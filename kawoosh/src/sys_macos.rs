@@ -50,7 +50,7 @@ pub fn install_common_mode_timer() {
     run_loop.add_timer(Some(&timer), Some(&tracking_mode));
 }
 
-pub fn hide_window_titlebar(sdl_window: *mut sdl3_sys::video::SDL_Window) -> (usize, usize) {
+pub fn hide_window_titlebar(sdl_window: *mut sdl3_sys::video::SDL_Window) -> (f32, f32) {
     unsafe {
         let props = SDL_GetWindowProperties(sdl_window);
         let ns_window = SDL_GetPointerProperty(
@@ -59,7 +59,7 @@ pub fn hide_window_titlebar(sdl_window: *mut sdl3_sys::video::SDL_Window) -> (us
             std::ptr::null_mut(),
         );
         if ns_window.is_null() {
-            return (0, 0);
+            return (0.0, 0.0);
         }
         let ns_window = ns_window as *mut NSObject;
 
@@ -90,11 +90,11 @@ pub fn hide_window_titlebar(sdl_window: *mut sdl3_sys::video::SDL_Window) -> (us
                 toView: std::ptr::null_mut::<NSObject>()
             ];
             // Right edge of the zoom button, measured from the left edge of the window
-            (zoom_in_window.origin.x + zoom_in_window.size.width).ceil() as usize
+            zoom_in_window.origin.x + zoom_in_window.size.width
         } else {
-            0
+            0.0
         };
 
-        (top_inset.ceil() as usize, traffic_lights_right)
+        (top_inset as f32, traffic_lights_right as f32)
     }
 }
