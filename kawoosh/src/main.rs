@@ -1,5 +1,6 @@
 use std::{ffi::CStr, sync::Mutex};
 
+use derive_more::Debug;
 use env_logger::Env;
 use log::debug;
 use sdl3::{
@@ -18,26 +19,19 @@ use sdl3_sys::everything::*;
 #[cfg(target_os = "macos")]
 mod sys_macos;
 
-#[derive(Default, Debug)]
-#[allow(dead_code)]
-struct Padding {
-    left: usize,
-    right: usize,
-    top: usize,
-    bottom: usize,
-}
-
 struct SdlData {
     canvas: WindowCanvas,
     _video: VideoSubsystem,
     _sdl: Sdl,
 }
 
+#[derive(Debug)]
 struct AppState {
+    #[debug(ignore)]
     main: MainThreadData<SdlData>,
     title: String,
     title_bar_height: usize,
-    title_bar_padding: Padding,
+    title_bar_left_padding: usize,
     mx: f32,
     my: f32,
 }
@@ -60,20 +54,19 @@ impl AppState {
 
         #[allow(unused_assignments)]
         let mut title_bar_height: usize = 0;
-        let mut title_bar_padding = Padding::default();
+        #[allow(unused_assignments)]
+        let mut title_bar_left_padding: usize = 0;
 
         #[cfg(target_os = "macos")]
         {
             let (titlebar_top_inset, titlebar_right_inset) =
                 sys_macos::hide_window_titlebar(window.raw());
-            title_bar_padding.left = titlebar_right_inset;
+            title_bar_left_padding = titlebar_right_inset;
             title_bar_height = titlebar_top_inset;
         }
-        dbg!(title_bar_height);
-        dbg!(&title_bar_padding);
 
         let canvas = window.into_canvas();
-        Ok(Self {
+        let res = Self {
             main: MainThreadData::assert_new(SdlData {
                 canvas,
                 _video: video,
@@ -81,10 +74,12 @@ impl AppState {
             }),
             title,
             title_bar_height,
-            title_bar_padding,
+            title_bar_left_padding,
             mx: 0.0,
             my: 0.0,
-        })
+        };
+        debug!("{res:?}");
+        Ok(res)
     }
 
     fn app_init() -> AppResultWithState<Box<Mutex<Self>>> {
@@ -120,7 +115,7 @@ impl AppState {
         let _ = canvas.draw_debug_text(
             &self.title,
             (
-                (self.title_bar_padding.left + 10) as i32,
+                (self.title_bar_left_padding + 10) as i32,
                 (self.title_bar_height / 2 - 4) as i32,
             ),
         );

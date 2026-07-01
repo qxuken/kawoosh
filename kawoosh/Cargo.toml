@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 cosmic-text = "0.19.0"
+derive_more = { version = "2.1.1", features = ["debug"] }
 env_logger = "0.11.11"
 log = "0.4.33"
 sdl3 = { version = "0.18.4", features = ["build-from-source-static", "image"] }

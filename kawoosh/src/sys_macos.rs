@@ -1,9 +1,8 @@
 use std::ffi::c_void;
 
 use log::trace;
+use objc2::msg_send;
 use objc2::runtime::NSObject;
-use objc2::{class, msg_send};
-use objc2_app_kit::NSToolbar;
 use objc2_core_foundation::{
     CFAllocator, CFRunLoop, CFRunLoopTimer, CFRunLoopTimerContext, CFString, CGRect,
 };
