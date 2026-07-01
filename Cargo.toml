@@ -2,4 +2,9 @@
 resolver = "3"
 members = ["kawoosh"]
 
-[dependencies]
+[workspace.package]
+publish = false
+version = "2026.6.0"
+edition = "2024"
+authors = ["Nasonov Viktor <me@qxuken.dev>"]
+repository = "https://drydock9.qxuken.dev/qxuken/kawoosh"
