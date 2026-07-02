@@ -14,8 +14,8 @@ unsafe extern "C-unwind" fn common_mode_timer(_timer: *mut CFRunLoopTimer, _info
         fn SDL_IterateMainCallbacks(pump_events: bool);
     }
 
-    trace!("common_mode_timer");
-    unsafe { SDL_IterateMainCallbacks(true) };
+    trace!("common_mode_timer:fire");
+    unsafe { SDL_IterateMainCallbacks(false) };
 }
 
 pub fn install_common_mode_timer() {

@@ -329,6 +329,7 @@ dependencies = [
 name = "kawoosh"
 version = "2026.6.0"
 dependencies = [
+ "bytemuck",
  "cosmic-text",
  "env_logger",
  "log",

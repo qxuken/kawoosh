@@ -1,17 +1,17 @@
 use std::{ffi::CStr, sync::Mutex};
 
+use bytemuck::checked::cast_slice;
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use env_logger::Env;
-use log::{debug, trace};
+use log::{debug, error, log_enabled, trace};
 use sdl3::{
     Sdl, VideoSubsystem,
-    event::Event,
+    event::{Event, WindowEvent},
     keyboard::Keycode,
     messagebox::{MessageBoxFlag, show_simple_message_box},
     pixels::Color,
     render::{FRect, WindowCanvas},
     timer::ticks,
-    video::WindowFlags,
 };
 use sdl3_main::{AppResult, AppResultWithState, MainThreadData, MainThreadToken, app_impl};
 use sdl3_sys::everything::*;
@@ -19,31 +19,141 @@ use sdl3_sys::everything::*;
 #[cfg(target_os = "macos")]
 mod sys_macos;
 
-const TITLE_COLOR: cosmic_text::Color = cosmic_text::Color::rgb(0xFF, 0xFF, 0xFF);
-// const CONTENT_METRICS: Metrics = Metrics {
-//     font_size: 16.0,
-//     line_height: 18.0,
-// };
-
 struct SdlData {
     canvas: WindowCanvas,
     _video: VideoSubsystem,
     _sdl: Sdl,
 }
 
+impl SdlData {
+    fn canvas_mut(&mut self) -> &mut WindowCanvas {
+        &mut self.canvas
+    }
+}
+
+struct TextNode<'a> {
+    text: String,
+    color: cosmic_text::Color,
+    metrics: Metrics,
+    attr: Attrs<'a>,
+    buffer: Buffer,
+}
+
+impl<'a> TextNode<'a> {
+    fn make_title(
+        font_system: &mut FontSystem,
+        text: impl ToString,
+        width_opt: Option<f32>,
+        height_opt: Option<f32>,
+    ) -> Self {
+        let mut node = TextNode::new(
+            text,
+            cosmic_text::Color::rgb(0xFF, 0xFF, 0xFF),
+            Metrics {
+                font_size: 14.0,
+                line_height: 16.0,
+            },
+        );
+        node.set_size(width_opt, height_opt);
+        node.reshape(font_system);
+        node
+    }
+    fn make_default(
+        font_system: &mut FontSystem,
+        text: impl ToString,
+        width_opt: Option<f32>,
+        height_opt: Option<f32>,
+    ) -> Self {
+        let mut node = TextNode::new(
+            text,
+            cosmic_text::Color::rgb(0xFF, 0xFF, 0xFF),
+            Metrics {
+                font_size: 16.0,
+                line_height: 18.0,
+            },
+        );
+        node.set_size(width_opt, height_opt);
+        node.reshape(font_system);
+        node
+    }
+
+    fn new(text: impl ToString, color: cosmic_text::Color, metrics: Metrics) -> Self {
+        let buffer = Buffer::new_empty(metrics);
+        let attr = Attrs::new()
+            .color(color)
+            .family(Family::Name("Iosevka Navcon"));
+        let mut node = Self {
+            text: String::new(),
+            color,
+            metrics,
+            attr,
+            buffer,
+        };
+        node.set_text(text);
+        node
+    }
+
+    fn set_size(&mut self, width_opt: Option<f32>, height_opt: Option<f32>) {
+        self.buffer.set_size(width_opt, height_opt);
+    }
+    fn set_text(&mut self, text: impl ToString) {
+        let str = text.to_string();
+        self.buffer
+            .set_text(&str, &self.attr, Shaping::Advanced, None);
+        self.text = str;
+    }
+    fn reshape(&mut self, font_system: &mut FontSystem) {
+        self.buffer.shape_until_scroll(font_system, false);
+        let _ = self.buffer.layout_runs().count();
+    }
+    pub fn draw<F>(&mut self, font_system: &mut FontSystem, cache: &mut crate::SwashCache, mut f: F)
+    where
+        F: FnMut(Metrics, i32, i32, u32, u32, cosmic_text::Color),
+    {
+        self.buffer
+            .borrow_with(font_system)
+            .draw(cache, self.color, |r, g, b, a, color| {
+                f(self.metrics, r, g, b, a, color)
+            });
+    }
+}
+
 struct AppState<'a> {
     main: MainThreadData<SdlData>,
-    scale: f32,
     font_system: FontSystem,
     swash_cache: SwashCache,
-    _title: String,
-    title_metrics: Metrics,
-    title_buffer: Buffer,
-    _title_attr: Attrs<'a>,
+    scale: f32,
+    padding: f32,
     title_bar_height: f32,
     title_bar_left_padding: f32,
-    mx: f32,
-    my: f32,
+    title: TextNode<'a>,
+    debug: TextNode<'a>,
+    mouse_x: f32,
+    mouse_y: f32,
+}
+
+impl<'a> AppState<'a> {
+    fn update_scale(&mut self, scale: f32) {
+        let rescale = scale / self.scale;
+        #[inline]
+        fn rescale_buffer(buf: &mut Buffer, new_scale: f32) {
+            let metrics = buf.metrics();
+            let (w, h) = buf.size();
+            buf.set_metrics_and_size(
+                metrics.scale(new_scale),
+                w.map(|v| v * new_scale),
+                h.map(|v| v * new_scale),
+            );
+        }
+        self.title_bar_height = self.title_bar_height * rescale;
+        self.title_bar_left_padding = self.title_bar_left_padding * rescale;
+        self.padding = self.padding * rescale;
+        rescale_buffer(&mut self.title.buffer, rescale);
+        self.title.reshape(&mut self.font_system);
+        rescale_buffer(&mut self.debug.buffer, rescale);
+        self.scale = scale;
+        debug!("New scale {scale}");
+    }
 }
 
 #[app_impl]
@@ -62,7 +172,6 @@ impl AppState<'static> {
 
         let window = video
             .window(&title, 800, 600)
-            .set_flags(WindowFlags::TRANSPARENT)
             .resizable()
             .position_centered()
             .high_pixel_density()
@@ -81,42 +190,44 @@ impl AppState<'static> {
         }
 
         let canvas = window.into_canvas();
-
-        let title_metrics = Metrics {
-            font_size: 14.0 * scale,
-            line_height: 16.0 * scale,
-        };
-        let mut title_buffer = Buffer::new(&mut font_system, title_metrics);
-        let title_attr = Attrs::new().family(Family::Name("IosevkaNavcon"));
-        title_buffer.set_size(
-            Some((800.0 - title_bar_left_padding) * scale),
-            Some(title_bar_height * scale),
-        );
-        title_buffer.set_text(&title, &title_attr, Shaping::Advanced, None);
-        title_buffer.shape_until_scroll(&mut font_system, true);
-        let _ = title_buffer.layout_runs().count();
-
         #[cfg(target_os = "macos")]
         sys_macos::install_common_mode_timer();
 
-        let res = Self {
+        let viewport = canvas.viewport();
+
+        let padding = 10.0;
+
+        let title = TextNode::make_title(
+            &mut font_system,
+            title,
+            Some(viewport.w as f32 / scale - title_bar_left_padding - padding * 2.0),
+            Some(title_bar_height),
+        );
+        let debug = TextNode::make_default(
+            &mut font_system,
+            String::new(),
+            Some(viewport.h as f32 / scale - title_bar_height - padding * 2.0),
+            Some(viewport.w as f32 / scale - padding * 2.0),
+        );
+
+        let mut res = Self {
             main: MainThreadData::assert_new(SdlData {
                 canvas,
                 _video: video,
                 _sdl: sdl,
             }),
-            scale,
             font_system,
             swash_cache,
-            _title: title,
-            title_metrics,
-            title_buffer,
-            _title_attr: title_attr,
+            scale: 1.0,
+            padding,
             title_bar_height,
             title_bar_left_padding,
-            mx: 0.0,
-            my: 0.0,
+            title,
+            debug,
+            mouse_x: 0.0,
+            mouse_y: 0.0,
         };
+        res.update_scale(scale);
 
         trace!("{:?}", res.font_system);
 
@@ -132,7 +243,7 @@ impl AppState<'static> {
             Ok(app) => AppResultWithState::Continue(Box::new(Mutex::new(app))),
             Err(err) => {
                 let error_msg = format!("Error initializing SDL: {err:?}");
-                eprintln!("{error_msg}");
+                error!("{error_msg:?}");
                 let _ = show_simple_message_box(MessageBoxFlag::ERROR, "Error!", &error_msg, None);
                 AppResultWithState::Failure(None)
             }
@@ -140,45 +251,54 @@ impl AppState<'static> {
     }
 
     fn app_iterate(&mut self) -> AppResult {
-        let Some(token) = MainThreadToken::get() else {
+        let Some(canvas) = MainThreadToken::get()
+            .map(|token| self.main.get_mut(token))
+            .map(SdlData::canvas_mut)
+        else {
             return AppResult::Continue;
         };
-        let main = self.main.get_mut(token);
-        let canvas = &mut main.canvas;
 
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
-        let mut title_buffer = self.title_buffer.borrow_with(&mut self.font_system);
-        title_buffer.draw(&mut self.swash_cache, TITLE_COLOR, |x, y, w, h, color| {
-            canvas.set_draw_color(Color::RGBA(color.r(), color.g(), color.b(), color.a()));
-            canvas
-                .draw_rect(FRect::new(
-                    (self.title_bar_left_padding + 10.0 + x as f32) * self.scale,
-                    self.title_bar_height as f32 / 2.0 - self.title_metrics.line_height / 2.0
-                        + y as f32 * self.scale,
-                    w as f32,
-                    h as f32,
-                ))
-                .unwrap();
-        });
-        canvas.set_draw_color(Color::WHITE);
-        let _ = canvas.draw_debug_text(
-            &format!("Callbacks running for {} ms", ticks()),
-            (4.0 * self.scale, (self.title_bar_height + 4.0) * self.scale),
+        let _ = canvas.set_blend_mode(sdl3::render::BlendMode::Blend);
+
+        self.debug.set_text(format!(
+            "Callbacks running for {} ms\nMouse x: {}\n      y: {}",
+            ticks(),
+            self.mouse_x,
+            self.mouse_y,
+        ));
+        self.debug.reshape(&mut self.font_system);
+        self.debug.draw(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            |_metrics, x, y, w, h, color| {
+                canvas.set_draw_color(Color::RGBA(color.r(), color.g(), color.b(), color.a()));
+                canvas
+                    .fill_rect(FRect::new(
+                        self.padding + x as f32,
+                        self.title_bar_height + self.padding + y as f32,
+                        w as f32,
+                        h as f32,
+                    ))
+                    .unwrap();
+            },
         );
-        let _ = canvas.draw_debug_text(
-            &format!("Mouse x: {}", self.mx),
-            (
-                4.0 * self.scale,
-                (self.title_bar_height + 20.0) * self.scale,
-            ),
-        );
-        let _ = canvas.draw_debug_text(
-            &format!("      y: {}", self.my),
-            (
-                4.0 * self.scale,
-                (self.title_bar_height + 28.0) * self.scale,
-            ),
+
+        self.title.draw(
+            &mut self.font_system,
+            &mut self.swash_cache,
+            |metrics, x, y, w, h, color| {
+                canvas.set_draw_color(Color::RGBA(color.r(), color.g(), color.b(), color.a()));
+                canvas
+                    .fill_rect(FRect::new(
+                        self.title_bar_left_padding + self.padding + x as f32,
+                        self.title_bar_height - metrics.line_height * (1.5 * self.scale) + y as f32,
+                        w as f32,
+                        h as f32,
+                    ))
+                    .unwrap();
+            },
         );
         canvas.present();
 
@@ -186,19 +306,54 @@ impl AppState<'static> {
     }
 
     fn app_event(&mut self, event: &SDL_Event) -> AppResult {
-        let mut buf = [0i8; 256];
-        unsafe { SDL_GetEventDescription(event, buf.as_mut_ptr(), buf.len() as i32) };
-        let desc = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy();
-        debug!("{desc}");
+        if log_enabled!(log::Level::Debug) {
+            let mut buf = [0i8; 256];
+            let buf_n =
+                unsafe { SDL_GetEventDescription(event, buf.as_mut_ptr(), buf.len() as i32) };
+            let buf: &[u8] = cast_slice(&buf[0..(buf_n as usize)]);
+            let desc = unsafe { CStr::from_bytes_with_nul_unchecked(buf) }.to_string_lossy();
+            debug!("{desc}");
+        }
         match Event::from_ll(*event) {
             Event::Quit { .. }
             | Event::KeyDown {
                 keycode: Some(Keycode::Escape),
                 ..
             } => AppResult::Success,
+            Event::Window {
+                win_event: WindowEvent::DisplayChanged(_),
+                ..
+            } => {
+                let scale = {
+                    let Some(canvas) = MainThreadToken::get()
+                        .map(|token| self.main.get_mut(token))
+                        .map(SdlData::canvas_mut)
+                    else {
+                        return AppResult::Continue;
+                    };
+                    canvas.window().display_scale()
+                };
+                self.update_scale(scale);
+                return AppResult::Continue;
+            }
+            Event::Window {
+                win_event: WindowEvent::Resized(w, h),
+                ..
+            } => {
+                self.title.set_size(
+                    Some(w as f32 * self.scale - self.padding * 2.0),
+                    Some(self.title_bar_height),
+                );
+                self.title.reshape(&mut self.font_system);
+                self.debug.set_size(
+                    Some(w as f32 * self.scale - self.padding * 2.0),
+                    Some(h as f32 * self.scale - self.title_bar_height - self.padding * 2.0),
+                );
+                AppResult::Continue
+            }
             Event::MouseMotion { x, y, .. } => {
-                self.mx = x;
-                self.my = y;
+                self.mouse_x = x;
+                self.mouse_y = y;
                 AppResult::Continue
             }
             _ => AppResult::Continue,
