@@ -13,7 +13,7 @@ env_logger = "0.11.11"
 log = "0.4.33"
 sdl3 = { version = "0.18.4", features = ["build-from-source-static", "image"] }
 sdl3-main = "0.6.4"
-sdl3-sys = { version = "0.6.6", features = ["build-from-source"] }
+sdl3-sys = { version = "0.6.7", features = ["build-from-source"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 taffy = "0.11.0"
