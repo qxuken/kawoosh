@@ -145,9 +145,9 @@ impl<'a> AppState<'a> {
                 h.map(|v| v * new_scale),
             );
         }
-        self.title_bar_height = self.title_bar_height * rescale;
-        self.title_bar_left_padding = self.title_bar_left_padding * rescale;
-        self.padding = self.padding * rescale;
+        self.title_bar_height *= rescale;
+        self.title_bar_left_padding *= rescale;
+        self.padding *= rescale;
         rescale_buffer(&mut self.title.buffer, rescale);
         self.title.reshape(&mut self.font_system);
         rescale_buffer(&mut self.debug.buffer, rescale);
@@ -178,8 +178,8 @@ impl AppState<'static> {
             .build()?;
         let scale = window.display_scale();
 
-        let title_bar_height;
-        let title_bar_left_padding;
+        let title_bar_height = 0.0;
+        let title_bar_left_padding = 0.0;
 
         #[cfg(target_os = "macos")]
         {
@@ -260,7 +260,7 @@ impl AppState<'static> {
 
         canvas.set_draw_color(Color::BLACK);
         canvas.clear();
-        let _ = canvas.set_blend_mode(sdl3::render::BlendMode::Blend);
+        canvas.set_blend_mode(sdl3::render::BlendMode::Blend);
 
         self.debug.set_text(format!(
             "Callbacks running for {} ms\nMouse x: {}\n      y: {}",
