@@ -19,6 +19,8 @@ use sdl3_sys::everything::*;
 #[cfg(target_os = "macos")]
 mod sys_macos;
 
+const DEFAULT_FONT: &str = "Iosevka Navcon";
+
 struct SdlData {
     canvas: WindowCanvas,
     _video: VideoSubsystem,
@@ -40,24 +42,6 @@ struct TextNode<'a> {
 }
 
 impl<'a> TextNode<'a> {
-    fn make_title(
-        font_system: &mut FontSystem,
-        text: impl ToString,
-        width_opt: Option<f32>,
-        height_opt: Option<f32>,
-    ) -> Self {
-        let mut node = TextNode::new(
-            text,
-            cosmic_text::Color::rgb(0xFF, 0xFF, 0xFF),
-            Metrics {
-                font_size: 14.0,
-                line_height: 16.0,
-            },
-        );
-        node.set_size(width_opt, height_opt);
-        node.reshape(font_system);
-        node
-    }
     fn make_default(
         font_system: &mut FontSystem,
         text: impl ToString,
@@ -79,9 +63,7 @@ impl<'a> TextNode<'a> {
 
     fn new(text: impl ToString, color: cosmic_text::Color, metrics: Metrics) -> Self {
         let buffer = Buffer::new_empty(metrics);
-        let attr = Attrs::new()
-            .color(color)
-            .family(Family::Name("Iosevka Navcon"));
+        let attr = Attrs::new().color(color).family(Family::Name(DEFAULT_FONT));
         let mut node = Self {
             text: String::new(),
             color,
@@ -102,9 +84,16 @@ impl<'a> TextNode<'a> {
             .set_text(&str, &self.attr, Shaping::Advanced, None);
         self.text = str;
     }
+    fn set_text_groups<'s, 'r, I>(&mut self, i: I)
+    where
+        I: IntoIterator<Item = (&'s str, Attrs<'r>)>,
+    {
+        self.buffer
+            .set_rich_text(i, &self.attr, Shaping::Advanced, None);
+    }
     fn reshape(&mut self, font_system: &mut FontSystem) {
         self.buffer.shape_until_scroll(font_system, false);
-        let _ = self.buffer.layout_runs().count();
+        // let _ = self.buffer.layout_runs().count();
     }
     pub fn draw<F>(&mut self, font_system: &mut FontSystem, cache: &mut crate::SwashCache, mut f: F)
     where
@@ -124,9 +113,6 @@ struct AppState<'a> {
     swash_cache: SwashCache,
     scale: f32,
     padding: f32,
-    title_bar_height: f32,
-    title_bar_left_padding: f32,
-    title: TextNode<'a>,
     debug: TextNode<'a>,
     mouse_x: f32,
     mouse_y: f32,
@@ -145,11 +131,7 @@ impl<'a> AppState<'a> {
                 h.map(|v| v * new_scale),
             );
         }
-        self.title_bar_height *= rescale;
-        self.title_bar_left_padding *= rescale;
         self.padding *= rescale;
-        rescale_buffer(&mut self.title.buffer, rescale);
-        self.title.reshape(&mut self.font_system);
         rescale_buffer(&mut self.debug.buffer, rescale);
         self.scale = scale;
         debug!("New scale {scale}");
@@ -178,17 +160,6 @@ impl AppState<'static> {
             .build()?;
         let scale = window.display_scale();
 
-        let title_bar_height = 0.0;
-        let title_bar_left_padding = 0.0;
-
-        #[cfg(target_os = "macos")]
-        {
-            let (titlebar_top_inset, titlebar_right_inset) =
-                sys_macos::hide_window_titlebar(window.raw());
-            title_bar_left_padding = titlebar_right_inset;
-            title_bar_height = titlebar_top_inset;
-        }
-
         let canvas = window.into_canvas();
         #[cfg(target_os = "macos")]
         sys_macos::install_common_mode_timer();
@@ -197,16 +168,10 @@ impl AppState<'static> {
 
         let padding = 10.0;
 
-        let title = TextNode::make_title(
-            &mut font_system,
-            title,
-            Some(viewport.w as f32 / scale - title_bar_left_padding - padding * 2.0),
-            Some(title_bar_height),
-        );
         let debug = TextNode::make_default(
             &mut font_system,
             String::new(),
-            Some(viewport.h as f32 / scale - title_bar_height - padding * 2.0),
+            Some(viewport.h as f32 / scale - padding * 2.0),
             Some(viewport.w as f32 / scale - padding * 2.0),
         );
 
@@ -220,9 +185,6 @@ impl AppState<'static> {
             swash_cache,
             scale: 1.0,
             padding,
-            title_bar_height,
-            title_bar_left_padding,
-            title,
             debug,
             mouse_x: 0.0,
             mouse_y: 0.0,
@@ -262,12 +224,19 @@ impl AppState<'static> {
         canvas.clear();
         canvas.set_blend_mode(sdl3::render::BlendMode::Blend);
 
-        self.debug.set_text(format!(
-            "Callbacks running for {} ms\nMouse x: {}\n      y: {}",
-            ticks(),
-            self.mouse_x,
-            self.mouse_y,
-        ));
+        let text = self.debug.attr.clone();
+        let value = Attrs::new()
+            .color(cosmic_text::Color::rgb(69, 129, 20))
+            .family(Family::Name(DEFAULT_FONT));
+        self.debug.set_text_groups([
+            ("Callbacks running for ", text.clone()),
+            (&ticks().to_string(), value.clone()),
+            (" ms", value.clone()),
+            ("\nMouse x: ", text.clone()),
+            (&self.mouse_x.to_string(), value.clone()),
+            ("\n      y: ", text),
+            (&self.mouse_y.to_string(), value.clone()),
+        ]);
         self.debug.reshape(&mut self.font_system);
         self.debug.draw(
             &mut self.font_system,
@@ -277,7 +246,7 @@ impl AppState<'static> {
                 canvas
                     .fill_rect(FRect::new(
                         self.padding + x as f32,
-                        self.title_bar_height + self.padding + y as f32,
+                        self.padding + y as f32,
                         w as f32,
                         h as f32,
                     ))
@@ -285,21 +254,6 @@ impl AppState<'static> {
             },
         );
 
-        self.title.draw(
-            &mut self.font_system,
-            &mut self.swash_cache,
-            |metrics, x, y, w, h, color| {
-                canvas.set_draw_color(Color::RGBA(color.r(), color.g(), color.b(), color.a()));
-                canvas
-                    .fill_rect(FRect::new(
-                        self.title_bar_left_padding + self.padding + x as f32,
-                        self.title_bar_height - metrics.line_height * (1.5 * self.scale) + y as f32,
-                        w as f32,
-                        h as f32,
-                    ))
-                    .unwrap();
-            },
-        );
         canvas.present();
 
         AppResult::Continue
@@ -340,14 +294,9 @@ impl AppState<'static> {
                 win_event: WindowEvent::Resized(w, h),
                 ..
             } => {
-                self.title.set_size(
-                    Some(w as f32 * self.scale - self.padding * 2.0),
-                    Some(self.title_bar_height),
-                );
-                self.title.reshape(&mut self.font_system);
                 self.debug.set_size(
                     Some(w as f32 * self.scale - self.padding * 2.0),
-                    Some(h as f32 * self.scale - self.title_bar_height - self.padding * 2.0),
+                    Some(h as f32 * self.scale - self.padding * 2.0),
                 );
                 AppResult::Continue
             }
