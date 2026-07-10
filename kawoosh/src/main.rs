@@ -1,10 +1,13 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 use anyhow::Result;
 use env_logger::Env;
 use gpui::{
     AssetSource, KeyBinding, SharedString, TitlebarOptions, WindowBounds, WindowOptions, actions,
-    colors::DefaultColors, div, prelude::*, px, size,
+    colors::{Colors, DefaultColors, GlobalColors},
+    div,
+    prelude::*,
+    px, size,
 };
 use rust_embed::Embed;
 
@@ -39,9 +42,9 @@ impl Render for App {
     ) -> impl gpui::IntoElement {
         let colors = cx.default_colors();
         div()
-            .font_family(DEFAULT_FONT)
             .flex()
             .flex_row()
+            .font_family(DEFAULT_FONT)
             .gap_4()
             .p_10()
             .w_full()
@@ -50,6 +53,7 @@ impl Render for App {
             .child(
                 div()
                     .id("iosevka-text")
+                    .cursor_pointer()
                     .flex()
                     .items_center()
                     .justify_center()
@@ -82,7 +86,6 @@ fn main() -> Result<()> {
                     .collect(),
             )
             .unwrap();
-        cx.init_colors();
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
             KeyBinding::new("escape", Quit, None),
@@ -98,7 +101,10 @@ fn main() -> Result<()> {
                     window_bounds: Some(WindowBounds::centered(size(px(920.), px(720.)), cx)),
                     ..Default::default()
                 },
-                |_window, cx| cx.new(|_cx| App),
+                |window, cx| {
+                    cx.set_global(GlobalColors(Arc::new(Colors::for_appearance(window))));
+                    cx.new(|_cx| App)
+                },
             )
             .unwrap();
         window.update(cx, |_v, _w, cx| cx.activate(true)).unwrap();
