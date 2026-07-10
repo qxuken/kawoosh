@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["kawoosh"]
+members = ["kawoosh", "text-buffer"]
 
 [workspace.package]
 publish = false
@@ -8,3 +8,21 @@ version = "2026.6.0"
 edition = "2024"
 authors = ["Nasonov Viktor <me@qxuken.dev>"]
 repository = "https://drydock9.qxuken.dev/qxuken/kawoosh"
+
+[workspace.dependencies]
+text-buffer = { path = "./text-buffer" }
+
+log = "0.4.33"
+env_logger = "0.11.11"
+
+gpui = { git = "ssh://git@drydock9-port1.qxuken.dev/mirrors/zed.git", rev = "10504e3ce18bb1d2444baf1047fa4ea9835ff1cc" }
+gpui_platform = { git = "ssh://git@drydock9-port1.qxuken.dev/mirrors/zed.git", rev = "10504e3ce18bb1d2444baf1047fa4ea9835ff1cc", features = [
+    "font-kit",
+    "wayland",
+    "x11",
+] }
+anyhow = { version = "1.0.103", features = ["backtrace"] }
+rust-embed = { version = "8.12.0", features = [
+    "compression",
+    "include-exclude",
+] }
