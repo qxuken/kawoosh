@@ -1,0 +1,13 @@
+[package]
+name = "resources"
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+rust-embed.workspace = true
+gpui.workspace = true

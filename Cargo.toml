@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["kawoosh", "text-buffer"]
+members = ["kawoosh", "resources", "text-buffer"]
 
 [workspace.package]
 publish = false
@@ -11,18 +11,20 @@ repository = "https://drydock9.qxuken.dev/qxuken/kawoosh"
 
 [workspace.dependencies]
 text-buffer = { path = "./text-buffer" }
+resources = { path = "./resources" }
 
 log = "0.4.33"
 env_logger = "0.11.11"
 
-gpui = { git = "https://drydock9.qxuken.dev/mirrors/zed.git", rev = "10504e3ce18bb1d2444baf1047fa4ea9835ff1cc" }
-gpui_platform = { git = "https://drydock9.qxuken.dev/mirrors/zed.git", rev = "10504e3ce18bb1d2444baf1047fa4ea9835ff1cc", features = [
+gpui = { git = "https://drydock9.qxuken.dev/mirrors/zed.git", rev = "65e1c5af258d4c80036467d583691f3f9ded0897" }
+gpui_platform = { git = "https://drydock9.qxuken.dev/mirrors/zed.git", rev = "65e1c5af258d4c80036467d583691f3f9ded0897", features = [
     "font-kit",
     "wayland",
     "x11",
 ] }
 anyhow = { version = "1.0.103", features = ["backtrace"] }
 rust-embed = { version = "8.12.0", features = [
-    "compression",
+    # "compression",
     "include-exclude",
 ] }
+mimalloc = "0.1.52"

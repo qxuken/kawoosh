@@ -6,10 +6,15 @@ edition.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[features]
+default = ["resources"]
+
 [dependencies]
+resources = { workspace = true, optional = true }
+
+mimalloc.workspace = true
 log.workspace = true
 env_logger.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
-rust-embed.workspace = true
 anyhow.workspace = true

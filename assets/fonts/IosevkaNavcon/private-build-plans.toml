@@ -1,10 +1,10 @@
-[buildPlans.IosevkaCustom]
-family = "Iosevka Navcon"
+[buildPlans.IosevkaNavcon]
+family = ".IosevkaNavcon"
 spacing = "term"
 serifs = "sans"
-exportGlyphNames = true
+exportGlyphNames = false  # Set this to true for ligature support in Kitty (increased file size)
 
-[buildPlans.IosevkaCustom.variants.design]
+[buildPlans.IosevkaNavcon.variants.design]
 one = "no-base"
 zero = "dotted"
 l = "flat-tailed"
@@ -20,53 +20,53 @@ decorative-angle-brackets = "middle"
 lig-hyphen-chain = "without-notch"
 lig-double-arrow-bar = "without-notch"
 
-[buildPlans.IosevkaCustom.weights.Regular]
+[buildPlans.IosevkaNavcon.weights.Regular]
 shape = 400
 menu = 400
 css = 400
 
-[buildPlans.IosevkaCustom.weights.Bold]
+[buildPlans.IosevkaNavcon.weights.Bold]
 shape = 700
 menu = 700
 css = 700
 
-[buildPlans.IosevkaCustom.weights.Thin]
+[buildPlans.IosevkaNavcon.weights.Thin]
 shape = 100
 menu = 100
 css = 100
 
-[buildPlans.IosevkaCustom.weights.ExtraLight]
+[buildPlans.IosevkaNavcon.weights.ExtraLight]
 shape = 200
 menu = 200
 css = 200
 
-[buildPlans.IosevkaCustom.weights.Light]
+[buildPlans.IosevkaNavcon.weights.Light]
 shape = 300
 menu = 300
 css = 300
 
-[buildPlans.IosevkaCustom.weights.Medium]
+[buildPlans.IosevkaNavcon.weights.Medium]
 shape = 500
 menu = 500
 css = 500
 
-[buildPlans.IosevkaCustom.weights.SemiBold]
+[buildPlans.IosevkaNavcon.weights.SemiBold]
 shape = 600
 menu = 600
 css = 600
 
-[buildPlans.IosevkaCustom.weights.ExtraBold]
+[buildPlans.IosevkaNavcon.weights.ExtraBold]
 shape = 800
 menu = 800
 css = 800
 
-[buildPlans.IosevkaCustom.slopes.Upright]
+[buildPlans.IosevkaNavcon.slopes.Upright]
 angle = 0
 shape = "upright"
 menu = "upright"
 css = "normal"
 
-[buildPlans.IosevkaCustom.slopes.Italic]
+[buildPlans.IosevkaNavcon.slopes.Italic]
 angle = 9.4
 shape = "italic"
 menu = "italic"

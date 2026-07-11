@@ -1,53 +1,23 @@
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use env_logger::Env;
 use gpui::{
-    AssetSource, KeyBinding, SharedString, TitlebarOptions, WindowBounds, WindowOptions, actions,
+    KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, actions,
     colors::{Colors, DefaultColors, GlobalColors},
     div,
     prelude::*,
     px, size,
 };
-use log::{debug, info, trace};
-use rust_embed::Embed;
+use log::info;
+use mimalloc::MiMalloc;
+#[cfg(feature = "resources")]
+use resources::Resources;
 
-const DEFAULT_FONT: &str = "Iosevka Navcon";
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
-#[derive(Embed)]
-#[folder = "../assets/"]
-#[exclude = "*.DS_Store"]
-struct Assets;
-
-impl AssetSource for Assets {
-    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        Assets::get(path)
-            .map(|r| Some(r.data))
-            .with_context(|| format!("loading asset at path {path:?}"))
-    }
-
-    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        Ok(Assets::iter()
-            .filter(|f| f.starts_with(path))
-            .map(|f| f.into())
-            .collect())
-    }
-}
-
-impl Assets {
-    fn load_fonts(cx: &mut gpui::App) -> Result<()> {
-        trace!("Fonts::loading");
-        let res = cx.text_system().add_fonts(
-            Self::iter()
-                .filter(|f| f.starts_with("fonts") && f.ends_with(".ttf"))
-                .map(|f| Assets::get(&f).expect("Load from static storage"))
-                .map(|f| f.data)
-                .collect(),
-        );
-        debug!("Fonts::loaded");
-        res
-    }
-}
+const DEFAULT_FONT: &str = ".IosevkaNavcon";
 
 actions!(main, [Quit]);
 
@@ -98,17 +68,23 @@ fn main() -> Result<()> {
         .parse_env(Env::default().default_filter_or("trace"))
         .init();
 
-    gpui_platform::application().with_assets(Assets).run(|cx| {
-        Assets::load_fonts(cx).expect("Load static assets");
+    let app = gpui_platform::application();
+
+    #[cfg(feature = "resources")]
+    let app = app.with_assets(Resources);
+
+    app.run(|cx| {
+        #[cfg(feature = "resources")]
+        Resources::load_fonts(cx).expect("Load static assets");
 
         let window = cx
             .open_window(
                 WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(920.), px(720.)), cx)),
                     titlebar: Some(TitlebarOptions {
                         title: Some("GPUI Typography".into()),
                         ..Default::default()
                     }),
-                    window_bounds: Some(WindowBounds::centered(size(px(920.), px(720.)), cx)),
                     ..Default::default()
                 },
                 |window, cx| {
