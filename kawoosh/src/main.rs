@@ -1,6 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use env_logger::Env;
 use gpui::{
     AssetSource, KeyBinding, SharedString, TitlebarOptions, WindowBounds, WindowOptions, actions,
@@ -9,24 +9,43 @@ use gpui::{
     prelude::*,
     px, size,
 };
+use log::{debug, info, trace};
 use rust_embed::Embed;
 
 const DEFAULT_FONT: &str = "Iosevka Navcon";
 
 #[derive(Embed)]
 #[folder = "../assets/"]
+#[exclude = "*.DS_Store"]
 struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        Ok(Assets::get(path).map(|r| r.data))
+        Assets::get(path)
+            .map(|r| Some(r.data))
+            .with_context(|| format!("loading asset at path {path:?}"))
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
         Ok(Assets::iter()
             .filter(|f| f.starts_with(path))
-            .map(|f| SharedString::from(f))
+            .map(|f| f.into())
             .collect())
+    }
+}
+
+impl Assets {
+    fn load_fonts(cx: &mut gpui::App) -> Result<()> {
+        trace!("Fonts::loading");
+        let res = cx.text_system().add_fonts(
+            Self::iter()
+                .filter(|f| f.starts_with("fonts") && f.ends_with(".ttf"))
+                .map(|f| Assets::get(&f).expect("Load from static storage"))
+                .map(|f| f.data)
+                .collect(),
+        );
+        debug!("Fonts::loaded");
+        res
     }
 }
 
@@ -65,6 +84,9 @@ impl Render for App {
                     .text_2xl()
                     .text_color(colors.text)
                     .hover(|s| s.bg(colors.selected).text_color(colors.selected_text))
+                    .on_click(|_this, _w, _cx| {
+                        info!("Click");
+                    })
                     .child("Iosevka"),
             )
     }
@@ -77,20 +99,8 @@ fn main() -> Result<()> {
         .init();
 
     gpui_platform::application().with_assets(Assets).run(|cx| {
-        cx.text_system()
-            .add_fonts(
-                Assets::iter()
-                    .filter(|f| f.starts_with("fonts/IosevkaNavcon") && f.ends_with(".ttf"))
-                    .filter_map(|f| Assets::get(&f))
-                    .map(|f| f.data)
-                    .collect(),
-            )
-            .unwrap();
-        cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("escape", Quit, None),
-        ]);
-        cx.on_action(|Quit, cx| cx.quit());
+        Assets::load_fonts(cx).expect("Load static assets");
+
         let window = cx
             .open_window(
                 WindowOptions {
@@ -108,6 +118,12 @@ fn main() -> Result<()> {
             )
             .unwrap();
         window.update(cx, |_v, _w, cx| cx.activate(true)).unwrap();
+
+        cx.bind_keys([
+            KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("escape", Quit, None),
+        ]);
+        cx.on_action(|Quit, cx| cx.quit());
     });
     Ok(())
 }
