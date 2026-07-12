@@ -18,3 +18,4 @@ env_logger.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 anyhow.workspace = true
+smallvec.workspace = true

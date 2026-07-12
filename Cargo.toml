@@ -28,3 +28,4 @@ rust-embed = { version = "8.12.0", features = [
     "include-exclude",
 ] }
 mimalloc = "0.1.52"
+smallvec = "1.15.2"
