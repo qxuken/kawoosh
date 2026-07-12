@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use env_logger::Env;
 use gpui::{
-    KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, actions,
+    KeyBinding, SharedString, TitlebarOptions, WindowBounds, WindowOptions, actions,
     colors::{Colors, DefaultColors, GlobalColors},
     div,
     prelude::*,
@@ -21,6 +21,27 @@ const DEFAULT_FONT: &str = ".IosevkaNavcon";
 
 actions!(main, [Quit]);
 
+struct Tab {
+    name: SharedString,
+}
+
+impl Tab {
+    fn new(name: SharedString) -> Self {
+        Self { name }
+    }
+}
+
+impl Render for Tab {
+    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.default_colors();
+        div()
+            .bg(colors.container)
+            .p_1()
+            .hover(|s| s.bg(colors.border))
+            .child(self.name.clone())
+    }
+}
+
 struct App;
 
 impl Render for App {
@@ -30,6 +51,7 @@ impl Render for App {
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
         let colors = cx.default_colors();
+        // let tab = cx.new(|_| Tab::new("first_tab".into()));
         div()
             .flex()
             .flex_row()
@@ -39,6 +61,7 @@ impl Render for App {
             .w_full()
             .h_full()
             .bg(colors.background)
+            // .child(tab)
             .child(
                 div()
                     .id("iosevka-text")
@@ -73,27 +96,34 @@ fn main() -> Result<()> {
     #[cfg(feature = "resources")]
     let app = app.with_assets(Resources);
 
+    fn create_window(cx: &mut gpui::App) -> Result<gpui::WindowHandle<App>> {
+        let window = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(920.), px(720.)), cx)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("GPUI Typography".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            |window, cx| {
+                cx.set_global(GlobalColors(Arc::new(Colors::for_appearance(window))));
+                cx.new(|_cx| App)
+            },
+        )?;
+        window.update(cx, |_v, _w, cx| cx.activate(true))?;
+        Ok(window)
+    }
+
+    app.on_reopen(|cx| {
+        create_window(cx).expect("Create window");
+    });
+
     app.run(|cx| {
         #[cfg(feature = "resources")]
         Resources::load_fonts(cx).expect("Load static assets");
 
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::centered(size(px(920.), px(720.)), cx)),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("GPUI Typography".into()),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    cx.set_global(GlobalColors(Arc::new(Colors::for_appearance(window))));
-                    cx.new(|_cx| App)
-                },
-            )
-            .unwrap();
-        window.update(cx, |_v, _w, cx| cx.activate(true)).unwrap();
+        create_window(cx).expect("Create window");
 
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
