@@ -8,6 +8,7 @@ version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3b7f7f85a7e5f68090000ed7622545829afd484d210358702ae4cb97dd0c320"
 dependencies = [
+ "enumn",
  "uuid",
 ]
 
@@ -1002,7 +1003,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "gpui_util",
  "indexmap",
@@ -1411,7 +1412,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1588,6 +1589,17 @@ name = "enumflags2_derive"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "enumn"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f9ed6b3789237c8a0c1c505af1c7eb2c560df6186f01b098c3a1064ea532f38"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2172,7 +2184,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2254,7 +2266,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2305,7 +2317,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2352,7 +2364,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2363,7 +2375,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
@@ -2376,7 +2388,7 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "schemars",
  "serde",
@@ -2386,7 +2398,7 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "anyhow",
  "log",
@@ -2396,7 +2408,7 @@ dependencies = [
 [[package]]
 name = "gpui_web"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -2420,7 +2432,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2449,7 +2461,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -2636,7 +2648,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -2807,7 +2819,6 @@ dependencies = [
  "qoi",
  "ravif",
  "rayon",
- "rgb",
  "tiff",
  "zune-core",
  "zune-jpeg",
@@ -3023,6 +3034,8 @@ dependencies = [
  "log",
  "mimalloc",
  "resources",
+ "schemars",
+ "serde",
  "smallvec",
 ]
 
@@ -3301,7 +3314,7 @@ dependencies = [
 [[package]]
 name = "media"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -3993,7 +4006,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "perf"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "collections",
  "serde",
@@ -4609,7 +4622,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "derive_refineable",
 ]
@@ -4831,7 +4844,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "async-task",
  "backtrace",
@@ -5310,7 +5323,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "heapless",
  "log",
@@ -5950,7 +5963,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "util_macros"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "perf",
  "quote",
@@ -7303,7 +7316,7 @@ dependencies = [
 [[package]]
 name = "zlog"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7320,7 +7333,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -7331,7 +7344,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=65e1c5af258d4c80036467d583691f3f9ded0897#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://drydock9.qxuken.dev/mirrors/zed.git?rev=c399451ca019f1df10782cebb1a3e3e662195fcd#c399451ca019f1df10782cebb1a3e3e662195fcd"
 
 [[package]]
 name = "zune-core"
