@@ -28,16 +28,16 @@ const DEFAULT_FONT: &str = ".IosevkaNavcon";
 #[cfg(debug_assertions)]
 const DEFAULT_FONT: &str = "Iosevka Term";
 
-actions!(kawwosh, [Quit, TabNew, TabNext, TabPrev]);
+actions!(kawoosh, [Quit, TabNew, TabNext, TabPrev]);
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = kawwosh)]
+#[action(namespace = kawoosh)]
 pub struct TabSelect {
     pub idx: usize,
 }
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = kawwosh)]
+#[action(namespace = kawoosh)]
 pub struct TabClose {
     pub idx: Option<usize>,
 }
@@ -117,7 +117,7 @@ impl Focusable for Tab {
 }
 
 #[derive(Debug)]
-struct Kawwosh {
+struct Kawoosh {
     focus_handle: FocusHandle,
     tabs_scroll: ScrollHandle,
     tabs: SmallVec<[Entity<Tab>; 4]>,
@@ -125,7 +125,7 @@ struct Kawwosh {
     selected_tab: usize,
 }
 
-impl Kawwosh {
+impl Kawoosh {
     fn select_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_tab == index && index != 0 {
             return;
@@ -149,7 +149,7 @@ impl Kawwosh {
     }
 }
 
-impl Render for Kawwosh {
+impl Render for Kawoosh {
     fn render(
         &mut self,
         _window: &mut gpui::Window,
@@ -238,13 +238,13 @@ impl Render for Kawwosh {
     }
 }
 
-impl Focusable for Kawwosh {
+impl Focusable for Kawoosh {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-fn create_window(cx: &mut gpui::App) -> Result<gpui::WindowHandle<Kawwosh>> {
+fn create_window(cx: &mut gpui::App) -> Result<gpui::WindowHandle<Kawoosh>> {
     let window = cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(920.), px(720.)), cx)),
@@ -258,7 +258,7 @@ fn create_window(cx: &mut gpui::App) -> Result<gpui::WindowHandle<Kawwosh>> {
             cx.set_global(GlobalColors(Arc::new(Colors::for_appearance(window))));
             let focus_handle = cx.focus_handle();
             let tabs = smallvec![cx.new(|_| Tab::new(0, "default", focus_handle.clone(), true))];
-            cx.new(|_cx| Kawwosh {
+            cx.new(|_cx| Kawoosh {
                 focus_handle,
                 tabs_scroll: ScrollHandle::new(),
                 tabs,
