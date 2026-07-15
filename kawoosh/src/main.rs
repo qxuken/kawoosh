@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{env, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use env_logger::Env;
@@ -116,22 +116,32 @@ impl Focusable for Tab {
     }
 }
 
+#[derive(Debug, Default)]
+enum Content {
+    #[default]
+    FileBrowser,
+    // Editor,
+    // Terminal,
+}
+
 #[derive(Debug)]
 struct Kawoosh {
+    cwd: Option<PathBuf>,
     focus_handle: FocusHandle,
     tabs_scroll: ScrollHandle,
     tabs: SmallVec<[Entity<Tab>; 4]>,
-    last_index: usize,
-    selected_tab: usize,
+    content: SmallVec<[Entity<Content>; 4]>,
+    last_idx: usize,
+    selected_idx: usize,
 }
 
 impl Kawoosh {
     fn select_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_tab == index && index != 0 {
+        if self.selected_idx == index && index != 0 {
             return;
         }
 
-        self.selected_tab = if index == self.tabs.len() {
+        self.selected_idx = if index == self.tabs.len() {
             0
         } else {
             index.min(self.tabs.len().saturating_sub(1))
@@ -139,7 +149,7 @@ impl Kawoosh {
         for (i, tab) in self.tabs.iter().enumerate() {
             tab.update(cx, |tab, cx| {
                 tab.idx = i;
-                tab.selected = i == self.selected_tab;
+                tab.selected = i == self.selected_idx;
                 if tab.selected {
                     self.tabs_scroll.scroll_to_top_of_item(i);
                     tab.focus_handle.focus(window, cx);
@@ -167,17 +177,17 @@ impl Render for Kawoosh {
                 }),
             )
             .on_action(cx.listener(|this: &mut Self, _: &TabNext, window, cx| {
-                this.select_tab(this.selected_tab.wrapping_add(1), window, cx);
+                this.select_tab(this.selected_idx.wrapping_add(1), window, cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|this: &mut Self, _: &TabPrev, window, cx| {
-                this.select_tab(this.selected_tab.wrapping_sub(1), window, cx);
+                this.select_tab(this.selected_idx.wrapping_sub(1), window, cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|this: &mut Self, _: &TabNew, window, cx| {
-                this.last_index += 1;
+                this.last_idx += 1;
                 this.tabs.push(cx.new(|_| {
-                    let id = this.last_index;
+                    let id = this.last_idx;
                     Tab::new(id, format!("Tab {id}"), this.focus_handle.clone(), true)
                 }));
                 this.select_tab(this.tabs.len() - 1, window, cx);
@@ -187,10 +197,10 @@ impl Render for Kawoosh {
                 if this.tabs.len() == 1 {
                     window.dispatch_action(Quit.boxed_clone(), cx);
                 } else {
-                    let idx = e.idx.unwrap_or(this.selected_tab);
+                    let idx = e.idx.unwrap_or(this.selected_idx);
                     this.tabs.remove(idx);
-                    if idx <= this.selected_tab {
-                        this.select_tab(this.selected_tab.saturating_sub(1), window, cx);
+                    if idx <= this.selected_idx {
+                        this.select_tab(this.selected_idx.saturating_sub(1), window, cx);
                     }
                     cx.notify();
                 }
@@ -259,11 +269,13 @@ fn create_window(cx: &mut gpui::App) -> Result<gpui::WindowHandle<Kawoosh>> {
             let focus_handle = cx.focus_handle();
             let tabs = smallvec![cx.new(|_| Tab::new(0, "default", focus_handle.clone(), true))];
             cx.new(|_cx| Kawoosh {
+                cwd: env::current_dir().ok(),
                 focus_handle,
                 tabs_scroll: ScrollHandle::new(),
                 tabs,
-                last_index: 0,
-                selected_tab: 0,
+                content: Default::default(),
+                last_idx: 0,
+                selected_idx: 0,
             })
         },
     )?;

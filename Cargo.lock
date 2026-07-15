@@ -3025,7 +3025,7 @@ dependencies = [
 
 [[package]]
 name = "kawoosh"
-version = "2026.6.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "env_logger",
@@ -4664,7 +4664,7 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
 name = "resources"
-version = "2026.6.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "gpui",
@@ -5530,7 +5530,7 @@ dependencies = [
 
 [[package]]
 name = "text-buffer"
-version = "2026.6.0"
+version = "0.0.1"
 
 [[package]]
 name = "thiserror"
