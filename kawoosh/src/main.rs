@@ -100,6 +100,9 @@ impl Render for Tab {
             .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
                 window.dispatch_action(TabSelect { idx }.boxed_clone(), cx);
             })
+            .on_mouse_down(MouseButton::Middle, move |_event, window, cx| {
+                window.dispatch_action(TabClose { idx: Some(idx) }.boxed_clone(), cx);
+            })
             .on_mouse_down(MouseButton::Right, move |_event, window, cx| {
                 window.dispatch_action(TabClose { idx: Some(idx) }.boxed_clone(), cx);
             })
@@ -156,6 +159,7 @@ impl Render for Kawwosh {
         div()
             .id("root")
             .track_focus(&self.focus_handle(cx))
+            .role(Role::Window)
             .on_action(
                 cx.listener(|this: &mut Self, action: &TabSelect, window, cx| {
                     this.select_tab(action.idx, window, cx);
@@ -200,14 +204,14 @@ impl Render for Kawwosh {
             .child(
                 div()
                     .id("tabs")
+                    .role(Role::TabList)
                     .flex()
                     .flex_row()
                     .justify_evenly()
-                    .overflow_scroll()
-                    .role(Role::TabList)
-                    .tab_group()
+                    .overflow_x_scroll()
                     .track_scroll(&self.tabs_scroll)
-                    .children(self.tabs.iter().map(|t| t.clone())),
+                    .tab_group()
+                    .children(self.tabs.iter().cloned()),
             )
             .child(
                 div().flex().flex_row().p_2().child(
@@ -254,14 +258,13 @@ fn create_window(cx: &mut gpui::App) -> Result<gpui::WindowHandle<Kawwosh>> {
             cx.set_global(GlobalColors(Arc::new(Colors::for_appearance(window))));
             let focus_handle = cx.focus_handle();
             let tabs = smallvec![cx.new(|_| Tab::new(0, "default", focus_handle.clone(), true))];
-            let app = cx.new(|_cx| Kawwosh {
+            cx.new(|_cx| Kawwosh {
                 focus_handle,
                 tabs_scroll: ScrollHandle::new(),
                 tabs,
                 last_index: 0,
                 selected_tab: 0,
-            });
-            app
+            })
         },
     )?;
     window.update(cx, |this, w, cx| {
@@ -269,6 +272,48 @@ fn create_window(cx: &mut gpui::App) -> Result<gpui::WindowHandle<Kawwosh>> {
         cx.activate(true);
     })?;
     Ok(window)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_keybinds() -> [KeyBinding; 15] {
+    [
+        KeyBinding::new("ctrl-q", Quit, None),
+        KeyBinding::new("escape", Quit, None),
+        KeyBinding::new("ctrl-1", TabSelect { idx: 0 }, None),
+        KeyBinding::new("ctrl-2", TabSelect { idx: 1 }, None),
+        KeyBinding::new("ctrl-3", TabSelect { idx: 2 }, None),
+        KeyBinding::new("ctrl-4", TabSelect { idx: 3 }, None),
+        KeyBinding::new("ctrl-5", TabSelect { idx: 4 }, None),
+        KeyBinding::new("ctrl-6", TabSelect { idx: 5 }, None),
+        KeyBinding::new("ctrl-7", TabSelect { idx: 6 }, None),
+        KeyBinding::new("ctrl-8", TabSelect { idx: 7 }, None),
+        KeyBinding::new("ctrl-9", TabSelect { idx: 8 }, None),
+        KeyBinding::new("ctrl-n", TabNext, None),
+        KeyBinding::new("ctrl-p", TabPrev, None),
+        KeyBinding::new("ctrl-t", TabNew, None),
+        KeyBinding::new("ctrl-w", TabClose { idx: None }, None),
+    ]
+}
+
+#[cfg(target_os = "macos")]
+fn default_keybinds() -> [KeyBinding; 15] {
+    [
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("escape", Quit, None),
+        KeyBinding::new("cmd-1", TabSelect { idx: 0 }, None),
+        KeyBinding::new("cmd-2", TabSelect { idx: 1 }, None),
+        KeyBinding::new("cmd-3", TabSelect { idx: 2 }, None),
+        KeyBinding::new("cmd-4", TabSelect { idx: 3 }, None),
+        KeyBinding::new("cmd-5", TabSelect { idx: 4 }, None),
+        KeyBinding::new("cmd-6", TabSelect { idx: 5 }, None),
+        KeyBinding::new("cmd-7", TabSelect { idx: 6 }, None),
+        KeyBinding::new("cmd-8", TabSelect { idx: 7 }, None),
+        KeyBinding::new("cmd-9", TabSelect { idx: 8 }, None),
+        KeyBinding::new("cmd-n", TabNext, None),
+        KeyBinding::new("cmd-p", TabPrev, None),
+        KeyBinding::new("cmd-t", TabNew, None),
+        KeyBinding::new("cmd-w", TabClose { idx: None }, None),
+    ]
 }
 
 fn main() -> Result<()> {
@@ -293,23 +338,7 @@ fn main() -> Result<()> {
         })
         .detach();
 
-        cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("escape", Quit, None),
-            KeyBinding::new("cmd-1", TabSelect { idx: 0 }, None),
-            KeyBinding::new("cmd-2", TabSelect { idx: 1 }, None),
-            KeyBinding::new("cmd-3", TabSelect { idx: 2 }, None),
-            KeyBinding::new("cmd-4", TabSelect { idx: 3 }, None),
-            KeyBinding::new("cmd-5", TabSelect { idx: 4 }, None),
-            KeyBinding::new("cmd-6", TabSelect { idx: 5 }, None),
-            KeyBinding::new("cmd-7", TabSelect { idx: 6 }, None),
-            KeyBinding::new("cmd-8", TabSelect { idx: 7 }, None),
-            KeyBinding::new("cmd-9", TabSelect { idx: 8 }, None),
-            KeyBinding::new("cmd-n", TabNext, None),
-            KeyBinding::new("cmd-p", TabPrev, None),
-            KeyBinding::new("cmd-t", TabNew, None),
-            KeyBinding::new("cmd-w", TabClose { idx: None }, None),
-        ]);
+        cx.bind_keys(default_keybinds());
         cx.on_action(|Quit, cx| cx.quit());
     });
     Ok(())
