@@ -1,5 +1,5 @@
 [package]
-name = "text-buffer"
+name = "core"
 publish.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -7,10 +7,5 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-
-[dev-dependencies]
-criterion.workspace = true
-
-[[bench]]
-name = "insert"
-harness = false
+text-buffer.workspace = true
+slotmap.workspace = true

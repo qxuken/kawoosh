@@ -11,6 +11,7 @@ default = ["resources"]
 
 [dependencies]
 resources = { workspace = true, optional = true }
+text-buffer.workspace = true
 
 mimalloc.workspace = true
 log.workspace = true

@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
-const BUFFER_MAX_PIECE_BYTES: usize = 1024;
+const BUFFER_MAX_PIECE_BYTES: usize = 2048;
 
 type Link = Option<Rc<Node>>;
 
@@ -14,9 +14,9 @@ enum Source {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Piece {
+    source: Source,
     start: usize,
     length: u16,
-    source: Source,
 }
 
 impl Piece {
@@ -39,6 +39,20 @@ impl Shared {
             added: Vec::new(),
             priority_seed: 0,
         }
+    }
+
+    fn next_priority(&mut self) -> u64 {
+        self.priority_seed = self.priority_seed.wrapping_add(1);
+
+        let mut z = self.priority_seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
+
+        z ^= z >> 30;
+        z = z.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z ^= z >> 27;
+        z = z.wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^= z >> 31;
+
+        z
     }
 }
 
@@ -121,6 +135,10 @@ impl Buffer {
             return;
         }
 
+        if self.try_extend_last_piece(offset, text) {
+            return;
+        }
+
         let add_start = {
             let mut shared = self.shared.borrow_mut();
             let add_start = shared.added.len();
@@ -133,6 +151,42 @@ impl Buffer {
         let old_root = self.root.clone();
         let (left, right) = self.split(&old_root, offset);
         let merged = self.merge(&left, &inserted);
+        self.root = self.merge(&merged, &right);
+    }
+
+    pub fn insert_char(&mut self, offset: usize, c: u8) {
+        assert!(offset <= self.len());
+
+        if self.try_extend_last_piece(offset, &[c]) {
+            return;
+        }
+
+        let (piece, priority) = {
+            let mut shared = self.shared.borrow_mut();
+
+            let piece = Piece {
+                source: Source::Add,
+                start: shared.added.len(),
+                length: 1,
+            };
+
+            shared.added.push(c);
+
+            (piece, shared.next_priority())
+        };
+
+        let own_newlines = usize::from(c == b'\n');
+        let leaf = Some(Rc::new(Node::new(
+            piece,
+            priority,
+            None,
+            None,
+            own_newlines,
+        )));
+
+        let old_root = self.root.clone();
+        let (left, right) = self.split(&old_root, offset);
+        let merged = self.merge(&left, &leaf);
         self.root = self.merge(&merged, &right);
     }
 
@@ -149,6 +203,96 @@ impl Buffer {
         let (_drop, right) = self.split(&mid, length);
 
         self.root = self.merge(&left, &right);
+    }
+
+    fn try_extend_last_piece(&mut self, offset: usize, text: &[u8]) -> bool {
+        if offset == 0 || text.is_empty() || self.root.is_none() {
+            return false;
+        }
+
+        let added_len = self.shared.borrow().added.len();
+        let text_newlines = text.iter().filter(|&&byte| byte == b'\n').count();
+
+        if !Self::extend_piece_at(
+            &mut self.root,
+            offset - 1,
+            0,
+            added_len,
+            text.len(),
+            text_newlines,
+        ) {
+            return false;
+        }
+
+        self.shared.borrow_mut().added.extend_from_slice(text);
+
+        true
+    }
+
+    fn extend_piece_at(
+        link: &mut Link,
+        target: usize,
+        base: usize,
+        added_len: usize,
+        text_len: usize,
+        text_newlines: usize,
+    ) -> bool {
+        let Some(node) = link.as_mut() else {
+            return false;
+        };
+
+        // Never touch a node shared with a snapshot; bail out before mutating.
+        if Rc::strong_count(node) != 1 || Rc::weak_count(node) != 0 {
+            return false;
+        }
+
+        let Some(node) = Rc::get_mut(node) else {
+            return false;
+        };
+
+        let node_start = base + link_length(&node.left);
+        let node_end = node_start + node.piece.len();
+
+        let extended = if target < node_start {
+            Self::extend_piece_at(
+                &mut node.left,
+                target,
+                base,
+                added_len,
+                text_len,
+                text_newlines,
+            )
+        } else if target >= node_end {
+            Self::extend_piece_at(
+                &mut node.right,
+                target,
+                node_end,
+                added_len,
+                text_len,
+                text_newlines,
+            )
+        } else {
+            let can_extend = target == node_end - 1
+                && node.piece.source == Source::Add
+                && node.piece.start + node.piece.len() == added_len
+                && node.piece.len() + text_len <= BUFFER_MAX_PIECE_BYTES;
+
+            if !can_extend {
+                return false;
+            }
+
+            node.piece.length += text_len as u16;
+            node.own_newlines += text_newlines;
+
+            true
+        };
+
+        if extended {
+            node.subtree_length += text_len;
+            node.subtree_newlines += text_newlines;
+        }
+
+        extended
     }
 
     pub fn len(&self) -> usize {
@@ -216,19 +360,7 @@ impl Buffer {
     }
 
     fn next_priority(&self) -> u64 {
-        let mut shared = self.shared.borrow_mut();
-
-        shared.priority_seed = shared.priority_seed.wrapping_add(1);
-
-        let mut z = shared.priority_seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
-
-        z ^= z >> 30;
-        z = z.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z ^= z >> 27;
-        z = z.wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^= z >> 31;
-
-        z
+        self.shared.borrow_mut().next_priority()
     }
 
     fn with_piece_bytes<R>(&self, piece: Piece, f: impl FnOnce(&[u8]) -> R) -> R {
@@ -550,6 +682,15 @@ mod tests {
         assert_eq!(buffer.get_line_range(line_index), Some(start..end));
     }
 
+    fn piece_count(buffer: &Buffer) -> usize {
+        fn count(link: &Link) -> usize {
+            link.as_ref()
+                .map_or(0, |node| count(&node.left) + 1 + count(&node.right))
+        }
+
+        count(&buffer.root)
+    }
+
     #[test]
     fn test_buffer_set_text() {
         let mut buffer = Buffer::new();
@@ -657,5 +798,101 @@ mod tests {
         buffer.copy_to(&mut out);
 
         assert_eq!(out, b"hello world");
+    }
+
+    #[test]
+    fn test_insert_char_typing() {
+        let mut buffer = Buffer::new();
+
+        let text = "hello\nworld\n!";
+        for (index, &byte) in text.as_bytes().iter().enumerate() {
+            buffer.insert_char(index, byte);
+        }
+
+        assert_eq!(buffer.len(), text.len());
+        assert_eq!(buffer.newline_count(), 2);
+        assert_eq!(buffer.line_count(), 3);
+        assert_eq!(buffer.byte_at(6), Some(b'w'));
+        assert_buffer_eq(&buffer, text);
+        assert_buffer_line_eq(&buffer, 0, "hello");
+        assert_buffer_line_eq(&buffer, 1, "world");
+        assert_buffer_line_eq(&buffer, 2, "!");
+    }
+
+    #[test]
+    fn test_insert_char_coalesces_pieces() {
+        let mut buffer = Buffer::new();
+
+        buffer.insert_char(0, b'a');
+        assert_eq!(piece_count(&buffer), 1);
+
+        for index in 1..BUFFER_MAX_PIECE_BYTES {
+            buffer.insert_char(index, b'b');
+        }
+
+        assert_eq!(piece_count(&buffer), 1);
+        assert_eq!(buffer.len(), BUFFER_MAX_PIECE_BYTES);
+
+        buffer.insert_char(BUFFER_MAX_PIECE_BYTES, b'c');
+
+        assert_eq!(piece_count(&buffer), 2);
+        assert_eq!(buffer.len(), BUFFER_MAX_PIECE_BYTES + 1);
+
+        let mut expected = vec![b'a'];
+        expected.extend(std::iter::repeat_n(b'b', BUFFER_MAX_PIECE_BYTES - 1));
+        expected.push(b'c');
+        assert_eq!(buffer.collect(), expected);
+    }
+
+    #[test]
+    fn test_insert_char_snapshot_fallback() {
+        let mut original = Buffer::new();
+        original.set_text(b"hello");
+
+        original.insert_char(5, b' ');
+        original.insert_char(6, b'w');
+
+        let snapshot = original.clone();
+
+        original.insert_char(7, b'o');
+        original.insert_char(8, b'r');
+        original.insert_char(9, b'l');
+        original.insert_char(10, b'd');
+
+        assert_eq!(original.len(), 11);
+        assert_buffer_eq(&original, "hello world");
+
+        assert_eq!(snapshot.len(), 7);
+        assert_buffer_eq(&snapshot, "hello w");
+    }
+
+    #[test]
+    fn test_insert_char_middle_and_move() {
+        let mut buffer = Buffer::new();
+        buffer.set_text(b"ac\n");
+
+        buffer.insert_char(1, b'b');
+        buffer.insert_char(2, b'!');
+        buffer.insert_char(0, b'>');
+        buffer.insert_char(6, b'\n');
+
+        assert_eq!(buffer.newline_count(), 2);
+        assert_eq!(buffer.line_count(), 3);
+        assert_buffer_eq(&buffer, ">ab!c\n\n");
+        assert_buffer_line_eq(&buffer, 0, ">ab!c");
+        assert_buffer_line_eq(&buffer, 1, "");
+        assert_buffer_line_eq(&buffer, 2, "");
+    }
+
+    #[test]
+    fn test_insert_coalesces_multibyte() {
+        let mut buffer = Buffer::new();
+
+        buffer.insert_char(0, b'a');
+        buffer.insert(1, b"bc");
+        buffer.insert(3, b"def");
+
+        assert_eq!(piece_count(&buffer), 1);
+        assert_buffer_eq(&buffer, "abcdef");
     }
 }
