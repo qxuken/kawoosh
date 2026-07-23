@@ -9,3 +9,4 @@ repository.workspace = true
 [dependencies]
 text-buffer.workspace = true
 slotmap.workspace = true
+bitflags.workspace = true

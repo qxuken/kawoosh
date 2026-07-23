@@ -16,8 +16,8 @@ resources = { path = "./resources" }
 log = { version = "0.4.33", features = ["serde"] }
 env_logger = "0.11.11"
 
-gpui = { git = "https://drydock9.qxuken.dev/mirrors/zed.git", rev = "c399451ca019f1df10782cebb1a3e3e662195fcd" }
-gpui_platform = { git = "https://drydock9.qxuken.dev/mirrors/zed.git", rev = "c399451ca019f1df10782cebb1a3e3e662195fcd", features = [
+gpui = { git = "https://drydock9.qxuken.dev/mirrors/zed.git", rev = "v1.12.0" }
+gpui_platform = { git = "https://drydock9.qxuken.dev/mirrors/zed.git", rev = "v1.12.0", features = [
     "font-kit",
     "wayland",
     "x11",
@@ -34,3 +34,5 @@ schemars = "1.2.1"
 slotmap = { version = "1.1.1", features = ["serde"] }
 
 criterion = "0.8.2"
+
+bitflags = { version = "2.13.1", features = ["serde"] }

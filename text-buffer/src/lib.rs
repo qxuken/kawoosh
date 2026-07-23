@@ -557,7 +557,11 @@ impl Buffer {
         self.copy_tree(&node.right, out, cursor);
     }
 
-    fn collect_range(&self, range: Range<usize>) -> Vec<u8> {
+    /// Collect a byte range without exposing the buffer's internal piece tree.
+    ///
+    /// This is intentionally an owned chunk: callers outside this crate can use
+    /// it while the buffer continues to hide its storage and snapshot strategy.
+    pub fn collect_range(&self, range: Range<usize>) -> Vec<u8> {
         assert!(range.end <= self.len());
         assert!(range.start <= range.end);
 
