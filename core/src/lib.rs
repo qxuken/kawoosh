@@ -49,7 +49,11 @@ pub enum HighlightGroupKind {
 }
 
 /// UI-neutral style properties. Consumers define the meaning of property keys.
-pub type HighlightStyle = HashMap<String, MetadataValue>;
+pub struct HighlightStyle {
+    pub fg: u32,
+    pub bg: u32,
+    pub color: u32,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MetadataValue {
@@ -62,7 +66,7 @@ bitflags::bitflags! {
     /// Orthogonal range properties. In particular, read-only is a flag, not a
     /// separate structural kind of metadata.
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-    pub struct HighlightFlags: u32 {
+    pub struct HighlightFlags: u8 {
         const READONLY = 1 << 0;
         const SELECTABLE = 1 << 1;
         const HIDDEN = 1 << 2;
