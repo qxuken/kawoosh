@@ -49,6 +49,7 @@ pub enum HighlightGroupKind {
 }
 
 /// UI-neutral style properties. Consumers define the meaning of property keys.
+#[derive(Debug, Clone, Default, Copy, Eq, PartialEq)]
 pub struct HighlightStyle {
     pub fg: u32,
     pub bg: u32,
