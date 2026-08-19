@@ -2,9 +2,9 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
-const BUFFER_MAX_PIECE_BYTES: usize = 2048;
+use derive_more::{AsMut, AsRef, Deref, DerefMut};
 
-type Link = Option<Rc<Node>>;
+const BUFFER_MAX_PIECE_BYTES: usize = 2048;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Source {
@@ -25,7 +25,7 @@ impl Piece {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Shared {
     original: Vec<u8>,
     added: Vec<u8>,
@@ -33,14 +33,6 @@ struct Shared {
 }
 
 impl Shared {
-    fn new() -> Self {
-        Self {
-            original: Vec::new(),
-            added: Vec::new(),
-            priority_seed: 0,
-        }
-    }
-
     fn next_priority(&mut self) -> u64 {
         self.priority_seed = self.priority_seed.wrapping_add(1);
 
@@ -56,76 +48,85 @@ impl Shared {
     }
 }
 
-#[derive(Debug)]
-struct Node {
-    piece: Piece,
-    priority: u64,
-    left: Link,
-    right: Link,
-    subtree_length: usize,
-    subtree_newlines: usize,
+#[derive(Debug, Clone, Copy)]
+struct Metadata {
+    length: usize,
+    newlines: usize,
     own_newlines: usize,
 }
 
-impl Node {
-    fn new(piece: Piece, priority: u64, left: Link, right: Link, own_newlines: usize) -> Self {
-        let subtree_length = link_length(&left) + piece.len() + link_length(&right);
-        let subtree_newlines = link_newlines(&left) + own_newlines + link_newlines(&right);
-
-        Self {
-            piece,
-            priority,
-            left,
-            right,
-            subtree_length,
-            subtree_newlines,
+impl Metadata {
+    fn new(
+        own_length: usize,
+        own_newlines: usize,
+        left: Option<Self>,
+        right: Option<Self>,
+    ) -> Self {
+        let (left_length, left_newlines) = left.map_or((0, 0), |m| (m.length, m.newlines));
+        let (right_length, right_newlines) = right.map_or((0, 0), |m| (m.length, m.newlines));
+        Metadata {
+            length: own_length + left_length + right_length,
+            newlines: own_newlines + left_newlines + right_newlines,
             own_newlines,
         }
     }
 }
 
-fn link_length(node: &Link) -> usize {
-    node.as_ref().map_or(0, |node| node.subtree_length)
+#[derive(Debug, Default, Clone, AsRef, AsMut, Deref, DerefMut)]
+struct Link(Option<Rc<Node>>);
+
+impl Link {
+    fn meta(&self) -> Option<Metadata> {
+        self.0.as_ref().map(|l| l.meta)
+    }
 }
 
-fn link_newlines(node: &Link) -> usize {
-    node.as_ref().map_or(0, |node| node.subtree_newlines)
+#[derive(Debug)]
+struct Node {
+    priority: u64,
+    left: Link,
+    right: Link,
+    piece: Piece,
+    meta: Metadata,
 }
 
-#[derive(Clone, Debug)]
+impl Node {
+    fn new(piece: Piece, priority: u64, left: Link, right: Link, own_newlines: usize) -> Self {
+        let meta = Metadata::new(piece.len(), own_newlines, left.meta(), right.meta());
+        Self {
+            piece,
+            priority,
+            left,
+            right,
+            meta,
+        }
+    }
+}
+
+#[derive(Default, Clone, Debug)]
 pub struct Buffer {
     shared: Rc<RefCell<Shared>>,
     root: Link,
 }
 
-impl Default for Buffer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Buffer {
-    pub fn new() -> Self {
-        Self {
-            shared: Rc::new(RefCell::new(Shared::new())),
-            root: None,
+    pub fn with_text(text: &[u8]) -> Self {
+        let mut buf = Buffer::default();
+        if !text.is_empty() {
+            buf.shared.borrow_mut().original.extend_from_slice(text);
+            buf.root = buf.build_piece_tree(Source::Original, 0, text.len());
         }
+        buf
     }
 
     pub fn reset(&mut self) {
-        self.shared = Rc::new(RefCell::new(Shared::new()));
-        self.root = None;
+        let mut new_buf = Buffer::default();
+        std::mem::swap(self, &mut new_buf);
     }
 
     pub fn set_text(&mut self, text: &[u8]) {
-        self.reset();
-
-        if text.is_empty() {
-            return;
-        }
-
-        self.shared.borrow_mut().original.extend_from_slice(text);
-        self.root = self.build_piece_tree(Source::Original, 0, text.len());
+        let mut new_buf = Buffer::with_text(text);
+        std::mem::swap(self, &mut new_buf);
     }
 
     pub fn insert(&mut self, offset: usize, text: &[u8]) {
@@ -670,6 +671,21 @@ impl Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const _: () = {
+        let dummy = Piece {
+            source: Source::Original,
+            start: 0,
+            length: 0,
+        };
+
+        let max_length = (1usize << (core::mem::size_of_val(&dummy.length) * 8)) - 1;
+
+        assert!(
+            max_length >= BUFFER_MAX_PIECE_BYTES,
+            "`Piece::length` is too small for `BUFFER_MAX_PIECE_BYTES`"
+        );
+    };
 
     fn assert_buffer_eq(buffer: &Buffer, expected: &str) {
         assert_eq!(buffer.collect(), expected.as_bytes());

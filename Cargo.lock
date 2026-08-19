@@ -5705,6 +5705,7 @@ name = "text-buffer"
 version = "0.0.1"
 dependencies = [
  "criterion",
+ "derive_more",
 ]
 
 [[package]]
