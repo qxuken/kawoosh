@@ -31,15 +31,19 @@ pub enum Refused {
 
 /// A frozen view of a buffer's text at a known version.
 ///
-/// Cloning is O(1) — the piece tree is persistent — so handing one to a
-/// provider is cheap. Note that `text_buffer::Buffer` is `Rc`-based and
-/// therefore not `Send`: off-thread providers require switching that crate to
-/// `Arc`, which is a mechanical change but has to happen there, not here.
+/// Cloning is O(1) — the piece tree is persistent — and `Send + Sync`, so the
+/// intended use is handing one to a provider running off the UI thread.
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     version: Version,
     text: text_buffer::Buffer,
 }
+
+// The whole point of a snapshot is to cross to a provider's thread.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Snapshot>();
+};
 
 impl Snapshot {
     pub fn version(&self) -> Version {

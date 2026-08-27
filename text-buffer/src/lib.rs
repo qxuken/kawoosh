@@ -1,65 +1,45 @@
-use std::cell::RefCell;
 use std::ops::Range;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use derive_more::{AsMut, AsRef, Deref, DerefMut};
 
 const BUFFER_MAX_PIECE_BYTES: usize = 2048;
 
+const _: () = assert!(
+    BUFFER_MAX_PIECE_BYTES <= u16::MAX as usize,
+    "`Piece::length` is too small for `BUFFER_MAX_PIECE_BYTES`"
+);
+
+// A clone is a snapshot, and snapshots must be free to cross threads so
+// providers can work on them off the UI thread.
 const _: () = {
-    let dummy = Piece {
-        source: Source::Original,
-        start: 0,
-        length: 0,
-    };
-
-    let max_length = (1usize << (std::mem::size_of_val(&dummy.length) * 8)) - 1;
-
-    assert!(
-        max_length >= BUFFER_MAX_PIECE_BYTES,
-        "`Piece::length` is too small for `BUFFER_MAX_PIECE_BYTES`"
-    );
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Buffer>();
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Source {
-    Original,
-    Add,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// A slice of one immutable text block.
+///
+/// Pieces own a share of their bytes: there is no separate arena, so a buffer
+/// clone is a full snapshot by construction, reads borrow directly from the
+/// block, and dropping the last piece into a block frees it.
+#[derive(Clone, Debug)]
 struct Piece {
-    source: Source,
+    block: Arc<Vec<u8>>,
     start: usize,
     length: u16,
 }
 
 impl Piece {
-    fn len(self) -> usize {
+    fn len(&self) -> usize {
         self.length as usize
     }
-}
 
-#[derive(Debug, Default)]
-struct Shared {
-    original: Vec<u8>,
-    added: Vec<u8>,
-    priority_seed: u64,
-}
+    fn bytes(&self) -> &[u8] {
+        &self.block[self.start..self.start + self.len()]
+    }
 
-impl Shared {
-    fn next_priority(&mut self) -> u64 {
-        self.priority_seed = self.priority_seed.wrapping_add(1);
-
-        let mut z = self.priority_seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
-
-        z ^= z >> 30;
-        z = z.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z ^= z >> 27;
-        z = z.wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^= z >> 31;
-
-        z
+    fn newlines(&self) -> usize {
+        self.bytes().iter().filter(|&&byte| byte == b'\n').count()
     }
 }
 
@@ -88,23 +68,23 @@ impl Metadata {
 }
 
 #[derive(Debug, Default, Clone, AsRef, AsMut, Deref, DerefMut)]
-struct Link(Option<Rc<Node>>);
+struct Link(Option<Arc<Node>>);
 
 impl Link {
     const fn none() -> Self {
         Self(None)
     }
 
-    fn leaf(node: Rc<Node>) -> Self {
+    fn leaf(node: Arc<Node>) -> Self {
         Self(Some(node))
     }
 
     /// Borrow the node, if any.
     ///
     /// Prefer this over `as_ref`: the derived `AsRef` impl also applies to
-    /// `Link` and resolves to `&Option<Rc<Node>>`, which is almost never what
+    /// `Link` and resolves to `&Option<Arc<Node>>`, which is almost never what
     /// a caller walking the tree wants.
-    fn node(&self) -> Option<&Rc<Node>> {
+    fn node(&self) -> Option<&Arc<Node>> {
         self.0.as_ref()
     }
 
@@ -145,8 +125,8 @@ impl Node {
 
 #[derive(Default, Clone, Debug)]
 pub struct Buffer {
-    shared: Rc<RefCell<Shared>>,
     root: Link,
+    priority_seed: u64,
 }
 
 impl Buffer {
@@ -157,8 +137,8 @@ impl Buffer {
     pub fn with_text(text: &[u8]) -> Self {
         let mut buf = Buffer::default();
         if !text.is_empty() {
-            buf.shared.borrow_mut().original.extend_from_slice(text);
-            buf.root = buf.build_piece_tree(Source::Original, 0, text.len());
+            let block = Arc::new(text.to_vec());
+            buf.root = buf.build_piece_tree(&block, text.len());
         }
         buf
     }
@@ -184,14 +164,8 @@ impl Buffer {
             return;
         }
 
-        let add_start = {
-            let mut shared = self.shared.borrow_mut();
-            let add_start = shared.added.len();
-            shared.added.extend_from_slice(text);
-            add_start
-        };
-
-        let inserted = self.build_piece_tree(Source::Add, add_start, text.len());
+        let block = Arc::new(text.to_vec());
+        let inserted = self.build_piece_tree(&block, text.len());
 
         let old_root = self.root.clone();
         let (left, right) = self.split(&old_root, offset);
@@ -206,22 +180,15 @@ impl Buffer {
             return;
         }
 
-        let (piece, priority) = {
-            let mut shared = self.shared.borrow_mut();
-
-            let piece = Piece {
-                source: Source::Add,
-                start: shared.added.len(),
-                length: 1,
-            };
-
-            shared.added.push(c);
-
-            (piece, shared.next_priority())
+        let piece = Piece {
+            block: Arc::new(vec![c]),
+            start: 0,
+            length: 1,
         };
 
         let own_newlines = usize::from(c == b'\n');
-        let leaf = Link::leaf(Rc::new(Node::new(
+        let priority = self.next_priority();
+        let leaf = Link::leaf(Arc::new(Node::new(
             piece,
             priority,
             Link::none(),
@@ -255,31 +222,16 @@ impl Buffer {
             return false;
         }
 
-        let added_len = self.shared.borrow().added.len();
         let text_newlines = text.iter().filter(|&&byte| byte == b'\n').count();
 
-        if !Self::extend_piece_at(
-            &mut self.root,
-            offset - 1,
-            0,
-            added_len,
-            text.len(),
-            text_newlines,
-        ) {
-            return false;
-        }
-
-        self.shared.borrow_mut().added.extend_from_slice(text);
-
-        true
+        Self::extend_piece_at(&mut self.root, offset - 1, 0, text, text_newlines)
     }
 
     fn extend_piece_at(
         link: &mut Link,
         target: usize,
         base: usize,
-        added_len: usize,
-        text_len: usize,
+        text: &[u8],
         text_newlines: usize,
     ) -> bool {
         let Some(node) = link.as_mut() else {
@@ -287,11 +239,7 @@ impl Buffer {
         };
 
         // Never touch a node shared with a snapshot; bail out before mutating.
-        if Rc::strong_count(node) != 1 || Rc::weak_count(node) != 0 {
-            return false;
-        }
-
-        let Some(node) = Rc::get_mut(node) else {
+        let Some(node) = Arc::get_mut(node) else {
             return false;
         };
 
@@ -299,41 +247,33 @@ impl Buffer {
         let node_end = node_start + node.piece.len();
 
         let extended = if target < node_start {
-            Self::extend_piece_at(
-                &mut node.left,
-                target,
-                base,
-                added_len,
-                text_len,
-                text_newlines,
-            )
+            Self::extend_piece_at(&mut node.left, target, base, text, text_newlines)
         } else if target >= node_end {
-            Self::extend_piece_at(
-                &mut node.right,
-                target,
-                node_end,
-                added_len,
-                text_len,
-                text_newlines,
-            )
+            Self::extend_piece_at(&mut node.right, target, node_end, text, text_newlines)
         } else {
             let can_extend = target == node_end - 1
-                && node.piece.source == Source::Add
-                && node.piece.start + node.piece.len() == added_len
-                && node.piece.len() + text_len <= BUFFER_MAX_PIECE_BYTES;
+                && node.piece.start + node.piece.len() == node.piece.block.len()
+                && node.piece.len() + text.len() <= BUFFER_MAX_PIECE_BYTES;
 
             if !can_extend {
                 return false;
             }
 
-            node.piece.length += text_len as u16;
+            // The block itself must be unshared too: another piece (from a
+            // split) or a snapshot may hold it even when the node is unique.
+            let Some(block) = Arc::get_mut(&mut node.piece.block) else {
+                return false;
+            };
+
+            block.extend_from_slice(text);
+            node.piece.length += text.len() as u16;
             node.meta.own_newlines += text_newlines;
 
             true
         };
 
         if extended {
-            node.meta.length += text_len;
+            node.meta.length += text.len();
             node.meta.newlines += text_newlines;
         }
 
@@ -362,7 +302,7 @@ impl Buffer {
 
     pub fn byte_at(&self, offset: usize) -> Option<u8> {
         let (piece, offset_in_piece) = self.find_location(offset)?;
-        Some(self.with_piece_bytes(piece, |bytes| bytes[offset_in_piece]))
+        Some(piece.bytes()[offset_in_piece])
     }
 
     pub fn get_line_range(&self, line_index: usize) -> Option<Range<usize>> {
@@ -394,50 +334,34 @@ impl Buffer {
         assert!(out.len() >= self.len());
 
         let mut cursor = 0;
-        self.copy_tree(&self.root, out, &mut cursor);
+        Self::copy_tree(&self.root, out, &mut cursor);
     }
 
     pub fn collect(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.len());
-        self.collect_tree(&self.root, &mut out);
+        Self::collect_tree(&self.root, &mut out);
         out
     }
 
-    fn next_priority(&self) -> u64 {
-        self.shared.borrow_mut().next_priority()
+    fn next_priority(&mut self) -> u64 {
+        self.priority_seed = self.priority_seed.wrapping_add(1);
+
+        let mut z = self.priority_seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
+
+        z ^= z >> 30;
+        z = z.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z ^= z >> 27;
+        z = z.wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^= z >> 31;
+
+        z
     }
 
-    fn with_piece_bytes<R>(&self, piece: Piece, f: impl FnOnce(&[u8]) -> R) -> R {
-        let shared = self.shared.borrow();
-
-        let bytes: &[u8] = match piece.source {
-            Source::Original => &shared.original,
-            Source::Add => &shared.added,
-        };
-
-        let start = piece.start;
-        let end = piece.start + piece.len();
-
-        debug_assert!(end <= bytes.len());
-
-        f(&bytes[start..end])
-    }
-
-    fn piece_newlines(&self, piece: Piece) -> usize {
-        if piece.len() == 0 {
-            return 0;
-        }
-
-        self.with_piece_bytes(piece, |bytes| {
-            bytes.iter().filter(|&&byte| byte == b'\n').count()
-        })
-    }
-
-    fn make_leaf(&self, piece: Piece) -> Link {
+    fn make_leaf(&mut self, piece: Piece) -> Link {
         let priority = self.next_priority();
-        let own_newlines = self.piece_newlines(piece);
+        let own_newlines = piece.newlines();
 
-        Link::leaf(Rc::new(Node::new(
+        Link::leaf(Arc::new(Node::new(
             piece,
             priority,
             Link::none(),
@@ -446,9 +370,9 @@ impl Buffer {
         )))
     }
 
-    fn clone_node(&self, src: &Rc<Node>, left: Link, right: Link) -> Link {
-        Link::leaf(Rc::new(Node::new(
-            src.piece,
+    fn clone_node(&self, src: &Arc<Node>, left: Link, right: Link) -> Link {
+        Link::leaf(Arc::new(Node::new(
+            src.piece.clone(),
             src.priority,
             left,
             right,
@@ -456,52 +380,55 @@ impl Buffer {
         )))
     }
 
-    fn merge(&self, left: &Link, right: &Link) -> Link {
+    fn merge(&mut self, left: &Link, right: &Link) -> Link {
         match (left.node(), right.node()) {
             (None, None) => Link::none(),
-            (Some(left), None) => Link::leaf(Rc::clone(left)),
-            (None, Some(right)) => Link::leaf(Rc::clone(right)),
+            (Some(left), None) => Link::leaf(Arc::clone(left)),
+            (None, Some(right)) => Link::leaf(Arc::clone(right)),
             (Some(left), Some(right)) => {
                 if left.priority <= right.priority {
-                    let merged_right = self.merge(&left.right, &Link::leaf(Rc::clone(right)));
-                    self.clone_node(left, left.left.clone(), merged_right)
+                    let (left, right) = (Arc::clone(left), Arc::clone(right));
+                    let merged_right = self.merge(&left.right, &Link::leaf(right));
+                    self.clone_node(&left, left.left.clone(), merged_right)
                 } else {
-                    let merged_left = self.merge(&Link::leaf(Rc::clone(left)), &right.left);
-                    self.clone_node(right, merged_left, right.right.clone())
+                    let (left, right) = (Arc::clone(left), Arc::clone(right));
+                    let merged_left = self.merge(&Link::leaf(left), &right.left);
+                    self.clone_node(&right, merged_left, right.right.clone())
                 }
             }
         }
     }
 
-    fn split(&self, root: &Link, offset: usize) -> (Link, Link) {
+    fn split(&mut self, root: &Link, offset: usize) -> (Link, Link) {
         let Some(root) = root.node() else {
             return (Link::none(), Link::none());
         };
+        let root = Arc::clone(root);
 
         let left_length = root.left.length();
         let piece_length = root.piece.len();
 
         if offset < left_length {
             let (left_tree, mid_tree) = self.split(&root.left, offset);
-            let right_tree = self.clone_node(root, mid_tree, root.right.clone());
+            let right_tree = self.clone_node(&root, mid_tree, root.right.clone());
             return (left_tree, right_tree);
         }
 
         if offset > left_length + piece_length {
             let relative_offset = offset - left_length - piece_length;
             let (mid_tree, right_tree) = self.split(&root.right, relative_offset);
-            let left_tree = self.clone_node(root, root.left.clone(), mid_tree);
+            let left_tree = self.clone_node(&root, root.left.clone(), mid_tree);
             return (left_tree, right_tree);
         }
 
         if offset == left_length {
             let left_tree = root.left.clone();
-            let right_tree = self.clone_node(root, Link::none(), root.right.clone());
+            let right_tree = self.clone_node(&root, Link::none(), root.right.clone());
             return (left_tree, right_tree);
         }
 
         if offset == left_length + piece_length {
-            let left_tree = self.clone_node(root, root.left.clone(), Link::none());
+            let left_tree = self.clone_node(&root, root.left.clone(), Link::none());
             let right_tree = root.right.clone();
             return (left_tree, right_tree);
         }
@@ -509,8 +436,8 @@ impl Buffer {
         let piece_offset = offset - left_length;
         debug_assert!(piece_offset > 0 && piece_offset < piece_length);
 
-        let mut left_piece = root.piece;
-        let mut right_piece = root.piece;
+        let mut left_piece = root.piece.clone();
+        let mut right_piece = root.piece.clone();
 
         left_piece.length = piece_offset as u16;
         right_piece.start += piece_offset;
@@ -525,7 +452,7 @@ impl Buffer {
         (left_tree, right_tree)
     }
 
-    fn build_piece_tree(&self, source: Source, start: usize, length: usize) -> Link {
+    fn build_piece_tree(&mut self, block: &Arc<Vec<u8>>, length: usize) -> Link {
         let mut root = Link::none();
         let mut offset = 0;
 
@@ -534,8 +461,8 @@ impl Buffer {
             let piece_length = remaining.min(BUFFER_MAX_PIECE_BYTES);
 
             let piece = Piece {
-                source,
-                start: start + offset,
+                block: Arc::clone(block),
+                start: offset,
                 length: piece_length as u16,
             };
 
@@ -553,58 +480,53 @@ impl Buffer {
             return None;
         }
 
-        let mut node = self.root.node().map(Rc::clone);
+        let mut node = self.root.node().map(Arc::clone);
         let mut remaining = offset;
 
         while let Some(current) = node {
             let left_length = current.left.length();
 
             if remaining < left_length {
-                node = current.left.node().map(Rc::clone);
+                node = current.left.node().map(Arc::clone);
                 continue;
             }
 
             remaining -= left_length;
 
             if remaining < current.piece.len() {
-                return Some((current.piece, remaining));
+                return Some((current.piece.clone(), remaining));
             }
 
             remaining -= current.piece.len();
-            node = current.right.node().map(Rc::clone);
+            node = current.right.node().map(Arc::clone);
         }
 
         unreachable!("valid offset should always resolve to a piece")
     }
 
-    fn collect_tree(&self, node: &Link, out: &mut Vec<u8>) {
+    fn collect_tree(node: &Link, out: &mut Vec<u8>) {
         let Some(node) = node.node() else {
             return;
         };
 
-        self.collect_tree(&node.left, out);
-
-        self.with_piece_bytes(node.piece, |bytes| {
-            out.extend_from_slice(bytes);
-        });
-
-        self.collect_tree(&node.right, out);
+        Self::collect_tree(&node.left, out);
+        out.extend_from_slice(node.piece.bytes());
+        Self::collect_tree(&node.right, out);
     }
 
-    fn copy_tree(&self, node: &Link, out: &mut [u8], cursor: &mut usize) {
+    fn copy_tree(node: &Link, out: &mut [u8], cursor: &mut usize) {
         let Some(node) = node.node() else {
             return;
         };
 
-        self.copy_tree(&node.left, out, cursor);
+        Self::copy_tree(&node.left, out, cursor);
 
-        self.with_piece_bytes(node.piece, |bytes| {
-            let end = *cursor + bytes.len();
-            out[*cursor..end].copy_from_slice(bytes);
-            *cursor = end;
-        });
+        let bytes = node.piece.bytes();
+        let end = *cursor + bytes.len();
+        out[*cursor..end].copy_from_slice(bytes);
+        *cursor = end;
 
-        self.copy_tree(&node.right, out, cursor);
+        Self::copy_tree(&node.right, out, cursor);
     }
 
     /// Collect a byte range without exposing the buffer's internal piece tree.
@@ -628,27 +550,21 @@ impl Buffer {
         assert!(range.start <= range.end);
 
         out.reserve(range.end - range.start);
-        self.collect_range_node(&self.root, 0, &range, out);
+        Self::collect_range_node(&self.root, 0, &range, out);
     }
 
     /// Visit a byte range as borrowed piece slices, in order, without copying.
     ///
-    /// The callback runs while the buffer's storage is borrowed, so it must not
-    /// re-enter this buffer (or any clone sharing its storage) mutably.
+    /// The slices borrow from the buffer's immutable blocks, so the callback
+    /// may hold them for the duration of the call without restriction.
     pub fn visit_range(&self, range: Range<usize>, mut f: impl FnMut(&[u8])) {
         assert!(range.end <= self.len());
         assert!(range.start <= range.end);
 
-        self.visit_range_node(&self.root, 0, &range, &mut f);
+        Self::visit_range_node(&self.root, 0, &range, &mut f);
     }
 
-    fn visit_range_node(
-        &self,
-        node: &Link,
-        start: usize,
-        range: &Range<usize>,
-        f: &mut impl FnMut(&[u8]),
-    ) {
+    fn visit_range_node(node: &Link, start: usize, range: &Range<usize>, f: &mut impl FnMut(&[u8])) {
         let Some(node) = node.node() else {
             return;
         };
@@ -662,28 +578,22 @@ impl Buffer {
         let node_end = node_start + node.piece.len();
 
         if range.start < node_start {
-            self.visit_range_node(&node.left, left_start, range, f);
+            Self::visit_range_node(&node.left, left_start, range, f);
         }
 
         if range.start < node_end && range.end > node_start {
             let chunk_start = range.start.max(node_start) - node_start;
             let chunk_end = range.end.min(node_end) - node_start;
 
-            self.with_piece_bytes(node.piece, |bytes| f(&bytes[chunk_start..chunk_end]));
+            f(&node.piece.bytes()[chunk_start..chunk_end]);
         }
 
         if range.end > node_end {
-            self.visit_range_node(&node.right, node_end, range, f);
+            Self::visit_range_node(&node.right, node_end, range, f);
         }
     }
 
-    fn collect_range_node(
-        &self,
-        node: &Link,
-        start: usize,
-        range: &Range<usize>,
-        out: &mut Vec<u8>,
-    ) {
+    fn collect_range_node(node: &Link, start: usize, range: &Range<usize>, out: &mut Vec<u8>) {
         let Some(node) = node.node() else {
             return;
         };
@@ -697,41 +607,37 @@ impl Buffer {
         let node_end = node_start + node.piece.len();
 
         if range.start < node_start {
-            self.collect_range_node(&node.left, left_start, range, out);
+            Self::collect_range_node(&node.left, left_start, range, out);
         }
 
         if range.start < node_end && range.end > node_start {
             let chunk_start = range.start.max(node_start) - node_start;
             let chunk_end = range.end.min(node_end) - node_start;
 
-            self.with_piece_bytes(node.piece, |bytes| {
-                out.extend_from_slice(&bytes[chunk_start..chunk_end]);
-            });
+            out.extend_from_slice(&node.piece.bytes()[chunk_start..chunk_end]);
         }
 
         if range.end > node_end {
-            self.collect_range_node(&node.right, node_end, range, out);
+            Self::collect_range_node(&node.right, node_end, range, out);
         }
     }
 
-    fn piece_find_nth_newline(&self, piece: Piece, newline_index: usize) -> Option<usize> {
-        self.with_piece_bytes(piece, |bytes| {
-            let mut seen = 0;
+    fn piece_find_nth_newline(piece: &Piece, newline_index: usize) -> Option<usize> {
+        let mut seen = 0;
 
-            for (index, &byte) in bytes.iter().enumerate() {
-                if byte != b'\n' {
-                    continue;
-                }
-
-                if seen == newline_index {
-                    return Some(index);
-                }
-
-                seen += 1;
+        for (index, &byte) in piece.bytes().iter().enumerate() {
+            if byte != b'\n' {
+                continue;
             }
 
-            None
-        })
+            if seen == newline_index {
+                return Some(index);
+            }
+
+            seen += 1;
+        }
+
+        None
     }
 
     fn find_nth_newline_offset(
@@ -752,7 +658,7 @@ impl Buffer {
         newline_index -= left_newlines;
 
         if newline_index < node.meta.own_newlines {
-            let offset_in_piece = self.piece_find_nth_newline(node.piece, newline_index)?;
+            let offset_in_piece = Self::piece_find_nth_newline(&node.piece, newline_index)?;
             return Some(node_offset + offset_in_piece);
         }
 
@@ -896,6 +802,23 @@ mod tests {
 
         original.reset();
         assert_buffer_eq(&snapshot, "say hello");
+    }
+
+    #[test]
+    fn test_snapshot_crosses_threads() {
+        let mut buffer = Buffer::new();
+        buffer.set_text(b"hello world");
+
+        let snapshot = buffer.clone();
+        let reader = std::thread::spawn(move || {
+            assert_eq!(snapshot.collect(), b"hello world");
+            snapshot.len()
+        });
+
+        buffer.insert(5, b",");
+
+        assert_eq!(reader.join().unwrap(), 11);
+        assert_buffer_eq(&buffer, "hello, world");
     }
 
     #[test]

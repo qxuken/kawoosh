@@ -159,10 +159,11 @@ broken by a depth cap.
 **Chunks carry no text (`chunks.rs`).** `Chunk` is `{ range, style, flags,
 highlights }`. Materializing bytes is the caller's choice: `Buffer::visit_range`
 is zero-copy, `Buffer::read_into` appends into one reusable scratch buffer per
-frame. This is honest about the constraint that forces it — `text_buffer` stores
-bytes behind `Rc<RefCell<_>>`, so a borrowed `&[u8]` cannot escape — and it
-still avoids the per-chunk `Vec<u8>` allocation the previous design paid on
-every frame.
+frame. Originally this was forced by `text_buffer` storing bytes behind
+`Rc<RefCell<_>>`; since the Arc migration (below) slices borrow freely, but the
+shape stays — the caller still knows best whether it wants borrows or one
+scratch allocation, and it still avoids the per-chunk `Vec<u8>` allocation the
+previous design paid on every frame.
 
 A layer registered after a buffer contributes nothing rather than panicking; the
 old `expect("metadata layer must cover every byte")` was reachable.
@@ -181,22 +182,24 @@ old `expect("metadata layer must cover every byte")` was reachable.
 - **UTF-8 validation.** Offsets are byte offsets and boundary correctness is the
   caller's job. This should be decided deliberately rather than left implicit.
 
-## The open decision: threading
+## Threading: resolved 2026-08-28
 
-`text_buffer::Buffer` uses `Rc<RefCell<Shared>>`. `Snapshot` is therefore not
-`Send`, and tree-sitter and LSP normally run off the UI thread.
+`text_buffer::Buffer` originally used `Rc<RefCell<Shared>>`, which made
+`Snapshot` not `Send` while tree-sitter and LSP normally run off the UI
+thread. This was the one open decision, and it is now closed: providers run
+off-thread on `Send + Sync` snapshots (MVP milestone 1, docs/design/mvp.md).
 
-The O(1) persistent clone is exactly the right primitive for handing a frozen
-snapshot to a worker — the design is one type swap away from supporting it.
-Switching `text-buffer` to `Arc` and dropping the `RefCell` (append-only arenas
-mutated through `&mut self` on the owner) is mechanical, and the atomic overhead
-is noise next to the allocations `split`/`merge` already do. It also unlocks
-genuinely borrowed chunk text.
-
-If everything stays single-threaded instead, providers become cooperatively
-yielding jobs. Either is fine; the point is that this is cheaper to decide now
-than to retrofit, and it is the only decision in this document that has not been
-made.
+The migration went further than the anticipated type swap: the shared
+append-only arena was removed entirely. Each `Piece` now owns an
+`Arc<Vec<u8>>` of its text block — a block per insert, extended in place
+through `Arc::get_mut` when the piece, its block, and its node are all
+unshared (the coalescing fast path survives; a live snapshot fails the
+uniqueness check and falls back to a fresh piece, exactly as before). This
+buys three things over an arena behind `&mut self`: no interior mutability
+anywhere, erased blocks actually free when their last piece drops (the old
+arena only ever grew), and `visit_range` hands out borrowed slices with no
+re-entrancy caveat. Compile-time `Send + Sync` assertions pin the property in
+both crates.
 
 ## Possible consolidation
 
