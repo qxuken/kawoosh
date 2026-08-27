@@ -15,7 +15,7 @@ use std::ops::Range;
 
 use kawoosh_core::{Bias, Buffer, Checkpoint, Version};
 
-use crate::app::{App, EditorState, View};
+use crate::app::{App, EditorState, Effect, View};
 use crate::keys::{Key, KeyPress};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -630,6 +630,10 @@ impl App {
         if let Some(prefix) = self.ed_mut().pending.take() {
             return match (prefix, kp.key) {
                 ('g', Key::Char('g')) if !kp.mods.shift => self.move_doc_start(extend),
+                ('g', Key::Char('d')) if !kp.mods.shift => {
+                    self.effects.push(Effect::GotoDefinition);
+                    false
+                }
                 ('d', Key::Char('d')) if !kp.mods.shift => {
                     self.begin_undo();
                     let mutated = self.delete_lines();

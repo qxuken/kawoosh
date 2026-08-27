@@ -734,6 +734,7 @@ dependencies = [
  "crossbeam-channel",
  "kawoosh-core",
  "log",
+ "serde_json",
  "tree-sitter",
  "tree-sitter-rust",
 ]

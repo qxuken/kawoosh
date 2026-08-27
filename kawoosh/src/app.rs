@@ -10,8 +10,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use kawoosh_core::{BufferId, Core, Highlight, HighlightId, HighlightStyle, LayerId, LayerSpec, Rgba};
-use kawoosh_systems::ts;
+use kawoosh_core::{
+    BufferId, Core, Highlight, HighlightId, HighlightStyle, LayerId, LayerSpec, Rgba, Version,
+};
+use kawoosh_systems::{lsp, ts};
 use kawoosh_term::Terminal;
 use kawoosh_ui::{Edges, Element, Size};
 
@@ -37,6 +39,8 @@ pub struct EditorState {
     pub language: Option<ts::Language>,
     /// A highlight job for this buffer is in flight.
     pub syntax_pending: bool,
+    /// Buffer version last synced to the lsp system.
+    pub lsp_synced: Option<Version>,
     pub mode: Mode,
     /// First visible line.
     pub scroll: usize,
@@ -58,6 +62,7 @@ impl EditorState {
             path,
             language,
             syntax_pending: false,
+            lsp_synced: None,
             mode: Mode::default(),
             scroll: 0,
             selections: vec![Selection::caret(0)],
@@ -102,6 +107,29 @@ fn fg(color: u32) -> HighlightStyle {
     }
 }
 
+/// Effects the app asks the shell to perform (async, system-bound).
+pub enum Effect {
+    GotoDefinition,
+}
+
+fn underline(color: u32) -> HighlightStyle {
+    HighlightStyle {
+        underline: Some(Rgba(0xFF00_0000 | color)),
+        ..HighlightStyle::default()
+    }
+}
+
+fn build_diagnostics(core: &mut Core) -> lsp::DiagTheme {
+    // Above syntax; squiggle colors only, so syntax fg shows through.
+    let layer = core.create_layer(LayerSpec::derived("diagnostics").with_z(20));
+    lsp::DiagTheme {
+        layer,
+        error: core.create_highlight(Highlight::styled(underline(0xD54E53))),
+        warning: core.create_highlight(Highlight::styled(underline(0xE7C547))),
+        info: core.create_highlight(Highlight::styled(underline(0x7AA6DA))),
+    }
+}
+
 fn build_syntax(core: &mut Core) -> Syntax {
     let layer = core.create_layer(LayerSpec::derived("syntax").with_z(10));
 
@@ -137,6 +165,11 @@ pub struct App {
     pub views: Vec<View>,
     pub active: usize,
     pub syntax: Syntax,
+    pub diagnostics: lsp::DiagTheme,
+    /// The workspace root (mvp.md Decision 7b; explicit workspaces later).
+    pub root: std::path::PathBuf,
+    /// Async requests for the shell to route to systems.
+    pub effects: Vec<Effect>,
     next_terminal_id: usize,
 }
 
@@ -144,15 +177,83 @@ impl App {
     pub fn open(title: impl Into<String>, bytes: &[u8]) -> Self {
         let mut core = Core::default();
         let syntax = build_syntax(&mut core);
+        let diagnostics = build_diagnostics(&mut core);
         let mut app = Self {
             core,
             views: Vec::new(),
             active: 0,
             syntax,
+            diagnostics,
+            root: std::env::current_dir().unwrap_or_else(|_| "/".into()),
+            effects: Vec::new(),
             next_terminal_id: 0,
         };
         app.open_editor(title, bytes, None);
         app
+    }
+
+    /// Full-text sync commands for every rust buffer the lsp pool has not
+    /// seen at its current version.
+    pub fn lsp_jobs(&mut self) -> Vec<lsp::Cmd> {
+        let root = self.root.clone();
+        let mut jobs = Vec::new();
+        for view in &mut self.views {
+            let View::Editor(ed) = view else { continue };
+            if ed.language != Some(ts::Language::Rust) {
+                continue;
+            }
+            let Some(path) = ed.path.clone() else { continue };
+            let Some(buf) = self.core.buffer(ed.buffer) else { continue };
+            let version = buf.version();
+            if ed.lsp_synced == Some(version) {
+                continue;
+            }
+            ed.lsp_synced = Some(version);
+            let mut text = Vec::with_capacity(buf.len());
+            buf.read_into(0..buf.len(), &mut text);
+            let path = if path.is_absolute() { path } else { root.join(&path) };
+            jobs.push(lsp::Cmd::Sync {
+                buffer: ed.buffer,
+                root: root.clone(),
+                path,
+                version,
+                text,
+            });
+        }
+        jobs
+    }
+
+    /// Apply an lsp event; returns whether the visible view changed.
+    pub fn apply_lsp(&mut self, event: lsp::Event) -> bool {
+        match event {
+            lsp::Event::Diagnostics { buffer, update } => {
+                let _ = self.core.apply(buffer, update);
+                matches!(self.active_view(), View::Editor(ed) if ed.buffer == buffer)
+            }
+            lsp::Event::Definition { path, line, character } => {
+                let bytes = std::fs::read(&path).unwrap_or_default();
+                let offset = lsp::offset_of_position(&bytes, line, character);
+
+                // Reuse an existing view of the same file if there is one.
+                let existing = self.views.iter().position(|view| {
+                    matches!(view, View::Editor(ed) if ed.path.as_deref() == Some(path.as_path()))
+                });
+                match existing {
+                    Some(index) => self.active = index,
+                    None => {
+                        let title = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+                        self.open_editor(title, &bytes, Some(path));
+                    }
+                }
+                if let Some(ed) = self.active_editor_mut() {
+                    ed.selections = vec![Selection::caret(offset)];
+                }
+                true
+            }
+        }
     }
 
     /// Highlight jobs for every damaged, language-bearing editor buffer with

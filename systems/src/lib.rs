@@ -2,4 +2,5 @@
 //! channels, no async runtime. Each system is understandable, testable, and
 //! replaceable from its message enum alone.
 
+pub mod lsp;
 pub mod ts;

@@ -140,7 +140,16 @@ fn draw_editor(app: &App, engine: &mut TextEngine, frame: &mut Frame, rect: Rect
                     })
                     .unwrap_or(base);
                 engine.draw_line(frame, segment, cx as i32, y as i32, color);
-                cx += engine.measure_text(segment).0;
+                let width = engine.measure_text(segment).0;
+                // Diagnostics squiggle: a 2px underline in the layer's color.
+                if let Some(underline) = chunk.style.underline {
+                    let v = underline.0;
+                    frame.fill_rect(
+                        Rect::new(cx, y + engine.line_height - 2.0, width, 2.0),
+                        [(v >> 16) as u8, (v >> 8) as u8, v as u8, 0xFF],
+                    );
+                }
+                cx += width;
             }
             // Fallback for anything the chunk walk could not slice.
             if drawn_to < text.len()
@@ -431,6 +440,14 @@ fn main() -> Result<()> {
         }
     });
 
+    // The lsp system (milestone 7): one pool, shared by every view.
+    let (lsp_tx, lsp_rx) = kawoosh_systems::lsp::spawn(app.diagnostics.clone(), {
+        let wake = events.event_sender();
+        move || {
+            let _ = wake.push_custom_event(PtyWake);
+        }
+    });
+
     let window = video
         .window("kawoosh", 1200, 800)
         .position_centered()
@@ -493,6 +510,28 @@ fn main() -> Result<()> {
         }
     }
 
+    // Headless verification: wait for the first non-empty diagnostics batch.
+    if let Ok(secs) = std::env::var("KAWOOSH_LSP_WAIT") {
+        for job in app.lsp_jobs() {
+            let _ = lsp_tx.send(job);
+        }
+        let secs: u64 = secs.parse().unwrap_or(30);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        while std::time::Instant::now() < deadline {
+            if let Ok(event) = lsp_rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                let done = matches!(
+                    &event,
+                    kawoosh_systems::lsp::Event::Diagnostics { update, .. }
+                        if !update.runs.is_empty()
+                );
+                app.apply_lsp(event);
+                if done {
+                    break;
+                }
+            }
+        }
+    }
+
     let mut event_pump = sdl.event_pump().context("event pump")?;
     let mut dirty = true;
     // Trackpads report fractional wheel deltas; accumulate until a whole line.
@@ -506,6 +545,25 @@ fn main() -> Result<()> {
         }
         for job in app.syntax_jobs() {
             let _ = ts_tx.send(job);
+        }
+        while let Ok(event) = lsp_rx.try_recv() {
+            dirty |= app.apply_lsp(event);
+        }
+        for job in app.lsp_jobs() {
+            let _ = lsp_tx.send(job);
+        }
+        for effect in std::mem::take(&mut app.effects) {
+            match effect {
+                kawoosh::app::Effect::GotoDefinition => {
+                    if let Some(ed) = app.active_editor() {
+                        let offset = ed.selections.first().map_or(0, |s| s.head);
+                        let _ = lsp_tx.send(kawoosh_systems::lsp::Cmd::Definition {
+                            buffer: ed.buffer,
+                            offset,
+                        });
+                    }
+                }
+            }
         }
 
         if dirty {
