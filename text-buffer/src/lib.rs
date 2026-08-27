@@ -173,33 +173,13 @@ impl Buffer {
         self.root = self.merge(&merged, &right);
     }
 
+    /// Convenience for [`Buffer::insert`] with a single byte.
+    ///
+    /// Since pieces own their blocks there is no cheaper single-byte path any
+    /// more: the coalescing fast path is shared, and the fallback allocates a
+    /// one-byte block either way.
     pub fn insert_char(&mut self, offset: usize, c: u8) {
-        assert!(offset <= self.len());
-
-        if self.try_extend_last_piece(offset, &[c]) {
-            return;
-        }
-
-        let piece = Piece {
-            block: Arc::new(vec![c]),
-            start: 0,
-            length: 1,
-        };
-
-        let own_newlines = usize::from(c == b'\n');
-        let priority = self.next_priority();
-        let leaf = Link::leaf(Arc::new(Node::new(
-            piece,
-            priority,
-            Link::none(),
-            Link::none(),
-            own_newlines,
-        )));
-
-        let old_root = self.root.clone();
-        let (left, right) = self.split(&old_root, offset);
-        let merged = self.merge(&left, &leaf);
-        self.root = self.merge(&merged, &right);
+        self.insert(offset, &[c]);
     }
 
     pub fn erase(&mut self, offset: usize, length: usize) {
