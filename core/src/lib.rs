@@ -1,17 +1,60 @@
 //! UI-independent document state.
 //!
-//! A [`Buffer`] owns text and the ranges that reference global [`Highlight`]s.
-//! Highlight definitions live in [`Core`], so changing a definition affects all
-//! of its uses without rewriting document runs. Each layer is a persistent run
-//! tree: `None` represents an explicit metadata gap and `Some(HighlightId)` a
-//! highlighted range. Layers may overlap; ranges inside one layer never do.
+//! # Shape of the thing
+//!
+//! [`Core`] is a registry of buffers, global [`Highlight`] definitions, and
+//! [`LayerSpec`]s. A [`Buffer`] is text plus one persistent run tree per layer.
+//! Runs reference highlights by id, so retheming a definition updates every use
+//! without rewriting a single run.
+//!
+//! Four properties carry the design:
+//!
+//! 1. **Versions.** Every edit bumps [`Version`] and appends to a journal, so a
+//!    result computed against an old version can be carried forward or rejected
+//!    ([`version`]). Synchronous and asynchronous providers use one code path.
+//! 2. **Layer ownership.** A layer has one producer, which submits whole spans
+//!    as an [`Update`]. Producers cannot corrupt each other, and stale results
+//!    are handled centrally.
+//! 3. **Durability.** [`Durability::Authoritative`] layers are user intent and
+//!    go into a [`Checkpoint`]; [`Durability::Derived`] layers are regenerable
+//!    and are merely invalidated, which keeps undo small.
+//! 4. **Constraints are not styling.** Read-only and atomic ranges are
+//!    flattened into one index consulted by the edit path, so checking
+//!    [`Buffer::can_edit`] is a single tree walk rather than a sweep over every
+//!    styling layer.
+//!
+//! # Not covered here
+//!
+//! Virtual content (inlay hints, fold placeholders) is a coordinate transform
+//! rather than metadata and belongs in a display-map layer above `core`.
+//! Nothing here assumes buffer offset equals screen position, which is what
+//! keeps that possible.
 
-use std::any::Any;
-use std::collections::{BTreeMap, HashMap};
+mod buffer;
+mod chunks;
+mod highlight;
+mod layer;
+mod provider;
+mod runs;
+mod version;
+
 use std::ops::Range;
 use std::rc::Rc;
 
 use slotmap::SlotMap;
+
+pub use buffer::{Buffer, Checkpoint, Refused, Snapshot};
+pub use chunks::{Chunk, Chunks};
+pub use highlight::{
+    Highlight, HighlightFlags, HighlightGroupKind, HighlightKind, HighlightStyle, MetadataValue,
+    Rgba,
+};
+pub use layer::{Durability, EditPolicy, LayerSpec};
+pub use provider::{Applied, Update};
+pub use runs::RunTree;
+pub use version::{Bias, Edit, Stale, Version};
+
+use highlight::HighlightEntry;
 
 slotmap::new_key_type! {
     pub struct BufferId;
@@ -19,647 +62,388 @@ slotmap::new_key_type! {
     pub struct LayerId;
 }
 
-/// The global, reusable description attached to a metadata run.
-///
-/// `style` and `properties` deliberately use a small data vocabulary rather
-/// than UI types. A renderer, language service, or future dynamic plugin can
-/// agree on property names without making `core` depend on any of them.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Highlight {
-    pub parent: Option<HighlightId>,
-    pub kind: HighlightKind,
-    pub style: HighlightStyle,
-    pub flags: HighlightFlags,
-    pub properties: HashMap<String, MetadataValue>,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub enum HighlightKind {
-    #[default]
-    Item,
-    Group(HighlightGroupKind),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum HighlightGroupKind {
-    Movement,
-    Semantic,
-    Presentation,
-    Custom,
-}
-
-/// UI-neutral style properties. Consumers define the meaning of property keys.
-#[derive(Debug, Clone, Default, Copy, Eq, PartialEq)]
-pub struct HighlightStyle {
-    pub fg: u32,
-    pub bg: u32,
-    pub color: u32,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MetadataValue {
-    Bool(bool),
-    Integer(i64),
-    Text(String),
-}
-
-bitflags::bitflags! {
-    /// Orthogonal range properties. In particular, read-only is a flag, not a
-    /// separate structural kind of metadata.
-    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-    pub struct HighlightFlags: u8 {
-        const READONLY = 1 << 0;
-        const SELECTABLE = 1 << 1;
-        const HIDDEN = 1 << 2;
-        const ATOMIC = 1 << 3;
-    }
-}
-
-/// A named overlap domain. It intentionally carries no display data: runs
-/// reference global highlights, which carry the metadata.
-#[derive(Clone, Debug, Default)]
-pub struct Layer;
+/// Maximum highlight inheritance depth, which also breaks parent cycles.
+const MAX_PARENT_DEPTH: usize = 32;
 
 #[derive(Debug, Default)]
 pub struct Core {
     buffers: SlotMap<BufferId, Buffer>,
-    highlights: SlotMap<HighlightId, Highlight>,
-    layers: SlotMap<LayerId, Layer>,
+    highlights: SlotMap<HighlightId, HighlightEntry>,
+    layers: SlotMap<LayerId, Rc<LayerSpec>>,
 }
 
 impl Core {
+    // -- registry ----------------------------------------------------------
+
     pub fn create_buffer(&mut self) -> BufferId {
-        self.buffers.insert(Buffer::new())
+        let mut buffer = Buffer::new();
+        for (id, spec) in &self.layers {
+            buffer.register_layer(id, Rc::clone(spec));
+        }
+        self.buffers.insert(buffer)
     }
 
     pub fn buffer(&self, id: BufferId) -> Option<&Buffer> {
         self.buffers.get(id)
     }
 
+    /// Mutable access for operations that do not touch metadata, such as
+    /// pruning journal history. Text edits must go through [`Core::insert`] and
+    /// friends so the constraint index stays in step.
     pub fn buffer_mut(&mut self, id: BufferId) -> Option<&mut Buffer> {
         self.buffers.get_mut(id)
     }
 
-    pub fn create_highlight(&mut self, highlight: Highlight) -> HighlightId {
-        self.highlights.insert(highlight)
+    /// Register a layer and make it available in every existing buffer.
+    pub fn create_layer(&mut self, spec: LayerSpec) -> LayerId {
+        let spec = Rc::new(spec);
+        let id = self.layers.insert(Rc::clone(&spec));
+
+        for buffer in self.buffers.values_mut() {
+            buffer.register_layer(id, Rc::clone(&spec));
+        }
+
+        id
     }
 
-    pub fn highlight(&self, id: HighlightId) -> Option<&Highlight> {
-        self.highlights.get(id)
-    }
-
-    pub fn highlight_mut(&mut self, id: HighlightId) -> Option<&mut Highlight> {
-        self.highlights.get_mut(id)
-    }
-
-    pub fn create_layer(&mut self) -> LayerId {
-        self.layers.insert(Layer)
+    pub fn layer(&self, id: LayerId) -> Option<&LayerSpec> {
+        self.layers.get(id).map(|spec| spec.as_ref())
     }
 
     pub fn has_layer(&self, id: LayerId) -> bool {
         self.layers.contains_key(id)
     }
-}
 
-/// Which adjacent run inherits newly inserted text at a run boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum InsertAffinity {
-    Before,
-    After,
-    Gap,
-}
+    // -- highlights --------------------------------------------------------
 
-/// A clonable document revision. It is suitable for undo boundaries, mode
-/// switches, and speculative movement because the text and run roots are
-/// shared until one revision changes them.
-#[derive(Clone)]
-pub struct Checkpoint {
-    text: text_buffer::Buffer,
-    metadata: MetadataStore,
-}
-
-/// Text and its per-layer metadata. This contains no UI objects and does not
-/// own highlights; ids are resolved through [`Core::highlight`].
-#[derive(Debug, Clone, Default)]
-pub struct Buffer {
-    text: text_buffer::Buffer,
-    metadata: MetadataStore,
-}
-
-impl Buffer {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn create_highlight(&mut self, highlight: Highlight) -> HighlightId {
+        let (resolved_style, resolved_flags) = self.resolve(&highlight);
+        self.highlights.insert(HighlightEntry {
+            def: highlight,
+            resolved_style,
+            resolved_flags,
+        })
     }
 
-    pub fn len(&self) -> usize {
-        self.text.len()
+    pub fn highlight(&self, id: HighlightId) -> Option<&Highlight> {
+        self.highlights.get(id).map(|entry| &entry.def)
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.text.is_empty()
+    /// The definition's style with its inheritance chain already flattened.
+    pub fn resolved_style(&self, id: HighlightId) -> Option<HighlightStyle> {
+        self.highlights.get(id).map(|entry| entry.resolved_style)
     }
 
-    pub fn text(&self) -> &text_buffer::Buffer {
-        &self.text
+    pub fn resolved_flags(&self, id: HighlightId) -> Option<HighlightFlags> {
+        self.highlights.get(id).map(|entry| entry.resolved_flags)
     }
 
-    pub fn set_text(&mut self, text: &[u8]) {
-        self.text.set_text(text);
-        self.metadata.reset(text.len());
-    }
-
-    pub fn insert(&mut self, offset: usize, text: &[u8], affinity: InsertAffinity) {
-        assert!(offset <= self.len());
-
-        if text.is_empty() {
+    /// Edit a definition in place. Every use picks the change up on the next
+    /// read; descendants are re-resolved.
+    pub fn update_highlight(&mut self, id: HighlightId, f: impl FnOnce(&mut Highlight)) {
+        let Some(entry) = self.highlights.get_mut(id) else {
             return;
+        };
+        f(&mut entry.def);
+        self.rebuild_styles();
+    }
+
+    /// Re-flatten every inheritance chain. Cheap — definitions are few — and
+    /// only needed after a definition is mutated.
+    pub fn rebuild_styles(&mut self) {
+        let defs: Vec<(HighlightId, Highlight)> = self
+            .highlights
+            .iter()
+            .map(|(id, entry)| (id, entry.def.clone()))
+            .collect();
+
+        for (id, def) in defs {
+            let resolved = self.resolve(&def);
+            if let Some(entry) = self.highlights.get_mut(id) {
+                entry.resolved_style = resolved.0;
+                entry.resolved_flags = resolved.1;
+            }
+        }
+    }
+
+    pub(crate) fn entry(&self, id: HighlightId) -> Option<&HighlightEntry> {
+        self.highlights.get(id)
+    }
+
+    fn resolve(&self, def: &Highlight) -> (HighlightStyle, HighlightFlags) {
+        let mut chain = Vec::new();
+        let mut cursor = def.parent;
+
+        while let Some(id) = cursor {
+            if chain.len() >= MAX_PARENT_DEPTH || chain.contains(&id) {
+                break;
+            }
+            let Some(entry) = self.highlights.get(id) else {
+                break;
+            };
+            chain.push(id);
+            cursor = entry.def.parent;
         }
 
-        self.text.insert(offset, text);
-        self.metadata.insert(offset, text.len(), affinity);
-        debug_assert_eq!(self.text.len(), self.metadata.len());
+        let mut style = HighlightStyle::default();
+        let mut flags = HighlightFlags::empty();
+
+        for id in chain.iter().rev() {
+            let entry = &self.highlights[*id];
+            style = style.compose(entry.def.style);
+            flags |= entry.def.flags;
+        }
+
+        (style.compose(def.style), flags | def.flags)
     }
 
-    pub fn erase(&mut self, range: Range<usize>) {
+    // -- reading -----------------------------------------------------------
+
+    /// Chunks over `range`, split at every boundary in every layer.
+    ///
+    /// # Panics
+    ///
+    /// If `range` is out of bounds for the buffer.
+    pub fn chunks(&self, buffer: BufferId, range: Range<usize>) -> Chunks<'_> {
+        let buffer = self.buffers.get(buffer).expect("unknown buffer");
         assert!(range.start <= range.end);
-        assert!(range.end <= self.len());
+        assert!(range.end <= buffer.len());
 
-        if range.is_empty() {
-            return;
+        Chunks {
+            core: self,
+            buffer,
+            cursor: range.start,
+            end: range.end,
         }
-
-        self.text.erase(range.start, range.end - range.start);
-        self.metadata.erase(range);
-        debug_assert_eq!(self.text.len(), self.metadata.len());
     }
 
-    /// Set one layer's metadata for `range`. Other layers are untouched.
+    // -- mutation ----------------------------------------------------------
+
+    pub fn set_text(&mut self, buffer: BufferId, text: &[u8]) {
+        let Some(buffer) = self.buffers.get_mut(buffer) else {
+            return;
+        };
+        buffer.set_text_raw(text);
+    }
+
+    /// Replace `range` with `text`, ignoring constraints.
+    ///
+    /// This is the mechanism; [`Core::try_replace`] is the policy. An editor
+    /// front-end should normally call the checked variant, while an undo
+    /// implementation restoring known-good state wants this one.
+    pub fn replace(
+        &mut self,
+        buffer: BufferId,
+        range: Range<usize>,
+        text: &[u8],
+    ) -> Option<Version> {
+        assert!(range.start <= range.end);
+
+        let buf = self.buffers.get_mut(buffer)?;
+        assert!(range.end <= buf.len());
+
+        if range.start == range.end && text.is_empty() {
+            return Some(buf.version());
+        }
+
+        let (version, inserted) = buf.edit_raw(range.start, range.end - range.start, text);
+
+        // New text is unconstrained; recompute the index over it plus the runs
+        // on either side, which may have coalesced.
+        let span = inserted.start.saturating_sub(1)..(inserted.end + 1).min(buf.len());
+        Self::refresh_constraints(buf, &self.highlights, span);
+
+        Some(version)
+    }
+
+    /// Replace `range` with `text` unless the constraint index refuses.
+    pub fn try_replace(
+        &mut self,
+        buffer: BufferId,
+        range: Range<usize>,
+        text: &[u8],
+    ) -> Result<Version, Refused> {
+        {
+            let buf = self.buffers.get(buffer).expect("unknown buffer");
+            buf.can_edit(&range)?;
+        }
+        Ok(self.replace(buffer, range, text).expect("unknown buffer"))
+    }
+
+    pub fn insert(&mut self, buffer: BufferId, offset: usize, text: &[u8]) -> Option<Version> {
+        self.replace(buffer, offset..offset, text)
+    }
+
+    pub fn erase(&mut self, buffer: BufferId, range: Range<usize>) -> Option<Version> {
+        self.replace(buffer, range, &[])
+    }
+
+    /// Write one layer's metadata for `range` directly.
+    ///
+    /// Convenient for authoritative layers driven by user action (select a
+    /// range, mark it read-only). Providers should use [`Core::apply`] so their
+    /// results are version-checked.
     pub fn set_highlight(
         &mut self,
+        buffer: BufferId,
         layer: LayerId,
         range: Range<usize>,
         highlight: Option<HighlightId>,
     ) {
         assert!(range.start <= range.end);
-        assert!(range.end <= self.len());
-        self.metadata.set(layer, range, highlight);
-    }
 
-    pub fn checkpoint(&self) -> Checkpoint {
-        Checkpoint {
-            text: self.text.clone(),
-            metadata: self.metadata.clone(),
-        }
-    }
+        let Some(buf) = self.buffers.get_mut(buffer) else {
+            return;
+        };
+        assert!(range.end <= buf.len());
 
-    pub fn restore(&mut self, checkpoint: &Checkpoint) {
-        self.text = checkpoint.text.clone();
-        self.metadata = checkpoint.metadata.clone();
-    }
-
-    pub fn highlights_at(&self, offset: usize) -> Vec<(LayerId, HighlightId)> {
-        self.metadata.highlights_at(offset)
-    }
-
-    /// Create owned text/metadata chunks whose boundaries are synchronized with
-    /// every enabled metadata layer.
-    pub fn chunks(&self, range: Range<usize>) -> SyncChunks<'_> {
-        assert!(range.start <= range.end);
-        assert!(range.end <= self.len());
-
-        SyncChunks {
-            buffer: self,
-            end: range.end,
-            cursor: range.start,
-        }
-    }
-
-    /// Feed synchronized chunks through a dynamically dispatched stage.
-    pub fn drive_chunks(
-        &self,
-        range: Range<usize>,
-        stage: &mut dyn ChunkIterator,
-        user_data: &mut dyn Any,
-    ) -> Vec<Chunk> {
-        let mut output = Vec::new();
-
-        for chunk in self.chunks(range) {
-            match stage.next(chunk, user_data) {
-                ChunkFlow::Yield(chunk) => output.push(chunk),
-                ChunkFlow::Skip => {}
-                ChunkFlow::Stop => break,
-            }
-        }
-
-        output
-    }
-}
-
-/// An owned unit of synchronized text and metadata. The active highlight ids
-/// are ordered by layer, not by a renderer-specific stacking convention.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Chunk {
-    pub range: Range<usize>,
-    pub text: Vec<u8>,
-    pub highlights: Vec<(LayerId, HighlightId)>,
-}
-
-pub enum ChunkFlow {
-    Yield(Chunk),
-    Skip,
-    Stop,
-}
-
-/// Object-safe chunk pipeline stage. `user_data` is intentionally caller-owned
-/// and erased, allowing a dynamic plugin boundary without making core depend on
-/// UI or plugin types.
-pub trait ChunkIterator {
-    fn next(&mut self, chunk: Chunk, user_data: &mut dyn Any) -> ChunkFlow;
-}
-
-pub struct SyncChunks<'a> {
-    buffer: &'a Buffer,
-    cursor: usize,
-    end: usize,
-}
-
-impl Iterator for SyncChunks<'_> {
-    type Item = Chunk;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.cursor == self.end {
-            return None;
-        }
-
-        let (mut chunk_end, highlights) = self.buffer.metadata.chunk_at(self.cursor, self.end);
-        chunk_end = chunk_end.min(self.end);
-        debug_assert!(chunk_end > self.cursor);
-
-        let range = self.cursor..chunk_end;
-        self.cursor = chunk_end;
-
-        Some(Chunk {
-            text: self.buffer.text.collect_range(range.clone()),
-            range,
-            highlights,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct MetadataStore {
-    len: usize,
-    priority_seed: u64,
-    layers: BTreeMap<LayerId, RunTree>,
-}
-
-impl MetadataStore {
-    fn reset(&mut self, len: usize) {
-        self.len = len;
-        self.priority_seed = 0;
-        self.layers.clear();
-    }
-
-    fn len(&self) -> usize {
-        self.len
-    }
-
-    fn insert(&mut self, offset: usize, len: usize, affinity: InsertAffinity) {
-        let previous_len = self.len;
-        let (layers, priority_seed) = (&mut self.layers, &mut self.priority_seed);
-
-        for root in layers.values_mut() {
-            let inherited = match affinity {
-                InsertAffinity::Gap => None,
-                InsertAffinity::Before if offset > 0 => {
-                    run_at(root, offset - 1).and_then(|(_, h)| h)
-                }
-                InsertAffinity::After if offset < previous_len => {
-                    run_at(root, offset).and_then(|(_, h)| h)
-                }
-                _ => None,
-            };
-
-            let old_root = root.clone();
-            let (left, right) = split(old_root, offset, priority_seed);
-            let inserted = make_run(inherited, len, priority_seed);
-            *root = merge(merge(left, inserted), right);
-        }
-
-        self.len += len;
-    }
-
-    fn erase(&mut self, range: Range<usize>) {
-        let removed = range.end - range.start;
-
-        for root in self.layers.values_mut() {
-            let old_root = root.clone();
-            let (left, rest) = split(old_root, range.start, &mut self.priority_seed);
-            let (_, right) = split(rest, removed, &mut self.priority_seed);
-            *root = merge(left, right);
-        }
-
-        self.len -= removed;
-    }
-
-    fn set(&mut self, layer: LayerId, range: Range<usize>, highlight: Option<HighlightId>) {
-        if range.is_empty() {
+        if range.start == range.end {
             return;
         }
 
-        let old_root = self
-            .layers
-            .get(&layer)
-            .cloned()
-            .unwrap_or_else(|| make_run(None, self.len, &mut self.priority_seed));
-        let (left, rest) = split(old_root, range.start, &mut self.priority_seed);
-        let (_, right) = split(rest, range.end - range.start, &mut self.priority_seed);
-        let replacement = make_run(highlight, range.end - range.start, &mut self.priority_seed);
-        self.layers
-            .insert(layer, merge(merge(left, replacement), right));
+        let Some(entry) = buf.layer_mut(layer) else {
+            return;
+        };
+
+        entry.state.runs.replace(range.clone(), highlight);
+        entry.state.clear_damage(&range);
+
+        if entry.spec.constrains {
+            Self::refresh_constraints(buf, &self.highlights, range);
+        }
     }
 
-    fn highlights_at(&self, offset: usize) -> Vec<(LayerId, HighlightId)> {
-        if offset >= self.len {
-            return Vec::new();
+    /// Submit a provider's result.
+    ///
+    /// If the update was computed against an older version it is carried
+    /// forward through the journal; individual runs that an edit landed inside
+    /// are dropped rather than misplaced.
+    pub fn apply(&mut self, buffer: BufferId, update: Update) -> Result<Applied, Stale> {
+        let Some(buf) = self.buffers.get_mut(buffer) else {
+            return Err(Stale::FutureVersion);
+        };
+
+        if !buf.has_layer(update.layer) {
+            return Err(Stale::FutureVersion);
         }
 
-        self.layers
-            .iter()
-            .filter_map(|(&layer, root)| {
-                run_at(root, offset).and_then(|(_, highlight)| highlight.map(|h| (layer, h)))
-            })
-            .collect()
-    }
+        let current = buf.version();
+        let transformed = update.version != current;
 
-    fn chunk_at(&self, offset: usize, end: usize) -> (usize, Vec<(LayerId, HighlightId)>) {
-        let mut chunk_end = end;
-        let mut highlights = Vec::new();
+        // The scope clamps rather than fails: an edit inside the span shrinks
+        // the region the provider is authoritative over, it does not poison it.
+        let span = buf.transform_span(update.span.clone(), update.version)?;
+        let span = span.start.min(buf.len())..span.end.min(buf.len());
 
-        for (&layer, root) in &self.layers {
-            let (run_end, highlight) =
-                run_at(root, offset).expect("metadata layer must cover every byte in the buffer");
-            chunk_end = chunk_end.min(run_end);
+        if span.start >= span.end {
+            return Ok(Applied {
+                span,
+                transformed,
+                dropped: update.runs.len(),
+            });
+        }
 
-            if let Some(highlight) = highlight {
-                highlights.push((layer, highlight));
+        let mut moved: Vec<(Range<usize>, Option<HighlightId>)> = Vec::new();
+        let mut dropped = 0;
+
+        for (range, highlight) in update.runs {
+            if range.start >= range.end {
+                continue;
+            }
+            match buf.transform_range(range, update.version) {
+                Ok(range) => moved.push((range, highlight)),
+                Err(Stale::Overwritten) => dropped += 1,
+                Err(other) => return Err(other),
             }
         }
 
-        (chunk_end, highlights)
-    }
-}
+        moved.sort_by_key(|(range, _)| range.start);
 
-#[derive(Debug, Clone, Copy)]
-struct Run {
-    highlight: Option<HighlightId>,
-    len: usize,
-}
+        // Fill the span exactly: clip to it, drop overlaps, gap the rest.
+        let mut runs: Vec<(usize, Option<HighlightId>)> = Vec::new();
+        let mut cursor = span.start;
 
-type RunTree = Option<Rc<RunNode>>;
-
-#[derive(Debug)]
-struct RunNode {
-    run: Run,
-    priority: u64,
-    left: RunTree,
-    right: RunTree,
-    subtree_len: usize,
-}
-
-impl RunNode {
-    fn new(run: Run, priority: u64, left: RunTree, right: RunTree) -> Self {
-        Self {
-            run,
-            priority,
-            subtree_len: tree_len(&left) + run.len + tree_len(&right),
-            left,
-            right,
-        }
-    }
-
-    fn clone_with(&self, left: RunTree, right: RunTree) -> Rc<Self> {
-        Rc::new(Self::new(self.run, self.priority, left, right))
-    }
-}
-
-fn tree_len(tree: &RunTree) -> usize {
-    tree.as_ref().map_or(0, |node| node.subtree_len)
-}
-
-fn make_run(highlight: Option<HighlightId>, len: usize, priority_seed: &mut u64) -> RunTree {
-    if len == 0 {
-        return None;
-    }
-
-    Some(Rc::new(RunNode::new(
-        Run { highlight, len },
-        next_priority(priority_seed),
-        None,
-        None,
-    )))
-}
-
-fn merge(left: RunTree, right: RunTree) -> RunTree {
-    match (left, right) {
-        (None, tree) | (tree, None) => tree,
-        (Some(left), Some(right)) if left.priority <= right.priority => {
-            let merged_right = merge(left.right.clone(), Some(right));
-            Some(left.clone_with(left.left.clone(), merged_right))
-        }
-        (Some(left), Some(right)) => {
-            let merged_left = merge(Some(left), right.left.clone());
-            Some(right.clone_with(merged_left, right.right.clone()))
-        }
-    }
-}
-
-fn split(root: RunTree, offset: usize, priority_seed: &mut u64) -> (RunTree, RunTree) {
-    let Some(root) = root else {
-        return (None, None);
-    };
-
-    let left_len = tree_len(&root.left);
-    if offset < left_len {
-        let (left, middle) = split(root.left.clone(), offset, priority_seed);
-        return (left, Some(root.clone_with(middle, root.right.clone())));
-    }
-
-    let run_end = left_len + root.run.len;
-    if offset > run_end {
-        let (middle, right) = split(root.right.clone(), offset - run_end, priority_seed);
-        return (Some(root.clone_with(root.left.clone(), middle)), right);
-    }
-
-    if offset == left_len {
-        return (
-            root.left.clone(),
-            Some(root.clone_with(None, root.right.clone())),
-        );
-    }
-
-    if offset == run_end {
-        return (
-            Some(root.clone_with(root.left.clone(), None)),
-            root.right.clone(),
-        );
-    }
-
-    let left_run = Run {
-        highlight: root.run.highlight,
-        len: offset - left_len,
-    };
-    let right_run = Run {
-        highlight: root.run.highlight,
-        len: run_end - offset,
-    };
-    let left_node = Some(Rc::new(RunNode::new(
-        left_run,
-        next_priority(priority_seed),
-        None,
-        None,
-    )));
-    let right_node = Some(Rc::new(RunNode::new(
-        right_run,
-        next_priority(priority_seed),
-        None,
-        None,
-    )));
-
-    (
-        merge(root.left.clone(), left_node),
-        merge(right_node, root.right.clone()),
-    )
-}
-
-fn next_priority(seed: &mut u64) -> u64 {
-    *seed = seed.wrapping_add(1);
-    let mut z = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
-    z ^= z >> 30;
-    z = z.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z ^= z >> 27;
-    z = z.wrapping_mul(0x94d0_49bb_1331_11eb);
-    z
-}
-
-/// Returns the end of the containing run and its highlight.
-fn run_at(root: &RunTree, offset: usize) -> Option<(usize, Option<HighlightId>)> {
-    let mut node = root.as_ref()?;
-    let mut base = 0;
-    let mut remaining = offset;
-
-    loop {
-        let left_len = tree_len(&node.left);
-        if remaining < left_len {
-            node = node.left.as_ref()?;
-            continue;
+        for (range, highlight) in moved {
+            let start = range.start.max(cursor);
+            let end = range.end.min(span.end);
+            if start >= end {
+                if range.end > range.start {
+                    dropped += 1;
+                }
+                continue;
+            }
+            if start > cursor {
+                runs.push((start - cursor, None));
+            }
+            runs.push((end - start, highlight));
+            cursor = end;
         }
 
-        remaining -= left_len;
-        base += left_len;
-        if remaining < node.run.len {
-            return Some((base + node.run.len, node.run.highlight));
+        if cursor < span.end {
+            runs.push((span.end - cursor, None));
         }
 
-        remaining -= node.run.len;
-        base += node.run.len;
-        node = node.right.as_ref()?;
+        let entry = buf.layer_mut(update.layer).expect("layer checked above");
+        entry.state.runs.replace_runs(span.clone(), &runs);
+        entry.state.clear_damage(&span);
+
+        if entry.spec.constrains {
+            Self::refresh_constraints(buf, &self.highlights, span.clone());
+        }
+
+        Ok(Applied {
+            span,
+            transformed,
+            dropped,
+        })
+    }
+
+    /// Recompute the flattened constraint index over `span` from the
+    /// constraining layers.
+    fn refresh_constraints(
+        buffer: &mut Buffer,
+        highlights: &SlotMap<HighlightId, HighlightEntry>,
+        span: Range<usize>,
+    ) {
+        let span = span.start.min(buffer.len())..span.end.min(buffer.len());
+        if span.start >= span.end {
+            return;
+        }
+
+        let layers: Vec<LayerId> = buffer.constraining_layers().map(|(id, _)| id).collect();
+
+        let mut runs: Vec<(usize, HighlightFlags)> = Vec::new();
+        let mut at = span.start;
+
+        while at < span.end {
+            let mut end = span.end;
+            let mut flags = HighlightFlags::empty();
+
+            for &id in &layers {
+                let Some(entry) = buffer.layer(id) else {
+                    continue;
+                };
+                let Some((run, highlight)) = entry.state.runs.run_at(at) else {
+                    continue;
+                };
+
+                end = end.min(run.end);
+
+                if let Some(highlight) = highlight
+                    && let Some(entry) = highlights.get(highlight)
+                {
+                    flags |= entry.resolved_flags & HighlightFlags::CONSTRAINTS;
+                }
+            }
+
+            let end = end.max(at + 1).min(span.end);
+            runs.push((end - at, flags));
+            at = end;
+        }
+
+        buffer.set_constraints(span, &runs);
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn chunks_follow_metadata_boundaries_and_gaps() {
-        let mut core = Core::default();
-        let layer = core.create_layer();
-        let highlight = core.create_highlight(Highlight::default());
-        let buffer = core.create_buffer();
-        let buffer = core.buffer_mut(buffer).unwrap();
-
-        buffer.set_text(b"hello world");
-        buffer.set_highlight(layer, 0..5, Some(highlight));
-
-        let chunks: Vec<_> = buffer.chunks(0..buffer.len()).collect();
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].text, b"hello");
-        assert_eq!(chunks[0].highlights, vec![(layer, highlight)]);
-        assert_eq!(chunks[1].text, b" world");
-        assert!(chunks[1].highlights.is_empty());
-    }
-
-    #[test]
-    fn chunks_zip_overlapping_layers_at_every_boundary() {
-        let mut core = Core::default();
-        let first_layer = core.create_layer();
-        let second_layer = core.create_layer();
-        let first_highlight = core.create_highlight(Highlight::default());
-        let second_highlight = core.create_highlight(Highlight::default());
-        let buffer = core.create_buffer();
-        let buffer = core.buffer_mut(buffer).unwrap();
-
-        buffer.set_text(b"abcdefgh");
-        buffer.set_highlight(first_layer, 0..5, Some(first_highlight));
-        buffer.set_highlight(second_layer, 2..8, Some(second_highlight));
-
-        let chunks: Vec<_> = buffer.chunks(0..buffer.len()).collect();
-        assert_eq!(
-            chunks
-                .iter()
-                .map(|chunk| (chunk.range.clone(), chunk.highlights.clone()))
-                .collect::<Vec<_>>(),
-            vec![
-                (0..2, vec![(first_layer, first_highlight)]),
-                (
-                    2..5,
-                    vec![
-                        (first_layer, first_highlight),
-                        (second_layer, second_highlight),
-                    ],
-                ),
-                (5..8, vec![(second_layer, second_highlight)]),
-            ],
-        );
-    }
-
-    #[test]
-    fn checkpoints_preserve_text_and_metadata() {
-        let mut core = Core::default();
-        let layer = core.create_layer();
-        let highlight = core.create_highlight(Highlight::default());
-        let buffer = core.create_buffer();
-        let buffer = core.buffer_mut(buffer).unwrap();
-
-        buffer.set_text(b"read");
-        buffer.set_highlight(layer, 0..4, Some(highlight));
-        let checkpoint = buffer.checkpoint();
-
-        buffer.insert(4, b" only", InsertAffinity::Before);
-        assert_eq!(buffer.text().collect(), b"read only");
-        assert_eq!(buffer.highlights_at(5), vec![(layer, highlight)]);
-
-        buffer.restore(&checkpoint);
-        assert_eq!(buffer.text().collect(), b"read");
-        assert_eq!(buffer.highlights_at(3), vec![(layer, highlight)]);
-    }
-
-    #[test]
-    fn chunk_stage_receives_user_data() {
-        struct Count;
-        impl ChunkIterator for Count {
-            fn next(&mut self, chunk: Chunk, user_data: &mut dyn Any) -> ChunkFlow {
-                *user_data.downcast_mut::<usize>().unwrap() += 1;
-                ChunkFlow::Yield(chunk)
-            }
-        }
-
-        let mut buffer = Buffer::new();
-        buffer.set_text(b"abc");
-        let mut count = 0_usize;
-        let chunks = buffer.drive_chunks(0..3, &mut Count, &mut count);
-        assert_eq!(count, 1);
-        assert_eq!(chunks[0].text, b"abc");
-    }
-}
+mod tests;

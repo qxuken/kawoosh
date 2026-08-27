@@ -6,6 +6,21 @@ use derive_more::{AsMut, AsRef, Deref, DerefMut};
 
 const BUFFER_MAX_PIECE_BYTES: usize = 2048;
 
+const _: () = {
+    let dummy = Piece {
+        source: Source::Original,
+        start: 0,
+        length: 0,
+    };
+
+    let max_length = (1usize << (std::mem::size_of_val(&dummy.length) * 8)) - 1;
+
+    assert!(
+        max_length >= BUFFER_MAX_PIECE_BYTES,
+        "`Piece::length` is too small for `BUFFER_MAX_PIECE_BYTES`"
+    );
+};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Source {
     Original,
@@ -76,8 +91,33 @@ impl Metadata {
 struct Link(Option<Rc<Node>>);
 
 impl Link {
+    const fn none() -> Self {
+        Self(None)
+    }
+
+    fn leaf(node: Rc<Node>) -> Self {
+        Self(Some(node))
+    }
+
+    /// Borrow the node, if any.
+    ///
+    /// Prefer this over `as_ref`: the derived `AsRef` impl also applies to
+    /// `Link` and resolves to `&Option<Rc<Node>>`, which is almost never what
+    /// a caller walking the tree wants.
+    fn node(&self) -> Option<&Rc<Node>> {
+        self.0.as_ref()
+    }
+
     fn meta(&self) -> Option<Metadata> {
         self.0.as_ref().map(|l| l.meta)
+    }
+
+    fn length(&self) -> usize {
+        self.0.as_ref().map_or(0, |node| node.meta.length)
+    }
+
+    fn newlines(&self) -> usize {
+        self.0.as_ref().map_or(0, |node| node.meta.newlines)
     }
 }
 
@@ -110,6 +150,10 @@ pub struct Buffer {
 }
 
 impl Buffer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn with_text(text: &[u8]) -> Self {
         let mut buf = Buffer::default();
         if !text.is_empty() {
@@ -177,11 +221,11 @@ impl Buffer {
         };
 
         let own_newlines = usize::from(c == b'\n');
-        let leaf = Some(Rc::new(Node::new(
+        let leaf = Link::leaf(Rc::new(Node::new(
             piece,
             priority,
-            None,
-            None,
+            Link::none(),
+            Link::none(),
             own_newlines,
         )));
 
@@ -251,7 +295,7 @@ impl Buffer {
             return false;
         };
 
-        let node_start = base + link_length(&node.left);
+        let node_start = base + node.left.length();
         let node_end = node_start + node.piece.len();
 
         let extended = if target < node_start {
@@ -283,21 +327,21 @@ impl Buffer {
             }
 
             node.piece.length += text_len as u16;
-            node.own_newlines += text_newlines;
+            node.meta.own_newlines += text_newlines;
 
             true
         };
 
         if extended {
-            node.subtree_length += text_len;
-            node.subtree_newlines += text_newlines;
+            node.meta.length += text_len;
+            node.meta.newlines += text_newlines;
         }
 
         extended
     }
 
     pub fn len(&self) -> usize {
-        link_length(&self.root)
+        self.root.length()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -305,7 +349,7 @@ impl Buffer {
     }
 
     pub fn newline_count(&self) -> usize {
-        link_newlines(&self.root)
+        self.root.newlines()
     }
 
     pub fn line_count(&self) -> usize {
@@ -318,8 +362,7 @@ impl Buffer {
 
     pub fn byte_at(&self, offset: usize) -> Option<u8> {
         let (piece, offset_in_piece) = self.find_location(offset)?;
-        self.with_piece_bytes(piece, |bytes| bytes[offset_in_piece])
-            .into()
+        Some(self.with_piece_bytes(piece, |bytes| bytes[offset_in_piece]))
     }
 
     pub fn get_line_range(&self, line_index: usize) -> Option<Range<usize>> {
@@ -390,69 +433,75 @@ impl Buffer {
         })
     }
 
-    fn make_leaf(&self, piece: Piece) -> Rc<Node> {
+    fn make_leaf(&self, piece: Piece) -> Link {
         let priority = self.next_priority();
         let own_newlines = self.piece_newlines(piece);
 
-        Rc::new(Node::new(piece, priority, None, None, own_newlines))
+        Link::leaf(Rc::new(Node::new(
+            piece,
+            priority,
+            Link::none(),
+            Link::none(),
+            own_newlines,
+        )))
     }
 
-    fn clone_node(&self, src: &Rc<Node>, left: Link, right: Link) -> Rc<Node> {
-        Rc::new(Node::new(
+    fn clone_node(&self, src: &Rc<Node>, left: Link, right: Link) -> Link {
+        Link::leaf(Rc::new(Node::new(
             src.piece,
             src.priority,
             left,
             right,
-            src.own_newlines,
-        ))
+            src.meta.own_newlines,
+        )))
     }
 
     fn merge(&self, left: &Link, right: &Link) -> Link {
-        match (left, right) {
-            (None, None) => None,
-            (Some(left), None) => Some(Rc::clone(left)),
-            (None, Some(right)) => Some(Rc::clone(right)),
+        match (left.node(), right.node()) {
+            (None, None) => Link::none(),
+            (Some(left), None) => Link::leaf(Rc::clone(left)),
+            (None, Some(right)) => Link::leaf(Rc::clone(right)),
             (Some(left), Some(right)) => {
                 if left.priority <= right.priority {
-                    let merged_right = self.merge(&left.right, &Some(right.clone()));
-                    Some(self.clone_node(left, left.left.clone(), merged_right))
+                    let merged_right = self.merge(&left.right, &Link::leaf(Rc::clone(right)));
+                    self.clone_node(left, left.left.clone(), merged_right)
                 } else {
-                    let merged_left = self.merge(&Some(left.clone()), &right.left);
-                    Some(self.clone_node(right, merged_left, right.right.clone()))
+                    let merged_left = self.merge(&Link::leaf(Rc::clone(left)), &right.left);
+                    self.clone_node(right, merged_left, right.right.clone())
                 }
             }
         }
     }
 
     fn split(&self, root: &Link, offset: usize) -> (Link, Link) {
-        let Some(root) = root else {
-            return (None, None);
+        let Some(root) = root.node() else {
+            return (Link::none(), Link::none());
         };
 
-        let left_length = link_length(&root.left);
+        let left_length = root.left.length();
         let piece_length = root.piece.len();
 
         if offset < left_length {
             let (left_tree, mid_tree) = self.split(&root.left, offset);
-            let right_tree = Some(self.clone_node(root, mid_tree, root.right.clone()));
+            let right_tree = self.clone_node(root, mid_tree, root.right.clone());
             return (left_tree, right_tree);
         }
 
         if offset > left_length + piece_length {
             let relative_offset = offset - left_length - piece_length;
             let (mid_tree, right_tree) = self.split(&root.right, relative_offset);
-            let left_tree = Some(self.clone_node(root, root.left.clone(), mid_tree));
+            let left_tree = self.clone_node(root, root.left.clone(), mid_tree);
             return (left_tree, right_tree);
         }
 
         if offset == left_length {
             let left_tree = root.left.clone();
-            let right_tree = Some(self.clone_node(root, None, root.right.clone()));
+            let right_tree = self.clone_node(root, Link::none(), root.right.clone());
             return (left_tree, right_tree);
         }
 
         if offset == left_length + piece_length {
-            let left_tree = Some(self.clone_node(root, root.left.clone(), None));
+            let left_tree = self.clone_node(root, root.left.clone(), Link::none());
             let right_tree = root.right.clone();
             return (left_tree, right_tree);
         }
@@ -467,17 +516,17 @@ impl Buffer {
         right_piece.start += piece_offset;
         right_piece.length = (piece_length - piece_offset) as u16;
 
-        let left_tail = Some(self.make_leaf(left_piece));
+        let left_tail = self.make_leaf(left_piece);
         let left_tree = self.merge(&root.left, &left_tail);
 
-        let right_head = Some(self.make_leaf(right_piece));
+        let right_head = self.make_leaf(right_piece);
         let right_tree = self.merge(&right_head, &root.right);
 
         (left_tree, right_tree)
     }
 
     fn build_piece_tree(&self, source: Source, start: usize, length: usize) -> Link {
-        let mut root: Link = None;
+        let mut root = Link::none();
         let mut offset = 0;
 
         while offset < length {
@@ -490,7 +539,7 @@ impl Buffer {
                 length: piece_length as u16,
             };
 
-            let leaf = Some(self.make_leaf(piece));
+            let leaf = self.make_leaf(piece);
             root = self.merge(&root, &leaf);
 
             offset += piece_length;
@@ -504,14 +553,14 @@ impl Buffer {
             return None;
         }
 
-        let mut node = self.root.as_ref().map(Rc::clone);
+        let mut node = self.root.node().map(Rc::clone);
         let mut remaining = offset;
 
         while let Some(current) = node {
-            let left_length = link_length(&current.left);
+            let left_length = current.left.length();
 
             if remaining < left_length {
-                node = current.left.as_ref().map(Rc::clone);
+                node = current.left.node().map(Rc::clone);
                 continue;
             }
 
@@ -522,14 +571,14 @@ impl Buffer {
             }
 
             remaining -= current.piece.len();
-            node = current.right.as_ref().map(Rc::clone);
+            node = current.right.node().map(Rc::clone);
         }
 
         unreachable!("valid offset should always resolve to a piece")
     }
 
     fn collect_tree(&self, node: &Link, out: &mut Vec<u8>) {
-        let Some(node) = node else {
+        let Some(node) = node.node() else {
             return;
         };
 
@@ -543,7 +592,7 @@ impl Buffer {
     }
 
     fn copy_tree(&self, node: &Link, out: &mut [u8], cursor: &mut usize) {
-        let Some(node) = node else {
+        let Some(node) = node.node() else {
             return;
         };
 
@@ -562,13 +611,70 @@ impl Buffer {
     ///
     /// This is intentionally an owned chunk: callers outside this crate can use
     /// it while the buffer continues to hide its storage and snapshot strategy.
+    /// Prefer [`Buffer::collect_range_into`] or [`Buffer::visit_range`] on hot
+    /// paths, which reuse the caller's allocation or avoid copying entirely.
     pub fn collect_range(&self, range: Range<usize>) -> Vec<u8> {
+        let mut out = Vec::with_capacity(range.end - range.start);
+        self.collect_range_into(range, &mut out);
+        out
+    }
+
+    /// Append a byte range to `out` without allocating a fresh buffer.
+    ///
+    /// Unlike [`Buffer::get_line_into`] this does not clear `out` first, so a
+    /// renderer can accumulate several ranges into one scratch allocation.
+    pub fn collect_range_into(&self, range: Range<usize>, out: &mut Vec<u8>) {
         assert!(range.end <= self.len());
         assert!(range.start <= range.end);
 
-        let mut out = Vec::with_capacity(range.end - range.start);
-        self.collect_range_node(&self.root, 0, &range, &mut out);
-        out
+        out.reserve(range.end - range.start);
+        self.collect_range_node(&self.root, 0, &range, out);
+    }
+
+    /// Visit a byte range as borrowed piece slices, in order, without copying.
+    ///
+    /// The callback runs while the buffer's storage is borrowed, so it must not
+    /// re-enter this buffer (or any clone sharing its storage) mutably.
+    pub fn visit_range(&self, range: Range<usize>, mut f: impl FnMut(&[u8])) {
+        assert!(range.end <= self.len());
+        assert!(range.start <= range.end);
+
+        self.visit_range_node(&self.root, 0, &range, &mut f);
+    }
+
+    fn visit_range_node(
+        &self,
+        node: &Link,
+        start: usize,
+        range: &Range<usize>,
+        f: &mut impl FnMut(&[u8]),
+    ) {
+        let Some(node) = node.node() else {
+            return;
+        };
+
+        if range.start == range.end {
+            return;
+        }
+
+        let left_start = start;
+        let node_start = left_start + node.left.length();
+        let node_end = node_start + node.piece.len();
+
+        if range.start < node_start {
+            self.visit_range_node(&node.left, left_start, range, f);
+        }
+
+        if range.start < node_end && range.end > node_start {
+            let chunk_start = range.start.max(node_start) - node_start;
+            let chunk_end = range.end.min(node_end) - node_start;
+
+            self.with_piece_bytes(node.piece, |bytes| f(&bytes[chunk_start..chunk_end]));
+        }
+
+        if range.end > node_end {
+            self.visit_range_node(&node.right, node_end, range, f);
+        }
     }
 
     fn collect_range_node(
@@ -578,7 +684,7 @@ impl Buffer {
         range: &Range<usize>,
         out: &mut Vec<u8>,
     ) {
-        let Some(node) = node else {
+        let Some(node) = node.node() else {
             return;
         };
 
@@ -587,7 +693,7 @@ impl Buffer {
         }
 
         let left_start = start;
-        let node_start = left_start + link_length(&node.left);
+        let node_start = left_start + node.left.length();
         let node_end = node_start + node.piece.len();
 
         if range.start < node_start {
@@ -634,23 +740,23 @@ impl Buffer {
         mut newline_index: usize,
         base_offset: usize,
     ) -> Option<usize> {
-        let node = node.as_ref()?;
+        let node = node.node()?;
 
-        let left_newlines = link_newlines(&node.left);
+        let left_newlines = node.left.newlines();
 
         if newline_index < left_newlines {
             return self.find_nth_newline_offset(&node.left, newline_index, base_offset);
         }
 
-        let node_offset = base_offset + link_length(&node.left);
+        let node_offset = base_offset + node.left.length();
         newline_index -= left_newlines;
 
-        if newline_index < node.own_newlines {
+        if newline_index < node.meta.own_newlines {
             let offset_in_piece = self.piece_find_nth_newline(node.piece, newline_index)?;
             return Some(node_offset + offset_in_piece);
         }
 
-        newline_index -= node.own_newlines;
+        newline_index -= node.meta.own_newlines;
 
         self.find_nth_newline_offset(&node.right, newline_index, node_offset + node.piece.len())
     }
@@ -662,8 +768,7 @@ impl Buffer {
         };
 
         out.clear();
-        out.reserve(range.end - range.start);
-        self.collect_range_node(&self.root, 0, &range, out);
+        self.collect_range_into(range, out);
         true
     }
 }
@@ -671,21 +776,6 @@ impl Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const _: () = {
-        let dummy = Piece {
-            source: Source::Original,
-            start: 0,
-            length: 0,
-        };
-
-        let max_length = (1usize << (core::mem::size_of_val(&dummy.length) * 8)) - 1;
-
-        assert!(
-            max_length >= BUFFER_MAX_PIECE_BYTES,
-            "`Piece::length` is too small for `BUFFER_MAX_PIECE_BYTES`"
-        );
-    };
 
     fn assert_buffer_eq(buffer: &Buffer, expected: &str) {
         assert_eq!(buffer.collect(), expected.as_bytes());
@@ -704,7 +794,7 @@ mod tests {
 
     fn piece_count(buffer: &Buffer) -> usize {
         fn count(link: &Link) -> usize {
-            link.as_ref()
+            link.node()
                 .map_or(0, |node| count(&node.left) + 1 + count(&node.right))
         }
 
@@ -818,6 +908,32 @@ mod tests {
         buffer.copy_to(&mut out);
 
         assert_eq!(out, b"hello world");
+    }
+
+    #[test]
+    fn test_visit_range_is_ordered_and_complete() {
+        let mut buffer = Buffer::new();
+        buffer.set_text(b"hello");
+        buffer.insert(5, b" world");
+        buffer.insert(0, b">> ");
+
+        let mut seen = Vec::new();
+        buffer.visit_range(2..12, |slice| seen.extend_from_slice(slice));
+
+        assert_eq!(seen, b" hello wor");
+        assert_eq!(seen, buffer.collect_range(2..12));
+    }
+
+    #[test]
+    fn test_collect_range_into_appends() {
+        let mut buffer = Buffer::new();
+        buffer.set_text(b"abcdef");
+
+        let mut out = b"..".to_vec();
+        buffer.collect_range_into(1..3, &mut out);
+        buffer.collect_range_into(4..6, &mut out);
+
+        assert_eq!(out, b"..bcef");
     }
 
     #[test]
