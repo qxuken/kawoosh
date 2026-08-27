@@ -7,7 +7,11 @@
 //! `App` knows nothing about SDL; the binary feeds it events and paints what
 //! `frame` describes.
 
-use kawoosh_core::{BufferId, Core};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use kawoosh_core::{BufferId, Core, Highlight, HighlightId, HighlightStyle, LayerId, LayerSpec, Rgba};
+use kawoosh_systems::ts;
 use kawoosh_term::Terminal;
 use kawoosh_ui::{Edges, Element, Size};
 
@@ -30,6 +34,9 @@ pub struct EditorState {
     pub title: String,
     /// Backing file, when there is one; save targets it.
     pub path: Option<std::path::PathBuf>,
+    pub language: Option<ts::Language>,
+    /// A highlight job for this buffer is in flight.
+    pub syntax_pending: bool,
     pub mode: Mode,
     /// First visible line.
     pub scroll: usize,
@@ -44,10 +51,13 @@ pub struct EditorState {
 
 impl EditorState {
     fn new(buffer: BufferId, title: impl Into<String>, path: Option<std::path::PathBuf>) -> Self {
+        let language = path.as_deref().and_then(ts::Language::detect);
         Self {
             buffer,
             title: title.into(),
             path,
+            language,
+            syntax_pending: false,
             mode: Mode::default(),
             scroll: 0,
             selections: vec![Selection::caret(0)],
@@ -79,23 +89,113 @@ impl View {
     }
 }
 
+/// The syntax theme: one derived layer plus capture-name → highlight ids.
+pub struct Syntax {
+    pub layer: LayerId,
+    pub map: Arc<HashMap<String, HighlightId>>,
+}
+
+fn fg(color: u32) -> HighlightStyle {
+    HighlightStyle {
+        fg: Some(Rgba(0xFF00_0000 | color)),
+        ..HighlightStyle::default()
+    }
+}
+
+fn build_syntax(core: &mut Core) -> Syntax {
+    let layer = core.create_layer(LayerSpec::derived("syntax").with_z(10));
+
+    let palette: &[(&str, u32)] = &[
+        ("keyword", 0xC397D8),
+        ("function", 0x7AA6DA),
+        ("string", 0xB9CA4A),
+        ("comment", 0x969896),
+        ("type", 0xE7C547),
+        ("constant", 0xE78C45),
+        ("number", 0xE78C45),
+        ("property", 0xDE935F),
+        ("attribute", 0xDE935F),
+        ("constructor", 0xE7C547),
+        ("escape", 0x70C0B1),
+        ("label", 0x70C0B1),
+        ("operator", 0xC5C8C6),
+        ("punctuation", 0x8F8F8F),
+    ];
+
+    let map = palette
+        .iter()
+        .map(|(name, color)| {
+            (name.to_string(), core.create_highlight(Highlight::styled(fg(*color))))
+        })
+        .collect();
+
+    Syntax { layer, map: Arc::new(map) }
+}
+
 pub struct App {
     pub core: Core,
     pub views: Vec<View>,
     pub active: usize,
+    pub syntax: Syntax,
     next_terminal_id: usize,
 }
 
 impl App {
     pub fn open(title: impl Into<String>, bytes: &[u8]) -> Self {
+        let mut core = Core::default();
+        let syntax = build_syntax(&mut core);
         let mut app = Self {
-            core: Core::default(),
+            core,
             views: Vec::new(),
             active: 0,
+            syntax,
             next_terminal_id: 0,
         };
         app.open_editor(title, bytes, None);
         app
+    }
+
+    /// Highlight jobs for every damaged, language-bearing editor buffer with
+    /// no job already in flight.
+    pub fn syntax_jobs(&mut self) -> Vec<ts::Job> {
+        let layer = self.syntax.layer;
+        let map = Arc::clone(&self.syntax.map);
+        let mut jobs = Vec::new();
+        for view in &mut self.views {
+            let View::Editor(ed) = view else { continue };
+            let Some(language) = ed.language else { continue };
+            if ed.syntax_pending {
+                continue;
+            }
+            let Some(buf) = self.core.buffer(ed.buffer) else {
+                continue;
+            };
+            if buf.damage(layer).is_empty() {
+                continue;
+            }
+            ed.syntax_pending = true;
+            jobs.push(ts::Job {
+                buffer: ed.buffer,
+                layer,
+                language,
+                snapshot: buf.snapshot(),
+                map: Arc::clone(&map),
+            });
+        }
+        jobs
+    }
+
+    /// Apply a worker result; returns whether the active view shows it.
+    pub fn apply_syntax(&mut self, result: ts::Result_) -> bool {
+        for view in &mut self.views {
+            if let View::Editor(ed) = view
+                && ed.buffer == result.buffer
+            {
+                ed.syntax_pending = false;
+            }
+        }
+        let _ = self.core.apply(result.buffer, result.update);
+        matches!(self.active_view(), View::Editor(ed) if ed.buffer == result.buffer)
     }
 
     /// Create an editor view over fresh buffer contents and activate it.

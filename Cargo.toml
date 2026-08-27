@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "kawoosh", "term", "text-buffer", "ui"]
+members = ["core", "kawoosh", "systems", "term", "text-buffer", "ui"]
 
 [workspace.package]
 publish = false
@@ -18,6 +18,7 @@ env_logger = "0.11.11"
 
 kawoosh-ui = { path = "./ui" }
 kawoosh-term = { path = "./term" }
+kawoosh-systems = { path = "./systems" }
 
 sdl3 = "0.18"
 cosmic-text = "0.19"

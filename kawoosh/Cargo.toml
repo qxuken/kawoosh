@@ -10,6 +10,7 @@ repository.workspace = true
 kawoosh-core.workspace = true
 kawoosh-ui.workspace = true
 kawoosh-term.workspace = true
+kawoosh-systems.workspace = true
 crossbeam-channel.workspace = true
 
 sdl3.workspace = true

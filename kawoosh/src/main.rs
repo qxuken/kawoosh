@@ -92,6 +92,7 @@ fn draw_editor(app: &App, engine: &mut TextEngine, frame: &mut Frame, rect: Rect
         let text = String::from_utf8_lossy(&scratch).into_owned();
         let x0 = rect.x + pad_x;
         let y = rect.y + row as f32 * engine.line_height;
+        let base = [FG[0], FG[1], FG[2]];
 
         // Selection backgrounds under the text.
         for sel in &ed.selections {
@@ -113,7 +114,41 @@ fn draw_editor(app: &App, engine: &mut TextEngine, frame: &mut Frame, rect: Rect
             );
         }
 
-        engine.draw_line(frame, &text, x0 as i32, y as i32, [FG[0], FG[1], FG[2]]);
+        // Text, split at core's chunk boundaries so each span draws in its
+        // composed style — this is where the ts system's runs become pixels.
+        if range.is_empty() {
+            // Nothing to draw on an empty line.
+        } else {
+            let mut cx = x0;
+            let mut drawn_to = 0usize;
+            for chunk in app.core.chunks(ed.buffer, range.clone()) {
+                let s = chunk.range.start - range.start;
+                let e = chunk.range.end - range.start;
+                let Some(segment) = text.get(s..e) else {
+                    break;
+                };
+                drawn_to = e;
+                if segment.is_empty() {
+                    continue;
+                }
+                let color = chunk
+                    .style
+                    .fg
+                    .map(|rgba| {
+                        let v = rgba.0;
+                        [(v >> 16) as u8, (v >> 8) as u8, v as u8]
+                    })
+                    .unwrap_or(base);
+                engine.draw_line(frame, segment, cx as i32, y as i32, color);
+                cx += engine.measure_text(segment).0;
+            }
+            // Fallback for anything the chunk walk could not slice.
+            if drawn_to < text.len()
+                && let Some(rest) = text.get(drawn_to..)
+            {
+                engine.draw_line(frame, rest, cx as i32, y as i32, base);
+            }
+        }
 
         // Carets on this line (line end included).
         for sel in &ed.selections {
@@ -361,6 +396,7 @@ fn main() -> Result<()> {
     let mut app = App::open(title, &bytes);
     if let (Some(path), Some(ed)) = (&path, app.active_editor_mut()) {
         ed.path = Some(std::path::PathBuf::from(path));
+        ed.language = kawoosh_systems::ts::Language::detect(std::path::Path::new(path));
     }
 
     let sdl = sdl3::init().context("SDL_Init")?;
@@ -386,6 +422,14 @@ fn main() -> Result<()> {
         });
     }
     let mut waiters: Vec<(BufferId, UnixStream)> = Vec::new();
+
+    // The tree-sitter system (milestone 6): jobs out, updates in.
+    let (ts_tx, ts_rx) = kawoosh_systems::ts::spawn({
+        let wake = events.event_sender();
+        move || {
+            let _ = wake.push_custom_event(PtyWake);
+        }
+    });
 
     let window = video
         .window("kawoosh", 1200, 800)
@@ -436,6 +480,19 @@ fn main() -> Result<()> {
     let text_input = video.text_input();
     let mut text_input_active = false;
 
+    // Headless verification: let the first highlight land before the dump.
+    if std::env::var("KAWOOSH_DUMP_FRAME").is_ok() {
+        for job in app.syntax_jobs() {
+            let _ = ts_tx.send(job);
+        }
+        while let Ok(result) = ts_rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            app.apply_syntax(result);
+            if app.syntax_jobs().is_empty() {
+                break;
+            }
+        }
+    }
+
     let mut event_pump = sdl.event_pump().context("event pump")?;
     let mut dirty = true;
     // Trackpads report fractional wheel deltas; accumulate until a whole line.
@@ -444,6 +501,12 @@ fn main() -> Result<()> {
     'run: loop {
         dirty |= drain_pty(&mut app, &pty_rx);
         dirty |= drain_opens(&mut app, &open_rx, &mut waiters);
+        while let Ok(result) = ts_rx.try_recv() {
+            dirty |= app.apply_syntax(result);
+        }
+        for job in app.syntax_jobs() {
+            let _ = ts_tx.send(job);
+        }
 
         if dirty {
             let root = app.frame(scale, engine.line_height);
