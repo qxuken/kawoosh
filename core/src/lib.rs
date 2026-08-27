@@ -87,6 +87,11 @@ impl Core {
         self.buffers.get(id)
     }
 
+    /// Drop a buffer and everything attached to it.
+    pub fn remove_buffer(&mut self, id: BufferId) {
+        self.buffers.remove(id);
+    }
+
     /// Mutable access for operations that do not touch metadata, such as
     /// pruning journal history. Text edits must go through [`Core::insert`] and
     /// friends so the constraint index stays in step.

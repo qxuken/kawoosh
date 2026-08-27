@@ -79,6 +79,7 @@ impl Terminal {
     pub fn spawn(
         cwd: Option<&std::path::Path>,
         size: TermSize,
+        envs: &[(&str, String)],
     ) -> Result<(Self, Box<dyn Read + Send>)> {
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -93,6 +94,9 @@ impl Terminal {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
         let mut cmd = CommandBuilder::new(shell);
         cmd.env("TERM", "xterm-256color");
+        for (key, value) in envs {
+            cmd.env(key, value);
+        }
         if let Some(cwd) = cwd {
             cmd.cwd(cwd);
         }

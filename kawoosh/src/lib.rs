@@ -7,4 +7,5 @@ pub mod app;
 pub mod editor;
 pub mod keys;
 pub mod paint;
+pub mod remote;
 pub mod text;

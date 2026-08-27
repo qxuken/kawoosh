@@ -9,9 +9,12 @@
 //! models. The painter is deliberately the thinnest replaceable layer.
 
 use std::io::Read;
+use std::os::unix::net::UnixStream;
 
 use anyhow::{Context as _, Result};
 use crossbeam_channel::{Receiver, Sender};
+use kawoosh::remote;
+use kawoosh_core::BufferId;
 use kawoosh::app::{App, BG, DIM, EDITOR_VIEW, FG, TERMINAL_VIEW, View};
 use kawoosh::editor::Mode;
 use kawoosh::keys::{self, Key, KeyPress, Mods};
@@ -27,7 +30,7 @@ const FONT_SIZE_PT: f32 = 14.0;
 const PAD_X: f32 = 8.0;
 const SEL_BG: [u8; 4] = [0x2E, 0x43, 0x6E, 0xFF];
 
-const WELCOME: &[u8] = b"kawoosh\n\nOpen a file:  kawoosh <path>\nTerminal:     ctrl-t   (ctrl-y: scrollback to buffer)\nCycle views:  ctrl-o\nQuit:         ctrl-q\n";
+const WELCOME: &[u8] = b"kawoosh\n\nOpen a file:  kawoosh <path>\nTerminal:     ctrl-t   (ctrl-y: scrollback to buffer)\nCycle views:  ctrl-o   close view: ctrl-w   save: ctrl-s\nQuit:         ctrl-q\n\nInside a kawoosh terminal, $EDITOR opens files here (kawoosh edit --wait).\n";
 
 /// Wake-up marker pushed by pty reader threads; payload rides the channel.
 struct PtyWake;
@@ -275,11 +278,44 @@ fn open_terminal(
     app: &mut App,
     tx: &Sender<(usize, Vec<u8>)>,
     wake: &sdl3::EventSubsystem,
+    socket: &str,
 ) -> Result<()> {
-    let (terminal, reader) = Terminal::spawn(None, TermSize { rows: 24, cols: 80 })?;
+    // The $EDITOR handoff (Decision 3b): tools inside this pty open files
+    // as editor views in this instance instead of nesting an editor.
+    let editor = remote::editor_value();
+    let envs = [
+        ("KAWOOSH_SOCKET", socket.to_string()),
+        ("EDITOR", editor.clone()),
+        ("VISUAL", editor),
+    ];
+    let (terminal, reader) = Terminal::spawn(None, TermSize { rows: 24, cols: 80 }, &envs)?;
     let id = app.open_terminal(terminal);
     spawn_pty_reader(id, reader, tx.clone(), wake.event_sender());
     Ok(())
+}
+
+/// Adopt open requests from the command socket as editor views.
+fn drain_opens(
+    app: &mut App,
+    rx: &Receiver<remote::OpenRequest>,
+    waiters: &mut Vec<(BufferId, UnixStream)>,
+) -> bool {
+    let mut dirty = false;
+    while let Ok(mut req) = rx.try_recv() {
+        let bytes = std::fs::read(&req.path).unwrap_or_default();
+        let title = req
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| req.path.to_string_lossy().into_owned());
+        let buffer = app.open_editor(title, &bytes, Some(req.path.clone()));
+        remote::ack(&mut req.reply);
+        if req.wait {
+            waiters.push((buffer, req.reply));
+        }
+        dirty = true;
+    }
+    dirty
 }
 
 fn drain_pty(app: &mut App, rx: &Receiver<(usize, Vec<u8>)>) -> bool {
@@ -303,13 +339,29 @@ fn drain_pty(app: &mut App, rx: &Receiver<(usize, Vec<u8>)>) -> bool {
 fn main() -> Result<()> {
     env_logger::init();
 
-    let path = std::env::args().nth(1);
+    // Client mode: `kawoosh edit [--wait] <path>` / `kawoosh open <path>`
+    // talks to the running instance named by $KAWOOSH_SOCKET.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(args.first().map(String::as_str), Some("edit" | "open")) {
+        let wait = args.iter().any(|a| a == "--wait");
+        let path = args
+            .iter()
+            .skip(1)
+            .find(|a| !a.starts_with("--"))
+            .context("usage: kawoosh edit [--wait] <path>")?;
+        return remote::client_open(std::path::Path::new(path), wait);
+    }
+
+    let path = args.first().cloned();
     let bytes = match &path {
         Some(path) => std::fs::read(path).with_context(|| format!("reading {path}"))?,
         None => WELCOME.to_vec(),
     };
     let title = path.as_deref().unwrap_or("welcome");
     let mut app = App::open(title, &bytes);
+    if let (Some(path), Some(ed)) = (&path, app.active_editor_mut()) {
+        ed.path = Some(std::path::PathBuf::from(path));
+    }
 
     let sdl = sdl3::init().context("SDL_Init")?;
     let video = sdl.video().context("SDL video subsystem")?;
@@ -320,6 +372,20 @@ fn main() -> Result<()> {
         .context("registering pty wake event")?;
 
     let (pty_tx, pty_rx) = crossbeam_channel::unbounded::<(usize, Vec<u8>)>();
+
+    // The command socket (Decision 3b): $EDITOR handoff and `kawoosh open`.
+    let socket = remote::socket_path();
+    let socket_str = socket.to_string_lossy().into_owned();
+    let (open_tx, open_rx) = crossbeam_channel::unbounded::<remote::OpenRequest>();
+    {
+        let listener = remote::bind()?;
+        let wake = events.event_sender();
+        remote::listen(listener, move |req| {
+            let _ = open_tx.send(req);
+            let _ = wake.push_custom_event(PtyWake);
+        });
+    }
+    let mut waiters: Vec<(BufferId, UnixStream)> = Vec::new();
 
     let window = video
         .window("kawoosh", 1200, 800)
@@ -356,7 +422,7 @@ fn main() -> Result<()> {
     // Headless verification: open a shell terminal and let it settle so the
     // first-frame dump shows real pty output.
     if std::env::var("KAWOOSH_TERM").is_ok() {
-        open_terminal(&mut app, &pty_tx, &events)?;
+        open_terminal(&mut app, &pty_tx, &events, &socket_str)?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(900);
         while std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -377,6 +443,7 @@ fn main() -> Result<()> {
 
     'run: loop {
         dirty |= drain_pty(&mut app, &pty_rx);
+        dirty |= drain_opens(&mut app, &open_rx, &mut waiters);
 
         if dirty {
             let root = app.frame(scale, engine.line_height);
@@ -451,8 +518,30 @@ fn main() -> Result<()> {
                             match kp.key {
                                 Key::Char('q') => break 'run,
                                 Key::Char('t') => {
-                                    open_terminal(&mut app, &pty_tx, &events)?;
+                                    open_terminal(&mut app, &pty_tx, &events, &socket_str)?;
                                     dirty = true;
+                                    pending = event_pump.poll_event();
+                                    continue;
+                                }
+                                Key::Char('s') => {
+                                    app.save_active();
+                                    pending = event_pump.poll_event();
+                                    continue;
+                                }
+                                Key::Char('w') => {
+                                    if let Some(view) = app.close_active_view() {
+                                        if let View::Editor(ed) = view {
+                                            waiters.retain_mut(|(buffer, stream)| {
+                                                if *buffer == ed.buffer {
+                                                    remote::finish(stream);
+                                                    false
+                                                } else {
+                                                    true
+                                                }
+                                            });
+                                        }
+                                        dirty = true;
+                                    }
                                     pending = event_pump.poll_event();
                                     continue;
                                 }
@@ -536,6 +625,12 @@ fn main() -> Result<()> {
             text_input_active = want_text_input;
         }
     }
+
+    // Unblock any --wait clients and remove the socket.
+    for (_, mut stream) in waiters {
+        remote::finish(&mut stream);
+    }
+    let _ = std::fs::remove_file(&socket);
 
     Ok(())
 }

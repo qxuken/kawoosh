@@ -28,6 +28,8 @@ pub const TERMINAL_VIEW: u64 = 2;
 pub struct EditorState {
     pub buffer: BufferId,
     pub title: String,
+    /// Backing file, when there is one; save targets it.
+    pub path: Option<std::path::PathBuf>,
     pub mode: Mode,
     /// First visible line.
     pub scroll: usize,
@@ -41,10 +43,11 @@ pub struct EditorState {
 }
 
 impl EditorState {
-    fn new(buffer: BufferId, title: impl Into<String>) -> Self {
+    fn new(buffer: BufferId, title: impl Into<String>, path: Option<std::path::PathBuf>) -> Self {
         Self {
             buffer,
             title: title.into(),
+            path,
             mode: Mode::default(),
             scroll: 0,
             selections: vec![Selection::caret(0)],
@@ -91,17 +94,39 @@ impl App {
             active: 0,
             next_terminal_id: 0,
         };
-        app.open_editor(title, bytes);
+        app.open_editor(title, bytes, None);
         app
     }
 
     /// Create an editor view over fresh buffer contents and activate it.
-    pub fn open_editor(&mut self, title: impl Into<String>, bytes: &[u8]) -> BufferId {
+    pub fn open_editor(
+        &mut self,
+        title: impl Into<String>,
+        bytes: &[u8],
+        path: Option<std::path::PathBuf>,
+    ) -> BufferId {
         let buffer = self.core.create_buffer();
         self.core.set_text(buffer, bytes);
-        self.views.push(View::Editor(EditorState::new(buffer, title)));
+        self.views
+            .push(View::Editor(EditorState::new(buffer, title, path)));
         self.active = self.views.len() - 1;
         buffer
+    }
+
+    /// Write the active editor's buffer back to its file, if it has one.
+    pub fn save_active(&mut self) -> bool {
+        let Some(ed) = self.active_editor() else {
+            return false;
+        };
+        let Some(path) = ed.path.clone() else {
+            return false;
+        };
+        let Some(buf) = self.core.buffer(ed.buffer) else {
+            return false;
+        };
+        let mut out = Vec::with_capacity(buf.len());
+        buf.read_into(0..buf.len(), &mut out);
+        std::fs::write(path, out).is_ok()
     }
 
     /// Adopt a spawned terminal as a view and activate it.
@@ -115,6 +140,22 @@ impl App {
         }));
         self.active = self.views.len() - 1;
         id
+    }
+
+    /// Close the active view (never the last one). The removed view is
+    /// returned so the shell can resolve `--wait` clients watching it.
+    pub fn close_active_view(&mut self) -> Option<View> {
+        if self.views.len() <= 1 {
+            return None;
+        }
+        let view = self.views.remove(self.active);
+        if self.active >= self.views.len() {
+            self.active = self.views.len() - 1;
+        }
+        if let View::Editor(ed) = &view {
+            self.core.remove_buffer(ed.buffer);
+        }
+        Some(view)
     }
 
     pub fn cycle_view(&mut self, delta: isize) -> bool {
@@ -166,7 +207,7 @@ impl App {
         };
         let title = format!("[{}]", term.title);
         let text = term.terminal.scrollback_text();
-        self.open_editor(title, &text);
+        self.open_editor(title, &text, None);
         true
     }
 

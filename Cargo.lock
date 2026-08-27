@@ -692,6 +692,7 @@ dependencies = [
  "kawoosh-ui",
  "log",
  "sdl3",
+ "serde_json",
 ]
 
 [[package]]
