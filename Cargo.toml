@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "text-buffer"]
+members = ["core", "kawoosh", "text-buffer"]
 
 [workspace.package]
 publish = false
@@ -11,9 +11,13 @@ repository = "https://drydock9.qxuken.dev/qxuken/kawoosh"
 
 [workspace.dependencies]
 text-buffer = { path = "./text-buffer" }
+kawoosh-core = { path = "./core" }
 
 log = { version = "0.4.33", features = ["serde"] }
 env_logger = "0.11.11"
+
+sdl3 = "0.18"
+cosmic-text = "0.19"
 
 anyhow = { version = "1.0.104", features = ["backtrace"] }
 mimalloc = "0.1.52"

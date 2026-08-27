@@ -1,0 +1,17 @@
+[package]
+name = "kawoosh"
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+kawoosh-core.workspace = true
+
+sdl3.workspace = true
+cosmic-text.workspace = true
+
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
