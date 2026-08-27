@@ -1,0 +1,9 @@
+{
+  "file_scan_exclusions": [
+    "assets/**/*.ttf",
+    "**/.git",
+    "**/.jj",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+  ],
+}

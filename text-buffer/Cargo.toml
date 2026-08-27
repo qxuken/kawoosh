@@ -1,0 +1,17 @@
+[package]
+name = "text-buffer"
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+derive_more.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "insert"
+harness = false
