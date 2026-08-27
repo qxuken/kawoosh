@@ -85,7 +85,10 @@ pub fn spawn(wake: impl Fn() + Send + 'static) -> (Sender<Job>, Receiver<Result_
                 span: 0..text.len(),
                 runs,
             };
-            let _ = result_tx.send(Result_ { buffer: job.buffer, update });
+            let _ = result_tx.send(Result_ {
+                buffer: job.buffer,
+                update,
+            });
             wake();
         }
     });
@@ -122,13 +125,18 @@ fn capture_runs(
     // Inner captures override outer ones: sort by (start asc, end desc) so a
     // containing capture comes first, then let later, narrower ranges split
     // it. A simple sweep with a stack of active outers does the splitting.
-    raw.sort_by(|a, b| (a.0.start, std::cmp::Reverse(a.0.end)).cmp(&(b.0.start, std::cmp::Reverse(b.0.end))));
+    raw.sort_by(|a, b| {
+        (a.0.start, std::cmp::Reverse(a.0.end)).cmp(&(b.0.start, std::cmp::Reverse(b.0.end)))
+    });
 
     let mut out: Vec<(Range<usize>, Option<HighlightId>)> = Vec::new();
     let mut stack: Vec<(Range<usize>, HighlightId)> = Vec::new();
     let mut cursor_at = 0usize;
 
-    let mut emit = |from: usize, to: usize, id: Option<HighlightId>, out: &mut Vec<(Range<usize>, Option<HighlightId>)>| {
+    let mut emit = |from: usize,
+                    to: usize,
+                    id: Option<HighlightId>,
+                    out: &mut Vec<(Range<usize>, Option<HighlightId>)>| {
         if from < to {
             out.push((from..to, id));
         }
@@ -177,7 +185,10 @@ mod tests {
     fn theme(core: &mut Core) -> Arc<HashMap<String, HighlightId>> {
         let mut map = HashMap::new();
         for name in ["keyword", "function", "string", "comment", "type"] {
-            map.insert(name.to_string(), core.create_highlight(Highlight::default()));
+            map.insert(
+                name.to_string(),
+                core.create_highlight(Highlight::default()),
+            );
         }
         Arc::new(map)
     }

@@ -85,7 +85,10 @@ fn insert_mode_edits_and_undo() {
 
     keys(&mut app, "u");
     assert_eq!(text_of(&app), "world");
-    app.handle_key(KeyPress { key: Key::Char('r'), mods: kawoosh::keys::Mods::CTRL });
+    app.handle_key(KeyPress {
+        key: Key::Char('r'),
+        mods: kawoosh::keys::Mods::CTRL,
+    });
     assert_eq!(text_of(&app), "hello world");
 }
 
@@ -251,12 +254,24 @@ fn terminal_view_cycle_and_scrollback_to_buffer() {
 
 #[test]
 fn terminal_key_encoding() {
-    assert_eq!(encode_terminal_key(KeyPress::of(Key::Enter)), Some(b"\r".to_vec()));
-    assert_eq!(encode_terminal_key(KeyPress::of(Key::Esc)), Some(b"\x1b".to_vec()));
-    assert_eq!(encode_terminal_key(KeyPress::of(Key::Up)), Some(b"\x1b[A".to_vec()));
+    assert_eq!(
+        encode_terminal_key(KeyPress::of(Key::Enter)),
+        Some(b"\r".to_vec())
+    );
+    assert_eq!(
+        encode_terminal_key(KeyPress::of(Key::Esc)),
+        Some(b"\x1b".to_vec())
+    );
+    assert_eq!(
+        encode_terminal_key(KeyPress::of(Key::Up)),
+        Some(b"\x1b[A".to_vec())
+    );
     // Ctrl-C is 0x03.
     assert_eq!(
-        encode_terminal_key(KeyPress { key: Key::Char('c'), mods: Mods::CTRL }),
+        encode_terminal_key(KeyPress {
+            key: Key::Char('c'),
+            mods: Mods::CTRL
+        }),
         Some(vec![0x03])
     );
     // Printable chars travel via the text-input path instead.
@@ -270,7 +285,11 @@ fn scroll_follows_cursor() {
 
     shifted(&mut app, 'g'); // G: end of document
     assert!(app.ensure_visible(10));
-    assert!(ed(&app).scroll >= 90, "scroll {} follows line 100", ed(&app).scroll);
+    assert!(
+        ed(&app).scroll >= 90,
+        "scroll {} follows line 100",
+        ed(&app).scroll
+    );
 
     keys(&mut app, "gg");
     assert!(app.ensure_visible(10));

@@ -67,7 +67,11 @@ pub fn listen(listener: UnixListener, deliver: impl Fn(OpenRequest) + Send + 'st
                 continue;
             }
             if let Some((path, wait)) = decode(line.trim()) {
-                deliver(OpenRequest { path, wait, reply: stream });
+                deliver(OpenRequest {
+                    path,
+                    wait,
+                    reply: stream,
+                });
             }
         }
     });

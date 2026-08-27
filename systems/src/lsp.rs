@@ -37,9 +37,16 @@ pub enum Cmd {
 
 /// Events back to the app.
 pub enum Event {
-    Diagnostics { buffer: BufferId, update: Update },
+    Diagnostics {
+        buffer: BufferId,
+        update: Update,
+    },
     /// Definition target: file path plus LSP (line, utf16 col).
-    Definition { path: PathBuf, line: u32, character: u32 },
+    Definition {
+        path: PathBuf,
+        line: u32,
+        character: u32,
+    },
 }
 
 /// Severity → highlight, provided by the app's theme.
@@ -122,7 +129,12 @@ struct Server {
 }
 
 impl Server {
-    fn spawn(command: &str, root: &Path, from_tx: Sender<(usize, Value)>, key: usize) -> Option<Self> {
+    fn spawn(
+        command: &str,
+        root: &Path,
+        from_tx: Sender<(usize, Value)>,
+        key: usize,
+    ) -> Option<Self> {
         let mut child = Command::new(command)
             .current_dir(root)
             .stdin(Stdio::piped())
@@ -252,7 +264,13 @@ fn handle_cmd(
     homes: &mut HashMap<BufferId, usize>,
 ) {
     match cmd {
-        Cmd::Sync { buffer, root, path, version, text } => {
+        Cmd::Sync {
+            buffer,
+            root,
+            path,
+            version,
+            text,
+        } => {
             let key = match keys.get(&(root.clone(), "rust-analyzer")) {
                 Some(&key) => key,
                 None => {
@@ -305,12 +323,15 @@ fn handle_cmd(
                     }));
                 }
                 None => {
-                    server.documents.insert(uri.clone(), Document {
-                        buffer,
-                        text,
-                        version,
-                        lsp_version: 1,
-                    });
+                    server.documents.insert(
+                        uri.clone(),
+                        Document {
+                            buffer,
+                            text,
+                            version,
+                            lsp_version: 1,
+                        },
+                    );
                     server.notify(json!({
                         "jsonrpc": "2.0", "method": "textDocument/didOpen",
                         "params": {
@@ -325,7 +346,9 @@ fn handle_cmd(
         }
 
         Cmd::Definition { buffer, offset } => {
-            let Some(&key) = homes.get(&buffer) else { return };
+            let Some(&key) = homes.get(&buffer) else {
+                return;
+            };
             let server = &mut servers[key];
             let Some((uri, doc)) = server
                 .documents
@@ -336,10 +359,13 @@ fn handle_cmd(
                 return;
             };
             let (line, character) = position_of_offset(&doc.text, offset);
-            server.request("textDocument/definition", json!({
-                "textDocument": { "uri": uri },
-                "position": { "line": line, "character": character }
-            }));
+            server.request(
+                "textDocument/definition",
+                json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": character }
+                }),
+            );
         }
     }
 }
@@ -368,7 +394,11 @@ fn handle_server_message(
             }
             Some("textDocument/definition") => {
                 if let Some((path, line, character)) = first_location(message.get("result")) {
-                    let _ = event_tx.send(Event::Definition { path, line, character });
+                    let _ = event_tx.send(Event::Definition {
+                        path,
+                        line,
+                        character,
+                    });
                     wake();
                 }
             }
@@ -405,7 +435,10 @@ fn handle_server_message(
         && let Some(doc) = server.documents.get(uri)
     {
         let update = diagnostics_update(params, doc, theme);
-        let _ = event_tx.send(Event::Diagnostics { buffer: doc.buffer, update });
+        let _ = event_tx.send(Event::Diagnostics {
+            buffer: doc.buffer,
+            update,
+        });
         wake();
     }
 }
@@ -439,7 +472,9 @@ fn diagnostics_update(params: &Value, doc: &Document, theme: &DiagTheme) -> Upda
 
     if let Some(diagnostics) = params.get("diagnostics").and_then(Value::as_array) {
         for diagnostic in diagnostics {
-            let Some(range) = diagnostic.get("range") else { continue };
+            let Some(range) = diagnostic.get("range") else {
+                continue;
+            };
             let (Some(sl), Some(sc), Some(el), Some(ec)) = (
                 range.pointer("/start/line").and_then(Value::as_u64),
                 range.pointer("/start/character").and_then(Value::as_u64),
@@ -495,7 +530,11 @@ mod tests {
 
         for offset in [0, 5, 12, 20, text.len()] {
             let (line, character) = position_of_offset(text, offset);
-            assert_eq!(offset_of_position(text, line, character), offset, "offset {offset}");
+            assert_eq!(
+                offset_of_position(text, line, character),
+                offset,
+                "offset {offset}"
+            );
         }
     }
 

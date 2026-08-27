@@ -15,9 +15,21 @@ pub struct Mods {
 }
 
 impl Mods {
-    pub const NONE: Mods = Mods { ctrl: false, shift: false, alt: false };
-    pub const CTRL: Mods = Mods { ctrl: true, shift: false, alt: false };
-    pub const SHIFT: Mods = Mods { ctrl: false, shift: true, alt: false };
+    pub const NONE: Mods = Mods {
+        ctrl: false,
+        shift: false,
+        alt: false,
+    };
+    pub const CTRL: Mods = Mods {
+        ctrl: true,
+        shift: false,
+        alt: false,
+    };
+    pub const SHIFT: Mods = Mods {
+        ctrl: false,
+        shift: true,
+        alt: false,
+    };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,15 +59,24 @@ pub struct KeyPress {
 
 impl KeyPress {
     pub fn plain(c: char) -> Self {
-        Self { key: Key::Char(c), mods: Mods::NONE }
+        Self {
+            key: Key::Char(c),
+            mods: Mods::NONE,
+        }
     }
 
     pub fn shifted(c: char) -> Self {
-        Self { key: Key::Char(c), mods: Mods::SHIFT }
+        Self {
+            key: Key::Char(c),
+            mods: Mods::SHIFT,
+        }
     }
 
     pub fn of(key: Key) -> Self {
-        Self { key, mods: Mods::NONE }
+        Self {
+            key,
+            mods: Mods::NONE,
+        }
     }
 }
 

@@ -579,7 +579,12 @@ impl Buffer {
         Self::visit_range_node(&self.root, 0, &range, &mut f);
     }
 
-    fn visit_range_node(node: &Link, start: usize, range: &Range<usize>, f: &mut impl FnMut(&[u8])) {
+    fn visit_range_node(
+        node: &Link,
+        start: usize,
+        range: &Range<usize>,
+        f: &mut impl FnMut(&[u8]),
+    ) {
         let Some(node) = node.node() else {
             return;
         };

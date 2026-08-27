@@ -262,7 +262,10 @@ impl Terminal {
             let mut row = String::new();
             for col in 0..grid.columns() {
                 let cell = &grid[Line(line)][Column(col)];
-                if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::HIDDEN) {
+                if cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::HIDDEN)
+                {
                     continue;
                 }
                 row.push(cell.c);

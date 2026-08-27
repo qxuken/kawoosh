@@ -47,7 +47,11 @@ pub struct Selection {
 
 impl Selection {
     pub fn caret(pos: usize) -> Self {
-        Self { anchor: pos, head: pos, goal: None }
+        Self {
+            anchor: pos,
+            head: pos,
+            goal: None,
+        }
     }
 
     pub fn is_caret(&self) -> bool {
@@ -129,9 +133,17 @@ fn normalize(selections: &mut Vec<Selection>) {
                 let end = last.range().end.max(sel.range().end);
                 let backwards = last.head < last.anchor;
                 *last = if backwards {
-                    Selection { anchor: end, head: start, goal: None }
+                    Selection {
+                        anchor: end,
+                        head: start,
+                        goal: None,
+                    }
                 } else {
-                    Selection { anchor: start, head: end, goal: None }
+                    Selection {
+                        anchor: start,
+                        head: end,
+                        goal: None,
+                    }
                 };
             }
             _ => merged.push(sel),
@@ -156,7 +168,22 @@ impl App {
     }
 
     fn buf(&self) -> &Buffer {
-        self.core.buffer(self.ed().buffer).expect("view buffer exists")
+        self.core
+            .buffer(self.ed().buffer)
+            .expect("view buffer exists")
+    }
+
+    /// Batch-undo hooks for message-driven edits (Lua): no-ops off-editor.
+    pub(crate) fn begin_undo_public(&mut self) {
+        if matches!(self.active_view(), View::Editor(_)) {
+            self.begin_undo();
+        }
+    }
+
+    pub(crate) fn clamp_selections_public(&mut self) {
+        if matches!(self.active_view(), View::Editor(_)) {
+            self.clamp_selections();
+        }
     }
 
     pub fn normalize_selections(&mut self) {
@@ -193,7 +220,11 @@ impl App {
     fn swap_history(&mut self, take_redo: bool) -> bool {
         let entry = {
             let ed = self.ed_mut();
-            let stack = if take_redo { &mut ed.redo } else { &mut ed.undo };
+            let stack = if take_redo {
+                &mut ed.redo
+            } else {
+                &mut ed.undo
+            };
             match stack.pop() {
                 Some(entry) => entry,
                 None => return false,
@@ -269,7 +300,11 @@ impl App {
                 let head = buf
                     .transform_offset(sel.head, v0, Bias::Left)
                     .unwrap_or_else(|_| sel.head.min(len));
-                let current = Selection { anchor, head, goal: None };
+                let current = Selection {
+                    anchor,
+                    head,
+                    goal: None,
+                };
                 (make(buf, &current), head, vnow)
             };
 
@@ -544,7 +579,11 @@ impl App {
                 return false;
             };
             let head = (next.start + col).min(next.end);
-            Selection { anchor: head, head, goal: Some(col) }
+            Selection {
+                anchor: head,
+                head,
+                goal: Some(col),
+            }
         };
         self.ed_mut().selections.push(new);
         self.normalize_selections();

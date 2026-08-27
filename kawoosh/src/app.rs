@@ -83,6 +83,10 @@ pub struct TerminalView {
 pub enum View {
     Editor(EditorState),
     Terminal(TerminalView),
+    /// A pane rendered by a Lua `view` function each dirty frame.
+    Lua {
+        name: String,
+    },
 }
 
 impl View {
@@ -90,6 +94,7 @@ impl View {
         match self {
             View::Editor(ed) => &ed.title,
             View::Terminal(term) => &term.title,
+            View::Lua { name } => name,
         }
     }
 }
@@ -153,11 +158,17 @@ fn build_syntax(core: &mut Core) -> Syntax {
     let map = palette
         .iter()
         .map(|(name, color)| {
-            (name.to_string(), core.create_highlight(Highlight::styled(fg(*color))))
+            (
+                name.to_string(),
+                core.create_highlight(Highlight::styled(fg(*color))),
+            )
         })
         .collect();
 
-    Syntax { layer, map: Arc::new(map) }
+    Syntax {
+        layer,
+        map: Arc::new(map),
+    }
 }
 
 pub struct App {
@@ -170,6 +181,8 @@ pub struct App {
     pub root: std::path::PathBuf,
     /// Async requests for the shell to route to systems.
     pub effects: Vec<Effect>,
+    /// Transient statusline message (Lua `echo`); cleared on the next key.
+    pub echo: Option<String>,
     next_terminal_id: usize,
 }
 
@@ -186,6 +199,7 @@ impl App {
             diagnostics,
             root: std::env::current_dir().unwrap_or_else(|_| "/".into()),
             effects: Vec::new(),
+            echo: None,
             next_terminal_id: 0,
         };
         app.open_editor(title, bytes, None);
@@ -202,8 +216,12 @@ impl App {
             if ed.language != Some(ts::Language::Rust) {
                 continue;
             }
-            let Some(path) = ed.path.clone() else { continue };
-            let Some(buf) = self.core.buffer(ed.buffer) else { continue };
+            let Some(path) = ed.path.clone() else {
+                continue;
+            };
+            let Some(buf) = self.core.buffer(ed.buffer) else {
+                continue;
+            };
             let version = buf.version();
             if ed.lsp_synced == Some(version) {
                 continue;
@@ -211,7 +229,11 @@ impl App {
             ed.lsp_synced = Some(version);
             let mut text = Vec::with_capacity(buf.len());
             buf.read_into(0..buf.len(), &mut text);
-            let path = if path.is_absolute() { path } else { root.join(&path) };
+            let path = if path.is_absolute() {
+                path
+            } else {
+                root.join(&path)
+            };
             jobs.push(lsp::Cmd::Sync {
                 buffer: ed.buffer,
                 root: root.clone(),
@@ -230,7 +252,11 @@ impl App {
                 let _ = self.core.apply(buffer, update);
                 matches!(self.active_view(), View::Editor(ed) if ed.buffer == buffer)
             }
-            lsp::Event::Definition { path, line, character } => {
+            lsp::Event::Definition {
+                path,
+                line,
+                character,
+            } => {
                 let bytes = std::fs::read(&path).unwrap_or_default();
                 let offset = lsp::offset_of_position(&bytes, line, character);
 
@@ -264,7 +290,9 @@ impl App {
         let mut jobs = Vec::new();
         for view in &mut self.views {
             let View::Editor(ed) = view else { continue };
-            let Some(language) = ed.language else { continue };
+            let Some(language) = ed.language else {
+                continue;
+            };
             if ed.syntax_pending {
                 continue;
             }
@@ -400,6 +428,90 @@ impl App {
         })
     }
 
+    pub fn open_lua_view(&mut self, name: impl Into<String>) {
+        let name = name.into();
+        let existing = self
+            .views
+            .iter()
+            .position(|view| matches!(view, View::Lua { name: n } if *n == name));
+        match existing {
+            Some(index) => self.active = index,
+            None => {
+                self.views.push(View::Lua { name });
+                self.active = self.views.len() - 1;
+            }
+        }
+    }
+
+    /// What Lua callbacks may read this dispatch (cheap: snapshot is O(1)).
+    pub fn published(&self) -> crate::lua::Published {
+        match self.active_editor() {
+            Some(ed) => crate::lua::Published {
+                snapshot: self.core.buffer(ed.buffer).map(|b| b.snapshot()),
+                cursor: ed.selections.first().map_or(0, |s| s.head),
+                title: ed.title.clone(),
+            },
+            None => crate::lua::Published::default(),
+        }
+    }
+
+    /// Apply queued Lua effect messages; one undo entry per batch.
+    pub fn apply_lua_msgs(&mut self, msgs: Vec<crate::lua::Msg>) -> bool {
+        use crate::lua::Msg;
+        let mut dirty = false;
+        let mutates = msgs
+            .iter()
+            .any(|m| matches!(m, Msg::Insert { .. } | Msg::Erase { .. }));
+        if mutates && self.active_editor().is_some() {
+            self.begin_undo_public();
+        }
+
+        for msg in msgs {
+            match msg {
+                Msg::Insert { offset, text } => {
+                    if let Some(ed) = self.active_editor() {
+                        let buffer = ed.buffer;
+                        let len = self.core.buffer(buffer).map_or(0, |b| b.len());
+                        let at = offset.min(len);
+                        dirty |= self.core.try_replace(buffer, at..at, &text).is_ok();
+                    }
+                }
+                Msg::Erase { start, end } => {
+                    if let Some(ed) = self.active_editor() {
+                        let buffer = ed.buffer;
+                        let len = self.core.buffer(buffer).map_or(0, |b| b.len());
+                        let range = start.min(len)..end.min(len);
+                        if !range.is_empty() {
+                            dirty |= self.core.try_replace(buffer, range, &[]).is_ok();
+                        }
+                    }
+                }
+                Msg::SetCursor { offset } => {
+                    if let Some(ed) = self.active_editor_mut() {
+                        ed.selections = vec![Selection::caret(offset)];
+                        dirty = true;
+                    }
+                }
+                Msg::OpenEditor { title, text } => {
+                    self.open_editor(title, &text, None);
+                    dirty = true;
+                }
+                Msg::OpenLuaView { name } => {
+                    self.open_lua_view(name);
+                    dirty = true;
+                }
+                Msg::Echo { text } => {
+                    self.echo = Some(text);
+                    dirty = true;
+                }
+            }
+        }
+        if mutates {
+            self.clamp_selections_public();
+        }
+        dirty
+    }
+
     /// Materialize the active terminal's scrollback into an editor view
     /// (mvp.md Decision 3: copy-mode is a buffer, not a mode).
     pub fn scrollback_to_buffer(&mut self) -> bool {
@@ -473,6 +585,7 @@ impl App {
         match self.active_view() {
             View::Editor(ed) => ed.mode == Mode::Insert,
             View::Terminal(_) => true,
+            View::Lua { .. } => false,
         }
     }
 
@@ -487,6 +600,7 @@ impl App {
                 term.terminal.input(text.as_bytes());
                 false
             }
+            View::Lua { .. } => false,
         }
     }
 
@@ -500,12 +614,14 @@ impl App {
                 }
                 false
             }
+            View::Lua { .. } => false,
         }
     }
 
     /// Build this frame's element tree. `scale` converts pt-ish constants to
     /// device pixels; `line_height` sizes the bars to match the text engine.
-    pub fn frame(&self, scale: f32, line_height: f32) -> Element {
+    /// `lua_center` is the shell-rendered element for an active Lua view.
+    pub fn frame(&self, scale: f32, line_height: f32, lua_center: Option<Element>) -> Element {
         let bar = line_height + 4.0 * scale;
         let pad = Edges::xy(8.0 * scale, 2.0 * scale);
 
@@ -517,8 +633,8 @@ impl App {
             .map(|(i, view)| {
                 let active = i == self.active;
                 let color = if active { FG } else { DIM };
-                let tab = Element::row(vec![Element::text(view.title().to_string(), color)])
-                    .padding(pad);
+                let tab =
+                    Element::row(vec![Element::text(view.title().to_string(), color)]).padding(pad);
                 if active { tab.bg(BAR_ACTIVE) } else { tab }
             })
             .collect();
@@ -551,13 +667,30 @@ impl App {
             View::Terminal(term) => (
                 Element::custom(TERMINAL_VIEW, Size::Grow(1.0), Size::Grow(1.0)),
                 "TERM".to_string(),
-                format!("{}×{}", term.terminal.size().cols, term.terminal.size().rows),
+                format!(
+                    "{}×{}",
+                    term.terminal.size().cols,
+                    term.terminal.size().rows
+                ),
+            ),
+            View::Lua { .. } => (
+                lua_center
+                    .unwrap_or_else(|| Element::col(Vec::new()))
+                    .width(Size::Grow(1.0))
+                    .height(Size::Grow(1.0))
+                    .clip(),
+                "LUA".to_string(),
+                String::new(),
             ),
         };
 
+        let middle = self
+            .echo
+            .clone()
+            .unwrap_or_else(|| self.active_view().title().to_string());
         let status = Element::row(vec![
             Element::text(status_left, FG),
-            Element::text(self.active_view().title().to_string(), DIM),
+            Element::text(middle, DIM),
             Element::spacer(),
             Element::text(status_right, DIM),
         ])

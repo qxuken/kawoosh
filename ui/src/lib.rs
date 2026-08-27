@@ -62,11 +62,21 @@ pub struct Edges {
 
 impl Edges {
     pub fn all(v: f32) -> Self {
-        Self { l: v, r: v, t: v, b: v }
+        Self {
+            l: v,
+            r: v,
+            t: v,
+            b: v,
+        }
     }
 
     pub fn xy(x: f32, y: f32) -> Self {
-        Self { l: x, r: x, t: y, b: y }
+        Self {
+            l: x,
+            r: x,
+            t: y,
+            b: y,
+        }
     }
 }
 
@@ -102,20 +112,29 @@ pub enum Element {
 impl Element {
     pub fn row(children: Vec<Element>) -> Self {
         Self::Box {
-            style: BoxStyle { dir: Dir::Row, ..Default::default() },
+            style: BoxStyle {
+                dir: Dir::Row,
+                ..Default::default()
+            },
             children,
         }
     }
 
     pub fn col(children: Vec<Element>) -> Self {
         Self::Box {
-            style: BoxStyle { dir: Dir::Col, ..Default::default() },
+            style: BoxStyle {
+                dir: Dir::Col,
+                ..Default::default()
+            },
             children,
         }
     }
 
     pub fn text(text: impl Into<String>, color: Color) -> Self {
-        Self::Text { text: text.into(), color }
+        Self::Text {
+            text: text.into(),
+            color,
+        }
     }
 
     pub fn custom(id: u64, width: Size, height: Size) -> Self {
@@ -125,7 +144,11 @@ impl Element {
     /// An empty grow box: pushes siblings apart.
     pub fn spacer() -> Self {
         Self::Box {
-            style: BoxStyle { width: Size::Grow(1.0), height: Size::Grow(1.0), ..Default::default() },
+            style: BoxStyle {
+                width: Size::Grow(1.0),
+                height: Size::Grow(1.0),
+                ..Default::default()
+            },
             children: Vec::new(),
         }
     }
@@ -183,9 +206,20 @@ pub trait Measure {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command<'a> {
-    Rect { rect: Rect, color: Color },
-    Text { x: f32, y: f32, text: &'a str, color: Color },
-    Custom { id: u64, rect: Rect },
+    Rect {
+        rect: Rect,
+        color: Color,
+    },
+    Text {
+        x: f32,
+        y: f32,
+        text: &'a str,
+        color: Color,
+    },
+    Custom {
+        id: u64,
+        rect: Rect,
+    },
     PushClip(Rect),
     PopClip,
 }
@@ -263,15 +297,15 @@ fn unaxis(dir: Dir, main: f32, cross: f32) -> (f32, f32) {
     }
 }
 
-fn place<'a>(
-    el: &'a Element,
-    rect: Rect,
-    measure: &mut dyn Measure,
-    out: &mut Vec<Command<'a>>,
-) {
+fn place<'a>(el: &'a Element, rect: Rect, measure: &mut dyn Measure, out: &mut Vec<Command<'a>>) {
     match el {
         Element::Text { text, color } => {
-            out.push(Command::Text { x: rect.x, y: rect.y, text, color: *color });
+            out.push(Command::Text {
+                x: rect.x,
+                y: rect.y,
+                text,
+                color: *color,
+            });
         }
         Element::Custom { id, .. } => {
             out.push(Command::Custom { id: *id, rect });
@@ -409,12 +443,14 @@ mod tests {
                 .height(Size::Fixed(24.0))
                 .bg([42, 42, 42, 255]),
             Element::custom(1, Size::Grow(1.0), Size::Grow(1.0)),
-            Element::row(vec![Element::text("status", [255; 4])])
-                .height(Size::Fixed(24.0)),
+            Element::row(vec![Element::text("status", [255; 4])]).height(Size::Fixed(24.0)),
         ]);
 
         let commands = layout(&root, Rect::new(0.0, 0.0, 800.0, 600.0), &mut Mono);
-        assert_eq!(rects(&commands), vec![(1, Rect::new(0.0, 24.0, 800.0, 552.0))]);
+        assert_eq!(
+            rects(&commands),
+            vec![(1, Rect::new(0.0, 24.0, 800.0, 552.0))]
+        );
     }
 
     #[test]
@@ -480,7 +516,10 @@ mod tests {
 
         let commands = layout(&root, Rect::new(0.0, 0.0, 100.0, 16.0), &mut Mono);
         // "abcd" = 32px wide, so the custom leaf starts at 32 and gets the rest.
-        assert_eq!(rects(&commands), vec![(1, Rect::new(32.0, 0.0, 68.0, 16.0))]);
+        assert_eq!(
+            rects(&commands),
+            vec![(1, Rect::new(32.0, 0.0, 68.0, 16.0))]
+        );
         assert!(commands.contains(&Command::Rect {
             rect: Rect::new(0.0, 0.0, 32.0, 16.0),
             color: [1, 1, 1, 255],

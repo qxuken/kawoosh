@@ -12,7 +12,12 @@ pub struct Frame<'a> {
 
 impl<'a> Frame<'a> {
     pub fn new(data: &'a mut [u8], width: usize, height: usize) -> Self {
-        Self { data, width, height, clip: None }
+        Self {
+            data,
+            width,
+            height,
+            clip: None,
+        }
     }
 
     pub fn set_clip(&mut self, clip: Option<Rect>) {

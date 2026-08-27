@@ -13,13 +13,14 @@ use std::os::unix::net::UnixStream;
 
 use anyhow::{Context as _, Result};
 use crossbeam_channel::{Receiver, Sender};
-use kawoosh::remote;
-use kawoosh_core::BufferId;
 use kawoosh::app::{App, BG, DIM, EDITOR_VIEW, FG, TERMINAL_VIEW, View};
 use kawoosh::editor::Mode;
 use kawoosh::keys::{self, Key, KeyPress, Mods};
+use kawoosh::lua::LuaRuntime;
 use kawoosh::paint::Frame;
+use kawoosh::remote;
 use kawoosh::text::TextEngine;
+use kawoosh_core::BufferId;
 use kawoosh_term::{TermSize, Terminal};
 use kawoosh_ui::{Command, Rect};
 use sdl3::event::{Event, EventSender, WindowEvent};
@@ -198,7 +199,13 @@ fn draw_editor(app: &App, engine: &mut TextEngine, frame: &mut Frame, rect: Rect
 
 /// Draw the active terminal view: resize the model to the rect's grid, then
 /// paint row runs grouped by style.
-fn draw_terminal(app: &mut App, engine: &mut TextEngine, frame: &mut Frame, rect: Rect, pad_x: f32) {
+fn draw_terminal(
+    app: &mut App,
+    engine: &mut TextEngine,
+    frame: &mut Frame,
+    rect: Rect,
+    pad_x: f32,
+) {
     let cell_w = engine.measure_text("M").0;
     let line_h = engine.line_height;
     let grid_rows = ((rect.h / line_h).floor() as u16).max(1);
@@ -207,11 +214,15 @@ fn draw_terminal(app: &mut App, engine: &mut TextEngine, frame: &mut Frame, rect
     let Some(view) = app.active_terminal_mut() else {
         return;
     };
-    view.terminal.resize(TermSize { rows: grid_rows, cols: grid_cols });
+    view.terminal.resize(TermSize {
+        rows: grid_rows,
+        cols: grid_cols,
+    });
 
     // Materialize the grid; alacritty iterates cells in order.
     let mut cells: Vec<(usize, usize, kawoosh_term::CellView)> = Vec::new();
-    view.terminal.for_each_cell(|row, col, cell| cells.push((row, col, cell)));
+    view.terminal
+        .for_each_cell(|row, col, cell| cells.push((row, col, cell)));
     let cursor = view.terminal.cursor();
 
     frame.set_clip(Some(rect));
@@ -221,7 +232,12 @@ fn draw_terminal(app: &mut App, engine: &mut TextEngine, frame: &mut Frame, rect
     for &(row, col, ref cell) in &cells {
         if let Some(bg) = cell.bg {
             frame.fill_rect(
-                Rect::new(x0 + col as f32 * cell_w, rect.y + row as f32 * line_h, cell_w, line_h),
+                Rect::new(
+                    x0 + col as f32 * cell_w,
+                    rect.y + row as f32 * line_h,
+                    cell_w,
+                    line_h,
+                ),
                 bg,
             );
         }
@@ -229,7 +245,9 @@ fn draw_terminal(app: &mut App, engine: &mut TextEngine, frame: &mut Frame, rect
 
     let mut run = String::new();
     let mut run_start: Option<(usize, usize, [u8; 4])> = None;
-    let mut flush = |engine: &mut TextEngine, frame: &mut Frame, run: &mut String,
+    let mut flush = |engine: &mut TextEngine,
+                     frame: &mut Frame,
+                     run: &mut String,
                      start: &mut Option<(usize, usize, [u8; 4])>| {
         if let Some((row, col, fg)) = start.take() {
             if !run.trim().is_empty() {
@@ -266,10 +284,7 @@ fn draw_terminal(app: &mut App, engine: &mut TextEngine, frame: &mut Frame, rect
         let cx = x0 + ccol as f32 * cell_w;
         let cy = rect.y + crow as f32 * line_h;
         frame.fill_rect(Rect::new(cx, cy, cell_w, line_h), DIM);
-        if let Some((_, _, cell)) = cells
-            .iter()
-            .find(|(r, c, _)| *r == crow && *c == ccol)
-        {
+        if let Some((_, _, cell)) = cells.iter().find(|(r, c, _)| *r == crow && *c == ccol) {
             let s = cell.c.to_string();
             engine.draw_line(frame, &s, cx as i32, cy as i32, [BG[0], BG[1], BG[2]]);
         }
@@ -310,6 +325,101 @@ fn map_key(keycode: Option<Keycode>, scancode: u16, keymod: Mod) -> Option<KeyPr
     };
 
     Some(KeyPress { key, mods })
+}
+
+/// The binding-layer string for a plain/shifted char key ("x", "X").
+fn lua_key_string(kp: KeyPress) -> Option<String> {
+    if kp.mods.ctrl || kp.mods.alt {
+        return None;
+    }
+    match kp.key {
+        Key::Char(c) if kp.mods.shift => Some(c.to_ascii_uppercase().to_string()),
+        Key::Char(c) => Some(c.to_string()),
+        _ => None,
+    }
+}
+
+// -- sessions (milestone 9) --------------------------------------------------
+
+fn session_save(app: &App) {
+    let Ok(db) = kawoosh::lua::open_state_db() else {
+        return;
+    };
+    let _ = db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS session_views (
+             idx INTEGER, path TEXT NOT NULL, scroll INTEGER, cursor INTEGER
+         );
+         CREATE TABLE IF NOT EXISTS session_meta (key TEXT PRIMARY KEY, value TEXT);
+         DELETE FROM session_views;",
+    );
+    let mut saved = 0i64;
+    let mut active = 0i64;
+    for (index, view) in app.views.iter().enumerate() {
+        let View::Editor(ed) = view else { continue };
+        let Some(path) = &ed.path else { continue };
+        let cursor = ed.selections.first().map_or(0, |s| s.head) as i64;
+        let _ = db.execute(
+            "INSERT INTO session_views (idx, path, scroll, cursor) VALUES (?1, ?2, ?3, ?4)",
+            (saved, path.to_string_lossy(), ed.scroll as i64, cursor),
+        );
+        if index == app.active {
+            active = saved;
+        }
+        saved += 1;
+    }
+    let _ = db.execute(
+        "INSERT INTO session_meta (key, value) VALUES ('active', ?1)
+         ON CONFLICT (key) DO UPDATE SET value = ?1",
+        (active.to_string(),),
+    );
+}
+
+/// Restore the previous session's file views; returns how many opened.
+fn session_restore(app: &mut App) -> usize {
+    let Ok(db) = kawoosh::lua::open_state_db() else {
+        return 0;
+    };
+    let rows: Vec<(String, i64, i64)> = db
+        .prepare("SELECT path, scroll, cursor FROM session_views ORDER BY idx")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .map(|rows| rows.flatten().collect())
+        })
+        .unwrap_or_default();
+
+    let mut opened = 0;
+    for (path, scroll, cursor) in rows {
+        let path = std::path::PathBuf::from(path);
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let title = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        app.open_editor(title, &bytes, Some(path));
+        if let Some(ed) = app.active_editor_mut() {
+            ed.scroll = scroll.max(0) as usize;
+            ed.selections = vec![kawoosh::editor::Selection::caret(cursor.max(0) as usize)];
+        }
+        opened += 1;
+    }
+
+    if opened > 0 {
+        let active: i64 = db
+            .query_row(
+                "SELECT value FROM session_meta WHERE key = 'active'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        // Editors restored after the initial welcome view, which is index 0.
+        let base = app.views.len() - opened;
+        app.active = (base as i64 + active.clamp(0, opened as i64 - 1)) as usize;
+    }
+    opened
 }
 
 fn write_ppm(path: &str, rgba: &[u8], width: u32, height: u32) -> Result<()> {
@@ -406,6 +516,29 @@ fn main() -> Result<()> {
     if let (Some(path), Some(ed)) = (&path, app.active_editor_mut()) {
         ed.path = Some(std::path::PathBuf::from(path));
         ed.language = kawoosh_systems::ts::Language::detect(std::path::Path::new(path));
+    }
+
+    // Sessions (milestone 9): with no file argument, restore the last one.
+    if path.is_none() {
+        session_restore(&mut app);
+    }
+
+    // The Lua runtime (milestone 8): config is code, state is SQLite.
+    let lua = kawoosh::lua::open_state_db()
+        .and_then(LuaRuntime::new)
+        .context("starting lua runtime")?;
+    match lua.load_config() {
+        Ok(Some(config)) => log::info!("loaded {}", config.display()),
+        Ok(None) => {}
+        Err(err) => log::error!("init.lua: {err:#}"),
+    }
+    if let Ok(script) = std::env::var("KAWOOSH_LUA") {
+        if let Err(err) = lua.eval(&script) {
+            log::error!("KAWOOSH_LUA: {err:#}");
+        }
+        lua.publish(app.published());
+        let msgs = lua.run_command("main").unwrap_or_default();
+        app.apply_lua_msgs(msgs);
     }
 
     let sdl = sdl3::init().context("SDL_Init")?;
@@ -567,7 +700,12 @@ fn main() -> Result<()> {
         }
 
         if dirty {
-            let root = app.frame(scale, engine.line_height);
+            // A Lua view renders through its Lua function (immediate mode).
+            let lua_center = match app.active_view() {
+                View::Lua { name } => lua.render_view(&name.clone()).map(|(el, _msgs)| el),
+                _ => None,
+            };
+            let root = app.frame(scale, engine.line_height, lua_center);
             let viewport = Rect::new(0.0, 0.0, pw as f32, ph as f32);
             let commands = kawoosh_ui::layout(&root, viewport, &mut engine);
 
@@ -587,10 +725,16 @@ fn main() -> Result<()> {
                             [color[0], color[1], color[2]],
                         );
                     }
-                    Command::Custom { id: EDITOR_VIEW, rect } => {
+                    Command::Custom {
+                        id: EDITOR_VIEW,
+                        rect,
+                    } => {
                         draw_editor(&app, &mut engine, &mut frame, *rect, pad_x);
                     }
-                    Command::Custom { id: TERMINAL_VIEW, rect } => {
+                    Command::Custom {
+                        id: TERMINAL_VIEW,
+                        rect,
+                    } => {
                         draw_terminal(&mut app, &mut engine, &mut frame, *rect, pad_x);
                     }
                     Command::Custom { .. } => {}
@@ -679,8 +823,28 @@ fn main() -> Result<()> {
                                 _ => {}
                             }
                         }
+                        dirty |= app.echo.take().is_some();
+
+                        // User keymaps first, in normal mode and Lua views.
+                        let modal = matches!(app.active_view(), View::Lua { .. })
+                            || app
+                                .active_editor()
+                                .is_some_and(|ed| ed.mode == Mode::Normal);
+                        let lua_handled = modal
+                            && lua_key_string(kp).is_some_and(|key| {
+                                lua.publish(app.published());
+                                match lua.handle_key("n", &key) {
+                                    Some(msgs) => {
+                                        dirty |= app.apply_lua_msgs(msgs);
+                                        true
+                                    }
+                                    None => false,
+                                }
+                            });
+
                         let editor_active = app.active_editor().is_some();
                         match kp.key {
+                            _ if lua_handled => {}
                             Key::PageUp if editor_active => {
                                 dirty |= app.scroll_by(-page.max(1));
                             }
@@ -747,10 +911,11 @@ fn main() -> Result<()> {
         }
     }
 
-    // Unblock any --wait clients and remove the socket.
+    // Unblock any --wait clients, persist the session, remove the socket.
     for (_, mut stream) in waiters {
         remote::finish(&mut stream);
     }
+    session_save(&app);
     let _ = std::fs::remove_file(&socket);
 
     Ok(())
