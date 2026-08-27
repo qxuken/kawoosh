@@ -7,6 +7,8 @@
 use kawoosh_core::{BufferId, Core};
 use kawoosh_ui::{Edges, Element, Size};
 
+use crate::editor::{Mode, Selection, UndoEntry};
+
 // Theme, deliberately close to the reference screenshots.
 pub const BG: [u8; 4] = [0x21, 0x21, 0x21, 0xFF];
 pub const FG: [u8; 4] = [0xE6, 0xE6, 0xE6, 0xFF];
@@ -23,6 +25,15 @@ pub struct App {
     /// First visible line of the editor view.
     pub scroll: usize,
     pub title: String,
+
+    pub mode: Mode,
+    pub selections: Vec<Selection>,
+    /// One register per selection; paste cycles when counts differ.
+    pub registers: Vec<Vec<u8>>,
+    pub undo: Vec<UndoEntry>,
+    pub redo: Vec<UndoEntry>,
+    /// First key of a pending multi-key sequence (`g`, `d`).
+    pub pending: Option<char>,
 }
 
 impl App {
@@ -35,7 +46,33 @@ impl App {
             buffer,
             scroll: 0,
             title: title.into(),
+            mode: Mode::default(),
+            selections: vec![Selection::caret(0)],
+            registers: Vec::new(),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            pending: None,
         }
+    }
+
+    /// Scroll so the primary head's line is visible in a `rows`-tall view.
+    pub fn ensure_visible(&mut self, rows: usize) -> bool {
+        let Some(primary) = self.selections.first() else {
+            return false;
+        };
+        let buf = self.core.buffer(self.buffer).expect("app buffer exists");
+        let line = buf.line_of_offset(primary.head.min(buf.len()));
+        let rows = rows.max(1);
+
+        let target = if line < self.scroll {
+            line
+        } else if line >= self.scroll + rows {
+            line + 1 - rows
+        } else {
+            return false;
+        };
+        self.scroll = target;
+        true
     }
 
     pub fn line_count(&self) -> usize {
@@ -75,12 +112,27 @@ impl App {
 
         let editor = Element::custom(EDITOR_VIEW, Size::Grow(1.0), Size::Grow(1.0));
 
-        let position = format!("{}/{}", self.scroll + 1, self.line_count());
+        let mode = if self.selections.len() > 1 {
+            format!("{} ×{}", self.mode.label(), self.selections.len())
+        } else {
+            self.mode.label().to_string()
+        };
+        let line = self
+            .selections
+            .first()
+            .map(|sel| {
+                let buf = self.core.buffer(self.buffer).expect("app buffer exists");
+                buf.line_of_offset(sel.head.min(buf.len())) + 1
+            })
+            .unwrap_or(1);
+        let position = format!("{}/{}", line, self.line_count());
         let status = Element::row(vec![
+            Element::text(mode, FG),
             Element::text(self.title.clone(), DIM),
             Element::spacer(),
             Element::text(position, DIM),
         ])
+        .gap(12.0 * scale)
         .width(Size::Grow(1.0))
         .height(Size::Fixed(bar))
         .padding(pad)

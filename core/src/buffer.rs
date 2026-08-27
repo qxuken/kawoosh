@@ -127,6 +127,11 @@ impl Buffer {
         self.text.get_line_range(line)
     }
 
+    /// The line containing `offset`.
+    pub fn line_of_offset(&self, offset: usize) -> usize {
+        self.text.line_of_offset(offset)
+    }
+
     /// Read a byte range as borrowed slices, without copying.
     pub fn visit_range(&self, range: Range<usize>, f: impl FnMut(&[u8])) {
         self.text.visit_range(range, f);

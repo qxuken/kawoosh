@@ -285,6 +285,41 @@ impl Buffer {
         Some(piece.bytes()[offset_in_piece])
     }
 
+    /// The line containing `offset`: newlines in `[0, offset)`, one tree walk.
+    pub fn line_of_offset(&self, offset: usize) -> usize {
+        assert!(offset <= self.len());
+
+        let mut node = self.root.node().map(Arc::clone);
+        let mut remaining = offset;
+        let mut newlines = 0;
+
+        while let Some(current) = node {
+            let left_length = current.left.length();
+
+            if remaining < left_length {
+                node = current.left.node().map(Arc::clone);
+                continue;
+            }
+
+            newlines += current.left.newlines();
+            remaining -= left_length;
+
+            if remaining < current.piece.len() {
+                newlines += current.piece.bytes()[..remaining]
+                    .iter()
+                    .filter(|&&byte| byte == b'\n')
+                    .count();
+                return newlines;
+            }
+
+            newlines += current.meta.own_newlines;
+            remaining -= current.piece.len();
+            node = current.right.node().map(Arc::clone);
+        }
+
+        newlines
+    }
+
     pub fn get_line_range(&self, line_index: usize) -> Option<Range<usize>> {
         if line_index >= self.line_count() {
             return None;
@@ -799,6 +834,18 @@ mod tests {
 
         assert_eq!(reader.join().unwrap(), 11);
         assert_buffer_eq(&buffer, "hello, world");
+    }
+
+    #[test]
+    fn test_line_of_offset() {
+        let mut buffer = Buffer::new();
+        buffer.set_text(b"ab\ncd\n\nef");
+
+        for (offset, line) in [(0, 0), (2, 0), (3, 1), (5, 1), (6, 2), (7, 3), (9, 3)] {
+            assert_eq!(buffer.line_of_offset(offset), line, "offset {offset}");
+        }
+
+        assert_eq!(Buffer::new().line_of_offset(0), 0);
     }
 
     #[test]
