@@ -7,12 +7,15 @@
 //! correctly after edits #1-36 shifted the text. One `Checkpoint` per command
 //! batch (and per insert session) makes multi-edits atomic under undo —
 //! checkpoints are O(1) retained roots, so this is cheap by construction.
+//!
+//! All commands act on the app's *active editor view*; the router in
+//! `app.rs` guarantees these paths only run when one is active.
 
 use std::ops::Range;
 
 use kawoosh_core::{Bias, Buffer, Checkpoint, Version};
 
-use crate::app::App;
+use crate::app::{App, EditorState, View};
 use crate::keys::{Key, KeyPress};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -110,104 +113,128 @@ fn line_bounds(buf: &Buffer, off: usize) -> (usize, Range<usize>) {
     (line, range)
 }
 
+fn normalize(selections: &mut Vec<Selection>) {
+    if selections.is_empty() {
+        selections.push(Selection::caret(0));
+    }
+    selections.sort_by_key(|s| (s.range().start, s.range().end));
+    let mut merged: Vec<Selection> = Vec::with_capacity(selections.len());
+    for sel in selections.drain(..) {
+        match merged.last_mut() {
+            Some(last)
+                if sel.range().start < last.range().end
+                    || (sel.is_caret() && last.is_caret() && sel.head == last.head) =>
+            {
+                let start = last.range().start.min(sel.range().start);
+                let end = last.range().end.max(sel.range().end);
+                let backwards = last.head < last.anchor;
+                *last = if backwards {
+                    Selection { anchor: end, head: start, goal: None }
+                } else {
+                    Selection { anchor: start, head: end, goal: None }
+                };
+            }
+            _ => merged.push(sel),
+        }
+    }
+    *selections = merged;
+}
+
 impl App {
-    fn buf(&self) -> &Buffer {
-        self.core.buffer(self.buffer).expect("app buffer exists")
+    fn ed(&self) -> &EditorState {
+        match self.active_view() {
+            View::Editor(ed) => ed,
+            _ => unreachable!("editor commands only run on editor views"),
+        }
     }
 
-    // -- selection maintenance ----------------------------------------------
+    fn ed_mut(&mut self) -> &mut EditorState {
+        match &mut self.views[self.active] {
+            View::Editor(ed) => ed,
+            _ => unreachable!("editor commands only run on editor views"),
+        }
+    }
 
-    /// Sort by position, merge overlapping ranges, dedupe coincident carets.
+    fn buf(&self) -> &Buffer {
+        self.core.buffer(self.ed().buffer).expect("view buffer exists")
+    }
+
     pub fn normalize_selections(&mut self) {
-        if self.selections.is_empty() {
-            self.selections.push(Selection::caret(0));
-        }
-        self.selections.sort_by_key(|s| (s.range().start, s.range().end));
-        let mut merged: Vec<Selection> = Vec::with_capacity(self.selections.len());
-        for sel in self.selections.drain(..) {
-            match merged.last_mut() {
-                Some(last)
-                    if sel.range().start < last.range().end
-                        || (sel.is_caret() && last.is_caret() && sel.head == last.head) =>
-                {
-                    // Extend the previous selection to cover both.
-                    let start = last.range().start.min(sel.range().start);
-                    let end = last.range().end.max(sel.range().end);
-                    let backwards = last.head < last.anchor;
-                    *last = if backwards {
-                        Selection { anchor: end, head: start, goal: None }
-                    } else {
-                        Selection { anchor: start, head: end, goal: None }
-                    };
-                }
-                _ => merged.push(sel),
-            }
-        }
-        self.selections = merged;
+        let mut sels = std::mem::take(&mut self.ed_mut().selections);
+        normalize(&mut sels);
+        self.ed_mut().selections = sels;
     }
 
     // -- undo ---------------------------------------------------------------
 
     fn begin_undo(&mut self) {
-        let buf = self.buf();
-        self.undo.push(UndoEntry {
-            checkpoint: buf.checkpoint(),
-            selections: self.selections.clone(),
-            version: buf.version(),
-        });
-        self.redo.clear();
+        let entry = {
+            let buf = self.buf();
+            UndoEntry {
+                checkpoint: buf.checkpoint(),
+                selections: self.ed().selections.clone(),
+                version: buf.version(),
+            }
+        };
+        let ed = self.ed_mut();
+        ed.undo.push(entry);
+        ed.redo.clear();
     }
 
     /// Drop the top undo entry if nothing was actually edited since.
     fn prune_noop_undo(&mut self) {
-        if let Some(top) = self.undo.last()
-            && top.version == self.buf().version()
-        {
-            self.undo.pop();
+        let version = self.buf().version();
+        let ed = self.ed_mut();
+        if ed.undo.last().is_some_and(|top| top.version == version) {
+            ed.undo.pop();
         }
+    }
+
+    fn swap_history(&mut self, take_redo: bool) -> bool {
+        let entry = {
+            let ed = self.ed_mut();
+            let stack = if take_redo { &mut ed.redo } else { &mut ed.undo };
+            match stack.pop() {
+                Some(entry) => entry,
+                None => return false,
+            }
+        };
+        let current = {
+            let buf = self.buf();
+            UndoEntry {
+                checkpoint: buf.checkpoint(),
+                selections: self.ed().selections.clone(),
+                version: buf.version(),
+            }
+        };
+        {
+            let ed = self.ed_mut();
+            if take_redo {
+                ed.undo.push(current);
+            } else {
+                ed.redo.push(current);
+            }
+        }
+        let buffer = self.ed().buffer;
+        if let Some(buf) = self.core.buffer_mut(buffer) {
+            buf.restore(&entry.checkpoint);
+        }
+        self.ed_mut().selections = entry.selections;
+        self.clamp_selections();
+        true
     }
 
     pub fn undo(&mut self) -> bool {
-        let Some(entry) = self.undo.pop() else {
-            return false;
-        };
-        let buf = self.buf();
-        self.redo.push(UndoEntry {
-            checkpoint: buf.checkpoint(),
-            selections: self.selections.clone(),
-            version: buf.version(),
-        });
-        let buffer = self.buffer;
-        if let Some(buf) = self.core.buffer_mut(buffer) {
-            buf.restore(&entry.checkpoint);
-        }
-        self.selections = entry.selections;
-        self.clamp_selections();
-        true
+        self.swap_history(false)
     }
 
     pub fn redo(&mut self) -> bool {
-        let Some(entry) = self.redo.pop() else {
-            return false;
-        };
-        let buf = self.buf();
-        self.undo.push(UndoEntry {
-            checkpoint: buf.checkpoint(),
-            selections: self.selections.clone(),
-            version: buf.version(),
-        });
-        let buffer = self.buffer;
-        if let Some(buf) = self.core.buffer_mut(buffer) {
-            buf.restore(&entry.checkpoint);
-        }
-        self.selections = entry.selections;
-        self.clamp_selections();
-        true
+        self.swap_history(true)
     }
 
     fn clamp_selections(&mut self) {
         let len = self.buf().len();
-        for sel in &mut self.selections {
+        for sel in &mut self.ed_mut().selections {
             sel.anchor = sel.anchor.min(len);
             sel.head = sel.head.min(len);
         }
@@ -225,26 +252,30 @@ impl App {
         mut make: impl FnMut(&Buffer, &Selection) -> Option<(Range<usize>, Vec<u8>, usize)>,
     ) -> bool {
         self.normalize_selections();
+        let buffer = self.ed().buffer;
         let v0 = self.buf().version();
-        let sels = self.selections.clone();
+        let sels = self.ed().selections.clone();
         let mut placed: Vec<(usize, Version)> = Vec::with_capacity(sels.len());
         let mut mutated = false;
 
         for sel in &sels {
-            let buf = self.buf();
-            let vnow = buf.version();
-            let len = buf.len();
-            let anchor = buf
-                .transform_offset(sel.anchor, v0, Bias::Left)
-                .unwrap_or_else(|_| sel.anchor.min(len));
-            let head = buf
-                .transform_offset(sel.head, v0, Bias::Left)
-                .unwrap_or_else(|_| sel.head.min(len));
-            let current = Selection { anchor, head, goal: None };
+            let (edit, head, vnow) = {
+                let buf = self.buf();
+                let vnow = buf.version();
+                let len = buf.len();
+                let anchor = buf
+                    .transform_offset(sel.anchor, v0, Bias::Left)
+                    .unwrap_or_else(|_| sel.anchor.min(len));
+                let head = buf
+                    .transform_offset(sel.head, v0, Bias::Left)
+                    .unwrap_or_else(|_| sel.head.min(len));
+                let current = Selection { anchor, head, goal: None };
+                (make(buf, &current), head, vnow)
+            };
 
-            match make(buf, &current) {
+            match edit {
                 Some((range, insert, rel)) => {
-                    match self.core.try_replace(self.buffer, range.clone(), &insert) {
+                    match self.core.try_replace(buffer, range.clone(), &insert) {
                         Ok(version) => {
                             placed.push((range.start + rel, version));
                             mutated = true;
@@ -256,21 +287,24 @@ impl App {
             }
         }
 
-        let buf = self.buf();
-        let vf = buf.version();
-        let len = buf.len();
-        self.selections = placed
-            .into_iter()
-            .map(|(pos, version)| {
-                let pos = if version == vf {
-                    pos
-                } else {
-                    buf.transform_offset(pos, version, Bias::Left)
-                        .unwrap_or_else(|_| pos.min(len))
-                };
-                Selection::caret(pos.min(len))
-            })
-            .collect();
+        let new_selections = {
+            let buf = self.buf();
+            let vf = buf.version();
+            let len = buf.len();
+            placed
+                .into_iter()
+                .map(|(pos, version)| {
+                    let pos = if version == vf {
+                        pos
+                    } else {
+                        buf.transform_offset(pos, version, Bias::Left)
+                            .unwrap_or_else(|_| pos.min(len))
+                    };
+                    Selection::caret(pos.min(len))
+                })
+                .collect()
+        };
+        self.ed_mut().selections = new_selections;
         self.normalize_selections();
         mutated
     }
@@ -279,9 +313,7 @@ impl App {
 
     pub fn insert_text(&mut self, text: &[u8]) -> bool {
         let text = text.to_vec();
-        self.apply_per_selection(|_, sel| {
-            Some((sel.head..sel.head, text.clone(), text.len()))
-        })
+        self.apply_per_selection(|_, sel| Some((sel.head..sel.head, text.clone(), text.len())))
     }
 
     fn backspace(&mut self) -> bool {
@@ -335,28 +367,32 @@ impl App {
     /// caret captures the character under it.
     fn capture_registers(&mut self, collapsed_char: bool) {
         self.normalize_selections();
-        let buf = self.buf();
-        self.registers = self
-            .selections
-            .iter()
-            .map(|sel| {
-                let range = if sel.is_caret() && collapsed_char {
-                    sel.head..next_char(buf, sel.head)
-                } else {
-                    sel.range()
-                };
-                let mut out = Vec::with_capacity(range.len());
-                buf.read_into(range, &mut out);
-                out
-            })
-            .collect();
+        let registers = {
+            let buf = self.buf();
+            self.ed()
+                .selections
+                .iter()
+                .map(|sel| {
+                    let range = if sel.is_caret() && collapsed_char {
+                        sel.head..next_char(buf, sel.head)
+                    } else {
+                        sel.range()
+                    };
+                    let mut out = Vec::with_capacity(range.len());
+                    buf.read_into(range, &mut out);
+                    out
+                })
+                .collect()
+        };
+        self.ed_mut().registers = registers;
     }
 
     fn yank(&mut self) -> bool {
         self.capture_registers(true);
-        if self.mode == Mode::Visual {
-            self.mode = Mode::Normal;
-            for sel in &mut self.selections {
+        let ed = self.ed_mut();
+        if ed.mode == Mode::Visual {
+            ed.mode = Mode::Normal;
+            for sel in &mut ed.selections {
                 let start = sel.range().start;
                 *sel = Selection::caret(start);
             }
@@ -365,11 +401,11 @@ impl App {
     }
 
     fn paste(&mut self) -> bool {
-        if self.registers.is_empty() {
+        if self.ed().registers.is_empty() {
             return false;
         }
         self.begin_undo();
-        let registers = self.registers.clone();
+        let registers = self.ed().registers.clone();
         let mut index = 0;
         let mutated = self.apply_per_selection(move |buf, sel| {
             let text = registers[index % registers.len()].clone();
@@ -399,11 +435,11 @@ impl App {
         extend: bool,
         step: impl Fn(&Buffer, usize, Option<usize>) -> (usize, Option<usize>),
     ) -> bool {
-        let buffer_moved;
+        let mut sels = self.ed().selections.clone();
+        let mut moved = false;
         {
-            let buf = self.core.buffer(self.buffer).expect("app buffer exists");
-            let mut moved = false;
-            for sel in &mut self.selections {
+            let buf = self.buf();
+            for sel in &mut sels {
                 let (head, goal) = step(buf, sel.head, sel.goal);
                 moved |= head != sel.head;
                 sel.head = head;
@@ -412,10 +448,10 @@ impl App {
                     sel.anchor = head;
                 }
             }
-            buffer_moved = moved;
         }
+        self.ed_mut().selections = sels;
         self.normalize_selections();
-        buffer_moved
+        moved
     }
 
     fn move_horiz(&mut self, extend: bool, delta: isize) -> bool {
@@ -497,30 +533,30 @@ impl App {
     // -- multicursor --------------------------------------------------------
 
     fn add_cursor_below(&mut self) -> bool {
-        let Some(last) = self.selections.last().copied() else {
-            return false;
+        let new = {
+            let Some(last) = self.ed().selections.last().copied() else {
+                return false;
+            };
+            let buf = self.buf();
+            let (line, range) = line_bounds(buf, last.head);
+            let col = last.goal.unwrap_or(last.head - range.start);
+            let Some(next) = buf.line_range(line + 1) else {
+                return false;
+            };
+            let head = (next.start + col).min(next.end);
+            Selection { anchor: head, head, goal: Some(col) }
         };
-        let buf = self.buf();
-        let (line, range) = line_bounds(buf, last.head);
-        let col = last.goal.unwrap_or(last.head - range.start);
-        let Some(next) = buf.line_range(line + 1) else {
-            return false;
-        };
-        let head = (next.start + col).min(next.end);
-        self.selections.push(Selection {
-            anchor: head,
-            head,
-            goal: Some(col),
-        });
+        self.ed_mut().selections.push(new);
         self.normalize_selections();
         true
     }
 
     fn collapse_cursors(&mut self) -> bool {
-        if self.selections.len() <= 1 {
+        let ed = self.ed_mut();
+        if ed.selections.len() <= 1 {
             return false;
         }
-        self.selections.truncate(1);
+        ed.selections.truncate(1);
         true
     }
 
@@ -528,20 +564,21 @@ impl App {
 
     fn enter_insert(&mut self) {
         self.begin_undo();
-        self.mode = Mode::Insert;
-        for sel in &mut self.selections {
+        let ed = self.ed_mut();
+        ed.mode = Mode::Insert;
+        for sel in &mut ed.selections {
             sel.anchor = sel.head;
         }
     }
 
     fn leave_insert(&mut self) {
-        self.mode = Mode::Normal;
+        self.ed_mut().mode = Mode::Normal;
         self.prune_noop_undo();
     }
 
     fn open_line(&mut self, below: bool) {
         self.begin_undo();
-        self.mode = Mode::Insert;
+        self.ed_mut().mode = Mode::Insert;
         self.apply_per_selection(|buf, sel| {
             let (_, range) = line_bounds(buf, sel.head);
             if below {
@@ -555,19 +592,18 @@ impl App {
     // -- dispatch -----------------------------------------------------------
 
     /// Insert-mode text from the platform's text-input path (never keycodes).
-    pub fn handle_text(&mut self, text: &str) -> bool {
-        if self.mode != Mode::Insert || text.is_empty() {
+    pub(crate) fn handle_editor_text(&mut self, text: &str) -> bool {
+        if self.ed().mode != Mode::Insert || text.is_empty() {
             return false;
         }
         self.insert_text(text.as_bytes())
     }
 
-    pub fn handle_key(&mut self, kp: KeyPress) -> bool {
-        let dirty = match self.mode {
+    pub(crate) fn handle_editor_key(&mut self, kp: KeyPress) -> bool {
+        match self.ed().mode {
             Mode::Insert => self.key_insert(kp),
             Mode::Normal | Mode::Visual => self.key_modal(kp),
-        };
-        dirty
+        }
     }
 
     fn key_insert(&mut self, kp: KeyPress) -> bool {
@@ -588,10 +624,10 @@ impl App {
     }
 
     fn key_modal(&mut self, kp: KeyPress) -> bool {
-        let extend = self.mode == Mode::Visual;
+        let extend = self.ed().mode == Mode::Visual;
 
         // Pending multi-key sequences (gg, dd).
-        if let Some(prefix) = self.pending.take() {
+        if let Some(prefix) = self.ed_mut().pending.take() {
             return match (prefix, kp.key) {
                 ('g', Key::Char('g')) if !kp.mods.shift => self.move_doc_start(extend),
                 ('d', Key::Char('d')) if !kp.mods.shift => {
@@ -616,7 +652,7 @@ impl App {
             (Key::Char('w'), false, false) => self.move_word_fwd(extend),
             (Key::Char('b'), false, false) => self.move_word_back(extend),
             (Key::Char('g'), false, false) => {
-                self.pending = Some('g');
+                self.ed_mut().pending = Some('g');
                 false
             }
             (Key::Char('g'), false, true) => self.move_doc_end(extend),
@@ -650,8 +686,9 @@ impl App {
             }
 
             (Key::Char('v'), false, false) => {
-                self.mode = if self.mode == Mode::Visual {
-                    for sel in &mut self.selections {
+                let ed = self.ed_mut();
+                ed.mode = if ed.mode == Mode::Visual {
+                    for sel in &mut ed.selections {
                         sel.anchor = sel.head;
                     }
                     Mode::Normal
@@ -665,20 +702,21 @@ impl App {
                 self.begin_undo();
                 let mutated = self.delete_selections();
                 self.prune_noop_undo();
-                if self.mode == Mode::Visual {
-                    self.mode = Mode::Normal;
+                let ed = self.ed_mut();
+                if ed.mode == Mode::Visual {
+                    ed.mode = Mode::Normal;
                 }
                 mutated
             }
             (Key::Char('d'), false, false) => {
-                if self.mode == Mode::Visual {
+                if self.ed().mode == Mode::Visual {
                     self.begin_undo();
                     let mutated = self.delete_selections();
                     self.prune_noop_undo();
-                    self.mode = Mode::Normal;
+                    self.ed_mut().mode = Mode::Normal;
                     mutated
                 } else {
-                    self.pending = Some('d');
+                    self.ed_mut().pending = Some('d');
                     false
                 }
             }
@@ -690,12 +728,13 @@ impl App {
             (Key::Char(','), false, false) => self.collapse_cursors(),
 
             (Key::Esc, ..) => {
-                self.pending = None;
-                let had_many = self.selections.len() > 1;
-                if self.mode == Mode::Visual {
-                    self.mode = Mode::Normal;
+                let ed = self.ed_mut();
+                ed.pending = None;
+                let had_many = ed.selections.len() > 1;
+                if ed.mode == Mode::Visual {
+                    ed.mode = Mode::Normal;
                 }
-                for sel in &mut self.selections {
+                for sel in &mut ed.selections {
                     sel.anchor = sel.head;
                 }
                 self.normalize_selections();

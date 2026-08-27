@@ -9,6 +9,8 @@ repository.workspace = true
 [dependencies]
 kawoosh-core.workspace = true
 kawoosh-ui.workspace = true
+kawoosh-term.workspace = true
+crossbeam-channel.workspace = true
 
 sdl3.workspace = true
 cosmic-text.workspace = true

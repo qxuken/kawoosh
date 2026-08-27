@@ -4,12 +4,17 @@
 //! text through `App::handle_text` — and asserts buffer text, selections,
 //! and modes. No SDL anywhere.
 
-use kawoosh::app::App;
+use kawoosh::app::{App, EditorState, encode_terminal_key};
 use kawoosh::editor::Mode;
-use kawoosh::keys::{Key, KeyPress};
+use kawoosh::keys::{Key, KeyPress, Mods};
+use kawoosh_term::{TermSize, Terminal};
+
+fn ed(app: &App) -> &EditorState {
+    app.active_editor().expect("active view is an editor")
+}
 
 fn text_of(app: &App) -> String {
-    let buf = app.core.buffer(app.buffer).unwrap();
+    let buf = app.core.buffer(ed(app).buffer).unwrap();
     let mut out = Vec::new();
     buf.read_into(0..buf.len(), &mut out);
     String::from_utf8(out).unwrap()
@@ -34,7 +39,7 @@ fn typing(app: &mut App, text: &str) {
 }
 
 fn heads(app: &App) -> Vec<usize> {
-    app.selections.iter().map(|s| s.head).collect()
+    ed(app).selections.iter().map(|s| s.head).collect()
 }
 
 #[test]
@@ -72,10 +77,10 @@ fn insert_mode_edits_and_undo() {
     let mut app = App::open("t", b"world");
 
     keys(&mut app, "i");
-    assert_eq!(app.mode, Mode::Insert);
+    assert_eq!(ed(&app).mode, Mode::Insert);
     typing(&mut app, "hello ");
     press(&mut app, Key::Esc);
-    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(ed(&app).mode, Mode::Normal);
     assert_eq!(text_of(&app), "hello world");
 
     keys(&mut app, "u");
@@ -91,7 +96,7 @@ fn multicursor_typing_hits_every_line() {
     // Three cursors at the starts of the three lines.
     shifted(&mut app, 'c');
     shifted(&mut app, 'c');
-    assert_eq!(app.selections.len(), 3);
+    assert_eq!(ed(&app).selections.len(), 3);
 
     keys(&mut app, "i");
     typing(&mut app, "# ");
@@ -112,7 +117,7 @@ fn multicursor_delete_and_collapse() {
     assert_eq!(text_of(&app), "bc\nbc\n");
 
     keys(&mut app, ",");
-    assert_eq!(app.selections.len(), 1);
+    assert_eq!(ed(&app).selections.len(), 1);
 }
 
 #[test]
@@ -120,9 +125,9 @@ fn visual_select_delete() {
     let mut app = App::open("t", b"hello world");
 
     keys(&mut app, "vllll");
-    assert_eq!(app.mode, Mode::Visual);
+    assert_eq!(ed(&app).mode, Mode::Visual);
     keys(&mut app, "d");
-    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(ed(&app).mode, Mode::Normal);
     assert_eq!(text_of(&app), "o world");
 }
 
@@ -132,7 +137,7 @@ fn yank_and_paste() {
 
     keys(&mut app, "vl"); // select "ab"... head exclusive: selects "a"? range 0..1
     keys(&mut app, "y");
-    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(ed(&app).mode, Mode::Normal);
     keys(&mut app, "p");
     assert_eq!(text_of(&app), "aab\n");
 }
@@ -154,7 +159,7 @@ fn open_line_below_and_above() {
     let mut app = App::open("t", b"a\nb");
 
     keys(&mut app, "o");
-    assert_eq!(app.mode, Mode::Insert);
+    assert_eq!(ed(&app).mode, Mode::Insert);
     typing(&mut app, "x");
     press(&mut app, Key::Esc);
     assert_eq!(text_of(&app), "a\nx\nb");
@@ -201,7 +206,7 @@ fn empty_insert_session_leaves_no_undo_entry() {
 
     keys(&mut app, "i");
     press(&mut app, Key::Esc);
-    assert!(app.undo.is_empty());
+    assert!(ed(&app).undo.is_empty());
 
     keys(&mut app, "u"); // nothing to undo, no crash
     assert_eq!(text_of(&app), "abc");
@@ -218,15 +223,56 @@ fn utf8_motion_is_char_wise() {
 }
 
 #[test]
+fn terminal_view_cycle_and_scrollback_to_buffer() {
+    let mut app = App::open("t", b"file contents");
+
+    // Adopt a headless terminal as a view; it becomes active.
+    let id = app.open_terminal(Terminal::headless(TermSize { rows: 5, cols: 40 }));
+    assert!(app.active_editor().is_none());
+    app.terminal_by_id_mut(id)
+        .unwrap()
+        .terminal
+        .feed(b"build ok\r\nsrc/main.rs:42: warning\r\n");
+
+    // Cycle back to the editor and forward to the terminal again.
+    assert!(app.cycle_view(1));
+    assert!(app.active_editor().is_some());
+    assert!(app.cycle_view(1));
+    assert!(app.active_editor().is_none());
+
+    // Scrollback materializes into a real, editable buffer view.
+    assert!(app.scrollback_to_buffer());
+    let text = text_of(&app);
+    assert!(text.contains("src/main.rs:42: warning"), "{text:?}");
+    // And it is a normal editor: modal editing works on it.
+    keys(&mut app, "wdd");
+    assert!(app.active_editor().is_some());
+}
+
+#[test]
+fn terminal_key_encoding() {
+    assert_eq!(encode_terminal_key(KeyPress::of(Key::Enter)), Some(b"\r".to_vec()));
+    assert_eq!(encode_terminal_key(KeyPress::of(Key::Esc)), Some(b"\x1b".to_vec()));
+    assert_eq!(encode_terminal_key(KeyPress::of(Key::Up)), Some(b"\x1b[A".to_vec()));
+    // Ctrl-C is 0x03.
+    assert_eq!(
+        encode_terminal_key(KeyPress { key: Key::Char('c'), mods: Mods::CTRL }),
+        Some(vec![0x03])
+    );
+    // Printable chars travel via the text-input path instead.
+    assert_eq!(encode_terminal_key(KeyPress::plain('x')), None);
+}
+
+#[test]
 fn scroll_follows_cursor() {
     let text: String = (0..100).map(|i| format!("line {i}\n")).collect();
     let mut app = App::open("t", text.as_bytes());
 
     shifted(&mut app, 'g'); // G: end of document
     assert!(app.ensure_visible(10));
-    assert!(app.scroll >= 90, "scroll {} follows line 100", app.scroll);
+    assert!(ed(&app).scroll >= 90, "scroll {} follows line 100", ed(&app).scroll);
 
     keys(&mut app, "gg");
     assert!(app.ensure_visible(10));
-    assert_eq!(app.scroll, 0);
+    assert_eq!(ed(&app).scroll, 0);
 }

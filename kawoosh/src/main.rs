@@ -1,20 +1,25 @@
-//! The SDL3 shell (docs/design/mvp.md, milestones 2-3).
+//! The SDL3 shell (docs/design/mvp.md, milestones 2-5).
 //!
 //! Event-driven: the loop blocks on `wait_event`, drains whatever queued, and
 //! redraws once if anything marked the frame dirty. Each dirty frame builds
 //! the element tree ([`App::frame`]), solves it with `kawoosh_ui::layout`,
 //! and executes the command list into a CPU framebuffer uploaded as one
-//! streaming texture. The painter is deliberately the thinnest replaceable
-//! layer.
+//! streaming texture. Pty readers run on io threads and wake the loop with a
+//! custom SDL event; bytes flow through one channel into the terminal
+//! models. The painter is deliberately the thinnest replaceable layer.
+
+use std::io::Read;
 
 use anyhow::{Context as _, Result};
-use kawoosh::app::{App, BG, EDITOR_VIEW, FG};
+use crossbeam_channel::{Receiver, Sender};
+use kawoosh::app::{App, BG, DIM, EDITOR_VIEW, FG, TERMINAL_VIEW, View};
 use kawoosh::editor::Mode;
 use kawoosh::keys::{self, Key, KeyPress, Mods};
 use kawoosh::paint::Frame;
 use kawoosh::text::TextEngine;
+use kawoosh_term::{TermSize, Terminal};
 use kawoosh_ui::{Command, Rect};
-use sdl3::event::{Event, WindowEvent};
+use sdl3::event::{Event, EventSender, WindowEvent};
 use sdl3::keyboard::{Keycode, Mod};
 use sdl3::pixels::PixelFormat;
 
@@ -22,7 +27,34 @@ const FONT_SIZE_PT: f32 = 14.0;
 const PAD_X: f32 = 8.0;
 const SEL_BG: [u8; 4] = [0x2E, 0x43, 0x6E, 0xFF];
 
-const WELCOME: &[u8] = b"kawoosh\n\nOpen a file: kawoosh <path>\n";
+const WELCOME: &[u8] = b"kawoosh\n\nOpen a file:  kawoosh <path>\nTerminal:     ctrl-t   (ctrl-y: scrollback to buffer)\nCycle views:  ctrl-o\nQuit:         ctrl-q\n";
+
+/// Wake-up marker pushed by pty reader threads; payload rides the channel.
+struct PtyWake;
+
+fn spawn_pty_reader(
+    id: usize,
+    mut reader: Box<dyn Read + Send>,
+    tx: Sender<(usize, Vec<u8>)>,
+    wake: EventSender,
+) {
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => {
+                    let _ = tx.send((id, Vec::new()));
+                    let _ = wake.push_custom_event(PtyWake);
+                    break;
+                }
+                Ok(n) => {
+                    let _ = tx.send((id, buf[..n].to_vec()));
+                    let _ = wake.push_custom_event(PtyWake);
+                }
+            }
+        }
+    });
+}
 
 /// Prefix width of `text` up to byte offset `off`, clamped to a boundary.
 fn prefix_x(engine: &mut TextEngine, text: &str, off: usize) -> f32 {
@@ -31,17 +63,23 @@ fn prefix_x(engine: &mut TextEngine, text: &str, off: usize) -> f32 {
     engine.measure_text(prefix).0
 }
 
-/// Draw the editor view into its solved rect.
+/// Draw the active editor view into its solved rect.
 fn draw_editor(app: &App, engine: &mut TextEngine, frame: &mut Frame, rect: Rect, pad_x: f32) {
+    let Some(ed) = app.active_editor() else {
+        return;
+    };
+    let Some(buf) = app.core.buffer(ed.buffer) else {
+        return;
+    };
+
     frame.set_clip(Some(rect));
 
     let rows = (rect.h / engine.line_height).ceil() as usize;
-    let buf = app.core.buffer(app.buffer).expect("app buffer exists");
     let cell_w = engine.measure_text("M").0;
 
     let mut scratch = Vec::new();
     for row in 0..rows {
-        let line = app.scroll + row;
+        let line = ed.scroll + row;
         let Some(range) = buf.line_range(line) else {
             break;
         };
@@ -53,7 +91,7 @@ fn draw_editor(app: &App, engine: &mut TextEngine, frame: &mut Frame, rect: Rect
         let y = rect.y + row as f32 * engine.line_height;
 
         // Selection backgrounds under the text.
-        for sel in &app.selections {
+        for sel in &ed.selections {
             let sr = sel.range();
             if sel.is_caret() || sr.end <= range.start || sr.start > range.end {
                 continue;
@@ -75,7 +113,7 @@ fn draw_editor(app: &App, engine: &mut TextEngine, frame: &mut Frame, rect: Rect
         engine.draw_line(frame, &text, x0 as i32, y as i32, [FG[0], FG[1], FG[2]]);
 
         // Carets on this line (line end included).
-        for sel in &app.selections {
+        for sel in &ed.selections {
             let head = sel.head.min(buf.len());
             if head < range.start || head > range.end || buf.line_of_offset(head) != line {
                 continue;
@@ -83,7 +121,7 @@ fn draw_editor(app: &App, engine: &mut TextEngine, frame: &mut Frame, rect: Rect
             let col = head - range.start;
             let cx = x0 + prefix_x(engine, &text, col);
 
-            if app.mode == Mode::Insert {
+            if ed.mode == Mode::Insert {
                 frame.fill_rect(Rect::new(cx, y, 2.0, engine.line_height), FG);
             } else {
                 let ch = text
@@ -105,6 +143,88 @@ fn draw_editor(app: &App, engine: &mut TextEngine, frame: &mut Frame, rect: Rect
                     );
                 }
             }
+        }
+    }
+
+    frame.set_clip(None);
+}
+
+/// Draw the active terminal view: resize the model to the rect's grid, then
+/// paint row runs grouped by style.
+fn draw_terminal(app: &mut App, engine: &mut TextEngine, frame: &mut Frame, rect: Rect, pad_x: f32) {
+    let cell_w = engine.measure_text("M").0;
+    let line_h = engine.line_height;
+    let grid_rows = ((rect.h / line_h).floor() as u16).max(1);
+    let grid_cols = (((rect.w - pad_x * 2.0) / cell_w).floor() as u16).max(1);
+
+    let Some(view) = app.active_terminal_mut() else {
+        return;
+    };
+    view.terminal.resize(TermSize { rows: grid_rows, cols: grid_cols });
+
+    // Materialize the grid; alacritty iterates cells in order.
+    let mut cells: Vec<(usize, usize, kawoosh_term::CellView)> = Vec::new();
+    view.terminal.for_each_cell(|row, col, cell| cells.push((row, col, cell)));
+    let cursor = view.terminal.cursor();
+
+    frame.set_clip(Some(rect));
+    let x0 = rect.x + pad_x;
+
+    // Backgrounds first, then glyph runs grouped by row + color.
+    for &(row, col, ref cell) in &cells {
+        if let Some(bg) = cell.bg {
+            frame.fill_rect(
+                Rect::new(x0 + col as f32 * cell_w, rect.y + row as f32 * line_h, cell_w, line_h),
+                bg,
+            );
+        }
+    }
+
+    let mut run = String::new();
+    let mut run_start: Option<(usize, usize, [u8; 4])> = None;
+    let mut flush = |engine: &mut TextEngine, frame: &mut Frame, run: &mut String,
+                     start: &mut Option<(usize, usize, [u8; 4])>| {
+        if let Some((row, col, fg)) = start.take() {
+            if !run.trim().is_empty() {
+                engine.draw_line(
+                    frame,
+                    run,
+                    (x0 + col as f32 * cell_w) as i32,
+                    (rect.y + row as f32 * line_h) as i32,
+                    [fg[0], fg[1], fg[2]],
+                );
+            }
+            run.clear();
+        }
+    };
+
+    let mut expected: Option<(usize, usize, [u8; 4])> = None;
+    for &(row, col, ref cell) in &cells {
+        let continues = matches!(
+            (&run_start, expected),
+            (Some((srow, _, sfg)), Some((erow, ecol, efg)))
+                if *srow == erow && row == erow && col == ecol && *sfg == efg && cell.fg == efg
+        );
+        if !continues {
+            flush(engine, frame, &mut run, &mut run_start);
+            run_start = Some((row, col, cell.fg));
+        }
+        run.push(cell.c);
+        expected = Some((row, col + 1, cell.fg));
+    }
+    flush(engine, frame, &mut run, &mut run_start);
+
+    // Block cursor.
+    if let Some((crow, ccol)) = cursor {
+        let cx = x0 + ccol as f32 * cell_w;
+        let cy = rect.y + crow as f32 * line_h;
+        frame.fill_rect(Rect::new(cx, cy, cell_w, line_h), DIM);
+        if let Some((_, _, cell)) = cells
+            .iter()
+            .find(|(r, c, _)| *r == crow && *c == ccol)
+        {
+            let s = cell.c.to_string();
+            engine.draw_line(frame, &s, cx as i32, cy as i32, [BG[0], BG[1], BG[2]]);
         }
     }
 
@@ -151,6 +271,35 @@ fn write_ppm(path: &str, rgba: &[u8], width: u32, height: u32) -> Result<()> {
     std::fs::write(path, out).with_context(|| format!("writing frame dump {path}"))
 }
 
+fn open_terminal(
+    app: &mut App,
+    tx: &Sender<(usize, Vec<u8>)>,
+    wake: &sdl3::EventSubsystem,
+) -> Result<()> {
+    let (terminal, reader) = Terminal::spawn(None, TermSize { rows: 24, cols: 80 })?;
+    let id = app.open_terminal(terminal);
+    spawn_pty_reader(id, reader, tx.clone(), wake.event_sender());
+    Ok(())
+}
+
+fn drain_pty(app: &mut App, rx: &Receiver<(usize, Vec<u8>)>) -> bool {
+    let mut dirty = false;
+    while let Ok((id, bytes)) = rx.try_recv() {
+        let active_terminal = matches!(app.active_view(), View::Terminal(t) if t.id == id);
+        if let Some(view) = app.terminal_by_id_mut(id) {
+            if bytes.is_empty() {
+                if !view.title.ends_with("[exited]") {
+                    view.title = format!("{} [exited]", view.title);
+                }
+            } else {
+                view.terminal.feed(&bytes);
+            }
+            dirty |= active_terminal;
+        }
+    }
+    dirty
+}
+
 fn main() -> Result<()> {
     env_logger::init();
 
@@ -164,6 +313,13 @@ fn main() -> Result<()> {
 
     let sdl = sdl3::init().context("SDL_Init")?;
     let video = sdl.video().context("SDL video subsystem")?;
+    let events = sdl.event().context("SDL event subsystem")?;
+    events
+        .register_custom_event::<PtyWake>()
+        .ok()
+        .context("registering pty wake event")?;
+
+    let (pty_tx, pty_rx) = crossbeam_channel::unbounded::<(usize, Vec<u8>)>();
 
     let window = video
         .window("kawoosh", 1200, 800)
@@ -197,9 +353,20 @@ fn main() -> Result<()> {
         app.ensure_visible(rows.saturating_sub(2).max(1));
     }
 
-    // Bindings come from key events; insert-mode content from text input.
-    // Text input runs only while in insert mode, so the keypress that enters
-    // the mode cannot also arrive as text.
+    // Headless verification: open a shell terminal and let it settle so the
+    // first-frame dump shows real pty output.
+    if std::env::var("KAWOOSH_TERM").is_ok() {
+        open_terminal(&mut app, &pty_tx, &events)?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(900);
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            drain_pty(&mut app, &pty_rx);
+        }
+    }
+
+    // Bindings come from key events; insert-mode/terminal content from text
+    // input, which runs only when a view wants it, so the keypress that
+    // enters insert mode cannot also arrive as text.
     let text_input = video.text_input();
     let mut text_input_active = false;
 
@@ -209,6 +376,8 @@ fn main() -> Result<()> {
     let mut wheel: f32 = 0.0;
 
     'run: loop {
+        dirty |= drain_pty(&mut app, &pty_rx);
+
         if dirty {
             let root = app.frame(scale, engine.line_height);
             let viewport = Rect::new(0.0, 0.0, pw as f32, ph as f32);
@@ -232,6 +401,9 @@ fn main() -> Result<()> {
                     }
                     Command::Custom { id: EDITOR_VIEW, rect } => {
                         draw_editor(&app, &mut engine, &mut frame, *rect, pad_x);
+                    }
+                    Command::Custom { id: TERMINAL_VIEW, rect } => {
+                        draw_terminal(&mut app, &mut engine, &mut frame, *rect, pad_x);
                     }
                     Command::Custom { .. } => {}
                     Command::PushClip(rect) => {
@@ -274,12 +446,37 @@ fn main() -> Result<()> {
                 } => {
                     let scancode = scancode.map(|s| s as u16).unwrap_or(0);
                     if let Some(kp) = map_key(keycode, scancode, keymod) {
-                        if kp.key == Key::Char('q') && kp.mods.ctrl {
-                            break 'run;
+                        if kp.mods.ctrl {
+                            // Global chords, valid in every view.
+                            match kp.key {
+                                Key::Char('q') => break 'run,
+                                Key::Char('t') => {
+                                    open_terminal(&mut app, &pty_tx, &events)?;
+                                    dirty = true;
+                                    pending = event_pump.poll_event();
+                                    continue;
+                                }
+                                Key::Char('o') => {
+                                    dirty |= app.cycle_view(1);
+                                    pending = event_pump.poll_event();
+                                    continue;
+                                }
+                                Key::Char('y') => {
+                                    dirty |= app.scrollback_to_buffer();
+                                    pending = event_pump.poll_event();
+                                    continue;
+                                }
+                                _ => {}
+                            }
                         }
+                        let editor_active = app.active_editor().is_some();
                         match kp.key {
-                            Key::PageUp => dirty |= app.scroll_by(-page.max(1)),
-                            Key::PageDown => dirty |= app.scroll_by(page.max(1)),
+                            Key::PageUp if editor_active => {
+                                dirty |= app.scroll_by(-page.max(1));
+                            }
+                            Key::PageDown if editor_active => {
+                                dirty |= app.scroll_by(page.max(1));
+                            }
                             _ => {
                                 dirty |= app.handle_key(kp);
                                 let rows = (ph as f32 / engine.line_height) as usize;
@@ -296,11 +493,13 @@ fn main() -> Result<()> {
                 }
 
                 Event::MouseWheel { y, .. } => {
-                    wheel += -y * 3.0;
-                    let lines = wheel.trunc() as isize;
-                    if lines != 0 {
-                        wheel -= lines as f32;
-                        dirty |= app.scroll_by(lines);
+                    if app.active_editor().is_some() {
+                        wheel += -y * 3.0;
+                        let lines = wheel.trunc() as isize;
+                        if lines != 0 {
+                            wheel -= lines as f32;
+                            dirty |= app.scroll_by(lines);
+                        }
                     }
                 }
 
@@ -325,7 +524,9 @@ fn main() -> Result<()> {
             pending = event_pump.poll_event();
         }
 
-        let want_text_input = app.mode == Mode::Insert;
+        dirty |= drain_pty(&mut app, &pty_rx);
+
+        let want_text_input = app.wants_text_input();
         if want_text_input != text_input_active {
             if want_text_input {
                 text_input.start(canvas.window());
