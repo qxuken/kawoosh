@@ -1,5 +1,5 @@
 [package]
-name = "core"
+name = "kawoosh-core"
 publish.workspace = true
 version.workspace = true
 edition.workspace = true

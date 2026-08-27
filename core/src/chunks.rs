@@ -6,7 +6,7 @@
 //! [`Buffer::visit_range`](crate::Buffer::visit_range):
 //!
 //! ```
-//! # use core::{Core, LayerSpec};
+//! # use kawoosh_core::{Core, LayerSpec};
 //! let mut core = Core::default();
 //! let buffer = core.create_buffer();
 //! core.set_text(buffer, b"hello world");
