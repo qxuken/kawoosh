@@ -1,5 +1,5 @@
 [package]
-name = "kawoosh"
+name = "kawoosh-term"
 publish.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -7,12 +7,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-kawoosh-core.workspace = true
-kawoosh-ui.workspace = true
-
-sdl3.workspace = true
-cosmic-text.workspace = true
-
+alacritty_terminal.workspace = true
+portable-pty.workspace = true
 anyhow.workspace = true
 log.workspace = true
-env_logger.workspace = true

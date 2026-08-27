@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "kawoosh", "text-buffer"]
+members = ["core", "kawoosh", "term", "text-buffer", "ui"]
 
 [workspace.package]
 publish = false
@@ -16,8 +16,20 @@ kawoosh-core = { path = "./core" }
 log = { version = "0.4.33", features = ["serde"] }
 env_logger = "0.11.11"
 
+kawoosh-ui = { path = "./ui" }
+kawoosh-term = { path = "./term" }
+
 sdl3 = "0.18"
 cosmic-text = "0.19"
+alacritty_terminal = "0.26"
+portable-pty = "0.9"
+crossbeam-channel = "0.5"
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
+lsp-types = "0.97"
+mlua = { version = "0.12", features = ["luajit", "vendored"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde_json = "1"
 
 anyhow = { version = "1.0.104", features = ["backtrace"] }
 mimalloc = "0.1.52"

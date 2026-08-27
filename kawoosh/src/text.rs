@@ -1,23 +1,20 @@
 //! CPU text engine: cosmic-text shaping + swash rasterization composited into
-//! an RGBA framebuffer the shell uploads as one streaming texture per frame.
+//! the [`Frame`](crate::paint::Frame).
 //!
 //! Deliberately thin (docs/design/mvp.md, Decision 1): everything here is a
-//! pure function of text + metrics, and nothing knows SDL exists.
+//! pure function of text + metrics, and nothing knows SDL exists. Implements
+//! [`kawoosh_ui::Measure`], which is the only service the layout crate needs
+//! from a text stack.
 
 use cosmic_text::{
     Attrs, Buffer as ShapeBuffer, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent,
     Wrap,
 };
 
+use crate::paint::Frame;
+
 const EMBEDDED_FONT: &[u8] =
     include_bytes!("../../assets/fonts/IosevkaNavcon/IosevkaNavcon-Regular.ttf");
-
-/// An RGBA8 framebuffer view the engine composites into.
-pub struct Frame<'a> {
-    pub data: &'a mut [u8],
-    pub width: usize,
-    pub height: usize,
-}
 
 pub struct TextEngine {
     font_system: FontSystem,
@@ -56,16 +53,30 @@ impl TextEngine {
         }
     }
 
-    /// Composite one line of text with its top-left corner at `(x, y)`.
-    pub fn draw_line(&mut self, frame: &mut Frame, text: &str, x: i32, y: i32, color: [u8; 3]) {
+    fn shape(&mut self, text: &str) {
         let family = match &self.family {
             Some(name) => Family::Name(name),
             None => Family::Monospace,
         };
         let attrs = Attrs::new().family(family);
-
         self.line.set_text(text, &attrs, Shaping::Advanced, None);
         self.line.shape_until_scroll(&mut self.font_system, false);
+    }
+
+    /// Width and height of `text` as one unwrapped line.
+    pub fn measure_text(&mut self, text: &str) -> (f32, f32) {
+        self.shape(text);
+        let width = self
+            .line
+            .layout_runs()
+            .map(|run| run.line_w)
+            .fold(0.0f32, f32::max);
+        (width, self.line_height)
+    }
+
+    /// Composite one line of text with its top-left corner at `(x, y)`.
+    pub fn draw_line(&mut self, frame: &mut Frame, text: &str, x: i32, y: i32, color: [u8; 3]) {
+        self.shape(text);
 
         for run in self.line.layout_runs() {
             for glyph in run.glyphs {
@@ -81,10 +92,24 @@ impl TextEngine {
                 let gx = physical.x + image.placement.left;
                 let gy = physical.y - image.placement.top;
 
-                blit(frame, &image.content, &image.data, image.placement.width,
-                    image.placement.height, gx, gy, color);
+                blit(
+                    frame,
+                    &image.content,
+                    &image.data,
+                    image.placement.width,
+                    image.placement.height,
+                    gx,
+                    gy,
+                    color,
+                );
             }
         }
+    }
+}
+
+impl kawoosh_ui::Measure for TextEngine {
+    fn text_size(&mut self, text: &str) -> (f32, f32) {
+        self.measure_text(text)
     }
 }
 
@@ -102,17 +127,7 @@ fn blit(
     let (width, height) = (width as i32, height as i32);
 
     for row in 0..height {
-        let y = y0 + row;
-        if y < 0 || y >= frame.height as i32 {
-            continue;
-        }
-
         for col in 0..width {
-            let x = x0 + col;
-            if x < 0 || x >= frame.width as i32 {
-                continue;
-            }
-
             let src = (row * width + col) as usize;
             let (rgb, alpha) = match content {
                 SwashContent::Mask => (color, data[src]),
@@ -125,18 +140,7 @@ fn blit(
                 SwashContent::SubpixelMask => (color, data[src * 4 + 1]),
             };
 
-            if alpha == 0 {
-                continue;
-            }
-
-            let dst = (y as usize * frame.width + x as usize) * 4;
-            let pixel = &mut frame.data[dst..dst + 4];
-            let a = alpha as u32;
-            for channel in 0..3 {
-                let blended = (rgb[channel] as u32 * a + pixel[channel] as u32 * (255 - a)) / 255;
-                pixel[channel] = blended as u8;
-            }
-            pixel[3] = 0xFF;
+            frame.blend(x0 + col, y0 + row, rgb, alpha);
         }
     }
 }
