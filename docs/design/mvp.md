@@ -1,7 +1,26 @@
 # MVP: a multiplexed terminal that is also an editor
 
-Status: proposed, 2026-08-28. Companion to [core.md](core.md), which documents
-the buffer/metadata layer this builds on.
+Status: accepted 2026-08-28; milestones 1-9 implemented same day (see git
+history, one commit per milestone). Companion to [core.md](core.md), which
+documents the buffer/metadata layer this builds on.
+
+Implementation notes — where reality is thinner than the design, so the gaps
+are records rather than surprises:
+
+- **Landed at full design depth**: Arc migration, SDL3 shell + cosmic-text,
+  kawoosh-ui, selection-first modal editing with multicursors and hybrid key
+  dispatch, terminal views with the $EDITOR handoff socket, the ts and lsp
+  systems through the provider/journal path (verified against rust-analyzer),
+  Lua runtime (all four verbs; callbacks read a published snapshot and queue
+  effect messages — the data boundary applied to the embedding), SQLite
+  state + session restore.
+- **Thinner than designed, still open**: splits and docks (the view list is
+  flat; one pane); completion/hover UX (Decision 5) untouched — no completion
+  yet; compile mode and the locations table (5c) not built; the oil file
+  manager (5b) not built — it is still the extension API's acceptance test;
+  Lua keymaps cover plain/shifted chars in normal mode only; workspace
+  `.kawoosh/` activation (7b) not built — state is global-scope only;
+  terminals are not restored by sessions.
 
 ## The thesis
 
