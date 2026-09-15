@@ -557,10 +557,9 @@ mod tests {
         // deleted — each still read as a whole parse would.
         let open = buf.text().find("fn f50(").unwrap();
         buf.replace(open..open, "/*");
-        let mut edits = vec![open..open + 2];
         let close = buf.text().find("fn f150(").unwrap();
         buf.replace(close..close, "*/");
-        edits.push(close..close + 2);
+        let edits = [open..open + 2, close..close + 2];
         for step in 0..3 {
             if step == 2 {
                 for r in edits.iter().rev() {
