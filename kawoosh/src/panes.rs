@@ -13,6 +13,7 @@ use crate::layout::{Content, Node, PaneId, SplitDir};
 use crate::palette::syntax_color;
 use crate::rows::{self, Caret, Drawn, GUTTER_W, LH, LineDraw, STRIP_H};
 use crate::terminals::TermId;
+use kawoosh_systems::lsp::DIAG_LAYER;
 use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
 
 impl Kawoosh {
@@ -438,6 +439,12 @@ impl Kawoosh {
         let cur_line = buf.line_of(primary.head);
         let title = buf.name.clone();
         let dark = ui.theme().is_dark();
+        let diag_messages = self.lsp.messages.get(&buf_id);
+        let diag_colors = [pal.dim, pal.danger, pal.command, pal.dim, pal.faint];
+        let ghost = self
+            .completion_typed()
+            .filter(|(v, _)| *v == view && focused)
+            .and_then(|(_, typed)| self.lsp.completion.as_ref()?.ghost(&typed));
         let caret_kind = if mode == Mode::Insert {
             Caret::Bar
         } else {
@@ -538,6 +545,24 @@ impl Kawoosh {
                                     (a < b).then_some((a..b, c))
                                 })
                                 .collect();
+                            let diags = buf.runs(DIAG_LAYER, range.clone());
+                            let underlined: Vec<(Range<usize>, kui::Color)> = diags
+                                .iter()
+                                .filter_map(|r| {
+                                    let a = clip(r.range.start);
+                                    let b = clip(r.range.end.min(range.end));
+                                    let c = diag_colors[(r.style as usize).min(4)];
+                                    (a < b).then_some((a..b, c))
+                                })
+                                .collect();
+                            let trailing = diags.first().and_then(|r| {
+                                let m = diag_messages?.get(r.tag as usize)?;
+                                Some((m.as_str(), diag_colors[(r.style as usize).min(4)]))
+                            });
+                            let ghost_here = ghost
+                                .as_deref()
+                                .filter(|_| ln == cur_line)
+                                .map(|g| (clip(primary.head), g));
                             rows::emit_line(
                                 ui,
                                 font,
@@ -549,8 +574,9 @@ impl Kawoosh {
                                     styled: &styled,
                                     carets: &carets,
                                     access,
-                                    underlined: &[],
-                                    trailing: None,
+                                    underlined: &underlined,
+                                    trailing,
+                                    ghost: ghost_here,
                                 },
                             );
                         }

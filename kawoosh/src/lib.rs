@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod layout;
+pub mod lsp;
 pub mod palette;
 pub mod panes;
 pub mod rows;

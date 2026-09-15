@@ -21,6 +21,7 @@ use kui::{FontId, NodeSpec, Sizing, Ui, UiEvent, Value, WindowCommand};
 
 use crate::Pal;
 use crate::layout::{Content, Layout, PaneId, SplitDir};
+use crate::lsp::LspState;
 use crate::rows::{self, Drawn, LH, STRIP_H};
 use crate::terminals::{TermId, Terminals};
 
@@ -36,6 +37,7 @@ pub struct Kawoosh {
     pub terms: Terminals,
     pub io: Io,
     pub ts: Ts,
+    pub lsp: LspState,
     pub(crate) wake: WakeHandle,
     /// The version each buffer was last sent to `ts`, so a frame submits
     /// only what changed.
@@ -77,6 +79,7 @@ impl Kawoosh {
             terms: Terminals::default(),
             io: Io::new(wake.clone()),
             ts: Ts::spawn(wake.clone()),
+            lsp: LspState::new(wake.clone()),
             wake,
             ts_sent: HashMap::new(),
             socket: None,
@@ -544,6 +547,9 @@ impl Kawoosh {
                 }
                 self.ed.remove_buffer(cur);
                 self.release_waiters(cur);
+                self.lsp
+                    .lsp
+                    .send(kawoosh_systems::lsp::Cmd::Close { buffer: cur });
             }
             "buffer_list" => {
                 let cur = self.focused_view().map(|v| self.ed.views[v].buffer);
@@ -564,7 +570,11 @@ impl Kawoosh {
                     .collect();
                 self.ed.message = list.join("   ");
             }
-            _ => self.ed.message = format!("not a command: {name}"),
+            _ => {
+                if !self.lsp_command(name) {
+                    self.ed.message = format!("not a command: {name}");
+                }
+            }
         }
     }
 
@@ -586,7 +596,12 @@ impl Kawoosh {
             text: p.get("text").and_then(Value::as_str).map(str::to_string),
         };
         if let Some(v) = self.focused_view() {
-            self.ed.key(v, stroke);
+            if self.completion_key(&stroke) {
+                self.follow_caret = true;
+                return;
+            }
+            self.ed.key(v, stroke.clone());
+            self.completion_after_key(&stroke);
         } else if let Some(t) = self.term_of(self.layout.focused()) {
             self.term_key(t, stroke);
         }
@@ -742,6 +757,7 @@ impl kui::App for Kawoosh {
     fn view(&mut self, ui: &mut Ui<'_>) {
         self.drain_io();
         self.sync_syntax();
+        self.sync_lsp();
         if self.quit {
             ui.window_command(WindowCommand::Close(ui.env().window.id));
         }

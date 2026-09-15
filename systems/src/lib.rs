@@ -3,6 +3,7 @@
 //! `wake` — and calls it after posting, so the parked loop draws.
 
 pub mod io;
+pub mod lsp;
 pub mod ts;
 
 use std::sync::{Arc, Mutex};

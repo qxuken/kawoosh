@@ -42,6 +42,7 @@ pub fn ex_alias(name: &str) -> Option<&'static str> {
         "map" => "map",
         "echo" => "echo",
         "lua" => "lua",
+        "lsp" => "lsp_status",
         _ => return None,
     })
 }
@@ -1271,6 +1272,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("gt", "tab_next"),
         ("gT", "tab_prev"),
         ("<C-w>d", "dock_toggle"),
+        ("gd", "lsp_definition"),
+        ("K", "lsp_hover"),
     ];
     for (k, c) in n {
         km.bind(Normal, k, c);
@@ -1307,6 +1310,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<End>", "line_end_insert"),
         ("<D-v>", "paste_clipboard"),
         ("<C-S-v>", "paste_clipboard"),
+        ("<C-Space>", "lsp_complete"),
     ];
     for (k, c) in i {
         km.bind(Insert, k, c);

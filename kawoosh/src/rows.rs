@@ -103,6 +103,10 @@ pub struct LineDraw<'a> {
     /// Text after the line's end that is not the document's (a
     /// diagnostic message), drawn dim under `role = none`.
     pub trailing: Option<(&'a str, Color)>,
+    /// Virtual text at a byte — the completion candidate's rest — drawn
+    /// dim under `role = none`. It shifts the real text and never hides
+    /// it (mvp.md Decision 5).
+    pub ghost: Option<(usize, &'a str)>,
 }
 
 /// The gutter cell for line `ln` (0-based), decoration rather than text.
@@ -151,6 +155,9 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
             cuts.push(next_char(text, b));
         }
     }
+    if let Some((b, _)) = line.ghost {
+        cuts.push(b.min(len));
+    }
     cuts.retain(|c| text.is_char_boundary(*c));
     cuts.sort_unstable();
     cuts.dedup();
@@ -168,6 +175,15 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
     }
     ui.with(row, |ui| {
         let base = mono(font, pal);
+        let ghost_at = |ui: &mut Ui<'_>, at: usize| {
+            if let Some((b, g)) = line.ghost
+                && b.min(len) == at
+            {
+                ui.with(NodeSpec::row().role(Role::None), |ui| {
+                    ui.text(g, base.color(pal.dim));
+                });
+            }
+        };
         for w in cuts.windows(2) {
             let (a, b) = (w[0], w[1]);
             for (cb, kind) in line.carets {
@@ -175,6 +191,7 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
                     caret_bar(ui, pal.accent);
                 }
             }
+            ghost_at(ui, a);
             if a == b {
                 continue;
             }
@@ -231,7 +248,10 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
         for (cb, kind) in line.carets {
             if *cb >= len {
                 match kind {
-                    Caret::Bar => caret_bar(ui, pal.accent),
+                    Caret::Bar => {
+                        caret_bar(ui, pal.accent);
+                        ghost_at(ui, len);
+                    }
                     Caret::Block => {
                         ui.with(
                             NodeSpec::column()

@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""A language server that speaks just enough JSON-RPC to test the pool:
+initialize; a diagnostic on didOpen (the first word of line 0, message
+"boom" — and none on didChange, so a test can watch it shift); completion (hello_world, help); hover ("the
+hover"); definition (line 1, character 0 of the same file)."""
+import json, sys
+
+def read():
+    length = 0
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        line = line.strip()
+        if not line:
+            break
+        if line.lower().startswith(b"content-length:"):
+            length = int(line.split(b":")[1])
+    return json.loads(sys.stdin.buffer.read(length))
+
+def send(msg):
+    body = json.dumps(msg).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+    sys.stdout.buffer.flush()
+
+while True:
+    m = read()
+    if m is None:
+        break
+    method = m.get("method")
+    mid = m.get("id")
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {}}})
+    elif method == "textDocument/didOpen":
+        uri = m["params"]["textDocument"]["uri"]
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+            "uri": uri,
+            "diagnostics": [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}},
+                             "severity": 1, "message": "boom"}]}})
+    elif method == "textDocument/completion":
+        send({"jsonrpc": "2.0", "id": mid, "result": {"isIncomplete": False, "items": [
+            {"label": "hello_world", "kind": 3, "insertText": "hello_world"},
+            {"label": "help", "kind": 3}]}})
+    elif method == "textDocument/hover":
+        send({"jsonrpc": "2.0", "id": mid, "result": {"contents": {"kind": "markdown", "value": "the hover"}}})
+    elif method == "textDocument/definition":
+        uri = m["params"]["textDocument"]["uri"]
+        send({"jsonrpc": "2.0", "id": mid, "result": [{"uri": uri, "range": {
+            "start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 2}}}]})
+    elif mid is not None:
+        send({"jsonrpc": "2.0", "id": mid, "result": None})
