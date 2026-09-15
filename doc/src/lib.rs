@@ -283,14 +283,22 @@ impl Buffer {
         self.text.clone()
     }
 
+    /// Puts a piece tree back — an undo or redo — as one journaled edit:
+    /// the span between the two texts' common prefix and suffix. Every
+    /// run outside it is carried across, so the colours stay where the
+    /// change was not (clearing the layers left the whole buffer plain
+    /// until the highlighter answered), and a producer's answer to the
+    /// version before is transformed rather than stale.
     pub fn restore(&mut self, root: text_buffer::Buffer) -> Version {
+        let old = self.text.collect();
+        let new = root.collect();
+        let edit = diff_edit(&old, &new);
         self.text = root;
         for (_, layer) in &mut self.layers {
-            layer.runs.clear();
+            shift_runs(&mut layer.runs, &edit);
         }
-        let v = self.journal.version().next();
-        self.journal.reset_to(v);
-        v
+        self.modified = true;
+        self.journal.record(edit)
     }
 
     // ------------------------------------------------------------ layers
@@ -359,6 +367,36 @@ impl Buffer {
     }
 }
 
+/// The one edit that turns `old` into `new`: what lies between their
+/// common prefix and common suffix, both backed off to a char boundary
+/// so a run's offsets never land inside one.
+fn diff_edit(old: &[u8], new: &[u8]) -> Edit {
+    let is_boundary = |b: u8| (b & 0xC0) != 0x80;
+    let mut prefix = old
+        .iter()
+        .zip(new)
+        .take_while(|(a, b)| a == b)
+        .count();
+    while prefix > 0 && !old.get(prefix).is_none_or(|b| is_boundary(*b)) {
+        prefix -= 1;
+    }
+    let room = old.len().min(new.len()) - prefix;
+    let mut suffix = old[prefix..]
+        .iter()
+        .rev()
+        .zip(new[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count()
+        .min(room);
+    while suffix > 0 && !is_boundary(old[old.len() - suffix]) {
+        suffix -= 1;
+    }
+    Edit {
+        range: prefix..old.len() - suffix,
+        new_len: new.len() - prefix - suffix,
+    }
+}
+
 /// Shifts sorted runs across one edit: runs before it stay, runs after it
 /// move by the length delta, runs the edit landed inside are dropped.
 fn shift_runs(runs: &mut Vec<Run>, edit: &Edit) {
@@ -413,6 +451,44 @@ mod tests {
         let b = Buffer::new("t", "");
         assert_eq!(b.line_count(), 1);
         assert_eq!(b.line_range(0), 0..0);
+    }
+
+    #[test]
+    fn restore_is_one_edit_and_keeps_the_runs_around_it() {
+        let mut b = Buffer::new("t", "fn main() { let x = 1; }");
+        let before = b.text_root();
+        let v0 = b.version();
+        b.set_layer(
+            "syntax",
+            vec![
+                Run { range: 0..2, style: 1, tag: 0 },
+                Run { range: 16..17, style: 2, tag: 0 },
+                Run { range: 20..21, style: 3, tag: 0 },
+            ],
+        );
+        // Type into the middle, then undo it: the runs before stay, the
+        // one the edit landed in goes, the ones after come back.
+        b.replace(16..17, "value");
+        let v1 = b.restore(before);
+        assert_eq!(b.text(), "fn main() { let x = 1; }");
+        assert!(v1 > v0);
+        let runs: Vec<Range<usize>> = b.runs("syntax", 0..b.len()).iter().map(|r| r.range.clone()).collect();
+        assert_eq!(runs, [0..2, 20..21]);
+        // The journal ran through it: an update from before both edits
+        // still lands.
+        assert_eq!(b.journal().transform_range(20..21, v0), Ok(20..21));
+    }
+
+    #[test]
+    fn diff_edit_backs_off_to_char_boundaries() {
+        let e = diff_edit("aéb".as_bytes(), "aèb".as_bytes());
+        assert_eq!((e.range, e.new_len), (1..3, 2));
+        let e = diff_edit(b"abc", b"abc");
+        assert_eq!((e.range, e.new_len), (3..3, 0));
+        let e = diff_edit(b"abc", b"abXYc");
+        assert_eq!((e.range, e.new_len), (2..2, 2));
+        let e = diff_edit(b"aXa", b"a");
+        assert_eq!((e.range, e.new_len), (1..3, 0));
     }
 
     #[test]
