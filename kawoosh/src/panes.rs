@@ -10,7 +10,7 @@ use kui::{Align, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
 
 use crate::app::{DIVIDER, Kawoosh, TAB_H, TITLE_H};
 use crate::layout::{Content, Node, PaneId, SplitDir};
-use crate::rows::{self, Caret, Drawn, GUTTER_W, LH, LineDraw, STRIP_H};
+use crate::rows::{self, Caret, Drawn, GUTTER_W, LH, LineDraw, STRIP_H, Window};
 use crate::terminals::TermId;
 use kawoosh_systems::lsp::DIAG_LAYER;
 use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
@@ -541,6 +541,11 @@ impl Kawoosh {
         } else {
             Caret::Block
         };
+        // The token colours, once: a minified line has ten thousand runs.
+        let token_colors: Vec<Option<kui::Color>> = Token::ALL
+            .iter()
+            .map(|t| self.syntax_color_for(*t, dark))
+            .collect();
         let tag = Value::map([("kind", "pane".into()), ("pane", Value::Int(pane as i64))]);
         let cell_w = self.cell.0;
         // The lines column's width, for the sideways follow and the
@@ -557,24 +562,31 @@ impl Kawoosh {
         // sliced to the window this lands on. A long line's caret is
         // placed by column, as its slice is.
         if self.follow_caret || !focused {
-            let drawn = Drawn::new(&buf.line_text(cur_line), tabstop);
             let range = buf.line_range(cur_line);
-            let head = drawn.to_drawn(primary.head.clamp(range.start, range.end) - range.start);
+            let head_rel = primary.head.clamp(range.start, range.end) - range.start;
+            let window = Window {
+                left,
+                width,
+                cell_w,
+            };
+            let (drawn, (c0, c1)) =
+                Drawn::for_line(buf, range.clone(), tabstop, Some(window), head_rel);
+            let head = drawn.to_drawn(head_rel);
             let style = rows::mono(font, &pal);
-            let long = drawn.text.len() >= rows::LONG_LINE_BYTES;
-            let mut x_at = |b: usize| {
-                if long {
-                    drawn.col_of(b) as f32 * cell_w
-                } else {
-                    ui.measure_text(&drawn.text[..b], &style, None).width
-                }
-            };
-            let x0 = x_at(head);
-            let x1 = if head < drawn.text.len() {
-                x_at(rows::next_char(&drawn.text, head))
+            let long = range.len() >= rows::LONG_LINE_BYTES;
+            let (x0, x1) = if long {
+                (c0 as f32 * cell_w, c1 as f32 * cell_w)
             } else {
-                x0 + 8.0
+                let x0 = ui.measure_text(&drawn.text[..head], &style, None).width;
+                let x1 = if head < drawn.text.len() {
+                    let next = rows::next_char(&drawn.text, head);
+                    ui.measure_text(&drawn.text[..next], &style, None).width
+                } else {
+                    x0
+                };
+                (x0, x1)
             };
+            let x1 = if head_rel >= range.len() { x0 + 8.0 } else { x1 };
             let margin = (cell_w * 3.0).min(width / 4.0);
             if x0 - margin < left {
                 left = (x0 - margin).max(0.0);
@@ -624,11 +636,20 @@ impl Kawoosh {
                     |ui| {
                         for ln in top..last {
                             let range = buf.line_range(ln);
-                            let src = buf.line_text(ln);
-                            let drawn = Drawn::new(&src, tabstop);
+                            let window = Window {
+                                left,
+                                width,
+                                cell_w,
+                            };
+                            let (drawn, _) =
+                                Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0);
                             let clip = |o: usize| {
                                 drawn.to_drawn(o.clamp(range.start, range.end) - range.start)
                             };
+                            // The runs of the drawn slice alone: a long
+                            // line's window, not its ten thousand runs.
+                            let src = drawn.src_range();
+                            let src = range.start + src.start..range.start + src.end;
                             let mut selected: Vec<Range<usize>> = Vec::new();
                             let mut carets: Vec<(Range<usize>, Caret)> = Vec::new();
                             let mut access = (None, None);
@@ -672,17 +693,19 @@ impl Kawoosh {
                                 }
                             }
                             let hits: Vec<Range<usize>> = buf
-                                .runs(SEARCH_LAYER, range.clone())
+                                .runs(SEARCH_LAYER, src.clone())
                                 .iter()
                                 .map(|r| clip(r.range.start)..clip(r.range.end.min(range.end)))
                                 .filter(|r| r.start < r.end)
                                 .collect();
                             let styled: Vec<(Range<usize>, kui::Color)> = buf
-                                .runs(SYNTAX_LAYER, range.clone())
+                                .runs(SYNTAX_LAYER, src.clone())
                                 .iter()
                                 .filter_map(|r| {
-                                    let c =
-                                        self.syntax_color_for(Token::from_style(r.style), dark)?;
+                                    let c = token_colors
+                                        .get(r.style as usize)
+                                        .copied()
+                                        .flatten()?;
                                     let a = clip(r.range.start);
                                     let b = clip(r.range.end.min(range.end));
                                     (a < b).then_some((a..b, c))
@@ -722,9 +745,8 @@ impl Kawoosh {
                                     underlined: &underlined,
                                     trailing,
                                     ghost: ghost_here,
-                                    window: (left, width),
-                                    cell_w,
-                                    cols: drawn.cols,
+                                    before: drawn.before_cols as f32 * cell_w,
+                                    after: drawn.after_cols as f32 * cell_w,
                                 },
                             );
                         }

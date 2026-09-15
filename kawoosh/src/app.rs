@@ -177,7 +177,9 @@ impl Kawoosh {
     pub(crate) fn sync_syntax(&mut self) {
         for a in self.ts.drain() {
             if let Some(b) = self.ed.buffers.get_mut(a.buffer) {
-                let _ = b.apply(a.update);
+                for u in a.updates {
+                    let _ = b.apply(u);
+                }
             }
         }
         let shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
@@ -845,19 +847,22 @@ impl Kawoosh {
         let top = self.ed.views[view].top;
         let buf = self.ed.buffer_of(view);
         let ln = (top + line.max(0) as usize).min(buf.line_count() - 1);
-        let drawn = Drawn::new(&buf.line_text(ln), tabstop);
         let range = buf.line_range(ln);
         // A long line was drawn from its window's slice, and `byte`
-        // counts from the slice's start.
+        // counts from the slice's start: the same slice maps it back.
         let width = self
             .layout
             .rects
             .get(&pane)
             .map(|r| (r.w - GUTTER_W - 2.0).max(0.0))
             .unwrap_or(0.0);
-        let slice = rows::window_slice(&drawn.text, (self.ed.views[view].left, width), self.cell.0);
-        let drawn_byte = (slice.start + byte.max(0) as usize).min(slice.end);
-        let off = (range.start + drawn.to_src(drawn_byte)).min(range.end);
+        let window = rows::Window {
+            left: self.ed.views[view].left,
+            width,
+            cell_w: self.cell.0,
+        };
+        let (drawn, _) = Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0);
+        let off = (range.start + drawn.to_src(byte.max(0) as usize)).min(range.end);
         let word = motions::word_at(buf, off);
         match phase {
             "start" => {

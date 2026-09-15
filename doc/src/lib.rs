@@ -168,6 +168,14 @@ impl Buffer {
         String::from_utf8_lossy(&self.text.collect_range(range)).into_owned()
     }
 
+    /// `range` as the piece tree's chunks, in order, borrowed — a scan
+    /// that copies nothing (a long line's cells). A chunk may end inside
+    /// a char.
+    pub fn visit_range(&self, range: Range<usize>, f: impl FnMut(&[u8])) {
+        let range = range.start.min(self.len())..range.end.min(self.len());
+        self.text.visit_range(range, f);
+    }
+
     pub fn byte_at(&self, offset: usize) -> Option<u8> {
         self.text.byte_at(offset)
     }
@@ -324,6 +332,51 @@ impl Buffer {
         }
         self.modified = true;
         self.journal.record(edit)
+    }
+
+    /// Several replacements at once — a multicursor keystroke — given
+    /// ascending and disjoint in the text as it is (an insertion may
+    /// share a point with the edit before it). Applied to the text from
+    /// the last to the first, so each keeps its coordinates, and
+    /// journaled in that order; the layers are shifted in one pass over
+    /// their runs instead of one pass per edit (a minified bundle has
+    /// half a million runs, and forty cursors made forty walks).
+    pub fn replace_many(&mut self, edits: &[(Range<usize>, &str)]) -> Version {
+        let disjoint = edits
+            .windows(2)
+            .all(|w| w[0].0.end <= w[1].0.start && w[0].0.start <= w[1].0.start);
+        if !disjoint || edits.len() < 2 {
+            let mut v = self.version();
+            for (r, t) in edits {
+                v = self.replace(r.clone(), t);
+            }
+            return v;
+        }
+        let mut v = self.version();
+        let mut shifts = Vec::with_capacity(edits.len());
+        for (range, text) in edits {
+            shifts.push(Edit {
+                range: range.clone(),
+                new_len: text.len(),
+            });
+        }
+        for (range, text) in edits.iter().rev() {
+            if !range.is_empty() {
+                self.text.erase(range.start, range.len());
+            }
+            if !text.is_empty() {
+                self.text.insert(range.start, text.as_bytes());
+            }
+            v = self.journal.record(Edit {
+                range: range.clone(),
+                new_len: text.len(),
+            });
+        }
+        for (_, layer) in &mut self.layers {
+            shift_runs_many(&mut layer.runs, &shifts);
+        }
+        self.modified = true;
+        v
     }
 
     /// Replaces the whole text — a restore, a reload. History is reset:
@@ -503,6 +556,36 @@ fn shift_runs(runs: &mut Vec<Run>, edit: &Edit) {
     runs.truncate(write);
 }
 
+/// [`shift_runs`] for several edits at once, ascending and disjoint in
+/// one coordinate space: one walk over the runs, the delta of the edits
+/// passed accumulating, a run any edit landed inside dropped. The same
+/// answer the edits applied one at a time give, in `O(runs + edits)`.
+fn shift_runs_many(runs: &mut Vec<Run>, edits: &[Edit]) {
+    let mut delta = 0isize;
+    let mut ei = 0;
+    let mut write = 0;
+    for i in 0..runs.len() {
+        let r = runs[i].range.clone();
+        // Edits wholly before the run (an insertion at its start among
+        // them: the run starts after the new text) shift it.
+        while ei < edits.len() && edits[ei].range.end <= r.start {
+            delta += edits[ei].new_len as isize - edits[ei].removed() as isize;
+            ei += 1;
+        }
+        // An edit reaching into it — its interior, or a removal touching
+        // it — invalidates it; one starting at its end leaves it.
+        if ei < edits.len() && edits[ei].range.start < r.end {
+            continue;
+        }
+        let start = (r.start as isize + delta) as usize;
+        let end = (r.end as isize + delta) as usize;
+        runs.swap(write, i);
+        runs[write].range = start..end;
+        write += 1;
+    }
+    runs.truncate(write);
+}
+
 pub fn language_of(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()) {
         Some("rs") => "rust",
@@ -563,6 +646,49 @@ mod tests {
         // The journal ran through it: an update from before both edits
         // still lands.
         assert_eq!(b.journal().transform_range(20..21, v0), Ok(20..21));
+    }
+
+    /// `replace_many` answers as the edits applied one at a time do —
+    /// the text, the journal's transform, the runs' shift and drops.
+    #[test]
+    fn replace_many_matches_one_at_a_time() {
+        let text = "aaaa bbbb cccc dddd eeee ffff";
+        let runs = || {
+            (0..6)
+                .map(|i| Run { range: i * 5..i * 5 + 4, style: 1 + i as u32, tag: 0 })
+                .collect::<Vec<_>>()
+        };
+        let cases: Vec<Vec<(Range<usize>, &str)>> = vec![
+            // Three cursors typing.
+            vec![(2..2, "x"), (12..12, "x"), (22..22, "x")],
+            // A removal touching a run's end, an insertion at a run's
+            // start, one inside a run.
+            vec![(3..5, ""), (10..10, "yy"), (16..17, "z")],
+            // Two insertions at one point (the second after the first).
+            vec![(7..7, "1"), (7..7, "2")],
+            // Whole words replaced, one deleted.
+            vec![(0..4, "AAAAAA"), (10..14, ""), (25..29, "F")],
+        ];
+        for edits in cases {
+            let mut a = Buffer::new("t", text);
+            a.set_layer("l", runs());
+            let v0 = a.version();
+            // One at a time from the last, so each keeps its coordinates.
+            for (r, t) in edits.iter().rev() {
+                a.replace(r.clone(), t);
+            }
+            let mut b = Buffer::new("t", text);
+            b.set_layer("l", runs());
+            b.replace_many(&edits);
+            assert_eq!(a.text(), b.text(), "{edits:?}");
+            assert_eq!(a.runs("l", 0..a.len()), b.runs("l", 0..b.len()), "{edits:?}");
+            assert_eq!(a.version(), b.version());
+            assert_eq!(
+                a.journal().transform_range(20..24, v0),
+                b.journal().transform_range(20..24, v0),
+                "{edits:?}"
+            );
+        }
     }
 
     #[test]

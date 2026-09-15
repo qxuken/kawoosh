@@ -49,18 +49,30 @@ pub fn mono(font: Option<FontId>, pal: &Pal) -> TextStyle {
 /// `<200b>`), with the byte maps both ways. A control character never
 /// reaches the shaper: it has no glyph, no width and no caret, and a
 /// binary file is a page of them.
+///
+/// A line past [`LONG_LINE_BYTES`] is drawn from its window alone
+/// ([`Drawn::for_line`]): `text` is the slice the pane shows plus
+/// overscan, `src_offset` where it starts in the line, and the cells
+/// before and after it are what two spacers stand in for. The rest of
+/// the line is scanned for its cells, never copied.
 pub struct Drawn {
     pub text: String,
-    /// `to_src[drawn_byte] = source_byte`, `to_src.len() == text.len() + 1`.
+    /// `to_src[drawn_byte] + src_offset` is the source byte,
+    /// `to_src.len() == text.len() + 1`.
     to_src: Vec<usize>,
-    /// `to_drawn[source_byte] = drawn_byte` for byte offsets on char
-    /// boundaries (others map to the char's start).
+    /// `to_drawn[source_byte - src_offset] = drawn_byte` for byte offsets
+    /// on char boundaries (others map to the char's start).
     to_drawn: Vec<usize>,
+    /// Where `text`'s source starts in the line, bytes.
+    pub src_offset: usize,
     /// The escapes, in drawn bytes — drawn dim, whatever the syntax says.
     pub escapes: Vec<Range<usize>>,
     /// The line's width in cells (`unicode-width`; a tab is its spaces,
-    /// an escape its chars), for placing a sliced long line by column.
+    /// an escape its chars).
     pub cols: usize,
+    /// Cells before and after `text` in the line: the spacers.
+    pub before_cols: usize,
+    pub after_cols: usize,
 }
 
 /// vim's `isprint` line: what is drawn as an escape rather than itself.
@@ -78,13 +90,192 @@ fn escape_of(c: char) -> Option<String> {
     }
 }
 
+/// How many chars [`escape_of`] spells `c` as, without spelling it.
+fn escape_len(c: char) -> Option<usize> {
+    let u = c as u32;
+    match u {
+        0..0x20 | 0x7f => Some(2),
+        0x80..0xa0 => Some(4),
+        0x200b | 0x200e | 0x200f | 0x2028 | 0x2029 | 0x202a..=0x202e | 0x2060..=0x2064
+        | 0x2066..=0x2069 | 0xfeff => Some(6),
+        _ => None,
+    }
+}
+
+/// The cells a char takes at cell `col`: a tab to the next stop, an
+/// escape its chars, else `unicode-width`'s answer.
+fn cells_of(c: char, col: usize, tabstop: usize) -> usize {
+    if c == '\t' {
+        tabstop - (col % tabstop)
+    } else if let Some(n) = escape_len(c) {
+        n
+    } else {
+        c.width().unwrap_or(0)
+    }
+}
+
+/// The pane's window on a line: the scroll offset and the column's
+/// width, logical px, and one cell's width.
+#[derive(Clone, Copy, Debug)]
+pub struct Window {
+    pub left: f32,
+    pub width: f32,
+    pub cell_w: f32,
+}
+
+impl Window {
+    /// The cells the window shows, with the overscan.
+    fn cols(&self) -> Range<usize> {
+        let first = (self.left / self.cell_w).floor().max(0.0) as usize;
+        let last = ((self.left + self.width) / self.cell_w).ceil().max(0.0) as usize;
+        first.saturating_sub(OVERSCAN_COLS)..last + OVERSCAN_COLS
+    }
+}
+
 impl Drawn {
     pub fn new(src: &str, tabstop: usize) -> Self {
+        Self::expand(src, tabstop, 0, 0, None)
+    }
+
+    /// Line `range` of `buf` as drawn for `window`, and the cells the
+    /// char at `mark` (a line-relative byte; the caret) starts and ends
+    /// at. A line shorter than [`LONG_LINE_BYTES`] is drawn whole; a
+    /// longer one is scanned once for its cells — the window's slice
+    /// found, `mark` placed, the total counted — reading the piece tree
+    /// in chunks, and only the slice is copied and expanded.
+    pub fn for_line(
+        buf: &kawoosh_doc::Buffer,
+        range: Range<usize>,
+        tabstop: usize,
+        window: Option<Window>,
+        mark: usize,
+    ) -> (Self, (usize, usize)) {
+        let len = range.len();
+        let Some(window) = window.filter(|w| len >= LONG_LINE_BYTES && w.cell_w > 0.0) else {
+            let drawn = Self::new(&buf.slice(range), tabstop);
+            let a = drawn.to_drawn(mark);
+            let b = next_char(&drawn.text, a);
+            let c0 = col_of(&drawn.text, a);
+            let c1 = c0 + col_of(&drawn.text[a..], b - a);
+            return (drawn, (c0, c1));
+        };
+        let want = window.cols();
+        let mark = mark.min(len);
+        // One pass over the line, chars decoded across chunk edges.
+        let mut pending = [0u8; 4];
+        let mut pending_len = 0usize;
+        let mut need = 0usize;
+        struct Scan {
+            byte: usize,
+            col: usize,
+            start: Option<(usize, usize)>,
+            end: Option<(usize, usize)>,
+            mark_cols: (Option<usize>, Option<usize>),
+        }
+        let mut sc = Scan {
+            byte: 0,
+            col: 0,
+            start: None,
+            end: None,
+            mark_cols: (None, None),
+        };
+        let at = |sc: &mut Scan, c: char, clen: usize| {
+            if sc.start.is_none() && sc.col >= want.start {
+                sc.start = Some((sc.byte, sc.col));
+            }
+            if sc.end.is_none() && sc.col >= want.end {
+                sc.end = Some((sc.byte, sc.col));
+            }
+            let w = cells_of(c, sc.col, tabstop);
+            if sc.byte == mark {
+                sc.mark_cols = (Some(sc.col), Some(sc.col + w));
+            }
+            sc.col += w;
+            sc.byte += clen;
+        };
+        // A run of printable ASCII is one cell a byte: taken at once,
+        // the marks placed by arithmetic, since most of a long line is
+        // that and a char at a time was the frame.
+        let bulk = |sc: &mut Scan, n: usize| {
+            if sc.start.is_none() && sc.col + n > want.start {
+                let k = want.start.saturating_sub(sc.col);
+                sc.start = Some((sc.byte + k, sc.col + k));
+            }
+            if sc.end.is_none() && sc.col + n > want.end {
+                let k = want.end.saturating_sub(sc.col);
+                sc.end = Some((sc.byte + k, sc.col + k));
+            }
+            if sc.byte <= mark && mark < sc.byte + n {
+                let k = mark - sc.byte;
+                sc.mark_cols = (Some(sc.col + k), Some(sc.col + k + 1));
+            }
+            sc.col += n;
+            sc.byte += n;
+        };
+        buf.visit_range(range.clone(), |chunk| {
+            let mut i = 0;
+            while i < chunk.len() {
+                if pending_len == 0 {
+                    let run = chunk[i..]
+                        .iter()
+                        .position(|&b| !(0x20..0x7f).contains(&b))
+                        .unwrap_or(chunk.len() - i);
+                    if run > 0 {
+                        bulk(&mut sc, run);
+                        i += run;
+                        continue;
+                    }
+                    let b = chunk[i];
+                    if b < 0x80 {
+                        at(&mut sc, b as char, 1);
+                        i += 1;
+                        continue;
+                    }
+                    need = match b {
+                        0xc0..0xe0 => 2,
+                        0xe0..0xf0 => 3,
+                        _ => 4,
+                    };
+                }
+                pending[pending_len] = chunk[i];
+                pending_len += 1;
+                i += 1;
+                if pending_len == need {
+                    let c = std::str::from_utf8(&pending[..need])
+                        .ok()
+                        .and_then(|s| s.chars().next())
+                        .unwrap_or('\u{fffd}');
+                    at(&mut sc, c, need);
+                    pending_len = 0;
+                }
+            }
+        });
+        let total = sc.col;
+        let (start_byte, start_col) = sc.start.unwrap_or((len, total));
+        let (end_byte, end_col) = sc.end.unwrap_or((len, total));
+        let src = buf.slice(range.start + start_byte..range.start + end_byte);
+        let mut drawn = Self::expand(&src, tabstop, start_col, start_byte, Some(total));
+        drawn.after_cols = total - end_col;
+        let c0 = sc.mark_cols.0.unwrap_or(total);
+        let c1 = sc.mark_cols.1.unwrap_or(total);
+        (drawn, (c0, c1))
+    }
+
+    /// The expansion itself: `src` starting at cell `col0` of the line
+    /// and byte `src_offset` into it; `total` the line's cells when
+    /// `src` is not the whole of it.
+    fn expand(
+        src: &str,
+        tabstop: usize,
+        col0: usize,
+        src_offset: usize,
+        total: Option<usize>,
+    ) -> Self {
         let mut text = String::with_capacity(src.len());
         let mut to_src = Vec::with_capacity(src.len() + 1);
         let mut to_drawn = vec![0; src.len() + 1];
         let mut escapes = Vec::new();
-        let mut col = 0usize;
+        let mut col = col0;
         for (i, c) in src.char_indices() {
             to_drawn[i] = text.len();
             for k in 1..c.len_utf8() {
@@ -119,22 +310,29 @@ impl Drawn {
             text,
             to_src,
             to_drawn,
+            src_offset,
             escapes,
-            cols: col,
+            cols: total.unwrap_or(col),
+            before_cols: col0,
+            after_cols: 0,
         }
     }
 
-    /// The cell column drawn byte `b` starts at.
-    pub fn col_of(&self, b: usize) -> usize {
-        col_of(&self.text, b)
-    }
-
+    /// The drawn byte for a line-relative source byte: the slice's start
+    /// for one before it, its end for one past.
     pub fn to_drawn(&self, src_byte: usize) -> usize {
-        self.to_drawn[src_byte.min(self.to_drawn.len() - 1)]
+        let i = src_byte.saturating_sub(self.src_offset);
+        self.to_drawn[i.min(self.to_drawn.len() - 1)]
     }
 
+    /// The line-relative source byte for a drawn one.
     pub fn to_src(&self, drawn_byte: usize) -> usize {
-        self.to_src[drawn_byte.min(self.to_src.len() - 1)]
+        self.src_offset + self.to_src[drawn_byte.min(self.to_src.len() - 1)]
+    }
+
+    /// The line's source bytes `text` was drawn from, line-relative.
+    pub fn src_range(&self) -> Range<usize> {
+        self.src_offset..self.src_offset + self.to_drawn.len() - 1
     }
 }
 
@@ -172,14 +370,11 @@ pub struct LineDraw<'a> {
     /// dim under `role = none`. It shifts the real text and never hides
     /// it (mvp.md Decision 5).
     pub ghost: Option<(usize, &'a str)>,
-    /// The pane's window on the line, logical px: the scroll offset and
-    /// the column's width. A line past [`LONG_LINE_BYTES`] emits only the
-    /// text in it (plus overscan), placed by column at `cell_w`.
-    pub window: (f32, f32),
-    /// One cell's width, `mono`'s `M`.
-    pub cell_w: f32,
-    /// The line's width in cells (`Drawn::cols`).
-    pub cols: usize,
+    /// Spacers before and after the text, logical px: a long line's
+    /// cells outside its window (`Drawn::before_cols` / `after_cols` at
+    /// the cell width).
+    pub before: f32,
+    pub after: f32,
 }
 
 /// The gutter cell for line `ln` (0-based), decoration rather than text.
@@ -226,90 +421,13 @@ struct Look {
 /// is not the document's text and the access tree and a click's byte
 /// must not count it. The bar caret is a float measured to its byte;
 /// what follows the text (a block caret past the end, a selection over
-/// the newline, a trailing message) is a sibling node.
-///
-/// A line past [`LONG_LINE_BYTES`] — a minified bundle, a binary — is
-/// sliced to the pane's window first: what lies outside it is two
-/// spacers sized by column, and only the slice is shaped, so a frame
-/// and a keystroke cost the window and not the line. The placement is a
-/// monospace grid's (a fallback glyph can drift it a pixel or two); kui's
-/// own chunked long line accepts the same.
+/// the newline, a trailing message) is a sibling node. A long line's
+/// text is its window's slice (`Drawn::for_line`) between two spacers
+/// sized by column — a monospace grid's placement (a fallback glyph can
+/// drift it a pixel or two), the tolerance kui's own chunked long line
+/// accepts.
 pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDraw<'_>) {
-    let text = line.text;
-    let len = text.len();
-    if len < LONG_LINE_BYTES || line.cell_w <= 0.0 {
-        emit_row(ui, font, pal, line, 0.0, 0.0);
-        return;
-    }
-    let Range { start, end } = window_slice(text, line.window, line.cell_w);
-    let start_col = col_of(text, start);
-    let end_col = start_col + col_of(&text[start..end], end - start);
-    let before = start_col as f32 * line.cell_w;
-    let after = line.cols.saturating_sub(end_col) as f32 * line.cell_w;
-    // Everything in drawn bytes, moved into the slice; what falls
-    // outside is dropped (a bar caret out of the window is not drawn).
-    let clip = |r: &Range<usize>| -> Option<Range<usize>> {
-        let (a, b) = (r.start.max(start).min(end), r.end.max(start).min(end));
-        (a < b || (r.start == r.end && (start..=end).contains(&r.start)))
-            .then(|| a - start..b - start)
-    };
-    let ranges = |rs: &[Range<usize>]| rs.iter().filter_map(clip).collect::<Vec<_>>();
-    let coloured = |rs: &[(Range<usize>, Color)]| {
-        rs.iter()
-            .filter_map(|(r, c)| clip(r).map(|r| (r, *c)))
-            .collect::<Vec<_>>()
-    };
-    // A selection past the newline shows only when the line's end is in
-    // the slice — as do the past-end carets and the trailing text.
-    let at_end = end == len;
-    let selected: Vec<Range<usize>> = line
-        .selected
-        .iter()
-        .filter_map(|r| {
-            let over = r.end > len && at_end;
-            clip(&(r.start..r.end.min(len))).map(|c| c.start..c.end + usize::from(over))
-        })
-        .collect();
-    let hits = ranges(line.hits);
-    let styled = coloured(line.styled);
-    let underlined = coloured(line.underlined);
-    let escapes = ranges(line.escapes);
-    let carets: Vec<(Range<usize>, Caret)> = line
-        .carets
-        .iter()
-        .filter_map(|(r, k)| clip(r).map(|r| (r, *k)))
-        .collect();
-    let sliced = LineDraw {
-        text: &text[start..end],
-        selected: &selected,
-        hits: &hits,
-        styled: &styled,
-        carets: &carets,
-        escapes: &escapes,
-        caret_on: line.caret_on,
-        access: line.access,
-        underlined: &underlined,
-        trailing: line.trailing.filter(|_| at_end),
-        ghost: line
-            .ghost
-            .and_then(|(b, g)| clip(&(b..b)).map(|r| (r.start, g))),
-        window: line.window,
-        cell_w: line.cell_w,
-        cols: line.cols,
-    };
-    emit_row(ui, font, pal, &sliced, before, after);
-}
-
-/// The row itself, `before` and `after` px of spacer around the text
-/// (a sliced long line's two ends).
-fn emit_row(
-    ui: &mut Ui<'_>,
-    font: Option<FontId>,
-    pal: &Pal,
-    line: &LineDraw<'_>,
-    before: f32,
-    after: f32,
-) {
+    let (before, after) = (line.before, line.after);
     let text = line.text;
     let len = text.len();
     // Every boundary a span must break at, on grapheme boundaries only:
@@ -530,33 +648,6 @@ fn emit_row(
 /// combining mark.
 pub fn col_of(s: &str, b: usize) -> usize {
     s[..b].chars().map(|c| c.width().unwrap_or(0)).sum()
-}
-
-/// The drawn bytes of a long line that a pane's window `(left, width)`
-/// shows, with the overscan — what `emit_line` emits of it, and so what
-/// a click's `byte` counts from (the spacers before it are not text).
-/// The whole line when it is short.
-pub fn window_slice(text: &str, (left, width): (f32, f32), cell_w: f32) -> Range<usize> {
-    if text.len() < LONG_LINE_BYTES || cell_w <= 0.0 {
-        return 0..text.len();
-    }
-    let first_col = (left / cell_w).floor().max(0.0) as usize;
-    let last_col = ((left + width) / cell_w).ceil().max(0.0) as usize;
-    let start = byte_at_col(text, first_col.saturating_sub(OVERSCAN_COLS));
-    let end = byte_at_col(text, last_col + OVERSCAN_COLS).max(start);
-    start..end
-}
-
-/// The first byte of `s` at or past cell column `col`, or the end.
-fn byte_at_col(s: &str, col: usize) -> usize {
-    let mut c = 0;
-    for (i, ch) in s.char_indices() {
-        if c >= col {
-            return i;
-        }
-        c += ch.width().unwrap_or(0);
-    }
-    s.len()
 }
 
 /// The grapheme boundary after `b` in `s`, or the end.

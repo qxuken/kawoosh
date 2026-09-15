@@ -692,17 +692,32 @@ impl Editor {
             return;
         }
         edits.sort_by(|a, b| b.1.start.cmp(&a.1.start).then(b.1.end.cmp(&a.1.end)));
+        // The text and its layers take every edit at once (descending,
+        // so each keeps its coordinates); the selections follow below,
+        // edit by edit, as the descriptors say.
+        let buf = &mut self.buffers[id];
+        let edits: Vec<(usize, std::ops::Range<usize>, String)> = edits
+            .into_iter()
+            .map(|(i, range, text)| {
+                let start = buf.floor_char(range.start);
+                let end = buf.floor_char(range.end).max(start);
+                (i, start..end, text)
+            })
+            .collect();
+        let ascending: Vec<(std::ops::Range<usize>, &str)> = edits
+            .iter()
+            .rev()
+            .map(|(_, r, t)| (r.clone(), t.as_str()))
+            .collect();
+        buf.replace_many(&ascending);
         let mut items = self.views[view].sels.items.clone();
         let mut placed: Vec<(usize, Selection)> = Vec::with_capacity(edits.len());
         for (i, range, text) in edits {
-            let buf = &mut self.buffers[id];
-            let start = buf.floor_char(range.start);
-            let end = buf.floor_char(range.end).max(start);
+            let (start, end) = (range.start, range.end);
             let edit = kawoosh_doc::Edit {
                 range: start..end,
                 new_len: text.len(),
             };
-            buf.replace(start..end, &text);
             // Carets already placed sit after this edit; shift them.
             for (_, s) in &mut placed {
                 *s = Selection::new(

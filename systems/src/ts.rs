@@ -136,8 +136,15 @@ pub struct Job {
 
 pub struct Answer {
     pub buffer: BufferId,
-    pub update: Update,
+    /// One update per span whose syntax changed — a multicursor keystroke
+    /// answers for each cursor's neighbourhood, not the stretch between
+    /// them; a whole parse is one update for the whole.
+    pub updates: Vec<Update>,
 }
+
+/// How many spans an answer may carry; past that the nearest are joined,
+/// since each is a query of its own.
+const SPANS_MAX: usize = 64;
 
 pub struct Ts {
     jobs: Sender<Job>,
@@ -335,11 +342,85 @@ fn cover(edits: &[Edit]) -> Option<(Range<usize>, usize)> {
     Some((os..oe, ne))
 }
 
+/// Tells the tree each edit of a descending, disjoint sequence — a
+/// multicursor keystroke, journaled from the last cursor to the first —
+/// one at a time, so tree-sitter reuses everything between the cursors
+/// where one covering edit would have it re-lex the lot. Each edit's
+/// start and old end are points of the old text (nothing before an edit
+/// has moved when it lands), its new end the start advanced over the
+/// inserted text, read off the new text where the edit finally sits.
+/// Answers the span each edit occupies in the new text, or `None` for a
+/// sequence that is not of that shape (the cover is the fallback).
+fn tell_each(
+    tree: &mut Tree,
+    edits: &[Edit],
+    old_text: &text_buffer::Buffer,
+    text: &text_buffer::Buffer,
+) -> Option<Vec<Range<usize>>> {
+    if edits.is_empty() || edits.windows(2).any(|w| w[1].range.end > w[0].range.start) {
+        return None;
+    }
+    // Where each edit's start lands in the new text: shifted by the
+    // edits before it in the text, which are the ones after it here.
+    let mut below = vec![0isize; edits.len()];
+    let mut acc = 0isize;
+    for (i, e) in edits.iter().enumerate().rev() {
+        below[i] = acc;
+        acc += e.new_len as isize - e.removed() as isize;
+    }
+    let mut spans = Vec::with_capacity(edits.len());
+    for (e, below) in edits.iter().zip(&below) {
+        let final_start = (e.range.start as isize + below) as usize;
+        let start = point_at(old_text, e.range.start);
+        let inserted = text.collect_range(final_start..final_start + e.new_len);
+        let rows = inserted.iter().filter(|&&b| b == b'\n').count();
+        let new_end = match inserted.iter().rposition(|&b| b == b'\n') {
+            Some(i) => Point::new(start.row + rows, e.new_len - i - 1),
+            None => Point::new(start.row, start.column + e.new_len),
+        };
+        tree.edit(&InputEdit {
+            start_byte: e.range.start,
+            old_end_byte: e.range.end,
+            new_end_byte: e.range.start + e.new_len,
+            start_position: start,
+            old_end_position: point_at(old_text, e.range.end),
+            new_end_position: new_end,
+        });
+        spans.push(final_start..final_start + e.new_len);
+    }
+    Some(spans)
+}
+
+/// Sorted, overlapping and touching ones joined, and no more than
+/// [`SPANS_MAX`]: past that the smallest gaps close first.
+fn merge_spans(mut spans: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    spans.sort_by_key(|r| r.start);
+    let mut out: Vec<Range<usize>> = Vec::with_capacity(spans.len());
+    for r in spans {
+        match out.last_mut() {
+            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+            _ => out.push(r),
+        }
+    }
+    while out.len() > SPANS_MAX {
+        let (i, _) = out
+            .windows(2)
+            .enumerate()
+            .map(|(i, w)| (i, w[1].start - w[0].end))
+            .min_by_key(|(_, gap)| *gap)
+            .expect("more than one span");
+        let end = out[i + 1].end;
+        out[i].end = end;
+        out.remove(i + 1);
+    }
+    out
+}
+
 fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, job: &Job) -> Answer {
     let text = &job.snapshot.text;
     let len = text.len();
-    let mut span = 0..len;
-    let runs = match grammars.get(&job.language) {
+    let mut spans = Vec::from([0..len]);
+    let runs: Vec<Vec<Run>> = match grammars.get(&job.language) {
         Some(g) if parser.set_language(&g.language).is_ok() => {
             // The last tree, told the edits, when it is this language's
             // and the journal reached back to it.
@@ -349,19 +430,23 @@ fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, 
                 .filter(|(lang, _, _)| *lang == job.language)
                 .and_then(|(_, old_text, mut tree)| {
                     let edits = job.edits.as_ref()?;
-                    let edited = match cover(edits) {
-                        Some((old_range, new_end)) => {
-                            tree.edit(&InputEdit {
-                                start_byte: old_range.start,
-                                old_end_byte: old_range.end,
-                                new_end_byte: new_end,
-                                start_position: point_at(&old_text, old_range.start),
-                                old_end_position: point_at(&old_text, old_range.end),
-                                new_end_position: point_at(text, new_end),
-                            });
-                            old_range.start..new_end
+                    let edited = if let Some(spans) = tell_each(&mut tree, edits, &old_text, text) {
+                        spans
+                    } else {
+                        match cover(edits) {
+                            Some((old_range, new_end)) => {
+                                tree.edit(&InputEdit {
+                                    start_byte: old_range.start,
+                                    old_end_byte: old_range.end,
+                                    new_end_byte: new_end,
+                                    start_position: point_at(&old_text, old_range.start),
+                                    old_end_position: point_at(&old_text, old_range.end),
+                                    new_end_position: point_at(text, new_end),
+                                });
+                                Vec::from([old_range.start..new_end])
+                            }
+                            None => Vec::new(),
                         }
-                        None => 0..0,
                     };
                     Some((tree, edited))
                 });
@@ -369,38 +454,45 @@ fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, 
             match parser.parse_with_options(&mut read, old.as_ref().map(|(t, _)| t), None) {
                 Some(tree) => {
                     if let Some((old_tree, edited)) = &old {
-                        // The edit itself, and every range whose syntax
-                        // the reparse changed; the runs elsewhere stand.
-                        let mut lo = edited.start;
-                        let mut hi = edited.end;
-                        for r in tree.changed_ranges(old_tree) {
-                            lo = lo.min(r.start_byte);
-                            hi = hi.max(r.end_byte);
-                        }
-                        span = lo.min(len)..hi.min(len);
+                        // The edits themselves, and every range whose
+                        // syntax the reparse changed; the runs elsewhere
+                        // stand.
+                        let mut all = edited.clone();
+                        all.extend(
+                            tree.changed_ranges(old_tree)
+                                .map(|r| r.start_byte.min(len)..r.end_byte.min(len)),
+                        );
+                        spans = merge_spans(all);
                     }
-                    let runs = capture_runs(g, tree.root_node(), text, span.clone());
+                    let runs = spans
+                        .iter()
+                        .map(|span| capture_runs(g, tree.root_node(), text, span.clone()))
+                        .collect();
                     parsed
                         .by_buffer
                         .insert(job.buffer, (job.language.clone(), text.clone(), tree));
                     runs
                 }
-                None => Vec::new(),
+                None => vec![Vec::new()],
             }
         }
         _ => {
             parsed.by_buffer.remove(&job.buffer);
-            Vec::new()
+            vec![Vec::new()]
         }
     };
     Answer {
         buffer: job.buffer,
-        update: Update {
-            layer: SYNTAX_LAYER,
-            version: job.snapshot.version,
-            span,
-            runs,
-        },
+        updates: spans
+            .into_iter()
+            .zip(runs)
+            .map(|(span, runs)| Update {
+                layer: SYNTAX_LAYER,
+                version: job.snapshot.version,
+                span,
+                runs,
+            })
+            .collect(),
     }
 }
 
@@ -492,10 +584,9 @@ mod tests {
             snapshot: buf.snapshot(),
             edits: None,
         };
-        let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job);
+        let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job).update();
         let tok_at = |o: usize| {
-            a.update
-                .runs
+            a.runs
                 .iter()
                 .find(|r| r.range.contains(&o))
                 .map(|r| Token::from_style(r.style))
@@ -544,18 +635,25 @@ mod tests {
                 snapshot: buf.snapshot(),
                 edits: None,
             };
-            let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job);
-            assert!(!a.update.runs.is_empty(), "{lang}: no runs");
+            let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job).update();
+            assert!(!a.runs.is_empty(), "{lang}: no runs");
             for (needle, tok) in *want {
                 let o = src.find(needle).unwrap();
                 let got = a
-                    .update
                     .runs
                     .iter()
                     .find(|r| r.range.contains(&o))
                     .map(|r| Token::from_style(r.style));
                 assert_eq!(got, Some(*tok), "{lang}: {needle:?}");
             }
+        }
+    }
+
+    impl Answer {
+        /// The one update of a whole-parse answer.
+        fn update(mut self) -> Update {
+            assert_eq!(self.updates.len(), 1, "one span");
+            self.updates.remove(0)
         }
     }
 
@@ -608,26 +706,47 @@ mod tests {
             snapshot: buf.snapshot(),
             edits: None,
         };
-        let first = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
-        assert_eq!(first.update.span, 0..body.len());
-        buf.apply(first.update).unwrap();
+        let first = highlight(&mut parser, &mut g, &mut parsed, &job(&buf)).update();
+        assert_eq!(first.span, 0..body.len());
+        buf.apply(first).unwrap();
         // Rename a function in the middle: a string that was a name.
         let at = body.find("fn f100(").unwrap() + 3;
         buf.replace(at..at + 4, "renamed");
         let second = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
-        let span = second.update.span.clone();
+        let second = second.update();
+        let span = second.span.clone();
         assert!(span.start >= at.saturating_sub(64), "{span:?} for an edit at {at}");
         assert!(span.end <= at + 64, "{span:?} for an edit at {at}");
-        assert!(second.update.runs.iter().all(|r| span.start <= r.range.start && r.range.end <= span.end));
-        buf.apply(second.update).unwrap();
-        let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &whole_job(&buf));
-        assert_eq!(whole.update.span, 0..buf.len());
-        assert_eq!(joined(buf.runs(SYNTAX_LAYER, 0..buf.len())), joined(&whole.update.runs));
+        assert!(second.runs.iter().all(|r| span.start <= r.range.start && r.range.end <= span.end));
+        buf.apply(second).unwrap();
+        let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &whole_job(&buf)).update();
+        assert_eq!(whole.span, 0..buf.len());
+        assert_eq!(joined(buf.runs(SYNTAX_LAYER, 0..buf.len())), joined(&whole.runs));
         let renamed = buf.text().find("renamed").unwrap();
         assert_eq!(
             buf.runs(SYNTAX_LAYER, renamed..renamed + 1).first().map(|r| Token::from_style(r.style)),
             Some(Token::Function)
         );
+        // A multicursor keystroke: three insertions at
+        // once, told to the tree one by one.
+        {
+            let at = |n: usize, buf: &Buffer| buf.text().find(&format!("fn f{n}(")).unwrap() + 3;
+            let (a, b, c) = (at(10, &buf), at(20, &buf), at(30, &buf));
+            buf.replace_many(&[(a..a, "x_"), (b..b, "y_"), (c..c, "z_")]);
+            let inc = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
+            assert!(inc.updates.len() >= 3, "a span per cursor: {:?}", inc.updates.iter().map(|u| u.span.clone()).collect::<Vec<_>>());
+            assert!(inc.updates.iter().all(|u| u.span.len() < buf.len() / 4));
+            for u in inc.updates {
+                buf.apply(u).unwrap();
+            }
+            let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &whole_job(&buf));
+            assert_eq!(joined(buf.runs(SYNTAX_LAYER, 0..buf.len())), joined(&whole.update().runs));
+            let renamed = buf.text().find("fn y_f20(").unwrap() + 3;
+            assert_eq!(
+                buf.runs(SYNTAX_LAYER, renamed..renamed + 1).first().map(|r| Token::from_style(r.style)),
+                Some(Token::Function)
+            );
+        }
         // Edits whose syntax reaches past them — a `/*` that swallows
         // the rest of the file, then its `*/` half way down, then both
         // deleted — each still read as a whole parse would.
@@ -643,11 +762,13 @@ mod tests {
                 }
             }
             let inc = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
-            buf.apply(inc.update).unwrap();
+            for u in inc.updates {
+                buf.apply(u).unwrap();
+            }
             let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &whole_job(&buf));
             assert_eq!(
                 joined(buf.runs(SYNTAX_LAYER, 0..buf.len())),
-                joined(&whole.update.runs),
+                joined(&whole.update().runs),
                 "step {step}"
             );
             let f60 = buf.text().find("fn f60(").unwrap();
@@ -695,7 +816,7 @@ mod tests {
         };
         assert!(
             highlight(&mut parser, &mut g, &mut Parsed::default(), &job)
-                .update
+                .update()
                 .runs
                 .is_empty()
         );
