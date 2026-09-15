@@ -51,6 +51,8 @@ pub fn ex_alias(name: &str) -> Option<&'static str> {
         "cn" | "cnext" => "error_next",
         "ol" | "oldfiles" | "bro" | "browse" => "oldfiles",
         "mks" | "mksession" => "session_save",
+        "kui_debugger" | "kui_devtools" => "kui_debugger",
+        "kui_framerate_hud" | "kui_framerate_hub" | "kui_hud" => "kui_framerate_hud",
         "cp" | "cprev" | "cprevious" => "error_prev",
         _ => return None,
     })

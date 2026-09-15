@@ -49,8 +49,11 @@ pub struct Kawoosh {
     pub cwd: PathBuf,
     /// The theme's base, for `TERM_APPEARANCE` and the syntax palette.
     pub(crate) dark: bool,
-    /// kui's devtools panel, toggled with F12.
+    /// kui's devtools panel, toggled with F12 or `:kui_debugger`.
     pub devtools: bool,
+    /// kui's latency HUD — frame times as a graph in the corner —
+    /// toggled with `:kui_framerate_hud`.
+    pub hud: bool,
     pub(crate) wake: WakeHandle,
     /// The version each buffer was last sent to `ts`, so a frame submits
     /// only what changed.
@@ -101,6 +104,7 @@ impl Kawoosh {
             cwd: std::env::current_dir().unwrap_or_default(),
             dark: true,
             devtools: false,
+            hud: false,
             wake,
             ts_sent: HashMap::new(),
             socket: None,
@@ -569,6 +573,27 @@ impl Kawoosh {
                 self.set_cwd(&target);
             }
             "pwd" => self.ed.message = self.cwd.display().to_string(),
+            // kui's own instruments: the devtools panel (F12 too) and
+            // the latency HUD. No argument toggles; `on` / `off` set.
+            "kui_debugger" | "kui_framerate_hud" => {
+                let on = match args.first().map(String::as_str) {
+                    Some("on" | "1" | "true") => true,
+                    Some("off" | "0" | "false") => false,
+                    _ => !if name == "kui_debugger" {
+                        self.devtools
+                    } else {
+                        self.hud
+                    },
+                };
+                let what = if name == "kui_debugger" {
+                    self.devtools = on;
+                    "devtools"
+                } else {
+                    self.hud = on;
+                    "framerate hud"
+                };
+                self.ed.message = format!("kui {what} {}", if on { "on" } else { "off" });
+            }
             "scrollback" => {
                 if let Some(t) = self.term_of(self.layout.focused()) {
                     self.scrollback_to_buffer(t);
@@ -1078,6 +1103,9 @@ impl kui::App for Kawoosh {
             self.status(ui);
             self.command_line(ui);
         });
+        if self.hud {
+            kui::widgets::latency_hud(ui);
+        }
     }
 
     fn on_event(&mut self, ev: UiEvent) {

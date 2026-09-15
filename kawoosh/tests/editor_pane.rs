@@ -267,3 +267,33 @@ fn a_flag_is_one_step_and_one_caret() {
     d.keys(&mut app, "x");
     assert_eq!(d.line_rows()[0], "x");
 }
+
+#[test]
+fn kui_instruments_are_commands() {
+    let mut app = Kawoosh::new("t", DOC);
+    let mut d = Drive::new(600.0, 300.0);
+    d.frame(&mut app);
+    let ex = |d: &mut Drive, app: &mut Kawoosh, cmd: &str| {
+        d.keys(app, ":");
+        d.keys(app, cmd);
+        d.key(app, "enter", KeyMods::default());
+    };
+    // The HUD: a float in the viewport's corner while it is on.
+    let hud_floats = |d: &Drive| d.core.nodes().iter().filter(|n| n.float && n.rect.h > 40.0).count();
+    assert_eq!(hud_floats(&d), 0);
+    ex(&mut d, &mut app, "kui_framerate_hud");
+    assert!(app.hud);
+    assert_eq!(app.ed.message, "kui framerate hud on");
+    assert_eq!(hud_floats(&d), 1);
+    ex(&mut d, &mut app, "kui_framerate_hub off");
+    assert!(!app.hud);
+    assert_eq!(hud_floats(&d), 0);
+    // The debugger: the same door F12 opens.
+    ex(&mut d, &mut app, "kui_debugger");
+    assert!(app.devtools);
+    assert!(d.core.devtools());
+    ex(&mut d, &mut app, "kui_debugger off");
+    assert!(!app.devtools);
+    assert_eq!(app.ed.message, "kui devtools off");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
