@@ -1,10 +1,39 @@
 # Kawoosh on kui: frontend attempt #4, and the last one
 
-Status: proposed 2026-09-15. Supersedes the platform, UI, input-plumbing and
-Lua-DSL decisions of [mvp.md](mvp.md) (Decisions 1, 2, 4b's SDL half, 8's
-DSL half, the crate table, the build order). The thesis, the taste
-constraints, and Decisions 3, 3b, 4, 5, 5b, 5c, 6, 7, 7b stand and are not
-restated here.
+Status: accepted 2026-09-15; milestones 1–8 implemented the same day, one
+commit each (`git log --oneline` from "Rebuild on kui, milestone 1").
+Supersedes the platform, UI, input-plumbing and Lua-DSL decisions of
+[mvp.md](mvp.md) (Decisions 1, 2, 4b's SDL half, 8's DSL half, the crate
+table, the build order). The thesis, the taste constraints, and Decisions
+3, 3b, 4, 5, 5b, 5c, 6, 7, 7b stand and are not restated here.
+
+Implementation notes — where reality is thinner than the design, so the
+gaps are records rather than surprises:
+
+- **Landed at full design depth**: the kui runner with the bundled face;
+  `doc` with the salvaged journal and eagerly shifted layers; the modal
+  engine (selection sets, vim operators over motions and text objects,
+  visual, multicursor, undo per command, the keymap trie, search, ex);
+  the editor pane as rows (selection, block/bar carets, search hits,
+  syntax runs, diagnostic underlines + EOL messages, completion ghost);
+  panes/tabs/dock with drag dividers and geometric focus moves;
+  terminals as `cells` with the pane prefix, scrollback-to-buffer,
+  ctrl-click locations, the `$EDITOR --wait` socket and shim; `ts`
+  (Rust) and `lsp` (pool by outermost workspace marker — verified: two
+  panes, one rust-analyzer); Lua with commands, keymaps, views as slot
+  panes, scratch buffers with `on_write`, tools, `kawoosh.store`; oil
+  with line identity through the journal; compile mode with `]q`;
+  sessions and oldfiles.
+- **Thinner than designed, still open**: mouse reporting is not passed
+  through to terminal programs (keyboard-driven TUIs work; lazygit's
+  mouse does not); document sync to LSP is whole-text per change, not
+  incremental from the journal; the journal is never pruned (bounded by
+  the buffer's life, not by memory); only Rust has a tree-sitter grammar
+  and only rust-analyzer a builtin server definition (`kawoosh.lsp.server`
+  adds others; grammars need a build); workspace `.kawoosh/init.lua`
+  (7b) is not loaded — one global `init.lua`; no `:map` listing; no
+  macros or `.`; the tab strip has no close button; the undo history is
+  linear.
 
 ## What changed
 
