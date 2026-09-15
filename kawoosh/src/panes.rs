@@ -591,7 +591,7 @@ impl Kawoosh {
                                 drawn.to_drawn(o.clamp(range.start, range.end) - range.start)
                             };
                             let mut selected: Vec<Range<usize>> = Vec::new();
-                            let mut carets: Vec<(usize, Caret)> = Vec::new();
+                            let mut carets: Vec<(Range<usize>, Caret)> = Vec::new();
                             let mut access = (None, None);
                             for s in sels.iter() {
                                 let r = s.range();
@@ -618,7 +618,12 @@ impl Kawoosh {
                                 }
                                 let head_line = buf.line_of(s.head);
                                 if head_line == ln && focused {
-                                    carets.push((clip(s.head), caret_kind));
+                                    let end = if caret_kind == Caret::Block {
+                                        clip(buf.next_char(s.head))
+                                    } else {
+                                        clip(s.head)
+                                    };
+                                    carets.push((clip(s.head)..end, caret_kind));
                                 }
                                 if *s == primary && head_line == ln && focused {
                                     access.0 = Some(clip(s.head) as u32);
@@ -672,6 +677,7 @@ impl Kawoosh {
                                     hits: &hits,
                                     styled: &styled,
                                     carets: &carets,
+                                    escapes: &drawn.escapes,
                                     caret_on: blink_on || mode != Mode::Insert,
                                     access,
                                     underlined: &underlined,

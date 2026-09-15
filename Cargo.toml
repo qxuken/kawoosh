@@ -49,3 +49,9 @@ criterion = "0.8.2"
 
 bitflags = { version = "2.13.1", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "deref", "deref_mut"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

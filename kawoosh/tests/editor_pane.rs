@@ -297,3 +297,43 @@ fn kui_instruments_are_commands() {
     assert_eq!(app.ed.message, "kui devtools off");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+#[test]
+fn control_characters_draw_as_escapes() {
+    // A NUL, a bell, a C1 control, a zero-width space: each is its escape
+    // on the row, the block caret covers the whole escape, and the
+    // shaper never sees the character (a raw NUL made it lay out at an
+    // infinite width and overflow kui's glyph cache).
+    let mut app = Kawoosh::new("t", "a\u{0}b\u{7}c\u{85}d\u{200b}e\n");
+    let mut d = Drive::new(600.0, 300.0);
+    d.frame(&mut app);
+    assert_eq!(d.line_rows()[0], "a^@b^Gc<85>d<200b>e");
+    // `l` onto the NUL: one step in the source, the escape under the
+    // caret; `x` removes the one char.
+    d.keys(&mut app, "l");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[v].sels.primary().head, 1);
+    d.keys(&mut app, "x");
+    assert_eq!(d.line_rows()[0], "ab^Gc<85>d<200b>e");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn a_binary_page_is_a_frame_not_a_hang() {
+    // Every other char an escape, thousands to a line: drawn plain (the
+    // dimming is capped), in one frame's time rather than seconds.
+    let line: String = (0..3000u32)
+        .map(|i| if i % 2 == 0 { '\u{1}' } else { char::from_u32(0x41 + i % 26).unwrap() })
+        .collect();
+    let doc = format!("{line}\n{line}\n{line}\n");
+    let mut app = Kawoosh::new("t", &doc);
+    let mut d = Drive::new(900.0, 300.0);
+    d.frame(&mut app);
+    let t = std::time::Instant::now();
+    for _ in 0..10 {
+        d.frame(&mut app);
+    }
+    let per = t.elapsed() / 10;
+    assert!(per.as_millis() < 50, "an idle frame took {per:?}");
+    assert!(d.line_rows()[0].starts_with("^AB^AD^AF"));
+}

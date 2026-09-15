@@ -16,6 +16,9 @@ pub const FONT: f32 = 13.0;
 pub const LH: f32 = 20.0;
 pub const GUTTER_W: f32 = 56.0;
 pub const STRIP_H: f32 = 24.0;
+/// How many escapes a line may have and still draw them dim; see
+/// `emit_line`.
+const DIM_ESCAPES_MAX: usize = 32;
 
 /// The one text style every run shares, so the shaping cache keys agree.
 /// A run never wraps: a line wider than the pane runs past its edge (the
@@ -34,7 +37,10 @@ pub fn mono(font: Option<FontId>, pal: &Pal) -> TextStyle {
 }
 
 /// A source line expanded for drawing: tabs as spaces to the next stop,
-/// with the byte maps both ways.
+/// control and format characters as their escapes (vim's `^A`, `<80>`,
+/// `<200b>`), with the byte maps both ways. A control character never
+/// reaches the shaper: it has no glyph, no width and no caret, and a
+/// binary file is a page of them.
 pub struct Drawn {
     pub text: String,
     /// `to_src[drawn_byte] = source_byte`, `to_src.len() == text.len() + 1`.
@@ -42,6 +48,23 @@ pub struct Drawn {
     /// `to_drawn[source_byte] = drawn_byte` for byte offsets on char
     /// boundaries (others map to the char's start).
     to_drawn: Vec<usize>,
+    /// The escapes, in drawn bytes — drawn dim, whatever the syntax says.
+    pub escapes: Vec<Range<usize>>,
+}
+
+/// vim's `isprint` line: what is drawn as an escape rather than itself.
+/// C0 and C1 controls and DEL, and the format characters that would be
+/// invisible — a zero-width space, a BOM, the bidi controls, the line
+/// and paragraph separators. Not the ZWJ, which joins an emoji sequence.
+fn escape_of(c: char) -> Option<String> {
+    let u = c as u32;
+    match u {
+        0..0x20 | 0x7f => Some(format!("^{}", char::from_u32((u + 0x40) & 0x7f).unwrap())),
+        0x80..0xa0 => Some(format!("<{u:02x}>")),
+        0x200b | 0x200e | 0x200f | 0x2028 | 0x2029 | 0x202a..=0x202e | 0x2060..=0x2064
+        | 0x2066..=0x2069 | 0xfeff => Some(format!("<{u:04x}>")),
+        _ => None,
+    }
 }
 
 impl Drawn {
@@ -49,6 +72,7 @@ impl Drawn {
         let mut text = String::with_capacity(src.len());
         let mut to_src = Vec::with_capacity(src.len() + 1);
         let mut to_drawn = vec![0; src.len() + 1];
+        let mut escapes = Vec::new();
         let mut col = 0usize;
         for (i, c) in src.char_indices() {
             to_drawn[i] = text.len();
@@ -62,6 +86,14 @@ impl Drawn {
                     text.push(' ');
                 }
                 col += n;
+            } else if let Some(esc) = escape_of(c) {
+                let start = text.len();
+                for _ in 0..esc.len() {
+                    to_src.push(i);
+                }
+                text.push_str(&esc);
+                escapes.push(start..text.len());
+                col += esc.len();
             } else {
                 for _ in 0..c.len_utf8() {
                     to_src.push(i);
@@ -76,6 +108,7 @@ impl Drawn {
             text,
             to_src,
             to_drawn,
+            escapes,
         }
     }
 
@@ -103,8 +136,11 @@ pub struct LineDraw<'a> {
     pub hits: &'a [Range<usize>],
     /// Syntax runs: `(range, color)`.
     pub styled: &'a [(Range<usize>, Color)],
-    /// Carets: byte and shape; the block draws the char under it inverted.
-    pub carets: &'a [(usize, Caret)],
+    /// Carets: the drawn bytes under each and its shape — a bar's range
+    /// is empty, a block's is the cluster (or tab, or escape) it inverts.
+    pub carets: &'a [(Range<usize>, Caret)],
+    /// Escapes — a control character drawn as `^A` — dim over any colour.
+    pub escapes: &'a [Range<usize>],
     /// The blink phase: a bar caret is in the row either way, so the runs
     /// after it keep their place, and only its colour comes and goes.
     pub caret_on: bool,
@@ -180,12 +216,17 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
         cuts.push(r.start.min(len));
         cuts.push(r.end.min(len));
     }
-    for (b, kind) in line.carets {
-        let b = (*b).min(len);
-        cuts.push(b);
-        if *kind == Caret::Block && b < len {
-            cuts.push(next_char(text, b));
-        }
+    // A stray `^M` is dimmed; a binary line, where every other char is
+    // an escape, is not: thousands of spans cost the shaper far more than
+    // the dimming is worth (a frame of them took 200 ms).
+    let escapes: &[Range<usize>] = if line.escapes.len() <= DIM_ESCAPES_MAX {
+        line.escapes
+    } else {
+        &[]
+    };
+    for r in line.carets.iter().map(|(r, _)| r).chain(escapes) {
+        cuts.push(r.start.min(len));
+        cuts.push(r.end.min(len));
     }
     if let Some((b, _)) = line.ghost {
         cuts.push(b.min(len));
@@ -209,14 +250,18 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
         let block = line
             .carets
             .iter()
-            .any(|(cb, k)| *cb == a && *k == Caret::Block);
+            .any(|(r, k)| *k == Caret::Block && r.start <= a && b <= r.end);
+        let escape = escapes.iter().any(|r| r.start <= a && b <= r.end);
         let selected = line.selected.iter().any(|r| r.start <= a && b <= r.end);
         let hit = line.hits.iter().any(|r| r.start <= a && b <= r.end);
-        let color = line
-            .styled
-            .iter()
-            .find(|(r, _)| r.start <= a && b <= r.end)
-            .map(|(_, c)| *c);
+        let color = if escape {
+            Some(pal.dim)
+        } else {
+            line.styled
+                .iter()
+                .find(|(r, _)| r.start <= a && b <= r.end)
+                .map(|(_, c)| *c)
+        };
         let underline = line
             .underlined
             .iter()
@@ -303,11 +348,11 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
         // Bar carets, measured to their byte — past the ghost when they
         // sit after it.
         let ghost_w = ghost.map(|(_, g)| ui.measure_text(g, &base, None).width);
-        for (cb, kind) in line.carets {
+        for (r, kind) in line.carets {
             if *kind != Caret::Bar {
                 continue;
             }
-            let cb = (*cb).min(len);
+            let cb = r.start.min(len);
             let mut x = ui.measure_text(&text[..cb], &base, None).width;
             if let (Some((g, _)), Some(w)) = (ghost, ghost_w)
                 && cb > g
@@ -320,7 +365,7 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
         if line
             .carets
             .iter()
-            .any(|(cb, k)| *cb >= len && *k == Caret::Block)
+            .any(|(r, k)| r.start >= len && *k == Caret::Block)
         {
             ui.with(
                 NodeSpec::column()
