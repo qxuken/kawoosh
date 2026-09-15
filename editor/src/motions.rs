@@ -1,0 +1,267 @@
+//! Text navigation over a `doc::Buffer`: lines and columns, words,
+//! matching brackets. Pure functions of the buffer and a byte offset.
+
+use kawoosh_doc::Buffer;
+
+/// `(line, column in chars)` of a byte offset.
+pub fn line_col(buf: &Buffer, offset: usize) -> (usize, usize) {
+    let ln = buf.line_of(offset);
+    let start = buf.line_start(ln);
+    let col = buf.slice(start..offset.max(start)).chars().count();
+    (ln, col)
+}
+
+/// The byte offset of `col` chars into line `ln`, clamped to the line.
+pub fn offset_at(buf: &Buffer, ln: usize, col: usize) -> usize {
+    let range = buf.line_range(ln);
+    let text = buf.slice(range.clone());
+    let mut o = range.start;
+    for (i, c) in text.chars().enumerate() {
+        if i == col {
+            return o;
+        }
+        o += c.len_utf8();
+    }
+    range.end
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Class {
+    Word,
+    Punct,
+    Space,
+}
+
+fn class(c: char) -> Class {
+    if c.is_alphanumeric() || c == '_' {
+        Class::Word
+    } else if c.is_whitespace() {
+        Class::Space
+    } else {
+        Class::Punct
+    }
+}
+
+fn char_at(buf: &Buffer, o: usize) -> Option<char> {
+    buf.char_at(o)
+}
+
+/// vim `w`: the start of the next word (a newline counts as a boundary,
+/// an empty line as a word).
+pub fn next_word_start(buf: &Buffer, mut o: usize) -> usize {
+    let len = buf.len();
+    let Some(c) = char_at(buf, o) else {
+        return len;
+    };
+    let cls = class(c);
+    if c == '\n' {
+        o = buf.next_char(o);
+    } else {
+        while let Some(c) = char_at(buf, o) {
+            if class(c) != cls || c == '\n' {
+                break;
+            }
+            o = buf.next_char(o);
+        }
+    }
+    // Skip spaces, but stop on an empty line.
+    while let Some(c) = char_at(buf, o) {
+        if c == '\n' {
+            let next = buf.next_char(o);
+            if char_at(buf, next) == Some('\n') {
+                return next;
+            }
+            o = next;
+            continue;
+        }
+        if !c.is_whitespace() {
+            break;
+        }
+        o = buf.next_char(o);
+    }
+    o.min(len)
+}
+
+/// vim `b`: the start of the previous word.
+pub fn prev_word_start(buf: &Buffer, mut o: usize) -> usize {
+    if o == 0 {
+        return 0;
+    }
+    o = buf.prev_char(o);
+    while o > 0 {
+        let c = char_at(buf, o).unwrap_or(' ');
+        if c == '\n' {
+            let prev = buf.prev_char(o);
+            if char_at(buf, prev) == Some('\n') {
+                return o;
+            }
+            o = prev;
+            continue;
+        }
+        if !c.is_whitespace() {
+            break;
+        }
+        o = buf.prev_char(o);
+    }
+    let Some(c) = char_at(buf, o) else {
+        return 0;
+    };
+    let cls = class(c);
+    while o > 0 {
+        let p = buf.prev_char(o);
+        match char_at(buf, p) {
+            Some(pc) if class(pc) == cls && pc != '\n' => o = p,
+            _ => break,
+        }
+    }
+    o
+}
+
+/// vim `e`: the last char of the current or next word (offset *of* that
+/// char, so the caret sits on it).
+pub fn next_word_end(buf: &Buffer, mut o: usize) -> usize {
+    let len = buf.len();
+    if o >= len {
+        return len;
+    }
+    o = buf.next_char(o);
+    while let Some(c) = char_at(buf, o) {
+        if !c.is_whitespace() {
+            break;
+        }
+        o = buf.next_char(o);
+    }
+    let Some(c) = char_at(buf, o) else {
+        return len;
+    };
+    let cls = class(c);
+    loop {
+        let n = buf.next_char(o);
+        match char_at(buf, n) {
+            Some(nc) if class(nc) == cls && nc != '\n' => o = n,
+            _ => break,
+        }
+    }
+    o
+}
+
+/// The word under `o`: `(start, end)`, or an empty range at `o`.
+pub fn word_at(buf: &Buffer, o: usize) -> (usize, usize) {
+    let Some(c) = char_at(buf, o) else {
+        return (o, o);
+    };
+    if c.is_whitespace() {
+        return (o, o);
+    }
+    let cls = class(c);
+    let mut s = o;
+    while s > 0 {
+        let p = buf.prev_char(s);
+        match char_at(buf, p) {
+            Some(pc) if class(pc) == cls && pc != '\n' => s = p,
+            _ => break,
+        }
+    }
+    let mut e = buf.next_char(o);
+    while let Some(nc) = char_at(buf, e) {
+        if class(nc) == cls && nc != '\n' {
+            e = buf.next_char(e);
+        } else {
+            break;
+        }
+    }
+    (s, e)
+}
+
+/// The first non-blank of line `ln`.
+pub fn first_nonblank(buf: &Buffer, ln: usize) -> usize {
+    let range = buf.line_range(ln);
+    let text = buf.slice(range.clone());
+    let skip: usize = text
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .map(char::len_utf8)
+        .sum();
+    range.start + skip
+}
+
+/// The leading whitespace of line `ln`, for auto-indent.
+pub fn indent_of(buf: &Buffer, ln: usize) -> String {
+    let text = buf.line_text(ln);
+    text.chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect()
+}
+
+/// The bracket matching the one at `o`, if `o` is on a bracket.
+pub fn matching_bracket(buf: &Buffer, o: usize) -> Option<usize> {
+    let c = char_at(buf, o)?;
+    let (open, close, forward) = match c {
+        '(' => ('(', ')', true),
+        '[' => ('[', ']', true),
+        '{' => ('{', '}', true),
+        ')' => ('(', ')', false),
+        ']' => ('[', ']', false),
+        '}' => ('{', '}', false),
+        _ => return None,
+    };
+    let mut depth = 0i32;
+    let mut p = o;
+    loop {
+        let ch = char_at(buf, p)?;
+        if ch == open {
+            depth += if forward { 1 } else { -1 };
+        } else if ch == close {
+            depth += if forward { -1 } else { 1 };
+        }
+        if depth == 0 {
+            return Some(p);
+        }
+        if forward {
+            let n = buf.next_char(p);
+            if n == p || n >= buf.len() {
+                return None;
+            }
+            p = n;
+        } else {
+            if p == 0 {
+                return None;
+            }
+            p = buf.prev_char(p);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn words() {
+        let b = Buffer::new("t", "foo bar.baz  qux\n\nend");
+        assert_eq!(next_word_start(&b, 0), 4);
+        assert_eq!(next_word_start(&b, 4), 7);
+        assert_eq!(next_word_start(&b, 7), 8);
+        assert_eq!(next_word_start(&b, 8), 13);
+        assert_eq!(next_word_start(&b, 13), 17); // the empty line
+        assert_eq!(next_word_start(&b, 17), 18);
+        assert_eq!(prev_word_start(&b, 18), 17);
+        assert_eq!(prev_word_start(&b, 17), 13);
+        assert_eq!(prev_word_start(&b, 13), 8);
+        assert_eq!(prev_word_start(&b, 5), 4);
+        assert_eq!(next_word_end(&b, 0), 2);
+        assert_eq!(next_word_end(&b, 2), 6);
+        assert_eq!(word_at(&b, 9), (8, 11));
+        assert_eq!(matching_bracket(&Buffer::new("t", "(a[b]c)"), 0), Some(6));
+        assert_eq!(matching_bracket(&Buffer::new("t", "(a[b]c)"), 4), Some(2));
+    }
+
+    #[test]
+    fn lines_and_columns() {
+        let b = Buffer::new("t", "ab\nc😀d\n");
+        assert_eq!(line_col(&b, 8), (1, 2));
+        assert_eq!(offset_at(&b, 1, 2), 8);
+        assert_eq!(offset_at(&b, 1, 99), 9);
+        assert_eq!(first_nonblank(&Buffer::new("t", "  x"), 0), 2);
+    }
+}

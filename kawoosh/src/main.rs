@@ -20,13 +20,12 @@ fn load_fonts(core: &mut Core) -> Option<kui::FontId> {
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     let path = std::env::args().nth(1);
-    let (title, text) = match &path {
-        Some(p) => (p.clone(), std::fs::read(p)?),
-        None => ("*scratch*".to_string(), SCRATCH.as_bytes().to_vec()),
-    };
     let mut core = Core::new();
     let font = load_fonts(&mut core);
-    let mut app = Kawoosh::new(title, &text);
+    let mut app = match &path {
+        Some(p) => Kawoosh::from_file(Path::new(p)),
+        None => Kawoosh::new("*scratch*", SCRATCH),
+    };
     app.font = font;
     kui::app("kawoosh")
         .size(1100.0, 760.0)
@@ -37,10 +36,12 @@ fn main() -> anyhow::Result<()> {
 }
 
 const SCRATCH: &str = "\
-kawoosh on kui — milestone 1
+kawoosh on kui — milestone 2
 
-This buffer is read-only. j / k move, gg / G jump, ctrl-d / ctrl-u page,
-q quits. Open a file: kawoosh <path>.
+A modal editor over a selection set: h j k l w b e 0 ^ $ gg G, i a o O,
+d c y with motions and text objects (dw, ciw, di(), v / V to select,
+u and ctrl-r, / to search, : for commands (:w path, :q, :e file).
+alt-j / alt-k add cursors; , keeps the primary.
 
 Every visible line is a row of text runs; the row is the layout.
 ";

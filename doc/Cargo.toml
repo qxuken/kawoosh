@@ -1,5 +1,5 @@
 [package]
-name = "kawoosh"
+name = "kawoosh-doc"
 publish.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -8,9 +8,4 @@ repository.workspace = true
 
 [dependencies]
 text-buffer.workspace = true
-kawoosh-doc.workspace = true
-kawoosh-editor.workspace = true
-kui.workspace = true
-anyhow.workspace = true
-log.workspace = true
-env_logger.workspace = true
+slotmap.workspace = true

@@ -1666,8 +1666,28 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "env_logger",
+ "kawoosh-doc",
+ "kawoosh-editor",
  "kui",
  "log",
+ "text-buffer",
+]
+
+[[package]]
+name = "kawoosh-doc"
+version = "0.0.1"
+dependencies = [
+ "slotmap",
+ "text-buffer",
+]
+
+[[package]]
+name = "kawoosh-editor"
+version = "0.0.1"
+dependencies = [
+ "kawoosh-doc",
+ "regex",
+ "slotmap",
  "text-buffer",
 ]
 
@@ -3097,6 +3117,7 @@ version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bdd58c3c93c3d278ca835519292445cb4b0d4dc59ccfdf7ceadaab3f8aeb4038"
 dependencies = [
+ "serde",
  "version_check",
 ]
 

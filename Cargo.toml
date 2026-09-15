@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["text-buffer", "kawoosh"]
+members = ["text-buffer", "doc", "editor", "kawoosh"]
 
 [workspace.package]
 publish = false
@@ -11,6 +11,8 @@ repository = "https://drydock9.qxuken.dev/qxuken/kawoosh"
 
 [workspace.dependencies]
 text-buffer = { path = "./text-buffer" }
+kawoosh-doc = { path = "./doc" }
+kawoosh-editor = { path = "./editor" }
 
 # kui by path while 0.1.0-alpha.13 is in CI; the registry form is
 #   kui = { version = "=0.1.0-alpha.13", registry = "forgejo" }

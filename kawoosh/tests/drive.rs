@@ -72,10 +72,18 @@ impl Drive {
         self.frame(app);
     }
 
-    /// `keys(app, "jjj ww")`: one plain key per non-space character.
+    /// `keys(app, "jjj ww")`: one plain key per character, a space being
+    /// the space key.
     pub fn keys(&mut self, app: &mut impl App, seq: &str) {
-        for c in seq.chars().filter(|c| *c != ' ') {
-            self.key(app, &c.to_string(), KeyMods::default());
+        for c in seq.chars() {
+            if c == ' ' {
+                let press = KeyPress::new(KeyCode::Space, KeyMods::default()).with_text(" ");
+                self.input(app, InputEvent::KeyDown(press.clone()));
+                self.input(app, InputEvent::KeyUp(press.released()));
+                self.frame(app);
+            } else {
+                self.key(app, &c.to_string(), KeyMods::default());
+            }
         }
     }
 
@@ -90,9 +98,10 @@ impl Drive {
         );
     }
 
-    /// Typed or pasted text, as the OS delivers it.
+    /// An IME commit or the clipboard's answer: text that did not come
+    /// from a key press, as the OS delivers it to a key sink.
     pub fn text(&mut self, app: &mut impl App, s: &str) {
-        self.input(app, InputEvent::Text(s.to_string()));
+        self.input(app, InputEvent::Commit(s.to_string()));
         self.frame(app);
     }
 
