@@ -162,20 +162,27 @@ a custom element that pulled `Chunks` for the visible range and laid
 glyphs itself, with `geometry(range) → rects` for decorations living in
 that leaf. kui's `modal_editor` and `syntax_view` examples show the other
 way, and its `highlight` bench measures it: **each visible line is a
-`row` of `text` runs** — one node per style run, a `bg`-colored container
-around selected runs, the caret an inline 2px node (bar) or an inverted
-one-char container (block) — and *the row is the layout*.
+`row` holding one `rich_text` of spans** — a span per style run,
+selection and search hits as span backgrounds, the block caret an
+inverted one-cluster span, the bar caret a 2 px float measured to its
+byte — and *the row is the layout*. (Built first as one `text` node per
+run with `bg` containers around them; the spans came after alpha.14,
+when a review counted the whitespace gaps as nodes and the `highlight`
+bench put `rich` at half the cost of runs. Spans break only on grapheme
+boundaries, so a flag or a letter with its mark shapes whole under a
+caret or a selection edge.)
 
 What this buys, each of which was a milestone-sized piece of work before:
 
 - **No measurement, no glyph geometry.** Selection rects, caret position,
   and decoration extents are all "wrap this run in a container"; the
   solver places them.
-- **Virtual text is just another run.** A completion ghost, an inlay hint,
-  an end-of-line diagnostic is a `text` node emitted between two real
-  runs with a ghost style. mvp.md's governing rule — *virtual text may
-  shift real text, never occlude it* — stops being a rule the leaf
-  enforces and becomes the only thing the shape can do.
+- **Virtual text is just another node.** A completion ghost, an inlay
+  hint, an end-of-line diagnostic is a `text` node under `role = none`
+  emitted beside the line's spans (the ghost splits them, so a click's
+  byte and the access tree never count it). mvp.md's governing rule —
+  *virtual text may shift real text, never occlude it* — stops being a
+  rule the leaf enforces and becomes the only thing the shape can do.
 - **Multicursor is free.** A selection set is N carets and N selected
   ranges on the visible lines; emitting them is the same loop.
 - **The mouse comes back as data.** A sink declaring `on_drag` over
@@ -195,9 +202,11 @@ Trailing spaces in a run are unreliable across fonts — the examples map
 ` ` to NBSP before emitting, and so does kawoosh (one char for one, so
 byte arithmetic on the drawn text still maps back).
 
-**The road to soft wrap** (still not MVP): a line as one `rich_text`
-node — spans carrying color and a per-span `bg` for selection — with the
-caret placed from `Ui::caret_rect(key, byte)`, wraps as a paragraph.
+**The road to soft wrap** (still not MVP): the line is already one
+`rich_text`, so wrapping it is a paragraph wrap — with the caret placed
+from `Ui::caret_rect(key, byte)` instead of a measured prefix, which
+answers from the last frame and so lags a keystroke; today's measure is
+exact for a line that never wraps.
 Same data in, one node instead of eight; the switch is local to the
 line-emit function. This replaces mvp.md's "ghost-text shifting is the
 same machinery inlay hints need later": now both are trivially runs, and

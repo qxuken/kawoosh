@@ -118,5 +118,5 @@ pane prefix (ctrl-w . sends a literal ^W), ctrl-\\ ctrl-n opens the
 scrollback as a buffer, and ctrl/cmd-click on src/main.rs:42 opens it.
 $EDITOR inside a terminal opens a pane here and waits.
 
-Every visible line is a row of text runs; the row is the layout.
+Every visible line is a row holding one rich text of spans; the row is the layout.
 ";

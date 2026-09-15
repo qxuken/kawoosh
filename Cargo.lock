@@ -1779,6 +1779,7 @@ dependencies = [
  "serde",
  "serde_json",
  "text-buffer",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -1787,6 +1788,7 @@ version = "0.0.1"
 dependencies = [
  "slotmap",
  "text-buffer",
+ "unicode-segmentation",
 ]
 
 [[package]]

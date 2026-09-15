@@ -23,18 +23,15 @@ fn rust_is_highlighted_and_stays_so_across_edits() {
     let buf = app.ed.buffer_of(v);
     let runs = buf.runs(SYNTAX_LAYER, 0..buf.len());
     assert!(runs.len() >= 4, "runs: {runs:?}");
-    // Rows split into runs at token boundaries (the caret sits on `f`,
-    // so `fn` is two runs; `main` and `"hi"` are whole ones), coloured.
+    // A row is one rich text of spans coloured at the runs' boundaries,
+    // the block caret on `f` a span of it too: one node per line.
     let nodes = d.core.nodes();
-    let main_node = nodes
+    let line_nodes = nodes
         .iter()
-        .find(|n| n.text.as_deref() == Some("main"))
-        .expect("a `main` run");
-    let str_node = nodes
-        .iter()
-        .find(|n| n.text.as_deref() == Some("\"hi\""))
-        .expect("a string run");
-    assert_ne!(main_node.key, str_node.key);
+        .filter(|n| n.text.as_deref().is_some_and(|t| t.starts_with("fn main") || t.contains("\"hi\"")))
+        .count();
+    assert_eq!(line_nodes, 2, "one text node per line");
+    assert!(nodes.iter().all(|n| n.text.as_deref() != Some("main")));
     // Edit a line above; the runs below shift with it.
     let string_run = runs
         .iter()

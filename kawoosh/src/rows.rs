@@ -1,12 +1,14 @@
-//! The editor pane's shape (kui.md D3): a visible line is a `row` of mono
-//! `text` runs inside one key sink. The row *is* the layout — nothing here
-//! measures text. Selection and search hits are `bg` containers around
-//! runs, the caret an inline node, and (from milestone 5) syntax runs are
-//! the colours of the text nodes.
+//! The editor pane's shape (kui.md D3): a visible line is a `row` holding
+//! one `rich_text` of mono spans inside one key sink. The row *is* the
+//! layout. Selection and search hits are span backgrounds, syntax runs
+//! (from milestone 5) the spans' colours, the block caret an inverted
+//! span, and the bar caret a float measured to its byte — the one place
+//! this file measures text.
 
 use std::ops::Range;
 
-use kui::{Align, Color, FloatConfig, FontId, Min, NodeSpec, Role, Sizing, TextStyle, Ui};
+use kui::{Align, Color, FloatConfig, FontId, Min, NodeSpec, Role, Sizing, Span, TextStyle, Ui};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::Pal;
 
@@ -134,32 +136,41 @@ pub fn gutter_row(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, ln: usize, c
     );
 }
 
-/// The bar caret. A zero-width node marks the boundary — so the bar
-/// takes no room in the row and the runs after it sit where they sit in
-/// normal mode — and the 2 px bar itself is a float hung off it, one
-/// pixel to either side, painted over the glyphs it straddles and inert
-/// to input (a plain box has no hit region). On the blink's off phase
-/// both nodes stay and only the colour goes.
-fn caret_bar(ui: &mut Ui<'_>, color: Color, on: bool) {
-    ui.with(
-        NodeSpec::row()
-            .width(Sizing::Fixed(0.0))
-            .height(Sizing::Fixed(LH - 4.0)),
-        |ui| {
-            let bar = NodeSpec::column()
-                .width(Sizing::Fixed(2.0))
-                .height(Sizing::Fixed(LH - 4.0))
-                .float(FloatConfig::parent().offset(-1.0, 0.0));
-            ui.with(if on { bar.bg(color) } else { bar }, |_| {});
-        },
-    );
+/// The bar caret: a 2 px float hung off the row at `x`, one pixel to
+/// either side of the boundary, painted over the glyphs it straddles and
+/// inert to input (a plain box has no hit region). It takes no room in
+/// the row, and on the blink's off phase it stays and only its colour
+/// goes.
+fn caret_bar(ui: &mut Ui<'_>, color: Color, on: bool, x: f32) {
+    let bar = NodeSpec::column()
+        .width(Sizing::Fixed(2.0))
+        .height(Sizing::Fixed(LH - 4.0))
+        .float(FloatConfig::parent().offset(x - 1.0, 2.0));
+    ui.with(if on { bar.bg(color) } else { bar }, |_| {});
 }
 
-/// One document line as a `Role::Line` row of runs.
+/// One span's resolved look, so neighbours that agree merge.
+#[derive(Clone, Copy, PartialEq)]
+struct Look {
+    color: Option<Color>,
+    bg: Option<Color>,
+    underline: Option<Color>,
+}
+
+/// One document line as a `Role::Line` row: its text is one `rich_text`
+/// of spans — the colours of the syntax runs, selection and search hits
+/// as span backgrounds, the block caret the char under it inverted, a
+/// diagnostic's wavy underline — split only where the completion ghost
+/// sits, since that is not the document's text and the access tree and
+/// a click's byte must not count it. The bar caret is a float measured
+/// to its byte; what follows the text (a block caret past the end, a
+/// selection over the newline, a trailing message) is a sibling node.
 pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDraw<'_>) {
     let text = line.text;
     let len = text.len();
-    // Every boundary a run must break at.
+    // Every boundary a span must break at, on grapheme boundaries only:
+    // a flag's two indicators or a letter and its mark shape as one
+    // cluster, and a cut inside one would draw its halves.
     let mut cuts: Vec<usize> = vec![0, len];
     for r in line.selected.iter().chain(line.hits.iter()) {
         cuts.push(r.start.min(len));
@@ -179,11 +190,64 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
     if let Some((b, _)) = line.ghost {
         cuts.push(b.min(len));
     }
-    cuts.retain(|c| text.is_char_boundary(*c));
+    let boundaries: Vec<usize> = text
+        .grapheme_indices(true)
+        .map(|(i, _)| i)
+        .chain([len])
+        .collect();
+    cuts.retain(|c| boundaries.binary_search(c).is_ok());
     cuts.sort_unstable();
     cuts.dedup();
 
-    // At least the pane's width, and as wide as its runs: the floor is
+    // The spans, neighbours of one look joined.
+    let mut segs: Vec<(Range<usize>, Look)> = Vec::new();
+    for w in cuts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if a == b {
+            continue;
+        }
+        let block = line
+            .carets
+            .iter()
+            .any(|(cb, k)| *cb == a && *k == Caret::Block);
+        let selected = line.selected.iter().any(|r| r.start <= a && b <= r.end);
+        let hit = line.hits.iter().any(|r| r.start <= a && b <= r.end);
+        let color = line
+            .styled
+            .iter()
+            .find(|(r, _)| r.start <= a && b <= r.end)
+            .map(|(_, c)| *c);
+        let underline = line
+            .underlined
+            .iter()
+            .find(|(r, _)| r.start <= a && b <= r.end)
+            .map(|(_, c)| *c);
+        let look = if block {
+            Look {
+                color: Some(pal.bg),
+                bg: Some(pal.accent),
+                underline,
+            }
+        } else {
+            Look {
+                color,
+                bg: if selected {
+                    Some(pal.select)
+                } else if hit {
+                    Some(pal.command.with_alpha(0.35))
+                } else {
+                    None
+                },
+                underline,
+            }
+        };
+        match segs.last_mut() {
+            Some((r, l)) if *l == look && r.end == a => r.end = b,
+            _ => segs.push((a..b, look)),
+        }
+    }
+
+    // At least the pane's width, and as wide as its text: the floor is
     // what the lines column's horizontal scroll measures its content by.
     let mut row = NodeSpec::row()
         .width(Sizing::Grow(1.0))
@@ -199,94 +263,72 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
     }
     ui.with(row, |ui| {
         let base = mono(font, pal);
-        let ghost_at = |ui: &mut Ui<'_>, at: usize| {
-            if let Some((b, g)) = line.ghost
-                && b.min(len) == at
-            {
-                ui.with(NodeSpec::row().role(Role::None), |ui| {
-                    ui.text(g, base.color(pal.dim));
-                });
+        let flush = |ui: &mut Ui<'_>, segs: &[(Range<usize>, Look)]| {
+            if segs.is_empty() {
+                return;
             }
+            let spans: Vec<Span<'_>> = segs
+                .iter()
+                .map(|(r, l)| {
+                    let mut s = Span::new(&text[r.clone()]);
+                    if let Some(c) = l.color {
+                        s = s.color(c);
+                    }
+                    if let Some(c) = l.bg {
+                        s = s.bg(c);
+                    }
+                    if let Some(c) = l.underline {
+                        s = s
+                            .underline()
+                            .underline_color(c)
+                            .underline_style(kui::UnderlineStyle::Wavy);
+                    }
+                    s
+                })
+                .collect();
+            ui.rich_text(&spans, base);
         };
-        for w in cuts.windows(2) {
-            let (a, b) = (w[0], w[1]);
-            for (cb, kind) in line.carets {
-                if *cb == a && *kind == Caret::Bar {
-                    caret_bar(ui, pal.accent, line.caret_on);
-                }
+        let ghost = line.ghost.map(|(b, g)| (b.min(len), g));
+        match ghost {
+            Some((g, ghost_text)) => {
+                let at = segs.partition_point(|(r, _)| r.end <= g);
+                flush(ui, &segs[..at]);
+                ui.with(NodeSpec::row().role(Role::None), |ui| {
+                    ui.text(ghost_text, base.color(pal.dim));
+                });
+                flush(ui, &segs[at..]);
             }
-            ghost_at(ui, a);
-            if a == b {
+            None => flush(ui, &segs),
+        }
+        // Bar carets, measured to their byte — past the ghost when they
+        // sit after it.
+        let ghost_w = ghost.map(|(_, g)| ui.measure_text(g, &base, None).width);
+        for (cb, kind) in line.carets {
+            if *kind != Caret::Bar {
                 continue;
             }
-            let run = &text[a..b];
-            let block = line
-                .carets
-                .iter()
-                .any(|(cb, k)| *cb == a && *k == Caret::Block);
-            let selected = line.selected.iter().any(|r| r.start <= a && b <= r.end);
-            let hit = line.hits.iter().any(|r| r.start <= a && b <= r.end);
-            let color = line
-                .styled
-                .iter()
-                .find(|(r, _)| r.start <= a && b <= r.end)
-                .map(|(_, c)| *c);
-            let underline = line
-                .underlined
-                .iter()
-                .find(|(r, _)| r.start <= a && b <= r.end)
-                .map(|(_, c)| *c);
-            let mut style = base;
-            if let Some(c) = color {
-                style = style.color(c);
+            let cb = (*cb).min(len);
+            let mut x = ui.measure_text(&text[..cb], &base, None).width;
+            if let (Some((g, _)), Some(w)) = (ghost, ghost_w)
+                && cb > g
+            {
+                x += w;
             }
-            if let Some(u) = underline {
-                style = style
-                    .underline_color(u)
-                    .underline_style(kui::UnderlineStyle::Wavy);
-            }
-            let bg = if block {
-                style = style.color(pal.bg);
-                Some(pal.accent)
-            } else if selected {
-                Some(pal.select)
-            } else if hit {
-                Some(pal.command.with_alpha(0.35))
-            } else {
-                None
-            };
-            match bg {
-                Some(bg) => {
-                    ui.with(
-                        NodeSpec::row()
-                            .height(Sizing::Fixed(LH))
-                            .cross_align(Align::Center)
-                            .bg(bg),
-                        |ui| ui.text(run, style),
-                    );
-                }
-                None => ui.text(run, style),
-            }
+            caret_bar(ui, pal.accent, line.caret_on, x);
         }
-        // Carets at the end of the line.
-        for (cb, kind) in line.carets {
-            if *cb >= len {
-                match kind {
-                    Caret::Bar => {
-                        caret_bar(ui, pal.accent, line.caret_on);
-                        ghost_at(ui, len);
-                    }
-                    Caret::Block => {
-                        ui.with(
-                            NodeSpec::column()
-                                .width(Sizing::Fixed(8.0))
-                                .height(Sizing::Fixed(LH - 4.0))
-                                .bg(pal.accent),
-                            |_| {},
-                        );
-                    }
-                }
-            }
+        // A block caret past the end of the line.
+        if line
+            .carets
+            .iter()
+            .any(|(cb, k)| *cb >= len && *k == Caret::Block)
+        {
+            ui.with(
+                NodeSpec::column()
+                    .width(Sizing::Fixed(8.0))
+                    .height(Sizing::Fixed(LH - 4.0))
+                    .bg(pal.accent),
+                |_| {},
+            );
         }
         // A selection running past the newline.
         if line.selected.iter().any(|r| r.end > len) {
@@ -310,10 +352,11 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
     });
 }
 
+/// The grapheme boundary after `b` in `s`, or the end.
 pub fn next_char(s: &str, b: usize) -> usize {
     s[b..]
-        .chars()
+        .graphemes(true)
         .next()
-        .map(|c| b + c.len_utf8())
+        .map(|g| b + g.len())
         .unwrap_or(s.len())
 }

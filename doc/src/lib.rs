@@ -12,6 +12,8 @@
 pub mod version;
 
 use std::ops::Range;
+
+use unicode_segmentation::UnicodeSegmentation;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -25,6 +27,10 @@ new_key_type! {
 
 /// One styled range in a layer. `style` and `tag` mean whatever the layer's
 /// producer says — a token class, a diagnostic severity plus a message id.
+/// How far to either side of an offset a grapheme boundary is looked
+/// for, bytes; see `Buffer::grapheme_window`.
+const GRAPHEME_WINDOW: usize = 256;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Run {
     pub range: Range<usize>,
@@ -203,7 +209,7 @@ impl Buffer {
     }
 
     /// Steps `offset` back to a char boundary.
-    pub fn floor_char(&self, mut offset: usize) -> usize {
+    fn floor_byte(&self, mut offset: usize) -> usize {
         offset = offset.min(self.len());
         while offset > 0 && matches!(self.byte_at(offset), Some(b) if (b & 0xC0) == 0x80) {
             offset -= 1;
@@ -211,18 +217,73 @@ impl Buffer {
         offset
     }
 
-    /// The char boundary after `offset`, or the end.
+    /// The text around `offset` a grapheme boundary is decided in: the
+    /// line, cut to [`GRAPHEME_WINDOW`] bytes to either side on char
+    /// boundaries, and where it starts. A cluster is decided from its
+    /// left — a run of regional indicators pairs up from its first — so
+    /// the window is wide, and a run longer than it is the one case
+    /// that reads wrong.
+    fn grapheme_window(&self, offset: usize) -> (usize, String) {
+        let line = self.line_range(self.line_of(offset));
+        let start = self.floor_byte(offset.saturating_sub(GRAPHEME_WINDOW).max(line.start));
+        let end = self.floor_byte((offset + GRAPHEME_WINDOW).min(line.end));
+        (start, self.slice(start..end))
+    }
+
+    /// The line's text end, when `offset` sits in its terminator — the
+    /// `\n`, or the `\r` of a `\r\n` — and where the next line starts.
+    fn in_terminator(&self, offset: usize) -> Option<(usize, usize)> {
+        let ln = self.line_of(offset);
+        let end = self.line_range(ln).end;
+        (offset >= end && offset < self.len()).then(|| {
+            // The raw range stops at the `\n`; the next line is past it.
+            let next = self
+                .text
+                .get_line_range(ln)
+                .map_or(self.len(), |r| (r.end + 1).min(self.len()));
+            (end, next)
+        })
+    }
+
+    /// Steps `offset` back to the start of the grapheme cluster it is in
+    /// — a flag's two regional indicators, a letter and its combining
+    /// mark, an emoji sequence are one unit for a caret.
+    pub fn floor_char(&self, offset: usize) -> usize {
+        let offset = self.floor_byte(offset);
+        if let Some((end, _)) = self.in_terminator(offset) {
+            return end;
+        }
+        let (start, text) = self.grapheme_window(offset);
+        let rel = offset - start;
+        start
+            + text
+                .grapheme_indices(true)
+                .map(|(i, _)| i)
+                .chain([text.len()])
+                .take_while(|i| *i <= rel)
+                .last()
+                .unwrap_or(0)
+    }
+
+    /// The grapheme boundary after `offset`, or the end.
     pub fn next_char(&self, offset: usize) -> usize {
         if offset >= self.len() {
             return self.len();
         }
-        let mut o = offset + 1;
-        while o < self.len() && matches!(self.byte_at(o), Some(b) if (b & 0xC0) == 0x80) {
-            o += 1;
+        if let Some((_, next)) = self.in_terminator(offset) {
+            return next;
         }
-        o
+        let (start, text) = self.grapheme_window(offset);
+        let rel = offset - start;
+        start
+            + text
+                .grapheme_indices(true)
+                .map(|(i, _)| i)
+                .find(|i| *i > rel)
+                .unwrap_or(text.len())
     }
 
+    /// The grapheme boundary before `offset`, or 0.
     pub fn prev_char(&self, offset: usize) -> usize {
         if offset == 0 {
             return 0;
@@ -531,6 +592,42 @@ mod tests {
         // An edit inside a run drops it.
         b.replace(8..9, "X");
         assert!(b.runs("syntax", 0..100).is_empty());
+    }
+
+    #[test]
+    fn stepping_is_by_grapheme_cluster() {
+        // A flag (two regional indicators), a letter with a combining
+        // mark, a family emoji joined with ZWJ, then plain ASCII.
+        let b = Buffer::new("t", "🇺🇸e\u{301}👨\u{200d}👩\u{200d}👧x");
+        let flag = "🇺🇸".len();
+        let e = "e\u{301}".len();
+        let fam = "👨\u{200d}👩\u{200d}👧".len();
+        assert_eq!(b.next_char(0), flag);
+        assert_eq!(b.next_char(flag), flag + e);
+        assert_eq!(b.next_char(flag + e), flag + e + fam);
+        assert_eq!(b.next_char(flag + e + fam), b.len());
+        assert_eq!(b.prev_char(b.len()), flag + e + fam);
+        assert_eq!(b.prev_char(flag + e + fam), flag + e);
+        assert_eq!(b.prev_char(flag + e), flag);
+        assert_eq!(b.prev_char(flag), 0);
+        // Inside a cluster floors to its start; a byte inside a char too;
+        // a boundary, the end included, is its own floor.
+        assert_eq!(b.floor_char(b.len()), b.len());
+        assert_eq!(b.floor_char(flag), flag);
+        assert_eq!(b.floor_char(4), 0);
+        assert_eq!(b.floor_char(1), 0);
+        assert_eq!(b.floor_char(flag + 1), flag);
+        // A line's terminator is one step, `\r\n` included.
+        let b = Buffer::new("t", "a\nb");
+        assert_eq!(b.next_char(0), 1);
+        assert_eq!(b.next_char(1), 2);
+        assert_eq!(b.prev_char(2), 1);
+        assert_eq!(b.prev_char(1), 0);
+        let b = Buffer::new("t", "a\r\nb");
+        assert_eq!(b.next_char(1), 3);
+        assert_eq!(b.prev_char(3), 1);
+        assert_eq!(b.floor_char(2), 1);
+        assert_eq!(b.next_char(3), 4);
     }
 
     #[test]

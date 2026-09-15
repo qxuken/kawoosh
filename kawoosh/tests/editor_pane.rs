@@ -121,29 +121,41 @@ fn the_caret_takes_no_room_in_the_row() {
     let mut app = Kawoosh::new("t", DOC);
     let mut d = Drive::new(800.0, 400.0);
     d.frame(&mut app);
-    // The x of the run starting at "one" — the block caret's run in
-    // normal mode, the run after the bar in insert.
-    let run_x = |d: &Drive| {
+    // The line is one text node; the block caret is a span of it.
+    let text_x = |d: &Drive| {
         d.core
             .nodes()
             .iter()
-            .find(|n| n.text.as_deref().is_some_and(|t| t.starts_with('o')))
+            .find(|n| n.text.as_deref() == Some("line one"))
             .map(|n| n.rect.x)
-            .expect("the run at the caret")
+            .expect("the line's text")
+    };
+    // The bar caret: the one 2 px float in the row.
+    let bar = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| n.float && n.rect.w == 2.0 && n.rect.y < 70.0)
+            .map(|n| (n.rect.x, n.bg.a))
     };
     d.keys(&mut app, "w");
-    let normal = run_x(&d);
-    // `line |one`: the bar is a float off a zero-width node, so the
-    // mode change moves nothing.
+    let normal = text_x(&d);
+    assert_eq!(bar(&d), None);
+    // `line |one`: the bar is a float measured to its byte, so the mode
+    // change moves nothing, and it sits after "line ".
     d.keys(&mut app, "i");
     assert_eq!(app.ed.mode, Mode::Insert);
     d.core.set_caret_visible(true);
     d.frame(&mut app);
-    assert_eq!(run_x(&d), normal, "entering insert mode shifted the text");
+    assert_eq!(text_x(&d), normal, "entering insert mode shifted the text");
+    let (x, a) = bar(&d).expect("the bar caret");
+    assert!(x > normal + 30.0 && x < normal + 45.0, "bar at {x} from {normal}");
+    assert_eq!(a, 1.0);
     // Nor does the blink's off phase: the node stays, its colour goes.
     d.core.set_caret_visible(false);
     d.frame(&mut app);
-    assert_eq!(run_x(&d), normal, "the off phase shifted the text");
+    assert_eq!(text_x(&d), normal, "the off phase shifted the text");
+    assert_eq!(bar(&d), Some((x, 0.0)));
     assert_eq!(d.line_rows()[0], "line one");
 }
 
@@ -176,24 +188,26 @@ fn a_long_line_scrolls_sideways_to_the_caret_and_never_wraps() {
     };
     assert_eq!(row_h(&d), 20.0);
     assert_eq!(d.line_rows()[1], "jj");
-    // `$` scrolls the column so the block caret is in view; `0` back.
-    let caret_x = |d: &Drive| {
+    // `$` scrolls the column so the line's end — the block caret's
+    // span — is in view; `0` back.
+    let text = |d: &Drive| {
         d.core
             .nodes()
             .iter()
-            .find(|n| n.text.as_deref() == Some("j") && n.rect.w < 10.0)
-            .map(|n| n.rect.x)
-            .expect("the caret's run")
+            .find(|n| n.text.as_deref().is_some_and(|t| t.starts_with("jjj")))
+            .map(|n| n.rect)
+            .expect("the long line")
     };
     d.keys(&mut app, "$");
     d.frame(&mut app);
-    let x = caret_x(&d);
-    assert!(x >= rect.x && x + 8.0 <= rect.x + rect.w, "caret at {x}, column {rect:?}");
+    let t = text(&d);
+    let end = t.x + t.w;
+    assert!(end > rect.x && end <= rect.x + rect.w + 0.5, "line ends at {end}, column {rect:?}");
     assert!(d.core.scroll_offset(key).x > 0.0);
     d.keys(&mut app, "0");
     d.frame(&mut app);
     assert_eq!(d.core.scroll_offset(key).x, 0.0);
-    assert_eq!(caret_x(&d), rect.x);
+    assert_eq!(text(&d).x, rect.x);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
@@ -220,4 +234,36 @@ fn the_wheel_reaches_the_view_over_the_lines_column() {
     let left = app.ed.views[view].left;
     assert!(left > 40.0 && left < 1000.0, "clamped to the content: {left}");
     assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn a_flag_is_one_step_and_one_caret() {
+    // Two regional indicators are one grapheme cluster: `l` crosses the
+    // flag in one step, the block caret covers it whole, and the row's
+    // text is the line, unsplit.
+    let mut app = Kawoosh::new("t", "🇺🇸x\n");
+    let mut d = Drive::new(300.0, 200.0);
+    d.frame(&mut app);
+    let head = |app: &Kawoosh| {
+        app.ed.views[app.focused_view().unwrap()]
+            .sels
+            .primary()
+            .head
+    };
+    assert_eq!(head(&app), 0);
+    d.keys(&mut app, "l");
+    assert_eq!(head(&app), "🇺🇸".len());
+    d.keys(&mut app, "h");
+    assert_eq!(head(&app), 0);
+    assert_eq!(d.line_rows()[0], "🇺🇸x");
+    let nodes = d.core.nodes();
+    let texts: Vec<&str> = nodes
+        .iter()
+        .filter_map(|n| n.text.as_deref())
+        .filter(|t| t.contains('🇺') || t.contains('🇸'))
+        .collect();
+    assert_eq!(texts, ["🇺🇸x"], "the flag is not split across nodes");
+    // Delete the flag: one `x` removes the whole cluster.
+    d.keys(&mut app, "x");
+    assert_eq!(d.line_rows()[0], "x");
 }
