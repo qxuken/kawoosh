@@ -76,9 +76,10 @@ fn tabs_and_the_dock() {
     assert_eq!(app.layout.tabs.len(), 1);
     ctrl_w(&mut d, &mut app, "d");
     assert!(app.layout.dock_open);
+    // The dock's tenant is a real shell (a pty spawned for the test).
     assert!(matches!(
         app.layout.focused_content(),
-        Some(Content::Editor(_))
+        Some(Content::Terminal(_))
     ));
     assert_eq!(app.layout.visible_panes().len(), 2);
     ctrl_w(&mut d, &mut app, "d");

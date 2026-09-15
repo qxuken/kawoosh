@@ -1,0 +1,16 @@
+[package]
+name = "kawoosh-term"
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# For `Cell` / `CellGrid` only: kui-core is the data contract, not the
+# runner (docs/design/kui-requirements.md R1.4).
+kui-core.workspace = true
+alacritty_terminal.workspace = true
+portable-pty.workspace = true
+anyhow.workspace = true
+log.workspace = true

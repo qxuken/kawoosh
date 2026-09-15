@@ -1,5 +1,5 @@
 [package]
-name = "kawoosh"
+name = "kawoosh-systems"
 publish.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -7,13 +7,9 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-text-buffer.workspace = true
 kawoosh-doc.workspace = true
-kawoosh-editor.workspace = true
-kawoosh-term.workspace = true
-kawoosh-systems.workspace = true
 crossbeam-channel.workspace = true
-kui.workspace = true
-anyhow.workspace = true
 log.workspace = true
-env_logger.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+serde.workspace = true

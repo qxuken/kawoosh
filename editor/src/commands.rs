@@ -38,6 +38,7 @@ pub fn ex_alias(name: &str) -> Option<&'static str> {
         "tabp" | "tabprev" => "tab_prev",
         "tabc" | "tabclose" => "tab_close",
         "term" | "terminal" => "terminal",
+        "scrollback" => "scrollback",
         "map" => "map",
         "echo" => "echo",
         "lua" => "lua",

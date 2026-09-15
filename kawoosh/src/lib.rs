@@ -7,7 +7,9 @@
 pub mod app;
 pub mod layout;
 pub mod palette;
+pub mod panes;
 pub mod rows;
+pub mod terminals;
 
 pub use app::Kawoosh;
 pub use palette::Pal;
