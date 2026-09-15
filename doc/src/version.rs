@@ -166,7 +166,9 @@ impl Journal {
         self.oldest = version;
     }
 
-    fn edits_since(&self, from: Version) -> Result<impl Iterator<Item = &Edit>, Stale> {
+    /// The edits after `from`, oldest first — what a producer that kept
+    /// its work at `from` needs to bring it to now (the ts thread's tree).
+    pub fn edits_since(&self, from: Version) -> Result<impl Iterator<Item = &Edit>, Stale> {
         if from > self.current {
             return Err(Stale::FutureVersion);
         }

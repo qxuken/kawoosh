@@ -1827,6 +1827,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "text-buffer",
  "tree-sitter",
  "tree-sitter-css",
  "tree-sitter-go",

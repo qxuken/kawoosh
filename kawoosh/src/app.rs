@@ -191,11 +191,19 @@ impl Kawoosh {
             if self.ts_sent.get(&id) == Some(&b.version()) {
                 continue;
             }
+            // The edits since the last job, for the thread's tree; none
+            // when there was no job or the journal no longer reaches it.
+            let edits = self
+                .ts_sent
+                .get(&id)
+                .and_then(|v| b.journal().edits_since(*v).ok())
+                .map(|it| it.cloned().collect());
             self.ts_sent.insert(id, b.version());
             self.ts.submit(Job {
                 buffer: id,
                 language: b.language.to_string(),
                 snapshot: b.snapshot(),
+                edits,
             });
         }
     }

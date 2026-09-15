@@ -490,6 +490,28 @@ impl Buffer {
         root
     }
 
+    /// The bytes from `offset` to the end of the piece holding it, borrowed
+    /// — what a parser reading the text in chunks asks for (tree-sitter's
+    /// read callback), one tree walk each and no copy. Empty at the end.
+    pub fn chunk_at(&self, offset: usize) -> &[u8] {
+        let mut node = self.root.node();
+        let mut remaining = offset;
+        while let Some(current) = node {
+            let left_length = current.left.length();
+            if remaining < left_length {
+                node = current.left.node();
+                continue;
+            }
+            remaining -= left_length;
+            if remaining < current.piece.len() {
+                return &current.piece.bytes()[remaining..];
+            }
+            remaining -= current.piece.len();
+            node = current.right.node();
+        }
+        &[]
+    }
+
     fn find_location(&self, offset: usize) -> Option<(Piece, usize)> {
         if offset >= self.len() {
             return None;

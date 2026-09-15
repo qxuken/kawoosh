@@ -2,21 +2,25 @@
 //! job is a buffer snapshot at a version; the answer is an `Update` for
 //! the `syntax` layer at that version, which `doc` carries forward.
 //!
-//! The parse is incremental: the thread keeps each buffer's last text
-//! and tree, reads the new snapshot against them as one edit (the diff
-//! between the two texts, the same one `Buffer::restore` journals),
-//! tells the tree, and parses with it — tree-sitter reuses every node
-//! the edit did not touch. The answer covers only the span whose syntax
-//! changed (the edit and `changed_ranges`), the query run over that span
-//! alone; the journal carries the runs outside it. A first sight of a
-//! buffer, or a change of language, parses and answers for the whole.
+//! The parse is incremental, and nothing copies the text: the thread
+//! keeps each buffer's last snapshot and tree; a job carries the
+//! journal's edits since the job before it, composed into the one edit
+//! that covers them, which the tree is told (with tree-sitter's points
+//! read off the two piece trees); the parser reads the new snapshot
+//! chunk by chunk from its pieces, and the query reads a node's text the
+//! same way, only where a predicate asks. tree-sitter reuses every node
+//! the edit did not touch, and the answer covers only the span whose
+//! syntax changed (the edit and `changed_ranges`), the query run over
+//! that span alone; the journal carries the runs outside it. A first
+//! sight of a buffer, edits the journal no longer has, or a change of
+//! language parse and answer for the whole.
 
 use std::collections::HashMap;
 use std::ops::Range;
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use kawoosh_doc::{BufferId, Run, Snapshot, Update};
+use kawoosh_doc::{BufferId, Edit, Run, Snapshot, Update};
 use tree_sitter::{InputEdit, Parser, Point, Query, QueryCursor, StreamingIterator, Tree};
 
 use crate::WakeHandle;
@@ -124,6 +128,10 @@ pub struct Job {
     pub buffer: BufferId,
     pub language: String,
     pub snapshot: Snapshot,
+    /// The journal's edits since the job sent before this one for the
+    /// buffer, oldest first; `None` when there was none, or the journal
+    /// no longer reaches back to it — the parse starts over then.
+    pub edits: Option<Vec<Edit>>,
 }
 
 pub struct Answer {
@@ -150,10 +158,18 @@ impl Ts {
                 let mut grammars = Grammars::load();
                 let mut parsed = Parsed::default();
                 while let Ok(job) = job_rx.recv() {
-                    // Only the newest job per buffer matters: skip ahead.
+                    // Only the newest job per buffer matters: skip ahead,
+                    // the skipped job's edits carried into the next one's.
                     let mut job = job;
-                    while let Ok(next) = job_rx.try_recv() {
+                    while let Ok(mut next) = job_rx.try_recv() {
                         if next.buffer == job.buffer {
+                            next.edits = match (job.edits.take(), next.edits.take()) {
+                                (Some(mut a), Some(b)) => {
+                                    a.extend(b);
+                                    Some(a)
+                                }
+                                _ => None,
+                            };
                             job = next;
                         } else {
                             // A different buffer: handle it after this one.
@@ -276,47 +292,81 @@ impl Grammar {
     }
 }
 
-/// What the thread parsed last, per buffer: the text and its tree, for
-/// the next parse to start from.
+/// What the thread parsed last, per buffer: the snapshot (a piece tree,
+/// shared with the buffer's own blocks) and its tree, for the next
+/// parse to start from.
 #[derive(Default)]
 struct Parsed {
-    by_buffer: HashMap<BufferId, (String, Vec<u8>, Tree)>,
+    by_buffer: HashMap<BufferId, (String, text_buffer::Buffer, Tree)>,
 }
 
-/// tree-sitter's point for byte `b` of `text`: the row and the column in
-/// bytes. Right, not approximate — the tree's node positions are read
-/// nowhere here, but a wrong point can mislead the reparse.
-fn point_at(text: &[u8], b: usize) -> Point {
+/// tree-sitter's point for byte `b`: the row and the column in bytes,
+/// two tree walks. Right, not approximate — the tree's node positions
+/// are read nowhere here, but a wrong point can mislead the reparse.
+fn point_at(text: &text_buffer::Buffer, b: usize) -> Point {
     let b = b.min(text.len());
-    let row = text[..b].iter().filter(|&&c| c == b'\n').count();
-    let line_start = text[..b].iter().rposition(|&c| c == b'\n').map_or(0, |i| i + 1);
+    let row = text.line_of_offset(b);
+    let line_start = text.get_line_range(row).map_or(0, |r| r.start);
     Point::new(row, b - line_start)
 }
 
+/// The one edit that covers a sequence: in the text before them all,
+/// `old` is the range they touched; in the text after, it became
+/// `new_end - old.start` bytes. Each edit is spelled in the text the
+/// ones before it made, so the cover grows by what an edit removes past
+/// its end (old bytes, at the same distance) and starts where the
+/// earliest started. `None` for no edits.
+fn cover(edits: &[Edit]) -> Option<(Range<usize>, usize)> {
+    let mut it = edits.iter();
+    let first = it.next()?;
+    let (mut os, mut oe) = (first.range.start, first.range.end);
+    let (mut ns, mut ne) = (first.range.start, first.range.start + first.new_len);
+    for e in it {
+        let (s, r, n) = (e.range.start, e.removed(), e.new_len);
+        if s < ns {
+            os -= ns - s;
+            ns = s;
+        }
+        if s + r > ne {
+            oe += s + r - ne;
+        }
+        ne = ne.max(s + r) + n - r;
+    }
+    Some((os..oe, ne))
+}
+
 fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, job: &Job) -> Answer {
-    let text = job.snapshot.text.collect();
-    let mut span = 0..text.len();
+    let text = &job.snapshot.text;
+    let len = text.len();
+    let mut span = 0..len;
     let runs = match grammars.get(&job.language) {
         Some(g) if parser.set_language(&g.language).is_ok() => {
-            // The last tree, told the edit, when it is this language's.
+            // The last tree, told the edits, when it is this language's
+            // and the journal reached back to it.
             let old = parsed
                 .by_buffer
                 .remove(&job.buffer)
                 .filter(|(lang, _, _)| *lang == job.language)
-                .map(|(_, old_text, mut tree)| {
-                    let e = kawoosh_doc::diff_edit(&old_text, &text);
-                    let new_end = e.range.start + e.new_len;
-                    tree.edit(&InputEdit {
-                        start_byte: e.range.start,
-                        old_end_byte: e.range.end,
-                        new_end_byte: new_end,
-                        start_position: point_at(&old_text, e.range.start),
-                        old_end_position: point_at(&old_text, e.range.end),
-                        new_end_position: point_at(&text, new_end),
-                    });
-                    (tree, e.range.start..new_end)
+                .and_then(|(_, old_text, mut tree)| {
+                    let edits = job.edits.as_ref()?;
+                    let edited = match cover(edits) {
+                        Some((old_range, new_end)) => {
+                            tree.edit(&InputEdit {
+                                start_byte: old_range.start,
+                                old_end_byte: old_range.end,
+                                new_end_byte: new_end,
+                                start_position: point_at(&old_text, old_range.start),
+                                old_end_position: point_at(&old_text, old_range.end),
+                                new_end_position: point_at(text, new_end),
+                            });
+                            old_range.start..new_end
+                        }
+                        None => 0..0,
+                    };
+                    Some((tree, edited))
                 });
-            match parser.parse(&text, old.as_ref().map(|(t, _)| t)) {
+            let mut read = |byte: usize, _: Point| text.chunk_at(byte);
+            match parser.parse_with_options(&mut read, old.as_ref().map(|(t, _)| t), None) {
                 Some(tree) => {
                     if let Some((old_tree, edited)) = &old {
                         // The edit itself, and every range whose syntax
@@ -327,12 +377,12 @@ fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, 
                             lo = lo.min(r.start_byte);
                             hi = hi.max(r.end_byte);
                         }
-                        span = lo.min(text.len())..hi.min(text.len());
+                        span = lo.min(len)..hi.min(len);
                     }
-                    let runs = capture_runs(g, tree.root_node(), &text, span.clone());
+                    let runs = capture_runs(g, tree.root_node(), text, span.clone());
                     parsed
                         .by_buffer
-                        .insert(job.buffer, (job.language.clone(), text, tree));
+                        .insert(job.buffer, (job.language.clone(), text.clone(), tree));
                     runs
                 }
                 None => Vec::new(),
@@ -358,11 +408,19 @@ fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, 
 /// so an inner one wins (tree-sitter's own precedence), then coalesces.
 /// A capture reaching past the span is cut at it: the layer keeps its
 /// own run for the part outside.
-fn capture_runs(g: &Grammar, root: tree_sitter::Node, text: &[u8], span: Range<usize>) -> Vec<Run> {
+fn capture_runs(
+    g: &Grammar,
+    root: tree_sitter::Node,
+    text: &text_buffer::Buffer,
+    span: Range<usize>,
+) -> Vec<Run> {
     let mut caps: Vec<(Range<usize>, Token)> = Vec::new();
     let mut cursor = QueryCursor::new();
     cursor.set_byte_range(span.clone());
-    let mut it = cursor.captures(&g.query, root, text);
+    // A node's text, for the predicates (`#match?` on a builtin's name):
+    // asked for that node alone, off the pieces.
+    let mut node_text = |n: tree_sitter::Node| std::iter::once(text.collect_range(n.byte_range()));
+    let mut it = cursor.captures(&g.query, root, &mut node_text);
     while let Some((m, i)) = it.next() {
         let c = m.captures[*i];
         let Some(Some(tok)) = g.classes.get(c.index as usize) else {
@@ -432,6 +490,7 @@ mod tests {
             buffer: BufferId::default(),
             language: "rust".into(),
             snapshot: buf.snapshot(),
+            edits: None,
         };
         let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job);
         let tok_at = |o: usize| {
@@ -483,6 +542,7 @@ mod tests {
                 buffer: BufferId::default(),
                 language: (*lang).into(),
                 snapshot: buf.snapshot(),
+                edits: None,
             };
             let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job);
             assert!(!a.update.runs.is_empty(), "{lang}: no runs");
@@ -527,10 +587,26 @@ mod tests {
             .collect();
         let mut buf = Buffer::new("t", &body);
         buf.language = "rust".into();
-        let job = |buf: &Buffer| Job {
+        // Jobs the way the app sends them: each with the journal's edits
+        // since the version the one before it read.
+        let mut sent: Option<kawoosh_doc::Version> = None;
+        let mut job = |buf: &Buffer| {
+            let edits = sent
+                .and_then(|v| buf.journal().edits_since(v).ok())
+                .map(|it| it.cloned().collect());
+            sent = Some(buf.version());
+            Job {
+                buffer: BufferId::default(),
+                language: "rust".into(),
+                snapshot: buf.snapshot(),
+                edits,
+            }
+        };
+        let whole_job = |buf: &Buffer| Job {
             buffer: BufferId::default(),
             language: "rust".into(),
             snapshot: buf.snapshot(),
+            edits: None,
         };
         let first = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
         assert_eq!(first.update.span, 0..body.len());
@@ -544,7 +620,7 @@ mod tests {
         assert!(span.end <= at + 64, "{span:?} for an edit at {at}");
         assert!(second.update.runs.iter().all(|r| span.start <= r.range.start && r.range.end <= span.end));
         buf.apply(second.update).unwrap();
-        let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &job(&buf));
+        let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &whole_job(&buf));
         assert_eq!(whole.update.span, 0..buf.len());
         assert_eq!(joined(buf.runs(SYNTAX_LAYER, 0..buf.len())), joined(&whole.update.runs));
         let renamed = buf.text().find("renamed").unwrap();
@@ -568,7 +644,7 @@ mod tests {
             }
             let inc = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
             buf.apply(inc.update).unwrap();
-            let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &job(&buf));
+            let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &whole_job(&buf));
             assert_eq!(
                 joined(buf.runs(SYNTAX_LAYER, 0..buf.len())),
                 joined(&whole.update.runs),
@@ -584,6 +660,28 @@ mod tests {
         }
     }
 
+    /// The cover of a sequence of edits is the one edit that replaces
+    /// what they touched, in the coordinates before and after them all.
+    #[test]
+    fn edits_compose_into_one_cover() {
+        let e = |s: usize, r: usize, n: usize| Edit {
+            range: s..s + r,
+            new_len: n,
+        };
+        assert_eq!(cover(&[]), None);
+        assert_eq!(cover(&[e(3, 2, 5)]), Some((3..5, 8)));
+        // "abcdef" → "aXdef" → "aXdYYf" → "QdYYf": old "abcde" became
+        // "QdYY".
+        assert_eq!(cover(&[e(1, 2, 1), e(3, 1, 2), e(0, 2, 1)]), Some((0..5, 4)));
+        // Typing three chars in a row: old 3..3 became 3..6.
+        assert_eq!(cover(&[e(3, 0, 1), e(4, 0, 1), e(5, 0, 1)]), Some((3..3, 6)));
+        // Then backspacing four: one char before the typing went too.
+        assert_eq!(
+            cover(&[e(3, 0, 1), e(4, 0, 1), e(5, 0, 1), e(5, 1, 0), e(4, 1, 0), e(3, 1, 0), e(2, 1, 0)]),
+            Some((2..3, 2))
+        );
+    }
+
     #[test]
     fn unknown_language_answers_empty() {
         let mut g = Grammars::load();
@@ -593,6 +691,7 @@ mod tests {
             buffer: BufferId::default(),
             language: "brainfuck".into(),
             snapshot: buf.snapshot(),
+            edits: None,
         };
         assert!(
             highlight(&mut parser, &mut g, &mut Parsed::default(), &job)
