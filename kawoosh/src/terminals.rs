@@ -70,7 +70,13 @@ impl Kawoosh {
     /// Spawns a shell (or `cmd`) sized for a pane, with the `$EDITOR`
     /// handoff in its environment (Decision 3b).
     pub fn spawn_terminal(&mut self, cmd: Option<&str>, cwd: Option<&Path>) -> Option<TermId> {
-        let mut envs = vec![("TERM_PROGRAM".to_string(), "kawoosh".to_string())];
+        let mut envs = vec![
+            ("TERM_PROGRAM".to_string(), "kawoosh".to_string()),
+            (
+                "TERM_APPEARANCE".to_string(),
+                if self.dark { "dark" } else { "light" }.to_string(),
+            ),
+        ];
         if let Some(sock) = &self.socket {
             envs.push(("KAWOOSH_SOCKET".into(), sock.display().to_string()));
             if let Ok(exe) = std::env::current_exe() {
@@ -84,7 +90,10 @@ impl Kawoosh {
             }
         }
         let size = TermSize { rows: 24, cols: 80 };
-        match Terminal::spawn(cmd, cwd, size, &envs) {
+        let cwd = cwd
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.cwd.clone());
+        match Terminal::spawn(cmd, Some(&cwd), size, &envs) {
             Ok((term, reader)) => {
                 let id = self.terms.add(term);
                 self.io.watch_pty(id, reader);
@@ -137,7 +146,7 @@ impl Kawoosh {
                 return;
             }
             let keys = ["<C-w>".to_string(), note.clone()];
-            if let Lookup::Exact(b) = self.ed.keymap.lookup(Mode::Normal, &keys) {
+            if let Lookup::Exact(b) = self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
                 let b = b.clone();
                 self.shell_command(&b.command, &b.args, None);
             }
@@ -212,11 +221,7 @@ impl Kawoosh {
             self.ed.message = "no path under the pointer".into();
             return false;
         };
-        let base = t
-            .cwd
-            .clone()
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_default();
+        let base = t.cwd.clone().unwrap_or_else(|| self.cwd.clone());
         let full = expand_home(&path);
         let full = if full.is_absolute() {
             full

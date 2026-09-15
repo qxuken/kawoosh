@@ -44,6 +44,13 @@ pub struct Kawoosh {
     pub compile: Compile,
     pub store: Option<std::rc::Rc<kawoosh_systems::store::Store>>,
     pub(crate) session_saved: bool,
+    /// The working directory: where terminals and `:e` relative paths
+    /// start; `:cd` and the file manager move it.
+    pub cwd: PathBuf,
+    /// The theme's base, for `TERM_APPEARANCE` and the syntax palette.
+    pub(crate) dark: bool,
+    /// kui's devtools panel, toggled with F12.
+    pub devtools: bool,
     pub(crate) wake: WakeHandle,
     /// The version each buffer was last sent to `ts`, so a frame submits
     /// only what changed.
@@ -67,8 +74,9 @@ pub struct Kawoosh {
     pub(crate) body_h: f32,
     /// A mono cell's advance and height, measured each frame.
     pub(crate) cell: (f32, f32),
-    /// Modifier state, from `{kind="modifiers"}` events.
-    pub(crate) mods: (bool, bool, bool),
+    /// Modifier state, from `{kind="modifiers"}` events: ctrl, alt, super,
+    /// shift.
+    pub(crate) mods: (bool, bool, bool, bool),
 }
 
 impl Kawoosh {
@@ -90,6 +98,9 @@ impl Kawoosh {
             compile: Compile::default(),
             store: None,
             session_saved: false,
+            cwd: std::env::current_dir().unwrap_or_default(),
+            dark: true,
+            devtools: false,
             wake,
             ts_sent: HashMap::new(),
             socket: None,
@@ -103,8 +114,43 @@ impl Kawoosh {
             dragging: None,
             body_h: 600.0,
             cell: (7.8, LH),
-            mods: (false, false, false),
+            mods: (false, false, false, false),
         }
+    }
+
+    /// The focused pane's terminal, if it is one.
+    pub fn term_of_focused(&self) -> Option<TermId> {
+        self.term_of(self.layout.focused())
+    }
+
+    /// `path` against the working directory.
+    pub fn resolve(&self, path: &Path) -> PathBuf {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else if let Some(rest) = path
+            .strip_prefix("~")
+            .ok()
+            .filter(|_| path.starts_with("~"))
+        {
+            std::env::var_os("HOME")
+                .map(|h| PathBuf::from(h).join(rest))
+                .unwrap_or_else(|| path.to_path_buf())
+        } else {
+            self.cwd.join(path)
+        }
+    }
+
+    /// Moves the working directory — the process's too, so child
+    /// processes and relative paths agree.
+    pub fn set_cwd(&mut self, dir: &Path) {
+        let dir = self.resolve(dir);
+        if !dir.is_dir() {
+            self.ed.message = format!("not a directory: {}", dir.display());
+            return;
+        }
+        let _ = std::env::set_current_dir(&dir);
+        self.cwd = dir;
+        self.ed.message = self.cwd.display().to_string();
     }
 
     /// A mono cell's advance and height, as measured last frame.
@@ -312,6 +358,8 @@ impl Kawoosh {
     /// The buffer for `path`: the one already open, or loaded, or — for a
     /// path that does not exist — a new unwritten buffer named for it.
     pub(crate) fn buffer_for(&mut self, path: &Path) -> Option<BufferId> {
+        let resolved = self.resolve(path);
+        let path = resolved.as_path();
         if let Some(id) = self.ed.buffer_at(path) {
             return Some(id);
         }
@@ -484,7 +532,8 @@ impl Kawoosh {
             "dock_toggle" => {
                 if self.layout.dock.is_none() {
                     // The dock's tenant is a terminal (mvp.md D5).
-                    let Some(t) = self.spawn_terminal(None, None) else {
+                    let cwd = self.cwd.clone();
+                    let Some(t) = self.spawn_terminal(None, Some(&cwd)) else {
                         return;
                     };
                     let p = self.layout.new_pane(Content::Terminal(t));
@@ -499,14 +548,27 @@ impl Kawoosh {
                 } else {
                     Some(args.join(" "))
                 };
-                let cwd = self
-                    .focused_view()
-                    .and_then(|v| self.ed.buffer_of(v).path.clone())
-                    .and_then(|p| p.parent().map(Path::to_path_buf));
-                if let Some(t) = self.spawn_terminal(cmd.as_deref(), cwd.as_deref()) {
+                let cwd = self.cwd.clone();
+                if let Some(t) = self.spawn_terminal(cmd.as_deref(), Some(&cwd)) {
                     self.layout.split(SplitDir::V, Content::Terminal(t));
                 }
             }
+            "cd" => {
+                let target = match path {
+                    Some(p) => self.resolve(&p),
+                    None => match self
+                        .focused_view()
+                        .and_then(|v| self.ed.buffer_of(v).path.clone())
+                    {
+                        Some(p) => p.parent().map(Path::to_path_buf).unwrap_or(p),
+                        None => std::env::var_os("HOME")
+                            .map(PathBuf::from)
+                            .unwrap_or_default(),
+                    },
+                };
+                self.set_cwd(&target);
+            }
+            "pwd" => self.ed.message = self.cwd.display().to_string(),
             "scrollback" => {
                 if let Some(t) = self.term_of(self.layout.focused()) {
                     self.scrollback_to_buffer(t);
@@ -683,6 +745,11 @@ impl Kawoosh {
             sup: flag("super"),
             text: p.get("text").and_then(Value::as_str).map(str::to_string),
         };
+        // F12 is the shell's everywhere: kui's devtools.
+        if stroke.code == "f12" {
+            self.devtools = !self.devtools;
+            return;
+        }
         // The command line opened from a terminal or Lua pane (`<C-w>:`)
         // takes the keys until it closes, on any view.
         let prompt_view = (self.ed.mode == Mode::Command)
@@ -785,10 +852,35 @@ impl Kawoosh {
 
     fn on_scroll(&mut self, pane: PaneId, p: &Value) {
         if let Some(t) = self.term_of(pane) {
-            // A grid: kui already turned the wheel into whole lines.
+            // A grid: kui already turned the wheel into whole lines. A
+            // program reporting the mouse gets wheel buttons; a full-screen
+            // one without it gets arrows; a shell scrolls its history.
             let lines = p.get("lines").and_then(Value::as_int).unwrap_or(0) as i32;
+            // A scroll carries no cell: the pointer against the pane's
+            // rect, past its border, title and padding.
+            let f = |k| p.get(k).and_then(Value::as_float).unwrap_or(0.0) as f32;
+            let (row, col) = match self.layout.rects.get(&pane) {
+                Some(r) => {
+                    let (cw, ch) = self.cell;
+                    (
+                        ((f("y") - r.y - TITLE_H - 1.0 - 4.0) / ch).max(0.0) as usize,
+                        ((f("x") - r.x - 1.0 - 4.0) / cw).max(0.0) as usize,
+                    )
+                }
+                None => (0, 0),
+            };
             if let Some(term) = self.terms.map.get_mut(&t) {
-                term.scroll(-lines);
+                if term.wants_mouse() && !self.mods.3 {
+                    let mods = (self.mods.3, self.mods.1, self.mods.0);
+                    let button = if lines > 0 { 65 } else { 64 };
+                    for _ in 0..lines.unsigned_abs() {
+                        term.mouse(button, kawoosh_term::MouseAction::Press, col, row, mods);
+                    }
+                } else if term.is_alt_screen() {
+                    term.wheel_as_arrows(lines);
+                } else {
+                    term.scroll(-lines);
+                }
             }
             return;
         }
@@ -808,6 +900,42 @@ impl Kawoosh {
         if pane == self.layout.focused() {
             self.follow_caret = false;
         }
+    }
+
+    /// A drag over a terminal that asked for the mouse: press, motion
+    /// while held, release — as the program's mouse reports.
+    fn on_term_drag(&mut self, p: &Value) {
+        let Some(pane) = p
+            .get("tag")
+            .and_then(|t| t.get("pane"))
+            .and_then(Value::as_int)
+        else {
+            return;
+        };
+        let Some(t) = self.term_of(pane as PaneId) else {
+            return;
+        };
+        let cell = p.get("cell");
+        let (Some(row), Some(col)) = (
+            cell.and_then(|c| c.get("row")).and_then(Value::as_int),
+            cell.and_then(|c| c.get("col")).and_then(Value::as_int),
+        ) else {
+            return;
+        };
+        let Some(term) = self.terms.map.get_mut(&t) else {
+            return;
+        };
+        let mods = (false, self.mods.1, self.mods.0);
+        let action = match p.get("phase").and_then(Value::as_str) {
+            Some("start") => {
+                self.layout.focus(pane as PaneId);
+                kawoosh_term::MouseAction::Press
+            }
+            Some("move") if term.wants_drag() => kawoosh_term::MouseAction::Motion,
+            Some("end") => kawoosh_term::MouseAction::Release,
+            _ => return,
+        };
+        term.mouse(0, action, col as usize, row as usize, mods);
     }
 
     /// A divider drag: the cursor over the split's own rect is the ratio.
@@ -872,7 +1000,11 @@ impl kui::App for Kawoosh {
             ui.window_command(WindowCommand::Close(ui.env().window.id));
         }
         self.pal = ui.theme().into();
+        self.dark = ui.theme().is_dark();
         let pal = self.pal;
+        if ui.core().devtools() != self.devtools {
+            ui.core().set_devtools(self.devtools);
+        }
         let m = ui.measure_text("M", &rows::mono(self.font, &pal), None);
         self.cell = (m.width.max(1.0), LH);
         if let Some(text) = self.clip_out.take() {
@@ -976,10 +1108,11 @@ impl kui::App for Kawoosh {
             }
             Some("modifiers") => {
                 let f = |k| p.get(k).and_then(Value::as_bool).unwrap_or(false);
-                self.mods = (f("ctrl"), f("alt"), f("super"));
+                self.mods = (f("ctrl"), f("alt"), f("super"), f("shift"));
             }
             Some("drag") => match tag_kind {
                 Some("split") => self.on_split_drag(p),
+                Some("termmouse") => self.on_term_drag(p),
                 _ => {
                     if let Some(pane) = pane_of(p) {
                         self.on_drag(pane, p);
@@ -1005,20 +1138,28 @@ impl kui::App for Kawoosh {
                 }
             }
             Some("term") => {
-                // A click focuses; with ctrl or ⌘ held it opens the path
-                // under the pointer (`gf` across the boundary).
+                // A click focuses; with ⌘ held it opens the path under the
+                // pointer (`gf` across the boundary). A program that asked
+                // for the mouse gets the click instead (shift bypasses).
                 if let Some(pane) = p.get("pane").and_then(Value::as_int) {
                     let pane = pane as PaneId;
                     self.layout.focus(pane);
                     let cell = p.get("cell");
-                    if (self.mods.0 || self.mods.2)
-                        && let (Some(t), Some(row), Some(col)) = (
-                            self.term_of(pane),
-                            cell.and_then(|c| c.get("row")).and_then(Value::as_int),
-                            cell.and_then(|c| c.get("col")).and_then(Value::as_int),
-                        )
-                    {
-                        self.open_location_at(t, row as usize, col as usize);
+                    if let (Some(t), Some(row), Some(col)) = (
+                        self.term_of(pane),
+                        cell.and_then(|c| c.get("row")).and_then(Value::as_int),
+                        cell.and_then(|c| c.get("col")).and_then(Value::as_int),
+                    ) {
+                        let reporting = self
+                            .terms
+                            .map
+                            .get(&t)
+                            .is_some_and(|term| term.wants_mouse() && !self.mods.3);
+                        // Reporting: the drag events (start = press, end =
+                        // release) carried it; the click only focused.
+                        if !reporting && (self.mods.0 || self.mods.2) {
+                            self.open_location_at(t, row as usize, col as usize);
+                        }
                     }
                 }
             }

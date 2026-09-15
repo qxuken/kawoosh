@@ -149,3 +149,118 @@ fn the_editor_handoff_opens_a_pane_and_waits_for_the_buffer_to_close() {
     assert_eq!(reply, "closed");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_program_that_asks_for_the_mouse_gets_clicks_drags_and_the_wheel() {
+    let mut app = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    // The program turns on SGR mouse reporting with drag motion.
+    app.feed_terminal(t, b"\x1b[?1002h\x1b[?1006h");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let cells = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.kind == kui::NodeKind::Cells)
+        .unwrap();
+    let (cw, ch) = app.cell_metrics();
+    let at = |c: f32, r: f32| (cells.rect.x + (c + 0.5) * cw, cells.rect.y + (r + 0.5) * ch);
+    let (x, y) = at(4.0, 2.0);
+    d.input(&mut app, InputEvent::CursorMoved(kui::Vec2::new(x, y)));
+    d.input(&mut app, InputEvent::mouse_down(1));
+    let (x2, y2) = at(6.0, 2.0);
+    d.input(&mut app, InputEvent::CursorMoved(kui::Vec2::new(x2, y2)));
+    d.input(&mut app, InputEvent::mouse_up());
+    d.frame(&mut app);
+    let sent = app.terms.map.get_mut(&t).unwrap().take_sent();
+    let sent = String::from_utf8_lossy(&sent).into_owned();
+    assert!(
+        sent.starts_with("\x1b[<0;5;3M"),
+        "press at col 5 row 3: {sent:?}"
+    );
+    assert!(
+        sent.contains("\x1b[<32;7;3M"),
+        "motion while held: {sent:?}"
+    );
+    assert!(sent.ends_with("\x1b[<0;7;3m"), "release: {sent:?}");
+    // The wheel becomes button 65 (down) reports.
+    d.wheel(&mut app, x, y, 0.0, -40.0);
+    let sent = app.terms.map.get_mut(&t).unwrap().take_sent();
+    assert!(
+        String::from_utf8_lossy(&sent).contains("\x1b[<65;5;3M"),
+        "{sent:?}"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn terminals_start_in_the_working_directory_with_the_appearance() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-cwd-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    let mut app = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    d.keys(&mut app, ":");
+    d.keys(&mut app, &format!("cd {}", dir.display()));
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(app.cwd, dir);
+    d.keys(&mut app, ":pwd");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(app.ed.message, dir.display().to_string());
+    // A real shell, told to print its cwd and the appearance.
+    d.keys(&mut app, ":term");
+    d.keys(&mut app, " pwd; echo APPEARANCE=$TERM_APPEARANCE; sleep 1");
+    d.key(&mut app, "enter", KeyMods::default());
+    let t = app.term_of_focused().expect("a terminal pane");
+    let mut seen = String::new();
+    for _ in 0..300 {
+        d.frame(&mut app);
+        let term = &app.terms.map[&t];
+        seen = (0..term.size().rows as usize)
+            .map(|r| term.row_text(r).trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if seen.contains("APPEARANCE=") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(seen.contains(&dir.display().to_string()), "{seen}");
+    assert!(seen.contains("APPEARANCE=dark"), "{seen}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn ctrl_w_ctrl_w_is_ctrl_w_w_and_f12_toggles_devtools() {
+    let mut app = Kawoosh::new("t", "a\nb");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    d.ctrl(&mut app, "w");
+    d.ctrl(&mut app, "v");
+    assert_eq!(app.layout.visible_panes().len(), 2, "<C-w><C-v> splits");
+    let before = app.layout.focused();
+    d.ctrl(&mut app, "w");
+    d.ctrl(&mut app, "w");
+    assert_ne!(app.layout.focused(), before, "<C-w><C-w> hops");
+    // From a terminal pane too.
+    let t = app.add_headless_terminal();
+    assert!(matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t));
+    d.ctrl(&mut app, "w");
+    d.ctrl(&mut app, "k");
+    assert!(matches!(
+        app.layout.focused_content(),
+        Some(Content::Editor(_))
+    ));
+    assert!(!app.devtools);
+    d.key(&mut app, "f12", KeyMods::default());
+    assert!(app.devtools);
+    d.frame(&mut app);
+    assert!(d.core.devtools());
+    d.key(&mut app, "f12", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!d.core.devtools());
+}

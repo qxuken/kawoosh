@@ -121,4 +121,12 @@ kawoosh.command("oil_enter", function()
   if line:sub(-1) == "/" then oil.open(target) else kawoosh.open(target) end
 end)
 
+-- `:cd` from a listing, or <leader>cd: the working directory follows the
+-- listing, so a terminal opened next starts here.
+kawoosh.command("oil_cd", function()
+  local dir = kawoosh.buf.name():match("^oil: (.*)$")
+  if dir then kawoosh.fs.chdir(dir) else kawoosh.cmd("cd") end
+end)
+
 kawoosh.map("n", "<CR>", "oil_enter")
+kawoosh.map("n", "<leader>cd", "oil_cd")

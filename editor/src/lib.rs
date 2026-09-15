@@ -544,9 +544,9 @@ impl Editor {
         } else {
             self.mode
         };
-        let lookup = match self.keymap.lookup(lookup_mode, &self.pending) {
+        let lookup = match self.keymap.lookup_lenient(lookup_mode, &self.pending) {
             Lookup::None if lookup_mode != Mode::Normal => {
-                self.keymap.lookup(Mode::Normal, &self.pending)
+                self.keymap.lookup_lenient(Mode::Normal, &self.pending)
             }
             l => l,
         };

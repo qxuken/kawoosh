@@ -24,9 +24,9 @@ gaps are records rather than surprises:
   panes, scratch buffers with `on_write`, tools, `kawoosh.store`; oil
   with line identity through the journal; compile mode with `]q`;
   sessions and oldfiles.
-- **Thinner than designed, still open**: mouse reporting is not passed
-  through to terminal programs (keyboard-driven TUIs work; lazygit's
-  mouse does not); document sync to LSP is whole-text per change, not
+- **Thinner than designed, still open**: mouse reporting covers the
+  primary button, drags and the wheel (kui routes the other buttons
+  nowhere, and hover motion without a button is not sent); document sync to LSP is whole-text per change, not
   incremental from the journal; the journal is never pruned (bounded by
   the buffer's life, not by memory); only Rust has a tree-sitter grammar
   and only rust-analyzer a builtin server definition (`kawoosh.lsp.server`

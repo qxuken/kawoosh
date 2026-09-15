@@ -220,3 +220,40 @@ fn compile_mode_streams_and_jumps_to_locations() {
     assert_eq!(app.ed.message, "no more locations");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn dash_opens_the_files_directory_and_can_move_the_cwd() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-dash-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("inner")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    let file = dir.join("inner/f.txt");
+    std::fs::write(&file, "x").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&file);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    d.keys(&mut app, "-");
+    let name = app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
+    assert_eq!(name, format!("oil: {}", dir.join("inner").display()));
+    assert_eq!(d.line_rows(), ["../", "f.txt"]);
+    d.keys(&mut app, "-");
+    assert!(d.line_rows().contains(&"inner/".to_string()));
+    // <leader>cd moves the working directory to the listing.
+    d.keys(&mut app, " cd");
+    assert_eq!(app.cwd, dir);
+    // And a terminal opened now starts there.
+    ex(&mut d, &mut app, "term pwd; sleep 1");
+    let t = app.term_of_focused().unwrap();
+    let mut seen = String::new();
+    for _ in 0..300 {
+        d.frame(&mut app);
+        seen = app.terms.map[&t].row_text(0);
+        if seen.contains(&dir.display().to_string()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(seen.contains(&dir.display().to_string()), "{seen}");
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -230,6 +230,7 @@ impl Kawoosh {
             Msg::Option { name, value } => {
                 self.ed.options.insert(name, value);
             }
+            Msg::Chdir(p) => self.set_cwd(&p),
             Msg::Edit { .. }
             | Msg::SetText { .. }
             | Msg::SetCursor { .. }
@@ -331,7 +332,7 @@ impl Kawoosh {
                 return;
             }
             let keys = ["<C-w>".to_string(), note];
-            if let Lookup::Exact(b) = self.ed.keymap.lookup(Mode::Normal, &keys) {
+            if let Lookup::Exact(b) = self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
                 let b = b.clone();
                 self.shell_command(&b.command, &b.args, None);
             }

@@ -319,6 +319,30 @@ impl Keymap {
         }
     }
 
+    /// [`Keymap::lookup`], then — when nothing matched and the last key is
+    /// a ctrl chord — the same sequence with the chord's letter bare, so
+    /// `<C-w><C-w>` is `<C-w>w` and `<C-w><C-v>` is `<C-w>v`, as in vim.
+    pub fn lookup_lenient(&self, mode: Mode, keys: &[String]) -> Lookup<'_> {
+        match self.lookup(mode, keys) {
+            Lookup::None if keys.len() > 1 => {
+                let Some(last) = keys.last() else {
+                    return Lookup::None;
+                };
+                let Some(bare) = last
+                    .strip_prefix("<C-")
+                    .and_then(|s| s.strip_suffix('>'))
+                    .filter(|s| s.chars().count() == 1)
+                else {
+                    return Lookup::None;
+                };
+                let mut alt = keys[..keys.len() - 1].to_vec();
+                alt.push(bare.to_string());
+                self.lookup(mode, &alt)
+            }
+            l => l,
+        }
+    }
+
     /// Every binding in `mode`, for `:map` listings and the Lua API.
     pub fn bindings(&self, mode: Mode) -> Vec<(String, Binding)> {
         let mut out = Vec::new();
@@ -378,6 +402,12 @@ mod tests {
         );
         let cd = ["<C-d>".to_string()];
         assert!(matches!(km.lookup(Mode::Normal, &cd), Lookup::Exact(_)));
+        km.bind(Mode::Normal, "<C-w>w", "pane_next");
+        let cw_cw = ["<C-w>".to_string(), "<C-w>".to_string()];
+        assert!(matches!(km.lookup(Mode::Normal, &cw_cw), Lookup::None));
+        assert!(
+            matches!(km.lookup_lenient(Mode::Normal, &cw_cw), Lookup::Exact(b) if b.command == "pane_next")
+        );
         let x = ["x".to_string()];
         assert!(matches!(km.lookup(Mode::Normal, &x), Lookup::None));
     }

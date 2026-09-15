@@ -44,6 +44,13 @@ impl EventListener for Proxy {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseAction {
+    Press,
+    Release,
+    Motion,
+}
+
 /// The screen, ready for `ui.cells`: the app owns the `Vec` for a frame.
 pub struct Screen {
     pub rows: usize,
@@ -86,6 +93,9 @@ pub struct Terminal {
     pub cwd: Option<std::path::PathBuf>,
     pub bell: bool,
     exited: bool,
+    /// Bytes a headless terminal would have sent to its process, for
+    /// tests (`Terminal::take_sent`).
+    sent: Vec<u8>,
 }
 
 impl Terminal {
@@ -152,6 +162,7 @@ impl Terminal {
                 cwd: cwd.map(Into::into),
                 bell: false,
                 exited: false,
+                sent: Vec::new(),
             },
             reader,
         ))
@@ -172,7 +183,13 @@ impl Terminal {
             cwd: None,
             bell: false,
             exited: false,
+            sent: Vec::new(),
         }
+    }
+
+    /// What a headless terminal was asked to send since the last take.
+    pub fn take_sent(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.sent)
     }
 
     pub fn size(&self) -> TermSize {
@@ -218,9 +235,12 @@ impl Terminal {
 
     /// Bytes to the process.
     pub fn input(&mut self, bytes: &[u8]) {
-        if let Some(writer) = &mut self.writer {
-            let _ = writer.write_all(bytes);
-            let _ = writer.flush();
+        match &mut self.writer {
+            Some(writer) => {
+                let _ = writer.write_all(bytes);
+                let _ = writer.flush();
+            }
+            None => self.sent.extend_from_slice(bytes),
         }
     }
 
@@ -268,8 +288,85 @@ impl Terminal {
         self.term.mode().contains(TermMode::APP_CURSOR)
     }
 
+    /// Whether the program asked for mouse reports (any of the click,
+    /// drag or motion modes).
     pub fn wants_mouse(&self) -> bool {
         self.term.mode().intersects(TermMode::MOUSE_MODE)
+    }
+
+    /// Whether button-drag motion is reported (modes 1002 / 1003).
+    pub fn wants_drag(&self) -> bool {
+        self.term
+            .mode()
+            .intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION)
+    }
+
+    /// A mouse report to the program, in the encoding it asked for (SGR
+    /// when it can, the X10 bytes otherwise). `button`: 0 left, 1 middle,
+    /// 2 right, 64 wheel up, 65 wheel down; `col`/`row` 0-based.
+    pub fn mouse(
+        &mut self,
+        button: u8,
+        action: MouseAction,
+        col: usize,
+        row: usize,
+        mods: (bool, bool, bool),
+    ) {
+        if !self.wants_mouse() {
+            return;
+        }
+        let (shift, alt, ctrl) = mods;
+        let mut cb = button as u32;
+        if action == MouseAction::Motion {
+            cb += 32;
+        }
+        if shift {
+            cb += 4;
+        }
+        if alt {
+            cb += 8;
+        }
+        if ctrl {
+            cb += 16;
+        }
+        let seq = if self.term.mode().contains(TermMode::SGR_MOUSE) {
+            let fin = if action == MouseAction::Release {
+                'm'
+            } else {
+                'M'
+            };
+            format!("\x1b[<{cb};{};{}{fin}", col + 1, row + 1)
+        } else {
+            let cb = if action == MouseAction::Release {
+                3 + 32
+            } else {
+                cb + 32
+            };
+            let enc = |v: usize| (v + 1 + 32).min(255) as u8 as char;
+            format!("\x1b[M{}{}{}", cb as u8 as char, enc(col), enc(row))
+        };
+        self.input(seq.as_bytes());
+    }
+
+    /// The wheel over a full-screen program without mouse reporting:
+    /// alacritty's "alternate scroll" — arrow keys, three a notch.
+    pub fn wheel_as_arrows(&mut self, lines: i32) {
+        if !self.term.mode().contains(TermMode::ALTERNATE_SCROLL) || !self.is_alt_screen() {
+            return;
+        }
+        let key: &[u8] = if lines > 0 { b"\x1b[B" } else { b"\x1b[A" };
+        let key = if self.app_cursor_keys() {
+            if lines > 0 {
+                b"\x1bOB".as_slice()
+            } else {
+                b"\x1bOA".as_slice()
+            }
+        } else {
+            key
+        };
+        for _ in 0..lines.unsigned_abs() {
+            self.input(key);
+        }
     }
 
     /// How far into history the view is scrolled.
@@ -628,6 +725,28 @@ mod tests {
         assert_eq!(rows(&t)[0], "TUI");
         t.feed(b"\x1b[?1049l");
         assert!(!t.is_alt_screen());
+    }
+
+    #[test]
+    fn mouse_reports_in_the_mode_asked_for() {
+        let mut t = Terminal::headless(TermSize { rows: 5, cols: 20 });
+        t.mouse(0, MouseAction::Press, 3, 1, (false, false, false));
+        assert!(t.take_sent().is_empty(), "no report without a mouse mode");
+        t.feed(b"\x1b[?1000h\x1b[?1006h");
+        assert!(t.wants_mouse() && !t.wants_drag());
+        t.mouse(0, MouseAction::Press, 3, 1, (false, false, false));
+        t.mouse(0, MouseAction::Release, 3, 1, (false, false, false));
+        assert_eq!(t.take_sent(), b"\x1b[<0;4;2M\x1b[<0;4;2m");
+        t.mouse(65, MouseAction::Press, 0, 0, (false, false, true));
+        assert_eq!(t.take_sent(), b"\x1b[<81;1;1M");
+        t.feed(b"\x1b[?1002h");
+        assert!(t.wants_drag());
+        t.mouse(0, MouseAction::Motion, 5, 2, (false, false, false));
+        assert_eq!(t.take_sent(), b"\x1b[<32;6;3M");
+        // X10 bytes without SGR.
+        t.feed(b"\x1b[?1006l");
+        t.mouse(0, MouseAction::Press, 0, 0, (false, false, false));
+        assert_eq!(t.take_sent(), b"\x1b[M !!");
     }
 
     #[test]

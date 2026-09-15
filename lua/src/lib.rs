@@ -56,6 +56,7 @@ pub enum Msg {
         name: String,
         value: String,
     },
+    Chdir(PathBuf),
     Edit {
         buffer: u64,
         range: std::ops::Range<usize>,
@@ -859,6 +860,14 @@ fn seed(
             Ok(std::env::current_dir()
                 .map(|p| p.display().to_string())
                 .unwrap_or_default())
+        })?,
+    )?;
+    let qq = q(queue);
+    fs.set(
+        "chdir",
+        lua.create_function(move |_, p: String| {
+            qq.borrow_mut().push(Msg::Chdir(PathBuf::from(p)));
+            Ok(())
         })?,
     )?;
     k.set("fs", fs)?;

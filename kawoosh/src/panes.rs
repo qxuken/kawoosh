@@ -40,41 +40,56 @@ impl Kawoosh {
         );
     }
 
+    /// The bar, i3-style: workspaces as numbered blocks on the left — the
+    /// focused one in the accent, the others quiet — and the facts on the
+    /// right (the working directory, the LSP pool).
     pub(crate) fn tab_strip(&self, ui: &mut Ui<'_>) {
         let pal = self.pal;
         let font = self.font;
+        let theme = ui.theme();
         ui.with(
             NodeSpec::row()
                 .width(Sizing::Grow(1.0))
                 .height(Sizing::Fixed(TAB_H))
                 .bg(pal.strip)
-                .pad_xy(6.0, 0.0)
-                .gap(2.0)
-                .cross_align(Align::End)
+                .cross_align(Align::Center)
                 .role(Role::TabList),
             |ui| {
                 for (i, tab) in self.layout.tabs.iter().enumerate() {
                     let active = i == self.layout.tab;
                     let name = match self.layout.content(tab.focused) {
                         Some(Content::Editor(v)) => self.ed.buffer_of(v).name.clone(),
-                        Some(Content::Terminal(_)) => "terminal".into(),
+                        Some(Content::Terminal(t)) => self
+                            .terms
+                            .map
+                            .get(&t)
+                            .filter(|t| !t.title.is_empty())
+                            .map(|t| t.title.clone())
+                            .unwrap_or_else(|| "term".into()),
                         Some(Content::Lua(n)) => n,
                         None => "?".into(),
                     };
                     let mut ps = Vec::new();
                     tab.root.panes(&mut ps);
-                    let label = if ps.len() > 1 {
-                        format!("{name} +{}", ps.len() - 1)
+                    let modified = ps.iter().any(
+                        |p| matches!(self.view_of(*p), Some(v) if self.ed.buffer_of(v).modified),
+                    );
+                    let label = format!("{}: {}{}", i + 1, name, if modified { " ●" } else { "" });
+                    let (bg, fg, edge) = if active {
+                        (theme.accent, theme.on_accent, theme.accent_hover)
                     } else {
-                        name
+                        (pal.strip, pal.dim, pal.border)
                     };
                     ui.with_indexed(
-                        i as u64,
-                        NodeSpec::row()
-                            .pad_xy(10.0, 3.0)
-                            .radius_top(5.0)
-                            .bg(if active { pal.panel } else { pal.strip })
-                            .hover_bg(pal.panel)
+                        100 + i as u64,
+                        NodeSpec::column()
+                            .height(Sizing::Grow(1.0))
+                            .bg(bg)
+                            .hover_bg(if active {
+                                theme.accent_hover
+                            } else {
+                                pal.panel
+                            })
                             .on_click(Value::map([
                                 ("kind", "tab".into()),
                                 ("index", Value::Int(i as i64)),
@@ -83,10 +98,76 @@ impl Kawoosh {
                             .selected(active)
                             .label(label.as_str()),
                         |ui| {
-                            ui.text(
-                                &label,
-                                rows::mono(font, &pal).color(if active { pal.fg } else { pal.dim }),
+                            // i3's coloured top edge on the block.
+                            ui.with(
+                                NodeSpec::row()
+                                    .width(Sizing::Grow(1.0))
+                                    .height(Sizing::Fixed(2.0))
+                                    .bg(edge),
+                                |_| {},
                             );
+                            ui.with(
+                                NodeSpec::row()
+                                    .height(Sizing::Grow(1.0))
+                                    .pad_xy(10.0, 0.0)
+                                    .cross_align(Align::Center),
+                                |ui| {
+                                    ui.text(&label, rows::mono(font, &pal).color(fg));
+                                },
+                            );
+                        },
+                    );
+                    // A hairline between blocks, as i3 draws.
+                    ui.with_indexed(
+                        1000 + i as u64,
+                        NodeSpec::column()
+                            .width(Sizing::Fixed(1.0))
+                            .height(Sizing::Grow(1.0))
+                            .bg(pal.border),
+                        |_| {},
+                    );
+                }
+                ui.with_indexed(500, NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
+                // The status block: cwd, the pool.
+                let home = std::env::var_os("HOME")
+                    .map(|h| h.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let cwd = self.cwd.display().to_string();
+                let cwd = match cwd.strip_prefix(&home) {
+                    Some(rest) if !home.is_empty() => format!("~{rest}"),
+                    _ => cwd,
+                };
+                let mut blocks: Vec<(String, kui::Color)> = vec![(cwd, pal.fg)];
+                if !self.lsp.status.is_empty() {
+                    let n: usize = self.lsp.status.iter().map(|s| s.2).sum();
+                    blocks.push((
+                        format!(
+                            "{} server{} · {n} docs",
+                            self.lsp.status.len(),
+                            if self.lsp.status.len() == 1 { "" } else { "s" }
+                        ),
+                        pal.dim,
+                    ));
+                }
+                if self.compile.running {
+                    blocks.push(("compiling…".into(), pal.command));
+                }
+                for (i, (text, color)) in blocks.iter().enumerate() {
+                    if i > 0 {
+                        ui.with_indexed(
+                            2000 + i as u64,
+                            NodeSpec::column()
+                                .width(Sizing::Fixed(1.0))
+                                .height(Sizing::Fixed(TAB_H - 10.0))
+                                .bg(pal.border),
+                            |_| {},
+                        );
+                    }
+                    ui.with_indexed(
+                        3000 + i as u64,
+                        NodeSpec::row().pad_xy(10.0, 0.0).cross_align(Align::Center),
+                        |ui| {
+                            ui.text(text, rows::mono(font, &pal).color(*color));
                         },
                     );
                 }
@@ -360,6 +441,14 @@ impl Kawoosh {
             origin_line: screen.origin_line,
         };
         let tag = Value::map([("kind", "term".into()), ("pane", Value::Int(pane as i64))]);
+        // A program reporting the mouse gets drags as reports and no cell
+        // selection — unless shift is held, the terminal convention for
+        // "my selection, not yours".
+        let reporting = term.wants_mouse() && !self.mods.3;
+        let drag_tag = Value::map([
+            ("kind", "termmouse".into()),
+            ("pane", Value::Int(pane as i64)),
+        ]);
         let sink = ui.with_keyed(
             "term",
             NodeSpec::column()
@@ -371,14 +460,13 @@ impl Kawoosh {
                 .cursor(kui::CursorShape::Text)
                 .label("terminal"),
             |ui| {
-                ui.cells_keyed(
-                    "cells",
-                    &grid,
-                    NodeSpec::column()
-                        .selectable()
-                        .on_click(tag.clone())
-                        .on_scroll(tag),
-                );
+                let mut spec = NodeSpec::column().on_click(tag.clone()).on_scroll(tag);
+                spec = if reporting {
+                    spec.on_drag(drag_tag)
+                } else {
+                    spec.selectable()
+                };
+                ui.cells_keyed("cells", &grid, spec);
             },
         );
         if focused {

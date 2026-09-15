@@ -114,6 +114,12 @@ impl Drive {
         self.frame(app);
     }
 
+    pub fn wheel(&mut self, app: &mut impl App, x: f32, y: f32, dx: f32, dy: f32) {
+        self.input(app, InputEvent::CursorMoved(Vec2::new(x, y)));
+        self.input(app, InputEvent::Scroll(Vec2::new(dx, dy)));
+        self.frame(app);
+    }
+
     pub fn click(&mut self, app: &mut impl App, x: f32, y: f32) {
         self.input(app, InputEvent::CursorMoved(Vec2::new(x, y)));
         self.input(app, InputEvent::mouse_down(1));

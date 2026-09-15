@@ -44,6 +44,8 @@ pub fn ex_alias(name: &str) -> Option<&'static str> {
         "lua" => "lua",
         "lsp" => "lsp_status",
         "tool" => "tool",
+        "cd" | "chdir" => "cd",
+        "pwd" => "pwd",
         "view" => "view",
         "compile" | "make" => "compile",
         "cn" | "cnext" => "error_next",
