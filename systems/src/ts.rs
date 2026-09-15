@@ -419,7 +419,7 @@ fn merge_spans(mut spans: Vec<Range<usize>>) -> Vec<Range<usize>> {
 fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, job: &Job) -> Answer {
     let text = &job.snapshot.text;
     let len = text.len();
-    let mut spans = Vec::from([0..len]);
+    let mut spans: Vec<Range<usize>> = std::iter::once(0..len).collect();
     let runs: Vec<Vec<Run>> = match grammars.get(&job.language) {
         Some(g) if parser.set_language(&g.language).is_ok() => {
             // The last tree, told the edits, when it is this language's
@@ -443,7 +443,7 @@ fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, 
                                     old_end_position: point_at(&old_text, old_range.end),
                                     new_end_position: point_at(text, new_end),
                                 });
-                                Vec::from([old_range.start..new_end])
+                                std::iter::once(old_range.start..new_end).collect()
                             }
                             None => Vec::new(),
                         }
