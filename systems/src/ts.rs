@@ -382,7 +382,8 @@ mod tests {
     fn toml_css_javascript_and_go_highlight() {
         let mut g = Grammars::load();
         let mut parser = Parser::new();
-        let cases: &[(&str, &str, &[(&str, Token)])] = &[
+        type Case = (&'static str, &'static str, &'static [(&'static str, Token)]);
+        let cases: &[Case] = &[
             (
                 "toml",
                 "# c\n[pkg]\nname = \"x\"\nn = 1\n",
