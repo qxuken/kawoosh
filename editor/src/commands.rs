@@ -47,6 +47,8 @@ pub fn ex_alias(name: &str) -> Option<&'static str> {
         "view" => "view",
         "compile" | "make" => "compile",
         "cn" | "cnext" => "error_next",
+        "ol" | "oldfiles" | "bro" | "browse" => "oldfiles",
+        "mks" | "mksession" => "session_save",
         "cp" | "cprev" | "cprevious" => "error_prev",
         _ => return None,
     })
@@ -1099,7 +1101,7 @@ pub fn install(ed: &mut Editor) {
             ed.message = "unsaved changes (:qa! to discard)".into();
             return;
         }
-        ed.effects.push(Effect::Quit);
+        ed.effects.push(Effect::QuitAll);
     });
     ed.register("write_quit", |ed, ctx| {
         if write(ed, ctx) {
@@ -1122,7 +1124,7 @@ pub fn install(ed: &mut Editor) {
             }
         }
         let _ = ctx;
-        ed.effects.push(Effect::Quit);
+        ed.effects.push(Effect::QuitAll);
     });
     ed.register("edit", |ed, ctx| match ctx.args.first() {
         Some(p) => ed.effects.push(Effect::Open(p.into())),

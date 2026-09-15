@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 kawoosh-doc.workspace = true
 kawoosh-editor.workspace = true
+kawoosh-systems.workspace = true
 kui-lua.workspace = true
 kui-core.workspace = true
 mlua.workspace = true

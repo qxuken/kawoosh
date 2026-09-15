@@ -67,7 +67,10 @@ struct History {
 /// What the engine asks the shell to do — things only the shell can.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
+    /// `:q`: the pane, or the app from the last one — the shell decides.
     Quit,
+    /// `:qa`: the app, whatever is open.
+    QuitAll,
     SetClipboard(String),
     RequestPaste,
     /// Open `path` in the view (a new buffer, or an existing one).

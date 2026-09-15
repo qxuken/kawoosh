@@ -42,6 +42,8 @@ pub struct Kawoosh {
     pub lsp: LspState,
     pub scripting: Scripting,
     pub compile: Compile,
+    pub store: Option<std::rc::Rc<kawoosh_systems::store::Store>>,
+    pub(crate) session_saved: bool,
     pub(crate) wake: WakeHandle,
     /// The version each buffer was last sent to `ts`, so a frame submits
     /// only what changed.
@@ -86,6 +88,8 @@ impl Kawoosh {
             lsp: LspState::new(wake.clone()),
             scripting: Scripting::default(),
             compile: Compile::default(),
+            store: None,
+            session_saved: false,
             wake,
             ts_sent: HashMap::new(),
             socket: None,
@@ -625,6 +629,35 @@ impl Kawoosh {
             }
             "error_next" => self.error_step(true),
             "error_prev" => self.error_step(false),
+            "session_save" | "mksession" => {
+                self.save_session();
+                self.ed.message = "session saved".into();
+            }
+            "session_restore" => {
+                if !self.restore_session() {
+                    self.ed.message = "no session to restore".into();
+                }
+            }
+            "oldfiles" => {
+                let list = self.oldfiles();
+                match count.or_else(|| args.first().and_then(|a| a.parse().ok())) {
+                    Some(n) => match list.get(n.saturating_sub(1)) {
+                        Some((p, line)) => {
+                            let p = p.clone();
+                            self.open_in_editor(&p, Some(line + 1), None);
+                        }
+                        None => self.ed.message = "no such oldfile".into(),
+                    },
+                    None => {
+                        self.ed.message = list
+                            .iter()
+                            .enumerate()
+                            .map(|(i, (p, _))| format!("{} {}", i + 1, p.display()))
+                            .collect::<Vec<_>>()
+                            .join("   ");
+                    }
+                }
+            }
             _ => {
                 if !self.lsp_command(name) {
                     self.ed.message = format!("not a command: {name}");
@@ -650,7 +683,12 @@ impl Kawoosh {
             sup: flag("super"),
             text: p.get("text").and_then(Value::as_str).map(str::to_string),
         };
-        if let Some(v) = self.focused_view() {
+        // The command line opened from a terminal or Lua pane (`<C-w>:`)
+        // takes the keys until it closes, on any view.
+        let prompt_view = (self.ed.mode == Mode::Command)
+            .then(|| self.focused_view().or_else(|| self.ed.views.keys().next()))
+            .flatten();
+        if let Some(v) = self.focused_view().or(prompt_view) {
             if self.completion_key(&stroke) {
                 self.follow_caret = true;
                 return;
@@ -671,6 +709,7 @@ impl Kawoosh {
         for e in self.ed.take_effects() {
             match e {
                 Effect::Quit => self.request_quit(),
+                Effect::QuitAll => self.quit = true,
                 Effect::SetClipboard(t) => self.clip_out = Some(t),
                 Effect::RequestPaste => self.awaiting_paste = true,
                 Effect::Open(p) => self.open(&p),
@@ -826,6 +865,10 @@ impl kui::App for Kawoosh {
             rt.publish(&self.ed, self.focused_view());
         }
         if self.quit {
+            if !self.session_saved {
+                self.save_session();
+                self.session_saved = true;
+            }
             ui.window_command(WindowCommand::Close(ui.env().window.id));
         }
         self.pal = ui.theme().into();

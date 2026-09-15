@@ -324,6 +324,12 @@ impl Kawoosh {
         let note = stroke.notation();
         if self.scripting.prefix {
             self.scripting.prefix = false;
+            if note == ":" {
+                self.ed.mode = Mode::Command;
+                self.ed.prompt = kawoosh_editor::Prompt::Command;
+                self.ed.cmdline.clear();
+                return;
+            }
             let keys = ["<C-w>".to_string(), note];
             if let Lookup::Exact(b) = self.ed.keymap.lookup(Mode::Normal, &keys) {
                 let b = b.clone();

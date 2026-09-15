@@ -89,7 +89,12 @@ fn main() -> anyhow::Result<()> {
     };
     app.font = font;
     let ext = app.attach_lua().map_err(|e| anyhow::anyhow!("lua: {e}"))?;
+    app.open_store(None);
     app.load_config();
+    // A bare launch picks up where the last one left off (mvp.md D7).
+    if path.is_none() {
+        app.restore_session();
+    }
     kui::app("kawoosh")
         .size(1100.0, 760.0)
         .min_size(480.0, 320.0)

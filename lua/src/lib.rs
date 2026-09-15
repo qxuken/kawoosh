@@ -122,6 +122,9 @@ pub struct Runtime {
     lua: Lua,
     queue: Rc<RefCell<Vec<Msg>>>,
     published: Rc<RefCell<Published>>,
+    /// The KV store `kawoosh.store(ns)` reads and writes, once the shell
+    /// opened it.
+    store: Rc<RefCell<Option<Rc<kawoosh_systems::store::Store>>>>,
     /// Line identity through the journal (core.md's hidden-id idea, done
     /// with edits instead of runs): the version a buffer was tracked at
     /// and each line's range then.
@@ -138,13 +141,15 @@ impl Runtime {
         let lua = ext.lua().clone();
         let queue = Rc::new(RefCell::new(Vec::new()));
         let published = Rc::new(RefCell::new(Published::default()));
-        seed(&lua, &queue, &published)?;
+        let store = Rc::new(RefCell::new(None));
+        seed(&lua, &queue, &published, &store)?;
         lua.load(BOOT).set_name("kawoosh:boot").exec()?;
         Ok((
             Self {
                 lua,
                 queue,
                 published,
+                store,
                 tracked: RefCell::new(HashMap::new()),
             },
             ext,
@@ -153,6 +158,10 @@ impl Runtime {
 
     pub fn lua(&self) -> &Lua {
         &self.lua
+    }
+
+    pub fn set_store(&self, store: Rc<kawoosh_systems::store::Store>) {
+        *self.store.borrow_mut() = Some(store);
     }
 
     /// Runs a config or plugin file; the error is a message, not a crash.
@@ -346,13 +355,68 @@ impl Runtime {
     }
 }
 
+type StoreCell = Rc<RefCell<Option<Rc<kawoosh_systems::store::Store>>>>;
+
 fn seed(
     lua: &Lua,
     queue: &Rc<RefCell<Vec<Msg>>>,
     published: &Rc<RefCell<Published>>,
+    store: &StoreCell,
 ) -> mlua::Result<()> {
     let k = lua.create_table()?;
     let q = |queue: &Rc<RefCell<Vec<Msg>>>| queue.clone();
+
+    // ---- kawoosh.store(ns): persistent KV, no ceremony (mvp.md D7)
+    let st = store.clone();
+    k.set(
+        "store",
+        lua.create_function(move |lua, ns: String| {
+            let t = lua.create_table()?;
+            let s = st.clone();
+            let n = ns.clone();
+            t.set(
+                "get",
+                lua.create_function(move |lua, key: String| {
+                    match s.borrow().as_ref().and_then(|s| s.get(&n, &key)) {
+                        Some(v) => Ok(LV::String(lua.create_string(v)?)),
+                        None => Ok(LV::Nil),
+                    }
+                })?,
+            )?;
+            let s = st.clone();
+            let n = ns.clone();
+            t.set(
+                "set",
+                lua.create_function(move |_, (key, value): (String, LV)| {
+                    if let Some(s) = s.borrow().as_ref() {
+                        s.set(&n, &key, &lua_str(&value))
+                            .map_err(mlua::Error::external)?;
+                    }
+                    Ok(())
+                })?,
+            )?;
+            let s = st.clone();
+            let n = ns.clone();
+            t.set(
+                "del",
+                lua.create_function(move |_, key: String| {
+                    if let Some(s) = s.borrow().as_ref() {
+                        s.del(&n, &key).map_err(mlua::Error::external)?;
+                    }
+                    Ok(())
+                })?,
+            )?;
+            let s = st.clone();
+            let n = ns;
+            t.set(
+                "keys",
+                lua.create_function(move |_, ()| {
+                    Ok(s.borrow().as_ref().map(|s| s.keys(&n)).unwrap_or_default())
+                })?,
+            )?;
+            Ok(t)
+        })?,
+    )?;
 
     // ---- registration and messages
     let qq = q(queue);

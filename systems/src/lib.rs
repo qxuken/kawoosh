@@ -4,6 +4,7 @@
 
 pub mod io;
 pub mod lsp;
+pub mod store;
 pub mod ts;
 
 use std::sync::{Arc, Mutex};
