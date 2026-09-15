@@ -1,8 +1,14 @@
 # MVP: a multiplexed terminal that is also an editor
 
 Status: accepted 2026-08-28; milestones 1-9 implemented same day (see git
-history, one commit per milestone). Companion to [core.md](core.md), which
-documents the buffer/metadata layer this builds on.
+history, one commit per milestone). **Partly superseded 2026-09-15 by
+[kui.md](kui.md)**: the platform (Decision 1), the layout crate (2), the
+input plumbing (4b's SDL half), the Lua UI DSL (8's DSL half), the crate
+table and the build order are replaced; the thesis, taste constraints and
+Decisions 3, 3b, 4, 5, 5b, 5c, 6, 7, 7b stand. Companion to
+[core.md](core.md), which documents the buffer/metadata layer this builds
+on — a layer kui.md scraps and rebuilds as `doc`, with core.md's reasoning
+still the spec.
 
 Implementation notes — where reality is thinner than the design, so the gaps
 are records rather than surprises:
