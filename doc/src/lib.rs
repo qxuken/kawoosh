@@ -490,6 +490,8 @@ pub fn language_of(path: &Path) -> &'static str {
         Some("js" | "mjs" | "cjs") => "javascript",
         Some("ts" | "tsx") => "typescript",
         Some("py") => "python",
+        Some("css") => "css",
+        Some("go") => "go",
         Some("c" | "h") => "c",
         Some("sh" | "bash" | "zsh") => "shell",
         _ => "text",

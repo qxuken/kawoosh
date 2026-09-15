@@ -169,7 +169,7 @@ impl Ts {
     }
 
     pub fn supports(language: &str) -> bool {
-        matches!(language, "rust")
+        matches!(language, "rust" | "toml" | "css" | "javascript" | "go")
     }
 }
 
@@ -180,22 +180,53 @@ struct Grammar {
     classes: Vec<Option<Token>>,
 }
 
+/// The grammars, each loaded with its own crate's highlight query on the
+/// thread's first job; `Ts::supports` is the same list.
 struct Grammars {
     rust: Option<Grammar>,
+    toml: Option<Grammar>,
+    css: Option<Grammar>,
+    javascript: Option<Grammar>,
+    go: Option<Grammar>,
 }
 
 impl Grammars {
     fn load() -> Self {
-        let rust = Grammar::new(
-            tree_sitter_rust::LANGUAGE.into(),
-            tree_sitter_rust::HIGHLIGHTS_QUERY,
-        );
-        Self { rust }
+        Self {
+            rust: Grammar::new(
+                tree_sitter_rust::LANGUAGE.into(),
+                tree_sitter_rust::HIGHLIGHTS_QUERY,
+            ),
+            // toml-ng captures every bare key as `@type` (the `@property`
+            // is on the pair around it, so the key wins); a key is a
+            // property here, as in every other table-shaped language.
+            toml: Grammar::new(
+                tree_sitter_toml_ng::LANGUAGE.into(),
+                tree_sitter_toml_ng::HIGHLIGHTS_QUERY,
+            )
+            .map(|g| g.recapture("type", Token::Property)),
+            css: Grammar::new(
+                tree_sitter_css::LANGUAGE.into(),
+                tree_sitter_css::HIGHLIGHTS_QUERY,
+            ),
+            javascript: Grammar::new(
+                tree_sitter_javascript::LANGUAGE.into(),
+                tree_sitter_javascript::HIGHLIGHT_QUERY,
+            ),
+            go: Grammar::new(
+                tree_sitter_go::LANGUAGE.into(),
+                tree_sitter_go::HIGHLIGHTS_QUERY,
+            ),
+        }
     }
 
     fn get(&mut self, language: &str) -> Option<&Grammar> {
         match language {
             "rust" => self.rust.as_ref(),
+            "toml" => self.toml.as_ref(),
+            "css" => self.css.as_ref(),
+            "javascript" => self.javascript.as_ref(),
+            "go" => self.go.as_ref(),
             _ => None,
         }
     }
@@ -220,6 +251,18 @@ impl Grammar {
             query,
             classes,
         })
+    }
+}
+
+impl Grammar {
+    /// Reads capture `name` (its head) as `token` instead of the default.
+    fn recapture(mut self, name: &str, token: Token) -> Self {
+        for (i, n) in self.query.capture_names().iter().enumerate() {
+            if n.split('.').next() == Some(name) {
+                self.classes[i] = Some(token);
+            }
+        }
+        self
     }
 }
 
@@ -261,6 +304,22 @@ fn capture_runs(g: &Grammar, root: tree_sitter::Node, text: &[u8]) -> Vec<Run> {
     }
     caps.sort_by(|a, b| {
         (a.0.start, std::cmp::Reverse(a.0.end)).cmp(&(b.0.start, std::cmp::Reverse(b.0.end)))
+    });
+    // One node under two patterns is the later pattern's, as
+    // tree-sitter's own highlighter reads it (javascript lists
+    // `(identifier) @variable` first and the function patterns after) —
+    // unless the later is the bare `@variable`, the class every
+    // identifier has, over a specific one (go lists its `(identifier)
+    // @variable` last). The sort is stable, so equal ranges are in
+    // capture order: keep the last that is not a plain variable.
+    caps.dedup_by(|later, first| {
+        if later.0 != first.0 {
+            return false;
+        }
+        if later.1 != Token::Variable || first.1 == Token::Variable {
+            first.1 = later.1;
+        }
+        true
     });
     let mut paint = vec![0u8; text.len()];
     for (r, tok) in caps {
@@ -315,6 +374,56 @@ mod tests {
         assert_eq!(tok_at(src.find("main").unwrap()), Some(Token::Function));
         assert_eq!(tok_at(src.find('"').unwrap() + 1), Some(Token::String));
         assert_eq!(tok_at(src.find("let").unwrap()), Some(Token::Keyword));
+    }
+
+    /// Each grammar's query compiles and lands the classes a theme
+    /// colours: a keyword, a string, a comment, and one of its own.
+    #[test]
+    fn toml_css_javascript_and_go_highlight() {
+        let mut g = Grammars::load();
+        let mut parser = Parser::new();
+        let cases: &[(&str, &str, &[(&str, Token)])] = &[
+            (
+                "toml",
+                "# c\n[pkg]\nname = \"x\"\nn = 1\n",
+                &[("# c", Token::Comment), ("name", Token::Property), ("\"x\"", Token::String), ("1", Token::Number)],
+            ),
+            (
+                "css",
+                "/* c */\n.a { color: red; }\n",
+                &[("/* c */", Token::Comment), ("color", Token::Property), ("{", Token::Punctuation)],
+            ),
+            (
+                "javascript",
+                "// c\nfunction f(a) { return \"s\" + 1; }\n",
+                &[("// c", Token::Comment), ("function", Token::Keyword), ("f(", Token::Function), ("\"s\"", Token::String), ("1;", Token::Number)],
+            ),
+            (
+                "go",
+                "// c\npackage main\nfunc main() { s := \"x\" }\n",
+                &[("// c", Token::Comment), ("func", Token::Keyword), ("main()", Token::Function), ("\"x\"", Token::String)],
+            ),
+        ];
+        for (lang, src, want) in cases {
+            let buf = Buffer::new("t", src);
+            let job = Job {
+                buffer: BufferId::default(),
+                language: (*lang).into(),
+                snapshot: buf.snapshot(),
+            };
+            let a = highlight(&mut parser, &mut g, &job);
+            assert!(!a.update.runs.is_empty(), "{lang}: no runs");
+            for (needle, tok) in *want {
+                let o = src.find(needle).unwrap();
+                let got = a
+                    .update
+                    .runs
+                    .iter()
+                    .find(|r| r.range.contains(&o))
+                    .map(|r| Token::from_style(r.style));
+                assert_eq!(got, Some(*tok), "{lang}: {needle:?}");
+            }
+        }
     }
 
     #[test]
