@@ -6,13 +6,18 @@
 
 #![allow(dead_code)]
 
-use kui::{App, Core, InputEvent, KeyCode, KeyMods, KeyPress, Size, UiEvent, Vec2};
+use kui::{
+    App, Core, Extension, Extensions, InputEvent, KeyCode, KeyMods, KeyPress, Size, UiEvent, Vec2,
+};
 
 pub struct Drive {
     pub core: Core,
     viewport: Size,
     now: f64,
     pub frames: u64,
+    /// The extensions filling the frame's slots — the Lua runtime, when
+    /// a test attaches it — routed the way the runner routes them.
+    pub exts: Extensions,
 }
 
 impl Drive {
@@ -25,19 +30,25 @@ impl Drive {
             viewport: Size::new(w, h),
             now: 0.0,
             frames: 0,
+            exts: Extensions::new(),
         }
+    }
+
+    /// Loads an extension under `ns`, as `Launcher::extension_as` would.
+    pub fn extension(&mut self, ns: &str, ext: impl Extension + 'static) {
+        self.exts
+            .push_as(ns, Box::new(ext))
+            .expect("a free namespace");
     }
 
     pub fn frame(&mut self, app: &mut impl App) {
         self.frames += 1;
         self.core.set_time(self.now);
-        let mut ui = self.core.frame(self.viewport, 1.0);
+        let mut ui = self.core.frame_with(self.viewport, 1.0, &mut self.exts);
         app.view(&mut ui);
         ui.finish();
         let pending = self.core.take_pending_events();
-        for ev in pending {
-            app.on_event(ev);
-        }
+        self.exts.route(pending, |ev| app.on_event(ev));
     }
 
     pub fn advance(&mut self, secs: f64) {
@@ -46,9 +57,7 @@ impl Drive {
 
     pub fn input(&mut self, app: &mut impl App, ev: InputEvent) -> Vec<UiEvent> {
         let out = self.core.handle_input(ev);
-        for ev in out.clone() {
-            app.on_event(ev);
-        }
+        self.exts.route(out.clone(), |ev| app.on_event(ev));
         out
     }
 

@@ -65,19 +65,15 @@ impl Edit {
         if offset < self.range.start {
             return offset;
         }
-
-        if offset >= self.range.end && !self.is_insertion() {
+        // Past the edit: shifted by its delta (a pure insertion removed
+        // nothing, so this is `offset + new_len`).
+        if offset >= self.range.end && offset > self.range.start {
             return offset - self.removed() + self.new_len;
         }
-
-        if offset > self.range.start {
-            // Strictly inside a replaced span, or past a pure insertion point.
-            return offset - self.removed() + self.new_len;
-        }
-
-        // Exactly on the edit. `Left` keeps the offset ahead of the new text
-        // (so a range ending here does not grow); `Right` puts it after (so a
-        // range starting here does not swallow the new text).
+        // Exactly on the edit, or strictly inside a replaced span. `Left`
+        // keeps the offset ahead of the new text (so a range ending here
+        // does not grow); `Right` puts it after (so a range starting here
+        // does not swallow the new text).
         match bias {
             Bias::Left => self.range.start,
             Bias::Right => self.range.start + self.new_len,

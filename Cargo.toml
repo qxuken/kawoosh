@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["text-buffer", "doc", "editor", "term", "systems", "kawoosh"]
+members = ["text-buffer", "doc", "editor", "term", "systems", "lua", "kawoosh"]
 
 [workspace.package]
 publish = false
@@ -15,6 +15,7 @@ kawoosh-doc = { path = "./doc" }
 kawoosh-editor = { path = "./editor" }
 kawoosh-term = { path = "./term" }
 kawoosh-systems = { path = "./systems" }
+kawoosh-lua = { path = "./lua" }
 
 # kui by path while 0.1.0-alpha.13 is in CI; the registry form is
 #   kui = { version = "=0.1.0-alpha.13", registry = "forgejo" }

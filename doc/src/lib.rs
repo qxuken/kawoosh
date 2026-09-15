@@ -92,6 +92,9 @@ pub struct Buffer {
     /// The kind of thing this is, for the systems: `"rust"`, `"lua"`,
     /// `"text"`… From the extension, or set by whoever made it.
     pub language: Arc<str>,
+    /// For a buffer that is not a file: who handles its writes (a Lua
+    /// `on_write` — the file manager's directory listing).
+    pub hook: Option<String>,
 }
 
 impl Buffer {
@@ -106,6 +109,7 @@ impl Buffer {
             read_only: false,
             disk_len: None,
             language: Arc::from("text"),
+            hook: None,
         }
     }
 

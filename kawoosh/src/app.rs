@@ -20,9 +20,11 @@ use kawoosh_term::TermSize;
 use kui::{FontId, NodeSpec, Sizing, Ui, UiEvent, Value, WindowCommand};
 
 use crate::Pal;
+use crate::compile::Compile;
 use crate::layout::{Content, Layout, PaneId, SplitDir};
 use crate::lsp::LspState;
 use crate::rows::{self, Drawn, LH, STRIP_H};
+use crate::scripting::Scripting;
 use crate::terminals::{TermId, Terminals};
 
 pub const TITLE_H: f32 = 22.0;
@@ -38,6 +40,8 @@ pub struct Kawoosh {
     pub io: Io,
     pub ts: Ts,
     pub lsp: LspState,
+    pub scripting: Scripting,
+    pub compile: Compile,
     pub(crate) wake: WakeHandle,
     /// The version each buffer was last sent to `ts`, so a frame submits
     /// only what changed.
@@ -80,6 +84,8 @@ impl Kawoosh {
             io: Io::new(wake.clone()),
             ts: Ts::spawn(wake.clone()),
             lsp: LspState::new(wake.clone()),
+            scripting: Scripting::default(),
+            compile: Compile::default(),
             wake,
             ts_sent: HashMap::new(),
             socket: None,
@@ -185,6 +191,9 @@ impl Kawoosh {
                     self.terms.map.remove(&id);
                 }
                 IoMsg::Request(incoming) => self.on_request(incoming),
+                other @ (IoMsg::ProcLine { .. } | IoMsg::ProcExit { .. }) => {
+                    self.on_proc_msg(other)
+                }
             }
         }
     }
@@ -339,7 +348,7 @@ impl Kawoosh {
         }
     }
 
-    fn show_buffer(&mut self, view: ViewId, id: BufferId) {
+    pub(crate) fn show_buffer(&mut self, view: ViewId, id: BufferId) {
         let v = &mut self.ed.views[view];
         if v.buffer != id {
             v.buffer = id;
@@ -405,6 +414,7 @@ impl Kawoosh {
                     Some(Content::Terminal(t)) => {
                         self.terms.map.remove(&t);
                     }
+                    Some(Content::Lua(_)) => {}
                     None => self.ed.message = "cannot close the last pane".into(),
                 }
             }
@@ -417,6 +427,7 @@ impl Kawoosh {
                         Content::Terminal(t) => {
                             self.terms.map.remove(&t);
                         }
+                        Content::Lua(_) => {}
                     }
                 }
             }
@@ -455,8 +466,14 @@ impl Kawoosh {
                 let mut ps = Vec::new();
                 self.layout.tab().root.panes(&mut ps);
                 for p in ps {
-                    if let Some(Content::Editor(v)) = self.layout.close(p) {
-                        self.ed.views.remove(v);
+                    match self.layout.close(p) {
+                        Some(Content::Editor(v)) => {
+                            self.ed.views.remove(v);
+                        }
+                        Some(Content::Terminal(t)) => {
+                            self.terms.map.remove(&t);
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -570,6 +587,44 @@ impl Kawoosh {
                     .collect();
                 self.ed.message = list.join("   ");
             }
+            "tool" => match args.first() {
+                Some(n) => self.tool(n),
+                None => {
+                    let mut names: Vec<&String> = self.scripting.tools.keys().collect();
+                    names.sort();
+                    self.ed.message = format!(
+                        "tools: {}",
+                        names
+                            .iter()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    );
+                }
+            },
+            "view" => match args.first() {
+                Some(n) => self.open_lua_view(n),
+                None => self.ed.message = "view what?".into(),
+            },
+            "lua" => {
+                let src = args.join(" ");
+                self.run_lua_source("<lua>", &src);
+            }
+            "compile" => {
+                if args.is_empty() {
+                    self.ed.message = "compile what? (:compile CMD)".into();
+                } else {
+                    let cmd = args.join(" ");
+                    self.compile(&cmd);
+                }
+            }
+            "goto_location" => {
+                if let Some(v) = self.focused_view() {
+                    self.goto_location(v);
+                }
+            }
+            "error_next" => self.error_step(true),
+            "error_prev" => self.error_step(false),
             _ => {
                 if !self.lsp_command(name) {
                     self.ed.message = format!("not a command: {name}");
@@ -604,12 +659,15 @@ impl Kawoosh {
             self.completion_after_key(&stroke);
         } else if let Some(t) = self.term_of(self.layout.focused()) {
             self.term_key(t, stroke);
+        } else if let Some(name) = self.lua_name_of(self.layout.focused()) {
+            self.lua_pane_key(&name, stroke);
         }
         self.follow_caret = true;
         self.drain_effects();
+        self.drain_lua();
     }
 
-    fn drain_effects(&mut self) {
+    pub(crate) fn drain_effects(&mut self) {
         for e in self.ed.take_effects() {
             match e {
                 Effect::Quit => self.request_quit(),
@@ -617,6 +675,11 @@ impl Kawoosh {
                 Effect::RequestPaste => self.awaiting_paste = true,
                 Effect::Open(p) => self.open(&p),
                 Effect::Wrote(_) => {}
+                Effect::Write(b) => {
+                    if let Some(v) = self.focused_view() {
+                        self.write_hooked(b, v);
+                    }
+                }
                 Effect::Shell { name, args, count } => self.shell_command(&name, &args, count),
             }
         }
@@ -758,6 +821,10 @@ impl kui::App for Kawoosh {
         self.drain_io();
         self.sync_syntax();
         self.sync_lsp();
+        self.drain_lua();
+        if let Some(rt) = self.scripting.rt.clone() {
+            rt.publish(&self.ed, self.focused_view());
+        }
         if self.quit {
             ui.window_command(WindowCommand::Close(ui.env().window.id));
         }
@@ -912,6 +979,7 @@ impl kui::App for Kawoosh {
                     }
                 }
             }
+            _ if ev.slot.is_some() => self.drain_lua(),
             Some("layout") => {
                 if let Some(pane) = pane_of(p) {
                     let f = |k| p.get(k).and_then(Value::as_float).unwrap_or(0.0) as f32;

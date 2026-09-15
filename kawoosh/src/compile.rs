@@ -1,0 +1,236 @@
+//! Compile mode and locations (mvp.md Decision 5c): a command's output
+//! streams into a read-only buffer, and a `path:line:col` on any line —
+//! there, in a scrollback buffer, or in a terminal — is one mechanism
+//! with three consumers.
+
+use std::path::{Path, PathBuf};
+
+use kawoosh_doc::BufferId;
+use kawoosh_editor::{Selection, ViewId};
+use kawoosh_systems::io::IoMsg;
+
+use crate::app::Kawoosh;
+use crate::terminals::location_at;
+
+pub const COMPILE_BUFFER: &str = "*compile*";
+
+#[derive(Default)]
+pub struct Compile {
+    pub buffer: Option<BufferId>,
+    pub proc_id: u64,
+    pub cwd: Option<PathBuf>,
+    pub running: bool,
+    /// The last location jumped to with `]q` / `[q`, by line in the
+    /// compile buffer.
+    pub cursor_line: Option<usize>,
+}
+
+impl Kawoosh {
+    /// `:compile CMD` / `kawoosh.compile(cmd)`: runs it, streams into
+    /// `*compile*`, shown beside the code with focus staying put.
+    pub fn compile(&mut self, cmd: &str) {
+        let cwd = self
+            .focused_view()
+            .and_then(|v| self.ed.buffer_of(v).path.clone())
+            .map(|p| {
+                let def = kawoosh_systems::lsp::ServerDef {
+                    language: String::new(),
+                    command: String::new(),
+                    args: vec![],
+                    roots: vec![
+                        "Cargo.toml".into(),
+                        "package.json".into(),
+                        "Makefile".into(),
+                    ],
+                };
+                kawoosh_systems::lsp::workspace_root(&p, &def)
+            })
+            .or_else(|| std::env::current_dir().ok());
+        self.compile.proc_id += 1;
+        let id = self.compile.proc_id;
+        let header = format!("$ {cmd}\n");
+        self.show_in_pane(COMPILE_BUFFER, &header);
+        let buffer = self
+            .ed
+            .buffers
+            .iter()
+            .find(|(_, b)| b.name == COMPILE_BUFFER)
+            .map(|(id, _)| id);
+        self.compile.buffer = buffer;
+        self.compile.cwd = cwd.clone();
+        self.compile.cursor_line = None;
+        match self.io.run_process(id, cmd, cwd.as_deref()) {
+            Ok(()) => self.compile.running = true,
+            Err(e) => {
+                self.compile_append(&format!("cannot run: {e}\n"));
+                self.compile.running = false;
+            }
+        }
+    }
+
+    pub(crate) fn compile_append(&mut self, text: &str) {
+        let Some(id) = self.compile.buffer else {
+            return;
+        };
+        let Some(b) = self.ed.buffers.get_mut(id) else {
+            return;
+        };
+        let len = b.len();
+        b.replace(len..len, text);
+        b.modified = false;
+        // Views on the buffer follow the output.
+        let last = b.len();
+        for v in self.ed.views.values_mut() {
+            if v.buffer == id {
+                v.sels = kawoosh_editor::Selections::single(Selection::point(last));
+            }
+        }
+    }
+
+    pub(crate) fn on_proc_msg(&mut self, msg: IoMsg) {
+        match msg {
+            IoMsg::ProcLine { id, line } if id == self.compile.proc_id => {
+                self.compile_append(&format!("{line}\n"));
+            }
+            IoMsg::ProcExit { id, code } if id == self.compile.proc_id => {
+                self.compile.running = false;
+                let status = match code {
+                    Some(0) => "finished".to_string(),
+                    Some(c) => format!("exited with {c}"),
+                    None => "killed".into(),
+                };
+                self.compile_append(&format!("\n[{status}]\n"));
+                self.ed.message = format!("compile: {status}");
+            }
+            _ => {}
+        }
+    }
+
+    /// The location named on line `ln` of `buffer`, resolved.
+    fn location_on(
+        &self,
+        buffer: BufferId,
+        ln: usize,
+    ) -> Option<(PathBuf, Option<usize>, Option<usize>)> {
+        let b = self.ed.buffers.get(buffer)?;
+        let text = b.line_text(ln);
+        // The command echo names its own arguments; not a location.
+        if Some(buffer) == self.compile.buffer && text.starts_with("$ ") {
+            return None;
+        }
+        // The first path-looking token on the line.
+        let mut at = 0;
+        while at < text.len() {
+            if let Some((path, line, col)) = location_at(&text, at) {
+                let base = if Some(buffer) == self.compile.buffer {
+                    self.compile.cwd.clone()
+                } else {
+                    b.path
+                        .as_ref()
+                        .and_then(|p| p.parent().map(Path::to_path_buf))
+                }
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_default();
+                let full = if Path::new(&path).is_absolute() {
+                    PathBuf::from(&path)
+                } else {
+                    base.join(&path)
+                };
+                if full.is_file() {
+                    return Some((full, line, col));
+                }
+            }
+            at += text[at..].chars().next().map(char::len_utf8).unwrap_or(1);
+            // Skip to the next token boundary.
+            while at < text.len() && !text.as_bytes()[at].is_ascii_whitespace() {
+                at += 1;
+            }
+            while at < text.len() && text.as_bytes()[at].is_ascii_whitespace() {
+                at += 1;
+            }
+        }
+        None
+    }
+
+    /// `<CR>` in normal mode: open the location on the caret's line.
+    pub(crate) fn goto_location(&mut self, view: ViewId) -> bool {
+        let buffer = self.ed.views[view].buffer;
+        let ln = self.ed.buffers[buffer].line_of(self.ed.views[view].sels.primary().head);
+        let Some((path, line, col)) = self.location_on(buffer, ln) else {
+            self.ed.message = "no location on this line".into();
+            return false;
+        };
+        self.open_location(&path, line, col, Some(buffer));
+        true
+    }
+
+    /// Opens a location in an editor pane other than the one showing
+    /// `from` (the compile buffer stays visible).
+    fn open_location(
+        &mut self,
+        path: &Path,
+        line: Option<usize>,
+        col: Option<usize>,
+        from: Option<BufferId>,
+    ) {
+        let other =
+            self.layout.visible_panes().into_iter().find(
+                |p| matches!(self.view_of(*p), Some(v) if Some(self.ed.views[v].buffer) != from),
+            );
+        if let Some(p) = other {
+            self.layout.focus(p);
+            self.open_in_editor(path, line, col);
+        } else {
+            // Only the compile pane is open: split for the file.
+            let Some(id) = self.buffer_for(path) else {
+                return;
+            };
+            let v = self.ed.add_view(id);
+            self.layout.split(
+                crate::layout::SplitDir::H,
+                crate::layout::Content::Editor(v),
+            );
+            self.open_in_editor(path, line, col);
+        }
+    }
+
+    /// `]q` / `[q`: the next or previous line of `*compile*` naming a
+    /// location, opened.
+    pub(crate) fn error_step(&mut self, forward: bool) {
+        let Some(buffer) = self.compile.buffer else {
+            self.ed.message = "no compile buffer (:compile CMD)".into();
+            return;
+        };
+        let count = self.ed.buffers[buffer].line_count();
+        let start = self.compile.cursor_line;
+        let range: Box<dyn Iterator<Item = usize>> = match (forward, start) {
+            (true, Some(s)) => Box::new(s + 1..count),
+            (true, None) => Box::new(0..count),
+            (false, Some(s)) => Box::new((0..s).rev()),
+            (false, None) => Box::new((0..count).rev()),
+        };
+        for ln in range {
+            if let Some((path, line, col)) = self.location_on(buffer, ln) {
+                self.compile.cursor_line = Some(ln);
+                for v in self.ed.views.values_mut() {
+                    if v.buffer == buffer {
+                        v.sels = kawoosh_editor::Selections::single(Selection::point(0));
+                    }
+                }
+                let off = self.ed.buffers[buffer].line_start(ln);
+                for v in self.ed.views.values_mut() {
+                    if v.buffer == buffer {
+                        v.sels = kawoosh_editor::Selections::single(Selection::point(off));
+                    }
+                }
+                self.open_location(&path, line, col, Some(buffer));
+                return;
+            }
+        }
+        self.ed.message = if forward {
+            "no more locations".into()
+        } else {
+            "no earlier locations".into()
+        };
+    }
+}

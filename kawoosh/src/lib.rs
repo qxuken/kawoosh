@@ -5,11 +5,14 @@
 //! window.
 
 pub mod app;
+pub mod compile;
 pub mod layout;
 pub mod lsp;
 pub mod palette;
 pub mod panes;
+pub mod plugins;
 pub mod rows;
+pub mod scripting;
 pub mod terminals;
 
 pub use app::Kawoosh;

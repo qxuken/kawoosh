@@ -17,6 +17,10 @@ pub enum IoMsg {
     PtyClosed { id: u64 },
     /// A request over the command socket.
     Request(Incoming),
+    /// A line (stdout or stderr) from process `id` (compile mode).
+    ProcLine { id: u64, line: String },
+    /// Process `id` exited.
+    ProcExit { id: u64, code: Option<i32> },
 }
 
 pub struct Io {
@@ -63,6 +67,53 @@ impl Io {
                 }
             })
             .expect("spawning a pty reader thread");
+    }
+
+    /// Runs `cmd` through the shell in `cwd`, streaming its output line by
+    /// line (stderr merged) as [`IoMsg::ProcLine`], then [`IoMsg::ProcExit`].
+    pub fn run_process(
+        &self,
+        id: u64,
+        cmd: &str,
+        cwd: Option<&std::path::Path>,
+    ) -> std::io::Result<()> {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+        let mut command = Command::new(shell);
+        command
+            .arg("-c")
+            .arg(cmd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(d) = cwd {
+            command.current_dir(d);
+        }
+        let mut child = command.spawn()?;
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        let pump = |reader: Box<dyn Read + Send>, tx: Sender<IoMsg>, wake: WakeHandle| {
+            thread::spawn(move || {
+                for line in BufReader::new(reader).lines().map_while(Result::ok) {
+                    if tx.send(IoMsg::ProcLine { id, line }).is_err() {
+                        return;
+                    }
+                    wake.wake();
+                }
+            })
+        };
+        let a = pump(Box::new(stdout), tx.clone(), wake.clone());
+        let b = pump(Box::new(stderr), tx.clone(), wake.clone());
+        thread::spawn(move || {
+            let _ = a.join();
+            let _ = b.join();
+            let code = child.wait().ok().and_then(|s| s.code());
+            let _ = tx.send(IoMsg::ProcExit { id, code });
+            wake.wake();
+        });
+        Ok(())
     }
 
     /// Everything that arrived since the last drain.

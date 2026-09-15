@@ -88,10 +88,13 @@ fn main() -> anyhow::Result<()> {
         None => Kawoosh::new("*scratch*", SCRATCH),
     };
     app.font = font;
+    let ext = app.attach_lua().map_err(|e| anyhow::anyhow!("lua: {e}"))?;
+    app.load_config();
     kui::app("kawoosh")
         .size(1100.0, 760.0)
         .min_size(480.0, 320.0)
         .core(core)
+        .extension_as("lua", ext)
         .run(app)
         .map_err(|e| anyhow::anyhow!("{e}"))
 }

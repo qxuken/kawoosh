@@ -43,6 +43,11 @@ pub fn ex_alias(name: &str) -> Option<&'static str> {
         "echo" => "echo",
         "lua" => "lua",
         "lsp" => "lsp_status",
+        "tool" => "tool",
+        "view" => "view",
+        "compile" | "make" => "compile",
+        "cn" | "cnext" => "error_next",
+        "cp" | "cprev" | "cprevious" => "error_prev",
         _ => return None,
     })
 }
@@ -494,6 +499,11 @@ fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
             .unwrap_or_else(|| p.clone());
     }
     let buf = &ed.buffers[id];
+    if buf.path.is_none() && buf.hook.is_some() {
+        ed.buffers[id].modified = false;
+        ed.effects.push(Effect::Write(id));
+        return true;
+    }
     let Some(path) = buf.path.clone() else {
         ed.message = "no file name (use :w <path>)".into();
         return false;
@@ -1190,7 +1200,6 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<BS>", "move_left"),
         ("l", "move_right"),
         ("<Right>", "move_right"),
-        ("<Space>", "move_right"),
         ("j", "move_down"),
         ("<Down>", "move_down"),
         ("k", "move_up"),
@@ -1274,6 +1283,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w>d", "dock_toggle"),
         ("gd", "lsp_definition"),
         ("K", "lsp_hover"),
+        ("<CR>", "goto_location"),
+        ("]q", "error_next"),
+        ("[q", "error_prev"),
+        ("-", "oil"),
     ];
     for (k, c) in n {
         km.bind(Normal, k, c);

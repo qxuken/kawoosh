@@ -1,5 +1,5 @@
 [package]
-name = "kawoosh"
+name = "kawoosh-lua"
 publish.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -7,16 +7,10 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-text-buffer.workspace = true
 kawoosh-doc.workspace = true
 kawoosh-editor.workspace = true
-kawoosh-term.workspace = true
-kawoosh-systems.workspace = true
-crossbeam-channel.workspace = true
-kawoosh-lua.workspace = true
 kui-lua.workspace = true
+kui-core.workspace = true
 mlua.workspace = true
-kui.workspace = true
-anyhow.workspace = true
+slotmap.workspace = true
 log.workspace = true
-env_logger.workspace = true

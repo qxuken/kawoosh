@@ -1,0 +1,222 @@
+//! Milestone 7: the Lua API — commands and keymaps from a config, a Lua
+//! view in a pane through a kui slot with its events routed back, the
+//! oil file manager, compile mode.
+
+mod drive;
+
+use drive::Drive;
+use kawoosh::Kawoosh;
+use kawoosh::layout::Content;
+use kui::KeyMods;
+
+fn app_with_lua(d: &mut Drive, title: &str, text: &str) -> Kawoosh {
+    let mut app = Kawoosh::new(title, text);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    app
+}
+
+fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
+    d.keys(app, ":");
+    d.keys(app, line);
+    d.key(app, "enter", KeyMods::default());
+}
+
+#[test]
+fn config_commands_keymaps_and_edits() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "hello\nworld");
+    app.run_lua_source(
+        "init",
+        r#"
+        kawoosh.opt("tabstop", "2")
+        kawoosh.command("shout", function(ctx)
+          local c = kawoosh.buf.cursor()
+          local line = kawoosh.buf.line(c.line)
+          kawoosh.buf.replace(c.offset - (c.col - 1), c.offset - (c.col - 1) + #line, line:upper())
+          kawoosh.echo("shouted " .. ctx.count)
+        end)
+        kawoosh.map("n", "<leader>s", "shout")
+        kawoosh.map("n", "<leader>x", function() kawoosh.cmd("echo from a function") end)
+        kawoosh.colors { keyword = "ff0000" }
+        "#,
+    );
+    d.frame(&mut app);
+    assert_eq!(app.ed.tabstop(), 2);
+    d.keys(&mut app, "j");
+    d.keys(&mut app, " s");
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).text(),
+        "hello\nWORLD"
+    );
+    assert_eq!(app.ed.message, "shouted 1");
+    d.keys(&mut app, "u");
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).text(),
+        "hello\nworld",
+        "one undo entry"
+    );
+    d.keys(&mut app, " x");
+    assert_eq!(app.ed.message, "from a function");
+    ex(
+        &mut d,
+        &mut app,
+        "lua kawoosh.echo(kawoosh.buf.line_count())",
+    );
+    assert_eq!(app.ed.message, "2");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn a_lua_view_is_a_pane_and_its_clicks_come_back() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    app.run_lua_source(
+        "init",
+        r#"
+        count = 0
+        kawoosh.view("counter", function(ctx)
+          return column { pad = 8, gap = 4,
+            text("count = " .. count),
+            button { key = "plus", label = "plus", on_click = { kind = "plus" } },
+            text(ctx.focused and "focused" or "blurred"),
+          }
+        end, function(ev)
+          if ev.kind == "plus" then count = count + 1 end
+          if ev.kind == "key" and ev.key == "q" then kawoosh.cmd("close") end
+        end)
+        "#,
+    );
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "view counter");
+    assert!(matches!(app.layout.focused_content(), Some(Content::Lua(n)) if n == "counter"));
+    d.frame(&mut app);
+    let nodes = d.core.nodes();
+    assert!(
+        nodes.iter().any(|n| n.text.as_deref() == Some("count = 0")),
+        "the view drew"
+    );
+    assert!(nodes.iter().any(|n| n.text.as_deref() == Some("focused")));
+    let plus = d.core.key_of("plus").expect("the button's key");
+    let rect = nodes.iter().find(|n| n.key == plus).unwrap().rect;
+    d.click(&mut app, rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+    d.frame(&mut app);
+    assert!(
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some("count = 1")),
+        "the click reached Lua"
+    );
+    // Keys in the pane reach the handler; the pane prefix still works.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    assert!(matches!(
+        app.layout.focused_content(),
+        Some(Content::Editor(_))
+    ));
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "l");
+    d.keys(&mut app, "q");
+    assert_eq!(
+        app.layout.visible_panes().len(),
+        1,
+        "q asked the view to close its pane"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn oil_renames_creates_and_deletes_on_write() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-oil-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("a.txt"), "a").unwrap();
+    std::fs::write(dir.join("b.txt"), "b").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("oil {}", dir.display()));
+    assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);
+    // Rename a.txt → renamed.txt, delete b.txt, add c.txt and d/.
+    d.keys(&mut app, "jj");
+    d.keys(&mut app, "ccrenamed.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "jdd");
+    d.keys(&mut app, "oc.txt");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.keys(&mut app, "d/");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    assert!(app.ed.message.contains("4 change(s)"), "{}", app.ed.message);
+    assert!(dir.join("renamed.txt").is_file());
+    assert!(!dir.join("a.txt").exists());
+    assert!(!dir.join("b.txt").exists());
+    assert!(dir.join("c.txt").is_file());
+    assert!(dir.join("d").is_dir());
+    assert_eq!(d.line_rows(), ["../", "d/", "sub/", "c.txt", "renamed.txt"]);
+    // Enter on a directory descends; `-` goes up.
+    d.keys(&mut app, "ggj");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(
+        app.ed
+            .buffer_of(app.focused_view().unwrap())
+            .name
+            .ends_with("/d")
+    );
+    d.keys(&mut app, "-");
+    assert!(
+        app.ed
+            .buffer_of(app.focused_view().unwrap())
+            .name
+            .ends_with(&dir.display().to_string())
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn compile_mode_streams_and_jumps_to_locations() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-compile-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "").unwrap();
+    std::fs::write(dir.join("src/a.rs"), "one\ntwo\nthree\n").unwrap();
+    std::fs::write(dir.join("src/b.rs"), "x\ny\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&dir.join("src/a.rs"));
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        "compile printf 'error at src/a.rs:3:1\\nwarning src/b.rs:2\\n'; exit 1",
+    );
+    let mut done = false;
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if !app.compile.running && app.compile.buffer.is_some() {
+            done = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(done);
+    let text = app.ed.buffers[app.compile.buffer.unwrap()].text();
+    assert!(
+        text.contains("error at src/a.rs:3:1") && text.contains("[exited with 1]"),
+        "{text}"
+    );
+    assert_eq!(app.layout.visible_panes().len(), 2, "shown in a split");
+    d.keys(&mut app, "]q");
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.buffer_of(v);
+    assert!(buf.path.as_ref().unwrap().ends_with("src/a.rs"));
+    assert_eq!(buf.line_of(app.ed.views[v].sels.primary().head), 2);
+    d.keys(&mut app, "]q");
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.buffer_of(v);
+    assert!(buf.path.as_ref().unwrap().ends_with("src/b.rs"));
+    assert_eq!(buf.line_of(app.ed.views[v].sels.primary().head), 1);
+    d.keys(&mut app, "]q");
+    assert_eq!(app.ed.message, "no more locations");
+    std::fs::remove_dir_all(&dir).ok();
+}

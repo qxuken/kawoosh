@@ -155,6 +155,8 @@ pub fn parse_notation(s: &str, leader: &str) -> Vec<String> {
             } else {
                 out.push(normalize_chord(&inner));
             }
+        } else if c == ' ' {
+            out.push("<Space>".into());
         } else {
             out.push(c.to_string());
         }
@@ -357,6 +359,7 @@ mod tests {
         assert_eq!(parse_notation("<c-D>", " "), ["<C-d>"]);
         assert_eq!(parse_notation("<C-S-v>", " "), ["<C-V>"]);
         assert_eq!(parse_notation("<leader>t", ","), [",", "t"]);
+        assert_eq!(parse_notation("<leader>t", " "), ["<Space>", "t"]);
         assert_eq!(parse_notation("<Esc>", " "), ["<Esc>"]);
         assert_eq!(parse_notation("<cr>", " "), ["<CR>"]);
     }

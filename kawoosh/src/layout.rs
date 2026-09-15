@@ -104,10 +104,12 @@ impl Node {
 
 /// What a pane shows. Views outlive panes; a terminal outlives its pane
 /// too (milestone 4).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Content {
     Editor(ViewId),
     Terminal(u64),
+    /// A Lua view by name, drawn through a kui slot.
+    Lua(String),
 }
 
 #[derive(Clone, Debug)]
@@ -185,7 +187,7 @@ impl Layout {
     }
 
     pub fn content(&self, pane: PaneId) -> Option<Content> {
-        self.panes.get(&pane).copied()
+        self.panes.get(&pane).cloned()
     }
 
     pub fn focused_content(&self) -> Option<Content> {

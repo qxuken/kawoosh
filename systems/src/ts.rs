@@ -17,7 +17,7 @@ pub const SYNTAX_LAYER: &str = "syntax";
 
 /// Token classes a run's `style` names — the app maps them to colours
 /// (tokens from Lua, kui.md D7). Fixed so a theme is a table, not code.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u32)]
 pub enum Token {
     Plain = 0,

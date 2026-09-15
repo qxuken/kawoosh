@@ -10,7 +10,6 @@ use kui::{Align, NodeSpec, Role, Sizing, TextStyle, Ui, Value};
 
 use crate::app::{DIVIDER, Kawoosh, TAB_H, TITLE_H};
 use crate::layout::{Content, Node, PaneId, SplitDir};
-use crate::palette::syntax_color;
 use crate::rows::{self, Caret, Drawn, GUTTER_W, LH, LineDraw, STRIP_H};
 use crate::terminals::TermId;
 use kawoosh_systems::lsp::DIAG_LAYER;
@@ -59,6 +58,7 @@ impl Kawoosh {
                     let name = match self.layout.content(tab.focused) {
                         Some(Content::Editor(v)) => self.ed.buffer_of(v).name.clone(),
                         Some(Content::Terminal(_)) => "terminal".into(),
+                        Some(Content::Lua(n)) => n,
                         None => "?".into(),
                     };
                     let mut ps = Vec::new();
@@ -245,15 +245,15 @@ impl Kawoosh {
         let pal = self.pal;
         let focused = self.layout.focused() == pane;
         let content = self.layout.content(pane);
-        let (name, modified) = match content {
+        let (name, modified) = match &content {
             Some(Content::Editor(v)) => {
-                let b = self.ed.buffer_of(v);
+                let b = self.ed.buffer_of(*v);
                 (b.name.clone(), b.modified)
             }
             Some(Content::Terminal(t)) => (
                 self.terms
                     .map
-                    .get(&t)
+                    .get(t)
                     .map(|t| {
                         if t.title.is_empty() {
                             "terminal".to_string()
@@ -264,6 +264,7 @@ impl Kawoosh {
                     .unwrap_or_else(|| "terminal".into()),
                 false,
             ),
+            Some(Content::Lua(n)) => (n.clone(), false),
             None => ("?".into(), false),
         };
         ui.with_keyed(
@@ -302,9 +303,10 @@ impl Kawoosh {
                         }
                     },
                 );
-                match content {
-                    Some(Content::Editor(v)) => self.render_editor(ui, pane, v, focused),
-                    Some(Content::Terminal(t)) => self.render_terminal(ui, pane, t, focused),
+                match &content {
+                    Some(Content::Editor(v)) => self.render_editor(ui, pane, *v, focused),
+                    Some(Content::Terminal(t)) => self.render_terminal(ui, pane, *t, focused),
+                    Some(Content::Lua(n)) => self.render_lua_pane(ui, pane, n, focused),
                     None => {}
                 }
             },
@@ -539,7 +541,8 @@ impl Kawoosh {
                                 .runs(SYNTAX_LAYER, range.clone())
                                 .iter()
                                 .filter_map(|r| {
-                                    let c = syntax_color(Token::from_style(r.style), dark)?;
+                                    let c =
+                                        self.syntax_color_for(Token::from_style(r.style), dark)?;
                                     let a = clip(r.range.start);
                                     let b = clip(r.range.end.min(range.end));
                                     (a < b).then_some((a..b, c))

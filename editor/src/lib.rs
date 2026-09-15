@@ -74,6 +74,9 @@ pub enum Effect {
     Open(PathBuf),
     /// A file was written, so the shell can tell the systems.
     Wrote(BufferId),
+    /// A hooked buffer (`Buffer::hook`) was `:w`ritten: the shell hands
+    /// its text to the handler.
+    Write(BufferId),
     /// A command the engine does not know: the shell's, if it has one
     /// (splits, tabs, terminals, Lua), with its args and count.
     Shell {
