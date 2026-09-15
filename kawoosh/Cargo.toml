@@ -7,18 +7,8 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-kawoosh-core.workspace = true
-kawoosh-ui.workspace = true
-kawoosh-term.workspace = true
-kawoosh-systems.workspace = true
-crossbeam-channel.workspace = true
-
-sdl3.workspace = true
-cosmic-text.workspace = true
-
+text-buffer.workspace = true
+kui.workspace = true
 anyhow.workspace = true
 log.workspace = true
 env_logger.workspace = true
-serde_json.workspace = true
-mlua.workspace = true
-rusqlite.workspace = true

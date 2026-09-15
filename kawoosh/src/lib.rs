@@ -1,12 +1,12 @@
-//! kawoosh application logic, UI-framework-free.
+//! kawoosh: a multiplexed terminal that is also an editor, on kui.
 //!
-//! Everything here runs headless: the SDL binary (`main.rs`) is a thin event
-//! source + painter around [`App`], and tests drive [`App`] directly.
+//! The library half exists so tests can drive the same `App` headless
+//! through a kui `Core` (docs/design/kui.md, Decision 8). `main.rs` is the
+//! window.
 
 pub mod app;
-pub mod editor;
-pub mod keys;
-pub mod lua;
-pub mod paint;
-pub mod remote;
-pub mod text;
+pub mod palette;
+pub mod rows;
+
+pub use app::Kawoosh;
+pub use palette::Pal;

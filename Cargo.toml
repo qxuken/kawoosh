@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "kawoosh", "systems", "term", "text-buffer", "ui"]
+members = ["text-buffer", "kawoosh"]
 
 [workspace.package]
 publish = false
@@ -11,24 +11,24 @@ repository = "https://drydock9.qxuken.dev/qxuken/kawoosh"
 
 [workspace.dependencies]
 text-buffer = { path = "./text-buffer" }
-kawoosh-core = { path = "./core" }
+
+# kui by path while 0.1.0-alpha.13 is in CI; the registry form is
+#   kui = { version = "=0.1.0-alpha.13", registry = "forgejo" }
+# and the swap is these three lines (docs/design/kui-requirements.md R1.1).
+kui = { path = "../kui/crates/kui" }
+kui-core = { path = "../kui/crates/kui-core" }
+kui-lua = { path = "../kui/crates/kui-lua" }
+# The one Lua in the binary is kui-lua's (kui.md D6).
+mlua = { version = "0.12", features = ["lua55", "vendored"] }
 
 log = { version = "0.4.33", features = ["serde"] }
 env_logger = "0.11.11"
-
-kawoosh-ui = { path = "./ui" }
-kawoosh-term = { path = "./term" }
-kawoosh-systems = { path = "./systems" }
-
-sdl3 = "0.18"
-cosmic-text = "0.19"
 alacritty_terminal = "0.26"
 portable-pty = "0.9"
 crossbeam-channel = "0.5"
 tree-sitter = "0.26"
 tree-sitter-rust = "0.24"
 lsp-types = "0.97"
-mlua = { version = "0.12", features = ["luajit", "vendored"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde_json = "1"
 
@@ -36,7 +36,6 @@ anyhow = { version = "1.0.104", features = ["backtrace"] }
 mimalloc = "0.1.52"
 smallvec = { version = "1.15.2", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
-schemars = "1.2.1"
 slotmap = { version = "1.1.1", features = ["serde"] }
 
 criterion = "0.8.2"
