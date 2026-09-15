@@ -6,7 +6,7 @@
 
 use std::ops::Range;
 
-use kui::{Align, Color, FontId, NodeSpec, Role, Sizing, TextStyle, Ui};
+use kui::{Align, Color, FloatConfig, FontId, Min, NodeSpec, Role, Sizing, TextStyle, Ui};
 
 use crate::Pal;
 
@@ -16,8 +16,15 @@ pub const GUTTER_W: f32 = 56.0;
 pub const STRIP_H: f32 = 24.0;
 
 /// The one text style every run shares, so the shaping cache keys agree.
+/// A run never wraps: a line wider than the pane runs past its edge (the
+/// lines column scrolls it into view), where kui's default would fold
+/// the run's tail onto a second line, painted over the row below.
 pub fn mono(font: Option<FontId>, pal: &Pal) -> TextStyle {
-    let s = TextStyle::new(FONT).mono().line_height(LH).color(pal.fg);
+    let s = TextStyle::new(FONT)
+        .mono()
+        .nowrap()
+        .line_height(LH)
+        .color(pal.fg);
     match font {
         Some(id) => s.font(id),
         None => s,
@@ -96,6 +103,9 @@ pub struct LineDraw<'a> {
     pub styled: &'a [(Range<usize>, Color)],
     /// Carets: byte and shape; the block draws the char under it inverted.
     pub carets: &'a [(usize, Caret)],
+    /// The blink phase: a bar caret is in the row either way, so the runs
+    /// after it keep their place, and only its colour comes and goes.
+    pub caret_on: bool,
     /// The primary caret and its anchor, for the access tree and the IME.
     pub access: (Option<u32>, Option<u32>),
     /// Underlined ranges with a colour (diagnostics).
@@ -124,13 +134,24 @@ pub fn gutter_row(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, ln: usize, c
     );
 }
 
-fn caret_bar(ui: &mut Ui<'_>, color: Color) {
+/// The bar caret. A zero-width node marks the boundary — so the bar
+/// takes no room in the row and the runs after it sit where they sit in
+/// normal mode — and the 2 px bar itself is a float hung off it, one
+/// pixel to either side, painted over the glyphs it straddles and inert
+/// to input (a plain box has no hit region). On the blink's off phase
+/// both nodes stay and only the colour goes.
+fn caret_bar(ui: &mut Ui<'_>, color: Color, on: bool) {
     ui.with(
-        NodeSpec::column()
-            .width(Sizing::Fixed(2.0))
-            .height(Sizing::Fixed(LH - 4.0))
-            .bg(color),
-        |_| {},
+        NodeSpec::row()
+            .width(Sizing::Fixed(0.0))
+            .height(Sizing::Fixed(LH - 4.0)),
+        |ui| {
+            let bar = NodeSpec::column()
+                .width(Sizing::Fixed(2.0))
+                .height(Sizing::Fixed(LH - 4.0))
+                .float(FloatConfig::parent().offset(-1.0, 0.0));
+            ui.with(if on { bar.bg(color) } else { bar }, |_| {});
+        },
     );
 }
 
@@ -162,8 +183,11 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
     cuts.sort_unstable();
     cuts.dedup();
 
+    // At least the pane's width, and as wide as its runs: the floor is
+    // what the lines column's horizontal scroll measures its content by.
     let mut row = NodeSpec::row()
         .width(Sizing::Grow(1.0))
+        .min_width(Min::FIT)
         .height(Sizing::Fixed(LH))
         .cross_align(Align::Center)
         .role(Role::Line);
@@ -188,7 +212,7 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
             let (a, b) = (w[0], w[1]);
             for (cb, kind) in line.carets {
                 if *cb == a && *kind == Caret::Bar {
-                    caret_bar(ui, pal.accent);
+                    caret_bar(ui, pal.accent, line.caret_on);
                 }
             }
             ghost_at(ui, a);
@@ -249,7 +273,7 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
             if *cb >= len {
                 match kind {
                     Caret::Bar => {
-                        caret_bar(ui, pal.accent);
+                        caret_bar(ui, pal.accent, line.caret_on);
                         ghost_at(ui, len);
                     }
                     Caret::Block => {
@@ -286,7 +310,7 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
     });
 }
 
-fn next_char(s: &str, b: usize) -> usize {
+pub fn next_char(s: &str, b: usize) -> usize {
     s[b..]
         .chars()
         .next()

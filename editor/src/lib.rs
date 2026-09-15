@@ -29,6 +29,9 @@ pub struct View {
     pub sels: Selections,
     /// First visible line; the shell keeps it in range of the caret.
     pub top: usize,
+    /// Horizontal scroll, logical px, for a line wider than the pane; the
+    /// shell keeps it in range of the caret and clamps it to the content.
+    pub left: f32,
     /// Visible rows, written by the shell each frame, read by paging.
     pub rows: usize,
     /// The column `j`/`k` aim for, in chars, across short lines.
@@ -41,6 +44,7 @@ impl View {
             buffer,
             sels: Selections::default(),
             top: 0,
+            left: 0.0,
             rows: 24,
             goal_col: None,
         }

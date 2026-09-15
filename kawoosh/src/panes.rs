@@ -6,7 +6,7 @@ use std::ops::Range;
 
 use kawoosh_editor::commands::SEARCH_LAYER;
 use kawoosh_editor::{Mode, Prompt, ViewId, motions};
-use kui::{Align, NodeSpec, Role, Sizing, TextStyle, Ui, Value};
+use kui::{Align, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
 
 use crate::app::{DIVIDER, Kawoosh, TAB_H, TITLE_H};
 use crate::layout::{Content, Node, PaneId, SplitDir};
@@ -523,6 +523,7 @@ impl Kawoosh {
         let v = &self.ed.views[view];
         let buf = &self.ed.buffers[buf_id];
         let top = v.top;
+        let mut left = v.left;
         let last = (top + rows_n).min(buf.line_count());
         let sels = &v.sels;
         let primary = sels.primary();
@@ -541,6 +542,7 @@ impl Kawoosh {
             Caret::Block
         };
         let tag = Value::map([("kind", "pane".into()), ("pane", Value::Int(pane as i64))]);
+        let follow = self.follow_caret;
 
         let sink = ui.with_keyed(
             "editor",
@@ -550,7 +552,7 @@ impl Kawoosh {
                 .clip()
                 .on_key(tag.clone())
                 .on_drag(tag.clone())
-                .on_scroll(tag)
+                .on_scroll(tag.clone())
                 .cursor(kui::CursorShape::Text)
                 .role(Role::MultilineTextInput)
                 .label(title.as_str()),
@@ -567,12 +569,19 @@ impl Kawoosh {
                         }
                     },
                 );
-                ui.with_keyed(
+                // The column scrolls sideways under a line wider than the
+                // pane, at an offset the view owns (`left`, as `top`):
+                // the wheel over it reaches the app through `on_scroll`
+                // — a kui scroll container under the pointer would take
+                // the notch itself, both axes, and `top` would never
+                // hear it — and the app hands the offset back each frame.
+                let lines = ui.with_keyed(
                     "lines",
                     NodeSpec::column()
                         .width(Sizing::Grow(1.0))
                         .height(Sizing::Grow(1.0))
-                        .clip(),
+                        .scroll_x()
+                        .on_scroll(tag.clone()),
                     |ui| {
                         for ln in top..last {
                             let range = buf.line_range(ln);
@@ -608,8 +617,7 @@ impl Kawoosh {
                                     }
                                 }
                                 let head_line = buf.line_of(s.head);
-                                if head_line == ln && focused && (blink_on || mode != Mode::Insert)
-                                {
+                                if head_line == ln && focused {
                                     carets.push((clip(s.head), caret_kind));
                                 }
                                 if *s == primary && head_line == ln && focused {
@@ -664,6 +672,7 @@ impl Kawoosh {
                                     hits: &hits,
                                     styled: &styled,
                                     carets: &carets,
+                                    caret_on: blink_on || mode != Mode::Insert,
                                     access,
                                     underlined: &underlined,
                                     trailing,
@@ -673,8 +682,39 @@ impl Kawoosh {
                         }
                     },
                 );
+                // Scroll the caret into view sideways, a few columns of
+                // margin, the way `top` follows it down. The geometry is
+                // last frame's (one frame late on a resize); the offset
+                // set here lands in this frame's positions.
+                let geo = ui.scroll_geometry(lines);
+                let width = geo.map(|g| g.rect.w).unwrap_or(0.0);
+                let max_left = geo.map(|g| g.max_offset.x).unwrap_or(f32::MAX);
+                left = left.clamp(0.0, max_left);
+                if follow || !focused {
+                    let drawn = Drawn::new(&buf.line_text(cur_line), tabstop);
+                    let range = buf.line_range(cur_line);
+                    let head =
+                        drawn.to_drawn(primary.head.clamp(range.start, range.end) - range.start);
+                    let style = rows::mono(font, &pal);
+                    let x0 = ui.measure_text(&drawn.text[..head], &style, None).width;
+                    let x1 = if head < drawn.text.len() {
+                        let next = rows::next_char(&drawn.text, head);
+                        ui.measure_text(&drawn.text[..next], &style, None).width
+                    } else {
+                        x0 + 8.0
+                    };
+                    let margin =
+                        (ui.measure_text("M", &style, None).width * 3.0).min(width / 4.0);
+                    if x0 - margin < left {
+                        left = (x0 - margin).max(0.0);
+                    } else if width > 0.0 && x1 + margin > left + width {
+                        left = x1 + margin - width;
+                    }
+                }
+                ui.set_scroll(lines, Vec2::new(left, 0.0));
             },
         );
+        self.ed.views[view].left = left;
         if focused {
             ui.take_key_focus(sink);
         }

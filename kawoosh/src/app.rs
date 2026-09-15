@@ -887,6 +887,15 @@ impl Kawoosh {
         let Some(view) = self.view_of(pane) else {
             return;
         };
+        let dx = p.get("dx").and_then(Value::as_float).unwrap_or(0.0) as f32;
+        if dx != 0.0 {
+            // Sideways: px, clamped to the content when the frame draws.
+            let v = &mut self.ed.views[view];
+            v.left = (v.left - dx).max(0.0);
+            if pane == self.layout.focused() {
+                self.follow_caret = false;
+            }
+        }
         let dy = p.get("dy").and_then(Value::as_float).unwrap_or(0.0) as f32;
         let total = self.scroll_carry - dy / LH;
         let whole = total.trunc();

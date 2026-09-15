@@ -115,3 +115,109 @@ fn a_click_places_the_caret_by_line_and_byte() {
         "landed in the line, not at its start"
     );
 }
+
+#[test]
+fn the_caret_takes_no_room_in_the_row() {
+    let mut app = Kawoosh::new("t", DOC);
+    let mut d = Drive::new(800.0, 400.0);
+    d.frame(&mut app);
+    // The x of the run starting at "one" — the block caret's run in
+    // normal mode, the run after the bar in insert.
+    let run_x = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| n.text.as_deref().is_some_and(|t| t.starts_with('o')))
+            .map(|n| n.rect.x)
+            .expect("the run at the caret")
+    };
+    d.keys(&mut app, "w");
+    let normal = run_x(&d);
+    // `line |one`: the bar is a float off a zero-width node, so the
+    // mode change moves nothing.
+    d.keys(&mut app, "i");
+    assert_eq!(app.ed.mode, Mode::Insert);
+    d.core.set_caret_visible(true);
+    d.frame(&mut app);
+    assert_eq!(run_x(&d), normal, "entering insert mode shifted the text");
+    // Nor does the blink's off phase: the node stays, its colour goes.
+    d.core.set_caret_visible(false);
+    d.frame(&mut app);
+    assert_eq!(run_x(&d), normal, "the off phase shifted the text");
+    assert_eq!(d.line_rows()[0], "line one");
+}
+
+#[test]
+fn a_long_line_scrolls_sideways_to_the_caret_and_never_wraps() {
+    let doc = format!("{}\njj\n", "j".repeat(60));
+    let mut app = Kawoosh::new("t", &doc);
+    let mut d = Drive::new(300.0, 200.0);
+    d.frame(&mut app);
+    let lines = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| n.label.as_deref() == Some("lines"))
+            .map(|n| (n.key, n.rect))
+            .expect("the lines column")
+    };
+    let (key, rect) = lines(&d);
+    let geo = d.core.scroll_geometry(key).expect("a scroll container");
+    // The runs never wrap: the row's content is wider than the column,
+    // one row tall, and nothing folds onto the row below.
+    assert!(geo.content.w > rect.w, "{geo:?}");
+    let row_h = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .filter(|n| n.text.as_deref().is_some_and(|t| t.starts_with("jjj")))
+            .map(|n| n.rect.h)
+            .fold(0.0f32, f32::max)
+    };
+    assert_eq!(row_h(&d), 20.0);
+    assert_eq!(d.line_rows()[1], "jj");
+    // `$` scrolls the column so the block caret is in view; `0` back.
+    let caret_x = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| n.text.as_deref() == Some("j") && n.rect.w < 10.0)
+            .map(|n| n.rect.x)
+            .expect("the caret's run")
+    };
+    d.keys(&mut app, "$");
+    d.frame(&mut app);
+    let x = caret_x(&d);
+    assert!(x >= rect.x && x + 8.0 <= rect.x + rect.w, "caret at {x}, column {rect:?}");
+    assert!(d.core.scroll_offset(key).x > 0.0);
+    d.keys(&mut app, "0");
+    d.frame(&mut app);
+    assert_eq!(d.core.scroll_offset(key).x, 0.0);
+    assert_eq!(caret_x(&d), rect.x);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn the_wheel_reaches_the_view_over_the_lines_column() {
+    let doc = (0..80)
+        .map(|i| format!("{} {i}", "x".repeat(70)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut app = Kawoosh::new("t", &doc);
+    let mut d = Drive::new(300.0, 200.0);
+    d.frame(&mut app);
+    let view = app.focused_view().unwrap();
+    // Down: `top` moves, the way it did before the column scrolled.
+    d.wheel(&mut app, 150.0, 80.0, 0.0, -60.0);
+    d.frame(&mut app);
+    assert_eq!(app.ed.views[view].top, 3);
+    // Sideways: `left` moves, and the frame clamps it to the content.
+    d.wheel(&mut app, 150.0, 80.0, -40.0, 0.0);
+    d.frame(&mut app);
+    assert_eq!(app.ed.views[view].left, 40.0);
+    d.wheel(&mut app, 150.0, 80.0, -10000.0, 0.0);
+    d.frame(&mut app);
+    let left = app.ed.views[view].left;
+    assert!(left > 40.0 && left < 1000.0, "clamped to the content: {left}");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

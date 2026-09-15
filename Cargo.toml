@@ -17,12 +17,13 @@ kawoosh-term = { path = "./term" }
 kawoosh-systems = { path = "./systems" }
 kawoosh-lua = { path = "./lua" }
 
-# kui by path while 0.1.0-alpha.13 is in CI; the registry form is
-#   kui = { version = "=0.1.0-alpha.13", registry = "forgejo" }
-# and the swap is these three lines (docs/design/kui-requirements.md R1.1).
-kui = { path = "../kui/crates/kui" }
-kui-core = { path = "../kui/crates/kui-core" }
-kui-lua = { path = "../kui/crates/kui-lua" }
+# kui at one exact pre-release from the forgejo registry
+# (docs/design/kui-requirements.md R1.1). To work against a local checkout
+# while a release is in CI, these three lines become
+#   kui = { path = "../kui/crates/kui" }  (and the same for -core, -lua).
+kui = { version = "=0.1.0-alpha.14", registry = "forgejo" }
+kui-core = { version = "=0.1.0-alpha.14", registry = "forgejo" }
+kui-lua = { version = "=0.1.0-alpha.14", registry = "forgejo" }
 # The one Lua in the binary is kui-lua's (kui.md D6).
 mlua = { version = "0.12", features = ["lua55", "vendored"] }
 
