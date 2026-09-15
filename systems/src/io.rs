@@ -6,7 +6,7 @@ use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
-use crate::Wake;
+use crate::WakeHandle;
 
 /// One message from a reader thread.
 #[derive(Debug)]
@@ -22,19 +22,13 @@ pub enum IoMsg {
 pub struct Io {
     tx: Sender<IoMsg>,
     pub rx: Receiver<IoMsg>,
-    /// Replaced once the shell learns its waker (`App::setup`); threads
-    /// spawned after that carry the real one.
-    wake: Wake,
+    wake: WakeHandle,
 }
 
 impl Io {
-    pub fn new(wake: Wake) -> Self {
+    pub fn new(wake: WakeHandle) -> Self {
         let (tx, rx) = unbounded();
         Self { tx, rx, wake }
-    }
-
-    pub fn set_wake(&mut self, wake: Wake) {
-        self.wake = wake;
     }
 
     /// Pumps `reader` into the channel until it closes, waking the loop
@@ -50,7 +44,7 @@ impl Io {
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => {
                             let _ = tx.send(IoMsg::PtyClosed { id });
-                            wake();
+                            wake.wake();
                             return;
                         }
                         Ok(n) => {
@@ -63,7 +57,7 @@ impl Io {
                             {
                                 return;
                             }
-                            wake();
+                            wake.wake();
                         }
                     }
                 }
@@ -157,7 +151,7 @@ impl Io {
                         {
                             return;
                         }
-                        wake();
+                        wake.wake();
                         if let Ok(reply) = reply_rx.recv() {
                             let _ = writeln!(stream, "{reply}");
                         }

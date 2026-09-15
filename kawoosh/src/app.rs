@@ -10,9 +10,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crossbeam_channel::Sender;
+use kawoosh_doc::Version;
 use kawoosh_doc::{Buffer, BufferId};
 use kawoosh_editor::{Editor, Effect, KeyStroke, Mode, Selection, ViewId, motions};
+use kawoosh_systems::WakeHandle;
 use kawoosh_systems::io::{Incoming, Io, IoMsg, Request};
+use kawoosh_systems::ts::{Job, Ts};
 use kawoosh_term::TermSize;
 use kui::{FontId, NodeSpec, Sizing, Ui, UiEvent, Value, WindowCommand};
 
@@ -32,6 +35,11 @@ pub struct Kawoosh {
     pub layout: Layout,
     pub terms: Terminals,
     pub io: Io,
+    pub ts: Ts,
+    pub(crate) wake: WakeHandle,
+    /// The version each buffer was last sent to `ts`, so a frame submits
+    /// only what changed.
+    pub(crate) ts_sent: HashMap<BufferId, Version>,
     /// The command socket's path once listening (`App::setup`).
     pub socket: Option<PathBuf>,
     /// `$EDITOR --wait` callers, answered when their buffer closes.
@@ -60,13 +68,17 @@ impl Kawoosh {
         let mut ed = Editor::new();
         let b = ed.add_buffer(Buffer::new(title, text));
         let view = ed.add_view(b);
+        let wake = WakeHandle::new();
         Self {
             pal: Pal::default(),
             font: None,
             ed,
             layout: Layout::new(Content::Editor(view)),
             terms: Terminals::default(),
-            io: Io::new(kawoosh_systems::no_wake()),
+            io: Io::new(wake.clone()),
+            ts: Ts::spawn(wake.clone()),
+            wake,
+            ts_sent: HashMap::new(),
             socket: None,
             waiters: HashMap::new(),
             quit: false,
@@ -96,6 +108,53 @@ impl Kawoosh {
     }
 
     // ------------------------------------------------------------ io
+
+    /// Buffers whose text moved since `ts` last saw them get a snapshot;
+    /// answers that came back are applied through the journal.
+    pub(crate) fn sync_syntax(&mut self) {
+        for a in self.ts.drain() {
+            if let Some(b) = self.ed.buffers.get_mut(a.buffer) {
+                let _ = b.apply(a.update);
+            }
+        }
+        let shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
+        for id in shown {
+            let Some(b) = self.ed.buffers.get(id) else {
+                continue;
+            };
+            if !Ts::supports(&b.language) {
+                continue;
+            }
+            if self.ts_sent.get(&id) == Some(&b.version()) {
+                continue;
+            }
+            self.ts_sent.insert(id, b.version());
+            self.ts.submit(Job {
+                buffer: id,
+                language: b.language.to_string(),
+                snapshot: b.snapshot(),
+            });
+        }
+    }
+
+    /// Blocks until `ts` has answered for every buffer sent — for tests,
+    /// which have no loop to be woken.
+    pub fn wait_for_syntax(&mut self) {
+        for _ in 0..200 {
+            self.sync_syntax();
+            let pending = self.ts_sent.iter().any(|(id, v)| {
+                self.ed.buffers.get(*id).is_some_and(|b| {
+                    b.version() == *v
+                        && b.layer_names()
+                            .all(|n| n != kawoosh_systems::ts::SYNTAX_LAYER)
+                })
+            });
+            if !pending {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
 
     /// Everything the systems sent since the last frame.
     pub(crate) fn drain_io(&mut self) {
@@ -672,7 +731,7 @@ impl Kawoosh {
 
 impl kui::App for Kawoosh {
     fn setup(&mut self, waker: kui::Waker) {
-        self.io.set_wake(Arc::new(move || waker.wake()));
+        self.wake.set(Arc::new(move || waker.wake()));
         let path = kawoosh_systems::io::socket_path();
         match self.io.listen(&path) {
             Ok(()) => self.socket = Some(path),
@@ -682,6 +741,7 @@ impl kui::App for Kawoosh {
 
     fn view(&mut self, ui: &mut Ui<'_>) {
         self.drain_io();
+        self.sync_syntax();
         if self.quit {
             ui.window_command(WindowCommand::Close(ui.env().window.id));
         }

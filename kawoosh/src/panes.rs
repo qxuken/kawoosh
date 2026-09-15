@@ -10,8 +10,10 @@ use kui::{Align, NodeSpec, Role, Sizing, TextStyle, Ui, Value};
 
 use crate::app::{DIVIDER, Kawoosh, TAB_H, TITLE_H};
 use crate::layout::{Content, Node, PaneId, SplitDir};
+use crate::palette::syntax_color;
 use crate::rows::{self, Caret, Drawn, GUTTER_W, LH, LineDraw, STRIP_H};
 use crate::terminals::TermId;
+use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
 
 impl Kawoosh {
     // ------------------------------------------------------------ view
@@ -435,6 +437,7 @@ impl Kawoosh {
         let primary = sels.primary();
         let cur_line = buf.line_of(primary.head);
         let title = buf.name.clone();
+        let dark = ui.theme().is_dark();
         let caret_kind = if mode == Mode::Insert {
             Caret::Bar
         } else {
@@ -525,6 +528,16 @@ impl Kawoosh {
                                 .map(|r| clip(r.range.start)..clip(r.range.end.min(range.end)))
                                 .filter(|r| r.start < r.end)
                                 .collect();
+                            let styled: Vec<(Range<usize>, kui::Color)> = buf
+                                .runs(SYNTAX_LAYER, range.clone())
+                                .iter()
+                                .filter_map(|r| {
+                                    let c = syntax_color(Token::from_style(r.style), dark)?;
+                                    let a = clip(r.range.start);
+                                    let b = clip(r.range.end.min(range.end));
+                                    (a < b).then_some((a..b, c))
+                                })
+                                .collect();
                             rows::emit_line(
                                 ui,
                                 font,
@@ -533,7 +546,7 @@ impl Kawoosh {
                                     text: &drawn.text,
                                     selected: &selected,
                                     hits: &hits,
-                                    styled: &[],
+                                    styled: &styled,
                                     carets: &carets,
                                     access,
                                     underlined: &[],
