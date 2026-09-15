@@ -20,6 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 kui.workspace = true
 unicode-segmentation.workspace = true
+unicode-width.workspace = true
 anyhow.workspace = true
 log.workspace = true
 env_logger.workspace = true

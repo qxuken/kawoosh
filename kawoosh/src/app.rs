@@ -23,7 +23,7 @@ use crate::Pal;
 use crate::compile::Compile;
 use crate::layout::{Content, Layout, PaneId, SplitDir};
 use crate::lsp::LspState;
-use crate::rows::{self, Drawn, LH, STRIP_H};
+use crate::rows::{self, Drawn, GUTTER_W, LH, STRIP_H};
 use crate::scripting::Scripting;
 use crate::terminals::{TermId, Terminals};
 
@@ -839,7 +839,17 @@ impl Kawoosh {
         let ln = (top + line.max(0) as usize).min(buf.line_count() - 1);
         let drawn = Drawn::new(&buf.line_text(ln), tabstop);
         let range = buf.line_range(ln);
-        let off = (range.start + drawn.to_src(byte.max(0) as usize)).min(range.end);
+        // A long line was drawn from its window's slice, and `byte`
+        // counts from the slice's start.
+        let width = self
+            .layout
+            .rects
+            .get(&pane)
+            .map(|r| (r.w - GUTTER_W - 2.0).max(0.0))
+            .unwrap_or(0.0);
+        let slice = rows::window_slice(&drawn.text, (self.ed.views[view].left, width), self.cell.0);
+        let drawn_byte = (slice.start + byte.max(0) as usize).min(slice.end);
+        let off = (range.start + drawn.to_src(drawn_byte)).min(range.end);
         let word = motions::word_at(buf, off);
         match phase {
             "start" => {

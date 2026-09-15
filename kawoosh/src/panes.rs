@@ -542,7 +542,46 @@ impl Kawoosh {
             Caret::Block
         };
         let tag = Value::map([("kind", "pane".into()), ("pane", Value::Int(pane as i64))]);
-        let follow = self.follow_caret;
+        let cell_w = self.cell.0;
+        // The lines column's width, for the sideways follow and the
+        // window a long line is sliced to: the pane's less the gutter
+        // and its border.
+        let width = self
+            .layout
+            .rects
+            .get(&pane)
+            .map(|r| (r.w - GUTTER_W - 2.0).max(0.0))
+            .unwrap_or(0.0);
+        // Scroll the caret into view sideways, a few columns of margin,
+        // the way `top` follows it down — before the rows, which are
+        // sliced to the window this lands on. A long line's caret is
+        // placed by column, as its slice is.
+        if self.follow_caret || !focused {
+            let drawn = Drawn::new(&buf.line_text(cur_line), tabstop);
+            let range = buf.line_range(cur_line);
+            let head = drawn.to_drawn(primary.head.clamp(range.start, range.end) - range.start);
+            let style = rows::mono(font, &pal);
+            let long = drawn.text.len() >= rows::LONG_LINE_BYTES;
+            let mut x_at = |b: usize| {
+                if long {
+                    drawn.col_of(b) as f32 * cell_w
+                } else {
+                    ui.measure_text(&drawn.text[..b], &style, None).width
+                }
+            };
+            let x0 = x_at(head);
+            let x1 = if head < drawn.text.len() {
+                x_at(rows::next_char(&drawn.text, head))
+            } else {
+                x0 + 8.0
+            };
+            let margin = (cell_w * 3.0).min(width / 4.0);
+            if x0 - margin < left {
+                left = (x0 - margin).max(0.0);
+            } else if width > 0.0 && x1 + margin > left + width {
+                left = x1 + margin - width;
+            }
+        }
 
         let sink = ui.with_keyed(
             "editor",
@@ -683,39 +722,19 @@ impl Kawoosh {
                                     underlined: &underlined,
                                     trailing,
                                     ghost: ghost_here,
+                                    window: (left, width),
+                                    cell_w,
+                                    cols: drawn.cols,
                                 },
                             );
                         }
                     },
                 );
-                // Scroll the caret into view sideways, a few columns of
-                // margin, the way `top` follows it down. The geometry is
-                // last frame's (one frame late on a resize); the offset
-                // set here lands in this frame's positions.
-                let geo = ui.scroll_geometry(lines);
-                let width = geo.map(|g| g.rect.w).unwrap_or(0.0);
-                let max_left = geo.map(|g| g.max_offset.x).unwrap_or(f32::MAX);
-                left = left.clamp(0.0, max_left);
-                if follow || !focused {
-                    let drawn = Drawn::new(&buf.line_text(cur_line), tabstop);
-                    let range = buf.line_range(cur_line);
-                    let head =
-                        drawn.to_drawn(primary.head.clamp(range.start, range.end) - range.start);
-                    let style = rows::mono(font, &pal);
-                    let x0 = ui.measure_text(&drawn.text[..head], &style, None).width;
-                    let x1 = if head < drawn.text.len() {
-                        let next = rows::next_char(&drawn.text, head);
-                        ui.measure_text(&drawn.text[..next], &style, None).width
-                    } else {
-                        x0 + 8.0
-                    };
-                    let margin =
-                        (ui.measure_text("M", &style, None).width * 3.0).min(width / 4.0);
-                    if x0 - margin < left {
-                        left = (x0 - margin).max(0.0);
-                    } else if width > 0.0 && x1 + margin > left + width {
-                        left = x1 + margin - width;
-                    }
+                // The offset lands in this frame's positions; the clamp
+                // is against last frame's content (a resize is one frame
+                // late), and what the wheel pushed past it comes back.
+                if let Some(geo) = ui.scroll_geometry(lines) {
+                    left = left.min(geo.max_offset.x);
                 }
                 ui.set_scroll(lines, Vec2::new(left, 0.0));
             },

@@ -1780,6 +1780,7 @@ dependencies = [
  "serde_json",
  "text-buffer",
  "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

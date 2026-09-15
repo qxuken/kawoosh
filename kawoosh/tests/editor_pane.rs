@@ -337,3 +337,64 @@ fn a_binary_page_is_a_frame_not_a_hang() {
     assert!(per.as_millis() < 50, "an idle frame took {per:?}");
     assert!(d.line_rows()[0].starts_with("^AB^AD^AF"));
 }
+
+#[test]
+fn a_long_line_is_drawn_from_its_window() {
+    // 8000 chars: past kui's long-line threshold, so only the window's
+    // slice is shaped, placed by column between two spacers.
+    let line: String = (0..8000u32)
+        .map(|i| char::from_u32(0x61 + i % 26).unwrap())
+        .collect();
+    let doc = format!("{line}\nshort\n");
+    let mut app = Kawoosh::new("t", &doc);
+    let mut d = Drive::new(600.0, 200.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    // The inspector cuts a node's text short; the width says how much
+    // was shaped: the window's ~70 columns plus overscan, not 8000.
+    let text_nodes = |d: &Drive| -> Vec<(String, f32, f32)> {
+        d.core
+            .nodes()
+            .iter()
+            .filter(|n| n.rect.y > 40.0 && n.text.as_deref().is_some_and(|t| t.len() > 40))
+            .map(|n| (n.text.clone().unwrap(), n.rect.x, n.rect.w))
+            .collect()
+    };
+    let nodes = text_nodes(&d);
+    assert_eq!(nodes.len(), 1, "{nodes:?}");
+    let (t, _, w) = &nodes[0];
+    assert!(*w < 300.0 * 8.0, "the slice, not the line: {w} px");
+    assert!(t.starts_with("abc"));
+    let lines = d
+        .core
+        .nodes()
+        .iter()
+        .find(|n| n.label.as_deref() == Some("lines"))
+        .map(|n| n.rect)
+        .unwrap();
+    // `$`: the window moves to the end; the slice is the line's tail,
+    // ending inside the column.
+    d.keys(&mut app, "$");
+    d.frame(&mut app);
+    let nodes = text_nodes(&d);
+    let (_, x, w) = &nodes[0];
+    assert!(*w < 300.0 * 8.0);
+    assert!(x + w <= lines.x + lines.w + 1.0, "tail in view: {} vs {lines:?}", x + w);
+    assert!(x + w > lines.x + lines.w - 40.0, "the tail ends near the edge: {}", x + w);
+    // A click in the slice lands on the right byte of the line.
+    let head = |app: &Kawoosh| app.ed.views[app.focused_view().unwrap()].sels.primary().head;
+    let before = head(&app);
+    d.click(&mut app, lines.x + lines.w - 30.0, lines.y + 10.0);
+    let after = head(&app);
+    assert!(after > 7000 && after <= 8000, "clicked at {after}");
+    assert!(after != before);
+    // `0`: back to the start, and a frame is cheap either way.
+    d.keys(&mut app, "0");
+    let t = std::time::Instant::now();
+    for _ in 0..10 {
+        d.frame(&mut app);
+    }
+    assert!(t.elapsed().as_millis() / 10 < 20);
+    assert_eq!(d.line_rows()[1], "short");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
