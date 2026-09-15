@@ -379,9 +379,30 @@ impl Buffer {
             .collect();
         fresh.sort_by_key(|r| r.range.start);
         let layer = self.layer_mut(update.layer);
-        layer
-            .runs
-            .retain(|r| r.range.end <= span.start || r.range.start >= span.end);
+        // An old run straddling the span's edge keeps its part outside:
+        // the producer answered for the span alone, and its fresh run
+        // for the same token ends where the span does. The row joins
+        // the two, being one look.
+        let mut kept = Vec::with_capacity(layer.runs.len() + fresh.len());
+        for r in layer.runs.drain(..) {
+            if r.range.end <= span.start || r.range.start >= span.end {
+                kept.push(r);
+                continue;
+            }
+            if r.range.start < span.start {
+                kept.push(Run {
+                    range: r.range.start..span.start,
+                    ..r.clone()
+                });
+            }
+            if r.range.end > span.end {
+                kept.push(Run {
+                    range: span.end..r.range.end,
+                    ..r
+                });
+            }
+        }
+        layer.runs = kept;
         layer.runs.extend(fresh);
         layer.runs.sort_by_key(|r| r.range.start);
         Ok(())
@@ -430,8 +451,10 @@ impl Buffer {
 
 /// The one edit that turns `old` into `new`: what lies between their
 /// common prefix and common suffix, both backed off to a char boundary
-/// so a run's offsets never land inside one.
-fn diff_edit(old: &[u8], new: &[u8]) -> Edit {
+/// so a run's offsets never land inside one. What `restore` journals,
+/// and what the ts system hands tree-sitter as the edit since the text
+/// it last parsed.
+pub fn diff_edit(old: &[u8], new: &[u8]) -> Edit {
     let is_boundary = |b: u8| (b & 0xC0) != 0x80;
     let mut prefix = old
         .iter()

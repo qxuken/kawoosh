@@ -1,15 +1,23 @@
 //! The ts system: tree-sitter on its own thread (mvp.md Decision 6). A
 //! job is a buffer snapshot at a version; the answer is an `Update` for
 //! the `syntax` layer at that version, which `doc` carries forward.
-//! Whole-document parses for the MVP — a source file parses in
-//! milliseconds, and the journal makes a late answer harmless.
+//!
+//! The parse is incremental: the thread keeps each buffer's last text
+//! and tree, reads the new snapshot against them as one edit (the diff
+//! between the two texts, the same one `Buffer::restore` journals),
+//! tells the tree, and parses with it — tree-sitter reuses every node
+//! the edit did not touch. The answer covers only the span whose syntax
+//! changed (the edit and `changed_ranges`), the query run over that span
+//! alone; the journal carries the runs outside it. A first sight of a
+//! buffer, or a change of language, parses and answers for the whole.
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use kawoosh_doc::{BufferId, Run, Snapshot, Update};
-use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
+use tree_sitter::{InputEdit, Parser, Point, Query, QueryCursor, StreamingIterator, Tree};
 
 use crate::WakeHandle;
 
@@ -140,6 +148,7 @@ impl Ts {
             .spawn(move || {
                 let mut parser = Parser::new();
                 let mut grammars = Grammars::load();
+                let mut parsed = Parsed::default();
                 while let Ok(job) = job_rx.recv() {
                     // Only the newest job per buffer matters: skip ahead.
                     let mut job = job;
@@ -148,11 +157,12 @@ impl Ts {
                             job = next;
                         } else {
                             // A different buffer: handle it after this one.
-                            let _ = answer_tx.send(highlight(&mut parser, &mut grammars, &job));
+                            let _ = answer_tx
+                                .send(highlight(&mut parser, &mut grammars, &mut parsed, &job));
                             job = next;
                         }
                     }
-                    let _ = answer_tx.send(highlight(&mut parser, &mut grammars, &job));
+                    let _ = answer_tx.send(highlight(&mut parser, &mut grammars, &mut parsed, &job));
                     wake.wake();
                 }
             })
@@ -266,31 +276,92 @@ impl Grammar {
     }
 }
 
-fn highlight(parser: &mut Parser, grammars: &mut Grammars, job: &Job) -> Answer {
+/// What the thread parsed last, per buffer: the text and its tree, for
+/// the next parse to start from.
+#[derive(Default)]
+struct Parsed {
+    by_buffer: HashMap<BufferId, (String, Vec<u8>, Tree)>,
+}
+
+/// tree-sitter's point for byte `b` of `text`: the row and the column in
+/// bytes. Right, not approximate — the tree's node positions are read
+/// nowhere here, but a wrong point can mislead the reparse.
+fn point_at(text: &[u8], b: usize) -> Point {
+    let b = b.min(text.len());
+    let row = text[..b].iter().filter(|&&c| c == b'\n').count();
+    let line_start = text[..b].iter().rposition(|&c| c == b'\n').map_or(0, |i| i + 1);
+    Point::new(row, b - line_start)
+}
+
+fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, job: &Job) -> Answer {
     let text = job.snapshot.text.collect();
+    let mut span = 0..text.len();
     let runs = match grammars.get(&job.language) {
-        Some(g) if parser.set_language(&g.language).is_ok() => match parser.parse(&text, None) {
-            Some(tree) => capture_runs(g, tree.root_node(), &text),
-            None => Vec::new(),
-        },
-        _ => Vec::new(),
+        Some(g) if parser.set_language(&g.language).is_ok() => {
+            // The last tree, told the edit, when it is this language's.
+            let old = parsed
+                .by_buffer
+                .remove(&job.buffer)
+                .filter(|(lang, _, _)| *lang == job.language)
+                .map(|(_, old_text, mut tree)| {
+                    let e = kawoosh_doc::diff_edit(&old_text, &text);
+                    let new_end = e.range.start + e.new_len;
+                    tree.edit(&InputEdit {
+                        start_byte: e.range.start,
+                        old_end_byte: e.range.end,
+                        new_end_byte: new_end,
+                        start_position: point_at(&old_text, e.range.start),
+                        old_end_position: point_at(&old_text, e.range.end),
+                        new_end_position: point_at(&text, new_end),
+                    });
+                    (tree, e.range.start..new_end)
+                });
+            match parser.parse(&text, old.as_ref().map(|(t, _)| t)) {
+                Some(tree) => {
+                    if let Some((old_tree, edited)) = &old {
+                        // The edit itself, and every range whose syntax
+                        // the reparse changed; the runs elsewhere stand.
+                        let mut lo = edited.start;
+                        let mut hi = edited.end;
+                        for r in tree.changed_ranges(old_tree) {
+                            lo = lo.min(r.start_byte);
+                            hi = hi.max(r.end_byte);
+                        }
+                        span = lo.min(text.len())..hi.min(text.len());
+                    }
+                    let runs = capture_runs(g, tree.root_node(), &text, span.clone());
+                    parsed
+                        .by_buffer
+                        .insert(job.buffer, (job.language.clone(), text, tree));
+                    runs
+                }
+                None => Vec::new(),
+            }
+        }
+        _ => {
+            parsed.by_buffer.remove(&job.buffer);
+            Vec::new()
+        }
     };
     Answer {
         buffer: job.buffer,
         update: Update {
             layer: SYNTAX_LAYER,
             version: job.snapshot.version,
-            span: 0..text.len(),
+            span,
             runs,
         },
     }
 }
 
-/// Paints every capture over a byte map, outer captures first so an
-/// inner one wins (tree-sitter's own precedence), then coalesces.
-fn capture_runs(g: &Grammar, root: tree_sitter::Node, text: &[u8]) -> Vec<Run> {
+/// Paints every capture in `span` over a byte map, outer captures first
+/// so an inner one wins (tree-sitter's own precedence), then coalesces.
+/// A capture reaching past the span is cut at it: the layer keeps its
+/// own run for the part outside.
+fn capture_runs(g: &Grammar, root: tree_sitter::Node, text: &[u8], span: Range<usize>) -> Vec<Run> {
     let mut caps: Vec<(Range<usize>, Token)> = Vec::new();
     let mut cursor = QueryCursor::new();
+    cursor.set_byte_range(span.clone());
     let mut it = cursor.captures(&g.query, root, text);
     while let Some((m, i)) = it.next() {
         let c = m.captures[*i];
@@ -298,7 +369,8 @@ fn capture_runs(g: &Grammar, root: tree_sitter::Node, text: &[u8]) -> Vec<Run> {
             continue;
         };
         let r = c.node.byte_range();
-        if !r.is_empty() {
+        let r = r.start.max(span.start)..r.end.min(span.end);
+        if r.start < r.end {
             caps.push((r, *tok));
         }
     }
@@ -321,10 +393,10 @@ fn capture_runs(g: &Grammar, root: tree_sitter::Node, text: &[u8]) -> Vec<Run> {
         }
         true
     });
-    let mut paint = vec![0u8; text.len()];
+    let base = span.start;
+    let mut paint = vec![0u8; span.len()];
     for (r, tok) in caps {
-        let end = r.end.min(paint.len());
-        for p in &mut paint[r.start.min(end)..end] {
+        for p in &mut paint[r.start - base..r.end - base] {
             *p = tok as u8;
         }
     }
@@ -334,7 +406,7 @@ fn capture_runs(g: &Grammar, root: tree_sitter::Node, text: &[u8]) -> Vec<Run> {
         if i == paint.len() || paint[i] != paint[start] {
             if paint[start] != 0 {
                 runs.push(Run {
-                    range: start..i,
+                    range: base + start..base + i,
                     style: paint[start] as u32,
                     tag: 0,
                 });
@@ -361,7 +433,7 @@ mod tests {
             language: "rust".into(),
             snapshot: buf.snapshot(),
         };
-        let a = highlight(&mut parser, &mut g, &job);
+        let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job);
         let tok_at = |o: usize| {
             a.update
                 .runs
@@ -412,7 +484,7 @@ mod tests {
                 language: (*lang).into(),
                 snapshot: buf.snapshot(),
             };
-            let a = highlight(&mut parser, &mut g, &job);
+            let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job);
             assert!(!a.update.runs.is_empty(), "{lang}: no runs");
             for (needle, tok) in *want {
                 let o = src.find(needle).unwrap();
@@ -427,6 +499,92 @@ mod tests {
         }
     }
 
+    /// Joins adjacent runs of one style, which is how a row reads them.
+    fn joined(runs: &[Run]) -> Vec<(Range<usize>, u32)> {
+        let mut out: Vec<(Range<usize>, u32)> = Vec::new();
+        for r in runs {
+            match out.last_mut() {
+                Some((last, style)) if *style == r.style && last.end == r.range.start => {
+                    last.end = r.range.end;
+                }
+                _ => out.push((r.range.clone(), r.style)),
+            }
+        }
+        out
+    }
+
+    /// The second parse of a buffer is incremental — its answer spans the
+    /// edit and what it changed, not the document — and, applied through
+    /// the journal over the first, the layer reads as a whole parse of
+    /// the new text would.
+    #[test]
+    fn a_reparse_answers_for_the_changed_span_alone() {
+        let mut g = Grammars::load();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let body: String = (0..200)
+            .map(|i| format!("fn f{i}(x: u32) -> u32 {{ x + {i} }} // c{i}\n"))
+            .collect();
+        let mut buf = Buffer::new("t", &body);
+        buf.language = "rust".into();
+        let job = |buf: &Buffer| Job {
+            buffer: BufferId::default(),
+            language: "rust".into(),
+            snapshot: buf.snapshot(),
+        };
+        let first = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
+        assert_eq!(first.update.span, 0..body.len());
+        buf.apply(first.update).unwrap();
+        // Rename a function in the middle: a string that was a name.
+        let at = body.find("fn f100(").unwrap() + 3;
+        buf.replace(at..at + 4, "renamed");
+        let second = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
+        let span = second.update.span.clone();
+        assert!(span.start >= at.saturating_sub(64), "{span:?} for an edit at {at}");
+        assert!(span.end <= at + 64, "{span:?} for an edit at {at}");
+        assert!(second.update.runs.iter().all(|r| span.start <= r.range.start && r.range.end <= span.end));
+        buf.apply(second.update).unwrap();
+        let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &job(&buf));
+        assert_eq!(whole.update.span, 0..buf.len());
+        assert_eq!(joined(buf.runs(SYNTAX_LAYER, 0..buf.len())), joined(&whole.update.runs));
+        let renamed = buf.text().find("renamed").unwrap();
+        assert_eq!(
+            buf.runs(SYNTAX_LAYER, renamed..renamed + 1).first().map(|r| Token::from_style(r.style)),
+            Some(Token::Function)
+        );
+        // Edits whose syntax reaches past them — a `/*` that swallows
+        // the rest of the file, then its `*/` half way down, then both
+        // deleted — each still read as a whole parse would.
+        let open = buf.text().find("fn f50(").unwrap();
+        buf.replace(open..open, "/*");
+        let mut edits = vec![open..open + 2];
+        let close = buf.text().find("fn f150(").unwrap();
+        buf.replace(close..close, "*/");
+        edits.push(close..close + 2);
+        for step in 0..3 {
+            if step == 2 {
+                for r in edits.iter().rev() {
+                    buf.replace(r.clone(), "");
+                }
+            }
+            let inc = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
+            buf.apply(inc.update).unwrap();
+            let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &job(&buf));
+            assert_eq!(
+                joined(buf.runs(SYNTAX_LAYER, 0..buf.len())),
+                joined(&whole.update.runs),
+                "step {step}"
+            );
+            let f60 = buf.text().find("fn f60(").unwrap();
+            let tok = buf
+                .runs(SYNTAX_LAYER, f60..f60 + 1)
+                .first()
+                .map(|r| Token::from_style(r.style));
+            let want = if step < 2 { Token::Comment } else { Token::Keyword };
+            assert_eq!(tok, Some(want), "step {step}: f60 in the block comment until it goes");
+        }
+    }
+
     #[test]
     fn unknown_language_answers_empty() {
         let mut g = Grammars::load();
@@ -437,6 +595,11 @@ mod tests {
             language: "brainfuck".into(),
             snapshot: buf.snapshot(),
         };
-        assert!(highlight(&mut parser, &mut g, &job).update.runs.is_empty());
+        assert!(
+            highlight(&mut parser, &mut g, &mut Parsed::default(), &job)
+                .update
+                .runs
+                .is_empty()
+        );
     }
 }
