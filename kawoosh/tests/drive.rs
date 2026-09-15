@@ -112,30 +112,30 @@ impl Drive {
         self.frame(app);
     }
 
-    /// The text of every row under the node labelled `lines` in the last
-    /// frame, top to bottom, runs joined — one document line each.
+    /// The text of every row under every node labelled `lines` in the
+    /// last frame, pane by pane, top to bottom, runs joined — one
+    /// document line each.
     pub fn line_rows(&self) -> Vec<String> {
         let nodes = self.core.nodes();
-        let Some(lines) = nodes.iter().find(|n| n.label.as_deref() == Some("lines")) else {
-            return Vec::new();
-        };
         let mut out = Vec::new();
-        let mut i = 0;
-        while i < nodes.len() {
-            if nodes[i].parent == Some(lines.key) {
-                let depth = nodes[i].depth;
-                let mut s = String::new();
-                let mut j = i + 1;
-                while j < nodes.len() && nodes[j].depth > depth {
-                    if let Some(t) = &nodes[j].text {
-                        s.push_str(t);
+        for lines in nodes.iter().filter(|n| n.label.as_deref() == Some("lines")) {
+            let mut i = 0;
+            while i < nodes.len() {
+                if nodes[i].parent == Some(lines.key) {
+                    let depth = nodes[i].depth;
+                    let mut s = String::new();
+                    let mut j = i + 1;
+                    while j < nodes.len() && nodes[j].depth > depth {
+                        if let Some(t) = &nodes[j].text {
+                            s.push_str(t);
+                        }
+                        j += 1;
                     }
-                    j += 1;
+                    out.push(s);
+                    i = j;
+                } else {
+                    i += 1;
                 }
-                out.push(s);
-                i = j;
-            } else {
-                i += 1;
             }
         }
         out

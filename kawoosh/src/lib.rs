@@ -5,6 +5,7 @@
 //! window.
 
 pub mod app;
+pub mod layout;
 pub mod palette;
 pub mod rows;
 

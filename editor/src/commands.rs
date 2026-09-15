@@ -27,6 +27,7 @@ pub fn ex_alias(name: &str) -> Option<&'static str> {
         "bn" | "bnext" => "buffer_next",
         "bp" | "bprev" | "bprevious" => "buffer_prev",
         "bd" | "bdelete" => "buffer_delete",
+        "b" | "buffer" => "buffer",
         "ls" | "buffers" => "buffer_list",
         "sp" | "split" => "split",
         "vs" | "vsplit" => "vsplit",
@@ -1250,6 +1251,25 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<A-k>", "add_cursor_above"),
         ("<Esc>", "normal_mode"),
         ("<C-c>", "normal_mode"),
+        // Panes, tabs, the dock: the shell's commands (Effect::Shell).
+        ("<C-w>v", "vsplit"),
+        ("<C-w>s", "split"),
+        ("<C-w>q", "close"),
+        ("<C-w>c", "close"),
+        ("<C-w>o", "only"),
+        ("<C-w>w", "pane_next"),
+        ("<C-w>h", "pane_left"),
+        ("<C-w>j", "pane_down"),
+        ("<C-w>k", "pane_up"),
+        ("<C-w>l", "pane_right"),
+        ("<C-w><Left>", "pane_left"),
+        ("<C-w><Down>", "pane_down"),
+        ("<C-w><Up>", "pane_up"),
+        ("<C-w><Right>", "pane_right"),
+        ("<C-w>t", "tab_new"),
+        ("gt", "tab_next"),
+        ("gT", "tab_prev"),
+        ("<C-w>d", "dock_toggle"),
     ];
     for (k, c) in n {
         km.bind(Normal, k, c);

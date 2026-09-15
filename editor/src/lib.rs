@@ -74,6 +74,13 @@ pub enum Effect {
     Open(PathBuf),
     /// A file was written, so the shell can tell the systems.
     Wrote(BufferId),
+    /// A command the engine does not know: the shell's, if it has one
+    /// (splits, tabs, terminals, Lua), with its args and count.
+    Shell {
+        name: String,
+        args: Vec<String>,
+        count: Option<usize>,
+    },
 }
 
 /// What a command runs with.
@@ -302,7 +309,12 @@ impl Editor {
     /// checkpoint around it. Unknown names set the message.
     pub fn run(&mut self, view: ViewId, name: &str, args: &[String], count: Option<usize>) {
         let Some(cmd) = self.commands.get(name).cloned() else {
-            self.message = format!("not a command: {name}");
+            self.pending_op = None;
+            self.effects.push(Effect::Shell {
+                name: name.to_string(),
+                args: args.to_vec(),
+                count,
+            });
             return;
         };
         let ctx = Ctx {

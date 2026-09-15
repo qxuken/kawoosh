@@ -259,8 +259,11 @@ fn command_line_and_search() {
     assert!(!t.ed.take_effects().contains(&Effect::Quit));
     t.keys(":q!<CR>");
     assert!(t.ed.take_effects().contains(&Effect::Quit));
-    t.keys(":nonsense<CR>");
-    assert!(t.ed.message.contains("not a command"));
+    t.keys(":nonsense a b<CR>");
+    assert!(matches!(
+        t.ed.take_effects().as_slice(),
+        [Effect::Shell { name, args, .. }] if name == "nonsense" && args == &["a", "b"]
+    ));
     t.keys(":set tabstop=2<CR>");
     assert_eq!(t.ed.tabstop(), 2);
 }

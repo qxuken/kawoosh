@@ -10,7 +10,7 @@ use kui::KeyMods;
 const DOC: &str = "line one\nline two\nline three\n\tindented\nlast";
 
 fn text(app: &Kawoosh) -> String {
-    app.ed.buffer_of(app.view).text()
+    app.ed.buffer_of(app.focused_view().unwrap()).text()
 }
 
 #[test]
@@ -48,24 +48,28 @@ fn keys_edit_through_the_real_dispatch() {
 fn the_view_follows_the_caret_with_scrolloff() {
     let text: String = (1..=100).map(|i| format!("l{i}\n")).collect();
     let mut app = Kawoosh::new("t", &text);
-    // 2 strips × 24 + 10 rows × 20 = 248.
-    let mut d = Drive::new(600.0, 248.0);
+    // tabs 26 + strips 48 + title 22 + border 2 + 10 rows × 20 = 298.
+    let mut d = Drive::new(600.0, 300.0);
     d.frame(&mut app);
-    assert_eq!(app.ed.views[app.view].rows, 10);
+    assert_eq!(app.ed.views[app.focused_view().unwrap()].rows, 10);
     d.keys(&mut app, "8j");
     assert_eq!(
-        app.ed.views[app.view].top, 2,
+        app.ed.views[app.focused_view().unwrap()].top,
+        2,
         "scrolloff 3 keeps 3 lines below"
     );
     d.keys(&mut app, "G");
     assert_eq!(d.line_rows().last().map(String::as_str), Some(""));
     d.keys(&mut app, "gg");
-    assert_eq!(app.ed.views[app.view].top, 0);
+    assert_eq!(app.ed.views[app.focused_view().unwrap()].top, 0);
     d.ctrl(&mut app, "d");
     assert_eq!(
-        app.ed
-            .buffer_of(app.view)
-            .line_of(app.ed.views[app.view].sels.primary().head),
+        app.ed.buffer_of(app.focused_view().unwrap()).line_of(
+            app.ed.views[app.focused_view().unwrap()]
+                .sels
+                .primary()
+                .head
+        ),
         5
     );
 }
@@ -100,8 +104,11 @@ fn a_click_places_the_caret_by_line_and_byte() {
         .unwrap();
     let x = lines.rect.x + 7.5 * 7.0; // ~7 chars in, 7px per char at 13px mono
     d.click(&mut app, x, lines.rect.y + 2.0 * 20.0 + 10.0);
-    let head = app.ed.views[app.view].sels.primary().head;
-    let buf = app.ed.buffer_of(app.view);
+    let head = app.ed.views[app.focused_view().unwrap()]
+        .sels
+        .primary()
+        .head;
+    let buf = app.ed.buffer_of(app.focused_view().unwrap());
     assert_eq!(buf.line_of(head), 2);
     assert!(
         head > buf.line_start(2) + 3,
