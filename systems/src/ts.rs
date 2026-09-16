@@ -557,7 +557,7 @@ fn capture_runs(
     let mut node_text = |n: tree_sitter::Node| std::iter::once(text.collect_range(n.byte_range()));
     let mut it = cursor.captures(&g.query, root, &mut node_text);
     while let Some((m, i)) = it.next() {
-        let c = m.captures[*i];
+        let c = m.captures()[*i];
         let Some(Some(tok)) = g.classes.get(c.index as usize) else {
             continue;
         };

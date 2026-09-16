@@ -31,9 +31,9 @@ pub struct Row {
     /// tree-sitter's node id: stable across an incremental reparse for
     /// the nodes it kept, which is what a fold is remembered by.
     pub id: usize,
-    pub kind: &'static str,
+    pub kind: Box<str>,
     /// The field the node fills in its parent (`name`, `body`).
-    pub field: Option<&'static str>,
+    pub field: Option<Box<str>>,
     pub range: Range<usize>,
     pub start: Point,
     pub end: Point,
@@ -148,8 +148,8 @@ fn flatten(tree: &Tree, folded: &HashSet<usize>, anonymous: bool) -> Vec<Row> {
         if anonymous || n.is_named() {
             rows.push(Row {
                 id: n.id(),
-                kind: n.kind(),
-                field: c.field_name(),
+                kind: n.kind().into(),
+                field: c.field_name().map(Into::into),
                 range: n.byte_range(),
                 start: n.start_position(),
                 end: n.end_position(),
@@ -342,7 +342,7 @@ impl Kawoosh {
                             ui.with_keyed("fold", fold, |ui| {
                                 ui.text(glyph, style().color(pal.dim))
                             });
-                            if let Some(f) = r.field {
+                            if let Some(f) = &r.field {
                                 ui.text(&format!("{f}: "), style().color(pal.dim));
                             }
                             let (text, color) = if r.missing {
