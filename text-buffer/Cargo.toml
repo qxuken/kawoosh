@@ -8,6 +8,8 @@ repository.workspace = true
 
 [dependencies]
 derive_more.workspace = true
+memchr = "2"
+memmap2 = "0.9"
 
 [dev-dependencies]
 criterion.workspace = true

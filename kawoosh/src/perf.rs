@@ -56,10 +56,16 @@ impl Phases {
 /// The process's memory, as the OS counts it.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Mem {
-    /// Resident now, bytes; 0 where the reading is not available.
+    /// Resident now, bytes — a mapped file's pages included, which the
+    /// OS lets go of under pressure; 0 where the reading is not
+    /// available.
     pub resident: u64,
     /// The most that was ever resident.
     pub peak: u64,
+    /// What the process is charged for: its own pages and what was
+    /// compressed, not a file's cached ones — Activity Monitor's
+    /// "Memory" (`phys_footprint`); 0 where there is no such reading.
+    pub footprint: u64,
 }
 
 /// The focused buffer's text, as the memory section reads it.
@@ -154,8 +160,61 @@ pub fn read_mem() -> Mem {
         } else {
             0
         };
-        Mem { resident, peak }
+        Mem {
+            resident,
+            peak,
+            footprint: phys_footprint(),
+        }
     }
+}
+
+/// `task_vm_info.phys_footprint`, through `task_info` — the struct's
+/// head as `<mach/task_info.h>` lays it out through that field (rev1);
+/// the count asked for is that much, so an older kernel answers what it
+/// has and the field stays zero.
+#[cfg(target_os = "macos")]
+// `libc` points at the `mach2` crate for `mach_task_self`; one port
+// lookup is not worth a dependency.
+#[allow(deprecated)]
+fn phys_footprint() -> u64 {
+    #[repr(C)]
+    #[derive(Default)]
+    struct TaskVmInfoHead {
+        virtual_size: u64,
+        region_count: i32,
+        page_size: i32,
+        resident_size: u64,
+        resident_size_peak: u64,
+        device: u64,
+        device_peak: u64,
+        internal: u64,
+        internal_peak: u64,
+        external: u64,
+        external_peak: u64,
+        reusable: u64,
+        reusable_peak: u64,
+        purgeable_volatile_pmap: u64,
+        purgeable_volatile_resident: u64,
+        purgeable_volatile_virtual: u64,
+        compressed: u64,
+        compressed_peak: u64,
+        compressed_lifetime: u64,
+        phys_footprint: u64,
+    }
+    const TASK_VM_INFO: u32 = 22;
+    let mut info = TaskVmInfoHead::default();
+    let mut count = (std::mem::size_of::<TaskVmInfoHead>() / std::mem::size_of::<u32>()) as u32;
+    // SAFETY: `task_info` writes at most `count` naturals into the
+    // struct, which is laid out as the kernel's through the field read.
+    let ok = unsafe {
+        libc::task_info(
+            libc::mach_task_self(),
+            TASK_VM_INFO,
+            (&raw mut info).cast(),
+            &mut count,
+        )
+    } == 0;
+    if ok { info.phys_footprint } else { 0 }
 }
 
 #[cfg(target_os = "linux")]
@@ -175,7 +234,11 @@ pub fn read_mem() -> Mem {
             0
         }
     };
-    Mem { resident, peak }
+    Mem {
+        resident,
+        peak,
+        footprint: 0,
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -342,7 +405,8 @@ impl Kawoosh {
                 ui,
                 "process",
                 &format!(
-                    "{} resident · {} peak",
+                    "{} footprint · {} resident · {} peak",
+                    bytes(mem.footprint),
                     bytes(mem.resident),
                     bytes(mem.peak)
                 ),

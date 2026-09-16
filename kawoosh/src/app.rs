@@ -311,7 +311,57 @@ impl Kawoosh {
                 other @ (IoMsg::ProcLine { .. } | IoMsg::ProcExit { .. }) => {
                     self.on_proc_msg(other)
                 }
+                IoMsg::Opening { path, done, total } => {
+                    if let Some(id) = self.ed.buffer_at(&path)
+                        && let Some(b) = self.ed.buffers.get_mut(id)
+                        && b.loading.is_some()
+                    {
+                        b.loading = Some((done, total));
+                    }
+                }
+                IoMsg::Opened {
+                    path,
+                    text,
+                    mapped,
+                    elapsed,
+                } => {
+                    if let Some(id) = self.ed.buffer_at(&path)
+                        && let Some(b) = self.ed.buffers.get_mut(id)
+                        && b.loading.is_some()
+                    {
+                        b.attach(text);
+                        let b = &self.ed.buffers[id];
+                        self.ed.message = format!(
+                            "\"{}\" {}L, {}B {} in {:.1}s",
+                            b.name,
+                            b.line_count(),
+                            b.len(),
+                            if mapped { "mapped" } else { "read" },
+                            elapsed.as_secs_f64()
+                        );
+                    }
+                }
+                IoMsg::OpenFailed { path, error } => {
+                    self.ed.message = format!("cannot open {}: {error}", path.display());
+                    if let Some(id) = self.ed.buffer_at(&path)
+                        && self.ed.buffers.get(id).is_some_and(|b| b.loading.is_some())
+                    {
+                        self.ed.buffers[id].loading = None;
+                    }
+                }
             }
+        }
+    }
+
+    /// Blocks until every buffer being opened has its text — for tests
+    /// and the perf harness, which have no loop to be woken.
+    pub fn wait_for_open(&mut self) {
+        for _ in 0..12_000 {
+            self.drain_io();
+            if self.ed.buffers.values().all(|b| b.loading.is_none()) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
 
@@ -430,6 +480,15 @@ impl Kawoosh {
         if let Some(id) = self.ed.buffer_at(path) {
             return Some(id);
         }
+        // A big file is opened on the io thread — mapped and indexed in
+        // parallel while the window goes on drawing — and its buffer
+        // stands in meanwhile, saying how far the open is.
+        if let Ok(meta) = std::fs::metadata(path)
+            && meta.is_file()
+            && meta.len() as usize >= ASYNC_OPEN_BYTES
+        {
+            return Some(self.open_on_io_thread(path, meta.len() as usize));
+        }
         let buf = match Buffer::from_file(path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -450,6 +509,15 @@ impl Kawoosh {
             }
         };
         Some(self.ed.add_buffer(buf))
+    }
+
+    /// The buffer for `path` before its text has arrived: the io thread
+    /// maps and indexes the file and `drain_io` attaches it. What a file
+    /// past [`ASYNC_OPEN_BYTES`] takes; a test takes it with a small one.
+    pub fn open_on_io_thread(&mut self, path: &Path, total: usize) -> BufferId {
+        let buf = Buffer::opening(path, total);
+        self.io.open_file(path.to_path_buf());
+        self.ed.add_buffer(buf)
     }
 
     /// Opens `path` in the focused editor pane (or a new pane if the
@@ -1107,6 +1175,11 @@ impl Kawoosh {
         }
     }
 }
+
+/// A file this big opens on the io thread (`Io::open_file`) rather than
+/// in the frame: sixty-four megabytes reads in well under a frame's
+/// worth of patience; a gigabyte does not.
+pub const ASYNC_OPEN_BYTES: usize = 64 << 20;
 
 impl kui::App for Kawoosh {
     fn setup(&mut self, waker: kui::Waker) {

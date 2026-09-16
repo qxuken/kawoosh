@@ -26,14 +26,44 @@ const _: () = {
     assert_send_sync::<Buffer>();
 };
 
+/// The bytes pieces slice: text the buffer owns — a file read, an edit
+/// typed — or a file's mapping, whose pages the OS brings in as they are
+/// read and lets go of under pressure, so a ten-gigabyte file costs no
+/// copy and holds no more memory than has been looked at.
+///
+/// A mapping reads the file as it is on disk *now*: a write to the file
+/// by another program changes what the pieces see, and a truncation
+/// makes reading past the new end a fault. The editor writes its own
+/// saves beside the file and renames them over it, which leaves the
+/// mapped inode intact; what another program does is the same risk
+/// every editor that maps a file takes.
+#[derive(Debug)]
+pub enum Block {
+    Owned(Vec<u8>),
+    Mapped(memmap2::Mmap),
+}
+
+impl Block {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Block::Owned(v) => v,
+            Block::Mapped(m) => m,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.bytes().len()
+    }
+}
+
 /// A slice of one immutable text block.
 ///
 /// Pieces own a share of their bytes: there is no separate arena, so a buffer
 /// clone is a full snapshot by construction, reads borrow directly from the
-/// block, and dropping the last piece into a block frees it.
+/// block, and dropping the last piece into a block frees it (or unmaps it).
 #[derive(Clone, Debug)]
 struct Piece {
-    block: Arc<Vec<u8>>,
+    block: Arc<Block>,
     start: usize,
     length: u16,
 }
@@ -44,11 +74,11 @@ impl Piece {
     }
 
     fn bytes(&self) -> &[u8] {
-        &self.block[self.start..self.start + self.len()]
+        &self.block.bytes()[self.start..self.start + self.len()]
     }
 
     fn newlines(&self) -> usize {
-        self.bytes().iter().filter(|&&byte| byte == b'\n').count()
+        memchr::memchr_iter(b'\n', self.bytes()).count()
     }
 }
 
@@ -160,7 +190,7 @@ impl<'a> Pieces<'a> {
 
 impl<'a> Iterator for Pieces<'a> {
     /// The block (by identity), the piece's start in it, and its bytes.
-    type Item = (&'a Vec<u8>, usize, &'a [u8]);
+    type Item = (&'a Block, usize, &'a [u8]);
 
     fn next(&mut self) -> Option<Self::Item> {
         let node = self.stack.pop()?;
@@ -184,20 +214,41 @@ impl Buffer {
     /// at a time. The priorities run down from the root, so the heap
     /// order holds and an edit's random one slots in where it falls.
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        let counts = count_newlines(&bytes);
+        Self::over(Block::Owned(bytes), &counts)
+    }
+
+    /// A buffer over a file's mapping (see [`Block`]), its pieces'
+    /// newline counts already taken by [`count_newlines`] — on another
+    /// thread, in parallel, while the window went on drawing — so this
+    /// reads nothing.
+    pub fn from_mapped(map: memmap2::Mmap, counts: &[u32]) -> Self {
+        Self::over(Block::Mapped(map), counts)
+    }
+
+    fn over(block: Block, counts: &[u32]) -> Self {
         let mut buf = Buffer::default();
-        if bytes.is_empty() {
+        let len = block.len();
+        if len == 0 {
             return buf;
         }
-        let len = bytes.len();
-        let block = Arc::new(bytes);
         let pieces = len.div_ceil(INITIAL_PIECE_BYTES);
-        buf.root = Self::build_balanced(&block, len, 0, pieces, u64::MAX);
+        assert_eq!(counts.len(), pieces, "one newline count per piece");
+        let block = Arc::new(block);
+        buf.root = Self::build_balanced(&block, len, counts, 0, pieces, u64::MAX);
         buf
     }
 
     /// Pieces `[lo, hi)` of `block` as a balanced subtree whose root has
     /// `priority`, its children less.
-    fn build_balanced(block: &Arc<Vec<u8>>, len: usize, lo: usize, hi: usize, priority: u64) -> Link {
+    fn build_balanced(
+        block: &Arc<Block>,
+        len: usize,
+        counts: &[u32],
+        lo: usize,
+        hi: usize,
+        priority: u64,
+    ) -> Link {
         if lo >= hi {
             return Link::none();
         }
@@ -208,11 +259,30 @@ impl Buffer {
             start,
             length: (len - start).min(INITIAL_PIECE_BYTES) as u16,
         };
-        let own_newlines = piece.newlines();
         let below = priority / 2;
-        let left = Self::build_balanced(block, len, lo, mid, below);
-        let right = Self::build_balanced(block, len, mid + 1, hi, below.wrapping_sub(1));
-        Link::leaf(Arc::new(Node::new(piece, priority, left, right, own_newlines)))
+        let left = Self::build_balanced(block, len, counts, lo, mid, below);
+        let right = Self::build_balanced(block, len, counts, mid + 1, hi, below.wrapping_sub(1));
+        Link::leaf(Arc::new(Node::new(
+            piece,
+            priority,
+            left,
+            right,
+            counts[mid] as usize,
+        )))
+    }
+
+    /// Writes the whole text to `out`, piece by piece — a save that never
+    /// holds the text as one string.
+    pub fn write_to(&self, out: &mut impl std::io::Write) -> std::io::Result<()> {
+        let mut err = None;
+        self.visit_range(0..self.len(), |chunk| {
+            if err.is_none()
+                && let Err(e) = out.write_all(chunk)
+            {
+                err = Some(e);
+            }
+        });
+        err.map_or(Ok(()), Err)
     }
 
     pub fn reset(&mut self) {
@@ -236,7 +306,7 @@ impl Buffer {
             return;
         }
 
-        let block = Arc::new(text.to_vec());
+        let block = Arc::new(Block::Owned(text.to_vec()));
         let inserted = self.build_piece_tree(&block, text.len());
 
         let old_root = self.root.clone();
@@ -313,7 +383,7 @@ impl Buffer {
 
             // The block itself must be unshared too: another piece (from a
             // split) or a snapshot may hold it even when the node is unique.
-            let Some(block) = Arc::get_mut(&mut node.piece.block) else {
+            let Some(Block::Owned(block)) = Arc::get_mut(&mut node.piece.block) else {
                 return false;
             };
 
@@ -399,7 +469,11 @@ impl Buffer {
             let eq = if same_place {
                 n
             } else if rev {
-                xs.iter().rev().zip(ys.iter().rev()).take_while(|(p, q)| p == q).count()
+                xs.iter()
+                    .rev()
+                    .zip(ys.iter().rev())
+                    .take_while(|(p, q)| p == q)
+                    .count()
             } else {
                 xs.iter().zip(ys).take_while(|(p, q)| p == q).count()
             };
@@ -624,7 +698,7 @@ impl Buffer {
         (left_tree, right_tree)
     }
 
-    fn build_piece_tree(&mut self, block: &Arc<Vec<u8>>, length: usize) -> Link {
+    fn build_piece_tree(&mut self, block: &Arc<Block>, length: usize) -> Link {
         let mut root = Link::none();
         let mut offset = 0;
 
@@ -1164,5 +1238,229 @@ mod tests {
 
         assert_eq!(piece_count(&buffer), 1);
         assert_buffer_eq(&buffer, "abcdef");
+    }
+}
+
+// ---------------------------------------------------------------- indexing
+
+/// Bytes each indexing thread takes at a time: enough that the threads
+/// are the cost, not their hand-offs.
+const INDEX_STRIDE: usize = 64 << 20;
+
+/// How many threads the index runs on: the machine's, capped.
+fn index_threads(len: usize) -> usize {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    cores.min(len.div_ceil(INDEX_STRIDE)).max(1)
+}
+
+/// Newline counts per [`INITIAL_PIECE_BYTES`] piece of `bytes`, in
+/// parallel: what [`Buffer::from_mapped`] takes, so the tree is built
+/// without reading the text again. `progress` hears the bytes done so
+/// far, from any thread, as each stride completes.
+pub fn count_newlines_with(bytes: &[u8], progress: &(dyn Fn(usize) + Sync)) -> Vec<u32> {
+    let pieces = bytes.len().div_ceil(INITIAL_PIECE_BYTES);
+    let mut counts = vec![0u32; pieces];
+    let threads = index_threads(bytes.len());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    // Each stride is a whole number of pieces, so the counts it writes
+    // are its own.
+    let per_stride = INDEX_STRIDE / INITIAL_PIECE_BYTES;
+    let strides = pieces.div_ceil(per_stride);
+    // Each stride's counts behind a lock of their own: the strides are
+    // disjoint, so a lock is taken once and never waited on.
+    let slots: Vec<std::sync::Mutex<&mut [u32]>> = counts
+        .chunks_mut(per_stride)
+        .map(std::sync::Mutex::new)
+        .collect();
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if i >= strides {
+                        return;
+                    }
+                    let mut out = slots[i].lock().unwrap();
+                    let base = i * per_stride;
+                    for (k, c) in out.iter_mut().enumerate() {
+                        let start = (base + k) * INITIAL_PIECE_BYTES;
+                        let end = (start + INITIAL_PIECE_BYTES).min(bytes.len());
+                        *c = memchr::memchr_iter(b'\n', &bytes[start..end]).count() as u32;
+                    }
+                    let end = ((base + out.len()) * INITIAL_PIECE_BYTES).min(bytes.len());
+                    let start = base * INITIAL_PIECE_BYTES;
+                    let so_far = done.fetch_add(end - start, std::sync::atomic::Ordering::Relaxed)
+                        + end
+                        - start;
+                    progress(so_far);
+                }
+            });
+        }
+    });
+    drop(slots);
+    counts
+}
+
+/// [`count_newlines_with`] with nobody listening.
+pub fn count_newlines(bytes: &[u8]) -> Vec<u32> {
+    count_newlines_with(bytes, &|_| {})
+}
+
+/// Whether `bytes` are UTF-8 — in parallel, each thread validating a
+/// stride cut at a char boundary. A file that is not is repaired into a
+/// copy by the caller; one that is stays mapped as it is.
+pub fn is_utf8(bytes: &[u8]) -> bool {
+    let threads = index_threads(bytes.len());
+    if threads == 1 {
+        return std::str::from_utf8(bytes).is_ok();
+    }
+    // Cut points moved forward to the next char boundary.
+    let mut cuts = vec![0usize];
+    let mut at = INDEX_STRIDE;
+    while at < bytes.len() {
+        let mut c = at;
+        while c < bytes.len() && (bytes[c] & 0xC0) == 0x80 {
+            c += 1;
+        }
+        cuts.push(c);
+        at = c + INDEX_STRIDE;
+    }
+    cuts.push(bytes.len());
+    let ok = std::sync::atomic::AtomicBool::new(true);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if i + 1 >= cuts.len() || !ok.load(std::sync::atomic::Ordering::Relaxed) {
+                        return;
+                    }
+                    if std::str::from_utf8(&bytes[cuts[i]..cuts[i + 1]]).is_err() {
+                        ok.store(false, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            });
+        }
+    });
+    ok.into_inner()
+}
+
+#[cfg(test)]
+mod mapped_tests {
+    use super::*;
+    use std::io::Write as _;
+
+    fn sample(n: usize) -> Vec<u8> {
+        let mut v = Vec::new();
+        let mut seed = 7u64;
+        while v.len() < n {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let line = format!("{seed:x},тест,日本,{}\n", seed % 1000);
+            v.extend_from_slice(line.as_bytes());
+        }
+        v
+    }
+
+    /// A mapped file reads, counts lines and edits as an owned one does,
+    /// and an edit's block stays owned: the mapping is never written.
+    #[test]
+    fn a_mapped_file_is_the_same_text() {
+        let bytes = sample(INITIAL_PIECE_BYTES * 5 + 777);
+        let dir = std::env::temp_dir().join(format!("text-buffer-map-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.txt");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(&bytes)
+            .unwrap();
+        // SAFETY: the file is this test's own and not written while mapped.
+        let map = unsafe { memmap2::Mmap::map(&std::fs::File::open(&path).unwrap()) }.unwrap();
+        let counts = count_newlines(&map);
+        assert_eq!(counts.len(), 6);
+        let owned = Buffer::from_bytes(bytes.clone());
+        let mut mapped = Buffer::from_mapped(map, &counts);
+        assert_eq!(mapped.collect(), bytes);
+        assert_eq!(mapped.len(), owned.len());
+        assert_eq!(mapped.newline_count(), owned.newline_count());
+        assert_eq!(mapped.piece_count(), 6);
+        for ln in [0, 1, 17, 500] {
+            assert_eq!(mapped.get_line_range(ln), owned.get_line_range(ln));
+        }
+        assert_eq!(
+            mapped.line_of_offset(bytes.len() / 2),
+            owned.line_of_offset(bytes.len() / 2)
+        );
+        // Edits: an insertion in the middle, a removal across a piece edge,
+        // typing at the end; the text is the owned one's after the same.
+        let mut owned = owned;
+        for (at, del, ins) in [
+            (100usize, 0usize, "hello\n"),
+            (INITIAL_PIECE_BYTES - 3, 10, ""),
+            (bytes.len() - 10, 5, "日"),
+        ] {
+            let at = at.min(mapped.len());
+            let del = del.min(mapped.len() - at);
+            mapped.erase(at, del);
+            owned.erase(at, del);
+            mapped.insert(at, ins.as_bytes());
+            owned.insert(at, ins.as_bytes());
+        }
+        let end = mapped.len();
+        mapped.insert(end, b"ab");
+        owned.insert(end, b"ab");
+        mapped.insert(end + 2, b"cd");
+        owned.insert(end + 2, b"cd");
+        assert_eq!(mapped.collect(), owned.collect());
+        assert_eq!(mapped.newline_count(), owned.newline_count());
+        // The file on disk is what it was.
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        // `write_to` streams the same bytes `collect` gathers.
+        let mut out = Vec::new();
+        mapped.write_to(&mut out).unwrap();
+        assert_eq!(out, mapped.collect());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The parallel index agrees with the plain count and the plain
+    /// validation, past one stride so more than one thread takes part,
+    /// with a multi-byte char on the cut.
+    #[test]
+    fn the_parallel_index_matches_the_serial_one() {
+        let mut bytes = sample(INDEX_STRIDE + INDEX_STRIDE / 2);
+        // A char straddling the first cut: the text cut at a boundary a
+        // byte before it, then a three-byte char across it.
+        let mut cut = INDEX_STRIDE - 1;
+        while (bytes[cut] & 0xC0) == 0x80 {
+            cut -= 1;
+        }
+        bytes.truncate(cut);
+        bytes.extend_from_slice("日本".as_bytes());
+        bytes.extend_from_slice(&sample(INDEX_STRIDE / 3));
+        let counts = count_newlines(&bytes);
+        let serial: Vec<u32> = bytes
+            .chunks(INITIAL_PIECE_BYTES)
+            .map(|c| c.iter().filter(|&&b| b == b'\n').count() as u32)
+            .collect();
+        assert_eq!(counts, serial);
+        assert!(std::str::from_utf8(&bytes).is_ok(), "the sample itself");
+        assert!(is_utf8(&bytes));
+        let mut progress = std::sync::Mutex::new(0usize);
+        let _ = count_newlines_with(&bytes, &|n| {
+            let mut p = progress.lock().unwrap();
+            *p = (*p).max(n);
+        });
+        assert_eq!(
+            *progress.get_mut().unwrap(),
+            bytes.len(),
+            "progress reaches the end"
+        );
+        // One bad byte anywhere fails it.
+        let mid = bytes.len() / 2;
+        bytes[mid] = 0xff;
+        assert!(!is_utf8(&bytes));
     }
 }

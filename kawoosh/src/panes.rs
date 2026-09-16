@@ -193,10 +193,15 @@ impl Kawoosh {
             Mode::Visual | Mode::Command => pal.command,
             _ => pal.accent,
         };
-        let name = if buf.modified {
-            format!("{} [+]", buf.name)
-        } else {
-            buf.name.clone()
+        let name = match buf.loading {
+            // Still on its way from the io thread: how far.
+            Some((done, total)) => format!(
+                "{} [opening {}%]",
+                buf.name,
+                (done * 100).checked_div(total).unwrap_or(100)
+            ),
+            None if buf.modified => format!("{} [+]", buf.name),
+            None => buf.name.clone(),
         };
         let (ln, col) = motions::line_col(buf, v.sels.primary().head);
         let mut right = format!("{}:{}", ln + 1, col + 1);

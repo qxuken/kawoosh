@@ -1826,6 +1826,7 @@ dependencies = [
  "crossbeam-channel",
  "kawoosh-doc",
  "log",
+ "memmap2",
  "rusqlite",
  "serde",
  "serde_json",
@@ -3749,6 +3750,8 @@ version = "0.0.1"
 dependencies = [
  "criterion",
  "derive_more",
+ "memchr",
+ "memmap2",
 ]
 
 [[package]]

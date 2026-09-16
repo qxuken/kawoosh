@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 kawoosh-doc.workspace = true
 text-buffer.workspace = true
+memmap2 = "0.9"
 crossbeam-channel.workspace = true
 log.workspace = true
 anyhow.workspace = true

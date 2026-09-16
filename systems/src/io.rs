@@ -1,7 +1,9 @@
-//! The io system: pty readers (milestone 4); the command socket and file
-//! watchers join it later.
+//! The io system: pty readers (milestone 4), the command socket, and the
+//! opening of a big file — mapped rather than read, indexed on a thread
+//! of its own while the window goes on drawing.
 
 use std::io::Read;
+use std::path::PathBuf;
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -12,15 +14,44 @@ use crate::WakeHandle;
 #[derive(Debug)]
 pub enum IoMsg {
     /// Bytes from terminal `id`'s pty.
-    Pty { id: u64, bytes: Vec<u8> },
+    Pty {
+        id: u64,
+        bytes: Vec<u8>,
+    },
     /// Terminal `id`'s pty closed (the process exited).
-    PtyClosed { id: u64 },
+    PtyClosed {
+        id: u64,
+    },
     /// A request over the command socket.
     Request(Incoming),
     /// A line (stdout or stderr) from process `id` (compile mode).
-    ProcLine { id: u64, line: String },
+    ProcLine {
+        id: u64,
+        line: String,
+    },
     /// Process `id` exited.
-    ProcExit { id: u64, code: Option<i32> },
+    ProcExit {
+        id: u64,
+        code: Option<i32>,
+    },
+    /// A file being opened ([`Io::open_file`]): the bytes indexed so far.
+    Opening {
+        path: PathBuf,
+        done: usize,
+        total: usize,
+    },
+    /// The file is open: its text, mapped (or, not being UTF-8, repaired
+    /// into a copy), and what the open took.
+    Opened {
+        path: PathBuf,
+        text: text_buffer::Buffer,
+        mapped: bool,
+        elapsed: std::time::Duration,
+    },
+    OpenFailed {
+        path: PathBuf,
+        error: String,
+    },
 }
 
 pub struct Io {
@@ -67,6 +98,64 @@ impl Io {
                 }
             })
             .expect("spawning a pty reader thread");
+    }
+
+    /// Opens `path` on a thread of its own: the file is mapped, checked
+    /// for UTF-8 and indexed for its lines in parallel — [`IoMsg::Opening`]
+    /// says how far — and arrives as [`IoMsg::Opened`] with the mapping as
+    /// its text, so nothing was copied and the pages come in as they are
+    /// read. A file that is not UTF-8 is repaired into a copy instead, as
+    /// a small one is.
+    pub fn open_file(&self, path: PathBuf) {
+        let tx = self.tx.clone();
+        let wake = self.wake.clone();
+        thread::Builder::new()
+            .name("open".into())
+            .spawn(move || {
+                let started = std::time::Instant::now();
+                let opened = (|| -> std::io::Result<(text_buffer::Buffer, bool)> {
+                    let file = std::fs::File::open(&path)?;
+                    let total = file.metadata()?.len() as usize;
+                    if total == 0 {
+                        return Ok((text_buffer::Buffer::new(), false));
+                    }
+                    // SAFETY: the mapping is read-only, and the editor never
+                    // writes the file in place (a save goes beside it and is
+                    // renamed over); another program's write is the risk
+                    // `text_buffer::Block` names.
+                    let map = unsafe { memmap2::Mmap::map(&file) }?;
+                    let _ = map.advise(memmap2::Advice::Sequential);
+                    if !text_buffer::is_utf8(&map) {
+                        let repaired = String::from_utf8_lossy(&map).into_owned().into_bytes();
+                        return Ok((text_buffer::Buffer::from_bytes(repaired), false));
+                    }
+                    let counts = text_buffer::count_newlines_with(&map, &|done| {
+                        let _ = tx.send(IoMsg::Opening {
+                            path: path.clone(),
+                            done,
+                            total,
+                        });
+                        wake.wake();
+                    });
+                    let _ = map.advise(memmap2::Advice::Normal);
+                    Ok((text_buffer::Buffer::from_mapped(map, &counts), true))
+                })();
+                let msg = match opened {
+                    Ok((text, mapped)) => IoMsg::Opened {
+                        path,
+                        text,
+                        mapped,
+                        elapsed: started.elapsed(),
+                    },
+                    Err(e) => IoMsg::OpenFailed {
+                        path,
+                        error: e.to_string(),
+                    },
+                };
+                let _ = tx.send(msg);
+                wake.wake();
+            })
+            .expect("spawning the open thread");
     }
 
     /// Runs `cmd` through the shell in `cwd`, streaming its output line by

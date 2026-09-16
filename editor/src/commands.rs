@@ -497,6 +497,36 @@ fn search(ed: &mut Editor, ctx: &Ctx, forward: bool) {
     };
 }
 
+/// Writes `buf` to `path` through a file beside it, renamed over the
+/// target once whole: the text streams out piece by piece (a big file is
+/// never one string), a crash mid-write leaves the old file, and a
+/// buffer whose text is the file's own mapping keeps reading the old
+/// inode rather than the bytes being written over it.
+fn save_beside(buf: &kawoosh_doc::Buffer, path: &std::path::Path) -> std::io::Result<()> {
+    // A link is written through, not replaced; the file's mode stays.
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mode = std::fs::metadata(&path).ok().map(|m| m.permissions());
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = path.with_file_name(format!(".{name}.kawoosh~"));
+    let result = (|| {
+        let mut out = std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(&tmp)?);
+        buf.write_to(&mut out)?;
+        std::io::Write::flush(&mut out)?;
+        out.into_inner().map_err(|e| e.into_error())?.sync_all()?;
+        if let Some(mode) = mode {
+            std::fs::set_permissions(&tmp, mode)?;
+        }
+        std::fs::rename(&tmp, &path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
     let id = view(ed, ctx).buffer;
     if let Some(p) = ctx.args.first().filter(|a| *a != "!") {
@@ -516,17 +546,20 @@ fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
         ed.message = "no file name (use :w <path>)".into();
         return false;
     };
-    let text = buf.text();
-    match std::fs::write(&path, &text) {
+    if buf.loading.is_some() {
+        ed.message = "still opening".into();
+        return false;
+    }
+    match save_beside(buf, &path) {
         Ok(()) => {
             let b = &mut ed.buffers[id];
             b.modified = false;
-            b.disk_len = Some(text.len());
+            b.disk_len = Some(b.len());
             ed.message = format!(
                 "\"{}\" {}L, {}B written",
                 path.display(),
                 b.line_count(),
-                text.len()
+                b.len()
             );
             ed.effects.push(Effect::Wrote(id));
             true
@@ -1122,9 +1155,8 @@ pub fn install(ed: &mut Editor) {
             .map(|(id, _)| id)
             .collect();
         for id in ids {
-            let text = ed.buffers[id].text();
             if let Some(p) = ed.buffers[id].path.clone()
-                && std::fs::write(&p, text).is_ok()
+                && save_beside(&ed.buffers[id], &p).is_ok()
             {
                 ed.buffers[id].modified = false;
             }

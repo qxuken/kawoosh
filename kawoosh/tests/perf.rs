@@ -45,22 +45,41 @@ fn keystroke_cost() {
     // pages down, the end, the top, a search — with the footprint at
     // each step. For a file too big to also edit.
     if std::env::var("KAWOOSH_PERF_OPEN").is_ok() {
-        let mem = || kawoosh::perf::bytes(kawoosh::perf::read_mem().resident);
+        let mem = || {
+            let m = kawoosh::perf::read_mem();
+            format!(
+                "{} footprint, {} resident",
+                kawoosh::perf::bytes(m.footprint),
+                kawoosh::perf::bytes(m.resident)
+            )
+        };
         let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         eprintln!(
-            "file {} ({}), resident before {}",
+            "file {} ({}), before: {}",
             path,
             kawoosh::perf::bytes(size),
             mem()
         );
         let t = Instant::now();
         let mut app = Kawoosh::from_file(std::path::Path::new(&path));
-        eprintln!("open        {:8.1} ms   resident {}", ms(t), mem());
+        eprintln!(
+            "open        {:8.1} ms   {}   (the frame's part)",
+            ms(t),
+            mem()
+        );
         let mut d = Drive::new(1100.0, 760.0);
         load_fonts(&mut d, &mut app);
         let t = Instant::now();
         d.frame(&mut app);
-        eprintln!("first frame {:8.1} ms   resident {}", ms(t), mem());
+        eprintln!("first frame {:8.1} ms   {}", ms(t), mem());
+        let t = Instant::now();
+        app.wait_for_open();
+        d.frame(&mut app);
+        eprintln!(
+            "text arrived {:7.1} ms   {}   (the io thread's part)",
+            ms(t),
+            mem()
+        );
         let v = app.focused_view().unwrap();
         let buf = app.ed.buffer_of(v);
         eprintln!(
@@ -75,7 +94,7 @@ fn keystroke_cost() {
                     f: &dyn Fn(&mut Drive, &mut Kawoosh)| {
             let t = Instant::now();
             f(d, app);
-            eprintln!("{label:<28} {:8.1} ms   resident {}", ms(t), mem());
+            eprintln!("{label:<28} {:8.1} ms   {}", ms(t), mem());
         };
         step(&mut d, &mut app, "20 × ctrl-d", &|d, app| {
             for _ in 0..20 {

@@ -13,9 +13,9 @@ pub mod version;
 
 use std::ops::Range;
 
-use unicode_segmentation::UnicodeSegmentation;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use unicode_segmentation::UnicodeSegmentation;
 
 use slotmap::new_key_type;
 pub use version::{Bias, Edit, Journal, Stale, Version};
@@ -133,8 +133,12 @@ impl Layer {
         let hi = self.chunks.partition_point(|c| c.start() < range.end);
         let mut out = Vec::new();
         for c in &self.chunks[lo..hi.max(lo)] {
-            let a = c.runs.partition_point(|r| r.range.end + c.base <= range.start);
-            let b = c.runs.partition_point(|r| r.range.start + c.base < range.end);
+            let a = c
+                .runs
+                .partition_point(|r| r.range.end + c.base <= range.start);
+            let b = c
+                .runs
+                .partition_point(|r| r.range.start + c.base < range.end);
             for r in &c.runs[a..b.max(a)] {
                 out.push(Run {
                     range: r.range.start + c.base..r.range.end + c.base,
@@ -204,7 +208,10 @@ impl Layer {
     /// the span does — and the region is chunked again.
     fn splice(&mut self, span: &Range<usize>, fresh: Vec<Run>) {
         let lo = self.chunks.partition_point(|c| c.end() <= span.start);
-        let hi = self.chunks.partition_point(|c| c.start() < span.end).max(lo);
+        let hi = self
+            .chunks
+            .partition_point(|c| c.start() < span.end)
+            .max(lo);
         let mut region: Vec<Run> = Vec::new();
         for c in &self.chunks[lo..hi] {
             if c.start() >= span.start && c.end() <= span.end {
@@ -273,6 +280,10 @@ pub struct Buffer {
     pub path: Option<PathBuf>,
     pub modified: bool,
     pub read_only: bool,
+    /// Still being opened on the io thread ([`Buffer::opening`]): the
+    /// bytes indexed so far and the whole, until [`Buffer::attach`]. Read
+    /// only meanwhile, and its text is empty.
+    pub loading: Option<(usize, usize)>,
     /// Where the file's text came from, for `:w` to know it is unchanged
     /// on disk; `None` for a scratch buffer.
     pub disk_len: Option<usize>,
@@ -294,10 +305,51 @@ impl Buffer {
             path: None,
             modified: false,
             read_only: false,
+            loading: None,
             disk_len: None,
             language: Arc::from("text"),
             hook: None,
         }
+    }
+
+    /// A buffer for `path` whose text is still on its way — the io
+    /// system's `open_file` is mapping and indexing it — so a pane can
+    /// show it and say how far it is. [`Buffer::attach`] brings the text.
+    pub fn opening(path: &Path, total: usize) -> Self {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let mut buf = Self::new(name, "");
+        buf.language = Arc::from(language_of(path));
+        buf.path = Some(path.to_path_buf());
+        buf.read_only = true;
+        buf.loading = Some((0, total));
+        buf
+    }
+
+    /// The text an [`Buffer::opening`] buffer was waiting for: what
+    /// `set_text` does, with a piece tree in hand, and the buffer
+    /// writable again. History starts here.
+    pub fn attach(&mut self, text: text_buffer::Buffer) -> Version {
+        let len = text.len();
+        self.text = text;
+        for (_, layer) in &mut self.layers {
+            layer.clear();
+        }
+        self.loading = None;
+        self.read_only = false;
+        self.modified = false;
+        self.disk_len = Some(len);
+        let v = self.journal.version().next();
+        self.journal.reset_to(v);
+        v
+    }
+
+    /// Writes the text to `out` piece by piece, never as one string —
+    /// a ten-gigabyte save allocates nothing.
+    pub fn write_to(&self, out: &mut impl std::io::Write) -> std::io::Result<()> {
+        self.text.write_to(out)
     }
 
     pub fn from_file(path: &Path) -> std::io::Result<Self> {
@@ -305,7 +357,9 @@ impl Buffer {
         // copied again, an invalid one is repaired into a fresh vector.
         let bytes = match String::from_utf8(std::fs::read(path)?) {
             Ok(s) => s.into_bytes(),
-            Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned().into_bytes(),
+            Err(e) => String::from_utf8_lossy(e.as_bytes())
+                .into_owned()
+                .into_bytes(),
         };
         let name = path
             .file_name()
@@ -703,11 +757,7 @@ pub fn diff_trees(old: &text_buffer::Buffer, new: &text_buffer::Buffer) -> Edit 
 /// it last parsed.
 pub fn diff_edit(old: &[u8], new: &[u8]) -> Edit {
     let is_boundary = |b: u8| (b & 0xC0) != 0x80;
-    let mut prefix = old
-        .iter()
-        .zip(new)
-        .take_while(|(a, b)| a == b)
-        .count();
+    let mut prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
     while prefix > 0 && !old.get(prefix).is_none_or(|b| is_boundary(*b)) {
         prefix -= 1;
     }
@@ -825,9 +875,21 @@ mod tests {
         b.set_layer(
             "syntax",
             vec![
-                Run { range: 0..2, style: 1, tag: 0 },
-                Run { range: 16..17, style: 2, tag: 0 },
-                Run { range: 20..21, style: 3, tag: 0 },
+                Run {
+                    range: 0..2,
+                    style: 1,
+                    tag: 0,
+                },
+                Run {
+                    range: 16..17,
+                    style: 2,
+                    tag: 0,
+                },
+                Run {
+                    range: 20..21,
+                    style: 3,
+                    tag: 0,
+                },
             ],
         );
         // Type into the middle, then undo it: the runs before stay, the
@@ -836,7 +898,11 @@ mod tests {
         let v1 = b.restore(before);
         assert_eq!(b.text(), "fn main() { let x = 1; }");
         assert!(v1 > v0);
-        let runs: Vec<Range<usize>> = b.runs("syntax", 0..b.len()).iter().map(|r| r.range.clone()).collect();
+        let runs: Vec<Range<usize>> = b
+            .runs("syntax", 0..b.len())
+            .iter()
+            .map(|r| r.range.clone())
+            .collect();
         assert_eq!(runs, [0..2, 20..21]);
         // The journal ran through it: an update from before both edits
         // still lands.
@@ -1022,7 +1088,11 @@ mod tests {
         let text = "aaaa bbbb cccc dddd eeee ffff";
         let runs = || {
             (0..6)
-                .map(|i| Run { range: i * 5..i * 5 + 4, style: 1 + i as u32, tag: 0 })
+                .map(|i| Run {
+                    range: i * 5..i * 5 + 4,
+                    style: 1 + i as u32,
+                    tag: 0,
+                })
                 .collect::<Vec<_>>()
         };
         let cases: Vec<Vec<(Range<usize>, &str)>> = vec![
@@ -1048,7 +1118,11 @@ mod tests {
             b.set_layer("l", runs());
             b.replace_many(&edits);
             assert_eq!(a.text(), b.text(), "{edits:?}");
-            assert_eq!(a.runs("l", 0..a.len()), b.runs("l", 0..b.len()), "{edits:?}");
+            assert_eq!(
+                a.runs("l", 0..a.len()),
+                b.runs("l", 0..b.len()),
+                "{edits:?}"
+            );
             assert_eq!(a.version(), b.version());
             assert_eq!(
                 a.journal().transform_range(20..24, v0),

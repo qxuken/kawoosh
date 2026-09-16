@@ -91,3 +91,59 @@ fn a_session_saves_and_restores_panes_files_and_carets() {
     assert!(app.ed.message.contains("a.txt") && app.ed.message.contains("b.txt"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A big file opens on the io thread (`ASYNC_OPEN_BYTES`; here forced on
+/// a small one): its buffer stands in, read only and saying how far the
+/// open is, until the mapped text arrives; then it reads, edits, and
+/// saves through a file beside it, the mapping untouched.
+#[test]
+fn a_file_opened_on_the_io_thread_arrives_mapped_and_saves_beside_itself() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("kawoosh-mapped-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("big.txt");
+    let text: String = (1..=5000)
+        .map(|i| format!("line {i} · строка {i}\n"))
+        .collect();
+    std::fs::write(&file, &text).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o750)).unwrap();
+    let mut app = Kawoosh::new("*scratch*", "");
+    let id = app.open_on_io_thread(&file, text.len());
+    let v = app.focused_view().unwrap();
+    app.ed.views[v].buffer = id;
+    // Before any frame drained the io: the stand-in.
+    assert!(app.ed.buffers[id].read_only);
+    assert_eq!(app.ed.buffers[id].loading, Some((0, text.len())));
+    assert_eq!(app.ed.buffers[id].len(), 0);
+    let mut d = Drive::new(800.0, 400.0);
+    app.wait_for_open();
+    d.frame(&mut app);
+    let b = &app.ed.buffers[id];
+    assert!(b.loading.is_none() && !b.read_only);
+    assert_eq!(b.len(), text.len());
+    assert_eq!(b.line_count(), 5001);
+    assert!(app.ed.message.contains("mapped"), "{}", app.ed.message);
+    assert_eq!(d.line_rows()[0], "line 1 · строка 1");
+    // An edit and a save: the file on disk is the buffer, its mode kept,
+    // and the buffer still reads (its mapping is the old inode).
+    d.keys(&mut app, "x");
+    d.keys(&mut app, ":w");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(app.ed.message.contains("written"), "{}", app.ed.message);
+    let saved = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(saved.lines().next(), Some("ine 1 · строка 1"));
+    assert_eq!(saved.len(), text.len() - 1);
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o750
+    );
+    assert!(
+        !dir.join(".big.txt.kawoosh~").exists(),
+        "the temp file is gone"
+    );
+    d.keys(&mut app, "G");
+    assert_eq!(d.line_rows().last().map(String::as_str), Some(""));
+    assert!(d.line_rows().iter().any(|l| l == "line 5000 · строка 5000"));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
