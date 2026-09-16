@@ -54,6 +54,14 @@ pub struct Kawoosh {
     pub devtools: bool,
     /// The syntax tab in it: the focused buffer's tree.
     pub inspector: Inspector,
+    /// A devtools tab to show on the next frame — `:syntax_tree` asks
+    /// for the syntax tab. Once, not every frame: kui's
+    /// `set_devtools_tab` is edge-triggered, so a standing request would
+    /// pin the strip against the user's own clicks.
+    pub(crate) show_tab: Option<&'static str>,
+    /// Whether the last frame drew the syntax tab — the panel on and the
+    /// strip on it — which is what `:syntax_tree` toggles against.
+    pub(crate) inspector_shown: bool,
     /// kui's latency HUD — frame times as a graph in the corner —
     /// toggled with `:kui_framerate_hud`.
     pub hud: bool,
@@ -108,6 +116,8 @@ impl Kawoosh {
             dark: true,
             devtools: false,
             inspector: Inspector::default(),
+            show_tab: None,
+            inspector_shown: false,
             hud: false,
             wake,
             ts_sent: HashMap::new(),
@@ -619,6 +629,24 @@ impl Kawoosh {
                 };
                 self.ed.message = format!("kui {what} {}", if on { "on" } else { "off" });
             }
+            // The syntax tab of the devtools: shown, with the panel if it
+            // was off; shown already, the panel closes — a toggle, like
+            // the instruments. `on` / `off` set.
+            "syntax_tree" => {
+                let showing = self.devtools && self.inspector_shown;
+                let on = match args.first().map(String::as_str) {
+                    Some("on" | "1" | "true") => true,
+                    Some("off" | "0" | "false") => false,
+                    _ => !showing,
+                };
+                if on {
+                    self.devtools = true;
+                    self.show_tab = Some(crate::inspector::TAB);
+                } else {
+                    self.devtools = false;
+                }
+                self.ed.message = format!("syntax tree {}", if on { "on" } else { "off" });
+            }
             "scrollback" => {
                 if let Some(t) = self.term_of(self.layout.focused()) {
                     self.scrollback_to_buffer(t);
@@ -1076,6 +1104,9 @@ impl kui::App for Kawoosh {
         let pal = self.pal;
         if ui.core().devtools() != self.devtools {
             ui.core().set_devtools(self.devtools);
+        }
+        if let Some(tab) = self.show_tab.take() {
+            ui.core().set_devtools_tab(tab);
         }
         // The syntax tab: declared every frame, drawn while on show, as
         // a layer over the panel's tab body (kui ADR 0032).

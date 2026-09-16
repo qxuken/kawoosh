@@ -74,6 +74,53 @@ fn tsx_is_its_own_language_and_highlights_tags() {
 }
 
 #[test]
+fn syntax_tree_is_a_command_that_shows_the_tab_and_toggles_it() {
+    let (mut app, mut d, dir) = tsx_app();
+    let ex = |d: &mut Drive, app: &mut Kawoosh, cmd: &str| {
+        d.keys(app, ":");
+        d.keys(app, cmd);
+        d.key(app, "enter", KeyMods::default());
+        d.frame(app);
+    };
+    // Off: the panel closed, the tab drawn nowhere.
+    assert!(!app.devtools);
+    assert!(drawn_rows(&d).is_empty());
+    // `:syntax_tree` opens the panel *on* the Syntax tab — kui's
+    // `set_devtools_tab` (F67), the door a strip click was the only way
+    // through before.
+    ex(&mut d, &mut app, "syntax_tree");
+    assert!(app.devtools && d.core.devtools());
+    assert_eq!(d.core.devtools_current_tab(), "syntax");
+    assert_eq!(app.ed.message, "syntax tree on");
+    let rows = drawn_rows(&d);
+    assert!(
+        rows.first().is_some_and(|(t, _)| t.starts_with("▾program")),
+        "{rows:?}"
+    );
+    // The strip is the user's again: another frame does not re-pin it.
+    d.core.set_devtools_tab("facts");
+    d.frame(&mut app);
+    assert_eq!(d.core.devtools_current_tab(), "facts");
+    assert!(drawn_rows(&d).is_empty());
+    // Asked again with the panel elsewhere: back on the tab, not closed.
+    ex(&mut d, &mut app, "syntax_tree");
+    assert!(app.devtools);
+    assert_eq!(d.core.devtools_current_tab(), "syntax");
+    // Showing already: the panel closes, as `:kui_debugger` would.
+    ex(&mut d, &mut app, "syntax_tree");
+    assert!(!app.devtools && !d.core.devtools());
+    assert_eq!(app.ed.message, "syntax tree off");
+    // The aliases and the explicit forms.
+    ex(&mut d, &mut app, "tree on");
+    assert!(app.devtools);
+    assert_eq!(d.core.devtools_current_tab(), "syntax");
+    ex(&mut d, &mut app, "syntax off");
+    assert!(!app.devtools);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn the_syntax_tab_shows_the_tree_and_follows_the_caret() {
     let (mut app, mut d, dir) = tsx_app();
     let v = app.focused_view().unwrap();
