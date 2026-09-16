@@ -191,13 +191,22 @@ impl<'a> Pieces<'a> {
     }
 }
 
+impl<'a> Pieces<'a> {
+    /// The next node whole, for a walk that wants its block by handle and
+    /// its newline count as well as its bytes.
+    fn next_node(&mut self) -> Option<&'a Node> {
+        let node = self.stack.pop()?;
+        self.descend(if self.rev { &node.left } else { &node.right });
+        Some(node)
+    }
+}
+
 impl<'a> Iterator for Pieces<'a> {
     /// The block (by identity), the piece's start in it, and its bytes.
     type Item = (&'a Block, usize, &'a [u8]);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let node = self.stack.pop()?;
-        self.descend(if self.rev { &node.left } else { &node.right });
+        let node = self.next_node()?;
         Some((&*node.piece.block, node.piece.start, node.piece.bytes()))
     }
 }
@@ -271,6 +280,115 @@ impl Buffer {
             left,
             right,
             counts[mid] as usize,
+        )))
+    }
+
+    /// Many edits at once — ascending, disjoint, `(range, replacement)` —
+    /// as one new tree: the old pieces cut where the edits fall, every
+    /// replacement in one block, and the lot built balanced. What a
+    /// substitution over a whole file is; spliced one at a time, each
+    /// edit would copy a path of the persistent tree and allocate a
+    /// block, and ten million of them would be minutes. A piece an edit
+    /// does not cut keeps its newline count; the cut ones are recounted,
+    /// which is a scan of the lines the edits touched, not of the text.
+    pub fn replace_bulk(&mut self, edits: &[(Range<usize>, &[u8])]) {
+        debug_assert!(edits.windows(2).all(|w| w[0].0.end <= w[1].0.start));
+        let mut rep = Vec::with_capacity(edits.iter().map(|(_, t)| t.len()).sum());
+        let mut rep_at = Vec::with_capacity(edits.len());
+        for (_, t) in edits {
+            rep_at.push(rep.len());
+            rep.extend_from_slice(t);
+        }
+        let rep_block = Arc::new(Block::Owned(rep));
+        let mut out: Vec<(Piece, usize)> = Vec::new();
+        // A slice of a block as pieces of at most `u16::MAX` bytes, its
+        // newline count taken where the caller could not carry it over.
+        let mut push = |block: &Arc<Block>, start: usize, len: usize, known: Option<usize>| {
+            let mut at = start;
+            let end = start + len;
+            while at < end {
+                let n = (end - at).min(u16::MAX as usize);
+                let newlines = match known {
+                    Some(k) if n == len => k,
+                    _ => memchr::memchr_iter(b'\n', &block.bytes()[at..at + n]).count(),
+                };
+                out.push((
+                    Piece {
+                        block: Arc::clone(block),
+                        start: at,
+                        length: n as u16,
+                    },
+                    newlines,
+                ));
+                at += n;
+            }
+        };
+        let mut pieces = self.pieces(false);
+        let mut ei = 0;
+        let mut pos = 0;
+        while let Some(node) = pieces.next_node() {
+            let plen = node.piece.len();
+            let pend = pos + plen;
+            let mut cur = pos;
+            while ei < edits.len() && edits[ei].0.start < pend {
+                let (r, t) = &edits[ei];
+                if r.start > cur {
+                    push(
+                        &node.piece.block,
+                        node.piece.start + (cur - pos),
+                        r.start - cur,
+                        None,
+                    );
+                }
+                // The replacement goes in once, where the edit starts.
+                if r.start >= pos {
+                    push(&rep_block, rep_at[ei], t.len(), None);
+                }
+                cur = r.end.min(pend).max(cur);
+                if r.end <= pend {
+                    ei += 1;
+                } else {
+                    // The erased span runs on into the next piece.
+                    break;
+                }
+            }
+            if cur < pend {
+                let known = (cur == pos).then_some(node.meta.own_newlines);
+                push(
+                    &node.piece.block,
+                    node.piece.start + (cur - pos),
+                    pend - cur,
+                    known,
+                );
+            }
+            pos = pend;
+        }
+        // Insertions at the very end.
+        while ei < edits.len() {
+            push(&rep_block, rep_at[ei], edits[ei].1.len(), None);
+            ei += 1;
+        }
+        self.root = Self::build_from(&out, 0, out.len(), u64::MAX);
+    }
+
+    /// Pieces `[lo, hi)` of `list`, each with its newline count, as a
+    /// balanced subtree whose root has `priority`, its children less —
+    /// [`Self::build_balanced`] over pieces of any block.
+    fn build_from(list: &[(Piece, usize)], lo: usize, hi: usize, priority: u64) -> Link {
+        if lo >= hi {
+            return Link::none();
+        }
+        let mid = lo + (hi - lo) / 2;
+        let below = priority / 2;
+        let left = Self::build_from(list, lo, mid, below);
+        let right = Self::build_from(list, mid + 1, hi, below.wrapping_sub(1));
+        let (piece, newlines) = &list[mid];
+        Link::leaf(Arc::new(Node::new(
+            piece.clone(),
+            priority,
+            left,
+            right,
+            *newlines,
         )))
     }
 
@@ -1387,6 +1505,68 @@ pub fn count_newlines(bytes: &[u8]) -> Vec<u32> {
     count_newlines_with(bytes, &|_| {})
 }
 
+/// [`is_utf8`] and [`count_newlines_with`] in one pass: each stride is
+/// validated (cut at a char boundary) and its pieces' newlines counted
+/// by the thread that has it, so a file is read once — on a cold cache
+/// the read is the cost, and two passes over ten gigabytes were the
+/// first at 0% and the second at once. `None` for a file that is not
+/// UTF-8, stopped as soon as one stride says so; `progress` hears the
+/// bytes done as each stride completes.
+pub fn index_with(bytes: &[u8], progress: &(dyn Fn(usize) + Sync)) -> Option<Vec<u32>> {
+    let pieces = bytes.len().div_ceil(INITIAL_PIECE_BYTES);
+    let mut counts = vec![0u32; pieces];
+    let threads = index_threads(bytes.len());
+    let per_stride = INDEX_STRIDE / INITIAL_PIECE_BYTES;
+    let strides = pieces.div_ceil(per_stride);
+    // A char boundary at or after `at`: where a stride's validation
+    // starts and the one before it ends.
+    let boundary = |at: usize| {
+        let mut c = at.min(bytes.len());
+        while c < bytes.len() && (bytes[c] & 0xC0) == 0x80 {
+            c += 1;
+        }
+        c
+    };
+    let slots: Vec<std::sync::Mutex<&mut [u32]>> = counts
+        .chunks_mut(per_stride)
+        .map(std::sync::Mutex::new)
+        .collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    let ok = std::sync::atomic::AtomicBool::new(true);
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if i >= strides || !ok.load(std::sync::atomic::Ordering::Relaxed) {
+                        return;
+                    }
+                    let start = i * INDEX_STRIDE;
+                    let end = ((i + 1) * INDEX_STRIDE).min(bytes.len());
+                    if std::str::from_utf8(&bytes[boundary(start)..boundary(end)]).is_err() {
+                        ok.store(false, std::sync::atomic::Ordering::Relaxed);
+                        return;
+                    }
+                    let mut out = slots[i].lock().unwrap();
+                    let base = i * per_stride;
+                    for (k, c) in out.iter_mut().enumerate() {
+                        let ps = (base + k) * INITIAL_PIECE_BYTES;
+                        let pe = (ps + INITIAL_PIECE_BYTES).min(bytes.len());
+                        *c = memchr::memchr_iter(b'\n', &bytes[ps..pe]).count() as u32;
+                    }
+                    let so_far = done.fetch_add(end - start, std::sync::atomic::Ordering::Relaxed)
+                        + end
+                        - start;
+                    progress(so_far);
+                }
+            });
+        }
+    });
+    drop(slots);
+    ok.into_inner().then_some(counts)
+}
+
 /// Whether `bytes` are UTF-8 — in parallel, each thread validating a
 /// stride cut at a char boundary. A file that is not is repaired into a
 /// copy by the caller; one that is stays mapped as it is.
@@ -1431,6 +1611,72 @@ pub fn is_utf8(bytes: &[u8]) -> bool {
 mod span_tests {
     use super::*;
 
+    /// `replace_bulk` is `replace` many times, as one tree: the same
+    /// bytes, the same line counts, whatever the edits cut — pieces in
+    /// the middle, edits at piece edges, one spanning three pieces, an
+    /// insertion at the end.
+    #[test]
+    fn a_bulk_replace_is_the_edits_one_by_one() {
+        let n = INITIAL_PIECE_BYTES * 6 + 100;
+        let bytes: Vec<u8> = (0..n)
+            .map(|i| {
+                if i % 37 == 0 {
+                    b'\n'
+                } else {
+                    b'a' + (i % 26) as u8
+                }
+            })
+            .collect();
+        let base = Buffer::from_bytes(bytes.clone());
+        let p = INITIAL_PIECE_BYTES;
+        let edits: Vec<(Range<usize>, &[u8])> = vec![
+            (0..3, b"START"),
+            (100..100, b"\n\n"),
+            (p - 2..p + 2, b"X"),
+            (p * 2..p * 2, b""),
+            (2 * p + 10..5 * p - 7, b"gone\n"),
+            (5 * p..5 * p + 1, b"\n"),
+            (n..n, b"END\n"),
+        ];
+        let mut bulk = base.clone();
+        bulk.replace_bulk(&edits);
+        let mut slow = base.clone();
+        for (r, t) in edits.iter().rev() {
+            if !r.is_empty() {
+                slow.erase(r.start, r.len());
+            }
+            if !t.is_empty() {
+                slow.insert(r.start, t);
+            }
+        }
+        assert_eq!(bulk.len(), slow.len());
+        assert_eq!(bulk.collect(), slow.collect());
+        assert_eq!(bulk.newline_count(), slow.newline_count());
+        for ln in [0, 1, 2, 3, 100, 500, bulk.line_count() - 1] {
+            assert_eq!(
+                bulk.get_line_range(ln),
+                slow.get_line_range(ln),
+                "line {ln}"
+            );
+        }
+        assert!(bulk.piece_count() < slow.piece_count() + 10);
+        // Thousands of edits, one tree.
+        let many: Vec<(Range<usize>, &[u8])> = (0..n / 20)
+            .map(|i| (i * 20..i * 20 + 1, &b"_-"[..]))
+            .collect();
+        let mut bulk = base.clone();
+        bulk.replace_bulk(&many);
+        let mut expect = bytes.clone();
+        for (r, t) in many.iter().rev() {
+            expect.splice(r.clone(), t.iter().copied());
+        }
+        assert_eq!(bulk.collect(), expect);
+        assert_eq!(
+            bulk.newline_count(),
+            memchr::memchr_iter(b'\n', &expect).count()
+        );
+    }
+
     /// A block cut into many pieces reads back as one span; an edit in
     /// the middle makes three — the block's two halves and the insert —
     /// and the walk from any offset starts at the piece holding it.
@@ -1472,6 +1718,33 @@ mod span_tests {
 mod mapped_tests {
     use super::*;
     use std::io::Write as _;
+
+    /// One pass validates and counts: the counts are `count_newlines`',
+    /// a multibyte char on a stride edge is read whole, a bad byte
+    /// anywhere is `None`, and the progress reaches the whole.
+    #[test]
+    fn index_with_is_both_passes_in_one() {
+        // ASCII lines up to one byte short of the stride edge, then a
+        // two-byte char straddling it, then more.
+        let mut bytes = Vec::new();
+        while bytes.len() < INDEX_STRIDE - 1 {
+            bytes.extend_from_slice(b"ab\n");
+        }
+        bytes.truncate(INDEX_STRIDE - 1);
+        bytes.extend_from_slice("é".as_bytes());
+        while bytes.len() < INDEX_STRIDE * 2 + 5000 {
+            bytes.extend_from_slice("строка text\n".as_bytes());
+        }
+        assert!(std::str::from_utf8(&bytes).is_ok());
+        let seen = std::sync::Mutex::new(Vec::new());
+        let counts = index_with(&bytes, &|done| seen.lock().unwrap().push(done)).expect("valid");
+        assert_eq!(counts, count_newlines(&bytes));
+        assert_eq!(seen.lock().unwrap().iter().max(), Some(&bytes.len()));
+        assert!(seen.lock().unwrap().len() >= 3, "a report per stride");
+        bytes[INDEX_STRIDE + 77] = 0xff;
+        assert!(index_with(&bytes, &|_| {}).is_none());
+        assert!(!is_utf8(&bytes));
+    }
 
     fn sample(n: usize) -> Vec<u8> {
         let mut v = Vec::new();

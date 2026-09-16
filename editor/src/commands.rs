@@ -569,6 +569,281 @@ fn search(ed: &mut Editor, ctx: &Ctx, forward: bool) {
     };
 }
 
+/// `[range]s{d}pat{d}rep{d}flags` taken apart: `[range, pat, rep,
+/// flags]`, or none when `line` is not that. The delimiter is whatever
+/// follows the `s` that is not a letter, a digit or a space; `\{d}` in
+/// the pattern or the replacement is the delimiter itself, and the
+/// replacement may stop early (`:s/a/b`).
+pub fn parse_substitute(line: &str) -> Option<Vec<String>> {
+    let range_len = line
+        .find(|c: char| {
+            !matches!(
+                c,
+                '0'..='9' | '%' | ',' | '.' | '$' | '\'' | '<' | '>' | '+' | '-'
+            )
+        })
+        .unwrap_or(line.len());
+    let (range, rest) = line.split_at(range_len);
+    let rest = rest.strip_prefix('s')?;
+    let delim = rest.chars().next()?;
+    if delim.is_alphanumeric() || delim.is_whitespace() || delim == '\\' {
+        return None;
+    }
+    let rest = &rest[delim.len_utf8()..];
+    // Split on the unescaped delimiter, keeping other escapes as they
+    // are for the regex and the template to read.
+    let mut parts: Vec<String> = vec![String::new()];
+    let mut chars = rest.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek() {
+                Some(&n) if n == delim => {
+                    parts.last_mut().unwrap().push(n);
+                    chars.next();
+                }
+                Some(&n) => {
+                    let p = parts.last_mut().unwrap();
+                    p.push('\\');
+                    p.push(n);
+                    chars.next();
+                }
+                None => parts.last_mut().unwrap().push('\\'),
+            }
+        } else if c == delim && parts.len() < 3 {
+            parts.push(String::new());
+        } else {
+            parts.last_mut().unwrap().push(c);
+        }
+    }
+    let pat = parts.first().cloned().unwrap_or_default();
+    if pat.is_empty() {
+        return None;
+    }
+    let rep = parts.get(1).cloned().unwrap_or_default();
+    let flags = parts.get(2).cloned().unwrap_or_default();
+    Some(vec![range.to_string(), pat, rep, flags])
+}
+
+/// The replacement as the regex crate expands it: vim's `&` is the
+/// whole match (`$0`), `\&` a literal `&`, `\n` and `\t` the characters,
+/// `\1` the group (`$1`); a `$` the user wrote is kept for `$1` /
+/// `${name}` / `$$`.
+fn substitute_template(rep: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(rep.len());
+    let mut chars = rep.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '&' => out.extend_from_slice(b"${0}"),
+            '\\' => match chars.next() {
+                Some('&') => out.push(b'&'),
+                Some('n') => out.push(b'\n'),
+                Some('t') => out.push(b'\t'),
+                Some('\\') => out.push(b'\\'),
+                Some(d @ '0'..='9') => {
+                    out.extend_from_slice(format!("${{{d}}}").as_bytes());
+                }
+                Some(other) => {
+                    let mut b = [0; 4];
+                    out.extend_from_slice(other.encode_utf8(&mut b).as_bytes());
+                }
+                None => out.push(b'\\'),
+            },
+            other => {
+                let mut b = [0; 4];
+                out.extend_from_slice(other.encode_utf8(&mut b).as_bytes());
+            }
+        }
+    }
+    out
+}
+
+/// The lines an ex range names, as byte ranges of whole lines with
+/// their newlines: `%` every line, `N` / `N,M` (1-based, `.` the
+/// primary's line, `$` the last, `+N` / `-N` from the current), `'<,'>`
+/// the lines the selections cover, and none — the lines every selection
+/// touches, one range each.
+fn substitute_ranges(ed: &Editor, ctx: &Ctx, spec: &str) -> Result<Vec<Range<usize>>, String> {
+    let v = view(ed, ctx);
+    let buf = &ed.buffers[v.buffer];
+    let last = buf.line_count() - 1;
+    let cur = buf.line_of(v.sels.primary().head);
+    let lines_of = |a: usize, b: usize| -> Range<usize> {
+        let (a, b) = (a.min(last), b.min(last));
+        let start = buf.line_range(a.min(b)).start;
+        let end = buf.line_range(a.max(b)).end;
+        // The newline (or `\r\n`) belongs to the line.
+        let mut end = end;
+        while end < buf.len() && matches!(buf.byte_at(end), Some(b'\r' | b'\n')) {
+            end += 1;
+            if buf.byte_at(end - 1) == Some(b'\n') {
+                break;
+            }
+        }
+        start..end
+    };
+    let addr = |s: &str| -> Result<usize, String> {
+        let s = s.trim();
+        Ok(match s {
+            "." | "" => cur,
+            "$" => last,
+            _ if s.starts_with('+') => cur + s[1..].parse::<usize>().unwrap_or(1),
+            _ if s.starts_with('-') => cur.saturating_sub(s[1..].parse::<usize>().unwrap_or(1)),
+            "'<" | "'>" => cur,
+            _ => s
+                .parse::<usize>()
+                .map(|n| n.saturating_sub(1))
+                .map_err(|_| format!("bad range: {spec}"))?,
+        })
+    };
+    let mut ranges: Vec<Range<usize>> = match spec {
+        "" => v
+            .sels
+            .iter()
+            .map(|s| {
+                let (a, b) = (
+                    buf.line_of(s.start()),
+                    buf.line_of(s.end().saturating_sub(usize::from(!s.is_empty()))),
+                );
+                lines_of(a, b)
+            })
+            .collect(),
+        "%" => vec![lines_of(0, last)],
+        "'<,'>" => v
+            .sels
+            .iter()
+            .map(|s| {
+                lines_of(
+                    buf.line_of(s.start()),
+                    buf.line_of(s.end().saturating_sub(usize::from(!s.is_empty()))),
+                )
+            })
+            .collect(),
+        _ => match spec.split_once(',') {
+            Some((a, b)) => vec![lines_of(addr(a)?, addr(b)?)],
+            None => {
+                let a = addr(spec)?;
+                vec![lines_of(a, a)]
+            }
+        },
+    };
+    // In order, joined where they touch, so each byte is searched once.
+    ranges.sort_by_key(|r| r.start);
+    let mut joined: Vec<Range<usize>> = Vec::new();
+    for r in ranges {
+        match joined.last_mut() {
+            Some(l) if r.start <= l.end => l.end = l.end.max(r.end),
+            _ => joined.push(r),
+        }
+    }
+    Ok(joined)
+}
+
+/// `:[range]s/pat/rep/[flags]` — flags `g` (every match on a line, not
+/// the first), `i` (case-insensitive). The matches are found on every
+/// core (`search::substitutions`) and applied as one edit, one tree for
+/// the lot however many (`Buffer::replace_many`); the selections follow
+/// the text and the primary lands at the start of the last line changed,
+/// as vim's does. The pattern becomes the search `n` walks.
+fn substitute(ed: &mut Editor, ctx: &Ctx) {
+    let (range, pat, rep, flags) = match ctx.args.as_slice() {
+        [r, p, s, f] => (r.as_str(), p.as_str(), s.as_str(), f.as_str()),
+        _ => {
+            ed.message = "usage: :[range]s/pattern/replacement/[gi]".into();
+            return;
+        }
+    };
+    let global = flags.contains('g');
+    let pattern = if flags.contains('i') {
+        format!("(?i){pat}")
+    } else {
+        pat.to_string()
+    };
+    if let Err(e) = ed.set_search(&pattern) {
+        ed.message = e;
+        return;
+    }
+    let re = ed.search.as_ref().unwrap().re.clone();
+    let id = view(ed, ctx).buffer;
+    if ed.buffers[id].read_only {
+        ed.message = "buffer is read-only".into();
+        return;
+    }
+    if ed.buffers[id].loading.is_some() {
+        ed.message = "still opening".into();
+        return;
+    }
+    let ranges = match substitute_ranges(ed, ctx, range) {
+        Ok(r) => r,
+        Err(e) => {
+            ed.message = e;
+            return;
+        }
+    };
+    let template = substitute_template(rep);
+    let started = std::time::Instant::now();
+    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+    let mut lines = 0;
+    for r in ranges {
+        let text = ed.buffers[id].tree();
+        let found = crate::search::substitutions(text, &re, r, global, &template);
+        lines += found.lines;
+        for (range, bytes) in found.edits {
+            let s = String::from_utf8(bytes)
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+            edits.push((range, s));
+        }
+    }
+    if edits.is_empty() {
+        ed.message = format!("no match: {pat}");
+        return;
+    }
+    let count = edits.len();
+    let v0 = ed.buffers[id].version();
+    let last_start = edits.last().map(|(r, _)| r.start).unwrap_or(0);
+    {
+        let refs: Vec<(Range<usize>, &str)> =
+            edits.iter().map(|(r, t)| (r.clone(), t.as_str())).collect();
+        ed.buffers[id].replace_many(&refs);
+    }
+    drop(edits);
+    // The selections follow the text; the primary to the last changed
+    // line's start.
+    let (buffers, views) = (&ed.buffers, &mut ed.views);
+    let buf = &buffers[id];
+    let journal = buf.journal();
+    let primary = views[ctx.view].sels.primary();
+    let last_line_start = {
+        let at = journal
+            .transform_offset(last_start, v0, kawoosh_doc::Bias::Left)
+            .unwrap_or(last_start);
+        buf.line_range(buf.line_of(at)).start
+    };
+    views[ctx.view].sels.map(|s| {
+        if s == primary {
+            Selection::new(last_line_start, last_line_start)
+        } else {
+            let t = |o: usize| {
+                journal
+                    .transform_offset(o, v0, kawoosh_doc::Bias::Left)
+                    .unwrap_or(o)
+            };
+            Selection::new(t(s.anchor), t(s.head))
+        }
+    });
+    if ed.mode == Mode::Visual {
+        ed.mode = Mode::Normal;
+    }
+    let took = started.elapsed();
+    ed.message = format!(
+        "{count} substitution(s) on {lines} line(s){}",
+        if took.as_millis() >= 100 {
+            format!(" in {:.1}s", took.as_secs_f64())
+        } else {
+            String::new()
+        }
+    );
+}
+
 /// Writes `buf` to `path` through a file beside it, renamed over the
 /// target once whole: the text streams out piece by piece (a big file is
 /// never one string), a crash mid-write leaves the old file, and a
@@ -894,6 +1169,7 @@ pub fn install(ed: &mut Editor) {
     ed.register_kind("search_prev", Kind::Motion(Exclusive), |ed, ctx| {
         search(ed, ctx, false)
     });
+    ed.register("substitute", substitute);
     ed.register("search_word", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];

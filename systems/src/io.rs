@@ -164,11 +164,9 @@ impl Io {
                     // `text_buffer::Block` names.
                     let map = unsafe { memmap2::Mmap::map(&file) }?;
                     let _ = map.advise(memmap2::Advice::Sequential);
-                    if !text_buffer::is_utf8(&map) {
-                        let repaired = String::from_utf8_lossy(&map).into_owned().into_bytes();
-                        return Ok((text_buffer::Buffer::from_bytes(repaired), false));
-                    }
-                    let counts = text_buffer::count_newlines_with(&map, &|done| {
+                    // Validated and indexed in one read, the progress
+                    // posted stride by stride.
+                    let counts = text_buffer::index_with(&map, &|done| {
                         let _ = tx.send(IoMsg::Opening {
                             path: path.clone(),
                             done,
@@ -177,6 +175,10 @@ impl Io {
                         wake.wake();
                     });
                     let _ = map.advise(memmap2::Advice::Normal);
+                    let Some(counts) = counts else {
+                        let repaired = String::from_utf8_lossy(&map).into_owned().into_bytes();
+                        return Ok((text_buffer::Buffer::from_bytes(repaired), false));
+                    };
                     Ok((text_buffer::Buffer::from_mapped(map, &counts), true))
                 })();
                 let msg = match opened {

@@ -277,6 +277,253 @@ pub fn count_on(text: &Buffer, re: &Regex, threads: usize) -> usize {
     n
 }
 
+/// The byte after the next newline at or after `from`, or the text's
+/// length: where the line holding `from` ends.
+fn line_end(text: &Buffer, from: usize) -> usize {
+    let len = text.len();
+    let mut at = from;
+    while let Some((start, span)) = text.span_at(at) {
+        if let Some(i) = memchr::memchr(b'\n', &span[at - start..]) {
+            return at + i + 1;
+        }
+        at = start + span.len();
+    }
+    len
+}
+
+/// The start of the line holding `at`, no earlier than `floor`.
+fn line_start(text: &Buffer, at: usize, floor: usize) -> usize {
+    let mut hi = at;
+    while hi > floor {
+        let lo = hi.saturating_sub(WINDOW).max(floor);
+        let bytes = window(text, lo..hi);
+        if let Some(i) = memchr::memrchr(b'\n', &bytes) {
+            return lo + i + 1;
+        }
+        hi = lo;
+    }
+    floor
+}
+
+/// One substitution: what it replaces and what with.
+pub type Substitution = (Range<usize>, Vec<u8>);
+
+/// What [`substitutions`] found: the edits, ascending, and how many
+/// lines they fall on — counted as they are found, since asking the
+/// tree for each edit's line afterwards is a walk per edit.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Substitutions {
+    pub edits: Vec<Substitution>,
+    pub lines: usize,
+}
+
+/// A stride's part of a substitution: its edits, the lines they fall
+/// on, and where the line of its last edit ends — for the join to tell
+/// whether the next stride's first edit is on that same line.
+struct Part {
+    edits: Vec<Substitution>,
+    lines: usize,
+    last_line_end: usize,
+}
+
+/// Every substitution `re` makes in `range` — `(what it replaces, what
+/// with)`, ascending — `template` expanded per match (`$1`, `${name}`,
+/// `$$`; a template with no `$` is literal). `global` takes every match;
+/// otherwise the first on each line, as `:s` without `g` does. Found on
+/// every core, the range in [`STRIDE`]s over the spans, each stride
+/// taking the matches that start in it, the line rule kept across a
+/// stride's edge by looking back to its line's start.
+pub fn substitutions(
+    text: &Buffer,
+    re: &Regex,
+    range: Range<usize>,
+    global: bool,
+    template: &[u8],
+) -> Substitutions {
+    let len = text.len();
+    let range = range.start.min(len)..range.end.min(len);
+    if range.start >= range.end {
+        return Substitutions::default();
+    }
+    // The strides: (span start, span end, stride start, stride end),
+    // within the range.
+    let mut strides: Vec<(usize, usize, usize, usize)> = Vec::new();
+    let mut at = range.start;
+    while at < range.end {
+        let Some((start, span)) = text.span_at(at) else {
+            break;
+        };
+        let send = (start + span.len()).min(range.end);
+        let mut s = at;
+        while s < send {
+            let e = (s + STRIDE).min(send);
+            strides.push((start, start + span.len(), s, e));
+            s = e;
+        }
+        at = send;
+    }
+    let literal = !template.contains(&b'$');
+    let expand = |span: &[u8], m: regex::bytes::Match<'_>| -> Vec<u8> {
+        if literal {
+            return template.to_vec();
+        }
+        let mut out = Vec::new();
+        match re.captures_at(span, m.start()) {
+            Some(c) if c.get(0).is_some_and(|g| g.start() == m.start()) => {
+                c.expand(template, &mut out);
+            }
+            _ => out.extend_from_slice(template),
+        }
+        out
+    };
+    let work = |&(sstart, send, s, e): &(usize, usize, usize, usize)| {
+        let (_, span) = text.span_at(sstart).expect("a span the walk listed");
+        let mut out: Vec<Substitution> = Vec::new();
+        let mut lines = 0;
+        // The end of the line the last match was on: without `g` a match
+        // before it is skipped (its line already had one); with `g` it
+        // says whether the next match starts a new line. A stride
+        // starting inside a line asks whether the part before it had one.
+        let mut line_to: Option<usize> = None;
+        if !global && s > range.start {
+            let ls = line_start(text, s, range.start);
+            if ls < s {
+                let bytes = window(text, ls..(s + EDGE).min(len));
+                if re.find_iter(&bytes).any(|m| ls + m.start() < s) {
+                    line_to = Some(line_end(text, s));
+                }
+            }
+        }
+        // The line's end from a point in the span: in the span nearly
+        // always, and only past it through the tree.
+        let end_of_line =
+            |from_local: usize, abs: usize| match memchr::memchr(b'\n', &span[from_local..]) {
+                Some(i) => sstart + from_local + i + 1,
+                None => line_end(text, abs),
+            };
+        let mut pos = s - sstart;
+        let stop = e - sstart;
+        while pos < stop {
+            let Some(m) = re.find_at(span, pos) else {
+                break;
+            };
+            if m.start() >= stop {
+                break;
+            }
+            let abs = sstart + m.start()..sstart + m.end();
+            // Past an empty match, the next char; else the match's end.
+            pos = if m.end() > m.start() {
+                m.end()
+            } else {
+                let mut p = m.end() + 1;
+                while p < span.len() && (span[p] & 0xC0) == 0x80 {
+                    p += 1;
+                }
+                p
+            };
+            let same_line = line_to.is_some_and(|to| abs.start < to);
+            if !global && same_line {
+                continue;
+            }
+            if !same_line {
+                lines += 1;
+                line_to = Some(end_of_line(m.end(), abs.end));
+            }
+            let rep = expand(span, m);
+            out.push((abs, rep));
+        }
+        // A match crossing the span's end, if this stride ends there.
+        if e == send && send < range.end {
+            let after = out.last().map_or(s, |(r, _)| r.end);
+            if let Some(c) = crossing(text, re, send, after) {
+                let same_line = line_to.is_some_and(|to| c.start < to);
+                if global || !same_line {
+                    let bytes = window(text, c.start..c.end);
+                    let rep = if literal {
+                        template.to_vec()
+                    } else {
+                        let mut o = Vec::new();
+                        match re.captures(&bytes) {
+                            Some(cap) => cap.expand(template, &mut o),
+                            None => o.extend_from_slice(template),
+                        }
+                        o
+                    };
+                    if !same_line {
+                        lines += 1;
+                        line_to = Some(line_end(text, c.end));
+                    }
+                    out.push((c, rep));
+                }
+            }
+        }
+        Part {
+            edits: out,
+            lines,
+            last_line_end: line_to.unwrap_or(0),
+        }
+    };
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .clamp(1, strides.len().max(1));
+    let mut parts: Vec<Option<Part>> = Vec::new();
+    if threads == 1 {
+        parts.extend(strides.iter().map(|s| Some(work(s))));
+    } else {
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let results: Vec<std::sync::Mutex<Option<Part>>> = strides
+            .iter()
+            .map(|_| std::sync::Mutex::new(None))
+            .collect();
+        std::thread::scope(|scope| {
+            for _ in 0..threads {
+                scope.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(stride) = strides.get(i) else {
+                            break;
+                        };
+                        *results[i].lock().unwrap() = Some(work(stride));
+                    }
+                });
+            }
+        });
+        parts.extend(results.into_iter().map(|m| m.into_inner().unwrap()));
+    }
+    // One list, ascending; a match a stride's neighbour also found at
+    // its edge, or one overlapping the last, is dropped; a part whose
+    // first edit is on the line the last part ended on shares that line.
+    let mut all = Substitutions {
+        edits: Vec::with_capacity(parts.iter().flatten().map(|p| p.edits.len()).sum()),
+        lines: 0,
+    };
+    let mut last_line_end = 0;
+    for part in parts.into_iter().flatten() {
+        let mut lines = part.lines;
+        if let Some((first, _)) = part.edits.first()
+            && !all.edits.is_empty()
+            && first.start < last_line_end
+        {
+            lines = lines.saturating_sub(1);
+        }
+        for (r, t) in part.edits {
+            if all
+                .edits
+                .last()
+                .is_some_and(|(last, _)| r.start < last.end || r.start == last.start)
+            {
+                continue;
+            }
+            all.edits.push((r, t));
+        }
+        if part.lines > 0 {
+            last_line_end = part.last_line_end;
+        }
+        all.lines += lines;
+    }
+    all
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,6 +619,82 @@ mod tests {
         assert_eq!(
             walk_backward(&text, &re, all[0].start, usize::MAX),
             Walk::NotFound
+        );
+    }
+
+    /// The substitutions over a range are the whole-text regex's — every
+    /// match with `g`, the first per line without — with the template
+    /// expanded per match, on a text in many pieces and on one big enough
+    /// to split into strides.
+    #[test]
+    fn substitutions_are_the_whole_texts_with_the_line_rule() {
+        let text = pieced();
+        let bytes = text.collect();
+        let re = re(r"(al|ga)(\w+)");
+        let global = substitutions(&text, &re, 0..text.len(), true, b"<$2-$1>");
+        assert_eq!(global.lines, 64, "every line has a match");
+        let global = global.edits;
+        let want: Vec<Substitution> = re
+            .captures_iter(&bytes)
+            .map(|c| {
+                let m = c.get(0).unwrap();
+                let mut o = Vec::new();
+                c.expand(b"<$2-$1>", &mut o);
+                (m.start()..m.end(), o)
+            })
+            .collect();
+        assert_eq!(global.len(), want.len());
+        assert_eq!(global, want);
+        // First per line: one per line, the line's first.
+        let first = substitutions(&text, &re, 0..text.len(), false, b"X");
+        assert_eq!(first.lines, 64);
+        let first = first.edits;
+        for (i, (r, t)) in first.iter().enumerate() {
+            assert_eq!(t, b"X");
+            assert_eq!(*r, want.iter().find(|(w, _)| w.start >= i * 32).unwrap().0);
+        }
+        // A range: only the matches starting in it, the line rule from
+        // the range's own start.
+        let mid = substitutions(&text, &re, 40..100, true, b"X");
+        assert_eq!(
+            mid.lines, 3,
+            "lines 1, 2 and 3 have matches starting in 40..100"
+        );
+        let mid = mid.edits;
+        assert_eq!(
+            mid.iter().map(|(r, _)| r.clone()).collect::<Vec<_>>(),
+            want.iter()
+                .map(|(r, _)| r.clone())
+                .filter(|r| r.start >= 40 && r.start < 100)
+                .collect::<Vec<_>>()
+        );
+
+        // Strides: a text past two of them, one block; `g` and the line
+        // rule agree with the whole-text answer.
+        let mut line = b"x,needle,y needle,".to_vec();
+        line.extend(std::iter::repeat_n(b'z', 1000));
+        line.push(b'\n');
+        let n = (STRIDE * 2 + 1000) / line.len();
+        let mut big = Vec::with_capacity(n * line.len());
+        for _ in 0..n {
+            big.extend_from_slice(&line);
+        }
+        let big = Buffer::from_bytes(big);
+        let re = Regex::new("needle").unwrap();
+        let all = substitutions(&big, &re, 0..big.len(), true, b"N");
+        assert_eq!(all.lines, n);
+        let all = all.edits;
+        assert_eq!(all.len(), 2 * n);
+        assert!(all.windows(2).all(|w| w[0].0.end <= w[1].0.start));
+        let first = substitutions(&big, &re, 0..big.len(), false, b"N");
+        assert_eq!(first.lines, n);
+        let first = first.edits;
+        assert_eq!(first.len(), n);
+        assert!(
+            first
+                .iter()
+                .enumerate()
+                .all(|(i, (r, _))| r.start == i * line.len() + 2)
         );
     }
 

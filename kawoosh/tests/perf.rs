@@ -72,13 +72,29 @@ fn keystroke_cost() {
         let t = Instant::now();
         d.frame(&mut app);
         eprintln!("first frame {:8.1} ms   {}", ms(t), mem());
+        // The progress the frames see while the io thread indexes:
+        // every `[opening N%]` the status line showed.
         let t = Instant::now();
-        app.wait_for_open();
-        d.frame(&mut app);
+        let mut seen: Vec<usize> = Vec::new();
+        loop {
+            d.frame(&mut app);
+            let v = app.focused_view().unwrap();
+            match app.ed.buffer_of(v).loading {
+                Some((done, total)) => {
+                    let pct = (done * 100).checked_div(total).unwrap_or(100);
+                    if seen.last() != Some(&pct) {
+                        seen.push(pct);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                None => break,
+            }
+        }
         eprintln!(
-            "text arrived {:7.1} ms   {}   (the io thread's part)",
+            "text arrived {:7.1} ms   {}   (the io thread's part); progress seen: {:?}",
             ms(t),
-            mem()
+            mem(),
+            seen
         );
         let v = app.focused_view().unwrap();
         let buf = app.ed.buffer_of(v);
@@ -156,6 +172,33 @@ fn keystroke_cost() {
             d.keys(app, "N")
         });
         settle(&mut d, &mut app, "searching");
+        // Substitution: one line, then the whole file (every core for the
+        // matches, one tree for the edits), then undone.
+        step(&mut d, &mut app, ":s/e/E/g (one line)", &|d, app| {
+            d.keys(app, ":s/e/E/g");
+            d.key(app, "enter", KeyMods::default());
+        });
+        eprintln!("  {}", app.ed.message);
+        step(
+            &mut d,
+            &mut app,
+            ":%s/first order/FIRST/ (all)",
+            &|d, app| {
+                d.keys(app, ":%s/first order/FIRST/");
+                d.key(app, "enter", KeyMods::default());
+            },
+        );
+        eprintln!(
+            "  {}   {} pieces",
+            app.ed.message,
+            app.ed.buffer_of(app.focused_view().unwrap()).piece_count()
+        );
+        step(&mut d, &mut app, "u (undo the lot)", &|d, app| {
+            d.keys(app, "u")
+        });
+        step(&mut d, &mut app, "j (a frame after)", &|d, app| {
+            d.keys(app, "j")
+        });
         return;
     }
     let mut app = Kawoosh::from_file(std::path::Path::new(&path));

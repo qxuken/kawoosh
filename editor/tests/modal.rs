@@ -316,6 +316,63 @@ fn search_walks_from_the_cursor_and_counts_off_the_frame_when_big() {
     assert_eq!(t.ed.message, "not found: nothing");
 }
 
+/// `:s`: the current line's first match, `g` every one, `%` every
+/// line, `N,M` a range, `&` and `$1` in the replacement, an escaped
+/// delimiter, another delimiter, `i`; the cursor lands at the last
+/// changed line's start, the pattern becomes the search, one `u` undoes
+/// the lot, and a bulk one (past the tree's rebuild threshold) is the
+/// same text as the small path gives.
+#[test]
+fn substitute_is_vims_on_a_line_a_range_and_the_file() {
+    let mut t = T::new("aa ab aa\nba aa\naa\n");
+    t.keys(":s/aa/X/<CR>");
+    assert_eq!(t.text(), "X ab aa\nba aa\naa\n");
+    assert_eq!(t.ed.message, "1 substitution(s) on 1 line(s)");
+    assert_eq!(t.head(), 0);
+    t.keys("u");
+    assert_eq!(t.text(), "aa ab aa\nba aa\naa\n");
+    t.keys(":s/aa/X/g<CR>");
+    assert_eq!(t.text(), "X ab X\nba aa\naa\n");
+    t.keys("u:%s/aa/[&]/g<CR>");
+    assert_eq!(t.text(), "[aa] ab [aa]\nba [aa]\n[aa]\n");
+    assert_eq!(t.ed.message, "4 substitution(s) on 3 line(s)");
+    assert_eq!(t.head(), 21, "the last changed line's start");
+    t.keys("u:2,3s/(a)(a)/$2-$1/<CR>");
+    assert_eq!(t.text(), "aa ab aa\nba a-a\na-a\n");
+    t.keys("u:%s#a/#A#g<CR>");
+    assert_eq!(
+        t.text(),
+        "aa ab aa\nba aa\naa\n",
+        "no `a/` anywhere: untouched"
+    );
+    assert_eq!(t.ed.message, "no match: a/");
+    t.keys(":%s/AA/z/gi<CR>");
+    assert_eq!(t.text(), "z ab z\nba z\nz\n");
+    assert_eq!(
+        t.ed.search.as_ref().unwrap().pattern,
+        "(?i)AA",
+        "and the search is the pattern"
+    );
+    t.keys("u:%s/\\//|/g<CR>");
+    assert_eq!(t.ed.message, "no match: /");
+    t.keys(":s/aa\\n/Q/<CR>");
+    assert_eq!(t.text(), "aa ab Qba aa\naa\n", "a regex over the newline");
+    // Bulk: many edits at once take the rebuild path and agree.
+    let line = "foo bar foo baz\n";
+    let mut t = T::new(&line.repeat(200));
+    t.keys(":%s/foo/F/g<CR>");
+    assert_eq!(t.text(), "F bar F baz\n".repeat(200));
+    assert_eq!(t.ed.message, "400 substitution(s) on 200 line(s)");
+    t.keys("u");
+    assert_eq!(t.text(), line.repeat(200), "one undo");
+    t.keys(":%s/foo/F/<CR>");
+    assert_eq!(
+        t.text(),
+        "F bar foo baz\n".repeat(200),
+        "the first per line"
+    );
+}
+
 #[test]
 fn indent_and_change_line() {
     let mut t = T::new("a\nb");

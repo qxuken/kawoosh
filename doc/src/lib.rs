@@ -271,6 +271,11 @@ const _: () = {
     assert_send::<Snapshot>();
 };
 
+/// From this many edits at once, `replace_many` rebuilds the tree in one
+/// pass rather than splicing each: below it a few path copies are
+/// cheaper than a rebuild, above it the rebuild is.
+const BULK_EDITS: usize = 32;
+
 #[derive(Clone, Debug)]
 pub struct Buffer {
     text: text_buffer::Buffer,
@@ -607,17 +612,34 @@ impl Buffer {
                 new_len: text.len(),
             });
         }
-        for (range, text) in edits.iter().rev() {
-            if !range.is_empty() {
-                self.text.erase(range.start, range.len());
+        if edits.len() >= BULK_EDITS {
+            // One tree for the lot (`text_buffer::Buffer::replace_bulk`):
+            // a substitution over a file. The journal has them one by
+            // one, back to front, as the splicing path records them.
+            let raw: Vec<(Range<usize>, &[u8])> = edits
+                .iter()
+                .map(|(r, t)| (r.clone(), t.as_bytes()))
+                .collect();
+            self.text.replace_bulk(&raw);
+            for (range, text) in edits.iter().rev() {
+                v = self.journal.record(Edit {
+                    range: range.clone(),
+                    new_len: text.len(),
+                });
             }
-            if !text.is_empty() {
-                self.text.insert(range.start, text.as_bytes());
+        } else {
+            for (range, text) in edits.iter().rev() {
+                if !range.is_empty() {
+                    self.text.erase(range.start, range.len());
+                }
+                if !text.is_empty() {
+                    self.text.insert(range.start, text.as_bytes());
+                }
+                v = self.journal.record(Edit {
+                    range: range.clone(),
+                    new_len: text.len(),
+                });
             }
-            v = self.journal.record(Edit {
-                range: range.clone(),
-                new_len: text.len(),
-            });
         }
         for (_, layer) in &mut self.layers {
             layer.shift_many(&shifts);
@@ -1101,6 +1123,17 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         };
+        // Past `BULK_EDITS`, so the rebuild path is what is compared.
+        let bulk: Vec<(Range<usize>, &str)> = (0..text.len() / 2)
+            .filter(|i| i % 3 != 0)
+            .map(|i| (i * 2..i * 2 + 1, "Q"))
+            .collect();
+        assert!(bulk.len() >= 9, "{} edits", bulk.len());
+        let text_long = text.repeat(8);
+        let bulk_long: Vec<(Range<usize>, &str)> = (0..text_long.len() / 4)
+            .map(|i| (i * 4..i * 4 + 2, "QQQ"))
+            .collect();
+        assert!(bulk_long.len() >= BULK_EDITS);
         let cases: Vec<Vec<(Range<usize>, &str)>> = vec![
             // Three cursors typing.
             vec![(2..2, "x"), (12..12, "x"), (22..22, "x")],
@@ -1111,8 +1144,14 @@ mod tests {
             vec![(7..7, "1"), (7..7, "2")],
             // Whole words replaced, one deleted.
             vec![(0..4, "AAAAAA"), (10..14, ""), (25..29, "F")],
+            bulk,
         ];
-        for edits in cases {
+        let long_cases = vec![bulk_long];
+        for (text, edits) in cases
+            .into_iter()
+            .map(|e| (text, e))
+            .chain(long_cases.into_iter().map(|e| (text_long.as_str(), e)))
+        {
             let mut a = Buffer::new("t", text);
             a.set_layer("l", runs());
             let v0 = a.version();

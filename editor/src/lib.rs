@@ -753,6 +753,13 @@ impl Editor {
             self.run(view, "goto_line", &[], Some(n));
             return;
         }
+        // `[range]s/pat/rep/[flags]`: the one ex line whose parts are not
+        // split on whitespace, taken apart here and run as `substitute`
+        // with them as its arguments.
+        if let Some(args) = commands::parse_substitute(line) {
+            self.run(view, "substitute", &args, None);
+            return;
+        }
         let split = line
             .find(|c: char| c.is_whitespace() || c == '!')
             .unwrap_or(line.len());

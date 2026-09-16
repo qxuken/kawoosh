@@ -1799,6 +1799,7 @@ name = "kawoosh-editor"
 version = "0.0.1"
 dependencies = [
  "kawoosh-doc",
+ "memchr",
  "regex",
  "slotmap",
  "text-buffer",
