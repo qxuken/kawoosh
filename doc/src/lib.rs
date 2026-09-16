@@ -275,6 +275,10 @@ const _: () = {
 /// pass rather than splicing each: below it a few path copies are
 /// cheaper than a rebuild, above it the rebuild is.
 const BULK_EDITS: usize = 32;
+/// The most a compaction copies: a session's small pieces in a file of
+/// any size; a huge file edited on every line has more, and is left as
+/// its edits made it.
+const COMPACT_BUDGET: usize = 64 << 20;
 
 #[derive(Clone, Debug)]
 pub struct Buffer {
@@ -298,6 +302,12 @@ pub struct Buffer {
     /// For a buffer that is not a file: who handles its writes (a Lua
     /// `on_write` — the file manager's directory listing).
     pub hook: Option<String>,
+    /// The piece count past which the next edit compacts the tree
+    /// (`text_buffer::Buffer::compact`): twice what the text had when it
+    /// was last whole, so a session's edits are gathered up now and then
+    /// and a search's spans stay long. Raised past the count either way,
+    /// so a text the budget will not gather is not asked on every edit.
+    compact_at: usize,
 }
 
 impl Buffer {
@@ -314,7 +324,21 @@ impl Buffer {
             disk_len: None,
             language: Arc::from("text"),
             hook: None,
+            compact_at: 2 * text_buffer::natural_pieces(text.len()),
         }
+    }
+
+    /// After an edit: the tree gathered up when its pieces have grown
+    /// past the mark (see `compact_at`). The text and its history are
+    /// what they were; only the pieces change.
+    fn settle(&mut self) {
+        let pieces = self.text.piece_count();
+        if pieces <= self.compact_at {
+            return;
+        }
+        self.text.compact(COMPACT_BUDGET);
+        let natural = text_buffer::natural_pieces(self.text.len());
+        self.compact_at = (2 * natural).max(2 * self.text.piece_count());
     }
 
     /// A buffer for `path` whose text is still on its way — the io
@@ -338,6 +362,7 @@ impl Buffer {
     /// writable again. History starts here.
     pub fn attach(&mut self, text: text_buffer::Buffer) -> Version {
         let len = text.len();
+        self.compact_at = 2 * text_buffer::natural_pieces(len);
         self.text = text;
         for (_, layer) in &mut self.layers {
             layer.clear();
@@ -583,7 +608,9 @@ impl Buffer {
             layer.shift(&edit);
         }
         self.modified = true;
-        self.journal.record(edit)
+        let v = self.journal.record(edit);
+        self.settle();
+        v
     }
 
     /// Several replacements at once — a multicursor keystroke — given
@@ -645,6 +672,7 @@ impl Buffer {
             layer.shift_many(&shifts);
         }
         self.modified = true;
+        self.settle();
         v
     }
 
@@ -679,7 +707,9 @@ impl Buffer {
             layer.shift(&edit);
         }
         self.modified = true;
-        self.journal.record(edit)
+        let v = self.journal.record(edit);
+        self.settle();
+        v
     }
 
     // ------------------------------------------------------------ layers
@@ -1109,6 +1139,32 @@ mod tests {
                 assert_eq!(b.text_root().collect(), before);
             }
         }
+    }
+
+    /// Past twice the natural piece count the next edit compacts: the
+    /// text and its lines are what they were, an undo's snapshot still
+    /// restores, and the count is back near natural.
+    #[test]
+    fn edits_past_the_mark_compact_the_tree() {
+        let mut b = Buffer::new("t", &"abcdefghij\n".repeat(200));
+        let snapshot = b.text_root();
+        let v0 = b.version();
+        for k in 0..9000 {
+            let at = (k * 31) % b.len();
+            b.replace(at..at, "x");
+        }
+        let text = b.text();
+        let lines = b.line_count();
+        assert!(
+            b.piece_count() < 9000,
+            "{} pieces: the tree was compacted along the way",
+            b.piece_count()
+        );
+        assert_eq!(b.text(), text);
+        assert_eq!(b.line_count(), lines);
+        assert!(b.version() > v0);
+        b.restore(snapshot);
+        assert_eq!(b.text(), "abcdefghij\n".repeat(200));
     }
 
     #[test]

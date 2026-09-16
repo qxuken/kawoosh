@@ -27,6 +27,15 @@ const INITIAL_PIECE_BYTES: usize = 16 * 1024;
 /// The most [`Buffer::span_at`] joins into one slice: 64 MB is four
 /// thousand pieces to walk, and a reader that wants more asks again.
 pub const SPAN_MAX: usize = 64 << 20;
+/// A piece shorter than this is one [`Buffer::compact`] copies into a
+/// fuller block; a longer one is kept as it is.
+const COMPACT_SMALL: usize = 1024;
+/// How many pieces a text of `len` bytes has when nothing has been done
+/// to it, plus room for a session's edits: past twice this, the owner
+/// compacts ([`Buffer::compact`]).
+pub fn natural_pieces(len: usize) -> usize {
+    len.div_ceil(INITIAL_PIECE_BYTES) + 4096
+}
 
 const _: () = assert!(
     BUFFER_MAX_PIECE_BYTES <= u16::MAX as usize,
@@ -99,7 +108,9 @@ const ADD_CAP: usize = BUFFER_MAX_PIECE_BYTES;
 /// fills `[len..len + n]` and only then publishes the new length
 /// (`Release`), and appends are serialised by a lock — so no byte is
 /// ever read and written at once, and no byte a reader has seen is
-/// written again.
+/// written again. The one write behind the end ([`AddBuf::rewind`])
+/// is made by the holder of the chunk's only piece, over bytes that
+/// piece does not reach: bytes nothing can read.
 pub struct AddBuf {
     cells: Box<[std::cell::UnsafeCell<u8>]>,
     len: std::sync::atomic::AtomicUsize,
@@ -161,6 +172,25 @@ impl AddBuf {
         }
         self.len
             .store(len + text.len(), std::sync::atomic::Ordering::Release);
+        true
+    }
+
+    /// Writes `text` at `at`, behind the published end — over bytes the
+    /// caller has established no piece reads — and publishes `at +
+    /// text.len()` as the end. Says whether it fit.
+    fn rewind(&self, at: usize, text: &[u8]) -> bool {
+        let _guard = self.append.lock().unwrap_or_else(|e| e.into_inner());
+        if at > self.len() || at + text.len() > self.cells.len() {
+            return false;
+        }
+        for (i, b) in text.iter().enumerate() {
+            // SAFETY: the caller holds the chunk's only reading piece,
+            // which ends at `at`, so `[at..]` is read by nothing; the
+            // lock keeps a second writer out.
+            unsafe { *self.cells[at + i].get() = *b };
+        }
+        self.len
+            .store(at + text.len(), std::sync::atomic::Ordering::Release);
         true
     }
 }
@@ -282,9 +312,11 @@ pub struct Buffer {
     /// The add buffer the next small insert goes into — the piece
     /// table's second block, in chunks: a run of typing grows its piece
     /// over it, and a run elsewhere takes the next bytes of the same
-    /// chunk rather than a chunk of its own. A snapshot shares it, which
-    /// is fine: nothing in it is ever changed or moved.
-    add: Option<Arc<Block>>,
+    /// chunk rather than a chunk of its own. Held weakly, so the chunk's
+    /// strong count is the number of pieces (in any tree or snapshot)
+    /// that read it — what [`Buffer::grown`] asks before writing over a
+    /// backspaced tail — and a chunk no piece reads is freed.
+    add: Option<std::sync::Weak<Block>>,
 }
 
 /// An in-order (or reverse) walk over a buffer's pieces, by an explicit
@@ -483,6 +515,84 @@ impl Buffer {
         self.root = Self::build_from(&out, 0, out.len(), u64::MAX);
     }
 
+    /// Runs the small pieces together — copied into blocks of
+    /// [`INITIAL_PIECE_BYTES`], one piece each — and joins pieces that
+    /// are neighbours in one block, which costs no copy; then one
+    /// balanced tree. What a long session's typing, deleting and undoing
+    /// accretes is undone this way: the text is the same, the snapshots
+    /// keep theirs, and a search's spans are long again. Says whether
+    /// anything changed. A text whose small pieces come to more than
+    /// `budget` bytes is left as it is: gathering a slice of them would
+    /// rebuild the whole tree for little, and gathering all of them
+    /// would copy the file (a ten-gigabyte csv after `:%s` is such a
+    /// text, and stays the pieces the substitution made).
+    pub fn compact(&mut self, budget: usize) -> bool {
+        let before = self.piece_count();
+        if before < 2 {
+            return false;
+        }
+        let mut small_bytes = 0;
+        let mut pieces = self.pieces(false);
+        while let Some(node) = pieces.next_node() {
+            if node.piece.len() < COMPACT_SMALL {
+                small_bytes += node.piece.len();
+                if small_bytes > budget {
+                    return false;
+                }
+            }
+        }
+        let mut out: Vec<(Piece, usize)> = Vec::with_capacity(before);
+        let mut pending: Vec<u8> = Vec::new();
+        let mut pending_newlines = 0;
+        let flush = |out: &mut Vec<(Piece, usize)>, pending: &mut Vec<u8>, newlines: &mut usize| {
+            if pending.is_empty() {
+                return;
+            }
+            let bytes = std::mem::take(pending);
+            let len = bytes.len();
+            out.push((
+                Piece {
+                    block: Arc::new(Block::Owned(bytes)),
+                    start: 0,
+                    length: len as u16,
+                },
+                *newlines,
+            ));
+            *newlines = 0;
+        };
+        let mut pieces = self.pieces(false);
+        while let Some(node) = pieces.next_node() {
+            let piece = &node.piece;
+            let small = piece.len() < COMPACT_SMALL;
+            if small {
+                if pending.len() + piece.len() > INITIAL_PIECE_BYTES {
+                    flush(&mut out, &mut pending, &mut pending_newlines);
+                }
+                pending.extend_from_slice(piece.bytes());
+                pending_newlines += node.meta.own_newlines;
+                continue;
+            }
+            flush(&mut out, &mut pending, &mut pending_newlines);
+            // A neighbour in the same block: one piece, no copy.
+            if let Some((last, last_newlines)) = out.last_mut()
+                && Arc::ptr_eq(&last.block, &piece.block)
+                && last.start + last.len() == piece.start
+                && last.len() + piece.len() <= u16::MAX as usize
+            {
+                last.length += piece.length;
+                *last_newlines += node.meta.own_newlines;
+                continue;
+            }
+            out.push((piece.clone(), node.meta.own_newlines));
+        }
+        flush(&mut out, &mut pending, &mut pending_newlines);
+        if out.len() == before && small_bytes == 0 {
+            return false;
+        }
+        self.root = Self::build_from(&out, 0, out.len(), u64::MAX);
+        true
+    }
+
     /// Pieces `[lo, hi)` of `list`, each with its newline count, as a
     /// balanced subtree whose root has `priority`, its children less —
     /// [`Self::build_balanced`] over pieces of any block.
@@ -608,16 +718,16 @@ impl Buffer {
     /// one when it is full — and where it landed: the block and the
     /// offset in it, for the piece that will point at it.
     fn add_bytes(&mut self, text: &[u8]) -> (Arc<Block>, usize) {
-        if let Some(block) = &self.add
-            && let Block::Add(add) = &**block
+        if let Some(block) = self.add.as_ref().and_then(std::sync::Weak::upgrade)
+            && let Block::Add(add) = &*block
         {
             let at = add.len();
             if add.append(at, text) {
-                return (Arc::clone(block), at);
+                return (block, at);
             }
         }
         let block = Arc::new(Block::Add(AddBuf::with(text)));
-        self.add = Some(Arc::clone(&block));
+        self.add = Some(Arc::downgrade(&block));
         (block, 0)
     }
 
@@ -658,7 +768,19 @@ impl Buffer {
             let Block::Add(add) = &*node.piece.block else {
                 return None;
             };
-            if !add.append(node.piece.start + node.piece.len(), text) {
+            let end = node.piece.start + node.piece.len();
+            // At the chunk's end the bytes go after; behind it — the
+            // tail a backspace left — only if this piece is the chunk's
+            // one reader (the strong count: the buffer's own handle is
+            // weak, and a snapshot that still read the tail would hold
+            // a node of its own with a piece of its own), in which case
+            // nothing can see the tail and it is written over.
+            let appended = if end == add.len() {
+                add.append(end, text)
+            } else {
+                Arc::strong_count(&node.piece.block) == 1 && add.rewind(end, text)
+            };
+            if !appended {
                 return None;
             }
             let piece = Piece {
@@ -1925,6 +2047,28 @@ mod add_tests {
         );
         e.insert(e.len(), b"!");
         assert_eq!(e.piece_count(), 3, "which then grows");
+        // …unless nothing else reads the chunk: without a snapshot of the
+        // longer text, the backspaced tail is written over and the run
+        // stays one piece.
+        let mut f = Buffer::with_text(b"");
+        for (i, c) in b"typo".iter().enumerate() {
+            f.insert(i, &[*c]);
+        }
+        f.erase(3, 1);
+        f.insert(3, b"e");
+        f.insert(4, b"d");
+        assert_eq!((f.piece_count(), f.collect()), (1, b"typed".to_vec()));
+        // A snapshot holding the longer text keeps its bytes.
+        let keep = f.clone();
+        f.erase(4, 1);
+        f.insert(4, b"!");
+        assert_eq!(f.collect(), b"type!");
+        assert_eq!(
+            keep.collect(),
+            b"typed",
+            "the snapshot's `d` is not written over"
+        );
+        assert_eq!(f.piece_count(), 2);
         // A run that fills its buffer goes on in a new one.
         let mut c = Buffer::with_text(b"");
         for i in 0..ADD_CAP + 10 {
@@ -1932,6 +2076,76 @@ mod add_tests {
         }
         assert_eq!(c.piece_count(), 2);
         assert_eq!(c.len(), ADD_CAP + 10);
+    }
+}
+
+#[cfg(test)]
+mod compact_tests {
+    use super::*;
+
+    /// A session's worth of edits — typing at a thousand places, deletes
+    /// inside pieces — compacts to a handful of pieces with the same
+    /// text and line count; the snapshot taken before is untouched; the
+    /// big pieces (a file's own) are kept, not copied; a budget leaves
+    /// the rest for later.
+    #[test]
+    fn compaction_runs_the_small_pieces_together() {
+        let n = INITIAL_PIECE_BYTES * 8;
+        let bytes: Vec<u8> = (0..n)
+            .map(|i| {
+                if i % 53 == 0 {
+                    b'\n'
+                } else {
+                    b'a' + (i % 26) as u8
+                }
+            })
+            .collect();
+        let mut b = Buffer::from_bytes(bytes);
+        let original = b.piece_count();
+        for k in 0..1000 {
+            let at = (k * 97) % b.len();
+            b.insert(at, b"xy");
+            if k % 3 == 0 {
+                b.erase((at + 40) % b.len(), 1);
+            }
+        }
+        assert!(b.piece_count() > 2000, "{} pieces", b.piece_count());
+        let snapshot = b.clone();
+        let text = b.collect();
+        let lines = b.newline_count();
+        assert!(b.compact(usize::MAX));
+        assert!(
+            b.piece_count() <= original + n / INITIAL_PIECE_BYTES + 8,
+            "{} pieces",
+            b.piece_count()
+        );
+        assert_eq!(b.collect(), text);
+        assert_eq!(b.newline_count(), lines);
+        assert_eq!(snapshot.collect(), text);
+        assert!(snapshot.piece_count() > 2000, "the snapshot is what it was");
+        for ln in [0, 7, 100, lines] {
+            assert_eq!(b.get_line_range(ln), snapshot.get_line_range(ln));
+        }
+        // Nothing to do the second time.
+        assert!(!b.compact(usize::MAX));
+        // Past the budget, nothing is done: a slice would rebuild the
+        // tree for little.
+        let mut c = snapshot.clone();
+        let before = c.piece_count();
+        assert!(!c.compact(4096));
+        assert_eq!(c.piece_count(), before);
+        // A mapped file's pieces are big and stay: two edits, compacted,
+        // leave its pieces as they were and join what they can.
+        let mut m = Buffer::from_bytes(
+            (0..INITIAL_PIECE_BYTES * 4)
+                .map(|i| (i % 7) as u8 + b'0')
+                .collect(),
+        );
+        m.insert(100, b"!");
+        m.erase(200, 1);
+        let count = m.piece_count();
+        assert!(m.compact(usize::MAX));
+        assert!(m.piece_count() <= count, "{} > {count}", m.piece_count());
     }
 }
 
