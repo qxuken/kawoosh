@@ -168,6 +168,15 @@ impl Journal {
 
     /// The edits after `from`, oldest first — what a producer that kept
     /// its work at `from` needs to bring it to now (the ts thread's tree).
+    /// How many edits the journal holds.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn edits_since(&self, from: Version) -> Result<impl Iterator<Item = &Edit>, Stale> {
         if from > self.current {
             return Err(Stale::FutureVersion);

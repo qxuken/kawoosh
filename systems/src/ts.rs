@@ -151,6 +151,9 @@ pub struct Answer {
     /// a handle over nodes shared with the thread's own copy (a clone is
     /// a count, not a walk). `None` for a language without a grammar.
     pub tree: Option<Tree>,
+    /// What the parse and the queries took on the thread — the devtools'
+    /// reading of a system the frame never waits on.
+    pub elapsed: std::time::Duration,
 }
 
 /// How many spans an answer may carry; past that the nearest are joined,
@@ -457,6 +460,7 @@ fn merge_spans(mut spans: Vec<Range<usize>>) -> Vec<Range<usize>> {
 }
 
 fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, job: &Job) -> Answer {
+    let started = std::time::Instant::now();
     let text = &job.snapshot.text;
     let len = text.len();
     let mut spans: Vec<Range<usize>> = std::iter::once(0..len).collect();
@@ -526,6 +530,7 @@ fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, 
         buffer: job.buffer,
         version: job.snapshot.version,
         tree,
+        elapsed: started.elapsed(),
         updates: spans
             .into_iter()
             .zip(runs)

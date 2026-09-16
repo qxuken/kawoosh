@@ -1774,6 +1774,7 @@ dependencies = [
  "kawoosh-term",
  "kui",
  "kui-lua",
+ "libc",
  "log",
  "mlua",
  "serde",

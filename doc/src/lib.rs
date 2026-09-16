@@ -638,6 +638,26 @@ impl Buffer {
         layer.query(&range)
     }
 
+    /// Each layer's name, its runs and the chunks they sit in — a devtools
+    /// reading.
+    pub fn layer_stats(&self) -> Vec<(&'static str, usize, usize)> {
+        self.layers
+            .iter()
+            .map(|(n, l)| {
+                (
+                    *n,
+                    l.chunks.iter().map(|c| c.runs.len()).sum(),
+                    l.chunks.len(),
+                )
+            })
+            .collect()
+    }
+
+    /// The piece tree's pieces — a devtools reading.
+    pub fn piece_count(&self) -> usize {
+        self.text.piece_count()
+    }
+
     pub fn layer_names(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.layers.iter().map(|(n, _)| *n)
     }

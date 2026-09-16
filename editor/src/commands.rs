@@ -54,6 +54,7 @@ pub fn ex_alias(name: &str) -> Option<&'static str> {
         "kui_debugger" | "kui_devtools" => "kui_debugger",
         "kui_framerate_hud" | "kui_framerate_hub" | "kui_hud" => "kui_framerate_hud",
         "syntax_tree" | "syntax" | "tree" => "syntax_tree",
+        "perf" | "kui_perf" => "perf",
         "cp" | "cprev" | "cprevious" => "error_prev",
         _ => return None,
     })

@@ -350,6 +350,11 @@ impl LineCellsCache {
         &e.lines[i].1
     }
 
+    /// How many lines are indexed — a devtools reading.
+    pub fn lines_indexed(&self) -> usize {
+        self.per.values().map(|e| e.lines.len()).sum()
+    }
+
     /// Once a frame, after the rows: keeps the lines a row asked for.
     pub fn sweep(&mut self) {
         for e in self.per.values_mut() {

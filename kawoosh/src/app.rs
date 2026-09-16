@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use kawoosh_doc::Version;
@@ -65,9 +66,12 @@ pub struct Kawoosh {
     pub(crate) show_tab: Option<&'static str>,
     /// The long lines on show, indexed for their cells (`rows::LineCells`).
     pub(crate) line_cells: rows::LineCellsCache,
-    /// Whether the last frame drew the syntax tab — the panel on and the
-    /// strip on it — which is what `:syntax_tree` toggles against.
-    pub(crate) inspector_shown: bool,
+    /// The Perf tab's readings: the frame's phases, the systems' reports.
+    pub perf: crate::perf::Perf,
+    /// The app's devtools tab the last frame drew, if any — the panel on
+    /// and the strip on it — which is what `:syntax_tree` and `:perf`
+    /// toggle against.
+    pub(crate) tab_shown: Option<&'static str>,
     /// kui's latency HUD — frame times as a graph in the corner —
     /// toggled with `:kui_framerate_hud`.
     pub hud: bool,
@@ -127,8 +131,9 @@ impl Kawoosh {
             devtools_synced: None,
             inspector: Inspector::new(wake.clone()),
             show_tab: None,
-            inspector_shown: false,
+            tab_shown: None,
             line_cells: Default::default(),
+            perf: Default::default(),
             hud: false,
             wake,
             ts_sent: HashMap::new(),
@@ -201,6 +206,11 @@ impl Kawoosh {
     /// answers that came back are applied through the journal.
     pub(crate) fn sync_syntax(&mut self) {
         for a in self.ts.drain() {
+            self.perf.ts_answers += 1;
+            self.perf.ts_last = Some((
+                a.elapsed,
+                self.ed.buffers.get(a.buffer).map_or(0, |b| b.len()),
+            ));
             if let Some(b) = self.ed.buffers.get_mut(a.buffer) {
                 for u in a.updates {
                     let _ = b.apply(u);
@@ -647,11 +657,17 @@ impl Kawoosh {
                 };
                 self.ed.message = format!("kui {what} {}", if on { "on" } else { "off" });
             }
-            // The syntax tab of the devtools: shown, with the panel if it
-            // was off; shown already, the panel closes — a toggle, like
-            // the instruments. `on` / `off` set.
-            "syntax_tree" => {
-                let showing = self.devtools && self.inspector_shown;
+            // A tab of the devtools — the syntax tree, the perf readings:
+            // shown, with the panel if it was off; shown already, the
+            // panel closes — a toggle, like the instruments. `on` / `off`
+            // set.
+            "syntax_tree" | "perf" => {
+                let (tab, what) = if name == "perf" {
+                    (crate::perf::TAB, "perf")
+                } else {
+                    (crate::inspector::TAB, "syntax tree")
+                };
+                let showing = self.devtools && self.tab_shown == Some(tab);
                 let on = match args.first().map(String::as_str) {
                     Some("on" | "1" | "true") => true,
                     Some("off" | "0" | "false") => false,
@@ -659,11 +675,11 @@ impl Kawoosh {
                 };
                 if on {
                     self.devtools = true;
-                    self.show_tab = Some(crate::inspector::TAB);
+                    self.show_tab = Some(tab);
                 } else {
                     self.devtools = false;
                 }
-                self.ed.message = format!("syntax tree {}", if on { "on" } else { "off" });
+                self.ed.message = format!("{what} {}", if on { "on" } else { "off" });
             }
             "scrollback" => {
                 if let Some(t) = self.term_of(self.layout.focused()) {
@@ -1103,13 +1119,23 @@ impl kui::App for Kawoosh {
     }
 
     fn view(&mut self, ui: &mut Ui<'_>) {
+        use crate::perf::ms;
+        let frame_started = Instant::now();
+        let t = Instant::now();
         self.drain_io();
+        self.perf.cur.io = ms(t);
+        let t = Instant::now();
         self.sync_syntax();
+        self.perf.cur.syntax = ms(t);
+        let t = Instant::now();
         self.sync_lsp();
+        self.perf.cur.lsp = ms(t);
+        let t = Instant::now();
         self.drain_lua();
         if let Some(rt) = self.scripting.rt.clone() {
             rt.publish(&self.ed, self.focused_view());
         }
+        self.perf.cur.lua = ms(t);
         if self.quit {
             if !self.session_saved {
                 self.save_session();
@@ -1129,9 +1155,10 @@ impl kui::App for Kawoosh {
         if let Some(tab) = self.show_tab.take() {
             ui.core().set_devtools_tab(tab);
         }
-        // The syntax tab: declared every frame, drawn while on show, as
-        // a layer over the panel's tab body (kui ADR 0032).
+        // The syntax and perf tabs: declared every frame, drawn while on
+        // show, as a layer over the panel's tab body (kui ADR 0032).
         self.syntax_tab(ui);
+        self.perf_tab(ui);
         let m = ui.measure_text("M", &rows::mono(self.font, &pal), None);
         self.cell = (m.width.max(1.0), LH);
         if let Some(text) = self.clip_out.take() {
@@ -1158,12 +1185,14 @@ impl kui::App for Kawoosh {
                     } else {
                         0.0
                     };
+                    let t = Instant::now();
                     ui.with(
                         NodeSpec::column()
                             .width(Sizing::Grow(1.0))
                             .height(Sizing::Grow(1.0)),
                         |ui| self.render_node(ui, &root, ""),
                     );
+                    self.perf.cur.rows = ms(t);
                     if let Some(d) = dock {
                         let divider = ui.child_key("dockdiv");
                         let active = ui.is_hovered(divider)
@@ -1197,6 +1226,7 @@ impl kui::App for Kawoosh {
             self.command_line(ui);
         });
         self.line_cells.sweep();
+        self.perf.end_frame(ms(frame_started));
         if self.hud {
             kui::widgets::latency_hud(ui);
         }

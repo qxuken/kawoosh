@@ -198,6 +198,46 @@ fn the_block_caret_is_solid_and_only_the_bar_arms_the_blink_clock() {
 }
 
 #[test]
+fn perf_is_a_tab_of_readings() {
+    let mut app = Kawoosh::new("t", DOC);
+    let mut d = Drive::new(900.0, 600.0);
+    d.frame(&mut app);
+    d.keys(&mut app, ":perf");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(app.devtools && d.core.devtools());
+    assert_eq!(d.core.devtools_current_tab(), "perf");
+    assert_eq!(app.ed.message, "perf on");
+    let texts: Vec<String> = d.core.nodes().iter().filter_map(|n| n.text.clone()).collect();
+    let has = |s: &str| texts.iter().any(|t| t.contains(s));
+    // The three sections, a phase, the process's footprint, the buffer.
+    assert!(has("frame · view"), "{texts:?}");
+    assert!(has("rows") && has("view"), "{texts:?}");
+    assert!(has("process"), "{texts:?}");
+    let process = texts.iter().find(|t| t.contains("resident")).expect("a footprint");
+    assert!(process.contains("MB") || process.contains("GB"), "{process}");
+    assert!(has("focused") && has("t"), "{texts:?}");
+    assert!(has("lines") && has("pieces"), "{texts:?}");
+    // The other tab still toggles against its own showing: `:syntax_tree`
+    // opens on the tree, and a second `:perf` closes the panel.
+    d.keys(&mut app, ":syntax_tree");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(d.core.devtools_current_tab(), "syntax");
+    d.keys(&mut app, ":perf");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(d.core.devtools_current_tab(), "perf");
+    d.frame(&mut app);
+    d.keys(&mut app, ":perf");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!app.devtools);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
 fn a_long_line_scrolls_sideways_to_the_caret_and_never_wraps() {
     let doc = format!("{}\njj\n", "j".repeat(60));
     let mut app = Kawoosh::new("t", &doc);

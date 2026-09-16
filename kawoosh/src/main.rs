@@ -121,7 +121,8 @@ pane prefix (ctrl-w . sends a literal ^W), ctrl-\\ ctrl-n opens the
 scrollback as a buffer, and ctrl/cmd-click on src/main.rs:42 opens it.
 $EDITOR inside a terminal opens a pane here and waits.
 kui's instruments: :kui_debugger (F12) and :kui_framerate_hud;
-:syntax_tree opens it on the buffer's tree-sitter tree.
+:syntax_tree opens it on the buffer's tree-sitter tree, :perf on what
+a frame and the systems cost and what the process holds.
 
 Every visible line is a row holding one rich text of spans; the row is the layout.
 ";

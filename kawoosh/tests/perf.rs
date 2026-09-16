@@ -15,6 +15,25 @@ fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1e3
 }
 
+/// The bundled face, as `main.rs` loads it — the rows name it by id, and
+/// the shaper's cost depends on it (a generic monospace family takes
+/// cosmic-text's fallback scan, a named one does not).
+fn load_fonts(d: &mut Drive, app: &mut Kawoosh) {
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts/IosevkaNavcon");
+    let n = d.core.load_fonts_dir(&dir);
+    let family = d
+        .core
+        .system_font_families()
+        .into_iter()
+        .find(|f| f.contains("Iosevka"));
+    app.font = family.and_then(|f| d.core.add_system_font(&f));
+    eprintln!(
+        "fonts: {n} faces loaded, iosevka {}",
+        if app.font.is_some() { "on" } else { "missing" }
+    );
+}
+
 #[test]
 #[ignore]
 fn keystroke_cost() {
@@ -22,8 +41,67 @@ fn keystroke_cost() {
         eprintln!("KAWOOSH_PERF_FILE not set");
         return;
     };
+    // `KAWOOSH_PERF_OPEN=1`: the open, then the moves a reader makes —
+    // pages down, the end, the top, a search — with the footprint at
+    // each step. For a file too big to also edit.
+    if std::env::var("KAWOOSH_PERF_OPEN").is_ok() {
+        let mem = || kawoosh::perf::bytes(kawoosh::perf::read_mem().resident);
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        eprintln!(
+            "file {} ({}), resident before {}",
+            path,
+            kawoosh::perf::bytes(size),
+            mem()
+        );
+        let t = Instant::now();
+        let mut app = Kawoosh::from_file(std::path::Path::new(&path));
+        eprintln!("open        {:8.1} ms   resident {}", ms(t), mem());
+        let mut d = Drive::new(1100.0, 760.0);
+        load_fonts(&mut d, &mut app);
+        let t = Instant::now();
+        d.frame(&mut app);
+        eprintln!("first frame {:8.1} ms   resident {}", ms(t), mem());
+        let v = app.focused_view().unwrap();
+        let buf = app.ed.buffer_of(v);
+        eprintln!(
+            "{} bytes, {} lines, {} pieces",
+            buf.len(),
+            buf.line_count(),
+            buf.piece_count()
+        );
+        let step = |d: &mut Drive,
+                    app: &mut Kawoosh,
+                    label: &str,
+                    f: &dyn Fn(&mut Drive, &mut Kawoosh)| {
+            let t = Instant::now();
+            f(d, app);
+            eprintln!("{label:<28} {:8.1} ms   resident {}", ms(t), mem());
+        };
+        step(&mut d, &mut app, "20 × ctrl-d", &|d, app| {
+            for _ in 0..20 {
+                d.ctrl(app, "d");
+            }
+        });
+        step(&mut d, &mut app, "G (end)", &|d, app| d.keys(app, "G"));
+        step(&mut d, &mut app, "20 × ctrl-u", &|d, app| {
+            for _ in 0..20 {
+                d.ctrl(app, "u");
+            }
+        });
+        step(&mut d, &mut app, "gg (top)", &|d, app| d.keys(app, "gg"));
+        step(&mut d, &mut app, "50% (middle)", &|d, app| {
+            d.keys(app, "50%")
+        });
+        step(&mut d, &mut app, "10 × j", &|d, app| {
+            d.keys(app, "jjjjjjjjjj")
+        });
+        step(&mut d, &mut app, "x (one edit)", &|d, app| d.keys(app, "x"));
+        step(&mut d, &mut app, "u (undo)", &|d, app| d.keys(app, "u"));
+        return;
+    }
     let mut app = Kawoosh::from_file(std::path::Path::new(&path));
     let mut d = Drive::new(1100.0, 760.0);
+    load_fonts(&mut d, &mut app);
     // As `main.rs` runs it: Lua attached, the store open, the config in.
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
@@ -94,7 +172,12 @@ fn keystroke_cost() {
         eprintln!("looping {n} × {keys:?}, pid {}", std::process::id());
         let t = Instant::now();
         for _ in 0..n {
-            d.keys(&mut app, &keys);
+            // `^d` spells a control key.
+            if let Some(k) = keys.strip_prefix('^') {
+                d.ctrl(&mut app, k);
+            } else {
+                d.keys(&mut app, &keys);
+            }
         }
         eprintln!("{n} × {keys:?}: {:.2} ms each", ms(t) / n as f64);
         return;

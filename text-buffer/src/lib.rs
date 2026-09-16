@@ -48,6 +48,9 @@ struct Metadata {
     length: usize,
     newlines: usize,
     own_newlines: usize,
+    /// Nodes in the subtree, this one included — a reading for the
+    /// devtools, kept here so it costs no walk.
+    pieces: usize,
 }
 
 impl Metadata {
@@ -63,6 +66,7 @@ impl Metadata {
             length: own_length + left_length + right_length,
             newlines: own_newlines + left_newlines + right_newlines,
             own_newlines,
+            pieces: 1 + left.map_or(0, |m| m.pieces) + right.map_or(0, |m| m.pieces),
         }
     }
 }
@@ -266,6 +270,12 @@ impl Buffer {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// How many pieces the text is in: one per block written since the
+    /// last coalescing, plus the splits edits made. A devtools reading.
+    pub fn piece_count(&self) -> usize {
+        self.root.node().map_or(0, |n| n.meta.pieces)
     }
 
     pub fn newline_count(&self) -> usize {

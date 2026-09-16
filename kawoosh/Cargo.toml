@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
+default-run = "kawoosh"
 
 [dependencies]
 text-buffer.workspace = true
@@ -25,3 +26,8 @@ unicode-width.workspace = true
 anyhow.workspace = true
 log.workspace = true
 env_logger.workspace = true
+libc = "0.2"
+
+[[bin]]
+name = "kawoosh-gen"
+path = "src/bin/gen.rs"

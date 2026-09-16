@@ -65,7 +65,8 @@ type Key = (BufferId, Version, u64, bool);
 /// loop is woken when the rows are ready.
 struct Worker {
     jobs: Sender<(Key, Tree, HashSet<usize>, bool)>,
-    answers: Receiver<(Key, Vec<Row>)>,
+    /// The rows, and what the walk took.
+    answers: Receiver<(Key, Vec<Row>, std::time::Duration)>,
 }
 
 impl Worker {
@@ -82,10 +83,9 @@ impl Worker {
                         job = next;
                     }
                     let (key, tree, folded, anonymous) = job;
-                    if answer_tx
-                        .send((key, flatten(&tree, &folded, anonymous)))
-                        .is_err()
-                    {
+                    let started = std::time::Instant::now();
+                    let rows = flatten(&tree, &folded, anonymous);
+                    if answer_tx.send((key, rows, started.elapsed())).is_err() {
                         return;
                     }
                     wake.wake();
@@ -113,6 +113,9 @@ pub struct Inspector {
     /// A build under way on the worker, by key; the rows shown meanwhile
     /// are the last ones built.
     in_flight: Option<Key>,
+    /// The last build's time and row count, in the frame or on the
+    /// worker — the Perf tab's reading.
+    pub last_build: Option<(std::time::Duration, usize)>,
     worker: Option<Worker>,
     /// What wakes the loop when the worker answers.
     wake: WakeHandle,
@@ -150,7 +153,8 @@ impl Inspector {
         while let Ok(a) = w.answers.try_recv() {
             latest = Some(a);
         }
-        if let Some((key, rows)) = latest {
+        if let Some((key, rows, took)) = latest {
+            self.last_build = Some((took, rows.len()));
             self.rows = rows;
             self.built = Some(key);
             if self.in_flight == Some(key) {
@@ -196,7 +200,9 @@ impl Inspector {
             return;
         }
         if tree.root_node().descendant_count() <= SYNC_MAX_NODES {
+            let started = std::time::Instant::now();
             self.rows = flatten(tree, &self.folded, self.anonymous);
+            self.last_build = Some((started.elapsed(), self.rows.len()));
             self.built = Some(key);
             self.in_flight = None;
             self.resolve_reveal();
@@ -305,12 +311,14 @@ fn flatten(tree: &Tree, folded: &HashSet<usize>, anonymous: bool) -> Vec<Row> {
 impl Kawoosh {
     /// Declares the tab every frame and draws it while it is on show.
     pub(crate) fn syntax_tab(&mut self, ui: &mut Ui<'_>) {
-        self.inspector_shown = false;
+        if self.tab_shown == Some(TAB) {
+            self.tab_shown = None;
+        }
         ui.devtools_tab_with(TAB, "Syntax", |ui| self.syntax_body(ui));
     }
 
     fn syntax_body(&mut self, ui: &mut Ui<'_>) {
-        self.inspector_shown = true;
+        self.tab_shown = Some(TAB);
         let pal = self.pal;
         let font = self.font;
         let style = || {
