@@ -4,10 +4,19 @@ use std::sync::Arc;
 use derive_more::{AsMut, AsRef, Deref, DerefMut};
 
 const BUFFER_MAX_PIECE_BYTES: usize = 2048;
+/// The pieces a whole text is cut into when it is taken as one block
+/// ([`Buffer::from_bytes`]): eight times an edit's, since a piece is a
+/// node and a ten-gigabyte file at 2 KB a piece is five million of them;
+/// a line lookup inside a piece scans at most this much.
+const INITIAL_PIECE_BYTES: usize = 16 * 1024;
 
 const _: () = assert!(
     BUFFER_MAX_PIECE_BYTES <= u16::MAX as usize,
     "`Piece::length` is too small for `BUFFER_MAX_PIECE_BYTES`"
+);
+const _: () = assert!(
+    INITIAL_PIECE_BYTES <= u16::MAX as usize,
+    "`Piece::length` is too small for `INITIAL_PIECE_BYTES`"
 );
 
 // A clone is a snapshot, and snapshots must be free to cross threads so
@@ -133,18 +142,77 @@ pub struct Buffer {
     priority_seed: u64,
 }
 
+/// An in-order (or reverse) walk over a buffer's pieces, by an explicit
+/// stack — a ten-gigabyte text is five million pieces.
+struct Pieces<'a> {
+    stack: Vec<&'a Node>,
+    rev: bool,
+}
+
+impl<'a> Pieces<'a> {
+    fn descend(&mut self, mut link: &'a Link) {
+        while let Some(node) = link.node() {
+            self.stack.push(node);
+            link = if self.rev { &node.right } else { &node.left };
+        }
+    }
+}
+
+impl<'a> Iterator for Pieces<'a> {
+    /// The block (by identity), the piece's start in it, and its bytes.
+    type Item = (&'a Vec<u8>, usize, &'a [u8]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = self.stack.pop()?;
+        self.descend(if self.rev { &node.left } else { &node.right });
+        Some((&*node.piece.block, node.piece.start, node.piece.bytes()))
+    }
+}
+
 impl Buffer {
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn with_text(text: &[u8]) -> Self {
+        Self::from_bytes(text.to_vec())
+    }
+
+    /// A buffer over `bytes` as its one block, no copy made: a file just
+    /// read is the text, and its pieces — [`INITIAL_PIECE_BYTES`] each —
+    /// are built into a balanced tree in one pass rather than merged one
+    /// at a time. The priorities run down from the root, so the heap
+    /// order holds and an edit's random one slots in where it falls.
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
         let mut buf = Buffer::default();
-        if !text.is_empty() {
-            let block = Arc::new(text.to_vec());
-            buf.root = buf.build_piece_tree(&block, text.len());
+        if bytes.is_empty() {
+            return buf;
         }
+        let len = bytes.len();
+        let block = Arc::new(bytes);
+        let pieces = len.div_ceil(INITIAL_PIECE_BYTES);
+        buf.root = Self::build_balanced(&block, len, 0, pieces, u64::MAX);
         buf
+    }
+
+    /// Pieces `[lo, hi)` of `block` as a balanced subtree whose root has
+    /// `priority`, its children less.
+    fn build_balanced(block: &Arc<Vec<u8>>, len: usize, lo: usize, hi: usize, priority: u64) -> Link {
+        if lo >= hi {
+            return Link::none();
+        }
+        let mid = lo + (hi - lo) / 2;
+        let start = mid * INITIAL_PIECE_BYTES;
+        let piece = Piece {
+            block: Arc::clone(block),
+            start,
+            length: (len - start).min(INITIAL_PIECE_BYTES) as u16,
+        };
+        let own_newlines = piece.newlines();
+        let below = priority / 2;
+        let left = Self::build_balanced(block, len, lo, mid, below);
+        let right = Self::build_balanced(block, len, mid + 1, hi, below.wrapping_sub(1));
+        Link::leaf(Arc::new(Node::new(piece, priority, left, right, own_newlines)))
     }
 
     pub fn reset(&mut self) {
@@ -270,6 +338,85 @@ impl Buffer {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// The pieces in order — `(block, start in block, bytes)`, the block
+    /// by identity — for a walk that can tell two buffers share a piece
+    /// without reading it. `rev` walks from the end.
+    fn pieces(&self, rev: bool) -> Pieces<'_> {
+        let mut it = Pieces {
+            stack: Vec::new(),
+            rev,
+        };
+        it.descend(&self.root);
+        it
+    }
+
+    /// The longest common prefix of `self` and `other`, in bytes. Pieces
+    /// both hold from one block at one offset are equal without a byte
+    /// read, which is most of what an undo's snapshot and the text it
+    /// came from share; the rest is compared.
+    pub fn common_prefix(&self, other: &Buffer) -> usize {
+        Self::common(self.pieces(false), other.pieces(false), false)
+    }
+
+    /// The longest common suffix, in bytes, of the two texts past their
+    /// first `skip` bytes — the prefix already matched, so the two do
+    /// not overlap.
+    pub fn common_suffix(&self, other: &Buffer, skip: usize) -> usize {
+        let room = self.len().min(other.len()).saturating_sub(skip);
+        Self::common(self.pieces(true), other.pieces(true), true).min(room)
+    }
+
+    fn common(mut a: Pieces<'_>, mut b: Pieces<'_>, rev: bool) -> usize {
+        let mut matched = 0;
+        let (mut pa, mut pb) = (a.next(), b.next());
+        // What is left of each piece: `(block, start, bytes)`, cut from
+        // the front (or the back, walking in reverse) as it is consumed.
+        loop {
+            let (Some(x), Some(y)) = (pa.as_mut(), pb.as_mut()) else {
+                return matched;
+            };
+            if x.2.is_empty() {
+                pa = a.next();
+                continue;
+            }
+            if y.2.is_empty() {
+                pb = b.next();
+                continue;
+            }
+            let n = x.2.len().min(y.2.len());
+            let same_place = if rev {
+                std::ptr::eq(x.0, y.0) && x.1 + x.2.len() == y.1 + y.2.len()
+            } else {
+                std::ptr::eq(x.0, y.0) && x.1 == y.1
+            };
+            let (xs, ys) = if rev {
+                (&x.2[x.2.len() - n..], &y.2[y.2.len() - n..])
+            } else {
+                (&x.2[..n], &y.2[..n])
+            };
+            let eq = if same_place {
+                n
+            } else if rev {
+                xs.iter().rev().zip(ys.iter().rev()).take_while(|(p, q)| p == q).count()
+            } else {
+                xs.iter().zip(ys).take_while(|(p, q)| p == q).count()
+            };
+            matched += eq;
+            if eq < n {
+                return matched;
+            }
+            if rev {
+                x.2 = &x.2[..x.2.len() - n];
+                y.2 = &y.2[..y.2.len() - n];
+            } else {
+                x.1 += n;
+                x.2 = &x.2[n..];
+                y.1 += n;
+                y.2 = &y.2[n..];
+            }
+        }
     }
 
     /// How many pieces the text is in: one per block written since the

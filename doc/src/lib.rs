@@ -301,16 +301,22 @@ impl Buffer {
     }
 
     pub fn from_file(path: &Path) -> std::io::Result<Self> {
-        let bytes = std::fs::read(path)?;
-        let text = String::from_utf8_lossy(&bytes);
+        // The bytes read are the text's one block: a valid file is not
+        // copied again, an invalid one is repaired into a fresh vector.
+        let bytes = match String::from_utf8(std::fs::read(path)?) {
+            Ok(s) => s.into_bytes(),
+            Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned().into_bytes(),
+        };
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
-        let mut buf = Self::new(name, &text);
+        let len = bytes.len();
+        let mut buf = Self::new(name, "");
+        buf.text = text_buffer::Buffer::from_bytes(bytes);
         buf.language = Arc::from(language_of(path));
         buf.path = Some(path.to_path_buf());
-        buf.disk_len = Some(text.len());
+        buf.disk_len = Some(len);
         Ok(buf)
     }
 
@@ -585,9 +591,7 @@ impl Buffer {
     /// until the highlighter answered), and a producer's answer to the
     /// version before is transformed rather than stale.
     pub fn restore(&mut self, root: text_buffer::Buffer) -> Version {
-        let old = self.text.collect();
-        let new = root.collect();
-        let edit = diff_edit(&old, &new);
+        let edit = diff_trees(&self.text, &root);
         self.text = root;
         for (_, layer) in &mut self.layers {
             layer.shift(&edit);
@@ -669,6 +673,26 @@ impl Buffer {
             self.layers.push((name, Layer::default()));
             &mut self.layers.last_mut().unwrap().1
         }
+    }
+}
+
+/// [`diff_edit`] over two piece trees, without collecting either: the
+/// pieces they share are skipped by identity (an undo's snapshot and the
+/// text it came from share all but the edited ones), and the boundary
+/// backs off to a char the way the byte form's does.
+pub fn diff_trees(old: &text_buffer::Buffer, new: &text_buffer::Buffer) -> Edit {
+    let is_boundary = |b: Option<u8>| b.is_none_or(|b| (b & 0xC0) != 0x80);
+    let mut prefix = old.common_prefix(new);
+    while prefix > 0 && !is_boundary(old.byte_at(prefix)) {
+        prefix -= 1;
+    }
+    let mut suffix = old.common_suffix(new, prefix);
+    while suffix > 0 && !is_boundary(old.byte_at(old.len() - suffix)) {
+        suffix -= 1;
+    }
+    Edit {
+        range: prefix..old.len() - suffix,
+        new_len: new.len() - prefix - suffix,
     }
 }
 
@@ -939,6 +963,57 @@ mod tests {
                 .cloned()
                 .collect();
             assert_eq!(layer.query(&q), want, "query {q:?} in round {round}");
+        }
+    }
+
+    /// `diff_trees` answers what `diff_edit` does over the collected
+    /// bytes — on trees that share most pieces (an undo's), on ones that
+    /// share none (a reload's), with multi-byte chars at the edges — and
+    /// so `restore` journals the same edit it did before it stopped
+    /// collecting the two texts.
+    #[test]
+    fn diff_trees_matches_diff_edit() {
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = |n: usize| -> usize {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n.max(1) as u64) as usize
+        };
+        let pieces = ["ab", "cé", "ф", "\n", "日本", "x"];
+        let mut text = String::new();
+        for _ in 0..6000 {
+            text.push_str(pieces[next(pieces.len())]);
+        }
+        let mut b = Buffer::new("t", &text);
+        for round in 0..300 {
+            let snapshot = b.text_root();
+            let before = snapshot.collect();
+            // One to four edits at arbitrary bytes (the diff is over
+            // bytes; a split char is a case, not a fault), then the diff
+            // of the two trees against the diff of the two byte strings.
+            for _ in 0..1 + next(4) {
+                let len = b.len();
+                let at = next(len + 1);
+                let end = (at + next(6)).min(len);
+                let ins = pieces[next(pieces.len())];
+                b.replace(at..end, if next(3) == 0 { "" } else { ins });
+            }
+            let after = b.text_root().collect();
+            let want = diff_edit(&after, &before);
+            let got = diff_trees(&b.text_root(), &snapshot);
+            assert_eq!(got, want, "round {round}");
+            // And the whole-text case: nothing shared.
+            let other = text_buffer::Buffer::with_text(&before);
+            assert_eq!(
+                diff_trees(&b.text_root(), &other),
+                want,
+                "round {round}, unshared"
+            );
+            if round % 7 == 0 {
+                b.restore(snapshot);
+                assert_eq!(b.text_root().collect(), before);
+            }
         }
     }
 
