@@ -1,3 +1,18 @@
+//! A persistent piece table: the text is a treap of pieces, each a slice
+//! of an immutable block — the file as read or mapped (the *original*),
+//! the *add buffer* small edits go into (in chunks, a piece growing over
+//! the bytes typed after it), or a block of its own for a big insert.
+//! A clone is a snapshot, so an undo's checkpoint and a parser's copy
+//! share every node and block with the live text; an edit copies a path.
+//!
+//! What an edit costs in pieces: typing at one place grows one piece;
+//! typing somewhere else, or after a backspace, starts another (the
+//! bytes a snapshot may still read cannot be written over); an erase
+//! inside a piece splits it in two; an erase at a piece's edge shrinks
+//! it. A piece is a node, so a long session accretes them the way every
+//! piece table does, and a whole-file edit rebuilds the tree in one pass
+//! ([`Buffer::replace_bulk`]).
+
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -264,6 +279,12 @@ impl Node {
 pub struct Buffer {
     root: Link,
     priority_seed: u64,
+    /// The add buffer the next small insert goes into — the piece
+    /// table's second block, in chunks: a run of typing grows its piece
+    /// over it, and a run elsewhere takes the next bytes of the same
+    /// chunk rather than a chunk of its own. A snapshot shares it, which
+    /// is fine: nothing in it is ever changed or moved.
+    add: Option<Arc<Block>>,
 }
 
 /// An in-order (or reverse) walk over a buffer's pieces, by an explicit
@@ -529,15 +550,29 @@ impl Buffer {
             }
         }
 
-        // A small insert — a keystroke, a word — starts an add buffer
-        // the next one at its end can grow into; a big one is its own
+        // A small insert — a keystroke, a word — goes into the add
+        // buffer, the current chunk while it has room, so the next
+        // keystroke at its end can grow the piece; a big one is its own
         // block as it always was.
-        let block = Arc::new(if text.len() <= ADD_CAP / 2 {
-            Block::Add(AddBuf::with(text))
+        let inserted = if text.len() <= ADD_CAP / 2 {
+            let (block, start) = self.add_bytes(text);
+            let piece = Piece {
+                block,
+                start,
+                length: text.len() as u16,
+            };
+            let priority = self.next_priority();
+            Link::leaf(Arc::new(Node::new(
+                piece,
+                priority,
+                Link::none(),
+                Link::none(),
+                memchr::memchr_iter(b'\n', text).count(),
+            )))
         } else {
-            Block::Owned(text.to_vec())
-        });
-        let inserted = self.build_piece_tree(&block, text.len());
+            let block = Arc::new(Block::Owned(text.to_vec()));
+            self.build_piece_tree(&block, text.len())
+        };
 
         let old_root = self.root.clone();
         let (left, right) = self.split(&old_root, offset);
@@ -567,6 +602,23 @@ impl Buffer {
         let (_drop, right) = self.split(&mid, length);
 
         self.root = self.merge(&left, &right);
+    }
+
+    /// `text` appended to the add buffer — the current chunk, or a new
+    /// one when it is full — and where it landed: the block and the
+    /// offset in it, for the piece that will point at it.
+    fn add_bytes(&mut self, text: &[u8]) -> (Arc<Block>, usize) {
+        if let Some(block) = &self.add
+            && let Block::Add(add) = &**block
+        {
+            let at = add.len();
+            if add.append(at, text) {
+                return (Arc::clone(block), at);
+            }
+        }
+        let block = Arc::new(Block::Add(AddBuf::with(text)));
+        self.add = Some(Arc::clone(&block));
+        (block, 0)
     }
 
     /// The tree with the piece holding `target` grown by `text`, if that
@@ -1822,9 +1874,21 @@ mod add_tests {
             }
         });
         assert_eq!(b.piece_count(), base_pieces + 2, "still one piece");
-        // Typing at another place starts a second run; a paste is a block.
+        // Typing at another place is a second run in the same chunk (the
+        // add buffer is one, in chunks); a paste is a block of its own.
         b.insert(0, b"x");
         assert_eq!(b.piece_count(), base_pieces + 3);
+        {
+            let (_, run) = b.piece_at(6).unwrap();
+            let (_, x) = b.piece_at(0).unwrap();
+            assert_eq!(x, b"x");
+            let run_ptr = run.as_ptr() as usize;
+            let x_ptr = x.as_ptr() as usize;
+            assert!(
+                x_ptr > run_ptr && x_ptr - run_ptr < ADD_CAP,
+                "one chunk, the run then the x"
+            );
+        }
         b.insert(0, &vec![b'y'; ADD_CAP]);
         assert_eq!(
             b.piece_count(),
@@ -1832,6 +1896,35 @@ mod add_tests {
             "a big insert is a block of its own"
         );
         assert!(matches!(b.piece_at(0).unwrap().1, [b'y', ..]));
+        // An erase: inside a piece splits it, at its end shrinks it, and
+        // typing after a backspace is a new run (the bytes behind the
+        // piece's old end may be a snapshot's).
+        let mut e = Buffer::with_text(b"");
+        for (i, c) in b"hello world".iter().enumerate() {
+            e.insert(i, &[*c]);
+        }
+        assert_eq!(e.piece_count(), 1);
+        e.erase(e.len() - 1, 1);
+        assert_eq!(
+            (e.piece_count(), e.len()),
+            (1, 10),
+            "backspace shrinks the piece"
+        );
+        e.erase(2, 1);
+        assert_eq!(
+            (e.piece_count(), e.len()),
+            (2, 9),
+            "a delete inside splits it"
+        );
+        assert_eq!(e.collect(), b"helo worl");
+        e.insert(e.len(), b"d");
+        assert_eq!(
+            e.piece_count(),
+            3,
+            "typing after the backspace is a new run"
+        );
+        e.insert(e.len(), b"!");
+        assert_eq!(e.piece_count(), 3, "which then grows");
         // A run that fills its buffer goes on in a new one.
         let mut c = Buffer::with_text(b"");
         for i in 0..ADD_CAP + 10 {
