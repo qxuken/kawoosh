@@ -44,6 +44,10 @@ const _: () = {
 pub enum Block {
     Owned(Vec<u8>),
     Mapped(memmap2::Mmap),
+    /// The add buffer of a piece table: typing appends here, and the
+    /// piece being typed into grows over the appended bytes instead of a
+    /// piece per keystroke (see [`AddBuf`]).
+    Add(AddBuf),
 }
 
 impl Block {
@@ -51,11 +55,98 @@ impl Block {
         match self {
             Block::Owned(v) => v,
             Block::Mapped(m) => m,
+            Block::Add(a) => a.bytes(),
         }
     }
 
     fn len(&self) -> usize {
         self.bytes().len()
+    }
+}
+
+/// How much an [`AddBuf`] holds: a run of typing at one place, before
+/// the next run starts another. Small, since one is made for every
+/// place typed at; a piece's most, so a run is one piece to its end.
+const ADD_CAP: usize = BUFFER_MAX_PIECE_BYTES;
+
+/// An append-only block: fixed capacity, bytes written once past a
+/// published length and never moved or changed — so a piece that ends
+/// at the block's end can grow over the next keystroke's bytes while a
+/// snapshot's piece, and a thread reading it, keep the shorter length
+/// and see nothing of the append. This is what lets typing coalesce
+/// into one piece when the tree is shared: the persistent tree copies
+/// the path to the piece (the snapshot keeps its own), but the bytes
+/// need no copy.
+///
+/// The soundness argument, since this is the one `unsafe` in the crate:
+/// the buffer never reallocates (a `Box<[_]>` at its final size), a
+/// reader takes `[..len]` at the length it loaded (`Acquire`), a writer
+/// fills `[len..len + n]` and only then publishes the new length
+/// (`Release`), and appends are serialised by a lock — so no byte is
+/// ever read and written at once, and no byte a reader has seen is
+/// written again.
+pub struct AddBuf {
+    cells: Box<[std::cell::UnsafeCell<u8>]>,
+    len: std::sync::atomic::AtomicUsize,
+    append: std::sync::Mutex<()>,
+}
+
+// SAFETY: see the type's doc — disjoint reads and writes, publication
+// ordered by the atomic, appends under the lock.
+unsafe impl Sync for AddBuf {}
+unsafe impl Send for AddBuf {}
+
+impl std::fmt::Debug for AddBuf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AddBuf")
+            .field("len", &self.len())
+            .field("cap", &self.cells.len())
+            .finish()
+    }
+}
+
+impl AddBuf {
+    fn with(text: &[u8]) -> Self {
+        let cap = ADD_CAP.max(text.len());
+        let cells: Box<[std::cell::UnsafeCell<u8>]> =
+            (0..cap).map(|_| std::cell::UnsafeCell::new(0)).collect();
+        let buf = Self {
+            cells,
+            len: std::sync::atomic::AtomicUsize::new(0),
+            append: std::sync::Mutex::new(()),
+        };
+        assert!(buf.append(0, text));
+        buf
+    }
+
+    fn len(&self) -> usize {
+        self.len.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn bytes(&self) -> &[u8] {
+        let n = self.len();
+        // SAFETY: `[..n]` was written before `n` was published and is
+        // never written again; the pointer is to `n` initialised bytes.
+        unsafe { std::slice::from_raw_parts(self.cells.as_ptr().cast::<u8>(), n) }
+    }
+
+    /// Appends `text` if the block's end is still `at` — the caller's
+    /// piece ends there — and it fits. Says whether it did.
+    fn append(&self, at: usize, text: &[u8]) -> bool {
+        let _guard = self.append.lock().unwrap_or_else(|e| e.into_inner());
+        let len = self.len();
+        if at != len || len + text.len() > self.cells.len() {
+            return false;
+        }
+        for (i, b) in text.iter().enumerate() {
+            // SAFETY: `[len..len + text.len()]` is past every published
+            // length, so nothing reads it, and the lock keeps a second
+            // appender out.
+            unsafe { *self.cells[len + i].get() = *b };
+        }
+        self.len
+            .store(len + text.len(), std::sync::atomic::Ordering::Release);
+        true
     }
 }
 
@@ -426,8 +517,26 @@ impl Buffer {
         if self.try_extend_last_piece(offset, text) {
             return;
         }
+        // The piece before `offset` ends at its add buffer's end: the
+        // buffer takes the bytes and the piece grows over them, along a
+        // copied path — one piece for a run of typing, however many
+        // snapshots hold the tree meanwhile.
+        if offset > 0 {
+            let newlines = memchr::memchr_iter(b'\n', text).count();
+            if let Some(root) = Self::grown(&self.root, offset - 1, 0, text, newlines) {
+                self.root = root;
+                return;
+            }
+        }
 
-        let block = Arc::new(Block::Owned(text.to_vec()));
+        // A small insert — a keystroke, a word — starts an add buffer
+        // the next one at its end can grow into; a big one is its own
+        // block as it always was.
+        let block = Arc::new(if text.len() <= ADD_CAP / 2 {
+            Block::Add(AddBuf::with(text))
+        } else {
+            Block::Owned(text.to_vec())
+        });
         let inserted = self.build_piece_tree(&block, text.len());
 
         let old_root = self.root.clone();
@@ -458,6 +567,67 @@ impl Buffer {
         let (_drop, right) = self.split(&mid, length);
 
         self.root = self.merge(&left, &right);
+    }
+
+    /// The tree with the piece holding `target` grown by `text`, if that
+    /// piece ends at `target` and at the end of an add buffer with room:
+    /// the path to it copied, the rest shared, the buffer appended to.
+    /// `None` leaves the buffer untouched.
+    fn grown(
+        link: &Link,
+        target: usize,
+        base: usize,
+        text: &[u8],
+        newlines: usize,
+    ) -> Option<Link> {
+        let node = link.node()?;
+        let node_start = base + node.left.length();
+        let node_end = node_start + node.piece.len();
+        let (piece, own_newlines, left, right) = if target < node_start {
+            let left = Self::grown(&node.left, target, base, text, newlines)?;
+            (
+                node.piece.clone(),
+                node.meta.own_newlines,
+                left,
+                node.right.clone(),
+            )
+        } else if target >= node_end {
+            let right = Self::grown(&node.right, target, node_end, text, newlines)?;
+            (
+                node.piece.clone(),
+                node.meta.own_newlines,
+                node.left.clone(),
+                right,
+            )
+        } else {
+            if target != node_end - 1 || node.piece.len() + text.len() > u16::MAX as usize {
+                return None;
+            }
+            let Block::Add(add) = &*node.piece.block else {
+                return None;
+            };
+            if !add.append(node.piece.start + node.piece.len(), text) {
+                return None;
+            }
+            let piece = Piece {
+                block: Arc::clone(&node.piece.block),
+                start: node.piece.start,
+                length: (node.piece.len() + text.len()) as u16,
+            };
+            (
+                piece,
+                node.meta.own_newlines + newlines,
+                node.left.clone(),
+                node.right.clone(),
+            )
+        };
+        Some(Link::leaf(Arc::new(Node::new(
+            piece,
+            node.priority,
+            left,
+            right,
+            own_newlines,
+        ))))
     }
 
     fn try_extend_last_piece(&mut self, offset: usize, text: &[u8]) -> bool {
@@ -1605,6 +1775,71 @@ pub fn is_utf8(bytes: &[u8]) -> bool {
         }
     });
     ok.into_inner()
+}
+
+#[cfg(test)]
+mod add_tests {
+    use super::*;
+
+    /// Typing one byte at a time, a snapshot taken after each (the undo
+    /// history's, the parser's), stays one piece: the add buffer grows
+    /// under the piece and the snapshots keep their lengths. Typing
+    /// elsewhere starts another; a big insert is its own block.
+    #[test]
+    fn typing_under_snapshots_is_one_piece() {
+        let mut b = Buffer::with_text(b"hello world");
+        let base_pieces = b.piece_count();
+        let mut snaps = vec![b.clone()];
+        let typed = "the quick brown fox\njumps over it";
+        for (i, c) in typed.bytes().enumerate() {
+            b.insert(5 + i, &[c]);
+            snaps.push(b.clone());
+        }
+        // The original split around the run, and the run itself.
+        assert_eq!(b.piece_count(), base_pieces + 2, "one piece for the run");
+        assert_eq!(b.collect(), format!("hello{typed} world").into_bytes());
+        assert_eq!(b.newline_count(), 1);
+        // Every snapshot still reads as it did.
+        for (i, s) in snaps.iter().enumerate() {
+            assert_eq!(
+                s.collect(),
+                format!("hello{} world", &typed[..i]).into_bytes()
+            );
+        }
+        // A reader on another thread through the run's snapshot, while
+        // the typing goes on.
+        let snap = snaps[10].clone();
+        let expect = snap.collect();
+        std::thread::scope(|sc| {
+            sc.spawn(|| {
+                for _ in 0..1000 {
+                    assert_eq!(snap.collect(), expect);
+                }
+            });
+            for c in b"more and more typing".iter().cycle().take(2000) {
+                let at = b.len() - 6;
+                b.insert(at, &[*c]);
+            }
+        });
+        assert_eq!(b.piece_count(), base_pieces + 2, "still one piece");
+        // Typing at another place starts a second run; a paste is a block.
+        b.insert(0, b"x");
+        assert_eq!(b.piece_count(), base_pieces + 3);
+        b.insert(0, &vec![b'y'; ADD_CAP]);
+        assert_eq!(
+            b.piece_count(),
+            base_pieces + 4,
+            "a big insert is a block of its own"
+        );
+        assert!(matches!(b.piece_at(0).unwrap().1, [b'y', ..]));
+        // A run that fills its buffer goes on in a new one.
+        let mut c = Buffer::with_text(b"");
+        for i in 0..ADD_CAP + 10 {
+            c.insert(i, b"z");
+        }
+        assert_eq!(c.piece_count(), 2);
+        assert_eq!(c.len(), ADD_CAP + 10);
+    }
 }
 
 #[cfg(test)]

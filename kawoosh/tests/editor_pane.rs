@@ -533,3 +533,40 @@ fn a_long_line_is_drawn_from_its_window() {
     assert_eq!(d.line_rows()[1], "short");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// Typing in the app — each key its own command, an undo checkpoint
+/// holding the tree between them — grows one piece rather than adding
+/// one per keystroke (the add buffer under a copied path).
+#[test]
+fn typing_a_run_is_one_piece() {
+    let mut app = Kawoosh::new("t", "line one\nline two\n");
+    let mut d = Drive::new(600.0, 300.0);
+    d.frame(&mut app);
+    let pieces = |app: &Kawoosh| app.ed.buffer_of(app.focused_view().unwrap()).piece_count();
+    let before = pieces(&app);
+    d.keys(&mut app, "A");
+    d.text(&mut app, " and some words typed one key at a time");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(
+        pieces(&app),
+        before + 2,
+        "the line's piece split around one run of typing"
+    );
+    d.keys(&mut app, "jI");
+    d.text(&mut app, "start: ");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(
+        pieces(&app),
+        before + 4,
+        "another place, another split and run"
+    );
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).text(),
+        "line one and some words typed one key at a time\nstart: line two\n"
+    );
+    d.keys(&mut app, "u");
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).text(),
+        "line one and some words typed one key at a time\nline two\n"
+    );
+}
