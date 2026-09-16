@@ -48,6 +48,8 @@ pub enum Token {
     Macro,
     Label,
     Constructor,
+    /// A markup element's name — a JSX `<div>`, a CSS `div` selector.
+    Tag,
 }
 
 impl Token {
@@ -68,6 +70,7 @@ impl Token {
         Token::Macro,
         Token::Label,
         Token::Constructor,
+        Token::Tag,
     ];
 
     pub fn from_style(style: u32) -> Token {
@@ -95,6 +98,7 @@ impl Token {
             Token::Macro => "macro",
             Token::Label => "label",
             Token::Constructor => "constructor",
+            Token::Tag => "tag",
         }
     }
 
@@ -119,6 +123,7 @@ impl Token {
             "macro" => Token::Macro,
             "label" => Token::Label,
             "constructor" => Token::Constructor,
+            "tag" => Token::Tag,
             _ => return None,
         })
     }
@@ -136,10 +141,16 @@ pub struct Job {
 
 pub struct Answer {
     pub buffer: BufferId,
+    /// The version the answer is for — the job's snapshot's.
+    pub version: kawoosh_doc::Version,
     /// One update per span whose syntax changed — a multicursor keystroke
     /// answers for each cursor's neighbourhood, not the stretch between
     /// them; a whole parse is one update for the whole.
     pub updates: Vec<Update>,
+    /// The tree the runs were read off, for the shell's syntax inspector:
+    /// a handle over nodes shared with the thread's own copy (a clone is
+    /// a count, not a walk). `None` for a language without a grammar.
+    pub tree: Option<Tree>,
 }
 
 /// How many spans an answer may carry; past that the nearest are joined,
@@ -202,7 +213,10 @@ impl Ts {
     }
 
     pub fn supports(language: &str) -> bool {
-        matches!(language, "rust" | "toml" | "css" | "javascript" | "go")
+        matches!(
+            language,
+            "rust" | "toml" | "css" | "javascript" | "typescript" | "tsx" | "go"
+        )
     }
 }
 
@@ -220,6 +234,8 @@ struct Grammars {
     toml: Option<Grammar>,
     css: Option<Grammar>,
     javascript: Option<Grammar>,
+    typescript: Option<Grammar>,
+    tsx: Option<Grammar>,
     go: Option<Grammar>,
 }
 
@@ -246,6 +262,28 @@ impl Grammars {
                 tree_sitter_javascript::LANGUAGE.into(),
                 tree_sitter_javascript::HIGHLIGHT_QUERY,
             ),
+            // The typescript crate's query is the additions over
+            // javascript's (its `tree-sitter.json` inherits it), so the
+            // one query is javascript's, JSX's for tsx, then typescript's
+            // — later patterns winning, a capitalised identifier reads as
+            // a type rather than a variable.
+            typescript: Grammar::new(
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+                &[
+                    tree_sitter_javascript::HIGHLIGHT_QUERY,
+                    tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                ]
+                .concat(),
+            ),
+            tsx: Grammar::new(
+                tree_sitter_typescript::LANGUAGE_TSX.into(),
+                &[
+                    tree_sitter_javascript::HIGHLIGHT_QUERY,
+                    tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
+                    tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                ]
+                .concat(),
+            ),
             go: Grammar::new(
                 tree_sitter_go::LANGUAGE.into(),
                 tree_sitter_go::HIGHLIGHTS_QUERY,
@@ -259,6 +297,8 @@ impl Grammars {
             "toml" => self.toml.as_ref(),
             "css" => self.css.as_ref(),
             "javascript" => self.javascript.as_ref(),
+            "typescript" => self.typescript.as_ref(),
+            "tsx" => self.tsx.as_ref(),
             "go" => self.go.as_ref(),
             _ => None,
         }
@@ -420,7 +460,7 @@ fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, 
     let text = &job.snapshot.text;
     let len = text.len();
     let mut spans: Vec<Range<usize>> = std::iter::once(0..len).collect();
-    let runs: Vec<Vec<Run>> = match grammars.get(&job.language) {
+    let (runs, tree): (Vec<Vec<Run>>, Option<Tree>) = match grammars.get(&job.language) {
         Some(g) if parser.set_language(&g.language).is_ok() => {
             // The last tree, told the edits, when it is this language's
             // and the journal reached back to it.
@@ -468,21 +508,24 @@ fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, 
                         .iter()
                         .map(|span| capture_runs(g, tree.root_node(), text, span.clone()))
                         .collect();
+                    let handle = tree.clone();
                     parsed
                         .by_buffer
                         .insert(job.buffer, (job.language.clone(), text.clone(), tree));
-                    runs
+                    (runs, Some(handle))
                 }
-                None => vec![Vec::new()],
+                None => (vec![Vec::new()], None),
             }
         }
         _ => {
             parsed.by_buffer.remove(&job.buffer);
-            vec![Vec::new()]
+            (vec![Vec::new()], None)
         }
     };
     Answer {
         buffer: job.buffer,
+        version: job.snapshot.version,
+        tree,
         updates: spans
             .into_iter()
             .zip(runs)
@@ -601,7 +644,7 @@ mod tests {
     /// Each grammar's query compiles and lands the classes a theme
     /// colours: a keyword, a string, a comment, and one of its own.
     #[test]
-    fn toml_css_javascript_and_go_highlight() {
+    fn the_other_grammars_highlight() {
         let mut g = Grammars::load();
         let mut parser = Parser::new();
         type Case = (&'static str, &'static str, &'static [(&'static str, Token)]);
@@ -625,6 +668,36 @@ mod tests {
                 "go",
                 "// c\npackage main\nfunc main() { s := \"x\" }\n",
                 &[("// c", Token::Comment), ("func", Token::Keyword), ("main()", Token::Function), ("\"x\"", Token::String)],
+            ),
+            // typescript: javascript's classes, and its own — a type
+            // name, an `interface`, and a capitalised identifier read
+            // as a type over javascript's bare variable.
+            (
+                "typescript",
+                "// c\ninterface P { n: number }\nfunction f(a: P): string { return \"s\" + Foo; }\n",
+                &[
+                    ("// c", Token::Comment),
+                    ("interface", Token::Keyword),
+                    ("P {", Token::Type),
+                    ("number", Token::Type),
+                    ("function", Token::Keyword),
+                    ("f(", Token::Function),
+                    ("\"s\"", Token::String),
+                    ("Foo", Token::Type),
+                ],
+            ),
+            // tsx: the same, and JSX's tags and attributes.
+            (
+                "tsx",
+                "const a: number = 1;\nconst e = <div className=\"x\"><Item n={a} /></div>;\n",
+                &[
+                    ("const", Token::Keyword),
+                    ("number", Token::Type),
+                    ("div", Token::Tag),
+                    ("className", Token::Attribute),
+                    ("Item", Token::Type),
+                    ("\"x\"", Token::String),
+                ],
             ),
         ];
         for (lang, src, want) in cases {
@@ -801,6 +874,30 @@ mod tests {
             cover(&[e(3, 0, 1), e(4, 0, 1), e(5, 0, 1), e(5, 1, 0), e(4, 1, 0), e(3, 1, 0), e(2, 1, 0)]),
             Some((2..3, 2))
         );
+    }
+
+    /// A parse answers with its tree, at the snapshot's version; a
+    /// language without a grammar with none.
+    #[test]
+    fn an_answer_carries_its_tree() {
+        let mut g = Grammars::load();
+        let mut parser = Parser::new();
+        let buf = Buffer::new("t", "let x: number = 1;\n");
+        let job = |language: &str| Job {
+            buffer: BufferId::default(),
+            language: language.into(),
+            snapshot: buf.snapshot(),
+            edits: None,
+        };
+        let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job("typescript"));
+        assert_eq!(a.version, buf.version());
+        let tree = a.tree.expect("a tree");
+        let root = tree.root_node();
+        assert_eq!(root.kind(), "program");
+        assert_eq!(root.byte_range(), 0..buf.len());
+        assert!(!root.has_error());
+        let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job("brainfuck"));
+        assert!(a.tree.is_none());
     }
 
     #[test]

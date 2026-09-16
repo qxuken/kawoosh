@@ -68,5 +68,6 @@ pub fn syntax_color(token: kawoosh_systems::ts::Token, dark: bool) -> Option<Col
         T::Macro => hue(0x7FC9B6, 0x1F7A66),
         T::Label => hue(0xE08A8A, 0xA02020),
         T::Constructor => hue(0x6FC3D6, 0x1A7A8F),
+        T::Tag => hue(0xE69AC0, 0xA0307A),
     }
 }

@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod compile;
+pub mod inspector;
 pub mod layout;
 pub mod lsp;
 pub mod palette;

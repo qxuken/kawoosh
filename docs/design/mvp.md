@@ -405,7 +405,9 @@ handles staleness. **This resolves core.md's one open decision (threading):
 migration is the prerequisite for the `ts` and `lsp` systems and lands first.
 
 - `ts` system: tree-sitter, incremental via damage spans, highlight queries →
-  derived layers.
+  derived layers. The answer carries the tree too (a handle, not a copy):
+  the shell's syntax inspector — a `Syntax` tab in kui's devtools, the
+  host form of ADR 0032 — reads the focused buffer's tree off it as rows.
 - `lsp` system: the headline. A pool keyed by `(workspace root, server id)`;
   clients are lightweight handles. `didOpen`/`didChange` are driven by the
   journal — core's `Version` maps directly onto LSP document versions.

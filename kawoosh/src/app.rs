@@ -21,6 +21,7 @@ use kui::{FontId, NodeSpec, Sizing, Ui, UiEvent, Value, WindowCommand};
 
 use crate::Pal;
 use crate::compile::Compile;
+use crate::inspector::Inspector;
 use crate::layout::{Content, Layout, PaneId, SplitDir};
 use crate::lsp::LspState;
 use crate::rows::{self, Drawn, GUTTER_W, LH, STRIP_H};
@@ -51,6 +52,8 @@ pub struct Kawoosh {
     pub(crate) dark: bool,
     /// kui's devtools panel, toggled with F12 or `:kui_debugger`.
     pub devtools: bool,
+    /// The syntax tab in it: the focused buffer's tree.
+    pub inspector: Inspector,
     /// kui's latency HUD — frame times as a graph in the corner —
     /// toggled with `:kui_framerate_hud`.
     pub hud: bool,
@@ -104,6 +107,7 @@ impl Kawoosh {
             cwd: std::env::current_dir().unwrap_or_default(),
             dark: true,
             devtools: false,
+            inspector: Inspector::default(),
             hud: false,
             wake,
             ts_sent: HashMap::new(),
@@ -181,7 +185,18 @@ impl Kawoosh {
                     let _ = b.apply(u);
                 }
             }
+            // The tree behind the runs, for the inspector: a handle, so
+            // holding it copies nothing.
+            match a.tree {
+                Some(t) => {
+                    self.inspector.trees.insert(a.buffer, (a.version, t));
+                }
+                None => {
+                    self.inspector.trees.remove(&a.buffer);
+                }
+            }
         }
+        self.inspector.trees.retain(|id, _| self.ed.buffers.contains_key(*id));
         let shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
         for id in shown {
             let Some(b) = self.ed.buffers.get(id) else {
@@ -1062,6 +1077,9 @@ impl kui::App for Kawoosh {
         if ui.core().devtools() != self.devtools {
             ui.core().set_devtools(self.devtools);
         }
+        // The syntax tab: declared every frame, drawn while on show, as
+        // a layer over the panel's tab body (kui ADR 0032).
+        self.syntax_tab(ui);
         let m = ui.measure_text("M", &rows::mono(self.font, &pal), None);
         self.cell = (m.width.max(1.0), LH);
         if let Some(text) = self.clip_out.take() {
@@ -1166,6 +1184,7 @@ impl kui::App for Kawoosh {
                 self.follow_caret = true;
                 self.drain_effects();
             }
+            Some("syntax") => self.on_syntax_click(p),
             Some("modifiers") => {
                 let f = |k| p.get(k).and_then(Value::as_bool).unwrap_or(false);
                 self.mods = (f("ctrl"), f("alt"), f("super"), f("shift"));
