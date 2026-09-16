@@ -333,6 +333,15 @@ fn kui_instruments_are_commands() {
     ex(&mut d, &mut app, "kui_debugger off");
     assert!(!app.devtools);
     assert_eq!(app.ed.message, "kui devtools off");
+    // The other direction: the panel's own close button (or `KUI_DEVTOOLS`
+    // at launch) is the core's say, and the app takes it rather than
+    // forcing its own flag back every frame.
+    ex(&mut d, &mut app, "kui_debugger on");
+    assert!(app.devtools && d.core.devtools());
+    d.core.set_devtools(false);
+    d.frame(&mut app);
+    assert!(!app.devtools, "the panel closed from its own side");
+    assert!(!d.core.devtools());
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

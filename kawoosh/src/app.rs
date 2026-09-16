@@ -52,6 +52,10 @@ pub struct Kawoosh {
     pub(crate) dark: bool,
     /// kui's devtools panel, toggled with F12 or `:kui_debugger`.
     pub devtools: bool,
+    /// What the core was last told (or last said): a change on this side
+    /// since is pushed, else the core's own — its close button, its
+    /// chords, `KUI_DEVTOOLS` at launch — is taken.
+    devtools_synced: Option<bool>,
     /// The syntax tab in it: the focused buffer's tree.
     pub inspector: Inspector,
     /// A devtools tab to show on the next frame — `:syntax_tree` asks
@@ -120,6 +124,7 @@ impl Kawoosh {
             cwd: std::env::current_dir().unwrap_or_default(),
             dark: true,
             devtools: false,
+            devtools_synced: None,
             inspector: Inspector::new(wake.clone()),
             show_tab: None,
             inspector_shown: false,
@@ -1115,9 +1120,12 @@ impl kui::App for Kawoosh {
         self.pal = ui.theme().into();
         self.dark = ui.theme().is_dark();
         let pal = self.pal;
-        if ui.core().devtools() != self.devtools {
+        if self.devtools_synced.is_some_and(|s| s != self.devtools) {
             ui.core().set_devtools(self.devtools);
+        } else {
+            self.devtools = ui.core().devtools();
         }
+        self.devtools_synced = Some(self.devtools);
         if let Some(tab) = self.show_tab.take() {
             ui.core().set_devtools_tab(tab);
         }
