@@ -98,6 +98,9 @@ fn main() -> anyhow::Result<()> {
     kui::app("kawoosh")
         .size(1100.0, 760.0)
         .min_size(480.0, 320.0)
+        // A held key repeats: `j` held is a motion, not a letter to
+        // accent (macOS's press-and-hold, on by default; kui F69).
+        .press_and_hold(false)
         .core(core)
         .extension_as("lua", ext)
         .run(app)
