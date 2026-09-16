@@ -160,6 +160,44 @@ fn the_caret_takes_no_room_in_the_row() {
 }
 
 #[test]
+fn the_block_caret_is_solid_and_only_the_bar_arms_the_blink_clock() {
+    // kui asks for a frame twice a second while the focused sink has a
+    // caret to blink. The block caret is declared `caret_solid`, so a
+    // pane idling in normal mode arms no clock and the loop stays
+    // parked — while the row still anchors the IME and is still the
+    // caret a screen reader hears. Insert mode's bar is the one that
+    // blinks.
+    let mut app = Kawoosh::new("t", DOC);
+    let mut d = Drive::new(800.0, 400.0);
+    d.frame(&mut app);
+    assert!(!d.core.has_caret(), "normal mode armed the blink clock");
+    assert!(d.core.ime_rect().is_some(), "the block still anchors the IME");
+    let editor = d
+        .core
+        .access_tree()
+        .nodes
+        .iter()
+        .find(|n| n.role == kui::Role::MultilineTextInput)
+        .cloned()
+        .expect("the pane's editor node");
+    assert_eq!(editor.caret, Some(0), "and still reads as the caret");
+    d.keys(&mut app, "v");
+    d.frame(&mut app);
+    assert!(!d.core.has_caret(), "visual mode armed the blink clock");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "i");
+    d.frame(&mut app);
+    assert!(d.core.has_caret(), "insert mode has a caret to blink");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert!(
+        !d.core.has_caret(),
+        "leaving insert mode left the clock armed"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
 fn a_long_line_scrolls_sideways_to_the_caret_and_never_wraps() {
     let doc = format!("{}\njj\n", "j".repeat(60));
     let mut app = Kawoosh::new("t", &doc);

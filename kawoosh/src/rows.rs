@@ -360,6 +360,10 @@ pub struct LineDraw<'a> {
     /// after it keep their place, and only its colour comes and goes.
     pub caret_on: bool,
     /// The primary caret and its anchor, for the access tree and the IME.
+    /// The row carrying the caret is what arms kui's blink clock, so the
+    /// block caret — solid in every mode but insert — is declared
+    /// `caret_solid`: still the anchor and the reader's caret, but no
+    /// frame twice a second for a blink nothing draws.
     pub access: (Option<u32>, Option<u32>),
     /// Underlined ranges with a colour (diagnostics).
     pub underlined: &'a [(Range<usize>, Color)],
@@ -528,6 +532,9 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
         .role(Role::Line);
     if let Some(c) = line.access.0 {
         row = row.caret(c);
+        if line.carets.iter().any(|(_, k)| *k == Caret::Block) {
+            row = row.caret_solid();
+        }
     }
     if let Some(a) = line.access.1 {
         row = row.selection_anchor(a);
