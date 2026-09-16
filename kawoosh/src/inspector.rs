@@ -426,7 +426,11 @@ impl Kawoosh {
             }
             let rows = std::mem::take(&mut self.inspector.rows);
             let lang = tree.as_ref().map(|t| t.language());
-            let name = |id: u16| lang.as_ref().and_then(|l| l.node_kind_for_id(id)).unwrap_or("?");
+            let name = |id: u16| {
+                lang.as_ref()
+                    .and_then(|l| l.node_kind_for_id(id))
+                    .unwrap_or("?")
+            };
             let field = |id: u16| {
                 (id != 0)
                     .then(|| lang.as_ref().and_then(|l| l.field_name_for_id(id)))

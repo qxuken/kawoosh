@@ -3,7 +3,10 @@ use drive::Drive;
 use kawoosh::Kawoosh;
 #[test]
 fn wheel_still_scrolls_lines() {
-    let doc = (0..80).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+    let doc = (0..80)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let mut app = Kawoosh::new("t", &doc);
     let mut d = Drive::new(300.0, 200.0);
     d.frame(&mut app);

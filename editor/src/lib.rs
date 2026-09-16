@@ -6,6 +6,7 @@
 pub mod commands;
 pub mod keymap;
 pub mod motions;
+pub mod search;
 pub mod selection;
 
 use std::collections::HashMap;
@@ -21,6 +22,19 @@ new_key_type! {
     /// A view: one window's cursor and scroll onto a buffer. Views
     /// outlive panes (mvp.md Decision 5).
     pub struct ViewId;
+}
+
+impl ViewId {
+    /// The id as one integer, for a message that crosses a crate that
+    /// cannot name the type (a thread's answer through the io channel);
+    /// [`ViewId::from_ffi`] is the way back.
+    pub fn to_ffi(self) -> u64 {
+        slotmap::Key::data(&self).as_ffi()
+    }
+
+    pub fn from_ffi(v: u64) -> Self {
+        <Self as From<slotmap::KeyData>>::from(slotmap::KeyData::from_ffi(v))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -81,6 +95,22 @@ pub enum Effect {
     Open(PathBuf),
     /// A file was written, so the shell can tell the systems.
     Wrote(BufferId),
+    /// A search moved in a buffer too big to count its matches on the
+    /// frame: the shell counts them on a thread (`search::count` over a
+    /// snapshot) and puts the number in the message when it has it.
+    CountMatches(BufferId),
+    /// A search read its frame's budget of text without a match
+    /// (`search::FRAME_BUDGET`): the shell walks on from `at` on a thread
+    /// — to the end, then round from the start — and moves the primary
+    /// selection when it lands, if it is still where it was (`head`) and
+    /// the text and pattern are still these (`Editor::search_landed`).
+    SearchContinue {
+        buffer: BufferId,
+        view: ViewId,
+        head: usize,
+        at: usize,
+        forward: bool,
+    },
     /// A hooked buffer (`Buffer::hook`) was `:w`ritten: the shell hands
     /// its text to the handler.
     Write(BufferId),
@@ -159,7 +189,10 @@ pub struct Editor {
     pub visual_linewise: bool,
     pub prompt: Prompt,
     pub cmdline: String,
-    pub last_search: Option<String>,
+    /// The pattern `/`, `?` and `*` left, compiled: what `n` walks from
+    /// the cursor and what the view paints in the visible lines
+    /// (`search::hits_in`). Set through [`Editor::set_search`].
+    pub search: Option<search::Search>,
     pub message: String,
     pub effects: Vec<Effect>,
     /// Options read by commands and the shell: `tabstop`, `expandtab`,
@@ -192,7 +225,7 @@ impl Editor {
             visual_linewise: false,
             prompt: Prompt::Command,
             cmdline: String::new(),
-            last_search: None,
+            search: None,
             message: String::new(),
             effects: Vec::new(),
             options: HashMap::new(),
@@ -611,8 +644,11 @@ impl Editor {
                 match self.prompt {
                     Prompt::Command => self.execute(view, &line),
                     Prompt::Search { backwards } => {
-                        if !line.is_empty() {
-                            self.last_search = Some(line);
+                        if !line.is_empty()
+                            && let Err(e) = self.set_search(&line)
+                        {
+                            self.message = e;
+                            return true;
                         }
                         let cmd = if backwards {
                             "search_prev"
@@ -646,6 +682,62 @@ impl Editor {
                     self.cmdline.push_str(t);
                 }
             }
+        }
+        true
+    }
+
+    /// Makes `pattern` the search `n` and `N` walk and the view paints;
+    /// a bad one is refused with the message to show and the old stands.
+    /// The same pattern again keeps its count.
+    pub fn set_search(&mut self, pattern: &str) -> Result<(), String> {
+        if self.search.as_ref().is_some_and(|s| s.pattern == pattern) {
+            return Ok(());
+        }
+        self.search = Some(search::Search::new(pattern)?);
+        Ok(())
+    }
+
+    /// A search the shell finished on a thread (`Effect::SearchContinue`)
+    /// lands: the primary selection of `view` moves to `hit`, or the
+    /// message says there was none — if the search is still this one
+    /// (the pattern, the text at `version`) and the selection still
+    /// where the walk left (`head`); otherwise nothing, since something
+    /// newer has happened. Says whether it landed.
+    pub fn search_landed(
+        &mut self,
+        buffer: BufferId,
+        version: Version,
+        pattern: &str,
+        view: ViewId,
+        head: usize,
+        hit: Option<(std::ops::Range<usize>, bool)>,
+    ) -> bool {
+        let current = self.search.as_ref().is_some_and(|s| s.pattern == pattern)
+            && self
+                .buffers
+                .get(buffer)
+                .is_some_and(|b| b.version() == version)
+            && self
+                .views
+                .get(view)
+                .is_some_and(|v| v.buffer == buffer && v.sels.primary().head == head);
+        if !current {
+            return false;
+        }
+        match hit {
+            Some((r, wrapped)) => {
+                let ext = self.mode == Mode::Visual;
+                let primary = self.views[view].sels.primary();
+                self.views[view].sels.map(|s| {
+                    if s == primary {
+                        s.with_head(r.start, ext)
+                    } else {
+                        s
+                    }
+                });
+                self.message = commands::search_message(self, buffer, wrapped);
+            }
+            None => self.message = format!("not found: {pattern}"),
         }
         true
     }

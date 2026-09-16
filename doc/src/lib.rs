@@ -399,6 +399,12 @@ impl Buffer {
         }
     }
 
+    /// The piece tree itself, for a reader that walks the bytes in place
+    /// — a search over a mapped file, which copies nothing of it.
+    pub fn tree(&self) -> &text_buffer::Buffer {
+        &self.text
+    }
+
     /// The whole text. Allocates; for a provider use [`Buffer::snapshot`].
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.text.collect()).into_owned()

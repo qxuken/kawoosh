@@ -116,6 +116,46 @@ fn keystroke_cost() {
         });
         step(&mut d, &mut app, "x (one edit)", &|d, app| d.keys(app, "x"));
         step(&mut d, &mut app, "u (undo)", &|d, app| d.keys(app, "u"));
+        // A search: `/` walks from the cursor to the next hit and the
+        // count goes to a thread (half the cores; a frame goes on beside
+        // it); `n` and `N` are walks from the cursor, the count remembered;
+        // a pattern the file has not got is the whole file — the frame
+        // reads its budget and a thread the rest, landing as `IoMsg::Found`.
+        let settle = |d: &mut Drive, app: &mut Kawoosh, word: &str| {
+            let t = Instant::now();
+            while app.ed.message.contains(word) && t.elapsed().as_secs() < 120 {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                d.frame(app);
+            }
+            eprintln!(
+                "  the thread answered after {:.0} ms: {}",
+                ms(t),
+                app.ed.message
+            );
+        };
+        step(&mut d, &mut app, "/first order<CR>", &|d, app| {
+            d.keys(app, "/first order");
+            d.key(app, "enter", KeyMods::default());
+        });
+        step(&mut d, &mut app, "j (during the count)", &|d, app| {
+            d.keys(app, "j")
+        });
+        settle(&mut d, &mut app, "counting");
+        step(&mut d, &mut app, "10 × n", &|d, app| {
+            d.keys(app, "nnnnnnnnnn")
+        });
+        step(&mut d, &mut app, "10 × N", &|d, app| {
+            d.keys(app, "NNNNNNNNNN")
+        });
+        step(&mut d, &mut app, "/ absent ((?m)^99999999,)", &|d, app| {
+            d.keys(app, "/(?m)^99999999,");
+            d.key(app, "enter", KeyMods::default());
+        });
+        settle(&mut d, &mut app, "searching");
+        step(&mut d, &mut app, "N (absent, walks back)", &|d, app| {
+            d.keys(app, "N")
+        });
+        settle(&mut d, &mut app, "searching");
         return;
     }
     let mut app = Kawoosh::from_file(std::path::Path::new(&path));

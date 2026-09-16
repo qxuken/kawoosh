@@ -95,7 +95,9 @@ impl Kawoosh {
     /// tells the pool. The list is also what `sync_lsp` reads to know
     /// which buffers have anyone to sync to.
     pub fn add_lsp_server(&mut self, def: ServerDef) {
-        self.scripting.servers.retain(|d| d.language != def.language);
+        self.scripting
+            .servers
+            .retain(|d| d.language != def.language);
         self.scripting.servers.push(def);
         self.lsp
             .lsp

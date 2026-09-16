@@ -227,7 +227,9 @@ impl Kawoosh {
                 }
             }
         }
-        self.inspector.trees.retain(|id, _| self.ed.buffers.contains_key(*id));
+        self.inspector
+            .trees
+            .retain(|id, _| self.ed.buffers.contains_key(*id));
         let shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
         for id in shown {
             let Some(b) = self.ed.buffers.get(id) else {
@@ -266,7 +268,8 @@ impl Kawoosh {
             let pending = self.ts_sent.iter().any(|(id, v)| {
                 self.ed.buffers.get(*id).is_some_and(|b| {
                     b.version() == *v
-                        && (b.layer_names()
+                        && (b
+                            .layer_names()
                             .all(|n| n != kawoosh_systems::ts::SYNTAX_LAYER)
                             || self
                                 .inspector
@@ -347,6 +350,62 @@ impl Kawoosh {
                         && self.ed.buffers.get(id).is_some_and(|b| b.loading.is_some())
                     {
                         self.ed.buffers[id].loading = None;
+                    }
+                }
+                IoMsg::Counted {
+                    buffer,
+                    version,
+                    pattern,
+                    count,
+                    elapsed,
+                } => {
+                    // Remembered for the next `n` in the same text, and
+                    // into the message while it is still that search's —
+                    // the same pattern, the text unchanged, the message
+                    // not yet something else.
+                    let current = self
+                        .ed
+                        .search
+                        .as_ref()
+                        .is_some_and(|s| s.pattern == pattern)
+                        && self
+                            .ed
+                            .buffers
+                            .get(buffer)
+                            .is_some_and(|b| b.version() == version);
+                    if current {
+                        if let Some(s) = self.ed.search.as_mut() {
+                            s.count = Some((buffer, version, count));
+                        }
+                        if self.ed.message.starts_with(&format!("/{pattern}  ")) {
+                            let wrapped = if self.ed.message.ends_with("· wrapped") {
+                                " · wrapped"
+                            } else {
+                                ""
+                            };
+                            self.ed.message = format!(
+                                "/{pattern}  {count} match(es) in {:.1}s{wrapped}",
+                                elapsed.as_secs_f64()
+                            );
+                        }
+                    }
+                }
+                IoMsg::Found {
+                    buffer,
+                    version,
+                    pattern,
+                    view,
+                    head,
+                    hit,
+                    elapsed,
+                } => {
+                    let view = ViewId::from_ffi(view);
+                    if self
+                        .ed
+                        .search_landed(buffer, version, &pattern, view, head, hit)
+                    {
+                        self.follow_caret = true;
+                        log::debug!("search landed after {:.1}s", elapsed.as_secs_f64());
                     }
                 }
             }
@@ -710,11 +769,13 @@ impl Kawoosh {
                 let on = match args.first().map(String::as_str) {
                     Some("on" | "1" | "true") => true,
                     Some("off" | "0" | "false") => false,
-                    _ => !if name == "kui_debugger" {
-                        self.devtools
-                    } else {
-                        self.hud
-                    },
+                    _ => {
+                        !if name == "kui_debugger" {
+                            self.devtools
+                        } else {
+                            self.hud
+                        }
+                    }
                 };
                 let what = if name == "kui_debugger" {
                     self.devtools = on;
@@ -952,6 +1013,77 @@ impl Kawoosh {
         self.drain_lua();
     }
 
+    /// A search in a buffer too big to count on the frame: the count runs
+    /// on a thread over a snapshot (the piece tree is persistent, so the
+    /// snapshot is a handle) and lands in the message as `IoMsg::Counted`.
+    fn count_matches(&mut self, id: kawoosh_doc::BufferId) {
+        let Some(search) = self.ed.search.clone() else {
+            return;
+        };
+        let Some(buf) = self.ed.buffers.get(id) else {
+            return;
+        };
+        let snap = buf.snapshot();
+        self.io.run("count", move || {
+            let started = Instant::now();
+            // Half the cores: the frame keeps drawing beside the count.
+            let threads = std::thread::available_parallelism().map_or(1, |n| n.get() / 2);
+            let count = kawoosh_editor::search::count_on(&snap.text, &search.re, threads.max(1));
+            IoMsg::Counted {
+                buffer: id,
+                version: snap.version,
+                pattern: search.pattern,
+                count,
+                elapsed: started.elapsed(),
+            }
+        });
+    }
+
+    /// The rest of a search the frame's budget did not reach: the walk
+    /// goes on from `at` on a thread — to the end, then round from the
+    /// start — over a snapshot, and lands through `Editor::search_landed`
+    /// as `IoMsg::Found`, if nothing has moved meanwhile.
+    fn search_continue(
+        &mut self,
+        id: kawoosh_doc::BufferId,
+        view: ViewId,
+        head: usize,
+        at: usize,
+        forward: bool,
+    ) {
+        let Some(search) = self.ed.search.clone() else {
+            return;
+        };
+        let Some(buf) = self.ed.buffers.get(id) else {
+            return;
+        };
+        let snap = buf.snapshot();
+        let view_key = view.to_ffi();
+        self.io.run("search", move || {
+            use kawoosh_editor::search::{find_backward, find_forward};
+            let started = Instant::now();
+            let text = &snap.text;
+            let hit = if forward {
+                find_forward(text, &search.re, at)
+                    .map(|r| (r, false))
+                    .or_else(|| find_forward(text, &search.re, 0).map(|r| (r, true)))
+            } else {
+                find_backward(text, &search.re, at)
+                    .map(|r| (r, false))
+                    .or_else(|| find_backward(text, &search.re, text.len()).map(|r| (r, true)))
+            };
+            IoMsg::Found {
+                buffer: id,
+                version: snap.version,
+                pattern: search.pattern,
+                view: view_key,
+                head,
+                hit,
+                elapsed: started.elapsed(),
+            }
+        });
+    }
+
     pub(crate) fn drain_effects(&mut self) {
         for e in self.ed.take_effects() {
             match e {
@@ -961,6 +1093,14 @@ impl Kawoosh {
                 Effect::RequestPaste => self.awaiting_paste = true,
                 Effect::Open(p) => self.open(&p),
                 Effect::Wrote(_) => {}
+                Effect::CountMatches(b) => self.count_matches(b),
+                Effect::SearchContinue {
+                    buffer,
+                    view,
+                    head,
+                    at,
+                    forward,
+                } => self.search_continue(buffer, view, head, at, forward),
                 Effect::Write(b) => {
                     if let Some(v) = self.focused_view() {
                         self.write_hooked(b, v);

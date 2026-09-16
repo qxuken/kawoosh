@@ -194,12 +194,17 @@ impl Ts {
                             job = next;
                         } else {
                             // A different buffer: handle it after this one.
-                            let _ = answer_tx
-                                .send(highlight(&mut parser, &mut grammars, &mut parsed, &job));
+                            let _ = answer_tx.send(highlight(
+                                &mut parser,
+                                &mut grammars,
+                                &mut parsed,
+                                &job,
+                            ));
                             job = next;
                         }
                     }
-                    let _ = answer_tx.send(highlight(&mut parser, &mut grammars, &mut parsed, &job));
+                    let _ =
+                        answer_tx.send(highlight(&mut parser, &mut grammars, &mut parsed, &job));
                     wake.wake();
                 }
             })
@@ -459,7 +464,12 @@ fn merge_spans(mut spans: Vec<Range<usize>>) -> Vec<Range<usize>> {
     out
 }
 
-fn highlight(parser: &mut Parser, grammars: &mut Grammars, parsed: &mut Parsed, job: &Job) -> Answer {
+fn highlight(
+    parser: &mut Parser,
+    grammars: &mut Grammars,
+    parsed: &mut Parsed,
+    job: &Job,
+) -> Answer {
     let started = std::time::Instant::now();
     let text = &job.snapshot.text;
     let len = text.len();
@@ -657,22 +667,42 @@ mod tests {
             (
                 "toml",
                 "# c\n[pkg]\nname = \"x\"\nn = 1\n",
-                &[("# c", Token::Comment), ("name", Token::Property), ("\"x\"", Token::String), ("1", Token::Number)],
+                &[
+                    ("# c", Token::Comment),
+                    ("name", Token::Property),
+                    ("\"x\"", Token::String),
+                    ("1", Token::Number),
+                ],
             ),
             (
                 "css",
                 "/* c */\n.a { color: red; }\n",
-                &[("/* c */", Token::Comment), ("color", Token::Property), ("{", Token::Punctuation)],
+                &[
+                    ("/* c */", Token::Comment),
+                    ("color", Token::Property),
+                    ("{", Token::Punctuation),
+                ],
             ),
             (
                 "javascript",
                 "// c\nfunction f(a) { return \"s\" + 1; }\n",
-                &[("// c", Token::Comment), ("function", Token::Keyword), ("f(", Token::Function), ("\"s\"", Token::String), ("1;", Token::Number)],
+                &[
+                    ("// c", Token::Comment),
+                    ("function", Token::Keyword),
+                    ("f(", Token::Function),
+                    ("\"s\"", Token::String),
+                    ("1;", Token::Number),
+                ],
             ),
             (
                 "go",
                 "// c\npackage main\nfunc main() { s := \"x\" }\n",
-                &[("// c", Token::Comment), ("func", Token::Keyword), ("main()", Token::Function), ("\"x\"", Token::String)],
+                &[
+                    ("// c", Token::Comment),
+                    ("func", Token::Keyword),
+                    ("main()", Token::Function),
+                    ("\"x\"", Token::String),
+                ],
             ),
             // typescript: javascript's classes, and its own — a type
             // name, an `interface`, and a capitalised identifier read
@@ -793,16 +823,35 @@ mod tests {
         let second = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
         let second = second.update();
         let span = second.span.clone();
-        assert!(span.start >= at.saturating_sub(64), "{span:?} for an edit at {at}");
+        assert!(
+            span.start >= at.saturating_sub(64),
+            "{span:?} for an edit at {at}"
+        );
         assert!(span.end <= at + 64, "{span:?} for an edit at {at}");
-        assert!(second.runs.iter().all(|r| span.start <= r.range.start && r.range.end <= span.end));
+        assert!(
+            second
+                .runs
+                .iter()
+                .all(|r| span.start <= r.range.start && r.range.end <= span.end)
+        );
         buf.apply(second).unwrap();
-        let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &whole_job(&buf)).update();
+        let whole = highlight(
+            &mut parser,
+            &mut g,
+            &mut Parsed::default(),
+            &whole_job(&buf),
+        )
+        .update();
         assert_eq!(whole.span, 0..buf.len());
-        assert_eq!(joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())), joined(&whole.runs));
+        assert_eq!(
+            joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())),
+            joined(&whole.runs)
+        );
         let renamed = buf.text().find("renamed").unwrap();
         assert_eq!(
-            buf.runs(SYNTAX_LAYER, renamed..renamed + 1).first().map(|r| Token::from_style(r.style)),
+            buf.runs(SYNTAX_LAYER, renamed..renamed + 1)
+                .first()
+                .map(|r| Token::from_style(r.style)),
             Some(Token::Function)
         );
         // A multicursor keystroke: three insertions at
@@ -812,16 +861,33 @@ mod tests {
             let (a, b, c) = (at(10, &buf), at(20, &buf), at(30, &buf));
             buf.replace_many(&[(a..a, "x_"), (b..b, "y_"), (c..c, "z_")]);
             let inc = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
-            assert!(inc.updates.len() >= 3, "a span per cursor: {:?}", inc.updates.iter().map(|u| u.span.clone()).collect::<Vec<_>>());
+            assert!(
+                inc.updates.len() >= 3,
+                "a span per cursor: {:?}",
+                inc.updates
+                    .iter()
+                    .map(|u| u.span.clone())
+                    .collect::<Vec<_>>()
+            );
             assert!(inc.updates.iter().all(|u| u.span.len() < buf.len() / 4));
             for u in inc.updates {
                 buf.apply(u).unwrap();
             }
-            let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &whole_job(&buf));
-            assert_eq!(joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())), joined(&whole.update().runs));
+            let whole = highlight(
+                &mut parser,
+                &mut g,
+                &mut Parsed::default(),
+                &whole_job(&buf),
+            );
+            assert_eq!(
+                joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())),
+                joined(&whole.update().runs)
+            );
             let renamed = buf.text().find("fn y_f20(").unwrap() + 3;
             assert_eq!(
-                buf.runs(SYNTAX_LAYER, renamed..renamed + 1).first().map(|r| Token::from_style(r.style)),
+                buf.runs(SYNTAX_LAYER, renamed..renamed + 1)
+                    .first()
+                    .map(|r| Token::from_style(r.style)),
                 Some(Token::Function)
             );
         }
@@ -843,7 +909,12 @@ mod tests {
             for u in inc.updates {
                 buf.apply(u).unwrap();
             }
-            let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &whole_job(&buf));
+            let whole = highlight(
+                &mut parser,
+                &mut g,
+                &mut Parsed::default(),
+                &whole_job(&buf),
+            );
             assert_eq!(
                 joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())),
                 joined(&whole.update().runs),
@@ -854,8 +925,16 @@ mod tests {
                 .runs(SYNTAX_LAYER, f60..f60 + 1)
                 .first()
                 .map(|r| Token::from_style(r.style));
-            let want = if step < 2 { Token::Comment } else { Token::Keyword };
-            assert_eq!(tok, Some(want), "step {step}: f60 in the block comment until it goes");
+            let want = if step < 2 {
+                Token::Comment
+            } else {
+                Token::Keyword
+            };
+            assert_eq!(
+                tok,
+                Some(want),
+                "step {step}: f60 in the block comment until it goes"
+            );
         }
     }
 
@@ -871,12 +950,26 @@ mod tests {
         assert_eq!(cover(&[e(3, 2, 5)]), Some((3..5, 8)));
         // "abcdef" → "aXdef" → "aXdYYf" → "QdYYf": old "abcde" became
         // "QdYY".
-        assert_eq!(cover(&[e(1, 2, 1), e(3, 1, 2), e(0, 2, 1)]), Some((0..5, 4)));
+        assert_eq!(
+            cover(&[e(1, 2, 1), e(3, 1, 2), e(0, 2, 1)]),
+            Some((0..5, 4))
+        );
         // Typing three chars in a row: old 3..3 became 3..6.
-        assert_eq!(cover(&[e(3, 0, 1), e(4, 0, 1), e(5, 0, 1)]), Some((3..3, 6)));
+        assert_eq!(
+            cover(&[e(3, 0, 1), e(4, 0, 1), e(5, 0, 1)]),
+            Some((3..3, 6))
+        );
         // Then backspacing four: one char before the typing went too.
         assert_eq!(
-            cover(&[e(3, 0, 1), e(4, 0, 1), e(5, 0, 1), e(5, 1, 0), e(4, 1, 0), e(3, 1, 0), e(2, 1, 0)]),
+            cover(&[
+                e(3, 0, 1),
+                e(4, 0, 1),
+                e(5, 0, 1),
+                e(5, 1, 0),
+                e(4, 1, 0),
+                e(3, 1, 0),
+                e(2, 1, 0)
+            ]),
             Some((2..3, 2))
         );
     }
@@ -894,14 +987,24 @@ mod tests {
             snapshot: buf.snapshot(),
             edits: None,
         };
-        let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job("typescript"));
+        let a = highlight(
+            &mut parser,
+            &mut g,
+            &mut Parsed::default(),
+            &job("typescript"),
+        );
         assert_eq!(a.version, buf.version());
         let tree = a.tree.expect("a tree");
         let root = tree.root_node();
         assert_eq!(root.kind(), "program");
         assert_eq!(root.byte_range(), 0..buf.len());
         assert!(!root.has_error());
-        let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job("brainfuck"));
+        let a = highlight(
+            &mut parser,
+            &mut g,
+            &mut Parsed::default(),
+            &job("brainfuck"),
+        );
         assert!(a.tree.is_none());
     }
 

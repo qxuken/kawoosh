@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 
-use kawoosh_editor::commands::SEARCH_LAYER;
+use kawoosh_editor::search;
 use kawoosh_editor::{Mode, Prompt, ViewId, motions};
 use kui::{Align, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
 
@@ -530,6 +530,7 @@ impl Kawoosh {
 
         let v = &self.ed.views[view];
         let buf = &self.ed.buffers[buf_id];
+        let search = self.ed.search.as_ref().map(|s| s.re.clone());
         let top = v.top;
         let mut left = v.left;
         let last = (top + rows_n).min(buf.line_count());
@@ -602,7 +603,11 @@ impl Kawoosh {
                 };
                 (x0, x1)
             };
-            let x1 = if head_rel >= range.len() { x0 + 8.0 } else { x1 };
+            let x1 = if head_rel >= range.len() {
+                x0 + 8.0
+            } else {
+                x1
+            };
             let margin = (cell_w * 3.0).min(width / 4.0);
             if x0 - margin < left {
                 left = (x0 - margin).max(0.0);
@@ -716,20 +721,23 @@ impl Kawoosh {
                                     }
                                 }
                             }
-                            let hits: Vec<Range<usize>> = buf
-                                .runs(SEARCH_LAYER, src.clone())
-                                .iter()
-                                .map(|r| clip(r.range.start)..clip(r.range.end.min(range.end)))
-                                .filter(|r| r.start < r.end)
-                                .collect();
+                            // The search's matches in the drawn slice, found
+                            // now: a few kilobytes of regex per row, and
+                            // nothing kept for the rows off screen.
+                            let hits: Vec<Range<usize>> = match &search {
+                                Some(re) => search::hits_in(buf.tree(), re, src.clone())
+                                    .into_iter()
+                                    .map(|r| clip(r.start)..clip(r.end.min(range.end)))
+                                    .filter(|r| r.start < r.end)
+                                    .collect(),
+                                None => Vec::new(),
+                            };
                             let styled: Vec<(Range<usize>, kui::Color)> = buf
                                 .runs(SYNTAX_LAYER, src.clone())
                                 .iter()
                                 .filter_map(|r| {
-                                    let c = token_colors
-                                        .get(r.style as usize)
-                                        .copied()
-                                        .flatten()?;
+                                    let c =
+                                        token_colors.get(r.style as usize).copied().flatten()?;
                                     let a = clip(r.range.start);
                                     let b = clip(r.range.end.min(range.end));
                                     (a < b).then_some((a..b, c))

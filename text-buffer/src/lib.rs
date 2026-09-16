@@ -9,6 +9,9 @@ const BUFFER_MAX_PIECE_BYTES: usize = 2048;
 /// node and a ten-gigabyte file at 2 KB a piece is five million of them;
 /// a line lookup inside a piece scans at most this much.
 const INITIAL_PIECE_BYTES: usize = 16 * 1024;
+/// The most [`Buffer::span_at`] joins into one slice: 64 MB is four
+/// thousand pieces to walk, and a reader that wants more asks again.
+pub const SPAN_MAX: usize = 64 << 20;
 
 const _: () = assert!(
     BUFFER_MAX_PIECE_BYTES <= u16::MAX as usize,
@@ -721,6 +724,83 @@ impl Buffer {
         root
     }
 
+    /// The piece holding `offset`: where it starts in the text and all of
+    /// its bytes, borrowed — what a search that wants the context before
+    /// `offset` (a `\b`) asks for, where [`Self::chunk_at`] hands over the
+    /// tail alone. `None` at or past the end.
+    pub fn piece_at(&self, offset: usize) -> Option<(usize, &[u8])> {
+        let mut node = self.root.node();
+        let mut remaining = offset;
+        let mut start = 0;
+        while let Some(current) = node {
+            let left_length = current.left.length();
+            if remaining < left_length {
+                node = current.left.node();
+                continue;
+            }
+            remaining -= left_length;
+            start += left_length;
+            if remaining < current.piece.len() {
+                return Some((start, current.piece.bytes()));
+            }
+            remaining -= current.piece.len();
+            start += current.piece.len();
+            node = current.right.node();
+        }
+        None
+    }
+
+    /// The pieces from the one holding `offset` on, in order, and where
+    /// that first piece starts: the in-order walk entered part-way, one
+    /// descent to set its stack up.
+    fn pieces_from(&self, offset: usize) -> (usize, Pieces<'_>) {
+        let mut it = Pieces {
+            stack: Vec::new(),
+            rev: false,
+        };
+        let mut link = &self.root;
+        let mut remaining = offset;
+        let mut start = 0;
+        while let Some(node) = link.node() {
+            let left_length = node.left.length();
+            if remaining < left_length {
+                // Everything left of `node` comes first, `node` after it.
+                it.stack.push(node);
+                link = &node.left;
+                continue;
+            }
+            remaining -= left_length;
+            start += left_length;
+            if remaining < node.piece.len() {
+                it.stack.push(node);
+                break;
+            }
+            remaining -= node.piece.len();
+            start += node.piece.len();
+            link = &node.right;
+        }
+        (start, it)
+    }
+
+    /// The longest stretch of text from the piece holding `offset` that is
+    /// one run of bytes in one block — the pieces a mapped file was cut
+    /// into are consecutive slices of its mapping, and a search wants the
+    /// slice, not the cuts — capped at [`SPAN_MAX`] so the walk that joins
+    /// them stays short. Where it starts and its bytes, borrowed; `None`
+    /// at or past the end.
+    pub fn span_at(&self, offset: usize) -> Option<(usize, &[u8])> {
+        let (abs, mut pieces) = self.pieces_from(offset);
+        let (block, first, bytes) = pieces.next()?;
+        let mut end = first + bytes.len();
+        for (b, start, more) in pieces {
+            if !std::ptr::eq(b, block) || start != end || end - first >= SPAN_MAX {
+                break;
+            }
+            end += more.len();
+        }
+        Some((abs, &block.bytes()[first..end]))
+    }
+
     /// The bytes from `offset` to the end of the piece holding it, borrowed
     /// — what a parser reading the text in chunks asks for (tree-sitter's
     /// read callback), one tree walk each and no copy. Empty at the end.
@@ -1345,6 +1425,47 @@ pub fn is_utf8(bytes: &[u8]) -> bool {
         }
     });
     ok.into_inner()
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::*;
+
+    /// A block cut into many pieces reads back as one span; an edit in
+    /// the middle makes three — the block's two halves and the insert —
+    /// and the walk from any offset starts at the piece holding it.
+    #[test]
+    fn a_span_joins_the_pieces_of_one_block() {
+        let n = INITIAL_PIECE_BYTES * 10 + 123;
+        let bytes: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
+        let mut b = Buffer::from_bytes(bytes.clone());
+        assert!(b.piece_count() > 5);
+        let (start, span) = b.span_at(0).unwrap();
+        assert_eq!((start, span.len()), (0, n));
+        assert_eq!(span, &bytes[..]);
+        let (start, span) = b.span_at(INITIAL_PIECE_BYTES * 3 + 7).unwrap();
+        assert_eq!(
+            start,
+            INITIAL_PIECE_BYTES * 3,
+            "the piece holding the offset"
+        );
+        assert_eq!(span, &bytes[start..]);
+        assert!(b.span_at(n).is_none());
+
+        let at = INITIAL_PIECE_BYTES * 4 + 5;
+        b.insert(at, b"xyz");
+        let (s0, span0) = b.span_at(0).unwrap();
+        assert_eq!((s0, span0.len()), (0, at));
+        let (s1, span1) = b.span_at(at).unwrap();
+        assert_eq!((s1, span1), (at, &b"xyz"[..]));
+        let (s2, span2) = b.span_at(at + 3).unwrap();
+        assert_eq!((s2, span2.len()), (at + 3, n - at));
+        assert_eq!(span2, &bytes[at..]);
+        // `piece_at` answers the one piece, whole, with its start.
+        let (ps, piece) = b.piece_at(at + 3 + 10).unwrap();
+        assert_eq!(ps, at + 3);
+        assert_eq!(piece.len(), INITIAL_PIECE_BYTES - 5);
+    }
 }
 
 #[cfg(test)]

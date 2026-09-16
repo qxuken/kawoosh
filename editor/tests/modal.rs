@@ -268,6 +268,54 @@ fn command_line_and_search() {
     assert_eq!(t.ed.tabstop(), 2);
 }
 
+/// A search is a walk from the cursor, not a pass over the text: in a
+/// buffer past `COUNT_ON_FRAME_BYTES` the next match is found and the
+/// count is left to the shell (`Effect::CountMatches`), the message
+/// saying so; `*` searches the word under the cursor whole; a bad
+/// pattern is refused and the last good one stands.
+#[test]
+fn search_walks_from_the_cursor_and_counts_off_the_frame_when_big() {
+    let line = "alpha,beta,gamma\n";
+    let n = kawoosh_editor::commands::COUNT_ON_FRAME_BYTES / line.len() + 3;
+    let mut t = T::new(&line.repeat(n));
+    t.keys("/gamma<CR>");
+    assert_eq!(t.head(), 11);
+    assert!(
+        t.ed.message.starts_with("/gamma  counting…"),
+        "{}",
+        t.ed.message
+    );
+    assert!(matches!(
+        t.ed.take_effects().as_slice(),
+        [Effect::CountMatches(_)]
+    ));
+    t.keys("3n");
+    assert_eq!(t.head(), 11 + 3 * line.len());
+    t.keys("N");
+    assert_eq!(t.head(), 11 + 2 * line.len());
+    // The count itself, over the whole text, on every core.
+    let re = t.ed.search.as_ref().unwrap().re.clone();
+    assert_eq!(
+        kawoosh_editor::search::count(t.ed.buffers[t.ed.views[t.v].buffer].tree(), &re),
+        n
+    );
+    // A small buffer counts on the frame.
+    let mut t = T::new("one two one\ntwo one");
+    t.keys("w*");
+    assert_eq!(t.head(), 12, "`*` from `two` finds the next whole `two`");
+    assert!(t.ed.message.contains("2 match(es)"), "{}", t.ed.message);
+    assert!(t.ed.take_effects().is_empty());
+    t.keys("/(<CR>");
+    assert!(t.ed.message.starts_with("bad pattern"), "{}", t.ed.message);
+    assert_eq!(
+        t.ed.search.as_ref().unwrap().pattern,
+        r"\btwo\b",
+        "the last good one stands"
+    );
+    t.keys("/nothing<CR>");
+    assert_eq!(t.ed.message, "not found: nothing");
+}
+
 #[test]
 fn indent_and_change_line() {
     let mut t = T::new("a\nb");

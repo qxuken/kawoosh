@@ -86,8 +86,15 @@ fn escape_of(c: char) -> Option<String> {
     match u {
         0..0x20 | 0x7f => Some(format!("^{}", char::from_u32((u + 0x40) & 0x7f).unwrap())),
         0x80..0xa0 => Some(format!("<{u:02x}>")),
-        0x200b | 0x200e | 0x200f | 0x2028 | 0x2029 | 0x202a..=0x202e | 0x2060..=0x2064
-        | 0x2066..=0x2069 | 0xfeff => Some(format!("<{u:04x}>")),
+        0x200b
+        | 0x200e
+        | 0x200f
+        | 0x2028
+        | 0x2029
+        | 0x202a..=0x202e
+        | 0x2060..=0x2064
+        | 0x2066..=0x2069
+        | 0xfeff => Some(format!("<{u:04x}>")),
         _ => None,
     }
 }
@@ -98,8 +105,15 @@ fn escape_len(c: char) -> Option<usize> {
     match u {
         0..0x20 | 0x7f => Some(2),
         0x80..0xa0 => Some(4),
-        0x200b | 0x200e | 0x200f | 0x2028 | 0x2029 | 0x202a..=0x202e | 0x2060..=0x2064
-        | 0x2066..=0x2069 | 0xfeff => Some(6),
+        0x200b
+        | 0x200e
+        | 0x200f
+        | 0x2028
+        | 0x2029
+        | 0x202a..=0x202e
+        | 0x2060..=0x2064
+        | 0x2066..=0x2069
+        | 0xfeff => Some(6),
         _ => None,
     }
 }
@@ -328,21 +342,25 @@ impl LineCellsCache {
         }
         if e.version != buf.version() {
             let from = e.version;
-            e.lines
-                .retain_mut(|(r, _, _)| match buf.journal().transform_range(r.clone(), from) {
+            e.lines.retain_mut(
+                |(r, _, _)| match buf.journal().transform_range(r.clone(), from) {
                     Ok(now) if now.len() == r.len() => {
                         *r = now;
                         true
                     }
                     _ => false,
-                });
+                },
+            );
             e.version = buf.version();
         }
         let i = match e.lines.iter().position(|(r, _, _)| r == range) {
             Some(i) => i,
             None => {
-                e.lines
-                    .push((range.clone(), LineCells::read(buf, range.clone(), tabstop), false));
+                e.lines.push((
+                    range.clone(),
+                    LineCells::read(buf, range.clone(), tabstop),
+                    false,
+                ));
                 e.lines.len() - 1
             }
         };

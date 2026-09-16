@@ -28,7 +28,11 @@ fn rust_is_highlighted_and_stays_so_across_edits() {
     let nodes = d.core.nodes();
     let line_nodes = nodes
         .iter()
-        .filter(|n| n.text.as_deref().is_some_and(|t| t.starts_with("fn main") || t.contains("\"hi\"")))
+        .filter(|n| {
+            n.text
+                .as_deref()
+                .is_some_and(|t| t.starts_with("fn main") || t.contains("\"hi\""))
+        })
         .count();
     assert_eq!(line_nodes, 2, "one text node per line");
     assert!(nodes.iter().all(|n| n.text.as_deref() != Some("main")));

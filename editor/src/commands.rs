@@ -6,13 +6,11 @@
 
 use std::ops::Range;
 
-use kawoosh_doc::{Buffer, Run};
+use kawoosh_doc::Buffer;
 
 use crate::keymap::{Keymap, Mode};
 use crate::motions as m;
 use crate::{Ctx, Editor, Effect, Kind, MotionKind, Prompt, Selection, ViewId};
-
-pub const SEARCH_LAYER: &str = "search";
 
 /// `:w` → `write`, and the other ex spellings.
 pub fn ex_alias(name: &str) -> Option<&'static str> {
@@ -439,61 +437,135 @@ fn quote_object(buf: &Buffer, o: usize, q: char, around: bool) -> Option<Range<u
     Some(range.start + s..range.start + e)
 }
 
+/// Past this many bytes the match count is not taken on the frame: the
+/// shell counts on a thread (`Effect::CountMatches`) and the message
+/// says so until it does. Below it a parallel count is a millisecond.
+pub const COUNT_ON_FRAME_BYTES: usize = 8 << 20;
+
+/// The message a search that landed shows: the pattern, the count if it
+/// is known for this text — taken now for a small buffer, remembered
+/// from the thread's answer for a big one — or the word that it is
+/// being counted, which asks the shell for it.
+pub fn search_message(ed: &mut Editor, id: kawoosh_doc::BufferId, wrapped: bool) -> String {
+    let Some(search) = ed.search.as_mut() else {
+        return String::new();
+    };
+    let version = ed.buffers[id].version();
+    let text = ed.buffers[id].tree();
+    let count = match search.count {
+        Some((b, v, n)) if b == id && v == version => Some(n),
+        _ if text.len() <= COUNT_ON_FRAME_BYTES => {
+            let n = crate::search::count(text, &search.re);
+            search.count = Some((id, version, n));
+            Some(n)
+        }
+        _ => None,
+    };
+    let pat = &search.pattern;
+    let wrapped = if wrapped { " · wrapped" } else { "" };
+    match count {
+        Some(n) => format!("/{pat}  {n} match(es){wrapped}"),
+        None => {
+            ed.effects.push(Effect::CountMatches(id));
+            format!("/{pat}  counting…{wrapped}")
+        }
+    }
+}
+
+/// `n` / `N`: every head to the next (or previous) match from where it
+/// is, wrapping round the end — each a walk from the cursor that stops
+/// at the first hit (`crate::search`), so the cost is the distance, not
+/// the file. A walk that reads its frame's budget without one hands the
+/// primary's rest to the shell (`Effect::SearchContinue`); the other
+/// selections stay. The message carries the count (`search_message`).
 fn search(ed: &mut Editor, ctx: &Ctx, forward: bool) {
-    let Some(pat) = ed.last_search.clone() else {
+    let Some(search) = ed.search.clone() else {
         ed.message = "no previous search".into();
         return;
     };
-    let re = match regex::RegexBuilder::new(&pat).build() {
-        Ok(re) => re,
-        Err(e) => {
-            ed.message = format!("bad pattern: {e}");
-            return;
-        }
-    };
+    use crate::search::{FRAME_BUDGET, Walk, walk_backward, walk_forward};
+    let re = &search.re;
+    let pat = &search.pattern;
     let id = view(ed, ctx).buffer;
-    let text = ed.buffers[id].text();
-    let hits: Vec<(usize, usize)> = re.find_iter(&text).map(|m| (m.start(), m.end())).collect();
-    ed.buffers[id].set_layer(
-        SEARCH_LAYER,
-        hits.iter()
-            .map(|(a, b)| Run {
-                range: *a..*b,
-                style: 0,
-                tag: 0,
-            })
-            .collect(),
-    );
-    if hits.is_empty() {
-        ed.message = format!("not found: {pat}");
-        return;
-    }
-    let ext = extend(ed);
-    let v = &mut ed.views[ctx.view];
+    let text = ed.buffers[id].tree();
+    let len = text.len();
     let mut wrapped = false;
-    for _ in 0..ctx.count.max(1) {
-        v.sels.map(|s| {
-            let target = if forward {
-                hits.iter().find(|(a, _)| *a > s.head).or_else(|| {
-                    wrapped = true;
-                    hits.first()
-                })
+    let mut found_any = false;
+    let mut handed_over = None;
+    let ext = extend(ed);
+    let primary = ed.views[ctx.view].sels.primary();
+    // The targets, one per selection, before anything moves: the walks
+    // borrow the text and the selections are the view's.
+    let mut targets: Vec<Option<usize>> = Vec::new();
+    for s in ed.views[ctx.view].sels.iter() {
+        let mut head = s.head;
+        let mut target = None;
+        for _ in 0..ctx.count.max(1) {
+            let walk = if forward {
+                match walk_forward(text, re, (head + 1).min(len), FRAME_BUDGET) {
+                    Walk::NotFound => {
+                        wrapped = true;
+                        walk_forward(text, re, 0, FRAME_BUDGET)
+                    }
+                    w => w,
+                }
             } else {
-                hits.iter().rev().find(|(a, _)| *a < s.head).or_else(|| {
-                    wrapped = true;
-                    hits.last()
-                })
+                match walk_backward(text, re, head, FRAME_BUDGET) {
+                    Walk::NotFound => {
+                        wrapped = true;
+                        walk_backward(text, re, len, FRAME_BUDGET)
+                    }
+                    w => w,
+                }
             };
-            match target {
-                Some((a, _)) => s.with_head(*a, ext),
-                None => s,
+            match walk {
+                Walk::Found(h) => {
+                    head = h.start;
+                    target = Some(h.start);
+                }
+                Walk::Exhausted(at) => {
+                    // The primary's walk goes on off the frame, from
+                    // where it is now (a count already walked lands the
+                    // rest at once); another selection's stops here.
+                    if *s == primary && handed_over.is_none() {
+                        handed_over = Some((head, at));
+                    }
+                    break;
+                }
+                Walk::NotFound => break,
             }
+        }
+        found_any |= target.is_some();
+        targets.push(target);
+    }
+    if let Some((head, at)) = handed_over {
+        ed.effects.push(Effect::SearchContinue {
+            buffer: id,
+            view: ctx.view,
+            head,
+            at,
+            forward,
         });
     }
-    ed.message = if wrapped {
-        format!("search wrapped: {pat}")
+    if !found_any {
+        ed.message = if handed_over.is_some() {
+            format!("/{pat}  searching…")
+        } else {
+            format!("not found: {pat}")
+        };
+        return;
+    }
+    let mut targets = targets.into_iter();
+    ed.views[ctx.view]
+        .sels
+        .map(|s| match targets.next().flatten() {
+            Some(a) => s.with_head(a, ext),
+            None => s,
+        });
+    ed.message = if handed_over.is_some() {
+        format!("/{pat}  searching…")
     } else {
-        format!("/{pat}  {} match(es)", hits.len())
+        search_message(ed, id, wrapped)
     };
 }
 
@@ -830,7 +902,10 @@ pub fn install(ed: &mut Editor) {
             return;
         }
         let word = buf.slice(a..b);
-        ed.last_search = Some(format!(r"\b{}\b", regex::escape(&word)));
+        if let Err(e) = ed.set_search(&format!(r"\b{}\b", regex::escape(&word))) {
+            ed.message = e;
+            return;
+        }
         search(ed, ctx, true);
     });
 

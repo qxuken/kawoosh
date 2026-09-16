@@ -149,7 +149,10 @@ fn the_caret_takes_no_room_in_the_row() {
     d.frame(&mut app);
     assert_eq!(text_x(&d), normal, "entering insert mode shifted the text");
     let (x, a) = bar(&d).expect("the bar caret");
-    assert!(x > normal + 30.0 && x < normal + 45.0, "bar at {x} from {normal}");
+    assert!(
+        x > normal + 30.0 && x < normal + 45.0,
+        "bar at {x} from {normal}"
+    );
     assert_eq!(a, 1.0);
     // Nor does the blink's off phase: the node stays, its colour goes.
     d.core.set_caret_visible(false);
@@ -171,7 +174,10 @@ fn the_block_caret_is_solid_and_only_the_bar_arms_the_blink_clock() {
     let mut d = Drive::new(800.0, 400.0);
     d.frame(&mut app);
     assert!(!d.core.has_caret(), "normal mode armed the blink clock");
-    assert!(d.core.ime_rect().is_some(), "the block still anchors the IME");
+    assert!(
+        d.core.ime_rect().is_some(),
+        "the block still anchors the IME"
+    );
     let editor = d
         .core
         .access_tree()
@@ -209,14 +215,25 @@ fn perf_is_a_tab_of_readings() {
     assert!(app.devtools && d.core.devtools());
     assert_eq!(d.core.devtools_current_tab(), "perf");
     assert_eq!(app.ed.message, "perf on");
-    let texts: Vec<String> = d.core.nodes().iter().filter_map(|n| n.text.clone()).collect();
+    let texts: Vec<String> = d
+        .core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect();
     let has = |s: &str| texts.iter().any(|t| t.contains(s));
     // The three sections, a phase, the process's footprint, the buffer.
     assert!(has("frame · view"), "{texts:?}");
     assert!(has("rows") && has("view"), "{texts:?}");
     assert!(has("process"), "{texts:?}");
-    let process = texts.iter().find(|t| t.contains("resident")).expect("a footprint");
-    assert!(process.contains("MB") || process.contains("GB"), "{process}");
+    let process = texts
+        .iter()
+        .find(|t| t.contains("resident"))
+        .expect("a footprint");
+    assert!(
+        process.contains("MB") || process.contains("GB"),
+        "{process}"
+    );
     assert!(has("focused") && has("t"), "{texts:?}");
     assert!(has("lines") && has("pieces"), "{texts:?}");
     // The other tab still toggles against its own showing: `:syntax_tree`
@@ -280,7 +297,10 @@ fn a_long_line_scrolls_sideways_to_the_caret_and_never_wraps() {
     d.frame(&mut app);
     let t = text(&d);
     let end = t.x + t.w;
-    assert!(end > rect.x && end <= rect.x + rect.w + 0.5, "line ends at {end}, column {rect:?}");
+    assert!(
+        end > rect.x && end <= rect.x + rect.w + 0.5,
+        "line ends at {end}, column {rect:?}"
+    );
     assert!(d.core.scroll_offset(key).x > 0.0);
     d.keys(&mut app, "0");
     d.frame(&mut app);
@@ -310,7 +330,10 @@ fn the_wheel_reaches_the_view_over_the_lines_column() {
     d.wheel(&mut app, 150.0, 80.0, -10000.0, 0.0);
     d.frame(&mut app);
     let left = app.ed.views[view].left;
-    assert!(left > 40.0 && left < 1000.0, "clamped to the content: {left}");
+    assert!(
+        left > 40.0 && left < 1000.0,
+        "clamped to the content: {left}"
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
@@ -357,7 +380,13 @@ fn kui_instruments_are_commands() {
         d.key(app, "enter", KeyMods::default());
     };
     // The HUD: a float in the viewport's corner while it is on.
-    let hud_floats = |d: &Drive| d.core.nodes().iter().filter(|n| n.float && n.rect.h > 40.0).count();
+    let hud_floats = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .filter(|n| n.float && n.rect.h > 40.0)
+            .count()
+    };
     assert_eq!(hud_floats(&d), 0);
     ex(&mut d, &mut app, "kui_framerate_hud");
     assert!(app.hud);
@@ -410,7 +439,13 @@ fn a_binary_page_is_a_frame_not_a_hang() {
     // Every other char an escape, thousands to a line: drawn plain (the
     // dimming is capped), in one frame's time rather than seconds.
     let line: String = (0..3000u32)
-        .map(|i| if i % 2 == 0 { '\u{1}' } else { char::from_u32(0x41 + i % 26).unwrap() })
+        .map(|i| {
+            if i % 2 == 0 {
+                '\u{1}'
+            } else {
+                char::from_u32(0x41 + i % 26).unwrap()
+            }
+        })
         .collect();
     let doc = format!("{line}\n{line}\n{line}\n");
     let mut app = Kawoosh::new("t", &doc);
@@ -466,10 +501,23 @@ fn a_long_line_is_drawn_from_its_window() {
     let nodes = text_nodes(&d);
     let (_, x, w) = &nodes[0];
     assert!(*w < 300.0 * 8.0);
-    assert!(x + w <= lines.x + lines.w + 1.0, "tail in view: {} vs {lines:?}", x + w);
-    assert!(x + w > lines.x + lines.w - 40.0, "the tail ends near the edge: {}", x + w);
+    assert!(
+        x + w <= lines.x + lines.w + 1.0,
+        "tail in view: {} vs {lines:?}",
+        x + w
+    );
+    assert!(
+        x + w > lines.x + lines.w - 40.0,
+        "the tail ends near the edge: {}",
+        x + w
+    );
     // A click in the slice lands on the right byte of the line.
-    let head = |app: &Kawoosh| app.ed.views[app.focused_view().unwrap()].sels.primary().head;
+    let head = |app: &Kawoosh| {
+        app.ed.views[app.focused_view().unwrap()]
+            .sels
+            .primary()
+            .head
+    };
     let before = head(&app);
     d.click(&mut app, lines.x + lines.w - 30.0, lines.y + 10.0);
     let after = head(&app);

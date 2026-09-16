@@ -52,6 +52,29 @@ pub enum IoMsg {
         path: PathBuf,
         error: String,
     },
+    /// A search's match count over a big buffer ([`Io::run`] from the
+    /// shell): the buffer and the text version it counted, the pattern,
+    /// the number, and what it took.
+    Counted {
+        buffer: kawoosh_doc::BufferId,
+        version: kawoosh_doc::Version,
+        pattern: String,
+        count: usize,
+        elapsed: std::time::Duration,
+    },
+    /// A search walked on from where the frame's budget ran out
+    /// ([`Io::run`] from the shell): the buffer and text version walked,
+    /// the pattern, the view whose primary selection was at `head`, and
+    /// the match with whether the walk came round the end — or none.
+    Found {
+        buffer: kawoosh_doc::BufferId,
+        version: kawoosh_doc::Version,
+        pattern: String,
+        view: u64,
+        head: usize,
+        hit: Option<(std::ops::Range<usize>, bool)>,
+        elapsed: std::time::Duration,
+    },
 }
 
 pub struct Io {
@@ -98,6 +121,22 @@ impl Io {
                 }
             })
             .expect("spawning a pty reader thread");
+    }
+
+    /// Runs `job` on a thread of its own and delivers what it returns,
+    /// waking the loop for it — a count over a snapshot, anything that
+    /// is one answer the frame should not wait for.
+    pub fn run(&self, name: &str, job: impl FnOnce() -> IoMsg + Send + 'static) {
+        let tx = self.tx.clone();
+        let wake = self.wake.clone();
+        thread::Builder::new()
+            .name(name.into())
+            .spawn(move || {
+                if tx.send(job()).is_ok() {
+                    wake.wake();
+                }
+            })
+            .expect("spawning a job thread");
     }
 
     /// Opens `path` on a thread of its own: the file is mapped, checked
