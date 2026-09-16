@@ -50,9 +50,190 @@ pub struct Update {
     pub runs: Vec<Run>,
 }
 
+/// A layer's runs, in chunks of up to [`CHUNK_RUNS`] with a base offset
+/// each and the runs' ranges relative to it. An edit moves everything
+/// after it by one delta, so the chunks past it move by their base —
+/// a few thousand additions for a bundle's four million runs — and only
+/// the chunk or two it landed in has its runs walked; a producer's
+/// update likewise replaces whole chunks inside its span and walks the
+/// two at its edges. Every walk that was `O(runs)` per keystroke is
+/// `O(chunks + a chunk)`.
 #[derive(Clone, Debug, Default)]
 struct Layer {
+    /// Ascending, non-overlapping, none empty.
+    chunks: Vec<Chunk>,
+}
+
+const CHUNK_RUNS: usize = 512;
+
+#[derive(Clone, Debug)]
+struct Chunk {
+    base: usize,
+    /// Ascending, non-empty, `range` relative to `base`.
     runs: Vec<Run>,
+}
+
+impl Chunk {
+    /// The runs as one chunk, `base` their first start. None for none.
+    fn of(runs: &[Run]) -> Option<Self> {
+        let base = runs.first()?.range.start;
+        Some(Self {
+            base,
+            runs: runs
+                .iter()
+                .map(|r| Run {
+                    range: r.range.start - base..r.range.end - base,
+                    ..r.clone()
+                })
+                .collect(),
+        })
+    }
+
+    fn start(&self) -> usize {
+        self.base + self.runs[0].range.start
+    }
+
+    fn end(&self) -> usize {
+        self.base + self.runs[self.runs.len() - 1].range.end
+    }
+
+    fn absolute(&self) -> Vec<Run> {
+        self.runs
+            .iter()
+            .map(|r| Run {
+                range: r.range.start + self.base..r.range.end + self.base,
+                ..r.clone()
+            })
+            .collect()
+    }
+
+    fn shift(&mut self, delta: isize) {
+        self.base = (self.base as isize + delta) as usize;
+    }
+}
+
+/// Sorted absolute runs as chunks.
+fn chunked(runs: &[Run]) -> impl Iterator<Item = Chunk> + '_ {
+    runs.chunks(CHUNK_RUNS).filter_map(Chunk::of)
+}
+
+impl Layer {
+    fn set(&mut self, mut runs: Vec<Run>) {
+        runs.sort_by_key(|r| r.range.start);
+        self.chunks = chunked(&runs).collect();
+    }
+
+    fn clear(&mut self) {
+        self.chunks.clear();
+    }
+
+    /// The runs overlapping `range`, absolute, in order.
+    fn query(&self, range: &Range<usize>) -> Vec<Run> {
+        let lo = self.chunks.partition_point(|c| c.end() <= range.start);
+        let hi = self.chunks.partition_point(|c| c.start() < range.end);
+        let mut out = Vec::new();
+        for c in &self.chunks[lo..hi.max(lo)] {
+            let a = c.runs.partition_point(|r| r.range.end + c.base <= range.start);
+            let b = c.runs.partition_point(|r| r.range.start + c.base < range.end);
+            for r in &c.runs[a..b.max(a)] {
+                out.push(Run {
+                    range: r.range.start + c.base..r.range.end + c.base,
+                    ..r.clone()
+                });
+            }
+        }
+        out
+    }
+
+    /// Every run, absolute — a test's reading.
+    #[cfg(test)]
+    fn all(&self) -> Vec<Run> {
+        self.chunks.iter().flat_map(Chunk::absolute).collect()
+    }
+
+    /// Across one edit: chunks before it stay, chunks after it move by
+    /// its delta, the ones it touches have their runs shifted one by one
+    /// ([`shift_runs`]).
+    fn shift(&mut self, edit: &Edit) {
+        let delta = edit.new_len as isize - edit.removed() as isize;
+        let mut out = Vec::with_capacity(self.chunks.len());
+        for mut c in self.chunks.drain(..) {
+            if c.end() <= edit.range.start {
+                out.push(c);
+            } else if c.start() >= edit.range.end {
+                c.shift(delta);
+                out.push(c);
+            } else {
+                let mut runs = c.absolute();
+                shift_runs(&mut runs, edit);
+                out.extend(chunked(&runs));
+            }
+        }
+        self.chunks = out;
+    }
+
+    /// Across several ascending, disjoint edits at once: the delta of the
+    /// edits passed accumulates over the chunks, and a chunk an edit
+    /// reaches into has its runs walked ([`shift_runs_many`]).
+    fn shift_many(&mut self, edits: &[Edit]) {
+        let (mut ei, mut delta) = (0usize, 0isize);
+        let mut out = Vec::with_capacity(self.chunks.len());
+        for mut c in self.chunks.drain(..) {
+            let (start, end) = (c.start(), c.end());
+            // Edits wholly before the chunk shift all of it.
+            while ei < edits.len() && edits[ei].range.end <= start {
+                delta += edits[ei].new_len as isize - edits[ei].removed() as isize;
+                ei += 1;
+            }
+            if ei < edits.len() && edits[ei].range.start < end {
+                let mut runs = c.absolute();
+                shift_runs_many_from(&mut runs, edits, &mut ei, &mut delta);
+                out.extend(chunked(&runs));
+            } else {
+                c.shift(delta);
+                out.push(c);
+            }
+        }
+        self.chunks = out;
+    }
+
+    /// Replaces the runs in `span` with `fresh` (sorted, inside it): the
+    /// chunks wholly inside go, the two at the edges keep their runs
+    /// outside the span — a run straddling an edge keeps its part
+    /// outside, the producer's fresh run for the same token ending where
+    /// the span does — and the region is chunked again.
+    fn splice(&mut self, span: &Range<usize>, fresh: Vec<Run>) {
+        let lo = self.chunks.partition_point(|c| c.end() <= span.start);
+        let hi = self.chunks.partition_point(|c| c.start() < span.end).max(lo);
+        let mut region: Vec<Run> = Vec::new();
+        for c in &self.chunks[lo..hi] {
+            if c.start() >= span.start && c.end() <= span.end {
+                continue;
+            }
+            for r in c.absolute() {
+                if r.range.end <= span.start || r.range.start >= span.end {
+                    region.push(r);
+                    continue;
+                }
+                if r.range.start < span.start {
+                    region.push(Run {
+                        range: r.range.start..span.start,
+                        ..r.clone()
+                    });
+                }
+                if r.range.end > span.end {
+                    region.push(Run {
+                        range: span.end..r.range.end,
+                        ..r
+                    });
+                }
+            }
+        }
+        region.extend(fresh);
+        region.sort_by_key(|r| r.range.start);
+        let fresh: Vec<Chunk> = chunked(&region).collect();
+        self.chunks.splice(lo..hi, fresh);
+    }
 }
 
 /// An immutable, `Send` view of a buffer's text at one version, for a
@@ -328,7 +509,7 @@ impl Buffer {
             new_len: text.len(),
         };
         for (_, layer) in &mut self.layers {
-            shift_runs(&mut layer.runs, &edit);
+            layer.shift(&edit);
         }
         self.modified = true;
         self.journal.record(edit)
@@ -373,7 +554,7 @@ impl Buffer {
             });
         }
         for (_, layer) in &mut self.layers {
-            shift_runs_many(&mut layer.runs, &shifts);
+            layer.shift_many(&shifts);
         }
         self.modified = true;
         v
@@ -384,7 +565,7 @@ impl Buffer {
     pub fn set_text(&mut self, text: &str) -> Version {
         self.text.set_text(text.as_bytes());
         for (_, layer) in &mut self.layers {
-            layer.runs.clear();
+            layer.clear();
         }
         let v = self.journal.version().next();
         self.journal.reset_to(v);
@@ -409,7 +590,7 @@ impl Buffer {
         let edit = diff_edit(&old, &new);
         self.text = root;
         for (_, layer) in &mut self.layers {
-            shift_runs(&mut layer.runs, &edit);
+            layer.shift(&edit);
         }
         self.modified = true;
         self.journal.record(edit)
@@ -431,61 +612,30 @@ impl Buffer {
             })
             .collect();
         fresh.sort_by_key(|r| r.range.start);
-        let layer = self.layer_mut(update.layer);
-        // An old run straddling the span's edge keeps its part outside:
-        // the producer answered for the span alone, and its fresh run
-        // for the same token ends where the span does. The row joins
-        // the two, being one look.
-        let mut kept = Vec::with_capacity(layer.runs.len() + fresh.len());
-        for r in layer.runs.drain(..) {
-            if r.range.end <= span.start || r.range.start >= span.end {
-                kept.push(r);
-                continue;
-            }
-            if r.range.start < span.start {
-                kept.push(Run {
-                    range: r.range.start..span.start,
-                    ..r.clone()
-                });
-            }
-            if r.range.end > span.end {
-                kept.push(Run {
-                    range: span.end..r.range.end,
-                    ..r
-                });
-            }
-        }
-        layer.runs = kept;
-        layer.runs.extend(fresh);
-        layer.runs.sort_by_key(|r| r.range.start);
+        self.layer_mut(update.layer).splice(&span, fresh);
         Ok(())
     }
 
     /// Replaces a layer wholesale at the current version — for layers the
     /// editor writes directly (search hits), where there is no version to
     /// check.
-    pub fn set_layer(&mut self, name: &'static str, mut runs: Vec<Run>) {
-        runs.sort_by_key(|r| r.range.start);
-        self.layer_mut(name).runs = runs;
+    pub fn set_layer(&mut self, name: &'static str, runs: Vec<Run>) {
+        self.layer_mut(name).set(runs);
     }
 
     pub fn clear_layer(&mut self, name: &'static str) {
         if let Some((_, l)) = self.layers.iter_mut().find(|(n, _)| *n == name) {
-            l.runs.clear();
+            l.clear();
         }
     }
 
-    /// The runs of `name` overlapping `range`, in order.
-    pub fn runs(&self, name: &str, range: Range<usize>) -> &[Run] {
+    /// The runs of `name` overlapping `range`, in order — a line's few,
+    /// gathered from the chunk or two they sit in.
+    pub fn runs(&self, name: &str, range: Range<usize>) -> Vec<Run> {
         let Some((_, layer)) = self.layers.iter().find(|(n, _)| *n == name) else {
-            return &[];
+            return Vec::new();
         };
-        let runs = &layer.runs;
-        // First run that could overlap: the last one starting before
-        // `range.start` may still reach into it.
-        let start = runs.partition_point(|r| r.range.end <= range.start);
-        let end = runs.partition_point(|r| r.range.start < range.end);
-        &runs[start..end.max(start)]
+        layer.query(&range)
     }
 
     pub fn layer_names(&self) -> impl Iterator<Item = &'static str> + '_ {
@@ -560,25 +710,25 @@ fn shift_runs(runs: &mut Vec<Run>, edit: &Edit) {
 /// one coordinate space: one walk over the runs, the delta of the edits
 /// passed accumulating, a run any edit landed inside dropped. The same
 /// answer the edits applied one at a time give, in `O(runs + edits)`.
-fn shift_runs_many(runs: &mut Vec<Run>, edits: &[Edit]) {
-    let mut delta = 0isize;
-    let mut ei = 0;
+/// `ei` and `delta` are the edits consumed so far and their delta,
+/// carried across the chunks of a layer.
+fn shift_runs_many_from(runs: &mut Vec<Run>, edits: &[Edit], ei: &mut usize, delta: &mut isize) {
     let mut write = 0;
     for i in 0..runs.len() {
         let r = runs[i].range.clone();
         // Edits wholly before the run (an insertion at its start among
         // them: the run starts after the new text) shift it.
-        while ei < edits.len() && edits[ei].range.end <= r.start {
-            delta += edits[ei].new_len as isize - edits[ei].removed() as isize;
-            ei += 1;
+        while *ei < edits.len() && edits[*ei].range.end <= r.start {
+            *delta += edits[*ei].new_len as isize - edits[*ei].removed() as isize;
+            *ei += 1;
         }
         // An edit reaching into it — its interior, or a removal touching
         // it — invalidates it; one starting at its end leaves it.
-        if ei < edits.len() && edits[ei].range.start < r.end {
+        if *ei < edits.len() && edits[*ei].range.start < r.end {
             continue;
         }
-        let start = (r.start as isize + delta) as usize;
-        let end = (r.end as isize + delta) as usize;
+        let start = (r.start as isize + *delta) as usize;
+        let end = (r.end as isize + *delta) as usize;
         runs.swap(write, i);
         runs[write].range = start..end;
         write += 1;
@@ -651,6 +801,127 @@ mod tests {
 
     /// `replace_many` answers as the edits applied one at a time do —
     /// the text, the journal's transform, the runs' shift and drops.
+    /// The chunked layer answers as a flat list of runs would: over many
+    /// chunks and edits of every kind — single, several at once, and a
+    /// producer's update over a span — the runs come out the same,
+    /// checked against the per-run walks applied to one flat vector,
+    /// which is what the layer was before it was chunked.
+    #[test]
+    fn chunked_layers_match_a_flat_walk() {
+        // A deterministic generator: no rand in the tree.
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = |n: usize| -> usize {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        // 3000 runs of 1..=4 bytes with gaps: six chunks.
+        let mut flat: Vec<Run> = Vec::new();
+        let mut at = 0;
+        for i in 0..3000 {
+            let len = 1 + next(4);
+            flat.push(Run {
+                range: at..at + len,
+                style: (i % 7) as u32,
+                tag: 0,
+            });
+            at += len + next(3);
+        }
+        let text_len = at + 10;
+        let mut layer = Layer::default();
+        layer.set(flat.clone());
+        assert!(layer.chunks.len() >= 5, "{} chunks", layer.chunks.len());
+        assert_eq!(layer.all(), flat);
+        for round in 0..400 {
+            match round % 3 {
+                0 => {
+                    let start = next(text_len);
+                    let removed = next(4);
+                    let edit = Edit {
+                        range: start..(start + removed).min(text_len),
+                        new_len: next(5),
+                    };
+                    shift_runs(&mut flat, &edit);
+                    layer.shift(&edit);
+                }
+                1 => {
+                    // Up to five ascending, disjoint edits.
+                    let mut edits = Vec::new();
+                    let mut pos = 0;
+                    for _ in 0..1 + next(5) {
+                        let start = pos + next(text_len / 4);
+                        if start >= text_len {
+                            break;
+                        }
+                        let removed = next(3);
+                        let end = (start + removed).min(text_len);
+                        edits.push(Edit {
+                            range: start..end,
+                            new_len: next(4),
+                        });
+                        pos = end + 1;
+                    }
+                    let (mut ei, mut delta) = (0, 0);
+                    shift_runs_many_from(&mut flat, &edits, &mut ei, &mut delta);
+                    layer.shift_many(&edits);
+                }
+                _ => {
+                    let start = next(text_len);
+                    let span = start..(start + next(600)).min(text_len);
+                    let mut fresh = Vec::new();
+                    let mut p = span.start;
+                    while p < span.end {
+                        let len = 1 + next(5);
+                        fresh.push(Run {
+                            range: p..(p + len).min(span.end),
+                            style: 9,
+                            tag: 0,
+                        });
+                        p += len + next(2);
+                    }
+                    // The flat form of `splice`, as `apply` walked it.
+                    let mut kept = Vec::new();
+                    for r in flat.drain(..) {
+                        if r.range.end <= span.start || r.range.start >= span.end {
+                            kept.push(r);
+                            continue;
+                        }
+                        if r.range.start < span.start {
+                            kept.push(Run {
+                                range: r.range.start..span.start,
+                                ..r.clone()
+                            });
+                        }
+                        if r.range.end > span.end {
+                            kept.push(Run {
+                                range: span.end..r.range.end,
+                                ..r
+                            });
+                        }
+                    }
+                    kept.extend(fresh.iter().cloned());
+                    kept.sort_by_key(|r| r.range.start);
+                    flat = kept;
+                    layer.splice(&span, fresh);
+                }
+            }
+            assert_eq!(layer.all(), flat, "round {round}");
+            for c in &layer.chunks {
+                assert!(!c.runs.is_empty());
+            }
+            // A window's query is the flat slice of it.
+            let qs = next(text_len);
+            let q = qs..(qs + 300).min(text_len);
+            let want: Vec<Run> = flat
+                .iter()
+                .filter(|r| r.range.start < q.end && r.range.end > q.start)
+                .cloned()
+                .collect();
+            assert_eq!(layer.query(&q), want, "query {q:?} in round {round}");
+        }
+    }
+
     #[test]
     fn replace_many_matches_one_at_a_time() {
         let text = "aaaa bbbb cccc dddd eeee ffff";

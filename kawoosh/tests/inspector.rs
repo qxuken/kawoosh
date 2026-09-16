@@ -120,6 +120,68 @@ fn syntax_tree_is_a_command_that_shows_the_tab_and_toggles_it() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A large tree's rows are built off the frame: the tab shows what it
+/// had (nothing, the first time) with "building…" in its header until
+/// the worker answers, and an edit's reparse never waits on the walk.
+#[test]
+fn a_large_trees_rows_are_built_off_the_frame() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-inspector-big-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("big.js");
+    // ~30k nodes: past the in-frame threshold, parsed in a blink.
+    let src: String = (0..4000).map(|i| format!("let a{i} = f({i});\n")).collect();
+    std::fs::write(&file, &src).unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    let mut d = Drive::new(1100.0, 600.0);
+    d.frame(&mut app);
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    d.keys(&mut app, ":syntax_tree");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    let header = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .filter_map(|n| n.text.clone())
+            .find(|t| t.contains("nodes"))
+            .unwrap_or_default()
+    };
+    assert!(app.inspector.building(), "a large tree goes to the worker");
+    assert!(header(&d).contains("building…"), "{}", header(&d));
+    app.inspector.wait_for_rows();
+    d.frame(&mut app);
+    assert!(!app.inspector.building());
+    assert!(
+        app.inspector.rows().len() > 20_000,
+        "{}",
+        app.inspector.rows().len()
+    );
+    assert!(!header(&d).contains("building"), "{}", header(&d));
+    let rows = drawn_rows(&d);
+    assert!(
+        rows.first().is_some_and(|(t, _)| t.starts_with("▾program")),
+        "{rows:?}"
+    );
+    // An edit: the rows on show are the last tree's until the worker
+    // answers for the new one; then they are the new tree's.
+    let before = app.inspector.rows().len();
+    d.keys(&mut app, "dd");
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    assert!(app.inspector.building());
+    assert_eq!(
+        app.inspector.rows().len(),
+        before,
+        "the last rows, meanwhile"
+    );
+    app.inspector.wait_for_rows();
+    d.frame(&mut app);
+    assert!(app.inspector.rows().len() < before, "a line's nodes gone");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn the_syntax_tab_shows_the_tree_and_follows_the_caret() {
     let (mut app, mut d, dir) = tsx_app();

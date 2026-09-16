@@ -59,6 +59,8 @@ pub struct Kawoosh {
     /// `set_devtools_tab` is edge-triggered, so a standing request would
     /// pin the strip against the user's own clicks.
     pub(crate) show_tab: Option<&'static str>,
+    /// The long lines on show, indexed for their cells (`rows::LineCells`).
+    pub(crate) line_cells: rows::LineCellsCache,
     /// Whether the last frame drew the syntax tab — the panel on and the
     /// strip on it — which is what `:syntax_tree` toggles against.
     pub(crate) inspector_shown: bool,
@@ -108,16 +110,20 @@ impl Kawoosh {
             io: Io::new(wake.clone()),
             ts: Ts::spawn(wake.clone()),
             lsp: LspState::new(wake.clone()),
-            scripting: Scripting::default(),
+            scripting: Scripting {
+                servers: kawoosh_systems::lsp::ServerDef::builtin(),
+                ..Default::default()
+            },
             compile: Compile::default(),
             store: None,
             session_saved: false,
             cwd: std::env::current_dir().unwrap_or_default(),
             dark: true,
             devtools: false,
-            inspector: Inspector::default(),
+            inspector: Inspector::new(wake.clone()),
             show_tab: None,
             inspector_shown: false,
+            line_cells: Default::default(),
             hud: false,
             wake,
             ts_sent: HashMap::new(),
@@ -240,11 +246,18 @@ impl Kawoosh {
     pub fn wait_for_syntax(&mut self) {
         for _ in 0..200 {
             self.sync_syntax();
+            // Pending: a buffer sent whose layer has not landed yet, or
+            // whose tree is still an older version's.
             let pending = self.ts_sent.iter().any(|(id, v)| {
                 self.ed.buffers.get(*id).is_some_and(|b| {
                     b.version() == *v
-                        && b.layer_names()
+                        && (b.layer_names()
                             .all(|n| n != kawoosh_systems::ts::SYNTAX_LAYER)
+                            || self
+                                .inspector
+                                .trees
+                                .get(id)
+                                .is_some_and(|(tv, _)| *tv != *v))
                 })
             });
             if !pending {
@@ -904,7 +917,7 @@ impl Kawoosh {
             width,
             cell_w: self.cell.0,
         };
-        let (drawn, _) = Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0);
+        let (drawn, _) = Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0, None);
         let off = (range.start + drawn.to_src(byte.max(0) as usize)).min(range.end);
         let word = motions::word_at(buf, off);
         match phase {
@@ -1175,6 +1188,7 @@ impl kui::App for Kawoosh {
             self.status(ui);
             self.command_line(ui);
         });
+        self.line_cells.sweep();
         if self.hud {
             kui::widgets::latency_hud(ui);
         }

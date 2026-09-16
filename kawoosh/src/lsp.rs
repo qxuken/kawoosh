@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use kawoosh_doc::{Buffer, BufferId, Version};
 use kawoosh_editor::{KeyStroke, Mode, Selection, ViewId};
 use kawoosh_systems::WakeHandle;
-use kawoosh_systems::lsp::{Cmd, CompletionItem, Event, Lsp};
+use kawoosh_systems::lsp::{Cmd, CompletionItem, Event, Lsp, ServerDef};
 
 use crate::app::Kawoosh;
 use crate::layout::{Content, SplitDir};
@@ -90,6 +90,18 @@ fn word_before(buf: &Buffer, caret: usize) -> (usize, String) {
 
 impl Kawoosh {
     /// Sends changed documents, applies what came back.
+    /// Registers a language server — `kawoosh.lsp.server` from Lua, a
+    /// test's scripted one — replacing the language's earlier one, and
+    /// tells the pool. The list is also what `sync_lsp` reads to know
+    /// which buffers have anyone to sync to.
+    pub fn add_lsp_server(&mut self, def: ServerDef) {
+        self.scripting.servers.retain(|d| d.language != def.language);
+        self.scripting.servers.push(def);
+        self.lsp
+            .lsp
+            .send(Cmd::Servers(self.scripting.servers.clone()));
+    }
+
     pub(crate) fn sync_lsp(&mut self) {
         for ev in self.lsp.lsp.drain() {
             match ev {
@@ -166,13 +178,24 @@ impl Kawoosh {
                 Event::Status(s) => self.lsp.status = s,
             }
         }
+        // Only a language with a server to send to: the sync is the whole
+        // text, a copy of the buffer per keystroke — ten milliseconds on
+        // a ten-megabyte file — and a language nobody serves (or whose
+        // server is not installed) paid it for nothing. Not marked sent,
+        // so a server registered later gets the buffer at once.
+        let served = |language: &str| {
+            self.scripting
+                .servers
+                .iter()
+                .any(|d| d.language == language && !self.lsp.said_unavailable.contains(&d.command))
+        };
         let shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
         for id in shown {
             let Some(b) = self.ed.buffers.get(id) else {
                 continue;
             };
             let Some(path) = b.path.clone() else { continue };
-            if b.language.as_ref() == "text" || self.lsp.sent.get(&id) == Some(&b.version()) {
+            if !served(&b.language) || self.lsp.sent.get(&id) == Some(&b.version()) {
                 continue;
             }
             self.lsp.sent.insert(id, b.version());

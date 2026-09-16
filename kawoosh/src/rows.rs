@@ -5,8 +5,10 @@
 //! span, and the bar caret a float measured to its byte — the one place
 //! this file measures text.
 
+use std::collections::HashMap;
 use std::ops::Range;
 
+use kawoosh_doc::{BufferId, Version};
 use kui::{Align, Color, FloatConfig, FontId, Min, NodeSpec, Role, Sizing, Span, TextStyle, Ui};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
@@ -132,87 +134,43 @@ impl Window {
     }
 }
 
-impl Drawn {
-    pub fn new(src: &str, tabstop: usize) -> Self {
-        Self::expand(src, tabstop, 0, 0, None)
+/// One step of a [`Scan`]: a run of printable ASCII taken at once (a
+/// cell a byte, `bulk`), or one char with its cells — a tab to its stop,
+/// an escape its chars, else its width.
+struct Step {
+    bytes: usize,
+    cells: usize,
+    bulk: bool,
+}
+
+/// A walk over a long line's bytes counting cells, reading the piece
+/// tree in chunks with chars decoded across chunk edges. The closure
+/// sees each step before it is taken — where the scan stands, in bytes
+/// and cells — which is how a window's edges, a mark and a checkpoint
+/// are placed.
+struct Scan {
+    /// Line-relative.
+    byte: usize,
+    col: usize,
+    tabstop: usize,
+}
+
+impl Scan {
+    fn new((byte, col): (usize, usize), tabstop: usize) -> Self {
+        Self { byte, col, tabstop }
     }
 
-    /// Line `range` of `buf` as drawn for `window`, and the cells the
-    /// char at `mark` (a line-relative byte; the caret) starts and ends
-    /// at. A line shorter than [`LONG_LINE_BYTES`] is drawn whole; a
-    /// longer one is scanned once for its cells — the window's slice
-    /// found, `mark` placed, the total counted — reading the piece tree
-    /// in chunks, and only the slice is copied and expanded.
-    pub fn for_line(
+    /// Scans `bytes` of `buf` (absolute; a char boundary at each end).
+    fn run(
+        &mut self,
         buf: &kawoosh_doc::Buffer,
-        range: Range<usize>,
-        tabstop: usize,
-        window: Option<Window>,
-        mark: usize,
-    ) -> (Self, (usize, usize)) {
-        let len = range.len();
-        let Some(window) = window.filter(|w| len >= LONG_LINE_BYTES && w.cell_w > 0.0) else {
-            let drawn = Self::new(&buf.slice(range), tabstop);
-            let a = drawn.to_drawn(mark);
-            let b = next_char(&drawn.text, a);
-            let c0 = col_of(&drawn.text, a);
-            let c1 = c0 + col_of(&drawn.text[a..], b - a);
-            return (drawn, (c0, c1));
-        };
-        let want = window.cols();
-        let mark = mark.min(len);
-        // One pass over the line, chars decoded across chunk edges.
+        bytes: Range<usize>,
+        mut f: impl FnMut(&Scan, &Step),
+    ) {
         let mut pending = [0u8; 4];
         let mut pending_len = 0usize;
         let mut need = 0usize;
-        struct Scan {
-            byte: usize,
-            col: usize,
-            start: Option<(usize, usize)>,
-            end: Option<(usize, usize)>,
-            mark_cols: (Option<usize>, Option<usize>),
-        }
-        let mut sc = Scan {
-            byte: 0,
-            col: 0,
-            start: None,
-            end: None,
-            mark_cols: (None, None),
-        };
-        let at = |sc: &mut Scan, c: char, clen: usize| {
-            if sc.start.is_none() && sc.col >= want.start {
-                sc.start = Some((sc.byte, sc.col));
-            }
-            if sc.end.is_none() && sc.col >= want.end {
-                sc.end = Some((sc.byte, sc.col));
-            }
-            let w = cells_of(c, sc.col, tabstop);
-            if sc.byte == mark {
-                sc.mark_cols = (Some(sc.col), Some(sc.col + w));
-            }
-            sc.col += w;
-            sc.byte += clen;
-        };
-        // A run of printable ASCII is one cell a byte: taken at once,
-        // the marks placed by arithmetic, since most of a long line is
-        // that and a char at a time was the frame.
-        let bulk = |sc: &mut Scan, n: usize| {
-            if sc.start.is_none() && sc.col + n > want.start {
-                let k = want.start.saturating_sub(sc.col);
-                sc.start = Some((sc.byte + k, sc.col + k));
-            }
-            if sc.end.is_none() && sc.col + n > want.end {
-                let k = want.end.saturating_sub(sc.col);
-                sc.end = Some((sc.byte + k, sc.col + k));
-            }
-            if sc.byte <= mark && mark < sc.byte + n {
-                let k = mark - sc.byte;
-                sc.mark_cols = (Some(sc.col + k), Some(sc.col + k + 1));
-            }
-            sc.col += n;
-            sc.byte += n;
-        };
-        buf.visit_range(range.clone(), |chunk| {
+        buf.visit_range(bytes, |chunk| {
             let mut i = 0;
             while i < chunk.len() {
                 if pending_len == 0 {
@@ -221,13 +179,20 @@ impl Drawn {
                         .position(|&b| !(0x20..0x7f).contains(&b))
                         .unwrap_or(chunk.len() - i);
                     if run > 0 {
-                        bulk(&mut sc, run);
+                        let step = Step {
+                            bytes: run,
+                            cells: run,
+                            bulk: true,
+                        };
+                        f(self, &step);
+                        self.byte += run;
+                        self.col += run;
                         i += run;
                         continue;
                     }
                     let b = chunk[i];
                     if b < 0x80 {
-                        at(&mut sc, b as char, 1);
+                        self.char(b as char, 1, &mut f);
                         i += 1;
                         continue;
                     }
@@ -245,19 +210,227 @@ impl Drawn {
                         .ok()
                         .and_then(|s| s.chars().next())
                         .unwrap_or('\u{fffd}');
-                    at(&mut sc, c, need);
+                    self.char(c, need, &mut f);
                     pending_len = 0;
                 }
             }
         });
-        let total = sc.col;
-        let (start_byte, start_col) = sc.start.unwrap_or((len, total));
-        let (end_byte, end_col) = sc.end.unwrap_or((len, total));
+    }
+
+    fn char(&mut self, c: char, bytes: usize, f: &mut impl FnMut(&Scan, &Step)) {
+        let step = Step {
+            bytes,
+            cells: cells_of(c, self.col, self.tabstop),
+            bulk: false,
+        };
+        f(self, &step);
+        self.byte += bytes;
+        self.col += step.cells;
+    }
+}
+
+/// Bytes between a long line's checkpoints, about: a checkpoint lands
+/// on the step that crosses the mark, and a step is at most a piece.
+const CHECKPOINT_BYTES: usize = 2048;
+
+/// A long line's cells, read once per version: a `(byte, col)` at about
+/// every [`CHECKPOINT_BYTES`] and the line's total. A row's window is
+/// then scanned from the checkpoint before it to the one after, not
+/// from the line's start to its end — forty rows of a fifty-kilobyte
+/// line were two megabytes a frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LineCells {
+    /// Ascending in both; the origin is implicit.
+    checkpoints: Vec<(usize, usize)>,
+    pub total: usize,
+    len: usize,
+}
+
+impl LineCells {
+    /// One scan of line `range`.
+    pub fn read(buf: &kawoosh_doc::Buffer, range: Range<usize>, tabstop: usize) -> Self {
+        let mut checkpoints = Vec::with_capacity(range.len() / CHECKPOINT_BYTES + 1);
+        let mut next = CHECKPOINT_BYTES;
+        let mut sc = Scan::new((0, 0), tabstop);
+        sc.run(buf, range.clone(), |sc, _| {
+            if sc.byte >= next {
+                checkpoints.push((sc.byte, sc.col));
+                next = sc.byte + CHECKPOINT_BYTES;
+            }
+        });
+        Self {
+            checkpoints,
+            total: sc.col,
+            len: range.len(),
+        }
+    }
+
+    /// The last checkpoint at or before cell `col`.
+    fn before_col(&self, col: usize) -> (usize, usize) {
+        let i = self.checkpoints.partition_point(|c| c.1 <= col);
+        i.checked_sub(1).map_or((0, 0), |i| self.checkpoints[i])
+    }
+
+    /// The last checkpoint at or before `byte`.
+    fn before_byte(&self, byte: usize) -> (usize, usize) {
+        let i = self.checkpoints.partition_point(|c| c.0 <= byte);
+        i.checked_sub(1).map_or((0, 0), |i| self.checkpoints[i])
+    }
+
+    /// The byte of the first checkpoint past cell `col`, else the end.
+    fn after_col(&self, col: usize) -> usize {
+        let i = self.checkpoints.partition_point(|c| c.1 <= col);
+        self.checkpoints.get(i).map_or(self.len, |c| c.0)
+    }
+
+    /// The byte of the first checkpoint past `byte`, else the end.
+    fn after_byte(&self, byte: usize) -> usize {
+        let i = self.checkpoints.partition_point(|c| c.0 <= byte);
+        self.checkpoints.get(i).map_or(self.len, |c| c.0)
+    }
+}
+
+/// The cell indexes of the long lines on show, per buffer, carried
+/// across edits by the journal: a line an edit did not land in keeps
+/// its index at the line's new place, one it did (or that grew at an
+/// edge) is read again the next time a row asks for it, and a line no
+/// row asked for in a frame is dropped by the sweep.
+#[derive(Default)]
+pub struct LineCellsCache {
+    per: HashMap<BufferId, BufCells>,
+}
+
+struct BufCells {
+    /// The version the ranges are in.
+    version: Version,
+    tabstop: usize,
+    /// The line's range, its cells, and whether a row asked this frame.
+    lines: Vec<(Range<usize>, LineCells, bool)>,
+}
+
+impl LineCellsCache {
+    /// The cells of line `range` of `buf`, read now if not on hand.
+    pub fn get(
+        &mut self,
+        id: BufferId,
+        buf: &kawoosh_doc::Buffer,
+        range: &Range<usize>,
+        tabstop: usize,
+    ) -> &LineCells {
+        let e = self.per.entry(id).or_insert_with(|| BufCells {
+            version: buf.version(),
+            tabstop,
+            lines: Vec::new(),
+        });
+        if e.tabstop != tabstop {
+            e.lines.clear();
+            e.tabstop = tabstop;
+        }
+        if e.version != buf.version() {
+            let from = e.version;
+            e.lines
+                .retain_mut(|(r, _, _)| match buf.journal().transform_range(r.clone(), from) {
+                    Ok(now) if now.len() == r.len() => {
+                        *r = now;
+                        true
+                    }
+                    _ => false,
+                });
+            e.version = buf.version();
+        }
+        let i = match e.lines.iter().position(|(r, _, _)| r == range) {
+            Some(i) => i,
+            None => {
+                e.lines
+                    .push((range.clone(), LineCells::read(buf, range.clone(), tabstop), false));
+                e.lines.len() - 1
+            }
+        };
+        e.lines[i].2 = true;
+        &e.lines[i].1
+    }
+
+    /// Once a frame, after the rows: keeps the lines a row asked for.
+    pub fn sweep(&mut self) {
+        for e in self.per.values_mut() {
+            e.lines.retain_mut(|l| std::mem::take(&mut l.2));
+        }
+        self.per.retain(|_, e| !e.lines.is_empty());
+    }
+}
+
+impl Drawn {
+    pub fn new(src: &str, tabstop: usize) -> Self {
+        Self::expand(src, tabstop, 0, 0, None)
+    }
+
+    /// Line `range` of `buf` as drawn for `window`, and the cells the
+    /// char at `mark` (a line-relative byte; the caret) starts and ends
+    /// at. A line shorter than [`LONG_LINE_BYTES`] is drawn whole; a
+    /// longer one is scanned for its cells — the window's slice found,
+    /// `mark` placed — reading the piece tree in chunks, and only the
+    /// slice is copied and expanded. With its [`LineCells`] the scan
+    /// runs from the checkpoint before the window (and the mark) to the
+    /// one after and takes the total from the index; without one, over
+    /// the whole line.
+    pub fn for_line(
+        buf: &kawoosh_doc::Buffer,
+        range: Range<usize>,
+        tabstop: usize,
+        window: Option<Window>,
+        mark: usize,
+        cells: Option<&LineCells>,
+    ) -> (Self, (usize, usize)) {
+        let len = range.len();
+        let Some(window) = window.filter(|w| len >= LONG_LINE_BYTES && w.cell_w > 0.0) else {
+            let drawn = Self::new(&buf.slice(range), tabstop);
+            let a = drawn.to_drawn(mark);
+            let b = next_char(&drawn.text, a);
+            let c0 = col_of(&drawn.text, a);
+            let c1 = c0 + col_of(&drawn.text[a..], b - a);
+            return (drawn, (c0, c1));
+        };
+        let want = window.cols();
+        let mark = mark.min(len);
+        let (from, to, total) = match cells {
+            Some(c) => (
+                c.before_col(want.start).min(c.before_byte(mark)),
+                c.after_col(want.end).max(c.after_byte(mark)),
+                Some(c.total),
+            ),
+            None => ((0, 0), len, None),
+        };
+        let mut sc = Scan::new(from, tabstop);
+        // The mark's cells, and the slice's edges as `(byte, col)`.
+        let mut marks: (Option<usize>, Option<usize>) = (None, None);
+        let mut slice_start: Option<(usize, usize)> = None;
+        let mut slice_end: Option<(usize, usize)> = None;
+        sc.run(buf, range.start + from.0..range.start + to, |sc, step| {
+            if slice_start.is_none() && sc.col + step.cells > want.start {
+                let k = want.start.saturating_sub(sc.col);
+                slice_start = Some((sc.byte + k, sc.col + k));
+            }
+            if slice_end.is_none() && sc.col + step.cells > want.end {
+                let k = want.end.saturating_sub(sc.col);
+                slice_end = Some((sc.byte + k, sc.col + k));
+            }
+            if sc.byte <= mark && mark < sc.byte + step.bytes {
+                marks = if step.bulk {
+                    let k = mark - sc.byte;
+                    (Some(sc.col + k), Some(sc.col + k + 1))
+                } else {
+                    (Some(sc.col), Some(sc.col + step.cells))
+                };
+            }
+        });
+        let total = total.unwrap_or(sc.col);
+        let (start_byte, start_col) = slice_start.unwrap_or((len, total));
+        let (end_byte, end_col) = slice_end.unwrap_or((len, total));
         let src = buf.slice(range.start + start_byte..range.start + end_byte);
         let mut drawn = Self::expand(&src, tabstop, start_col, start_byte, Some(total));
         drawn.after_cols = total - end_col;
-        let c0 = sc.mark_cols.0.unwrap_or(total);
-        let c1 = sc.mark_cols.1.unwrap_or(total);
+        let c0 = marks.0.unwrap_or(total);
+        let c1 = marks.1.unwrap_or(total);
         (drawn, (c0, c1))
     }
 

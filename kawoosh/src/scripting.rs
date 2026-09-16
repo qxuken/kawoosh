@@ -10,7 +10,7 @@ use std::rc::Rc;
 use kawoosh_doc::Buffer;
 use kawoosh_editor::{KeyStroke, Lookup, Mode, ViewId};
 use kawoosh_lua::{Msg, Runtime};
-use kawoosh_systems::lsp::{Cmd, ServerDef};
+use kawoosh_systems::lsp::ServerDef;
 use kawoosh_systems::ts::Token;
 use kui::{Color, NodeSpec, Sizing, Ui, Value};
 
@@ -56,7 +56,6 @@ impl Kawoosh {
         let (rt, ext) = Runtime::new().map_err(|e| e.to_string())?;
         let rt = Rc::new(rt);
         self.scripting.rt = Some(rt.clone());
-        self.scripting.servers = ServerDef::builtin();
         for (name, src) in crate::plugins::BUNDLED {
             if let Err(e) = rt.load_source(name, src) {
                 log::error!("{name}: {e}");
@@ -204,16 +203,12 @@ impl Kawoosh {
                 args,
                 roots,
             } => {
-                self.scripting.servers.retain(|d| d.language != language);
-                self.scripting.servers.push(ServerDef {
+                self.add_lsp_server(ServerDef {
                     language,
                     command,
                     args,
                     roots,
                 });
-                self.lsp
-                    .lsp
-                    .send(Cmd::Servers(self.scripting.servers.clone()));
             }
             Msg::Colors(list) => {
                 for (name, hex) in list {

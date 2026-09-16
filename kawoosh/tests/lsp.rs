@@ -6,7 +6,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh_editor::Mode;
-use kawoosh_systems::lsp::{Cmd, DIAG_LAYER, ServerDef};
+use kawoosh_systems::lsp::{DIAG_LAYER, ServerDef};
 use kui::KeyMods;
 
 fn fake_server() -> ServerDef {
@@ -41,7 +41,7 @@ fn diagnostics_definition_hover_and_completion() {
     std::fs::write(&file, "fn main() {\n    hel\n}\n").unwrap();
 
     let mut app = Kawoosh::from_file(&file);
-    app.lsp.lsp.send(Cmd::Servers(vec![fake_server()]));
+    app.add_lsp_server(fake_server());
     let mut d = Drive::new(900.0, 500.0);
     let v = app.focused_view().unwrap();
     let buf_id = app.ed.views[v].buffer;

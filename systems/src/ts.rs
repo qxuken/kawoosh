@@ -794,7 +794,7 @@ mod tests {
         buf.apply(second).unwrap();
         let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &whole_job(&buf)).update();
         assert_eq!(whole.span, 0..buf.len());
-        assert_eq!(joined(buf.runs(SYNTAX_LAYER, 0..buf.len())), joined(&whole.runs));
+        assert_eq!(joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())), joined(&whole.runs));
         let renamed = buf.text().find("renamed").unwrap();
         assert_eq!(
             buf.runs(SYNTAX_LAYER, renamed..renamed + 1).first().map(|r| Token::from_style(r.style)),
@@ -813,7 +813,7 @@ mod tests {
                 buf.apply(u).unwrap();
             }
             let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &whole_job(&buf));
-            assert_eq!(joined(buf.runs(SYNTAX_LAYER, 0..buf.len())), joined(&whole.update().runs));
+            assert_eq!(joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())), joined(&whole.update().runs));
             let renamed = buf.text().find("fn y_f20(").unwrap() + 3;
             assert_eq!(
                 buf.runs(SYNTAX_LAYER, renamed..renamed + 1).first().map(|r| Token::from_style(r.style)),
@@ -840,7 +840,7 @@ mod tests {
             }
             let whole = highlight(&mut parser, &mut g, &mut Parsed::default(), &whole_job(&buf));
             assert_eq!(
-                joined(buf.runs(SYNTAX_LAYER, 0..buf.len())),
+                joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())),
                 joined(&whole.update().runs),
                 "step {step}"
             );

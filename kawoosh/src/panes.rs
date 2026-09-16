@@ -497,6 +497,9 @@ impl Kawoosh {
             .unwrap_or(3)
             .min(rows_n / 2);
         let tabstop = self.ed.tabstop();
+        // The long lines' cell indexes, out of `self` for the rows below
+        // (which borrow the buffer) and back at the end.
+        let mut cells = std::mem::take(&mut self.line_cells);
         let mode = if focused { self.ed.mode } else { Mode::Normal };
         let linewise = self.ed.visual_linewise;
         let blink_on = ui.caret_visible();
@@ -569,8 +572,16 @@ impl Kawoosh {
                 width,
                 cell_w,
             };
-            let (drawn, (c0, c1)) =
-                Drawn::for_line(buf, range.clone(), tabstop, Some(window), head_rel);
+            let index = (range.len() >= rows::LONG_LINE_BYTES)
+                .then(|| cells.get(buf_id, buf, &range, tabstop).clone());
+            let (drawn, (c0, c1)) = Drawn::for_line(
+                buf,
+                range.clone(),
+                tabstop,
+                Some(window),
+                head_rel,
+                index.as_ref(),
+            );
             let head = drawn.to_drawn(head_rel);
             let style = rows::mono(font, &pal);
             let long = range.len() >= rows::LONG_LINE_BYTES;
@@ -641,8 +652,16 @@ impl Kawoosh {
                                 width,
                                 cell_w,
                             };
-                            let (drawn, _) =
-                                Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0);
+                            let index = (range.len() >= rows::LONG_LINE_BYTES)
+                                .then(|| cells.get(buf_id, buf, &range, tabstop));
+                            let (drawn, _) = Drawn::for_line(
+                                buf,
+                                range.clone(),
+                                tabstop,
+                                Some(window),
+                                0,
+                                index,
+                            );
                             let clip = |o: usize| {
                                 drawn.to_drawn(o.clamp(range.start, range.end) - range.start)
                             };
@@ -762,6 +781,7 @@ impl Kawoosh {
             },
         );
         self.ed.views[view].left = left;
+        self.line_cells = cells;
         if focused {
             ui.take_key_focus(sink);
         }
