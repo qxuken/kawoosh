@@ -104,11 +104,13 @@ impl Token {
 
     /// A tree-sitter capture name to a class: `keyword.control` is a
     /// keyword, `function.method` a function, `punctuation.bracket`
-    /// punctuation.
+    /// punctuation. nvim's older spellings — `repeat`, `conditional`
+    /// for the loop and branch keywords, `preproc` for a `#!` line —
+    /// read as their class (lua's query is written in them).
     pub fn from_capture(name: &str) -> Option<Token> {
         let head = name.split('.').next().unwrap_or(name);
         Some(match head {
-            "keyword" => Token::Keyword,
+            "keyword" | "repeat" | "conditional" => Token::Keyword,
             "function" | "method" => Token::Function,
             "type" => Token::Type,
             "string" | "character" | "escape" => Token::String,
@@ -120,7 +122,7 @@ impl Token {
             "punctuation" => Token::Punctuation,
             "attribute" => Token::Attribute,
             "constant" => Token::Constant,
-            "macro" => Token::Macro,
+            "macro" | "preproc" => Token::Macro,
             "label" => Token::Label,
             "constructor" => Token::Constructor,
             "tag" => Token::Tag,
@@ -223,7 +225,7 @@ impl Ts {
     pub fn supports(language: &str) -> bool {
         matches!(
             language,
-            "rust" | "toml" | "css" | "javascript" | "typescript" | "tsx" | "go"
+            "rust" | "toml" | "css" | "javascript" | "typescript" | "tsx" | "go" | "lua"
         )
     }
 }
@@ -245,6 +247,7 @@ struct Grammars {
     typescript: Option<Grammar>,
     tsx: Option<Grammar>,
     go: Option<Grammar>,
+    lua: Option<Grammar>,
 }
 
 impl Grammars {
@@ -303,6 +306,10 @@ impl Grammars {
                 tree_sitter_go::LANGUAGE.into(),
                 tree_sitter_go::HIGHLIGHTS_QUERY,
             ),
+            lua: Grammar::new(
+                tree_sitter_lua::LANGUAGE.into(),
+                tree_sitter_lua::HIGHLIGHTS_QUERY,
+            ),
         }
     }
 
@@ -315,6 +322,7 @@ impl Grammars {
             "typescript" => self.typescript.as_ref(),
             "tsx" => self.tsx.as_ref(),
             "go" => self.go.as_ref(),
+            "lua" => self.lua.as_ref(),
             _ => None,
         }
     }
@@ -735,6 +743,27 @@ mod tests {
                     ("func", Token::Keyword),
                     ("main()", Token::Function),
                     ("\"x\"", Token::String),
+                ],
+            ),
+            // lua: its query spells the branch and loop keywords as
+            // nvim's `conditional` and `repeat`; a field, a parameter,
+            // a method call.
+            (
+                "lua",
+                "-- c\nlocal M = {}\nfunction M.f(a)\n  if a then return \"s\" end\n  while a.n do a:go() end\n  return 1\nend\n",
+                &[
+                    ("-- c", Token::Comment),
+                    ("local", Token::Keyword),
+                    ("function", Token::Keyword),
+                    ("f(", Token::Function),
+                    ("a)", Token::Variable),
+                    ("if", Token::Keyword),
+                    ("then", Token::Keyword),
+                    ("\"s\"", Token::String),
+                    ("while", Token::Keyword),
+                    ("n do", Token::Property),
+                    ("go()", Token::Function),
+                    ("1\n", Token::Number),
                 ],
             ),
             // typescript: javascript's classes, and its own — a type
