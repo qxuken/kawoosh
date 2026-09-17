@@ -49,15 +49,29 @@ impl WakeHandle {
 /// A wake at a time — for the shell to look again once something has
 /// been still for long enough (the lsp glue holds a diagnostics answer
 /// while its buffer is being typed in, and there is no keystroke to
-/// bring the frame that applies it). `set` arms it; armed again before
-/// it fires, the later time wins.
+/// bring the frame that applies it), or once something has been on
+/// show for long enough (a toast's timeout). `set` arms it; armed again
+/// before it fires, [`Alarm::spawn`]'s keeps the later time (a debounce:
+/// the last keystroke's quiet is the one that counts) and
+/// [`Alarm::spawn_soonest`]'s the earlier (a deadline: the first toast
+/// to expire is the one to wake for).
 #[derive(Clone)]
 pub struct Alarm {
     tx: crossbeam_channel::Sender<Instant>,
 }
 
 impl Alarm {
+    /// Later wins.
     pub fn spawn(wake: WakeHandle) -> Self {
+        Self::spawn_with(wake, Instant::max)
+    }
+
+    /// Earlier wins.
+    pub fn spawn_soonest(wake: WakeHandle) -> Self {
+        Self::spawn_with(wake, Instant::min)
+    }
+
+    fn spawn_with(wake: WakeHandle, pick: fn(Instant, Instant) -> Instant) -> Self {
         let (tx, rx) = crossbeam_channel::unbounded::<Instant>();
         std::thread::Builder::new()
             .name("alarm".into())
@@ -70,7 +84,7 @@ impl Alarm {
                         None => rx.recv().map_err(|_| Disconnected),
                     };
                     match got {
-                        Ok(t) => due = Some(due.map_or(t, |d| d.max(t))),
+                        Ok(t) => due = Some(due.map_or(t, |d| pick(d, t))),
                         Err(Timeout) => {
                             due = None;
                             wake.wake();
@@ -114,5 +128,26 @@ mod tests {
         // Armed again, it fires again.
         alarm.set(Instant::now() + Duration::from_millis(20));
         assert!(rx.recv_timeout(Duration::from_secs(2)).is_ok());
+    }
+
+    /// The soonest alarm wakes at the earliest time it was set to, even
+    /// when that one was set second.
+    #[test]
+    fn the_soonest_alarm_wakes_at_the_earliest_time_set() {
+        let (tx, rx) = crossbeam_channel::unbounded::<Instant>();
+        let wake = WakeHandle::new();
+        wake.set(Arc::new(move || {
+            let _ = tx.send(Instant::now());
+        }));
+        let alarm = Alarm::spawn_soonest(wake);
+        let t0 = Instant::now();
+        alarm.set(t0 + Duration::from_millis(400));
+        alarm.set(t0 + Duration::from_millis(40));
+        let woke = rx.recv_timeout(Duration::from_secs(2)).expect("a wake");
+        assert!(woke >= t0 + Duration::from_millis(40));
+        assert!(
+            woke < t0 + Duration::from_millis(400),
+            "the later time did not push it out"
+        );
     }
 }

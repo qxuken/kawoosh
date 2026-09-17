@@ -7,10 +7,15 @@ wait for the typing to pause); completion
 (hello_world, help — or, after a `.` in the text it was last sent,
 member_a and member_b, so a test can see the request was made on the
 synced text); hover ("the hover"); definition (line 1, character 0 of
-the same file)."""
+the same file); progress: on `initialized` a work-done token
+"Loading workspace" begins (after asking to create it) and reports
+3/12 at 50%, and the first didChange ends it — and sends a
+window/showMessage warning ("the warning") and a window/logMessage
+("the log line"), so a test can see where each lands."""
 import json, sys
 
 docs = {}
+ended = False
 
 def char_before(uri, pos):
     lines = docs.get(uri, "").split("\n")
@@ -42,12 +47,29 @@ while True:
         break
     method = m.get("method")
     mid = m.get("id")
+    if method is None:
+        continue  # a response to a request of ours
     if method == "initialize":
         send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {}}})
+    elif method == "initialized":
+        send({"jsonrpc": "2.0", "id": 1000, "method": "window/workDoneProgress/create",
+              "params": {"token": "ws"}})
+        send({"jsonrpc": "2.0", "method": "$/progress", "params": {"token": "ws", "value": {
+            "kind": "begin", "title": "Loading workspace", "percentage": 0}}})
+        send({"jsonrpc": "2.0", "method": "$/progress", "params": {"token": "ws", "value": {
+            "kind": "report", "message": "3/12", "percentage": 50}}})
     elif method == "textDocument/didChange":
         uri = m["params"]["textDocument"]["uri"]
         text = m["params"]["contentChanges"][0]["text"]
         docs[uri] = text
+        if not ended:
+            ended = True
+            send({"jsonrpc": "2.0", "method": "$/progress", "params": {"token": "ws", "value": {
+                "kind": "end"}}})
+            send({"jsonrpc": "2.0", "method": "window/showMessage", "params": {
+                "type": 2, "message": "the warning"}})
+            send({"jsonrpc": "2.0", "method": "window/logMessage", "params": {
+                "type": 4, "message": "the log line"}})
         if "!!" in text:
             send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
                 "uri": uri,

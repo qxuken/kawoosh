@@ -38,6 +38,34 @@ function kawoosh.map(mode, keys, cmd)
   kawoosh._map(mode, keys, cmd)
 end
 
+-- kawoosh.notify(text[, opts]): a notification. `opts` is a level name
+-- ("debug", "info", "warn", "error"; info when omitted) or a table:
+-- `level`, `source` (who says so), `show` ("toast", "corner", "log" —
+-- else the level decides: an error or a warning is a toast, an info a
+-- dim corner line, a debug the log's alone), `timeout` in ms (0 keeps
+-- it until acted on), and `actions`, a list of `{ label = "Retry", run
+-- = fn }` (or `run = "command line"`) — a toast with actions stays
+-- until one is clicked. Every notification is in `:messages`.
+function kawoosh.notify(text, opts)
+  if type(opts) == "string" then opts = { level = opts } end
+  opts = opts or {}
+  local labels, commands = {}, {}
+  for i, a in ipairs(opts.actions or {}) do
+    local cmd = a.run or a.command or a[2]
+    if type(cmd) == "function" then
+      kawoosh._nonce = kawoosh._nonce + 1
+      local name = "lua.notify." .. kawoosh._nonce
+      kawoosh.command(name, cmd)
+      cmd = name
+    end
+    labels[i] = tostring(a.label or a[1] or ("action " .. i))
+    commands[i] = tostring(cmd or "")
+  end
+  local timeout = opts.timeout
+  if timeout == false then timeout = 0 end
+  kawoosh._notify(tostring(text), opts.level, opts.source, opts.show, timeout, labels, commands)
+end
+
 -- kawoosh.view(name, fn[, on_event]): a pane whose content is what `fn`
 -- returns — a kui table tree (row, column, text, edit, button, ...).
 -- `fn(ctx)` gets { pane = id, focused = bool, env = kui's env }. Events

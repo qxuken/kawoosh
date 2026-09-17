@@ -238,3 +238,87 @@ fn diagnostics_wait_for_the_typing_to_pause() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A server's `$/progress` is a corner line under the server's name —
+/// live while it runs, "Completed" once done — its `window/showMessage`
+/// a toast by type, its `window/logMessage` the log's alone.
+#[test]
+fn progress_and_messages_land_in_the_corner() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-notify-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    assert!(
+        until(&mut d, &mut app, |a| a
+            .notes
+            .progress
+            .iter()
+            .any(|p| p.percentage == Some(50))),
+        "the report arrived"
+    );
+    let texts = d.corner_texts();
+    assert!(
+        texts.iter().any(|t| t == "Loading workspace 3/12 50%"),
+        "{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t == "python3"),
+        "the server's name: {texts:?}"
+    );
+    assert!(texts.iter().any(|t| t == "…"), "running: {texts:?}");
+
+    // An edit: the server ends the token and speaks.
+    d.keys(&mut app, "O");
+    d.text(&mut app, "//");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(
+        until(&mut d, &mut app, |a| a
+            .notes
+            .log
+            .iter()
+            .any(|e| e.text == "the log line")),
+        "the log message arrived"
+    );
+    let texts = d.corner_texts();
+    assert!(
+        texts.iter().any(|t| t == "Completed Loading workspace"),
+        "{texts:?}"
+    );
+    assert!(texts.iter().any(|t| t == "✓"), "done: {texts:?}");
+    assert!(
+        texts.iter().any(|t| t == "the warning"),
+        "a toast: {texts:?}"
+    );
+    let warning = app
+        .notes
+        .shown
+        .iter()
+        .find(|s| s.text == "the warning")
+        .unwrap();
+    assert!(warning.toast);
+    assert_eq!(warning.source.as_deref(), Some("python3"));
+    assert!(
+        !texts.iter().any(|t| t == "the log line"),
+        "the log's alone"
+    );
+    let logged = app
+        .notes
+        .log
+        .iter()
+        .find(|e| e.text == "the log line")
+        .unwrap();
+    assert_eq!(logged.level, kawoosh::notify::Level::Debug);
+    assert!(
+        app.notes
+            .log
+            .iter()
+            .any(|e| e.text == "Loading workspace done")
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -13,6 +13,8 @@ use kawoosh_editor::{KeyStroke, Mode, Selection, ViewId};
 use kawoosh_systems::lsp::{Cmd, CompletionItem, Event, Lsp, ServerDef};
 use kawoosh_systems::{Alarm, WakeHandle};
 
+use crate::notify::{Level, Note, Show};
+
 /// How long a buffer's text must have been still, in insert mode,
 /// before a diagnostics answer for it lands. A server answers each
 /// keystroke of a half-typed line with a syntax error on every line
@@ -207,10 +209,45 @@ impl Kawoosh {
                 }
                 Event::Unavailable { language, command } => {
                     if self.lsp.said_unavailable.insert(command.clone()) {
-                        self.ed.message = format!("{language}: `{command}` not found; lsp off");
+                        self.notify_with(
+                            Note::new(Level::Warn, format!("`{command}` not found; lsp off"))
+                                .source(language),
+                        );
                     }
                 }
                 Event::Status(s) => self.lsp.status = s,
+                // A server's word: shown by its type, or — a log
+                // message — kept to the log.
+                Event::Message {
+                    server,
+                    kind,
+                    text,
+                    log,
+                } => {
+                    let mut note = Note::new(Level::from_lsp(kind), text).source(server);
+                    if log {
+                        note = note.show(Show::Log);
+                    }
+                    self.notify_with(note);
+                }
+                Event::Progress {
+                    server,
+                    token,
+                    title,
+                    message,
+                    percentage,
+                    done,
+                } => {
+                    self.notes.progress(
+                        &server,
+                        &token,
+                        title,
+                        message,
+                        percentage,
+                        done,
+                        Instant::now(),
+                    );
+                }
             }
         }
         // Held answers land once the typing paused or insert mode ended;

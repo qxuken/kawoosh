@@ -130,6 +130,25 @@ pub enum Event {
     },
     /// The pool's shape, for the status line: `(root, server, open docs)`.
     Status(Vec<(PathBuf, String, usize)>),
+    /// `window/showMessage` (`log` false) or `window/logMessage` (`log`
+    /// true): `kind` is the protocol's MessageType, 1 error … 4 log.
+    Message {
+        server: String,
+        kind: u64,
+        text: String,
+        log: bool,
+    },
+    /// `$/progress`: one of a server's work-done tokens moved. `title`
+    /// comes with the begin, `message` and `percentage` with any step,
+    /// `done` with the end.
+    Progress {
+        server: String,
+        token: String,
+        title: Option<String>,
+        message: Option<String>,
+        percentage: Option<u32>,
+        done: bool,
+    },
 }
 
 pub struct Lsp {
@@ -247,6 +266,9 @@ struct Server {
     pending: HashMap<i64, (&'static str, BufferId, Version, usize)>,
     documents: HashMap<String, Document>,
     language: String,
+    /// The command it was started as — what a message from it is
+    /// attributed to.
+    name: String,
 }
 
 impl Server {
@@ -306,6 +328,7 @@ impl Server {
             pending: HashMap::new(),
             documents: HashMap::new(),
             language: def.language.clone(),
+            name: def.command.clone(),
         })
     }
 
@@ -450,7 +473,8 @@ impl Pool {
                         "completion": { "completionItem": { "snippetSupport": false, "insertReplaceSupport": true } },
                         "synchronization": { "didSave": true }
                     },
-                    "workspace": { "configuration": true, "workspaceFolders": true }
+                    "workspace": { "configuration": true, "workspaceFolders": true },
+                    "window": { "workDoneProgress": true }
                 }
             }
         }));
@@ -652,18 +676,64 @@ impl Pool {
             return;
         }
         // A notification.
-        if message.get("method").and_then(Value::as_str) == Some("textDocument/publishDiagnostics")
-            && let Some(params) = message.get("params")
-            && let Some(uri) = params.get("uri").and_then(Value::as_str)
-            && let Some(doc) = server.documents.get(uri)
-        {
-            let (update, messages) = diagnostics_update(params, doc);
-            let buffer = doc.buffer;
-            self.emit(Event::Diagnostics {
-                buffer,
-                update,
-                messages,
-            });
+        let method = message.get("method").and_then(Value::as_str);
+        let params = message.get("params");
+        match method {
+            Some("textDocument/publishDiagnostics") => {
+                if let Some(params) = params
+                    && let Some(uri) = params.get("uri").and_then(Value::as_str)
+                    && let Some(doc) = server.documents.get(uri)
+                {
+                    let (update, messages) = diagnostics_update(params, doc);
+                    let buffer = doc.buffer;
+                    self.emit(Event::Diagnostics {
+                        buffer,
+                        update,
+                        messages,
+                    });
+                }
+            }
+            Some(m @ ("window/showMessage" | "window/logMessage")) => {
+                let Some(params) = params else { return };
+                let text = params
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let kind = params.get("type").and_then(Value::as_u64).unwrap_or(3);
+                let server = server.name.clone();
+                self.emit(Event::Message {
+                    server,
+                    kind,
+                    text,
+                    log: m == "window/logMessage",
+                });
+            }
+            Some("$/progress") => {
+                let Some(params) = params else { return };
+                let token = match params.get("token") {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(other) => other.to_string(),
+                    None => return,
+                };
+                let Some(value) = params.get("value") else {
+                    return;
+                };
+                let string = |k: &str| value.get(k).and_then(Value::as_str).map(str::to_string);
+                let server = server.name.clone();
+                self.emit(Event::Progress {
+                    server,
+                    token,
+                    title: string("title"),
+                    message: string("message"),
+                    percentage: value
+                        .get("percentage")
+                        .and_then(Value::as_f64)
+                        .map(|p| p.round().clamp(0.0, 100.0) as u32),
+                    done: value.get("kind").and_then(Value::as_str) == Some("end"),
+                });
+            }
+            _ => {}
         }
     }
 }

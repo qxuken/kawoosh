@@ -67,6 +67,8 @@ pub const SHELL_COMMANDS: &[(&str, &[ArgKind], bool)] = &[
     ("lsp_hover", &[], false),
     ("lsp_status", &[], false),
     ("lua", &[ArgKind::Text], true),
+    ("messages", &[ArgKind::Text], false),
+    ("notify", &[ArgKind::Text], true),
     ("oldfiles", &[ArgKind::Text], false),
     ("only", &[], false),
     ("pane_down", &[], false),

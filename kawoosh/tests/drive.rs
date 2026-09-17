@@ -156,6 +156,28 @@ impl Drive {
         out
     }
 
+    /// The text nodes drawn in the notification floats (`notify.rs`) —
+    /// the toasts at the top, then the corner — top to bottom; none
+    /// when nothing is on show.
+    pub fn corner_texts(&self) -> Vec<String> {
+        let nodes = self.core.nodes();
+        let mut out = Vec::new();
+        for label in ["toasts", "corner"] {
+            let Some(at) = nodes.iter().position(|n| n.label.as_deref() == Some(label)) else {
+                continue;
+            };
+            // Preorder: the float's subtree is the run after it that is
+            // deeper.
+            out.extend(
+                nodes[at + 1..]
+                    .iter()
+                    .take_while(|n| n.depth > nodes[at].depth)
+                    .filter_map(|n| n.text.clone()),
+            );
+        }
+        out
+    }
+
     /// Every warning the core raised so far; a test asserts it empty.
     pub fn warnings(&mut self) -> Vec<String> {
         self.core

@@ -153,7 +153,9 @@ because it *paid*: no z-order, no occlusion, no focus stealing in a
 homegrown layout crate. kui solves all three, so the engineering half of
 the justification is gone. The taste half stays: transient UI goes in
 panes and strips, completion is in-place, hover opens a pane. It is now a
-rule that costs nothing to revisit, and it is not revisited here.
+rule that costs nothing to revisit, and it was revisited once, for
+notifications (Decision 9): two floats that never take focus, never
+cover the caret's row, and are read rather than worked in.
 
 ### 3. The editor pane is rows of runs, not a custom leaf
 
@@ -387,6 +389,50 @@ quads, the events, the warnings and the access tree. So:
 
 The thing not covered headless is smaller than before: it was the
 painter, and the painter is now kui's, with its own coverage.
+
+### 9. Notifications: a level says where it shows
+
+The old shape was one message line under the command line, set from
+forty places and overwritten by the next; anything asynchronous — a
+server that failed to start, a compile that finished, `$/progress` —
+either took the line or was lost. Now a notification has a **level**
+(`debug`, `info`, `warn`, `error`) and the level decides where it shows
+(`notify.rs`):
+
+- **error, warn → a toast.** A bordered card at the top-right under the
+  tab strip, gone after eight seconds — or, when it carries **actions**,
+  only when one is clicked (a toast with actions is a question, and a
+  question does not time out). A plain toast goes on a click too.
+- **info → a corner line.** A dim line at the bottom-right above the
+  strips, gone after four seconds, grouped under its **source** with
+  the source's name below the group — fidget's shape. A language
+  server's `$/progress` is one of these, live while it runs (`Indexing
+  163/336 48%`), `Completed …` once done, the server's name ticked when
+  every token of its is done. The same thing said again counts up,
+  `(2x)`, instead of showing twice.
+- **debug → the log only.** The log keeps the last thousand entries;
+  `:messages` opens it as the read-only `*messages*` buffer — time,
+  level, source, text, a repeat's count — live while it is open, and
+  `:messages clear` empties it. What the command line shows lands in it
+  too, so the old message line keeps its job (a command's immediate
+  answer) and stops being the record.
+
+A notification is data — `Note { level, source, text, actions, show,
+ttl }` — and an **action is a command line**: `{ label, command }`, run
+through the engine as `:` would run it, so a toast's buttons come from
+the same table a keymap's bindings do, whoever registered the command.
+`kawoosh.notify(text, { level=, source=, timeout=, show=, actions = {
+{ label=, run = fn | "command" } } })` is the Lua half; a function is
+made a command first, as `kawoosh.map` does. `:notify [LEVEL] TEXT` is
+the command line's. The shell's own sources are the lsp glue (a server
+not found; `window/showMessage` by its type, `window/logMessage` to the
+log; `$/progress`, asked for with `window.workDoneProgress`) and compile
+mode's exit; the level is the caller's to pick and `show` overrides it.
+
+Redraw stays event-driven: what times out arms a `systems::Alarm` at the
+earliest expiry (`Alarm::spawn_soonest`; the diagnostics debounce keeps
+the latest-wins one), so a toast's going brings its own frame and a
+quiet editor still draws nothing.
 
 ### Deliberately not in the MVP
 

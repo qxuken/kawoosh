@@ -42,6 +42,8 @@ pub const EX_ALIASES: &[(&[&str], &str)] = &[
     (&["map"], "map"),
     (&["echo"], "echo"),
     (&["lua"], "lua"),
+    (&["messages", "mes"], "messages"),
+    (&["notify"], "notify"),
     (&["lsp"], "lsp_status"),
     (&["tool"], "tool"),
     (&["cd", "chdir"], "cd"),

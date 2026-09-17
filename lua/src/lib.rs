@@ -34,6 +34,17 @@ pub enum Msg {
     },
     Ex(String),
     Echo(String),
+    /// `kawoosh.notify(text, opts)`: a level by name, where to show it
+    /// (`toast` / `corner` / `log`, else by the level), a timeout in
+    /// milliseconds (0 never), and its actions as `(label, command)`.
+    Notify {
+        level: Option<String>,
+        source: Option<String>,
+        text: String,
+        show: Option<String>,
+        timeout: Option<f64>,
+        actions: Vec<(String, String)>,
+    },
     Open(PathBuf),
     OpenScratch {
         name: String,
@@ -482,6 +493,33 @@ fn seed(
             qq.borrow_mut().push(Msg::Echo(lua_str(&s)));
             Ok(())
         })?,
+    )?;
+    let qq = q(queue);
+    #[allow(clippy::type_complexity)]
+    k.set(
+        "_notify",
+        lua.create_function(
+            move |_,
+                  (text, level, source, show, timeout, labels, commands): (
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<f64>,
+                Vec<String>,
+                Vec<String>,
+            )| {
+                qq.borrow_mut().push(Msg::Notify {
+                    level,
+                    source,
+                    text,
+                    show,
+                    timeout,
+                    actions: labels.into_iter().zip(commands).collect(),
+                });
+                Ok(())
+            },
+        )?,
     )?;
     let qq = q(queue);
     k.set(

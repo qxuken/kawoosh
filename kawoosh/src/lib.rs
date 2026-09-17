@@ -10,6 +10,7 @@ pub mod compile;
 pub mod inspector;
 pub mod layout;
 pub mod lsp;
+pub mod notify;
 pub mod palette;
 pub mod panes;
 pub mod perf;

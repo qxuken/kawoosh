@@ -10,6 +10,7 @@ use kawoosh_editor::{Selection, ViewId};
 use kawoosh_systems::io::IoMsg;
 
 use crate::app::Kawoosh;
+use crate::notify::{Level, Note};
 use crate::terminals::location_at;
 
 pub const COMPILE_BUFFER: &str = "*compile*";
@@ -100,7 +101,13 @@ impl Kawoosh {
                     None => "killed".into(),
                 };
                 self.compile_append(&format!("\n[{status}]\n"));
-                self.ed.message = format!("compile: {status}");
+                // Asynchronous: the corner, not the command line.
+                let level = if code == Some(0) {
+                    Level::Info
+                } else {
+                    Level::Warn
+                };
+                self.notify_with(Note::new(level, status).source("compile"));
             }
             _ => {}
         }

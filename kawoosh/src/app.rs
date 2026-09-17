@@ -25,6 +25,7 @@ use crate::compile::Compile;
 use crate::inspector::Inspector;
 use crate::layout::{Content, Layout, PaneId, SplitDir};
 use crate::lsp::LspState;
+use crate::notify::{Level, Notifications};
 use crate::rows::{self, Drawn, GUTTER_W, LH, STRIP_H};
 use crate::scripting::Scripting;
 use crate::terminals::{TermId, Terminals};
@@ -44,6 +45,10 @@ pub struct Kawoosh {
     pub lsp: LspState,
     pub scripting: Scripting,
     pub compile: Compile,
+    /// Toasts, the corner log and the full log (`notify.rs`).
+    pub notes: Notifications,
+    /// The log version the `*messages*` buffer was last filled from.
+    pub(crate) messages_shown: u64,
     pub store: Option<std::rc::Rc<kawoosh_systems::store::Store>>,
     pub(crate) session_saved: bool,
     /// Where each buffer was left when a view moved off it — its
@@ -130,6 +135,8 @@ impl Kawoosh {
                 ..Default::default()
             },
             compile: Compile::default(),
+            notes: Notifications::new(wake.clone()),
+            messages_shown: 0,
             store: None,
             session_saved: false,
             last_pos: HashMap::new(),
@@ -983,6 +990,19 @@ impl Kawoosh {
             }
             "error_next" => self.error_step(true),
             "error_prev" => self.error_step(false),
+            "messages" => self.messages_command(args),
+            // `:notify LEVEL TEXT` (or just the text, at info).
+            "notify" => {
+                let (level, text) = match args.first().and_then(|a| Level::parse(a)) {
+                    Some(l) => (l, args[1..].join(" ")),
+                    None => (Level::Info, args.join(" ")),
+                };
+                if text.is_empty() {
+                    self.ed.message = "notify what? (:notify [LEVEL] TEXT)".into();
+                } else {
+                    self.notify(level, text);
+                }
+            }
             "session_save" | "mksession" => {
                 self.save_session();
                 self.ed.message = "session saved".into();
@@ -1408,6 +1428,7 @@ impl kui::App for Kawoosh {
         let t = Instant::now();
         self.sync_lsp();
         self.perf.cur.lsp = ms(t);
+        self.sync_notifications();
         let t = Instant::now();
         self.drain_lua();
         if let Some(rt) = self.scripting.rt.clone() {
@@ -1502,6 +1523,8 @@ impl kui::App for Kawoosh {
             );
             self.status(ui);
             self.command_line(ui);
+            self.toasts(ui);
+            self.corner(ui);
         });
         self.line_cells.sweep();
         self.perf.end_frame(ms(frame_started));
@@ -1571,6 +1594,7 @@ impl kui::App for Kawoosh {
                     self.layout.focus(pane as PaneId);
                 }
             }
+            Some("toast") => self.on_toast(p),
             Some("tab") => {
                 if let Some(i) = p.get("index").and_then(Value::as_int) {
                     self.layout.tab = (i as usize).min(self.layout.tabs.len() - 1);

@@ -16,6 +16,7 @@ use kui::{Color, NodeSpec, Sizing, Ui, Value};
 
 use crate::app::Kawoosh;
 use crate::layout::{Content, PaneId, SplitDir};
+use crate::notify::{Level, Note, Show, Ttl};
 
 #[derive(Clone, Debug)]
 pub struct ToolDef {
@@ -230,6 +231,48 @@ impl Kawoosh {
                     .insert(name, ToolDef { cmd, cwd, dock });
             }
             Msg::Compile(cmd) => self.compile(&cmd),
+            Msg::Notify {
+                level,
+                source,
+                text,
+                show,
+                timeout,
+                actions,
+            } => {
+                let level = match level.as_deref() {
+                    None => Level::Info,
+                    Some(l) => match Level::parse(l) {
+                        Some(l) => l,
+                        None => {
+                            self.ed.message = format!("notify: unknown level {l}");
+                            return;
+                        }
+                    },
+                };
+                let mut note = Note::new(level, text);
+                if let Some(s) = source {
+                    note = note.source(s);
+                }
+                note.show = match show.as_deref() {
+                    None => None,
+                    Some("toast") => Some(Show::Toast),
+                    Some("corner") => Some(Show::Corner),
+                    Some("log") => Some(Show::Log),
+                    Some(other) => {
+                        self.ed.message = format!("notify: unknown show {other}");
+                        return;
+                    }
+                };
+                note.ttl = match timeout {
+                    None => Ttl::Default,
+                    Some(ms) if ms <= 0.0 => Ttl::Never,
+                    Some(ms) => Ttl::After(std::time::Duration::from_millis(ms as u64)),
+                };
+                for (label, command) in actions {
+                    note = note.action(label, command);
+                }
+                self.notify_with(note);
+            }
             Msg::LspServer {
                 language,
                 command,

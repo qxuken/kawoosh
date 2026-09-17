@@ -114,6 +114,8 @@ A modal editor over a selection set: h j k l w b e 0 ^ $ gg G, i a o O,
 d c y with motions and text objects (dw, ciw, di(), v / V to select,
 u and ctrl-r, / to search, : for commands (:w path, :q, :e file) —
 Tab completes a command or a path, Up recalls the last one.
+Notifications: :notify warn TEXT is a toast at the top, :notify TEXT a
+dim line in the corner, :messages the log of every one.
 alt-j / alt-k add cursors; , keeps the primary.
 Buffers: :ls, :b name, :bn, :bd, :bdo (delete the others); - is the
 file manager on the current file's directory.
