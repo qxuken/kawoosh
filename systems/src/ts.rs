@@ -250,9 +250,16 @@ struct Grammars {
 impl Grammars {
     fn load() -> Self {
         Self {
+            // rust's query colours by naming convention — an uppercase
+            // identifier is a constructor — so a lowercase variant name
+            // got nothing; a variant is a constructor by where it is.
             rust: Grammar::new(
                 tree_sitter_rust::LANGUAGE.into(),
-                tree_sitter_rust::HIGHLIGHTS_QUERY,
+                &[
+                    tree_sitter_rust::HIGHLIGHTS_QUERY,
+                    "(enum_variant name: (identifier) @constructor)\n",
+                ]
+                .concat(),
             ),
             // toml-ng captures every bare key as `@type` (the `@property`
             // is on the pair around it, so the key wins); a key is a
@@ -654,6 +661,32 @@ mod tests {
         assert_eq!(tok_at(src.find("main").unwrap()), Some(Token::Function));
         assert_eq!(tok_at(src.find('"').unwrap() + 1), Some(Token::String));
         assert_eq!(tok_at(src.find("let").unwrap()), Some(Token::Keyword));
+    }
+
+    /// A variant is a constructor whatever its case: the query's own rule
+    /// is by an uppercase first letter.
+    #[test]
+    fn rust_enum_variants_are_constructors_by_position() {
+        let mut g = Grammars::load();
+        let mut parser = Parser::new();
+        let src = "enum E {\n    Value,\n    value,\n    Pair(u8),\n}\n";
+        let buf = Buffer::new("t", src);
+        let job = Job {
+            buffer: BufferId::default(),
+            language: "rust".into(),
+            snapshot: buf.snapshot(),
+            edits: None,
+        };
+        let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job).update();
+        for needle in ["Value", "value", "Pair"] {
+            let o = src.find(needle).unwrap();
+            let got = a
+                .runs
+                .iter()
+                .find(|r| r.range.contains(&o))
+                .map(|r| Token::from_style(r.style));
+            assert_eq!(got, Some(Token::Constructor), "{needle}");
+        }
     }
 
     /// Each grammar's query compiles and lands the classes a theme
