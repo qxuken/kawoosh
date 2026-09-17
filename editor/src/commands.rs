@@ -895,7 +895,7 @@ fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
     }
     let buf = &ed.buffers[id];
     if buf.path.is_none() && buf.hook.is_some() {
-        ed.buffers[id].modified = false;
+        ed.buffers[id].mark_saved();
         ed.effects.push(Effect::Write(id));
         return true;
     }
@@ -910,7 +910,7 @@ fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
     match save_beside(buf, &path) {
         Ok(()) => {
             let b = &mut ed.buffers[id];
-            b.modified = false;
+            b.mark_saved();
             b.disk_len = Some(b.len());
             ed.message = format!(
                 "\"{}\" {}L, {}B written",
@@ -1519,7 +1519,7 @@ pub fn install(ed: &mut Editor) {
             if let Some(p) = ed.buffers[id].path.clone()
                 && save_beside(&ed.buffers[id], &p).is_ok()
             {
-                ed.buffers[id].modified = false;
+                ed.buffers[id].mark_saved();
             }
         }
         let _ = ctx;

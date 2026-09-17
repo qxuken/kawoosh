@@ -52,6 +52,16 @@ Two transform modes, and the distinction matters:
 - `clamp_range` (`Buffer::transform_span`) — for a provider's **scope**. An edit
   inside the span shrinks the region the provider is authoritative over; it does
   not poison the whole submission.
+- `carry_range` (2026-09-17) — what the layers actually do with a run, and what
+  `Buffer::apply` does with a late result: an edit inside the range stretches or
+  shrinks it, one over an edge cuts it, and only an edit that swallows it empties
+  it. The strict form turned out to be the wrong default for colours: a
+  highlighter's incremental answer covers the edit and what tree-sitter says
+  changed, not the token around the edit, so dropping the token's run left a
+  string plain from the first typed char until the next whole parse. The stale
+  colour over the typed text is the `Invalidate` policy below — keep drawing,
+  let the provider correct — and `transform_range` stays for a caller that wants
+  the failure (the row cache).
 
 Boundary behaviour is bias-driven and worth stating explicitly, because it is
 the part that is easy to get subtly wrong: a range **excludes** text inserted at

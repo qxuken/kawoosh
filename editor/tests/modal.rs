@@ -187,6 +187,54 @@ fn undo_redo_are_per_command_and_per_insert_session() {
     assert_eq!(t.text(), "one twobc");
 }
 
+/// The buffer is modified by what its text is, not by what happened:
+/// an undo back to the text that was loaded, or written, is clean;
+/// a redo away from it is not; a write in the middle of the history
+/// moves the clean point there.
+#[test]
+fn undo_back_to_the_saved_text_is_clean() {
+    let mut t = T::new("abc");
+    assert!(!t.ed.buffer_of(t.v).modified);
+    t.keys("x");
+    assert!(t.ed.buffer_of(t.v).modified);
+    t.keys("ione<Esc>");
+    t.keys("u");
+    assert!(
+        t.ed.buffer_of(t.v).modified,
+        "one step back is still off the file"
+    );
+    t.keys("u");
+    assert_eq!(t.text(), "abc");
+    assert!(!t.ed.buffer_of(t.v).modified, "back to what was loaded");
+    t.keys("<C-r>");
+    assert_eq!(t.text(), "bc");
+    assert!(t.ed.buffer_of(t.v).modified);
+    // Written here: this text is the clean one now, and the loaded
+    // text no longer is.
+    let dir = std::env::temp_dir().join(format!("kawoosh-modal-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.txt");
+    t.keys(&format!(":w {}<CR>", file.display()));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "bc");
+    assert!(!t.ed.buffer_of(t.v).modified);
+    t.keys("u");
+    assert_eq!(t.text(), "abc");
+    assert!(t.ed.buffer_of(t.v).modified);
+    t.keys("<C-r>");
+    assert_eq!(t.text(), "bc");
+    assert!(!t.ed.buffer_of(t.v).modified);
+    t.keys("<C-r>");
+    assert_eq!(t.text(), "onebc");
+    assert!(t.ed.buffer_of(t.v).modified);
+    // Typing the text back by hand is an edit, not an undo: vim's rule,
+    // since the history has moved on.
+    t.keys("u");
+    assert!(!t.ed.buffer_of(t.v).modified);
+    t.keys("ione<Esc>u");
+    assert!(!t.ed.buffer_of(t.v).modified);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn visual_mode_selects_and_operates() {
     let mut t = T::new("hello world");

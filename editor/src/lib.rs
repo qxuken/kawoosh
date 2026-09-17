@@ -686,8 +686,9 @@ impl Editor {
             root: buf.text_root(),
             sels: self.views[view].sels.clone(),
         });
+        // `restore` says whether this is the saved text: undone back
+        // to it, the buffer is clean again.
         buf.restore(cp.root);
-        buf.modified = true;
         let len = buf.len();
         let v = &mut self.views[view];
         v.sels = cp.sels;

@@ -7,7 +7,10 @@
 //! LSP diagnostic — can be carried forward. Layers are named, sorted lists
 //! of [`Run`]s; a provider submits an [`Update`] for a span at the version
 //! it read, and the buffer transforms it to now. Runs are shifted eagerly
-//! on every edit, so reading a layer is a slice, never a transform.
+//! on every edit, so reading a layer is a slice, never a transform; a run
+//! an edit lands inside is carried over it — stretched, shrunk, cut —
+//! rather than dropped, so a token keeps its colour while it is typed in
+//! and the producer's answer, which covers the edit, corrects it.
 
 pub mod paths;
 pub mod version;
@@ -157,7 +160,7 @@ impl Layer {
     }
 
     /// Across one edit: chunks before it stay, chunks after it move by
-    /// its delta, the ones it touches have their runs shifted one by one
+    /// its delta, the ones it touches have their runs carried one by one
     /// ([`shift_runs`]).
     fn shift(&mut self, edit: &Edit) {
         let delta = edit.new_len as isize - edit.removed() as isize;
@@ -179,7 +182,7 @@ impl Layer {
 
     /// Across several ascending, disjoint edits at once: the delta of the
     /// edits passed accumulates over the chunks, and a chunk an edit
-    /// reaches into has its runs walked ([`shift_runs_many`]).
+    /// reaches into has its runs walked ([`shift_runs_many_from`]).
     fn shift_many(&mut self, edits: &[Edit]) {
         let (mut ei, mut delta) = (0usize, 0isize);
         let mut out = Vec::with_capacity(self.chunks.len());
@@ -288,7 +291,14 @@ pub struct Buffer {
     layers: Vec<(&'static str, Layer)>,
     pub name: String,
     pub path: Option<PathBuf>,
+    /// Whether the text is not what was last written or loaded
+    /// ([`Buffer::mark_saved`]). An edit sets it; an undo or redo asks
+    /// the text (`saved`), so stepping back to what was saved is clean.
     pub modified: bool,
+    /// The text as it was last written or loaded: a piece tree, shared
+    /// with the text until an edit, so `restore` can tell in one
+    /// pointer compare whether an undo landed back on it.
+    saved: text_buffer::Buffer,
     pub read_only: bool,
     /// Still being opened on the io thread ([`Buffer::opening`]): the
     /// bytes indexed so far and the whole, until [`Buffer::attach`]. Read
@@ -313,8 +323,11 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new(name: impl Into<String>, text: &str) -> Self {
+        let compact_at = 2 * text_buffer::natural_pieces(text.len());
+        let text = text_buffer::Buffer::with_text(text.as_bytes());
         Self {
-            text: text_buffer::Buffer::with_text(text.as_bytes()),
+            saved: text.clone(),
+            text,
             journal: Journal::new(),
             layers: Vec::new(),
             name: name.into(),
@@ -325,7 +338,7 @@ impl Buffer {
             disk_len: None,
             language: Arc::from("text"),
             hook: None,
-            compact_at: 2 * text_buffer::natural_pieces(text.len()),
+            compact_at,
         }
     }
 
@@ -370,7 +383,7 @@ impl Buffer {
         }
         self.loading = None;
         self.read_only = false;
-        self.modified = false;
+        self.mark_saved();
         self.disk_len = Some(len);
         let v = self.journal.version().next();
         self.journal.reset_to(v);
@@ -399,6 +412,7 @@ impl Buffer {
         let len = bytes.len();
         let mut buf = Self::new(name, "");
         buf.text = text_buffer::Buffer::from_bytes(bytes);
+        buf.saved = buf.text.clone();
         buf.language = Arc::from(language_of(path));
         buf.path = Some(path.to_path_buf());
         buf.disk_len = Some(len);
@@ -409,6 +423,14 @@ impl Buffer {
 
     pub fn version(&self) -> Version {
         self.journal.version()
+    }
+
+    /// The text is what is on disk (or what a scratch buffer was filled
+    /// with): clean now, and clean again whenever an undo or redo brings
+    /// this text back.
+    pub fn mark_saved(&mut self) {
+        self.saved = self.text.clone();
+        self.modified = false;
     }
 
     pub fn journal(&self) -> &Journal {
@@ -700,14 +722,15 @@ impl Buffer {
     /// run outside it is carried across, so the colours stay where the
     /// change was not (clearing the layers left the whole buffer plain
     /// until the highlighter answered), and a producer's answer to the
-    /// version before is transformed rather than stale.
+    /// version before is transformed rather than stale. The buffer is
+    /// modified unless this is the text that was saved.
     pub fn restore(&mut self, root: text_buffer::Buffer) -> Version {
         let edit = diff_trees(&self.text, &root);
         self.text = root;
         for (_, layer) in &mut self.layers {
             layer.shift(&edit);
         }
-        self.modified = true;
+        self.modified = !self.text.same_text(&self.saved);
         let v = self.journal.record(edit);
         self.settle();
         v
@@ -716,15 +739,17 @@ impl Buffer {
     // ------------------------------------------------------------ layers
 
     /// Applies a producer's update: the span and every run are carried
-    /// from `update.version` to now, runs an edit landed inside are
-    /// dropped, and the span's old runs are replaced.
+    /// from `update.version` to now — a run over an edit since stretched
+    /// or cut as the layer's own are (`Journal::carry_range`), so a late
+    /// answer leaves no hole where the next one will paint — and the
+    /// span's old runs are replaced.
     pub fn apply(&mut self, update: Update) -> Result<(), Stale> {
         let span = self.journal.clamp_range(update.span, update.version)?;
         let mut fresh: Vec<Run> = update
             .runs
             .into_iter()
             .filter_map(|r| {
-                let range = self.journal.transform_range(r.range, update.version).ok()?;
+                let range = self.journal.carry_range(r.range, update.version).ok()?;
                 (!range.is_empty()).then_some(Run { range, ..r })
             })
             .collect();
@@ -838,7 +863,13 @@ pub fn diff_edit(old: &[u8], new: &[u8]) -> Edit {
 }
 
 /// Shifts sorted runs across one edit: runs before it stay, runs after it
-/// move by the length delta, runs the edit landed inside are dropped.
+/// move by the length delta, and a run the edit landed inside is carried
+/// over it — stretched over an insertion, shrunk around a removal, cut
+/// to its part outside an edit over one of its edges, and gone once an
+/// edit swallowed it. The token's colour stays over what was typed until
+/// the producer answers, so typing inside a string does not blank it
+/// (the highlighter's answer covers the edit, not the token around it).
+/// Text inserted at either edge is not the run's (`Bias`).
 fn shift_runs(runs: &mut Vec<Run>, edit: &Edit) {
     let first = runs.partition_point(|r| r.range.end <= edit.range.start);
     let mut i = first;
@@ -846,9 +877,6 @@ fn shift_runs(runs: &mut Vec<Run>, edit: &Edit) {
     while i < runs.len() {
         let r = runs[i].clone();
         i += 1;
-        if edit.invalidates(&r.range) {
-            continue;
-        }
         let range = edit.transform_offset(r.range.start, Bias::Right)
             ..edit.transform_offset(r.range.end, Bias::Left);
         if range.end > range.start {
@@ -861,30 +889,49 @@ fn shift_runs(runs: &mut Vec<Run>, edit: &Edit) {
 
 /// [`shift_runs`] for several edits at once, ascending and disjoint in
 /// one coordinate space: one walk over the runs, the delta of the edits
-/// passed accumulating, a run any edit landed inside dropped. The same
+/// passed accumulating, a run carried over the edits inside it. The same
 /// answer the edits applied one at a time give, in `O(runs + edits)`.
 /// `ei` and `delta` are the edits consumed so far and their delta,
 /// carried across the chunks of a layer.
 fn shift_runs_many_from(runs: &mut Vec<Run>, edits: &[Edit], ei: &mut usize, delta: &mut isize) {
+    let d = |e: &Edit| e.new_len as isize - e.removed() as isize;
     let mut write = 0;
     for i in 0..runs.len() {
         let r = runs[i].range.clone();
         // Edits wholly before the run (an insertion at its start among
         // them: the run starts after the new text) shift it.
         while *ei < edits.len() && edits[*ei].range.end <= r.start {
-            *delta += edits[*ei].new_len as isize - edits[*ei].removed() as isize;
+            *delta += d(&edits[*ei]);
             *ei += 1;
         }
-        // An edit reaching into it — its interior, or a removal touching
-        // it — invalidates it; one starting at its end leaves it.
-        if *ei < edits.len() && edits[*ei].range.start < r.end {
-            continue;
+        // The start: after the new text of an edit over it (`Bias::Right`).
+        let mut start = (r.start as isize + *delta) as usize;
+        if let Some(e) = edits.get(*ei)
+            && e.range.start <= r.start
+            && r.start < e.range.end
+        {
+            start = (e.range.start as isize + *delta) as usize + e.new_len;
         }
-        let start = (r.start as isize + *delta) as usize;
-        let end = (r.end as isize + *delta) as usize;
-        runs.swap(write, i);
-        runs[write].range = start..end;
-        write += 1;
+        // Edits ending inside the run move its end by their delta; an
+        // insertion at its end is not inside (`Bias::Left`). One reaching
+        // past the end cuts the run there, and stays for the next run.
+        let mut inside = 0isize;
+        let mut j = *ei;
+        while j < edits.len() && edits[j].range.end <= r.end && edits[j].range.start < r.end {
+            inside += d(&edits[j]);
+            j += 1;
+        }
+        let end = match edits.get(j) {
+            Some(e) if e.range.start < r.end => (e.range.start as isize + *delta + inside) as usize,
+            _ => (r.end as isize + *delta + inside) as usize,
+        };
+        *ei = j;
+        *delta += inside;
+        if end > start {
+            runs.swap(write, i);
+            runs[write].range = start..end;
+            write += 1;
+        }
     }
     runs.truncate(write);
 }
@@ -940,7 +987,7 @@ mod tests {
                     tag: 0,
                 },
                 Run {
-                    range: 16..17,
+                    range: 12..17,
                     style: 2,
                     tag: 0,
                 },
@@ -951,9 +998,11 @@ mod tests {
                 },
             ],
         );
-        // Type into the middle, then undo it: the runs before stay, the
-        // one the edit landed in goes, the ones after come back.
+        // Type over the middle, then undo it: the runs before stay, the
+        // one the edit landed in follows the text, the ones after come
+        // back.
         b.replace(16..17, "value");
+        assert_eq!(b.runs("syntax", 16..17)[0].range, 12..21);
         let v1 = b.restore(before);
         assert_eq!(b.text(), "fn main() { let x = 1; }");
         assert!(v1 > v0);
@@ -962,7 +1011,7 @@ mod tests {
             .iter()
             .map(|r| r.range.clone())
             .collect();
-        assert_eq!(runs, [0..2, 20..21]);
+        assert_eq!(runs, [0..2, 12..17, 20..21]);
         // The journal ran through it: an update from before both edits
         // still lands.
         assert_eq!(b.journal().transform_range(20..21, v0), Ok(20..21));
@@ -1201,6 +1250,16 @@ mod tests {
             vec![(7..7, "1"), (7..7, "2")],
             // Whole words replaced, one deleted.
             vec![(0..4, "AAAAAA"), (10..14, ""), (25..29, "F")],
+            // Two cursors inside one run, a removal over a run's start,
+            // one over its end, one swallowing a run, one at its end.
+            vec![
+                (1..1, "x"),
+                (2..2, "y"),
+                (8..11, ""),
+                (17..21, "Z"),
+                (24..29, ""),
+            ],
+            vec![(4..4, "x"), (5..5, "y"), (14..21, "Q"), (23..23, "e")],
             bulk,
         ];
         let long_cases = vec![bulk_long];
@@ -1283,9 +1342,50 @@ mod tests {
         let runs = b.runs("syntax", 0..100);
         assert_eq!(runs.len(), 1);
         assert_eq!((runs[0].range.clone(), runs[0].style), (7..12, 9));
-        // An edit inside a run drops it.
+        // An edit inside a run is carried by it: the colour stays over
+        // what was typed until the producer answers.
         b.replace(8..9, "X");
+        assert_eq!(b.runs("syntax", 0..100)[0].range, 7..12);
+        b.replace(9..9, "yz");
+        assert_eq!(b.runs("syntax", 0..100)[0].range, 7..14);
+        b.replace(8..12, "");
+        assert_eq!(b.runs("syntax", 0..100)[0].range, 7..10);
+        // Text at its edges is not its.
+        b.replace(7..7, "<");
+        b.replace(11..11, ">");
+        assert_eq!(b.runs("syntax", 0..100)[0].range, 8..11);
+        // Over an edge, the part outside stays; swallowed, it goes.
+        b.replace(6..9, "");
+        assert_eq!(b.runs("syntax", 0..100)[0].range, 6..8);
+        b.replace(5..9, "");
         assert!(b.runs("syntax", 0..100).is_empty());
+    }
+
+    /// A late answer — computed at a version the text moved past — is
+    /// carried the way the layer's own runs are: its run over the edit
+    /// stretches rather than going, so the token keeps its colour until
+    /// the answer for the new text lands.
+    #[test]
+    fn a_late_update_is_carried_over_an_edit_inside_its_run() {
+        let mut b = Buffer::new("t", "let s = \"hello\";");
+        let v = b.version();
+        let up = |runs: Vec<Run>| Update {
+            layer: "syntax",
+            version: v,
+            span: 0..16,
+            runs,
+        };
+        let string = Run {
+            range: 8..15,
+            style: 4,
+            tag: 0,
+        };
+        b.apply(up(vec![string.clone()])).unwrap();
+        // Typed inside the string after the answer was computed.
+        b.replace(11..11, "XY");
+        assert_eq!(b.runs("syntax", 0..100)[0].range, 8..17);
+        b.apply(up(vec![string])).unwrap();
+        assert_eq!(b.runs("syntax", 0..100)[0].range, 8..17);
     }
 
     #[test]

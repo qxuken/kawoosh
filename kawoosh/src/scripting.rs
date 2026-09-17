@@ -170,7 +170,7 @@ impl Kawoosh {
                     Some(id) => {
                         let b = &mut self.ed.buffers[id];
                         b.set_text(&text);
-                        b.modified = false;
+                        b.mark_saved();
                         if existing.is_none() {
                             b.name = name.clone();
                             b.read_only = read_only;

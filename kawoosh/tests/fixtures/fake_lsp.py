@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """A language server that speaks just enough JSON-RPC to test the pool:
 initialize; a diagnostic on didOpen (the first word of line 0, message
-"boom" — and none on didChange, so a test can watch it shift); completion
+"boom" — and on didChange only when the text has `!!` in it: an error on
+every line, the cascade a half-typed line gets, so a test can watch it
+wait for the typing to pause); completion
 (hello_world, help — or, after a `.` in the text it was last sent,
 member_a and member_b, so a test can see the request was made on the
 synced text); hover ("the hover"); definition (line 1, character 0 of
@@ -43,7 +45,15 @@ while True:
     if method == "initialize":
         send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {}}})
     elif method == "textDocument/didChange":
-        docs[m["params"]["textDocument"]["uri"]] = m["params"]["contentChanges"][0]["text"]
+        uri = m["params"]["textDocument"]["uri"]
+        text = m["params"]["contentChanges"][0]["text"]
+        docs[uri] = text
+        if "!!" in text:
+            send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+                "uri": uri,
+                "diagnostics": [{"range": {"start": {"line": i, "character": 0}, "end": {"line": i, "character": 1}},
+                                 "severity": 1, "message": "expected SEMICOLON"}
+                                for i, line in enumerate(text.split("\n")) if line]}})
     elif method == "textDocument/didOpen":
         uri = m["params"]["textDocument"]["uri"]
         docs[uri] = m["params"]["textDocument"]["text"]

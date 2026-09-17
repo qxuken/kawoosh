@@ -887,6 +887,18 @@ impl Buffer {
         it
     }
 
+    /// Whether the two texts are the same bytes: the same tree (an undo
+    /// put a snapshot back, and this is that snapshot — one pointer),
+    /// or, failing that, a compare that skips the pieces they share.
+    pub fn same_text(&self, other: &Buffer) -> bool {
+        let same_root = match (self.root.node(), other.root.node()) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        };
+        same_root || (self.len() == other.len() && self.common_prefix(other) == self.len())
+    }
+
     /// The longest common prefix of `self` and `other`, in bytes. Pieces
     /// both hold from one block at one offset are equal without a byte
     /// read, which is most of what an undo's snapshot and the text it
@@ -2398,5 +2410,27 @@ mod mapped_tests {
         let mid = bytes.len() / 2;
         bytes[mid] = 0xff;
         assert!(!is_utf8(&bytes));
+    }
+
+    /// `same_text`: a snapshot and the text it was taken from, the text
+    /// after an edit and its undo (equal bytes, trees apart), a
+    /// compacted copy, and two texts that differ.
+    #[test]
+    fn same_text_by_tree_or_by_bytes() {
+        let mut b = Buffer::with_text(b"hello world");
+        let saved = b.clone();
+        assert!(b.same_text(&saved));
+        b.insert(5, b",");
+        assert!(!b.same_text(&saved));
+        b.erase(5, 1);
+        assert!(b.same_text(&saved), "the same bytes again, in another tree");
+        assert!(saved.same_text(&b));
+        b.compact(usize::MAX);
+        assert!(b.same_text(&saved));
+        b.erase(0, 1);
+        b.insert(0, b"H");
+        assert!(!b.same_text(&saved), "same length, one byte apart");
+        assert!(Buffer::new().same_text(&Buffer::new()));
+        assert!(!Buffer::new().same_text(&saved));
     }
 }

@@ -77,7 +77,7 @@ impl Kawoosh {
         };
         let len = b.len();
         b.replace(len..len, text);
-        b.modified = false;
+        b.mark_saved();
         // Views on the buffer follow the output.
         let last = b.len();
         for v in self.ed.views.values_mut() {

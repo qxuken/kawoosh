@@ -227,6 +227,22 @@ impl Journal {
         Ok(range)
     }
 
+    /// Carry a range forward the way a layer carries its runs: an edit
+    /// inside it stretches or shrinks it rather than failing it — the
+    /// token's colour stays over what was typed until the producer
+    /// answers — and the edges exclude text inserted at them, as
+    /// [`Journal::transform_range`]'s do. Empty when an edit swallowed
+    /// it.
+    pub fn carry_range(&self, range: Range<usize>, from: Version) -> Result<Range<usize>, Stale> {
+        let mut range = range;
+        for edit in self.edits_since(from)? {
+            let start = edit.transform_offset(range.start, Bias::Right);
+            let end = edit.transform_offset(range.end, Bias::Left);
+            range = start..end.max(start);
+        }
+        Ok(range)
+    }
+
     /// Carry a range forward, clamping instead of failing when an edit lands
     /// inside it. Useful for a provider's *scope* (the span it was asked to
     /// cover) as opposed to its individual results.
@@ -337,6 +353,38 @@ mod tests {
             journal.transform_range(0..1, Version(9)),
             Err(Stale::FutureVersion)
         );
+    }
+
+    /// A carried range stretches over an insertion inside it, shrinks
+    /// around a removal, keeps its part outside an edit over its edge,
+    /// and is empty once an edit swallowed it.
+    #[test]
+    fn carry_stretches_over_an_interior_edit() {
+        let at = |edits: &[(usize, usize, usize)]| {
+            let mut j = Journal::new();
+            let v0 = j.version();
+            for (s, r, n) in edits {
+                j.record(Edit {
+                    range: *s..*s + *r,
+                    new_len: *n,
+                });
+            }
+            j.carry_range(10..15, v0)
+        };
+        assert_eq!(at(&[(12, 0, 3)]), Ok(10..18));
+        assert_eq!(at(&[(12, 2, 0)]), Ok(10..13));
+        assert_eq!(at(&[(12, 2, 1)]), Ok(10..14));
+        // At the edges: inserted text is not the range's.
+        assert_eq!(at(&[(10, 0, 3)]), Ok(13..18));
+        assert_eq!(at(&[(15, 0, 3)]), Ok(10..15));
+        // Over an edge: the part outside the edit.
+        assert_eq!(at(&[(8, 4, 1)]), Ok(9..12));
+        assert_eq!(at(&[(13, 4, 1)]), Ok(10..13));
+        // Swallowed.
+        assert_eq!(at(&[(8, 10, 2)]), Ok(10..10));
+        assert_eq!(at(&[(10, 5, 5)]), Ok(15..15));
+        // Several, composed.
+        assert_eq!(at(&[(12, 0, 1), (13, 0, 1), (0, 2, 0)]), Ok(8..15));
     }
 
     #[test]

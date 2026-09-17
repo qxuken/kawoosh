@@ -158,3 +158,71 @@ fn diagnostics_definition_hover_and_completion() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A diagnostics answer to a keystroke waits until the typing pauses:
+/// the server's cascade for a half-typed line is held while the text
+/// keeps moving — the rows keep the answer before, shifted — and lands
+/// once the buffer has been still for `DIAG_QUIET`.
+#[test]
+fn diagnostics_wait_for_the_typing_to_pause() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-quiet-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n    hel\n}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    // The open's answer lands at once: nothing was typed.
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.messages.get(&buf_id)
+            == Some(&vec!["boom".into()])),
+        "the open's diagnostics"
+    );
+    assert!(app.lsp.held.is_empty());
+
+    // Typing brings the cascade, which waits.
+    d.keys(&mut app, "O");
+    d.text(&mut app, "!!");
+    assert_eq!(app.ed.mode, Mode::Insert);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.held.contains_key(&buf_id)),
+        "the answer is held"
+    );
+    assert_eq!(
+        app.lsp.messages[&buf_id],
+        ["boom"],
+        "the rows keep the answer before"
+    );
+    let runs = app.ed.buffers[buf_id].runs(DIAG_LAYER, 0..100);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].range.start, 3, "shifted past the typed line");
+    // More typing within the quiet period: still held, the newest kept.
+    std::thread::sleep(kawoosh::lsp::DIAG_QUIET / 2);
+    d.text(&mut app, "x");
+    d.frame(&mut app);
+    std::thread::sleep(kawoosh::lsp::DIAG_QUIET / 2);
+    d.frame(&mut app);
+    assert!(
+        app.lsp.held.contains_key(&buf_id),
+        "the pause restarted with the keystroke"
+    );
+    assert_eq!(app.lsp.messages[&buf_id], ["boom"]);
+    // Still for the quiet period: the frame after applies it, insert
+    // mode or not.
+    std::thread::sleep(kawoosh::lsp::DIAG_QUIET);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.held.is_empty()),
+        "the answer landed"
+    );
+    assert_eq!(app.ed.mode, Mode::Insert);
+    let messages = &app.lsp.messages[&buf_id];
+    assert_eq!(messages.len(), 4, "{messages:?}");
+    assert!(messages.iter().all(|m| m == "expected SEMICOLON"));
+    assert_eq!(app.ed.buffers[buf_id].runs(DIAG_LAYER, 0..100).len(), 4);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

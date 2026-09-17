@@ -6,11 +6,18 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
-use kawoosh_doc::{Buffer, BufferId, Version};
+use kawoosh_doc::{Buffer, BufferId, Update, Version};
 use kawoosh_editor::{KeyStroke, Mode, Selection, ViewId};
-use kawoosh_systems::WakeHandle;
 use kawoosh_systems::lsp::{Cmd, CompletionItem, Event, Lsp, ServerDef};
+use kawoosh_systems::{Alarm, WakeHandle};
+
+/// How long a buffer's text must have been still before a diagnostics
+/// answer for it lands. A server answers each keystroke of a half-typed
+/// line with a syntax error on every line after it, and the messages
+/// reflowed on every key; held until the typing pauses, they land once.
+pub const DIAG_QUIET: Duration = Duration::from_millis(600);
 
 use crate::app::Kawoosh;
 use crate::layout::{Content, SplitDir};
@@ -51,6 +58,14 @@ impl Completion {
 pub struct LspState {
     pub lsp: Lsp,
     sent: HashMap<BufferId, Version>,
+    /// When each buffer's text was last sent after its open — when it
+    /// last moved, as far as the server knows.
+    moved: HashMap<BufferId, Instant>,
+    /// The newest diagnostics answer per buffer still being typed in,
+    /// kept until the text has been still for [`DIAG_QUIET`]; the alarm
+    /// brings the frame that applies it.
+    pub held: HashMap<BufferId, (Update, Vec<String>)>,
+    alarm: Alarm,
     /// Diagnostic messages per buffer, indexed by a run's `tag`.
     pub messages: HashMap<BufferId, Vec<String>>,
     pub completion: Option<Completion>,
@@ -64,14 +79,27 @@ pub struct LspState {
 impl LspState {
     pub fn new(wake: WakeHandle) -> Self {
         Self {
-            lsp: Lsp::spawn(wake),
+            lsp: Lsp::spawn(wake.clone()),
             sent: HashMap::new(),
+            moved: HashMap::new(),
+            held: HashMap::new(),
+            alarm: Alarm::spawn(wake),
             messages: HashMap::new(),
             completion: None,
             requested: None,
             said_unavailable: HashSet::new(),
             status: Vec::new(),
         }
+    }
+}
+
+impl LspState {
+    /// Whether the buffer's text moved within [`DIAG_QUIET`] — a
+    /// diagnostics answer for it waits.
+    fn typing(&self, id: BufferId) -> bool {
+        self.moved
+            .get(&id)
+            .is_some_and(|t| t.elapsed() < DIAG_QUIET)
     }
 }
 
@@ -112,10 +140,11 @@ impl Kawoosh {
                     update,
                     messages,
                 } => {
-                    if let Some(b) = self.ed.buffers.get_mut(buffer)
-                        && b.apply(update).is_ok()
-                    {
-                        self.lsp.messages.insert(buffer, messages);
+                    if self.lsp.typing(buffer) {
+                        self.lsp.held.insert(buffer, (update, messages));
+                        self.lsp.alarm.set(self.lsp.moved[&buffer] + DIAG_QUIET);
+                    } else {
+                        self.apply_diagnostics(buffer, update, messages);
                     }
                 }
                 Event::Definition {
@@ -180,7 +209,28 @@ impl Kawoosh {
                 Event::Status(s) => self.lsp.status = s,
             }
         }
+        // Held answers whose buffer has been still long enough land now;
+        // one still moving waits for the next alarm.
+        let quiet: Vec<BufferId> = self
+            .lsp
+            .held
+            .keys()
+            .copied()
+            .filter(|id| !self.lsp.typing(*id))
+            .collect();
+        for id in quiet {
+            let (update, messages) = self.lsp.held.remove(&id).unwrap();
+            self.apply_diagnostics(id, update, messages);
+        }
         self.push_documents();
+    }
+
+    fn apply_diagnostics(&mut self, buffer: BufferId, update: Update, messages: Vec<String>) {
+        if let Some(b) = self.ed.buffers.get_mut(buffer)
+            && b.apply(update).is_ok()
+        {
+            self.lsp.messages.insert(buffer, messages);
+        }
     }
 
     /// Sends every shown buffer whose text moved since the server last
@@ -208,7 +258,13 @@ impl Kawoosh {
             if !served(&b.language) || self.lsp.sent.get(&id) == Some(&b.version()) {
                 continue;
             }
-            self.lsp.sent.insert(id, b.version());
+            // A change, not the open: the open's diagnostics land at once.
+            if self.lsp.sent.insert(id, b.version()).is_some() {
+                self.lsp.moved.insert(id, Instant::now());
+                if self.lsp.held.contains_key(&id) {
+                    self.lsp.alarm.set(Instant::now() + DIAG_QUIET);
+                }
+            }
             self.lsp.lsp.send(Cmd::Sync {
                 buffer: id,
                 path,
@@ -239,7 +295,7 @@ impl Kawoosh {
                 self.ed.add_buffer(b)
             }
         };
-        self.ed.buffers[id].modified = false;
+        self.ed.buffers[id].mark_saved();
         let shown = self
             .layout
             .visible_panes()

@@ -938,6 +938,80 @@ mod tests {
         }
     }
 
+    /// Typing inside a token — a string, a comment, a name — keeps the
+    /// token's colour over the whole of it, not just the typed byte:
+    /// the layer carries its run over the edit, and the answer, which
+    /// covers the edit and what tree-sitter says changed, leaves the
+    /// carried run where it agrees with a whole parse.
+    #[test]
+    fn typing_inside_a_token_keeps_its_colour() {
+        let mut g = Grammars::load();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let src = "// a comment here\nfn main() {\n    let greeting = \"hello world\";\n    println!(\"{greeting}\");\n}\n";
+        let mut buf = Buffer::new("t", src);
+        buf.language = "rust".into();
+        let mut sent: Option<kawoosh_doc::Version> = None;
+        let mut job = |buf: &Buffer| {
+            let edits = sent
+                .and_then(|v| buf.journal().edits_since(v).ok())
+                .map(|it| it.cloned().collect());
+            sent = Some(buf.version());
+            Job {
+                buffer: BufferId::default(),
+                language: "rust".into(),
+                snapshot: buf.snapshot(),
+                edits,
+            }
+        };
+        let first = highlight(&mut parser, &mut g, &mut parsed, &job(&buf)).update();
+        buf.apply(first).unwrap();
+        // Where to type: `into` bytes into `needle`, which is the first
+        // `len` bytes of a token; what colour every byte of the token
+        // should have afterwards.
+        let cases: &[(&str, usize, &str, usize, Token)] = &[
+            ("hello world", 5, "\\", 11, Token::String),
+            ("a comment", 3, "x", 9, Token::Comment),
+            ("main()", 2, "_", 4, Token::Function),
+            ("hello", 0, "\\n", 5, Token::String),
+        ];
+        for (needle, into, typed, len, tok) in cases {
+            let at = buf.text().find(needle).unwrap() + into;
+            buf.replace(at..at, typed);
+            let inc = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
+            for u in inc.updates {
+                buf.apply(u).unwrap();
+            }
+            let whole = highlight(
+                &mut parser,
+                &mut g,
+                &mut Parsed::default(),
+                &Job {
+                    buffer: BufferId::default(),
+                    language: "rust".into(),
+                    snapshot: buf.snapshot(),
+                    edits: None,
+                },
+            )
+            .update();
+            assert_eq!(
+                joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())),
+                joined(&whole.runs),
+                "{needle:?} + {typed:?}"
+            );
+            // The whole token, every byte of it, in its colour.
+            let start = at - into;
+            let end = start + len + typed.len();
+            for o in start..end {
+                let got = buf
+                    .runs(SYNTAX_LAYER, o..o + 1)
+                    .first()
+                    .map(|r| Token::from_style(r.style));
+                assert_eq!(got, Some(*tok), "{needle:?} + {typed:?} at {o}");
+            }
+        }
+    }
+
     /// The cover of a sequence of edits is the one edit that replaces
     /// what they touched, in the coordinates before and after them all.
     #[test]
