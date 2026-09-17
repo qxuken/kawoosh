@@ -180,6 +180,14 @@ impl Kawoosh {
                 Event::Status(s) => self.lsp.status = s,
             }
         }
+        self.push_documents();
+    }
+
+    /// Sends every shown buffer whose text moved since the server last
+    /// saw it. Once per frame, and before a positional request
+    /// (`positional_cmd`), so the position is in the text the server
+    /// has.
+    fn push_documents(&mut self) {
         // Only a language with a server to send to: the sync is the whole
         // text, a copy of the buffer per keystroke — ten milliseconds on
         // a ten-megabyte file — and a language nobody serves (or whose
@@ -260,16 +268,26 @@ impl Kawoosh {
         Some((v, view.buffer, view.sels.primary().head))
     }
 
+    /// A request about the caret: the document goes first, so the
+    /// server answers for the text under the caret and not for the text
+    /// of the last frame — a completion asked at the keystroke would
+    /// otherwise be answered for the position before the key, with the
+    /// candidates of the wrong word, until the next key asked again.
+    fn positional_cmd(&mut self, cmd: Cmd) {
+        self.push_documents();
+        self.lsp.lsp.send(cmd);
+    }
+
     pub(crate) fn lsp_command(&mut self, name: &str) -> bool {
         match name {
             "lsp_definition" => {
                 if let Some((_, buffer, offset)) = self.lsp_at_caret() {
-                    self.lsp.lsp.send(Cmd::Definition { buffer, offset });
+                    self.positional_cmd(Cmd::Definition { buffer, offset });
                 }
             }
             "lsp_hover" => {
                 if let Some((_, buffer, offset)) = self.lsp_at_caret() {
-                    self.lsp.lsp.send(Cmd::Hover { buffer, offset });
+                    self.positional_cmd(Cmd::Hover { buffer, offset });
                 }
             }
             "lsp_complete" => self.request_completion(),
@@ -303,10 +321,11 @@ impl Kawoosh {
         };
         let (start, _) = word_before(&self.ed.buffers[buffer], offset);
         self.lsp.requested = Some((buffer, start));
-        self.lsp.lsp.send(Cmd::Completion {
+        let version = self.ed.buffers[buffer].version();
+        self.positional_cmd(Cmd::Completion {
             buffer,
             offset,
-            version: self.ed.buffers[buffer].version(),
+            version,
         });
     }
 

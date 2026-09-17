@@ -1,8 +1,9 @@
 //! Sessions (mvp.md Decision 7, milestone 8): the layout as JSON in the
 //! store — tabs, splits with their ratios, each editor pane's file,
-//! caret and scroll, Lua panes by name — saved on quit and restored on a
-//! bare launch. Terminals are not restored (their processes are gone);
-//! a tab that held only terminals is dropped.
+//! caret and scroll, Lua panes by name, the prompts' histories — saved
+//! on quit (`:q`, or the window closed from outside: `App::teardown`)
+//! and restored on a bare launch. Terminals are not restored (their
+//! processes are gone); a tab that held only terminals is dropped.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -22,6 +23,11 @@ pub struct SessionData {
     pub tab: usize,
     pub dock_open: bool,
     pub dock_ratio: f32,
+    /// The `:` prompt's history, oldest first (`Editor::cmd_history`).
+    #[serde(default)]
+    pub cmd_history: Vec<String>,
+    #[serde(default)]
+    pub search_history: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -134,6 +140,8 @@ impl Kawoosh {
             tab: self.layout.tab,
             dock_open: self.layout.dock_open,
             dock_ratio: self.layout.dock_ratio,
+            cmd_history: self.ed.cmd_history.clone(),
+            search_history: self.ed.search_history.clone(),
         }
     }
 
@@ -167,6 +175,10 @@ impl Kawoosh {
     /// Rebuilds the layout from `data`. Returns false when nothing in it
     /// could be restored (only terminals, or files that are gone).
     pub fn restore_session_data(&mut self, data: &SessionData) -> bool {
+        // The histories come back whatever the layout does: a line typed
+        // last time is worth having even when its files are gone.
+        self.ed.cmd_history = data.cmd_history.clone();
+        self.ed.search_history = data.search_history.clone();
         let mut layout = Layout::new(Content::Lua(String::new()));
         layout.tabs.clear();
         layout.panes.clear();

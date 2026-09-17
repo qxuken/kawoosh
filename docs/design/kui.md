@@ -277,9 +277,23 @@ have run against a different API in any dialect. Accepted.
 unit is a script that defines `view(env, slot)` and `on_event(ev)`. Kawoosh
 loads exactly one, a bundled bootstrap, and seeds its state
 (`LuaExtension::lua()`) with the `kawoosh` table: `command`, `map`, `view`,
-`buf`, `store`, `tool`, `compile`, `opt`. `init.lua` and every plugin run
+`buf`, `store`, `tool`, `compile`, `opt`, `fs`. `init.lua` and every plugin run
 in that state; there is no per-plugin sandbox, which is the neovim model
 and the honest one for an editor whose config *is* code.
+
+**`kawoosh.fs` is the one path layer, and it is the shell's own.** A
+plugin never matches on `/` or reads `$HOME`: `fs.expand` turns a path as
+the user wrote it — `~/x`, `../y`, `C:\z` — into the absolute, normalized
+one, against the working directory the shell keeps the process in step
+with; `join`, `parent`, `basename` do what a pattern on `/` did, on every
+platform; `list`, `create`, `rename`, `remove`, `read`, `write`, `exists`,
+`is_dir`, `is_file` are the operations, each taking its path as written
+and raising with the path in the message. The Rust half is
+`kawoosh_systems::fs`, and the shell's `:e`, `:cd`, `:oil` and the status
+line's `~` go through the same functions, so what the command line accepts
+and what a plugin accepts are one thing (the case that filed this: `:oil
+~/projects` refused as "not a directory" because the plugin's `is_dir`
+never saw the `~`). The file manager is the acceptance test: no `/` in it.
 
 The bootstrap's `view(env, slot)` is a dispatcher: the host declares
 `ui.slot_with("lua/<view>@<pane>", params)` inside every pane whose content

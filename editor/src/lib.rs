@@ -162,6 +162,9 @@ pub struct Command {
     pub takes_char: bool,
 }
 
+/// How many lines a prompt's history keeps.
+pub const HISTORY_CAP: usize = 200;
+
 /// What the command line is prompting for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Prompt {
@@ -189,6 +192,16 @@ pub struct Editor {
     pub visual_linewise: bool,
     pub prompt: Prompt,
     pub cmdline: String,
+    /// What was entered at the `:` prompt, oldest first, no repeats:
+    /// `<Up>` / `<Down>` at the prompt walk it, from the newest line
+    /// starting with what is typed. The shell keeps it with the session.
+    pub cmd_history: Vec<String>,
+    /// The same for `/` and `?`.
+    pub search_history: Vec<String>,
+    /// A walk in progress: the index into the history the prompt shows,
+    /// and the line typed before the walk began, which is the prefix
+    /// the walk keeps to and what `<Down>` past the newest puts back.
+    hist_walk: Option<(usize, String)>,
     /// The pattern `/`, `?` and `*` left, compiled: what `n` walks from
     /// the cursor and what the view paints in the visible lines
     /// (`search::hits_in`). Set through [`Editor::set_search`].
@@ -225,6 +238,9 @@ impl Editor {
             visual_linewise: false,
             prompt: Prompt::Command,
             cmdline: String::new(),
+            cmd_history: Vec::new(),
+            search_history: Vec::new(),
+            hist_walk: None,
             search: None,
             message: String::new(),
             effects: Vec::new(),
@@ -632,15 +648,74 @@ impl Editor {
         }
     }
 
+    /// The history the prompt in force walks.
+    fn history_mut(&mut self) -> &mut Vec<String> {
+        match self.prompt {
+            Prompt::Command => &mut self.cmd_history,
+            Prompt::Search { .. } => &mut self.search_history,
+        }
+    }
+
+    /// Remembers `line` as the newest entry, once.
+    fn remember(&mut self, line: &str) {
+        if line.trim().is_empty() {
+            return;
+        }
+        let h = self.history_mut();
+        h.retain(|l| l != line);
+        h.push(line.to_string());
+        if h.len() > HISTORY_CAP {
+            h.remove(0);
+        }
+    }
+
+    /// `<Up>` / `<Down>` at the prompt: the next older (or newer) line
+    /// starting with what was typed before the walk began; past the
+    /// newest, what was typed comes back.
+    fn walk_history(&mut self, older: bool) {
+        let (at, typed) = self
+            .hist_walk
+            .clone()
+            .unwrap_or_else(|| (self.history_mut().len(), self.cmdline.clone()));
+        let h = self.history_mut();
+        let found = if older {
+            (0..at).rev().find(|&i| h[i].starts_with(&typed))
+        } else {
+            ((at + 1)..h.len()).find(|&i| h[i].starts_with(&typed))
+        };
+        match found {
+            Some(i) => {
+                self.cmdline = h[i].clone();
+                self.hist_walk = Some((i, typed));
+            }
+            None if !older => {
+                self.cmdline = typed;
+                self.hist_walk = None;
+            }
+            None => {}
+        }
+    }
+
     fn prompt_key(&mut self, view: ViewId, stroke: KeyStroke) -> bool {
+        // A key that is not the walk ends it: the line is the user's again.
+        let walking = matches!(stroke.code.as_str(), "up" | "down")
+            || (stroke.ctrl && matches!(stroke.code.as_str(), "p" | "n"));
+        if !walking {
+            self.hist_walk = None;
+        }
         match stroke.code.as_str() {
             "escape" => {
                 self.mode = Mode::Normal;
                 self.cmdline.clear();
             }
+            "up" => self.walk_history(true),
+            "down" => self.walk_history(false),
+            "p" if stroke.ctrl => self.walk_history(true),
+            "n" if stroke.ctrl => self.walk_history(false),
             "enter" => {
                 let line = std::mem::take(&mut self.cmdline);
                 self.mode = Mode::Normal;
+                self.remember(&line);
                 match self.prompt {
                     Prompt::Command => self.execute(view, &line),
                     Prompt::Search { backwards } => {

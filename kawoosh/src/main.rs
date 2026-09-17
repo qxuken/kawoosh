@@ -112,8 +112,11 @@ kawoosh on kui — milestone 4
 
 A modal editor over a selection set: h j k l w b e 0 ^ $ gg G, i a o O,
 d c y with motions and text objects (dw, ciw, di(), v / V to select,
-u and ctrl-r, / to search, : for commands (:w path, :q, :e file).
+u and ctrl-r, / to search, : for commands (:w path, :q, :e file) —
+Tab completes a command or a path, Up recalls the last one.
 alt-j / alt-k add cursors; , keeps the primary.
+Buffers: :ls, :b name, :bn, :bd, :bdo (delete the others); - is the
+file manager on the current file's directory.
 
 Panes: ctrl-w v / s split, ctrl-w h j k l move, ctrl-w q close, :tabnew.
 Terminals: :term, ctrl-w d for the dock. In a terminal ctrl-w is the

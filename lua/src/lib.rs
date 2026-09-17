@@ -36,6 +36,12 @@ pub enum Msg {
         hooked: bool,
         read_only: bool,
         language: Option<String>,
+        /// A scratch buffer to become this one — renamed and refilled —
+        /// rather than a new buffer beside it: a listing moving to the
+        /// next directory.
+        reuse: Option<u64>,
+        /// The line (from 1) to put the caret on.
+        line: Option<usize>,
     },
     OpenView(String),
     Tool {
@@ -282,6 +288,20 @@ impl Runtime {
         }
     }
 
+    /// The views registered with `kawoosh.view`, for `:view` to complete.
+    pub fn view_names(&self) -> Vec<String> {
+        self.lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<Table>("_views"))
+            .map(|t| {
+                t.pairs::<String, LV>()
+                    .filter_map(|p| p.ok().map(|(k, _)| k))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn take_msgs(&self) -> Vec<Msg> {
         std::mem::take(&mut *self.queue.borrow_mut())
     }
@@ -477,12 +497,14 @@ fn seed(
         "_open_scratch",
         lua.create_function(
             move |_,
-                  (name, text, hooked, read_only, language): (
+                  (name, text, hooked, read_only, language, reuse, line): (
                 String,
                 String,
                 bool,
                 bool,
                 Option<String>,
+                Option<u64>,
+                Option<usize>,
             )| {
                 qq.borrow_mut().push(Msg::OpenScratch {
                     name,
@@ -490,6 +512,8 @@ fn seed(
                     hooked,
                     read_only,
                     language,
+                    reuse,
+                    line,
                 });
                 Ok(())
             },
@@ -786,26 +810,58 @@ fn seed(
     )?;
     k.set("buf", buf)?;
 
-    // ---- fs: synchronous, for the file manager
+    // ---- fs: synchronous, for the file manager and any plugin that
+    // touches a path. Every path is taken as written — `~/x`, `../y`,
+    // `C:\z` — and expanded against the working directory
+    // (`kawoosh_systems::fs::expand`); the path functions do what a
+    // plugin would otherwise do with `/` and a pattern, on every
+    // platform. An operation that fails raises, naming the path.
     let fs = lua.create_table()?;
+    use kawoosh_systems::fs as kfs;
+    fn expand(p: &str) -> PathBuf {
+        kfs::expand(std::path::Path::new(p), &kfs::cwd())
+    }
+    fn io_err(e: std::io::Error) -> mlua::Error {
+        mlua::Error::runtime(e.to_string())
+    }
+    fs.set(
+        "expand",
+        lua.create_function(|_, p: String| Ok(kfs::display(&expand(&p))))?,
+    )?;
+    fs.set(
+        "join",
+        lua.create_function(|_, (a, b): (String, String)| {
+            Ok(kfs::display(&kfs::join(
+                std::path::Path::new(&a),
+                std::path::Path::new(&b),
+            )))
+        })?,
+    )?;
+    fs.set(
+        "parent",
+        lua.create_function(|_, p: String| {
+            Ok(kfs::parent(std::path::Path::new(&p)).map(|p| kfs::display(&p)))
+        })?,
+    )?;
+    fs.set(
+        "basename",
+        lua.create_function(|_, p: String| Ok(kfs::basename(std::path::Path::new(&p))))?,
+    )?;
+    fs.set(
+        "home",
+        lua.create_function(|_, ()| Ok(kfs::home().map(|h| kfs::display(&h))))?,
+    )?;
     fs.set(
         "list",
         lua.create_function(|lua, dir: String| {
             let t = lua.create_table()?;
-            let mut entries: Vec<(String, bool)> = std::fs::read_dir(&dir)
-                .map_err(mlua::Error::external)?
-                .filter_map(|e| e.ok())
-                .map(|e| {
-                    let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                    (e.file_name().to_string_lossy().into_owned(), is_dir)
-                })
-                .collect();
-            entries.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-            for (i, (name, is_dir)) in entries.into_iter().enumerate() {
-                let e = lua.create_table()?;
-                e.set("name", name)?;
-                e.set("is_dir", is_dir)?;
-                t.set(i + 1, e)?;
+            let entries = kfs::list(&expand(&dir)).map_err(io_err)?;
+            for (i, e) in entries.into_iter().enumerate() {
+                let et = lua.create_table()?;
+                et.set("name", e.name)?;
+                et.set("is_dir", e.is_dir)?;
+                et.set("is_symlink", e.is_symlink)?;
+                t.set(i + 1, et)?;
             }
             Ok(t)
         })?,
@@ -813,54 +869,44 @@ fn seed(
     fs.set(
         "rename",
         lua.create_function(|_, (a, b): (String, String)| {
-            std::fs::rename(a, b).map_err(mlua::Error::external)
+            kfs::rename(&expand(&a), &expand(&b)).map_err(io_err)
         })?,
     )?;
     fs.set(
         "remove",
-        lua.create_function(|_, p: String| {
-            let path = std::path::Path::new(&p);
-            if path.is_dir() {
-                std::fs::remove_dir_all(path)
-            } else {
-                std::fs::remove_file(path)
-            }
-            .map_err(mlua::Error::external)
-        })?,
+        lua.create_function(|_, p: String| kfs::remove(&expand(&p)).map_err(io_err))?,
     )?;
     fs.set(
         "create",
         lua.create_function(|_, (p, is_dir): (String, Option<bool>)| {
-            if is_dir.unwrap_or(false) {
-                std::fs::create_dir_all(&p).map_err(mlua::Error::external)
-            } else {
-                if let Some(parent) = std::path::Path::new(&p).parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&p)
-                    .map(|_| ())
-                    .map_err(mlua::Error::external)
-            }
+            kfs::create(&expand(&p), is_dir.unwrap_or(false)).map_err(io_err)
+        })?,
+    )?;
+    fs.set(
+        "read",
+        lua.create_function(|_, p: String| kfs::read(&expand(&p)).map_err(io_err))?,
+    )?;
+    fs.set(
+        "write",
+        lua.create_function(|_, (p, text): (String, String)| {
+            kfs::write(&expand(&p), &text).map_err(io_err)
         })?,
     )?;
     fs.set(
         "exists",
-        lua.create_function(|_, p: String| Ok(std::path::Path::new(&p).exists()))?,
+        lua.create_function(|_, p: String| Ok(kfs::exists(&expand(&p))))?,
     )?;
     fs.set(
         "is_dir",
-        lua.create_function(|_, p: String| Ok(std::path::Path::new(&p).is_dir()))?,
+        lua.create_function(|_, p: String| Ok(kfs::is_dir(&expand(&p))))?,
+    )?;
+    fs.set(
+        "is_file",
+        lua.create_function(|_, p: String| Ok(kfs::is_file(&expand(&p))))?,
     )?;
     fs.set(
         "cwd",
-        lua.create_function(|_, ()| {
-            Ok(std::env::current_dir()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default())
-        })?,
+        lua.create_function(|_, ()| Ok(kfs::display(&kfs::cwd())))?,
     )?;
     let qq = q(queue);
     fs.set(
@@ -942,5 +988,50 @@ mod tests {
         );
         Runtime::apply_editor_msgs(&mut ed, v, rt.take_msgs());
         assert_eq!(ed.buffers[b].text(), "Z3ab\ncd");
+    }
+
+    /// `kawoosh.fs`: paths as the user writes them, on every platform —
+    /// `~` and a relative path expand against the cwd, the path
+    /// functions do not need `/`, and an operation that fails names
+    /// the path.
+    #[test]
+    fn fs_expands_joins_and_names_its_errors() {
+        let (rt, _ext) = Runtime::new().unwrap();
+        let dir = std::env::temp_dir().join(format!("kawoosh-luafs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let home = kawoosh_systems::fs::home().unwrap();
+        rt.load_source(
+            "t",
+            &format!(
+                r#"
+            local fs = kawoosh.fs
+            local dir = {dir:?}
+            assert(fs.expand("~") == {home:?}, fs.expand("~"))
+            assert(fs.expand("~/x/../y") == fs.join({home:?}, "y"))
+            assert(fs.expand(fs.join(dir, "a/./b/..")) == fs.join(dir, "a"))
+            assert(fs.parent(fs.join(dir, "a")) == dir)
+            assert(fs.parent("/") == nil)
+            assert(fs.basename(fs.join(dir, "a.txt")) == "a.txt")
+            assert(fs.basename(fs.join(dir, "sub/")) == "sub")
+            fs.create(fs.join(dir, "sub/deep"), true)
+            fs.write(fs.join(dir, "sub/f.txt"), "hello")
+            assert(fs.read(fs.join(dir, "sub/f.txt")) == "hello")
+            assert(fs.is_file(fs.join(dir, "sub/f.txt")))
+            assert(fs.is_dir(fs.join(dir, "sub/deep")))
+            local l = fs.list(fs.join(dir, "sub"))
+            assert(#l == 2 and l[1].name == "deep" and l[1].is_dir and l[2].name == "f.txt" and not l[2].is_symlink)
+            local ok, err = pcall(fs.list, fs.join(dir, "nope"))
+            assert(not ok and tostring(err):find("nope", 1, true), tostring(err))
+            local ok2, err2 = pcall(fs.create, fs.join(dir, "sub/f.txt"))
+            assert(not ok2 and tostring(err2):find("f.txt", 1, true), tostring(err2))
+            fs.remove(fs.join(dir, "sub"))
+            assert(not fs.exists(fs.join(dir, "sub")))
+            "#,
+            ),
+        )
+        .unwrap();
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

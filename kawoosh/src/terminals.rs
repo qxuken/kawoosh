@@ -4,7 +4,7 @@
 //! pointer into an open file (mvp.md Decisions 3, 3b, 5c).
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use kawoosh_doc::Buffer;
 use kawoosh_editor::{KeyStroke, Lookup, Mode, Selection, motions};
@@ -222,12 +222,7 @@ impl Kawoosh {
             return false;
         };
         let base = t.cwd.clone().unwrap_or_else(|| self.cwd.clone());
-        let full = expand_home(&path);
-        let full = if full.is_absolute() {
-            full
-        } else {
-            base.join(full)
-        };
+        let full = kawoosh_systems::fs::expand(Path::new(&path), &base);
         if !full.exists() {
             self.ed.message = format!("not found: {}", full.display());
             return false;
@@ -268,15 +263,6 @@ impl Kawoosh {
             self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(off));
         }
     }
-}
-
-fn expand_home(p: &str) -> PathBuf {
-    if let Some(rest) = p.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
-    {
-        return PathBuf::from(home).join(rest);
-    }
-    PathBuf::from(p)
 }
 
 #[cfg(test)]

@@ -129,14 +129,7 @@ impl Kawoosh {
                 }
                 ui.with_indexed(500, NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
                 // The status block: cwd, the pool.
-                let home = std::env::var_os("HOME")
-                    .map(|h| h.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let cwd = self.cwd.display().to_string();
-                let cwd = match cwd.strip_prefix(&home) {
-                    Some(rest) if !home.is_empty() => format!("~{rest}"),
-                    _ => cwd,
-                };
+                let cwd = kawoosh_systems::fs::abbreviate_home(&self.cwd);
                 let mut blocks: Vec<(String, kui::Color)> = vec![(cwd, pal.fg)];
                 if !self.lsp.status.is_empty() {
                     let n: usize = self.lsp.status.iter().map(|s| s.2).sum();
@@ -254,6 +247,7 @@ impl Kawoosh {
                     if !self.ed.cmdline.is_empty() {
                         ui.text(&self.ed.cmdline, rows::mono(font, &pal));
                     }
+                    // The caret is a solid bar: nothing here blinks.
                     ui.with(
                         NodeSpec::column()
                             .width(Sizing::Fixed(2.0))
@@ -261,6 +255,36 @@ impl Kawoosh {
                             .bg(pal.command),
                         |_| {},
                     );
+                    // The completion, in place: the candidate's rest
+                    // after the caret, and the candidates as a row —
+                    // the current one lit — clipped at the strip's end.
+                    if let Some(ghost) = self.cmdline_ghost() {
+                        ui.text(&ghost, rows::mono(font, &pal).color(pal.dim));
+                    }
+                    let candidates = self
+                        .cmd_completion
+                        .as_ref()
+                        .filter(|c| c.candidates.len() > 1 && self.ed.cmdline.len() > c.start)
+                        .map(|c| (c.candidates.clone(), c.index));
+                    if let Some((cands, index)) = candidates {
+                        ui.with(
+                            NodeSpec::row()
+                                .width(Sizing::Grow(1.0))
+                                .height(Sizing::Fixed(STRIP_H))
+                                .pad_xy(16.0, 0.0)
+                                .gap(12.0)
+                                .cross_align(Align::Center)
+                                .clip(),
+                            |ui| {
+                                for (i, c) in cands.iter().enumerate().take(40) {
+                                    let color = if i == index { pal.fg } else { pal.dim };
+                                    ui.with_indexed(i as u64, NodeSpec::row(), |ui| {
+                                        ui.text(c, TextStyle::new(12.0).color(color).nowrap());
+                                    });
+                                }
+                            },
+                        );
+                    }
                 } else if !self.ed.message.is_empty() {
                     ui.text(&self.ed.message, TextStyle::new(12.0).color(pal.dim));
                 }

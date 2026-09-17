@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
 """A language server that speaks just enough JSON-RPC to test the pool:
 initialize; a diagnostic on didOpen (the first word of line 0, message
-"boom" — and none on didChange, so a test can watch it shift); completion (hello_world, help); hover ("the
-hover"); definition (line 1, character 0 of the same file)."""
+"boom" — and none on didChange, so a test can watch it shift); completion
+(hello_world, help — or, after a `.` in the text it was last sent,
+member_a and member_b, so a test can see the request was made on the
+synced text); hover ("the hover"); definition (line 1, character 0 of
+the same file)."""
 import json, sys
+
+docs = {}
+
+def char_before(uri, pos):
+    lines = docs.get(uri, "").split("\n")
+    line = lines[pos["line"]] if pos["line"] < len(lines) else ""
+    c = pos["character"]
+    return line[c - 1] if 0 < c <= len(line) else ""
 
 def read():
     length = 0
@@ -31,16 +42,23 @@ while True:
     mid = m.get("id")
     if method == "initialize":
         send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {}}})
+    elif method == "textDocument/didChange":
+        docs[m["params"]["textDocument"]["uri"]] = m["params"]["contentChanges"][0]["text"]
     elif method == "textDocument/didOpen":
         uri = m["params"]["textDocument"]["uri"]
+        docs[uri] = m["params"]["textDocument"]["text"]
         send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
             "uri": uri,
             "diagnostics": [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}},
                              "severity": 1, "message": "boom"}]}})
     elif method == "textDocument/completion":
-        send({"jsonrpc": "2.0", "id": mid, "result": {"isIncomplete": False, "items": [
-            {"label": "hello_world", "kind": 3, "insertText": "hello_world"},
-            {"label": "help", "kind": 3}]}})
+        p = m["params"]
+        if char_before(p["textDocument"]["uri"], p["position"]) == ".":
+            items = [{"label": "member_a", "kind": 2}, {"label": "member_b", "kind": 2}]
+        else:
+            items = [{"label": "hello_world", "kind": 3, "insertText": "hello_world"},
+                     {"label": "help", "kind": 3}]
+        send({"jsonrpc": "2.0", "id": mid, "result": {"isIncomplete": False, "items": items}})
     elif method == "textDocument/hover":
         send({"jsonrpc": "2.0", "id": mid, "result": {"contents": {"kind": "markdown", "value": "the hover"}}})
     elif method == "textDocument/definition":

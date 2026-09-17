@@ -121,5 +121,37 @@ fn buffers_are_listed_and_switched() {
         d.line_rows().iter().filter(|r| r.as_str() == "aaa").count(),
         1
     );
+    // Switching back lands where the buffer was left.
+    d.keys(&mut app, "A");
+    d.text(&mut app, "!");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "b b.rs");
+    ex(&mut d, &mut app, "b a.txt");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[v].sels.primary().head, 3, "on the `!`");
+    // `:bdo` keeps the current buffer and an unsaved one, says so; with
+    // `!` the unsaved one goes too, and the pane on it moves to the
+    // survivor.
+    let c = dir.join("c.txt");
+    std::fs::write(&c, "ccc\n").unwrap();
+    ex(&mut d, &mut app, &format!("e {}", c.display()));
+    assert_eq!(app.ed.buffers.len(), 3);
+    ex(&mut d, &mut app, "bdo");
+    assert_eq!(app.ed.buffers.len(), 2, "a.txt is modified and stays");
+    assert!(
+        app.ed.message.contains("1 unsaved kept"),
+        "{}",
+        app.ed.message
+    );
+    ex(&mut d, &mut app, "bdo!");
+    assert_eq!(app.ed.buffers.len(), 1);
+    assert_eq!(app.ed.message, "1 buffer(s) deleted");
+    assert!(
+        d.line_rows()
+            .iter()
+            .all(|r| r.as_str() == "ccc" || r.is_empty()),
+        "{:?}",
+        d.line_rows()
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

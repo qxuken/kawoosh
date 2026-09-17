@@ -46,6 +46,12 @@ pub struct Kawoosh {
     pub compile: Compile,
     pub store: Option<std::rc::Rc<kawoosh_systems::store::Store>>,
     pub(crate) session_saved: bool,
+    /// Where each buffer was left when a view moved off it — its
+    /// selections, `top` and `left` — so coming back lands there
+    /// (`show_buffer`).
+    pub(crate) last_pos: HashMap<BufferId, (kawoosh_editor::Selections, usize, f32)>,
+    /// The `:` prompt's completion (`cmdline.rs`), while it is open.
+    pub cmd_completion: Option<crate::cmdline::CmdCompletion>,
     /// The working directory: where terminals and `:e` relative paths
     /// start; `:cd` and the file manager move it.
     pub cwd: PathBuf,
@@ -125,6 +131,8 @@ impl Kawoosh {
             compile: Compile::default(),
             store: None,
             session_saved: false,
+            last_pos: HashMap::new(),
+            cmd_completion: None,
             cwd: std::env::current_dir().unwrap_or_default(),
             dark: true,
             devtools: false,
@@ -157,21 +165,10 @@ impl Kawoosh {
         self.term_of(self.layout.focused())
     }
 
-    /// `path` against the working directory.
+    /// `path` as the user wrote it — `~/x`, `../y` — against the working
+    /// directory (`kawoosh_systems::fs::expand`).
     pub fn resolve(&self, path: &Path) -> PathBuf {
-        if path.is_absolute() {
-            path.to_path_buf()
-        } else if let Some(rest) = path
-            .strip_prefix("~")
-            .ok()
-            .filter(|_| path.starts_with("~"))
-        {
-            std::env::var_os("HOME")
-                .map(|h| PathBuf::from(h).join(rest))
-                .unwrap_or_else(|| path.to_path_buf())
-        } else {
-            self.cwd.join(path)
-        }
+        kawoosh_systems::fs::expand(path, &self.cwd)
     }
 
     /// Moves the working directory — the process's too, so child
@@ -495,6 +492,27 @@ impl Kawoosh {
         size
     }
 
+    /// Removes buffer `id`: every view on it moves to `next`, a
+    /// `--wait` caller on it is answered, the server told, and what
+    /// was remembered about it forgotten.
+    fn delete_buffer(&mut self, id: BufferId, next: BufferId) {
+        for (_, view) in self.ed.views.iter_mut() {
+            if view.buffer == id {
+                view.buffer = next;
+                view.sels = Default::default();
+                view.top = 0;
+                view.left = 0.0;
+            }
+        }
+        self.ed.remove_buffer(id);
+        self.release_waiters(id);
+        self.last_pos.remove(&id);
+        self.ts_sent.remove(&id);
+        self.lsp
+            .lsp
+            .send(kawoosh_systems::lsp::Cmd::Close { buffer: id });
+    }
+
     /// Whether any pane still shows buffer `id`.
     fn buffer_shown(&self, id: BufferId) -> bool {
         self.layout
@@ -594,13 +612,34 @@ impl Kawoosh {
         }
     }
 
+    /// Shows buffer `id` in `view`. The caret and scroll of the buffer
+    /// left are remembered (`last_pos`), and the one shown comes back
+    /// where it was last left — `:b`, `:bn`, a listing's `<CR>` on the
+    /// file `-` came from — or at the top the first time.
     pub(crate) fn show_buffer(&mut self, view: ViewId, id: BufferId) {
         let v = &mut self.ed.views[view];
-        if v.buffer != id {
-            v.buffer = id;
-            v.sels = Default::default();
-            v.top = 0;
-            v.goal_col = None;
+        if v.buffer == id {
+            return;
+        }
+        self.last_pos
+            .insert(v.buffer, (v.sels.clone(), v.top, v.left));
+        v.buffer = id;
+        v.goal_col = None;
+        match self.last_pos.get(&id) {
+            Some((sels, top, left)) => {
+                // Clamped: the text may have changed under another view.
+                let len = self.ed.buffers[id].len();
+                let mut sels = sels.clone();
+                sels.map(|s| Selection::new(s.anchor.min(len), s.head.min(len)));
+                v.sels = sels;
+                v.top = *top;
+                v.left = *left;
+            }
+            None => {
+                v.sels = Default::default();
+                v.top = 0;
+                v.left = 0.0;
+            }
         }
     }
 
@@ -755,9 +794,7 @@ impl Kawoosh {
                         .and_then(|v| self.ed.buffer_of(v).path.clone())
                     {
                         Some(p) => p.parent().map(Path::to_path_buf).unwrap_or(p),
-                        None => std::env::var_os("HOME")
-                            .map(PathBuf::from)
-                            .unwrap_or_default(),
+                        None => kawoosh_systems::fs::home().unwrap_or_default(),
                     },
                 };
                 self.set_cwd(&target);
@@ -862,18 +899,30 @@ impl Kawoosh {
                     Some(n) => n,
                     None => self.ed.add_buffer(Buffer::new("*scratch*", "")),
                 };
-                for (_, view) in self.ed.views.iter_mut() {
-                    if view.buffer == cur {
-                        view.buffer = next;
-                        view.sels = Default::default();
-                        view.top = 0;
+                self.delete_buffer(cur, next);
+            }
+            // `:bdo`: every buffer but the current one goes; a modified
+            // one stays unless `!`, and the message says how many.
+            "buffer_delete_others" => {
+                let Some(v) = self.focused_view() else { return };
+                let keep = self.ed.views[v].buffer;
+                let force = args.iter().any(|a| a == "!");
+                let others: Vec<BufferId> = self.ed.buffers.keys().filter(|b| *b != keep).collect();
+                let (mut gone, mut kept) = (0, 0);
+                for id in others {
+                    if self.ed.buffers[id].modified && !force {
+                        kept += 1;
+                        continue;
                     }
+                    self.delete_buffer(id, keep);
+                    gone += 1;
                 }
-                self.ed.remove_buffer(cur);
-                self.release_waiters(cur);
-                self.lsp
-                    .lsp
-                    .send(kawoosh_systems::lsp::Cmd::Close { buffer: cur });
+                self.ed.message = match kept {
+                    0 => format!("{gone} buffer(s) deleted"),
+                    _ => {
+                        format!("{gone} buffer(s) deleted, {kept} unsaved kept (:bdo! to discard)")
+                    }
+                };
             }
             "buffer_list" => {
                 let cur = self.focused_view().map(|v| self.ed.views[v].buffer);
@@ -1001,8 +1050,12 @@ impl Kawoosh {
                 self.follow_caret = true;
                 return;
             }
+            if self.cmdline_key(&stroke) {
+                return;
+            }
             self.ed.key(v, stroke.clone());
             self.completion_after_key(&stroke);
+            self.cmdline_refresh();
         } else if let Some(t) = self.term_of(self.layout.focused()) {
             self.term_key(t, stroke);
         } else if let Some(name) = self.lua_name_of(self.layout.focused()) {
@@ -1328,6 +1381,16 @@ impl kui::App for Kawoosh {
         match self.io.listen(&path) {
             Ok(()) => self.socket = Some(path),
             Err(e) => log::warn!("command socket: {e}"),
+        }
+    }
+
+    /// The window going without `:q` — its close button, ⌘Q, the dock's
+    /// Quit — is a quit too: the session is saved as `:q` saves it, once
+    /// (`:q` saved it already when it got here).
+    fn teardown(&mut self) {
+        if !self.session_saved {
+            self.save_session();
+            self.session_saved = true;
         }
     }
 

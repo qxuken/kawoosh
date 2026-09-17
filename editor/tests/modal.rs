@@ -268,6 +268,58 @@ fn command_line_and_search() {
     assert_eq!(t.ed.tabstop(), 2);
 }
 
+/// `<Up>` at the prompt is the line before, newest first and only the
+/// ones starting with what is typed; `<Down>` walks back to what was
+/// typed; a line entered twice is remembered once, as the newest; the
+/// search prompt has a history of its own.
+#[test]
+fn the_prompt_walks_its_history() {
+    let mut t = T::new("one\ntwo");
+    t.keys(":set tabstop=2<CR>");
+    t.keys(":echo hi<CR>");
+    t.keys(":set tabstop=8<CR>");
+    t.keys(":set tabstop=2<CR>");
+    assert_eq!(
+        t.ed.cmd_history,
+        ["echo hi", "set tabstop=8", "set tabstop=2"],
+        "no repeats, the newest last"
+    );
+    t.keys(":<Up>");
+    assert_eq!(t.ed.cmdline, "set tabstop=2");
+    t.keys("<Up>");
+    assert_eq!(t.ed.cmdline, "set tabstop=8");
+    t.keys("<Up>");
+    assert_eq!(t.ed.cmdline, "echo hi");
+    t.keys("<Up>");
+    assert_eq!(t.ed.cmdline, "echo hi", "the oldest stays");
+    t.keys("<Down><Down><Down>");
+    assert_eq!(t.ed.cmdline, "", "past the newest is what was typed");
+    t.keys("<Esc>");
+    // A prefix keeps the walk to the lines starting with it.
+    t.keys(":ec<Up>");
+    assert_eq!(t.ed.cmdline, "echo hi");
+    t.keys("<Down>");
+    assert_eq!(t.ed.cmdline, "ec");
+    t.keys("<C-p><C-p>");
+    assert_eq!(
+        t.ed.cmdline, "echo hi",
+        "the walk starts over from the prefix"
+    );
+    // Typing ends the walk: the line is the user's.
+    t.keys(" there<CR>");
+    assert_eq!(t.ed.message, "hi there");
+    assert_eq!(
+        t.ed.cmd_history.last().map(String::as_str),
+        Some("echo hi there")
+    );
+    // The search prompt's own.
+    t.keys("/two<CR>");
+    t.keys("/<Up>");
+    assert_eq!(t.ed.cmdline, "two");
+    assert_eq!(t.ed.search_history, ["two"]);
+    t.keys("<Esc>");
+}
+
 /// A search is a walk from the cursor, not a pass over the text: in a
 /// buffer past `COUNT_ON_FRAME_BYTES` the next match is found and the
 /// count is left to the shell (`Effect::CountMatches`), the message

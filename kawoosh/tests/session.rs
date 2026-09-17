@@ -59,6 +59,13 @@ fn a_session_saves_and_restores_panes_files_and_carets() {
     assert!(app.restore_session());
     d.frame(&mut app);
     assert_eq!(app.layout.tabs.len(), 2);
+    // The prompt's history came with the layout.
+    assert_eq!(
+        app.ed.cmd_history.last().map(String::as_str),
+        Some("qa"),
+        "{:?}",
+        app.ed.cmd_history
+    );
     assert_eq!(app.layout.tab, 1);
     // Tab 2 held a scratch pane, a Lua view and a terminal: the terminal
     // is gone, the Lua pane is back by name.
@@ -145,5 +152,41 @@ fn a_file_opened_on_the_io_thread_arrives_mapped_and_saves_beside_itself() {
     assert_eq!(d.line_rows().last().map(String::as_str), Some(""));
     assert!(d.line_rows().iter().any(|l| l == "line 5000 · строка 5000"));
     assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The window closed by the system — its button, ⌘Q — saves the session
+/// as `:q` does: kui's `App::teardown` is the hook, and the store has
+/// the layout after it.
+#[test]
+fn a_window_closed_from_outside_saves_the_session() {
+    use kui::App;
+    let dir = std::env::temp_dir().join(format!("kawoosh-teardown-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "1\n2\n3\n").unwrap();
+    let db = dir.join("state.db");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&a);
+    app.open_store(Some(&db));
+    d.frame(&mut app);
+    d.keys(&mut app, "jj");
+    ex(&mut d, &mut app, "vs");
+    assert!(!app.quit, "no :q");
+    app.teardown();
+    drop(app);
+
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.open_store(Some(&db));
+    assert!(app.restore_session());
+    assert_eq!(app.layout.visible_panes().len(), 2);
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).path.as_deref(), Some(a.as_path()));
+    assert_eq!(
+        app.ed
+            .buffer_of(v)
+            .line_of(app.ed.views[v].sels.primary().head),
+        2
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

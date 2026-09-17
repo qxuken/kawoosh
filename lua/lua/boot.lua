@@ -41,11 +41,16 @@ function kawoosh.view(name, fn, on_event)
   kawoosh._handlers[name] = on_event
 end
 
--- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, read_only=bool }:
--- a buffer that is not a file. `on_write(lines)` handles :w.
+-- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, read_only=bool,
+-- language=, reuse=handle, line=n }: a buffer that is not a file.
+-- `on_write(lines)` handles :w. A buffer named `name` already open is
+-- refilled; else `reuse`, a scratch buffer's handle, is renamed and
+-- refilled instead of a new buffer being made beside it; `line` is
+-- where the caret goes (from 1).
 function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
-  kawoosh._open_scratch(t.name, t.text or "", t.on_write ~= nil, t.read_only or false, t.language)
+  kawoosh._open_scratch(t.name, t.text or "", t.on_write ~= nil, t.read_only or false, t.language,
+    t.reuse, t.line)
 end
 
 -- ---------------------------------------------------------------- kui's doors

@@ -149,6 +149,8 @@ impl Kawoosh {
                 hooked,
                 read_only,
                 language,
+                reuse,
+                line,
             } => {
                 let existing = self
                     .ed
@@ -156,10 +158,30 @@ impl Kawoosh {
                     .iter()
                     .find(|(_, b)| b.name == name)
                     .map(|(id, _)| id);
-                let id = match existing {
+                // A scratch buffer handed back (`reuse`) becomes this one
+                // — renamed and refilled — so a listing that moves to the
+                // next directory leaves no buffer behind per directory.
+                let reused = existing.or_else(|| {
+                    reuse
+                        .map(kawoosh_lua::id_of)
+                        .filter(|id| self.ed.buffers.get(*id).is_some_and(|b| b.path.is_none()))
+                });
+                let id = match reused {
                     Some(id) => {
-                        self.ed.buffers[id].set_text(&text);
-                        self.ed.buffers[id].modified = false;
+                        let b = &mut self.ed.buffers[id];
+                        b.set_text(&text);
+                        b.modified = false;
+                        if existing.is_none() {
+                            b.name = name.clone();
+                            b.read_only = read_only;
+                            b.hook = hooked.then(|| name.clone());
+                            if let Some(l) = language {
+                                b.language = l.into();
+                            }
+                            // Another listing now: where the caret was in
+                            // the last one is not where it goes in this.
+                            self.last_pos.remove(&id);
+                        }
                         id
                     }
                     None => {
@@ -183,6 +205,17 @@ impl Kawoosh {
                         let v = self.ed.add_view(id);
                         self.layout.split(SplitDir::H, Content::Editor(v));
                     }
+                }
+                // The caret on the line asked for, else at the top: a
+                // refilled buffer is new text, whatever the caret was in
+                // the old.
+                if let Some(v) = self.focused_view() {
+                    let buf = self.ed.buffer_of(v);
+                    let ln = line.unwrap_or(1).max(1).min(buf.line_count()) - 1;
+                    let off = buf.line_start(ln);
+                    self.ed.views[v].sels =
+                        kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(off));
+                    self.ed.views[v].goal_col = None;
                 }
             }
             Msg::OpenView(name) => self.open_lua_view(&name),

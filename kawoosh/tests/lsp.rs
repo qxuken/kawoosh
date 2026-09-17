@@ -133,6 +133,28 @@ fn diagnostics_definition_hover_and_completion() {
         app.ed.buffer_of(v).text()
     );
     assert!(app.lsp.completion.is_none());
+
+    // A `.` asks at once, on the text with the `.` in it: the members,
+    // not the candidates of the word before — which would have shown
+    // as a ghost and then been replaced, a blink at every member access.
+    d.keys(&mut app, ".");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.completion.is_some()),
+        "member completion arrived"
+    );
+    assert_eq!(
+        app.lsp.completion.as_ref().unwrap().ghost("").as_deref(),
+        Some("member_a")
+    );
+    d.keys(&mut app, "m");
+    assert!(
+        app.lsp.completion.is_some(),
+        "the ghost stays while the word grows"
+    );
+    assert_eq!(
+        app.lsp.completion.as_ref().unwrap().ghost("m").as_deref(),
+        Some("ember_a")
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }

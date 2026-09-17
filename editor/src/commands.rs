@@ -12,50 +12,60 @@ use crate::keymap::{Keymap, Mode};
 use crate::motions as m;
 use crate::{Ctx, Editor, Effect, Kind, MotionKind, Prompt, Selection, ViewId};
 
-/// `:w` → `write`, and the other ex spellings.
+/// The ex spellings and the commands they run: `:w` is `write`, `:bd`
+/// `buffer_delete`. One table, so the command line completes them and
+/// `ex_alias` resolves them from the same list.
+pub const EX_ALIASES: &[(&[&str], &str)] = &[
+    (&["w", "write"], "write"),
+    (&["q", "quit"], "quit"),
+    (&["wq", "x"], "write_quit"),
+    (&["qa", "qall", "quitall"], "quit_all"),
+    (&["wqa", "xa"], "write_quit_all"),
+    (&["e", "edit"], "edit"),
+    (&["set", "se"], "set"),
+    (&["bn", "bnext"], "buffer_next"),
+    (&["bp", "bprev", "bprevious"], "buffer_prev"),
+    (&["bd", "bdelete"], "buffer_delete"),
+    (&["bdo", "bdother", "bdothers"], "buffer_delete_others"),
+    (&["b", "buffer"], "buffer"),
+    (&["ls", "buffers"], "buffer_list"),
+    (&["sp", "split"], "split"),
+    (&["vs", "vsplit"], "vsplit"),
+    (&["clo", "close"], "close"),
+    (&["on", "only"], "only"),
+    (&["tabnew", "tabe"], "tab_new"),
+    (&["tabn", "tabnext"], "tab_next"),
+    (&["tabp", "tabprev"], "tab_prev"),
+    (&["tabc", "tabclose"], "tab_close"),
+    (&["term", "terminal"], "terminal"),
+    (&["scrollback"], "scrollback"),
+    (&["map"], "map"),
+    (&["echo"], "echo"),
+    (&["lua"], "lua"),
+    (&["lsp"], "lsp_status"),
+    (&["tool"], "tool"),
+    (&["cd", "chdir"], "cd"),
+    (&["pwd"], "pwd"),
+    (&["view"], "view"),
+    (&["compile", "make"], "compile"),
+    (&["cn", "cnext"], "error_next"),
+    (&["ol", "oldfiles", "bro", "browse"], "oldfiles"),
+    (&["mks", "mksession"], "session_save"),
+    (&["kui_debugger", "kui_devtools"], "kui_debugger"),
+    (
+        &["kui_framerate_hud", "kui_framerate_hub", "kui_hud"],
+        "kui_framerate_hud",
+    ),
+    (&["syntax_tree", "syntax", "tree"], "syntax_tree"),
+    (&["perf", "kui_perf"], "perf"),
+    (&["cp", "cprev", "cprevious"], "error_prev"),
+];
+
 pub fn ex_alias(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "w" | "write" => "write",
-        "q" | "quit" => "quit",
-        "wq" | "x" => "write_quit",
-        "qa" | "qall" | "quitall" => "quit_all",
-        "wqa" | "xa" => "write_quit_all",
-        "e" | "edit" => "edit",
-        "set" | "se" => "set",
-        "bn" | "bnext" => "buffer_next",
-        "bp" | "bprev" | "bprevious" => "buffer_prev",
-        "bd" | "bdelete" => "buffer_delete",
-        "b" | "buffer" => "buffer",
-        "ls" | "buffers" => "buffer_list",
-        "sp" | "split" => "split",
-        "vs" | "vsplit" => "vsplit",
-        "clo" | "close" => "close",
-        "on" | "only" => "only",
-        "tabnew" | "tabe" => "tab_new",
-        "tabn" | "tabnext" => "tab_next",
-        "tabp" | "tabprev" => "tab_prev",
-        "tabc" | "tabclose" => "tab_close",
-        "term" | "terminal" => "terminal",
-        "scrollback" => "scrollback",
-        "map" => "map",
-        "echo" => "echo",
-        "lua" => "lua",
-        "lsp" => "lsp_status",
-        "tool" => "tool",
-        "cd" | "chdir" => "cd",
-        "pwd" => "pwd",
-        "view" => "view",
-        "compile" | "make" => "compile",
-        "cn" | "cnext" => "error_next",
-        "ol" | "oldfiles" | "bro" | "browse" => "oldfiles",
-        "mks" | "mksession" => "session_save",
-        "kui_debugger" | "kui_devtools" => "kui_debugger",
-        "kui_framerate_hud" | "kui_framerate_hub" | "kui_hud" => "kui_framerate_hud",
-        "syntax_tree" | "syntax" | "tree" => "syntax_tree",
-        "perf" | "kui_perf" => "perf",
-        "cp" | "cprev" | "cprevious" => "error_prev",
-        _ => return None,
-    })
+    EX_ALIASES
+        .iter()
+        .find(|(spellings, _)| spellings.contains(&name))
+        .map(|(_, cmd)| *cmd)
 }
 
 fn view<'a>(ed: &'a Editor, ctx: &Ctx) -> &'a crate::View {

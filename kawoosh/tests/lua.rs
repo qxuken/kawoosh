@@ -257,3 +257,78 @@ fn dash_opens_the_files_directory_and_can_move_the_cwd() {
     assert!(seen.contains(&dir.display().to_string()), "{seen}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn dash_lands_on_the_entry_it_came_from_and_reuses_the_listing() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-oilfrom-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("inner")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("inner/a.txt"), "1\n2\n3\n").unwrap();
+    std::fs::write(dir.join("inner/b.txt"), "x").unwrap();
+    std::fs::write(dir.join("z.txt"), "x").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&dir.join("inner/b.txt"));
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    let buffers = |app: &Kawoosh| app.ed.buffers.len();
+    let line = |app: &Kawoosh| {
+        let v = app.focused_view().unwrap();
+        app.ed
+            .buffer_of(v)
+            .line_of(app.ed.views[v].sels.primary().head)
+    };
+    // From b.txt: the listing of inner, the caret on b.txt.
+    d.keys(&mut app, "-");
+    assert_eq!(d.line_rows(), ["../", "a.txt", "b.txt"]);
+    assert_eq!(line(&app), 2, "on b.txt");
+    let n = buffers(&app);
+    // Up: the caret on inner/, and no second listing buffer.
+    d.keys(&mut app, "-");
+    assert_eq!(d.line_rows(), ["../", "inner/", "z.txt"]);
+    assert_eq!(line(&app), 1, "on inner/");
+    assert_eq!(buffers(&app), n, "the listing buffer was reused");
+    // Down into inner, up again through `../`: the same.
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(line(&app), 0);
+    d.keys(&mut app, "gg");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(line(&app), 1, "on inner/ again");
+    assert_eq!(buffers(&app), n);
+    // Into a.txt, down to its third line, `-` and back: the caret is
+    // where it was left, and the file buffer was not opened twice.
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(line(&app), 0, "a fresh listing starts at its top");
+    d.keys(&mut app, "j");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.keys(&mut app, "jj");
+    assert_eq!(line(&app), 2);
+    let n = buffers(&app);
+    d.keys(&mut app, "-");
+    assert_eq!(line(&app), 1, "on a.txt");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(
+        app.ed
+            .buffer_of(app.focused_view().unwrap())
+            .path
+            .as_ref()
+            .unwrap()
+            .ends_with("a.txt")
+    );
+    assert_eq!(line(&app), 2, "back on the third line");
+    assert_eq!(buffers(&app), n);
+    // `~` is the home in a path given to :oil.
+    ex(&mut d, &mut app, "oil ~");
+    let name = app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
+    assert_eq!(
+        name,
+        format!("oil: {}", kawoosh_systems::fs::home().unwrap().display())
+    );
+    ex(&mut d, &mut app, "oil ~/definitely-not-a-directory-here");
+    assert!(
+        app.ed.message.starts_with("not a directory: /"),
+        "{}",
+        app.ed.message
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
