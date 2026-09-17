@@ -1088,6 +1088,10 @@ impl Kawoosh {
         if self.toast_key(&stroke) {
             return;
         }
+        // <Esc> clears the command line's message, whatever else it does.
+        if stroke.code == "escape" {
+            self.ed.message.clear();
+        }
         // The command line opened from a terminal or Lua pane (`<C-w>:`)
         // takes the keys until it closes, on any view.
         let prompt_view = (self.ed.mode == Mode::Command)

@@ -401,3 +401,29 @@ fn a_big_open_is_progress() {
     assert!(corner_has(&d, "io"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The command line's message clears itself after `ECHO_TTL`, and on
+/// `<Esc>` at once; the log keeps it.
+#[test]
+fn the_message_line_clears_itself() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "echo stays a while");
+    assert_eq!(app.ed.message, "stays a while");
+    d.keys(&mut app, "jk");
+    assert_eq!(
+        app.ed.message, "stays a while",
+        "a motion does not clear it"
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(app.ed.message, "", "<Esc> does");
+    ex(&mut d, &mut app, "echo times out");
+    assert!(app.notes.next_due().is_some(), "the alarm is armed for it");
+    assert!(!app.notes.echo_expired(Instant::now()));
+    assert!(
+        app.notes
+            .echo_expired(Instant::now() + kawoosh::notify::ECHO_TTL)
+    );
+    assert!(app.notes.log.iter().any(|e| e.text == "times out"));
+}

@@ -11,11 +11,13 @@ the same file); progress: on `initialized` a work-done token
 "Loading workspace" begins (after asking to create it) and reports
 3/12 at 50%, and the first didChange ends it — and sends a
 window/showMessage warning ("the warning") and a window/logMessage
-("the log line"), so a test can see where each lands."""
+("the log line"), so a test can see where each lands; a line on stderr
+at start ("fake server starting"), which is the log's too."""
 import json, sys
 
 docs = {}
 ended = False
+print("fake server starting", file=sys.stderr, flush=True)
 
 def char_before(uri, pos):
     lines = docs.get(uri, "").split("\n")

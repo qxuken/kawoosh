@@ -18,7 +18,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use kawoosh_editor::KeyStroke;
 use kawoosh_systems::{Alarm, WakeHandle};
-use kui::{Align, FloatConfig, NodeSpec, TextStyle, Ui, Value};
+use kui::{Align, FloatConfig, NodeSpec, Sizing, TextStyle, Ui, Value};
 
 use crate::app::{Kawoosh, TAB_H};
 use crate::rows::STRIP_H;
@@ -30,6 +30,11 @@ pub const CORNER_TTL: Duration = Duration::from_secs(4);
 /// The log keeps this many entries; the oldest go.
 pub const LOG_CAP: usize = 1000;
 pub const MESSAGES_BUFFER: &str = "*messages*";
+/// How long the command line keeps a message before it clears itself
+/// (`<Esc>` clears it now). The log keeps it.
+pub const ECHO_TTL: Duration = Duration::from_secs(8);
+/// A progress bar's width in the corner.
+const BAR_W: f32 = 160.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Level {
@@ -207,8 +212,10 @@ pub struct Notifications {
     /// go is the one to draw for.
     alarm: Alarm,
     /// The command line's message as last logged, so the frame logs a
-    /// message once, when it changes.
+    /// message once, when it changes — and when, so it clears after
+    /// [`ECHO_TTL`].
     last_echo: String,
+    echo_at: Option<Instant>,
     /// The toast the keyboard is on, and which of its actions
     /// (`:toast`, `<C-w>n`). A focused toast does not time out.
     pub focus: Option<Focus>,
@@ -237,6 +244,7 @@ impl Notifications {
             next_id: 0,
             alarm: Alarm::spawn_soonest(wake),
             last_echo: String::new(),
+            echo_at: None,
             focus: None,
             stderr: None,
             stderr_buf: String::new(),
@@ -407,9 +415,17 @@ impl Notifications {
             return;
         }
         self.last_echo = message.to_string();
+        self.echo_at = (!message.is_empty()).then_some(now);
         if !message.is_empty() {
             self.push(Note::new(Level::Info, message).show(Show::Log), now);
         }
+        self.arm();
+    }
+
+    /// Whether the command line's message has been up for [`ECHO_TTL`]
+    /// and should clear.
+    pub fn echo_expired(&self, now: Instant) -> bool {
+        self.echo_at.is_some_and(|t| now >= t + ECHO_TTL)
     }
 
     /// A step of a server's work-done token: begun (with a title),
@@ -518,6 +534,7 @@ impl Notifications {
             .filter(|s| Some(s.id) != focused)
             .filter_map(|s| s.until)
             .chain(self.progress.iter().filter_map(|p| p.until))
+            .chain(self.echo_at.map(|t| t + ECHO_TTL))
             .min()
     }
 
@@ -602,6 +619,11 @@ impl Kawoosh {
         }
         let echo = self.ed.message.clone();
         self.notes.echo(&echo, now);
+        // The command line's message clears itself; the log has it.
+        if self.notes.echo_expired(now) {
+            self.ed.message.clear();
+            self.notes.echo("", now);
+        }
         self.notes.sweep(now);
         let err = self.notes.take_stderr();
         if !err.is_empty() {
@@ -922,9 +944,42 @@ impl Kawoosh {
                                     }
                                     t
                                 };
-                                ui.with_indexed(1 << 33 | pi as u64, line(), |ui| {
-                                    ui.text(&text, dim);
-                                });
+                                // A running token with a percentage is a
+                                // loader: the line, and a bar under it
+                                // filled that far.
+                                let bar = (!p.done).then_some(p.percentage).flatten();
+                                ui.with_indexed(
+                                    1 << 33 | pi as u64,
+                                    NodeSpec::column().gap(2.0).cross_align(Align::End),
+                                    |ui| {
+                                        ui.with(line(), |ui| {
+                                            ui.text(&text, dim);
+                                        });
+                                        if let Some(pct) = bar {
+                                            ui.with_keyed(
+                                                "bar",
+                                                NodeSpec::row()
+                                                    .width(Sizing::Fixed(BAR_W))
+                                                    .height(Sizing::Fixed(3.0))
+                                                    .radius(1.5)
+                                                    .bg(pal.border)
+                                                    .clip(),
+                                                |ui| {
+                                                    ui.with_keyed(
+                                                        "fill",
+                                                        NodeSpec::row()
+                                                            .width(Sizing::Fixed(
+                                                                BAR_W * pct.min(100) as f32 / 100.0,
+                                                            ))
+                                                            .height(Sizing::Grow(1.0))
+                                                            .bg(pal.accent),
+                                                        |_| {},
+                                                    );
+                                                },
+                                            );
+                                        }
+                                    },
+                                );
                             }
                             if let Some(src) = source {
                                 ui.with_indexed(1 << 34, NodeSpec::row().gap(6.0), |ui| {

@@ -275,7 +275,7 @@ impl Server {
     fn spawn(
         def: &ServerDef,
         root: &Path,
-        from_tx: Sender<(usize, Value)>,
+        from_tx: Sender<(usize, FromServer)>,
         key: usize,
     ) -> Option<Self> {
         let mut child = Command::new(&def.command)
@@ -283,11 +283,23 @@ impl Server {
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .ok()?;
         let stdin = child.stdin.take()?;
         let stdout = child.stdout.take()?;
+        // What the server says on stderr is the log's, line by line.
+        if let Some(stderr) = child.stderr.take() {
+            let tx = from_tx.clone();
+            thread::spawn(move || {
+                for line in BufReader::new(stderr).lines() {
+                    let Ok(line) = line else { return };
+                    if tx.send((key, FromServer::Stderr(line))).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
@@ -313,7 +325,7 @@ impl Server {
                     return;
                 }
                 if let Ok(message) = serde_json::from_slice::<Value>(&body)
-                    && from_tx.send((key, message)).is_err()
+                    && from_tx.send((key, FromServer::Message(message))).is_err()
                 {
                     return;
                 }
@@ -384,14 +396,21 @@ struct Pool {
     keys: HashMap<(PathBuf, String), usize>,
     servers: Vec<Option<Server>>,
     homes: HashMap<BufferId, usize>,
-    from_tx: Sender<(usize, Value)>,
+    from_tx: Sender<(usize, FromServer)>,
     event_tx: Sender<Event>,
     wake: WakeHandle,
     failed: std::collections::HashSet<String>,
 }
 
+/// What a server's threads hand the pool: a JSON-RPC message from its
+/// stdout, or a line of its stderr.
+enum FromServer {
+    Message(Value),
+    Stderr(String),
+}
+
 fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
-    let (from_tx, from_rx) = unbounded::<(usize, Value)>();
+    let (from_tx, from_rx) = unbounded::<(usize, FromServer)>();
     let mut pool = Pool {
         defs: ServerDef::builtin(),
         keys: HashMap::new(),
@@ -409,8 +428,11 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
                 pool.handle_cmd(cmd);
             }
             recv(from_rx) -> message => {
-                let Ok((key, message)) = message else { continue };
-                pool.handle_message(key, message);
+                let Ok((key, from)) = message else { continue };
+                match from {
+                    FromServer::Message(m) => pool.handle_message(key, m),
+                    FromServer::Stderr(line) => pool.handle_stderr(key, line),
+                }
             }
         }
     }
@@ -609,6 +631,23 @@ impl Pool {
             params["context"] = c;
         }
         server.request(method, params, (buffer, version, offset));
+    }
+
+    /// A line of a server's stderr: a log message from it, kept to the
+    /// log as `window/logMessage` is.
+    fn handle_stderr(&mut self, key: usize, line: String) {
+        let Some(server) = self.servers.get(key).and_then(Option::as_ref) else {
+            return;
+        };
+        if line.trim().is_empty() {
+            return;
+        }
+        self.emit(Event::Message {
+            server: server.name.clone(),
+            kind: 4,
+            text: line,
+            log: true,
+        });
     }
 
     fn handle_message(&mut self, key: usize, message: Value) {

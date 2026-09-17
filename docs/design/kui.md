@@ -420,7 +420,9 @@ either took the line or was lost. Now a notification has a **level**
   level, source, text, a repeat's count — live while it is open, and
   `:messages clear` empties it. What the command line shows lands in it
   too, so the old message line keeps its job (a command's immediate
-  answer) and stops being the record.
+  answer) and stops being the record — and it clears itself after
+  `ECHO_TTL` (8 s), or on `<Esc>` at once; before, a message stayed
+  until the next one, across buffers, with no way to dismiss it.
 
 A notification is data — `Note { level, source, text, actions, show,
 ttl }` — and an **action is a command line**: `{ label, command }`, run
@@ -432,7 +434,9 @@ made a command first, as `kawoosh.map` does. `:notify [LEVEL] TEXT` is
 the command line's. The shell's own sources are the lsp glue (a server
 not found; `window/showMessage` by its type, `window/logMessage` to the
 log; `$/progress`, asked for with `window.workDoneProgress`) and compile
-mode's exit; the level is the caller's to pick and `show` overrides it.
+mode's exit, and a server's stderr, line by line, kept to the log under
+the server's name as `window/logMessage` is; the level is the caller's
+to pick and `show` overrides it.
 
 The **`log` crate is a source** (`logger.rs`): `log::warn!` anywhere in
 the process is a warn toast, `log::info!` a corner line, `log::debug!`
@@ -451,7 +455,8 @@ measures it: ~3 ns for a record nobody wants, ~20 ns for a literal,
 
 A file opening on the io thread is a progress line under `io` —
 `Opening NAME 42%`, `Completed Opening NAME` — the same shape as a
-server's token.
+server's token. A running token with a percentage is a loader: a bar
+under its line, filled that far, whoever owns the token.
 
 Redraw stays event-driven: what times out arms a `systems::Alarm` at the
 earliest expiry (`Alarm::spawn_soonest`; the diagnostics debounce keeps
