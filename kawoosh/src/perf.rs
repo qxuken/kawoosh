@@ -8,14 +8,14 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use kui::{Align, NodeSpec, Sizing, TextStyle, Ui};
+use kui::{Align, Min, NodeSpec, Sizing, Ui};
+
+use crate::devtab::Tab;
 
 use crate::app::Kawoosh;
 
 /// The tab's name in the devtools strip.
 pub const TAB: &str = "perf";
-const ROW_H: f32 = 18.0;
-const FONT: f32 = 12.0;
 /// Frames kept for the averages.
 const KEEP: usize = 120;
 /// How often the process is asked for its footprint.
@@ -261,6 +261,10 @@ pub fn bytes(n: u64) -> String {
     }
 }
 
+/// A section of the tab: its caption, a header row when the columns
+/// need naming, and its rows, a cell per column.
+type Section = (String, Option<Vec<&'static str>>, Vec<Vec<String>>);
+
 fn count(n: usize) -> String {
     // Thousands apart, for the eye.
     let s = n.to_string();
@@ -287,13 +291,10 @@ impl Kawoosh {
         self.tab_shown = Some(TAB);
         let pal = self.pal;
         let font = self.font;
-        let style = move || {
-            let s = TextStyle::new(FONT).mono().nowrap().color(pal.fg);
-            match font {
-                Some(id) => s.font(id),
-                None => s,
-            }
-        };
+        // Every size from kui's metrics (`devtab::Tab`), as the Settings
+        // tab's are, so the two agree with the panel and each other.
+        let tm = Tab::of(&ui.metrics());
+        let style = move || tm.style(&pal, font);
         let dim = move || style().color(pal.dim);
         // The readings, gathered before the tree is built.
         let mem = self.perf.mem();
@@ -329,125 +330,153 @@ impl Kawoosh {
         let row_size = std::mem::size_of::<crate::inspector::Row>();
         let rows_bytes = std::mem::size_of_val(self.inspector.rows());
 
-        let section = |ui: &mut Ui<'_>, title: &str| {
-            ui.with(
-                NodeSpec::row()
-                    .width(Sizing::Grow(1.0))
-                    .height(Sizing::Fixed(ROW_H + 8.0))
-                    .pad_xy(8.0, 0.0)
-                    .cross_align(Align::End)
-                    .bg(pal.strip),
-                |ui| ui.text(title, dim()),
-            );
+        // The sections as data, then one table per section (ADR 0033):
+        // the name column at its longest name in that section, nothing
+        // measured and no width picked by hand. A section is a caption,
+        // a header row over the columns when the columns need naming,
+        // and its rows — each cell its own, so a number sits under its
+        // heading and at its column's right edge.
+        let mut sections: Vec<Section> = Vec::new();
+        sections.push((
+            format!("frame · view, ms, over {frames} frames"),
+            Some(vec!["phase", "last", "avg", "worst"]),
+            phases
+                .iter()
+                .map(|(name, (last, avg, worst))| {
+                    vec![
+                        name.to_string(),
+                        format!("{last:.2}"),
+                        format!("{avg:.2}"),
+                        format!("{worst:.2}"),
+                    ]
+                })
+                .collect(),
+        ));
+        // The two-column sections: a name and what it reads.
+        let pairs = |rows: Vec<(String, String)>| -> Vec<Vec<String>> {
+            rows.into_iter().map(|(k, v)| vec![k, v]).collect()
         };
-        let line = |ui: &mut Ui<'_>, k: &str, v: &str| {
+        sections.push((
+            "systems".into(),
+            None,
+            pairs(vec![
+                (
+                    "ts parse".into(),
+                    match ts_last {
+                        Some((d, n)) => format!(
+                            "{:.1} ms for {} · {} answers",
+                            d.as_secs_f64() * 1e3,
+                            bytes(n as u64),
+                            ts_answers
+                        ),
+                        None => "—".into(),
+                    },
+                ),
+                (
+                    "syntax rows".into(),
+                    match rows_last {
+                        Some((d, n)) => format!(
+                            "{} rows in {:.1} ms{}",
+                            count(n),
+                            d.as_secs_f64() * 1e3,
+                            if building { " · building…" } else { "" }
+                        ),
+                        None if inspector_rows > 0 => {
+                            format!("{} rows, in the frame", count(inspector_rows))
+                        }
+                        None => "—".into(),
+                    },
+                ),
+                (
+                    "lsp".into(),
+                    format!("{lsp_servers} servers · {lsp_docs} documents"),
+                ),
+                ("terminals".into(), count(terms)),
+                ("lua".into(), if lua { "attached" } else { "—" }.into()),
+            ]),
+        ));
+        // One reading a row, so each has its name beside it.
+        let mut memory = vec![
+            ("footprint".into(), bytes(mem.footprint)),
+            ("resident".into(), bytes(mem.resident)),
+            ("peak resident".into(), bytes(mem.peak)),
+            ("buffers".into(), count(buffers)),
+            ("buffers' text".into(), bytes(total_bytes as u64)),
+        ];
+        if let Some(f) = &focused {
+            memory.push(("focused".into(), f.name.clone()));
+            memory.push(("  text".into(), bytes(f.len as u64)));
+            memory.push(("  lines".into(), count(f.lines)));
+            memory.push(("  pieces".into(), count(f.pieces)));
+            memory.push(("  edits journaled".into(), count(f.journal)));
+            for (layer, runs, chunks) in &f.layers {
+                memory.push((format!("  layer {layer} runs"), count(*runs)));
+                memory.push((format!("  layer {layer} chunks"), count(*chunks)));
+            }
+        }
+        memory.push(("line indexes".into(), count(cells)));
+        memory.push(("syntax rows".into(), count(inspector_rows)));
+        memory.push(("syntax row size".into(), format!("{row_size} B")));
+        memory.push(("syntax rows' bytes".into(), bytes(rows_bytes as u64)));
+        sections.push(("memory".into(), None, pairs(memory)));
+
+        // A row: every other one washed and a hovered one lit, so a
+        // reading is found by eye across the gap; the name column grows.
+        let row_spec = move |i: usize| tm.row(&pal, i);
+        // The name column grows, but never below its longest name: a
+        // long value beside it takes the room, not the name.
+        let name_cell = move |ui: &mut Ui<'_>, name: &str| {
             ui.with(
-                NodeSpec::row()
-                    .width(Sizing::Grow(1.0))
-                    .height(Sizing::Fixed(ROW_H))
-                    .pad_xy(8.0, 0.0)
-                    .cross_align(Align::Center),
+                NodeSpec::row().width(Sizing::Grow(1.0)).min_width(Min::FIT),
                 |ui| {
-                    ui.with(NodeSpec::row().width(Sizing::Fixed(110.0)), |ui| {
-                        ui.text(k, dim())
-                    });
-                    ui.text(v, style());
+                    ui.text(name, dim());
                 },
             );
         };
-        ui.with(NodeSpec::column().fill().bg(pal.bg).scroll_y(), |ui| {
-            section(
-                ui,
-                &format!("frame · view, ms, last / avg / worst over {frames}"),
-            );
-            for (name, (last, avg, worst)) in &phases {
-                line(ui, name, &format!("{last:6.2}  {avg:6.2}  {worst:6.2}"));
-            }
-            section(ui, "systems");
-            line(
-                ui,
-                "ts parse",
-                &match ts_last {
-                    Some((d, n)) => format!(
-                        "{:.1} ms for {} · {} answers",
-                        d.as_secs_f64() * 1e3,
-                        bytes(n as u64),
-                        ts_answers
-                    ),
-                    None => "—".into(),
-                },
-            );
-            line(
-                ui,
-                "syntax rows",
-                &match rows_last {
-                    Some((d, n)) => format!(
-                        "{} rows in {:.1} ms{}",
-                        count(n),
-                        d.as_secs_f64() * 1e3,
-                        if building { " · building…" } else { "" }
-                    ),
-                    None if inspector_rows > 0 => {
-                        format!("{} rows, in the frame", count(inspector_rows))
-                    }
-                    None => "—".into(),
-                },
-            );
-            line(
-                ui,
-                "lsp",
-                &format!("{lsp_servers} servers · {lsp_docs} documents"),
-            );
-            line(ui, "terminals", &count(terms));
-            line(ui, "lua", if lua { "attached" } else { "—" });
-            section(ui, "memory");
-            line(
-                ui,
-                "process",
-                &format!(
-                    "{} footprint · {} resident · {} peak",
-                    bytes(mem.footprint),
-                    bytes(mem.resident),
-                    bytes(mem.peak)
-                ),
-            );
-            line(
-                ui,
-                "buffers",
-                &format!("{} · {}", count(buffers), bytes(total_bytes as u64)),
-            );
-            if let Some(f) = &focused {
-                line(ui, "focused", &f.name);
-                line(
-                    ui,
-                    "  text",
-                    &format!(
-                        "{} · {} lines · {} pieces · {} edits journaled",
-                        bytes(f.len as u64),
-                        count(f.lines),
-                        count(f.pieces),
-                        count(f.journal)
-                    ),
-                );
-                for (layer, runs, chunks) in &f.layers {
-                    line(
-                        ui,
-                        &format!("  layer {layer}"),
-                        &format!("{} runs in {} chunks", count(*runs), count(*chunks)),
-                    );
+        // On the panel's own surface: each section a block of its own —
+        // the caption its strip — with room between the blocks, as the
+        // Settings tab lays its layers out.
+        ui.with(
+            NodeSpec::column().fill().scroll_y().gap(tm.section_gap),
+            |ui| {
+                for (title, header, rows) in &sections {
+                    ui.with(NodeSpec::column().width(Sizing::Grow(1.0)), |ui| {
+                        ui.with(tm.caption(&pal), |ui| ui.text(title, dim()));
+                        ui.with(NodeSpec::table().width(Sizing::Grow(1.0)), |ui| {
+                            // The header names the numeric columns and sits at
+                            // their right edge, where the numbers do.
+                            if let Some(header) = header {
+                                ui.with(row_spec(0), |ui| {
+                                    for (i, h) in header.iter().enumerate() {
+                                        if i == 0 {
+                                            name_cell(ui, h);
+                                        } else {
+                                            ui.with(NodeSpec::row().main_align(Align::End), |ui| {
+                                                ui.text(h, dim())
+                                            });
+                                        }
+                                    }
+                                });
+                            }
+                            for (r, cells) in rows.iter().enumerate() {
+                                ui.with(row_spec(r + usize::from(header.is_some())), |ui| {
+                                    for (i, cell) in cells.iter().enumerate() {
+                                        if i == 0 {
+                                            name_cell(ui, cell);
+                                        } else if header.is_some() {
+                                            ui.with(NodeSpec::row().main_align(Align::End), |ui| {
+                                                ui.text(cell, style())
+                                            });
+                                        } else {
+                                            ui.text(cell, style());
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    });
                 }
-            }
-            line(ui, "line indexes", &count(cells));
-            line(
-                ui,
-                "syntax rows",
-                &format!(
-                    "{} × {} B = {}",
-                    count(inspector_rows),
-                    row_size,
-                    bytes(rows_bytes as u64)
-                ),
-            );
-        });
+            },
+        );
     }
 }

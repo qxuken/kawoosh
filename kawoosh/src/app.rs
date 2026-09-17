@@ -88,6 +88,10 @@ pub struct Kawoosh {
     /// and the strip on it — which is what `:syntax_tree` and `:perf`
     /// toggle against.
     pub(crate) tab_shown: Option<&'static str>,
+    /// Whether the Settings tab shows the default layer's leaves: what
+    /// the editor ships is the longest list and the least often read,
+    /// so it opens folded and a click on its row unfolds it.
+    pub(crate) settings_default_open: bool,
     /// kui's latency HUD — frame times as a graph in the corner —
     /// toggled with `:kui_framerate_hud`.
     pub hud: bool,
@@ -161,6 +165,7 @@ impl Kawoosh {
             inspector: Inspector::new(wake.clone()),
             show_tab: None,
             tab_shown: None,
+            settings_default_open: false,
             line_cells: Default::default(),
             perf: Default::default(),
             hud: false,

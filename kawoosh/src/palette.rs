@@ -18,6 +18,11 @@ pub struct Pal {
     pub command: Color,
     pub border: Color,
     pub danger: Color,
+    /// A hovered row's wash, the theme's own.
+    pub hover: Color,
+    /// Every other row of a table: the foreground at a whisper, so it
+    /// reads on any base without a hue of its own.
+    pub zebra: Color,
 }
 
 impl From<Theme> for Pal {
@@ -35,6 +40,8 @@ impl From<Theme> for Pal {
             command: t.warning,
             border: t.border,
             danger: t.danger,
+            hover: t.hover,
+            zebra: t.fg.with_alpha(0.04),
         }
     }
 }

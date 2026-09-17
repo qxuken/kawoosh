@@ -7,6 +7,7 @@
 pub mod app;
 pub mod cmdline;
 pub mod compile;
+pub mod devtab;
 pub mod inspector;
 pub mod layout;
 pub mod logger;

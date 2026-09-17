@@ -222,18 +222,17 @@ fn perf_is_a_tab_of_readings() {
         .filter_map(|n| n.text.clone())
         .collect();
     let has = |s: &str| texts.iter().any(|t| t.contains(s));
-    // The three sections, a phase, the process's footprint, the buffer.
+    // The three sections, a phase, the process's footprint — a reading
+    // a row, the name beside its value — the buffer.
     assert!(has("frame · view"), "{texts:?}");
     assert!(has("rows") && has("view"), "{texts:?}");
-    assert!(has("process"), "{texts:?}");
-    let process = texts
+    let footprint = texts
         .iter()
-        .find(|t| t.contains("resident"))
-        .expect("a footprint");
-    assert!(
-        process.contains("MB") || process.contains("GB"),
-        "{process}"
-    );
+        .position(|t| t == "footprint")
+        .expect("a footprint row");
+    let value = &texts[footprint + 1];
+    assert!(value.contains("MB") || value.contains("GB"), "{value}");
+    assert!(has("resident"), "{texts:?}");
     assert!(has("focused") && has("t"), "{texts:?}");
     assert!(has("lines") && has("pieces"), "{texts:?}");
     // The other tab still toggles against its own showing: `:syntax_tree`

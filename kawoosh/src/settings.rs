@@ -35,7 +35,9 @@ use std::time::Instant;
 use kawoosh_editor::{Layer, Setting};
 use kawoosh_systems::WakeHandle;
 use kawoosh_systems::watch::Watcher;
-use kui::{Align, Color, NodeSpec, Sizing, TextStyle, Ui, Value};
+use kui::{NodeSpec, Sizing, TextStyle, Ui, Value, Vec2};
+
+use crate::devtab::Tab;
 
 use crate::app::Kawoosh;
 use crate::notify::{Level, Note};
@@ -49,8 +51,6 @@ pub const TAB: &str = "settings";
 /// What a settings file opened from the tab starts as — a buffer at the
 /// path, unsaved: `:w` is the user's.
 pub const SETTINGS_STUB: &str = "-- kawoosh settings: a table, read on save.\nreturn {\n}\n";
-const ROW_H: f32 = 18.0;
-const FONT: f32 = 12.0;
 
 /// The user's config directory: `$XDG_CONFIG_HOME/kawoosh`, else
 /// `~/.config/kawoosh`.
@@ -295,14 +295,15 @@ impl Kawoosh {
         self.tab_shown = Some(TAB);
         let pal = self.pal;
         let font = self.font;
-        let style = move || {
-            let s = TextStyle::new(FONT).mono().nowrap().color(pal.fg);
-            match font {
-                Some(id) => s.font(id),
-                None => s,
-            }
-        };
+        // Every size from kui's metrics (`devtab::Tab`), so the tab's
+        // rows, captions and toolbar agree with the panel and each other.
+        let tm = Tab::of(&ui.metrics());
+        let theme = ui.theme();
+        let style = move || tm.style(&pal, font);
         let dim = move || style().color(pal.dim);
+        // The path column's style: the same face, folding at the column.
+        let wrapping = move || style().wrap(kui::TextWrap::Word);
+        let default_open = self.settings_default_open;
         // The facts, gathered before the tree is built.
         let watched = self.config.project.len()
             + self.config.user.iter().count()
@@ -378,157 +379,205 @@ impl Kawoosh {
         let creatable_user = self.config.user.clone();
         let creatable_project = self.cwd.join(PROJECT_DIR).join(SETTINGS_FILE);
 
-        let section = |ui: &mut Ui<'_>, title: &str| {
-            ui.with(
-                NodeSpec::row()
-                    .width(Sizing::Grow(1.0))
-                    .height(Sizing::Fixed(ROW_H + 8.0))
-                    .pad_xy(8.0, 0.0)
-                    .cross_align(Align::End)
-                    .bg(pal.strip),
-                |ui| ui.text(title, dim()),
-            );
-        };
-        let leaf = |ui: &mut Ui<'_>, path: &str, value: &str, from: Option<&str>| {
-            ui.with(
-                NodeSpec::row()
-                    .width(Sizing::Grow(1.0))
-                    .height(Sizing::Fixed(ROW_H))
-                    .pad_xy(16.0, 0.0)
-                    .gap(8.0)
-                    .cross_align(Align::Center),
-                |ui| {
-                    ui.with(NodeSpec::row().width(Sizing::Fixed(180.0)), |ui| {
-                        ui.text(path, style())
-                    });
-                    ui.text(value, style().color(pal.accent));
-                    if let Some(from) = from {
-                        ui.text(from, dim());
-                    }
-                },
-            );
-        };
-        ui.with(NodeSpec::column().fill().bg(pal.bg), |ui| {
-            // The header: how much is loaded, and the reload button.
-            ui.with(
-                NodeSpec::row()
-                    .width(Sizing::Grow(1.0))
-                    .height(Sizing::Fixed(ROW_H + 6.0))
-                    .pad_xy(8.0, 0.0)
-                    .gap(8.0)
-                    .cross_align(Align::Center)
-                    .bg(pal.strip),
-                |ui| {
-                    let mut head = format!("{sources_n} sources · watching {watched} files");
-                    if let Some(r) = &reloaded {
-                        head.push_str(" · ");
-                        head.push_str(r);
-                    }
-                    ui.text(&head, dim());
-                    ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
-                    ui.with_keyed(
-                        "reload",
+        // A section's caption. The default layer's is also its fold: what
+        // the editor ships is the longest list and the least often read,
+        // so it opens folded, its caption saying how many, and a click
+        // on the caption unfolds it.
+        let section = |ui: &mut Ui<'_>, title: &str, fold: Option<usize>| {
+            let mut spec = tm.caption(&pal);
+            if fold.is_some() {
+                spec = spec
+                    .hover_bg(pal.hover)
+                    .on_click(Value::map([
+                        ("kind", "settings".into()),
+                        ("what", "toggle-default".into()),
+                    ]))
+                    .label("default settings")
+                    .expanded(default_open);
+            }
+            ui.with_keyed(title, spec, |ui| {
+                if fold.is_some() {
+                    // The fold's triangle, drawn rather than typed — a
+                    // glyph is whatever size the face makes it — in a box
+                    // the text's size, its points fractions of that.
+                    let e = tm.text;
+                    let points: [Vec2; 3] = if default_open {
+                        [
+                            Vec2::new(e / 12.0, e / 4.0),
+                            Vec2::new(e * 11.0 / 12.0, e / 4.0),
+                            Vec2::new(e / 2.0, e * 5.0 / 6.0),
+                        ]
+                    } else {
+                        [
+                            Vec2::new(e / 6.0, e / 12.0),
+                            Vec2::new(e * 5.0 / 6.0, e / 2.0),
+                            Vec2::new(e / 6.0, e * 11.0 / 12.0),
+                        ]
+                    };
+                    ui.with(
                         NodeSpec::row()
-                            .pad_xy(6.0, 1.0)
-                            .bg(Color::TRANSPARENT)
-                            .hover_bg(pal.panel)
-                            .on_click(Value::map([
-                                ("kind", "settings".into()),
-                                ("what", "reload".into()),
-                            ]))
-                            .label("reload settings"),
-                        |ui| ui.text("reload", style()),
+                            .width(Sizing::Fixed(e))
+                            .height(Sizing::Fixed(e)),
+                        |ui| ui.polygon(&points, NodeSpec::row().bg(pal.dim)),
                     );
-                },
-            );
-            ui.with(NodeSpec::column().fill().scroll_y(), |ui| {
-                for ((layer, sources), shown) in layers.iter().zip(&short) {
-                    let title = match layer {
-                        Layer::Session => "session — :set, and what a plugin sets",
-                        Layer::Project => "project — .kawoosh/settings.lua, root to cwd",
-                        Layer::User => "user — settings.lua, then what init.lua sets",
-                        Layer::Default => "default — what the editor ships",
-                    };
-                    section(ui, title);
-                    // A layer with no file yet offers one: the user's in
-                    // the config dir, the project's in the cwd — a buffer
-                    // from a template, saved when the user says.
-                    let creatable = match layer {
-                        Layer::User => creatable_user.as_ref(),
-                        Layer::Project => Some(&creatable_project),
-                        _ => None,
-                    };
-                    let has_file = sources.iter().any(|(n, _)| n != layer.name());
-                    if let Some(path) = creatable.filter(|_| !has_file) {
-                        let shown = self.short_name(path);
-                        ui.with_keyed(
-                            &format!("new {}", path.display()),
-                            NodeSpec::row()
-                                .width(Sizing::Grow(1.0))
-                                .height(Sizing::Fixed(ROW_H))
-                                .pad_xy(8.0, 0.0)
-                                .gap(8.0)
-                                .cross_align(Align::Center)
-                                .bg(Color::TRANSPARENT)
-                                .hover_bg(pal.panel)
-                                .on_click(Value::map([
-                                    ("kind", "settings".into()),
-                                    ("what", "new".into()),
-                                    ("path", path.display().to_string().into()),
-                                ]))
-                                .label(format!("new {shown}").as_str()),
-                            |ui| {
-                                ui.text(&shown, dim());
-                                ui.text("· new", style().color(pal.accent));
-                            },
-                        );
-                    } else if sources.is_empty() {
-                        leaf(ui, "—", "", None);
-                    }
-                    for ((name, leaves), shown) in sources.iter().zip(shown) {
-                        let is_file = name != layer.name();
-                        // A file's row opens it; the layer's own source
-                        // is a name, not a thing to click.
-                        let mut spec = NodeSpec::row()
-                            .width(Sizing::Grow(1.0))
-                            .height(Sizing::Fixed(ROW_H))
-                            .pad_xy(8.0, 0.0)
-                            .cross_align(Align::Center);
-                        if is_file {
-                            spec = spec
-                                .bg(Color::TRANSPARENT)
-                                .hover_bg(pal.panel)
-                                .on_click(Value::map([
-                                    ("kind", "settings".into()),
-                                    ("what", "open".into()),
-                                    ("path", name.as_str().into()),
-                                ]))
-                                .label(name.as_str());
-                        }
-                        ui.with_keyed(name, spec, |ui| {
-                            ui.text(shown, style().color(pal.fg));
-                            if leaves.is_empty() {
-                                ui.with(NodeSpec::row().width(Sizing::Fixed(8.0)), |_| {});
-                                ui.text("(empty)", dim());
-                            }
-                        });
-                        for (p, v) in leaves {
-                            leaf(ui, p, v, None);
-                        }
-                    }
                 }
-                section(
-                    ui,
-                    "effective — every layer merged, and where each value is from",
-                );
-                for (p, v, from) in &effective {
-                    leaf(ui, p, v, Some(from));
+                ui.text(title, dim());
+                if let Some(n) = fold.filter(|_| !default_open) {
+                    ui.text(&format!("· {n} settings"), dim());
                 }
             });
+        };
+        // A row of a leaves table (ADR 0033): the path column grows and
+        // its text wraps, so a long dotted key folds instead of pushing
+        // the value off the edge; the value and, in the effective table,
+        // where it came from sit at their columns. Every other row is
+        // washed, and a hovered one lit.
+        let leaf = move |ui: &mut Ui<'_>, i: usize, path: &str, value: &str, from: Option<&str>| {
+            ui.with(tm.row(&pal, i), |ui| {
+                ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |ui| {
+                    ui.text(path, wrapping());
+                });
+                ui.text(value, style().color(pal.accent));
+                if let Some(from) = from {
+                    ui.text(from, dim());
+                }
+            });
+        };
+        // The header row of a leaves table, naming its columns.
+        let head = move |ui: &mut Ui<'_>, from: bool| {
+            ui.with(tm.row(&pal, 0), |ui| {
+                ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |ui| {
+                    ui.text("path", dim());
+                });
+                ui.text("value", dim());
+                if from {
+                    ui.text("from", dim());
+                }
+            });
+        };
+        // On the panel's own surface, as its Events tab is: a toolbar —
+        // the counts as a note, the reload as a small button of the
+        // panel's kind — then the layers, with room between them.
+        ui.with(NodeSpec::column().fill().gap(tm.section_gap), |ui| {
+            ui.with(tm.toolbar(), |ui| {
+                let mut head = format!("{sources_n} sources · watching {watched} files");
+                if let Some(r) = &reloaded {
+                    head.push_str(" · ");
+                    head.push_str(r);
+                }
+                ui.text(&head, TextStyle::new(tm.small_text).color(pal.dim).nowrap());
+                ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
+                ui.with_keyed(
+                    "reload",
+                    tm.button(&theme)
+                        .on_click(Value::map([
+                            ("kind", "settings".into()),
+                            ("what", "reload".into()),
+                        ]))
+                        .label("reload settings")
+                        .apply_tooltip("every layer from its files again, init.lua included"),
+                    |ui| ui.text("reload", TextStyle::new(tm.small_text).color(pal.fg)),
+                );
+            });
+            // Each layer is a block of its own — the caption its strip,
+            // then its rows, nothing between — with room between the
+            // blocks, so where one layer ends and the next begins is
+            // seen before it is read.
+            let block = move || NodeSpec::column().width(Sizing::Grow(1.0));
+            ui.with(
+                NodeSpec::column().fill().scroll_y().gap(tm.section_gap),
+                |ui| {
+                    for ((layer, sources), shown) in layers.iter().zip(&short) {
+                        ui.with(block(), |ui| {
+                            let title = match layer {
+                                Layer::Session => "session — :set, and what a plugin sets",
+                                Layer::Project => "project — .kawoosh/settings.lua, root to cwd",
+                                Layer::User => "user — settings.lua, then what init.lua sets",
+                                Layer::Default => "default — what the editor ships",
+                            };
+                            let fold = (*layer == Layer::Default)
+                                .then(|| sources.iter().map(|(_, l)| l.len()).sum::<usize>());
+                            section(ui, title, fold);
+                            // A layer with no file yet offers one: the user's in
+                            // the config dir, the project's in the cwd — a buffer
+                            // from a template, saved when the user says.
+                            let creatable = match layer {
+                                Layer::User => creatable_user.as_ref(),
+                                Layer::Project => Some(&creatable_project),
+                                _ => None,
+                            };
+                            let has_file = sources.iter().any(|(n, _)| n != layer.name());
+                            if let Some(path) = creatable.filter(|_| !has_file) {
+                                let shown = self.short_name(path);
+                                ui.with_keyed(
+                                    &format!("new {}", path.display()),
+                                    tm.row(&pal, 0)
+                                        .on_click(Value::map([
+                                            ("kind", "settings".into()),
+                                            ("what", "new".into()),
+                                            ("path", path.display().to_string().into()),
+                                        ]))
+                                        .label(format!("new {shown}").as_str()),
+                                    |ui| {
+                                        ui.text(&shown, dim());
+                                        ui.text("· new", style().color(pal.accent));
+                                    },
+                                );
+                            } else if sources.is_empty() {
+                                ui.with(NodeSpec::table().width(Sizing::Grow(1.0)), |ui| {
+                                    leaf(ui, 0, "—", "", None);
+                                });
+                            }
+                            for ((name, leaves), shown) in sources.iter().zip(shown) {
+                                let is_file = name != layer.name();
+                                // A file's row opens it. A layer's own source —
+                                // the session's, the default's — has no row: the
+                                // caption already names it.
+                                if is_file {
+                                    let spec = tm
+                                        .row(&pal, 0)
+                                        .on_click(Value::map([
+                                            ("kind", "settings".into()),
+                                            ("what", "open".into()),
+                                            ("path", name.as_str().into()),
+                                        ]))
+                                        .label(name.as_str());
+                                    ui.with_keyed(name, spec, |ui| {
+                                        ui.text(shown, style().color(pal.fg));
+                                        if leaves.is_empty() {
+                                            ui.text("(empty)", dim());
+                                        }
+                                    });
+                                }
+                                // A source's leaves are one table: its paths line
+                                // up at the longest of them, under a header.
+                                if !leaves.is_empty() && (fold.is_none() || default_open) {
+                                    ui.with(NodeSpec::table().width(Sizing::Grow(1.0)), |ui| {
+                                        head(ui, false);
+                                        for (i, (p, v)) in leaves.iter().enumerate() {
+                                            leaf(ui, i + 1, p, v, None);
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                    }
+                    ui.with(block(), |ui| {
+                        section(ui, "effective — every layer merged", None);
+                        ui.with(NodeSpec::table().width(Sizing::Grow(1.0)), |ui| {
+                            head(ui, true);
+                            for (i, (p, v, from)) in effective.iter().enumerate() {
+                                leaf(ui, i + 1, p, v, Some(from));
+                            }
+                        });
+                    });
+                },
+            );
         });
     }
 
-    /// A click in the tab: a file's name opens it; `new` opens a buffer
+    /// A click in the tab: a file's name opens it; the default layer's
+    /// row folds and unfolds its leaves; `new` opens a buffer
     /// at the path a layer has no file at, the template as its text
     /// and nothing on disk — `:w` is the user's, and the watch takes
     /// it from there; `reload` reloads every layer. The keyboard goes
@@ -560,6 +609,11 @@ impl Kawoosh {
                 self.reclaim_focus = true;
             }
             (Some("reload"), _) => self.reload_all_settings(),
+            (Some("toggle-default"), _) => {
+                self.settings_default_open = !self.settings_default_open;
+                // A fold is not a place for the keyboard: back to the pane.
+                self.reclaim_focus = true;
+            }
             _ => {}
         }
     }

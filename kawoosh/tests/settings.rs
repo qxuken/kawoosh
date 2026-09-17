@@ -434,12 +434,7 @@ fn the_settings_tab_shows_the_layers_and_opens_a_file() {
     assert!(app.devtools && d.core.devtools());
     assert_eq!(d.core.devtools_current_tab(), "settings");
     assert_eq!(app.ed.message, "settings on");
-    let texts: Vec<String> = d
-        .core
-        .nodes()
-        .iter()
-        .filter_map(|n| n.text.clone())
-        .collect();
+    let texts = texts(&d);
     let has = |s: &str| texts.iter().any(|t| t.contains(s));
     assert!(has("session — :set"), "{texts:?}");
     assert!(has("project — .kawoosh"), "{texts:?}");
@@ -460,8 +455,13 @@ fn the_settings_tab_shows_the_layers_and_opens_a_file() {
     let top = texts.iter().position(|t| t.contains("session — ")).unwrap();
     let bottom = texts.iter().position(|t| t.contains("default — ")).unwrap();
     assert!(top < bottom, "what wins is on top");
-    // Which value the session set, and where the project's sits.
-    let session_rows: Vec<&String> = texts[top..].iter().take(4).collect();
+    // Which value the session set: the caption, the table's header and
+    // its one leaf — the layer's own source has no row of its own.
+    let session_rows: Vec<&String> = texts[top..].iter().take(5).collect();
+    assert!(
+        !session_rows.iter().any(|t| t.as_str() == "session"),
+        "{session_rows:?}"
+    );
     assert!(
         session_rows.iter().any(|t| t.as_str() == "tabstop")
             && session_rows.iter().any(|t| t.as_str() == "1"),
@@ -486,8 +486,21 @@ fn the_settings_tab_shows_the_layers_and_opens_a_file() {
         .focused_view()
         .and_then(|v| app.ed.buffer_of(v).path.clone());
     assert_eq!(opened, Some(t.sub.join(PROJECT_DIR).join(SETTINGS_FILE)));
-    // `default` is a name, not a file: no click on it, nothing opens.
-    let default = d.core.key_of("default").expect("the row is there");
+    // The default layer's caption is its fold, not a file: its click
+    // opens nothing — it unfolds what the editor ships, folded until then (`leader` is
+    // the default layer's alone, so it is drawn once, in the effective
+    // table, and twice once the layer is open).
+    let leaders = |d: &Drive| {
+        self::texts(d)
+            .iter()
+            .filter(|x| x.as_str() == "leader")
+            .count()
+    };
+    assert_eq!(leaders(&d), 1, "folded: {:?}", self::texts(&d));
+    let default = d
+        .core
+        .key_of("default — what the editor ships")
+        .expect("the caption is the fold");
     let rect = d
         .core
         .nodes()
@@ -506,6 +519,10 @@ fn the_settings_tab_shows_the_layers_and_opens_a_file() {
             .map(|b| b.name.clone())
             .collect::<Vec<_>>()
     );
+    assert_eq!(leaders(&d), 2, "unfolded: {:?}", self::texts(&d));
+    d.click(&mut app, rect.x + 20.0, rect.y + rect.h / 2.0);
+    d.frame(&mut app);
+    assert_eq!(leaders(&d), 1, "folded again");
 
     // The keyboard is on the opened file, not on the panel the clicks
     // were in (a press on a plain row blurs kui's focus; the pane takes
