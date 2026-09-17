@@ -176,12 +176,16 @@ impl Kawoosh {
         };
         let v = &self.ed.views[view];
         let buf = self.ed.buffer_of(view);
-        let mode = if self.ed.mode == Mode::Visual && self.ed.visual_linewise {
+        let on_toast = self.notes.focus.is_some();
+        let mode = if on_toast {
+            "TOAST"
+        } else if self.ed.mode == Mode::Visual && self.ed.visual_linewise {
             "VIS LINE"
         } else {
             self.ed.mode.name()
         };
         let mode_color = match self.ed.mode {
+            _ if on_toast => pal.command,
             Mode::Insert => pal.insert,
             Mode::Visual | Mode::Command => pal.command,
             _ => pal.accent,

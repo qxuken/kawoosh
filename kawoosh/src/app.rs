@@ -49,6 +49,8 @@ pub struct Kawoosh {
     pub notes: Notifications,
     /// The log version the `*messages*` buffer was last filled from.
     pub(crate) messages_shown: u64,
+    /// The `log` crate's records, once `Logger::install` ran (main).
+    pub log_sink: Option<crate::logger::Sink>,
     pub store: Option<std::rc::Rc<kawoosh_systems::store::Store>>,
     pub(crate) session_saved: bool,
     /// Where each buffer was left when a view moved off it — its
@@ -87,6 +89,9 @@ pub struct Kawoosh {
     /// toggled with `:kui_framerate_hud`.
     pub hud: bool,
     pub(crate) wake: WakeHandle,
+    /// Wake handles made before the app was — the logger's — set with
+    /// the app's own in `setup`.
+    shared_wakes: Vec<WakeHandle>,
     /// The version each buffer was last sent to `ts`, so a frame submits
     /// only what changed.
     pub(crate) ts_sent: HashMap<BufferId, Version>,
@@ -137,6 +142,7 @@ impl Kawoosh {
             compile: Compile::default(),
             notes: Notifications::new(wake.clone()),
             messages_shown: 0,
+            log_sink: None,
             store: None,
             session_saved: false,
             last_pos: HashMap::new(),
@@ -152,6 +158,7 @@ impl Kawoosh {
             perf: Default::default(),
             hud: false,
             wake,
+            shared_wakes: Vec::new(),
             ts_sent: HashMap::new(),
             socket: None,
             waiters: HashMap::new(),
@@ -166,6 +173,17 @@ impl Kawoosh {
             cell: (7.8, LH),
             mods: (false, false, false, false),
         }
+    }
+
+    /// The app's wake, for a system made beside it — a test's logger.
+    pub fn wake_handle(&self) -> WakeHandle {
+        self.wake.clone()
+    }
+
+    /// A wake handle made before the app — the logger's — to be set
+    /// with the app's own once the window's waker is known.
+    pub fn share_wake(&mut self, wake: WakeHandle) {
+        self.shared_wakes.push(wake);
     }
 
     /// The focused pane's terminal, if it is one.
@@ -326,6 +344,7 @@ impl Kawoosh {
                         && b.loading.is_some()
                     {
                         b.loading = Some((done, total));
+                        self.open_progress(&path, Some((done, total)), false);
                     }
                 }
                 IoMsg::Opened {
@@ -339,6 +358,7 @@ impl Kawoosh {
                         && b.loading.is_some()
                     {
                         b.attach(text);
+                        self.open_progress(&path, None, true);
                         let b = &self.ed.buffers[id];
                         self.ed.message = format!(
                             "\"{}\" {}L, {}B {} in {:.1}s",
@@ -352,6 +372,7 @@ impl Kawoosh {
                 }
                 IoMsg::OpenFailed { path, error } => {
                     self.ed.message = format!("cannot open {}: {error}", path.display());
+                    self.open_progress(&path, None, true);
                     if let Some(id) = self.ed.buffer_at(&path)
                         && self.ed.buffers.get(id).is_some_and(|b| b.loading.is_some())
                     {
@@ -625,7 +646,7 @@ impl Kawoosh {
     /// left are remembered (`last_pos`), and the one shown comes back
     /// where it was last left — `:b`, `:bn`, a listing's `<CR>` on the
     /// file `-` came from — or at the top the first time.
-    pub(crate) fn show_buffer(&mut self, view: ViewId, id: BufferId) {
+    pub fn show_buffer(&mut self, view: ViewId, id: BufferId) {
         let v = &mut self.ed.views[view];
         if v.buffer == id {
             return;
@@ -991,6 +1012,7 @@ impl Kawoosh {
             "error_next" => self.error_step(true),
             "error_prev" => self.error_step(false),
             "messages" => self.messages_command(args),
+            "toast" => self.toast_focus(),
             // `:notify LEVEL TEXT` (or just the text, at info).
             "notify" => {
                 let (level, text) = match args.first().and_then(|a| Level::parse(a)) {
@@ -1062,6 +1084,10 @@ impl Kawoosh {
             self.devtools = !self.devtools;
             return;
         }
+        // The keyboard on a toast takes the keys until it leaves.
+        if self.toast_key(&stroke) {
+            return;
+        }
         // The command line opened from a terminal or Lua pane (`<C-w>:`)
         // takes the keys until it closes, on any view.
         let prompt_view = (self.ed.mode == Mode::Command)
@@ -1086,6 +1112,25 @@ impl Kawoosh {
         self.follow_caret = true;
         self.drain_effects();
         self.drain_lua();
+    }
+
+    /// A file opening on the io thread, as a corner line under `io`:
+    /// `Opening NAME 42%`, then `Completed Opening NAME`.
+    fn open_progress(&mut self, path: &Path, at: Option<(usize, usize)>, done: bool) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let pct = at.map(|(d, t)| ((d as f64 / t.max(1) as f64) * 100.0) as u32);
+        self.notes.progress(
+            "io",
+            &path.display().to_string(),
+            Some(format!("Opening {name}")),
+            None,
+            pct,
+            done,
+            Instant::now(),
+        );
     }
 
     /// A search in a buffer too big to count on the frame: the count runs
@@ -1398,7 +1443,11 @@ pub const ASYNC_OPEN_BYTES: usize = 64 << 20;
 
 impl kui::App for Kawoosh {
     fn setup(&mut self, waker: kui::Waker) {
-        self.wake.set(Arc::new(move || waker.wake()));
+        let wake: kawoosh_systems::Wake = Arc::new(move || waker.wake());
+        for w in &self.shared_wakes {
+            w.set(wake.clone());
+        }
+        self.wake.set(wake);
         let path = kawoosh_systems::io::socket_path();
         match self.io.listen(&path) {
             Ok(()) => self.socket = Some(path),

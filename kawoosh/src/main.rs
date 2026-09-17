@@ -1,6 +1,9 @@
 use std::path::Path;
 
 use kawoosh::Kawoosh;
+use kawoosh::logger::Logger;
+use kawoosh::notify::Level;
+use kawoosh_systems::WakeHandle;
 use kui::Core;
 
 /// The bundled face, loaded onto a core the launcher then opens the
@@ -9,7 +12,8 @@ use kui::Core;
 fn load_fonts(core: &mut Core) -> Option<kui::FontId> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts/IosevkaNavcon");
     let n = core.load_fonts_dir(&dir);
-    log::info!("loaded {n} font faces from {}", dir.display());
+    log::info!("loaded {n} font faces");
+    log::debug!("fonts from {}", dir.display());
     let family = core
         .system_font_families()
         .into_iter()
@@ -74,13 +78,31 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
     Ok(true)
 }
 
+/// The stderr sink's threshold: on when stderr is a terminal or
+/// `RUST_LOG` names a level (`debug`, `info`, `warn`, `error`), which
+/// is then the threshold; `info` on a bare terminal.
+fn stderr_level() -> Option<Level> {
+    use std::io::IsTerminal;
+    let asked = std::env::var("RUST_LOG").ok();
+    match asked.as_deref().map(|s| s.trim().to_ascii_lowercase()) {
+        Some(l) if Level::parse(&l).is_some() => Level::parse(&l),
+        Some(l) if l == "trace" => Some(Level::Debug),
+        Some(l) if l == "off" => None,
+        _ if std::io::stderr().is_terminal() => Some(Level::Info),
+        _ => None,
+    }
+}
+
 fn main() -> anyhow::Result<()> {
-    env_logger::init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if shim(&args)? {
         return Ok(());
     }
     let path = args.first().cloned();
+    // The logger before anything logs: its records wait in the sink
+    // until the app's first frame drains them.
+    let wake = WakeHandle::new();
+    let log_sink = Logger::install(wake.clone());
     let mut core = Core::new();
     let font = load_fonts(&mut core);
     let mut app = match &path {
@@ -88,6 +110,9 @@ fn main() -> anyhow::Result<()> {
         None => Kawoosh::new("*scratch*", SCRATCH),
     };
     app.font = font;
+    app.log_sink = log_sink;
+    app.notes.stderr = stderr_level();
+    app.share_wake(wake);
     let ext = app.attach_lua().map_err(|e| anyhow::anyhow!("lua: {e}"))?;
     app.open_store(None);
     app.load_config();
@@ -115,7 +140,8 @@ d c y with motions and text objects (dw, ciw, di(), v / V to select,
 u and ctrl-r, / to search, : for commands (:w path, :q, :e file) —
 Tab completes a command or a path, Up recalls the last one.
 Notifications: :notify warn TEXT is a toast at the top, :notify TEXT a
-dim line in the corner, :messages the log of every one.
+dim line in the corner, :messages the log of every one; ctrl-w n puts
+the keyboard on the toasts (j k h l, Enter, x, Esc).
 alt-j / alt-k add cursors; , keeps the primary.
 Buffers: :ls, :b name, :bn, :bd, :bdo (delete the others); - is the
 file manager on the current file's directory.

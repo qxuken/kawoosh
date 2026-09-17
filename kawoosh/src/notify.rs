@@ -16,6 +16,7 @@
 
 use std::time::{Duration, Instant, SystemTime};
 
+use kawoosh_editor::KeyStroke;
 use kawoosh_systems::{Alarm, WakeHandle};
 use kui::{Align, FloatConfig, NodeSpec, TextStyle, Ui, Value};
 
@@ -208,6 +209,22 @@ pub struct Notifications {
     /// The command line's message as last logged, so the frame logs a
     /// message once, when it changes.
     last_echo: String,
+    /// The toast the keyboard is on, and which of its actions
+    /// (`:toast`, `<C-w>n`). A focused toast does not time out.
+    pub focus: Option<Focus>,
+    /// The stderr sink's threshold, when stderr is hooked: every entry
+    /// from this level up is written there too — queued here, written
+    /// once a frame by [`Notifications::flush_stderr`], never on a
+    /// caller's thread.
+    pub stderr: Option<Level>,
+    stderr_buf: String,
+}
+
+/// Where the keyboard is among the toasts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Focus {
+    pub id: u64,
+    pub action: usize,
 }
 
 impl Notifications {
@@ -220,6 +237,83 @@ impl Notifications {
             next_id: 0,
             alarm: Alarm::spawn_soonest(wake),
             last_echo: String::new(),
+            focus: None,
+            stderr: None,
+            stderr_buf: String::new(),
+        }
+    }
+
+    // ------------------------------------------------------------ focus
+
+    /// The toasts in the order they are drawn, oldest first.
+    fn toast_ids(&self) -> Vec<u64> {
+        self.shown
+            .iter()
+            .filter(|s| s.toast)
+            .map(|s| s.id)
+            .collect()
+    }
+
+    /// Puts the keyboard on the newest toast. False when there is none.
+    pub fn focus_toast(&mut self) -> bool {
+        match self.toast_ids().last() {
+            Some(&id) => {
+                self.focus = Some(Focus { id, action: 0 });
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn focus_leave(&mut self) {
+        self.focus = None;
+        self.arm();
+    }
+
+    /// The toast `delta` away — down the column for +1 — wrapping.
+    pub fn focus_move(&mut self, delta: i32) {
+        let ids = self.toast_ids();
+        let Some(f) = self.focus else { return };
+        let Some(at) = ids.iter().position(|&id| id == f.id) else {
+            return;
+        };
+        let n = ids.len() as i32;
+        let next = (at as i32 + delta).rem_euclid(n) as usize;
+        self.focus = Some(Focus {
+            id: ids[next],
+            action: 0,
+        });
+    }
+
+    /// The action `delta` away on the focused toast, wrapping.
+    pub fn focus_action(&mut self, delta: i32) {
+        let Some(f) = self.focus else { return };
+        let Some(s) = self.shown.iter().find(|s| s.id == f.id) else {
+            return;
+        };
+        let n = s.actions.len() as i32;
+        if n == 0 {
+            return;
+        }
+        let action = (f.action as i32 + delta).rem_euclid(n) as usize;
+        self.focus = Some(Focus { id: f.id, action });
+    }
+
+    /// The focused toast, if any.
+    pub fn focused(&self) -> Option<&Shown> {
+        let f = self.focus?;
+        self.shown.iter().find(|s| s.id == f.id)
+    }
+
+    /// Focus onto a toast still up once `id` went — the one after it,
+    /// else the last — or off.
+    fn refocus_after(&mut self, id: u64, was_at: usize) {
+        if self.focus.is_some_and(|f| f.id == id) {
+            let ids = self.toast_ids();
+            self.focus = ids
+                .get(was_at)
+                .or(ids.last())
+                .map(|&id| Focus { id, action: 0 });
         }
     }
 
@@ -268,6 +362,12 @@ impl Notifications {
             }
         };
         self.log_version += 1;
+        if let Some(threshold) = self.stderr
+            && note.level >= threshold
+            && let Some(e) = self.log.iter().rev().find(|e| e.id == id)
+        {
+            self.stderr_buf.push_str(&entry_line(e));
+        }
         if show == Show::Log {
             return id;
         }
@@ -367,24 +467,41 @@ impl Notifications {
 
     /// Takes a toast down.
     pub fn dismiss(&mut self, id: u64) {
+        let was_at = self.toast_ids().iter().position(|&t| t == id);
         self.shown.retain(|s| s.id != id);
+        if let Some(at) = was_at {
+            self.refocus_after(id, at);
+        }
     }
 
     /// Takes action `index` of toast `id`: the toast goes and the
     /// command line to run comes back.
     pub fn take_action(&mut self, id: u64, index: usize) -> Option<String> {
-        let at = self.shown.iter().position(|s| s.id == id)?;
-        let command = self.shown[at].actions.get(index)?.command.clone();
-        self.shown.remove(at);
+        let command = self
+            .shown
+            .iter()
+            .find(|s| s.id == id)?
+            .actions
+            .get(index)?
+            .command
+            .clone();
+        self.dismiss(id);
         Some(command)
     }
 
-    /// Takes down what has been on show long enough, and arms the alarm
-    /// for the next to go.
+    /// Takes down what has been on show long enough — not the toast the
+    /// keyboard is on — and arms the alarm for the next to go.
     pub fn sweep(&mut self, now: Instant) {
-        self.shown.retain(|s| s.until.is_none_or(|t| t > now));
+        let focused = self.focus.map(|f| f.id);
+        self.shown
+            .retain(|s| Some(s.id) == focused || s.until.is_none_or(|t| t > now));
         self.progress.retain(|p| p.until.is_none_or(|t| t > now));
         self.arm();
+    }
+
+    /// What the stderr sink has queued since the last flush.
+    pub fn take_stderr(&mut self) -> String {
+        std::mem::take(&mut self.stderr_buf)
     }
 
     fn arm(&self) {
@@ -395,8 +512,10 @@ impl Notifications {
 
     /// When the next thing on show goes.
     pub fn next_due(&self) -> Option<Instant> {
+        let focused = self.focus.map(|f| f.id);
         self.shown
             .iter()
+            .filter(|s| Some(s.id) != focused)
             .filter_map(|s| s.until)
             .chain(self.progress.iter().filter_map(|p| p.until))
             .min()
@@ -411,22 +530,24 @@ impl Notifications {
     /// The log as `*messages*` shows it: one line per entry, the time,
     /// the level, the source and the text, a repeat's count at the end.
     pub fn render_log(&self) -> String {
-        let mut out = String::new();
-        for e in &self.log {
-            out.push_str(&clock(e.at));
-            out.push_str(&format!("  {:<5}  ", e.level.name()));
-            if let Some(s) = &e.source {
-                out.push_str(s);
-                out.push_str(": ");
-            }
-            out.push_str(&e.text);
-            if e.count > 1 {
-                out.push_str(&format!("  ({}x)", e.count));
-            }
-            out.push('\n');
-        }
-        out
+        self.log.iter().map(entry_line).collect()
     }
+}
+
+/// One line of the log, as `*messages*` and stderr show it.
+fn entry_line(e: &Entry) -> String {
+    let mut out = clock(e.at);
+    out.push_str(&format!("  {:<5}  ", e.level.name()));
+    if let Some(s) = &e.source {
+        out.push_str(s);
+        out.push_str(": ");
+    }
+    out.push_str(&e.text);
+    if e.count > 1 {
+        out.push_str(&format!("  ({}x)", e.count));
+    }
+    out.push('\n');
+    out
 }
 
 /// `HH:MM:SS` in local time.
@@ -471,9 +592,24 @@ impl Kawoosh {
     /// open and the log moved.
     pub(crate) fn sync_notifications(&mut self) {
         let now = Instant::now();
+        // What the `log` macros said since the last frame, ours from
+        // debug up, anyone else's from warn (`logger.rs`).
+        if let Some(sink) = &self.log_sink {
+            for rec in sink.drain() {
+                let note = Note::new(rec.level, rec.text()).source(rec.source());
+                self.notes.push(note, now);
+            }
+        }
         let echo = self.ed.message.clone();
         self.notes.echo(&echo, now);
         self.notes.sweep(now);
+        let err = self.notes.take_stderr();
+        if !err.is_empty() {
+            use std::io::Write;
+            let mut out = std::io::stderr().lock();
+            let _ = out.write_all(err.as_bytes());
+            let _ = out.flush();
+        }
         if self.messages_shown != self.notes.log_version {
             let id = self
                 .ed
@@ -541,6 +677,66 @@ impl Kawoosh {
         }
     }
 
+    /// `:toast` / `<C-w>n`: the keyboard onto the newest toast. Then
+    /// `j` `k` move between toasts, `h` `l` between actions, `<CR>`
+    /// takes the action (or the toast down, when it has none), a digit
+    /// takes that action, `x` takes a toast without actions down,
+    /// `<Esc>` / `q` leave.
+    pub(crate) fn toast_focus(&mut self) {
+        if !self.notes.focus_toast() {
+            self.ed.message = "no toasts".into();
+        }
+    }
+
+    /// A key while the keyboard is on a toast. True when it was taken.
+    pub(crate) fn toast_key(&mut self, stroke: &KeyStroke) -> bool {
+        let Some(f) = self.notes.focus else {
+            return false;
+        };
+        let note = stroke.notation();
+        let act = |this: &mut Self, index: usize| {
+            let actions = this.notes.focused().map_or(0, |s| s.actions.len());
+            if actions == 0 {
+                this.notes.dismiss(f.id);
+            } else if let Some(cmd) = this.notes.take_action(f.id, index) {
+                this.run_line(&cmd);
+            }
+            if this.notes.focus.is_none() {
+                this.notes.focus_leave();
+            }
+        };
+        match note.as_str() {
+            "<Esc>" | "q" | "<C-c>" => self.notes.focus_leave(),
+            "j" | "<Down>" | "<Tab>" | "<C-n>" => self.notes.focus_move(1),
+            "k" | "<Up>" | "<S-Tab>" | "<C-p>" => self.notes.focus_move(-1),
+            "l" | "<Right>" => self.notes.focus_action(1),
+            "h" | "<Left>" => self.notes.focus_action(-1),
+            "<CR>" | "<Space>" => act(self, f.action),
+            "x" | "d" | "<BS>" => {
+                if self.notes.focused().is_some_and(|s| s.actions.is_empty()) {
+                    self.notes.dismiss(f.id);
+                    if self.notes.focus.is_none() {
+                        self.notes.focus_leave();
+                    }
+                } else {
+                    self.ed.message = "this toast wants an action (h l, <CR>)".into();
+                }
+            }
+            d if d.len() == 1 && d.as_bytes()[0].is_ascii_digit() && d != "0" => {
+                let index = (d.as_bytes()[0] - b'1') as usize;
+                if self
+                    .notes
+                    .focused()
+                    .is_some_and(|s| index < s.actions.len())
+                {
+                    act(self, index);
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// Runs a command line as the `:` prompt would, on the focused view
     /// or any.
     pub(crate) fn run_line(&mut self, line: &str) {
@@ -579,15 +775,18 @@ impl Kawoosh {
                 .gap(6.0)
                 .cross_align(Align::End),
             |ui| {
+                let focus = self.notes.focus;
                 for s in self.notes.shown.iter().filter(|s| s.toast) {
                     let color = level_color(s.level);
+                    let focused = focus.is_some_and(|f| f.id == s.id);
                     let mut spec = NodeSpec::column()
                         .max_width(max_w)
-                        .bg(pal.panel)
-                        .border(1.0, color)
+                        .bg(if focused { pal.strip } else { pal.panel })
+                        .border(if focused { 2.0 } else { 1.0 }, color)
                         .radius(4.0)
                         .pad_xy(10.0, 6.0)
-                        .gap(6.0);
+                        .gap(6.0)
+                        .selected(focused);
                     if s.actions.is_empty() {
                         spec = spec.on_click(Value::map([
                             ("kind", "toast".into()),
@@ -610,12 +809,13 @@ impl Kawoosh {
                         if !s.actions.is_empty() {
                             ui.with(NodeSpec::row().gap(6.0).cross_align(Align::Center), |ui| {
                                 for (i, a) in s.actions.iter().enumerate() {
+                                    let on = focused && focus.is_some_and(|f| f.action == i);
                                     ui.with_indexed(
                                         i as u64,
                                         NodeSpec::row()
                                             .pad_xy(8.0, 2.0)
                                             .radius(3.0)
-                                            .bg(pal.strip)
+                                            .bg(if on { pal.select } else { pal.panel })
                                             .hover_bg(pal.select)
                                             .role(kui::Role::Button)
                                             .label(a.label.as_str())
@@ -675,7 +875,11 @@ impl Kawoosh {
                         sources.push(Some(p.source.as_str()));
                     }
                 }
-                let dim = TextStyle::new(12.0).color(pal.dim).nowrap();
+                // One line each, cut with an ellipsis at the corner's
+                // width: a path or a server's sentence does not push
+                // the column off the pane.
+                let dim = TextStyle::new(12.0).color(pal.dim).max_lines(1).ellipsis();
+                let line = || NodeSpec::row().max_width(max_w).clip();
                 for (gi, source) in sources.iter().enumerate() {
                     ui.with_indexed(
                         1 << 32 | gi as u64,
@@ -692,7 +896,7 @@ impl Kawoosh {
                                 } else {
                                     s.text.clone()
                                 };
-                                ui.with_indexed(s.id, NodeSpec::row(), |ui| {
+                                ui.with_indexed(s.id, line(), |ui| {
                                     ui.text(&text, dim);
                                 });
                             }
@@ -718,7 +922,7 @@ impl Kawoosh {
                                     }
                                     t
                                 };
-                                ui.with_indexed(1 << 33 | pi as u64, NodeSpec::row(), |ui| {
+                                ui.with_indexed(1 << 33 | pi as u64, line(), |ui| {
                                     ui.text(&text, dim);
                                 });
                             }

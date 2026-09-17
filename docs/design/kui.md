@@ -401,8 +401,13 @@ either took the line or was lost. Now a notification has a **level**
 
 - **error, warn → a toast.** A bordered card at the top-right under the
   tab strip, gone after eight seconds — or, when it carries **actions**,
-  only when one is clicked (a toast with actions is a question, and a
-  question does not time out). A plain toast goes on a click too.
+  only when one is taken (a toast with actions is a question, and a
+  question does not time out). A plain toast goes on a click too. The
+  keyboard reaches them: `<C-w>n` (`:toast`) puts it on the newest —
+  `TOAST` in the status strip — `j` `k` walk the toasts, `h` `l` the
+  actions, `<CR>` takes one, a digit takes that one, `x` takes a plain
+  toast down, `<Esc>` leaves; a focused toast does not time out under
+  the user.
 - **info → a corner line.** A dim line at the bottom-right above the
   strips, gone after four seconds, grouped under its **source** with
   the source's name below the group — fidget's shape. A language
@@ -428,6 +433,25 @@ the command line's. The shell's own sources are the lsp glue (a server
 not found; `window/showMessage` by its type, `window/logMessage` to the
 log; `$/progress`, asked for with `window.workDoneProgress`) and compile
 mode's exit; the level is the caller's to pick and `show` overrides it.
+
+The **`log` crate is a source** (`logger.rs`): `log::warn!` anywhere in
+the process is a warn toast, `log::info!` a corner line, `log::debug!`
+a line in `:messages` — kawoosh's own crates from debug up, anyone
+else's (wgpu, winit) from warn — the source being the module for ours
+and the crate for theirs. Its sinks are the notification log and, when
+stderr is a terminal or `RUST_LOG` names a level, stderr, where every
+entry the notification log takes (a `notify`, an echo, a record) is
+written once a frame by the frame. The caller pays nanoseconds: the cut
+by level and target comes before the message is looked at, a literal
+message is borrowed, a formatted one goes into the record's inline
+buffer, the record is one channel send, and only the first of a burst
+wakes the loop (an `AtomicBool` the drain clears). `benches/logger.rs`
+measures it: ~3 ns for a record nobody wants, ~20 ns for a literal,
+~80 ns formatted, with a drain running beside.
+
+A file opening on the io thread is a progress line under `io` —
+`Opening NAME 42%`, `Completed Opening NAME` — the same shape as a
+server's token.
 
 Redraw stays event-driven: what times out arms a `systems::Alarm` at the
 earliest expiry (`Alarm::spawn_soonest`; the diagnostics debounce keeps

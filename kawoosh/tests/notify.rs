@@ -214,3 +214,190 @@ fn notify_from_the_command_line_and_from_lua() {
     assert!(!corner_has(&d, "with actions"));
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// `<C-w>n` puts the keyboard on the newest toast — `TOAST` in the
+/// status strip — `j` / `k` walk the toasts, `h` / `l` the actions,
+/// `<CR>` takes one, a digit takes that one, `x` takes a plain toast
+/// down and refuses on one with actions, `<Esc>` leaves; a focused toast
+/// does not time out.
+#[test]
+fn the_keyboard_reaches_the_toasts() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    d.frame(&mut app);
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "n");
+    assert_eq!(app.ed.message, "no toasts");
+
+    app.notify(Level::Warn, "first");
+    app.notify_with(
+        Note::new(Level::Error, "second")
+            .action("One", "echo one")
+            .action("Two", "echo two"),
+    );
+    app.notify(Level::Warn, "third");
+    d.frame(&mut app);
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "n");
+    let focused = |a: &Kawoosh| a.notes.focused().map(|s| s.text.clone());
+    assert_eq!(focused(&app).as_deref(), Some("third"), "the newest");
+    let nodes = d.core.nodes();
+    assert!(
+        nodes.iter().any(|n| n.text.as_deref() == Some("TOAST")),
+        "the strip says so"
+    );
+    // Keys go to the toasts, not the buffer.
+    d.keys(&mut app, "k");
+    assert_eq!(focused(&app).as_deref(), Some("second"));
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).text(),
+        "hello\n"
+    );
+    d.keys(&mut app, "k");
+    assert_eq!(focused(&app).as_deref(), Some("first"));
+    d.keys(&mut app, "k");
+    assert_eq!(focused(&app).as_deref(), Some("third"), "wraps");
+    d.keys(&mut app, "j");
+    assert_eq!(focused(&app).as_deref(), Some("first"), "wraps back");
+    // The focused one outlives its timeout.
+    app.notes
+        .sweep(Instant::now() + TOAST_TTL + Duration::from_millis(10));
+    d.frame(&mut app);
+    assert_eq!(focused(&app).as_deref(), Some("first"));
+    assert!(!corner_has(&d, "third"), "the others went");
+    // A plain toast: `x` takes it down; focus moves on.
+    d.keys(&mut app, "x");
+    assert!(!corner_has(&d, "first"));
+    assert_eq!(focused(&app).as_deref(), Some("second"));
+    // One with actions: `x` refuses, `l` moves, `<CR>` takes.
+    d.keys(&mut app, "x");
+    assert!(corner_has(&d, "second"));
+    assert!(app.ed.message.contains("wants an action"));
+    d.keys(&mut app, "l");
+    assert_eq!(app.notes.focus.unwrap().action, 1);
+    d.keys(&mut app, "l");
+    assert_eq!(app.notes.focus.unwrap().action, 0, "wraps");
+    d.keys(&mut app, "h");
+    assert_eq!(app.notes.focus.unwrap().action, 1);
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(app.ed.message, "two");
+    assert!(app.notes.focus.is_none(), "nothing left to be on");
+    assert!(app.notes.shown.is_empty());
+    d.keys(&mut app, "x");
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).text(),
+        "ello\n",
+        "keys are the buffer's again"
+    );
+    // A digit takes that action; <Esc> leaves.
+    app.notify_with(
+        Note::new(Level::Error, "digits")
+            .action("A", "echo a")
+            .action("B", "echo b"),
+    );
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "toast");
+    assert!(app.notes.focus.is_some());
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(app.notes.focus.is_none());
+    ex(&mut d, &mut app, "toast");
+    d.keys(&mut app, "2");
+    assert_eq!(app.ed.message, "b");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// The `log` macros are notifications: a warn is a toast, a debug the
+/// log's, another crate's info nothing; and with stderr hooked the log
+/// is written there once a frame.
+#[test]
+fn the_log_crate_is_a_source() {
+    use log::Log;
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let (logger, sink) = kawoosh::logger::Logger::new(app.wake_handle());
+    app.log_sink = Some(sink);
+    app.notes.stderr = Some(Level::Debug);
+    macro_rules! rec {
+        ($level:expr, $target:literal, $text:literal) => {
+            logger.log(
+                &log::Record::builder()
+                    .level($level)
+                    .target($target)
+                    .args(format_args!($text))
+                    .build(),
+            )
+        };
+    }
+    rec!(log::Level::Warn, "kawoosh::session", "state db: locked");
+    rec!(log::Level::Debug, "kawoosh::app", "search landed");
+    rec!(log::Level::Info, "wgpu_core::device", "created");
+    d.frame(&mut app);
+    assert!(corner_has(&d, "state db: locked"));
+    assert!(corner_has(&d, "session"));
+    let warn = app
+        .notes
+        .shown
+        .iter()
+        .find(|s| s.text == "state db: locked")
+        .unwrap();
+    assert!(warn.toast);
+    let debug = app
+        .notes
+        .log
+        .iter()
+        .find(|e| e.text == "search landed")
+        .unwrap();
+    assert_eq!(debug.level, Level::Debug);
+    assert_eq!(debug.source.as_deref(), Some("app"));
+    assert!(!app.notes.log.iter().any(|e| e.text == "created"));
+    // What went to stderr this frame: the frame took it.
+    assert_eq!(app.notes.take_stderr(), "", "flushed by the frame");
+    app.notify(Level::Info, "queued");
+    let queued = app.notes.take_stderr();
+    assert!(queued.contains("info   queued\n"), "{queued:?}");
+}
+
+/// A file opening on the io thread is a corner line under `io`, with
+/// its percentage, then `Completed`.
+#[test]
+fn a_big_open_is_progress() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-open-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("big.txt");
+    let line = "0123456789abcdef".repeat(4) + "\n";
+    let text = line.repeat((1 << 20) / line.len());
+    std::fs::write(&path, &text).unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "");
+    // The io thread's path, as a file past `ASYNC_OPEN_BYTES` takes.
+    let id = app.open_on_io_thread(&path, text.len());
+    let v = app.focused_view().unwrap();
+    app.show_buffer(v, id);
+    let mut seen_pct = false;
+    for _ in 0..500 {
+        d.frame(&mut app);
+        if let Some(p) = app.notes.progress.iter().find(|p| p.source == "io") {
+            assert_eq!(p.title, "Opening big.txt");
+            seen_pct |= p.percentage.is_some();
+            if p.done {
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let p = app
+        .notes
+        .progress
+        .iter()
+        .find(|p| p.source == "io")
+        .expect("the open's progress");
+    assert!(p.done, "finished");
+    assert!(seen_pct, "a percentage was shown on the way");
+    assert!(
+        corner_has(&d, "Completed Opening big.txt"),
+        "{:?}",
+        corner_texts(&d)
+    );
+    assert!(corner_has(&d, "io"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

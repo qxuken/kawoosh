@@ -31,7 +31,6 @@ kui-lua = { path = "../kui/crates/kui-lua" }
 mlua = { version = "0.12", features = ["lua55", "vendored"] }
 
 log = { version = "0.4.33", features = ["serde"] }
-env_logger = "0.11.11"
 alacritty_terminal = "0.26"
 portable-pty = "0.9"
 crossbeam-channel = "0.5"

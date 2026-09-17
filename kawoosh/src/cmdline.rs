@@ -84,6 +84,7 @@ pub const SHELL_COMMANDS: &[(&str, &[ArgKind], bool)] = &[
     ("split", &[ArgKind::Path], false),
     ("syntax_tree", &[ArgKind::Text], false),
     ("tab_close", &[], false),
+    ("toast", &[], false),
     ("tab_new", &[ArgKind::Path], false),
     ("tab_next", &[], false),
     ("tab_prev", &[], false),

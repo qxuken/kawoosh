@@ -25,9 +25,16 @@ unicode-segmentation.workspace = true
 unicode-width.workspace = true
 anyhow.workspace = true
 log.workspace = true
-env_logger.workspace = true
+smallvec.workspace = true
 libc = "0.2"
 
 [[bin]]
 name = "kawoosh-gen"
 path = "src/bin/gen.rs"
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "logger"
+harness = false

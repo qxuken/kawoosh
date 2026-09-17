@@ -9,6 +9,7 @@ pub mod cmdline;
 pub mod compile;
 pub mod inspector;
 pub mod layout;
+pub mod logger;
 pub mod lsp;
 pub mod notify;
 pub mod palette;
