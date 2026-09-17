@@ -1,7 +1,8 @@
 //! The `log` crate's logger, with the notification log as its sink
 //! (kui.md Decision 9): `log::warn!` anywhere in the process is a warn
 //! toast, `log::info!` a corner line, `log::debug!` a line in
-//! `:messages` — and, when stderr is a terminal (or `RUST_LOG` asks),
+//! `:messages`, `log::trace!` nothing unless `RUST_LOG=trace` — and,
+//! when stderr is a terminal (or `RUST_LOG` asks),
 //! every entry the notification log takes is written there too, once
 //! per frame, by the frame.
 //!
@@ -115,7 +116,8 @@ fn level_of(l: log::Level) -> Level {
         log::Level::Error => Level::Error,
         log::Level::Warn => Level::Warn,
         log::Level::Info => Level::Info,
-        log::Level::Debug | log::Level::Trace => Level::Debug,
+        log::Level::Debug => Level::Debug,
+        log::Level::Trace => Level::Trace,
     }
 }
 
@@ -138,12 +140,20 @@ impl Logger {
         )
     }
 
-    /// Installs it as the process's logger. `None` when one is already
-    /// installed — a second app in the same process, which is a test.
-    pub fn install(wake: WakeHandle) -> Option<Sink> {
+    /// Installs it as the process's logger, taking records from `keep`
+    /// up — the cut the macros make before calling in, so a trace
+    /// nobody keeps costs a load. `None` when one is already installed
+    /// — a second app in the same process, which is a test.
+    pub fn install(wake: WakeHandle, keep: Level) -> Option<Sink> {
         let (logger, sink) = Logger::new(wake);
         log::set_logger(logger).ok()?;
-        log::set_max_level(LevelFilter::Debug);
+        log::set_max_level(match keep {
+            Level::Trace => LevelFilter::Trace,
+            Level::Debug => LevelFilter::Debug,
+            Level::Info => LevelFilter::Info,
+            Level::Warn => LevelFilter::Warn,
+            Level::Error => LevelFilter::Error,
+        });
         Some(sink)
     }
 

@@ -415,7 +415,12 @@ either took the line or was lost. Now a notification has a **level**
   163/336 48%`), `Completed …` once done, the server's name ticked when
   every token of its is done. The same thing said again counts up,
   `(2x)`, instead of showing twice.
-- **debug → the log only.** The log keeps the last thousand entries;
+- **debug → the log only.** And **trace → nothing**, unless
+  `RUST_LOG=trace` asks the log to keep it: a server's stderr
+  (rust-analyzer says a line per watched path), a startup fact. The
+  `log` crate's max level is set to match, so a trace nobody keeps
+  costs its macro one atomic load. The log keeps the last thousand
+  entries;
   `:messages` opens it as the read-only `*messages*` buffer — time,
   level, source, text, a repeat's count — live while it is open, and
   `:messages clear` empties it. What the command line shows lands in it
@@ -434,9 +439,9 @@ made a command first, as `kawoosh.map` does. `:notify [LEVEL] TEXT` is
 the command line's. The shell's own sources are the lsp glue (a server
 not found; `window/showMessage` by its type, `window/logMessage` to the
 log; `$/progress`, asked for with `window.workDoneProgress`) and compile
-mode's exit, and a server's stderr, line by line, kept to the log under
-the server's name as `window/logMessage` is; the level is the caller's
-to pick and `show` overrides it.
+mode's exit, and a server's stderr, line by line, a trace under the
+server's name; the level is the caller's to pick and `show` overrides
+it.
 
 The **`log` crate is a source** (`logger.rs`): `log::warn!` anywhere in
 the process is a warn toast, `log::info!` a corner line, `log::debug!`

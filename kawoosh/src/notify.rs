@@ -38,6 +38,9 @@ const BAR_W: f32 = 160.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Level {
+    /// Below the log: a server's stderr, a startup fact — kept only
+    /// when `RUST_LOG=trace` asks (`Notifications::keep`).
+    Trace,
     Debug,
     Info,
     Warn,
@@ -47,6 +50,7 @@ pub enum Level {
 impl Level {
     pub fn name(self) -> &'static str {
         match self {
+            Level::Trace => "trace",
             Level::Debug => "debug",
             Level::Info => "info",
             Level::Warn => "warn",
@@ -56,7 +60,8 @@ impl Level {
 
     pub fn parse(s: &str) -> Option<Level> {
         Some(match s {
-            "debug" | "trace" => Level::Debug,
+            "trace" => Level::Trace,
+            "debug" => Level::Debug,
             "info" => Level::Info,
             "warn" | "warning" => Level::Warn,
             "error" | "err" => Level::Error,
@@ -64,13 +69,15 @@ impl Level {
         })
     }
 
-    /// The protocol's `MessageType`: 1 error, 2 warning, 3 info, 4 log.
+    /// The protocol's `MessageType`: 1 error, 2 warning, 3 info, 4 log
+    /// — and 5, the pool's own, for a server's stderr.
     pub fn from_lsp(kind: u64) -> Level {
         match kind {
             1 => Level::Error,
             2 => Level::Warn,
             3 => Level::Info,
-            _ => Level::Debug,
+            4 => Level::Debug,
+            _ => Level::Trace,
         }
     }
 
@@ -79,7 +86,7 @@ impl Level {
         match self {
             Level::Error | Level::Warn => Show::Toast,
             Level::Info => Show::Corner,
-            Level::Debug => Show::Log,
+            Level::Debug | Level::Trace => Show::Log,
         }
     }
 }
@@ -225,6 +232,9 @@ pub struct Notifications {
     /// caller's thread.
     pub stderr: Option<Level>,
     stderr_buf: String,
+    /// The lowest level the log keeps: debug, or trace when
+    /// `RUST_LOG=trace` asks. Below it a notification is nothing.
+    pub keep: Level,
 }
 
 /// Where the keyboard is among the toasts.
@@ -248,6 +258,7 @@ impl Notifications {
             focus: None,
             stderr: None,
             stderr_buf: String::new(),
+            keep: Level::Debug,
         }
     }
 
@@ -330,6 +341,9 @@ impl Notifications {
     /// last entry is the same, it counts up instead — `(2x)` — and
     /// stays on show afresh.
     pub fn push(&mut self, note: Note, now: Instant) -> u64 {
+        if note.level < self.keep {
+            return 0;
+        }
         let show = note.show.unwrap_or(note.level.show());
         let same = |level: Level, source: &Option<String>, text: &str| {
             level == note.level && *source == note.source && text == note.text
@@ -782,7 +796,7 @@ impl Kawoosh {
             Level::Error => pal.danger,
             Level::Warn => pal.command,
             Level::Info => pal.accent,
-            Level::Debug => pal.dim,
+            Level::Debug | Level::Trace => pal.dim,
         };
         ui.with_keyed(
             "toasts",
@@ -1161,6 +1175,21 @@ mod tests {
         );
         n.sweep(t0 + CORNER_TTL + Duration::from_millis(1));
         assert!(n.progress.is_empty());
+    }
+
+    /// A trace is nothing unless the log keeps traces.
+    #[test]
+    fn a_trace_is_kept_only_when_asked() {
+        let mut n = notes();
+        let t0 = Instant::now();
+        assert_eq!(n.push(Note::new(Level::Trace, "chatter"), t0), 0);
+        assert!(n.log.is_empty());
+        n.keep = Level::Trace;
+        n.stderr = Some(Level::Trace);
+        assert_ne!(n.push(Note::new(Level::Trace, "chatter"), t0), 0);
+        assert_eq!(n.log[0].level, Level::Trace);
+        assert!(n.take_stderr().contains("trace  chatter"));
+        assert!(n.shown.is_empty(), "the log's alone");
     }
 
     /// The command line's message is logged once per change, and the

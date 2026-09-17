@@ -12,8 +12,8 @@ use kui::Core;
 fn load_fonts(core: &mut Core) -> Option<kui::FontId> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts/IosevkaNavcon");
     let n = core.load_fonts_dir(&dir);
-    // A startup fact, not news: the log's, not the corner's.
-    log::debug!("loaded {n} font faces from {}", dir.display());
+    // A startup fact, not news: a trace.
+    log::trace!("loaded {n} font faces from {}", dir.display());
     let family = core
         .system_font_families()
         .into_iter()
@@ -78,19 +78,26 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
     Ok(true)
 }
 
-/// The stderr sink's threshold: on when stderr is a terminal or
-/// `RUST_LOG` names a level (`debug`, `info`, `warn`, `error`), which
-/// is then the threshold; `info` on a bare terminal.
-fn stderr_level() -> Option<Level> {
+/// What `RUST_LOG` asks: the level the log keeps from (`trace` when it
+/// says so, else `debug`) and the stderr sink's threshold — the level
+/// named (`trace`, `debug`, `info`, `warn`, `error`), `off` for none,
+/// `info` on a bare terminal, none otherwise.
+fn log_levels() -> (Level, Option<Level>) {
     use std::io::IsTerminal;
-    let asked = std::env::var("RUST_LOG").ok();
-    match asked.as_deref().map(|s| s.trim().to_ascii_lowercase()) {
-        Some(l) if Level::parse(&l).is_some() => Level::parse(&l),
-        Some(l) if l == "trace" => Some(Level::Debug),
-        Some(l) if l == "off" => None,
+    let asked = std::env::var("RUST_LOG")
+        .ok()
+        .map(|s| s.trim().to_ascii_lowercase());
+    let stderr = match asked.as_deref() {
+        Some("off") => None,
+        Some(l) if Level::parse(l).is_some() => Level::parse(l),
         _ if std::io::stderr().is_terminal() => Some(Level::Info),
         _ => None,
-    }
+    };
+    let keep = match asked.as_deref() {
+        Some("trace") => Level::Trace,
+        _ => Level::Debug,
+    };
+    (keep, stderr)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -102,7 +109,8 @@ fn main() -> anyhow::Result<()> {
     // The logger before anything logs: its records wait in the sink
     // until the app's first frame drains them.
     let wake = WakeHandle::new();
-    let log_sink = Logger::install(wake.clone());
+    let (keep, stderr) = log_levels();
+    let log_sink = Logger::install(wake.clone(), keep);
     let mut core = Core::new();
     let font = load_fonts(&mut core);
     let mut app = match &path {
@@ -111,7 +119,8 @@ fn main() -> anyhow::Result<()> {
     };
     app.font = font;
     app.log_sink = log_sink;
-    app.notes.stderr = stderr_level();
+    app.notes.stderr = stderr;
+    app.notes.keep = keep;
     app.share_wake(wake);
     let ext = app.attach_lua().map_err(|e| anyhow::anyhow!("lua: {e}"))?;
     app.open_store(None);

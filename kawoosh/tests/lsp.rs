@@ -252,6 +252,8 @@ fn progress_and_messages_land_in_the_corner() {
 
     let mut app = Kawoosh::from_file(&file);
     app.add_lsp_server(fake_server());
+    // A server's stderr is a trace: kept only when asked.
+    app.notes.keep = kawoosh::notify::Level::Trace;
     let mut d = Drive::new(900.0, 500.0);
     assert!(
         until(&mut d, &mut app, |a| a

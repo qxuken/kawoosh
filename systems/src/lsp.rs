@@ -131,7 +131,8 @@ pub enum Event {
     /// The pool's shape, for the status line: `(root, server, open docs)`.
     Status(Vec<(PathBuf, String, usize)>),
     /// `window/showMessage` (`log` false) or `window/logMessage` (`log`
-    /// true): `kind` is the protocol's MessageType, 1 error … 4 log.
+    /// true): `kind` is the protocol's MessageType, 1 error … 4 log —
+    /// and 5, below it, for a line of the server's stderr.
     Message {
         server: String,
         kind: u64,
@@ -633,8 +634,9 @@ impl Pool {
         server.request(method, params, (buffer, version, offset));
     }
 
-    /// A line of a server's stderr: a log message from it, kept to the
-    /// log as `window/logMessage` is.
+    /// A line of a server's stderr: a log message from it, below the
+    /// protocol's own log messages (`kind` 5, past MessageType's 4) —
+    /// rust-analyzer says a line per watched path.
     fn handle_stderr(&mut self, key: usize, line: String) {
         let Some(server) = self.servers.get(key).and_then(Option::as_ref) else {
             return;
@@ -644,7 +646,7 @@ impl Pool {
         }
         self.emit(Event::Message {
             server: server.name.clone(),
-            kind: 4,
+            kind: 5,
             text: line,
             log: true,
         });
