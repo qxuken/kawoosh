@@ -13,10 +13,11 @@ use kawoosh_editor::{KeyStroke, Mode, Selection, ViewId};
 use kawoosh_systems::lsp::{Cmd, CompletionItem, Event, Lsp, ServerDef};
 use kawoosh_systems::{Alarm, WakeHandle};
 
-/// How long a buffer's text must have been still before a diagnostics
-/// answer for it lands. A server answers each keystroke of a half-typed
-/// line with a syntax error on every line after it, and the messages
-/// reflowed on every key; held until the typing pauses, they land once.
+/// How long a buffer's text must have been still, in insert mode,
+/// before a diagnostics answer for it lands. A server answers each
+/// keystroke of a half-typed line with a syntax error on every line
+/// after it, and the messages reflowed on every key; held until the
+/// typing pauses or insert mode ends, they land once.
 pub const DIAG_QUIET: Duration = Duration::from_millis(600);
 
 use crate::app::Kawoosh;
@@ -62,8 +63,8 @@ pub struct LspState {
     /// last moved, as far as the server knows.
     moved: HashMap<BufferId, Instant>,
     /// The newest diagnostics answer per buffer still being typed in,
-    /// kept until the text has been still for [`DIAG_QUIET`]; the alarm
-    /// brings the frame that applies it.
+    /// kept until the text has been still for [`DIAG_QUIET`] or insert
+    /// mode ends; the alarm brings the frame that applies it.
     pub held: HashMap<BufferId, (Update, Vec<String>)>,
     alarm: Alarm,
     /// Diagnostic messages per buffer, indexed by a run's `tag`.
@@ -94,12 +95,15 @@ impl LspState {
 }
 
 impl LspState {
-    /// Whether the buffer's text moved within [`DIAG_QUIET`] — a
-    /// diagnostics answer for it waits.
-    fn typing(&self, id: BufferId) -> bool {
-        self.moved
-            .get(&id)
-            .is_some_and(|t| t.elapsed() < DIAG_QUIET)
+    /// Whether the buffer is being typed in: insert mode, and its text
+    /// moved within [`DIAG_QUIET`]. A diagnostics answer for it waits;
+    /// leaving insert mode lands it at once.
+    fn typing(&self, id: BufferId, mode: Mode) -> bool {
+        mode == Mode::Insert
+            && self
+                .moved
+                .get(&id)
+                .is_some_and(|t| t.elapsed() < DIAG_QUIET)
     }
 }
 
@@ -140,7 +144,7 @@ impl Kawoosh {
                     update,
                     messages,
                 } => {
-                    if self.lsp.typing(buffer) {
+                    if self.lsp.typing(buffer, self.ed.mode) {
                         self.lsp.held.insert(buffer, (update, messages));
                         self.lsp.alarm.set(self.lsp.moved[&buffer] + DIAG_QUIET);
                     } else {
@@ -209,14 +213,15 @@ impl Kawoosh {
                 Event::Status(s) => self.lsp.status = s,
             }
         }
-        // Held answers whose buffer has been still long enough land now;
-        // one still moving waits for the next alarm.
+        // Held answers land once the typing paused or insert mode ended;
+        // one still being typed in waits for the next alarm.
+        let mode = self.ed.mode;
         let quiet: Vec<BufferId> = self
             .lsp
             .held
             .keys()
             .copied()
-            .filter(|id| !self.lsp.typing(*id))
+            .filter(|id| !self.lsp.typing(*id, mode))
             .collect();
         for id in quiet {
             let (update, messages) = self.lsp.held.remove(&id).unwrap();

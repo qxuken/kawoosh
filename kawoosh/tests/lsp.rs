@@ -161,8 +161,9 @@ fn diagnostics_definition_hover_and_completion() {
 
 /// A diagnostics answer to a keystroke waits until the typing pauses:
 /// the server's cascade for a half-typed line is held while the text
-/// keeps moving — the rows keep the answer before, shifted — and lands
-/// once the buffer has been still for `DIAG_QUIET`.
+/// keeps moving in insert mode — the rows keep the answer before,
+/// shifted — and lands once the buffer has been still for `DIAG_QUIET`,
+/// or the moment insert mode ends.
 #[test]
 fn diagnostics_wait_for_the_typing_to_pause() {
     let dir = std::env::temp_dir().join(format!("kawoosh-lsp-quiet-{}", std::process::id()));
@@ -223,6 +224,17 @@ fn diagnostics_wait_for_the_typing_to_pause() {
     assert_eq!(messages.len(), 4, "{messages:?}");
     assert!(messages.iter().all(|m| m == "expected SEMICOLON"));
     assert_eq!(app.ed.buffers[buf_id].runs(DIAG_LAYER, 0..100).len(), 4);
+
+    // Leaving insert mode lands a held answer at once, quiet or not.
+    d.text(&mut app, " !!");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.held.contains_key(&buf_id)),
+        "held again"
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(app.ed.mode, Mode::Normal);
+    d.frame(&mut app);
+    assert!(app.lsp.held.is_empty(), "landed on <Esc>");
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }

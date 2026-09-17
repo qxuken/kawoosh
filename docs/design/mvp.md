@@ -335,10 +335,11 @@ float, and the answer is two-fold:
   squiggle marks the range; the EOL text says why; neither hides a glyph.
   They land between keystrokes, not during: a server answers a half-typed
   line with a syntax error on every line after it, and the messages reflowed
-  on every key; an answer for a buffer whose text moved in the last 600 ms
-  (`lsp::DIAG_QUIET`) is held, the newest kept, and applied once the text has
-  been still that long — an alarm thread brings the frame, since no keystroke
-  will. The open's answer lands at once.
+  on every key; in insert mode an answer for a buffer whose text moved in the
+  last 600 ms (`lsp::DIAG_QUIET`) is held, the newest kept, and applied once
+  the text has been still that long — an alarm thread brings the frame, since
+  no keystroke will — or the moment insert mode ends. The open's answer lands
+  at once.
 - **Hover, type info, diagnostics detail, and signature help open a real
   pane** — focusable, navigable, yankable, a working pane like any other
   (lean.nvim-infoview style), not a transient that vanishes on cursor move.
