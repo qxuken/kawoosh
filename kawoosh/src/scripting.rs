@@ -508,9 +508,14 @@ impl Kawoosh {
         };
         rt.publish(&self.ed, Some(view));
         rt.write_hook(&hook, &text);
-        // The listing was rewritten by the hook: track it afresh.
-        rt.track_lines(&self.ed, buffer);
+        // The hook rewrote the listing (`kawoosh.buf.set_text`, queued):
+        // apply that first, then track the lines as they now are — a
+        // tracking of the old text would call every line of the next
+        // write renamed.
         self.drain_lua();
+        if let Some(rt) = self.scripting.rt.clone() {
+            rt.track_lines(&self.ed, buffer);
+        }
     }
 }
 

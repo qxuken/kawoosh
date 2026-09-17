@@ -147,13 +147,47 @@ fn oil_renames_creates_and_deletes_on_write() {
     d.keys(&mut app, "d/");
     d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "w");
-    assert!(app.ed.message.contains("4 change(s)"), "{}", app.ed.message);
+    // What the write did is a corner line under `oil`, not an echo.
+    let said = app
+        .notes
+        .shown
+        .iter()
+        .find(|s| s.text == "4 change(s) applied")
+        .expect("the count in the corner");
+    assert_eq!(said.source.as_deref(), Some("oil"));
+    assert!(!said.toast);
     assert!(dir.join("renamed.txt").is_file());
     assert!(!dir.join("a.txt").exists());
     assert!(!dir.join("b.txt").exists());
     assert!(dir.join("c.txt").is_file());
     assert!(dir.join("d").is_dir());
     assert_eq!(d.line_rows(), ["../", "d/", "sub/", "c.txt", "renamed.txt"]);
+    // A change that cannot be made — a file under a file — is an error
+    // toast with the count, and the failure itself is in the log.
+    d.keys(&mut app, "Goc.txt/under");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    let toast = app
+        .notes
+        .shown
+        .iter()
+        .find(|s| s.text.starts_with("1 of 1 failed: create c.txt/under"))
+        .unwrap_or_else(|| panic!("the failure toast: {:?}", app.notes.shown));
+    assert!(toast.toast && toast.level == kawoosh::notify::Level::Error);
+    assert!(
+        !toast.text.contains('\n'),
+        "one line, no traceback: {:?}",
+        toast.text
+    );
+    assert!(
+        app.notes
+            .log
+            .iter()
+            .any(|e| e.text.starts_with("create c.txt/under: ")
+                && e.source.as_deref() == Some("oil")),
+        "the failure in the log"
+    );
+    assert!(!dir.join("c.txt/under").exists());
     // Enter on a directory descends; `-` goes up.
     d.keys(&mut app, "ggj");
     d.key(&mut app, "enter", KeyMods::default());

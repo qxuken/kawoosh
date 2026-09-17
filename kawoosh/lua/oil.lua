@@ -15,6 +15,12 @@
 -- Paths go through `kawoosh.fs` — `expand`, `parent`, `basename`,
 -- `join` — never through a pattern on `/`, so the plugin is the same
 -- on every platform.
+--
+-- Messages go two ways: the answer to a command the user just gave
+-- (`not a directory`) is `kawoosh.echo`, the command line's; what a
+-- bulk operation did is `kawoosh.notify` under the source `oil` — a
+-- corner line for the count, an error toast when some failed, every
+-- failure in `:messages`.
 
 local fs = kawoosh.fs
 local oil = { dir = nil, entries = {} }
@@ -103,6 +109,10 @@ function oil.write(lines)
     return a[2] < b[2]
   end)
   local function at(entry) return fs.join(oil.dir, (entry:gsub("/$", ""))) end
+  -- An error's first line, without the runtime's prefix and traceback.
+  local function reason(err)
+    return (tostring(err):gsub("^runtime error: ", ""):match("^[^\n]*"))
+  end
   local done, failed = 0, {}
   for _, op in ipairs(ops) do
     local ok, err
@@ -113,14 +123,18 @@ function oil.write(lines)
     else
       ok, err = pcall(fs.remove, at(op[2]))
     end
-    if ok then done = done + 1 else failed[#failed + 1] = op[1] .. " " .. op[2] .. ": " .. tostring(err) end
+    if ok then done = done + 1 else failed[#failed + 1] = op[1] .. " " .. op[2] .. ": " .. reason(err) end
   end
   oil.entries = listing(oil.dir)
   kawoosh.buf.set_text(table.concat(oil.entries, "\n"))
   if #failed > 0 then
-    kawoosh.echo(#failed .. " failed: " .. failed[1])
+    for _, f in ipairs(failed) do
+      kawoosh.notify(f, { level = "error", source = "oil", show = "log" })
+    end
+    kawoosh.notify(#failed .. " of " .. #ops .. " failed: " .. failed[1],
+      { level = "error", source = "oil" })
   else
-    kawoosh.echo("oil: " .. done .. " change(s) applied")
+    kawoosh.notify(done .. " change(s) applied", { source = "oil" })
   end
 end
 
