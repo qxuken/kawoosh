@@ -12,8 +12,8 @@ use kui::Core;
 fn load_fonts(core: &mut Core) -> Option<kui::FontId> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts/IosevkaNavcon");
     let n = core.load_fonts_dir(&dir);
-    log::info!("loaded {n} font faces");
-    log::debug!("fonts from {}", dir.display());
+    // A startup fact, not news: the log's, not the corner's.
+    log::debug!("loaded {n} font faces from {}", dir.display());
     let family = core
         .system_font_families()
         .into_iter()
