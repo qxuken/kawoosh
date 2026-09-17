@@ -10,7 +10,9 @@ use kawoosh_doc::Buffer;
 
 use crate::keymap::{Keymap, Mode};
 use crate::motions as m;
-use crate::{ArgKind, Args, Ctx, Editor, Effect, Kind, MotionKind, Prompt, Selection, ViewId};
+use crate::{
+    ArgKind, Args, Ctx, Editor, Effect, Kind, Layer, MotionKind, Prompt, Selection, Setting, ViewId,
+};
 
 /// The ex spellings and the commands they run: `:w` is `write`, `:bd`
 /// `buffer_delete`. One table, so the command line completes them and
@@ -248,7 +250,7 @@ pub(crate) fn apply_operator(
         }
         "indent" | "dedent" => {
             let ts = ed.tabstop();
-            let unit = if ed.option("expandtab") == Some("true") {
+            let unit = if ed.expandtab() {
                 " ".repeat(ts)
             } else {
                 "\t".into()
@@ -872,6 +874,13 @@ fn save_beside(buf: &kawoosh_doc::Buffer, path: &std::path::Path) -> std::io::Re
         .unwrap_or_default();
     let tmp = path.with_file_name(format!(".{name}.kawoosh~"));
     let result = (|| {
+        // A new file in a directory that is not there yet: the
+        // directory first (a `.kawoosh/settings.lua` from its template).
+        if let Some(dir) = path.parent()
+            && !dir.exists()
+        {
+            std::fs::create_dir_all(dir)?;
+        }
         let mut out = std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(&tmp)?);
         buf.write_to(&mut out)?;
         std::io::Write::flush(&mut out)?;
@@ -1534,17 +1543,39 @@ pub fn install(ed: &mut Editor) {
             None => ed.message = "edit what?".into(),
         }
     });
-    ed.register_with_args("set", Args::new(&[ArgKind::Option]), |ed, ctx| {
-        let Some(a) = ctx.args.first() else {
-            ed.message = "set what?".into();
+    // `:set PATH=VALUE`, `:set FLAG`, `:set noFLAG` set into the session
+    // layer, shaped like the value already there; `:set PATH?` says what
+    // it is and where it came from; `:set PATH!` takes the session's
+    // value back out.
+    ed.register_with_args("set", Args::rest(&[ArgKind::Option]), |ed, ctx| {
+        // One setting per line: what follows a `=` is the value, spaces
+        // and all (`:set compile.command=cargo test`).
+        let a = ctx.args.join(" ");
+        if a.is_empty() {
+            ed.message = "set what? (:set PATH=VALUE, :set PATH?)".into();
             return;
+        }
+        let a = a.as_str();
+        if let Some(path) = a.strip_suffix('?') {
+            ed.message = match ed.settings.get(path) {
+                Some(v) => match ed.settings.origin(path) {
+                    Some(from) => format!("{path} = {v}  ({from})"),
+                    None => format!("{path} = {v}"),
+                },
+                None => format!("{path} is not set"),
+            };
+            return;
+        }
+        if let Some(path) = a.strip_suffix('!') {
+            ed.settings.unset(Layer::Session, path);
+            return;
+        }
+        let (path, value) = match a.split_once('=') {
+            Some((k, v)) => (k.to_string(), Setting::parse_like(v, ed.settings.get(k))),
+            None if a.starts_with("no") => (a[2..].to_string(), Setting::Bool(false)),
+            None => (a.to_string(), Setting::Bool(true)),
         };
-        let (k, v) = match a.split_once('=') {
-            Some((k, v)) => (k.to_string(), v.to_string()),
-            None if a.starts_with("no") => (a[2..].to_string(), "false".to_string()),
-            None => (a.to_string(), "true".to_string()),
-        };
-        ed.options.insert(k, v);
+        ed.settings.set(Layer::Session, &path, value);
     });
     ed.register_with_args("echo", Args::rest(&[ArgKind::Text]), |ed, ctx| {
         ed.message = ctx.args.join(" ")

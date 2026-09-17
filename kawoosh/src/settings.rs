@@ -1,0 +1,631 @@
+//! Settings files, where they land, and their reload (kui.md D10). The
+//! tree and its layers are the engine's (`kawoosh_editor::settings`);
+//! this is the shell's half: which files, evaluated how, into which
+//! layer, watched for a save, and shown in a devtools tab.
+//!
+//! - `$XDG_CONFIG_HOME/kawoosh/settings.lua` (else `~/.config/kawoosh/`)
+//!   is the user's, the [`Layer::User`] — loaded before `init.lua`, so
+//!   the code can read what the data said; what `init.lua` sets with
+//!   `kawoosh.opt` lands in the same layer, beside the file.
+//! - `.kawoosh/settings.lua` in the working directory and every
+//!   directory above it are the project's, the [`Layer::Project`] —
+//!   outermost first, so a monorepo's root sets the base and a member's
+//!   refines it; `:cd` reloads the layer from the new directory.
+//!
+//! A settings file returns a table and runs in a sandbox
+//! (`Runtime::eval_settings`): data, not code, so a repository's file
+//! needs no trust prompt to be read. A file that fails is an error
+//! toast under the source `settings`, and the layer keeps the files
+//! that did not.
+//!
+//! **Hot reload.** The files — the two of the user's and every
+//! candidate `.kawoosh/settings.lua` above the working directory,
+//! whether it exists yet — are on a [`Watcher`]; a save re-layers the
+//! file's layer at the next frame, and a saved `init.lua` runs again
+//! with what it set before taken out first. A corner line says which.
+//!
+//! **The Settings tab** of the devtools (`:settings`): the layers from
+//! the one that wins down, each source's leaves as `path = value`, a
+//! file's name a click from opening, and the effective tree with where
+//! each value came from.
+
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use kawoosh_editor::{Layer, Setting};
+use kawoosh_systems::WakeHandle;
+use kawoosh_systems::watch::Watcher;
+use kui::{Align, Color, NodeSpec, Sizing, TextStyle, Ui, Value};
+
+use crate::app::Kawoosh;
+use crate::notify::{Level, Note};
+
+/// The project marker directory (mvp.md 7b).
+pub const PROJECT_DIR: &str = ".kawoosh";
+/// The settings file's name, in the config dir and in a project's marker.
+pub const SETTINGS_FILE: &str = "settings.lua";
+/// The tab's name in the devtools strip.
+pub const TAB: &str = "settings";
+/// What a settings file opened from the tab starts as — a buffer at the
+/// path, unsaved: `:w` is the user's.
+pub const SETTINGS_STUB: &str = "-- kawoosh settings: a table, read on save.\nreturn {\n}\n";
+const ROW_H: f32 = 18.0;
+const FONT: f32 = 12.0;
+
+/// The user's config directory: `$XDG_CONFIG_HOME/kawoosh`, else
+/// `~/.config/kawoosh`.
+pub fn config_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    Some(base.join("kawoosh"))
+}
+
+/// Where `init.lua` lives: `$KAWOOSH_INIT`, else `init.lua` in the
+/// config dir.
+pub fn config_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("KAWOOSH_INIT") {
+        return Some(PathBuf::from(p));
+    }
+    Some(config_dir()?.join("init.lua"))
+}
+
+/// The user's settings file: `$KAWOOSH_SETTINGS`, else `settings.lua`
+/// in the config dir.
+pub fn user_settings_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("KAWOOSH_SETTINGS") {
+        return Some(PathBuf::from(p));
+    }
+    Some(config_dir()?.join(SETTINGS_FILE))
+}
+
+/// Every place a project settings file can be for `dir`: `.kawoosh/
+/// settings.lua` in it and in every directory above, outermost first.
+pub fn project_settings_candidates(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = dir
+        .ancestors()
+        .map(|d| d.join(PROJECT_DIR).join(SETTINGS_FILE))
+        .collect();
+    files.reverse();
+    files
+}
+
+/// Every `.kawoosh/settings.lua` from the root down to `dir`,
+/// outermost first — the order they merge in.
+pub fn project_settings_files(dir: &Path) -> Vec<PathBuf> {
+    project_settings_candidates(dir)
+        .into_iter()
+        .filter(|p| p.is_file())
+        .collect()
+}
+
+/// The shell's config state: the files, their watch, the last reload.
+pub struct Config {
+    /// `init.lua`, when there is a config dir.
+    pub init: Option<PathBuf>,
+    /// The user's `settings.lua`, when there is a config dir.
+    pub user: Option<PathBuf>,
+    /// The project candidates the watch was last set from.
+    pub project: Vec<PathBuf>,
+    watch: Watcher,
+    /// The last reload: when, and the file's name.
+    pub reloaded: Option<(Instant, String)>,
+    /// True while `init.lua` runs: what it sets is the user's, not the
+    /// session's.
+    pub loading: bool,
+}
+
+impl Config {
+    pub fn new(wake: WakeHandle) -> Self {
+        Self {
+            init: None,
+            user: None,
+            project: Vec::new(),
+            watch: Watcher::spawn(wake),
+            reloaded: None,
+            loading: false,
+        }
+    }
+}
+
+impl Kawoosh {
+    /// The user's settings file into the user layer — a file that is
+    /// gone is a layer without it, quietly. What `init.lua` set stays
+    /// beside it.
+    pub fn load_user_settings(&mut self, path: &Path) {
+        let file = if path.is_file() {
+            self.eval_settings_file(path)
+                .map(|s| (path.display().to_string(), s))
+        } else {
+            None
+        };
+        self.config.user = Some(path.to_path_buf());
+        let mut sources: Vec<(String, Setting)> = file.into_iter().collect();
+        sources.extend(
+            self.ed
+                .settings
+                .sources(Layer::User)
+                .iter()
+                .filter(|(name, _)| name == Layer::User.name())
+                .cloned(),
+        );
+        self.ed.settings.replace(Layer::User, sources);
+    }
+
+    /// The project layer from the working directory: every
+    /// `.kawoosh/settings.lua` above it, outermost first. Called at
+    /// start, on every `:cd`, and when one is saved.
+    pub fn reload_project_settings(&mut self) {
+        let files = project_settings_files(&self.cwd);
+        let sources: Vec<(String, Setting)> = files
+            .iter()
+            .filter_map(|p| Some((p.display().to_string(), self.eval_settings_file(p)?)))
+            .collect();
+        if !sources.is_empty() {
+            log::debug!(
+                "settings: {} project file{} under {}",
+                sources.len(),
+                if sources.len() == 1 { "" } else { "s" },
+                self.cwd.display()
+            );
+        }
+        self.ed.settings.replace(Layer::Project, sources);
+    }
+
+    /// Runs `init.lua` — again, on a save: what it set before is taken
+    /// out first, so a line removed from it is a setting gone.
+    pub fn run_init(&mut self, path: &Path) {
+        self.config.init = Some(path.to_path_buf());
+        self.ed
+            .settings
+            .retain_sources(Layer::User, |n| n != Layer::User.name());
+        if !path.is_file() {
+            return;
+        }
+        self.config.loading = true;
+        self.run_lua_file(path);
+        self.config.loading = false;
+    }
+
+    /// Puts the config files on the watch: the user's two and every
+    /// project candidate above the working directory.
+    pub(crate) fn rewatch_config(&mut self) {
+        self.config.project = project_settings_candidates(&self.cwd);
+        let mut paths = self.config.project.clone();
+        paths.extend(self.config.user.clone());
+        paths.extend(self.config.init.clone());
+        self.config.watch.watch(paths);
+    }
+
+    /// Reloads what the watch saw saved since the last frame.
+    pub(crate) fn sync_settings(&mut self) {
+        let changed = self.config.watch.drain();
+        if changed.is_empty() {
+            return;
+        }
+        self.reload_changed(&changed);
+    }
+
+    /// Reloads the layers `paths` belong to — each layer once — and
+    /// says so.
+    pub(crate) fn reload_changed(&mut self, paths: &[PathBuf]) {
+        let mut project = false;
+        let mut names = Vec::new();
+        for p in paths {
+            if Some(p) == self.config.user.as_ref() {
+                let p = p.clone();
+                self.load_user_settings(&p);
+            } else if Some(p) == self.config.init.as_ref() {
+                let p = p.clone();
+                self.run_init(&p);
+            } else if self.config.project.contains(p) {
+                project = true;
+            } else {
+                continue;
+            }
+            names.push(self.short_name(p));
+        }
+        if project {
+            self.reload_project_settings();
+        }
+        if names.is_empty() {
+            return;
+        }
+        let what = names.join(", ");
+        self.config.reloaded = Some((Instant::now(), what.clone()));
+        self.notify_with(Note::new(Level::Info, format!("reloaded {what}")).source("settings"));
+    }
+
+    /// A config file's name for a line: under the working directory,
+    /// relative to it; a project file above, by its directory's name
+    /// (`repo/.kawoosh/settings.lua`); else as the shell displays a path.
+    fn short_name(&self, path: &Path) -> String {
+        if let Ok(rel) = path.strip_prefix(&self.cwd) {
+            return kawoosh_systems::fs::display(rel);
+        }
+        let project_dir = path.parent().filter(|d| d.ends_with(PROJECT_DIR));
+        match project_dir
+            .and_then(Path::parent)
+            .and_then(|d| d.file_name())
+        {
+            Some(name) => {
+                let mut p = PathBuf::from(name);
+                p.push(PROJECT_DIR);
+                p.push(SETTINGS_FILE);
+                kawoosh_systems::fs::display(&p)
+            }
+            None => kawoosh_systems::fs::display(path),
+        }
+    }
+
+    /// One file as a tree, or an error toast and nothing.
+    fn eval_settings_file(&mut self, path: &Path) -> Option<Setting> {
+        let rt = self.scripting.rt.clone()?;
+        let src = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.notify_with(
+                    Note::new(Level::Error, format!("{}: {e}", path.display())).source("settings"),
+                );
+                return None;
+            }
+        };
+        match rt.eval_settings(&path.display().to_string(), &src) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                let first = e.lines().next().unwrap_or("settings error").to_string();
+                log::error!("{e}");
+                self.notify_with(Note::new(Level::Error, first).source("settings"));
+                None
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ the tab
+
+    /// Declares the tab every frame and draws it while it is on show.
+    pub(crate) fn settings_tab(&mut self, ui: &mut Ui<'_>) {
+        if self.tab_shown == Some(TAB) {
+            self.tab_shown = None;
+        }
+        ui.devtools_tab_with(TAB, "Settings", |ui| self.settings_body(ui));
+    }
+
+    fn settings_body(&mut self, ui: &mut Ui<'_>) {
+        self.tab_shown = Some(TAB);
+        let pal = self.pal;
+        let font = self.font;
+        let style = move || {
+            let s = TextStyle::new(FONT).mono().nowrap().color(pal.fg);
+            match font {
+                Some(id) => s.font(id),
+                None => s,
+            }
+        };
+        let dim = move || style().color(pal.dim);
+        // The facts, gathered before the tree is built.
+        let watched = self.config.project.len()
+            + self.config.user.iter().count()
+            + self.config.init.iter().count();
+        let reloaded = self
+            .config
+            .reloaded
+            .as_ref()
+            .map(|(at, what)| format!("reloaded {what} {}", ago(at.elapsed())));
+        let layers: Vec<(Layer, Vec<Source>)> = Layer::ALL
+            .iter()
+            .rev()
+            .map(|layer| {
+                let sources = self
+                    .ed
+                    .settings
+                    .sources(*layer)
+                    .iter()
+                    .map(|(name, tree)| {
+                        let leaves = tree
+                            .paths()
+                            .into_iter()
+                            .map(|p| {
+                                let v = tree.get(&p).map(|v| v.to_string()).unwrap_or_default();
+                                (p, v)
+                            })
+                            .collect();
+                        (name.clone(), leaves)
+                    })
+                    .collect();
+                (*layer, sources)
+            })
+            .collect();
+        let sources_n: usize = layers.iter().map(|(_, s)| s.len()).sum();
+        let effective: Vec<(String, String, String)> = self
+            .ed
+            .settings
+            .effective()
+            .paths()
+            .into_iter()
+            .map(|p| {
+                let v = self
+                    .ed
+                    .settings
+                    .get(&p)
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+                let from = match self.ed.settings.source_of(&p) {
+                    Some((layer, src)) if src != layer.name() => {
+                        format!("{}: {}", layer.name(), self.short_name(Path::new(src)))
+                    }
+                    Some((layer, _)) => layer.name().to_string(),
+                    None => String::new(),
+                };
+                (p, v, from)
+            })
+            .collect();
+        let short: Vec<Vec<String>> = layers
+            .iter()
+            .map(|(layer, sources)| {
+                sources
+                    .iter()
+                    .map(|(name, _)| {
+                        if name == layer.name() {
+                            name.clone()
+                        } else {
+                            self.short_name(Path::new(name))
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let creatable_user = self.config.user.clone();
+        let creatable_project = self.cwd.join(PROJECT_DIR).join(SETTINGS_FILE);
+
+        let section = |ui: &mut Ui<'_>, title: &str| {
+            ui.with(
+                NodeSpec::row()
+                    .width(Sizing::Grow(1.0))
+                    .height(Sizing::Fixed(ROW_H + 8.0))
+                    .pad_xy(8.0, 0.0)
+                    .cross_align(Align::End)
+                    .bg(pal.strip),
+                |ui| ui.text(title, dim()),
+            );
+        };
+        let leaf = |ui: &mut Ui<'_>, path: &str, value: &str, from: Option<&str>| {
+            ui.with(
+                NodeSpec::row()
+                    .width(Sizing::Grow(1.0))
+                    .height(Sizing::Fixed(ROW_H))
+                    .pad_xy(16.0, 0.0)
+                    .gap(8.0)
+                    .cross_align(Align::Center),
+                |ui| {
+                    ui.with(NodeSpec::row().width(Sizing::Fixed(180.0)), |ui| {
+                        ui.text(path, style())
+                    });
+                    ui.text(value, style().color(pal.accent));
+                    if let Some(from) = from {
+                        ui.text(from, dim());
+                    }
+                },
+            );
+        };
+        ui.with(NodeSpec::column().fill().bg(pal.bg), |ui| {
+            // The header: how much is loaded, and the reload button.
+            ui.with(
+                NodeSpec::row()
+                    .width(Sizing::Grow(1.0))
+                    .height(Sizing::Fixed(ROW_H + 6.0))
+                    .pad_xy(8.0, 0.0)
+                    .gap(8.0)
+                    .cross_align(Align::Center)
+                    .bg(pal.strip),
+                |ui| {
+                    let mut head = format!("{sources_n} sources · watching {watched} files");
+                    if let Some(r) = &reloaded {
+                        head.push_str(" · ");
+                        head.push_str(r);
+                    }
+                    ui.text(&head, dim());
+                    ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
+                    ui.with_keyed(
+                        "reload",
+                        NodeSpec::row()
+                            .pad_xy(6.0, 1.0)
+                            .bg(Color::TRANSPARENT)
+                            .hover_bg(pal.panel)
+                            .on_click(Value::map([
+                                ("kind", "settings".into()),
+                                ("what", "reload".into()),
+                            ]))
+                            .label("reload settings"),
+                        |ui| ui.text("reload", style()),
+                    );
+                },
+            );
+            ui.with(NodeSpec::column().fill().scroll_y(), |ui| {
+                for ((layer, sources), shown) in layers.iter().zip(&short) {
+                    let title = match layer {
+                        Layer::Session => "session — :set, and what a plugin sets",
+                        Layer::Project => "project — .kawoosh/settings.lua, root to cwd",
+                        Layer::User => "user — settings.lua, then what init.lua sets",
+                        Layer::Default => "default — what the editor ships",
+                    };
+                    section(ui, title);
+                    // A layer with no file yet offers one: the user's in
+                    // the config dir, the project's in the cwd — a buffer
+                    // from a template, saved when the user says.
+                    let creatable = match layer {
+                        Layer::User => creatable_user.as_ref(),
+                        Layer::Project => Some(&creatable_project),
+                        _ => None,
+                    };
+                    let has_file = sources.iter().any(|(n, _)| n != layer.name());
+                    if let Some(path) = creatable.filter(|_| !has_file) {
+                        let shown = self.short_name(path);
+                        ui.with_keyed(
+                            &format!("new {}", path.display()),
+                            NodeSpec::row()
+                                .width(Sizing::Grow(1.0))
+                                .height(Sizing::Fixed(ROW_H))
+                                .pad_xy(8.0, 0.0)
+                                .gap(8.0)
+                                .cross_align(Align::Center)
+                                .bg(Color::TRANSPARENT)
+                                .hover_bg(pal.panel)
+                                .on_click(Value::map([
+                                    ("kind", "settings".into()),
+                                    ("what", "new".into()),
+                                    ("path", path.display().to_string().into()),
+                                ]))
+                                .label(format!("new {shown}").as_str()),
+                            |ui| {
+                                ui.text(&shown, dim());
+                                ui.text("· new", style().color(pal.accent));
+                            },
+                        );
+                    } else if sources.is_empty() {
+                        leaf(ui, "—", "", None);
+                    }
+                    for ((name, leaves), shown) in sources.iter().zip(shown) {
+                        let is_file = name != layer.name();
+                        // A file's row opens it; the layer's own source
+                        // is a name, not a thing to click.
+                        let mut spec = NodeSpec::row()
+                            .width(Sizing::Grow(1.0))
+                            .height(Sizing::Fixed(ROW_H))
+                            .pad_xy(8.0, 0.0)
+                            .cross_align(Align::Center);
+                        if is_file {
+                            spec = spec
+                                .bg(Color::TRANSPARENT)
+                                .hover_bg(pal.panel)
+                                .on_click(Value::map([
+                                    ("kind", "settings".into()),
+                                    ("what", "open".into()),
+                                    ("path", name.as_str().into()),
+                                ]))
+                                .label(name.as_str());
+                        }
+                        ui.with_keyed(name, spec, |ui| {
+                            ui.text(shown, style().color(pal.fg));
+                            if leaves.is_empty() {
+                                ui.with(NodeSpec::row().width(Sizing::Fixed(8.0)), |_| {});
+                                ui.text("(empty)", dim());
+                            }
+                        });
+                        for (p, v) in leaves {
+                            leaf(ui, p, v, None);
+                        }
+                    }
+                }
+                section(
+                    ui,
+                    "effective — every layer merged, and where each value is from",
+                );
+                for (p, v, from) in &effective {
+                    leaf(ui, p, v, Some(from));
+                }
+            });
+        });
+    }
+
+    /// A click in the tab: a file's name opens it; `new` opens a buffer
+    /// at the path a layer has no file at, the template as its text
+    /// and nothing on disk — `:w` is the user's, and the watch takes
+    /// it from there; `reload` reloads every layer. The keyboard goes
+    /// to what opened.
+    pub(crate) fn on_settings_click(&mut self, p: &Value) {
+        let path = p.get("path").and_then(Value::as_str).map(PathBuf::from);
+        match (p.get("what").and_then(Value::as_str), path) {
+            (Some("open"), Some(path)) => {
+                self.open_in_editor(&path, None, None);
+                self.reclaim_focus = true;
+            }
+            (Some("new"), Some(path)) => {
+                self.open_in_editor(&path, None, None);
+                if let Some(v) = self.focused_view()
+                    && !path.exists()
+                    && self.ed.buffer_of(v).path.as_deref() == Some(path.as_path())
+                    && self.ed.buffer_of(v).is_empty()
+                {
+                    // An edit, not a reload: the buffer is modified, so
+                    // `:q` asks and `:w` writes.
+                    self.ed.buffer_of_mut(v).replace(0..0, SETTINGS_STUB);
+                    // The caret inside the table, where the first key goes.
+                    let off = self.ed.buffer_of(v).line_start(2);
+                    self.ed.views[v].sels =
+                        kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(off));
+                    self.ed.message =
+                        format!("{} — a template; :w keeps it", self.short_name(&path));
+                }
+                self.reclaim_focus = true;
+            }
+            (Some("reload"), _) => self.reload_all_settings(),
+            _ => {}
+        }
+    }
+
+    /// `:settings reload` and the tab's button: every layer from its
+    /// files again, `init.lua` included.
+    pub(crate) fn reload_all_settings(&mut self) {
+        let mut paths = self.config.project.clone();
+        paths.extend(self.config.user.clone());
+        paths.extend(self.config.init.clone());
+        if paths.is_empty() {
+            self.reload_project_settings();
+            self.ed.message = "settings reloaded".into();
+            return;
+        }
+        self.reload_changed(&paths);
+    }
+}
+
+/// A source as the tab lists it: its name, and each leaf with its
+/// value spelled.
+type Source = (String, Vec<(String, String)>);
+
+fn ago(d: std::time::Duration) -> String {
+    let s = d.as_secs();
+    if s < 60 {
+        format!("{s}s ago")
+    } else if s < 3600 {
+        format!("{}m ago", s / 60)
+    } else {
+        format!("{}h ago", s / 3600)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_files_are_found_outermost_first() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-settings-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let inner = dir.join("a/b/c");
+        std::fs::create_dir_all(inner.join(PROJECT_DIR)).unwrap();
+        std::fs::create_dir_all(dir.join(PROJECT_DIR)).unwrap();
+        // A marker directory with no settings file is not a source.
+        std::fs::create_dir_all(dir.join("a").join(PROJECT_DIR)).unwrap();
+        std::fs::write(dir.join(PROJECT_DIR).join(SETTINGS_FILE), "return {}").unwrap();
+        std::fs::write(inner.join(PROJECT_DIR).join(SETTINGS_FILE), "return {}").unwrap();
+        let found = project_settings_files(&inner);
+        assert_eq!(
+            found,
+            [
+                dir.join(PROJECT_DIR).join(SETTINGS_FILE),
+                inner.join(PROJECT_DIR).join(SETTINGS_FILE)
+            ]
+        );
+        assert_eq!(project_settings_files(&dir.join("a")).len(), 1);
+        // The candidates are one per ancestor, whether or not the file
+        // is there: what the watch waits on.
+        let candidates = project_settings_candidates(&inner);
+        assert_eq!(
+            candidates.last(),
+            Some(&inner.join(PROJECT_DIR).join(SETTINGS_FILE))
+        );
+        assert_eq!(candidates.len(), inner.ancestors().count());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

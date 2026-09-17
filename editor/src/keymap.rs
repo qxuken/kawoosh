@@ -129,8 +129,14 @@ fn named_key(code: &str) -> Option<&'static str> {
     })
 }
 
-/// Splits `"<C-w>v"` into `["<C-w>", "v"]`; `<leader>` becomes `leader`.
-pub fn parse_notation(s: &str, leader: &str) -> Vec<String> {
+/// The token a `<leader>` in a map is kept as: what it stands for is
+/// the keymap's to say at lookup ([`Keymap::set_leader`]), so a leader
+/// set after the map was made — from a settings file, reloaded on
+/// save — retargets every map at once.
+pub const LEADER: &str = "<leader>";
+
+/// Splits `"<C-w>v"` into `["<C-w>", "v"]`; `<leader>` stays [`LEADER`].
+pub fn parse_notation(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -149,7 +155,7 @@ pub fn parse_notation(s: &str, leader: &str) -> Vec<String> {
                 break;
             }
             if inner.eq_ignore_ascii_case("leader") {
-                out.extend(parse_notation(leader, " "));
+                out.push(LEADER.into());
             } else if inner.eq_ignore_ascii_case("lt") {
                 out.push("<".into());
             } else {
@@ -256,14 +262,33 @@ pub enum Lookup<'a> {
 #[derive(Default, Debug)]
 pub struct Keymap {
     modes: HashMap<Mode, Node>,
-    pub leader: String,
+    /// The key `<leader>` stands for, in notation (`<Space>`, `,`).
+    leader: String,
 }
 
 impl Keymap {
     pub fn new() -> Self {
         Self {
             modes: HashMap::new(),
-            leader: " ".into(),
+            leader: "<Space>".into(),
+        }
+    }
+
+    /// The key `<leader>` stands for.
+    pub fn leader(&self) -> &str {
+        &self.leader
+    }
+
+    /// Makes `<leader>` stand for `key`, given in map notation — `","`,
+    /// `"<Space>"`, `" "`. One key: a sequence is refused.
+    pub fn set_leader(&mut self, key: &str) -> Result<(), String> {
+        match parse_notation(key).as_slice() {
+            [one] => {
+                self.leader = one.clone();
+                Ok(())
+            }
+            [] => Err("leader: no key".into()),
+            _ => Err(format!("leader: one key, not a sequence ({key})")),
         }
     }
 
@@ -271,7 +296,7 @@ impl Keymap {
     /// binding on a prefix of another shadows it: the longer one is
     /// unreachable, which is neovim's behaviour too (timeout aside).
     pub fn bind(&mut self, mode: Mode, keys: &str, command: &str) {
-        let seq = parse_notation(keys, &self.leader);
+        let seq = parse_notation(keys);
         let mut parts = command.split_whitespace();
         let name = parts.next().unwrap_or_default().to_string();
         let args = parts.map(str::to_string).collect();
@@ -286,7 +311,7 @@ impl Keymap {
     }
 
     pub fn unbind(&mut self, mode: Mode, keys: &str) {
-        let seq = parse_notation(keys, &self.leader);
+        let seq = parse_notation(keys);
         let Some(mut node) = self.modes.get_mut(&mode) else {
             return;
         };
@@ -300,22 +325,44 @@ impl Keymap {
     }
 
     pub fn lookup(&self, mode: Mode, keys: &[String]) -> Lookup<'_> {
-        let Some(mut node) = self.modes.get(&mode) else {
-            return Lookup::None;
-        };
-        for k in keys {
-            match node.children.get(k) {
-                Some(n) => node = n,
-                None => return Lookup::None,
-            }
+        match self.modes.get(&mode) {
+            Some(root) => self.walk(root, keys),
+            None => Lookup::None,
         }
-        match &node.binding {
-            Some(b) if node.children.is_empty() => Lookup::Exact(b),
-            // A binding with longer bindings beneath it: the shorter wins
-            // at once, like neovim without `timeoutlen`.
-            Some(b) => Lookup::Exact(b),
-            None if node.children.is_empty() => Lookup::None,
-            None => Lookup::Prefix,
+    }
+
+    /// The trie from `node` down `keys`. A pressed key that is the
+    /// leader's follows the `<leader>` branch as well as its own — an
+    /// explicit `<Space>x` and a `<leader>y` both reachable with Space
+    /// as the leader. An exact match on the key's own branch wins over
+    /// the leader's, but a leader map open past the key keeps the
+    /// sequence open rather than firing the bare key: a `,` bound and
+    /// chosen as leader waits for what follows, as vim's would.
+    fn walk<'a>(&'a self, node: &'a Node, keys: &[String]) -> Lookup<'a> {
+        let Some((k, rest)) = keys.split_first() else {
+            return match &node.binding {
+                // A binding with longer bindings beneath it: the shorter
+                // wins at once, like neovim without `timeoutlen`.
+                Some(b) => Lookup::Exact(b),
+                None if node.children.is_empty() => Lookup::None,
+                None => Lookup::Prefix,
+            };
+        };
+        let own = match node.children.get(k) {
+            Some(n) => self.walk(n, rest),
+            None => Lookup::None,
+        };
+        let leader = match node.children.get(LEADER) {
+            Some(n) if *k == self.leader => self.walk(n, rest),
+            _ => Lookup::None,
+        };
+        match (own, leader) {
+            (Lookup::Exact(b), Lookup::None) => Lookup::Exact(b),
+            (Lookup::Exact(_), Lookup::Prefix) => Lookup::Prefix,
+            (Lookup::Exact(b), Lookup::Exact(_)) => Lookup::Exact(b),
+            (Lookup::Prefix, Lookup::Exact(b)) => Lookup::Exact(b),
+            (Lookup::Prefix, _) | (Lookup::None, Lookup::Prefix) => Lookup::Prefix,
+            (Lookup::None, l) => l,
         }
     }
 
@@ -378,14 +425,76 @@ mod tests {
         let mut k = KeyStroke::plain("tab");
         k.shift = true;
         assert_eq!(k.notation(), "<S-Tab>");
-        assert_eq!(parse_notation("gg", " "), ["g", "g"]);
-        assert_eq!(parse_notation("<C-w>v", " "), ["<C-w>", "v"]);
-        assert_eq!(parse_notation("<c-D>", " "), ["<C-d>"]);
-        assert_eq!(parse_notation("<C-S-v>", " "), ["<C-V>"]);
-        assert_eq!(parse_notation("<leader>t", ","), [",", "t"]);
-        assert_eq!(parse_notation("<leader>t", " "), ["<Space>", "t"]);
-        assert_eq!(parse_notation("<Esc>", " "), ["<Esc>"]);
-        assert_eq!(parse_notation("<cr>", " "), ["<CR>"]);
+        assert_eq!(parse_notation("gg"), ["g", "g"]);
+        assert_eq!(parse_notation("<C-w>v"), ["<C-w>", "v"]);
+        assert_eq!(parse_notation("<c-D>"), ["<C-d>"]);
+        assert_eq!(parse_notation("<C-S-v>"), ["<C-V>"]);
+        assert_eq!(parse_notation("<leader>t"), [LEADER, "t"]);
+        assert_eq!(parse_notation("<Esc>"), ["<Esc>"]);
+        assert_eq!(parse_notation("<cr>"), ["<CR>"]);
+    }
+
+    /// `<leader>` is resolved when a key is looked up, not when the map
+    /// is made: the leader changes and every map follows; an explicit
+    /// map on the leader's key lives beside the leader maps.
+    #[test]
+    fn the_leader_is_resolved_at_lookup() {
+        let mut km = Keymap::new();
+        km.bind(Mode::Normal, "<leader>t", "todo");
+        km.bind(Mode::Normal, "<leader>cd", "chdir");
+        km.bind(Mode::Normal, "<Space>x", "explicit");
+        let keys = |s: &str| parse_notation(s);
+        assert!(
+            matches!(km.lookup(Mode::Normal, &keys(" t")), Lookup::Exact(b) if b.command == "todo")
+        );
+        assert!(matches!(
+            km.lookup(Mode::Normal, &keys(" c")),
+            Lookup::Prefix
+        ));
+        assert!(
+            matches!(km.lookup(Mode::Normal, &keys(" cd")), Lookup::Exact(b) if b.command == "chdir")
+        );
+        assert!(
+            matches!(km.lookup(Mode::Normal, &keys(" x")), Lookup::Exact(b) if b.command == "explicit")
+        );
+        assert!(matches!(
+            km.lookup(Mode::Normal, &keys(" ")),
+            Lookup::Prefix
+        ));
+        assert!(matches!(km.lookup(Mode::Normal, &keys(",t")), Lookup::None));
+        km.set_leader(",").unwrap();
+        assert_eq!(km.leader(), ",");
+        // A bound `,` waits while a leader map is open past it.
+        km.bind(Mode::Normal, ",", "keep_primary");
+        assert!(matches!(
+            km.lookup(Mode::Normal, &keys(",")),
+            Lookup::Prefix
+        ));
+        assert!(matches!(km.lookup(Mode::Normal, &keys(",q")), Lookup::None));
+        assert!(
+            matches!(km.lookup(Mode::Normal, &keys(",t")), Lookup::Exact(b) if b.command == "todo")
+        );
+        assert!(
+            matches!(km.lookup(Mode::Normal, &keys(" t")), Lookup::None),
+            "Space is no leader now"
+        );
+        assert!(
+            matches!(km.lookup(Mode::Normal, &keys(" x")), Lookup::Exact(_)),
+            "the explicit map stays"
+        );
+        km.set_leader("<Space>").unwrap();
+        assert_eq!(km.leader(), "<Space>");
+        km.set_leader(" ").unwrap();
+        assert_eq!(km.leader(), "<Space>");
+        assert!(km.set_leader("ab").is_err());
+        assert!(km.set_leader("").is_err());
+        // The listing says `<leader>`, whatever it stands for.
+        let listed: Vec<String> = km
+            .bindings(Mode::Normal)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert!(listed.contains(&"<leader>t".to_string()), "{listed:?}");
     }
 
     #[test]

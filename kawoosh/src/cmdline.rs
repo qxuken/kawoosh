@@ -81,6 +81,7 @@ pub const SHELL_COMMANDS: &[(&str, &[ArgKind], bool)] = &[
     ("scrollback", &[], false),
     ("session_restore", &[], false),
     ("session_save", &[], false),
+    ("settings", &[ArgKind::Text], false),
     ("split", &[ArgKind::Path], false),
     ("syntax_tree", &[ArgKind::Text], false),
     ("tab_close", &[], false),
@@ -172,15 +173,19 @@ impl Kawoosh {
                 v
             }
             Some(ArgKind::Option) => {
-                let mut v: Vec<String> = self
-                    .ed
-                    .options
-                    .keys()
-                    .filter(|n| n.starts_with(token))
-                    .cloned()
-                    .collect();
-                v.sort();
-                v
+                // Every leaf of the effective tree, by dotted path; `no`
+                // and `=` are not part of the name.
+                let name = token.strip_prefix("no").unwrap_or(token);
+                let name = name.split('=').next().unwrap_or(name);
+                let prefix = &token[..token.len() - name.len()];
+                self.ed
+                    .settings
+                    .effective()
+                    .paths()
+                    .into_iter()
+                    .filter(|p| p.starts_with(name))
+                    .map(|p| format!("{prefix}{p}"))
+                    .collect()
             }
         };
         out.dedup();

@@ -503,7 +503,7 @@ impl Kawoosh {
             },
         );
         if focused {
-            ui.take_key_focus(sink);
+            self.focus_sink(ui, sink);
         }
     }
 
@@ -525,8 +525,9 @@ impl Kawoosh {
         let rows_n = ((height / LH).floor().max(1.0)) as usize;
         let scrolloff = self
             .ed
-            .option("scrolloff")
-            .and_then(|s| s.parse::<usize>().ok())
+            .settings
+            .int("scrolloff")
+            .map(|n| n.max(0) as usize)
             .unwrap_or(3)
             .min(rows_n / 2);
         let tabstop = self.ed.tabstop();
@@ -824,7 +825,7 @@ impl Kawoosh {
         self.ed.views[view].left = left;
         self.line_cells = cells;
         if focused {
-            ui.take_key_focus(sink);
+            self.focus_sink(ui, sink);
         }
     }
 }

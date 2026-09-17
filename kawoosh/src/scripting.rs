@@ -38,18 +38,6 @@ pub struct Scripting {
     pub prefix: bool,
 }
 
-/// Where `init.lua` lives: `$KAWOOSH_INIT`, else
-/// `$XDG_CONFIG_HOME/kawoosh/init.lua`, else `~/.config/kawoosh/init.lua`.
-pub fn config_path() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("KAWOOSH_INIT") {
-        return Some(PathBuf::from(p));
-    }
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("kawoosh/init.lua"))
-}
-
 impl Kawoosh {
     /// Installs the runtime and returns the extension for the launcher
     /// (`extension_as("lua", ..)`). The bundled plugins load with it.
@@ -67,13 +55,25 @@ impl Kawoosh {
         Ok(ext)
     }
 
-    /// Runs `init.lua` if there is one.
+    /// The config, in layers (kui.md D10): the user's `settings.lua`,
+    /// then `init.lua` — which can read it — then the project's
+    /// `.kawoosh/settings.lua` files over both; and the files on the
+    /// watch, so a save reloads its layer.
     pub fn load_config(&mut self) {
-        let Some(path) = config_path() else { return };
-        if !path.exists() {
-            return;
+        if let Some(p) = crate::settings::user_settings_path() {
+            self.config.user = Some(p.clone());
+            if p.is_file() {
+                self.load_user_settings(&p);
+            }
         }
-        self.run_lua_file(&path);
+        if let Some(p) = crate::settings::config_path() {
+            self.config.init = Some(p.clone());
+            if p.is_file() {
+                self.run_init(&p);
+            }
+        }
+        self.reload_project_settings();
+        self.rewatch_config();
     }
 
     pub fn run_lua_file(&mut self, path: &Path) {
@@ -298,8 +298,18 @@ impl Kawoosh {
                     }
                 }
             }
-            Msg::Option { name, value } => {
-                self.ed.options.insert(name, value);
+            // What `init.lua` sets is the user's layer, under a project's
+            // files; what runs later is the session's, over them.
+            Msg::Option { path, value } => {
+                let layer = if self.config.loading {
+                    kawoosh_editor::Layer::User
+                } else {
+                    kawoosh_editor::Layer::Session
+                };
+                match value {
+                    Some(v) => self.ed.settings.set(layer, &path, v),
+                    None => self.ed.settings.unset(layer, &path),
+                }
             }
             Msg::Chdir(p) => self.set_cwd(&p),
             Msg::Edit { .. }
@@ -403,6 +413,7 @@ impl Kawoosh {
                 return;
             }
             let keys = ["<C-w>".to_string(), note];
+            self.ed.sync_settings();
             if let Lookup::Exact(b) = self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
                 let b = b.clone();
                 self.shell_command(&b.command, &b.args, None);
@@ -474,7 +485,7 @@ impl Kawoosh {
             },
         );
         if focused {
-            ui.take_key_focus(sink);
+            self.focus_sink(ui, sink);
         }
     }
 

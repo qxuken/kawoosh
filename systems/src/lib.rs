@@ -7,6 +7,7 @@ pub mod io;
 pub mod lsp;
 pub mod store;
 pub mod ts;
+pub mod watch;
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

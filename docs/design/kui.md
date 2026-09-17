@@ -30,10 +30,12 @@ gaps are records rather than surprises:
   incremental from the journal; the journal is never pruned (bounded by
   the buffer's life, not by memory); only Rust has a tree-sitter grammar
   and only rust-analyzer a builtin server definition (`kawoosh.lsp.server`
-  adds others; grammars need a build); workspace `.kawoosh/init.lua`
-  (7b) is not loaded — one global `init.lua`; no `:map` listing; no
-  macros or `.`; the tab strip has no close button; the undo history is
-  linear.
+  adds others; grammars need a build); a workspace's
+  `.kawoosh/settings.lua` is loaded (Decision 10) but its `init.lua`
+  (7b's code half) is not — one global `init.lua`, since code from a
+  repository wants the trust prompt 7b describes and data does not; no
+  `:map` listing; no macros or `.`; the tab strip has no close button;
+  the undo history is linear.
 
 ## What changed
 
@@ -467,6 +469,108 @@ Redraw stays event-driven: what times out arms a `systems::Alarm` at the
 earliest expiry (`Alarm::spawn_soonest`; the diagnostics debounce keeps
 the latest-wins one), so a toast's going brings its own frame and a
 quiet editor still draws nothing.
+
+### 10. Settings: data in layers, a file per source, reloaded on save
+
+mvp.md's Decision 8 drew the line — config is code, state is data — and
+left settings on the code side: `kawoosh.opt(name, value)` from
+`init.lua`, into a flat map of strings the engine read back by parsing.
+That shape had no answer for a project: 7b's `.kawoosh/init.lua` would
+have been code from a repository, run on open, behind a trust prompt
+nobody had built. The answer is that **a setting is data, and the file
+that holds it is a Lua table, not a Lua program**:
+
+```lua
+-- ~/.config/kawoosh/settings.lua, or <project>/.kawoosh/settings.lua
+return {
+  tabstop = 2,
+  compile = { command = "cargo test" },
+  lsp = { rust = { roots = { "Cargo.toml" }, args = { "-v" } } },
+}
+```
+
+A settings file is evaluated in a sandbox (`Runtime::eval_settings`):
+the pure library — `string`, `table`, `math`, `pairs`, `tostring` — and
+nothing that reaches out, no `os`, `io`, `require`, no `kawoosh`. So a
+file in a repository is read the way a `.editorconfig` is read: on
+open, without asking, because it cannot do anything but describe. A
+file that reaches for `os` is an error toast naming its line, and the
+files beside it still load. (7b's `.kawoosh/init.lua` stays unbuilt:
+code from a repository still wants the prompt, and most of what 7b
+listed for it — compile commands, LSP settings, tool definitions — is
+data, which this file carries.)
+
+**A `Setting` is a tree** — `Bool`, `Int`, `Float`, `Str`, `List`,
+`Table` — read by dotted path (`lsp.rust.cmd`), typed at the reader
+(`settings.int("tabstop")`), lenient where it costs nothing (a `"2"`
+reads as 2). **`Settings` keeps a layer per source**, and the effective
+tree is their merge, in this order:
+
+| Layer | Source | Set by |
+|---|---|---|
+| default | `default` | the engine (`tabstop = 4`, `expandtab`, `scrolloff`, `leader = " "`) |
+| user | `~/.config/kawoosh/settings.lua`, then `user` | the file; then `init.lua`'s `kawoosh.opt` |
+| project | every `.kawoosh/settings.lua` above the cwd, outermost first | the repository |
+| session | `session` | `:set`, and `kawoosh.opt` from a command |
+
+A table over a table merges key by key, so a member crate's file can
+add `lsp.rust.args` without repeating the root's `lsp.rust.roots`;
+anything else replaces. Each layer is swapped whole: `:cd` replaces the
+project layer from the new directory and leaves `:set` alone; `:set
+PATH!` takes the session's value out and what was under it shows
+again; `:set PATH?` says the value and its origin (`project:
+repo/.kawoosh/settings.lua`). `init.lua` runs after the user's file, so
+code can read what data said; what it sets lands in the user layer
+under the project's files, which is what makes a project file an
+*override*. `:compile` with no argument runs `compile.command` — the
+setting a project file is there to set.
+
+**The leader is a setting** (`leader = ","`), and a map keeps
+`<leader>` as its own token rather than the key it stood for when the
+map was made: the keymap resolves it at lookup, so the bundled plugins'
+maps — bound before any file loads — and a reloaded file's leader
+agree without anything rebound, and `:map` listings say `<leader>cd`.
+A pressed key that is the leader's follows both its own branch and the
+`<leader>` branch, an exact map on the key winning; a leader map open
+past a bound key keeps the sequence waiting rather than firing the
+bare key, which is what choosing `,` as leader means in vim too. The
+engine applies the leader before a key is looked up whenever the
+settings' version moved (`Editor::sync_settings`).
+
+The Lua side is one verb, typed: `kawoosh.opt("tabstop")` is `4` (an
+integer, not `"4"`), `kawoosh.opt("lsp")` the subtree as a table,
+`kawoosh.opt()` the whole tree; `kawoosh.opt("lsp.rust", { args = {} })`
+sets a subtree, `nil` unsets. A function anywhere in the value is
+refused where it is (`a function at \`x.f\``) — settings are data, and
+the message crossing the boundary (`Msg::Option { path, value }`) is
+the same shape a file returns.
+
+**Reload on save.** The user's two files and every candidate
+`.kawoosh/settings.lua` above the working directory — whether it exists
+yet, so making one counts — are on a watch (`systems::watch`): a
+thread stats the set twice a second, posts the paths whose stamp
+changed and wakes the loop, and posts nothing while they are still,
+so a quiet editor stays parked. Polling rather than the platform's
+file events: a handful of paths, a microsecond a stat, no dependency
+and no backend per platform. The frame re-layers the file's layer; a
+saved `init.lua` runs again with what it set before taken out first,
+so a line removed is a setting gone; a corner line under `settings`
+says which file (`reloaded .kawoosh/settings.lua`). `:settings reload`
+does it on demand.
+
+**The Settings tab** (`:settings`, beside Syntax and Perf in the
+devtools) is the state made visible: the layers from the one that wins
+down, each source's leaves as `path = value`, a file's row a click from
+opening it, and the effective tree with where every value came from. A
+layer with no file yet offers one — `~/.config/kawoosh/settings.lua ·
+new`, `.kawoosh/settings.lua · new` for the working directory — and the
+click opens a buffer at that path with a `return {}` template in it and
+nothing on disk: `:w` is the user's (it makes the directory), and the
+watch lists the file once it lands. A click in the panel that opens
+something hands the keyboard to what opened; a press on a plain row
+blurs kui's focus to none, and the focused pane takes it back the
+next frame — a modal editor has no state where keys go nowhere. Its header counts the sources and the watched files and says what
+was last reloaded and when.
 
 ### Deliberately not in the MVP
 

@@ -19,7 +19,7 @@ impl T {
     /// Keys in map notation, one per char, `<...>` chords whole. In insert
     /// mode a character arrives as text, the way the shell delivers it.
     fn keys(&mut self, seq: &str) -> &mut Self {
-        for k in kawoosh_editor::keymap::parse_notation(seq, " ") {
+        for k in kawoosh_editor::keymap::parse_notation(seq) {
             let stroke = stroke_of(&k);
             self.ed.key(self.v, stroke);
         }

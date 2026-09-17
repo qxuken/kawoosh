@@ -8,6 +8,7 @@ pub mod keymap;
 pub mod motions;
 pub mod search;
 pub mod selection;
+pub mod settings;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,7 @@ use std::rc::Rc;
 use kawoosh_doc::{Buffer, BufferId, Version};
 pub use keymap::{Binding, KeyStroke, Keymap, Lookup, Mode};
 pub use selection::{Selection, Selections};
+pub use settings::{Layer, Setting, Settings};
 use slotmap::{SlotMap, new_key_type};
 
 new_key_type! {
@@ -318,9 +320,12 @@ pub struct Editor {
     pub search: Option<search::Search>,
     pub message: String,
     pub effects: Vec<Effect>,
-    /// Options read by commands and the shell: `tabstop`, `expandtab`,
-    /// `scrolloff`. Strings, so Lua sets them without a schema.
-    pub options: HashMap<String, String>,
+    /// What commands and the shell read — `tabstop`, `expandtab`,
+    /// `scrolloff`, and whatever a file or a plugin adds — as a tree of
+    /// data with a layer per source ([`settings`]).
+    pub settings: Settings,
+    /// The settings version the keymap last took its leader from.
+    settings_applied: u64,
     pub last_insert: String,
 }
 
@@ -355,12 +360,10 @@ impl Editor {
             search: None,
             message: String::new(),
             effects: Vec::new(),
-            options: HashMap::new(),
+            settings: Settings::new(),
+            settings_applied: 0,
             last_insert: String::new(),
         };
-        ed.options.insert("tabstop".into(), "4".into());
-        ed.options.insert("expandtab".into(), "true".into());
-        ed.options.insert("scrolloff".into(), "3".into());
         commands::install(&mut ed);
         commands::default_keymap(&mut ed.keymap);
         ed
@@ -400,14 +403,31 @@ impl Editor {
             .map(|(id, _)| id)
     }
 
-    pub fn option(&self, name: &str) -> Option<&str> {
-        self.options.get(name).map(String::as_str)
+    pub fn tabstop(&self) -> usize {
+        self.settings
+            .int("tabstop")
+            .filter(|n| *n > 0)
+            .map(|n| n as usize)
+            .unwrap_or(4)
     }
 
-    pub fn tabstop(&self) -> usize {
-        self.option("tabstop")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(4)
+    pub fn expandtab(&self) -> bool {
+        self.settings.bool("expandtab").unwrap_or(true)
+    }
+
+    /// What the keymap derives from the settings — the leader — applied
+    /// once per change, before a key is looked up.
+    pub fn sync_settings(&mut self) {
+        let v = self.settings.version();
+        if v == self.settings_applied {
+            return;
+        }
+        self.settings_applied = v;
+        if let Some(l) = self.settings.str("leader")
+            && let Err(e) = self.keymap.set_leader(l)
+        {
+            self.message = e;
+        }
     }
 
     // ------------------------------------------------------------ commands
@@ -702,6 +722,7 @@ impl Editor {
     /// A key press. Returns true when the key was consumed by a binding
     /// or a prompt; false when nothing was bound.
     pub fn key(&mut self, view: ViewId, stroke: KeyStroke) -> bool {
+        self.sync_settings();
         if !self.views.contains_key(view) {
             return false;
         }
@@ -1124,7 +1145,7 @@ impl Editor {
             return;
         }
         let mut text = text.to_string();
-        if text == "\t" && self.option("expandtab") == Some("true") {
+        if text == "\t" && self.expandtab() {
             text = " ".repeat(self.tabstop());
         }
         let sels = self.views[view].sels.items.clone();

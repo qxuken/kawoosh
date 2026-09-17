@@ -19,6 +19,7 @@ pub mod plugins;
 pub mod rows;
 pub mod scripting;
 pub mod session;
+pub mod settings;
 pub mod terminals;
 
 pub use app::Kawoosh;

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use kawoosh_doc::{BufferId, Snapshot};
-use kawoosh_editor::{Ctx, Editor, ViewId};
+use kawoosh_editor::{Ctx, Editor, Setting, ViewId};
 use kui_lua::LuaExtension;
 use mlua::{Lua, Table, Value as LV};
 use slotmap::{Key, KeyData};
@@ -74,9 +74,12 @@ pub enum Msg {
         roots: Vec<String>,
     },
     Colors(Vec<(String, String)>),
+    /// `kawoosh.opt(path, value)`: a setting by dotted path, `None` to
+    /// take the session's value back out. Which layer it lands in is
+    /// the shell's to say (a config loading sets the user's).
     Option {
-        name: String,
-        value: String,
+        path: String,
+        value: Option<Setting>,
     },
     Chdir(PathBuf),
     Edit {
@@ -119,15 +122,28 @@ pub struct BufSnap {
     pub modified: bool,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Published {
     pub current: Option<u64>,
     pub mode: String,
     pub buffers: HashMap<u64, BufSnap>,
-    pub options: HashMap<String, String>,
+    /// The effective settings, every layer merged.
+    pub settings: Setting,
     /// For a tracked buffer: what each original line has become — its
     /// current text, or `None` when deleted (see `Runtime::track_lines`).
     pub tracked: HashMap<u64, Vec<Option<String>>>,
+}
+
+impl Default for Published {
+    fn default() -> Self {
+        Self {
+            current: None,
+            mode: String::new(),
+            buffers: HashMap::new(),
+            settings: Setting::table(),
+            tracked: HashMap::new(),
+        }
+    }
 }
 
 pub fn handle_of(id: BufferId) -> u64 {
@@ -201,6 +217,44 @@ impl Runtime {
             .map_err(|e| format!("{e}"))
     }
 
+    /// Evaluates a settings file: a chunk that returns a table, run
+    /// with nothing but the pure library in scope — no `os`, `io`,
+    /// `require`, no `kawoosh` — so a project's file is data, not code
+    /// that opening the project runs (kui.md D10). `name` is for the
+    /// error.
+    pub fn eval_settings(&self, name: &str, src: &str) -> Result<Setting, String> {
+        let env = self.settings_env().map_err(|e| format!("{name}: {e}"))?;
+        let v: LV = self
+            .lua
+            .load(src)
+            .set_name(name)
+            .set_environment(env)
+            .eval()
+            .map_err(|e| settings_error(name, &e))?;
+        match v {
+            LV::Table(_) => from_lua(&v, "").map_err(|e| format!("{name}: {e}")),
+            other => Err(format!(
+                "{name}: a settings file returns a table, this returned {}",
+                other.type_name()
+            )),
+        }
+    }
+
+    /// The sandbox a settings file runs in: the functions that compute
+    /// and nothing that reaches out.
+    fn settings_env(&self) -> mlua::Result<Table> {
+        let g = self.lua.globals();
+        let env = self.lua.create_table()?;
+        for name in [
+            "assert", "error", "ipairs", "pairs", "next", "select", "tonumber", "tostring", "type",
+            "pcall", "math", "string", "table", "utf8",
+        ] {
+            env.set(name, g.get::<LV>(name)?)?;
+        }
+        env.set("_G", &env)?;
+        Ok(env)
+    }
+
     /// Remembers every line of `id` at its current version, so a later
     /// `kawoosh.buf.tracked()` says what each became — renamed, deleted,
     /// or unchanged — however the text was edited in between.
@@ -259,7 +313,7 @@ impl Runtime {
         }
         p.current = current.map(|v| handle_of(ed.views[v].buffer));
         p.mode = ed.mode.name().to_lowercase();
-        p.options = ed.options.clone();
+        p.settings = ed.settings.effective().clone();
     }
 
     /// Runs the Lua command `name`.
@@ -598,23 +652,30 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // ---- settings: `kawoosh.opt(path)` reads the effective value at a
+    // dotted path (a table for a subtree, the whole tree for no path);
+    // `kawoosh.opt(path, value)` sets it, typed as given, `nil` unsets.
     let qq = q(queue);
     let pp = published.clone();
     k.set(
         "opt",
         lua.create_function(
-            move |lua, (name, value): (String, Option<LV>)| match value {
-                Some(v) => {
-                    qq.borrow_mut().push(Msg::Option {
-                        name,
-                        value: lua_str(&v),
-                    });
-                    Ok(LV::Nil)
+            move |lua, (path, value): (Option<String>, mlua::Variadic<LV>)| {
+                let path = path.unwrap_or_default();
+                match value.into_iter().next() {
+                    Some(v) => {
+                        let value = match v {
+                            LV::Nil => None,
+                            v => Some(from_lua(&v, &path).map_err(mlua::Error::runtime)?),
+                        };
+                        qq.borrow_mut().push(Msg::Option { path, value });
+                        Ok(LV::Nil)
+                    }
+                    None => match pp.borrow().settings.get(&path) {
+                        Some(s) => to_lua(lua, s),
+                        None => Ok(LV::Nil),
+                    },
                 }
-                None => match pp.borrow().options.get(&name) {
-                    Some(v) => Ok(LV::String(lua.create_string(v)?)),
-                    None => Ok(LV::Nil),
-                },
             },
         )?,
     )?;
@@ -967,6 +1028,112 @@ fn seed(
     Ok(())
 }
 
+/// A settings file's error as `FILE:LINE: what`: Lua's own message
+/// with its chunk name — `[string "…"]`, cut to sixty characters — put
+/// back as the path, whole.
+fn settings_error(name: &str, e: &mlua::Error) -> String {
+    let msg = match e {
+        mlua::Error::SyntaxError { message, .. } => message.clone(),
+        mlua::Error::RuntimeError(m) => m.clone(),
+        other => other.to_string(),
+    };
+    let msg = msg.lines().next().unwrap_or("").to_string();
+    match msg
+        .strip_prefix("[string \"")
+        .and_then(|r| r.split_once("\"]:"))
+    {
+        Some((_, rest)) => format!("{name}:{rest}"),
+        None => format!("{name}: {msg}"),
+    }
+}
+
+/// A setting as a Lua value; a table is built fresh each read.
+pub fn to_lua(lua: &Lua, s: &Setting) -> mlua::Result<LV> {
+    Ok(match s {
+        Setting::Bool(b) => LV::Boolean(*b),
+        Setting::Int(i) => LV::Integer(*i),
+        Setting::Float(f) => LV::Number(*f),
+        Setting::Str(x) => LV::String(lua.create_string(x)?),
+        Setting::List(l) => {
+            let t = lua.create_table()?;
+            for (i, v) in l.iter().enumerate() {
+                t.set(i + 1, to_lua(lua, v)?)?;
+            }
+            LV::Table(t)
+        }
+        Setting::Table(m) => {
+            let t = lua.create_table()?;
+            for (k, v) in m {
+                t.set(k.as_str(), to_lua(lua, v)?)?;
+            }
+            LV::Table(t)
+        }
+    })
+}
+
+/// A Lua value as a setting: a sequence is a list, a table with string
+/// keys a table, and a function or anything else that is not data is an
+/// error naming where it was (`at` is the path so far).
+pub fn from_lua(v: &LV, at: &str) -> Result<Setting, String> {
+    let here = |k: &str| {
+        if at.is_empty() {
+            k.to_string()
+        } else {
+            format!("{at}.{k}")
+        }
+    };
+    Ok(match v {
+        LV::Boolean(b) => Setting::Bool(*b),
+        LV::Integer(i) => Setting::Int(*i),
+        LV::Number(n) => Setting::Float(*n),
+        LV::String(s) => Setting::Str(s.to_string_lossy()),
+        LV::Table(t) => {
+            let n = t.raw_len();
+            let mut list = Vec::new();
+            let mut map = std::collections::BTreeMap::new();
+            for pair in t.pairs::<LV, LV>() {
+                let (k, v) = pair.map_err(|e| e.to_string())?;
+                match k {
+                    LV::Integer(i) if i >= 1 && i as usize <= n => {
+                        list.push((i as usize, from_lua(&v, &here(&i.to_string()))?));
+                    }
+                    LV::String(s) => {
+                        let s = s.to_string_lossy();
+                        let v = from_lua(&v, &here(&s))?;
+                        map.insert(s, v);
+                    }
+                    other => {
+                        return Err(format!(
+                            "settings are data: a {} key at `{}`",
+                            other.type_name(),
+                            if at.is_empty() { "<root>" } else { at }
+                        ));
+                    }
+                }
+            }
+            if !list.is_empty() && !map.is_empty() {
+                return Err(format!(
+                    "settings are data: `{}` mixes a list and a table",
+                    if at.is_empty() { "<root>" } else { at }
+                ));
+            }
+            if list.is_empty() {
+                Setting::Table(map)
+            } else {
+                list.sort_by_key(|(i, _)| *i);
+                Setting::List(list.into_iter().map(|(_, v)| v).collect())
+            }
+        }
+        other => {
+            return Err(format!(
+                "settings are data: a {} at `{}`",
+                other.type_name(),
+                if at.is_empty() { "<root>" } else { at }
+            ));
+        }
+    })
+}
+
 fn lua_str(v: &LV) -> String {
     match v {
         LV::String(s) => s.to_string_lossy(),
@@ -1036,6 +1203,118 @@ mod tests {
         );
         Runtime::apply_editor_msgs(&mut ed, v, rt.take_msgs());
         assert_eq!(ed.buffers[b].text(), "Z3ab\ncd");
+    }
+
+    /// `kawoosh.opt`: a read is the effective value, typed — a number,
+    /// a table for a subtree, the whole tree for no path; a write is a
+    /// message with the value as given, `nil` an unset; a function is
+    /// refused where it is.
+    #[test]
+    fn opt_reads_typed_and_writes_data() {
+        let (rt, _ext) = Runtime::new().unwrap();
+        let mut ed = Editor::new();
+        ed.settings.set(
+            kawoosh_editor::Layer::User,
+            "lsp.rust.cmd",
+            Setting::Str("ra".into()),
+        );
+        rt.publish(&ed, None);
+        rt.load_source(
+            "t",
+            r#"
+            assert(kawoosh.opt("tabstop") == 4)
+            assert(math.type(kawoosh.opt("tabstop")) == "integer")
+            assert(kawoosh.opt("expandtab") == true)
+            assert(kawoosh.opt("lsp.rust.cmd") == "ra")
+            assert(kawoosh.opt("lsp").rust.cmd == "ra")
+            assert(kawoosh.opt().tabstop == 4)
+            assert(kawoosh.opt("nope") == nil)
+            kawoosh.opt("tabstop", 2)
+            kawoosh.opt("lsp.rust", { args = { "-v", "-q" }, roots = {} })
+            kawoosh.opt("scrolloff", nil)
+            local ok, err = pcall(kawoosh.opt, "x.f", function() end)
+            assert(not ok and tostring(err):find("a function at `x.f`", 1, true), tostring(err))
+            local ok2, err2 = pcall(kawoosh.opt, "m", { 1, a = 2 })
+            assert(not ok2 and tostring(err2):find("mixes", 1, true), tostring(err2))
+            "#,
+        )
+        .unwrap();
+        let mut args = std::collections::BTreeMap::new();
+        args.insert(
+            "args".to_string(),
+            Setting::List(vec![Setting::Str("-v".into()), Setting::Str("-q".into())]),
+        );
+        args.insert("roots".to_string(), Setting::table());
+        assert_eq!(
+            rt.take_msgs(),
+            [
+                Msg::Option {
+                    path: "tabstop".into(),
+                    value: Some(Setting::Int(2))
+                },
+                Msg::Option {
+                    path: "lsp.rust".into(),
+                    value: Some(Setting::Table(args))
+                },
+                Msg::Option {
+                    path: "scrolloff".into(),
+                    value: None
+                },
+            ]
+        );
+    }
+
+    /// A settings file is data: it returns a table, computed with the
+    /// pure library only — `os`, `io`, `require` and `kawoosh` are not
+    /// there — and a file that returns anything else says so.
+    #[test]
+    fn a_settings_file_is_a_table_in_a_sandbox() {
+        let (rt, _ext) = Runtime::new().unwrap();
+        let s = rt
+            .eval_settings(
+                "x/settings.lua",
+                r#"
+                local ts = 2
+                return {
+                  tabstop = ts * 2,
+                  compile = { command = ("cargo %s"):format("test") },
+                  lsp = { rust = { roots = { "Cargo.toml" }, args = {} } },
+                  ratio = 1.5,
+                }
+                "#,
+            )
+            .unwrap();
+        assert_eq!(s.get("tabstop"), Some(&Setting::Int(4)));
+        assert_eq!(
+            s.get("compile.command").and_then(Setting::as_str),
+            Some("cargo test")
+        );
+        assert_eq!(
+            s.get("lsp.rust.roots"),
+            Some(&Setting::List(vec![Setting::Str("Cargo.toml".into())]))
+        );
+        assert_eq!(s.get("lsp.rust.args"), Some(&Setting::table()));
+        assert_eq!(s.get("ratio"), Some(&Setting::Float(1.5)));
+
+        for (src, needle) in [
+            (
+                "return os.getenv('HOME')",
+                "s.lua:1: attempt to index a nil value (global 'os')",
+            ),
+            ("return io.open('/etc/passwd')", "global 'io'"),
+            ("return require('x')", "global 'require'"),
+            ("return kawoosh.buf.text()", "global 'kawoosh'"),
+            ("return 1", "returned integer"),
+            ("tabstop = 2", "returned nil"),
+            ("return { f = function() end }", "a function at `f`"),
+            ("return {", "s.lua:1: unexpected symbol"),
+        ] {
+            let err = rt.eval_settings("s.lua", src).unwrap_err();
+            assert!(err.contains(needle), "{src:?}: {err}");
+        }
+        // The sandbox is per evaluation: a global set there is gone after.
+        rt.eval_settings("s.lua", "leaked = 1; return {}").unwrap();
+        assert!(rt.lua().globals().get::<LV>("leaked").unwrap().is_nil());
     }
 
     /// `kawoosh.fs`: paths as the user writes them, on every platform —

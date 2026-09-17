@@ -160,6 +160,9 @@ Terminals: :term, ctrl-w d for the dock. In a terminal ctrl-w is the
 pane prefix (ctrl-w . sends a literal ^W), ctrl-\\ ctrl-n opens the
 scrollback as a buffer, and ctrl/cmd-click on src/main.rs:42 opens it.
 $EDITOR inside a terminal opens a pane here and waits.
+Settings: :set tabstop=2, :set path? for a value and where it is from,
+:settings for the devtools tab of every layer — ~/.config/kawoosh/
+settings.lua, a project's .kawoosh/settings.lua, :set — reloaded on save.
 kui's instruments: :kui_debugger (F12) and :kui_framerate_hud;
 :syntax_tree opens it on the buffer's tree-sitter tree, :perf on what
 a frame and the systems cost and what the process holds.

@@ -28,6 +28,7 @@ use crate::lsp::LspState;
 use crate::notify::{Level, Notifications};
 use crate::rows::{self, Drawn, GUTTER_W, LH, STRIP_H};
 use crate::scripting::Scripting;
+use crate::settings::Config;
 use crate::terminals::{TermId, Terminals};
 
 pub const TITLE_H: f32 = 22.0;
@@ -44,6 +45,8 @@ pub struct Kawoosh {
     pub ts: Ts,
     pub lsp: LspState,
     pub scripting: Scripting,
+    /// The config files, their watch, and the last reload.
+    pub config: Config,
     pub compile: Compile,
     /// Toasts, the corner log and the full log (`notify.rs`).
     pub notes: Notifications,
@@ -108,6 +111,9 @@ pub struct Kawoosh {
     /// False after a wheel scroll, so the view stays where the wheel put
     /// it until the caret moves again.
     pub(crate) follow_caret: bool,
+    /// The next frame moves the keyboard to the focused pane, whatever
+    /// kui put it on — a click in the devtools panel that opened a file.
+    pub(crate) reclaim_focus: bool,
     pub(crate) drag_anchor: Option<usize>,
     /// The split divider being dragged, by path.
     pub(crate) dragging: Option<String>,
@@ -139,6 +145,7 @@ impl Kawoosh {
                 servers: kawoosh_systems::lsp::ServerDef::builtin(),
                 ..Default::default()
             },
+            config: Config::new(wake.clone()),
             compile: Compile::default(),
             notes: Notifications::new(wake.clone()),
             messages_shown: 0,
@@ -167,6 +174,7 @@ impl Kawoosh {
             awaiting_paste: false,
             scroll_carry: 0.0,
             follow_caret: true,
+            reclaim_focus: false,
             drag_anchor: None,
             dragging: None,
             body_h: 600.0,
@@ -209,6 +217,22 @@ impl Kawoosh {
         self.ed.cwd = dir.clone();
         self.cwd = dir;
         self.ed.message = self.cwd.display().to_string();
+        // Another directory is another project: its `.kawoosh` files
+        // are the project layer now, and the ones to watch.
+        self.reload_project_settings();
+        self.rewatch_config();
+    }
+
+    /// Declares `sink` the focused pane's: it takes the keyboard when the
+    /// declaration starts (kui's rule), or now, when the shell asked to
+    /// have it back (`reclaim_focus`) or nothing holds it — a press on a
+    /// dead spot of the devtools panel blurs kui's focus to none, and a
+    /// modal editor has no state in which the keyboard goes nowhere.
+    pub(crate) fn focus_sink(&mut self, ui: &mut Ui<'_>, sink: kui::Key) {
+        ui.take_key_focus(sink);
+        if std::mem::take(&mut self.reclaim_focus) || ui.key_focus().is_none() {
+            ui.focus(sink);
+        }
     }
 
     /// A mono cell's advance and height, as measured last frame.
@@ -857,11 +881,14 @@ impl Kawoosh {
             // shown, with the panel if it was off; shown already, the
             // panel closes — a toggle, like the instruments. `on` / `off`
             // set.
-            "syntax_tree" | "perf" => {
-                let (tab, what) = if name == "perf" {
-                    (crate::perf::TAB, "perf")
-                } else {
-                    (crate::inspector::TAB, "syntax tree")
+            "settings" if args.first().map(String::as_str) == Some("reload") => {
+                self.reload_all_settings();
+            }
+            "syntax_tree" | "perf" | "settings" => {
+                let (tab, what) = match name {
+                    "perf" => (crate::perf::TAB, "perf"),
+                    "settings" => (crate::settings::TAB, "settings"),
+                    _ => (crate::inspector::TAB, "syntax tree"),
                 };
                 let showing = self.devtools && self.tab_shown == Some(tab);
                 let on = match args.first().map(String::as_str) {
@@ -996,12 +1023,20 @@ impl Kawoosh {
                 let src = args.join(" ");
                 self.run_lua_source("<lua>", &src);
             }
+            // `:compile CMD`, or bare, the project's `compile.command` —
+            // the setting a `.kawoosh/settings.lua` is there to set.
             "compile" => {
-                if args.is_empty() {
-                    self.ed.message = "compile what? (:compile CMD)".into();
+                let cmd = if args.is_empty() {
+                    self.ed.settings.str("compile.command").map(str::to_string)
                 } else {
-                    let cmd = args.join(" ");
-                    self.compile(&cmd);
+                    Some(args.join(" "))
+                };
+                match cmd {
+                    Some(cmd) => self.compile(&cmd),
+                    None => {
+                        self.ed.message =
+                            "compile what? (:compile CMD, or set compile.command)".into();
+                    }
                 }
             }
             "goto_location" => {
@@ -1474,6 +1509,7 @@ impl kui::App for Kawoosh {
         let frame_started = Instant::now();
         let t = Instant::now();
         self.drain_io();
+        self.sync_settings();
         self.perf.cur.io = ms(t);
         let t = Instant::now();
         self.sync_syntax();
@@ -1511,6 +1547,7 @@ impl kui::App for Kawoosh {
         // show, as a layer over the panel's tab body (kui ADR 0032).
         self.syntax_tab(ui);
         self.perf_tab(ui);
+        self.settings_tab(ui);
         let m = ui.measure_text("M", &rows::mono(self.font, &pal), None);
         self.cell = (m.width.max(1.0), LH);
         if let Some(text) = self.clip_out.take() {
@@ -1622,6 +1659,7 @@ impl kui::App for Kawoosh {
                 self.drain_effects();
             }
             Some("syntax") => self.on_syntax_click(p),
+            Some("settings") => self.on_settings_click(p),
             Some("modifiers") => {
                 let f = |k| p.get(k).and_then(Value::as_bool).unwrap_or(false);
                 self.mods = (f("ctrl"), f("alt"), f("super"), f("shift"));
