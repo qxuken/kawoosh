@@ -295,6 +295,20 @@ and what a plugin accepts are one thing (the case that filed this: `:oil
 ~/projects` refused as "not a directory" because the plugin's `is_dir`
 never saw the `~`). The file manager is the acceptance test: no `/` in it.
 
+**A command declares what its arguments are, and the engine resolves
+them.** `kawoosh.command(name, fn, { args = { "path", "text..." } })` —
+the kinds are `path`, `buffer`, `command`, `option`, `tool`, `view`,
+`text`, the last with `...` for the rest — and the same declaration in
+Rust (`Editor::register_with_args`, `Editor::declare` for a command the
+shell runs). A `path` reaches the command absolute, whoever registered it
+— the engine's `:w`, the shell's `:cd`, a plugin's `:oil` — resolved once
+in `Editor::run` against the working directory the shell keeps the engine
+told of; and the command line completes each argument from its kind, so
+neither the completer nor the plugin keeps a list of which commands take
+paths. The declaration is data on the command (`Args`), which is the
+extension surface: a plugin can read it, and a kind can be added without
+touching a plugin.
+
 The bootstrap's `view(env, slot)` is a dispatcher: the host declares
 `ui.slot_with("lua/<view>@<pane>", params)` inside every pane whose content
 is a Lua view, and the bootstrap calls the function `kawoosh.view(name,

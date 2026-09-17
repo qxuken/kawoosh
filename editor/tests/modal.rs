@@ -1,7 +1,7 @@
 //! The modal engine driven by key sequences, no UI anywhere.
 
 use kawoosh_doc::Buffer;
-use kawoosh_editor::{Editor, Effect, KeyStroke, Mode, Selection, ViewId};
+use kawoosh_editor::{ArgKind, Args, Editor, Effect, KeyStroke, Mode, Selection, ViewId};
 
 struct T {
     ed: Editor,
@@ -450,4 +450,55 @@ fn insert_mode_keys() {
     let mut t = T::new("foo bar");
     t.keys("A<C-w><Esc>");
     assert_eq!(t.text(), "foo ");
+}
+
+/// A command's `Path` argument reaches it absolute — `~`, `..` and a
+/// relative path resolved against the engine's working directory — for
+/// the engine's own commands, for one the shell declared, and for one
+/// registered with `Args`; `!` is not a path, and an argument of another
+/// kind is left alone.
+#[test]
+fn a_path_argument_is_resolved_before_the_command_runs() {
+    let mut t = T::new("x");
+    t.ed.cwd = std::path::PathBuf::from("/work/dir");
+    t.keys(":e sub/../a.txt<CR>");
+    assert!(matches!(
+        t.ed.take_effects().as_slice(),
+        [Effect::Open(p)] if p == std::path::Path::new("/work/dir/a.txt")
+    ));
+    t.keys(":e! ~/b.txt<CR>");
+    let home = kawoosh_doc::paths::home().unwrap();
+    assert!(matches!(
+        t.ed.take_effects().as_slice(),
+        [Effect::Open(p)] if *p == home.join("b.txt")
+    ));
+    // The shell's `:cd`, declared here: its argument comes back resolved
+    // in the effect, the `!` as it was.
+    t.ed.declare("cd", Args::new(&[ArgKind::Path]));
+    t.keys(":cd! ../up<CR>");
+    assert!(matches!(
+        t.ed.take_effects().as_slice(),
+        [Effect::Shell { name, args, .. }] if name == "cd" && args == &["/work/up", "!"]
+    ));
+    // A plugin's: `args = { "path", "text..." }`.
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let s2 = seen.clone();
+    t.ed.register_with_args(
+        "plug",
+        Args::parse(&["path".into(), "text...".into()]).unwrap(),
+        move |_, ctx| s2.borrow_mut().extend(ctx.args.clone()),
+    );
+    t.keys(":plug ./f.txt ~/not-a-path more<CR>");
+    assert_eq!(*seen.borrow(), ["/work/dir/f.txt", "~/not-a-path", "more"]);
+    assert_eq!(
+        Args::parse(&["text...".into(), "path".into()]).unwrap_err(),
+        "`text...` must be the last argument"
+    );
+    assert!(Args::parse(&["nope".into()]).is_err());
+    // `:w path` names the buffer by the resolved path.
+    t.keys(":w ../c.txt<CR>");
+    assert_eq!(
+        t.ed.buffer_of(t.v).path.as_deref(),
+        Some(std::path::Path::new("/work/c.txt"))
+    );
 }

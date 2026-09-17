@@ -112,6 +112,7 @@ pub struct Kawoosh {
 impl Kawoosh {
     pub fn new(title: impl Into<String>, text: &str) -> Self {
         let mut ed = Editor::new();
+        crate::cmdline::declare_shell_commands(&mut ed);
         let b = ed.add_buffer(Buffer::new(title, text));
         let view = ed.add_view(b);
         let wake = WakeHandle::new();
@@ -180,6 +181,7 @@ impl Kawoosh {
             return;
         }
         let _ = std::env::set_current_dir(&dir);
+        self.ed.cwd = dir.clone();
         self.cwd = dir;
         self.ed.message = self.cwd.display().to_string();
     }

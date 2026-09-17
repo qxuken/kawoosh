@@ -3,74 +3,16 @@
 //! and the platform's separators, so nothing else — a plugin above all
 //! — matches on `/` or reads `$HOME`. Every function taking a path
 //! takes it as the user wrote it (`~/x`, `../y`, `a\b` on Windows) and
-//! [`expand`] is how it becomes the absolute, normalized path the
-//! operations run on. Errors name the path they were about: an
-//! `io::Error` is "No such file or directory" and nothing else.
+//! [`expand`] — `kawoosh_doc::paths`, the pure part, which the engine
+//! resolves a command's path argument with — is how it becomes the
+//! absolute, normalized path the operations run on. Errors name the
+//! path they were about: an `io::Error` is "No such file or directory"
+//! and nothing else.
 
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
-/// The user's home: `$HOME`, else `$USERPROFILE` (Windows).
-pub fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .filter(|h| !h.is_empty())
-        .map(PathBuf::from)
-}
-
-/// `path` as an absolute, normalized path: `~` and `~/x` are the home,
-/// a relative path is against `cwd`, and `.` and `..` are folded
-/// lexically ([`normalize`]) — no link is followed and nothing is
-/// touched, so a path that does not exist yet expands like one that
-/// does.
-pub fn expand(path: &Path, cwd: &Path) -> PathBuf {
-    let p = if path.is_absolute() {
-        path.to_path_buf()
-    } else if let Some(rest) = path
-        .strip_prefix("~")
-        .ok()
-        .filter(|_| path.starts_with("~"))
-    {
-        match home() {
-            Some(h) => h.join(rest),
-            None => cwd.join(path),
-        }
-    } else {
-        cwd.join(path)
-    };
-    normalize(&p)
-}
-
-/// Folds `.` and `..` lexically and drops empty components: `a/./b/../c`
-/// is `a/c`. A `..` at the root stays at the root; a `..` past a
-/// relative path's start is kept, since nothing is known to fold it
-/// into. The prefix and root of an absolute path are kept as they are.
-pub fn normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    let mut depth = 0usize;
-    for c in path.components() {
-        match c {
-            Component::Prefix(_) | Component::RootDir => out.push(c.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if depth > 0 {
-                    out.pop();
-                    depth -= 1;
-                } else if !out.has_root() {
-                    out.push("..");
-                }
-            }
-            Component::Normal(n) => {
-                out.push(n);
-                depth += 1;
-            }
-        }
-    }
-    if out.as_os_str().is_empty() {
-        out.push(".");
-    }
-    out
-}
+pub use kawoosh_doc::paths::{expand, home, normalize};
 
 /// `a/b`: `b` absolute is `b` itself, as `Path::join` has it, and a
 /// trailing separator on `a` is not doubled.
@@ -232,36 +174,6 @@ pub fn write(path: &Path, text: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn normalize_folds_dots() {
-        assert_eq!(normalize(Path::new("/a/./b/../c")), PathBuf::from("/a/c"));
-        assert_eq!(normalize(Path::new("/../a")), PathBuf::from("/a"));
-        assert_eq!(normalize(Path::new("../a/..")), PathBuf::from(".."));
-        assert_eq!(normalize(Path::new("a/../..")), PathBuf::from(".."));
-        assert_eq!(normalize(Path::new("./")), PathBuf::from("."));
-        assert_eq!(normalize(Path::new("a/b/")), PathBuf::from("a/b"));
-    }
-
-    #[test]
-    fn expand_knows_home_and_cwd() {
-        let cwd = Path::new("/work/dir");
-        assert_eq!(
-            expand(Path::new("x/y"), cwd),
-            PathBuf::from("/work/dir/x/y")
-        );
-        assert_eq!(expand(Path::new("../y"), cwd), PathBuf::from("/work/y"));
-        assert_eq!(expand(Path::new("/abs"), cwd), PathBuf::from("/abs"));
-        if let Some(h) = home() {
-            assert_eq!(expand(Path::new("~"), cwd), normalize(&h));
-            assert_eq!(expand(Path::new("~/p"), cwd), normalize(&h.join("p")));
-        }
-        // `~user` is not the home; it is a name in the cwd.
-        assert_eq!(
-            expand(Path::new("~bob/p"), cwd),
-            PathBuf::from("/work/dir/~bob/p")
-        );
-    }
 
     #[test]
     fn parent_and_basename_ignore_a_trailing_separator() {

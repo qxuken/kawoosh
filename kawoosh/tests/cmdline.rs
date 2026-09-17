@@ -101,8 +101,32 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     assert_eq!(app.ed.cmdline, "b main.rs");
     d.key(&mut app, "escape", KeyMods::default());
 
-    // A Lua command completes like any other; `<Tab>` with nothing to
-    // complete is not a character.
+    // A Lua command completes like any other, and what it declared its
+    // argument to be is what the command line completes and what the
+    // command gets — a path, resolved. A kind that is not one is refused
+    // by name.
+    app.run_lua_source(
+        "t",
+        r#"
+        kawoosh.command("visit", function(ctx)
+          kawoosh.echo("visit " .. ctx.args[1] .. " " .. (ctx.args[2] or ""))
+        end, { args = { "path", "text" } })
+        local ok, err = pcall(kawoosh.command, "bad", function() end, { args = { "thing" } })
+        assert(not ok and tostring(err):find("unknown argument kind `thing`", 1, true), tostring(err))
+        "#,
+    );
+    d.keys(&mut app, ":visit s");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("rc/"));
+    tab(&mut d, &mut app);
+    d.keys(&mut app, " ~/x");
+    assert_eq!(app.cmdline_ghost(), None, "text is not completed");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(
+        app.ed.message,
+        format!("visit {} ~/x", dir.join("src").display()),
+        "the path resolved, the text as typed"
+    );
+    // `<Tab>` with nothing to complete is not a character.
     d.keys(&mut app, ":oi");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("l"));
     tab(&mut d, &mut app);

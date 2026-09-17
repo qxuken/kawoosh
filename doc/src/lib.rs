@@ -9,6 +9,7 @@
 //! it read, and the buffer transforms it to now. Runs are shifted eagerly
 //! on every edit, so reading a layer is a slice, never a transform.
 
+pub mod paths;
 pub mod version;
 
 use std::ops::Range;

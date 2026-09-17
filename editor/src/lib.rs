@@ -10,7 +10,7 @@ pub mod search;
 pub mod selection;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use kawoosh_doc::{Buffer, BufferId, Version};
@@ -153,13 +153,120 @@ pub enum Kind {
 
 pub type CommandFn = Rc<dyn Fn(&mut Editor, &Ctx)>;
 
+/// What an argument of a command is, declared with the command. The
+/// engine resolves a `Path` — `~/x`, `../y`, against the working
+/// directory — before any command sees it, whoever registered the
+/// command: the engine's `:w`, the shell's `:cd`, a plugin's `:oil`.
+/// The command line completes each kind from what it names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArgKind {
+    /// A file or directory, as the user writes it.
+    Path,
+    /// A buffer, by name.
+    Buffer,
+    /// A command, by name (`:map`'s last).
+    Command,
+    /// An option (`:set`).
+    Option,
+    /// A tool the config registered.
+    Tool,
+    /// A Lua view.
+    View,
+    /// Anything.
+    Text,
+}
+
+impl ArgKind {
+    /// The kind by its name — what a plugin writes in `args = { "path" }`.
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "path" | "file" | "dir" => Self::Path,
+            "buffer" => Self::Buffer,
+            "command" => Self::Command,
+            "option" => Self::Option,
+            "tool" => Self::Tool,
+            "view" => Self::View,
+            "text" | "string" => Self::Text,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Path => "path",
+            Self::Buffer => "buffer",
+            Self::Command => "command",
+            Self::Option => "option",
+            Self::Tool => "tool",
+            Self::View => "view",
+            Self::Text => "text",
+        }
+    }
+}
+
+/// A command's arguments: one kind per position; with `rest`, the last
+/// kind takes every argument past it (`:echo` is `text...`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Args {
+    pub kinds: Vec<ArgKind>,
+    pub rest: bool,
+}
+
+impl Args {
+    pub fn new(kinds: &[ArgKind]) -> Self {
+        Self {
+            kinds: kinds.to_vec(),
+            rest: false,
+        }
+    }
+
+    /// `kinds`, the last of them repeated.
+    pub fn rest(kinds: &[ArgKind]) -> Self {
+        Self {
+            kinds: kinds.to_vec(),
+            rest: true,
+        }
+    }
+
+    /// Parses `"path"`, `"text..."`: a trailing `...` on the last name
+    /// is `rest`. An unknown name is an error naming it.
+    pub fn parse(names: &[String]) -> Result<Self, String> {
+        let mut kinds = Vec::new();
+        let mut rest = false;
+        for (i, n) in names.iter().enumerate() {
+            let (n, more) = match n.strip_suffix("...") {
+                Some(n) => (n, true),
+                None => (n.as_str(), false),
+            };
+            if more && i + 1 != names.len() {
+                return Err(format!("`{n}...` must be the last argument"));
+            }
+            rest |= more;
+            kinds.push(ArgKind::parse(n).ok_or_else(|| format!("unknown argument kind `{n}`"))?);
+        }
+        Ok(Self { kinds, rest })
+    }
+
+    /// The kind of argument `i` (from 0), if the command takes one.
+    pub fn kind_at(&self, i: usize) -> Option<ArgKind> {
+        self.kinds
+            .get(i)
+            .copied()
+            .or_else(|| (self.rest && !self.kinds.is_empty()).then(|| *self.kinds.last().unwrap()))
+    }
+}
+
 #[derive(Clone)]
 pub struct Command {
     pub name: String,
-    pub run: CommandFn,
+    /// What runs it — or nothing, for a command declared here (its
+    /// arguments, for resolving and completing) and run by the shell:
+    /// running one is [`Effect::Shell`].
+    pub run: Option<CommandFn>,
     pub kind: Kind,
     /// True for commands that read one more key as an argument.
     pub takes_char: bool,
+    pub args: Args,
 }
 
 /// How many lines a prompt's history keeps.
@@ -192,6 +299,9 @@ pub struct Editor {
     pub visual_linewise: bool,
     pub prompt: Prompt,
     pub cmdline: String,
+    /// The working directory a command's `Path` argument is resolved
+    /// against (`ArgKind::Path`); the shell keeps it in step with its own.
+    pub cwd: PathBuf,
     /// What was entered at the `:` prompt, oldest first, no repeats:
     /// `<Up>` / `<Down>` at the prompt walk it, from the newest line
     /// starting with what is typed. The shell keeps it with the session.
@@ -238,6 +348,7 @@ impl Editor {
             visual_linewise: false,
             prompt: Prompt::Command,
             cmdline: String::new(),
+            cwd: std::env::current_dir().unwrap_or_default(),
             cmd_history: Vec::new(),
             search_history: Vec::new(),
             hist_walk: None,
@@ -305,21 +416,92 @@ impl Editor {
         self.register_kind(name, Kind::Other, run);
     }
 
+    /// A command with its arguments declared: a `Path` among them
+    /// reaches `run` resolved, and the command line completes each.
+    pub fn register_with_args(
+        &mut self,
+        name: &str,
+        args: Args,
+        run: impl Fn(&mut Editor, &Ctx) + 'static,
+    ) {
+        self.register_kind(name, Kind::Other, run);
+        self.commands.get_mut(name).unwrap().args = args;
+    }
+
+    /// Declares a command the shell runs: its name and arguments are
+    /// known here — resolved and completed like any other — and running
+    /// it is [`Effect::Shell`]. A declaration never replaces a command
+    /// that has a `run`.
+    pub fn declare(&mut self, name: &str, args: Args) {
+        match self.commands.get_mut(name) {
+            Some(c) => c.args = args,
+            None => {
+                self.commands.insert(
+                    name.to_string(),
+                    Command {
+                        name: name.to_string(),
+                        run: None,
+                        kind: Kind::Other,
+                        takes_char: false,
+                        args,
+                    },
+                );
+            }
+        }
+    }
+
     pub fn register_kind(
         &mut self,
         name: &str,
         kind: Kind,
         run: impl Fn(&mut Editor, &Ctx) + 'static,
     ) {
+        let args = self
+            .commands
+            .get(name)
+            .filter(|c| c.run.is_none())
+            .map(|c| c.args.clone())
+            .unwrap_or_default();
         self.commands.insert(
             name.to_string(),
             Command {
                 name: name.to_string(),
-                run: Rc::new(run),
+                run: Some(Rc::new(run)),
                 kind,
                 takes_char: false,
+                args,
             },
         );
+    }
+
+    /// The arguments command `name` declares, if it is known.
+    pub fn command_args(&self, name: &str) -> Option<&Args> {
+        self.commands.get(name).map(|c| &c.args)
+    }
+
+    /// `args` with every `Path` the command declares made absolute
+    /// against the working directory (`~`, `..`; `kawoosh_doc::paths`);
+    /// a `!` is not a path.
+    pub fn resolve_args(&self, name: &str, args: &[String]) -> Vec<String> {
+        let Some(spec) = self.command_args(name) else {
+            return args.to_vec();
+        };
+        let mut i = 0;
+        args.iter()
+            .map(|a| {
+                if a == "!" {
+                    return a.clone();
+                }
+                let kind = spec.kind_at(i);
+                i += 1;
+                match kind {
+                    Some(ArgKind::Path) => kawoosh_doc::paths::expand(Path::new(a), &self.cwd)
+                        .display()
+                        .to_string(),
+                    _ => a.clone(),
+                }
+            })
+            .collect()
     }
 
     pub fn register_with_char(&mut self, name: &str, run: impl Fn(&mut Editor, &Ctx) + 'static) {
@@ -365,13 +547,16 @@ impl Editor {
     }
 
     /// Runs a named command with `args` on `view`, with an undo
-    /// checkpoint around it. Unknown names set the message.
+    /// checkpoint around it; a path among the arguments is resolved
+    /// first. A command without a `run` here — declared, or unknown —
+    /// is the shell's (`Effect::Shell`).
     pub fn run(&mut self, view: ViewId, name: &str, args: &[String], count: Option<usize>) {
-        let Some(cmd) = self.commands.get(name).cloned() else {
+        let args = self.resolve_args(name, args);
+        let Some(cmd) = self.commands.get(name).filter(|c| c.run.is_some()).cloned() else {
             self.pending_op = None;
             self.effects.push(Effect::Shell {
                 name: name.to_string(),
-                args: args.to_vec(),
+                args,
                 count,
             });
             return;
@@ -380,7 +565,7 @@ impl Editor {
             view,
             count: count.unwrap_or(1).max(1),
             has_count: count.is_some(),
-            args: args.to_vec(),
+            args,
             arg_char: None,
         };
         self.run_cmd(&cmd, ctx);
@@ -392,7 +577,9 @@ impl Editor {
         }
         self.open_checkpoint(ctx.view);
         let op_before = self.pending_op;
-        (cmd.run)(self, &ctx);
+        if let Some(run) = &cmd.run {
+            run(self, &ctx);
+        }
         // An operator waiting on a motion: the motion just extended every
         // selection, so apply the operator now (mvp.md D4: operators
         // compose with the selection set, not with "the cursor").

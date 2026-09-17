@@ -21,7 +21,12 @@ const BOOT: &str = include_str!("../lua/boot.lua");
 /// command that ran the script; the rest reach the shell.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Msg {
-    RegisterCommand(String),
+    /// A command and what it takes (`kawoosh.command(name, fn, { args =
+    /// { "path", "text..." } })`), as the engine's `Args` spells it.
+    RegisterCommand {
+        name: String,
+        args: kawoosh_editor::Args,
+    },
     Map {
         mode: String,
         keys: String,
@@ -443,8 +448,10 @@ fn seed(
     let qq = q(queue);
     k.set(
         "_register",
-        lua.create_function(move |_, name: String| {
-            qq.borrow_mut().push(Msg::RegisterCommand(name));
+        lua.create_function(move |_, (name, args): (String, Option<Vec<String>>)| {
+            let args = kawoosh_editor::Args::parse(&args.unwrap_or_default())
+                .map_err(|e| mlua::Error::runtime(format!("command `{name}`: {e}")))?;
+            qq.borrow_mut().push(Msg::RegisterCommand { name, args });
             Ok(())
         })?,
     )?;
@@ -967,7 +974,10 @@ mod tests {
         assert_eq!(
             rest,
             [
-                Msg::RegisterCommand("zap".into()),
+                Msg::RegisterCommand {
+                    name: "zap".into(),
+                    args: Default::default()
+                },
                 Msg::Map {
                     mode: "n".into(),
                     keys: "<leader>z".into(),

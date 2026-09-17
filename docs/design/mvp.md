@@ -467,8 +467,10 @@ in an opaque database.
 The API surface is four verbs, all data:
 
 ```lua
--- commands: everything is a named command (Decision 4)
+-- commands: everything is a named command (Decision 4); a command says
+-- what its arguments are, and a path arrives resolved and completes
 kawoosh.command("todo.toggle", function(ctx) ... end)
+kawoosh.command("todo.load", function(ctx) ... end, { args = { "path" } })
 kawoosh.map("n", "<leader>t", "view.open todo")
 
 -- views: a pane is a function from state to elements — clay in Lua

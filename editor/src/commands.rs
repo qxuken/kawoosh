@@ -10,7 +10,7 @@ use kawoosh_doc::Buffer;
 
 use crate::keymap::{Keymap, Mode};
 use crate::motions as m;
-use crate::{Ctx, Editor, Effect, Kind, MotionKind, Prompt, Selection, ViewId};
+use crate::{ArgKind, Args, Ctx, Editor, Effect, Kind, MotionKind, Prompt, Selection, ViewId};
 
 /// The ex spellings and the commands they run: `:w` is `write`, `:bd`
 /// `buffer_delete`. One table, so the command line completes them and
@@ -1179,7 +1179,7 @@ pub fn install(ed: &mut Editor) {
     ed.register_kind("search_prev", Kind::Motion(Exclusive), |ed, ctx| {
         search(ed, ctx, false)
     });
-    ed.register("substitute", substitute);
+    ed.register_with_args("substitute", Args::rest(&[ArgKind::Text]), substitute);
     ed.register("search_word", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
@@ -1483,7 +1483,7 @@ pub fn install(ed: &mut Editor) {
         ed.prompt = Prompt::Search { backwards: true };
         ed.cmdline.clear();
     });
-    ed.register("write", |ed, ctx| {
+    ed.register_with_args("write", Args::new(&[ArgKind::Path]), |ed, ctx| {
         write(ed, ctx);
     });
     ed.register("quit", |ed, ctx| {
@@ -1503,7 +1503,7 @@ pub fn install(ed: &mut Editor) {
         }
         ed.effects.push(Effect::QuitAll);
     });
-    ed.register("write_quit", |ed, ctx| {
+    ed.register_with_args("write_quit", Args::new(&[ArgKind::Path]), |ed, ctx| {
         if write(ed, ctx) {
             ed.effects.push(Effect::Quit);
         }
@@ -1525,11 +1525,13 @@ pub fn install(ed: &mut Editor) {
         let _ = ctx;
         ed.effects.push(Effect::QuitAll);
     });
-    ed.register("edit", |ed, ctx| match ctx.args.first() {
-        Some(p) => ed.effects.push(Effect::Open(p.into())),
-        None => ed.message = "edit what?".into(),
+    ed.register_with_args("edit", Args::new(&[ArgKind::Path]), |ed, ctx| {
+        match ctx.args.first() {
+            Some(p) => ed.effects.push(Effect::Open(p.into())),
+            None => ed.message = "edit what?".into(),
+        }
     });
-    ed.register("set", |ed, ctx| {
+    ed.register_with_args("set", Args::new(&[ArgKind::Option]), |ed, ctx| {
         let Some(a) = ctx.args.first() else {
             ed.message = "set what?".into();
             return;
@@ -1541,7 +1543,9 @@ pub fn install(ed: &mut Editor) {
         };
         ed.options.insert(k, v);
     });
-    ed.register("echo", |ed, ctx| ed.message = ctx.args.join(" "));
+    ed.register_with_args("echo", Args::rest(&[ArgKind::Text]), |ed, ctx| {
+        ed.message = ctx.args.join(" ")
+    });
 }
 
 fn goto_line(ed: &mut Editor, view: ViewId, n: usize) {

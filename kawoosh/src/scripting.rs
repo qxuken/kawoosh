@@ -121,10 +121,10 @@ impl Kawoosh {
 
     fn apply_lua_msg(&mut self, rt: &Rc<Runtime>, m: Msg) {
         match m {
-            Msg::RegisterCommand(name) => {
+            Msg::RegisterCommand { name, args } => {
                 let rt = rt.clone();
                 let cmd_name = name.clone();
-                self.ed.register(&name, move |ed, ctx| {
+                self.ed.register_with_args(&name, args, move |ed, ctx| {
                     rt.publish(ed, Some(ctx.view));
                     rt.run_command(&cmd_name, ctx);
                     let msgs = rt.take_msgs();

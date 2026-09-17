@@ -13,11 +13,17 @@ kawoosh._commands = {}
 kawoosh._writers = {}
 kawoosh._nonce = 0
 
--- kawoosh.command(name, fn): a named command, callable from a keymap,
--- the command line, or Rust. `fn(ctx)` gets { count = n, args = {...} }.
-function kawoosh.command(name, fn)
+-- kawoosh.command(name, fn[, opts]): a named command, callable from a
+-- keymap, the command line, or Rust. `fn(ctx)` gets { count = n, args =
+-- {...} }. `opts.args` says what the arguments are, one kind per
+-- position — "path", "buffer", "command", "option", "tool", "view",
+-- "text" — the last with "..." for the rest: a "path" reaches `fn`
+-- absolute (`~`, `..`, the working directory resolved), and the command
+-- line completes each kind. `kawoosh.command("oil", fn, { args = {
+-- "path" } })`.
+function kawoosh.command(name, fn, opts)
   kawoosh._commands[name] = fn
-  kawoosh._register(name)
+  kawoosh._register(name, opts and opts.args or nil)
 end
 
 -- kawoosh.map(mode, keys, cmd): `cmd` is a command name (with args, as

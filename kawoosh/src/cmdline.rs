@@ -3,13 +3,14 @@
 //! caret, `<Tab>` takes it, `<Tab>` again cycles the candidates and
 //! `<S-Tab>` cycles back; typing narrows. The first word completes to a
 //! command — the ex spellings, the shell's, the engine's and Lua's —
-//! and an argument to what the command takes: a path for `:e`, `:w`,
-//! `:cd`, `:vs`, `:oil`; a buffer for `:b`; a tool, a view, an option.
+//! and an argument to what the command declares it takes
+//! (`kawoosh_editor::ArgKind`): a path for `:e`, `:w`, `:cd`, `:vs`,
+//! `:oil`; a buffer for `:b`; a tool, a view, an option, a command.
 //! Nothing is a popup: the candidates are a row in the strip.
 
 use std::path::{MAIN_SEPARATOR, Path};
 
-use kawoosh_editor::{KeyStroke, Mode, Prompt, commands};
+use kawoosh_editor::{ArgKind, Args, KeyStroke, Mode, Prompt, commands};
 
 use crate::app::Kawoosh;
 
@@ -40,57 +41,67 @@ impl CmdCompletion {
     }
 }
 
-/// The commands the shell runs (`Kawoosh::shell_command`), for the
-/// command line to complete beside the engine's.
-pub const SHELL_COMMANDS: &[&str] = &[
-    "buffer",
-    "buffer_delete",
-    "buffer_delete_others",
-    "buffer_list",
-    "buffer_next",
-    "buffer_prev",
-    "cd",
-    "close",
-    "compile",
-    "dock_toggle",
-    "error_next",
-    "error_prev",
-    "goto_location",
-    "kui_debugger",
-    "kui_framerate_hud",
-    "lsp_complete",
-    "lsp_definition",
-    "lsp_hover",
-    "lsp_status",
-    "lua",
-    "oldfiles",
-    "only",
-    "pane_down",
-    "pane_left",
-    "pane_next",
-    "pane_right",
-    "pane_up",
-    "perf",
-    "pwd",
-    "scrollback",
-    "session_restore",
-    "session_save",
-    "split",
-    "syntax_tree",
-    "tab_close",
-    "tab_new",
-    "tab_next",
-    "tab_prev",
-    "terminal",
-    "tool",
-    "view",
-    "vsplit",
+/// The commands the shell runs (`Kawoosh::shell_command`) and what each
+/// takes, declared into the engine at start (`Editor::declare`) so a
+/// path among the arguments arrives resolved and the command line
+/// completes them like the engine's own. `true` is `rest`: the last
+/// kind takes every argument past it.
+pub const SHELL_COMMANDS: &[(&str, &[ArgKind], bool)] = &[
+    ("buffer", &[ArgKind::Buffer], false),
+    ("buffer_delete", &[], false),
+    ("buffer_delete_others", &[], false),
+    ("buffer_list", &[], false),
+    ("buffer_next", &[], false),
+    ("buffer_prev", &[], false),
+    ("cd", &[ArgKind::Path], false),
+    ("close", &[], false),
+    ("compile", &[ArgKind::Text], true),
+    ("dock_toggle", &[], false),
+    ("error_next", &[], false),
+    ("error_prev", &[], false),
+    ("goto_location", &[], false),
+    ("kui_debugger", &[ArgKind::Text], false),
+    ("kui_framerate_hud", &[ArgKind::Text], false),
+    ("lsp_complete", &[], false),
+    ("lsp_definition", &[], false),
+    ("lsp_hover", &[], false),
+    ("lsp_status", &[], false),
+    ("lua", &[ArgKind::Text], true),
+    ("oldfiles", &[ArgKind::Text], false),
+    ("only", &[], false),
+    ("pane_down", &[], false),
+    ("pane_left", &[], false),
+    ("pane_next", &[], false),
+    ("pane_right", &[], false),
+    ("pane_up", &[], false),
+    ("perf", &[ArgKind::Text], false),
+    ("pwd", &[], false),
+    ("scrollback", &[], false),
+    ("session_restore", &[], false),
+    ("session_save", &[], false),
+    ("split", &[ArgKind::Path], false),
+    ("syntax_tree", &[ArgKind::Text], false),
+    ("tab_close", &[], false),
+    ("tab_new", &[ArgKind::Path], false),
+    ("tab_next", &[], false),
+    ("tab_prev", &[], false),
+    ("terminal", &[ArgKind::Text], true),
+    ("tool", &[ArgKind::Tool], false),
+    ("view", &[ArgKind::View], false),
+    ("vsplit", &[ArgKind::Path], false),
 ];
 
-/// The commands whose argument is a path.
-const PATH_COMMANDS: &[&str] = &[
-    "edit", "write", "vsplit", "split", "tab_new", "cd", "oil", "source",
-];
+/// Declares every shell command into `ed`.
+pub fn declare_shell_commands(ed: &mut kawoosh_editor::Editor) {
+    for (name, kinds, rest) in SHELL_COMMANDS {
+        let args = if *rest {
+            Args::rest(kinds)
+        } else {
+            Args::new(kinds)
+        };
+        ed.declare(name, args);
+    }
+}
 
 /// Where the token being completed starts: after the last whitespace,
 /// or the line's start for the command itself.
@@ -108,12 +119,17 @@ impl Kawoosh {
             return (0, self.command_name_candidates(token));
         }
         let head = line[..start].trim();
-        let name = head.split_whitespace().next().unwrap_or("");
-        let name = name.trim_end_matches('!');
+        let mut words = head.split_whitespace();
+        let name = words.next().unwrap_or("").trim_end_matches('!');
+        // Which argument the token is (a `!` on its own is not one).
+        let index = words.filter(|w| *w != "!").count();
         let full = commands::ex_alias(name).unwrap_or(name);
-        let mut out: Vec<String> = match full {
-            f if PATH_COMMANDS.contains(&f) => self.path_candidates(token),
-            "buffer" => {
+        let kind = self.ed.command_args(full).and_then(|a| a.kind_at(index));
+        let mut out: Vec<String> = match kind {
+            None | Some(ArgKind::Text) => Vec::new(),
+            Some(ArgKind::Path) => self.path_candidates(token),
+            Some(ArgKind::Command) => self.command_name_candidates(token),
+            Some(ArgKind::Buffer) => {
                 let names: Vec<&str> = self.ed.buffers.values().map(|b| b.name.as_str()).collect();
                 let mut v: Vec<String> = names
                     .iter()
@@ -128,7 +144,7 @@ impl Kawoosh {
                 );
                 v
             }
-            "tool" => {
+            Some(ArgKind::Tool) => {
                 let mut v: Vec<String> = self
                     .scripting
                     .tools
@@ -139,7 +155,7 @@ impl Kawoosh {
                 v.sort();
                 v
             }
-            "view" => {
+            Some(ArgKind::View) => {
                 let mut v: Vec<String> = self
                     .scripting
                     .rt
@@ -152,7 +168,7 @@ impl Kawoosh {
                 v.sort();
                 v
             }
-            "set" => {
+            Some(ArgKind::Option) => {
                 let mut v: Vec<String> = self
                     .ed
                     .options
@@ -163,15 +179,14 @@ impl Kawoosh {
                 v.sort();
                 v
             }
-            _ => Vec::new(),
         };
         out.dedup();
         (start, out)
     }
 
     /// The ex spellings first (`:e`, `:vs` — the short names a user
-    /// types), then the shell's and the engine's full names, each group
-    /// sorted; a name in two groups is listed once.
+    /// types), then every command the engine knows — its own, the
+    /// shell's declared, Lua's — sorted; a name in both is listed once.
     fn command_name_candidates(&self, token: &str) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         let mut push = |names: Vec<&str>| {
@@ -189,7 +204,6 @@ impl Kawoosh {
                 .flat_map(|(spellings, _)| spellings.iter().copied())
                 .collect(),
         );
-        push(SHELL_COMMANDS.to_vec());
         push(self.ed.command_names());
         out
     }

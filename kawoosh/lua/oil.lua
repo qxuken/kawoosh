@@ -141,10 +141,12 @@ local function up()
   oil.open(fs.cwd())
 end
 
+-- `:oil [dir]`: the argument is a path, so it arrives resolved and the
+-- command line completes it.
 kawoosh.command("oil", function(ctx)
   if ctx.args[1] then return oil.open(ctx.args[1]) end
   up()
-end)
+end, { args = { "path" } })
 
 kawoosh.command("oil_enter", function()
   local dir = listed()
