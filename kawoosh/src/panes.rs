@@ -180,7 +180,20 @@ impl Kawoosh {
                 Some(Content::Commands) => "COMMANDS",
                 _ => "TERM",
             };
-            self.strip(ui, &[(what, pal.accent)], "");
+            // A pane with a field, or the prompt over it: the field's
+            // mode first, as a buffer pane shows its own.
+            match self.keyed_view().map(|v| &self.ed.views[v]) {
+                Some(kv) => {
+                    let (mode, color) = match kv.mode {
+                        Mode::Insert => ("INS", pal.insert),
+                        Mode::Visual if kv.visual_linewise => ("VIS LINE", pal.command),
+                        Mode::Visual => ("VIS", pal.command),
+                        _ => ("NOR", pal.accent),
+                    };
+                    self.strip(ui, &[(mode, color), (what, pal.accent)], "");
+                }
+                None => self.strip(ui, &[(what, pal.accent)], ""),
+            }
             return;
         };
         let v = &self.ed.views[view];

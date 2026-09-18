@@ -119,8 +119,13 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
     // A word from a doc — typed after `<Esc>D` cleared the line as the
     // editor would, then `i` back to insert.
     d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
     let field = app.commands_pane.field.unwrap();
     assert_eq!(app.ed.mode(field), kawoosh_editor::Mode::Normal);
+    assert!(
+        texts(&d).iter().any(|t| t == "NOR"),
+        "the field's mode in the status"
+    );
     d.keys(&mut app, "0Di");
     assert_eq!(app.commands_query(), "");
     assert_eq!(app.layout.focused_content(), Some(Content::Commands));

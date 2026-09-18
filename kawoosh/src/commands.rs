@@ -115,12 +115,24 @@ impl Kawoosh {
         self.drain_effects();
     }
 
-    /// The mode of the view the keyboard is on: the prompt's field
-    /// while one is open, else the focused pane's; normal elsewhere.
-    pub fn focused_mode(&self) -> Mode {
+    /// The view the keyboard is on: the prompt's field while one is
+    /// open, else the focused pane's view, else the field of a pane
+    /// that has one (the commands pane's query).
+    pub fn keyed_view(&self) -> Option<ViewId> {
         self.ed
             .prompt_view()
             .or_else(|| self.focused_view())
+            .or_else(|| {
+                (self.layout.focused_content() == Some(Content::Commands))
+                    .then_some(self.commands_pane.field)
+                    .flatten()
+            })
+    }
+
+    /// The mode of the view the keyboard is on; normal where there is
+    /// none (a terminal pane).
+    pub fn focused_mode(&self) -> Mode {
+        self.keyed_view()
             .map(|v| self.ed.mode(v))
             .unwrap_or(Mode::Normal)
     }
