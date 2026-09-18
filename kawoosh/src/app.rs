@@ -1323,7 +1323,7 @@ impl Kawoosh {
         match phase {
             "start" => {
                 if self.ed.mode == Mode::Command {
-                    self.ed.mode = Mode::Normal;
+                    self.ed.cancel_prompt();
                 }
                 let sel = match clicks {
                     1 => Selection::point(off),

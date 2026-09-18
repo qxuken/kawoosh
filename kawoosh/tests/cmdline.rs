@@ -1,5 +1,6 @@
 //! The command line's completion: in place, a ghost after the caret,
-//! `<Tab>` taking and cycling; commands, paths, buffers.
+//! on the buffer completion's keys — `<C-n>`/`<C-p>` cycling, `<Tab>`
+//! taking; commands, paths, buffers.
 
 mod drive;
 
@@ -9,17 +10,6 @@ use kui::KeyMods;
 
 fn tab(d: &mut Drive, app: &mut Kawoosh) {
     d.key(app, "tab", KeyMods::default());
-}
-
-fn shift_tab(d: &mut Drive, app: &mut Kawoosh) {
-    d.key(
-        app,
-        "tab",
-        KeyMods {
-            shift: true,
-            ..Default::default()
-        },
-    );
 }
 
 #[test]
@@ -38,7 +28,9 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     d.frame(&mut app);
 
     // A command: the ghost is the first candidate's rest, drawn dim;
-    // `<Tab>` takes it and cycles, `<S-Tab>` cycles back.
+    // `<C-n>` and `<C-p>` move the ghost through the candidates and
+    // leave the line alone, `<Tab>` takes the current one. `<S-Tab>`
+    // is nothing to the completion.
     d.keys(&mut app, ":v");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("iew"));
     assert!(
@@ -48,16 +40,57 @@ fn the_command_line_completes_commands_paths_and_buffers() {
             .any(|n| n.text.as_deref() == Some("iew")),
         "the ghost is on the strip"
     );
+    d.ctrl(&mut app, "n");
+    assert_eq!(app.ed.cmdline, "v", "cycling does not take");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("s"));
+    d.ctrl(&mut app, "n");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("split"));
+    d.ctrl(&mut app, "p");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("s"));
+    d.ctrl(&mut app, "p");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("iew"));
+    d.ctrl(&mut app, "p");
+    let last = app
+        .cmd_completion
+        .as_ref()
+        .unwrap()
+        .candidates
+        .last()
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        app.cmdline_ghost().as_deref(),
+        last.strip_prefix('v'),
+        "wraps"
+    );
+    d.key(
+        &mut app,
+        "tab",
+        KeyMods {
+            shift: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(app.ed.cmdline, "v");
+    assert_eq!(app.cmdline_ghost().as_deref(), last.strip_prefix('v'));
     tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, "view");
-    tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, "vs");
-    tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, "vsplit");
-    shift_tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, "vs");
+    assert_eq!(app.ed.cmdline, last);
+    assert_eq!(app.cmdline_ghost(), None, "taken whole");
     d.key(&mut app, "escape", KeyMods::default());
     assert!(app.cmd_completion.is_none(), "cleared with the prompt");
+
+    // `<Tab>` on a taken candidate goes on to the candidates past it —
+    // the longer spellings — and `<C-y>` takes like `<Tab>`.
+    d.keys(&mut app, ":bu");
+    tab(&mut d, &mut app);
+    assert_eq!(app.ed.cmdline, "buffer");
+    assert_eq!(app.cmdline_ghost(), None);
+    d.ctrl(&mut app, "n");
+    let ghost = app.cmdline_ghost().unwrap();
+    assert!(!ghost.is_empty());
+    d.ctrl(&mut app, "y");
+    assert_eq!(app.ed.cmdline, format!("buffer{ghost}"));
+    d.key(&mut app, "escape", KeyMods::default());
 
     // A path: the directory's entries, hidden ones only asked for; one
     // candidate taken goes on into what it opens.
@@ -69,10 +102,12 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     );
     let cands = app.cmd_completion.as_ref().unwrap().candidates.clone();
     assert_eq!(cands, ["src/", "a.txt"]);
+    d.ctrl(&mut app, "n");
     tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, "e src/");
-    tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, "e a.txt", "two candidates cycle");
+    assert_eq!(
+        app.ed.cmdline, "e a.txt",
+        "the cycled-to candidate is taken"
+    );
     d.key(&mut app, "escape", KeyMods::default());
     d.keys(&mut app, ":e s");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("rc/"));
