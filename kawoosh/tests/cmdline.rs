@@ -42,11 +42,17 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     );
     d.ctrl(&mut app, "n");
     assert_eq!(app.ed.cmdline, "v", "cycling does not take");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("ne"));
+    d.ctrl(&mut app, "n");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("new"));
+    d.ctrl(&mut app, "n");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("s"));
     d.ctrl(&mut app, "n");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("split"));
     d.ctrl(&mut app, "p");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("s"));
+    d.ctrl(&mut app, "p");
+    d.ctrl(&mut app, "p");
     d.ctrl(&mut app, "p");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("iew"));
     d.ctrl(&mut app, "p");

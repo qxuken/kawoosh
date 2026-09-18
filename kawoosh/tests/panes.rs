@@ -88,6 +88,45 @@ fn tabs_and_the_dock() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// `:enew` puts a fresh scratch in the focused pane, `:new` and `:vnew`
+/// one in a split; each is its own buffer, empty, named `*scratch*`.
+#[test]
+fn new_scratches() {
+    let mut app = Kawoosh::new("t", "one");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let first = app.ed.views[app.focused_view().unwrap()].buffer;
+    ex(&mut d, &mut app, "enew");
+    let v = app.focused_view().unwrap();
+    let scratch = app.ed.views[v].buffer;
+    assert_ne!(scratch, first);
+    assert_eq!(app.ed.buffers[scratch].name, "*scratch*");
+    assert_eq!(app.ed.buffers[scratch].text(), "");
+    assert_eq!(app.layout.visible_panes().len(), 1, "the pane is reused");
+    assert_eq!(app.ed.buffers.len(), 2, "the first buffer stays");
+    // Typed into and left, it is a buffer like any other.
+    d.keys(&mut app, "i");
+    d.text(&mut app, "note");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "b t");
+    assert_eq!(d.line_rows()[0], "one");
+    ex(&mut d, &mut app, "b *scratch*");
+    assert_eq!(d.line_rows()[0], "note");
+    // `:new` splits below, `:vnew` beside; neither shares its buffer.
+    ex(&mut d, &mut app, "new");
+    assert_eq!(app.layout.visible_panes().len(), 2);
+    let below = app.ed.views[app.focused_view().unwrap()].buffer;
+    assert_ne!(below, scratch);
+    assert_eq!(app.ed.buffers[below].text(), "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "vnew");
+    assert_eq!(app.layout.visible_panes().len(), 3);
+    let beside = app.ed.views[app.focused_view().unwrap()].buffer;
+    assert_ne!(beside, below);
+    assert_eq!(app.ed.buffers.len(), 4);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 #[test]
 fn buffers_are_listed_and_switched() {
     let dir = std::env::temp_dir().join(format!("kawoosh-panes-{}", std::process::id()));

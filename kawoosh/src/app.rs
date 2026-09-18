@@ -795,6 +795,30 @@ impl Kawoosh {
                 }
                 self.layout.split(dir, Content::Editor(nv));
             }
+            // `:enew` shows a fresh scratch in the focused pane; `:new`
+            // and `:vnew` open one in a split, as vim's do. A scratch is
+            // named `*scratch*` like the one a launch without a file
+            // gets, and takes a history row of its own once written in.
+            "enew" => {
+                let id = self.ed.add_buffer(Buffer::new("*scratch*", ""));
+                match self.focused_view() {
+                    Some(v) => self.show_buffer(v, id),
+                    None => {
+                        let v = self.ed.add_view(id);
+                        self.layout.split(SplitDir::H, Content::Editor(v));
+                    }
+                }
+            }
+            "new" | "vnew" => {
+                let dir = if name == "vnew" {
+                    SplitDir::H
+                } else {
+                    SplitDir::V
+                };
+                let id = self.ed.add_buffer(Buffer::new("*scratch*", ""));
+                let v = self.ed.add_view(id);
+                self.layout.split(dir, Content::Editor(v));
+            }
             "close" => {
                 let pane = self.layout.focused();
                 let buffer = self.view_of(pane).map(|v| self.ed.views[v].buffer);

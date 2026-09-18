@@ -57,6 +57,7 @@ pub const SHELL_COMMANDS: &[(&str, &[ArgKind], bool)] = &[
     ("close", &[], false),
     ("compile", &[ArgKind::Text], true),
     ("dock_toggle", &[], false),
+    ("enew", &[], false),
     ("history", &[ArgKind::Text], true),
     ("error_next", &[], false),
     ("error_prev", &[], false),
@@ -69,6 +70,7 @@ pub const SHELL_COMMANDS: &[(&str, &[ArgKind], bool)] = &[
     ("lsp_status", &[], false),
     ("lua", &[ArgKind::Text], true),
     ("messages", &[ArgKind::Text], false),
+    ("new", &[], false),
     ("notify", &[ArgKind::Text], true),
     ("oldfiles", &[ArgKind::Text], false),
     ("only", &[], false),
@@ -94,6 +96,7 @@ pub const SHELL_COMMANDS: &[(&str, &[ArgKind], bool)] = &[
     ("tool", &[ArgKind::Tool], false),
     ("undo_history", &[], false),
     ("view", &[ArgKind::View], false),
+    ("vnew", &[], false),
     ("vsplit", &[ArgKind::Path], false),
 ];
 

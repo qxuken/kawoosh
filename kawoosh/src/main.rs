@@ -153,8 +153,9 @@ Notifications: :notify warn TEXT is a toast at the top, :notify TEXT a
 dim line in the corner, :messages the log of every one; ctrl-w n puts
 the keyboard on the toasts (j k h l, Enter, x, Esc).
 alt-j / alt-k add cursors; , keeps the primary.
-Buffers: :ls, :b name, :bn, :bd, :bdo (delete the others); - is the
-file manager on the current file's directory.
+Buffers: :ls, :b name, :bn, :bd, :bdo (delete the others); :enew is a
+fresh scratch here, :new / :vnew one in a split; - is the file manager
+on the current file's directory.
 
 Panes: ctrl-w v / s split, ctrl-w h j k l move, ctrl-w q close, :tabnew.
 Terminals: :term, ctrl-w d for the dock. In a terminal ctrl-w is the
