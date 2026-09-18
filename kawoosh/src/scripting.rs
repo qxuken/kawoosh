@@ -8,13 +8,14 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use kawoosh_doc::Buffer;
-use kawoosh_editor::{KeyStroke, Lookup, Mode, ViewId};
+use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Spec, ViewId};
 use kawoosh_lua::{Msg, Runtime};
 use kawoosh_systems::lsp::ServerDef;
 use kawoosh_systems::ts::Token;
 use kui::{Color, NodeSpec, Sizing, Ui, Value};
 
 use crate::app::Kawoosh;
+use crate::commands::{ShellCommand, cmd};
 use crate::layout::{Content, PaneId, SplitDir};
 use crate::notify::{Level, Note, Show, Ttl};
 
@@ -105,6 +106,7 @@ impl Kawoosh {
         let Some(rt) = self.scripting.rt.clone() else {
             return;
         };
+        self.sync_facts();
         let msgs = rt.take_msgs();
         if msgs.is_empty() {
             return;
@@ -122,10 +124,10 @@ impl Kawoosh {
 
     fn apply_lua_msg(&mut self, rt: &Rc<Runtime>, m: Msg) {
         match m {
-            Msg::RegisterCommand { name, args } => {
+            Msg::RegisterCommand(spec) => {
                 let rt = rt.clone();
-                let cmd_name = name.clone();
-                self.ed.register_with_args(&name, args, move |ed, ctx| {
+                let cmd_name = spec.name.clone();
+                self.ed.register_spec(spec, move |ed, ctx| {
                     rt.publish(ed, Some(ctx.view));
                     rt.run_command(&cmd_name, ctx);
                     let msgs = rt.take_msgs();
@@ -312,6 +314,8 @@ impl Kawoosh {
                 }
             }
             Msg::Chdir(p) => self.set_cwd(&p),
+            // A fact needs no view: published even before there is one.
+            Msg::Fact { name, on } => self.ed.fact(&name, on),
             Msg::Edit { .. }
             | Msg::SetText { .. }
             | Msg::SetCursor { .. }
@@ -546,4 +550,48 @@ impl ParseHex for str {
             _ => return None,
         })
     }
+}
+
+pub(crate) fn commands() -> Vec<ShellCommand> {
+    vec![
+        cmd(
+            Spec::new("tool")
+                .args(Args::new(&[ArgKind::Tool]))
+                .query("list the tools")
+                .doc("run the tool NAME the config registered; bare, list them"),
+            |k, ctx| match ctx.args.first().filter(|_| !ctx.query()) {
+                Some(n) => k.tool(n),
+                None => {
+                    let mut names: Vec<&String> = k.scripting.tools.keys().collect();
+                    names.sort();
+                    k.ed.message = format!(
+                        "tools: {}",
+                        names
+                            .iter()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    );
+                }
+            },
+        ),
+        cmd(
+            Spec::new("view")
+                .args(Args::new(&[ArgKind::View]))
+                .doc("open the Lua view NAME in a pane"),
+            |k, ctx| match ctx.args.first() {
+                Some(n) => k.open_lua_view(n),
+                None => k.ed.message = "view what?".into(),
+            },
+        ),
+        cmd(
+            Spec::new("lua")
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("run CODE in the Lua state"),
+            |k, ctx| {
+                let src = ctx.args.join(" ");
+                k.run_lua_source("<lua>", &src);
+            },
+        ),
+    ]
 }

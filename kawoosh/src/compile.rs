@@ -6,10 +6,11 @@
 use std::path::{Path, PathBuf};
 
 use kawoosh_doc::BufferId;
-use kawoosh_editor::{Selection, ViewId};
+use kawoosh_editor::{ArgKind, Args, Selection, Spec, ViewId};
 use kawoosh_systems::io::IoMsg;
 
 use crate::app::Kawoosh;
+use crate::commands::{ShellCommand, cmd};
 use crate::notify::{Level, Note};
 use crate::terminals::location_at;
 
@@ -240,4 +241,63 @@ impl Kawoosh {
             "no earlier locations".into()
         };
     }
+}
+
+pub(crate) fn commands() -> Vec<ShellCommand> {
+    vec![
+        // `:compile CMD`, or bare, the project's `compile.command` —
+        // the setting a `.kawoosh/settings.lua` is there to set.
+        cmd(
+            Spec::new("compile")
+                .alias(&["make"])
+                .args(Args::rest(&[ArgKind::Text]))
+                .query("say what a bare :compile would run")
+                .doc("run CMD (or compile.command) into the *compile* buffer"),
+            |k, ctx| {
+                let setting = k.ed.settings.str("compile.command").map(str::to_string);
+                if ctx.query() {
+                    k.ed.message = match setting {
+                        Some(c) => format!("compile.command = {c}"),
+                        None => "compile.command is not set".into(),
+                    };
+                    return;
+                }
+                let cmd = if ctx.args.is_empty() {
+                    setting
+                } else {
+                    Some(ctx.args.join(" "))
+                };
+                match cmd {
+                    Some(cmd) => k.compile(&cmd),
+                    None => {
+                        k.ed.message =
+                            "compile what? (:compile CMD, or set compile.command)".into();
+                    }
+                }
+            },
+        ),
+        cmd(
+            Spec::new("goto_location").doc("open the path:line under the caret"),
+            |k, ctx| {
+                if let Some(v) = k
+                    .focused_view()
+                    .or_else(|| k.ed.views.contains_key(ctx.view).then_some(ctx.view))
+                {
+                    k.goto_location(v);
+                }
+            },
+        ),
+        cmd(
+            Spec::new("error_next")
+                .alias(&["cn", "cnext"])
+                .doc("the next location in the compile output"),
+            |k, _| k.error_step(true),
+        ),
+        cmd(
+            Spec::new("error_prev")
+                .alias(&["cp", "cprev", "cprevious"])
+                .doc("the previous location in the compile output"),
+            |k, _| k.error_step(false),
+        ),
+    ]
 }

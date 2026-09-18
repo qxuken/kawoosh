@@ -21,11 +21,12 @@ use kawoosh_term::TermSize;
 use kui::{FontId, NodeSpec, Sizing, Ui, UiEvent, Value, WindowCommand};
 
 use crate::Pal;
+use crate::commands::ShellCommands;
 use crate::compile::Compile;
 use crate::inspector::Inspector;
-use crate::layout::{Content, Drop, Layout, PaneId, SplitDir};
+use crate::layout::{Content, Layout, PaneId, SplitDir};
 use crate::lsp::LspState;
-use crate::notify::{Level, Notifications};
+use crate::notify::Notifications;
 use crate::rows::{self, Drawn, GUTTER_W, LH, STRIP_H};
 use crate::scripting::Scripting;
 use crate::settings::Config;
@@ -55,6 +56,8 @@ pub struct Kawoosh {
     /// The `log` crate's records, once `Logger::install` ran (main).
     pub log_sink: Option<crate::logger::Sink>,
     pub store: Option<std::rc::Rc<kawoosh_systems::store::Store>>,
+    /// The shell's command bodies; their specs are in `ed` (`commands`).
+    pub(crate) commands: ShellCommands,
     /// The undo histories of buffers, kept in the store, with the
     /// unsaved text of scratches and modified files (`history.rs`).
     pub histories: crate::history::Histories,
@@ -143,11 +146,10 @@ pub struct Kawoosh {
 impl Kawoosh {
     pub fn new(title: impl Into<String>, text: &str) -> Self {
         let mut ed = Editor::new();
-        crate::cmdline::declare_shell_commands(&mut ed);
         let b = ed.add_buffer(Buffer::new(title, text));
         let view = ed.add_view(b);
         let wake = WakeHandle::new();
-        Self {
+        let mut app = Self {
             pal: Pal::default(),
             font: None,
             ed,
@@ -166,6 +168,7 @@ impl Kawoosh {
             messages_shown: 0,
             log_sink: None,
             store: None,
+            commands: ShellCommands::default(),
             histories: crate::history::Histories::new(wake.clone()),
             session_saved: false,
             last_pos: HashMap::new(),
@@ -200,7 +203,9 @@ impl Kawoosh {
             body_h: 600.0,
             cell: (7.8, LH),
             mods: (false, false, false, false),
-        }
+        };
+        app.install_commands();
+        app
     }
 
     /// The app's wake, for a system made beside it — a test's logger.
@@ -497,6 +502,7 @@ impl Kawoosh {
 
     /// A request over the command socket (mvp.md Decision 3b).
     fn on_request(&mut self, Incoming { request, reply }: Incoming) {
+        self.sync_facts();
         match request {
             Request::Open { path, wait, line } => {
                 let path = PathBuf::from(path);
@@ -607,7 +613,7 @@ impl Kawoosh {
     /// Removes buffer `id`: every view on it moves to `next`, a
     /// `--wait` caller on it is answered, the server told, and what
     /// was remembered about it forgotten.
-    fn delete_buffer(&mut self, id: BufferId, next: BufferId) {
+    pub(crate) fn delete_buffer(&mut self, id: BufferId, next: BufferId) {
         for (_, view) in self.ed.views.iter_mut() {
             if view.buffer == id {
                 view.buffer = next;
@@ -763,436 +769,6 @@ impl Kawoosh {
         match self.focused_view() {
             Some(v) => self.ed.buffer_of(v).name.clone(),
             None => "kawoosh".into(),
-        }
-    }
-
-    // ------------------------------------------------------------ shell commands
-
-    /// Commands the engine does not own: panes, tabs, buffers.
-    pub fn shell_command(&mut self, name: &str, args: &[String], count: Option<usize>) {
-        let path = args.first().filter(|a| *a != "!").map(PathBuf::from);
-        match name {
-            "vsplit" | "split" => {
-                let dir = if name == "vsplit" {
-                    SplitDir::H
-                } else {
-                    SplitDir::V
-                };
-                let buffer = match path {
-                    Some(p) => match self.buffer_for(&p) {
-                        Some(id) => id,
-                        None => return,
-                    },
-                    None => match self.focused_view() {
-                        Some(v) => self.ed.views[v].buffer,
-                        None => match self.ed.buffers.keys().next() {
-                            Some(id) => id,
-                            None => return,
-                        },
-                    },
-                };
-                let nv = self.ed.add_view(buffer);
-                if let Some(v) = self.focused_view()
-                    && self.ed.views[v].buffer == buffer
-                {
-                    let src = self.ed.views[v].clone();
-                    self.ed.views[nv] = src;
-                }
-                self.layout.split(dir, Content::Editor(nv));
-            }
-            // `:enew` shows a fresh scratch in the focused pane; `:new`
-            // and `:vnew` open one in a split, as vim's do. A scratch is
-            // named `*scratch*` like the one a launch without a file
-            // gets, and takes a history row of its own once written in.
-            "enew" => {
-                let id = self.ed.add_buffer(Buffer::new("*scratch*", ""));
-                match self.focused_view() {
-                    Some(v) => self.show_buffer(v, id),
-                    None => {
-                        let v = self.ed.add_view(id);
-                        self.layout.split(SplitDir::H, Content::Editor(v));
-                    }
-                }
-            }
-            "new" | "vnew" => {
-                let dir = if name == "vnew" {
-                    SplitDir::H
-                } else {
-                    SplitDir::V
-                };
-                let id = self.ed.add_buffer(Buffer::new("*scratch*", ""));
-                let v = self.ed.add_view(id);
-                self.layout.split(dir, Content::Editor(v));
-            }
-            "close" => {
-                let pane = self.layout.focused();
-                let buffer = self.view_of(pane).map(|v| self.ed.views[v].buffer);
-                match self.layout.close(pane) {
-                    Some(Content::Editor(v)) => {
-                        self.ed.views.remove(v);
-                        if let Some(b) = buffer
-                            && !self.buffer_shown(b)
-                        {
-                            self.release_waiters(b);
-                        }
-                    }
-                    Some(Content::Terminal(t)) => {
-                        self.terms.map.remove(&t);
-                    }
-                    Some(Content::Lua(_) | Content::Undo | Content::History) => {}
-                    None => self.ed.message = "cannot close the last pane".into(),
-                }
-            }
-            "only" => {
-                for c in self.layout.only() {
-                    match c {
-                        Content::Editor(v) => {
-                            self.ed.views.remove(v);
-                        }
-                        Content::Terminal(t) => {
-                            self.terms.map.remove(&t);
-                        }
-                        Content::Lua(_) | Content::Undo | Content::History => {}
-                    }
-                }
-            }
-            "pane_next" => {
-                let p = self.layout.next_pane();
-                self.layout.focus(p);
-            }
-            // `<C-w>x`: trade places with the next pane, as vim does.
-            "pane_swap" => {
-                let (from, to) = (self.layout.focused(), self.layout.next_pane());
-                self.layout.move_pane(from, to, Drop::Swap);
-            }
-            "pane_left" | "pane_right" | "pane_up" | "pane_down" => {
-                let (dir, fwd) = match name {
-                    "pane_left" => (SplitDir::H, false),
-                    "pane_right" => (SplitDir::H, true),
-                    "pane_up" => (SplitDir::V, false),
-                    _ => (SplitDir::V, true),
-                };
-                if let Some(p) = self.layout.neighbour(dir, fwd) {
-                    self.layout.focus(p);
-                }
-            }
-            "tab_new" => {
-                let buffer = match path {
-                    Some(p) => self.buffer_for(&p),
-                    None => Some(self.ed.add_buffer(Buffer::new("*scratch*", ""))),
-                };
-                if let Some(id) = buffer {
-                    let v = self.ed.add_view(id);
-                    self.layout.new_tab(Content::Editor(v));
-                }
-            }
-            "tab_next" => self.layout.next_tab(count.unwrap_or(1) as i64),
-            "tab_prev" => self.layout.next_tab(-(count.unwrap_or(1) as i64)),
-            "tab_close" => {
-                if self.layout.tabs.len() == 1 {
-                    self.ed.message = "cannot close the last tab".into();
-                    return;
-                }
-                let mut ps = Vec::new();
-                self.layout.tab().root.panes(&mut ps);
-                for p in ps {
-                    match self.layout.close(p) {
-                        Some(Content::Editor(v)) => {
-                            self.ed.views.remove(v);
-                        }
-                        Some(Content::Terminal(t)) => {
-                            self.terms.map.remove(&t);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            "dock_toggle" => {
-                if self.layout.dock.is_none() {
-                    // The dock's tenant is a terminal (mvp.md D5).
-                    let cwd = self.cwd.clone();
-                    let Some(t) = self.spawn_terminal(None, Some(&cwd)) else {
-                        return;
-                    };
-                    let p = self.layout.new_pane(Content::Terminal(t));
-                    self.layout.dock = Some(p);
-                }
-                self.layout.dock_open = !self.layout.dock_open;
-                self.layout.dock_focused = self.layout.dock_open;
-            }
-            "terminal" => {
-                let cmd = if args.is_empty() {
-                    None
-                } else {
-                    Some(args.join(" "))
-                };
-                let cwd = self.cwd.clone();
-                if let Some(t) = self.spawn_terminal(cmd.as_deref(), Some(&cwd)) {
-                    self.layout.split(SplitDir::V, Content::Terminal(t));
-                }
-            }
-            "cd" => {
-                let target = match path {
-                    Some(p) => self.resolve(&p),
-                    None => match self
-                        .focused_view()
-                        .and_then(|v| self.ed.buffer_of(v).path.clone())
-                    {
-                        Some(p) => p.parent().map(Path::to_path_buf).unwrap_or(p),
-                        None => kawoosh_systems::fs::home().unwrap_or_default(),
-                    },
-                };
-                self.set_cwd(&target);
-            }
-            "pwd" => self.ed.message = self.cwd.display().to_string(),
-            // kui's own instruments: the devtools panel (F12 too) and
-            // the latency HUD. No argument toggles; `on` / `off` set.
-            "kui_debugger" | "kui_framerate_hud" => {
-                let on = match args.first().map(String::as_str) {
-                    Some("on" | "1" | "true") => true,
-                    Some("off" | "0" | "false") => false,
-                    _ => {
-                        !if name == "kui_debugger" {
-                            self.devtools
-                        } else {
-                            self.hud
-                        }
-                    }
-                };
-                let what = if name == "kui_debugger" {
-                    self.devtools = on;
-                    "devtools"
-                } else {
-                    self.hud = on;
-                    "framerate hud"
-                };
-                self.ed.message = format!("kui {what} {}", if on { "on" } else { "off" });
-            }
-            // A tab of the devtools — the syntax tree, the perf readings:
-            // shown, with the panel if it was off; shown already, the
-            // panel closes — a toggle, like the instruments. `on` / `off`
-            // set.
-            "settings" if args.first().map(String::as_str) == Some("reload") => {
-                self.reload_all_settings();
-            }
-            "syntax_tree" | "perf" | "settings" => {
-                let (tab, what) = match name {
-                    "perf" => (crate::perf::TAB, "perf"),
-                    "settings" => (crate::settings::TAB, "settings"),
-                    _ => (crate::inspector::TAB, "syntax tree"),
-                };
-                let showing = self.devtools && self.tab_shown == Some(tab);
-                let on = match args.first().map(String::as_str) {
-                    Some("on" | "1" | "true") => true,
-                    Some("off" | "0" | "false") => false,
-                    _ => !showing,
-                };
-                if on {
-                    self.devtools = true;
-                    self.show_tab = Some(tab);
-                } else {
-                    self.devtools = false;
-                }
-                self.ed.message = format!("{what} {}", if on { "on" } else { "off" });
-            }
-            "scrollback" => {
-                if let Some(t) = self.term_of(self.layout.focused()) {
-                    self.scrollback_to_buffer(t);
-                }
-            }
-            "undo_history" => self.toggle_undo_panel(),
-            "buffer_next" | "buffer_prev" => {
-                let Some(v) = self.focused_view() else { return };
-                let ids: Vec<BufferId> = self.ed.buffers.keys().collect();
-                let cur = self.ed.views[v].buffer;
-                let i = ids.iter().position(|b| *b == cur).unwrap_or(0);
-                let n = ids.len();
-                let j = if name == "buffer_next" {
-                    (i + 1) % n
-                } else {
-                    (i + n - 1) % n
-                };
-                self.show_buffer(v, ids[j]);
-            }
-            "buffer" => {
-                let Some(v) = self.focused_view() else { return };
-                let Some(arg) = args.first() else {
-                    self.shell_command("buffer_list", &[], None);
-                    return;
-                };
-                let ids: Vec<BufferId> = self.ed.buffers.keys().collect();
-                let target = arg
-                    .parse::<usize>()
-                    .ok()
-                    .and_then(|n| ids.get(n.wrapping_sub(1)).copied())
-                    .or_else(|| {
-                        ids.iter()
-                            .copied()
-                            .find(|id| self.ed.buffers[*id].name.contains(arg.as_str()))
-                    });
-                match target {
-                    Some(id) => self.show_buffer(v, id),
-                    None => self.ed.message = format!("no buffer matching {arg}"),
-                }
-            }
-            "buffer_delete" => {
-                let Some(v) = self.focused_view() else { return };
-                let cur = self.ed.views[v].buffer;
-                let force = args.iter().any(|a| a == "!");
-                if self.ed.buffers[cur].modified {
-                    if !force {
-                        self.ed.message = "unsaved changes (:bd! to discard)".into();
-                        return;
-                    }
-                    self.discard(cur);
-                }
-                let ids: Vec<BufferId> = self.ed.buffers.keys().collect();
-                let next = match ids.iter().copied().find(|b| *b != cur) {
-                    Some(n) => n,
-                    None => self.ed.add_buffer(Buffer::new("*scratch*", "")),
-                };
-                self.delete_buffer(cur, next);
-            }
-            // `:bdo`: every buffer but the current one goes; a modified
-            // one stays unless `!`, and the message says how many.
-            "buffer_delete_others" => {
-                let Some(v) = self.focused_view() else { return };
-                let keep = self.ed.views[v].buffer;
-                let force = args.iter().any(|a| a == "!");
-                let others: Vec<BufferId> = self.ed.buffers.keys().filter(|b| *b != keep).collect();
-                let (mut gone, mut kept) = (0, 0);
-                for id in others {
-                    if self.ed.buffers[id].modified {
-                        if !force {
-                            kept += 1;
-                            continue;
-                        }
-                        self.discard(id);
-                    }
-                    self.delete_buffer(id, keep);
-                    gone += 1;
-                }
-                self.ed.message = match kept {
-                    0 => format!("{gone} buffer(s) deleted"),
-                    _ => {
-                        format!("{gone} buffer(s) deleted, {kept} unsaved kept (:bdo! to discard)")
-                    }
-                };
-            }
-            "buffer_list" => {
-                let cur = self.focused_view().map(|v| self.ed.views[v].buffer);
-                let list: Vec<String> = self
-                    .ed
-                    .buffers
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (id, b))| {
-                        format!(
-                            "{}{}{}{}",
-                            i + 1,
-                            if Some(id) == cur { "%" } else { " " },
-                            if b.modified { "+" } else { " " },
-                            b.name
-                        )
-                    })
-                    .collect();
-                self.ed.message = list.join("   ");
-            }
-            "tool" => match args.first() {
-                Some(n) => self.tool(n),
-                None => {
-                    let mut names: Vec<&String> = self.scripting.tools.keys().collect();
-                    names.sort();
-                    self.ed.message = format!(
-                        "tools: {}",
-                        names
-                            .iter()
-                            .map(|s| s.as_str())
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    );
-                }
-            },
-            "view" => match args.first() {
-                Some(n) => self.open_lua_view(n),
-                None => self.ed.message = "view what?".into(),
-            },
-            "lua" => {
-                let src = args.join(" ");
-                self.run_lua_source("<lua>", &src);
-            }
-            // `:compile CMD`, or bare, the project's `compile.command` —
-            // the setting a `.kawoosh/settings.lua` is there to set.
-            "compile" => {
-                let cmd = if args.is_empty() {
-                    self.ed.settings.str("compile.command").map(str::to_string)
-                } else {
-                    Some(args.join(" "))
-                };
-                match cmd {
-                    Some(cmd) => self.compile(&cmd),
-                    None => {
-                        self.ed.message =
-                            "compile what? (:compile CMD, or set compile.command)".into();
-                    }
-                }
-            }
-            "goto_location" => {
-                if let Some(v) = self.focused_view() {
-                    self.goto_location(v);
-                }
-            }
-            "error_next" => self.error_step(true),
-            "error_prev" => self.error_step(false),
-            "messages" => self.messages_command(args),
-            "history" => self.history_command(args),
-            "toast" => self.toast_focus(),
-            // `:notify LEVEL TEXT` (or just the text, at info).
-            "notify" => {
-                let (level, text) = match args.first().and_then(|a| Level::parse(a)) {
-                    Some(l) => (l, args[1..].join(" ")),
-                    None => (Level::Info, args.join(" ")),
-                };
-                if text.is_empty() {
-                    self.ed.message = "notify what? (:notify [LEVEL] TEXT)".into();
-                } else {
-                    self.notify(level, text);
-                }
-            }
-            "session_save" | "mksession" => {
-                self.save_session();
-                self.ed.message = "session saved".into();
-            }
-            "session_restore" => {
-                if !self.restore_session() {
-                    self.ed.message = "no session to restore".into();
-                }
-            }
-            "oldfiles" => {
-                let list = self.oldfiles();
-                match count.or_else(|| args.first().and_then(|a| a.parse().ok())) {
-                    Some(n) => match list.get(n.saturating_sub(1)) {
-                        Some((p, line)) => {
-                            let p = p.clone();
-                            self.open_in_editor(&p, Some(line + 1), None);
-                        }
-                        None => self.ed.message = "no such oldfile".into(),
-                    },
-                    None => {
-                        self.ed.message = list
-                            .iter()
-                            .enumerate()
-                            .map(|(i, (p, _))| format!("{} {}", i + 1, p.display()))
-                            .collect::<Vec<_>>()
-                            .join("   ");
-                    }
-                }
-            }
-            _ => {
-                if !self.lsp_command(name) {
-                    self.ed.message = format!("not a command: {name}");
-                }
-            }
         }
     }
 
@@ -1368,7 +944,7 @@ impl Kawoosh {
                         self.write_hooked(b, v);
                     }
                 }
-                Effect::Shell { name, args, count } => self.shell_command(&name, &args, count),
+                Effect::Shell { name, ctx } => self.shell_run(&name, &ctx),
             }
         }
     }
@@ -1757,6 +1333,7 @@ impl kui::App for Kawoosh {
     }
 
     fn on_event(&mut self, ev: UiEvent) {
+        self.sync_facts();
         let p = &ev.payload;
         let pane_of = |p: &Value| {
             p.get("tag")

@@ -16,11 +16,12 @@
 
 use std::time::{Duration, Instant, SystemTime};
 
-use kawoosh_editor::KeyStroke;
+use kawoosh_editor::{ArgKind, Args, KeyStroke, Spec};
 use kawoosh_systems::{Alarm, WakeHandle};
 use kui::{Align, FloatConfig, NodeSpec, Sizing, TextStyle, Ui, Value};
 
 use crate::app::{Kawoosh, TAB_H};
+use crate::commands::{ShellCommand, cmd};
 use crate::rows::STRIP_H;
 
 /// How long a toast without actions stays.
@@ -665,12 +666,8 @@ impl Kawoosh {
 
     /// `:messages`: the log in a read-only pane, live while it is open;
     /// `:messages clear` empties it.
-    pub(crate) fn messages_command(&mut self, args: &[String]) {
-        if args.first().map(String::as_str) == Some("clear") {
-            self.notes.clear();
-            self.ed.message = "messages cleared".into();
-            return;
-        }
+    /// `:messages`: the log in a pane, the keyboard on it.
+    pub(crate) fn show_messages(&mut self) {
         let text = self.notes.render_log();
         self.show_in_pane(MESSAGES_BUFFER, &text);
         self.messages_shown = self.notes.log_version;
@@ -1016,6 +1013,44 @@ impl Kawoosh {
             },
         );
     }
+}
+
+pub(crate) fn commands() -> Vec<ShellCommand> {
+    vec![
+        cmd(
+            Spec::new("messages")
+                .alias(&["mes"])
+                .doc("every notification so far, in a pane"),
+            |k, _| k.show_messages(),
+        ),
+        cmd(Spec::new("messages clear").doc("forget the log"), |k, _| {
+            k.notes.clear();
+            k.ed.message = "messages cleared".into();
+        }),
+        // `:notify LEVEL TEXT` (or just the text, at info).
+        cmd(
+            Spec::new("notify")
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("a notification: [LEVEL] TEXT"),
+            |k, ctx| {
+                let (level, text) = match ctx.args.first().and_then(|a| Level::parse(a)) {
+                    Some(l) => (l, ctx.args[1..].join(" ")),
+                    None => (Level::Info, ctx.args.join(" ")),
+                };
+                if text.is_empty() {
+                    k.ed.message = "notify what? (:notify [LEVEL] TEXT)".into();
+                } else {
+                    k.notify(level, text);
+                }
+            },
+        ),
+        cmd(
+            Spec::new("toast")
+                .alias(&["toasts"])
+                .doc("the keyboard onto the toasts"),
+            |k, _| k.toast_focus(),
+        ),
+    ]
 }
 
 #[cfg(test)]

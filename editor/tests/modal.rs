@@ -1,7 +1,7 @@
 //! The modal engine driven by key sequences, no UI anywhere.
 
 use kawoosh_doc::Buffer;
-use kawoosh_editor::{ArgKind, Args, Editor, Effect, KeyStroke, Mode, Selection, ViewId};
+use kawoosh_editor::{ArgKind, Args, Editor, Effect, KeyStroke, Mode, Selection, Spec, ViewId};
 
 struct T {
     ed: Editor,
@@ -514,7 +514,7 @@ fn command_line_and_search() {
     t.keys(":nonsense a b<CR>");
     assert!(matches!(
         t.ed.take_effects().as_slice(),
-        [Effect::Shell { name, args, .. }] if name == "nonsense" && args == &["a", "b"]
+        [Effect::Shell { name, ctx }] if name == "nonsense" && ctx.args == ["a", "b"]
     ));
     t.keys(":set tabstop=2<CR>");
     assert_eq!(t.ed.tabstop(), 2);
@@ -786,11 +786,15 @@ fn a_path_argument_is_resolved_before_the_command_runs() {
     ));
     // The shell's `:cd`, declared here: its argument comes back resolved
     // in the effect, the `!` as it was.
-    t.ed.declare("cd", Args::new(&[ArgKind::Path]));
+    t.ed.declare(
+        Spec::new("cd")
+            .args(Args::new(&[ArgKind::Path]))
+            .bang("test"),
+    );
     t.keys(":cd! ../up<CR>");
     assert!(matches!(
         t.ed.take_effects().as_slice(),
-        [Effect::Shell { name, args, .. }] if name == "cd" && args == &["/work/up", "!"]
+        [Effect::Shell { name, ctx }] if name == "cd" && ctx.args == ["/work/up"] && ctx.bang()
     ));
     // A plugin's: `args = { "path", "text..." }`.
     let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -812,5 +816,139 @@ fn a_path_argument_is_resolved_before_the_command_runs() {
     assert_eq!(
         t.ed.buffer_of(t.v).path.as_deref(),
         Some(std::path::Path::new("/work/c.txt"))
+    );
+}
+
+/// A command is a spec and a body (`kawoosh_editor::command`): the ex
+/// spelling is an alias on the spec; `!` and `?` are forms the spec
+/// has a word for or refuses; `when` names facts, the engine's own or
+/// published, and refuses with the reason; a subcommand is a two-word
+/// name, walked from the line's words and from a keymap's binding
+/// alike, its marker carried on either word.
+#[test]
+fn commands_are_specs_with_forms_conditions_and_subcommands() {
+    use kawoosh_editor::{Ctx, Form};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let mut t = T::new("a\n");
+    type Ran = Rc<RefCell<Vec<(String, Form, Vec<String>)>>>;
+    let ran: Ran = Rc::new(RefCell::new(Vec::new()));
+    let note = |ran: &Ran, name: &'static str| {
+        let ran = ran.clone();
+        move |_: &mut Editor, ctx: &Ctx| {
+            ran.borrow_mut()
+                .push((name.to_string(), ctx.form, ctx.args.clone()))
+        }
+    };
+    t.ed.register_spec(
+        Spec::new("hist").alias(&["hi"]).bang("everything"),
+        note(&ran, "hist"),
+    );
+    t.ed.register_spec(
+        Spec::new("hist drop").args(Args::new(&[ArgKind::Text])),
+        note(&ran, "hist drop"),
+    );
+    t.ed.register_spec(
+        Spec::new("hist clear").bang("held too").query("how many"),
+        note(&ran, "hist clear"),
+    );
+    // The alias, the subcommand consumed, its arguments past it.
+    t.keys(":hi drop file:/a<CR>");
+    // A word that is no subcommand is the parent's argument.
+    t.keys(":hist nope<CR>");
+    // The marker on either word.
+    t.keys(":hist clear!<CR>");
+    t.keys(":hist! clear<CR>");
+    t.keys(":hist clear?<CR>");
+    assert_eq!(
+        *ran.borrow(),
+        [
+            (
+                "hist drop".to_string(),
+                Form::Run,
+                vec!["file:/a".to_string()]
+            ),
+            ("hist".to_string(), Form::Run, vec!["nope".to_string()]),
+            ("hist clear".to_string(), Form::Bang, vec![]),
+            ("hist clear".to_string(), Form::Bang, vec![]),
+            ("hist clear".to_string(), Form::Query, vec![]),
+        ]
+    );
+    ran.borrow_mut().clear();
+    // A form the spec has no word for is refused with a message, and
+    // the command does not run.
+    t.keys(":hist drop!<CR>");
+    assert_eq!(t.ed.message, "hist drop takes no !");
+    t.keys(":hist?<CR>");
+    assert_eq!(t.ed.message, "hist takes no ?");
+    assert!(ran.borrow().is_empty());
+    // `e!foo` and `e! foo`: the marker splits the name either way.
+    t.keys(":hist!clear x<CR>");
+    assert_eq!(
+        ran.borrow().last().unwrap(),
+        &("hist clear".to_string(), Form::Bang, vec!["x".to_string()])
+    );
+
+    // `when`: a fact the shell publishes, one the engine answers.
+    t.ed.declare(Spec::new("scroll").when(&["terminal"]));
+    t.keys(":scroll<CR>");
+    assert_eq!(t.ed.message, "scroll needs terminal");
+    assert!(t.ed.take_effects().is_empty());
+    t.ed.fact("terminal", true);
+    t.keys(":scroll<CR>");
+    assert!(matches!(
+        t.ed.take_effects().as_slice(),
+        [Effect::Shell { name, .. }] if name == "scroll"
+    ));
+    t.ed.fact("terminal", false);
+    assert_eq!(
+        t.ed.can(Some(t.v), "scroll"),
+        Err("scroll needs terminal".into())
+    );
+    t.ed.register_spec(
+        Spec::new("only_here").when(&["language:oil", "!modified"]),
+        note(&ran, "only_here"),
+    );
+    ran.borrow_mut().clear();
+    t.keys(":only_here<CR>");
+    assert_eq!(t.ed.message, "only_here needs language:oil");
+    let b = t.ed.views[t.v].buffer;
+    t.ed.buffers[b].language = "oil".into();
+    t.keys(":only_here<CR>");
+    assert_eq!(ran.borrow().len(), 1);
+    t.keys("x:only_here<CR>");
+    assert_eq!(t.ed.message, "only_here is not for modified");
+    assert_eq!(ran.borrow().len(), 1);
+    assert!(t.ed.holds(Some(t.v), "buffer:a") || t.ed.holds(Some(t.v), "modified"));
+
+    // A keymap's binding carries a marker and a subcommand like the
+    // line does: `:map n Q quit!` binds `Q` to a forced quit.
+    t.keys(":map n Q quit!<CR>");
+    t.keys("Q");
+    assert!(t.ed.take_effects().contains(&Effect::Quit { force: true }));
+    t.keys(":map n <leader>d hist drop k<CR>");
+    ran.borrow_mut().clear();
+    t.keys(" d");
+    assert_eq!(
+        *ran.borrow(),
+        [("hist drop".to_string(), Form::Run, vec!["k".to_string()])]
+    );
+
+    // The registry as data: names, aliases, subcommands, the specs.
+    assert!(t.ed.command_names().contains(&"hist"));
+    assert!(!t.ed.command_names().contains(&"hist drop"));
+    assert_eq!(
+        t.ed.commands
+            .subcommands("hist")
+            .iter()
+            .map(|s| s.word())
+            .collect::<Vec<_>>(),
+        ["clear", "drop"]
+    );
+    assert_eq!(t.ed.commands.canonical("hi"), "hist");
+    assert_eq!(t.ed.spec("quit").unwrap().aliases, ["q"]);
+    assert_eq!(
+        t.ed.spec("edit").unwrap().bang.as_deref(),
+        Some("reload the disk's text, as one undoable change")
     );
 }

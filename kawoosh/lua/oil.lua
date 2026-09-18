@@ -156,12 +156,22 @@ local function up()
 end
 
 -- `:oil [dir]`: the argument is a path, so it arrives resolved and the
--- command line completes it.
+-- command line completes it; `:oil?` says which directory is listed.
 kawoosh.command("oil", function(ctx)
+  if ctx.query then
+    return kawoosh.echo(listed() and ("oil: " .. listed()) or "no listing here")
+  end
   if ctx.args[1] then return oil.open(ctx.args[1]) end
   up()
-end, { args = { "path" } })
+end, {
+  args = { "path" },
+  query = "say which directory is listed",
+  doc = "list DIR, or the current file's directory, as a buffer",
+})
 
+-- `<CR>` everywhere: in a listing, open the entry under the caret;
+-- elsewhere, the `path:line` under it — so it is not gated on the
+-- listing but falls through.
 kawoosh.command("oil_enter", function()
   local dir = listed()
   if not dir then return kawoosh.cmd("goto_location") end
@@ -170,14 +180,18 @@ kawoosh.command("oil_enter", function()
   if line == "../" then return up() end
   local target = fs.join(dir, (line:gsub("/$", "")))
   if line:sub(-1) == "/" then oil.open(target) else kawoosh.open(target) end
-end)
+end, { doc = "open the entry under the caret" })
 
--- `:cd` from a listing, or <leader>cd: the working directory follows the
--- listing, so a terminal opened next starts here.
-kawoosh.command("oil_cd", function()
-  local dir = listed()
-  if dir then fs.chdir(dir) else kawoosh.cmd("cd") end
-end)
+-- `:oil cd`, or <leader>cd: the working directory follows the listing,
+-- so a terminal opened next starts here. A subcommand of `:oil`, so it
+-- completes there; `when` names the listing, so anywhere else the
+-- engine answers `oil cd needs language:oil` and nothing runs.
+kawoosh.command("oil cd", function()
+  fs.chdir(listed())
+end, {
+  when = { "language:oil" },
+  doc = "make the listed directory the working directory",
+})
 
 kawoosh.map("n", "<CR>", "oil_enter")
-kawoosh.map("n", "<leader>cd", "oil_cd")
+kawoosh.map("n", "<leader>cd", "oil cd")

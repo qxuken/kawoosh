@@ -51,11 +51,13 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use kawoosh_doc::{Buffer, BufferId, Version, diff_trees};
-use kawoosh_editor::{HistoryState, Selection, Selections};
+use kawoosh_editor::{ArgKind, Args, HistoryState, Selection, Selections, Spec};
+use kawoosh_systems::store::Store;
 use kawoosh_systems::{Alarm, WakeHandle};
 use serde::{Deserialize, Serialize};
 
 use crate::app::Kawoosh;
+use crate::commands::{ShellCommand, cmd};
 use crate::notify::Level;
 
 /// How long a buffer is still after an edit before its row is
@@ -995,69 +997,38 @@ impl Kawoosh {
     /// buffer that holds it; `:history clear` takes out every row no
     /// buffer holds and `:history clear!` the held ones too, and either
     /// vacuums the db.
-    pub(crate) fn history_command(&mut self, args: &[String]) {
-        let Some(store) = self.store.clone() else {
-            self.ed.message = "no store: histories are not kept".into();
-            return;
-        };
-        // `:history clear!` and `:history! clear` alike.
-        let bang = args.iter().any(|a| a == "!" || a.ends_with('!'));
-        let words: Vec<&str> = args
-            .iter()
-            .map(|a| a.trim_end_matches('!'))
-            .filter(|a| !a.is_empty())
-            .collect();
-        match words.as_slice() {
-            [] => self.toggle_history_panel(),
-            ["list"] => {
-                let text = self.history_listing(&store.history_rows());
-                self.show_in_pane(HISTORY_BUFFER, &text);
-            }
-            ["drop", key] => {
-                let key = key.to_string();
-                self.ed.message = match self.drop_history_key(&key) {
-                    Ok(true) => format!("{key} dropped, its buffer reverted"),
-                    Ok(false) => format!("{key} dropped"),
-                    Err(e) => e,
-                };
-            }
-            ["clear"] => {
-                let (mut gone, mut kept) = (0, 0);
-                for row in store.history_rows() {
-                    match self.histories.holder(&row.key) {
-                        Some(_) if !bang => {
-                            kept += 1;
-                            continue;
-                        }
-                        Some(id) => self.discard(id),
-                        None => {
-                            if let Err(e) = store.drop_history(&row.key) {
-                                log::warn!("history {}: {e}", row.key);
-                                continue;
-                            }
-                        }
+    /// `:history clear[!]`: every row goes and the db is vacuumed; a
+    /// row held by an open buffer stays unless `!`, which reverts it.
+    fn history_clear(&mut self, store: &Store, bang: bool) {
+        let (mut gone, mut kept) = (0, 0);
+        for row in store.history_rows() {
+            match self.histories.holder(&row.key) {
+                Some(_) if !bang => {
+                    kept += 1;
+                    continue;
+                }
+                Some(id) => self.discard(id),
+                None => {
+                    if let Err(e) = store.drop_history(&row.key) {
+                        log::warn!("history {}: {e}", row.key);
+                        continue;
                     }
-                    gone += 1;
                 }
-                if let Err(e) = store.vacuum() {
-                    log::warn!("vacuum: {e}");
-                }
-                self.histories.changed += 1;
-                self.ed.message = match kept {
-                    0 => format!("{gone} histor{} dropped, db vacuumed", plural(gone)),
-                    _ => format!(
-                        "{gone} histor{} dropped, {kept} held by open buffers kept \
-                         (:history clear! reverts them), db vacuumed",
-                        plural(gone)
-                    ),
-                };
             }
-            _ => {
-                self.ed.message =
-                    "history what? (:history, :history list, :history drop KEY, :history clear[!])"
-                        .into()
-            }
+            gone += 1;
         }
+        if let Err(e) = store.vacuum() {
+            log::warn!("vacuum: {e}");
+        }
+        self.histories.changed += 1;
+        self.ed.message = match kept {
+            0 => format!("{gone} histor{} dropped, db vacuumed", plural(gone)),
+            _ => format!(
+                "{gone} histor{} dropped, {kept} held by open buffers kept \
+                 (:history clear! reverts them), db vacuumed",
+                plural(gone)
+            ),
+        };
     }
 
     /// Takes the row under `key` out — reverting the buffer that holds
@@ -1138,6 +1109,55 @@ impl Kawoosh {
         out.push_str(":history drop KEY · :history clear[!]\n");
         out
     }
+}
+
+/// `:history` and its subcommands, each needing the store.
+pub(crate) fn commands() -> Vec<ShellCommand> {
+    vec![
+        cmd(
+            Spec::new("history")
+                .when(&["store"])
+                .doc("the histories pane: every buffer's undo tree and draft in the store"),
+            |k, _| k.toggle_history_panel(),
+        ),
+        cmd(
+            Spec::new("history list")
+                .when(&["store"])
+                .doc("the histories as text in a pane"),
+            |k, _| {
+                let Some(store) = k.store.clone() else { return };
+                let text = k.history_listing(&store.history_rows());
+                k.show_in_pane(HISTORY_BUFFER, &text);
+            },
+        ),
+        cmd(
+            Spec::new("history drop")
+                .args(Args::new(&[ArgKind::Text]))
+                .when(&["store"])
+                .doc("drop the row KEY (file:<path> or scratch:<n>), reverting its buffer"),
+            |k, ctx| match ctx.args.first() {
+                Some(key) => {
+                    let key = key.clone();
+                    k.ed.message = match k.drop_history_key(&key) {
+                        Ok(true) => format!("{key} dropped, its buffer reverted"),
+                        Ok(false) => format!("{key} dropped"),
+                        Err(e) => e,
+                    };
+                }
+                None => k.ed.message = "drop what? (:history drop KEY)".into(),
+            },
+        ),
+        cmd(
+            Spec::new("history clear")
+                .bang("revert the buffers holding rows too")
+                .when(&["store"])
+                .doc("drop every row and vacuum the db"),
+            |k, ctx| {
+                let Some(store) = k.store.clone() else { return };
+                k.history_clear(&store, ctx.bang());
+            },
+        ),
+    ]
 }
 
 #[cfg(test)]

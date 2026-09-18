@@ -6,11 +6,14 @@
 //! and Lua's — and an argument to what the command declares it takes
 //! (`kawoosh_editor::ArgKind`): a path for `:e`, `:w`, `:cd`, `:vs`,
 //! `:oil`; a buffer for `:b`; a tool, a view, an option, a command.
-//! Nothing is a popup: the candidates are a row in the strip.
+//! A command's subcommands complete as its first word (`:history dr`
+//! is `:history drop`), and the words after complete as the
+//! subcommand's own. Nothing is a popup: the candidates are a row in
+//! the strip.
 
 use std::path::{MAIN_SEPARATOR, Path};
 
-use kawoosh_editor::{ArgKind, Args, KeyStroke, Mode, Prompt, commands};
+use kawoosh_editor::{ArgKind, KeyStroke, Mode, Prompt, Spec};
 
 use crate::app::Kawoosh;
 
@@ -41,78 +44,6 @@ impl CmdCompletion {
     }
 }
 
-/// The commands the shell runs (`Kawoosh::shell_command`) and what each
-/// takes, declared into the engine at start (`Editor::declare`) so a
-/// path among the arguments arrives resolved and the command line
-/// completes them like the engine's own. `true` is `rest`: the last
-/// kind takes every argument past it.
-pub const SHELL_COMMANDS: &[(&str, &[ArgKind], bool)] = &[
-    ("buffer", &[ArgKind::Buffer], false),
-    ("buffer_delete", &[], false),
-    ("buffer_delete_others", &[], false),
-    ("buffer_list", &[], false),
-    ("buffer_next", &[], false),
-    ("buffer_prev", &[], false),
-    ("cd", &[ArgKind::Path], false),
-    ("close", &[], false),
-    ("compile", &[ArgKind::Text], true),
-    ("dock_toggle", &[], false),
-    ("enew", &[], false),
-    ("history", &[ArgKind::Text], true),
-    ("error_next", &[], false),
-    ("error_prev", &[], false),
-    ("goto_location", &[], false),
-    ("kui_debugger", &[ArgKind::Text], false),
-    ("kui_framerate_hud", &[ArgKind::Text], false),
-    ("lsp_complete", &[], false),
-    ("lsp_definition", &[], false),
-    ("lsp_hover", &[], false),
-    ("lsp_status", &[], false),
-    ("lua", &[ArgKind::Text], true),
-    ("messages", &[ArgKind::Text], false),
-    ("new", &[], false),
-    ("notify", &[ArgKind::Text], true),
-    ("oldfiles", &[ArgKind::Text], false),
-    ("only", &[], false),
-    ("pane_down", &[], false),
-    ("pane_left", &[], false),
-    ("pane_next", &[], false),
-    ("pane_right", &[], false),
-    ("pane_swap", &[], false),
-    ("pane_up", &[], false),
-    ("perf", &[ArgKind::Text], false),
-    ("pwd", &[], false),
-    ("scrollback", &[], false),
-    ("session_restore", &[], false),
-    ("session_save", &[], false),
-    ("settings", &[ArgKind::Text], false),
-    ("split", &[ArgKind::Path], false),
-    ("syntax_tree", &[ArgKind::Text], false),
-    ("tab_close", &[], false),
-    ("toast", &[], false),
-    ("tab_new", &[ArgKind::Path], false),
-    ("tab_next", &[], false),
-    ("tab_prev", &[], false),
-    ("terminal", &[ArgKind::Text], true),
-    ("tool", &[ArgKind::Tool], false),
-    ("undo_history", &[], false),
-    ("view", &[ArgKind::View], false),
-    ("vnew", &[], false),
-    ("vsplit", &[ArgKind::Path], false),
-];
-
-/// Declares every shell command into `ed`.
-pub fn declare_shell_commands(ed: &mut kawoosh_editor::Editor) {
-    for (name, kinds, rest) in SHELL_COMMANDS {
-        let args = if *rest {
-            Args::rest(kinds)
-        } else {
-            Args::new(kinds)
-        };
-        ed.declare(name, args);
-    }
-}
-
 /// Where the token being completed starts: after the last whitespace,
 /// or the line's start for the command itself.
 fn token_start(line: &str) -> usize {
@@ -130,12 +61,30 @@ impl Kawoosh {
         }
         let head = line[..start].trim();
         let mut words = head.split_whitespace();
-        let name = words.next().unwrap_or("").trim_end_matches('!');
-        // Which argument the token is (a `!` on its own is not one).
-        let index = words.filter(|w| *w != "!").count();
-        let full = commands::ex_alias(name).unwrap_or(name);
-        let kind = self.ed.command_args(full).and_then(|a| a.kind_at(index));
-        let mut out: Vec<String> = match kind {
+        let name = words.next().unwrap_or("");
+        let words: Vec<String> = words.map(str::to_string).collect();
+        // The command the words so far name — its alias resolved, its
+        // subcommands consumed — and which of its arguments the token is.
+        let inv = self.ed.commands.resolve(name, &words);
+        let index = inv.args.len();
+        // The first word after a command with subcommands is one of
+        // them, or its own first argument: both are offered.
+        let mut out: Vec<String> = Vec::new();
+        if index == 0 {
+            out.extend(
+                self.ed
+                    .commands
+                    .subcommands(&inv.name)
+                    .into_iter()
+                    .map(|s| s.word().to_string())
+                    .filter(|w| w.starts_with(token)),
+            );
+        }
+        let kind = self
+            .ed
+            .command_args(&inv.name)
+            .and_then(|a| a.kind_at(index));
+        let args: Vec<String> = match kind {
             None | Some(ArgKind::Text) => Vec::new(),
             Some(ArgKind::Path) => self.path_candidates(token),
             Some(ArgKind::Command) => self.command_name_candidates(token),
@@ -194,13 +143,16 @@ impl Kawoosh {
                     .collect()
             }
         };
+        out.extend(args);
         out.dedup();
         (start, out)
     }
 
-    /// The ex spellings first (`:e`, `:vs` — the short names a user
-    /// types), then every command the engine knows — its own, the
-    /// shell's declared, Lua's — sorted; a name in both is listed once.
+    /// Every name the engine knows a command by, the ones meant for
+    /// the command line first: the ex spellings and the commands with
+    /// a line of doc (`:view`, `:vsplit`), then the rest — the
+    /// keymap's `visual_mode` and its kind, typed rarely. Each group
+    /// sorted, a name once.
     fn command_name_candidates(&self, token: &str) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         let mut push = |names: Vec<&str>| {
@@ -212,13 +164,17 @@ impl Kawoosh {
                 }
             }
         };
-        push(
-            commands::EX_ALIASES
-                .iter()
-                .flat_map(|(spellings, _)| spellings.iter().copied())
-                .collect(),
-        );
-        push(self.ed.command_names());
+        let (documented, bare): (Vec<&Spec>, Vec<&Spec>) = self
+            .ed
+            .commands
+            .specs()
+            .into_iter()
+            .filter(|s| !s.name.contains(' '))
+            .partition(|s| !s.doc.is_empty());
+        let mut typed = self.ed.commands.alias_names();
+        typed.extend(documented.iter().map(|s| s.name.as_str()));
+        push(typed);
+        push(bare.iter().map(|s| s.name.as_str()).collect());
         out
     }
 

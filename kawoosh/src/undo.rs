@@ -20,10 +20,11 @@
 use std::time::Instant;
 
 use kawoosh_doc::{BufferId, Version};
-use kawoosh_editor::{HistoryRow, Hunk, KeyStroke, Lookup, Mode, ViewId};
+use kawoosh_editor::{HistoryRow, Hunk, KeyStroke, Lookup, Mode, Spec, ViewId};
 use kui::{Align, Color, NodeSpec, Sizing, Ui, Value, Vec2};
 
 use crate::app::Kawoosh;
+use crate::commands::{ShellCommand, cmd};
 use crate::devtab::Tab;
 use crate::diff;
 use crate::graph::{Geometry, Graph};
@@ -525,4 +526,11 @@ impl Kawoosh {
             self.focus_sink(ui, sink);
         }
     }
+}
+
+pub(crate) fn commands() -> Vec<ShellCommand> {
+    vec![cmd(
+        Spec::new("undo_history").doc("the undo tree as a pane beside the buffer"),
+        |k, _| k.toggle_undo_panel(),
+    )]
 }

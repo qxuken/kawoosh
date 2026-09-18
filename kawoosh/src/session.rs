@@ -12,11 +12,12 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use kawoosh_editor::{Selection, motions};
+use kawoosh_editor::{ArgKind, Args, Selection, Spec, motions};
 use kawoosh_systems::store::Store;
 use serde::{Deserialize, Serialize};
 
 use crate::app::Kawoosh;
+use crate::commands::{ShellCommand, cmd};
 use crate::layout::{Content, Layout, Node, PaneId, SplitDir, Tab};
 
 pub const SESSION: &str = "default";
@@ -322,4 +323,61 @@ impl Kawoosh {
             .map(|s| s.oldfiles(20))
             .unwrap_or_default()
     }
+}
+
+pub(crate) fn commands() -> Vec<ShellCommand> {
+    vec![
+        cmd(
+            Spec::new("session_save")
+                .alias(&["mks", "mksession"])
+                .when(&["store"])
+                .doc("write the layout to the store now"),
+            |k, _| {
+                k.save_session();
+                k.ed.message = "session saved".into();
+            },
+        ),
+        cmd(
+            Spec::new("session_restore")
+                .when(&["store"])
+                .doc("bring the saved layout back"),
+            |k, _| {
+                if !k.restore_session() {
+                    k.ed.message = "no session to restore".into();
+                }
+            },
+        ),
+        // `:oldfiles` lists the files opened before, newest first;
+        // `:oldfiles N` or `N:oldfiles` opens the Nth.
+        cmd(
+            Spec::new("oldfiles")
+                .alias(&["ol", "bro", "browse"])
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("the files opened before; N opens the Nth"),
+            |k, ctx| {
+                let list = k.oldfiles();
+                let n = ctx
+                    .has_count
+                    .then_some(ctx.count)
+                    .or_else(|| ctx.args.first().and_then(|a| a.parse().ok()));
+                match n {
+                    Some(n) => match list.get(n.saturating_sub(1)) {
+                        Some((p, line)) => {
+                            let p = p.clone();
+                            k.open_in_editor(&p, Some(line + 1), None);
+                        }
+                        None => k.ed.message = "no such oldfile".into(),
+                    },
+                    None => {
+                        k.ed.message = list
+                            .iter()
+                            .enumerate()
+                            .map(|(i, (p, _))| format!("{} {}", i + 1, p.display()))
+                            .collect::<Vec<_>>()
+                            .join("   ");
+                    }
+                }
+            },
+        ),
+    ]
 }

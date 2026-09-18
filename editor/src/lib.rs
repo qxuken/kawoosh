@@ -3,6 +3,7 @@
 //! Decision 4; kui.md D5). No UI types: the shell feeds it key strokes and
 //! text, reads its state to draw, and drains its [`Effect`]s.
 
+pub mod command;
 pub mod commands;
 pub mod keymap;
 pub mod motions;
@@ -16,6 +17,10 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Instant;
 
+pub use command::{
+    ArgKind, Args, Command, Cond, Ctx, Facts, FnCommand, Form, Invocation, Kind, MotionKind,
+    Registry, Spec,
+};
 pub use kawoosh_doc::Hunk;
 use kawoosh_doc::{Buffer, BufferId, Version};
 pub use keymap::{Binding, KeyStroke, Keymap, Lookup, Mode};
@@ -316,159 +321,13 @@ pub enum Effect {
     /// A hooked buffer (`Buffer::hook`) was `:w`ritten: the shell hands
     /// its text to the handler.
     Write(BufferId),
-    /// A command the engine does not know: the shell's, if it has one
-    /// (splits, tabs, terminals, Lua), with its args and count.
+    /// A command the engine has no body for — declared by the shell
+    /// (splits, tabs, terminals, Lua), or unknown — with everything it
+    /// would run with.
     Shell {
         name: String,
-        args: Vec<String>,
-        count: Option<usize>,
+        ctx: Ctx,
     },
-}
-
-/// What a command runs with.
-#[derive(Clone, Debug)]
-pub struct Ctx {
-    pub view: ViewId,
-    pub count: usize,
-    pub has_count: bool,
-    pub args: Vec<String>,
-    /// The key that followed, for commands that take a character (`f`,
-    /// `r`, `iw`).
-    pub arg_char: Option<char>,
-}
-
-/// How an operator takes a motion's range (vim's three).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MotionKind {
-    Exclusive,
-    Inclusive,
-    Linewise,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Kind {
-    Motion(MotionKind),
-    Operator,
-    TextObject,
-    Other,
-}
-
-pub type CommandFn = Rc<dyn Fn(&mut Editor, &Ctx)>;
-
-/// What an argument of a command is, declared with the command. The
-/// engine resolves a `Path` — `~/x`, `../y`, against the working
-/// directory — before any command sees it, whoever registered the
-/// command: the engine's `:w`, the shell's `:cd`, a plugin's `:oil`.
-/// The command line completes each kind from what it names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ArgKind {
-    /// A file or directory, as the user writes it.
-    Path,
-    /// A buffer, by name.
-    Buffer,
-    /// A command, by name (`:map`'s last).
-    Command,
-    /// An option (`:set`).
-    Option,
-    /// A tool the config registered.
-    Tool,
-    /// A Lua view.
-    View,
-    /// Anything.
-    Text,
-}
-
-impl ArgKind {
-    /// The kind by its name — what a plugin writes in `args = { "path" }`.
-    pub fn parse(name: &str) -> Option<Self> {
-        Some(match name {
-            "path" | "file" | "dir" => Self::Path,
-            "buffer" => Self::Buffer,
-            "command" => Self::Command,
-            "option" => Self::Option,
-            "tool" => Self::Tool,
-            "view" => Self::View,
-            "text" | "string" => Self::Text,
-            _ => return None,
-        })
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Path => "path",
-            Self::Buffer => "buffer",
-            Self::Command => "command",
-            Self::Option => "option",
-            Self::Tool => "tool",
-            Self::View => "view",
-            Self::Text => "text",
-        }
-    }
-}
-
-/// A command's arguments: one kind per position; with `rest`, the last
-/// kind takes every argument past it (`:echo` is `text...`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Args {
-    pub kinds: Vec<ArgKind>,
-    pub rest: bool,
-}
-
-impl Args {
-    pub fn new(kinds: &[ArgKind]) -> Self {
-        Self {
-            kinds: kinds.to_vec(),
-            rest: false,
-        }
-    }
-
-    /// `kinds`, the last of them repeated.
-    pub fn rest(kinds: &[ArgKind]) -> Self {
-        Self {
-            kinds: kinds.to_vec(),
-            rest: true,
-        }
-    }
-
-    /// Parses `"path"`, `"text..."`: a trailing `...` on the last name
-    /// is `rest`. An unknown name is an error naming it.
-    pub fn parse(names: &[String]) -> Result<Self, String> {
-        let mut kinds = Vec::new();
-        let mut rest = false;
-        for (i, n) in names.iter().enumerate() {
-            let (n, more) = match n.strip_suffix("...") {
-                Some(n) => (n, true),
-                None => (n.as_str(), false),
-            };
-            if more && i + 1 != names.len() {
-                return Err(format!("`{n}...` must be the last argument"));
-            }
-            rest |= more;
-            kinds.push(ArgKind::parse(n).ok_or_else(|| format!("unknown argument kind `{n}`"))?);
-        }
-        Ok(Self { kinds, rest })
-    }
-
-    /// The kind of argument `i` (from 0), if the command takes one.
-    pub fn kind_at(&self, i: usize) -> Option<ArgKind> {
-        self.kinds
-            .get(i)
-            .copied()
-            .or_else(|| (self.rest && !self.kinds.is_empty()).then(|| *self.kinds.last().unwrap()))
-    }
-}
-
-#[derive(Clone)]
-pub struct Command {
-    pub name: String,
-    /// What runs it — or nothing, for a command declared here (its
-    /// arguments, for resolving and completing) and run by the shell:
-    /// running one is [`Effect::Shell`].
-    pub run: Option<CommandFn>,
-    pub kind: Kind,
-    /// True for commands that read one more key as an argument.
-    pub takes_char: bool,
-    pub args: Args,
 }
 
 /// How many lines a prompt's history keeps.
@@ -500,7 +359,9 @@ pub struct Editor {
     history: HashMap<BufferId, History>,
     pub mode: Mode,
     pub keymap: Keymap,
-    commands: HashMap<String, Command>,
+    /// Every command's spec, and its body when the engine runs it
+    /// ([`command`]).
+    pub commands: Registry,
     pub registers: HashMap<char, String>,
     pub register_linewise: bool,
     /// Keys of a multi-key sequence so far.
@@ -558,7 +419,7 @@ impl Editor {
             history: HashMap::new(),
             mode: Mode::Normal,
             keymap: Keymap::new(),
-            commands: HashMap::new(),
+            commands: Registry::default(),
             registers: HashMap::new(),
             register_linewise: false,
             pending: Vec::new(),
@@ -648,8 +509,18 @@ impl Editor {
 
     // ------------------------------------------------------------ commands
 
+    /// Adds a command: its spec to the registry, its body to run here.
+    pub fn command(&mut self, cmd: impl Command<Editor> + 'static) {
+        self.commands.add(cmd);
+    }
+
+    /// A command out of a spec and a closure.
+    pub fn register_spec(&mut self, spec: Spec, run: impl Fn(&mut Editor, &Ctx) + 'static) {
+        self.commands.add(FnCommand::new(spec, run));
+    }
+
     pub fn register(&mut self, name: &str, run: impl Fn(&mut Editor, &Ctx) + 'static) {
-        self.register_kind(name, Kind::Other, run);
+        self.register_spec(Spec::new(name), run);
     }
 
     /// A command with its arguments declared: a `Path` among them
@@ -660,30 +531,15 @@ impl Editor {
         args: Args,
         run: impl Fn(&mut Editor, &Ctx) + 'static,
     ) {
-        self.register_kind(name, Kind::Other, run);
-        self.commands.get_mut(name).unwrap().args = args;
+        self.register_spec(Spec::new(name).args(args), run);
     }
 
-    /// Declares a command the shell runs: its name and arguments are
-    /// known here — resolved and completed like any other — and running
-    /// it is [`Effect::Shell`]. A declaration never replaces a command
-    /// that has a `run`.
-    pub fn declare(&mut self, name: &str, args: Args) {
-        match self.commands.get_mut(name) {
-            Some(c) => c.args = args,
-            None => {
-                self.commands.insert(
-                    name.to_string(),
-                    Command {
-                        name: name.to_string(),
-                        run: None,
-                        kind: Kind::Other,
-                        takes_char: false,
-                        args,
-                    },
-                );
-            }
-        }
+    /// Declares a command the shell runs: its spec is known here —
+    /// resolved, completed and checked like any other — and running it
+    /// is [`Effect::Shell`]. A declaration never replaces a command
+    /// that has a body.
+    pub fn declare(&mut self, spec: Spec) {
+        self.commands.declare(spec);
     }
 
     pub fn register_kind(
@@ -692,50 +548,32 @@ impl Editor {
         kind: Kind,
         run: impl Fn(&mut Editor, &Ctx) + 'static,
     ) {
-        let args = self
-            .commands
-            .get(name)
-            .filter(|c| c.run.is_none())
-            .map(|c| c.args.clone())
-            .unwrap_or_default();
-        self.commands.insert(
-            name.to_string(),
-            Command {
-                name: name.to_string(),
-                run: Some(Rc::new(run)),
-                kind,
-                takes_char: false,
-                args,
-            },
-        );
+        self.register_spec(Spec::new(name).kind(kind), run);
+    }
+
+    /// The spec of command `name` (its own name, not an alias).
+    pub fn spec(&self, name: &str) -> Option<&Spec> {
+        self.commands.spec(name)
     }
 
     /// The arguments command `name` declares, if it is known.
     pub fn command_args(&self, name: &str) -> Option<&Args> {
-        self.commands.get(name).map(|c| &c.args)
+        self.commands.spec(name).map(|s| &s.args)
     }
 
     /// `args` with every `Path` the command declares made absolute
-    /// against the working directory (`~`, `..`; `kawoosh_doc::paths`);
-    /// a `!` is not a path.
+    /// against the working directory (`~`, `..`; `kawoosh_doc::paths`).
     pub fn resolve_args(&self, name: &str, args: &[String]) -> Vec<String> {
         let Some(spec) = self.command_args(name) else {
             return args.to_vec();
         };
-        let mut i = 0;
         args.iter()
-            .map(|a| {
-                if a == "!" {
-                    return a.clone();
-                }
-                let kind = spec.kind_at(i);
-                i += 1;
-                match kind {
-                    Some(ArgKind::Path) => kawoosh_doc::paths::expand(Path::new(a), &self.cwd)
-                        .display()
-                        .to_string(),
-                    _ => a.clone(),
-                }
+            .enumerate()
+            .map(|(i, a)| match spec.kind_at(i) {
+                Some(ArgKind::Path) => kawoosh_doc::paths::expand(Path::new(a), &self.cwd)
+                    .display()
+                    .to_string(),
+                _ => a.clone(),
             })
             .collect()
     }
@@ -750,8 +588,7 @@ impl Editor {
         kind: Kind,
         run: impl Fn(&mut Editor, &Ctx) + 'static,
     ) {
-        self.register_kind(name, kind, run);
-        self.commands.get_mut(name).unwrap().takes_char = true;
+        self.register_spec(Spec::new(name).kind(kind).takes_char(), run);
     }
 
     /// A motion over every head: `f(buf, head, count) -> new head`.
@@ -772,57 +609,113 @@ impl Editor {
         });
     }
 
+    /// Every top-level command name, sorted.
     pub fn command_names(&self) -> Vec<&str> {
-        let mut v: Vec<&str> = self.commands.keys().map(String::as_str).collect();
-        v.sort();
-        v
+        self.commands.names()
     }
 
     pub fn has_command(&self, name: &str) -> bool {
-        self.commands.contains_key(name)
+        self.commands.contains(name)
     }
 
-    /// Runs a named command with `args` on `view`, with an undo
-    /// checkpoint around it; a path among the arguments is resolved
-    /// first. A command without a `run` here — declared, or unknown —
-    /// is the shell's (`Effect::Shell`).
+    // ------------------------------------------------------------ facts
+
+    /// Says that `fact` holds, or no longer does — the shell's word on
+    /// what it has (`store`, `lsp`, `terminal`), a plugin's on its own.
+    pub fn fact(&mut self, fact: &str, on: bool) {
+        if on {
+            self.commands.facts.insert(fact.to_string());
+        } else {
+            self.commands.facts.remove(fact);
+        }
+    }
+
+    /// What a `when` is answered from on `view` ([`command::Facts`]).
+    pub fn facts(&self, view: Option<ViewId>) -> command::Facts<'_> {
+        let buffer = view
+            .and_then(|v| self.views.get(v))
+            .map(|v| &self.buffers[v.buffer])
+            .map(|b| (b.name.as_str(), &*b.language, b.modified, b.path.is_some()));
+        command::Facts {
+            published: Some(&self.commands.facts),
+            visual: self.mode == Mode::Visual,
+            buffer,
+        }
+    }
+
+    /// Whether `fact` holds on `view`.
+    pub fn holds(&self, view: Option<ViewId>, fact: &str) -> bool {
+        self.facts(view).holds(fact)
+    }
+
+    /// Whether command `name` can run on `view` now: every condition of
+    /// its `when` holds. The error is the reason, for the message.
+    pub fn can(&self, view: Option<ViewId>, name: &str) -> Result<(), String> {
+        match self.commands.spec(name) {
+            Some(spec) => spec.check(&self.facts(view)),
+            None => Ok(()),
+        }
+    }
+
+    /// Runs a command by name (an alias, with `!` or `?`, with its
+    /// subcommand among `args` — [`Registry::resolve`]) with `args` on
+    /// `view`, with an undo checkpoint around it; a path among the
+    /// arguments is resolved first, a form the command has no word for
+    /// or a condition it needs is refused with the reason as the
+    /// message. A command without a body here — declared, or unknown —
+    /// is the shell's ([`Effect::Shell`]).
     pub fn run(&mut self, view: ViewId, name: &str, args: &[String], count: Option<usize>) {
-        let args = self.resolve_args(name, args);
-        let Some(cmd) = self.commands.get(name).filter(|c| c.run.is_some()).cloned() else {
+        let inv = self.commands.resolve(name, args);
+        if let Some(spec) = self.commands.spec(&inv.name)
+            && !spec.takes(inv.form)
+        {
             self.pending_op = None;
-            self.effects.push(Effect::Shell {
-                name: name.to_string(),
-                args,
-                count,
-            });
+            self.message = format!("{} takes no {}", inv.name, inv.form.marker());
             return;
-        };
+        }
+        if let Err(reason) = self.can(Some(view), &inv.name) {
+            self.pending_op = None;
+            self.message = reason;
+            return;
+        }
         let ctx = Ctx {
             view,
             count: count.unwrap_or(1).max(1),
             has_count: count.is_some(),
-            args,
+            form: inv.form,
+            args: self.resolve_args(&inv.name, &inv.args),
             arg_char: None,
         };
-        self.run_cmd(&cmd, ctx);
+        let Some(cmd) = self.commands.body(&inv.name) else {
+            self.pending_op = None;
+            self.effects.push(Effect::Shell {
+                name: inv.name,
+                ctx,
+            });
+            return;
+        };
+        let kind = self
+            .commands
+            .spec(&inv.name)
+            .map(|s| s.kind)
+            .unwrap_or_default();
+        self.run_cmd(&cmd, kind, ctx);
     }
 
-    fn run_cmd(&mut self, cmd: &Command, ctx: Ctx) {
+    fn run_cmd(&mut self, cmd: &Rc<dyn Command<Editor>>, kind: Kind, ctx: Ctx) {
         if !self.views.contains_key(ctx.view) {
             return;
         }
         self.open_checkpoint(ctx.view);
         let op_before = self.pending_op;
-        if let Some(run) = &cmd.run {
-            run(self, &ctx);
-        }
+        cmd.run(self, &ctx);
         // An operator waiting on a motion: the motion just extended every
         // selection, so apply the operator now (mvp.md D4: operators
         // compose with the selection set, not with "the cursor").
         if let Some((op, op_count)) = op_before
             && self.pending_op == op_before
         {
-            match cmd.kind {
+            match kind {
                 Kind::Motion(kind) => {
                     self.pending_op = None;
                     let count = if ctx.has_count {
@@ -1236,15 +1129,22 @@ impl Editor {
             let Some(c) = c else {
                 return true;
             };
-            if let Some(cmd) = self.commands.get(&binding.command).cloned() {
+            let inv = self.commands.resolve(&binding.command, &binding.args);
+            if let Some(cmd) = self.commands.body(&inv.name) {
+                let kind = self
+                    .commands
+                    .spec(&inv.name)
+                    .map(|s| s.kind)
+                    .unwrap_or_default();
                 let ctx = Ctx {
                     view,
                     count: count.unwrap_or(1).max(1),
                     has_count: count.is_some(),
-                    args: binding.args.clone(),
+                    form: inv.form,
+                    args: inv.args,
                     arg_char: Some(c),
                 };
-                self.run_cmd(&cmd, ctx);
+                self.run_cmd(&cmd, kind, ctx);
             }
             return true;
         }
@@ -1315,7 +1215,8 @@ impl Editor {
                 let b = b.clone();
                 self.pending.clear();
                 let count = self.count.take();
-                if self.commands.get(&b.command).is_some_and(|c| c.takes_char) {
+                let name = self.commands.resolve(&b.command, &b.args).name;
+                if self.commands.spec(&name).is_some_and(|c| c.takes_char) {
                     self.awaiting_char = Some((b, count));
                     return true;
                 }
@@ -1648,18 +1549,19 @@ impl Editor {
             self.run(view, "substitute", &args, None);
             return;
         }
+        // The name ends at whitespace or at a marker: `q!`, `e!foo`
+        // and `e! foo` alike name `e` with `!`; `history clear!` carries
+        // its marker on the subcommand's word, resolved with it.
         let split = line
-            .find(|c: char| c.is_whitespace() || c == '!')
+            .find(|c: char| c.is_whitespace() || c == '!' || c == '?')
             .unwrap_or(line.len());
-        let (name, rest) = (&line[..split], line[split..].trim());
-        let bang = rest.starts_with('!');
-        let rest = rest.trim_start_matches('!').trim();
-        let mut args: Vec<String> = rest.split_whitespace().map(str::to_string).collect();
-        if bang {
-            args.push("!".into());
-        }
-        let full = commands::ex_alias(name).unwrap_or(name).to_string();
-        self.run(view, &full, &args, None);
+        let (name, rest) = line.split_at(split);
+        let (name, rest) = match rest.chars().next() {
+            Some(m @ ('!' | '?')) if !name.is_empty() => (format!("{name}{m}"), &rest[1..]),
+            _ => (name.to_string(), rest),
+        };
+        let args: Vec<String> = rest.split_whitespace().map(str::to_string).collect();
+        self.run(view, &name, &args, None);
     }
 
     // ------------------------------------------------------------ editing primitives

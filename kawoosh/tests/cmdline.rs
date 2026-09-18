@@ -178,6 +178,34 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     tab(&mut d, &mut app);
     assert_eq!(app.ed.cmdline, "echo x");
     d.key(&mut app, "escape", KeyMods::default());
+
+    // A subcommand completes as its parent's first word — the shell's
+    // `:history drop`, a plugin's `:oil cd` — and what follows it
+    // completes as the subcommand's own; a subcommand and the parent's
+    // first argument are offered side by side.
+    d.keys(&mut app, ":history ");
+    assert_eq!(
+        app.cmd_completion.as_ref().unwrap().candidates,
+        ["clear", "drop", "list"]
+    );
+    d.keys(&mut app, "dr");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("op"));
+    tab(&mut d, &mut app);
+    assert_eq!(app.ed.cmdline, "history drop");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, ":settings re");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("load"));
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, ":oil ");
+    let cands = app.cmd_completion.as_ref().unwrap().candidates.clone();
+    assert_eq!(
+        cands,
+        ["cd", "src/", "a.txt"],
+        "the subcommand, then the path"
+    );
+    d.keys(&mut app, "c");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("d"));
+    d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }

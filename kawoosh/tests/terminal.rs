@@ -55,6 +55,12 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
     let text = app.ed.buffer_of(v).text();
     assert!(text.starts_with("$ echo hi\nhi\n"), "{text:?}");
     assert_eq!(app.layout.visible_panes().len(), 3);
+    // `:scrollback` is the terminal pane's (`when = terminal`): from the
+    // editor pane it now has, the engine says so and nothing opens.
+    d.keys(&mut app, ":scrollback");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(app.ed.message, "scrollback needs terminal");
+    assert_eq!(app.layout.visible_panes().len(), 3);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

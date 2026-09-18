@@ -7,10 +7,11 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use kawoosh_doc::Buffer;
-use kawoosh_editor::{KeyStroke, Lookup, Mode, Selection, motions};
+use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Selection, Spec, motions};
 use kawoosh_term::{TermSize, Terminal, encode_key};
 
 use crate::app::Kawoosh;
+use crate::commands::{ShellCommand, cmd};
 use crate::layout::{Content, SplitDir};
 
 pub type TermId = u64;
@@ -264,6 +265,38 @@ impl Kawoosh {
             self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(off));
         }
     }
+}
+
+pub(crate) fn commands() -> Vec<ShellCommand> {
+    vec![
+        cmd(
+            Spec::new("terminal")
+                .alias(&["term"])
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("a terminal in a split below, running CMD or the shell"),
+            |k, ctx| {
+                let cmd = if ctx.args.is_empty() {
+                    None
+                } else {
+                    Some(ctx.args.join(" "))
+                };
+                let cwd = k.cwd.clone();
+                if let Some(t) = k.spawn_terminal(cmd.as_deref(), Some(&cwd)) {
+                    k.layout.split(SplitDir::V, Content::Terminal(t));
+                }
+            },
+        ),
+        cmd(
+            Spec::new("scrollback")
+                .when(&["terminal"])
+                .doc("the terminal's scrollback as a buffer"),
+            |k, _| {
+                if let Some(t) = k.term_of(k.layout.focused()) {
+                    k.scrollback_to_buffer(t);
+                }
+            },
+        ),
+    ]
 }
 
 #[cfg(test)]

@@ -11,70 +11,9 @@ use kawoosh_doc::Buffer;
 use crate::keymap::{Keymap, Mode};
 use crate::motions as m;
 use crate::{
-    ArgKind, Args, Ctx, Editor, Effect, Kind, Layer, MotionKind, Prompt, Selection, Setting, ViewId,
+    ArgKind, Args, Ctx, Editor, Effect, Kind, Layer, MotionKind, Prompt, Selection, Setting, Spec,
+    ViewId,
 };
-
-/// The ex spellings and the commands they run: `:w` is `write`, `:bd`
-/// `buffer_delete`. One table, so the command line completes them and
-/// `ex_alias` resolves them from the same list.
-pub const EX_ALIASES: &[(&[&str], &str)] = &[
-    (&["w", "write"], "write"),
-    (&["q", "quit"], "quit"),
-    (&["wq", "x"], "write_quit"),
-    (&["qa", "qall", "quitall"], "quit_all"),
-    (&["wqa", "xa"], "write_quit_all"),
-    (&["e", "edit"], "edit"),
-    (&["ene", "enew"], "enew"),
-    (&["new"], "new"),
-    (&["vne", "vnew"], "vnew"),
-    (&["set", "se"], "set"),
-    (&["bn", "bnext"], "buffer_next"),
-    (&["bp", "bprev", "bprevious"], "buffer_prev"),
-    (&["bd", "bdelete"], "buffer_delete"),
-    (&["bdo", "bdother", "bdothers"], "buffer_delete_others"),
-    (&["b", "buffer"], "buffer"),
-    (&["ls", "buffers"], "buffer_list"),
-    (&["sp", "split"], "split"),
-    (&["vs", "vsplit"], "vsplit"),
-    (&["clo", "close"], "close"),
-    (&["on", "only"], "only"),
-    (&["tabnew", "tabe"], "tab_new"),
-    (&["tabn", "tabnext"], "tab_next"),
-    (&["tabp", "tabprev"], "tab_prev"),
-    (&["tabc", "tabclose"], "tab_close"),
-    (&["term", "terminal"], "terminal"),
-    (&["scrollback"], "scrollback"),
-    (&["map"], "map"),
-    (&["echo"], "echo"),
-    (&["lua"], "lua"),
-    (&["messages", "mes"], "messages"),
-    (&["notify"], "notify"),
-    (&["toast", "toasts"], "toast"),
-    (&["lsp"], "lsp_status"),
-    (&["tool"], "tool"),
-    (&["cd", "chdir"], "cd"),
-    (&["pwd"], "pwd"),
-    (&["view"], "view"),
-    (&["compile", "make"], "compile"),
-    (&["cn", "cnext"], "error_next"),
-    (&["ol", "oldfiles", "bro", "browse"], "oldfiles"),
-    (&["mks", "mksession"], "session_save"),
-    (&["kui_debugger", "kui_devtools"], "kui_debugger"),
-    (
-        &["kui_framerate_hud", "kui_framerate_hub", "kui_hud"],
-        "kui_framerate_hud",
-    ),
-    (&["syntax_tree", "syntax", "tree"], "syntax_tree"),
-    (&["perf", "kui_perf"], "perf"),
-    (&["cp", "cprev", "cprevious"], "error_prev"),
-];
-
-pub fn ex_alias(name: &str) -> Option<&'static str> {
-    EX_ALIASES
-        .iter()
-        .find(|(spellings, _)| spellings.contains(&name))
-        .map(|(_, cmd)| *cmd)
-}
 
 fn view<'a>(ed: &'a Editor, ctx: &Ctx) -> &'a crate::View {
     &ed.views[ctx.view]
@@ -901,7 +840,7 @@ fn save_beside(buf: &kawoosh_doc::Buffer, path: &std::path::Path) -> std::io::Re
 
 fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
     let id = view(ed, ctx).buffer;
-    if let Some(p) = ctx.args.first().filter(|a| *a != "!") {
+    if let Some(p) = ctx.args.first() {
         ed.buffers[id].path = Some(std::path::PathBuf::from(p));
         ed.buffers[id].name = std::path::Path::new(p)
             .file_name()
@@ -1544,92 +1483,151 @@ pub fn install(ed: &mut Editor) {
     });
     ed.register("search_mode", |ed, ctx| ed.open_search(ctx.view, false));
     ed.register("search_mode_back", |ed, ctx| ed.open_search(ctx.view, true));
-    ed.register_with_args("write", Args::new(&[ArgKind::Path]), |ed, ctx| {
-        write(ed, ctx);
-    });
+    ed.register_spec(
+        Spec::new("write")
+            .alias(&["w"])
+            .args(Args::new(&[ArgKind::Path]))
+            .bang("nothing yet: taken for the fingers that type :w!")
+            .doc("write the buffer to its file, or to PATH"),
+        |ed, ctx| {
+            write(ed, ctx);
+        },
+    );
     // Whether unsaved changes let `:q` through is the shell's call
     // (`Effect::Quit`): with a store they are kept for the next launch,
     // without one it refuses as vim does.
-    ed.register("quit", |ed, ctx| {
-        let force = ctx.args.iter().any(|a| a == "!");
-        ed.effects.push(Effect::Quit { force });
-    });
-    ed.register("quit_all", |ed, ctx| {
-        let force = ctx.args.iter().any(|a| a == "!");
-        ed.effects.push(Effect::QuitAll { force });
-    });
-    ed.register_with_args("write_quit", Args::new(&[ArgKind::Path]), |ed, ctx| {
-        if write(ed, ctx) {
-            ed.effects.push(Effect::Quit { force: false });
-        }
-    });
-    ed.register("write_quit_all", |ed, ctx| {
-        let ids: Vec<_> = ed
-            .buffers
-            .iter()
-            .filter(|(_, b)| b.modified && b.path.is_some())
-            .map(|(id, _)| id)
-            .collect();
-        for id in ids {
-            if let Some(p) = ed.buffers[id].path.clone()
-                && save_beside(&ed.buffers[id], &p).is_ok()
-            {
-                ed.buffers[id].mark_saved();
+    ed.register_spec(
+        Spec::new("quit")
+            .alias(&["q"])
+            .bang("discard unsaved changes")
+            .doc("close the pane, or the app from the last one"),
+        |ed, ctx| {
+            ed.effects.push(Effect::Quit { force: ctx.bang() });
+        },
+    );
+    ed.register_spec(
+        Spec::new("quit_all")
+            .alias(&["qa", "qall", "quitall"])
+            .bang("discard unsaved changes")
+            .doc("close the app, whatever is open"),
+        |ed, ctx| {
+            ed.effects.push(Effect::QuitAll { force: ctx.bang() });
+        },
+    );
+    ed.register_spec(
+        Spec::new("write_quit")
+            .alias(&["wq", "x"])
+            .args(Args::new(&[ArgKind::Path]))
+            .bang("nothing yet: taken for the fingers that type :wq!")
+            .doc("write, then quit"),
+        |ed, ctx| {
+            if write(ed, ctx) {
+                ed.effects.push(Effect::Quit { force: false });
             }
-        }
-        let _ = ctx;
-        ed.effects.push(Effect::QuitAll { force: false });
-    });
+        },
+    );
+    ed.register_spec(
+        Spec::new("write_quit_all")
+            .alias(&["wqa", "xa"])
+            .doc("write every file, then quit"),
+        |ed, _| {
+            let ids: Vec<_> = ed
+                .buffers
+                .iter()
+                .filter(|(_, b)| b.modified && b.path.is_some())
+                .map(|(id, _)| id)
+                .collect();
+            for id in ids {
+                if let Some(p) = ed.buffers[id].path.clone()
+                    && save_beside(&ed.buffers[id], &p).is_ok()
+                {
+                    ed.buffers[id].mark_saved();
+                }
+            }
+            ed.effects.push(Effect::QuitAll { force: false });
+        },
+    );
     // `:e path` opens; `:e!` alone loads the disk's text into the
     // buffer as one undoable change, so what was unsaved is a `u` away
     // — a draft restored over a file that moved on disk, looked at
     // both ways. `:e! path` is `:e path` (the changes are kept either
     // way).
-    ed.register_with_args("edit", Args::new(&[ArgKind::Path]), |ed, ctx| {
-        let bang = ctx.args.iter().any(|a| a == "!");
-        match ctx.args.iter().find(|a| *a != "!") {
+    ed.register_spec(
+        Spec::new("edit")
+            .alias(&["e"])
+            .args(Args::new(&[ArgKind::Path]))
+            .bang("reload the disk's text, as one undoable change")
+            .doc("open PATH"),
+        |ed, ctx| match ctx.args.first() {
             Some(p) => ed.effects.push(Effect::Open(p.into())),
-            None if bang => reload(ed, ctx),
+            None if ctx.bang() => reload(ed, ctx),
             None => ed.message = "edit what?".into(),
-        }
-    });
+        },
+    );
     // `:set PATH=VALUE`, `:set FLAG`, `:set noFLAG` set into the session
     // layer, shaped like the value already there; `:set PATH?` says what
     // it is and where it came from; `:set PATH!` takes the session's
     // value back out.
-    ed.register_with_args("set", Args::rest(&[ArgKind::Option]), |ed, ctx| {
-        // One setting per line: what follows a `=` is the value, spaces
-        // and all (`:set compile.command=cargo test`).
-        let a = ctx.args.join(" ");
-        if a.is_empty() {
-            ed.message = "set what? (:set PATH=VALUE, :set PATH?)".into();
-            return;
-        }
-        let a = a.as_str();
-        if let Some(path) = a.strip_suffix('?') {
-            ed.message = match ed.settings.get(path) {
-                Some(v) => match ed.settings.origin(path) {
-                    Some(from) => format!("{path} = {v}  ({from})"),
-                    None => format!("{path} = {v}"),
-                },
-                None => format!("{path} is not set"),
+    ed.register_spec(
+        Spec::new("set")
+            .alias(&["se"])
+            .args(Args::rest(&[ArgKind::Option]))
+            .doc("set an option for the session (PATH=VALUE, FLAG, noFLAG, PATH?, PATH!)"),
+        |ed, ctx| {
+            // One setting per line: what follows a `=` is the value, spaces
+            // and all (`:set compile.command=cargo test`).
+            let a = ctx.args.join(" ");
+            if a.is_empty() {
+                ed.message = "set what? (:set PATH=VALUE, :set PATH?)".into();
+                return;
+            }
+            let a = a.as_str();
+            if let Some(path) = a.strip_suffix('?') {
+                ed.message = match ed.settings.get(path) {
+                    Some(v) => match ed.settings.origin(path) {
+                        Some(from) => format!("{path} = {v}  ({from})"),
+                        None => format!("{path} = {v}"),
+                    },
+                    None => format!("{path} is not set"),
+                };
+                return;
+            }
+            if let Some(path) = a.strip_suffix('!') {
+                ed.settings.unset(Layer::Session, path);
+                return;
+            }
+            let (path, value) = match a.split_once('=') {
+                Some((k, v)) => (k.to_string(), Setting::parse_like(v, ed.settings.get(k))),
+                None if a.starts_with("no") => (a[2..].to_string(), Setting::Bool(false)),
+                None => (a.to_string(), Setting::Bool(true)),
             };
-            return;
-        }
-        if let Some(path) = a.strip_suffix('!') {
-            ed.settings.unset(Layer::Session, path);
-            return;
-        }
-        let (path, value) = match a.split_once('=') {
-            Some((k, v)) => (k.to_string(), Setting::parse_like(v, ed.settings.get(k))),
-            None if a.starts_with("no") => (a[2..].to_string(), Setting::Bool(false)),
-            None => (a.to_string(), Setting::Bool(true)),
-        };
-        ed.settings.set(Layer::Session, &path, value);
-    });
-    ed.register_with_args("echo", Args::rest(&[ArgKind::Text]), |ed, ctx| {
-        ed.message = ctx.args.join(" ")
-    });
+            ed.settings.set(Layer::Session, &path, value);
+        },
+    );
+    ed.register_spec(
+        Spec::new("echo")
+            .args(Args::rest(&[ArgKind::Text]))
+            .doc("put TEXT in the message line"),
+        |ed, ctx| ed.message = ctx.args.join(" "),
+    );
+    // `:map MODE KEYS COMMAND ARGS...`: a binding for the session, as a
+    // plugin's `kawoosh.map` makes one.
+    ed.register_spec(
+        Spec::new("map")
+            .args(Args::rest(&[
+                ArgKind::Text,
+                ArgKind::Text,
+                ArgKind::Command,
+            ]))
+            .doc("bind KEYS in MODE to COMMAND"),
+        |ed, ctx| match ctx.args.as_slice() {
+            [mode, keys, cmd @ ..] if !cmd.is_empty() => match Mode::from_short(mode) {
+                Some(m) => ed.keymap.bind(m, keys, &cmd.join(" ")),
+                None => ed.message = format!("map: unknown mode {mode}"),
+            },
+            _ => ed.message = "map what? (:map MODE KEYS COMMAND)".into(),
+        },
+    );
 }
 
 fn goto_line(ed: &mut Editor, view: ViewId, n: usize) {

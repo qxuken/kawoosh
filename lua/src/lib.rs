@@ -10,7 +10,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use kawoosh_doc::{BufferId, Snapshot};
-use kawoosh_editor::{Ctx, Editor, Setting, ViewId};
+use std::collections::BTreeSet;
+
+use kawoosh_editor::{Args, Ctx, Editor, Facts, Setting, Spec, ViewId};
 use kui_lua::LuaExtension;
 use mlua::{Lua, Table, Value as LV};
 use slotmap::{Key, KeyData};
@@ -21,11 +23,15 @@ const BOOT: &str = include_str!("../lua/boot.lua");
 /// command that ran the script; the rest reach the shell.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Msg {
-    /// A command and what it takes (`kawoosh.command(name, fn, { args =
-    /// { "path", "text..." } })`), as the engine's `Args` spells it.
-    RegisterCommand {
+    /// A command and its spec (`kawoosh.command(name, fn, { args = {
+    /// "path", "text..." }, aliases = {...}, bang = "...", query =
+    /// "...", when = { "language:oil" }, doc = "..." })`).
+    RegisterCommand(Spec),
+    /// `kawoosh.fact(name, on)`: a plugin's word on what holds, for a
+    /// `when`.
+    Fact {
         name: String,
-        args: kawoosh_editor::Args,
+        on: bool,
     },
     Map {
         mode: String,
@@ -107,6 +113,7 @@ impl Msg {
                 | Msg::SetCursor { .. }
                 | Msg::Echo(_)
                 | Msg::Ex(_)
+                | Msg::Fact { .. }
         )
     }
 }
@@ -129,6 +136,11 @@ pub struct Published {
     pub buffers: HashMap<u64, BufSnap>,
     /// The effective settings, every layer merged.
     pub settings: Setting,
+    /// Every command's spec, copied when the registry's version moved.
+    pub commands: Vec<Spec>,
+    pub commands_version: u64,
+    /// What the shell and plugins published as holding.
+    pub facts: BTreeSet<String>,
     /// For a tracked buffer: what each original line has become — its
     /// current text, or `None` when deleted (see `Runtime::track_lines`).
     pub tracked: HashMap<u64, Vec<Option<String>>>,
@@ -141,6 +153,9 @@ impl Default for Published {
             mode: String::new(),
             buffers: HashMap::new(),
             settings: Setting::table(),
+            commands: Vec::new(),
+            commands_version: 0,
+            facts: BTreeSet::new(),
             tracked: HashMap::new(),
         }
     }
@@ -314,6 +329,11 @@ impl Runtime {
         p.current = current.map(|v| handle_of(ed.views[v].buffer));
         p.mode = ed.mode.name().to_lowercase();
         p.settings = ed.settings.effective().clone();
+        if p.commands_version != ed.commands.version() {
+            p.commands = ed.commands.specs().into_iter().cloned().collect();
+            p.commands_version = ed.commands.version();
+        }
+        p.facts = ed.commands.facts.clone();
     }
 
     /// Runs the Lua command `name`.
@@ -333,6 +353,9 @@ impl Runtime {
         let t = self.lua.create_table().unwrap();
         let _ = t.set("count", ctx.count);
         let _ = t.set("args", ctx.args.clone());
+        let _ = t.set("form", ctx.form.name());
+        let _ = t.set("bang", ctx.bang());
+        let _ = t.set("query", ctx.query());
         if let Err(e) = f.call::<()>((name, t)) {
             self.queue
                 .borrow_mut()
@@ -439,6 +462,7 @@ impl Runtime {
                 }
                 Msg::Echo(s) => ed.message = s,
                 Msg::Ex(line) => ed.execute(view, &line),
+                Msg::Fact { name, on } => ed.fact(&name, on),
                 other => rest.push(other),
             }
         }
@@ -513,10 +537,63 @@ fn seed(
     let qq = q(queue);
     k.set(
         "_register",
-        lua.create_function(move |_, (name, args): (String, Option<Vec<String>>)| {
-            let args = kawoosh_editor::Args::parse(&args.unwrap_or_default())
+        lua.create_function(move |_, (name, opts): (String, Option<Table>)| {
+            let spec = spec_from_lua(&name, opts.as_ref())
                 .map_err(|e| mlua::Error::runtime(format!("command `{name}`: {e}")))?;
-            qq.borrow_mut().push(Msg::RegisterCommand { name, args });
+            qq.borrow_mut().push(Msg::RegisterCommand(spec));
+            Ok(())
+        })?,
+    )?;
+    // ---- the registry read back: every spec as a table, and whether
+    // a command can run now — the engine's `can`, answered from the
+    // snapshot with the same rule.
+    let pp = published.clone();
+    k.set(
+        "commands",
+        lua.create_function(move |lua, ()| {
+            let p = pp.borrow();
+            let out = lua.create_table()?;
+            for (i, s) in p.commands.iter().enumerate() {
+                out.set(i + 1, spec_to_lua(lua, s)?)?;
+            }
+            Ok(out)
+        })?,
+    )?;
+    let pp = published.clone();
+    k.set(
+        "can",
+        lua.create_function(move |lua, name: String| {
+            let p = pp.borrow();
+            let Some(spec) = p.commands.iter().find(|s| s.name == name) else {
+                return Ok(LV::Boolean(true));
+            };
+            let buf = p.current.and_then(|c| p.buffers.get(&c));
+            let facts = Facts {
+                published: Some(&p.facts),
+                visual: p.mode == "visual",
+                buffer: buf.map(|b| {
+                    (
+                        b.name.as_str(),
+                        b.language.as_str(),
+                        b.modified,
+                        b.path.is_some(),
+                    )
+                }),
+            };
+            Ok(match spec.check(&facts) {
+                Ok(()) => LV::Boolean(true),
+                Err(reason) => LV::String(lua.create_string(&reason)?),
+            })
+        })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "fact",
+        lua.create_function(move |_, (name, on): (String, Option<bool>)| {
+            qq.borrow_mut().push(Msg::Fact {
+                name,
+                on: on.unwrap_or(true),
+            });
             Ok(())
         })?,
     )?;
@@ -1048,6 +1125,77 @@ fn settings_error(name: &str, e: &mlua::Error) -> String {
 }
 
 /// A setting as a Lua value; a table is built fresh each read.
+/// A `kawoosh.command` options table as a spec: `args`, `aliases`,
+/// `bang`, `query` (each a line on what the form means), `when` (facts,
+/// `!` for must-not), `doc`.
+fn spec_from_lua(name: &str, opts: Option<&Table>) -> Result<Spec, String> {
+    let mut spec = Spec::new(name);
+    let Some(t) = opts else {
+        return Ok(spec);
+    };
+    let strings = |key: &str| -> Result<Vec<String>, String> {
+        match t.get::<Option<LV>>(key).map_err(|e| e.to_string())? {
+            None | Some(LV::Nil) => Ok(Vec::new()),
+            Some(LV::String(s)) => Ok(vec![s.to_str().map_err(|e| e.to_string())?.to_string()]),
+            Some(LV::Table(list)) => list
+                .sequence_values::<String>()
+                .map(|v| v.map_err(|e| e.to_string()))
+                .collect(),
+            Some(_) => Err(format!("`{key}` must be a string or a list of them")),
+        }
+    };
+    let string = |key: &str| -> Result<Option<String>, String> {
+        match t.get::<Option<LV>>(key).map_err(|e| e.to_string())? {
+            None | Some(LV::Nil) | Some(LV::Boolean(false)) => Ok(None),
+            Some(LV::Boolean(true)) => Ok(Some(String::new())),
+            Some(LV::String(s)) => Ok(Some(s.to_str().map_err(|e| e.to_string())?.to_string())),
+            Some(_) => Err(format!("`{key}` must be a string")),
+        }
+    };
+    spec.args = Args::parse(&strings("args")?)?;
+    spec.aliases = strings("aliases")?;
+    spec.bang = string("bang")?;
+    spec.query = string("query")?;
+    spec = spec.when(
+        &strings("when")?
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+    );
+    spec.doc = string("doc")?.unwrap_or_default();
+    Ok(spec)
+}
+
+/// A spec as the table `kawoosh.commands()` lists: the fields as
+/// `kawoosh.command` takes them, `name` and `kind` besides.
+fn spec_to_lua(lua: &Lua, s: &Spec) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    t.set("name", s.name.as_str())?;
+    t.set("aliases", s.aliases.clone())?;
+    t.set("args", s.args.names())?;
+    if let Some(b) = &s.bang {
+        t.set("bang", b.as_str())?;
+    }
+    if let Some(q) = &s.query {
+        t.set("query", q.as_str())?;
+    }
+    t.set(
+        "when",
+        s.when.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
+    )?;
+    t.set("doc", s.doc.as_str())?;
+    t.set(
+        "kind",
+        match s.kind {
+            kawoosh_editor::Kind::Motion(_) => "motion",
+            kawoosh_editor::Kind::Operator => "operator",
+            kawoosh_editor::Kind::TextObject => "textobject",
+            kawoosh_editor::Kind::Other => "command",
+        },
+    )?;
+    Ok(t)
+}
+
 pub fn to_lua(lua: &Lua, s: &Setting) -> mlua::Result<LV> {
     Ok(match s {
         Setting::Bool(b) => LV::Boolean(*b),
@@ -1179,10 +1327,7 @@ mod tests {
         assert_eq!(
             rest,
             [
-                Msg::RegisterCommand {
-                    name: "zap".into(),
-                    args: Default::default()
-                },
+                Msg::RegisterCommand(Spec::new("zap")),
                 Msg::Map {
                     mode: "n".into(),
                     keys: "<leader>z".into(),
@@ -1197,6 +1342,7 @@ mod tests {
                 view: v,
                 count: 3,
                 has_count: true,
+                form: kawoosh_editor::Form::Run,
                 args: vec![],
                 arg_char: None,
             },

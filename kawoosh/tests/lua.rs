@@ -366,3 +366,101 @@ fn dash_lands_on_the_entry_it_came_from_and_reuses_the_listing() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The design check for `kawoosh.command`'s spec: oil's `oil cd` says
+/// `when = { "language:oil" }`, so off a listing `<leader>cd` runs
+/// nothing and the message is the engine's reason, `kawoosh.can` is
+/// that reason, and in a listing both are clear; `:oil?` is the query
+/// form; `kawoosh.commands()` lists the spec as it was given; a
+/// plugin's own fact through `kawoosh.fact` gates a command the same
+/// way; and a Lua command with no word for `!` is refused before it
+/// runs, while one with a word sees `ctx.bang`.
+#[test]
+fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-when-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("inner")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    let file = dir.join("inner/f.txt");
+    std::fs::write(&file, "x").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&file);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    let cwd = app.cwd.clone();
+
+    // Off a listing: refused with the reason, nothing moved.
+    d.keys(&mut app, " cd");
+    assert_eq!(app.ed.message, "oil cd needs language:oil");
+    assert_eq!(app.cwd, cwd);
+    ex(&mut d, &mut app, "oil cd");
+    assert_eq!(app.ed.message, "oil cd needs language:oil");
+    ex(&mut d, &mut app, "oil?");
+    assert_eq!(app.ed.message, "no listing here");
+    app.run_lua_source(
+        "t",
+        r#"
+        assert(kawoosh.can("oil cd") == "oil cd needs language:oil", tostring(kawoosh.can("oil cd")))
+        assert(kawoosh.can("oil") == true)
+        local found
+        for _, c in ipairs(kawoosh.commands()) do
+          if c.name == "oil cd" then found = c end
+        end
+        assert(found, "oil cd is listed")
+        assert(found.when[1] == "language:oil", found.when[1])
+        assert(found.doc ~= "", "documented")
+        for _, c in ipairs(kawoosh.commands()) do
+          if c.name == "oil" then
+            assert(c.query == "say which directory is listed", tostring(c.query))
+            assert(c.args[1] == "path")
+          end
+          if c.name == "quit" then assert(c.aliases[1] == "q" and c.bang) end
+        end
+        kawoosh.echo("checked")
+        "#,
+    );
+    assert_eq!(app.ed.message, "checked");
+
+    // In a listing: clear, and the working directory follows.
+    d.keys(&mut app, "-");
+    ex(&mut d, &mut app, "oil?");
+    assert_eq!(
+        app.ed.message,
+        format!("oil: {}", dir.join("inner").display())
+    );
+    app.run_lua_source("t", r#"assert(kawoosh.can("oil cd") == true)"#);
+    d.keys(&mut app, " cd");
+    assert_eq!(app.cwd, dir.join("inner"));
+
+    // A plugin's own fact, and the forms.
+    app.run_lua_source(
+        "t",
+        r#"
+        kawoosh.command("ready", function() kawoosh.echo("ran") end, { when = { "plug:ready" } })
+        kawoosh.command("plain", function(ctx) kawoosh.echo("plain " .. ctx.form) end)
+        kawoosh.command("force", function(ctx)
+          kawoosh.echo("force " .. ctx.form .. " " .. tostring(ctx.bang))
+        end, { bang = "harder", aliases = { "fo" } })
+        "#,
+    );
+    ex(&mut d, &mut app, "ready");
+    assert_eq!(app.ed.message, "ready needs plug:ready");
+    app.run_lua_source("t", r#"kawoosh.fact("plug:ready")"#);
+    ex(&mut d, &mut app, "ready");
+    assert_eq!(app.ed.message, "ran");
+    app.run_lua_source("t", r#"kawoosh.fact("plug:ready", false)"#);
+    ex(&mut d, &mut app, "ready");
+    assert_eq!(app.ed.message, "ready needs plug:ready");
+    ex(&mut d, &mut app, "plain!");
+    assert_eq!(app.ed.message, "plain takes no !");
+    ex(&mut d, &mut app, "plain");
+    assert_eq!(app.ed.message, "plain run");
+    ex(&mut d, &mut app, "fo!");
+    assert_eq!(app.ed.message, "force bang true");
+    // The shell's own: `:pwd!` is refused, `:cd?` answers.
+    ex(&mut d, &mut app, "pwd!");
+    assert_eq!(app.ed.message, "pwd takes no !");
+    ex(&mut d, &mut app, "cd?");
+    assert_eq!(app.ed.message, dir.join("inner").display().to_string());
+    std::fs::remove_dir_all(&dir).ok();
+}

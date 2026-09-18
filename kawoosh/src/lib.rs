@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod cmdline;
+pub mod commands;
 pub mod compile;
 pub mod devtab;
 pub mod diff;

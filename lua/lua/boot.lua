@@ -14,16 +14,29 @@ kawoosh._writers = {}
 kawoosh._nonce = 0
 
 -- kawoosh.command(name, fn[, opts]): a named command, callable from a
--- keymap, the command line, or Rust. `fn(ctx)` gets { count = n, args =
--- {...} }. `opts.args` says what the arguments are, one kind per
--- position — "path", "buffer", "command", "option", "tool", "view",
--- "text" — the last with "..." for the rest: a "path" reaches `fn`
--- absolute (`~`, `..`, the working directory resolved), and the command
--- line completes each kind. `kawoosh.command("oil", fn, { args = {
--- "path" } })`.
+-- keymap, the command line, or Rust. A name of two words is a
+-- subcommand (`"oil cd"` runs as `:oil cd`, completes under `:oil`).
+-- `fn(ctx)` gets { count = n, args = {...}, form = "run" | "bang" |
+-- "query", bang = bool, query = bool }. `opts`:
+--   args    what the arguments are, one kind per position — "path",
+--           "buffer", "command", "option", "tool", "view", "text" — the
+--           last with "..." for the rest: a "path" reaches `fn` absolute
+--           (`~`, `..`, the working directory resolved), and the command
+--           line completes each kind.
+--   aliases the ex spellings, `{ "o" }`.
+--   bang    a line on what `!` means; without one `:name!` is refused.
+--   query   the same for `?`.
+--   when    facts that must hold, `{ "language:oil", "!terminal" }` —
+--           the engine's `visual`, `modified`, `file`, `buffer:NAME`,
+--           `language:NAME`; the shell's `store`, `lsp`, `editor`,
+--           `terminal`, `lua`, `dock`; or one a plugin published with
+--           `kawoosh.fact`. The command line refuses with the reason.
+--   doc     one line on what it does.
+-- `kawoosh.commands()` lists every command's spec as such a table;
+-- `kawoosh.can(name)` is true, or the reason it cannot run now.
 function kawoosh.command(name, fn, opts)
   kawoosh._commands[name] = fn
-  kawoosh._register(name, opts and opts.args or nil)
+  kawoosh._register(name, opts)
 end
 
 -- kawoosh.map(mode, keys, cmd): `cmd` is a command name (with args, as

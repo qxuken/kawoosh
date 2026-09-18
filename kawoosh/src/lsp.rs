@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use kawoosh_doc::{Buffer, BufferId, Update, Version};
-use kawoosh_editor::{KeyStroke, Mode, Selection, ViewId};
+use kawoosh_editor::{KeyStroke, Mode, Selection, Spec, ViewId};
 use kawoosh_systems::lsp::{Cmd, CompletionItem, Event, Lsp, ServerDef};
 use kawoosh_systems::{Alarm, WakeHandle};
 
@@ -23,6 +23,7 @@ use crate::notify::{Level, Note, Show};
 pub const DIAG_QUIET: Duration = Duration::from_millis(600);
 
 use crate::app::Kawoosh;
+use crate::commands::{ShellCommand, cmd};
 use crate::layout::{Content, SplitDir};
 
 pub struct Completion {
@@ -376,41 +377,24 @@ impl Kawoosh {
         self.lsp.lsp.send(cmd);
     }
 
-    pub(crate) fn lsp_command(&mut self, name: &str) -> bool {
-        match name {
-            "lsp_definition" => {
-                if let Some((_, buffer, offset)) = self.lsp_at_caret() {
-                    self.positional_cmd(Cmd::Definition { buffer, offset });
-                }
-            }
-            "lsp_hover" => {
-                if let Some((_, buffer, offset)) = self.lsp_at_caret() {
-                    self.positional_cmd(Cmd::Hover { buffer, offset });
-                }
-            }
-            "lsp_complete" => self.request_completion(),
-            "lsp_status" => {
-                self.ed.message = if self.lsp.status.is_empty() {
-                    "lsp: no servers".into()
-                } else {
-                    self.lsp
-                        .status
-                        .iter()
-                        .map(|(root, cmd, n)| {
-                            format!(
-                                "{cmd} @ {} ({n} docs)",
-                                root.file_name()
-                                    .map(|f| f.to_string_lossy().into_owned())
-                                    .unwrap_or_default()
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join("   ")
-                };
-            }
-            _ => return false,
+    /// `:lsp`: each server, its root and how many documents it holds.
+    fn lsp_status_line(&self) -> String {
+        if self.lsp.status.is_empty() {
+            return "lsp: no servers".into();
         }
-        true
+        self.lsp
+            .status
+            .iter()
+            .map(|(root, cmd, n)| {
+                format!(
+                    "{cmd} @ {} ({n} docs)",
+                    root.file_name()
+                        .map(|f| f.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("   ")
     }
 
     fn request_completion(&mut self) {
@@ -515,4 +499,42 @@ impl Kawoosh {
             self.request_completion();
         }
     }
+}
+
+/// The LSP commands: the positional ones need a server up.
+pub(crate) fn commands() -> Vec<ShellCommand> {
+    vec![
+        cmd(
+            Spec::new("lsp_definition")
+                .when(&["lsp"])
+                .doc("go to the definition under the caret"),
+            |k, _| {
+                if let Some((_, buffer, offset)) = k.lsp_at_caret() {
+                    k.positional_cmd(Cmd::Definition { buffer, offset });
+                }
+            },
+        ),
+        cmd(
+            Spec::new("lsp_hover")
+                .when(&["lsp"])
+                .doc("what the server says of the symbol under the caret"),
+            |k, _| {
+                if let Some((_, buffer, offset)) = k.lsp_at_caret() {
+                    k.positional_cmd(Cmd::Hover { buffer, offset });
+                }
+            },
+        ),
+        cmd(
+            Spec::new("lsp_complete")
+                .when(&["lsp"])
+                .doc("ask the server for completions at the caret"),
+            |k, _| k.request_completion(),
+        ),
+        cmd(
+            Spec::new("lsp_status")
+                .alias(&["lsp"])
+                .doc("the servers running, and what they hold"),
+            |k, _| k.ed.message = k.lsp_status_line(),
+        ),
+    ]
 }

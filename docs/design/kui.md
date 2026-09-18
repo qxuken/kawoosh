@@ -691,6 +691,71 @@ holds *modified* is never evicted, since the store is what keeps those
 changes; the store may sit over the cap by exactly what is unsaved.
 A corner line says how many went.
 
+### 12. A command is a spec and a body
+
+mvp.md's Decision 4 made the command registry the hackability primitive:
+everything the editor does has a name Lua can call and bind. What a
+command *was* stayed spread out — its name and closure in the engine, its
+ex spelling in one table, its arguments in another, its `!` smuggled into
+the arguments for each body to scan for, its subcommands string-matched
+inside the parent, and whether it could run at all an early `return` with
+whatever message that body chose, or none. Now **a command is two things:
+a `Spec`, and a body** (`kawoosh_editor::command`).
+
+The spec is data, and it is the whole of what is not behaviour: the
+name; the aliases (`bd`, `bdelete` — the old alias table folded into the
+specs); the arguments as before; what `!` means to it and what `?` means
+to it, each a line of doc whose presence is the permission (`:pwd!` is
+refused with "pwd takes no !" before any body runs, `:q!` discards, `:e!`
+reloads, `:cd?` says where — the meaning is the command's, the check is
+the engine's); the conditions under which it runs; and a line on what it
+does. The body is the `Command<H>` trait, implemented on the host it acts
+on — `Editor` for the engine's, the shell for the shell's — so that
+everything about `:history drop` is in `history.rs` and nothing about it
+is in a dispatcher. Most bodies are `FnCommand`, a spec and a closure.
+The engine's registry holds every spec — its own, the shell's declared,
+Lua's — and the shell keeps its bodies by name; running a command without
+a body here is `Effect::Shell` with the context ready, as before, only
+now the form, the subcommand and the paths are resolved in it.
+
+**A subcommand is a command whose name is two words.** `history drop`
+is registered as one, and the engine walks a line's words as far as they
+name subcommands, carrying a `!` or `?` from any of them (`:history
+clear!` and `:history! clear` alike), then hands the rest as arguments.
+The same walk serves a keymap's binding (`kawoosh.map("n", "<leader>cd",
+"oil cd")`) and the command line's completion: under `:history ` the
+words are `clear`, `drop`, `list`, and after one the subcommand's own
+arguments. Not a second trait — a subcommand needs nothing a command
+does not have.
+
+**`when` is a list of facts, not a closure.** A closure could not cross
+to Lua, could not be shown, and could not be evaluated inside the engine
+when what it asks about is the shell's — a store, an LSP server, which
+kind of pane has the keyboard. So the shell *publishes* facts into the
+engine as they change (`store`, `lsp`, `editor`, `terminal`, `lua`,
+`dock`), a plugin publishes its own (`kawoosh.fact("plug:ready")`), the
+engine answers the ones it can from the view (`visual`, `modified`,
+`file`, `buffer:NAME`, `language:NAME`), and a spec names them, `!` for
+must-not (`when = { "language:oil", "!terminal" }`). The engine refuses
+with the reason in one voice — "scrollback needs terminal", "oil cd needs
+language:oil" — whether the command came from the line, a key, a toast's
+action or Lua, and `kawoosh.can(name)` is that reason or `true`. This is
+VS Code's `when` clause without the expression language; a list with
+negation is enough, and if a day comes when it is not, that is the day to
+add one. Facts are strings, not an enum, so a plugin can invent one
+(hackable-by-design over typed): the names the shell and engine answer
+are documented in `boot.lua`, and a typo is a command that never runs,
+which `kawoosh.can` shows.
+
+Lua never sees the trait. `kawoosh.command(name, fn, opts)` takes the
+spec's fields as the table (`args`, `aliases`, `bang`, `query`, `when`,
+`doc`), `ctx.form` / `ctx.bang` / `ctx.query` reach the function, and
+`kawoosh.commands()` hands every spec back as such a table — the same
+data the completion reads, for a palette or a help pane to build from.
+The bundled oil is the acceptance test: `oil cd` is a subcommand gated on
+`language:oil`, `:oil?` says what is listed, and `<leader>cd` off a
+listing runs nothing and says why.
+
 ### Deliberately not in the MVP
 
 Unchanged from mvp.md: detachable daemon, soft wrap, proportional fonts,
