@@ -220,7 +220,7 @@ fn a_click_in_a_pane_focuses_it() {
     d.click(&mut app, r.x + 6.0, r.y + r.h / 2.0);
     assert_eq!(app.layout.focused(), right);
     // The undo pane, under its rows.
-    ex(&mut d, &mut app, "undo_history");
+    ex(&mut d, &mut app, "undo history");
     d.frame(&mut app);
     let undo = app.layout.focused();
     assert_eq!(app.layout.focused_content(), Some(Content::Undo));
