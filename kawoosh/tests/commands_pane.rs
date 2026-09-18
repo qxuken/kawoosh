@@ -170,12 +170,39 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
     d.key(&mut app, "escape", KeyMods::default());
     assert!(app.ed.prompt_view().is_none());
     d.frame(&mut app);
-    // `<Down>` moves the cursor; a click lands it on a row.
+    // `<Down>` moves the cursor, `j`/`k` in normal mode too; a click
+    // lands it on a row. The query's caret shows only while the pane
+    // has the keyboard.
     d.ctrl(&mut app, "u");
     d.frame(&mut app);
+    let bars = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .filter(|n| n.float && n.rect.w == 2.0)
+            .count()
+    };
+    assert_eq!(bars(&d), 1, "the query's bar caret");
     let before = app.commands_pane.cursor;
     d.key(&mut app, "down", KeyMods::default());
     assert_eq!(app.commands_pane.cursor, before + 1);
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "jjk");
+    assert_eq!(app.commands_pane.cursor, before + 2);
+    d.frame(&mut app);
+    assert_eq!(bars(&d), 0, "a block in normal mode, no bar");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    d.frame(&mut app);
+    assert!(
+        app.focused_view().is_some(),
+        "<C-w>h from normal mode leaves the pane"
+    );
+    assert_eq!(bars(&d), 0, "the query draws no caret without the keyboard");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "l");
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused_content(), Some(Content::Commands));
     let third = names(&app)[2].clone();
     let label = format!("command {third}");
     let node = d

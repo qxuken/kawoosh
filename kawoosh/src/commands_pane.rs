@@ -334,6 +334,9 @@ impl Kawoosh {
         let reveal = std::mem::take(&mut self.commands_pane.reveal);
         let query = self.commands_query();
         let field = self.commands_field();
+        // The keyboard is on the query when the pane is focused and no
+        // prompt is open over it.
+        let keyed = focused && self.ed.prompt_view().is_none();
         let view = self.commands_view();
         let can: Vec<Result<(), String>> = rows
             .iter()
@@ -371,7 +374,7 @@ impl Kawoosh {
                 ui.with(
                     tm.line(&pal, 0).hover_bg(Color::TRANSPARENT).gap(0.0),
                     |ui| {
-                        self.field_line(ui, field, None);
+                        self.field_line(ui, field, keyed, None);
                         if query.is_empty() {
                             ui.text("search commands, keys, docs", style().color(pal.faint));
                         }
@@ -610,4 +613,8 @@ pub(crate) fn bind(km: &mut kawoosh_editor::Keymap) {
         km.bind_when(mode, "<C-k>", "commands prev", &at);
     }
     km.bind_when(Mode::Normal, "<Esc>", "commands leave", &at);
+    // In normal mode over the query, `j` and `k` walk the rows, as
+    // `<C-n>`/`<C-p>` do in either mode.
+    km.bind_when(Mode::Normal, "j", "commands next", &at);
+    km.bind_when(Mode::Normal, "k", "commands prev", &at);
 }

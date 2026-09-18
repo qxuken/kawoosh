@@ -251,8 +251,22 @@ fn the_prompt_is_a_field_with_modes_and_motions() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("*scratch*", "hello\n");
     d.frame(&mut app);
+    // One caret on the screen: the buffer's, in insert mode, is a bar
+    // — then the prompt opens and the buffer pane draws none.
+    let bars = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .filter(|n| n.float && n.rect.w == 2.0)
+            .count()
+    };
+    d.keys(&mut app, "i");
+    d.frame(&mut app);
+    assert_eq!(bars(&d), 1, "the buffer's bar caret");
+    d.key(&mut app, "escape", KeyMods::default());
     d.keys(&mut app, ":echo hello world");
     d.frame(&mut app);
+    assert_eq!(bars(&d), 1, "the prompt's alone");
     let field = app.ed.prompt_view().unwrap();
     assert_eq!(app.ed.mode(field), Mode::Insert);
     assert_eq!(app.focused_mode(), Mode::Insert);

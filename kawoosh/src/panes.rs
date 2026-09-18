@@ -257,11 +257,19 @@ impl Kawoosh {
     }
 
     /// A field's one line, drawn as a pane's row is (`rows::emit_line`):
-    /// its selections, a caret per selection — a bar in insert mode on
-    /// kui's blink, a block otherwise — and `ghost` after the primary
-    /// caret. The line declares the caret, so kui's blink clock runs
-    /// while the field has the keyboard.
-    pub(crate) fn field_line(&self, ui: &mut Ui<'_>, view: ViewId, ghost: Option<&str>) {
+    /// its selections, and when `keyed` — the keyboard is on it — a
+    /// caret per selection, a bar in insert mode on kui's blink, a
+    /// block otherwise, with `ghost` after the primary one. The line
+    /// declares the caret, so kui's blink clock runs while the field
+    /// has the keyboard; a field without it shows no caret, so one
+    /// caret is on the screen at a time.
+    pub(crate) fn field_line(
+        &self,
+        ui: &mut Ui<'_>,
+        view: ViewId,
+        keyed: bool,
+        ghost: Option<&str>,
+    ) {
         let pal = self.pal;
         let font = self.font;
         let Some(v) = self.ed.views.get(view) else {
@@ -294,6 +302,9 @@ impl Kawoosh {
                     clip(re)
                 };
                 selected.push(clip(rs)..b);
+            }
+            if !keyed {
+                continue;
             }
             let end = if caret_kind == Caret::Block {
                 clip(buf.next_char(s.head))
@@ -348,7 +359,7 @@ impl Kawoosh {
                     // candidates as a row — the current one lit —
                     // clipped at the strip's end.
                     let ghost = self.cmdline_ghost();
-                    self.field_line(ui, field, ghost.as_deref());
+                    self.field_line(ui, field, true, ghost.as_deref());
                     let line_len = self.ed.prompt_text().map_or(0, |t| t.len());
                     let candidates = self
                         .cmd_completion
@@ -711,6 +722,17 @@ impl Kawoosh {
         let v = &self.ed.views[view];
         let buf = &self.ed.buffers[buf_id];
         let search = self.ed.search.as_ref().map(|s| s.re.clone());
+        // One caret on the screen: the view the keyboard is on. A pane
+        // whose keyboard is on the prompt draws none — while a search
+        // prompt previews, the match it landed on is drawn as a
+        // selection instead (vim's IncSearch).
+        let keyed = focused && self.ed.prompt_view().is_none();
+        let previewing = focused
+            && matches!(
+                self.ed.prompt_kind(),
+                Some(kawoosh_editor::Prompt::Search { .. })
+            )
+            && self.ed.prompt_from() == Some(view);
         let top = v.top;
         let mut left = v.left;
         let last = (top + rows_n).min(buf.line_count());
@@ -886,7 +908,7 @@ impl Kawoosh {
                                     }
                                 }
                                 let head_line = buf.line_of(s.head);
-                                if head_line == ln && focused {
+                                if head_line == ln && keyed {
                                     let end = if caret_kind == Caret::Block {
                                         clip(buf.next_char(s.head))
                                     } else {
@@ -894,7 +916,7 @@ impl Kawoosh {
                                     };
                                     carets.push((clip(s.head)..end, caret_kind));
                                 }
-                                if *s == primary && head_line == ln && focused {
+                                if *s == primary && head_line == ln && keyed {
                                     access.0 = Some(clip(s.head) as u32);
                                     if !s.is_empty() && buf.line_of(s.anchor) == ln {
                                         access.1 = Some(clip(s.anchor) as u32);
@@ -912,6 +934,12 @@ impl Kawoosh {
                                     .collect(),
                                 None => Vec::new(),
                             };
+                            if previewing && ln == cur_line {
+                                let at = clip(primary.head);
+                                if let Some(h) = hits.iter().find(|h| h.start == at) {
+                                    selected.push(h.clone());
+                                }
+                            }
                             let styled: Vec<(Range<usize>, kui::Color)> = buf
                                 .runs(SYNTAX_LAYER, src.clone())
                                 .iter()
