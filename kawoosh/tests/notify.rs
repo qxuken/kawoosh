@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::notify::{CORNER_TTL, Level, MESSAGES_BUFFER, Note, TOAST_TTL};
-use kui::KeyMods;
+use kui::{InputEvent, KeyMods, Vec2};
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -354,6 +354,105 @@ fn the_keyboard_reaches_the_toasts() {
     ex(&mut d, &mut app, "toast");
     d.keys(&mut app, "2");
     assert_eq!(app.ed.message, "b");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A toast under the pointer stays, and its time starts over once the
+/// pointer leaves — over one of its buttons is still over it.
+#[test]
+fn a_hovered_toast_waits_and_starts_over() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let hover = |d: &mut Drive, app: &mut Kawoosh, x: f32, y: f32| {
+        d.input(app, InputEvent::CursorMoved(Vec2::new(x, y)));
+        d.frame(app);
+    };
+    let node = |d: &Drive, text: &str| {
+        d.core
+            .nodes()
+            .into_iter()
+            .find(|n| n.text.as_deref() == Some(text))
+            .unwrap_or_else(|| panic!("{text} on show"))
+    };
+    let t0 = Instant::now();
+    app.notes.push(Note::new(Level::Warn, "plain"), t0);
+    d.frame(&mut app);
+    let plain = app
+        .notes
+        .shown
+        .iter()
+        .find(|s| s.text == "plain")
+        .unwrap()
+        .id;
+    assert_eq!(app.notes.next_due(), Some(t0 + TOAST_TTL));
+
+    // The pointer over it: it outlives its timeout, and is not due.
+    let n = node(&d, "plain");
+    hover(&mut d, &mut app, n.rect.x + 2.0, n.rect.y + n.rect.h / 2.0);
+    assert_eq!(app.notes.hovered, Some(plain));
+    assert_eq!(app.notes.next_due(), None, "nothing to wake for");
+    app.notes.sweep(t0 + TOAST_TTL + Duration::from_secs(60));
+    d.frame(&mut app);
+    assert!(corner_has(&d, "plain"), "held under the pointer");
+
+    // The pointer off it: eight seconds from now, not from when it was
+    // said.
+    let t1 = Instant::now();
+    hover(&mut d, &mut app, 10.0, 250.0);
+    assert_eq!(app.notes.hovered, None);
+    let until = app
+        .notes
+        .shown
+        .iter()
+        .find(|s| s.id == plain)
+        .unwrap()
+        .until
+        .unwrap();
+    assert!(until >= t1 + TOAST_TTL, "starts over on leave");
+    app.notes.sweep(t0 + TOAST_TTL + Duration::from_millis(1));
+    d.frame(&mut app);
+    assert!(corner_has(&d, "plain"), "the old deadline is gone");
+    app.notes.sweep(until + Duration::from_millis(1));
+    d.frame(&mut app);
+    assert!(!corner_has(&d, "plain"), "the new one holds");
+
+    // Over a toast's button is over the toast: moving from the card to
+    // the button keeps it hovered.
+    app.notify_with(
+        Note::new(Level::Error, "asks")
+            .action("Yes", "echo yes")
+            .action("No", "echo no"),
+    );
+    d.frame(&mut app);
+    let asks = app
+        .notes
+        .shown
+        .iter()
+        .find(|s| s.text == "asks")
+        .unwrap()
+        .id;
+    let n = node(&d, "asks");
+    hover(&mut d, &mut app, n.rect.x + 2.0, n.rect.y + n.rect.h / 2.0);
+    assert_eq!(app.notes.hovered, Some(asks));
+    let yes = node(&d, "Yes");
+    hover(
+        &mut d,
+        &mut app,
+        yes.rect.x + yes.rect.w / 2.0,
+        yes.rect.y + yes.rect.h / 2.0,
+    );
+    assert_eq!(app.notes.hovered, Some(asks), "the button is the toast's");
+    hover(&mut d, &mut app, 10.0, 250.0);
+    assert_eq!(app.notes.hovered, None);
+    // Taken down while hovered: nothing is left hovered.
+    let n = node(&d, "Yes");
+    d.click(
+        &mut app,
+        n.rect.x + n.rect.w / 2.0,
+        n.rect.y + n.rect.h / 2.0,
+    );
+    assert_eq!(app.ed.message, "yes");
+    assert_eq!(app.notes.hovered, None);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

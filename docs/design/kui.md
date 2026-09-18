@@ -413,7 +413,9 @@ either took the line or was lost. Now a notification has a **level**
   `TOAST` in the status strip — `j` `k` walk the toasts, `h` `l` the
   actions, `<CR>` takes one, a digit takes that one, `x` takes a plain
   toast down, `<Esc>` leaves; a focused toast does not time out under
-  the user.
+  the user. Nor does one under the pointer — over the card or one of
+  its buttons — and once the pointer leaves, its eight seconds start
+  over, so a toast being read is not read out from under the reader.
 - **info → a corner line.** A dim line at the bottom-right above the
   strips, gone after four seconds, grouped under its **source** with
   the source's name below the group — fidget's shape. A language

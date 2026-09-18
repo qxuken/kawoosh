@@ -1403,6 +1403,11 @@ impl kui::App for Kawoosh {
                 }
             }
             Some("toast") => self.on_toast(p),
+            Some("hover") => {
+                if tag_kind == Some("toast") {
+                    self.on_toast_hover(p);
+                }
+            }
             Some("tab") => {
                 if let Some(i) = p.get("index").and_then(Value::as_int) {
                     self.layout.tab = (i as usize).min(self.layout.tabs.len() - 1);

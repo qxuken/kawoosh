@@ -1,7 +1,8 @@
 //! Notifications (kui.md Decision 9): a level, and from the level where
 //! it shows. An error or a warning is a **toast** — a bordered card at
-//! the top-right, under the tab strip, gone after [`TOAST_TTL`], or,
-//! when it carries actions, only when one is taken. An info is a
+//! the top-right, under the tab strip, gone after [`TOAST_TTL`] — not
+//! while the pointer is over it, and afresh once it leaves — or, when
+//! it carries actions, only when one is taken. An info is a
 //! **corner line** — a dim line at the bottom-right above the strips,
 //! fidget-style, gone after [`CORNER_TTL`]. A debug goes to the **log**
 //! only. Every one lands in the log, which `:messages` opens as the
@@ -191,7 +192,10 @@ pub struct Shown {
     pub count: u32,
     pub toast: bool,
     pub actions: Vec<Action>,
-    /// When it goes; `None` stays until an action is taken.
+    /// How long it stays; `None` stays until an action is taken.
+    pub ttl: Option<Duration>,
+    /// When it goes — `ttl` from when it was said, or from when the
+    /// pointer last left it.
     pub until: Option<Instant>,
 }
 
@@ -227,6 +231,9 @@ pub struct Notifications {
     /// The toast the keyboard is on, and which of its actions
     /// (`:toast`, `<C-w>n`). A focused toast does not time out.
     pub focus: Option<Focus>,
+    /// The toast the pointer is over. It does not time out either, and
+    /// its time starts over when the pointer leaves.
+    pub hovered: Option<u64>,
     /// The stderr sink's threshold, when stderr is hooked: every entry
     /// from this level up is written there too — queued here, written
     /// once a frame by [`Notifications::flush_stderr`], never on a
@@ -257,6 +264,7 @@ impl Notifications {
             last_echo: String::new(),
             echo_at: None,
             focus: None,
+            hovered: None,
             stderr: None,
             stderr_buf: String::new(),
             keep: Level::Debug,
@@ -395,15 +403,17 @@ impl Notifications {
             return id;
         }
         let toast = show == Show::Toast;
-        let until = match note.ttl {
+        let ttl = match note.ttl {
             Ttl::Never => None,
-            Ttl::After(d) => Some(now + d),
+            Ttl::After(d) => Some(d),
             Ttl::Default if toast && !note.actions.is_empty() => None,
-            Ttl::Default => Some(now + if toast { TOAST_TTL } else { CORNER_TTL }),
+            Ttl::Default => Some(if toast { TOAST_TTL } else { CORNER_TTL }),
         };
+        let until = ttl.map(|d| now + d);
         match self.shown.iter_mut().find(|s| s.id == id) {
             Some(s) => {
                 s.count = count;
+                s.ttl = ttl;
                 s.until = until;
                 s.actions = note.actions;
             }
@@ -415,6 +425,7 @@ impl Notifications {
                 count,
                 toast,
                 actions: note.actions,
+                ttl,
                 until,
             }),
         }
@@ -496,10 +507,31 @@ impl Notifications {
         self.arm();
     }
 
+    /// The pointer came over toast `id`: it stays while it is there.
+    pub fn hover_enter(&mut self, id: u64) {
+        if self.shown.iter().any(|s| s.id == id && s.toast) {
+            self.hovered = Some(id);
+        }
+    }
+
+    /// The pointer left toast `id`: its time starts over from `now`.
+    pub fn hover_leave(&mut self, id: u64, now: Instant) {
+        if self.hovered == Some(id) {
+            self.hovered = None;
+        }
+        if let Some(s) = self.shown.iter_mut().find(|s| s.id == id) {
+            s.until = s.ttl.map(|d| now + d);
+        }
+        self.arm();
+    }
+
     /// Takes a toast down.
     pub fn dismiss(&mut self, id: u64) {
         let was_at = self.toast_ids().iter().position(|&t| t == id);
         self.shown.retain(|s| s.id != id);
+        if self.hovered == Some(id) {
+            self.hovered = None;
+        }
         if let Some(at) = was_at {
             self.refocus_after(id, at);
         }
@@ -520,12 +552,19 @@ impl Notifications {
         Some(command)
     }
 
+    /// The toasts held under the user — the keyboard on one, the pointer
+    /// over one — which do not time out.
+    fn held(&self) -> [Option<u64>; 2] {
+        [self.focus.map(|f| f.id), self.hovered]
+    }
+
     /// Takes down what has been on show long enough — not the toast the
-    /// keyboard is on — and arms the alarm for the next to go.
+    /// keyboard is on, nor the one the pointer is over — and arms the
+    /// alarm for the next to go.
     pub fn sweep(&mut self, now: Instant) {
-        let focused = self.focus.map(|f| f.id);
+        let held = self.held();
         self.shown
-            .retain(|s| Some(s.id) == focused || s.until.is_none_or(|t| t > now));
+            .retain(|s| held.contains(&Some(s.id)) || s.until.is_none_or(|t| t > now));
         self.progress.retain(|p| p.until.is_none_or(|t| t > now));
         self.arm();
     }
@@ -543,10 +582,10 @@ impl Notifications {
 
     /// When the next thing on show goes.
     pub fn next_due(&self) -> Option<Instant> {
-        let focused = self.focus.map(|f| f.id);
+        let held = self.held();
         self.shown
             .iter()
-            .filter(|s| Some(s.id) != focused)
+            .filter(|s| !held.contains(&Some(s.id)))
             .filter_map(|s| s.until)
             .chain(self.progress.iter().filter_map(|p| p.until))
             .chain(self.echo_at.map(|t| t + ECHO_TTL))
@@ -556,6 +595,7 @@ impl Notifications {
     pub fn clear(&mut self) {
         self.log.clear();
         self.shown.clear();
+        self.hovered = None;
         self.log_version += 1;
     }
 
@@ -710,6 +750,24 @@ impl Kawoosh {
         }
     }
 
+    /// The pointer over a toast, or one of its buttons, or off it:
+    /// while it is over, the toast stays; once it leaves, the toast's
+    /// time starts over.
+    pub(crate) fn on_toast_hover(&mut self, p: &Value) {
+        let Some(id) = p
+            .get("tag")
+            .and_then(|t| t.get("id"))
+            .and_then(Value::as_int)
+        else {
+            return;
+        };
+        match p.get("phase").and_then(Value::as_str) {
+            Some("enter") => self.notes.hover_enter(id as u64),
+            Some("leave") => self.notes.hover_leave(id as u64, Instant::now()),
+            _ => {}
+        }
+    }
+
     /// `:toast` / `<C-w>n`: the keyboard onto the newest toast. Then
     /// `j` `k` move between toasts, `h` `l` between actions, `<CR>`
     /// takes the action (or the toast down, when it has none), a digit
@@ -826,6 +884,12 @@ impl Kawoosh {
                         .pad_xy(10.0, 6.0)
                         .gap(6.0)
                         .selected(focused);
+                    // The pointer over the card holds it — the buttons
+                    // carry the tag too, since hover is per node and a
+                    // button under the pointer would be the card left.
+                    let hover =
+                        Value::map([("kind", "toast".into()), ("id", Value::Int(s.id as i64))]);
+                    spec = spec.on_hover(hover.clone());
                     if s.actions.is_empty() {
                         spec = spec.on_click(Value::map([
                             ("kind", "toast".into()),
@@ -855,6 +919,7 @@ impl Kawoosh {
                                             .radius(3.0)
                                             .bg(if on { pal.select } else { pal.panel })
                                             .hover_bg(pal.select)
+                                            .on_hover(hover.clone())
                                             .role(kui::Role::Button)
                                             .label(a.label.as_str())
                                             .on_click(Value::map([
