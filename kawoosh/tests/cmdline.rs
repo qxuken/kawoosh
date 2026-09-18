@@ -6,10 +6,28 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
+use kawoosh_editor::Mode;
 use kui::KeyMods;
+
+fn texts(d: &Drive) -> Vec<String> {
+    d.core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect()
+}
 
 fn tab(d: &mut Drive, app: &mut Kawoosh) {
     d.key(app, "tab", KeyMods::default());
+}
+
+/// `<Esc><Esc>`: the first is normal mode in the prompt's field, the
+/// second leaves it.
+fn leave(d: &mut Drive, app: &mut Kawoosh) {
+    d.key(app, "escape", KeyMods::default());
+    assert!(app.ed.prompt_view().is_some(), "one <Esc> is normal mode");
+    d.key(app, "escape", KeyMods::default());
+    assert!(app.ed.prompt_view().is_none(), "two leave");
 }
 
 #[test]
@@ -41,7 +59,11 @@ fn the_command_line_completes_commands_paths_and_buffers() {
         "the ghost is on the strip"
     );
     d.ctrl(&mut app, "n");
-    assert_eq!(app.ed.cmdline, "v", "cycling does not take");
+    assert_eq!(
+        app.ed.prompt_text().unwrap_or_default(),
+        "v",
+        "cycling does not take"
+    );
     assert_eq!(app.cmdline_ghost().as_deref(), Some("ne"));
     d.ctrl(&mut app, "n");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("new"));
@@ -77,26 +99,29 @@ fn the_command_line_completes_commands_paths_and_buffers() {
             ..Default::default()
         },
     );
-    assert_eq!(app.ed.cmdline, "v");
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "v");
     assert_eq!(app.cmdline_ghost().as_deref(), last.strip_prefix('v'));
     tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, last);
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), last);
     assert_eq!(app.cmdline_ghost(), None, "taken whole");
-    d.key(&mut app, "escape", KeyMods::default());
+    leave(&mut d, &mut app);
     assert!(app.cmd_completion.is_none(), "cleared with the prompt");
 
     // `<Tab>` on a taken candidate goes on to the candidates past it —
     // the longer spellings — and `<C-y>` takes like `<Tab>`.
     d.keys(&mut app, ":bu");
     tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, "buffer");
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "buffer");
     assert_eq!(app.cmdline_ghost(), None);
     d.ctrl(&mut app, "n");
     let ghost = app.cmdline_ghost().unwrap();
     assert!(!ghost.is_empty());
     d.ctrl(&mut app, "y");
-    assert_eq!(app.ed.cmdline, format!("buffer{ghost}"));
-    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(
+        app.ed.prompt_text().unwrap_or_default(),
+        format!("buffer{ghost}")
+    );
+    leave(&mut d, &mut app);
 
     // A path: the directory's entries, hidden ones only asked for; one
     // candidate taken goes on into what it opens.
@@ -111,36 +136,37 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     d.ctrl(&mut app, "n");
     tab(&mut d, &mut app);
     assert_eq!(
-        app.ed.cmdline, "e a.txt",
+        app.ed.prompt_text().unwrap_or_default(),
+        "e a.txt",
         "the cycled-to candidate is taken"
     );
-    d.key(&mut app, "escape", KeyMods::default());
+    leave(&mut d, &mut app);
     d.keys(&mut app, ":e s");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("rc/"));
     tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, "e src/");
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "e src/");
     assert_eq!(
         app.cmdline_ghost().as_deref(),
         Some("main.rs"),
         "the one candidate opened onto its entries"
     );
     tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, "e src/main.rs");
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "e src/main.rs");
     d.key(&mut app, "enter", KeyMods::default());
     assert_eq!(d.line_rows()[0], "fn main() {}");
     d.keys(&mut app, ":e .h");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("idden"));
-    d.key(&mut app, "escape", KeyMods::default());
+    leave(&mut d, &mut app);
 
     // A buffer, by prefix then by substring.
     d.keys(&mut app, ":b a");
     assert_eq!(app.cmdline_ghost().as_deref(), Some(".txt"));
-    d.key(&mut app, "escape", KeyMods::default());
+    leave(&mut d, &mut app);
     d.keys(&mut app, ":b ain");
     assert_eq!(app.cmd_completion.as_ref().unwrap().candidates, ["main.rs"]);
     tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, "b main.rs");
-    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "b main.rs");
+    leave(&mut d, &mut app);
 
     // A Lua command completes like any other, and what it declared its
     // argument to be is what the command line completes and what the
@@ -172,12 +198,16 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     assert_eq!(app.cmdline_ghost().as_deref(), Some("l"));
     tab(&mut d, &mut app);
     tab(&mut d, &mut app);
-    assert!(app.ed.cmdline.starts_with("oil"), "{}", app.ed.cmdline);
-    d.key(&mut app, "escape", KeyMods::default());
+    assert!(
+        app.ed.prompt_text().unwrap_or_default().starts_with("oil"),
+        "{}",
+        app.ed.prompt_text().unwrap_or_default()
+    );
+    leave(&mut d, &mut app);
     d.keys(&mut app, ":echo x");
     tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, "echo x");
-    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "echo x");
+    leave(&mut d, &mut app);
 
     // A subcommand completes as its parent's first word — the shell's
     // `:history drop`, a plugin's `:oil cd` — and what follows it
@@ -191,11 +221,11 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     d.keys(&mut app, "dr");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("op"));
     tab(&mut d, &mut app);
-    assert_eq!(app.ed.cmdline, "history drop");
-    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "history drop");
+    leave(&mut d, &mut app);
     d.keys(&mut app, ":settings re");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("load"));
-    d.key(&mut app, "escape", KeyMods::default());
+    leave(&mut d, &mut app);
     d.keys(&mut app, ":oil ");
     let cands = app.cmd_completion.as_ref().unwrap().candidates.clone();
     assert_eq!(
@@ -205,7 +235,64 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     );
     d.keys(&mut app, "c");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("d"));
-    d.key(&mut app, "escape", KeyMods::default());
+    leave(&mut d, &mut app);
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The prompt is a field — the editor's own line — so its keys are the
+/// editor's: `<Esc>` is normal mode over the line, where `b`, `ciw`,
+/// `0`, `D` and `u` work, the status shows the field's mode, and the
+/// strip draws the line with a block caret; `<Esc>` again leaves. A
+/// paste with a newline in it is one line. `<C-u>` clears in insert
+/// mode; `<BS>` on an empty line leaves.
+#[test]
+fn the_prompt_is_a_field_with_modes_and_motions() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "hello\n");
+    d.frame(&mut app);
+    d.keys(&mut app, ":echo hello world");
+    d.frame(&mut app);
+    let field = app.ed.prompt_view().unwrap();
+    assert_eq!(app.ed.mode(field), Mode::Insert);
+    assert_eq!(app.focused_mode(), Mode::Insert);
+    assert!(texts(&d).iter().any(|t| t == "INS"), "{:?}", texts(&d));
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(app.ed.mode(field), Mode::Normal);
+    assert!(texts(&d).iter().any(|t| t == "NOR"));
+    assert!(app.ed.prompt_view().is_some(), "still open");
+    d.keys(&mut app, "bciwthere");
+    assert_eq!(app.ed.prompt_text().as_deref(), Some("echo hello there"));
+    assert_eq!(app.ed.mode(field), Mode::Insert);
+    // Undo in the field.
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "u");
+    assert_eq!(app.ed.prompt_text().as_deref(), Some("echo hello world"));
+    d.ctrl(&mut app, "r");
+    assert_eq!(app.ed.prompt_text().as_deref(), Some("echo hello there"));
+    // `<CR>` in normal mode submits too.
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(app.ed.prompt_view().is_none());
+    assert_eq!(app.ed.message, "hello there");
+    assert_eq!(app.focused_mode(), Mode::Normal, "the buffer's own mode");
+    // The buffer is untouched by any of it.
+    assert_eq!(d.line_rows()[0], "hello");
+    assert_eq!(
+        app.ed.listed_buffers().len(),
+        1,
+        "a field is not a buffer to list"
+    );
+
+    // Pasted text with a newline is one line; `<C-u>` clears; `<BS>`
+    // on an empty line leaves.
+    d.keys(&mut app, ":");
+    let v = app.focused_view().unwrap();
+    app.ed.paste_text(v, "echo a\nb");
+    assert_eq!(app.ed.prompt_text().as_deref(), Some("echo a b"));
+    d.ctrl(&mut app, "u");
+    assert_eq!(app.ed.prompt_text().as_deref(), Some(""));
+    d.key(&mut app, "backspace", KeyMods::default());
+    assert!(app.ed.prompt_view().is_none());
+    assert_eq!(d.warnings(), Vec::<String>::new());
 }

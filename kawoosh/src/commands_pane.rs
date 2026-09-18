@@ -16,7 +16,7 @@
 //! whether a row can run is asked each frame, since that is what the
 //! facts are for. Every size is `devtab::Tab`'s, as the other panes'.
 
-use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Prompt, Spec, ViewId};
+use kawoosh_editor::{ArgKind, Args, Cond, KeyStroke, Mode, Spec, ViewId};
 use kui::{Color, NodeSpec, Sizing, Ui, Value, Vec2};
 
 use crate::app::Kawoosh;
@@ -79,14 +79,16 @@ impl Row {
 
 #[derive(Default)]
 pub struct CommandsPanel {
-    pub query: String,
+    /// The query is a field (`Editor::open_field`, named `commands`):
+    /// the editor's own line, in insert mode to type, `<Esc>` to normal
+    /// mode for motions over it. Opened with the pane, closed with it.
+    pub field: Option<ViewId>,
     /// The panel's own cursor: a row's index in `rows`.
     pub cursor: usize,
     rows: Vec<Row>,
     /// The registry and keymap versions and the query the rows were
     /// built from.
     built: Option<(u64, u64, String)>,
-    prefix: bool,
     reveal: bool,
 }
 
@@ -122,17 +124,47 @@ impl Kawoosh {
                 }
             }
         }
+        let field = self.commands_field();
         if let Some(q) = query {
-            self.commands_pane.query = q.to_string();
+            self.ed.set_field_text(field, q);
             self.commands_pane.cursor = 0;
         }
         self.commands_pane.reveal = true;
     }
 
+    /// The query's field, opened the first time it is asked for.
+    pub(crate) fn commands_field(&mut self) -> ViewId {
+        match self.commands_pane.field {
+            Some(f) if self.ed.views.contains_key(f) => f,
+            _ => {
+                let f = self.ed.open_field("commands", "");
+                self.commands_pane.field = Some(f);
+                f
+            }
+        }
+    }
+
+    /// The query as it reads.
+    pub fn commands_query(&self) -> String {
+        self.commands_pane
+            .field
+            .and_then(|f| self.ed.field_text(f))
+            .unwrap_or_default()
+    }
+
+    /// The pane is gone: its field goes with it.
+    pub(crate) fn close_commands_field(&mut self) {
+        if let Some(f) = self.commands_pane.field.take() {
+            self.ed.close_field(f);
+        }
+    }
+
     fn close_commands_panel(&mut self, pane: PaneId) {
         if self.layout.close(pane).is_none() {
             self.ed.message = "cannot close the last pane".into();
+            return;
         }
+        self.close_commands_field();
     }
 
     /// The view the pane answers "can it run here" for: the keyboard's
@@ -152,12 +184,12 @@ impl Kawoosh {
         let key = (
             self.ed.commands.version(),
             self.ed.keymap.version(),
-            self.commands_pane.query.clone(),
+            self.commands_query(),
         );
         if self.commands_pane.built.as_ref() == Some(&key) {
             return;
         }
-        let q = self.commands_pane.query.trim().to_lowercase();
+        let q = key.2.trim().to_lowercase();
         let mut rows: Vec<(u8, Row)> = self
             .ed
             .commands
@@ -184,8 +216,12 @@ impl Kawoosh {
         self.commands_pane.rows = rows.into_iter().map(|(_, r)| r).collect();
         // The cursor stays on its row when the row is still there; a
         // narrowed query lands it on the best match.
+        let same_query = self.commands_pane.built.as_ref().map(|b| &b.2) == Some(&key.2);
+        if !same_query {
+            self.commands_pane.reveal = true;
+        }
         self.commands_pane.cursor = match selected {
-            Some(name) if self.commands_pane.built.as_ref().map(|b| &b.2) == Some(&key.2) => self
+            Some(name) if same_query => self
                 .commands_pane
                 .rows
                 .iter()
@@ -204,7 +240,6 @@ impl Kawoosh {
             Mode::Visual,
             Mode::Insert,
             Mode::OperatorPending,
-            Mode::Command,
         ] {
             for (keys, b) in self.ed.keymap.bindings(mode) {
                 let inv = self.ed.commands.resolve(&b.command, &b.args);
@@ -226,83 +261,42 @@ impl Kawoosh {
         if row.spec.args.kinds.is_empty() {
             self.shell_command(&name, &[], None);
         } else {
-            self.ed.mode = Mode::Command;
-            self.ed.prompt = Prompt::Command;
-            self.ed.cmdline = format!("{name} ");
+            self.open_cmdline();
+            self.ed.set_prompt_text(&format!("{name} "));
             self.cmdline_refresh();
         }
     }
 
+    /// A key on the pane: the query's field takes it — the editor's
+    /// keys, and the pane's own as bindings `when field:commands`
+    /// (`commands next|prev|run|leave`).
     pub(crate) fn commands_key_press(&mut self, _pane: PaneId, stroke: KeyStroke) {
-        let note = stroke.notation();
-        if self.commands_pane.prefix {
-            self.commands_pane.prefix = false;
-            if note == ":" {
-                self.ed.mode = Mode::Command;
-                self.ed.prompt = Prompt::Command;
-                self.ed.cmdline.clear();
-                return;
-            }
-            let keys = ["<C-w>".to_string(), note];
-            self.ed.sync_settings();
-            if let Lookup::Exact(bs) = self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
-                let bs = bs.to_vec();
-                self.run_bindings(&bs);
-            }
-            return;
-        }
+        let field = self.commands_field();
+        self.ed.key(field, stroke);
+        self.sync_command_rows();
+    }
+
+    fn commands_step(&mut self, down: bool) {
         self.sync_command_rows();
         let n = self.commands_pane.rows.len();
         let p = &mut self.commands_pane;
-        match note.as_str() {
-            "<C-w>" => p.prefix = true,
-            "<Down>" | "<C-n>" | "<C-j>" => {
-                p.cursor = (p.cursor + 1).min(n.saturating_sub(1));
-                p.reveal = true;
-            }
-            "<Up>" | "<C-p>" | "<C-k>" => {
-                p.cursor = p.cursor.saturating_sub(1);
-                p.reveal = true;
-            }
-            "<CR>" => self.run_command_row(self.commands_pane.cursor),
-            "<BS>" => {
-                p.query.pop();
-                p.reveal = true;
-            }
-            "<C-u>" => {
-                p.query.clear();
-                p.reveal = true;
-            }
-            "<Esc>" if !p.query.is_empty() => {
-                p.query.clear();
-                p.reveal = true;
-            }
-            "<Esc>" => {
-                let back = self
-                    .layout
-                    .visible_panes()
-                    .into_iter()
-                    .find(|p| self.view_of(*p).is_some());
-                if let Some(p) = back {
-                    self.layout.focus(p);
-                }
-            }
-            ":" => {
-                self.ed.mode = Mode::Command;
-                self.ed.prompt = Prompt::Command;
-                self.ed.cmdline.clear();
-            }
-            _ => {
-                if let Some(t) = &stroke.text
-                    && !stroke.ctrl
-                    && !stroke.alt
-                    && !stroke.sup
-                    && !t.chars().any(char::is_control)
-                {
-                    p.query.push_str(t);
-                    p.reveal = true;
-                }
-            }
+        p.cursor = if down {
+            (p.cursor + 1).min(n.saturating_sub(1))
+        } else {
+            p.cursor.saturating_sub(1)
+        };
+        p.reveal = true;
+    }
+
+    /// `<Esc>` in normal mode: the keyboard back to an editor pane.
+    fn commands_leave(&mut self) {
+        let back = self
+            .layout
+            .visible_panes()
+            .into_iter()
+            .find(|p| self.view_of(*p).is_some());
+        if let Some(p) = back {
+            self.layout.focus(p);
         }
     }
 
@@ -323,7 +317,6 @@ impl Kawoosh {
         self.sync_facts();
         self.sync_command_rows();
         let tm = Tab::of(&ui.metrics());
-        let blink_on = ui.caret_visible();
         let pal = self.pal;
         let font = self.font;
         let (cell_w, _) = self.cell;
@@ -339,7 +332,8 @@ impl Kawoosh {
         let n = rows.len();
         let cursor = self.commands_pane.cursor.min(n.saturating_sub(1));
         let reveal = std::mem::take(&mut self.commands_pane.reveal);
-        let query = self.commands_pane.query.clone();
+        let query = self.commands_query();
+        let field = self.commands_field();
         let view = self.commands_view();
         let can: Vec<Result<(), String>> = rows
             .iter()
@@ -370,36 +364,19 @@ impl Kawoosh {
                     ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
                     ui.text("type to search · ⏎ run · <Esc> back", small(pal.faint));
                 });
-                // The query line: what is typed, then the caret — a bar
-                // on kui's blink, as the editor's insert caret is: the
-                // line declares its caret (`Role::Line` + `caret`, kui's
-                // custom-editor contract), which arms the blink clock,
-                // and `caret_visible` is the phase read back. Unfocused,
-                // no caret. The placeholder sits after the caret, so
-                // the caret is where typing would start.
-                let mut line = tm.line(&pal, 0).hover_bg(Color::TRANSPARENT).gap(0.0);
-                if focused {
-                    line = line.role(kui::Role::Line).caret(query.len() as u32);
-                }
-                ui.with(line, |ui| {
-                    if !query.is_empty() {
-                        ui.text(&query, style());
-                    }
-                    ui.with(
-                        NodeSpec::column()
-                            .width(Sizing::Fixed(2.0))
-                            .height(Sizing::Fixed(tm.line_h - 4.0))
-                            .bg(if focused && blink_on {
-                                pal.accent
-                            } else {
-                                Color::TRANSPARENT
-                            }),
-                        |_| {},
-                    );
-                    if query.is_empty() {
-                        ui.text("search commands, keys, docs", style().color(pal.faint));
-                    }
-                });
+                // The query line: the field, drawn as the prompt is —
+                // its selections, a bar caret on kui's blink in insert
+                // mode, a block in normal — and a placeholder after it
+                // while it is empty.
+                ui.with(
+                    tm.line(&pal, 0).hover_bg(Color::TRANSPARENT).gap(0.0),
+                    |ui| {
+                        self.field_line(ui, field, None);
+                        if query.is_empty() {
+                            ui.text("search commands, keys, docs", style().color(pal.faint));
+                        }
+                    },
+                );
                 ui.with(tm.line(&pal, 0).hover_bg(Color::TRANSPARENT), |ui| {
                     ui.with(col(26.0), |ui| ui.text("command", small(pal.faint)));
                     ui.with(col(13.0), |ui| ui.text("keys", small(pal.faint)));
@@ -582,11 +559,55 @@ fn args_text(args: &Args) -> String {
 }
 
 pub(crate) fn commands() -> Vec<ShellCommand> {
-    vec![cmd(
-        Spec::new("commands")
-            .alias(&["cmds", "help"])
-            .args(Args::new(&[ArgKind::Command]))
-            .doc("every command as a pane, searched as you type; QUERY starts the search"),
-        |k, ctx| k.toggle_commands_panel(ctx.args.first().map(String::as_str)),
-    )]
+    vec![
+        cmd(
+            Spec::new("commands")
+                .alias(&["cmds", "help"])
+                .args(Args::new(&[ArgKind::Command]))
+                .doc("every command as a pane, searched as you type; QUERY starts the search"),
+            |k, ctx| k.toggle_commands_panel(ctx.args.first().map(String::as_str)),
+        ),
+        cmd(
+            Spec::new("commands next")
+                .when(&["field:commands"])
+                .doc("the pane's cursor a row down"),
+            |k, _| k.commands_step(true),
+        ),
+        cmd(
+            Spec::new("commands prev")
+                .when(&["field:commands"])
+                .doc("the pane's cursor a row up"),
+            |k, _| k.commands_step(false),
+        ),
+        cmd(
+            Spec::new("commands run").when(&["field:commands"]).doc(
+                "run the cursor's command, or put it on the command line when it takes arguments",
+            ),
+            |k, _| {
+                k.sync_command_rows();
+                k.run_command_row(k.commands_pane.cursor);
+            },
+        ),
+        cmd(
+            Spec::new("commands leave")
+                .when(&["field:commands"])
+                .doc("the keyboard back to an editor pane"),
+            |k, _| k.commands_leave(),
+        ),
+    ]
+}
+
+/// The pane's keys on its query, over the editor's on the same keys.
+pub(crate) fn bind(km: &mut kawoosh_editor::Keymap) {
+    let at = [Cond::parse("field:commands")];
+    for mode in [Mode::Insert, Mode::Normal] {
+        km.bind_when(mode, "<CR>", "commands run", &at);
+        km.bind_when(mode, "<Down>", "commands next", &at);
+        km.bind_when(mode, "<Up>", "commands prev", &at);
+        km.bind_when(mode, "<C-n>", "commands next", &at);
+        km.bind_when(mode, "<C-p>", "commands prev", &at);
+        km.bind_when(mode, "<C-j>", "commands next", &at);
+        km.bind_when(mode, "<C-k>", "commands prev", &at);
+    }
+    km.bind_when(Mode::Normal, "<Esc>", "commands leave", &at);
 }

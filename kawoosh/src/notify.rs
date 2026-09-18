@@ -773,7 +773,7 @@ impl Kawoosh {
     /// Runs a command line as the `:` prompt would, on the focused view
     /// or any.
     pub(crate) fn run_line(&mut self, line: &str) {
-        let Some(v) = self.focused_view().or_else(|| self.ed.views.keys().next()) else {
+        let Some(v) = self.focused_view().or_else(|| self.ed.any_view()) else {
             return;
         };
         self.ed.execute(v, line);

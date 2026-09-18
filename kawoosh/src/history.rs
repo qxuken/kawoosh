@@ -488,7 +488,7 @@ impl Kawoosh {
             self.expire_histories();
         }
         let now = Instant::now();
-        let ids: Vec<BufferId> = self.ed.buffers.keys().collect();
+        let ids: Vec<BufferId> = self.ed.listed_buffers();
         let mut soonest: Option<Instant> = None;
         for id in ids {
             let buf = &self.ed.buffers[id];

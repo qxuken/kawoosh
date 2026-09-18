@@ -5,7 +5,7 @@
 use std::ops::Range;
 
 use kawoosh_editor::search;
-use kawoosh_editor::{Mode, Prompt, ViewId, motions};
+use kawoosh_editor::{Mode, ViewId, motions};
 use kui::{Align, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
 
 use crate::app::{DIVIDER, Kawoosh, TAB_H, TITLE_H};
@@ -186,17 +186,21 @@ impl Kawoosh {
         let v = &self.ed.views[view];
         let buf = self.ed.buffer_of(view);
         let on_toast = self.notes.focus.is_some();
+        // The mode shown is the keyboard's: the prompt's field while
+        // one is open, else the pane's.
+        let keyed = self.ed.prompt_view().unwrap_or(view);
+        let kv = &self.ed.views[keyed];
         let mode = if on_toast {
             "TOAST"
-        } else if self.ed.mode == Mode::Visual && self.ed.visual_linewise {
+        } else if kv.mode == Mode::Visual && kv.visual_linewise {
             "VIS LINE"
         } else {
-            self.ed.mode.name()
+            kv.mode.name()
         };
-        let mode_color = match self.ed.mode {
+        let mode_color = match kv.mode {
             _ if on_toast => pal.command,
             Mode::Insert => pal.insert,
-            Mode::Visual | Mode::Command => pal.command,
+            Mode::Visual => pal.command,
             _ => pal.accent,
         };
         let name = match buf.loading {
@@ -239,6 +243,80 @@ impl Kawoosh {
         );
     }
 
+    /// A field's one line, drawn as a pane's row is (`rows::emit_line`):
+    /// its selections, a caret per selection — a bar in insert mode on
+    /// kui's blink, a block otherwise — and `ghost` after the primary
+    /// caret. The line declares the caret, so kui's blink clock runs
+    /// while the field has the keyboard.
+    pub(crate) fn field_line(&self, ui: &mut Ui<'_>, view: ViewId, ghost: Option<&str>) {
+        let pal = self.pal;
+        let font = self.font;
+        let Some(v) = self.ed.views.get(view) else {
+            return;
+        };
+        let buf = &self.ed.buffers[v.buffer];
+        let text = buf.text();
+        let drawn = Drawn::new(&text, self.ed.tabstop());
+        let clip = |o: usize| drawn.to_drawn(o.min(text.len()));
+        let caret_kind = if v.mode == Mode::Insert {
+            Caret::Bar
+        } else {
+            Caret::Block
+        };
+        let mut selected: Vec<Range<usize>> = Vec::new();
+        let mut carets: Vec<(Range<usize>, Caret)> = Vec::new();
+        let mut access = (None, None);
+        let primary = v.sels.primary();
+        for s in v.sels.iter() {
+            let r = s.range();
+            let (rs, re) = if v.mode == Mode::Visual {
+                (r.start, buf.next_char(r.end).max(r.end + 1))
+            } else {
+                (r.start, r.end)
+            };
+            if rs < re {
+                let b = if re > text.len() {
+                    drawn.text.len() + 1
+                } else {
+                    clip(re)
+                };
+                selected.push(clip(rs)..b);
+            }
+            let end = if caret_kind == Caret::Block {
+                clip(buf.next_char(s.head))
+            } else {
+                clip(s.head)
+            };
+            carets.push((clip(s.head)..end, caret_kind));
+            if *s == primary {
+                access.0 = Some(clip(s.head) as u32);
+                if !s.is_empty() {
+                    access.1 = Some(clip(s.anchor) as u32);
+                }
+            }
+        }
+        rows::emit_line(
+            ui,
+            font,
+            &pal,
+            &LineDraw {
+                text: &drawn.text,
+                selected: &selected,
+                hits: &[],
+                styled: &[],
+                carets: &carets,
+                escapes: &drawn.escapes,
+                caret_on: ui.caret_visible() || v.mode != Mode::Insert,
+                access,
+                underlined: &[],
+                trailing: None,
+                ghost: ghost.map(|g| (clip(primary.head), g)),
+                before: 0.0,
+                after: 0.0,
+            },
+        );
+    }
+
     pub(crate) fn command_line(&self, ui: &mut Ui<'_>) {
         let pal = self.pal;
         let font = self.font;
@@ -250,34 +328,19 @@ impl Kawoosh {
                 .pad_xy(8.0, 0.0)
                 .cross_align(Align::Center),
             |ui| {
-                if self.ed.mode == Mode::Command {
-                    let prompt = match self.ed.prompt {
-                        Prompt::Command => ":",
-                        Prompt::Search { backwards: false } => "/",
-                        Prompt::Search { backwards: true } => "?",
-                    };
-                    ui.text(prompt, rows::mono(font, &pal).color(pal.command));
-                    if !self.ed.cmdline.is_empty() {
-                        ui.text(&self.ed.cmdline, rows::mono(font, &pal));
-                    }
-                    // The caret is a solid bar: nothing here blinks.
-                    ui.with(
-                        NodeSpec::column()
-                            .width(Sizing::Fixed(2.0))
-                            .height(Sizing::Fixed(LH - 4.0))
-                            .bg(pal.command),
-                        |_| {},
-                    );
-                    // The completion, in place: the candidate's rest
-                    // after the caret, and the candidates as a row —
-                    // the current one lit — clipped at the strip's end.
-                    if let Some(ghost) = self.cmdline_ghost() {
-                        ui.text(&ghost, rows::mono(font, &pal).color(pal.dim));
-                    }
+                if let (Some(field), Some(kind)) = (self.ed.prompt_view(), self.ed.prompt_kind()) {
+                    ui.text(kind.sigil(), rows::mono(font, &pal).color(pal.command));
+                    // The prompt's field: the editor's own line, with
+                    // the completion's ghost after the caret, and the
+                    // candidates as a row — the current one lit —
+                    // clipped at the strip's end.
+                    let ghost = self.cmdline_ghost();
+                    self.field_line(ui, field, ghost.as_deref());
+                    let line_len = self.ed.prompt_text().map_or(0, |t| t.len());
                     let candidates = self
                         .cmd_completion
                         .as_ref()
-                        .filter(|c| c.candidates.len() > 1 && self.ed.cmdline.len() > c.start)
+                        .filter(|c| c.candidates.len() > 1 && line_len > c.start)
                         .map(|c| (c.candidates.clone(), c.index));
                     if let Some((cands, index)) = candidates {
                         ui.with(
@@ -605,8 +668,12 @@ impl Kawoosh {
         // The long lines' cell indexes, out of `self` for the rows below
         // (which borrow the buffer) and back at the end.
         let mut cells = std::mem::take(&mut self.line_cells);
-        let mode = if focused { self.ed.mode } else { Mode::Normal };
-        let linewise = self.ed.visual_linewise;
+        let mode = if focused {
+            self.ed.mode(view)
+        } else {
+            Mode::Normal
+        };
+        let linewise = self.ed.views[view].visual_linewise;
         let blink_on = ui.caret_visible();
         let buf_id = self.ed.views[view].buffer;
 

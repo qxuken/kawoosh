@@ -111,7 +111,7 @@ impl Kawoosh {
         if msgs.is_empty() {
             return;
         }
-        let view = self.focused_view().or_else(|| self.ed.views.keys().next());
+        let view = self.focused_view().or_else(|| self.ed.any_view());
         let rest = match view {
             Some(v) => Runtime::apply_editor_msgs(&mut self.ed, v, msgs),
             None => msgs,
@@ -415,9 +415,7 @@ impl Kawoosh {
         if self.scripting.prefix {
             self.scripting.prefix = false;
             if note == ":" {
-                self.ed.mode = Mode::Command;
-                self.ed.prompt = kawoosh_editor::Prompt::Command;
-                self.ed.cmdline.clear();
+                self.open_cmdline();
                 return;
             }
             let keys = ["<C-w>".to_string(), note];

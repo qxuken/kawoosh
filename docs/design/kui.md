@@ -778,6 +778,34 @@ is a subcommand gated on `language:oil`, `oil enter` is gated the same
 way and falls through to `goto location`, `:oil?` says what is listed,
 and `<leader>cd` off a listing runs nothing and says why.
 
+**Every input is the editor, and the mode is the view's** (Zed's
+model). A [`Field`] is a one-line buffer with a view on it —
+`Editor::open_field` — and the command line, the search prompt and the
+`:commands` pane's query are fields: the keys that reach them are the
+editor's, so a prompt opens in insert mode to type, `<Esc>` is normal
+mode over the line — `b`, `ciw`, `0`, `D`, `u`, a second caret — and
+`<Esc>` again leaves. For that the mode moved from the editor onto the
+view (`View::mode`, `Editor::mode(view)`): the buffer pane sits in
+normal mode while the field beside it takes typing, and `Mode::Command`
+is gone — "the prompt is open" is "the prompt's field has the
+keyboard" (`Editor::prompt_view`), and a key sent to any view while it
+is open goes to the field. What a prompt does on its own keys is
+commands gated on facts, bound over the editor's on the same keys and
+falling through when no prompt is open: `prompt submit` (`<CR>`, either
+mode), `prompt cancel` (`<Esc>` in normal mode), `prompt backspace`
+(`<BS>` on an empty line leaves), `prompt history prev|next`
+(`<Up>`/`<Down>`, `<C-p>`/`<C-n>`), and the shell's `prompt complete`
+and `prompt cycle next|prev` `when field:cmdline` over the last two;
+the `:commands` pane's `commands next|prev|run|leave` `when
+field:commands` the same way. A field is not listed, kept, or given a
+history row (`Editor::listed_buffers`), a newline typed or pasted into
+one is a space, and the shell draws it with the same `rows::emit_line`
+a pane's row is drawn with — selections, a bar caret on kui's blink in
+insert mode, a block in normal — so a field anywhere (the strip, a
+pane, a Lua view later) looks and behaves like the buffer. The
+incsearch preview keys off the field's buffer version, not off which
+key was pressed.
+
 **`:commands` is the registry as a pane** (`commands_pane.rs`), the
 help this design makes free: every spec a row — the name with its forms
 marked, the first ex spelling, the key bound to it, what it does or, in

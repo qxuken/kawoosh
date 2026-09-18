@@ -14,7 +14,6 @@ pub enum Mode {
     Insert,
     Visual,
     /// The command line and the search prompt: `:` and `/`.
-    Command,
     /// An operator is waiting for its motion or text object.
     OperatorPending,
 }
@@ -25,7 +24,6 @@ impl Mode {
             Mode::Normal => "NOR",
             Mode::Insert => "INS",
             Mode::Visual => "VIS",
-            Mode::Command => "CMD",
             Mode::OperatorPending => "OP",
         }
     }
@@ -36,7 +34,6 @@ impl Mode {
             Mode::Normal => "n",
             Mode::Insert => "i",
             Mode::Visual => "v",
-            Mode::Command => "c",
             Mode::OperatorPending => "o",
         }
     }
@@ -46,7 +43,6 @@ impl Mode {
             "n" | "normal" => Some(Mode::Normal),
             "i" | "insert" => Some(Mode::Insert),
             "v" | "visual" => Some(Mode::Visual),
-            "c" | "command" => Some(Mode::Command),
             "o" | "op" | "operator" => Some(Mode::OperatorPending),
             _ => None,
         }

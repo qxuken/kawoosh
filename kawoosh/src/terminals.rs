@@ -141,9 +141,7 @@ impl Kawoosh {
                 return;
             }
             if note == ":" {
-                self.ed.mode = Mode::Command;
-                self.ed.prompt = kawoosh_editor::Prompt::Command;
-                self.ed.cmdline.clear();
+                self.open_cmdline();
                 return;
             }
             let keys = ["<C-w>".to_string(), note.clone()];

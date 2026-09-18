@@ -9,12 +9,17 @@
 //! A command's subcommands complete as its first word (`:history dr`
 //! is `:history drop`), and the words after complete as the
 //! subcommand's own. Nothing is a popup: the candidates are a row in
-//! the strip.
+//! the strip. The keys are the shell's commands `prompt complete`
+//! (`<Tab>`, `<C-y>`) and `prompt cycle next|prev` (`<C-n>`, `<C-p>`),
+//! bound `when field:cmdline` over the engine's history walk on the
+//! same keys, which a search prompt keeps.
 
 use std::collections::HashSet;
 use std::path::{MAIN_SEPARATOR, Path};
 
-use kawoosh_editor::{ArgKind, KeyStroke, Mode, Prompt};
+use kawoosh_editor::{ArgKind, Cond, Mode, Prompt, Spec};
+
+use crate::commands::{ShellCommand, cmd};
 
 use crate::app::Kawoosh;
 
@@ -90,7 +95,12 @@ impl Kawoosh {
             Some(ArgKind::Path) => self.path_candidates(token),
             Some(ArgKind::Command) => self.command_name_candidates(token),
             Some(ArgKind::Buffer) => {
-                let names: Vec<&str> = self.ed.buffers.values().map(|b| b.name.as_str()).collect();
+                let names: Vec<&str> = self
+                    .ed
+                    .listed_buffers()
+                    .into_iter()
+                    .map(|id| self.ed.buffers[id].name.as_str())
+                    .collect();
                 let mut v: Vec<String> = names
                     .iter()
                     .filter(|n| n.starts_with(token))
@@ -198,7 +208,6 @@ impl Kawoosh {
                 Mode::Visual,
                 Mode::Insert,
                 Mode::OperatorPending,
-                Mode::Command,
             ] {
                 for (_, b) in self.ed.keymap.bindings(mode) {
                     let name = self.ed.commands.resolve(&b.command, &b.args).name;
@@ -243,7 +252,7 @@ impl Kawoosh {
 
     /// Whether the command line is at the `:` prompt.
     fn at_command_prompt(&self) -> bool {
-        self.ed.mode == Mode::Command && self.ed.prompt == Prompt::Command
+        self.ed.prompt_kind() == Some(Prompt::Command)
     }
 
     /// The ghost after the caret, if the current candidate extends what
@@ -253,55 +262,45 @@ impl Kawoosh {
             return None;
         }
         let c = self.cmd_completion.as_ref()?;
-        let token = self.ed.cmdline.get(c.start..)?;
+        let line = self.ed.prompt_text()?;
+        let token = line.get(c.start..)?;
         c.ghost(token).map(str::to_string)
     }
 
-    /// Replaces the token with the current candidate.
+    /// `<Tab>` / `<C-y>`: the token replaced with the current candidate,
+    /// then completed on from it (a directory's entries, a command's
+    /// longer spellings). Nothing to take is nothing done — a `<Tab>`
+    /// is never a character on the command line.
     fn take_candidate(&mut self) {
         let Some(c) = &self.cmd_completion else {
             return;
         };
         let Some(cand) = c.current() else { return };
-        let start = c.start.min(self.ed.cmdline.len());
-        let mut line = self.ed.cmdline[..start].to_string();
+        let Some(line) = self.ed.prompt_text() else {
+            return;
+        };
+        let start = c.start.min(line.len());
+        let mut line = line[..start].to_string();
         line.push_str(cand);
-        self.ed.cmdline = line;
+        self.ed.set_prompt_text(&line);
+        self.cmdline_refresh();
     }
 
-    /// Keys the `:` prompt's completion takes before the engine sees
-    /// them, the buffer completion's (`Kawoosh::completion_key`):
-    /// `<C-n>`/`<C-p>` cycle the candidates — the ghost moves, the line
-    /// does not — and `<Tab>` or `<C-y>` takes the current one, then
-    /// completes on from it (a directory's entries, a command's
-    /// longer spellings). `<Up>`/`<Down>` stay the history's. Returns
-    /// true when consumed.
-    pub(crate) fn cmdline_key(&mut self, stroke: &KeyStroke) -> bool {
-        if !self.at_command_prompt() {
-            return false;
-        }
-        let note = stroke.notation();
-        let take = matches!(note.as_str(), "<Tab>" | "<C-y>");
-        if !take && note != "<C-n>" && note != "<C-p>" {
-            return false;
-        }
+    /// `<C-n>` / `<C-p>`: the ghost moves through the candidates; the
+    /// line stays as typed.
+    fn cycle_candidate(&mut self, forward: bool) {
         let Some(c) = self.cmd_completion.as_mut() else {
-            // A `<Tab>` is never a character on the command line.
-            return take;
+            return;
         };
         if c.candidates.is_empty() {
-            return take;
+            return;
         }
-        match note.as_str() {
-            "<C-n>" => c.index = (c.index + 1) % c.candidates.len(),
-            "<C-p>" => c.index = (c.index + c.candidates.len() - 1) % c.candidates.len(),
-            _ => {
-                self.take_candidate();
-                // The candidate is taken: what it opens onto is next.
-                self.cmdline_refresh();
-            }
-        }
-        true
+        let n = c.candidates.len();
+        c.index = if forward {
+            (c.index + 1) % n
+        } else {
+            (c.index + n - 1) % n
+        };
     }
 
     /// After a key at the `:` prompt: the candidates for the line as it
@@ -313,7 +312,7 @@ impl Kawoosh {
             self.cmd_completion = None;
             return;
         }
-        let line = self.ed.cmdline.clone();
+        let line = self.ed.prompt_text().unwrap_or_default();
         let (start, candidates) = self.cmd_candidates(&line);
         let index = match &self.cmd_completion {
             Some(c) if c.start == start && c.candidates == candidates => c.index,
@@ -325,4 +324,37 @@ impl Kawoosh {
             index,
         });
     }
+}
+
+pub(crate) fn commands() -> Vec<ShellCommand> {
+    vec![
+        cmd(
+            Spec::new("prompt complete")
+                .when(&["field:cmdline"])
+                .doc("take the completion's current candidate and complete on from it"),
+            |k, _| k.take_candidate(),
+        ),
+        cmd(
+            Spec::new("prompt cycle next")
+                .when(&["field:cmdline"])
+                .doc("the next completion candidate; the line stays as typed"),
+            |k, _| k.cycle_candidate(true),
+        ),
+        cmd(
+            Spec::new("prompt cycle prev")
+                .when(&["field:cmdline"])
+                .doc("the previous completion candidate"),
+            |k, _| k.cycle_candidate(false),
+        ),
+    ]
+}
+
+/// The completion's keys at the `:` prompt, over the engine's on the
+/// same keys.
+pub(crate) fn bind(km: &mut kawoosh_editor::Keymap) {
+    let at = [Cond::parse("field:cmdline")];
+    km.bind_when(Mode::Insert, "<Tab>", "prompt complete", &at);
+    km.bind_when(Mode::Insert, "<C-y>", "prompt complete", &at);
+    km.bind_when(Mode::Insert, "<C-n>", "prompt cycle next", &at);
+    km.bind_when(Mode::Insert, "<C-p>", "prompt cycle prev", &at);
 }

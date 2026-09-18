@@ -144,9 +144,10 @@ fn the_panel_lists_the_states_and_restores_one() {
     let rect = d.core.nodes().iter().find(|n| n.key == key).unwrap().rect;
     d.click(&mut app, rect.x + rect.w / 2.0, rect.y + 8.0);
     assert_eq!(app.layout.focused_content(), Some(Content::Undo));
-    assert_eq!(app.ed.mode, kawoosh_editor::Mode::Insert);
+    let bv = app.undo.view.unwrap();
+    assert_eq!(app.ed.mode(bv), kawoosh_editor::Mode::Insert);
     d.keys(&mut app, "u");
-    assert_eq!(app.ed.mode, kawoosh_editor::Mode::Normal);
+    assert_eq!(app.ed.mode(bv), kawoosh_editor::Mode::Normal);
     assert_eq!(text(&app), "bc\nef\n");
     assert_eq!(app.undo.rows().len(), 5);
     assert!(!app.undo.rows()[4].pending);

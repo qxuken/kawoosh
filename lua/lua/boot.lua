@@ -28,9 +28,12 @@ kawoosh._nonce = 0
 --   query   the same for `?`.
 --   when    facts that must hold, `{ "language:oil", "!terminal" }` —
 --           the engine's `visual`, `modified`, `file`, `buffer:NAME`,
---           `language:NAME`; the shell's `store`, `lsp`, `editor`,
---           `terminal`, `lua`, `dock`; or one a plugin published with
---           `kawoosh.fact`. The command line refuses with the reason.
+--           `language:NAME`, `field` (a one-line input has the keys:
+--           the command line, a pane's query), `field:NAME`, `prompt`
+--           (the command line or a search); the shell's `store`,
+--           `lsp`, `editor`, `terminal`, `lua`, `dock`; or one a plugin
+--           published with `kawoosh.fact`. The command line refuses
+--           with the reason.
 --   doc     one line on what it does.
 -- `kawoosh.commands()` lists every command's spec as such a table;
 -- `kawoosh.can(name)` is true, or the reason it cannot run now.

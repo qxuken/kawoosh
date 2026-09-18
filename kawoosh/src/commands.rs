@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use kawoosh_doc::{Buffer, BufferId};
-use kawoosh_editor::{ArgKind, Args, Binding, Command, Ctx, FnCommand, Spec, ViewId};
+use kawoosh_editor::{ArgKind, Args, Binding, Command, Ctx, FnCommand, Mode, Prompt, Spec, ViewId};
 
 use crate::app::Kawoosh;
 use crate::layout::{Content, Drop, SplitDir};
@@ -46,6 +46,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::scripting::commands());
     v.extend(crate::undo::commands());
     v.extend(crate::commands_pane::commands());
+    v.extend(crate::cmdline::commands());
     v
 }
 
@@ -69,6 +70,8 @@ impl Kawoosh {
             self.ed.declare(spec.clone());
             self.commands.map.insert(spec.name, Rc::new(c));
         }
+        crate::cmdline::bind(&mut self.ed.keymap);
+        crate::commands_pane::bind(&mut self.ed.keymap);
     }
 
     /// Adds one shell command after start (a test's, a plugin's).
@@ -94,7 +97,7 @@ impl Kawoosh {
     /// run as well as the shell's.
     pub fn shell_command(&mut self, name: &str, args: &[String], count: Option<usize>) {
         self.sync_facts();
-        let Some(v) = self.focused_view().or_else(|| self.ed.views.keys().next()) else {
+        let Some(v) = self.focused_view().or_else(|| self.ed.any_view()) else {
             return;
         };
         self.ed.run(v, name, args, count);
@@ -105,11 +108,30 @@ impl Kawoosh {
     /// view — a `<C-w>` chord on a terminal, the undo pane's keys.
     pub(crate) fn run_bindings(&mut self, bs: &[Binding]) {
         self.sync_facts();
-        let Some(v) = self.focused_view().or_else(|| self.ed.views.keys().next()) else {
+        let Some(v) = self.focused_view().or_else(|| self.ed.any_view()) else {
             return;
         };
         self.ed.run_bindings(v, bs, None);
         self.drain_effects();
+    }
+
+    /// The mode of the view the keyboard is on: the prompt's field
+    /// while one is open, else the focused pane's; normal elsewhere.
+    pub fn focused_mode(&self) -> Mode {
+        self.ed
+            .prompt_view()
+            .or_else(|| self.focused_view())
+            .map(|v| self.ed.mode(v))
+            .unwrap_or(Mode::Normal)
+    }
+
+    /// Opens the `:` prompt over the keyboard's view, or over some view
+    /// when the keyboard is on a pane without one — a terminal's, the
+    /// undo pane's `<C-w>:`.
+    pub(crate) fn open_cmdline(&mut self) {
+        if let Some(v) = self.focused_view().or_else(|| self.ed.any_view()) {
+            self.ed.open_prompt(v, Prompt::Command);
+        }
     }
 
     /// Tells the engine what the shell has, so a `when` can ask.
@@ -144,7 +166,7 @@ impl Kawoosh {
             },
             None => match self.focused_view() {
                 Some(v) => self.ed.views[v].buffer,
-                None => match self.ed.buffers.keys().next() {
+                None => match self.ed.listed_buffers().first().copied() {
                     Some(id) => id,
                     None => return,
                 },
@@ -175,7 +197,8 @@ impl Kawoosh {
             Some(Content::Terminal(t)) => {
                 self.terms.map.remove(&t);
             }
-            Some(Content::Lua(_) | Content::Undo | Content::History | Content::Commands) => {}
+            Some(Content::Commands) => self.close_commands_field(),
+            Some(Content::Lua(_) | Content::Undo | Content::History) => {}
             None => self.ed.message = "cannot close the last pane".into(),
         }
     }
@@ -188,7 +211,7 @@ impl Kawoosh {
 
     fn buffer_step(&mut self, ctx: &Ctx, forward: bool) {
         let Some(v) = self.view_arg(ctx) else { return };
-        let ids: Vec<BufferId> = self.ed.buffers.keys().collect();
+        let ids: Vec<BufferId> = self.ed.listed_buffers();
         let cur = self.ed.views[v].buffer;
         let i = ids.iter().position(|b| *b == cur).unwrap_or(0);
         let n = ids.len();
@@ -205,8 +228,9 @@ impl Kawoosh {
     fn buffer_listing(&self) -> String {
         let cur = self.focused_view().map(|v| self.ed.views[v].buffer);
         self.ed
-            .buffers
-            .iter()
+            .listed_buffers()
+            .into_iter()
+            .map(|id| (id, &self.ed.buffers[id]))
             .enumerate()
             .map(|(i, (id, b))| {
                 format!(
@@ -299,7 +323,8 @@ fn panes() -> Vec<ShellCommand> {
                         Content::Terminal(t) => {
                             k.terms.map.remove(&t);
                         }
-                        Content::Lua(_) | Content::Undo | Content::History | Content::Commands => {}
+                        Content::Commands => k.close_commands_field(),
+                        Content::Lua(_) | Content::Undo | Content::History => {}
                     }
                 }
             },
@@ -378,6 +403,7 @@ fn panes() -> Vec<ShellCommand> {
                         Some(Content::Terminal(t)) => {
                             k.terms.map.remove(&t);
                         }
+                        Some(Content::Commands) => k.close_commands_field(),
                         _ => {}
                     }
                 }
@@ -429,7 +455,7 @@ fn buffers() -> Vec<ShellCommand> {
                     k.ed.message = k.buffer_listing();
                     return;
                 };
-                let ids: Vec<BufferId> = k.ed.buffers.keys().collect();
+                let ids: Vec<BufferId> = k.ed.listed_buffers();
                 let target = arg
                     .parse::<usize>()
                     .ok()
@@ -466,7 +492,7 @@ fn buffers() -> Vec<ShellCommand> {
                     }
                     k.discard(cur);
                 }
-                let ids: Vec<BufferId> = k.ed.buffers.keys().collect();
+                let ids: Vec<BufferId> = k.ed.listed_buffers();
                 let next = match ids.iter().copied().find(|b| *b != cur) {
                     Some(n) => n,
                     None => k.ed.add_buffer(Buffer::new("*scratch*", "")),
@@ -484,7 +510,11 @@ fn buffers() -> Vec<ShellCommand> {
             |k, ctx| {
                 let Some(v) = k.view_arg(ctx) else { return };
                 let keep = k.ed.views[v].buffer;
-                let others: Vec<BufferId> = k.ed.buffers.keys().filter(|b| *b != keep).collect();
+                let others: Vec<BufferId> =
+                    k.ed.listed_buffers()
+                        .into_iter()
+                        .filter(|b| *b != keep)
+                        .collect();
                 let (mut gone, mut kept) = (0, 0);
                 for id in others {
                     if k.ed.buffers[id].modified {

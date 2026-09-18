@@ -143,6 +143,10 @@ pub struct Published {
     pub commands_version: u64,
     /// What the shell and plugins published as holding.
     pub facts: BTreeSet<String>,
+    /// The current view's field name, when it is one, and whether it
+    /// is the prompt's.
+    pub field: Option<String>,
+    pub prompt: bool,
     /// For a tracked buffer: what each original line has become — its
     /// current text, or `None` when deleted (see `Runtime::track_lines`).
     pub tracked: HashMap<u64, Vec<Option<String>>>,
@@ -158,6 +162,8 @@ impl Default for Published {
             commands: Vec::new(),
             commands_version: 0,
             facts: BTreeSet::new(),
+            field: None,
+            prompt: false,
             tracked: HashMap::new(),
         }
     }
@@ -329,7 +335,13 @@ impl Runtime {
             );
         }
         p.current = current.map(|v| handle_of(ed.views[v].buffer));
-        p.mode = ed.mode.name().to_lowercase();
+        p.mode = current
+            .map(|v| ed.mode(v))
+            .unwrap_or(kawoosh_editor::Mode::Normal)
+            .name()
+            .to_lowercase();
+        p.field = current.and_then(|v| ed.field_name(v)).map(str::to_string);
+        p.prompt = current.is_some() && current == ed.prompt_view();
         p.settings = ed.settings.effective().clone();
         if p.commands_version != ed.commands.version() {
             p.commands = ed.commands.specs().into_iter().cloned().collect();
@@ -581,6 +593,8 @@ fn seed(
                         b.path.is_some(),
                     )
                 }),
+                field: p.field.as_deref(),
+                prompt: p.prompt,
             };
             Ok(match spec.check(&facts) {
                 Ok(()) => LV::Boolean(true),

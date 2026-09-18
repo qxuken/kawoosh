@@ -247,9 +247,10 @@ impl Args {
 
 /// One condition of a command's `when`: a fact that must hold, or with
 /// `!`, must not. A fact is a name — `store`, `terminal`, `lsp`,
-/// `modified`, `language:oil` — that the engine answers from the view
-/// ([`Editor::holds`]) or that the shell or a plugin published
-/// ([`Editor::fact`]). Written `"terminal"` / `"!terminal"`.
+/// `modified`, `language:oil`, `field`, `field:cmdline`, `prompt` —
+/// that the engine answers from the view ([`Editor::holds`]) or that
+/// the shell or a plugin published ([`Editor::fact`]). Written
+/// `"terminal"` / `"!terminal"`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Cond {
     pub fact: String,
@@ -289,6 +290,10 @@ pub struct Facts<'a> {
     pub visual: bool,
     /// The buffer's name, language, whether modified, whether a file.
     pub buffer: Option<(&'a str, &'a str, bool, bool)>,
+    /// The field's name, when the view is one (`field`, `field:NAME`).
+    pub field: Option<&'a str>,
+    /// Whether the view is the prompt's field (`prompt`).
+    pub prompt: bool,
 }
 
 impl Facts<'_> {
@@ -298,8 +303,14 @@ impl Facts<'_> {
         if self.published.is_some_and(|p| p.contains(fact)) {
             return true;
         }
-        if fact == "visual" {
-            return self.visual;
+        match fact {
+            "visual" => return self.visual,
+            "field" => return self.field.is_some(),
+            "prompt" => return self.prompt,
+            _ => {}
+        }
+        if let Some(("field", n)) = fact.split_once(':') {
+            return self.field == Some(n);
         }
         let Some((name, language, modified, file)) = self.buffer else {
             return false;

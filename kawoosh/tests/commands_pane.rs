@@ -84,18 +84,19 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
         t.contains(&"n <leader>cd".to_string()),
         "the key bound to oil cd"
     );
-    d.key(&mut app, "escape", KeyMods::default());
+    d.ctrl(&mut app, "u");
     d.keys(&mut app, "history");
     d.frame(&mut app);
     assert!(texts(&d).contains(&"history needs store".to_string()));
-    d.key(&mut app, "escape", KeyMods::default());
+    d.ctrl(&mut app, "u");
 
     // Typing filters: the name's start first, then an alias, then
-    // anything; `<BS>` widens, `<Esc>` clears, and empty hands the
-    // keyboard back to the editor.
+    // anything; `<BS>` widens; the query is a field, so `<Esc>` is
+    // normal mode over it (`0`, `D`, `ciw` work), and `<Esc>` again
+    // hands the keyboard back to the editor.
     d.keys(&mut app, "buf");
     d.frame(&mut app);
-    assert_eq!(app.commands_pane.query, "buf");
+    assert_eq!(app.commands_query(), "buf");
     let n = names(&app);
     let by_name = n.iter().take_while(|s| s.starts_with("buffer")).count();
     assert_eq!(by_name, 6, "the names first: {n:?}");
@@ -115,9 +116,13 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
     let n = names(&app);
     assert_eq!(n[0], "cd", "the name's start comes first");
     assert!(n.contains(&"oil cd".to_string()), "{n:?}");
-    // A word from a doc.
+    // A word from a doc — typed after `<Esc>D` cleared the line as the
+    // editor would, then `i` back to insert.
     d.key(&mut app, "escape", KeyMods::default());
-    assert_eq!(app.commands_pane.query, "");
+    let field = app.commands_pane.field.unwrap();
+    assert_eq!(app.ed.mode(field), kawoosh_editor::Mode::Normal);
+    d.keys(&mut app, "0Di");
+    assert_eq!(app.commands_query(), "");
     assert_eq!(app.layout.focused_content(), Some(Content::Commands));
     d.keys(&mut app, "vacuum");
     d.frame(&mut app);
@@ -141,9 +146,10 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
     );
 
     // `⏎` on a command without arguments runs it; on one with, the
-    // command line opens on it with a space after.
+    // command line opens on it with a space after. (`:` from the pane
+    // is `<Esc>:` — in insert mode it is a character of the query.)
     ex(&mut d, &mut app, "commands pwd");
-    assert_eq!(app.commands_pane.query, "pwd");
+    assert_eq!(app.commands_query(), "pwd");
     assert_eq!(names(&app)[0], "pwd");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
@@ -153,9 +159,11 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
     d.frame(&mut app);
     assert_eq!(names(&app)[0], "vsplit");
     d.key(&mut app, "enter", KeyMods::default());
-    assert_eq!(app.ed.mode, kawoosh_editor::Mode::Command);
-    assert_eq!(app.ed.cmdline, "vsplit ");
+    assert!(app.ed.prompt_view().is_some());
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "vsplit ");
     d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(app.ed.prompt_view().is_none());
     d.frame(&mut app);
     // `<Down>` moves the cursor; a click lands it on a row.
     d.ctrl(&mut app, "u");
@@ -188,6 +196,8 @@ fn the_pane_is_kept_by_a_session() {
     app.open_store(Some(&db));
     d.frame(&mut app);
     ex(&mut d, &mut app, "commands");
+    // The query is in insert mode: `<Esc>` first, then `:qa`.
+    d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "qa");
     drop(app);
     let mut d = Drive::new(1000.0, 600.0);

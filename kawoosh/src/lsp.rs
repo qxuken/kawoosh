@@ -147,7 +147,7 @@ impl Kawoosh {
                     update,
                     messages,
                 } => {
-                    if self.lsp.typing(buffer, self.ed.mode) {
+                    if self.lsp.typing(buffer, self.focused_mode()) {
                         self.lsp.held.insert(buffer, (update, messages));
                         self.lsp.alarm.set(self.lsp.moved[&buffer] + DIAG_QUIET);
                     } else {
@@ -184,7 +184,7 @@ impl Kawoosh {
                     let Some((b, start)) = self.lsp.requested.take() else {
                         continue;
                     };
-                    if b != buffer || items.is_empty() || self.ed.mode != Mode::Insert {
+                    if b != buffer || items.is_empty() || self.focused_mode() != Mode::Insert {
                         continue;
                     }
                     let Some(v) = self.focused_view() else {
@@ -253,7 +253,7 @@ impl Kawoosh {
         }
         // Held answers land once the typing paused or insert mode ended;
         // one still being typed in waits for the next alarm.
-        let mode = self.ed.mode;
+        let mode = self.focused_mode();
         let quiet: Vec<BufferId> = self
             .lsp
             .held
@@ -434,7 +434,7 @@ impl Kawoosh {
     /// Keys a completion in progress takes before the engine sees them.
     /// Returns true when consumed.
     pub(crate) fn completion_key(&mut self, stroke: &KeyStroke) -> bool {
-        if self.lsp.completion.is_none() || self.ed.mode != Mode::Insert {
+        if self.lsp.completion.is_none() || self.focused_mode() != Mode::Insert {
             return false;
         }
         let Some((v, typed)) = self.completion_typed() else {
@@ -473,7 +473,7 @@ impl Kawoosh {
     /// After an insert-mode key: keep the completion's filter in step
     /// with the word, or ask for one when a word starts.
     pub(crate) fn completion_after_key(&mut self, stroke: &KeyStroke) {
-        if self.ed.mode != Mode::Insert {
+        if self.focused_mode() != Mode::Insert {
             self.lsp.completion = None;
             return;
         }

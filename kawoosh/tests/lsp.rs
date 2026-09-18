@@ -101,7 +101,7 @@ fn diagnostics_definition_hover_and_completion() {
     // rest of `hello_world`; <C-n> cycles to `help`; <Tab> accepts.
     d.keys(&mut app, "G");
     d.keys(&mut app, "o");
-    assert_eq!(app.ed.mode, Mode::Insert);
+    assert_eq!(app.focused_mode(), Mode::Insert);
     d.keys(&mut app, "hel");
     assert!(
         until(&mut d, &mut app, |a| a.lsp.completion.is_some()),
@@ -188,7 +188,7 @@ fn diagnostics_wait_for_the_typing_to_pause() {
     // Typing brings the cascade, which waits.
     d.keys(&mut app, "O");
     d.text(&mut app, "!!");
-    assert_eq!(app.ed.mode, Mode::Insert);
+    assert_eq!(app.focused_mode(), Mode::Insert);
     assert!(
         until(&mut d, &mut app, |a| a.lsp.held.contains_key(&buf_id)),
         "the answer is held"
@@ -219,7 +219,7 @@ fn diagnostics_wait_for_the_typing_to_pause() {
         until(&mut d, &mut app, |a| a.lsp.held.is_empty()),
         "the answer landed"
     );
-    assert_eq!(app.ed.mode, Mode::Insert);
+    assert_eq!(app.focused_mode(), Mode::Insert);
     let messages = &app.lsp.messages[&buf_id];
     assert_eq!(messages.len(), 4, "{messages:?}");
     assert!(messages.iter().all(|m| m == "expected SEMICOLON"));
@@ -232,7 +232,7 @@ fn diagnostics_wait_for_the_typing_to_pause() {
         "held again"
     );
     d.key(&mut app, "escape", KeyMods::default());
-    assert_eq!(app.ed.mode, Mode::Normal);
+    assert_eq!(app.focused_mode(), Mode::Normal);
     d.frame(&mut app);
     assert!(app.lsp.held.is_empty(), "landed on <Esc>");
     assert_eq!(d.warnings(), Vec::<String>::new());

@@ -297,7 +297,7 @@ fn a_row_selects_its_node_and_a_fold_hides_its_children() {
     let sel = app.ed.views[v].sels.primary();
     let buf = app.ed.buffer_of(v);
     assert_eq!(buf.slice(sel.range()), "<div className=\"x\">{1}</div>");
-    assert_eq!(app.ed.mode, Mode::Visual);
+    assert_eq!(app.focused_mode(), Mode::Visual);
     // Its mark is on that row, and its children are still listed.
     let before = drawn_rows(&d).len();
     // The fold glyph, at the row's left after the indent: the children
@@ -331,7 +331,8 @@ fn a_row_selects_its_node_and_a_fold_hides_its_children() {
     // The caret moving into the folded node opens it again.
     let at = SRC.find("className").unwrap();
     app.ed.views[v].sels = kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(at));
-    app.ed.mode = Mode::Normal;
+    let fv = app.focused_view().unwrap();
+    app.ed.set_mode(fv, Mode::Normal);
     d.frame(&mut app);
     d.frame(&mut app);
     let reopened = drawn_rows(&d);

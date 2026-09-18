@@ -400,9 +400,7 @@ impl Kawoosh {
         if self.history_pane.prefix {
             self.history_pane.prefix = false;
             if note == ":" {
-                self.ed.mode = Mode::Command;
-                self.ed.prompt = kawoosh_editor::Prompt::Command;
-                self.ed.cmdline.clear();
+                self.open_cmdline();
                 return;
             }
             let keys = ["<C-w>".to_string(), note];
@@ -418,9 +416,7 @@ impl Kawoosh {
         match note.as_str() {
             "<C-w>" => self.history_pane.prefix = true,
             ":" => {
-                self.ed.mode = Mode::Command;
-                self.ed.prompt = kawoosh_editor::Prompt::Command;
-                self.ed.cmdline.clear();
+                self.open_cmdline();
             }
             // Newest at the top, as the undo pane: down is older.
             "j" | "<Down>" => {

@@ -186,7 +186,8 @@ impl Kawoosh {
             Err(e) => log::warn!("session: {e}"),
         }
         // Every file buffer is an oldfile at its caret.
-        for (id, b) in self.ed.buffers.iter() {
+        for id in self.ed.listed_buffers() {
+            let b = &self.ed.buffers[id];
             let Some(p) = &b.path else { continue };
             let line = self
                 .ed

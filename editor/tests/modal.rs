@@ -26,6 +26,11 @@ impl T {
         self
     }
 
+    /// The prompt's line, empty when no prompt is open.
+    fn cmdline(&self) -> String {
+        self.ed.prompt_text().unwrap_or_default()
+    }
+
     fn text(&self) -> String {
         self.ed.buffer_of(self.v).text()
     }
@@ -126,7 +131,7 @@ fn insert_and_escape() {
     let mut t = T::new("ab");
     t.keys("ihello<Esc>");
     assert_eq!(t.text(), "helloab");
-    assert_eq!(t.ed.mode, Mode::Normal);
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
     assert_eq!(t.head(), 4); // stepped back onto the 'o'
     t.keys("A!<Esc>");
     assert_eq!(t.text(), "helloab!");
@@ -442,7 +447,7 @@ fn visual_mode_selects_and_operates() {
     let mut t = T::new("hello world");
     t.keys("vllld");
     assert_eq!(t.text(), "o world");
-    assert_eq!(t.ed.mode, Mode::Normal);
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
     let mut t = T::new("a\nb\nc");
     t.keys("Vjd");
     assert_eq!(t.text(), "c");
@@ -537,24 +542,25 @@ fn the_prompt_walks_its_history() {
         "no repeats, the newest last"
     );
     t.keys(":<Up>");
-    assert_eq!(t.ed.cmdline, "set tabstop=2");
+    assert_eq!(t.cmdline(), "set tabstop=2");
     t.keys("<Up>");
-    assert_eq!(t.ed.cmdline, "set tabstop=8");
+    assert_eq!(t.cmdline(), "set tabstop=8");
     t.keys("<Up>");
-    assert_eq!(t.ed.cmdline, "echo hi");
+    assert_eq!(t.cmdline(), "echo hi");
     t.keys("<Up>");
-    assert_eq!(t.ed.cmdline, "echo hi", "the oldest stays");
+    assert_eq!(t.cmdline(), "echo hi", "the oldest stays");
     t.keys("<Down><Down><Down>");
-    assert_eq!(t.ed.cmdline, "", "past the newest is what was typed");
+    assert_eq!(t.cmdline(), "", "past the newest is what was typed");
     t.keys("<Esc>");
     // A prefix keeps the walk to the lines starting with it.
     t.keys(":ec<Up>");
-    assert_eq!(t.ed.cmdline, "echo hi");
+    assert_eq!(t.cmdline(), "echo hi");
     t.keys("<Down>");
-    assert_eq!(t.ed.cmdline, "ec");
+    assert_eq!(t.cmdline(), "ec");
     t.keys("<C-p><C-p>");
     assert_eq!(
-        t.ed.cmdline, "echo hi",
+        t.cmdline(),
+        "echo hi",
         "the walk starts over from the prefix"
     );
     // Typing ends the walk: the line is the user's.
@@ -567,7 +573,7 @@ fn the_prompt_walks_its_history() {
     // The search prompt's own.
     t.keys("/two<CR>");
     t.keys("/<Up>");
-    assert_eq!(t.ed.cmdline, "two");
+    assert_eq!(t.cmdline(), "two");
     assert_eq!(t.ed.search_history, ["two"]);
     t.keys("<Esc>");
 }
@@ -635,7 +641,7 @@ fn the_search_prompt_previews_the_first_match_as_it_is_typed() {
     t.ed.views[t.v].top = 3;
     t.keys("/t");
     assert_eq!(t.head(), 4, "`t` is `two` on the second line");
-    assert_eq!(t.ed.mode, Mode::Command);
+    assert!(t.ed.prompt_view().is_some(), "the prompt is open");
     t.keys("h");
     assert_eq!(t.head(), 8, "`th` is `three`");
     assert_eq!(pattern(&t).as_deref(), Some("th"), "painted as typed");
@@ -649,8 +655,12 @@ fn the_search_prompt_previews_the_first_match_as_it_is_typed() {
     assert_eq!(t.head(), 0, "no match");
     assert_eq!(pattern(&t).as_deref(), Some("zzz"));
     t.ed.views[t.v].top = 7;
+    // `<Esc>` once is normal mode in the field; twice leaves.
     t.keys("<Esc>");
-    assert_eq!(t.ed.mode, Mode::Normal);
+    assert!(t.ed.prompt_view().is_some());
+    t.keys("<Esc>");
+    assert!(t.ed.prompt_view().is_none());
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
     assert_eq!(t.head(), 0);
     assert_eq!(t.ed.views[t.v].top, 3, "the scroll from before the prompt");
     assert_eq!(
@@ -673,10 +683,10 @@ fn the_search_prompt_previews_the_first_match_as_it_is_typed() {
     assert_eq!(t.head(), 14);
     // The history walk previews too, and `<BS>` on an empty line is `<Esc>`.
     t.keys("gg/<Up>");
-    assert_eq!(t.ed.cmdline, "tw");
+    assert_eq!(t.cmdline(), "tw");
     assert_eq!(t.head(), 4);
     t.keys("<C-u><BS>");
-    assert_eq!(t.ed.mode, Mode::Normal);
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
     assert_eq!(t.head(), 0);
 }
 
@@ -940,7 +950,7 @@ fn commands_are_specs_with_forms_conditions_and_subcommands() {
     t.keys(":page<CR>");
     assert_eq!(t.ed.message, "page what? (down, half, up)");
     t.keys(":delete to<CR>");
-    assert_eq!(t.ed.message, "delete to what? (end)");
+    assert_eq!(t.ed.message, "delete to what? (end, start)");
     t.keys("ggiabc def<Esc>0w:delete to end<CR>");
     assert_eq!(t.text().lines().next(), Some("abc "));
     assert_eq!(
@@ -1016,7 +1026,13 @@ fn a_key_falls_through_its_bindings_by_when() {
         .collect();
     assert_eq!(
         cr,
-        ["plain_enter", "oil enter", "plain_enter", "goto location"]
+        [
+            "plain_enter",
+            "oil enter",
+            "plain_enter",
+            "prompt submit",
+            "goto location"
+        ]
     );
 }
 

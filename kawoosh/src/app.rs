@@ -527,7 +527,7 @@ impl Kawoosh {
             }
             Request::Ex { line } => {
                 // Any view will do for a command that needs one.
-                let view = self.focused_view().or_else(|| self.ed.views.keys().next());
+                let view = self.focused_view().or_else(|| self.ed.any_view());
                 if let Some(v) = view {
                     self.ed.message.clear();
                     self.ed.execute(v, &line);
@@ -808,17 +808,12 @@ impl Kawoosh {
         if stroke.code == "escape" {
             self.ed.message.clear();
         }
-        // The command line opened from a terminal or Lua pane (`<C-w>:`)
-        // takes the keys until it closes, on any view.
-        let prompt_view = (self.ed.mode == Mode::Command)
-            .then(|| self.focused_view().or_else(|| self.ed.views.keys().next()))
-            .flatten();
-        if let Some(v) = self.focused_view().or(prompt_view) {
-            if self.completion_key(&stroke) {
+        // The prompt takes the keys while it is open, from any pane —
+        // the engine sends a key on any view to its field — so one
+        // opened from a terminal or Lua pane (`<C-w>:`) works too.
+        if let Some(v) = self.focused_view().or_else(|| self.ed.prompt_view()) {
+            if self.ed.prompt_view().is_none() && self.completion_key(&stroke) {
                 self.follow_caret = true;
-                return;
-            }
-            if self.cmdline_key(&stroke) {
                 return;
             }
             self.ed.key(v, stroke.clone());
@@ -997,7 +992,7 @@ impl Kawoosh {
         let word = motions::word_at(buf, off);
         match phase {
             "start" => {
-                if self.ed.mode == Mode::Command {
+                if self.ed.prompt_view().is_some() {
                     self.ed.cancel_prompt();
                 }
                 let sel = match clicks {
@@ -1009,8 +1004,8 @@ impl Kawoosh {
                 let v = &mut self.ed.views[view];
                 v.sels = kawoosh_editor::Selections::single(sel);
                 v.goal_col = None;
-                if !sel.is_empty() && self.ed.mode == Mode::Normal {
-                    self.ed.mode = Mode::Visual;
+                if !sel.is_empty() && self.ed.mode(view) == Mode::Normal {
+                    self.ed.set_mode(view, Mode::Visual);
                 }
             }
             "move" => {
@@ -1019,8 +1014,8 @@ impl Kawoosh {
                 {
                     let v = &mut self.ed.views[view];
                     v.sels = kawoosh_editor::Selections::single(Selection::new(anchor, off));
-                    if self.ed.mode == Mode::Normal {
-                        self.ed.mode = Mode::Visual;
+                    if self.ed.mode(view) == Mode::Normal {
+                        self.ed.set_mode(view, Mode::Visual);
                     }
                 }
             }

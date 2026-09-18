@@ -183,7 +183,7 @@ impl Kawoosh {
         let Some(v) = self.undo.view.filter(|v| self.ed.views.contains_key(*v)) else {
             return;
         };
-        if self.ed.mode == Mode::Insert {
+        if self.ed.mode(v) == Mode::Insert {
             self.ed.run(v, "normal", &[], None);
         }
         step(&mut self.ed, v);
@@ -275,9 +275,7 @@ impl Kawoosh {
     }
 
     fn open_prompt(&mut self) {
-        self.ed.mode = Mode::Command;
-        self.ed.prompt = kawoosh_editor::Prompt::Command;
-        self.ed.cmdline.clear();
+        self.open_cmdline();
     }
 
     /// A click on a row: the pane takes the keyboard and the row's

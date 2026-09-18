@@ -11,22 +11,22 @@ use kawoosh_doc::Buffer;
 use crate::keymap::{Keymap, Mode};
 use crate::motions as m;
 use crate::{
-    ArgKind, Args, Ctx, Editor, Effect, Kind, Layer, MotionKind, Prompt, Selection, Setting, Spec,
-    ViewId,
+    ArgKind, Args, Cond, Ctx, Editor, Effect, Kind, Layer, MotionKind, Prompt, Selection, Setting,
+    Spec, ViewId,
 };
 
 fn view<'a>(ed: &'a Editor, ctx: &Ctx) -> &'a crate::View {
     &ed.views[ctx.view]
 }
 
-fn extend(ed: &Editor) -> bool {
-    ed.mode == Mode::Visual || ed.pending_op.is_some()
+fn extend(ed: &Editor, view: ViewId) -> bool {
+    ed.mode(view) == Mode::Visual || ed.pending_op.is_some()
 }
 
 /// Moves every head by `f(buf, head, count)`; the anchor follows unless
 /// extending.
 fn motion(ed: &mut Editor, ctx: &Ctx, f: impl Fn(&Buffer, usize, usize) -> usize) {
-    let ext = extend(ed);
+    let ext = extend(ed, ctx.view);
     let id = view(ed, ctx).buffer;
     let buf = &ed.buffers[id];
     let v = &mut ed.views[ctx.view];
@@ -36,7 +36,7 @@ fn motion(ed: &mut Editor, ctx: &Ctx, f: impl Fn(&Buffer, usize, usize) -> usize
 }
 
 fn vertical(ed: &mut Editor, ctx: &Ctx, dy: i64) {
-    let ext = extend(ed);
+    let ext = extend(ed, ctx.view);
     let id = view(ed, ctx).buffer;
     let buf = &ed.buffers[id];
     let v = &mut ed.views[ctx.view];
@@ -178,7 +178,7 @@ pub(crate) fn apply_operator(
                 .collect();
             ed.edit_each(view, edits, |start, len| Selection::point(start + len));
             if op == "change" {
-                ed.mode = Mode::Insert;
+                ed.set_mode(view, Mode::Insert);
             } else {
                 // After a delete the caret sits where the text was; on a
                 // linewise delete, at the line's first non-blank.
@@ -267,10 +267,10 @@ pub(crate) fn apply_operator(
 }
 
 fn operator(ed: &mut Editor, ctx: &Ctx, op: &'static str) {
-    if ed.mode == Mode::Visual {
+    if ed.mode(ctx.view) == Mode::Visual {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
-        let linewise = ed.visual_linewise;
+        let linewise = ed.views[ctx.view].visual_linewise;
         let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
             .sels
             .iter()
@@ -282,8 +282,7 @@ fn operator(ed: &mut Editor, ctx: &Ctx, op: &'static str) {
                 }
             })
             .collect();
-        ed.mode = Mode::Normal;
-        ed.visual_linewise = false;
+        ed.set_mode(ctx.view, Mode::Normal);
         apply_operator(ed, ctx.view, op, ranges);
         return;
     }
@@ -449,7 +448,7 @@ fn search(ed: &mut Editor, ctx: &Ctx, forward: bool) {
     let mut wrapped = false;
     let mut found_any = false;
     let mut handed_over = None;
-    let ext = extend(ed);
+    let ext = extend(ed, ctx.view);
     let primary = ed.views[ctx.view].sels.primary();
     // The targets, one per selection, before anything moves: the walks
     // borrow the text and the selections are the view's.
@@ -787,8 +786,8 @@ fn substitute(ed: &mut Editor, ctx: &Ctx) {
             Selection::new(t(s.anchor), t(s.head))
         }
     });
-    if ed.mode == Mode::Visual {
-        ed.mode = Mode::Normal;
+    if ed.mode(ctx.view) == Mode::Visual {
+        ed.set_mode(ctx.view, Mode::Normal);
     }
     let took = started.elapsed();
     ed.message = format!(
@@ -1202,7 +1201,7 @@ pub fn install(ed: &mut Editor) {
         let n = ctx.count.max(2) - 1;
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
-        let ranges: Vec<(Range<usize>, bool)> = if ed.mode == Mode::Visual {
+        let ranges: Vec<(Range<usize>, bool)> = if ed.mode(ctx.view) == Mode::Visual {
             ed.views[ctx.view]
                 .sels
                 .iter()
@@ -1215,8 +1214,8 @@ pub fn install(ed: &mut Editor) {
                 .map(|s| (line_range_of_sel(buf, s, n), true))
                 .collect()
         };
-        if ed.mode == Mode::Visual {
-            ed.mode = Mode::Normal;
+        if ed.mode(ctx.view) == Mode::Visual {
+            ed.set_mode(ctx.view, Mode::Normal);
         }
         apply_operator(ed, ctx.view, "join", ranges);
     });
@@ -1227,7 +1226,7 @@ pub fn install(ed: &mut Editor) {
             .sels
             .iter()
             .map(|s| {
-                if ed.mode == Mode::Visual && !s.is_empty() {
+                if ed.mode(ctx.view) == Mode::Visual && !s.is_empty() {
                     return op_range(buf, s, MotionKind::Inclusive, 1);
                 }
                 let le = buf.line_range(buf.line_of(s.head)).end;
@@ -1240,8 +1239,8 @@ pub fn install(ed: &mut Editor) {
                 (s.head..e, false)
             })
             .collect();
-        if ed.mode == Mode::Visual {
-            ed.mode = Mode::Normal;
+        if ed.mode(ctx.view) == Mode::Visual {
+            ed.set_mode(ctx.view, Mode::Normal);
         }
         apply_operator(ed, ctx.view, "delete", ranges);
     });
@@ -1271,7 +1270,7 @@ pub fn install(ed: &mut Editor) {
             .sels
             .iter()
             .map(|s| {
-                if ed.mode == Mode::Visual && !s.is_empty() {
+                if ed.mode(ctx.view) == Mode::Visual && !s.is_empty() {
                     return op_range(buf, s, MotionKind::Inclusive, 1);
                 }
                 let le = buf.line_range(buf.line_of(s.head)).end;
@@ -1284,7 +1283,7 @@ pub fn install(ed: &mut Editor) {
                 (s.head..e, false)
             })
             .collect();
-        ed.mode = Mode::Normal;
+        ed.set_mode(ctx.view, Mode::Normal);
         apply_operator(ed, ctx.view, "change", ranges);
     });
     ed.register("delete to end", |ed, ctx| {
@@ -1325,28 +1324,27 @@ pub fn install(ed: &mut Editor) {
     });
 
     // ---- insert
-    ed.register("insert", |ed, _| ed.mode = Mode::Insert);
+    ed.register("insert", |ed, ctx| ed.set_mode(ctx.view, Mode::Insert));
     ed.register("append", |ed, ctx| {
         motion(ed, ctx, |b, o, _| {
             let le = b.line_range(b.line_of(o)).end;
             if o < le { b.next_char(o) } else { o }
         });
-        ed.mode = Mode::Insert;
+        ed.set_mode(ctx.view, Mode::Insert);
     });
     ed.register("insert line start", |ed, ctx| {
         motion(ed, ctx, |b, o, _| m::first_nonblank(b, b.line_of(o)));
-        ed.mode = Mode::Insert;
+        ed.set_mode(ctx.view, Mode::Insert);
     });
     ed.register("append line end", |ed, ctx| {
         motion(ed, ctx, |b, o, _| b.line_range(b.line_of(o)).end);
-        ed.mode = Mode::Insert;
+        ed.set_mode(ctx.view, Mode::Insert);
     });
     ed.register("open below", |ed, ctx| open_line(ed, ctx, true));
     ed.register("open above", |ed, ctx| open_line(ed, ctx, false));
     ed.register("normal", |ed, ctx| {
-        let was_insert = ed.mode == Mode::Insert;
-        ed.mode = Mode::Normal;
-        ed.visual_linewise = false;
+        let was_insert = ed.mode(ctx.view) == Mode::Insert;
+        ed.set_mode(ctx.view, Mode::Normal);
         ed.pending_op = None;
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
@@ -1376,6 +1374,23 @@ pub fn install(ed: &mut Editor) {
         ed.insert_text(ctx.view, &format!("\n{indent}"));
     });
     ed.register("insert tab", |ed, ctx| ed.insert_text(ctx.view, "\t"));
+    ed.register("delete to start", |ed, ctx| {
+        let id = view(ed, ctx).buffer;
+        let buf = &ed.buffers[id];
+        let edits = ed.views[ctx.view]
+            .sels
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                (
+                    i,
+                    buf.line_start(buf.line_of(s.head))..s.head,
+                    String::new(),
+                )
+            })
+            .collect();
+        ed.edit_each(ctx.view, edits, |start, _| Selection::point(start));
+    });
     ed.register("delete word back", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
@@ -1442,21 +1457,19 @@ pub fn install(ed: &mut Editor) {
     });
 
     // ---- visual and selections
-    ed.register("visual", |ed, _| {
-        if ed.mode == Mode::Visual && !ed.visual_linewise {
-            ed.mode = Mode::Normal;
+    ed.register("visual", |ed, ctx| {
+        if ed.mode(ctx.view) == Mode::Visual && !ed.views[ctx.view].visual_linewise {
+            ed.set_mode(ctx.view, Mode::Normal);
         } else {
-            ed.mode = Mode::Visual;
-            ed.visual_linewise = false;
+            ed.set_mode(ctx.view, Mode::Visual);
         }
     });
-    ed.register("visual line", |ed, _| {
-        if ed.mode == Mode::Visual && ed.visual_linewise {
-            ed.mode = Mode::Normal;
-            ed.visual_linewise = false;
+    ed.register("visual line", |ed, ctx| {
+        if ed.mode(ctx.view) == Mode::Visual && ed.views[ctx.view].visual_linewise {
+            ed.set_mode(ctx.view, Mode::Normal);
         } else {
-            ed.mode = Mode::Visual;
-            ed.visual_linewise = true;
+            ed.set_mode(ctx.view, Mode::Visual);
+            ed.views[ctx.view].visual_linewise = true;
         }
     });
     ed.register("cursor swap", |ed, ctx| {
@@ -1470,17 +1483,47 @@ pub fn install(ed: &mut Editor) {
     ed.register("select all", |ed, ctx| {
         let len = ed.buffer_of(ctx.view).len();
         ed.views[ctx.view].sels = crate::Selections::single(Selection::new(0, len));
-        ed.mode = Mode::Visual;
+        ed.set_mode(ctx.view, Mode::Visual);
     });
     ed.register("cursor below", |ed, ctx| add_cursor(ed, ctx, 1));
     ed.register("cursor above", |ed, ctx| add_cursor(ed, ctx, -1));
 
     // ---- prompts and ex commands
-    ed.register("command", |ed, _| {
-        ed.mode = Mode::Command;
-        ed.prompt = Prompt::Command;
-        ed.cmdline.clear();
+    ed.register("command", |ed, ctx| {
+        ed.open_prompt(ctx.view, Prompt::Command);
     });
+    // The prompt's own keys, each a command gated on `prompt`, so the
+    // field's other keys are the editor's — motions, operators, undo.
+    ed.register_spec(
+        Spec::new("prompt submit")
+            .when(&["prompt"])
+            .doc("run the prompt's line: an ex line, or a search"),
+        |ed, _| ed.submit_prompt(),
+    );
+    ed.register_spec(
+        Spec::new("prompt cancel")
+            .when(&["prompt"])
+            .doc("leave the prompt with nothing done"),
+        |ed, _| ed.cancel_prompt(),
+    );
+    ed.register_spec(
+        Spec::new("prompt backspace")
+            .when(&["prompt"])
+            .doc("delete the character before the caret, or leave an empty prompt"),
+        |ed, ctx| ed.prompt_backspace(ctx.view),
+    );
+    ed.register_spec(
+        Spec::new("prompt history prev")
+            .when(&["prompt"])
+            .doc("the older line starting with what was typed"),
+        |ed, _| ed.walk_history(true),
+    );
+    ed.register_spec(
+        Spec::new("prompt history next")
+            .when(&["prompt"])
+            .doc("the newer line starting with what was typed, then what was typed"),
+        |ed, _| ed.walk_history(false),
+    );
     ed.register("search", |ed, ctx| ed.open_search(ctx.view, false));
     ed.register("search back", |ed, ctx| ed.open_search(ctx.view, true));
     ed.register_spec(
@@ -1729,6 +1772,10 @@ const DOCS: &[(&str, &str)] = &[
         "delete the word before the caret (insert's <C-w>)",
     ),
     (
+        "delete to start",
+        "delete to the start of the line (insert's <C-u>)",
+    ),
+    (
         "change char",
         "replace the character under the caret with typing (`s`)",
     ),
@@ -1791,7 +1838,7 @@ const DOCS: &[(&str, &str)] = &[
 ];
 
 fn goto_line(ed: &mut Editor, view: ViewId, n: usize) {
-    let ext = extend(ed);
+    let ext = extend(ed, view);
     let id = ed.views[view].buffer;
     let buf = &ed.buffers[id];
     let ln = n.max(1).min(buf.line_count()) - 1;
@@ -1822,7 +1869,7 @@ fn open_line(ed: &mut Editor, ctx: &Ctx, below: bool) {
     ed.edit_each(ctx.view, edits, move |start, len| {
         Selection::point(if below { start + len } else { start + len - 1 })
     });
-    ed.mode = Mode::Insert;
+    ed.set_mode(ctx.view, Mode::Insert);
 }
 
 fn add_cursor(ed: &mut Editor, ctx: &Ctx, dy: i64) {
@@ -1975,8 +2022,26 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<D-v>", "paste clipboard"),
         ("<C-S-v>", "paste clipboard"),
         ("<C-Space>", "lsp complete"),
+        ("<C-u>", "delete to start"),
     ];
     for (k, c) in i {
         km.bind(Insert, k, c);
     }
+    // The prompt's keys, bound after the editor's on the same keys so
+    // they come first and fall through when no prompt is open: `<CR>`
+    // submits (in either mode), `<Esc>` in normal mode cancels — so
+    // `<Esc><Esc>` leaves from insert mode — `<BS>` on an empty line
+    // cancels, `<Up>`/`<Down>` and `<C-p>`/`<C-n>` walk the history
+    // (the shell binds the latter two to the completion at the command
+    // line, over these).
+    let prompt = [Cond::parse("prompt")];
+    km.bind_when(Insert, "<CR>", "prompt submit", &prompt);
+    km.bind_when(Normal, "<CR>", "prompt submit", &prompt);
+    km.bind_when(Normal, "<Esc>", "prompt cancel", &prompt);
+    km.bind_when(Normal, "<C-c>", "prompt cancel", &prompt);
+    km.bind_when(Insert, "<BS>", "prompt backspace", &prompt);
+    km.bind_when(Insert, "<Up>", "prompt history prev", &prompt);
+    km.bind_when(Insert, "<Down>", "prompt history next", &prompt);
+    km.bind_when(Insert, "<C-p>", "prompt history prev", &prompt);
+    km.bind_when(Insert, "<C-n>", "prompt history next", &prompt);
 }

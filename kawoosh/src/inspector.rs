@@ -554,8 +554,8 @@ impl Kawoosh {
                 let v = &mut self.ed.views[view];
                 v.sels = Selections::single(Selection::new(start, end));
                 v.goal_col = None;
-                if start != end && self.ed.mode == Mode::Normal {
-                    self.ed.mode = Mode::Visual;
+                if start != end && self.ed.mode(view) == Mode::Normal {
+                    self.ed.set_mode(view, Mode::Visual);
                 }
                 self.follow_caret = true;
             }

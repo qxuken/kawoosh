@@ -34,11 +34,11 @@ fn keys_edit_through_the_real_dispatch() {
     d.keys(&mut app, "wdw");
     assert_eq!(text(&app).lines().next(), Some("line "));
     d.keys(&mut app, "i");
-    assert_eq!(app.ed.mode, Mode::Insert);
+    assert_eq!(app.focused_mode(), Mode::Insert);
     d.text(&mut app, "ünï");
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(d.line_rows()[0], "line ünï");
-    assert_eq!(app.ed.mode, Mode::Normal);
+    assert_eq!(app.focused_mode(), Mode::Normal);
     d.keys(&mut app, "u");
     assert_eq!(d.line_rows()[0], "line ");
     assert_eq!(d.warnings(), Vec::<String>::new());
@@ -80,7 +80,7 @@ fn command_line_quits_and_reports() {
     let mut d = Drive::new(600.0, 300.0);
     d.frame(&mut app);
     d.keys(&mut app, ":");
-    assert_eq!(app.ed.mode, Mode::Command);
+    assert!(app.ed.prompt_view().is_some());
     d.keys(&mut app, "echo hi");
     d.key(&mut app, "enter", KeyMods::default());
     assert_eq!(app.ed.message, "hi");
@@ -144,7 +144,7 @@ fn the_caret_takes_no_room_in_the_row() {
     // `line |one`: the bar is a float measured to its byte, so the mode
     // change moves nothing, and it sits after "line ".
     d.keys(&mut app, "i");
-    assert_eq!(app.ed.mode, Mode::Insert);
+    assert_eq!(app.focused_mode(), Mode::Insert);
     d.core.set_caret_visible(true);
     d.frame(&mut app);
     assert_eq!(text_x(&d), normal, "entering insert mode shifted the text");

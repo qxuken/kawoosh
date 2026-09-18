@@ -60,6 +60,11 @@ pub struct View {
     pub rows: usize,
     /// The column `j`/`k` aim for, in chars, across short lines.
     pub goal_col: Option<usize>,
+    /// The mode is the view's, not the editor's (Zed's model): a
+    /// buffer pane sits in normal mode while a field beside it takes
+    /// typing in insert mode, and two panes on one buffer can differ.
+    pub mode: Mode,
+    pub visual_linewise: bool,
 }
 
 impl View {
@@ -71,6 +76,8 @@ impl View {
             left: 0.0,
             rows: 24,
             goal_col: None,
+            mode: Mode::Normal,
+            visual_linewise: false,
         }
     }
 }
@@ -340,6 +347,58 @@ pub enum Prompt {
     Search { backwards: bool },
 }
 
+impl Prompt {
+    /// The field's name: `cmdline`, `search`.
+    pub fn field_name(self) -> &'static str {
+        match self {
+            Prompt::Command => "cmdline",
+            Prompt::Search { .. } => "search",
+        }
+    }
+
+    /// The character the prompt is opened with.
+    pub fn sigil(self) -> &'static str {
+        match self {
+            Prompt::Command => ":",
+            Prompt::Search { backwards: false } => "/",
+            Prompt::Search { backwards: true } => "?",
+        }
+    }
+}
+
+/// A one-line buffer with the keyboard on it — the command line, a
+/// search, a pane's query — and a view on it, so that every input is
+/// the editor (Zed's model): insert mode to type, `<Esc>` to normal
+/// mode for motions and operators over the line, the registers and
+/// undo the buffer's. Not listed among the buffers, not kept by a
+/// session, no history row; a newline typed or pasted is a space.
+#[derive(Clone, Debug)]
+pub struct Field {
+    pub name: String,
+    pub buffer: BufferId,
+}
+
+/// The prompt while it is open: its field, what it is for, the view it
+/// was opened over — what `execute` runs on, what the search moves —
+/// and the state its keys keep.
+#[derive(Clone, Debug)]
+struct PromptState {
+    field: ViewId,
+    kind: Prompt,
+    from: ViewId,
+    /// Where a search prompt opened, for the preview and `<Esc>`.
+    origin: Option<SearchOrigin>,
+    /// A history walk in progress: the index the field shows, and the
+    /// line typed before the walk began, which is the prefix the walk
+    /// keeps to and what `<Down>` past the newest puts back.
+    walk: Option<(usize, String)>,
+    /// The key being handled is a step of the walk, so the walk
+    /// survives it; any other key ends the walk.
+    walking: bool,
+    /// The field's version the preview last ran at.
+    seen: Version,
+}
+
 /// What the search prompt was opened over: the view, its selections and
 /// scroll, and the search before. The prompt previews the pattern as it
 /// is typed — the primary selection at the first match from here — and
@@ -357,7 +416,6 @@ pub struct Editor {
     pub buffers: SlotMap<BufferId, Buffer>,
     pub views: SlotMap<ViewId, View>,
     history: HashMap<BufferId, History>,
-    pub mode: Mode,
     pub keymap: Keymap,
     /// Every command's spec, and its body when the engine runs it
     /// ([`command`]).
@@ -372,9 +430,9 @@ pub struct Editor {
     pub pending_op: Option<(&'static str, usize)>,
     /// A command waiting for its character argument.
     awaiting_char: Option<(Binding, Option<usize>)>,
-    pub visual_linewise: bool,
-    pub prompt: Prompt,
-    pub cmdline: String,
+    /// Every field, by its view ([`Field`]).
+    fields: HashMap<ViewId, Field>,
+    prompt: Option<PromptState>,
     /// The working directory a command's `Path` argument is resolved
     /// against (`ArgKind::Path`); the shell keeps it in step with its own.
     pub cwd: PathBuf,
@@ -384,16 +442,10 @@ pub struct Editor {
     pub cmd_history: Vec<String>,
     /// The same for `/` and `?`.
     pub search_history: Vec<String>,
-    /// A walk in progress: the index into the history the prompt shows,
-    /// and the line typed before the walk began, which is the prefix
-    /// the walk keeps to and what `<Down>` past the newest puts back.
-    hist_walk: Option<(usize, String)>,
     /// The pattern `/`, `?` and `*` left, compiled: what `n` walks from
     /// the cursor and what the view paints in the visible lines
     /// (`search::hits_in`). Set through [`Editor::set_search`].
     pub search: Option<search::Search>,
-    /// Where the search prompt opened, while it is open.
-    search_origin: Option<SearchOrigin>,
     pub message: String,
     pub effects: Vec<Effect>,
     /// What commands and the shell read — `tabstop`, `expandtab`,
@@ -417,7 +469,6 @@ impl Editor {
             buffers: SlotMap::with_key(),
             views: SlotMap::with_key(),
             history: HashMap::new(),
-            mode: Mode::Normal,
             keymap: Keymap::new(),
             commands: Registry::default(),
             registers: HashMap::new(),
@@ -426,15 +477,12 @@ impl Editor {
             count: None,
             pending_op: None,
             awaiting_char: None,
-            visual_linewise: false,
-            prompt: Prompt::Command,
-            cmdline: String::new(),
+            fields: HashMap::new(),
+            prompt: None,
             cwd: std::env::current_dir().unwrap_or_default(),
             cmd_history: Vec::new(),
             search_history: Vec::new(),
-            hist_walk: None,
             search: None,
-            search_origin: None,
             message: String::new(),
             effects: Vec::new(),
             settings: Settings::new(),
@@ -470,6 +518,317 @@ impl Editor {
     pub fn buffer_of_mut(&mut self, view: ViewId) -> &mut Buffer {
         let id = self.views[view].buffer;
         &mut self.buffers[id]
+    }
+
+    /// The mode `view` is in; a view that is gone is in normal mode.
+    pub fn mode(&self, view: ViewId) -> Mode {
+        self.views.get(view).map(|v| v.mode).unwrap_or(Mode::Normal)
+    }
+
+    pub fn set_mode(&mut self, view: ViewId, mode: Mode) {
+        if let Some(v) = self.views.get_mut(view) {
+            v.mode = mode;
+            if mode != Mode::Visual {
+                v.visual_linewise = false;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ fields
+
+    /// Opens a field named `name` holding `text`, in insert mode with
+    /// the caret at the end, and hands its view back ([`Field`]).
+    pub fn open_field(&mut self, name: &str, text: &str) -> ViewId {
+        let text: String = text.replace('\n', " ");
+        let buffer = self.add_buffer(Buffer::new(format!("*{name}*"), &text));
+        let view = self.add_view(buffer);
+        let v = &mut self.views[view];
+        v.mode = Mode::Insert;
+        v.sels = Selections::single(Selection::point(text.len()));
+        self.fields.insert(
+            view,
+            Field {
+                name: name.to_string(),
+                buffer,
+            },
+        );
+        view
+    }
+
+    /// Closes a field: its view and buffer go; the prompt with it, if
+    /// it was the prompt's.
+    pub fn close_field(&mut self, view: ViewId) {
+        let Some(f) = self.fields.remove(&view) else {
+            return;
+        };
+        if self.prompt.as_ref().is_some_and(|p| p.field == view) {
+            self.prompt = None;
+        }
+        self.views.remove(view);
+        self.remove_buffer(f.buffer);
+    }
+
+    pub fn is_field(&self, view: ViewId) -> bool {
+        self.fields.contains_key(&view)
+    }
+
+    /// The buffers that are not fields — the ones `:ls` lists, `:bn`
+    /// walks, a session keeps — in the order made.
+    pub fn listed_buffers(&self) -> Vec<BufferId> {
+        self.buffers
+            .keys()
+            .filter(|id| !self.is_field_buffer(*id))
+            .collect()
+    }
+
+    /// Some view on a listed buffer — a fallback for a key from a pane
+    /// that has none.
+    pub fn any_view(&self) -> Option<ViewId> {
+        self.views.keys().find(|v| !self.is_field(*v))
+    }
+
+    pub fn field_name(&self, view: ViewId) -> Option<&str> {
+        self.fields.get(&view).map(|f| f.name.as_str())
+    }
+
+    /// Whether `id` is a field's buffer — not one to list, keep, or
+    /// write a history row for.
+    pub fn is_field_buffer(&self, id: BufferId) -> bool {
+        self.fields.values().any(|f| f.buffer == id)
+    }
+
+    /// The field's text, its one line.
+    pub fn field_text(&self, view: ViewId) -> Option<String> {
+        let f = self.fields.get(&view)?;
+        Some(self.buffers.get(f.buffer)?.text())
+    }
+
+    /// Replaces the field's text whole, the caret at the end, in insert
+    /// mode — a history walk, a completion taken.
+    pub fn set_field_text(&mut self, view: ViewId, text: &str) {
+        let Some(f) = self.fields.get(&view) else {
+            return;
+        };
+        let text = text.replace('\n', " ");
+        let buf = &mut self.buffers[f.buffer];
+        let len = buf.len();
+        buf.replace(0..len, &text);
+        let v = &mut self.views[view];
+        v.mode = Mode::Insert;
+        v.sels = Selections::single(Selection::point(text.len()));
+    }
+
+    // ------------------------------------------------------------ the prompt
+
+    /// Opens the command line (`:`) or a search (`/`, `?`) over `view`:
+    /// a field the keys go to until `<CR>` submits or `<Esc>` in normal
+    /// mode cancels. A prompt already open is cancelled first. What a
+    /// search's view shows now is remembered, for the preview to move
+    /// from and `<Esc>` to put back.
+    pub fn open_prompt(&mut self, view: ViewId, kind: Prompt) -> ViewId {
+        // `:` typed in the prompt's own normal mode opens a new prompt
+        // over the view the old one was over, not over its field.
+        let view = match &self.prompt {
+            Some(p) if p.field == view => p.from,
+            _ => view,
+        };
+        if self.prompt.is_some() {
+            self.cancel_prompt();
+        }
+        let origin = match kind {
+            Prompt::Search { .. } => self.views.get(view).map(|v| SearchOrigin {
+                view,
+                sels: v.sels.clone(),
+                top: v.top,
+                left: v.left,
+                search: self.search.clone(),
+            }),
+            Prompt::Command => None,
+        };
+        let field = self.open_field(kind.field_name(), "");
+        let seen = self.buffers[self.fields[&field].buffer].version();
+        self.prompt = Some(PromptState {
+            field,
+            kind,
+            from: view,
+            origin,
+            walk: None,
+            walking: false,
+            seen,
+        });
+        field
+    }
+
+    /// Opens the search prompt over `view`: `/` forward, `?` back.
+    pub fn open_search(&mut self, view: ViewId, backwards: bool) {
+        self.open_prompt(view, Prompt::Search { backwards });
+    }
+
+    /// The prompt's field, while one is open.
+    pub fn prompt_view(&self) -> Option<ViewId> {
+        self.prompt.as_ref().map(|p| p.field)
+    }
+
+    pub fn prompt_kind(&self) -> Option<Prompt> {
+        self.prompt.as_ref().map(|p| p.kind)
+    }
+
+    /// The view the prompt was opened over.
+    pub fn prompt_from(&self) -> Option<ViewId> {
+        self.prompt.as_ref().map(|p| p.from)
+    }
+
+    /// The prompt's line as it reads now.
+    pub fn prompt_text(&self) -> Option<String> {
+        self.field_text(self.prompt_view()?)
+    }
+
+    /// Puts `line` on the prompt, the caret at its end.
+    pub fn set_prompt_text(&mut self, line: &str) {
+        if let Some(v) = self.prompt_view() {
+            self.set_field_text(v, line);
+        }
+    }
+
+    /// `<CR>`: the prompt closes and its line runs — an ex line on the
+    /// view the prompt was opened over; a search from where that view
+    /// was when the prompt opened, not from the preview's match, so the
+    /// first match from there is the one the preview showed.
+    pub fn submit_prompt(&mut self) {
+        let Some(p) = self.prompt.take() else {
+            return;
+        };
+        let line = self.field_text(p.field).unwrap_or_default();
+        self.close_field(p.field);
+        self.remember(p.kind, &line);
+        let view = p.from;
+        match p.kind {
+            Prompt::Command => self.execute(view, &line),
+            Prompt::Search { backwards } => {
+                if let Some(origin) = &p.origin {
+                    self.restore_origin(origin);
+                }
+                if !self.views.contains_key(view) {
+                    return;
+                }
+                if !line.is_empty()
+                    && let Err(e) = self.set_search(&line)
+                {
+                    self.message = e;
+                    return;
+                }
+                let cmd = if backwards {
+                    "search prev"
+                } else {
+                    "search next"
+                };
+                self.run(view, cmd, &[], None);
+            }
+        }
+    }
+
+    /// Leaves the prompt with nothing done — `<Esc>` in normal mode,
+    /// `<BS>` on an empty line, or the shell's click elsewhere — the
+    /// view and the search as they were when a search prompt opened.
+    pub fn cancel_prompt(&mut self) {
+        let Some(p) = self.prompt.take() else {
+            return;
+        };
+        self.close_field(p.field);
+        if let Some(origin) = p.origin {
+            self.restore_origin(&origin);
+            self.search = origin.search;
+        }
+    }
+
+    /// `<BS>` at the prompt: the character before the caret, or, on an
+    /// empty line, the prompt itself.
+    pub fn prompt_backspace(&mut self, view: ViewId) {
+        if self.field_text(view).is_some_and(|t| t.is_empty()) {
+            self.cancel_prompt();
+        } else {
+            self.run(view, "delete char back", &[], None);
+        }
+    }
+
+    /// The history the prompt in force walks.
+    fn history_mut(&mut self, kind: Prompt) -> &mut Vec<String> {
+        match kind {
+            Prompt::Command => &mut self.cmd_history,
+            Prompt::Search { .. } => &mut self.search_history,
+        }
+    }
+
+    /// Remembers `line` as the newest entry, once.
+    fn remember(&mut self, kind: Prompt, line: &str) {
+        if line.trim().is_empty() {
+            return;
+        }
+        let h = self.history_mut(kind);
+        h.retain(|l| l != line);
+        h.push(line.to_string());
+        if h.len() > HISTORY_CAP {
+            h.remove(0);
+        }
+    }
+
+    /// `<Up>` / `<Down>` at the prompt: the next older (or newer) line
+    /// starting with what was typed before the walk began; past the
+    /// newest, what was typed comes back.
+    pub fn walk_history(&mut self, older: bool) {
+        let Some(p) = self.prompt.clone() else {
+            return;
+        };
+        let typed_now = self.field_text(p.field).unwrap_or_default();
+        let (at, typed) = p
+            .walk
+            .clone()
+            .unwrap_or_else(|| (self.history_mut(p.kind).len(), typed_now));
+        let h = self.history_mut(p.kind);
+        let found = if older {
+            (0..at).rev().find(|&i| h[i].starts_with(&typed))
+        } else {
+            ((at + 1)..h.len()).find(|&i| h[i].starts_with(&typed))
+        };
+        let (line, walk) = match found {
+            Some(i) => (Some(h[i].clone()), Some((i, typed))),
+            None if !older => (Some(typed), None),
+            None => (None, p.walk.clone()),
+        };
+        if let Some(line) = line {
+            self.set_field_text(p.field, &line);
+        }
+        if let Some(p) = &mut self.prompt {
+            p.walk = walk;
+            p.walking = true;
+        }
+    }
+
+    /// After a key or text on the prompt's field: a key that was not a
+    /// step of the history walk ends it, and a line that changed is
+    /// previewed (a search).
+    fn after_prompt_key(&mut self, view: ViewId) {
+        let Some(p) = &mut self.prompt else {
+            return;
+        };
+        if p.field != view {
+            return;
+        }
+        if !p.walking {
+            p.walk = None;
+        }
+        p.walking = false;
+        let version = self
+            .fields
+            .get(&view)
+            .and_then(|f| self.buffers.get(f.buffer))
+            .map(|b| b.version());
+        if let Some(version) = version
+            && version != self.prompt.as_ref().unwrap().seen
+        {
+            self.prompt.as_mut().unwrap().seen = version;
+            self.preview_search();
+        }
     }
 
     /// The buffer already open at `path`, if any.
@@ -599,7 +958,7 @@ impl Editor {
         f: impl Fn(&Buffer, usize, usize) -> usize + 'static,
     ) {
         self.register_kind(name, Kind::Motion(kind), move |ed, ctx| {
-            let extend = ed.mode == Mode::Visual || ed.pending_op.is_some();
+            let extend = ed.mode(ctx.view) == Mode::Visual || ed.pending_op.is_some();
             let id = ed.views[ctx.view].buffer;
             let buf = &ed.buffers[id];
             let v = &mut ed.views[ctx.view];
@@ -638,8 +997,10 @@ impl Editor {
             .map(|b| (b.name.as_str(), &*b.language, b.modified, b.path.is_some()));
         command::Facts {
             published: Some(&self.commands.facts),
-            visual: self.mode == Mode::Visual,
+            visual: view.is_some_and(|v| self.mode(v) == Mode::Visual),
             buffer,
+            field: view.and_then(|v| self.field_name(v)),
+            prompt: view.is_some() && view == self.prompt_view(),
         }
     }
 
@@ -833,7 +1194,7 @@ impl Editor {
 
     fn close_checkpoint(&mut self, view: ViewId) {
         // Insert mode keeps one entry for the whole session of typing.
-        if self.mode == Mode::Insert {
+        if self.mode(view) == Mode::Insert {
             return;
         }
         self.settle_checkpoint(self.views[view].buffer);
@@ -1046,7 +1407,7 @@ impl Editor {
         let id = self.views[view].buffer;
         self.settle_checkpoint(id);
         let moved = self.go_to(view, index);
-        if self.mode == Mode::Insert {
+        if self.mode(view) == Mode::Insert {
             self.open_checkpoint(view);
         }
         moved
@@ -1155,7 +1516,21 @@ impl Editor {
 
     /// A key press. Returns true when the key was consumed by a binding
     /// or a prompt; false when nothing was bound.
+    /// A key on `view`. While the prompt is open it has the keyboard:
+    /// a key sent to any other view goes to the prompt's field — the
+    /// shell sends keys to the pane it focuses, and the prompt is not
+    /// a pane.
     pub fn key(&mut self, view: ViewId, stroke: KeyStroke) -> bool {
+        let view = match self.prompt_view() {
+            Some(p) if !self.is_field(view) => p,
+            _ => view,
+        };
+        let taken = self.key_on(view, stroke);
+        self.after_prompt_key(view);
+        taken
+    }
+
+    fn key_on(&mut self, view: ViewId, stroke: KeyStroke) -> bool {
         self.sync_settings();
         if !self.views.contains_key(view) {
             return false;
@@ -1199,8 +1574,7 @@ impl Editor {
             return true;
         }
 
-        match self.mode {
-            Mode::Command => return self.prompt_key(view, stroke),
+        match self.mode(view) {
             Mode::Insert => {
                 let note = stroke.notation();
                 if let Lookup::Exact(bs) = self.keymap.lookup(Mode::Insert, &[note]) {
@@ -1245,7 +1619,7 @@ impl Editor {
         let lookup_mode = if self.pending_op.is_some() {
             Mode::OperatorPending
         } else {
-            self.mode
+            self.mode(view)
         };
         let lookup = match self.keymap.lookup_lenient(lookup_mode, &self.pending) {
             Lookup::None if lookup_mode != Mode::Normal => {
@@ -1284,177 +1658,34 @@ impl Editor {
         }
     }
 
-    /// Typed or pasted text: inserted at every selection in insert mode,
-    /// appended to the prompt in command mode, otherwise ignored.
+    /// Typed or pasted text: inserted at every selection in insert mode
+    /// — the prompt's field while the prompt is open, as for a key —
+    /// otherwise ignored.
     pub fn text(&mut self, view: ViewId, text: &str) {
-        match self.mode {
-            Mode::Insert => self.insert_text(view, text),
-            Mode::Command => {
-                self.cmdline.push_str(text);
-                self.preview_search(view);
-            }
-            _ => {}
+        let view = match self.prompt_view() {
+            Some(p) if !self.is_field(view) => p,
+            _ => view,
+        };
+        if self.mode(view) == Mode::Insert {
+            self.insert_text(view, text);
         }
+        self.after_prompt_key(view);
     }
 
-    /// The clipboard's answer to `paste_clipboard`: typed in insert mode,
-    /// put after the caret otherwise.
+    /// The clipboard's answer to `paste clipboard`: typed in insert
+    /// mode, put after the caret otherwise.
     pub fn paste_text(&mut self, view: ViewId, text: &str) {
-        match self.mode {
-            Mode::Insert | Mode::Command => self.text(view, text),
+        let view = match self.prompt_view() {
+            Some(p) if !self.is_field(view) => p,
+            _ => view,
+        };
+        match self.mode(view) {
+            Mode::Insert => self.text(view, text),
             _ => {
                 self.registers.insert('"', text.to_string());
                 self.register_linewise = text.ends_with('\n');
                 self.run(view, "paste after", &[], None);
             }
-        }
-    }
-
-    /// The history the prompt in force walks.
-    fn history_mut(&mut self) -> &mut Vec<String> {
-        match self.prompt {
-            Prompt::Command => &mut self.cmd_history,
-            Prompt::Search { .. } => &mut self.search_history,
-        }
-    }
-
-    /// Remembers `line` as the newest entry, once.
-    fn remember(&mut self, line: &str) {
-        if line.trim().is_empty() {
-            return;
-        }
-        let h = self.history_mut();
-        h.retain(|l| l != line);
-        h.push(line.to_string());
-        if h.len() > HISTORY_CAP {
-            h.remove(0);
-        }
-    }
-
-    /// `<Up>` / `<Down>` at the prompt: the next older (or newer) line
-    /// starting with what was typed before the walk began; past the
-    /// newest, what was typed comes back.
-    fn walk_history(&mut self, older: bool) {
-        let (at, typed) = self
-            .hist_walk
-            .clone()
-            .unwrap_or_else(|| (self.history_mut().len(), self.cmdline.clone()));
-        let h = self.history_mut();
-        let found = if older {
-            (0..at).rev().find(|&i| h[i].starts_with(&typed))
-        } else {
-            ((at + 1)..h.len()).find(|&i| h[i].starts_with(&typed))
-        };
-        match found {
-            Some(i) => {
-                self.cmdline = h[i].clone();
-                self.hist_walk = Some((i, typed));
-            }
-            None if !older => {
-                self.cmdline = typed;
-                self.hist_walk = None;
-            }
-            None => {}
-        }
-    }
-
-    fn prompt_key(&mut self, view: ViewId, stroke: KeyStroke) -> bool {
-        // A key that is not the walk ends it: the line is the user's again.
-        let walking = matches!(stroke.code.as_str(), "up" | "down")
-            || (stroke.ctrl && matches!(stroke.code.as_str(), "p" | "n"));
-        if !walking {
-            self.hist_walk = None;
-        }
-        match stroke.code.as_str() {
-            "escape" => self.cancel_prompt(),
-            "up" => self.walk_history(true),
-            "down" => self.walk_history(false),
-            "p" if stroke.ctrl => self.walk_history(true),
-            "n" if stroke.ctrl => self.walk_history(false),
-            "enter" => {
-                let line = std::mem::take(&mut self.cmdline);
-                self.mode = Mode::Normal;
-                self.remember(&line);
-                match self.prompt {
-                    Prompt::Command => self.execute(view, &line),
-                    Prompt::Search { backwards } => {
-                        // The search runs from where the prompt opened,
-                        // not from the preview's match: the first match
-                        // from there is the one the preview showed.
-                        if let Some(origin) = self.search_origin.take() {
-                            self.restore_origin(&origin);
-                        }
-                        if !line.is_empty()
-                            && let Err(e) = self.set_search(&line)
-                        {
-                            self.message = e;
-                            return true;
-                        }
-                        let cmd = if backwards {
-                            "search prev"
-                        } else {
-                            "search next"
-                        };
-                        self.run(view, cmd, &[], None);
-                    }
-                }
-            }
-            "backspace" => {
-                if self.cmdline.pop().is_none() {
-                    self.cancel_prompt();
-                }
-            }
-            "u" if stroke.ctrl => self.cmdline.clear(),
-            "w" if stroke.ctrl => {
-                let trimmed = self.cmdline.trim_end().to_string();
-                let cut = trimmed
-                    .rfind(char::is_whitespace)
-                    .map(|i| i + 1)
-                    .unwrap_or(0);
-                self.cmdline.truncate(cut);
-            }
-            _ => {
-                if let Some(t) = &stroke.text
-                    && !stroke.ctrl
-                    && !stroke.alt
-                    && !stroke.sup
-                {
-                    self.cmdline.push_str(t);
-                }
-            }
-        }
-        if self.mode == Mode::Command {
-            self.preview_search(view);
-        }
-        true
-    }
-
-    /// Opens the search prompt over `view`: `/` forward, `?` back. What
-    /// the view shows now is remembered, for the preview to move from
-    /// and `<Esc>` to put back.
-    pub fn open_search(&mut self, view: ViewId, backwards: bool) {
-        self.mode = Mode::Command;
-        self.prompt = Prompt::Search { backwards };
-        self.cmdline.clear();
-        self.search_origin = self.views.get(view).map(|v| SearchOrigin {
-            view,
-            sels: v.sels.clone(),
-            top: v.top,
-            left: v.left,
-            search: self.search.clone(),
-        });
-    }
-
-    /// Leaves the prompt with nothing done — `<Esc>`, `<BS>` on an empty
-    /// line, or the shell's click elsewhere — the view and the search as
-    /// they were when a search prompt opened.
-    pub fn cancel_prompt(&mut self) {
-        self.mode = Mode::Normal;
-        self.cmdline.clear();
-        self.hist_walk = None;
-        if let Some(origin) = self.search_origin.take() {
-            self.restore_origin(&origin);
-            self.search = origin.search;
         }
     }
 
@@ -1480,18 +1711,21 @@ impl Editor {
     /// has no match within the frame's budget leaves the cursor where the
     /// prompt opened, with the search before still painted; nothing is
     /// said in the message and nothing is counted until `<CR>`.
-    fn preview_search(&mut self, view: ViewId) {
-        let Some(origin) = self.search_origin.clone() else {
+    fn preview_search(&mut self) {
+        let Some(p) = self.prompt.as_ref() else {
             return;
         };
-        let Prompt::Search { backwards } = self.prompt else {
+        let (Some(origin), Prompt::Search { backwards }, field) =
+            (p.origin.clone(), p.kind, p.field)
+        else {
             return;
         };
-        if origin.view != view || !self.views.contains_key(view) {
+        let view = origin.view;
+        if !self.views.contains_key(view) {
             return;
         }
         self.restore_origin(&origin);
-        let line = self.cmdline.clone();
+        let line = self.field_text(field).unwrap_or_default();
         let compiled = if line.is_empty() {
             None
         } else if origin.search.as_ref().is_some_and(|s| s.pattern == line) {
@@ -1573,7 +1807,7 @@ impl Editor {
         }
         match hit {
             Some((r, wrapped)) => {
-                let ext = self.mode == Mode::Visual;
+                let ext = self.mode(view) == Mode::Visual;
                 let primary = self.views[view].sels.primary();
                 self.views[view].sels.map(|s| {
                     if s == primary {
@@ -1711,6 +1945,9 @@ impl Editor {
         let mut text = text.to_string();
         if text == "\t" && self.expandtab() {
             text = " ".repeat(self.tabstop());
+        }
+        if self.is_field(view) {
+            text = text.replace('\n', " ");
         }
         let sels = self.views[view].sels.items.clone();
         let edits = sels
