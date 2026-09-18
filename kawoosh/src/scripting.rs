@@ -479,7 +479,10 @@ impl Kawoosh {
                 .width(Sizing::Grow(1.0))
                 .height(Sizing::Grow(1.0))
                 .clip()
-                .on_key(tag),
+                .on_key(tag.clone())
+                // A click the view's own nodes do not take focuses the
+                // pane.
+                .on_click(tag),
             |ui| {
                 ui.slot_with(&format!("lua/{name}@{pane}"), &params);
             },

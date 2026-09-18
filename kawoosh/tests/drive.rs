@@ -127,6 +127,32 @@ impl Drive {
         self.frame(app);
     }
 
+    /// A press at one point, the pointer taken to another in two steps
+    /// (past kui's click slop, so the node's `on_drag` reports moves and
+    /// the release is no click), a frame drawn while held, the release.
+    pub fn drag(&mut self, app: &mut impl App, from: (f32, f32), to: (f32, f32)) {
+        self.input(app, InputEvent::CursorMoved(Vec2::new(from.0, from.1)));
+        self.input(app, InputEvent::mouse_down(1));
+        self.input(
+            app,
+            InputEvent::CursorMoved(Vec2::new(from.0 + 8.0, from.1 + 8.0)),
+        );
+        self.input(app, InputEvent::CursorMoved(Vec2::new(to.0, to.1)));
+        self.frame(app);
+        self.input(app, InputEvent::mouse_up());
+        self.frame(app);
+    }
+
+    /// Where the node labelled `label` was drawn last frame, as (x, y,
+    /// w, h); the first one when several carry the label.
+    pub fn rect_of(&self, label: &str) -> Option<(f32, f32, f32, f32)> {
+        self.core
+            .nodes()
+            .iter()
+            .find(|n| n.label.as_deref() == Some(label))
+            .map(|n| (n.rect.x, n.rect.y, n.rect.w, n.rect.h))
+    }
+
     /// The text of every row under every node labelled `lines` in the
     /// last frame, pane by pane, top to bottom, runs joined — one
     /// document line each.

@@ -23,7 +23,7 @@ use kui::{FontId, NodeSpec, Sizing, Ui, UiEvent, Value, WindowCommand};
 use crate::Pal;
 use crate::compile::Compile;
 use crate::inspector::Inspector;
-use crate::layout::{Content, Layout, PaneId, SplitDir};
+use crate::layout::{Content, Drop, Layout, PaneId, SplitDir};
 use crate::lsp::LspState;
 use crate::notify::{Level, Notifications};
 use crate::rows::{self, Drawn, GUTTER_W, LH, STRIP_H};
@@ -128,6 +128,10 @@ pub struct Kawoosh {
     pub(crate) drag_anchor: Option<usize>,
     /// The split divider being dragged, by path.
     pub(crate) dragging: Option<String>,
+    /// The pane being dragged by its title bar, and where the pointer is
+    /// (`on_pane_drag`); the drop it would make is drawn over the pane
+    /// under it.
+    pub(crate) pane_drag: Option<(PaneId, f32, f32)>,
     pub(crate) body_h: f32,
     /// A mono cell's advance and height, measured each frame.
     pub(crate) cell: (f32, f32),
@@ -192,6 +196,7 @@ impl Kawoosh {
             reclaim_focus: false,
             drag_anchor: None,
             dragging: None,
+            pane_drag: None,
             body_h: 600.0,
             cell: (7.8, LH),
             mods: (false, false, false, false),
@@ -854,6 +859,11 @@ impl Kawoosh {
             "pane_next" => {
                 let p = self.layout.next_pane();
                 self.layout.focus(p);
+            }
+            // `<C-w>x`: trade places with the next pane, as vim does.
+            "pane_swap" => {
+                let (from, to) = (self.layout.focused(), self.layout.next_pane());
+                self.layout.move_pane(from, to, Drop::Swap);
             }
             "pane_left" | "pane_right" | "pane_up" | "pane_down" => {
                 let (dir, fwd) = match name {
@@ -1532,6 +1542,34 @@ impl Kawoosh {
         term.mouse(0, action, col as usize, row as usize, mods);
     }
 
+    /// A title bar drag: the pane follows the pointer, and where it is
+    /// let go — over the middle of another pane, or one of its edges —
+    /// is where it lands (`Layout::drop_at`). Let go elsewhere, nothing
+    /// moves.
+    fn on_pane_drag(&mut self, p: &Value) {
+        let Some(pane) = p
+            .get("tag")
+            .and_then(|t| t.get("pane"))
+            .and_then(Value::as_int)
+            .map(|n| n as PaneId)
+        else {
+            return;
+        };
+        let at = |k| p.get(k).and_then(Value::as_float).unwrap_or(0.0) as f32;
+        match p.get("phase").and_then(Value::as_str) {
+            Some("start") => self.layout.focus(pane),
+            Some("move") => self.pane_drag = Some((pane, at("x"), at("y"))),
+            Some("end") => {
+                if self.pane_drag.take().is_some()
+                    && let Some((target, drop)) = self.layout.drop_at(at("x"), at("y"))
+                {
+                    self.layout.move_pane(pane, target, drop);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// A divider drag: the cursor over the split's own rect is the ratio.
     fn on_split_drag(&mut self, p: &Value) {
         let tag = p.get("tag");
@@ -1764,6 +1802,7 @@ impl kui::App for Kawoosh {
             Some("drag") => match tag_kind {
                 Some("split") => self.on_split_drag(p),
                 Some("termmouse") => self.on_term_drag(p),
+                Some("panedrag") => self.on_pane_drag(p),
                 _ => {
                     if let Some(pane) = pane_of(p) {
                         self.on_drag(pane, p);
@@ -1777,7 +1816,7 @@ impl kui::App for Kawoosh {
             }
             // A click's payload is the `on_click` value itself, with the
             // pointer's `cell` beside it on a grid.
-            Some("focus") => {
+            Some("focus" | "luapane") => {
                 if let Some(pane) = p.get("pane").and_then(Value::as_int) {
                     self.layout.focus(pane as PaneId);
                 }

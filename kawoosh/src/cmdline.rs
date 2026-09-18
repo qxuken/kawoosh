@@ -78,6 +78,7 @@ pub const SHELL_COMMANDS: &[(&str, &[ArgKind], bool)] = &[
     ("pane_left", &[], false),
     ("pane_next", &[], false),
     ("pane_right", &[], false),
+    ("pane_swap", &[], false),
     ("pane_up", &[], false),
     ("perf", &[ArgKind::Text], false),
     ("pwd", &[], false),

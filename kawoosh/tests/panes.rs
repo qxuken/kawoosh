@@ -4,7 +4,7 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kawoosh::layout::Content;
+use kawoosh::layout::{Content, Rect};
 use kui::KeyMods;
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
@@ -193,4 +193,128 @@ fn buffers_are_listed_and_switched() {
         d.line_rows()
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+fn centre(r: &Rect) -> (f32, f32) {
+    (r.x + r.w / 2.0, r.y + r.h / 2.0)
+}
+
+/// A click anywhere in a pane gives it the keyboard: the editor's rows,
+/// a terminal's margin past its grid, the undo pane under its rows, a
+/// Lua view's own column.
+#[test]
+fn a_click_in_a_pane_focuses_it() {
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(900.0, 600.0);
+    d.frame(&mut app);
+    ctrl_w(&mut d, &mut app, "v");
+    d.frame(&mut app);
+    let right = app.layout.focused();
+    assert_eq!(app.layout.visible_panes(), [1, right]);
+    // The left editor, on a row past the text.
+    let left = app.layout.rects[&1];
+    d.click(&mut app, left.x + left.w / 2.0, left.y + left.h - 20.0);
+    assert_eq!(app.layout.focused(), 1);
+    // The right editor, on its gutter.
+    let r = app.layout.rects[&right];
+    d.click(&mut app, r.x + 6.0, r.y + r.h / 2.0);
+    assert_eq!(app.layout.focused(), right);
+    // The undo pane, under its rows.
+    ex(&mut d, &mut app, "undo_history");
+    d.frame(&mut app);
+    let undo = app.layout.focused();
+    assert_eq!(app.layout.focused_content(), Some(Content::Undo));
+    d.click(&mut app, left.x + left.w / 2.0, left.y + left.h / 2.0);
+    assert_eq!(app.layout.focused(), 1);
+    let u = app.layout.rects[&undo];
+    d.click(&mut app, u.x + u.w / 2.0, u.y + u.h - 10.0);
+    assert_eq!(app.layout.focused(), undo);
+    // A terminal, in the padding round its grid.
+    ex(&mut d, &mut app, "terminal");
+    d.frame(&mut app);
+    let term = app.layout.focused();
+    assert!(matches!(
+        app.layout.focused_content(),
+        Some(Content::Terminal(_))
+    ));
+    d.click(&mut app, left.x + left.w / 2.0, left.y + left.h / 2.0);
+    assert_eq!(app.layout.focused(), 1);
+    let t = app.layout.rects[&term];
+    d.click(&mut app, t.x + t.w - 3.0, t.y + t.h - 3.0);
+    assert_eq!(app.layout.focused(), term);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A pane dragged by its title bar lands where it is let go: the middle
+/// of another pane trades places with it, an edge puts it beside; while
+/// held, the drop is drawn over the pane under the pointer; let go
+/// elsewhere, nothing moves.
+#[test]
+fn a_pane_is_dragged_by_its_title_bar() {
+    let mut app = Kawoosh::new("t", "one");
+    let mut d = Drive::new(900.0, 600.0);
+    d.frame(&mut app);
+    ctrl_w(&mut d, &mut app, "v");
+    ctrl_w(&mut d, &mut app, "s");
+    d.frame(&mut app);
+    // 1 | (2 over 3)
+    assert_eq!(app.layout.visible_panes(), [1, 2, 3]);
+    let title = |app: &Kawoosh, p: u64| {
+        let r = app.layout.rects[&p];
+        (r.x + r.w / 2.0, r.y + 8.0)
+    };
+    // 3 onto the middle of 1: a swap, 3 with the keyboard.
+    let to = centre(&app.layout.rects[&1]);
+    let from = title(&app, 3);
+    d.drag(&mut app, from, to);
+    assert_eq!(app.layout.visible_panes(), [3, 2, 1]);
+    assert_eq!(app.layout.focused(), 3);
+    d.frame(&mut app);
+    // 1 onto the left edge of 3: beside it, on that side, out of its
+    // split with 2.
+    let r3 = app.layout.rects[&3];
+    let from = title(&app, 1);
+    d.drag(&mut app, from, (r3.x + 10.0, r3.y + r3.h / 2.0));
+    assert_eq!(app.layout.visible_panes(), [1, 3, 2]);
+    assert_eq!(app.layout.focused(), 1);
+    assert_eq!(app.layout.tab().root.split_of(2).as_deref(), Some(""));
+    d.frame(&mut app);
+    // While held over the top of 2, the drop is drawn on its upper half;
+    // let go there, 3 is stacked over 2.
+    let r2 = app.layout.rects[&2];
+    let from = title(&app, 3);
+    d.input(
+        &mut app,
+        kui::InputEvent::CursorMoved(kui::Vec2::new(from.0, from.1)),
+    );
+    d.input(&mut app, kui::InputEvent::mouse_down(1));
+    let over = (r2.x + r2.w / 2.0, r2.y + 10.0);
+    d.input(
+        &mut app,
+        kui::InputEvent::CursorMoved(kui::Vec2::new(over.0, over.1)),
+    );
+    d.frame(&mut app);
+    let drop = d.rect_of("drop").expect("the drop drawn while held");
+    assert!((drop.0 - r2.x).abs() < 1.0 && (drop.1 - r2.y).abs() < 1.0);
+    assert!((drop.2 - r2.w).abs() < 1.0 && (drop.3 - r2.h / 2.0).abs() < 1.0);
+    d.input(&mut app, kui::InputEvent::mouse_up());
+    d.frame(&mut app);
+    assert!(d.rect_of("drop").is_none(), "gone once let go");
+    assert_eq!(app.layout.visible_panes(), [1, 3, 2]);
+    assert_eq!(app.layout.tab().root.split_of(3).as_deref(), Some("b"));
+    d.frame(&mut app);
+    // Let go on the status strip: nothing moves.
+    let from = title(&app, 2);
+    d.drag(&mut app, from, (450.0, 590.0));
+    assert_eq!(app.layout.visible_panes(), [1, 3, 2]);
+    // The title bar's click still focuses.
+    d.frame(&mut app);
+    let t1 = title(&app, 1);
+    d.click(&mut app, t1.0, t1.1);
+    assert_eq!(app.layout.focused(), 1);
+    // `<C-w>x` trades places with the next pane, as the middle drop does.
+    ctrl_w(&mut d, &mut app, "x");
+    assert_eq!(app.layout.visible_panes(), [3, 1, 2]);
+    assert_eq!(app.layout.focused(), 1);
+    assert_eq!(d.warnings(), Vec::<String>::new());
 }

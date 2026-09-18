@@ -48,18 +48,46 @@ impl Node {
     /// Replaces the leaf `target` with a split of it and `new`, `new`
     /// after it.
     pub fn split(&mut self, target: PaneId, dir: SplitDir, new: PaneId) -> bool {
+        self.split_beside(target, dir, new, false)
+    }
+
+    /// `split`, with `new` before `target` when `before`: the left or the
+    /// top of the pair.
+    pub fn split_beside(
+        &mut self,
+        target: PaneId,
+        dir: SplitDir,
+        new: PaneId,
+        before: bool,
+    ) -> bool {
         match self {
             Node::Pane(id) if *id == target => {
+                let (first, second) = if before { (new, *id) } else { (*id, new) };
                 *self = Node::Split {
                     dir,
                     ratio: 0.5,
-                    a: Box::new(Node::Pane(*id)),
-                    b: Box::new(Node::Pane(new)),
+                    a: Box::new(Node::Pane(first)),
+                    b: Box::new(Node::Pane(second)),
                 };
                 true
             }
             Node::Pane(_) => false,
-            Node::Split { a, b, .. } => a.split(target, dir, new) || b.split(target, dir, new),
+            Node::Split { a, b, .. } => {
+                a.split_beside(target, dir, new, before) || b.split_beside(target, dir, new, before)
+            }
+        }
+    }
+
+    /// Exchanges two leaves, the splits around them as they were.
+    pub fn swap(&mut self, x: PaneId, y: PaneId) {
+        match self {
+            Node::Pane(id) if *id == x => *id = y,
+            Node::Pane(id) if *id == y => *id = x,
+            Node::Pane(_) => {}
+            Node::Split { a, b, .. } => {
+                a.swap(x, y);
+                b.swap(x, y);
+            }
         }
     }
 
@@ -117,6 +145,38 @@ impl Node {
             Node::Pane(_) => 0,
             Node::Split { a, b, .. } => 1 + a.depth().max(b.depth()),
         }
+    }
+}
+
+/// Where a dragged pane lands on the pane under the pointer
+/// (`Layout::drop_at`): the middle of it trades places, an edge puts it
+/// beside.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Drop {
+    Swap,
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+impl Drop {
+    /// The zone a point in a rect falls in: the outer quarter on each
+    /// side is that side's, the rest is the middle.
+    pub fn in_rect(r: &Rect, x: f32, y: f32) -> Drop {
+        let u = ((x - r.x) / r.w.max(1.0)).clamp(0.0, 1.0);
+        let v = ((y - r.y) / r.h.max(1.0)).clamp(0.0, 1.0);
+        let edges = [
+            (u, Drop::Left),
+            (1.0 - u, Drop::Right),
+            (v, Drop::Up),
+            (1.0 - v, Drop::Down),
+        ];
+        let (d, side) = edges
+            .into_iter()
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .unwrap();
+        if d < 0.25 { side } else { Drop::Swap }
     }
 }
 
@@ -372,6 +432,51 @@ impl Layout {
         best.map(|(_, p)| p)
     }
 
+    /// The tab's pane under a point (never the dock) and where a drop
+    /// there would land, by last frame's rects.
+    pub fn drop_at(&self, x: f32, y: f32) -> Option<(PaneId, Drop)> {
+        let mut ps = Vec::new();
+        self.tab().root.panes(&mut ps);
+        ps.into_iter().find_map(|p| {
+            let r = self.rects.get(&p)?;
+            let inside = x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+            inside.then(|| (p, Drop::in_rect(r, x, y)))
+        })
+    }
+
+    /// Moves `pane` onto `target` in the tab: a `Swap` trades their
+    /// places, a side takes `pane` out of its split and puts it beside
+    /// `target` in a new one. Nothing when either is the dock, not in
+    /// the tab, or the same pane. The moved pane keeps the keyboard.
+    pub fn move_pane(&mut self, pane: PaneId, target: PaneId, at: Drop) -> bool {
+        if pane == target || self.dock == Some(pane) || self.dock == Some(target) {
+            return false;
+        }
+        let t = self.tab_mut();
+        if !t.root.contains(pane) || !t.root.contains(target) {
+            return false;
+        }
+        match at {
+            Drop::Swap => t.root.swap(pane, target),
+            side => {
+                let root = std::mem::replace(&mut t.root, Node::Pane(0));
+                // `target` stays, so the tree is never empty.
+                let mut root = root.without(pane).unwrap_or(Node::Pane(target));
+                let (dir, before) = match side {
+                    Drop::Left => (SplitDir::H, true),
+                    Drop::Right => (SplitDir::H, false),
+                    Drop::Up => (SplitDir::V, true),
+                    _ => (SplitDir::V, false),
+                };
+                root.split_beside(target, dir, pane, before);
+                t.root = root;
+            }
+        }
+        t.focused = pane;
+        self.dock_focused = false;
+        true
+    }
+
     /// The next pane in tree order (`<C-w>w`).
     pub fn next_pane(&self) -> PaneId {
         let ps = self.visible_panes();
@@ -421,6 +526,48 @@ mod tests {
         assert_eq!(l.tab().root.split_of(1).as_deref(), Some(""));
         assert_eq!(l.tab().root.split_of(99), None);
         *l.tab_mut().root.ratio_mut("b").unwrap() = 0.25;
+    }
+
+    #[test]
+    fn a_pane_moves_onto_another() {
+        // 1 | b over c
+        let mut l = Layout::new(view());
+        let b = l.split(SplitDir::H, view());
+        let c = l.split(SplitDir::V, view());
+        let rect = |x, y, w, h| Rect { x, y, w, h };
+        l.rects.insert(1, rect(0.0, 0.0, 100.0, 100.0));
+        l.rects.insert(b, rect(100.0, 0.0, 100.0, 50.0));
+        l.rects.insert(c, rect(100.0, 50.0, 100.0, 50.0));
+        assert_eq!(l.drop_at(50.0, 50.0), Some((1, Drop::Swap)));
+        assert_eq!(l.drop_at(5.0, 50.0), Some((1, Drop::Left)));
+        assert_eq!(l.drop_at(150.0, 45.0), Some((b, Drop::Down)));
+        assert_eq!(l.drop_at(199.0, 75.0), Some((c, Drop::Right)));
+        assert_eq!(l.drop_at(300.0, 75.0), None);
+        // A swap keeps the splits and gives the moved pane the keyboard.
+        l.focus(1);
+        assert!(l.move_pane(1, c, Drop::Swap));
+        assert_eq!(l.visible_panes(), [c, b, 1]);
+        assert_eq!(l.focused(), 1);
+        assert_eq!(l.tab().root.depth(), 2);
+        // Beside: out of its split, into a new one on the side asked.
+        assert!(l.move_pane(1, c, Drop::Left));
+        assert_eq!(l.visible_panes(), [1, c, b]);
+        assert_eq!(l.tab().root.split_of(1).as_deref(), Some("a"));
+        assert!(matches!(
+            l.tab().root,
+            Node::Split { dir: SplitDir::H, ref a, .. }
+                if matches!(**a, Node::Split { dir: SplitDir::H, .. })
+        ));
+        assert!(l.move_pane(b, 1, Drop::Up));
+        assert_eq!(l.visible_panes(), [b, 1, c]);
+        assert_eq!(l.tab().root.depth(), 2, "the split b left collapsed");
+        // Onto itself, or the dock: nothing.
+        assert!(!l.move_pane(b, b, Drop::Swap));
+        let d = l.new_pane(view());
+        l.dock = Some(d);
+        assert!(!l.move_pane(b, d, Drop::Swap));
+        assert!(!l.move_pane(d, b, Drop::Left));
+        assert_eq!(l.visible_panes(), [b, 1, c]);
     }
 
     #[test]

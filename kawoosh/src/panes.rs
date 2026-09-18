@@ -6,10 +6,10 @@ use std::ops::Range;
 
 use kawoosh_editor::search;
 use kawoosh_editor::{Mode, Prompt, ViewId, motions};
-use kui::{Align, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
+use kui::{Align, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
 
 use crate::app::{DIVIDER, Kawoosh, TAB_H, TITLE_H};
-use crate::layout::{Content, Node, PaneId, SplitDir};
+use crate::layout::{Content, Drop, Node, PaneId, SplitDir};
 use crate::rows::{self, Caret, Drawn, GUTTER_W, LH, LineDraw, STRIP_H, Window};
 use crate::terminals::TermId;
 use kawoosh_systems::lsp::DIAG_LAYER;
@@ -397,6 +397,15 @@ impl Kawoosh {
             Some(Content::History) => ("history".into(), false),
             None => ("?".into(), false),
         };
+        // A tab's pane goes where its title bar is dragged; the dock is
+        // not in the tree and stays put.
+        let draggable = self.layout.dock != Some(pane);
+        let dragged = self.pane_drag.is_some_and(|(p, _, _)| p == pane);
+        let drop = self
+            .pane_drag
+            .and_then(|(p, x, y)| self.layout.drop_at(x, y).filter(|(t, _)| *t != p))
+            .filter(|(t, _)| *t == pane)
+            .map(|(_, d)| d);
         ui.with_keyed(
             &format!("pane{pane}"),
             NodeSpec::column()
@@ -409,30 +418,68 @@ impl Kawoosh {
                     ("pane", Value::Int(pane as i64)),
                 ])),
             |ui| {
-                // The title bar.
-                ui.with(
-                    NodeSpec::row()
-                        .width(Sizing::Grow(1.0))
-                        .height(Sizing::Fixed(TITLE_H))
-                        .bg(if focused { pal.strip } else { pal.bg })
-                        .pad_xy(8.0, 0.0)
-                        .gap(6.0)
-                        .cross_align(Align::Center)
-                        .on_click(Value::map([
-                            ("kind", "focus".into()),
+                // The title bar: a click focuses, a drag moves the pane.
+                let mut title = NodeSpec::row()
+                    .width(Sizing::Grow(1.0))
+                    .height(Sizing::Fixed(TITLE_H))
+                    .bg(if dragged {
+                        pal.accent.with_alpha(0.3)
+                    } else if focused {
+                        pal.strip
+                    } else {
+                        pal.bg
+                    })
+                    .pad_xy(8.0, 0.0)
+                    .gap(6.0)
+                    .cross_align(Align::Center)
+                    .on_click(Value::map([
+                        ("kind", "focus".into()),
+                        ("pane", Value::Int(pane as i64)),
+                    ]))
+                    .label(name.as_str());
+                if draggable {
+                    title = title
+                        .on_drag(Value::map([
+                            ("kind", "panedrag".into()),
                             ("pane", Value::Int(pane as i64)),
                         ]))
-                        .label(name.as_str()),
-                    |ui| {
-                        ui.text(
-                            &name,
-                            TextStyle::new(12.0).color(if focused { pal.fg } else { pal.dim }),
-                        );
-                        if modified {
-                            ui.text("●", TextStyle::new(10.0).color(pal.command));
-                        }
-                    },
-                );
+                        .cursor(if dragged {
+                            kui::CursorShape::Grabbing
+                        } else {
+                            kui::CursorShape::Grab
+                        });
+                }
+                ui.with(title, |ui| {
+                    ui.text(
+                        &name,
+                        TextStyle::new(12.0).color(if focused { pal.fg } else { pal.dim }),
+                    );
+                    if modified {
+                        ui.text("●", TextStyle::new(10.0).color(pal.command));
+                    }
+                });
+                // Where the dragged pane would land here: the whole pane
+                // for a swap, the half on the side it would take.
+                if let Some(drop) = drop {
+                    let (x, y, w, h) = match drop {
+                        Drop::Swap => (Align::Start, Align::Start, 1.0, 1.0),
+                        Drop::Left => (Align::Start, Align::Start, 0.5, 1.0),
+                        Drop::Right => (Align::End, Align::Start, 0.5, 1.0),
+                        Drop::Up => (Align::Start, Align::Start, 1.0, 0.5),
+                        Drop::Down => (Align::Start, Align::End, 1.0, 0.5),
+                    };
+                    ui.with_keyed(
+                        "drop",
+                        NodeSpec::column()
+                            .float(FloatConfig::parent().at(x, y).self_at(x, y))
+                            .width(Sizing::Percent(w))
+                            .height(Sizing::Percent(h))
+                            .bg(pal.accent.with_alpha(0.25))
+                            .border(2.0, pal.accent)
+                            .label("drop"),
+                        |_| {},
+                    );
+                }
                 match &content {
                     Some(Content::Editor(v)) => self.render_editor(ui, pane, *v, focused),
                     Some(Content::Terminal(t)) => self.render_terminal(ui, pane, *t, focused),
@@ -508,6 +555,8 @@ impl Kawoosh {
                 .pad(pad)
                 .clip()
                 .on_key(tag.clone())
+                // A click past the grid's last cell focuses too.
+                .on_click(tag.clone())
                 .cursor(kui::CursorShape::Text)
                 .label("terminal"),
             |ui| {

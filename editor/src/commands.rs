@@ -1760,6 +1760,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w>c", "close"),
         ("<C-w>o", "only"),
         ("<C-w>w", "pane_next"),
+        ("<C-w>x", "pane_swap"),
         ("<C-w>h", "pane_left"),
         ("<C-w>j", "pane_down"),
         ("<C-w>k", "pane_up"),

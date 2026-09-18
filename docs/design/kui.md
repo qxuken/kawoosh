@@ -16,7 +16,9 @@ gaps are records rather than surprises:
   visual, multicursor, undo per command, the keymap trie, search, ex);
   the editor pane as rows (selection, block/bar carets, search hits,
   syntax runs, diagnostic underlines + EOL messages, completion ghost);
-  panes/tabs/dock with drag dividers and geometric focus moves;
+  panes/tabs/dock with drag dividers, geometric focus moves, a click
+  anywhere in a pane focusing it, and a pane dragged by its title bar
+  onto another (its middle swaps, an edge puts it beside; `<C-w>x`);
   terminals as `cells` with the pane prefix, scrollback-to-buffer,
   ctrl-click locations, the `$EDITOR --wait` socket and shim; `ts`
   (Rust) and `lsp` (pool by outermost workspace marker — verified: two

@@ -333,6 +333,8 @@ impl Kawoosh {
                 .height(Sizing::Grow(1.0))
                 .clip()
                 .on_key(tag.clone())
+                // A click under the rows focuses the pane.
+                .on_click(tag.clone())
                 .label("undo history"),
             |ui| {
                 // The header: how many states, how many branches, and

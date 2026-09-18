@@ -525,6 +525,8 @@ impl Kawoosh {
                 .height(Sizing::Grow(1.0))
                 .clip()
                 .on_key(tag.clone())
+                // A click under the rows focuses the pane.
+                .on_click(tag.clone())
                 .label("history"),
             |ui| {
                 ui.with(tm.strip(&pal).on_click(tag.clone()), |ui| {
