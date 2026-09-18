@@ -146,8 +146,9 @@ end
 -- not done yet (a `kawoosh.confirm` is up), and the buffer stays
 -- modified until it is. A buffer named `name` already open is
 -- refilled; else `reuse`, a scratch buffer's handle, is renamed and
--- refilled instead of a new buffer being made beside it; `line` is
--- where the caret goes (from 1).
+-- refilled instead of a new buffer being made beside it — unless it
+-- is shown in another pane too, which keeps it; `line` is where the
+-- caret goes (from 1).
 --
 -- kawoosh.buf.annotate(lines[, buffer]): text after a line's end that
 -- is not the buffer's — what an entry is, beside its name — `{ [n] =

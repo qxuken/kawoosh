@@ -1055,3 +1055,114 @@ fn a_plugin_asks_with_a_confirm() {
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// Listings are many: a listing shown in two panes is not renamed under
+/// the other pane when one of them moves on — that pane gets a buffer
+/// of its own — `:dir!` opens a new buffer outright, every listing
+/// keeps its own entries and writes to its own directory, the buffers
+/// stay in `:ls` for `:b`, and the preview follows the listing the
+/// keyboard is in.
+#[test]
+fn listings_are_many_and_each_writes_its_own_directory() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-many-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::fs::create_dir_all(dir.join("b")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("a/a1.txt"), "alpha").unwrap();
+    std::fs::write(dir.join("b/b1.txt"), "beta").unwrap();
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    let name = |app: &Kawoosh| app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
+    let a = format!("dir: {}", dir.join("a").display());
+    let b = format!("dir: {}", dir.join("b").display());
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("a").display()),
+    );
+    assert_eq!(name(&app), a);
+    let n = app.ed.buffers.len();
+    // The listing in two panes; the right one moves to b: a new buffer,
+    // the left pane still on a.
+    ex(&mut d, &mut app, "vsplit");
+    assert_eq!(app.layout.visible_panes().len(), 2);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("b").display()),
+    );
+    assert_eq!(name(&app), b);
+    assert_eq!(app.ed.buffers.len(), n + 1, "a buffer of its own");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    assert_eq!(name(&app), a, "the other pane keeps its listing");
+    // Each writes to its own directory, from its own entries.
+    d.keys(&mut app, "jcca2.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..],
+        ["rename a1.txt → a2.txt", "Apply", "Cancel"]
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(dir.join("a/a2.txt").is_file() && dir.join("b/b1.txt").is_file());
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "l");
+    assert_eq!(name(&app), b);
+    d.keys(&mut app, "jccb2.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..],
+        ["rename b1.txt → b2.txt", "Apply", "Cancel"]
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(dir.join("b/b2.txt").is_file() && dir.join("a/a2.txt").is_file());
+    // `:dir!` lists in a new buffer; the one it came from stays listed
+    // and `:b` reaches it. A plain `:dir` in one pane still moves on
+    // in place.
+    ex(&mut d, &mut app, &format!("dir! {}", dir.display()));
+    assert_eq!(name(&app), format!("dir: {}", dir.display()));
+    assert_eq!(app.ed.buffers.len(), n + 2);
+    let names: Vec<String> = app.ed.buffers.values().map(|b| b.name.clone()).collect();
+    assert!(names.contains(&a) && names.contains(&b), "{names:?}");
+    ex(&mut d, &mut app, "b /b");
+    assert_eq!(name(&app), b, "reached by a substring of its name");
+    d.keys(&mut app, "-");
+    assert_eq!(name(&app), format!("dir: {}", dir.display()));
+    assert_eq!(app.ed.buffers.len(), n + 2, "moved on in place");
+    // The preview follows the keyboard from one listing to another.
+    d.keys(&mut app, "j");
+    d.ctrl(&mut app, "p");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let texts = |d: &Drive| -> Vec<String> {
+        d.core
+            .nodes()
+            .iter()
+            .filter_map(|n| n.text.clone())
+            .collect()
+    };
+    assert!(
+        texts(&d).iter().any(|s| s.starts_with("directory")),
+        "{:?}",
+        texts(&d)
+    );
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    assert_eq!(name(&app), a);
+    d.keys(&mut app, "j");
+    d.frame(&mut app);
+    assert!(
+        texts(&d).contains(&"alpha".to_string()),
+        "the other listing's entry: {:?}",
+        texts(&d)
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

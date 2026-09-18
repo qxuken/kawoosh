@@ -168,10 +168,13 @@ impl Kawoosh {
                 // A scratch buffer handed back (`reuse`) becomes this one
                 // — renamed and refilled — so a listing that moves to the
                 // next directory leaves no buffer behind per directory.
+                // One shown in another pane too is not renamed under
+                // that pane: the next directory gets a buffer of its own.
                 let reused = existing.or_else(|| {
-                    reuse
-                        .map(kawoosh_lua::id_of)
-                        .filter(|id| self.ed.buffers.get(*id).is_some_and(|b| b.path.is_none()))
+                    reuse.map(kawoosh_lua::id_of).filter(|id| {
+                        self.ed.buffers.get(*id).is_some_and(|b| b.path.is_none())
+                            && self.ed.views.values().filter(|v| v.buffer == *id).count() <= 1
+                    })
                 });
                 let id = match reused {
                     Some(id) => {

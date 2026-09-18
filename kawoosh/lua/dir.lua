@@ -13,8 +13,12 @@
 -- opens the entry under the caret, `<C-l>` reads the directory again,
 -- `<C-p>` opens a preview of the entry beside the listing. `:dir PATH`
 -- lists a directory, or a file's directory with the caret on the file
--- — `:dir %` the current file's. One listing buffer is reused as the
--- directory changes, so browsing leaves no trail in `:ls`.
+-- — `:dir %` the current file's. A listing's buffer is reused as it
+-- moves to the next directory, so browsing leaves no trail in `:ls`;
+-- one shown in two panes is not renamed under the other, and `:dir!`
+-- asks for a new buffer outright, so any number of listings can be
+-- open at once — in panes, or in the background for `:b` — each with
+-- its own entries, each written to its own directory.
 --
 -- What each entry is — a file's size, the mtime — is drawn past its
 -- line (`kawoosh.buf.annotate`), never in the buffer's text, so the
@@ -31,7 +35,9 @@
 -- failure in `:messages`.
 
 local fs = kawoosh.fs
-local dir = { dir = nil, entries = {} }
+-- `state[name]` is what the listing buffer `name` opened with: its
+-- directory and its lines, the write's baseline.
+local dir = { state = {}, followed = nil }
 
 local PREFIX = "dir: "
 local PREVIEW = "dir preview"
@@ -78,11 +84,20 @@ local function listed()
   return ok and name:match("^dir: (.*)$") or nil
 end
 
--- The listing buffer on show anywhere, and the directory it lists.
-local function listing_buffer()
-  for _, h in ipairs(kawoosh.buf.list()) do
-    local name = kawoosh.buf.name(h)
-    if name:sub(1, #PREFIX) == PREFIX then return h, name:sub(#PREFIX + 1) end
+-- The directory a buffer lists, by handle; nil for any other.
+local function lists(h)
+  local ok, name = pcall(kawoosh.buf.name, h)
+  return ok and name:match("^dir: (.*)$") or nil
+end
+
+-- The listing the preview follows: the one the keyboard is in, else
+-- the one it was in last, else any listing on show.
+local function followed_listing()
+  local h = kawoosh.buf.current()
+  if h and lists(h) then dir.followed = h end
+  if dir.followed and lists(dir.followed) then return dir.followed, lists(dir.followed) end
+  for _, b in ipairs(kawoosh.buf.list()) do
+    if lists(b) then return b, lists(b) end
   end
 end
 
@@ -108,8 +123,9 @@ end
 
 -- Opens `path` as a listing, the caret on `from` (an entry's name) when
 -- given; a file's path lists its directory with the caret on the file.
--- A listing already on show is reused: renamed and refilled.
-function dir.open(path, from)
+-- The listing the keyboard is in is reused — renamed and refilled —
+-- unless `fresh` asks for a buffer of its own.
+function dir.open(path, from, fresh)
   path = fs.expand(path)
   if fs.is_file(path) then
     from = fs.basename(path)
@@ -124,10 +140,9 @@ function dir.open(path, from)
     kawoosh.echo(tostring(lines))
     return
   end
-  dir.dir = path
-  dir.entries = lines
-  local reuse = listed() and kawoosh.buf.current() or nil
   local name = PREFIX .. path
+  dir.state[name] = { dir = path, entries = lines }
+  local reuse = (listed() and not fresh) and kawoosh.buf.current() or nil
   kawoosh.buf.open_scratch {
     name = name,
     text = table.concat(lines, "\n"),
@@ -139,15 +154,15 @@ function dir.open(path, from)
   kawoosh.buf.annotate(meta, name)
 end
 
--- The changes a write means: every line the listing opened with is
--- tracked through the edit journal (`kawoosh.buf.tracked()`), so its
--- identity survives being edited — a changed line is a rename, a gone
--- line a delete, and a line no entry became is a create. Renames
--- first, deletes last.
-local function plan(lines)
+-- The changes a write means: every line the listing opened with
+-- (`entries`) is tracked through the edit journal
+-- (`kawoosh.buf.tracked()`), so its identity survives being edited —
+-- a changed line is a rename, a gone line a delete, and a line no
+-- entry became is a create. Renames first, deletes last.
+local function plan(entries, lines)
   local tracked = kawoosh.buf.tracked()
   local ops, taken = {}, {}
-  for i, old in ipairs(dir.entries) do
+  for i, old in ipairs(entries) do
     if old ~= "../" then
       local now = tracked[i]
       if now == false or now == nil then
@@ -229,12 +244,17 @@ end
 -- false keeps the buffer modified until then; with nothing to do the
 -- write is done as it is.
 function dir.write(lines)
-  local ops = plan(lines)
+  local st = dir.state[PREFIX .. (listed() or "")]
+  if not st then
+    kawoosh.echo("this listing was not opened here: :dir refresh! first")
+    return false
+  end
+  local ops = plan(st.entries, lines)
   if #ops == 0 then
     kawoosh.echo("nothing to apply")
     return true
   end
-  local d, from = dir.dir, under_caret()
+  local d, from = st.dir, under_caret()
   local desc = {}
   for i, op in ipairs(ops) do desc[i] = describe(op) end
   kawoosh.confirm {
@@ -251,31 +271,33 @@ end
 -- Up one level: from a listing to its parent with the caret on the
 -- directory left; from a file to its directory with the caret on the
 -- file; from anything else to the cwd.
-local function up()
+local function up(fresh)
   local here = listed()
   if here then
     local parent = fs.parent(here)
     if not parent then return kawoosh.echo("at the root") end
-    return dir.open(parent, fs.basename(here))
+    return dir.open(parent, fs.basename(here), fresh)
   end
   local ok, path = pcall(kawoosh.buf.path)
   if ok and path then
-    return dir.open(fs.parent(path) or fs.cwd(), fs.basename(path))
+    return dir.open(fs.parent(path) or fs.cwd(), fs.basename(path), fresh)
   end
-  dir.open(fs.cwd())
+  dir.open(fs.cwd(), nil, fresh)
 end
 
 -- `:dir [PATH]`: the argument is a path, so it arrives resolved (`~`,
 -- `..`, `%`) and the command line completes it; `:dir?` says which
--- directory is listed.
+-- directory is listed; `:dir!` lists in a new buffer, leaving the
+-- listing the keyboard is in as it is.
 kawoosh.command("dir", function(ctx)
   if ctx.query then
     return kawoosh.echo(listed() and (PREFIX .. listed()) or "no listing here")
   end
-  if ctx.args[1] then return dir.open(ctx.args[1]) end
-  up()
+  if ctx.args[1] then return dir.open(ctx.args[1], nil, ctx.bang) end
+  up(ctx.bang)
 end, {
   args = { "path" },
+  bang = "list in a new buffer, keeping this listing",
   query = "say which directory is listed",
   doc = "list DIR (or a file's directory), or the current file's, as a buffer",
 })
@@ -364,8 +386,9 @@ local function preview_of(path, st)
 end
 
 -- The preview pane: the entry under the listing's caret — its path,
--- what it is, and its head — read from the listing buffer wherever the
--- keyboard is, so `j` and `k` in the listing move it.
+-- what it is, and its head — read from the listing the keyboard is in
+-- (or was in last), so `j` and `k` in the listing move it, and moving
+-- to another listing's pane moves it there.
 kawoosh.view(PREVIEW, function(ctx)
   local t = ctx.env.theme
   local size = 12
@@ -374,7 +397,7 @@ kawoosh.view(PREVIEW, function(ctx)
   local function say(s, color)
     root[#root + 1] = text(s, { size = size, color = color or t.muted, wrap = "word" })
   end
-  local h, d = listing_buffer()
+  local h, d = followed_listing()
   if not h then
     say("no listing")
     return root

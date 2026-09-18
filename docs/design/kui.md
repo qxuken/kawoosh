@@ -808,8 +808,12 @@ bare command shadows the older ones, so a rebinding in `init.lua` still
 replaces the default. The bundled file manager, `dir`, is the acceptance
 test: `dir cd` is a subcommand gated on `language:dir`, `dir enter` is
 gated the same way and falls through to `goto location`, `:dir?` says
-what is listed, and `<leader>cd` off a listing runs nothing and says
-why.
+what is listed, `:dir!` lists in a new buffer beside the one the
+keyboard is in (a listing is a buffer among the others — any number
+open at once, in panes or in the background for `:b`, each written to
+its own directory; one shown in two panes moves on in a buffer of its
+own rather than under the other pane), and `<leader>cd` off a listing
+runs nothing and says why.
 
 **Every input is the editor, and the mode is the view's** (Zed's
 model). A [`Field`] is a one-line buffer with a view on it —
