@@ -292,8 +292,9 @@ fn progress_and_messages_land_in_the_corner() {
         "{texts:?}"
     );
     assert!(texts.iter().any(|t| t == "✓"), "done: {texts:?}");
+    // A toast is one paragraph, its source first.
     assert!(
-        texts.iter().any(|t| t == "the warning"),
+        texts.iter().any(|t| t == "python3 the warning"),
         "a toast: {texts:?}"
     );
     let warning = app

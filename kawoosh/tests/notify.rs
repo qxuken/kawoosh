@@ -22,8 +22,15 @@ fn corner_texts(d: &Drive) -> Vec<String> {
     d.corner_texts()
 }
 
+/// A toast is one paragraph — its count, its source and its line —
+/// so a piece is looked for as a whole or as a word of the paragraph.
 fn corner_has(d: &Drive, text: &str) -> bool {
-    corner_texts(d).iter().any(|t| t == text)
+    corner_texts(d).iter().any(|t| {
+        t == text
+            || t.ends_with(&format!(" {text}"))
+            || t.starts_with(&format!("{text} "))
+            || t.contains(&format!(" {text} "))
+    })
 }
 
 #[test]
@@ -160,6 +167,17 @@ fn a_toast_with_actions_waits_for_a_click() {
     assert!(n.rect.x + n.rect.w <= 900.0, "inside the window");
     d.click(&mut app, n.rect.x + 2.0, n.rect.y + 2.0);
     assert!(!corner_has(&d, long));
+    // A short one stays snug: its box is its line's width, not the cap.
+    app.notify(Level::Error, "snug");
+    d.frame(&mut app);
+    let n = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.text.as_deref() == Some("snug"))
+        .unwrap();
+    assert!(n.rect.w < 60.0, "snug: {}", n.rect.w);
+    d.click(&mut app, n.rect.x + 2.0, n.rect.y + 2.0);
 
     // A toast without actions: a click on it takes it down.
     app.notify(Level::Warn, "plain");

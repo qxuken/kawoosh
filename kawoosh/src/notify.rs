@@ -18,7 +18,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Spec};
 use kawoosh_systems::{Alarm, WakeHandle};
-use kui::{Align, FloatConfig, NodeSpec, Sizing, TextStyle, Ui, Value};
+use kui::{Align, FloatConfig, NodeSpec, Sizing, Span, TextStyle, Ui, Value};
 
 use crate::app::{Kawoosh, TAB_H};
 use crate::commands::{ShellCommand, cmd};
@@ -812,11 +812,14 @@ impl Kawoosh {
                 for s in self.notes.shown.iter().filter(|s| s.toast) {
                     let color = level_color(s.level);
                     let focused = focus.is_some_and(|f| f.id == s.id);
-                    // A toast is one width — the toasts' — so its text
-                    // has a width to wrap at: a fit column takes the
-                    // unwrapped line and runs off the window.
+                    // A toast is as wide as its line up to the toasts'
+                    // width, where the line wraps: the count, the
+                    // source and the text are one paragraph
+                    // (`rich_text`), so the column's fit is the
+                    // paragraph's and the cap folds it — a row of
+                    // three texts would be fit at the unwrapped line.
                     let mut spec = NodeSpec::column()
-                        .width(Sizing::Fixed(max_w))
+                        .max_width(max_w)
                         .bg(if focused { pal.strip } else { pal.panel })
                         .border(if focused { 2.0 } else { 1.0 }, color)
                         .radius(4.0)
@@ -830,29 +833,17 @@ impl Kawoosh {
                         ]));
                     }
                     ui.with_indexed(s.id, spec, |ui| {
-                        // The row takes the toast's width and the text
-                        // what the count and source leave of it, and
-                        // wraps there.
-                        ui.with(
-                            NodeSpec::row()
-                                .gap(6.0)
-                                .width(Sizing::Grow(1.0))
-                                .cross_align(Align::Start),
-                            |ui| {
-                                if s.count > 1 {
-                                    ui.text(
-                                        &format!("({}x)", s.count),
-                                        TextStyle::new(12.0).color(pal.dim).nowrap(),
-                                    );
-                                }
-                                if let Some(src) = &s.source {
-                                    ui.text(src, TextStyle::new(12.0).color(color).nowrap());
-                                }
-                                ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |ui| {
-                                    ui.text(&s.text, TextStyle::new(12.0).color(pal.fg));
-                                });
-                            },
-                        );
+                        let count = format!("({}x) ", s.count);
+                        let mut spans: Vec<Span<'_>> = Vec::new();
+                        if s.count > 1 {
+                            spans.push(Span::new(&count).color(pal.dim));
+                        }
+                        if let Some(src) = &s.source {
+                            spans.push(Span::new(src).color(color));
+                            spans.push(Span::new(" "));
+                        }
+                        spans.push(Span::new(&s.text));
+                        ui.rich_text(&spans, TextStyle::new(12.0).color(pal.fg));
                         if !s.actions.is_empty() {
                             ui.with(NodeSpec::row().gap(6.0).cross_align(Align::Center), |ui| {
                                 for (i, a) in s.actions.iter().enumerate() {
