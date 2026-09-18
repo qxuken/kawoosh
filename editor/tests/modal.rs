@@ -416,6 +416,66 @@ fn search_walks_from_the_cursor_and_counts_off_the_frame_when_big() {
     assert_eq!(t.ed.message, "not found: nothing");
 }
 
+/// The search prompt previews its pattern: each key at `/` puts the
+/// cursor at the first match from where the prompt opened (`?` the
+/// last before it), the view painting the pattern so far; a line that
+/// is empty, does not compile yet or matches nothing leaves the cursor
+/// at the origin; `<Esc>` puts the cursor, the scroll and the search
+/// before back; `<CR>` lands where the preview showed and `n` goes on
+/// from there.
+#[test]
+fn the_search_prompt_previews_the_first_match_as_it_is_typed() {
+    let pattern = |t: &T| t.ed.search.as_ref().map(|s| s.pattern.clone());
+    let mut t = T::new("one\ntwo\nthree\ntwo again");
+    t.keys("/two<CR>gg");
+    t.ed.views[t.v].top = 3;
+    t.keys("/t");
+    assert_eq!(t.head(), 4, "`t` is `two` on the second line");
+    assert_eq!(t.ed.mode, Mode::Command);
+    t.keys("h");
+    assert_eq!(t.head(), 8, "`th` is `three`");
+    assert_eq!(pattern(&t).as_deref(), Some("th"), "painted as typed");
+    t.keys("<BS><BS>");
+    assert_eq!(t.head(), 0, "an empty line is the origin");
+    assert_eq!(pattern(&t).as_deref(), Some("two"), "and the search before");
+    t.keys("[");
+    assert_eq!(t.head(), 0, "not a pattern yet");
+    assert_eq!(pattern(&t).as_deref(), Some("two"));
+    t.keys("<BS>zzz");
+    assert_eq!(t.head(), 0, "no match");
+    assert_eq!(pattern(&t).as_deref(), Some("zzz"));
+    t.ed.views[t.v].top = 7;
+    t.keys("<Esc>");
+    assert_eq!(t.ed.mode, Mode::Normal);
+    assert_eq!(t.head(), 0);
+    assert_eq!(t.ed.views[t.v].top, 3, "the scroll from before the prompt");
+    assert_eq!(
+        pattern(&t).as_deref(),
+        Some("two"),
+        "`<Esc>` leaves no trace"
+    );
+    assert_eq!(
+        t.ed.message, "/two  2 match(es)",
+        "the preview says nothing"
+    );
+    // Backwards, then accepted: the search runs from the origin, so the
+    // cursor is where the preview showed, and `n` goes on from there.
+    t.keys("G?tw");
+    assert_eq!(t.head(), 4);
+    t.keys("<CR>");
+    assert_eq!(t.head(), 4);
+    assert!(t.ed.message.contains("2 match(es)"), "{}", t.ed.message);
+    t.keys("n");
+    assert_eq!(t.head(), 14);
+    // The history walk previews too, and `<BS>` on an empty line is `<Esc>`.
+    t.keys("gg/<Up>");
+    assert_eq!(t.ed.cmdline, "tw");
+    assert_eq!(t.head(), 4);
+    t.keys("<C-u><BS>");
+    assert_eq!(t.ed.mode, Mode::Normal);
+    assert_eq!(t.head(), 0);
+}
+
 /// `:s`: the current line's first match, `g` every one, `%` every
 /// line, `N,M` a range, `&` and `$1` in the replacement, an escaped
 /// delimiter, another delimiter, `i`; the cursor lands at the last

@@ -1485,16 +1485,8 @@ pub fn install(ed: &mut Editor) {
         ed.prompt = Prompt::Command;
         ed.cmdline.clear();
     });
-    ed.register("search_mode", |ed, _| {
-        ed.mode = Mode::Command;
-        ed.prompt = Prompt::Search { backwards: false };
-        ed.cmdline.clear();
-    });
-    ed.register("search_mode_back", |ed, _| {
-        ed.mode = Mode::Command;
-        ed.prompt = Prompt::Search { backwards: true };
-        ed.cmdline.clear();
-    });
+    ed.register("search_mode", |ed, ctx| ed.open_search(ctx.view, false));
+    ed.register("search_mode_back", |ed, ctx| ed.open_search(ctx.view, true));
     ed.register_with_args("write", Args::new(&[ArgKind::Path]), |ed, ctx| {
         write(ed, ctx);
     });

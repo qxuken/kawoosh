@@ -281,6 +281,19 @@ pub enum Prompt {
     Search { backwards: bool },
 }
 
+/// What the search prompt was opened over: the view, its selections and
+/// scroll, and the search before. The prompt previews the pattern as it
+/// is typed — the primary selection at the first match from here — and
+/// `<Esc>` puts all of this back, so a search abandoned leaves no trace.
+#[derive(Clone, Debug)]
+struct SearchOrigin {
+    view: ViewId,
+    sels: Selections,
+    top: usize,
+    left: f32,
+    search: Option<search::Search>,
+}
+
 pub struct Editor {
     pub buffers: SlotMap<BufferId, Buffer>,
     pub views: SlotMap<ViewId, View>,
@@ -318,6 +331,8 @@ pub struct Editor {
     /// the cursor and what the view paints in the visible lines
     /// (`search::hits_in`). Set through [`Editor::set_search`].
     pub search: Option<search::Search>,
+    /// Where the search prompt opened, while it is open.
+    search_origin: Option<SearchOrigin>,
     pub message: String,
     pub effects: Vec<Effect>,
     /// What commands and the shell read — `tabstop`, `expandtab`,
@@ -358,6 +373,7 @@ impl Editor {
             search_history: Vec::new(),
             hist_walk: None,
             search: None,
+            search_origin: None,
             message: String::new(),
             effects: Vec::new(),
             settings: Settings::new(),
@@ -839,7 +855,10 @@ impl Editor {
     pub fn text(&mut self, view: ViewId, text: &str) {
         match self.mode {
             Mode::Insert => self.insert_text(view, text),
-            Mode::Command => self.cmdline.push_str(text),
+            Mode::Command => {
+                self.cmdline.push_str(text);
+                self.preview_search(view);
+            }
             _ => {}
         }
     }
@@ -913,10 +932,7 @@ impl Editor {
             self.hist_walk = None;
         }
         match stroke.code.as_str() {
-            "escape" => {
-                self.mode = Mode::Normal;
-                self.cmdline.clear();
-            }
+            "escape" => self.cancel_prompt(),
             "up" => self.walk_history(true),
             "down" => self.walk_history(false),
             "p" if stroke.ctrl => self.walk_history(true),
@@ -928,6 +944,12 @@ impl Editor {
                 match self.prompt {
                     Prompt::Command => self.execute(view, &line),
                     Prompt::Search { backwards } => {
+                        // The search runs from where the prompt opened,
+                        // not from the preview's match: the first match
+                        // from there is the one the preview showed.
+                        if let Some(origin) = self.search_origin.take() {
+                            self.restore_origin(&origin);
+                        }
                         if !line.is_empty()
                             && let Err(e) = self.set_search(&line)
                         {
@@ -945,7 +967,7 @@ impl Editor {
             }
             "backspace" => {
                 if self.cmdline.pop().is_none() {
-                    self.mode = Mode::Normal;
+                    self.cancel_prompt();
                 }
             }
             "u" if stroke.ctrl => self.cmdline.clear(),
@@ -967,7 +989,114 @@ impl Editor {
                 }
             }
         }
+        if self.mode == Mode::Command {
+            self.preview_search(view);
+        }
         true
+    }
+
+    /// Opens the search prompt over `view`: `/` forward, `?` back. What
+    /// the view shows now is remembered, for the preview to move from
+    /// and `<Esc>` to put back.
+    pub fn open_search(&mut self, view: ViewId, backwards: bool) {
+        self.mode = Mode::Command;
+        self.prompt = Prompt::Search { backwards };
+        self.cmdline.clear();
+        self.search_origin = self.views.get(view).map(|v| SearchOrigin {
+            view,
+            sels: v.sels.clone(),
+            top: v.top,
+            left: v.left,
+            search: self.search.clone(),
+        });
+    }
+
+    /// Leaves the prompt with nothing done — `<Esc>`, `<BS>` on an empty
+    /// line, or the shell's click elsewhere — the view and the search as
+    /// they were when a search prompt opened.
+    pub fn cancel_prompt(&mut self) {
+        self.mode = Mode::Normal;
+        self.cmdline.clear();
+        self.hist_walk = None;
+        if let Some(origin) = self.search_origin.take() {
+            self.restore_origin(&origin);
+            self.search = origin.search;
+        }
+    }
+
+    /// The view as it was when the search prompt opened, if it is still
+    /// there.
+    fn restore_origin(&mut self, origin: &SearchOrigin) {
+        let Some(v) = self.views.get_mut(origin.view) else {
+            return;
+        };
+        let len = self.buffers[v.buffer].len();
+        v.sels = origin.sels.clone();
+        v.sels
+            .map(|s| Selection::new(s.anchor.min(len), s.head.min(len)));
+        v.top = origin.top;
+        v.left = origin.left;
+    }
+
+    /// The search prompt as it reads now, previewed: the primary
+    /// selection back where the prompt opened and then at the first match
+    /// from there — forward for `/`, back for `?`, round the end — and the
+    /// pattern the one the view paints, so the view follows the pattern
+    /// as it is typed. One that does not compile yet (`foo\`, `[a`) or
+    /// has no match within the frame's budget leaves the cursor where the
+    /// prompt opened, with the search before still painted; nothing is
+    /// said in the message and nothing is counted until `<CR>`.
+    fn preview_search(&mut self, view: ViewId) {
+        let Some(origin) = self.search_origin.clone() else {
+            return;
+        };
+        let Prompt::Search { backwards } = self.prompt else {
+            return;
+        };
+        if origin.view != view || !self.views.contains_key(view) {
+            return;
+        }
+        self.restore_origin(&origin);
+        let line = self.cmdline.clone();
+        let compiled = if line.is_empty() {
+            None
+        } else if origin.search.as_ref().is_some_and(|s| s.pattern == line) {
+            origin.search.clone()
+        } else {
+            search::Search::new(&line).ok()
+        };
+        let Some(compiled) = compiled else {
+            self.search = origin.search;
+            return;
+        };
+        use search::{FRAME_BUDGET, Walk, walk_backward, walk_forward};
+        let id = self.views[view].buffer;
+        let text = self.buffers[id].tree();
+        let len = text.len();
+        let head = self.views[view].sels.primary().head;
+        let re = &compiled.re;
+        let walk = if backwards {
+            match walk_backward(text, re, head, FRAME_BUDGET) {
+                Walk::NotFound => walk_backward(text, re, len, FRAME_BUDGET),
+                w => w,
+            }
+        } else {
+            match walk_forward(text, re, (head + 1).min(len), FRAME_BUDGET) {
+                Walk::NotFound => walk_forward(text, re, 0, FRAME_BUDGET),
+                w => w,
+            }
+        };
+        self.search = Some(compiled);
+        if let Walk::Found(r) = walk {
+            let primary = self.views[view].sels.primary();
+            self.views[view].sels.map(|s| {
+                if s == primary {
+                    s.with_head(r.start, false)
+                } else {
+                    s
+                }
+            });
+        }
     }
 
     /// Makes `pattern` the search `n` and `N` walk and the view paints;
