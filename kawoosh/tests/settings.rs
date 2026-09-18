@@ -411,7 +411,7 @@ fn the_leader_is_a_setting() {
     assert_eq!(app.ed.settings.int("hit"), Some(4));
     // The bundled plugin's `<leader>cd` followed too: a listing, then
     // the map that moves the cwd to it.
-    ex(&mut d, &mut app, &format!("oil {}", t.root.display()));
+    ex(&mut d, &mut app, &format!("dir {}", t.root.display()));
     d.keys(&mut app, ";cd");
     assert_eq!(app.cwd, t.root);
     assert_eq!(d.warnings(), Vec::<String>::new());

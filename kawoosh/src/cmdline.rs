@@ -5,7 +5,7 @@
 //! completes to a command — the ex spellings, the shell's, the engine's
 //! and Lua's — and an argument to what the command declares it takes
 //! (`kawoosh_editor::ArgKind`): a path for `:e`, `:w`, `:cd`, `:vs`,
-//! `:oil`; a buffer for `:b`; a tool, a view, an option, a command.
+//! `:dir`; a buffer for `:b`; a tool, a view, an option, a command.
 //! A command's subcommands complete as its first word (`:history dr`
 //! is `:history drop`), and the words after complete as the
 //! subcommand's own. Nothing is a popup: the candidates are a row in

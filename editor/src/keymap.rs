@@ -262,7 +262,7 @@ fn normalize_chord(inner: &str) -> String {
 /// What a key sequence runs. A key can carry several, newest first:
 /// the engine takes the first whose `when` holds and whose command can
 /// run ([`crate::Editor::pick_binding`]), so `<CR>` bound to
-/// `oil enter` (`when` the listing) and, older, to `goto location`
+/// `dir enter` (`when` the listing) and, older, to `goto location`
 /// (`when` not) is one key doing the right thing in each — and a bare
 /// binding on a bare command still shadows everything under it.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]

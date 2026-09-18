@@ -154,6 +154,14 @@ pub struct Kawoosh {
     /// Modifier state, from `{kind="modifiers"}` events: ctrl, alt, super,
     /// shift.
     pub(crate) mods: (bool, bool, bool, bool),
+    /// The question on show, if one (`confirm.rs`): the keys are its.
+    pub confirm: Option<crate::confirm::Confirm>,
+    /// A buffer's annotations (`kawoosh.buf.annotate`): text drawn past
+    /// a line's end, each anchored to its line at the version it was
+    /// set (`Buffer::line_anchor`), carried through the journal to
+    /// where the line is now — the way `Runtime::track_lines` follows a
+    /// line's identity.
+    pub(crate) annotations: HashMap<BufferId, (Version, Vec<(kawoosh_doc::LineAnchor, String)>)>,
 }
 
 impl Kawoosh {
@@ -221,6 +229,8 @@ impl Kawoosh {
             body_h: 600.0,
             cell: (7.8, LH),
             mods: (false, false, false, false),
+            confirm: None,
+            annotations: HashMap::new(),
         };
         app.install_commands();
         app
@@ -647,6 +657,7 @@ impl Kawoosh {
         self.release_waiters(id);
         self.last_pos.remove(&id);
         self.ts_sent.remove(&id);
+        self.annotations.remove(&id);
         self.histories.forget(id);
         self.lsp
             .lsp
@@ -822,7 +833,13 @@ impl Kawoosh {
             self.devtools = !self.devtools;
             return;
         }
-        // The keyboard on a toast takes the keys until it leaves.
+        // A confirm has every key until it is answered; the keyboard on
+        // a toast takes them until it leaves.
+        if self.confirm_key(&stroke) {
+            self.drain_effects();
+            self.drain_lua();
+            return;
+        }
         if self.toast_key(&stroke) {
             return;
         }
@@ -1375,6 +1392,7 @@ impl kui::App for Kawoosh {
             self.command_line(ui);
             self.toasts(ui);
             self.right_stack(ui);
+            self.confirm_float(ui);
         });
         self.line_cells.sweep();
         self.perf.end_frame(ms(frame_started));
@@ -1456,6 +1474,12 @@ impl kui::App for Kawoosh {
                     self.on_toast_hover(p);
                 }
             }
+            Some("confirm") => {
+                self.on_confirm(p);
+                self.drain_effects();
+                self.drain_lua();
+            }
+            Some("dismiss") => self.on_dismiss(p),
             Some("tab") => {
                 if let Some(i) = p.get("index").and_then(Value::as_int) {
                     self.layout.tab = (i as usize).min(self.layout.tabs.len() - 1);

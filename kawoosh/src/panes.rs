@@ -743,6 +743,30 @@ impl Kawoosh {
         let dark = ui.theme().is_dark();
         let diag_messages = self.lsp.messages.get(&buf_id);
         let diag_colors = [pal.dim, pal.danger, pal.command, pal.dim, pal.faint];
+        // The annotations on the rows drawn, each on the line it was
+        // set on has become (`Buffer::line_now`) — none once that line
+        // is deleted, and none where two would land on one line.
+        let annotated: std::collections::HashMap<usize, &str> = self
+            .annotations
+            .get(&buf_id)
+            .map(|(version, list)| {
+                let mut seen = std::collections::HashSet::new();
+                let mut out = std::collections::HashMap::new();
+                for (a, text) in list {
+                    let Some(ln) = buf.line_now(a, *version) else {
+                        continue;
+                    };
+                    if !seen.insert(ln) {
+                        out.remove(&ln);
+                        continue;
+                    }
+                    if (top..last).contains(&ln) {
+                        out.insert(ln, text.as_str());
+                    }
+                }
+                out
+            })
+            .unwrap_or_default();
         let ghost = self
             .completion_typed()
             .filter(|(v, _)| *v == view && focused)
@@ -961,10 +985,13 @@ impl Kawoosh {
                                     (a < b).then_some((a..b, c))
                                 })
                                 .collect();
-                            let trailing = diags.first().and_then(|r| {
-                                let m = diag_messages?.get(r.tag as usize)?;
-                                Some((m.as_str(), diag_colors[(r.style as usize).min(4)]))
-                            });
+                            let trailing = diags
+                                .first()
+                                .and_then(|r| {
+                                    let m = diag_messages?.get(r.tag as usize)?;
+                                    Some((m.as_str(), diag_colors[(r.style as usize).min(4)]))
+                                })
+                                .or_else(|| annotated.get(&ln).map(|t| (*t, pal.dim)));
                             let ghost_here = ghost
                                 .as_deref()
                                 .filter(|_| ln == cur_line)

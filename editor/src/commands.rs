@@ -161,10 +161,19 @@ pub(crate) fn apply_operator(
                 .iter()
                 .enumerate()
                 .map(|(i, (r, lw))| {
-                    // `cc` keeps the line's indent and its newline.
+                    // `cc` keeps the line's indent and its newline. A
+                    // linewise range on the last line starts with the
+                    // newline before it (`line_range_of_sel`), which is
+                    // the line above's: the first line changed is the
+                    // one after that byte.
                     if op == "change" && *lw {
                         let buf = &ed.buffers[id];
-                        let ln = buf.line_of(r.start);
+                        let first = if r.end == buf.len() && buf.char_at(r.start) == Some('\n') {
+                            r.start + 1
+                        } else {
+                            r.start
+                        };
+                        let ln = buf.line_of(first);
                         let indent = m::indent_of(buf, ln);
                         let inner = buf.line_range(ln).start
                             ..buf
@@ -904,8 +913,10 @@ fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
             .unwrap_or_else(|| p.clone());
     }
     let buf = &ed.buffers[id];
+    // A hooked buffer is written by its hook, on the shell's side, which
+    // marks it saved when the hook says it is (`Effect::Write`) — a hook
+    // that asks first leaves it modified until the answer.
     if buf.path.is_none() && buf.hook.is_some() {
-        ed.buffers[id].mark_saved();
         ed.effects.push(Effect::Write(id));
         return true;
     }
@@ -2459,7 +2470,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("gd", "lsp definition"),
         ("K", "lsp hover"),
         ("<CR>", "goto location"),
-        ("-", "oil"),
+        ("-", "dir"),
         // Surrounds under `gs`, as mini.surround's: add, delete, replace.
         ("gsa", "surround add"),
         ("gsd", "surround delete"),

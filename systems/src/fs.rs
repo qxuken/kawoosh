@@ -58,11 +58,50 @@ pub fn abbreviate_home(path: &Path) -> String {
 
 /// One entry of a listing. `is_dir` follows a link, so a link to a
 /// directory lists as one and descends; `is_symlink` says it was a link.
+/// `size` and `modified` (seconds since the epoch) are the target's,
+/// for a listing that shows what each entry is beside its name; an
+/// entry whose metadata cannot be read is listed with none.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub name: String,
     pub is_dir: bool,
     pub is_symlink: bool,
+    pub size: u64,
+    pub modified: Option<u64>,
+}
+
+/// What a path is: the same facts as an [`Entry`] for one path, the
+/// link followed for all but `is_symlink`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stat {
+    pub is_dir: bool,
+    pub is_file: bool,
+    pub is_symlink: bool,
+    pub size: u64,
+    pub modified: Option<u64>,
+}
+
+fn epoch_secs(m: &std::fs::Metadata) -> Option<u64> {
+    m.modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs())
+}
+
+/// The facts about `path`, the link followed; an error names the path.
+pub fn stat(path: &Path) -> io::Result<Stat> {
+    let link = std::fs::symlink_metadata(path).map_err(|e| named(path, e))?;
+    let is_symlink = link.file_type().is_symlink();
+    // A dangling link is what it is: the link's own metadata.
+    let m = std::fs::metadata(path).unwrap_or(link);
+    Ok(Stat {
+        is_dir: m.is_dir(),
+        is_file: m.is_file(),
+        is_symlink,
+        size: m.len(),
+        modified: epoch_secs(&m),
+    })
 }
 
 fn named(path: &Path, e: io::Error) -> io::Error {
@@ -83,10 +122,14 @@ pub fn list(dir: &Path) -> io::Result<Vec<Entry>> {
                 Some(t) if t.is_symlink() => e.path().is_dir(),
                 _ => false,
             };
+            // The target's metadata; a dangling link's is its own.
+            let m = std::fs::metadata(e.path()).or_else(|_| e.metadata()).ok();
             Entry {
                 name: e.file_name().to_string_lossy().into_owned(),
                 is_dir,
                 is_symlink,
+                size: m.as_ref().map(|m| m.len()).unwrap_or(0),
+                modified: m.as_ref().and_then(epoch_secs),
             }
         })
         .collect();
@@ -220,6 +263,30 @@ mod tests {
                 ("b.txt".to_string(), false)
             ]
         );
+        // An entry carries its target's size and mtime; `stat` says the
+        // same of one path, and a link is one that is not followed for
+        // `is_symlink` alone.
+        write(&dir.join("b.txt"), "hello").unwrap();
+        let b = list(&dir)
+            .unwrap()
+            .into_iter()
+            .find(|e| e.name == "b.txt")
+            .unwrap();
+        assert_eq!(b.size, 5);
+        assert!(b.modified.is_some_and(|m| m > 0));
+        let st = stat(&dir.join("b.txt")).unwrap();
+        assert_eq!(
+            (st.is_file, st.is_dir, st.is_symlink, st.size),
+            (true, false, false, 5)
+        );
+        assert_eq!(st.modified, b.modified);
+        #[cfg(unix)]
+        {
+            let st = stat(&dir.join("link")).unwrap();
+            assert!(st.is_dir && st.is_symlink, "{st:?}");
+        }
+        let err = stat(&dir.join("nope")).unwrap_err().to_string();
+        assert!(err.contains("nope"), "{err}");
         let err = create(&dir.join("b.txt"), false).unwrap_err().to_string();
         assert!(err.contains("b.txt"), "{err}");
         let err = list(&dir.join("nope")).unwrap_err().to_string();

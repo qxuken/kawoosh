@@ -868,6 +868,15 @@ fn indent_and_change_line() {
     assert_eq!(t.text(), "    z\n    b");
     t.keys("jC!<Esc>");
     assert_eq!(t.text(), "    z\n    !");
+    // `cc` on the last line changes that line alone: its linewise
+    // range starts with the newline before it, which is not its line.
+    t.keys("ccq<Esc>");
+    assert_eq!(t.text(), "    z\n    q");
+    t.keys("2ccw<Esc>");
+    assert_eq!(t.text(), "    z\n    w");
+    let mut t = T::new("a\nb\n");
+    t.keys("Gccx<Esc>");
+    assert_eq!(t.text(), "a\nb\nx");
 }
 
 #[test]

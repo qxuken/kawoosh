@@ -23,8 +23,10 @@ gaps are records rather than surprises:
   ctrl-click locations, the `$EDITOR --wait` socket and shim; `ts`
   (Rust) and `lsp` (pool by outermost workspace marker — verified: two
   panes, one rust-analyzer); Lua with commands, keymaps, views as slot
-  panes, scratch buffers with `on_write`, tools, `kawoosh.store`; oil
-  with line identity through the journal; compile mode with `]q`;
+  panes, scratch buffers with `on_write`, tools, `kawoosh.store`; the
+  `dir` file manager with line identity through the journal
+  (`Buffer::line_now`), what each entry is annotated past its line, a
+  preview pane, and a write that asks first; compile mode with `]q`;
   sessions and oldfiles.
 - **Thinner than designed, still open**: mouse reporting covers the
   primary button, drags and the wheel (kui routes the other buttons
@@ -160,9 +162,19 @@ because it *paid*: no z-order, no occlusion, no focus stealing in a
 homegrown layout crate. kui solves all three, so the engineering half of
 the justification is gone. The taste half stays: transient UI goes in
 panes and strips, completion is in-place, hover opens a pane. It is now a
-rule that costs nothing to revisit, and it was revisited once, for
+rule that costs nothing to revisit, and it was revisited twice. Once for
 notifications (Decision 9): two floats that never take focus, never
-cover the caret's row, and are read rather than worked in.
+cover the caret's row, and are read rather than worked in. Once for the
+opposite case, a **confirm** (`kawoosh.confirm { title, lines, actions
+}`, `confirm.rs`): one modal float over the window that a plugin puts
+up before something happens — the file manager's write, its changes
+one a line, `Apply` and `Cancel` — with the keys on it until it is
+answered (`<CR>` the default, `y` the first, a digit that one, `h` `l`
+between them, `<Esc>` / `n` / a press outside none: kui's `modal` and
+its `dismiss`), everything under it inert. A question that must be
+answered before the next key is the one transient a strip cannot hold.
+A scratch buffer's `on_write` returning `false` says its write waits on
+one, and the buffer stays modified until the answer writes it.
 
 ### 3. The editor pane is rows of runs, not a custom leaf
 
@@ -192,6 +204,17 @@ What this buys, each of which was a milestone-sized piece of work before:
   byte and the access tree never count it). mvp.md's governing rule —
   *virtual text may shift real text, never occlude it* — stops being a
   rule the leaf enforces and becomes the only thing the shape can do.
+  A plugin's is the same node: `kawoosh.buf.annotate(lines, buffer)`
+  puts text past a line's end — the file manager's sizes and mtimes
+  beside the names — anchored to the line's identity through the
+  journal (`Buffer::line_now`: a line is its bytes and its newline,
+  carried as a result is; text typed at its edges is its own, a line
+  opened above or below is not, a line retyped whole keeps its newline
+  and so itself, a line deleted is gone — undone or not, since the
+  journal cannot tell an undo from a line typed where it was, which is
+  why the file manager's plan calls a delete and a create of one name
+  no change), so it follows its line through edits and goes with it,
+  and never becomes a byte the write would see.
 - **Multicursor is free.** A selection set is N carets and N selected
   ranges on the visible lines; emitting them is the same loop.
 - **The mouse comes back as data.** A sink declaring `on_drag` over
@@ -295,14 +318,15 @@ plugin never matches on `/` or reads `$HOME`: `fs.expand` turns a path as
 the user wrote it — `~/x`, `../y`, `C:\z` — into the absolute, normalized
 one, against the working directory the shell keeps the process in step
 with; `join`, `parent`, `basename` do what a pattern on `/` did, on every
-platform; `list`, `create`, `rename`, `remove`, `read`, `write`, `exists`,
-`is_dir`, `is_file` are the operations, each taking its path as written
-and raising with the path in the message. The Rust half is
-`kawoosh_systems::fs`, and the shell's `:e`, `:cd`, `:oil` and the status
-line's `~` go through the same functions, so what the command line accepts
-and what a plugin accepts are one thing (the case that filed this: `:oil
-~/projects` refused as "not a directory" because the plugin's `is_dir`
-never saw the `~`). The file manager is the acceptance test: no `/` in it.
+platform; `list` (each entry with its size and mtime), `stat`, `create`,
+`rename`, `remove`, `read`, `write`, `exists`, `is_dir`, `is_file` are
+the operations, each taking its path as written and raising with the
+path in the message. The Rust half is `kawoosh_systems::fs`, and the
+shell's `:e`, `:cd`, `:dir` and the status line's `~` go through the
+same functions, so what the command line accepts and what a plugin
+accepts are one thing (the case that filed this: `:dir ~/projects`
+refused as "not a directory" because the plugin's `is_dir` never saw
+the `~`). The file manager is the acceptance test: no `/` in it.
 
 **A command declares what its arguments are, and the engine resolves
 them.** `kawoosh.command(name, fn, { args = { "path", "text..." } })` —
@@ -310,11 +334,13 @@ the kinds are `path`, `buffer`, `command`, `option`, `tool`, `view`,
 `text`, the last with `...` for the rest — and the same declaration in
 Rust (`Editor::register_with_args`, `Editor::declare` for a command the
 shell runs). A `path` reaches the command absolute, whoever registered it
-— the engine's `:w`, the shell's `:cd`, a plugin's `:oil` — resolved once
+— the engine's `:w`, the shell's `:cd`, a plugin's `:dir` — resolved once
 in `Editor::run` against the working directory the shell keeps the engine
-told of; and the command line completes each argument from its kind, so
-neither the completer nor the plugin keeps a list of which commands take
-paths. The declaration is data on the command (`Args`), which is the
+told of, and `%` in one is the view's file first (vim's: `%:h` its
+directory, `%:t` its name, the rest of the argument after — `:cd %:h`,
+`:dir %`), refused with "no file for %" where there is none; and the
+command line completes each argument from its kind, so neither the
+completer nor the plugin keeps a list of which commands take paths. The declaration is data on the command (`Args`), which is the
 extension surface: a plugin can read it, and a kind can be added without
 touching a plugin.
 
@@ -326,7 +352,10 @@ under it, so the same Lua view in two panes has two sets of scroll offsets
 and edit state. Params are the pane's facts this frame (id, focused,
 size, the buffer it is attached to if any) — declared every frame, never
 retained, per ADR 0014. The bootstrap's `on_event` routes back to that
-view's handler.
+view's handler. `kawoosh.view_open(name, { focus = })` puts a view in a
+split or focuses its pane — `focus = false` leaves the keyboard where
+it is, for a preview beside the listing it follows — `view_close`
+takes the pane away, and `view_toggle` does one or the other.
 
 Two things kui does not do today, both small and both kawoosh's to add to
 kui rather than work around here (the full door-by-door list is
@@ -726,7 +755,7 @@ drop` is registered as one, and the engine walks a line's words as far
 as they name subcommands or lead to them, carrying a `!` or `?` from any
 of them (`:history clear!` and `:history! clear` alike), then hands the
 rest as arguments. The same walk serves a keymap's binding
-(`kawoosh.map("n", "<leader>cd", "oil cd")`) and the command line's
+(`kawoosh.map("n", "<leader>cd", "dir cd")`) and the command line's
 completion: under `:history ` the words are `clear`, `drop`, `list`, and
 after one the subcommand's own arguments. Not a second trait — a
 subcommand needs nothing a command does not have. The names are
@@ -737,7 +766,7 @@ char`, `change to end`; `goto line`, `goto file start`, `goto location`;
 `paste after`, `paste clipboard`; `undo older`, `undo history`; `cursor
 below`, `cursor primary`, `cursor swap`; `buffer next`, `buffer delete
 others`; `tab new`, `pane left`, `lsp hover`, `session save`, `error
-next`, `kui hud`; `oil cd`, `oil enter`. A word that only leads on —
+next`, `kui hud`; `dir cd`, `dir enter`, `dir refresh`, `dir preview`. A word that only leads on —
 `tab`, `delete to`, `page` — needs no command of its own: it is walked,
 listed under its parent and on the command line, and typed bare it asks
 which (`tab what? (close, new, next, prev)`). The vim spellings stay as
@@ -752,9 +781,9 @@ engine as they change (`store`, `lsp`, `editor`, `terminal`, `lua`,
 `dock`), a plugin publishes its own (`kawoosh.fact("plug:ready")`), the
 engine answers the ones it can from the view (`visual`, `modified`,
 `file`, `buffer:NAME`, `language:NAME`), and a spec names them, `!` for
-must-not (`when = { "language:oil", "!terminal" }`). The engine refuses
-with the reason in one voice — "scrollback needs terminal", "oil cd needs
-language:oil" — whether the command came from the line, a key, a toast's
+must-not (`when = { "language:dir", "!terminal" }`). The engine refuses
+with the reason in one voice — "scrollback needs terminal", "dir cd needs
+language:dir" — whether the command came from the line, a key, a toast's
 action or Lua, and `kawoosh.can(name)` is that reason or `true`. This is
 VS Code's `when` clause without the expression language; a list with
 negation is enough, and if a day comes when it is not, that is the day to
@@ -771,15 +800,16 @@ data the completion reads, for a palette or a help pane to build from.
 **A key carries its bindings, newest first, and the engine takes the
 first that can run.** A binding has a `when` of its own beside its
 command's, so `kawoosh.map("n", "<CR>", "goto location", { when = {
-"!language:oil" } })` and then `kawoosh.map("n", "<CR>", "oil enter")`
+"!language:dir" } })` and then `kawoosh.map("n", "<CR>", "dir enter")`
 — a command gated on the listing — make one key do the right thing in
 each place without either command knowing about the other; when none
 can run, the message is the newest binding's reason; a bare binding on a
 bare command shadows the older ones, so a rebinding in `init.lua` still
-replaces the default. The bundled oil is the acceptance test: `oil cd`
-is a subcommand gated on `language:oil`, `oil enter` is gated the same
-way and falls through to `goto location`, `:oil?` says what is listed,
-and `<leader>cd` off a listing runs nothing and says why.
+replaces the default. The bundled file manager, `dir`, is the acceptance
+test: `dir cd` is a subcommand gated on `language:dir`, `dir enter` is
+gated the same way and falls through to `goto location`, `:dir?` says
+what is listed, and `<leader>cd` off a listing runs nothing and says
+why.
 
 **Every input is the editor, and the mode is the view's** (Zed's
 model). A [`Field`] is a one-line buffer with a view on it —

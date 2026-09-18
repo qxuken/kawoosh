@@ -225,7 +225,54 @@ impl Kawoosh {
                     self.ed.views[v].goal_col = None;
                 }
             }
-            Msg::OpenView(name) => self.open_lua_view(&name),
+            Msg::OpenView { name, focus } => self.open_lua_view(&name, focus),
+            Msg::CloseView(name) => self.close_lua_view(&name),
+            Msg::ToggleView { name, focus } => {
+                if self.lua_view_pane(&name).is_some() {
+                    self.close_lua_view(&name);
+                } else {
+                    self.open_lua_view(&name, focus);
+                }
+            }
+            Msg::Confirm {
+                title,
+                lines,
+                actions,
+                default,
+            } => self.confirm_with(crate::confirm::Confirm {
+                title,
+                lines,
+                actions,
+                chosen: default,
+            }),
+            Msg::Annotate {
+                buffer,
+                name,
+                lines,
+            } => {
+                let id = match (buffer, name) {
+                    (Some(h), _) => Some(kawoosh_lua::id_of(h)),
+                    (None, Some(n)) => self
+                        .ed
+                        .buffers
+                        .iter()
+                        .find(|(_, b)| b.name == n)
+                        .map(|(id, _)| id),
+                    (None, None) => None,
+                };
+                let Some(b) = id.and_then(|id| self.ed.buffers.get(id)) else {
+                    self.ed.message = "annotate: no such buffer".into();
+                    return;
+                };
+                let count = b.line_count();
+                let anchored = lines
+                    .into_iter()
+                    .filter(|(ln, _)| (1..=count).contains(ln))
+                    .map(|(ln, text)| (b.line_anchor(ln - 1), text))
+                    .collect();
+                self.annotations
+                    .insert(id.unwrap(), (b.version(), anchored));
+            }
             Msg::Tool {
                 name,
                 cmd,
@@ -367,18 +414,41 @@ impl Kawoosh {
         }
     }
 
-    /// Opens Lua view `name` in a split (or focuses its pane).
-    pub fn open_lua_view(&mut self, name: &str) {
-        let shown = self
-            .layout
+    /// The pane showing Lua view `name`, when one does.
+    pub fn lua_view_pane(&self, name: &str) -> Option<PaneId> {
+        self.layout
             .visible_panes()
             .into_iter()
-            .find(|p| matches!(self.layout.content(*p), Some(Content::Lua(n)) if n == name));
-        match shown {
-            Some(p) => self.layout.focus(p),
+            .find(|p| matches!(self.layout.content(*p), Some(Content::Lua(n)) if n == name))
+    }
+
+    /// Opens Lua view `name` in a split, or focuses its pane; with
+    /// `focus` off the keyboard stays where it was — a preview beside
+    /// the listing it follows.
+    pub fn open_lua_view(&mut self, name: &str, focus: bool) {
+        match self.lua_view_pane(name) {
+            Some(p) => {
+                if focus {
+                    self.layout.focus(p);
+                }
+            }
             None => {
+                let was = self.layout.focused();
                 self.layout
                     .split(SplitDir::H, Content::Lua(name.to_string()));
+                if !focus {
+                    self.layout.focus(was);
+                }
+            }
+        }
+    }
+
+    /// Closes the pane showing Lua view `name`, if one does.
+    pub fn close_lua_view(&mut self, name: &str) {
+        if let Some(p) = self.lua_view_pane(name) {
+            self.layout.close(p);
+            if let Some(rt) = &self.scripting.rt {
+                rt.set_field_focus(name, None);
             }
         }
     }
@@ -599,14 +669,20 @@ impl Kawoosh {
             return;
         };
         rt.publish(&self.ed, Some(view));
-        rt.write_hook(&hook, &text);
+        let written = rt.write_hook(&hook, &text);
         // The hook rewrote the listing (`kawoosh.buf.set_text`, queued):
         // apply that first, then track the lines as they now are — a
         // tracking of the old text would call every line of the next
-        // write renamed.
+        // write renamed. A hook that asked first (`false`) leaves the
+        // buffer modified until the answer writes it.
         self.drain_lua();
-        if let Some(rt) = self.scripting.rt.clone() {
-            rt.track_lines(&self.ed, buffer);
+        if written {
+            if let Some(b) = self.ed.buffers.get_mut(buffer) {
+                b.mark_saved();
+            }
+            if let Some(rt) = self.scripting.rt.clone() {
+                rt.track_lines(&self.ed, buffer);
+            }
         }
     }
 }
@@ -654,7 +730,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .args(Args::new(&[ArgKind::View]))
                 .doc("open the Lua view NAME in a pane"),
             |k, ctx| match ctx.args.first() {
-                Some(n) => k.open_lua_view(n),
+                Some(n) => k.open_lua_view(n, true),
                 None => k.ed.message = "view what?".into(),
             },
         ),

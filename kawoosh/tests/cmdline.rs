@@ -194,12 +194,12 @@ fn the_command_line_completes_commands_paths_and_buffers() {
         "the path resolved, the text as typed"
     );
     // `<Tab>` with nothing to complete is not a character.
-    d.keys(&mut app, ":oi");
-    assert_eq!(app.cmdline_ghost().as_deref(), Some("l"));
+    d.keys(&mut app, ":di");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("r"));
     tab(&mut d, &mut app);
     tab(&mut d, &mut app);
     assert!(
-        app.ed.prompt_text().unwrap_or_default().starts_with("oil"),
+        app.ed.prompt_text().unwrap_or_default().starts_with("dir"),
         "{}",
         app.ed.prompt_text().unwrap_or_default()
     );
@@ -210,7 +210,7 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     leave(&mut d, &mut app);
 
     // A subcommand completes as its parent's first word — the shell's
-    // `:history drop`, a plugin's `:oil cd` — and what follows it
+    // `:history drop`, a plugin's `:dir cd` — and what follows it
     // completes as the subcommand's own; a subcommand and the parent's
     // first argument are offered side by side.
     d.keys(&mut app, ":history ");
@@ -226,11 +226,11 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     d.keys(&mut app, ":settings re");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("load"));
     leave(&mut d, &mut app);
-    d.keys(&mut app, ":oil ");
+    d.keys(&mut app, ":dir ");
     let cands = app.cmd_completion.as_ref().unwrap().candidates.clone();
     assert_eq!(
         cands,
-        ["cd", "enter", "src/", "a.txt"],
+        ["cd", "enter", "preview", "refresh", "src/", "a.txt"],
         "the subcommands, then the path"
     );
     d.keys(&mut app, "c");

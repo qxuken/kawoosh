@@ -1,6 +1,6 @@
 //! Milestone 7: the Lua API — commands and keymaps from a config, a Lua
 //! view in a pane through a kui slot with its events routed back, the
-//! oil file manager, compile mode.
+//! dir file manager, compile mode.
 
 mod drive;
 
@@ -127,15 +127,15 @@ fn a_lua_view_is_a_pane_and_its_clicks_come_back() {
 }
 
 #[test]
-fn oil_renames_creates_and_deletes_on_write() {
-    let dir = std::env::temp_dir().join(format!("kawoosh-oil-{}", std::process::id()));
+fn dir_confirms_then_renames_creates_and_deletes_on_write() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-dir-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("sub")).unwrap();
     std::fs::write(dir.join("a.txt"), "a").unwrap();
     std::fs::write(dir.join("b.txt"), "b").unwrap();
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "");
     d.frame(&mut app);
-    ex(&mut d, &mut app, &format!("oil {}", dir.display()));
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
     assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);
     // Rename a.txt → renamed.txt, delete b.txt, add c.txt and d/.
     d.keys(&mut app, "jj");
@@ -147,15 +147,46 @@ fn oil_renames_creates_and_deletes_on_write() {
     d.keys(&mut app, "d/");
     d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "w");
-    // What the write did is a corner line under `oil`, not an echo.
+    // The write asks first: a confirm over the window, the changes one
+    // a line, the keys on it. `<Esc>` answers with none — nothing on
+    // disk moved, the listing is still to write — and `:w` again with
+    // `<CR>` applies.
+    d.frame(&mut app);
+    let t = d.confirm_texts();
+    assert!(t[0].starts_with("4 change(s) in "), "{t:?}");
+    assert!(
+        t.contains(&"rename a.txt → renamed.txt".to_string()),
+        "{t:?}"
+    );
+    assert!(t.contains(&"create c.txt".to_string()));
+    assert!(t.contains(&"create d/".to_string()));
+    assert!(t.contains(&"delete b.txt".to_string()));
+    assert_eq!(&t[t.len() - 2..], ["Apply", "Cancel"]);
+    // An editing key does not reach the listing while it is up.
+    d.keys(&mut app, "x");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert!(d.confirm_texts().is_empty(), "answered");
+    assert!(dir.join("a.txt").is_file(), "nothing moved");
+    let listing = app.focused_view().unwrap();
+    assert!(app.ed.buffer_of(listing).modified, "still to write");
+    assert_eq!(d.line_rows(), ["../", "sub/", "renamed.txt", "c.txt", "d/"]);
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert!(!d.confirm_texts().is_empty(), "asked again");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(d.confirm_texts().is_empty());
+    // What the write did is a corner line under `dir`, not an echo.
     let said = app
         .notes
         .shown
         .iter()
         .find(|s| s.text == "4 change(s) applied")
         .expect("the count in the corner");
-    assert_eq!(said.source.as_deref(), Some("oil"));
+    assert_eq!(said.source.as_deref(), Some("dir"));
     assert!(!said.toast);
+    assert!(!app.ed.buffer_of(listing).modified, "written");
     assert!(dir.join("renamed.txt").is_file());
     assert!(!dir.join("a.txt").exists());
     assert!(!dir.join("b.txt").exists());
@@ -167,6 +198,10 @@ fn oil_renames_creates_and_deletes_on_write() {
     d.keys(&mut app, "Goc.txt/under");
     d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(d.confirm_texts()[1], "create c.txt/under");
+    d.keys(&mut app, "y");
+    d.frame(&mut app);
     let toast = app
         .notes
         .shown
@@ -184,7 +219,7 @@ fn oil_renames_creates_and_deletes_on_write() {
             .log
             .iter()
             .any(|e| e.text.starts_with("create c.txt/under: ")
-                && e.source.as_deref() == Some("oil")),
+                && e.source.as_deref() == Some("dir")),
         "the failure in the log"
     );
     assert!(!dir.join("c.txt/under").exists());
@@ -269,7 +304,7 @@ fn dash_opens_the_files_directory_and_can_move_the_cwd() {
     d.frame(&mut app);
     d.keys(&mut app, "-");
     let name = app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
-    assert_eq!(name, format!("oil: {}", dir.join("inner").display()));
+    assert_eq!(name, format!("dir: {}", dir.join("inner").display()));
     assert_eq!(d.line_rows(), ["../", "f.txt"]);
     d.keys(&mut app, "-");
     assert!(d.line_rows().contains(&"inner/".to_string()));
@@ -294,7 +329,7 @@ fn dash_opens_the_files_directory_and_can_move_the_cwd() {
 
 #[test]
 fn dash_lands_on_the_entry_it_came_from_and_reuses_the_listing() {
-    let dir = std::env::temp_dir().join(format!("kawoosh-oilfrom-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("kawoosh-dirfrom-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("inner")).unwrap();
     let dir = dir.canonicalize().unwrap();
     std::fs::write(dir.join("inner/a.txt"), "1\n2\n3\n").unwrap();
@@ -351,14 +386,14 @@ fn dash_lands_on_the_entry_it_came_from_and_reuses_the_listing() {
     );
     assert_eq!(line(&app), 2, "back on the third line");
     assert_eq!(buffers(&app), n);
-    // `~` is the home in a path given to :oil.
-    ex(&mut d, &mut app, "oil ~");
+    // `~` is the home in a path given to :dir.
+    ex(&mut d, &mut app, "dir ~");
     let name = app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
     assert_eq!(
         name,
-        format!("oil: {}", kawoosh_systems::fs::home().unwrap().display())
+        format!("dir: {}", kawoosh_systems::fs::home().unwrap().display())
     );
-    ex(&mut d, &mut app, "oil ~/definitely-not-a-directory-here");
+    ex(&mut d, &mut app, "dir ~/definitely-not-a-directory-here");
     assert!(
         app.ed.message.starts_with("not a directory: /"),
         "{}",
@@ -367,10 +402,10 @@ fn dash_lands_on_the_entry_it_came_from_and_reuses_the_listing() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// The design check for `kawoosh.command`'s spec: oil's `oil cd` says
-/// `when = { "language:oil" }`, so off a listing `<leader>cd` runs
+/// The design check for `kawoosh.command`'s spec: dir's `dir cd` says
+/// `when = { "language:dir" }`, so off a listing `<leader>cd` runs
 /// nothing and the message is the engine's reason, `kawoosh.can` is
-/// that reason, and in a listing both are clear; `:oil?` is the query
+/// that reason, and in a listing both are clear; `:dir?` is the query
 /// form; `kawoosh.commands()` lists the spec as it was given; a
 /// plugin's own fact through `kawoosh.fact` gates a command the same
 /// way; and a Lua command with no word for `!` is refused before it
@@ -391,26 +426,26 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
 
     // Off a listing: refused with the reason, nothing moved.
     d.keys(&mut app, " cd");
-    assert_eq!(app.ed.message, "oil cd needs language:oil");
+    assert_eq!(app.ed.message, "dir cd needs language:dir");
     assert_eq!(app.cwd, cwd);
-    ex(&mut d, &mut app, "oil cd");
-    assert_eq!(app.ed.message, "oil cd needs language:oil");
-    ex(&mut d, &mut app, "oil?");
+    ex(&mut d, &mut app, "dir cd");
+    assert_eq!(app.ed.message, "dir cd needs language:dir");
+    ex(&mut d, &mut app, "dir?");
     assert_eq!(app.ed.message, "no listing here");
     app.run_lua_source(
         "t",
         r#"
-        assert(kawoosh.can("oil cd") == "oil cd needs language:oil", tostring(kawoosh.can("oil cd")))
-        assert(kawoosh.can("oil") == true)
+        assert(kawoosh.can("dir cd") == "dir cd needs language:dir", tostring(kawoosh.can("dir cd")))
+        assert(kawoosh.can("dir") == true)
         local found
         for _, c in ipairs(kawoosh.commands()) do
-          if c.name == "oil cd" then found = c end
+          if c.name == "dir cd" then found = c end
         end
-        assert(found, "oil cd is listed")
-        assert(found.when[1] == "language:oil", found.when[1])
+        assert(found, "dir cd is listed")
+        assert(found.when[1] == "language:dir", found.when[1])
         assert(found.doc ~= "", "documented")
         for _, c in ipairs(kawoosh.commands()) do
-          if c.name == "oil" then
+          if c.name == "dir" then
             assert(c.query == "say which directory is listed", tostring(c.query))
             assert(c.args[1] == "path")
           end
@@ -422,11 +457,11 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
     assert_eq!(app.ed.message, "checked");
 
     // `<CR>` off a listing is `goto_location`, the older binding with
-    // a `when` of its own that the gated `oil_enter` falls through to:
-    // on a `path:line` it opens the file; `oil_enter` itself is refused.
+    // a `when` of its own that the gated `dir_enter` falls through to:
+    // on a `path:line` it opens the file; `dir_enter` itself is refused.
     app.run_lua_source(
         "t",
-        r#"assert(kawoosh.can("oil_enter") == "oil_enter needs language:oil")"#,
+        r#"assert(kawoosh.can("dir_enter") == "dir_enter needs language:dir")"#,
     );
     ex(&mut d, &mut app, "enew");
     d.keys(&mut app, &format!("i{}:1", file.display()));
@@ -447,12 +482,12 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
     // In a listing: clear, `<CR>` opens the entry, and the working
     // directory follows `<leader>cd`.
     d.keys(&mut app, "-");
-    ex(&mut d, &mut app, "oil?");
+    ex(&mut d, &mut app, "dir?");
     assert_eq!(
         app.ed.message,
-        format!("oil: {}", dir.join("inner").display())
+        format!("dir: {}", dir.join("inner").display())
     );
-    app.run_lua_source("t", r#"assert(kawoosh.can("oil cd") == true)"#);
+    app.run_lua_source("t", r#"assert(kawoosh.can("dir cd") == true)"#);
     d.keys(&mut app, "j");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
@@ -696,4 +731,327 @@ fn a_language_from_lua_names_its_files_and_warns_of_a_missing_grammar() {
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
+/// A listing's entries carry what they are past their lines
+/// (`kawoosh.buf.annotate`): a file's size and its mtime, a directory's
+/// mtime alone, none on `../` — drawn under `Role::None`, so the rows'
+/// text is the names alone. An annotation follows its line: one typed
+/// above moves it down, the line deleted takes it away, undo brings it
+/// back. `<C-l>` reads the directory again with the caret on its entry,
+/// refused while the listing has edits unless `!` drops them.
+#[test]
+fn a_listing_is_annotated_and_refreshed() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-dirmeta-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("a.txt"), "alpha").unwrap();
+    std::fs::write(dir.join("b.txt"), vec![b'x'; 2048]).unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);
+    // The columns are padded with no-break spaces, which fonts keep.
+    let extras = |d: &Drive| -> Vec<String> {
+        d.row_extras()
+            .iter()
+            .map(|s| s.replace('\u{a0}', " "))
+            .collect()
+    };
+    let e = extras(&d);
+    assert_eq!(e[0], "", "nothing on ../");
+    assert!(e[2].contains(" 5 B  20"), "{e:?}");
+    assert!(e[3].contains(" 2.0 KB  20"), "{e:?}");
+    let date = e[1].trim();
+    assert!(
+        date.len() == 16 && date.as_bytes()[4] == b'-' && date.as_bytes()[10] == b' ',
+        "the mtime alone on a directory: {e:?}"
+    );
+    // A line typed above: the annotations move with their entries.
+    d.keys(&mut app, "ggOnew.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["new.txt", "../", "sub/", "a.txt", "b.txt"]);
+    let e = extras(&d);
+    assert_eq!(e[0], "", "the new line has none");
+    assert!(e[3].contains(" 5 B"), "{e:?}");
+    // The entry's line deleted: its annotation is gone, and stays gone
+    // when the deletion is undone — the journal cannot tell an undo
+    // from a line typed where it was — until the directory is listed
+    // again; the entries around it keep theirs. Retyped whole, a line
+    // keeps its annotation.
+    d.keys(&mut app, "jjjdd");
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["new.txt", "../", "sub/", "b.txt"]);
+    let e = extras(&d);
+    assert!(!e.iter().any(|x| x.contains(" 5 B")), "{e:?}");
+    assert!(e[3].contains(" 2.0 KB"), "{e:?}");
+    d.keys(&mut app, "u");
+    d.frame(&mut app);
+    let e = extras(&d);
+    assert!(!e.iter().any(|x| x.contains(" 5 B")), "{e:?}");
+    assert!(e[4].contains(" 2.0 KB"), "{e:?}");
+    d.keys(&mut app, "ggjjjjccrenamed.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        d.line_rows(),
+        ["new.txt", "../", "sub/", "a.txt", "renamed.txt"]
+    );
+    assert!(extras(&d)[4].contains(" 2.0 KB"), "{:?}", extras(&d));
+    d.keys(&mut app, "u");
+    // Refresh: refused with edits, `!` drops them; a file made behind
+    // the listing's back appears, the caret still on its entry.
+    d.keys(&mut app, "jjjj");
+    d.ctrl(&mut app, "l");
+    assert!(
+        app.ed.message.starts_with("the listing has edits"),
+        "{}",
+        app.ed.message
+    );
+    std::fs::write(dir.join("c.txt"), "").unwrap();
+    ex(&mut d, &mut app, "dir refresh!");
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt", "c.txt"]);
+    let v = app.focused_view().unwrap();
+    assert_eq!(
+        app.ed
+            .buffer_of(v)
+            .line_of(app.ed.views[v].sels.primary().head),
+        3,
+        "on b.txt still"
+    );
+    assert!(!app.ed.buffer_of(v).modified);
+    std::fs::remove_file(dir.join("c.txt")).unwrap();
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(app.ed.message, "");
+    d.ctrl(&mut app, "l");
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);
+    assert_eq!(app.ed.message, "", "not refused");
+    // The write's tracking follows the same identity: a line opened
+    // above an entry is a create, not the entry renamed; an entry
+    // deleted and undone is itself (a delete and a create of one name
+    // are no change), and the one below it is not it.
+    d.keys(&mut app, "ggjjOnew.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "jjddu");
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..],
+        ["create new.txt", "Apply", "Cancel"]
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "dir refresh!");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A path argument's `%` is the view's file (`%:h` its directory,
+/// `%:t` its name), resolved by the engine for every command that
+/// declares a path — `:dir %` lists the file's directory with the
+/// caret on it, `:cd %:h` moves there — and refused where there is no
+/// file. `:dir FILE` lists the file's directory the same way.
+#[test]
+fn a_path_argument_knows_the_current_file() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-pct-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("inner")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("inner/a.txt"), "1").unwrap();
+    std::fs::write(dir.join("inner/f.txt"), "x").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&dir.join("inner/f.txt"));
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    let line = |app: &Kawoosh| {
+        let v = app.focused_view().unwrap();
+        app.ed
+            .buffer_of(v)
+            .line_of(app.ed.views[v].sels.primary().head)
+    };
+    ex(&mut d, &mut app, "dir %");
+    assert_eq!(d.line_rows(), ["../", "a.txt", "f.txt"]);
+    assert_eq!(line(&app), 2, "on the file");
+    ex(&mut d, &mut app, "dir %");
+    assert_eq!(app.ed.message, "no file for %", "a listing is not a file");
+    d.keys(&mut app, "j");
+    d.key(&mut app, "enter", KeyMods::default());
+    ex(&mut d, &mut app, "cd %:h");
+    assert_eq!(app.cwd, dir.join("inner"));
+    ex(&mut d, &mut app, "dir %:h");
+    assert_eq!(d.line_rows(), ["../", "a.txt", "f.txt"]);
+    assert_eq!(line(&app), 0);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("inner/f.txt").display()),
+    );
+    assert_eq!(line(&app), 2, "a file's path lists its directory, on it");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `<C-p>` in a listing opens a preview beside it — the keyboard stays
+/// in the listing — showing the entry under the caret: its path, its
+/// size and mtime, its first lines; `j` moves it to the next entry, a
+/// directory shows its names; `<C-p>` again closes it, and `q` in the
+/// preview pane does too.
+#[test]
+fn a_listing_previews_the_entry_under_the_caret() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-preview-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("sub/inside.txt"), "").unwrap();
+    std::fs::write(dir.join("a.txt"), "alpha\nbeta\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "gamma\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    d.keys(&mut app, "jj");
+    d.ctrl(&mut app, "p");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(app.layout.visible_panes().len(), 2, "a preview pane");
+    assert!(
+        matches!(app.layout.focused_content(), Some(Content::Editor(_))),
+        "the keyboard stays in the listing"
+    );
+    let texts = |d: &Drive| -> Vec<String> {
+        d.core
+            .nodes()
+            .iter()
+            .filter_map(|n| n.text.clone())
+            .collect()
+    };
+    // The node listing cuts a long text: the path's start is enough.
+    let t = texts(&d);
+    let path = dir.join("a.txt").display().to_string();
+    assert!(
+        t.iter().any(|s| s.starts_with(&path[..path.len().min(40)])),
+        "{t:?}"
+    );
+    assert!(t.iter().any(|s| s.starts_with("11 B")), "{t:?}");
+    assert!(t.contains(&"alpha".to_string()) && t.contains(&"beta".to_string()));
+    d.keys(&mut app, "j");
+    d.frame(&mut app);
+    let t = texts(&d);
+    assert!(
+        t.contains(&"gamma".to_string()) && !t.contains(&"alpha".to_string()),
+        "{t:?}"
+    );
+    d.keys(&mut app, "gg");
+    d.keys(&mut app, "j");
+    d.frame(&mut app);
+    let t = texts(&d);
+    assert!(
+        t.iter().any(|s| s.starts_with("directory")) && t.contains(&"inside.txt".to_string()),
+        "{t:?}"
+    );
+    d.ctrl(&mut app, "p");
+    d.frame(&mut app);
+    assert_eq!(app.layout.visible_panes().len(), 1, "closed again");
+    d.ctrl(&mut app, "p");
+    d.frame(&mut app);
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "l");
+    assert!(matches!(
+        app.layout.focused_content(),
+        Some(Content::Lua(_))
+    ));
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    assert_eq!(app.layout.visible_panes().len(), 1, "q closed it");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `kawoosh.confirm`: one modal float with the keys — `<CR>` takes the
+/// default, a digit its action, `h`/`l` move, a click on a button
+/// answers, a press outside dismisses with none — and the editor under
+/// it gets no key until it is answered.
+#[test]
+fn a_plugin_asks_with_a_confirm() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "hello\n");
+    app.run_lua_source(
+        "init",
+        r#"
+        answered = "none"
+        function ask()
+          kawoosh.confirm {
+            title = "Really?",
+            lines = { "one", "two" },
+            actions = {
+              { label = "Yes", run = function() answered = "yes" end },
+              { label = "No", run = function() answered = "no" end },
+            },
+            default = 2,
+          }
+        end
+        kawoosh.command("ask", ask)
+        "#,
+    );
+    d.frame(&mut app);
+    let answered = |app: &mut Kawoosh| {
+        app.run_lua_source("t", "kawoosh.echo(answered)");
+        app.ed.message.clone()
+    };
+    ex(&mut d, &mut app, "ask");
+    d.frame(&mut app);
+    assert!(
+        app.confirm.is_some(),
+        "{} / {:?}",
+        app.ed.message,
+        app.ed.buffer_of(app.focused_view().unwrap()).text()
+    );
+    assert_eq!(d.confirm_texts(), ["Really?", "one", "two", "Yes", "No"]);
+    // Keys under it do not reach the buffer.
+    d.keys(&mut app, "x");
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).text(),
+        "hello\n"
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(answered(&mut app), "no", "the default");
+    assert!(app.confirm.is_none());
+    ex(&mut d, &mut app, "ask");
+    d.keys(&mut app, "1");
+    assert_eq!(answered(&mut app), "yes");
+    ex(&mut d, &mut app, "ask");
+    d.keys(&mut app, "h");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(answered(&mut app), "yes", "moved to the first");
+    // A click on a button.
+    app.run_lua_source("t", "answered = 'none'");
+    ex(&mut d, &mut app, "ask");
+    d.frame(&mut app);
+    let no = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.text.as_deref() == Some("No"))
+        .expect("the button");
+    d.click(
+        &mut app,
+        no.rect.x + no.rect.w / 2.0,
+        no.rect.y + no.rect.h / 2.0,
+    );
+    assert_eq!(answered(&mut app), "no");
+    // A press outside: dismissed, nothing ran.
+    app.run_lua_source("t", "answered = 'none'");
+    ex(&mut d, &mut app, "ask");
+    d.frame(&mut app);
+    d.click(&mut app, 30.0, 60.0);
+    d.frame(&mut app);
+    assert!(app.confirm.is_none(), "dismissed");
+    assert_eq!(answered(&mut app), "none");
+    d.keys(&mut app, "x");
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).text(),
+        "ello\n",
+        "the keys are the editor's again"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
 }

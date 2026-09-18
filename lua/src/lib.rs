@@ -25,7 +25,7 @@ const BOOT: &str = include_str!("../lua/boot.lua");
 pub enum Msg {
     /// A command and its spec (`kawoosh.command(name, fn, { args = {
     /// "path", "text..." }, aliases = {...}, bang = "...", query =
-    /// "...", when = { "language:oil" }, doc = "..." })`).
+    /// "...", when = { "language:dir" }, doc = "..." })`).
     RegisterCommand(Spec),
     /// `kawoosh.fact(name, on)`: a plugin's word on what holds, for a
     /// `when`.
@@ -80,7 +80,40 @@ pub enum Msg {
         /// The line (from 1) to put the caret on.
         line: Option<usize>,
     },
-    OpenView(String),
+    /// `kawoosh.view_open(name, { focus = })`: the view in a split, or
+    /// its pane focused; `focus = false` leaves the keyboard where it
+    /// is (a preview beside a listing).
+    OpenView {
+        name: String,
+        focus: bool,
+    },
+    /// `kawoosh.view_close(name)`: the pane showing the view goes.
+    CloseView(String),
+    /// `kawoosh.view_toggle(name, { focus = })`: the view's pane closed
+    /// when it is on show, opened in a split when it is not.
+    ToggleView {
+        name: String,
+        focus: bool,
+    },
+    /// `kawoosh.confirm { title, lines, actions, default }`: a question
+    /// over the window, its actions as `(label, command)` like a
+    /// toast's, `default` the one `<CR>` takes (from 0).
+    Confirm {
+        title: String,
+        lines: Vec<String>,
+        actions: Vec<(String, String)>,
+        default: usize,
+    },
+    /// `kawoosh.buf.annotate(lines, buffer)`: text after a line's end
+    /// that is not the buffer's — what an entry is, beside its name —
+    /// by line (from 1), replacing the buffer's. The buffer by handle,
+    /// by name (a scratch just asked for, not yet in the snapshot), or
+    /// the current one.
+    Annotate {
+        buffer: Option<u64>,
+        name: Option<String>,
+        lines: Vec<(usize, String)>,
+    },
     Tool {
         name: String,
         cmd: String,
@@ -222,7 +255,7 @@ pub fn id_of(handle: u64) -> BufferId {
 }
 
 /// A buffer's lines as they were when tracking began.
-type Tracked = (kawoosh_doc::Version, Vec<std::ops::Range<usize>>);
+type Tracked = (kawoosh_doc::Version, Vec<kawoosh_doc::LineAnchor>);
 
 pub struct Runtime {
     lua: Lua,
@@ -327,8 +360,8 @@ impl Runtime {
     /// or unchanged — however the text was edited in between.
     pub fn track_lines(&self, ed: &Editor, id: BufferId) {
         let Some(b) = ed.buffers.get(id) else { return };
-        let ranges = (0..b.line_count()).map(|ln| b.line_range(ln)).collect();
-        self.tracked.borrow_mut().insert(id, (b.version(), ranges));
+        let anchors = (0..b.line_count()).map(|ln| b.line_anchor(ln)).collect();
+        self.tracked.borrow_mut().insert(id, (b.version(), anchors));
     }
 
     /// The snapshot Lua reads from, refreshed before every call in.
@@ -336,19 +369,19 @@ impl Runtime {
         let mut p = self.published.borrow_mut();
         p.buffers.clear();
         p.tracked.clear();
-        for (id, (version, ranges)) in self.tracked.borrow().iter() {
+        for (id, (version, anchors)) in self.tracked.borrow().iter() {
             let Some(b) = ed.buffers.get(*id) else {
                 continue;
             };
-            let lines = ranges
+            let lines = anchors
                 .iter()
-                .map(|r| {
-                    // The line's scope carried forward: what was typed at
-                    // its edges is its own, up to the next newline.
-                    let now = b.journal().clamp_range(r.clone(), *version).ok()?;
-                    let text = b.slice(now);
-                    let first = text.split('\n').next().unwrap_or("").to_string();
-                    (!first.is_empty()).then_some(first)
+                .map(|a| {
+                    // The line it became (`Buffer::line_now`): what was
+                    // typed at its edges is its own, a line opened
+                    // above or below is not.
+                    let ln = b.line_now(a, *version)?;
+                    let text = b.line_text(ln);
+                    (!text.is_empty()).then_some(text)
                 })
                 .collect();
             p.tracked.insert(handle_of(*id), lines);
@@ -459,21 +492,28 @@ impl Runtime {
         }
     }
 
-    /// Hands a hooked scratch buffer's lines to its `on_write`.
-    pub fn write_hook(&self, name: &str, text: &str) {
+    /// Hands a hooked scratch buffer's lines to its `on_write`. False
+    /// when the hook said `false` — the write is not done yet (a
+    /// confirm is up), so the buffer stays modified.
+    pub fn write_hook(&self, name: &str, text: &str) -> bool {
         let Ok(f) = self
             .lua
             .globals()
             .get::<Table>("kawoosh")
             .and_then(|k| k.get::<mlua::Function>("_write"))
         else {
-            return;
+            return true;
         };
         let lines: Vec<String> = text.lines().map(str::to_string).collect();
-        if let Err(e) = f.call::<()>((name, lines)) {
-            self.queue
-                .borrow_mut()
-                .push(Msg::Echo(format!("{name}: {e}")));
+        match f.call::<LV>((name, lines)) {
+            Ok(LV::Boolean(false)) => false,
+            Ok(_) => true,
+            Err(e) => {
+                self.queue
+                    .borrow_mut()
+                    .push(Msg::Echo(format!("{name}: {e}")));
+                true
+            }
         }
     }
 
@@ -805,12 +845,60 @@ fn seed(
         })?,
     )?;
     let qq = q(queue);
+    fn focus_opt(opts: Option<Table>) -> bool {
+        opts.and_then(|t| t.get::<Option<bool>>("focus").ok().flatten())
+            .unwrap_or(true)
+    }
     k.set(
         "view_open",
-        lua.create_function(move |_, name: String| {
-            qq.borrow_mut().push(Msg::OpenView(name));
+        lua.create_function(move |_, (name, opts): (String, Option<Table>)| {
+            qq.borrow_mut().push(Msg::OpenView {
+                name,
+                focus: focus_opt(opts),
+            });
             Ok(())
         })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "view_close",
+        lua.create_function(move |_, name: String| {
+            qq.borrow_mut().push(Msg::CloseView(name));
+            Ok(())
+        })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "view_toggle",
+        lua.create_function(move |_, (name, opts): (String, Option<Table>)| {
+            qq.borrow_mut().push(Msg::ToggleView {
+                name,
+                focus: focus_opt(opts),
+            });
+            Ok(())
+        })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "_confirm",
+        lua.create_function(
+            move |_,
+                  (title, lines, labels, commands, default): (
+                String,
+                Vec<String>,
+                Vec<String>,
+                Vec<String>,
+                Option<usize>,
+            )| {
+                qq.borrow_mut().push(Msg::Confirm {
+                    title,
+                    lines,
+                    actions: labels.into_iter().zip(commands).collect(),
+                    default: default.unwrap_or(1).saturating_sub(1),
+                });
+                Ok(())
+            },
+        )?,
     )?;
     let qq = q(queue);
     k.set(
@@ -1162,6 +1250,37 @@ fn seed(
             Ok(())
         })?,
     )?;
+    let qq = q(queue);
+    let pp = published.clone();
+    buf.set(
+        "annotate",
+        lua.create_function(move |_, (lines, which): (Table, LV)| {
+            let (buffer, name) = match which {
+                LV::String(s) => (None, Some(s.to_str()?.to_string())),
+                LV::Integer(n) => (Some(n as u64), None),
+                LV::Number(n) => (Some(n as u64), None),
+                _ => (
+                    Some(
+                        pp.borrow()
+                            .current
+                            .ok_or_else(|| mlua::Error::runtime("no current buffer"))?,
+                    ),
+                    None,
+                ),
+            };
+            let mut out = Vec::new();
+            for pair in lines.pairs::<usize, String>() {
+                let (ln, text) = pair?;
+                out.push((ln, text));
+            }
+            qq.borrow_mut().push(Msg::Annotate {
+                buffer,
+                name,
+                lines: out,
+            });
+            Ok(())
+        })?,
+    )?;
     k.set("buf", buf)?;
 
     // ---- fs: synchronous, for the file manager and any plugin that
@@ -1215,8 +1334,23 @@ fn seed(
                 et.set("name", e.name)?;
                 et.set("is_dir", e.is_dir)?;
                 et.set("is_symlink", e.is_symlink)?;
+                et.set("size", e.size)?;
+                et.set("modified", e.modified)?;
                 t.set(i + 1, et)?;
             }
+            Ok(t)
+        })?,
+    )?;
+    fs.set(
+        "stat",
+        lua.create_function(|lua, p: String| {
+            let st = kfs::stat(&expand(&p)).map_err(io_err)?;
+            let t = lua.create_table()?;
+            t.set("is_dir", st.is_dir)?;
+            t.set("is_file", st.is_file)?;
+            t.set("is_symlink", st.is_symlink)?;
+            t.set("size", st.size)?;
+            t.set("modified", st.modified)?;
             Ok(t)
         })?,
     )?;

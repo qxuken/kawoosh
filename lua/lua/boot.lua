@@ -15,7 +15,7 @@ kawoosh._nonce = 0
 
 -- kawoosh.command(name, fn[, opts]): a named command, callable from a
 -- keymap, the command line, or Rust. A name of two words is a
--- subcommand (`"oil cd"` runs as `:oil cd`, completes under `:oil`).
+-- subcommand (`"dir cd"` runs as `:dir cd`, completes under `:dir`).
 -- `fn(ctx)` gets { count = n, args = {...}, form = "run" | "bang" |
 -- "query", bang = bool, query = bool }. `opts`:
 --   args    what the arguments are, one kind per position — "path",
@@ -26,7 +26,7 @@ kawoosh._nonce = 0
 --   aliases the ex spellings, `{ "o" }`.
 --   bang    a line on what `!` means; without one `:name!` is refused.
 --   query   the same for `?`.
---   when    facts that must hold, `{ "language:oil", "!terminal" }` —
+--   when    facts that must hold, `{ "language:dir", "!terminal" }` —
 --           the engine's `visual`, `modified`, `file`, `buffer:NAME`,
 --           `language:NAME`, `field` (a one-line input has the keys:
 --           the command line, a pane's query), `field:NAME`, `prompt`
@@ -66,8 +66,8 @@ end
 -- args, as the command line would spell it) or a function, which
 -- becomes one. A key can be bound more than once: the newest binding
 -- whose `opts.when` holds and whose command can run is the one that
--- runs, so `map("n", "<CR>", "goto location", { when = { "!language:oil" } })`
--- and then `map("n", "<CR>", "oil enter")` (a command gated on the
+-- runs, so `map("n", "<CR>", "goto location", { when = { "!language:dir" } })`
+-- and then `map("n", "<CR>", "dir enter")` (a command gated on the
 -- listing) make one key do the right thing in each place. A binding
 -- with no `when` on a command with none shadows the older ones.
 function kawoosh.map(mode, keys, cmd, opts)
@@ -78,6 +78,25 @@ function kawoosh.map(mode, keys, cmd, opts)
     cmd = name
   end
   kawoosh._map(mode, keys, cmd, opts and opts.when or nil)
+end
+
+-- A list of actions — `{ label = "Retry", run = fn }`, or `run =
+-- "command line"` — as the labels and the commands they run, a
+-- function made a command under `prefix`.
+local function actions_of(list, prefix)
+  local labels, commands = {}, {}
+  for i, a in ipairs(list or {}) do
+    local cmd = a.run or a.command or a[2]
+    if type(cmd) == "function" then
+      kawoosh._nonce = kawoosh._nonce + 1
+      local name = prefix .. kawoosh._nonce
+      kawoosh.command(name, cmd)
+      cmd = name
+    end
+    labels[i] = tostring(a.label or a[1] or ("action " .. i))
+    commands[i] = tostring(cmd or "")
+  end
+  return labels, commands
 end
 
 -- kawoosh.notify(text[, opts]): a notification. `opts` is a level name
@@ -91,21 +110,25 @@ end
 function kawoosh.notify(text, opts)
   if type(opts) == "string" then opts = { level = opts } end
   opts = opts or {}
-  local labels, commands = {}, {}
-  for i, a in ipairs(opts.actions or {}) do
-    local cmd = a.run or a.command or a[2]
-    if type(cmd) == "function" then
-      kawoosh._nonce = kawoosh._nonce + 1
-      local name = "lua.notify." .. kawoosh._nonce
-      kawoosh.command(name, cmd)
-      cmd = name
-    end
-    labels[i] = tostring(a.label or a[1] or ("action " .. i))
-    commands[i] = tostring(cmd or "")
-  end
+  local labels, commands = actions_of(opts.actions, "lua.notify.")
   local timeout = opts.timeout
   if timeout == false then timeout = 0 end
   kawoosh._notify(tostring(text), opts.level, opts.source, opts.show, timeout, labels, commands)
+end
+
+-- kawoosh.confirm{ title=, lines=, actions=, default= }: a question the
+-- user answers before anything happens — one modal float over the
+-- window with the keys on it. `title` is the question, `lines` what
+-- would happen (one each, shown in mono), `actions` a list as
+-- notify's — the first is what `<CR>` and `y` take unless `default`
+-- names another (from 1); `h` `l` `<Tab>` move between them, a digit
+-- takes that one, and `<Esc>`, `n`, `q` or a press outside answer
+-- with none. An action without `run` is a plain "no".
+function kawoosh.confirm(opts)
+  local labels, commands = actions_of(opts.actions, "lua.confirm.")
+  local lines = {}
+  for i, l in ipairs(opts.lines or {}) do lines[i] = tostring(l) end
+  kawoosh._confirm(tostring(opts.title or "?"), lines, labels, commands, opts.default)
 end
 
 -- kawoosh.view(name, fn[, on_event]): a pane whose content is what `fn`
@@ -119,10 +142,26 @@ end
 
 -- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, read_only=bool,
 -- language=, reuse=handle, line=n }: a buffer that is not a file.
--- `on_write(lines)` handles :w. A buffer named `name` already open is
+-- `on_write(lines)` handles :w; it returns `false` when the write is
+-- not done yet (a `kawoosh.confirm` is up), and the buffer stays
+-- modified until it is. A buffer named `name` already open is
 -- refilled; else `reuse`, a scratch buffer's handle, is renamed and
 -- refilled instead of a new buffer being made beside it; `line` is
 -- where the caret goes (from 1).
+--
+-- kawoosh.buf.annotate(lines[, buffer]): text after a line's end that
+-- is not the buffer's — what an entry is, beside its name — `{ [n] =
+-- "text" }` by line from 1, drawn dim past the line and never in its
+-- bytes; it replaces the buffer's, and follows its line through edits
+-- (a line typed above moves it down, its line deleted takes it away).
+-- `buffer` is a handle, a name (a scratch just asked for by
+-- `open_scratch`, which is not in the snapshot yet), or the current
+-- one. Spaces in it are `\u{A0}`, which every font keeps.
+--
+-- kawoosh.view_open(name[, { focus = false }]) puts a Lua view in a
+-- split, or focuses its pane — `focus = false` leaves the keyboard
+-- where it is; kawoosh.view_close(name) closes that pane;
+-- kawoosh.view_toggle(name[, opts]) does one or the other.
 function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
   kawoosh._open_scratch(t.name, t.text or "", t.on_write ~= nil, t.read_only or false, t.language,
@@ -311,10 +350,15 @@ function kawoosh._run(name, ctx)
   if not ok then kawoosh.echo("command `" .. name .. "`: " .. tostring(err)) end
 end
 
--- Called from Rust when a scratch buffer with an on_write is written.
+-- Called from Rust when a scratch buffer with an on_write is written:
+-- false when the hook said the write waits.
 function kawoosh._write(name, lines)
   local fn = kawoosh._writers[name]
-  if not fn then return end
-  local ok, err = pcall(fn, lines)
-  if not ok then kawoosh.echo("write `" .. name .. "`: " .. tostring(err)) end
+  if not fn then return true end
+  local ok, res = pcall(fn, lines)
+  if not ok then
+    kawoosh.echo("write `" .. name .. "`: " .. tostring(res))
+    return true
+  end
+  return res ~= false
 end

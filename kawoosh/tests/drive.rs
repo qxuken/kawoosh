@@ -155,8 +155,20 @@ impl Drive {
 
     /// The text of every row under every node labelled `lines` in the
     /// last frame, pane by pane, top to bottom, runs joined — one
-    /// document line each.
+    /// document line each. What is drawn on the row but is not the
+    /// line's — a `Role::None` box: an annotation, a diagnostic's
+    /// message, the completion ghost — is left out; `row_extras` has it.
     pub fn line_rows(&self) -> Vec<String> {
+        self.rows().into_iter().map(|(line, _)| line).collect()
+    }
+
+    /// Each drawn row's text after its line — annotations, a
+    /// diagnostic's message — under `Role::None`, joined.
+    pub fn row_extras(&self) -> Vec<String> {
+        self.rows().into_iter().map(|(_, extra)| extra).collect()
+    }
+
+    fn rows(&self) -> Vec<(String, String)> {
         let nodes = self.core.nodes();
         let mut out = Vec::new();
         for lines in nodes.iter().filter(|n| n.label.as_deref() == Some("lines")) {
@@ -164,15 +176,26 @@ impl Drive {
             while i < nodes.len() {
                 if nodes[i].parent == Some(lines.key) {
                     let depth = nodes[i].depth;
-                    let mut s = String::new();
+                    let (mut line, mut extra) = (String::new(), String::new());
                     let mut j = i + 1;
                     while j < nodes.len() && nodes[j].depth > depth {
+                        if nodes[j].role == Some(kui::Role::None) {
+                            let d = nodes[j].depth;
+                            j += 1;
+                            while j < nodes.len() && nodes[j].depth > d {
+                                if let Some(t) = &nodes[j].text {
+                                    extra.push_str(t);
+                                }
+                                j += 1;
+                            }
+                            continue;
+                        }
                         if let Some(t) = &nodes[j].text {
-                            s.push_str(t);
+                            line.push_str(t);
                         }
                         j += 1;
                     }
-                    out.push(s);
+                    out.push((line, extra));
                     i = j;
                 } else {
                     i += 1;
@@ -180,6 +203,23 @@ impl Drive {
             }
         }
         out
+    }
+
+    /// The text nodes of the confirm float, top to bottom: the title,
+    /// the lines, the buttons; none when no confirm is up.
+    pub fn confirm_texts(&self) -> Vec<String> {
+        let nodes = self.core.nodes();
+        let Some(at) = nodes
+            .iter()
+            .position(|n| n.label.as_deref() == Some("confirm"))
+        else {
+            return Vec::new();
+        };
+        nodes[at + 1..]
+            .iter()
+            .take_while(|n| n.depth > nodes[at].depth)
+            .filter_map(|n| n.text.clone())
+            .collect()
     }
 
     /// The text nodes drawn in the notification floats (`notify.rs`) —

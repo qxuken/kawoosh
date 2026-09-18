@@ -134,7 +134,7 @@ pub enum Kind {
 /// What an argument of a command is, declared with the command. The
 /// engine resolves a `Path` — `~/x`, `../y`, against the working
 /// directory — before any command sees it, whoever registered the
-/// command: the engine's `:w`, the shell's `:cd`, a plugin's `:oil`.
+/// command: the engine's `:w`, the shell's `:cd`, a plugin's `:dir`.
 /// The command line completes each kind from what it names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArgKind {
@@ -247,7 +247,7 @@ impl Args {
 
 /// One condition of a command's `when`: a fact that must hold, or with
 /// `!`, must not. A fact is a name — `store`, `terminal`, `lsp`,
-/// `modified`, `language:oil`, `field`, `field:cmdline`, `prompt` —
+/// `modified`, `language:dir`, `field`, `field:cmdline`, `prompt` —
 /// that the engine answers from the view ([`Editor::holds`]) or that
 /// the shell or a plugin published ([`Editor::fact`]). Written
 /// `"terminal"` / `"!terminal"`.

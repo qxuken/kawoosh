@@ -61,7 +61,7 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
     let all = names(&app);
     assert!(all.contains(&"buffer delete".to_string()));
     assert!(all.contains(&"history drop".to_string()));
-    assert!(all.contains(&"oil cd".to_string()));
+    assert!(all.contains(&"dir cd".to_string()));
     assert!(all.windows(2).all(|w| w[0] <= w[1]), "sorted");
     let t = texts(&d);
     assert!(
@@ -70,19 +70,26 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
     );
     assert!(t.contains(&":bd".to_string()), "an alias beside the name");
     // The row says what a command needs where the keyboard came from
-    // — a scratch is no oil listing, and there is no store.
-    d.keys(&mut app, "oil");
+    // — a scratch is no dir listing, and there is no store.
+    d.keys(&mut app, "dir");
     d.frame(&mut app);
-    assert_eq!(names(&app), ["oil", "oil cd", "oil enter"]);
+    let n = names(&app);
+    assert_eq!(
+        n.iter()
+            .filter(|s| s.starts_with("dir"))
+            .collect::<Vec<_>>(),
+        ["dir", "dir cd", "dir enter", "dir preview", "dir refresh"],
+        "{n:?}"
+    );
     let t = texts(&d);
     assert!(
-        t.contains(&"oil cd needs language:oil".to_string()),
+        t.contains(&"dir cd needs language:dir".to_string()),
         "{t:?}"
     );
-    assert!(t.contains(&"oil enter needs language:oil".to_string()));
+    assert!(t.contains(&"dir enter needs language:dir".to_string()));
     assert!(
         t.contains(&"n <leader>cd".to_string()),
-        "the key bound to oil cd"
+        "the key bound to dir cd"
     );
     d.ctrl(&mut app, "u");
     d.keys(&mut app, "history");
@@ -115,7 +122,7 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
     d.frame(&mut app);
     let n = names(&app);
     assert_eq!(n[0], "cd", "the name's start comes first");
-    assert!(n.contains(&"oil cd".to_string()), "{n:?}");
+    assert!(n.contains(&"dir cd".to_string()), "{n:?}");
     // A word from a doc — typed after `<Esc>D` cleared the line as the
     // editor would, then `i` back to insert.
     d.key(&mut app, "escape", KeyMods::default());

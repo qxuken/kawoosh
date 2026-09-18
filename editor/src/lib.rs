@@ -942,20 +942,65 @@ impl Editor {
     }
 
     /// `args` with every `Path` the command declares made absolute
-    /// against the working directory (`~`, `..`; `kawoosh_doc::paths`).
-    pub fn resolve_args(&self, name: &str, args: &[String]) -> Vec<String> {
+    /// against the working directory (`~`, `..`; `kawoosh_doc::paths`),
+    /// `%` first made the view's file (vim's: `%` the path, `%:h` its
+    /// directory, `%:t` its name, and the rest of the argument after —
+    /// `%:h/other.rs`). An error is the message: `%` where there is no
+    /// file.
+    pub fn resolve_args(
+        &self,
+        view: ViewId,
+        name: &str,
+        args: &[String],
+    ) -> Result<Vec<String>, String> {
         let Some(spec) = self.command_args(name) else {
-            return args.to_vec();
+            return Ok(args.to_vec());
         };
         args.iter()
             .enumerate()
             .map(|(i, a)| match spec.kind_at(i) {
-                Some(ArgKind::Path) => kawoosh_doc::paths::expand(Path::new(a), &self.cwd)
-                    .display()
-                    .to_string(),
-                _ => a.clone(),
+                Some(ArgKind::Path) => {
+                    let a = self.context_path(view, a)?;
+                    Ok(kawoosh_doc::paths::expand(Path::new(&a), &self.cwd)
+                        .display()
+                        .to_string())
+                }
+                _ => Ok(a.clone()),
             })
             .collect()
+    }
+
+    /// A path argument's `%` — the view's file — with a modifier and
+    /// the rest of the argument; any other argument as it is.
+    fn context_path(&self, view: ViewId, arg: &str) -> Result<String, String> {
+        let Some(rest) = arg.strip_prefix('%') else {
+            return Ok(arg.to_string());
+        };
+        let path = self
+            .views
+            .get(view)
+            .and_then(|v| self.buffers.get(v.buffer))
+            .and_then(|b| b.path.clone())
+            .ok_or_else(|| "no file for %".to_string())?;
+        let (path, rest) = if let Some(r) = rest.strip_prefix(":h") {
+            (
+                path.parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .map(Path::to_path_buf)
+                    .unwrap_or(path.clone()),
+                r,
+            )
+        } else if let Some(r) = rest.strip_prefix(":t") {
+            (
+                path.file_name()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or(path.clone()),
+                r,
+            )
+        } else {
+            (path, rest)
+        };
+        Ok(format!("{}{rest}", path.display()))
     }
 
     pub fn register_with_char(&mut self, name: &str, run: impl Fn(&mut Editor, &Ctx) + 'static) {
@@ -1101,12 +1146,20 @@ impl Editor {
             self.message = reason;
             return;
         }
+        let args = match self.resolve_args(view, &inv.name, &inv.args) {
+            Ok(a) => a,
+            Err(reason) => {
+                self.pending_op = None;
+                self.message = reason;
+                return;
+            }
+        };
         let ctx = Ctx {
             view,
             count: count.unwrap_or(1).max(1),
             has_count: count.is_some(),
             form: inv.form,
-            args: self.resolve_args(&inv.name, &inv.args),
+            args,
             arg_char: None,
         };
         let Some(cmd) = self.commands.body(&inv.name) else {
