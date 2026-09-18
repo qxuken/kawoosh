@@ -532,6 +532,15 @@ fn a_lua_view_has_fields_with_modes() {
         "#,
     );
     d.frame(&mut app);
+    // Focused before it is ever drawn: the field opens for it.
+    app.run_lua_source("t", r#"kawoosh.field_focus("finder", "q")"#);
+    d.frame(&mut app);
+    assert!(
+        app.ed.find_field("lua:finder/q").is_some(),
+        "opened by the focus"
+    );
+    app.run_lua_source("t", r#"kawoosh.field_focus("finder", nil)"#);
+    d.frame(&mut app);
     ex(&mut d, &mut app, "view finder");
     d.frame(&mut app);
     d.frame(&mut app);

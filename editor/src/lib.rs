@@ -1527,12 +1527,11 @@ impl Editor {
 
     // ------------------------------------------------------------ dispatch
 
-    /// A key press. Returns true when the key was consumed by a binding
-    /// or a prompt; false when nothing was bound.
-    /// A key on `view`. While the prompt is open it has the keyboard:
-    /// a key sent to any other view goes to the prompt's field — the
-    /// shell sends keys to the pane it focuses, and the prompt is not
-    /// a pane.
+    /// A key on `view`: true when a binding or the prompt took it,
+    /// false when nothing was bound. While the prompt is open it has
+    /// the keyboard: a key sent to any other view goes to the prompt's
+    /// field — the shell sends keys to the pane it focuses, and the
+    /// prompt is not a pane.
     pub fn key(&mut self, view: ViewId, stroke: KeyStroke) -> bool {
         let view = match self.prompt_view() {
             Some(p) if !self.is_field(view) => p,

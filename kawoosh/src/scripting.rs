@@ -326,7 +326,13 @@ impl Kawoosh {
                 }
             }
             Msg::FieldFocus { view, field } => {
-                let field = field.filter(|f| self.ed.find_field(f).is_some());
+                // A field focused before its first draw is opened here,
+                // as `field_set` opens one.
+                if let Some(f) = &field
+                    && self.ed.find_field(f).is_none()
+                {
+                    self.ed.open_field(f, "");
+                }
                 rt.set_field_focus(&view, field);
             }
             Msg::FieldSet { name, text } => {

@@ -155,6 +155,17 @@ fn diagnostics_definition_hover_and_completion() {
         app.lsp.completion.as_ref().unwrap().ghost("m").as_deref(),
         Some("ember_a")
     );
+    // The prompt's insert mode is not the buffer's: typing `:echo` asks
+    // the server for nothing and shows no candidates over the buffer.
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, ":echo hel");
+    for _ in 0..5 {
+        d.frame(&mut app);
+    }
+    assert!(
+        app.lsp.completion.is_none(),
+        "no completion while the prompt has the keys"
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
