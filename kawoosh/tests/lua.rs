@@ -499,3 +499,130 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
     assert_eq!(app.ed.message, dir.join("inner").display().to_string());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A Lua view's `ctx.field`: a one-line input that is the editor's
+/// field (kui.md Decision 12) drawn by `boot.lua` from the engine's
+/// data. A click on it takes the keys; typing lands in the field and
+/// the view reads it back with `ctx.field_text`; `<Esc>` is normal mode
+/// over the line — motions and operators work, the status says so —
+/// and `<Esc>` again hands the keys back to the view; a plugin can bind
+/// its own keys on the field (`when field:lua:<view>/<name>`) and set
+/// its line (`kawoosh.field_set`).
+#[test]
+fn a_lua_view_has_fields_with_modes() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "hello\n");
+    app.run_lua_source(
+        "init",
+        r#"
+        submitted = nil
+        kawoosh.view("finder", function(ctx)
+          return column { pad = 8, gap = 4,
+            ctx.field { name = "q", placeholder = "find a thing" },
+            text("typed: " .. ctx.field_text("q")),
+          }
+        end, function(ev)
+          if ev.kind == "key" and ev.key == "q" then kawoosh.cmd("close") end
+          if ev.kind == "key" and ev.key == "i" then kawoosh.field_focus("finder", "q") end
+        end)
+        kawoosh.command("finder submit", function()
+          submitted = kawoosh.field_text("finder", "q")
+        end, { when = { "field:lua:finder/q" } })
+        kawoosh.map("i", "<CR>", "finder submit", { when = { "field:lua:finder/q" } })
+        "#,
+    );
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "view finder");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let texts = |d: &Drive| -> Vec<String> {
+        d.core
+            .nodes()
+            .iter()
+            .filter_map(|n| n.text.clone())
+            .collect()
+    };
+    assert!(
+        texts(&d).contains(&"find a thing".to_string()),
+        "the placeholder: {:?}",
+        texts(&d)
+    );
+    assert!(texts(&d).contains(&"typed: ".to_string()));
+    // The view's own keys still reach its handler: `i` focuses the field.
+    d.keys(&mut app, "i");
+    d.frame(&mut app);
+    let field = app.ed.find_field("lua:finder/q").expect("the field opened");
+    assert_eq!(app.ed.mode(field), kawoosh_editor::Mode::Insert);
+    d.keys(&mut app, "hello world");
+    d.frame(&mut app);
+    assert!(
+        texts(&d).contains(&"typed: hello world".to_string()),
+        "{:?}",
+        texts(&d)
+    );
+    assert!(
+        !texts(&d).contains(&"find a thing".to_string()),
+        "no placeholder with text"
+    );
+    assert!(
+        texts(&d).iter().any(|t| t == "INS"),
+        "the field's mode in the status"
+    );
+    let bars = |d: &Drive| d.core.nodes().iter().filter(|n| n.rect.w == 2.0).count();
+    assert_eq!(bars(&d), 1, "a bar caret in insert mode, and only there");
+    // Normal mode over the line: `b` then `ciw`.
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(app.ed.mode(field), kawoosh_editor::Mode::Normal);
+    assert!(texts(&d).iter().any(|t| t == "NOR"));
+    assert_eq!(bars(&d), 0, "a block in normal mode, no bar");
+    d.keys(&mut app, "bciwthere");
+    d.frame(&mut app);
+    assert!(
+        texts(&d).contains(&"typed: hello there".to_string()),
+        "{:?}",
+        texts(&d)
+    );
+    // The plugin's own binding on the field.
+    d.key(&mut app, "enter", KeyMods::default());
+    app.run_lua_source(
+        "t",
+        r#"assert(submitted == "hello there", tostring(submitted))"#,
+    );
+    // `<Esc><Esc>`: back to the view, whose `q` closes the pane.
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert!(
+        app.lua_field_focused("finder").is_none(),
+        "the keys are the view's again"
+    );
+    assert!(
+        texts(&d).contains(&"typed: hello there".to_string()),
+        "the line stays"
+    );
+    // `kawoosh.field_set` from Lua, and a click on the field focuses it.
+    app.run_lua_source("t", r#"kawoosh.field_set("finder", "q", "set from lua")"#);
+    d.frame(&mut app);
+    assert!(
+        texts(&d).contains(&"typed: set from lua".to_string()),
+        "{:?}",
+        texts(&d)
+    );
+    let key = d
+        .core
+        .key_of("field:lua:finder/q")
+        .expect("the field's row");
+    let rect = d.core.nodes().iter().find(|n| n.key == key).unwrap().rect;
+    d.click(&mut app, rect.x + 4.0, rect.y + rect.h / 2.0);
+    d.frame(&mut app);
+    assert!(
+        app.lua_field_focused("finder").is_some(),
+        "a click takes the keys"
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "q");
+    assert_eq!(app.layout.visible_panes().len(), 1, "q closed the pane");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

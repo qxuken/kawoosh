@@ -320,6 +320,22 @@ impl Kawoosh {
             Msg::Chdir(p) => self.set_cwd(&p),
             // A fact needs no view: published even before there is one.
             Msg::Fact { name, on } => self.ed.fact(&name, on),
+            Msg::FieldOpen(name) => {
+                if self.ed.find_field(&name).is_none() {
+                    self.ed.open_field(&name, "");
+                }
+            }
+            Msg::FieldFocus { view, field } => {
+                let field = field.filter(|f| self.ed.find_field(f).is_some());
+                rt.set_field_focus(&view, field);
+            }
+            Msg::FieldSet { name, text } => {
+                let v = match self.ed.find_field(&name) {
+                    Some(v) => v,
+                    None => self.ed.open_field(&name, ""),
+                };
+                self.ed.set_field_text(v, &text);
+            }
             Msg::Edit { .. }
             | Msg::SetText { .. }
             | Msg::SetCursor { .. }
@@ -411,6 +427,16 @@ impl Kawoosh {
     /// A key in a focused Lua pane: the pane prefix, else the view's
     /// `on_event` as `{kind="key", ...}`.
     pub(crate) fn lua_pane_key(&mut self, name: &str, stroke: KeyStroke) {
+        // A field of the view with the keys: the editor's own — insert
+        // mode types, `<Esc>` is normal mode over the line, `<C-w>l` in
+        // it moves panes as everywhere — until `field blur` (`<Esc>` in
+        // normal mode) hands them back to the view.
+        if let Some(f) = self.lua_field_focused(name) {
+            self.ed.key(f, stroke);
+            self.drain_effects();
+            self.drain_lua();
+            return;
+        }
         let note = stroke.notation();
         if self.scripting.prefix {
             self.scripting.prefix = false;
@@ -453,6 +479,32 @@ impl Kawoosh {
             }
         }
         self.drain_lua();
+    }
+
+    /// The field the view `name`'s keys are on, if it has one and the
+    /// field is still open.
+    pub fn lua_field_focused(&self, name: &str) -> Option<ViewId> {
+        let rt = self.scripting.rt.as_ref()?;
+        let f = rt.field_focus(name)?;
+        self.ed.find_field(&f)
+    }
+
+    /// `field blur`: the keys back from the field `view` to the Lua
+    /// view that drew it (`lua:<view>/<name>`).
+    fn blur_lua_field(&mut self, view: ViewId) {
+        let Some(name) = self.ed.field_name(view) else {
+            return;
+        };
+        let Some(rest) = name.strip_prefix("lua:") else {
+            return;
+        };
+        let Some((owner, _)) = rest.rsplit_once('/') else {
+            return;
+        };
+        let owner = owner.to_string();
+        if let Some(rt) = &self.scripting.rt {
+            rt.set_field_focus(&owner, None);
+        }
     }
 
     pub(crate) fn render_lua_pane(
@@ -585,6 +637,12 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 Some(n) => k.open_lua_view(n),
                 None => k.ed.message = "view what?".into(),
             },
+        ),
+        cmd(
+            Spec::new("field blur")
+                .when(&["field", "!prompt", "!field:commands"])
+                .doc("the keys back from a view's field to the view"),
+            |k, ctx| k.blur_lua_field(ctx.view),
         ),
         cmd(
             Spec::new("lua")

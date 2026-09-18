@@ -18,7 +18,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use kawoosh_doc::{Buffer, BufferId};
-use kawoosh_editor::{ArgKind, Args, Binding, Command, Ctx, FnCommand, Mode, Prompt, Spec, ViewId};
+use kawoosh_editor::{
+    ArgKind, Args, Binding, Command, Cond, Ctx, FnCommand, Mode, Prompt, Spec, ViewId,
+};
 
 use crate::app::Kawoosh;
 use crate::layout::{Content, Drop, SplitDir};
@@ -72,6 +74,17 @@ impl Kawoosh {
         }
         crate::cmdline::bind(&mut self.ed.keymap);
         crate::commands_pane::bind(&mut self.ed.keymap);
+        // A view's field: `<Esc>` in normal mode hands the keys back.
+        self.ed.keymap.bind_when(
+            Mode::Normal,
+            "<Esc>",
+            "field blur",
+            &[
+                Cond::parse("field"),
+                Cond::parse("!prompt"),
+                Cond::parse("!field:commands"),
+            ],
+        );
     }
 
     /// Adds one shell command after start (a test's, a plugin's).
@@ -122,10 +135,10 @@ impl Kawoosh {
         self.ed
             .prompt_view()
             .or_else(|| self.focused_view())
-            .or_else(|| {
-                (self.layout.focused_content() == Some(Content::Commands))
-                    .then_some(self.commands_pane.field)
-                    .flatten()
+            .or_else(|| match self.layout.focused_content() {
+                Some(Content::Commands) => self.commands_pane.field,
+                Some(Content::Lua(name)) => self.lua_field_focused(&name),
+                _ => None,
             })
     }
 

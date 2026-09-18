@@ -109,6 +109,119 @@ function kawoosh.buf.open_scratch(t)
     t.reuse, t.line)
 end
 
+-- ---------------------------------------------------------------- fields
+
+-- The byte length of the character at byte `i` (1-based) of `s`.
+local function char_len(s, i)
+  local c = s:byte(i)
+  if not c then return 0 end
+  if c < 0x80 then return 1 elseif c < 0xE0 then return 2 elseif c < 0xF0 then return 3 else return 4 end
+end
+
+-- A view's field, drawn from the engine's: the text, the selection in
+-- visual mode, the caret — a bar on kui's blink in insert mode, a block
+-- in normal — and a placeholder while it is empty and off the keys.
+-- `full` names the engine field (`lua:<view>/<name>`); one that is not
+-- open yet is asked for and drawn empty this frame.
+local function field_node(view_name, env, opts)
+  local full = "lua:" .. view_name .. "/" .. opts.name
+  local st = kawoosh._field(full)
+  if not st then
+    kawoosh._field_open(full)
+    st = { text = "", mode = "normal", caret = 0, anchor = 0, focused = false }
+  end
+  local t = env.theme
+  local size = opts.size or 13
+  local style = { family = "mono", size = size }
+  local line = st.text
+  local focused = st.focused
+  local insert = st.mode == "insert"
+  -- Byte ranges (0-based, end exclusive) of the selection and the block
+  -- caret's character, in visual and normal mode.
+  local sel_lo, sel_hi
+  if focused and st.mode == "visual" then
+    sel_lo = math.min(st.anchor, st.caret)
+    sel_hi = math.max(st.anchor, st.caret)
+    sel_hi = sel_hi + math.max(char_len(line, sel_hi + 1), 1)
+  end
+  local block_lo, block_hi
+  if focused and not insert then
+    block_lo = st.caret
+    block_hi = st.caret + math.max(char_len(line, st.caret + 1), 1)
+  end
+  -- The text as spans, cut at every edge, each styled by what it is in.
+  local cuts = { 0, #line }
+  local function cut(b) if b and b > 0 and b < #line then cuts[#cuts + 1] = b end end
+  cut(sel_lo) cut(sel_hi) cut(block_lo) cut(block_hi)
+  if insert and focused then cut(st.caret) end
+  table.sort(cuts)
+  local function spans_between(from, to)
+    local out = {}
+    for i = 1, #cuts - 1 do
+      local a, b = cuts[i], cuts[i + 1]
+      if a >= from and b <= to and b > a then
+        local piece = line:sub(a + 1, b)
+        local span = { piece }
+        if sel_lo and a >= sel_lo and b <= sel_hi then span.bg = t.selection end
+        if block_lo and a >= block_lo and b <= block_hi then span.bg = t.accent; span.color = t.bg end
+        out[#out + 1] = span
+      end
+    end
+    return out
+  end
+  local row_h = size + 6
+  local children = {}
+  local function push(node) children[#children + 1] = node end
+  if insert and focused then
+    -- Two texts around a bar that keeps its place on the blink's off
+    -- phase, so the line does not shift.
+    local before, after = spans_between(0, st.caret), spans_between(st.caret, #line)
+    if #before > 0 then push(text(before, style)) end
+    push(row { width = 2, height = size + 2, bg = env.caret_visible and t.accent or nil })
+    if #after > 0 then push(text(after, style)) end
+  else
+    local all = spans_between(0, #line)
+    if #all > 0 then push(text(all, style)) end
+    -- A block caret past the end sits on a space of its own.
+    if block_lo and block_lo >= #line then
+      push(text({ { " ", bg = t.accent, color = t.bg } }, style))
+    end
+  end
+  if #line == 0 and not focused and opts.placeholder then
+    push(text(opts.placeholder, { family = "mono", size = size, color = t.muted }))
+  end
+  local node = row {
+    key = "field:" .. full,
+    height = row_h,
+    cross_align = "center",
+    on_click = { kind = "field", field = full },
+    role = "line",
+    caret = focused and st.caret or nil,
+    label = opts.label or opts.name,
+  }
+  for _, c in ipairs(children) do node[#node + 1] = c end
+  return node
+end
+
+-- kawoosh.field_text(view, name): a view's field's line, "" before it
+-- is opened. `kawoosh.field_set(view, name, text)` puts a line on it.
+function kawoosh.field_text(view_name, name)
+  local st = kawoosh._field("lua:" .. view_name .. "/" .. name)
+  return st and st.text or ""
+end
+
+local field_set = kawoosh.field_set
+function kawoosh.field_set(view_name, name, text)
+  field_set("lua:" .. view_name .. "/" .. name, text)
+end
+
+-- kawoosh.field_focus(view, name): the view's keys go to the field —
+-- the editor's own keys, insert mode to type, `<Esc>` to normal mode,
+-- `<Esc>` again back to the view. `nil` for back to the view.
+function kawoosh.field_focus(view_name, name)
+  kawoosh._field_focus(view_name, name and ("lua:" .. view_name .. "/" .. name) or nil)
+end
+
 -- ---------------------------------------------------------------- kui's doors
 
 -- "lua/counter@2" (an event's full name) or "counter@2" (a view's own):
@@ -127,8 +240,14 @@ function view(env, slot)
     return column { pad = 12, text("no such view: " .. name, { color = t.danger }) }
   end
   local params = slot.params or {}
-  local ok, tree = pcall(fn, { pane = pane, focused = params.focused, width = params.width,
-                              height = params.height, env = env, name = name })
+  -- `ctx.field { name = "q", placeholder = , size = , label = }`: a
+  -- one-line input drawn through the editor (kui.md Decision 12), the
+  -- node to put in the tree; `ctx.field_text("q")` is its line.
+  local ctx = { pane = pane, focused = params.focused, width = params.width,
+                height = params.height, env = env, name = name }
+  ctx.field = function(opts) return field_node(name, env, opts) end
+  ctx.field_text = function(field) return kawoosh.field_text(name, field) end
+  local ok, tree = pcall(fn, ctx)
   if not ok then
     return column { pad = 12, gap = 6,
       text("view `" .. name .. "` failed", { color = t.danger }),
@@ -143,6 +262,11 @@ end
 function on_event(ev)
   if not ev.slot then return end
   local name = split_slot(ev.slot)
+  -- A click on a field: the keys go to it.
+  if ev.kind == "field" and type(ev.field) == "string" then
+    kawoosh._field_focus(name, ev.field)
+    return
+  end
   local h = kawoosh._handlers[name]
   if h then
     local ok, err = pcall(h, ev)

@@ -28,6 +28,16 @@ impl Mode {
         }
     }
 
+    /// The word Lua reads the mode as: `normal`, `insert`, `visual`.
+    pub fn word(self) -> &'static str {
+        match self {
+            Mode::Normal => "normal",
+            Mode::Insert => "insert",
+            Mode::Visual => "visual",
+            Mode::OperatorPending => "operator",
+        }
+    }
+
     /// The letter `kawoosh.map` and `:map` name the mode by.
     pub fn short(self) -> &'static str {
         match self {

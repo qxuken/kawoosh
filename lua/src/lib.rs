@@ -33,6 +33,19 @@ pub enum Msg {
         name: String,
         on: bool,
     },
+    /// A view drew a `field` the engine has no field for yet: open it
+    /// (`lua:<view>/<name>`).
+    FieldOpen(String),
+    /// The keyboard on a view's field (or, `None`, on the view itself).
+    FieldFocus {
+        view: String,
+        field: Option<String>,
+    },
+    /// `kawoosh.field_set(name, text)`.
+    FieldSet {
+        name: String,
+        text: String,
+    },
     /// `kawoosh.map(mode, keys, cmd, { when = {...} })`.
     Map {
         mode: String,
@@ -120,6 +133,17 @@ impl Msg {
     }
 }
 
+/// A Lua view's field as the view draws it: the text, the mode, the
+/// primary selection's ends, and whether the keys are on it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldSnap {
+    pub text: String,
+    pub mode: String,
+    pub caret: usize,
+    pub anchor: usize,
+    pub focused: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct BufSnap {
     pub name: String,
@@ -147,6 +171,10 @@ pub struct Published {
     /// is the prompt's.
     pub field: Option<String>,
     pub prompt: bool,
+    /// The Lua views' fields (`lua:<view>/<name>`), by name.
+    pub fields: HashMap<String, FieldSnap>,
+    /// Which field each view's keys are on.
+    pub field_focus: HashMap<String, String>,
     /// For a tracked buffer: what each original line has become — its
     /// current text, or `None` when deleted (see `Runtime::track_lines`).
     pub tracked: HashMap<u64, Vec<Option<String>>>,
@@ -164,6 +192,8 @@ impl Default for Published {
             facts: BTreeSet::new(),
             field: None,
             prompt: false,
+            fields: HashMap::new(),
+            field_focus: HashMap::new(),
             tracked: HashMap::new(),
         }
     }
@@ -338,16 +368,54 @@ impl Runtime {
         p.mode = current
             .map(|v| ed.mode(v))
             .unwrap_or(kawoosh_editor::Mode::Normal)
-            .name()
-            .to_lowercase();
+            .word()
+            .to_string();
         p.field = current.and_then(|v| ed.field_name(v)).map(str::to_string);
         p.prompt = current.is_some() && current == ed.prompt_view();
+        p.fields.clear();
+        for (v, f) in ed.fields() {
+            if !f.name.starts_with("lua:") {
+                continue;
+            }
+            let view = &ed.views[v];
+            let s = view.sels.primary();
+            let focused = p.field_focus.values().any(|n| *n == f.name);
+            p.fields.insert(
+                f.name.clone(),
+                FieldSnap {
+                    text: ed.buffers[f.buffer].text(),
+                    mode: view.mode.word().to_string(),
+                    caret: s.head,
+                    anchor: s.anchor,
+                    focused,
+                },
+            );
+        }
         p.settings = ed.settings.effective().clone();
         if p.commands_version != ed.commands.version() {
             p.commands = ed.commands.specs().into_iter().cloned().collect();
             p.commands_version = ed.commands.version();
         }
         p.facts = ed.commands.facts.clone();
+    }
+
+    /// Notes which field `view`'s keys are on, for the snapshot's
+    /// `focused` — the shell's word, kept here so `publish` can say it.
+    pub fn set_field_focus(&self, view: &str, field: Option<String>) {
+        let mut p = self.published.borrow_mut();
+        match field {
+            Some(f) => {
+                p.field_focus.insert(view.to_string(), f);
+            }
+            None => {
+                p.field_focus.remove(view);
+            }
+        }
+    }
+
+    /// The field `view`'s keys are on, if any.
+    pub fn field_focus(&self, view: &str) -> Option<String> {
+        self.published.borrow().field_focus.get(view).cloned()
     }
 
     /// Runs the Lua command `name`.
@@ -600,6 +668,49 @@ fn seed(
                 Ok(()) => LV::Boolean(true),
                 Err(reason) => LV::String(lua.create_string(&reason)?),
             })
+        })?,
+    )?;
+    // ---- a view's fields: the engine's, read as a table, opened and
+    // focused by message (`boot.lua` draws them).
+    let pp = published.clone();
+    k.set(
+        "_field",
+        lua.create_function(move |lua, name: String| {
+            let p = pp.borrow();
+            let Some(f) = p.fields.get(&name) else {
+                return Ok(LV::Nil);
+            };
+            let t = lua.create_table()?;
+            t.set("text", f.text.as_str())?;
+            t.set("mode", f.mode.as_str())?;
+            t.set("caret", f.caret)?;
+            t.set("anchor", f.anchor)?;
+            t.set("focused", f.focused)?;
+            Ok(LV::Table(t))
+        })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "_field_open",
+        lua.create_function(move |_, name: String| {
+            qq.borrow_mut().push(Msg::FieldOpen(name));
+            Ok(())
+        })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "_field_focus",
+        lua.create_function(move |_, (view, field): (String, Option<String>)| {
+            qq.borrow_mut().push(Msg::FieldFocus { view, field });
+            Ok(())
+        })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "field_set",
+        lua.create_function(move |_, (name, text): (String, String)| {
+            qq.borrow_mut().push(Msg::FieldSet { name, text });
+            Ok(())
         })?,
     )?;
     let qq = q(queue);

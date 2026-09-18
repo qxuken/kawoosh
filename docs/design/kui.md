@@ -802,9 +802,25 @@ history row (`Editor::listed_buffers`), a newline typed or pasted into
 one is a space, and the shell draws it with the same `rows::emit_line`
 a pane's row is drawn with — selections, a bar caret on kui's blink in
 insert mode, a block in normal — so a field anywhere (the strip, a
-pane, a Lua view later) looks and behaves like the buffer. The
-incsearch preview keys off the field's buffer version, not off which
-key was pressed.
+pane) looks and behaves like the buffer. The incsearch preview keys off
+the field's buffer version, not off which key was pressed.
+
+A Lua view has the same: `ctx.field { name = "q", placeholder = }` in
+the tree it returns is an engine field named `lua:<view>/<name>`,
+opened the first time it is drawn, and drawn by `boot.lua` from the
+engine's data as the snapshot publishes it (`text`, `mode`, `caret`,
+`anchor`, `focused`) — spans with the selection and a block caret in
+normal mode, two texts around a bar on kui's blink in insert mode, the
+row declaring `role = "line"` and `caret` so the clock is armed — with
+`ctx.field_text("q")` the line for the view's own logic. The keys go to
+it on a click or `kawoosh.field_focus(view, "q")`, and while they do
+the field is the editor: insert mode types, `<Esc>` is normal mode over
+the line, `<Esc>` again (`field blur`) hands the keys back to the
+view's handler; a plugin binds its own on it (`kawoosh.map("i", "<CR>",
+"finder submit", { when = { "field:lua:finder/q" } })`) and sets its
+line (`kawoosh.field_set`). The data-shaped boundary held: the field
+crosses to Lua as a table and back as three messages, and Lua draws it
+with the same tree it draws everything else with.
 
 **`:commands` is the registry as a pane** (`commands_pane.rs`), the
 help this design makes free: every spec a row — the name with its forms

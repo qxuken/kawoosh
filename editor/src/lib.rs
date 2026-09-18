@@ -591,6 +591,19 @@ impl Editor {
         self.fields.get(&view).map(|f| f.name.as_str())
     }
 
+    /// The field named `name`, if one is open.
+    pub fn find_field(&self, name: &str) -> Option<ViewId> {
+        self.fields
+            .iter()
+            .find(|(_, f)| f.name == name)
+            .map(|(v, _)| *v)
+    }
+
+    /// Every field, by its view.
+    pub fn fields(&self) -> impl Iterator<Item = (ViewId, &Field)> {
+        self.fields.iter().map(|(v, f)| (*v, f))
+    }
+
     /// Whether `id` is a field's buffer — not one to list, keep, or
     /// write a history row for.
     pub fn is_field_buffer(&self, id: BufferId) -> bool {
