@@ -68,6 +68,7 @@ impl Kawoosh {
                             .unwrap_or_else(|| "term".into()),
                         Some(Content::Lua(n)) => n,
                         Some(Content::Undo) => "undo".into(),
+                        Some(Content::History) => "history".into(),
                         None => "?".into(),
                     };
                     let mut ps = Vec::new();
@@ -174,6 +175,7 @@ impl Kawoosh {
         let Some(view) = self.focused_view() else {
             let what = match self.layout.focused_content() {
                 Some(Content::Undo) => "UNDO",
+                Some(Content::History) => "HISTORY",
                 _ => "TERM",
             };
             self.strip(ui, &[(what, pal.accent)], "");
@@ -392,6 +394,7 @@ impl Kawoosh {
                 },
                 false,
             ),
+            Some(Content::History) => ("history".into(), false),
             None => ("?".into(), false),
         };
         ui.with_keyed(
@@ -435,6 +438,7 @@ impl Kawoosh {
                     Some(Content::Terminal(t)) => self.render_terminal(ui, pane, *t, focused),
                     Some(Content::Lua(n)) => self.render_lua_pane(ui, pane, n, focused),
                     Some(Content::Undo) => self.render_undo(ui, pane, focused),
+                    Some(Content::History) => self.render_history(ui, pane, focused),
                     None => {}
                 }
             },

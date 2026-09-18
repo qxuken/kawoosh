@@ -130,6 +130,8 @@ pub enum Content {
     Lua(String),
     /// The undo history of whichever buffer has the keyboard (`undo.rs`).
     Undo,
+    /// The histories in the store (`history_pane.rs`).
+    History,
 }
 
 #[derive(Clone, Debug)]

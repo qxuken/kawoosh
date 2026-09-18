@@ -1,13 +1,18 @@
-//! The sizes the app's devtools tabs — Perf, Settings — are drawn from,
-//! read off kui's metrics (`ui.metrics()`, kui's T2) rather than kept as
-//! numbers of their own: one inset for a toolbar, a caption and a row, so
-//! their text is on one line; one row height, one text size, one gap —
-//! and a density the app sets (`Metrics::compact`) reaches the tabs the
-//! way it reaches the stock widgets. A tab that wants a size asks here.
+//! The sizes the app's devtools tabs — Perf, Settings — and its own
+//! panes — the undo history, the histories — are drawn from, read off
+//! kui's metrics (`ui.metrics()`, kui's T2) rather than kept as numbers
+//! of their own: one inset for a toolbar, a caption and a row, so their
+//! text is on one line; one row height, one text size, one gap — and a
+//! density the app sets (`Metrics::compact`) reaches the tabs the way it
+//! reaches the stock widgets. A tab or a pane that wants a size asks
+//! here. The one size that is the editor's and not kui's is a line of
+//! buffer text ([`Tab::line_h`]): a pane that shows what a buffer holds
+//! — a change's text, a diff's lines — shows it as the buffer does.
 
 use kui::{Align, Color, Metrics, NodeSpec, Sizing, TextStyle};
 
 use crate::palette::Pal;
+use crate::rows::LH;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Tab {
@@ -37,6 +42,9 @@ pub(crate) struct Tab {
     /// A small button's text, and a toolbar's note: a step under the
     /// row's, as the panel's are.
     pub small_text: f32,
+    /// A line of buffer text, in a pane that shows some: the editor's
+    /// line height, so it reads as it does in the buffer.
+    pub line_h: f32,
 }
 
 impl Tab {
@@ -52,6 +60,69 @@ impl Tab {
             radius: m.radius_inner,
             button_pad: (m.menu_pad_x, 1.0),
             small_text: m.hint_text - 1.0,
+            line_h: LH,
+        }
+    }
+
+    /// A row of buffer text in a pane's table: a line's height exactly
+    /// (a virtual list needs it fixed), the inset and the cell gap the
+    /// tabs' rows have, every other row washed and a hovered one lit.
+    pub(crate) fn line(&self, pal: &Pal, i: usize) -> NodeSpec {
+        NodeSpec::row()
+            .width(Sizing::Grow(1.0))
+            .height(Sizing::Fixed(self.line_h))
+            .pad_xy(self.pad_x, 0.0)
+            .gap(self.cell_gap)
+            .cross_align(Align::Center)
+            .bg(if i % 2 == 1 {
+                pal.zebra
+            } else {
+                Color::TRANSPARENT
+            })
+            .hover_bg(pal.hover)
+    }
+
+    /// A cell of a table's line, `cells` mono cells wide, its content
+    /// at its right edge — numbers under each other row to row.
+    pub(crate) fn cell(&self, cells: f32, cell_w: f32) -> NodeSpec {
+        NodeSpec::row()
+            .width(Sizing::Fixed(cells * cell_w))
+            .height(Sizing::Fixed(self.line_h))
+            .cross_align(Align::Center)
+            .main_align(Align::End)
+    }
+
+    /// The cell that takes the rest of the line, clipped.
+    pub(crate) fn rest(&self) -> NodeSpec {
+        NodeSpec::row()
+            .width(Sizing::Grow(1.0))
+            .height(Sizing::Fixed(self.line_h))
+            .gap(self.cell_gap)
+            .clip()
+            .cross_align(Align::Center)
+    }
+
+    /// A pane's header or footer strip: a caption, by another name.
+    pub(crate) fn strip(&self, pal: &Pal) -> NodeSpec {
+        self.caption(pal)
+    }
+
+    /// A strip's note, a row's tag: the small text, one line.
+    pub(crate) fn small(&self, color: Color) -> TextStyle {
+        TextStyle::new(self.small_text).color(color).nowrap()
+    }
+
+    /// How a diff's rows are drawn in a pane: lines of buffer text at
+    /// the pane's inset, the sides in the palette's insert and danger.
+    pub(crate) fn diff(&self, pal: &Pal, text: TextStyle) -> crate::diff::Style {
+        crate::diff::Style {
+            row_h: self.line_h,
+            pad_x: self.pad_x,
+            gap: self.cell_gap,
+            text,
+            added: pal.insert,
+            removed: pal.danger,
+            dim: pal.dim,
         }
     }
 

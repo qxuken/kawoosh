@@ -55,6 +55,9 @@ pub struct Kawoosh {
     /// The `log` crate's records, once `Logger::install` ran (main).
     pub log_sink: Option<crate::logger::Sink>,
     pub store: Option<std::rc::Rc<kawoosh_systems::store::Store>>,
+    /// The undo histories of buffers, kept in the store, with the
+    /// unsaved text of scratches and modified files (`history.rs`).
+    pub histories: crate::history::Histories,
     pub(crate) session_saved: bool,
     /// Where each buffer was left when a view moved off it — its
     /// selections, `top` and `left` — so coming back lands there
@@ -87,6 +90,7 @@ pub struct Kawoosh {
     /// The undo history pane (`:undo_history`): which buffer it follows,
     /// its rows and its cursor.
     pub undo: crate::undo::UndoPanel,
+    pub history_pane: crate::history_pane::HistoryPanel,
     /// The app's devtools tab the last frame drew, if any — the panel on
     /// and the strip on it — which is what `:syntax_tree` and `:perf`
     /// toggle against.
@@ -158,6 +162,7 @@ impl Kawoosh {
             messages_shown: 0,
             log_sink: None,
             store: None,
+            histories: crate::history::Histories::new(wake.clone()),
             session_saved: false,
             last_pos: HashMap::new(),
             cmd_completion: None,
@@ -172,6 +177,7 @@ impl Kawoosh {
             line_cells: Default::default(),
             perf: Default::default(),
             undo: Default::default(),
+            history_pane: Default::default(),
             hud: false,
             wake,
             shared_wakes: Vec::new(),
@@ -519,9 +525,27 @@ impl Kawoosh {
     /// others, and the app quits from the last one. A buffer an
     /// `$EDITOR --wait` caller is waiting on answers the caller instead
     /// of quitting, since "the editor exited" is what it asked about.
-    fn request_quit(&mut self) {
+    /// `:q` (`force`: `:q!`). Unsaved changes in the pane's buffer are
+    /// kept for the next launch as a draft when there is a store, and
+    /// refuse the quit when there is not — except a buffer an `$EDITOR
+    /// --wait` caller is waiting on, whose caller reads the file: that
+    /// one wants `:wq` or `:q!`. With `!` the changes are discarded.
+    fn request_quit(&mut self, force: bool) {
         let pane = self.layout.focused();
         let buffer = self.view_of(pane).map(|v| self.ed.views[v].buffer);
+        if let Some(b) = buffer
+            && self.ed.buffers[b].modified
+        {
+            if force {
+                self.discard(b);
+            } else if self.waiters.contains_key(&b) {
+                self.ed.message = "unsaved changes (:wq to hand back, :q! to discard)".into();
+                return;
+            } else if !self.history_kept() {
+                self.ed.message = "unsaved changes (:q! to discard, :wq to write)".into();
+                return;
+            }
+        }
         let alone = self.layout.visible_panes().len() == 1 && self.layout.tabs.len() == 1;
         if !alone {
             self.shell_command("close", &[], None);
@@ -531,6 +555,26 @@ impl Kawoosh {
             Some(b) if self.waiters.contains_key(&b) => self.release_waiters(b),
             _ => self.quit = true,
         }
+    }
+
+    /// `:qa` (`force`: `:qa!`): as `request_quit`, over every buffer.
+    fn request_quit_all(&mut self, force: bool) {
+        let modified: Vec<BufferId> = self
+            .ed
+            .buffers
+            .iter()
+            .filter(|(_, b)| b.modified)
+            .map(|(id, _)| id)
+            .collect();
+        if force {
+            for id in modified {
+                self.discard(id);
+            }
+        } else if !modified.is_empty() && !self.history_kept() {
+            self.ed.message = "unsaved changes (:qa! to discard)".into();
+            return;
+        }
+        self.quit = true;
     }
 
     /// Answers `--wait` callers on `id` — a buffer that was closed.
@@ -571,13 +615,14 @@ impl Kawoosh {
         self.release_waiters(id);
         self.last_pos.remove(&id);
         self.ts_sent.remove(&id);
+        self.histories.forget(id);
         self.lsp
             .lsp
             .send(kawoosh_systems::lsp::Cmd::Close { buffer: id });
     }
 
     /// Whether any pane still shows buffer `id`.
-    fn buffer_shown(&self, id: BufferId) -> bool {
+    pub(crate) fn buffer_shown(&self, id: BufferId) -> bool {
         self.layout
             .all_panes()
             .into_iter()
@@ -648,7 +693,10 @@ impl Kawoosh {
                 return None;
             }
         };
-        Some(self.ed.add_buffer(buf))
+        let id = self.ed.add_buffer(buf);
+        // Its history from last time — with the unsaved changes, if any.
+        self.attach_file_history(id, path);
+        Some(id)
     }
 
     /// The buffer for `path` before its text has arrived: the io thread
@@ -762,7 +810,7 @@ impl Kawoosh {
                     Some(Content::Terminal(t)) => {
                         self.terms.map.remove(&t);
                     }
-                    Some(Content::Lua(_) | Content::Undo) => {}
+                    Some(Content::Lua(_) | Content::Undo | Content::History) => {}
                     None => self.ed.message = "cannot close the last pane".into(),
                 }
             }
@@ -775,7 +823,7 @@ impl Kawoosh {
                         Content::Terminal(t) => {
                             self.terms.map.remove(&t);
                         }
-                        Content::Lua(_) | Content::Undo => {}
+                        Content::Lua(_) | Content::Undo | Content::History => {}
                     }
                 }
             }
@@ -957,9 +1005,12 @@ impl Kawoosh {
                 let Some(v) = self.focused_view() else { return };
                 let cur = self.ed.views[v].buffer;
                 let force = args.iter().any(|a| a == "!");
-                if self.ed.buffers[cur].modified && !force {
-                    self.ed.message = "unsaved changes (:bd! to discard)".into();
-                    return;
+                if self.ed.buffers[cur].modified {
+                    if !force {
+                        self.ed.message = "unsaved changes (:bd! to discard)".into();
+                        return;
+                    }
+                    self.discard(cur);
                 }
                 let ids: Vec<BufferId> = self.ed.buffers.keys().collect();
                 let next = match ids.iter().copied().find(|b| *b != cur) {
@@ -977,9 +1028,12 @@ impl Kawoosh {
                 let others: Vec<BufferId> = self.ed.buffers.keys().filter(|b| *b != keep).collect();
                 let (mut gone, mut kept) = (0, 0);
                 for id in others {
-                    if self.ed.buffers[id].modified && !force {
-                        kept += 1;
-                        continue;
+                    if self.ed.buffers[id].modified {
+                        if !force {
+                            kept += 1;
+                            continue;
+                        }
+                        self.discard(id);
                     }
                     self.delete_buffer(id, keep);
                     gone += 1;
@@ -1057,6 +1111,7 @@ impl Kawoosh {
             "error_next" => self.error_step(true),
             "error_prev" => self.error_step(false),
             "messages" => self.messages_command(args),
+            "history" => self.history_command(args),
             "toast" => self.toast_focus(),
             // `:notify LEVEL TEXT` (or just the text, at info).
             "notify" => {
@@ -1159,6 +1214,8 @@ impl Kawoosh {
             self.lua_pane_key(&name, stroke);
         } else if self.layout.focused_content() == Some(Content::Undo) {
             self.undo_key(self.layout.focused(), stroke);
+        } else if self.layout.focused_content() == Some(Content::History) {
+            self.history_key_press(self.layout.focused(), stroke);
         }
         self.follow_caret = true;
         self.drain_effects();
@@ -1258,8 +1315,8 @@ impl Kawoosh {
     pub(crate) fn drain_effects(&mut self) {
         for e in self.ed.take_effects() {
             match e {
-                Effect::Quit => self.request_quit(),
-                Effect::QuitAll => self.quit = true,
+                Effect::Quit { force } => self.request_quit(force),
+                Effect::QuitAll { force } => self.request_quit_all(force),
                 Effect::SetClipboard(t) => self.clip_out = Some(t),
                 Effect::RequestPaste => self.awaiting_paste = true,
                 Effect::Open(p) => self.open(&p),
@@ -1522,6 +1579,7 @@ impl kui::App for Kawoosh {
         let t = Instant::now();
         self.drain_io();
         self.sync_settings();
+        self.sync_histories(false);
         self.perf.cur.io = ms(t);
         let t = Instant::now();
         self.sync_syntax();
@@ -1674,6 +1732,7 @@ impl kui::App for Kawoosh {
             Some("syntax") => self.on_syntax_click(p),
             Some("settings") => self.on_settings_click(p),
             Some("undo") => self.on_undo_click(p),
+            Some("history") => self.on_history_click(p),
             Some("modifiers") => {
                 let f = |k| p.get(k).and_then(Value::as_bool).unwrap_or(false);
                 self.mods = (f("ctrl"), f("alt"), f("super"), f("shift"));

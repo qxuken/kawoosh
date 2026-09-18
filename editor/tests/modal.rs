@@ -504,11 +504,13 @@ fn command_line_and_search() {
     t.keys("N");
     assert_eq!(t.head(), 14);
     t.keys(":q<CR>");
-    assert!(t.ed.take_effects().contains(&Effect::Quit));
+    assert!(t.ed.take_effects().contains(&Effect::Quit { force: false }));
+    // Unsaved changes are the shell's to keep or refuse: the effect
+    // goes out either way, the `!` on it.
     t.keys("x:q<CR>");
-    assert!(!t.ed.take_effects().contains(&Effect::Quit));
+    assert!(t.ed.take_effects().contains(&Effect::Quit { force: false }));
     t.keys(":q!<CR>");
-    assert!(t.ed.take_effects().contains(&Effect::Quit));
+    assert!(t.ed.take_effects().contains(&Effect::Quit { force: true }));
     t.keys(":nonsense a b<CR>");
     assert!(matches!(
         t.ed.take_effects().as_slice(),

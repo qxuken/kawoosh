@@ -10,6 +10,8 @@ pub mod compile;
 pub mod devtab;
 pub mod diff;
 pub mod graph;
+pub mod history;
+pub mod history_pane;
 pub mod inspector;
 pub mod layout;
 pub mod logger;

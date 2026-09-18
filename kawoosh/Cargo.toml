@@ -27,6 +27,7 @@ anyhow.workspace = true
 log.workspace = true
 smallvec.workspace = true
 libc = "0.2"
+blake3.workspace = true
 
 [[bin]]
 name = "kawoosh-gen"

@@ -312,6 +312,14 @@ impl Settings {
         defaults.set("expandtab", Setting::Bool(true));
         defaults.set("scrolloff", Setting::Int(3));
         defaults.set("leader", Setting::Str(" ".into()));
+        // Days a history (a buffer's undo tree in the store, with its
+        // unsaved text while it has one) may go untouched; 0 keeps
+        // every row.
+        defaults.set("history.keep_days", Setting::Int(90));
+        // The most the histories may add up to in the store, in
+        // megabytes; past it the oldest untouched rows go, one by one.
+        // 0 for no cap.
+        defaults.set("history.max_mb", Setting::Int(64));
         let mut s = Self {
             layers: Default::default(),
             effective: Setting::table(),
@@ -581,7 +589,14 @@ mod tests {
         assert_eq!(s.int("tabstop"), Some(2));
         assert_eq!(
             s.effective().paths(),
-            ["expandtab", "leader", "scrolloff", "tabstop"]
+            [
+                "expandtab",
+                "history.keep_days",
+                "history.max_mb",
+                "leader",
+                "scrolloff",
+                "tabstop"
+            ]
         );
     }
 

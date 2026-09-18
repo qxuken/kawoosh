@@ -1,9 +1,13 @@
 //! Sessions (mvp.md Decision 7, milestone 8): the layout as JSON in the
-//! store — tabs, splits with their ratios, each editor pane's file,
-//! caret and scroll, Lua panes by name, the prompts' histories — saved
-//! on quit (`:q`, or the window closed from outside: `App::teardown`)
-//! and restored on a bare launch. Terminals are not restored (their
-//! processes are gone); a tab that held only terminals is dropped.
+//! store — tabs, splits with their ratios, each editor pane's file or
+//! scratch, caret and scroll, Lua panes by name, the prompts' histories
+//! — saved on quit (`:q`, or the window closed from outside:
+//! `App::teardown`) and restored on a bare launch. What is unsaved
+//! comes back with it: the histories (`history.rs`) are flushed before
+//! the layout is written, and every draft the layout does not claim is
+//! restored as a buffer without a pane. Terminals are not restored
+//! (their processes are gone); a tab that held only terminals is
+//! dropped.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -54,6 +58,9 @@ pub enum NodeData {
 pub enum PaneData {
     Editor {
         path: Option<PathBuf>,
+        /// A pane on a scratch with a row in the store: its number.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scratch: Option<u64>,
         line: usize,
         col: usize,
         top: usize,
@@ -65,6 +72,9 @@ pub enum PaneData {
     /// The undo history pane: it follows the keyboard, so it carries
     /// nothing of its own.
     Undo,
+    /// The history pane (`drafts` in a session from before the name).
+    #[serde(alias = "drafts")]
+    History,
 }
 
 impl Kawoosh {
@@ -86,6 +96,7 @@ impl Kawoosh {
             }
             Err(e) => log::warn!("state db: {e}"),
         }
+        self.attach_histories();
     }
 
     fn pane_data(&self, pane: PaneId) -> PaneData {
@@ -96,6 +107,10 @@ impl Kawoosh {
                 let (line, col) = motions::line_col(buf, view.sels.primary().head);
                 PaneData::Editor {
                     path: buf.path.clone(),
+                    scratch: match buf.path {
+                        Some(_) => None,
+                        None => self.histories.scratch_of(view.buffer),
+                    },
                     line,
                     col,
                     top: view.top,
@@ -103,6 +118,7 @@ impl Kawoosh {
             }
             Some(Content::Lua(name)) => PaneData::Lua { name },
             Some(Content::Undo) => PaneData::Undo,
+            Some(Content::History) => PaneData::History,
             _ => PaneData::Terminal,
         }
     }
@@ -153,6 +169,9 @@ impl Kawoosh {
         let Some(store) = self.store.clone() else {
             return;
         };
+        // The histories first: a scratch gets its number from its row,
+        // and the layout names it by that.
+        self.sync_histories(true);
         let data = self.session_data();
         match serde_json::to_string(&data) {
             Ok(json) => {
@@ -220,16 +239,21 @@ impl Kawoosh {
                 let content = match p {
                     PaneData::Editor {
                         path,
+                        scratch,
                         line,
                         col,
                         top,
                     } => {
-                        let id = match path {
-                            Some(p) => self.buffer_for(p)?,
-                            None => self
-                                .ed
-                                .add_buffer(kawoosh_doc::Buffer::new("*scratch*", "")),
-                        };
+                        let id =
+                            match path {
+                                Some(p) => self.buffer_for(p)?,
+                                None => scratch
+                                    .and_then(|n| self.scratch_buffer(n))
+                                    .unwrap_or_else(|| {
+                                        self.ed
+                                            .add_buffer(kawoosh_doc::Buffer::new("*scratch*", ""))
+                                    }),
+                            };
                         let v = self.ed.add_view(id);
                         let buf = &self.ed.buffers[id];
                         let ln = (*line).min(buf.line_count().saturating_sub(1));
@@ -241,6 +265,7 @@ impl Kawoosh {
                     }
                     PaneData::Lua { name } => Content::Lua(name.clone()),
                     PaneData::Undo => Content::Undo,
+                    PaneData::History => Content::History,
                     PaneData::Terminal => return None,
                 };
                 Some(Node::Pane(layout.new_pane(content)))
@@ -267,19 +292,25 @@ impl Kawoosh {
         let Some(store) = self.store.clone() else {
             return false;
         };
-        let Some(json) = store.load_session(SESSION) else {
-            return false;
-        };
-        let data: SessionData = match serde_json::from_str(&json) {
-            Ok(d) => d,
-            Err(e) => {
-                log::warn!("session: {e}");
-                return false;
-            }
-        };
-        let ok = self.restore_session_data(&data);
+        // Histories come back whether or not there is a layout to put
+        // them in: a crash before the first quit left rows and no
+        // session, and the drafts among them are the user's unsaved
+        // work.
+        let data: Option<SessionData> = store.load_session(SESSION).and_then(|json| {
+            serde_json::from_str(&json)
+                .map_err(|e| log::warn!("session: {e}"))
+                .ok()
+        });
+        let ok = data.is_some_and(|d| self.restore_session_data(&d));
+        let unsaved = self.restore_hidden_histories();
         if ok {
-            self.ed.message = format!("session restored ({} tab(s))", self.layout.tabs.len());
+            self.ed.message = match unsaved {
+                0 => format!("session restored ({} tab(s))", self.layout.tabs.len()),
+                n => format!(
+                    "session restored ({} tab(s), {n} unsaved)",
+                    self.layout.tabs.len()
+                ),
+            };
         }
         ok
     }

@@ -21,25 +21,23 @@ use std::time::Instant;
 
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{HistoryRow, Hunk, KeyStroke, Lookup, Mode, ViewId};
-use kui::{Align, Color, NodeSpec, Sizing, TextStyle, Ui, Value, Vec2};
+use kui::{Align, Color, NodeSpec, Sizing, Ui, Value, Vec2};
 
 use crate::app::Kawoosh;
+use crate::devtab::Tab;
 use crate::diff;
 use crate::graph::{Geometry, Graph};
 use crate::layout::{Content, PaneId, SplitDir};
-use crate::rows::{self, LH, STRIP_H};
+use crate::rows;
 
 /// The panel's share of the split it opens in: the buffer keeps most
 /// of the width, a change's row needs less.
-const PANEL_SHARE: f32 = 0.35;
-/// The graph at the rows' height: a lane with room for a dot and the
-/// line beside it.
-const GRAPH: Geometry = Geometry {
-    lane_w: 12.0,
-    row_h: LH,
-    line_w: 1.5,
-    dot: 6.0,
-};
+pub(crate) const PANEL_SHARE: f32 = 0.35;
+/// The graph's lane: room for a dot and the line beside it. A dot this
+/// small has no metric of its own; the row is the pane's line.
+const LANE_W: f32 = 12.0;
+const LINE_W: f32 = 1.5;
+const DOT: f32 = 6.0;
 
 /// What the panel keeps between frames.
 #[derive(Default)]
@@ -297,12 +295,21 @@ impl Kawoosh {
 
     pub(crate) fn render_undo(&mut self, ui: &mut Ui<'_>, pane: PaneId, focused: bool) {
         self.sync_undo_rows();
+        // Every size from kui's metrics (`devtab::Tab`), as the tabs
+        // and the history pane take theirs.
+        let tm = Tab::of(&ui.metrics());
+        let graph_geometry = Geometry {
+            lane_w: LANE_W,
+            row_h: tm.line_h,
+            line_w: LINE_W,
+            dot: DOT,
+        };
         let pal = self.pal;
         let font = self.font;
         let (cell_w, _) = self.cell;
         let style = move || rows::mono(font, &pal);
         let dim = move || style().color(pal.dim);
-        let small = move |c: Color| TextStyle::new(11.0).color(c).nowrap();
+        let small = move |c: Color| tm.small(c);
         let rows = std::mem::take(&mut self.undo.rows);
         let graph = std::mem::take(&mut self.undo.graph);
         let n = rows.len();
@@ -316,33 +323,9 @@ impl Kawoosh {
         let hunk = self.undo.hunk.as_ref().and_then(|(_, h)| h.clone());
         let now = Instant::now();
         let tag = Value::map([("kind", "undo".into()), ("pane", Value::Int(pane as i64))]);
-        let graph_w = graph.width() as f32 * GRAPH.lane_w;
-        // A column's width in cells of the mono face, so the numbers
-        // line up under each other row to row.
-        let col = move |cells: f32| {
-            NodeSpec::row()
-                .width(Sizing::Fixed(cells * cell_w))
-                .height(Sizing::Fixed(LH))
-                .cross_align(Align::Center)
-                .main_align(Align::End)
-        };
-        let line_spec = move || {
-            NodeSpec::row()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(LH))
-                .pad_xy(8.0, 0.0)
-                .gap(cell_w)
-                .cross_align(Align::Center)
-        };
-        let strip = move || {
-            NodeSpec::row()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(STRIP_H))
-                .pad_xy(8.0, 0.0)
-                .gap(6.0)
-                .cross_align(Align::Center)
-                .bg(pal.strip)
-        };
+        let graph_w = graph.width() as f32 * LANE_W;
+        let col = move |cells: f32| tm.cell(cells, cell_w);
+        let strip = move || tm.strip(&pal);
         let sink = ui.with_keyed(
             "undo",
             NodeSpec::column()
@@ -376,11 +359,11 @@ impl Kawoosh {
                     ui.text("⏎ restore · u ⌃r g- g+ step · q close", small(pal.faint));
                 });
                 // The columns named, over the numbers they hold.
-                ui.with(line_spec(), |ui| {
+                ui.with(tm.line(&pal, 0).hover_bg(Color::TRANSPARENT), |ui| {
                     ui.with(
                         NodeSpec::row()
                             .width(Sizing::Fixed(graph_w))
-                            .height(Sizing::Fixed(LH)),
+                            .height(Sizing::Fixed(tm.line_h)),
                         |_| {},
                     );
                     ui.with(col(4.0), |ui| ui.text("#", small(pal.faint)));
@@ -398,22 +381,21 @@ impl Kawoosh {
                         .width(Sizing::Grow(1.0))
                         .height(Sizing::Grow(3.0)),
                     n,
-                    LH,
+                    tm.line_h,
                     |ui, d| {
                         // Newest at the top.
                         let i = n - 1 - d;
                         let r = &rows[i];
-                        let bg = if i == cursor {
-                            if focused {
+                        let mut line = tm.line(&pal, d);
+                        if i == cursor {
+                            line = line.bg(if focused {
                                 pal.select
                             } else {
                                 pal.select.with_alpha(0.4)
-                            }
+                            });
                         } else if r.current {
-                            pal.strip
-                        } else {
-                            Color::TRANSPARENT
-                        };
+                            line = line.bg(pal.strip);
+                        }
                         let payload = Value::map([
                             ("kind", "undo".into()),
                             ("pane", Value::Int(pane as i64)),
@@ -422,10 +404,7 @@ impl Kawoosh {
                         let label = format!("state {i}");
                         ui.with_keyed(
                             &label,
-                            line_spec()
-                                .bg(bg)
-                                .hover_bg(pal.hover)
-                                .on_click(payload)
+                            line.on_click(payload)
                                 .cursor(kui::CursorShape::Pointer)
                                 .label(label.as_str()),
                             |ui| {
@@ -433,11 +412,11 @@ impl Kawoosh {
                                 // then the state's dot — the text now in
                                 // the accent, and a little larger.
                                 let (color, size) = if r.current {
-                                    (pal.accent, Some(GRAPH.dot + 2.0))
+                                    (pal.accent, Some(DOT + 2.0))
                                 } else {
                                     (pal.dim, None)
                                 };
-                                graph.row(ui, i, &GRAPH, pal.dim, color, size);
+                                graph.row(ui, i, &graph_geometry, pal.dim, color, size);
                                 ui.with(col(4.0), |ui| {
                                     ui.text(
                                         &r.seq.to_string(),
@@ -474,33 +453,19 @@ impl Kawoosh {
                                                 }
                                             },
                                         );
-                                        ui.with(
-                                            NodeSpec::row()
-                                                .width(Sizing::Grow(1.0))
-                                                .height(Sizing::Fixed(LH))
-                                                .gap(cell_w)
-                                                .clip()
-                                                .cross_align(Align::Center),
-                                            |ui| {
-                                                if !c.inserted_text.is_empty() {
-                                                    ui.text(&c.inserted_text, style());
-                                                }
-                                                if !c.removed_text.is_empty() {
-                                                    ui.text(&c.removed_text, dim().strikethrough());
-                                                }
-                                            },
-                                        );
+                                        ui.with(tm.rest(), |ui| {
+                                            if !c.inserted_text.is_empty() {
+                                                ui.text(&c.inserted_text, style());
+                                            }
+                                            if !c.removed_text.is_empty() {
+                                                ui.text(&c.removed_text, dim().strikethrough());
+                                            }
+                                        });
                                     }
                                     None => {
                                         ui.with(col(5.0), |_| {});
                                         ui.with(col(9.0), |_| {});
-                                        ui.with(
-                                            NodeSpec::row()
-                                                .width(Sizing::Grow(1.0))
-                                                .height(Sizing::Fixed(LH))
-                                                .cross_align(Align::Center),
-                                            |ui| ui.text("opened", dim()),
-                                        );
+                                        ui.with(tm.rest(), |ui| ui.text("opened", dim()));
                                     }
                                 }
                                 if r.pending {
@@ -515,10 +480,10 @@ impl Kawoosh {
                 // The cursor's row into view when it moved.
                 let list = ui.child_key("rows");
                 if reveal && n > 0 {
-                    let y = (n - 1 - cursor) as f32 * LH;
+                    let y = (n - 1 - cursor) as f32 * tm.line_h;
                     let seen = ui
                         .scroll_geometry(list)
-                        .is_some_and(|g| g.offset.y <= y && y + LH <= g.offset.y + g.rect.h);
+                        .is_some_and(|g| g.offset.y <= y && y + tm.line_h <= g.offset.y + g.rect.h);
                     if !seen {
                         let h = ui.scroll_geometry(list).map_or(0.0, |g| g.rect.h);
                         ui.set_scroll(list, Vec2::new(0.0, (y - h / 2.0).max(0.0)));
@@ -536,15 +501,7 @@ impl Kawoosh {
                     };
                     ui.text(&head, small(pal.dim));
                 });
-                let diff_style = diff::Style {
-                    row_h: LH,
-                    pad_x: 8.0,
-                    gap: cell_w,
-                    text: style(),
-                    added: pal.insert,
-                    removed: pal.danger,
-                    dim: pal.dim,
-                };
+                let diff_style = tm.diff(&pal, style());
                 ui.with_keyed(
                     "hunk",
                     NodeSpec::column()

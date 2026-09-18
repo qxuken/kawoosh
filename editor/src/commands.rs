@@ -940,6 +940,43 @@ fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
     }
 }
 
+/// `:e!`: the file's text as it is on disk, put in as one journaled
+/// edit — undoable — and the buffer clean on it. A file that is gone
+/// is said so, the buffer left as it is.
+fn reload(ed: &mut Editor, ctx: &Ctx) {
+    let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
+    let Some(path) = buf.path.clone() else {
+        ed.message = "no file to reload from".into();
+        return;
+    };
+    if buf.loading.is_some() {
+        ed.message = "still opening".into();
+        return;
+    }
+    let disk = match kawoosh_doc::Buffer::from_file(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            ed.message = format!("cannot read {}: {e}", path.display());
+            return;
+        }
+    };
+    let len = disk.len();
+    let b = &mut ed.buffers[id];
+    b.restore(disk.text_root());
+    b.mark_saved();
+    b.disk_len = Some(len);
+    ed.message = format!(
+        "\"{}\" {}L, {}B loaded from disk (u brings the changes back)",
+        path.display(),
+        ed.buffers[id].line_count(),
+        len
+    );
+    let v = &mut ed.views[ctx.view];
+    v.sels
+        .map(|s| Selection::new(s.anchor.min(len), s.head.min(len)));
+}
+
 fn paste(ed: &mut Editor, ctx: &Ctx, after: bool) {
     let Some(text) = ed.registers.get(&'"').cloned() else {
         ed.message = "nothing to paste".into();
@@ -1507,26 +1544,20 @@ pub fn install(ed: &mut Editor) {
     ed.register_with_args("write", Args::new(&[ArgKind::Path]), |ed, ctx| {
         write(ed, ctx);
     });
+    // Whether unsaved changes let `:q` through is the shell's call
+    // (`Effect::Quit`): with a store they are kept for the next launch,
+    // without one it refuses as vim does.
     ed.register("quit", |ed, ctx| {
         let force = ctx.args.iter().any(|a| a == "!");
-        let id = view(ed, ctx).buffer;
-        if ed.buffers[id].modified && !force {
-            ed.message = "unsaved changes (:q! to discard, :wq to write)".into();
-            return;
-        }
-        ed.effects.push(Effect::Quit);
+        ed.effects.push(Effect::Quit { force });
     });
     ed.register("quit_all", |ed, ctx| {
         let force = ctx.args.iter().any(|a| a == "!");
-        if !force && ed.buffers.values().any(|b| b.modified) {
-            ed.message = "unsaved changes (:qa! to discard)".into();
-            return;
-        }
-        ed.effects.push(Effect::QuitAll);
+        ed.effects.push(Effect::QuitAll { force });
     });
     ed.register_with_args("write_quit", Args::new(&[ArgKind::Path]), |ed, ctx| {
         if write(ed, ctx) {
-            ed.effects.push(Effect::Quit);
+            ed.effects.push(Effect::Quit { force: false });
         }
     });
     ed.register("write_quit_all", |ed, ctx| {
@@ -1544,11 +1575,18 @@ pub fn install(ed: &mut Editor) {
             }
         }
         let _ = ctx;
-        ed.effects.push(Effect::QuitAll);
+        ed.effects.push(Effect::QuitAll { force: false });
     });
+    // `:e path` opens; `:e!` alone loads the disk's text into the
+    // buffer as one undoable change, so what was unsaved is a `u` away
+    // — a draft restored over a file that moved on disk, looked at
+    // both ways. `:e! path` is `:e path` (the changes are kept either
+    // way).
     ed.register_with_args("edit", Args::new(&[ArgKind::Path]), |ed, ctx| {
-        match ctx.args.first() {
+        let bang = ctx.args.iter().any(|a| a == "!");
+        match ctx.args.iter().find(|a| *a != "!") {
             Some(p) => ed.effects.push(Effect::Open(p.into())),
+            None if bang => reload(ed, ctx),
             None => ed.message = "edit what?".into(),
         }
     });

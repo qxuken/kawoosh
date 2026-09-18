@@ -574,6 +574,121 @@ blurs kui's focus to none, and the focused pane takes it back the
 next frame — a modal editor has no state where keys go nowhere. Its header counts the sources and the watched files and says what
 was last reloaded and when.
 
+### 11. Histories: a buffer's undo tree and unsaved text survive a restart, and a quit is a hot exit
+
+mvp.md's Decision 7 kept file contents and undo trees out of the store.
+That left two things a session did not carry: a scratch buffer came back
+empty, and a file left modified came back as the disk had it — so `:q`
+had to refuse unsaved changes, vim's way, and closing the window from
+outside, or a crash, lost them. Now **a buffer has a history**: a row
+in the store (`histories`, keyed `file:<absolute path>` or
+`scratch:<n>`) holding its undo tree and, while it is unsaved, its
+whole text — a history with unsaved text is a *draft* — and, for a
+file, a hash of the disk text it was loaded from. The tree is kept
+as each state's edit from its parent, both ways — the text it took out
+and the text it put in — so the whole of it rebuilds from the one
+text: up from the current state to the root by the edits reversed,
+then down every branch (`Editor::history_states` hands the tree out as
+data, `set_history_states` takes it back). Typing in progress is one
+more state, so a draft written mid-insert can be undone to before it. It is written once the buffer has been still for a
+second after an edit, or every ten seconds while it is being typed in,
+and dropped the moment the buffer is clean: written, undone back to
+what was loaded, discarded. SQLite in WAL mode makes each write whole
+or nothing, so a crash mid-write leaves the row as it was.
+
+**A quit is a hot exit.** `:q` and `:qa` go through with unsaved
+changes; the session save flushes every draft first, and the next
+launch has the text back, modified, with `u` stepping through what was
+done to it. `:q!`, `:qa!`, `:bd!` and `:bdo!` are the discard: the
+buffer's text goes back to what was loaded and the row goes with it.
+`:bd` without `!` still refuses a modified buffer — deleting it is how
+its draft would be lost. Without a store (the state db failed to open)
+there is nowhere to keep a draft, and `:q` refuses as before; so does a
+buffer an `$EDITOR --wait` caller is waiting on, whose caller reads the
+disk. The decision the engine used to make in `quit` is the shell's:
+`Effect::Quit { force }` carries the `!`, and the shell knows whether
+it has a store.
+
+A scratch comes back with the session, in its pane (`PaneData::Editor`
+names it by number) or as a buffer without one; a file's draft comes
+back whenever the file is opened — with the session or `kawoosh
+path` — as one edit over the disk text, so the undo to clean is the
+disk. Rows the session does not claim are restored hidden, and rows
+come back even without a session (a crash before the first quit), so
+nothing waits in the store unseen; the restore's message counts them
+(`session restored (2 tab(s), 3 unsaved)`). A file whose disk text is
+not the one the draft was taken from gets its draft all the same — the
+unsaved work is the user's — and an error toast saying the disk moved:
+`:w` writes the draft over it, `:e!` loads the disk's text into the
+buffer as one undoable change — clean on it, `u` a step back to the
+draft — so both can be looked at before choosing.
+
+**The store is visible and bounded.** `:history` is a pane of its own
+(`history_pane.rs`, `Content::History`, kept by a session), beside the
+buffer as the undo history is: every row as a table — name and path,
+size, when it was last touched, and its state: held by a buffer (on
+show, hidden, saved), its file gone, not opened, a saved file's
+history, not restored — and
+under it the cursor's row inspected: name, language, path, size,
+how many states its history holds, whether the disk still has the
+text it was taken from, and the unsaved changes themselves as a diff
+of the disk's lines against the buffer's, drawn as the undo pane draws
+a change. `⏎` or a click opens the cursor's row (the buffer that
+holds it shown, a file opened, a scratch restored), `x` drops it,
+`q` closes, `<Esc>` hands the keyboard back. The rows are read off
+the store when it changed, not once a frame. `:history list` is the
+same as text; `:history drop KEY` takes one out, reverting the buffer
+that holds it; `:history clear` takes out every row no buffer holds and
+`:history clear!` the held ones too, and either `VACUUM`s the db so it
+does not sit at its high-water mark.
+
+Every size in both panes is `devtab::Tab`'s — the tokens the devtools
+tabs already read off kui's metrics: the strip, the inset, the cell
+gap, the small text, the zebra and hover of a table's rows, the diff's
+style — plus the one size that is the editor's, a line of buffer text
+(`Tab::line_h`), for what a buffer holds. The undo pane's own numbers
+(an inset of 8, a gap of 6, text at 11, a strip of 24) were those
+tokens' values by hand; now they are the tokens, so the two panes and
+the tabs cannot drift, and a density the app sets reaches them all. The setting `history.keep_days`
+(90; 0 keeps everything) drops rows untouched that long at the first
+frame of a launch, with the hidden buffer holding one — a row is
+touched when it is written and when a pane shows its buffer, so a
+history looked at every session never ages, and one restored hidden
+and never looked at does. A row whose meta cannot be read (another
+build's, a corrupted one) still gives its text back, history and name
+gone, with a warning: the text is the authoritative part. A row whose
+key is not a history's is dropped. A row whose file cannot be opened is
+kept, and the listing says so.
+
+**A saved file keeps its history** the way neovim's `undofile` does.
+Its row is *clean*: the tree alone, no text — the disk is the text —
+and in the text's place a real hash of it (BLAKE3 with the length,
+`Base`), because a hash that matches installs edits into a buffer at
+their offsets, so a checksum will not do. On open, the disk is hashed:
+the same, and the tree goes around it, `u` undoing what was saved;
+different — a checkout, an edit elsewhere — and the row is dropped
+without a word, the tree having been of another text. A clean row is
+not opened by a session restore (nothing is unsaved in it); it waits
+for the file. `:w` turns a draft row into a clean one in place; a
+discard (`:q!`, `:bd!`, `x` in the pane) clears the buffer's history
+along with its changes, so the history does not outlive what it was
+of. The rule for a row's existence is therefore: the buffer is
+modified or has history; neither, and the row goes.
+
+Bounds, so a row is a few times the buffer at most: a buffer past 8 MB
+has no row and a warning says so once; a tree past 200 states or
+1 MB of edit text is kept as its trunk — the states `u` walks from the
+current one, newest first, as many as fit — each state costing what it
+changed (`doc::diff_trees` against its parent). A file that opens on
+the io thread is past the cap by definition. And the store as a whole
+is capped: `history.max_mb` (64; 0 for none). Past it, after a write
+and at the launch sweep, the oldest-touched rows go one by one until
+the rest fit — a row nobody holds is dropped, one a buffer holds clean
+is its history and the buffer forgets it with the row, one a buffer
+holds *modified* is never evicted, since the store is what keeps those
+changes; the store may sit over the cap by exactly what is unsaved.
+A corner line says how many went.
+
 ### Deliberately not in the MVP
 
 Unchanged from mvp.md: detachable daemon, soft wrap, proportional fonts,

@@ -183,6 +183,19 @@ impl History {
     }
 }
 
+/// One state of a buffer's undo tree with its text, as
+/// [`Editor::history_states`] hands it out and
+/// [`Editor::set_history_states`] takes it back: a draft's history.
+#[derive(Clone, Debug)]
+pub struct HistoryState {
+    pub root: text_buffer::Buffer,
+    pub sels: Selections,
+    pub parent: Option<usize>,
+    pub child: Option<usize>,
+    pub seq: u64,
+    pub at: Option<Instant>,
+}
+
 /// One state of a buffer's undo tree, as [`Editor::history`] lists
 /// them: what the text was at one point, what made it so from its
 /// parent, and where it sits in the tree.
@@ -267,10 +280,17 @@ fn snippet(text: &text_buffer::Buffer, range: Range<usize>) -> String {
 /// What the engine asks the shell to do — things only the shell can.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
-    /// `:q`: the pane, or the app from the last one — the shell decides.
-    Quit,
-    /// `:qa`: the app, whatever is open.
-    QuitAll,
+    /// `:q`: the pane, or the app from the last one — the shell
+    /// decides, and decides what unsaved changes mean: kept for the
+    /// next launch when it has a store for them, refused when it has
+    /// not. `force` is the `!`: the changes are discarded either way.
+    Quit {
+        force: bool,
+    },
+    /// `:qa`: the app, whatever is open; `force` as for `Quit`.
+    QuitAll {
+        force: bool,
+    },
     SetClipboard(String),
     RequestPaste,
     /// Open `path` in the view (a new buffer, or an existing one).
@@ -1087,6 +1107,105 @@ impl Editor {
             self.open_checkpoint(view);
         }
         moved
+    }
+
+    /// The buffer's undo tree as data, for a draft to keep: every state
+    /// in the order made (a parent before its children, the root
+    /// first), and which one the text is at. Typing in progress is one
+    /// more state, a child of the text's node and the current one, so
+    /// a draft written mid-insert can be undone to before it.
+    /// [`Editor::set_history_states`] puts it back.
+    pub fn history_states(&self, id: BufferId) -> (Vec<HistoryState>, usize) {
+        let Some(h) = self.history.get(&id) else {
+            return (Vec::new(), 0);
+        };
+        let Some(buf) = self.buffers.get(id) else {
+            return (Vec::new(), 0);
+        };
+        let mut states: Vec<HistoryState> = h
+            .nodes
+            .iter()
+            .map(|n| HistoryState {
+                root: n.root.clone(),
+                sels: n.sels.clone(),
+                parent: n.parent,
+                child: n.child,
+                seq: n.seq,
+                at: n.at,
+            })
+            .collect();
+        let mut current = h.current;
+        // Typing in progress, or an edit made outside any command that
+        // no settle has written into the node yet: the text is not the
+        // current state's, so it becomes one more, as `settle_checkpoint`
+        // would make it — the parent's text what the change began from.
+        let began = match &h.open {
+            Some((cp, v0)) if buf.version() != *v0 => Some((cp.root.clone(), cp.sels.clone())),
+            _ => states
+                .get(current)
+                .filter(|s| !s.root.same_text(buf.tree()))
+                .map(|s| (s.root.clone(), s.sels.clone())),
+        };
+        if let Some((root, sels)) = began
+            && !states.is_empty()
+        {
+            let node = states.len();
+            states[current].root = root;
+            states[current].sels = sels.clone();
+            states[current].child = Some(node);
+            states.push(HistoryState {
+                root: buf.text_root(),
+                sels,
+                parent: Some(current),
+                child: None,
+                seq: h.next_seq,
+                at: Some(Instant::now()),
+            });
+            current = node;
+        }
+        (states, current)
+    }
+
+    /// Replaces buffer `id`'s undo tree with `states` — in the order
+    /// made, parents before children — the text at `current`: a
+    /// restored draft's history. The buffer's text is left as it is;
+    /// the caller has put it at `current`'s already. Nothing is
+    /// installed from an empty or ill-formed list (a parent past its
+    /// child, `current` out of range).
+    pub fn set_history_states(&mut self, id: BufferId, states: Vec<HistoryState>, current: usize) {
+        if states.is_empty()
+            || current >= states.len()
+            || states.iter().enumerate().any(|(i, s)| {
+                s.parent.is_some_and(|p| p >= i) || s.child.is_some_and(|c| c >= states.len())
+            })
+        {
+            return;
+        }
+        let next_seq = states.iter().map(|s| s.seq + 1).max().unwrap_or(1);
+        let h = self.history.entry(id).or_default();
+        h.open = None;
+        h.nodes = states
+            .into_iter()
+            .map(|s| Node {
+                root: s.root,
+                sels: s.sels,
+                parent: s.parent,
+                child: s.child,
+                seq: s.seq,
+                at: s.at,
+            })
+            .collect();
+        h.current = current;
+        h.next_seq = next_seq;
+        h.prune();
+    }
+
+    /// Forgets buffer `id`'s undo tree: the text as it is becomes the
+    /// root, with nothing to go back to. What a discard does after
+    /// reverting the text, so the history does not outlive the changes
+    /// it was of.
+    pub fn clear_history(&mut self, id: BufferId) {
+        self.history.remove(&id);
     }
 
     // ------------------------------------------------------------ dispatch

@@ -428,6 +428,9 @@ scroll per view), oldfiles/marks, and — the DX centerpiece — a **namespaced 
 store for plugins**: `kawoosh.store("myplugin")` hands Lua a persistent table
 backed by one SQLite table. Plugins get durable state in one line, no file
 formats invented. Not stored: file contents, undo trees, scrollback (MVP).
+*Amended 2026-09-18 by kui.md Decision 11: a buffer's undo history is
+stored, with the unsaved text of a scratch or a modified file while it has
+one — a history, a draft while it is unsaved.*
 
 ### 7b. Workspaces: explicit, marked by `.kawoosh/`
 

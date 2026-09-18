@@ -44,6 +44,7 @@ tree-sitter-go = "0.25"
 tree-sitter-lua = "0.5"
 lsp-types = "0.97"
 rusqlite = { version = "0.40", features = ["bundled"] }
+blake3 = "1"
 serde_json = "1"
 unicode-segmentation = "1"
 unicode-width = "0.2"

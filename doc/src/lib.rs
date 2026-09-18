@@ -445,6 +445,20 @@ impl Buffer {
         root.same_text(&self.saved)
     }
 
+    /// The text as it was last written or loaded — what an undo lands
+    /// on to be clean again, and what a draft of this buffer is a
+    /// draft of.
+    pub fn saved_text(&self) -> &text_buffer::Buffer {
+        &self.saved
+    }
+
+    /// Back to the saved text, as one journaled edit ([`Buffer::restore`]):
+    /// what `:q!` does to a buffer whose changes it discards. Clean after.
+    pub fn revert(&mut self) -> Version {
+        let saved = self.saved.clone();
+        self.restore(saved)
+    }
+
     pub fn len(&self) -> usize {
         self.text.len()
     }

@@ -57,6 +57,7 @@ pub const SHELL_COMMANDS: &[(&str, &[ArgKind], bool)] = &[
     ("close", &[], false),
     ("compile", &[ArgKind::Text], true),
     ("dock_toggle", &[], false),
+    ("history", &[ArgKind::Text], true),
     ("error_next", &[], false),
     ("error_prev", &[], false),
     ("goto_location", &[], false),
