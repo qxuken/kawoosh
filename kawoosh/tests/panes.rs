@@ -318,3 +318,89 @@ fn a_pane_is_dragged_by_its_title_bar() {
     assert_eq!(app.layout.focused(), 1);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// The pane moves are one chord from every kind of pane: `<C-hjkl>` in
+/// normal mode, and `<C-S-hjkl>` there, in insert mode, and from a
+/// terminal — whose pty could not tell the shifted chord from the
+/// plain one, which stays the shell's. `]b` / `[b` step the buffers.
+#[test]
+fn pane_moves_are_one_chord_everywhere() {
+    let shifted = KeyMods {
+        ctrl: true,
+        shift: true,
+        ..Default::default()
+    };
+    let mut app = Kawoosh::new("t", "alpha\nbeta");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ctrl_w(&mut d, &mut app, "v");
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), 2);
+    d.ctrl(&mut app, "h");
+    assert_eq!(app.layout.focused(), 1, "<C-h> moves left");
+    d.key(&mut app, "L", shifted);
+    assert_eq!(app.layout.focused(), 2, "<C-S-l> moves right");
+    // From insert mode the shifted spelling moves; `<C-h>` is a backspace.
+    d.keys(&mut app, "i");
+    d.key(&mut app, "H", shifted);
+    assert_eq!(app.layout.focused(), 1);
+    assert_eq!(app.focused_mode(), kawoosh_editor::Mode::Normal);
+    d.keys(&mut app, "i");
+    d.ctrl(&mut app, "h");
+    assert_eq!(app.layout.focused(), 1, "<C-h> stays insert mode's");
+    d.key(&mut app, "escape", KeyMods::default());
+    // A terminal below: the shifted chord moves up and back down, the
+    // plain one reaches the pty.
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    assert!(matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t));
+    d.key(&mut app, "K", shifted);
+    assert!(
+        matches!(app.layout.focused_content(), Some(Content::Editor(_))),
+        "<C-S-k> from a terminal"
+    );
+    d.key(&mut app, "J", shifted);
+    assert!(matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t));
+    d.ctrl(&mut app, "k");
+    assert!(
+        matches!(app.layout.focused_content(), Some(Content::Terminal(_))),
+        "<C-k> is the shell's"
+    );
+    assert!(!app.terms.prefix);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn buffers_step_on_brackets_and_the_leader() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-keys-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    let b = dir.join("b.txt");
+    std::fs::write(&a, "aaa\n").unwrap();
+    std::fs::write(&b, "bbb\n").unwrap();
+    let mut app = Kawoosh::from_file(&a);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("e {}", b.display()));
+    assert_eq!(d.line_rows()[0], "bbb");
+    d.keys(&mut app, "]b");
+    assert_eq!(d.line_rows()[0], "aaa");
+    d.keys(&mut app, "[b");
+    assert_eq!(d.line_rows()[0], "bbb");
+    d.keys(&mut app, " bn");
+    assert_eq!(d.line_rows()[0], "aaa");
+    d.keys(&mut app, "  ");
+    assert!(
+        app.ed.message.contains("a.txt") && app.ed.message.contains("b.txt"),
+        "<leader><leader> lists: {}",
+        app.ed.message
+    );
+    d.keys(&mut app, " bd");
+    assert_eq!(d.line_rows()[0], "bbb");
+    assert_eq!(app.ed.listed_buffers().len(), 1);
+    d.keys(&mut app, " tn");
+    assert_eq!(app.layout.tabs.len(), 2);
+    d.keys(&mut app, " tq");
+    assert_eq!(app.layout.tabs.len(), 1);
+    std::fs::remove_dir_all(&dir).ok();
+}

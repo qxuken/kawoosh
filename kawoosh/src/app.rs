@@ -13,7 +13,7 @@ use std::time::Instant;
 use crossbeam_channel::Sender;
 use kawoosh_doc::Version;
 use kawoosh_doc::{Buffer, BufferId};
-use kawoosh_editor::{Editor, Effect, KeyStroke, Mode, Selection, ViewId, motions};
+use kawoosh_editor::{Editor, Effect, KeyStroke, Lookup, Mode, Selection, ViewId, motions};
 use kawoosh_systems::WakeHandle;
 use kawoosh_systems::io::{Incoming, Io, IoMsg, Request};
 use kawoosh_systems::ts::{Job, Ts};
@@ -821,10 +821,20 @@ impl Kawoosh {
         if stroke.code == "escape" {
             self.ed.message.clear();
         }
+        // A ctrl-shift chord is the pane cluster's from every kind of
+        // pane (docs/design/keys.md): `<C-S-l>` moves right from a
+        // terminal too, whose pty could not tell it from `<C-l>`
+        // anyway. An editor pane has them in its own maps.
+        let chord = stroke.ctrl
+            && stroke.shift
+            && self.focused_view().is_none()
+            && self.ed.prompt_view().is_none()
+            && self.pane_chord(&stroke);
         // The prompt takes the keys while it is open, from any pane —
         // the engine sends a key on any view to its field — so one
         // opened from a terminal or Lua pane (`<C-w>:`) works too.
-        if let Some(v) = self.focused_view().or_else(|| self.ed.prompt_view()) {
+        if chord {
+        } else if let Some(v) = self.focused_view().or_else(|| self.ed.prompt_view()) {
             if self.ed.prompt_view().is_none() && self.completion_key(&stroke) {
                 self.follow_caret = true;
                 return;
@@ -846,6 +856,22 @@ impl Kawoosh {
         self.follow_caret = true;
         self.drain_effects();
         self.drain_lua();
+    }
+
+    /// Runs the normal-mode binding of a chord from a pane without a
+    /// view of its own — a terminal's, a Lua pane's, the undo pane's —
+    /// and says whether there was one.
+    fn pane_chord(&mut self, stroke: &KeyStroke) -> bool {
+        let note = stroke.notation();
+        self.ed.sync_settings();
+        match self.ed.keymap.lookup(Mode::Normal, &[note]) {
+            Lookup::Exact(bs) => {
+                let bs = bs.to_vec();
+                self.run_bindings(&bs);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// A file opening on the io thread, as a corner line under `io`:

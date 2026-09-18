@@ -569,3 +569,61 @@ fn typing_a_run_is_one_piece() {
         "line one and some words typed one key at a time\nline two\n"
     );
 }
+
+/// The keymap is English letters, but a press is matched by what kui
+/// resolves it to (mvp.md Decision 4b, kui.md Decision 5): a layout
+/// that puts a non-ASCII letter on a key — Russian's `о` on the key
+/// printed J — falls back to the US-QWERTY letter at that position,
+/// so `j` moves down, `x` deletes and a chord is a chord without
+/// switching layouts, while insert mode types what the layout says.
+#[test]
+fn a_cyrillic_layout_drives_the_motions_and_types_itself() {
+    use kui::{InputEvent, KeyCode, KeyPress};
+    let mut app = Kawoosh::new("t", "one\ntwo\nthree");
+    let mut d = Drive::new(800.0, 400.0);
+    d.frame(&mut app);
+    let ru = |d: &mut Drive, app: &mut Kawoosh, letter: char, at: char, mods: KeyMods| {
+        let press = KeyPress::from_layout(KeyCode::Char(letter), KeyCode::Char(at), mods);
+        let press = if mods == KeyMods::default() {
+            press.with_text(letter.to_string())
+        } else {
+            press
+        };
+        d.input(app, InputEvent::KeyDown(press.clone()));
+        if let Some(ev) = press.edit_event() {
+            d.input(app, ev);
+        }
+        d.input(app, InputEvent::KeyUp(press.released()));
+        d.frame(app);
+    };
+    let head = |app: &Kawoosh| {
+        app.ed.views[app.focused_view().unwrap()]
+            .sels
+            .primary()
+            .head
+    };
+    // `о` sits on J, `ч` on X, `ш` on I: down, delete, insert.
+    ru(&mut d, &mut app, 'о', 'j', KeyMods::default());
+    assert_eq!(head(&app), 4, "`о` at J moves down");
+    ru(&mut d, &mut app, 'ч', 'x', KeyMods::default());
+    assert_eq!(text(&app), "one\nwo\nthree");
+    ru(&mut d, &mut app, 'ш', 'i', KeyMods::default());
+    assert_eq!(app.focused_mode(), Mode::Insert);
+    // Typing goes by the layout's text, not the key's position.
+    ru(&mut d, &mut app, 'п', 'g', KeyMods::default());
+    assert_eq!(text(&app), "one\nпwo\nthree");
+    d.key(&mut app, "escape", KeyMods::default());
+    // A chord too: ctrl with `ц` on W, then `м` on V, is `<C-w>v`.
+    let ctrl = KeyMods {
+        ctrl: true,
+        ..Default::default()
+    };
+    ru(&mut d, &mut app, 'ц', 'w', ctrl);
+    ru(&mut d, &mut app, 'м', 'v', KeyMods::default());
+    assert_eq!(
+        app.layout.visible_panes().len(),
+        2,
+        "`<C-w>v` from a Russian layout"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

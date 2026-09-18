@@ -475,6 +475,71 @@ fn multicursor_edits_every_selection() {
     assert_eq!(t.sels().len(), 1);
 }
 
+/// `<D-d>` (and `<A-d>`): the first press selects the word under the
+/// caret, each after adds the next whole-word match and makes it
+/// primary, round the end, until every one is selected; `<A-l>` takes
+/// them all at once. From a selection the text is looked for as is.
+#[test]
+fn select_next_and_all_matches() {
+    let mut t = T::new("foo bar foo\nfoobar foo");
+    t.keys("<D-d>");
+    assert_eq!(t.ed.mode(t.v), Mode::Visual);
+    assert_eq!(t.sels(), [(0, 2)], "the word, the head on its last char");
+    t.keys("<D-d>");
+    assert_eq!(t.sels(), [(0, 2), (8, 10)]);
+    assert_eq!(t.sel(), Selection::new(8, 10), "the newest is primary");
+    // `foobar` is not the word; the third `foo` is on the next line.
+    t.keys("<A-d>");
+    assert_eq!(t.sels(), [(0, 2), (8, 10), (19, 21)]);
+    t.keys("<D-d>");
+    assert_eq!(t.sels().len(), 3, "round the end: nothing new");
+    assert_eq!(t.ed.message, "every match is selected");
+    t.keys("cqux<Esc>");
+    assert_eq!(t.text(), "qux bar qux\nfoobar qux");
+    // From a selection the text is taken as is: `foo` in `foobar` too.
+    let mut t = T::new("foo bar foo\nfoobar foo");
+    t.keys("vll<D-d>");
+    assert_eq!(t.sels(), [(0, 2), (8, 10)]);
+    t.keys("<D-d>");
+    assert_eq!(t.sels(), [(0, 2), (8, 10), (12, 14)]);
+    // The search is set to it: `n` goes on from wherever the caret is.
+    t.keys("<Esc>ggn");
+    assert_eq!(t.head(), 8);
+    // A caret on a blank has no word.
+    let mut t = T::new("a  b");
+    t.keys("l<D-d>");
+    assert_eq!(t.sels(), [(1, 1)]);
+    assert_eq!(t.ed.message, "no word under the caret");
+    // Every match at once, the primary the one under the caret.
+    let mut t = T::new("a b a b a");
+    t.keys("4l<A-l>");
+    assert_eq!(t.sels(), [(0, 0), (4, 4), (8, 8)]);
+    assert_eq!(t.sel(), Selection::new(4, 4));
+    t.keys("cx<Esc>");
+    assert_eq!(t.text(), "x b x b x");
+    // `gh` / `gl`, `ZZ`, `<C-s>` in every mode, and `<D-a>` are bound.
+    let mut t = T::new("  ab cd");
+    t.keys("$gh");
+    assert_eq!(t.head(), 2);
+    t.keys("gl");
+    assert_eq!(t.head(), 6);
+    t.keys("<D-a>");
+    assert_eq!(t.sels(), [(0, 7)]);
+    assert_eq!(t.ed.mode(t.v), Mode::Visual);
+    t.keys("<C-s>");
+    assert_eq!(t.ed.message, "no file name (use :w <path>)");
+    assert_eq!(
+        t.ed.mode(t.v),
+        Mode::Visual,
+        "a write leaves the mode alone"
+    );
+    t.keys("<Esc>ix<C-s>");
+    assert_eq!(t.ed.message, "no file name (use :w <path>)");
+    assert_eq!(t.ed.mode(t.v), Mode::Insert);
+    t.keys("<Esc>ZQ");
+    assert!(t.ed.take_effects().contains(&Effect::Quit { force: true }));
+}
+
 #[test]
 fn counts_and_paste() {
     let mut t = T::new("abc\n");
@@ -936,7 +1001,9 @@ fn commands_are_specs_with_forms_conditions_and_subcommands() {
     t.keys(":map n Q quit!<CR>");
     t.keys("Q");
     assert!(t.ed.take_effects().contains(&Effect::Quit { force: true }));
-    t.keys(":map n <leader>d hist drop k<CR>");
+    // `<lt>` types the `<` itself: the line reads `<leader>d`, and the
+    // leader — Space — opens it.
+    t.keys(":map n <lt>leader>d hist drop k<CR>");
     ran.borrow_mut().clear();
     t.keys(" d");
     assert_eq!(

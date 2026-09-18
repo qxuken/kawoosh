@@ -1487,6 +1487,8 @@ pub fn install(ed: &mut Editor) {
     });
     ed.register("cursor below", |ed, ctx| add_cursor(ed, ctx, 1));
     ed.register("cursor above", |ed, ctx| add_cursor(ed, ctx, -1));
+    ed.register("select next", select_next);
+    ed.register("select all matches", select_all_matches);
 
     // ---- prompts and ex commands
     ed.register("command", |ed, ctx| {
@@ -1833,6 +1835,14 @@ const DOCS: &[(&str, &str)] = &[
     ),
     ("cursor below", "add a caret on the line below (<A-j>)"),
     ("cursor above", "add a caret on the line above (<A-k>)"),
+    (
+        "select next",
+        "select the next match of the selection, or the word under the caret (<A-d>, <D-d>)",
+    ),
+    (
+        "select all matches",
+        "select every match of the selection, or of the word under the caret (<A-l>, <D-L>)",
+    ),
     ("select all", "select the whole buffer"),
     ("command", "open the command line"),
 ];
@@ -1886,6 +1896,146 @@ fn add_cursor(ed: &mut Editor, ctx: &Ctx, dy: i64) {
     v.sels.push(Selection::point(head), true);
 }
 
+/// What `select next` and `select all matches` look for: the primary
+/// selection's text as is, or — from a bare caret — the word under it,
+/// whole (`\b` on both sides, as `*`). A press on a selection whose
+/// text's word form is the search already, the last press's, keeps to
+/// the word. The search is set to it, so `n` goes on past the
+/// selections. The word's range comes back for a bare caret, which the
+/// first press selects and nothing more.
+fn select_pattern(ed: &mut Editor, ctx: &Ctx) -> Option<Option<Range<usize>>> {
+    let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
+    let p = ed.views[ctx.view].sels.primary();
+    let (pattern, word) = if p.is_empty() {
+        let (a, b) = m::word_at(buf, p.head);
+        if a == b {
+            ed.message = "no word under the caret".into();
+            return None;
+        }
+        (
+            format!(r"\b{}\b", regex::escape(&buf.slice(a..b))),
+            Some(a..b),
+        )
+    } else {
+        let (r, _) = op_range(buf, &p, MotionKind::Inclusive, 1);
+        let text = regex::escape(&buf.slice(r));
+        let word = format!(r"\b{text}\b");
+        match &ed.search {
+            Some(s) if s.pattern == word => (word, None),
+            _ => (text, None),
+        }
+    };
+    if let Err(e) = ed.set_search(&pattern) {
+        ed.message = e;
+        return None;
+    }
+    Some(word)
+}
+
+/// A selection over `r` as a visual one lies, the head on the last
+/// character: an operator takes exactly the match.
+fn over(buf: &Buffer, r: Range<usize>) -> Selection {
+    let head = if r.end > r.start {
+        buf.prev_char(r.end)
+    } else {
+        r.start
+    };
+    Selection::new(r.start, head)
+}
+
+/// `<D-d>` (Zed's; helix's `*` with the selection kept): a selection on
+/// the next match of the primary's text — the word under a bare caret,
+/// which the first press selects — added beside the ones there and made
+/// primary, in visual mode, so a press more takes the next and an
+/// operator takes them all. The next is looked for from the last
+/// selection on, round the end, past what is selected already; when
+/// that is every match, the message says so and nothing moves.
+fn select_next(ed: &mut Editor, ctx: &Ctx) {
+    let Some(word) = select_pattern(ed, ctx) else {
+        return;
+    };
+    let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
+    if let Some(w) = word {
+        ed.views[ctx.view].sels = crate::Selections::single(over(buf, w));
+        ed.set_mode(ctx.view, Mode::Visual);
+        return;
+    }
+    let Some(re) = ed.search.as_ref().map(|s| s.re.clone()) else {
+        return;
+    };
+    let text = buf.tree();
+    let len = text.len();
+    let sels = &ed.views[ctx.view].sels;
+    let starts: Vec<usize> = sels.iter().map(Selection::start).collect();
+    let after = sels
+        .iter()
+        .map(|s| op_range(buf, s, MotionKind::Inclusive, 1).0.end)
+        .max()
+        .unwrap_or(0)
+        .min(len);
+    let mut from = after;
+    let mut wrapped = false;
+    let found = loop {
+        match crate::search::find_forward(text, &re, from) {
+            Some(r) if wrapped && r.start >= after => break None,
+            Some(r) if starts.contains(&r.start) => from = r.end.max(r.start + 1),
+            Some(r) => break Some(r),
+            None if !wrapped => {
+                wrapped = true;
+                from = 0;
+            }
+            None => break None,
+        }
+    };
+    match found {
+        Some(r) => {
+            let s = over(buf, r);
+            ed.views[ctx.view].sels.push(s, true);
+            ed.set_mode(ctx.view, Mode::Visual);
+        }
+        None => ed.message = "every match is selected".into(),
+    }
+}
+
+/// `<D-L>` (Zed's): a selection on every match of the primary's text,
+/// or of the word under a bare caret, the primary the one at the caret,
+/// in visual mode — one operator over them all.
+fn select_all_matches(ed: &mut Editor, ctx: &Ctx) {
+    let Some(word) = select_pattern(ed, ctx) else {
+        return;
+    };
+    let Some(re) = ed.search.as_ref().map(|s| s.re.clone()) else {
+        return;
+    };
+    let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
+    let text = buf.tree();
+    let hits = crate::search::hits_in(text, &re, 0..text.len());
+    if hits.is_empty() {
+        ed.message = "no match".into();
+        return;
+    }
+    let at = match word {
+        Some(w) => w.start,
+        None => ed.views[ctx.view].sels.primary().start(),
+    };
+    let primary = hits.iter().position(|r| r.start == at).unwrap_or(0);
+    let items: Vec<Selection> = hits.into_iter().map(|r| over(buf, r)).collect();
+    let mut sels = crate::Selections { items, primary };
+    sels.normalize();
+    ed.views[ctx.view].sels = sels;
+    ed.set_mode(ctx.view, Mode::Visual);
+}
+
+/// The keymap the engine ships: vim's letters where vim has them, and
+/// beside them the clusters docs/design/keys.md lays out — a prefix or
+/// a modifier per family, so a hand that knows one member of a family
+/// finds the rest: `<C-w>` and `<C-hjkl>` for panes, `[x` / `]x` for
+/// the next and previous of a thing, `g` for going somewhere, Alt (and
+/// ⌘ for the Zed fingers) for selections, `<leader>` groups for the
+/// rest.
 pub fn default_keymap(km: &mut Keymap) {
     use Mode::*;
     let n = [
@@ -1903,6 +2053,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("^", "line nonblank"),
         ("$", "line end"),
         ("<End>", "line end"),
+        // helix's `gh` / `gl`: the line's ends under `g`, where `gg`
+        // and `G` are the file's.
+        ("gh", "line nonblank"),
+        ("gl", "line end"),
         ("w", "word next"),
         ("b", "word prev"),
         ("e", "word end"),
@@ -1953,12 +2107,26 @@ pub fn default_keymap(km: &mut Keymap) {
         ("g+", "undo newer"),
         ("v", "visual"),
         ("V", "visual line"),
+        // Selections: Alt is the modifier, ⌘ the same for Zed's fingers.
         (",", "cursor primary"),
         ("<A-j>", "cursor below"),
         ("<A-k>", "cursor above"),
+        ("<A-d>", "select next"),
+        ("<D-d>", "select next"),
+        ("<A-l>", "select all matches"),
+        ("<D-S-l>", "select all matches"),
+        ("<D-a>", "select all"),
         ("<Esc>", "normal"),
         ("<C-c>", "normal"),
-        // Panes, tabs, the dock: the shell's commands (Effect::Shell).
+        // The file: `<C-s>` from any mode, and vim's `ZZ` / `ZQ`.
+        ("<C-s>", "write"),
+        ("<D-s>", "write"),
+        ("ZZ", "write quit"),
+        ("ZQ", "quit!"),
+        // Panes, tabs, the dock: the shell's commands (Effect::Shell),
+        // under `<C-w>` as vim's, and the four moves on `<C-hjkl>`
+        // straight — with shift too, which is their spelling in every
+        // kind of pane (`Kawoosh::pane_chord`).
         ("<C-w>v", "vsplit"),
         ("<C-w>s", "split"),
         ("<C-w>q", "close"),
@@ -1974,17 +2142,49 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w><Down>", "pane down"),
         ("<C-w><Up>", "pane up"),
         ("<C-w><Right>", "pane right"),
+        ("<C-h>", "pane left"),
+        ("<C-j>", "pane down"),
+        ("<C-k>", "pane up"),
+        ("<C-l>", "pane right"),
+        ("<C-S-h>", "pane left"),
+        ("<C-S-j>", "pane down"),
+        ("<C-S-k>", "pane up"),
+        ("<C-S-l>", "pane right"),
         ("<C-w>t", "tab new"),
+        ("<C-w>d", "dock"),
+        ("<C-w>!", "terminal"),
+        ("<C-w>n", "toast"),
         ("gt", "tab next"),
         ("gT", "tab prev"),
-        ("<C-w>d", "dock"),
-        ("<C-w>n", "toast"),
+        // `]x` / `[x`: the next and the previous of a thing.
+        ("]b", "buffer next"),
+        ("[b", "buffer prev"),
+        ("]t", "tab next"),
+        ("[t", "tab prev"),
+        ("]q", "error next"),
+        ("[q", "error prev"),
+        // `g`: going somewhere.
         ("gd", "lsp definition"),
         ("K", "lsp hover"),
         ("<CR>", "goto location"),
-        ("]q", "error next"),
-        ("[q", "error prev"),
         ("-", "oil"),
+        // `<leader>` groups: b buffers, t tabs, s search and lists, w
+        // the workspace, c code, and single letters for the daily few.
+        ("<leader><leader>", "buffer list"),
+        ("<leader>bd", "buffer delete"),
+        ("<leader>bo", "buffer delete others"),
+        ("<leader>bn", "buffer next"),
+        ("<leader>bp", "buffer prev"),
+        ("<leader>tn", "tab new"),
+        ("<leader>tq", "tab close"),
+        ("<leader>sp", "commands"),
+        ("<leader>so", "oldfiles"),
+        ("<leader>sm", "messages"),
+        ("<leader>ws", "session save"),
+        ("<leader>wr", "session restore"),
+        ("<leader>cc", "compile"),
+        ("<leader>u", "undo history"),
+        ("<leader>Q", "quit all"),
     ];
     for (k, c) in n {
         km.bind(Normal, k, c);
@@ -1994,6 +2194,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("x", "delete char"),
         ("i", "textobject inner"),
         ("a", "textobject around"),
+        ("<D-c>", "yank"),
         ("<Esc>", "normal"),
         ("<C-c>", "normal"),
     ];
@@ -2023,6 +2224,14 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-S-v>", "paste clipboard"),
         ("<C-Space>", "lsp complete"),
         ("<C-u>", "delete to start"),
+        ("<C-s>", "write"),
+        ("<D-s>", "write"),
+        // The pane moves from insert mode too: the shifted spelling,
+        // since `<C-h>` is a backspace here.
+        ("<C-S-h>", "pane left"),
+        ("<C-S-j>", "pane down"),
+        ("<C-S-k>", "pane up"),
+        ("<C-S-l>", "pane right"),
     ];
     for (k, c) in i {
         km.bind(Insert, k, c);
