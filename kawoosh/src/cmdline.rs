@@ -1,9 +1,9 @@
 //! The command line's completion, in place like the editor's (mvp.md
-//! Decision 5): the current candidate's rest is a ghost after the
-//! caret, `<Tab>` takes it, `<Tab>` again cycles the candidates and
-//! `<S-Tab>` cycles back; typing narrows. The first word completes to a
-//! command — the ex spellings, the shell's, the engine's and Lua's —
-//! and an argument to what the command declares it takes
+//! Decision 5) and on its keys: the current candidate's rest is a
+//! ghost after the caret, `<C-n>`/`<C-p>` cycle the candidates, `<Tab>`
+//! or `<C-y>` takes the current one; typing narrows. The first word
+//! completes to a command — the ex spellings, the shell's, the engine's
+//! and Lua's — and an argument to what the command declares it takes
 //! (`kawoosh_editor::ArgKind`): a path for `:e`, `:w`, `:cd`, `:vs`,
 //! `:oil`; a buffer for `:b`; a tool, a view, an option, a command.
 //! Nothing is a popup: the candidates are a row in the strip.
@@ -277,43 +277,44 @@ impl Kawoosh {
     }
 
     /// Keys the `:` prompt's completion takes before the engine sees
-    /// them: `<Tab>` takes the candidate — one candidate is then
-    /// completed further (a directory's entries), several are cycled
-    /// by the next `<Tab>` — and `<S-Tab>` cycles back. Returns true
-    /// when consumed.
+    /// them, the buffer completion's (`Kawoosh::completion_key`):
+    /// `<C-n>`/`<C-p>` cycle the candidates — the ghost moves, the line
+    /// does not — and `<Tab>` or `<C-y>` takes the current one, then
+    /// completes on from it (a directory's entries, a command's
+    /// longer spellings). `<Up>`/`<Down>` stay the history's. Returns
+    /// true when consumed.
     pub(crate) fn cmdline_key(&mut self, stroke: &KeyStroke) -> bool {
         if !self.at_command_prompt() {
             return false;
         }
         let note = stroke.notation();
-        if note != "<Tab>" && note != "<S-Tab>" {
+        let take = matches!(note.as_str(), "<Tab>" | "<C-y>");
+        if !take && note != "<C-n>" && note != "<C-p>" {
             return false;
         }
         let Some(c) = self.cmd_completion.as_mut() else {
             // A `<Tab>` is never a character on the command line.
-            return true;
+            return take;
         };
         if c.candidates.is_empty() {
-            return true;
+            return take;
         }
-        let token = self.ed.cmdline.get(c.start..).unwrap_or("");
-        let at_candidate = c.current() == Some(token);
-        if note == "<S-Tab>" {
-            c.index = (c.index + c.candidates.len() - 1) % c.candidates.len();
-        } else if at_candidate {
-            c.index = (c.index + 1) % c.candidates.len();
-        }
-        let only = c.candidates.len() == 1;
-        self.take_candidate();
-        if only && note == "<Tab>" {
-            // The one candidate is taken: what it opens onto is next.
-            self.cmdline_refresh();
+        match note.as_str() {
+            "<C-n>" => c.index = (c.index + 1) % c.candidates.len(),
+            "<C-p>" => c.index = (c.index + c.candidates.len() - 1) % c.candidates.len(),
+            _ => {
+                self.take_candidate();
+                // The candidate is taken: what it opens onto is next.
+                self.cmdline_refresh();
+            }
         }
         true
     }
 
     /// After a key at the `:` prompt: the candidates for the line as it
-    /// now reads, the first current; off the prompt, none.
+    /// now reads, the first current — unless they are the ones already
+    /// up, when a key that left the line alone leaves the cycling alone
+    /// too; off the prompt, none.
     pub(crate) fn cmdline_refresh(&mut self) {
         if !self.at_command_prompt() {
             self.cmd_completion = None;
@@ -321,10 +322,14 @@ impl Kawoosh {
         }
         let line = self.ed.cmdline.clone();
         let (start, candidates) = self.cmd_candidates(&line);
+        let index = match &self.cmd_completion {
+            Some(c) if c.start == start && c.candidates == candidates => c.index,
+            _ => 0,
+        };
         self.cmd_completion = Some(CmdCompletion {
             start,
             candidates,
-            index: 0,
+            index,
         });
     }
 }

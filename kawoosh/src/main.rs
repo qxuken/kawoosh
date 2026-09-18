@@ -147,7 +147,8 @@ kawoosh on kui — milestone 4
 A modal editor over a selection set: h j k l w b e 0 ^ $ gg G, i a o O,
 d c y with motions and text objects (dw, ciw, di(), v / V to select,
 u and ctrl-r, / to search, : for commands (:w path, :q, :e file) —
-Tab completes a command or a path, Up recalls the last one.
+ctrl-n / ctrl-p cycle a command's or a path's completions, Tab takes one,
+Up recalls the last command.
 Notifications: :notify warn TEXT is a toast at the top, :notify TEXT a
 dim line in the corner, :messages the log of every one; ctrl-w n puts
 the keyboard on the toasts (j k h l, Enter, x, Esc).
