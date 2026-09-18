@@ -1444,6 +1444,23 @@ pub fn install(ed: &mut Editor) {
             }
         }
     });
+    // In time over the whole tree, where `u` follows one branch.
+    ed.register("undo_older", |ed, ctx| {
+        for _ in 0..ctx.count.max(1) {
+            if !ed.undo_by_time(ctx.view, true) {
+                ed.message = "already at oldest change".into();
+                break;
+            }
+        }
+    });
+    ed.register("undo_newer", |ed, ctx| {
+        for _ in 0..ctx.count.max(1) {
+            if !ed.undo_by_time(ctx.view, false) {
+                ed.message = "already at newest change".into();
+                break;
+            }
+        }
+    });
 
     // ---- visual and selections
     ed.register("visual_mode", |ed, _| {
@@ -1694,6 +1711,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("u", "undo"),
         ("<C-r>", "redo"),
         ("U", "redo"),
+        ("g-", "undo_older"),
+        ("g+", "undo_newer"),
         ("v", "visual_mode"),
         ("V", "visual_line_mode"),
         (",", "keep_primary"),

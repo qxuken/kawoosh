@@ -84,6 +84,9 @@ pub struct Kawoosh {
     pub(crate) line_cells: rows::LineCellsCache,
     /// The Perf tab's readings: the frame's phases, the systems' reports.
     pub perf: crate::perf::Perf,
+    /// The undo history pane (`:undo_history`): which buffer it follows,
+    /// its rows and its cursor.
+    pub undo: crate::undo::UndoPanel,
     /// The app's devtools tab the last frame drew, if any — the panel on
     /// and the strip on it — which is what `:syntax_tree` and `:perf`
     /// toggle against.
@@ -168,6 +171,7 @@ impl Kawoosh {
             settings_default_open: false,
             line_cells: Default::default(),
             perf: Default::default(),
+            undo: Default::default(),
             hud: false,
             wake,
             shared_wakes: Vec::new(),
@@ -758,7 +762,7 @@ impl Kawoosh {
                     Some(Content::Terminal(t)) => {
                         self.terms.map.remove(&t);
                     }
-                    Some(Content::Lua(_)) => {}
+                    Some(Content::Lua(_) | Content::Undo) => {}
                     None => self.ed.message = "cannot close the last pane".into(),
                 }
             }
@@ -771,7 +775,7 @@ impl Kawoosh {
                         Content::Terminal(t) => {
                             self.terms.map.remove(&t);
                         }
-                        Content::Lua(_) => {}
+                        Content::Lua(_) | Content::Undo => {}
                     }
                 }
             }
@@ -914,6 +918,7 @@ impl Kawoosh {
                     self.scrollback_to_buffer(t);
                 }
             }
+            "undo_history" => self.toggle_undo_panel(),
             "buffer_next" | "buffer_prev" => {
                 let Some(v) = self.focused_view() else { return };
                 let ids: Vec<BufferId> = self.ed.buffers.keys().collect();
@@ -1152,6 +1157,8 @@ impl Kawoosh {
             self.term_key(t, stroke);
         } else if let Some(name) = self.lua_name_of(self.layout.focused()) {
             self.lua_pane_key(&name, stroke);
+        } else if self.layout.focused_content() == Some(Content::Undo) {
+            self.undo_key(self.layout.focused(), stroke);
         }
         self.follow_caret = true;
         self.drain_effects();
@@ -1553,6 +1560,7 @@ impl kui::App for Kawoosh {
         self.syntax_tab(ui);
         self.perf_tab(ui);
         self.settings_tab(ui);
+        self.sync_undo_view();
         let m = ui.measure_text("M", &rows::mono(self.font, &pal), None);
         self.cell = (m.width.max(1.0), LH);
         if let Some(text) = self.clip_out.take() {
@@ -1665,6 +1673,7 @@ impl kui::App for Kawoosh {
             }
             Some("syntax") => self.on_syntax_click(p),
             Some("settings") => self.on_settings_click(p),
+            Some("undo") => self.on_undo_click(p),
             Some("modifiers") => {
                 let f = |k| p.get(k).and_then(Value::as_bool).unwrap_or(false);
                 self.mods = (f("ctrl"), f("alt"), f("super"), f("shift"));

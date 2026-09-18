@@ -67,6 +67,7 @@ impl Kawoosh {
                             .map(|t| t.title.clone())
                             .unwrap_or_else(|| "term".into()),
                         Some(Content::Lua(n)) => n,
+                        Some(Content::Undo) => "undo".into(),
                         None => "?".into(),
                     };
                     let mut ps = Vec::new();
@@ -171,7 +172,11 @@ impl Kawoosh {
     pub(crate) fn status(&self, ui: &mut Ui<'_>) {
         let pal = self.pal;
         let Some(view) = self.focused_view() else {
-            self.strip(ui, &[("TERM", pal.accent)], "");
+            let what = match self.layout.focused_content() {
+                Some(Content::Undo) => "UNDO",
+                _ => "TERM",
+            };
+            self.strip(ui, &[(what, pal.accent)], "");
             return;
         };
         let v = &self.ed.views[view];
@@ -379,6 +384,14 @@ impl Kawoosh {
                 false,
             ),
             Some(Content::Lua(n)) => (n.clone(), false),
+            // Named for the buffer it follows.
+            Some(Content::Undo) => (
+                match self.undo.view.filter(|v| self.ed.views.contains_key(*v)) {
+                    Some(v) => format!("undo · {}", self.ed.buffer_of(v).name),
+                    None => "undo".into(),
+                },
+                false,
+            ),
             None => ("?".into(), false),
         };
         ui.with_keyed(
@@ -421,6 +434,7 @@ impl Kawoosh {
                     Some(Content::Editor(v)) => self.render_editor(ui, pane, *v, focused),
                     Some(Content::Terminal(t)) => self.render_terminal(ui, pane, *t, focused),
                     Some(Content::Lua(n)) => self.render_lua_pane(ui, pane, n, focused),
+                    Some(Content::Undo) => self.render_undo(ui, pane, focused),
                     None => {}
                 }
             },

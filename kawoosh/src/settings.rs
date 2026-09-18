@@ -637,14 +637,16 @@ impl Kawoosh {
 /// value spelled.
 type Source = (String, Vec<(String, String)>);
 
-fn ago(d: std::time::Duration) -> String {
+pub(crate) fn ago(d: std::time::Duration) -> String {
     let s = d.as_secs();
     if s < 60 {
         format!("{s}s ago")
     } else if s < 3600 {
         format!("{}m ago", s / 60)
-    } else {
+    } else if s < 86_400 {
         format!("{}h ago", s / 3600)
+    } else {
+        format!("{}d ago", s / 86_400)
     }
 }
 

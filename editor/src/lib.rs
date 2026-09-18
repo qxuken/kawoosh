@@ -11,9 +11,12 @@ pub mod selection;
 pub mod settings;
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Instant;
 
+pub use kawoosh_doc::Hunk;
 use kawoosh_doc::{Buffer, BufferId, Version};
 pub use keymap::{Binding, KeyStroke, Keymap, Lookup, Mode};
 pub use selection::{Selection, Selections};
@@ -67,21 +70,198 @@ impl View {
     }
 }
 
-/// One undo entry: the piece-tree root (O(1), structurally shared) and
-/// the selections to put back with it.
+/// The state a command began from: the piece-tree root (O(1),
+/// structurally shared) and the selections then.
 #[derive(Clone, Debug)]
 struct Checkpoint {
     root: text_buffer::Buffer,
     sels: Selections,
 }
 
+/// One state of a buffer in its undo tree (mvp.md: undo is retained
+/// roots, so a state is a root and a branch costs nothing to keep).
+#[derive(Clone, Debug)]
+struct Node {
+    root: text_buffer::Buffer,
+    /// The selections to put back on arriving: where the text was left
+    /// when this state was last stepped or edited away from.
+    sels: Selections,
+    parent: Option<usize>,
+    /// The child last stepped to or made from here: where redo goes.
+    child: Option<usize>,
+    /// The state's place in time, over the whole tree: `g-` and `g+`
+    /// walk by it.
+    seq: u64,
+    /// When the change that made it was made; `None` for the original.
+    at: Option<Instant>,
+}
+
+/// A buffer's undo tree. `nodes` is in the order made, so a parent is
+/// before its children and the root is first; a pruned tree keeps that.
 #[derive(Default, Debug)]
 struct History {
-    undo: Vec<Checkpoint>,
-    redo: Vec<Checkpoint>,
+    nodes: Vec<Node>,
+    /// The node the text is at.
+    current: usize,
+    next_seq: u64,
     /// The checkpoint taken when the current command (or insert session)
-    /// began, and the version then; pushed if the version moved.
+    /// began, and the version then; a node if the version moved.
     open: Option<(Checkpoint, Version)>,
+}
+
+/// How many states a buffer's undo tree keeps: past it, the root and
+/// every branch not under the text now go, oldest first.
+const HISTORY_MAX: usize = 1000;
+
+impl History {
+    /// The child of `node` on the way to `current`, if `current` is
+    /// under it.
+    fn towards_current(&self, node: usize) -> Option<usize> {
+        let mut n = self.current;
+        while let Some(p) = self.nodes[n].parent {
+            if p == node {
+                return Some(n);
+            }
+            n = p;
+        }
+        None
+    }
+
+    /// Past the cap: the root goes, with every branch off it that the
+    /// text now is not under, and the child on the way to the text
+    /// becomes the root — until the tree fits, or the text is at the
+    /// root.
+    fn prune(&mut self) {
+        while self.nodes.len() > HISTORY_MAX {
+            let Some(keep) = self.towards_current(0) else {
+                return;
+            };
+            // A parent is before its children, so one pass says what
+            // is under `keep`.
+            let mut under = vec![false; self.nodes.len()];
+            let mut index = vec![usize::MAX; self.nodes.len()];
+            let mut kept = Vec::with_capacity(self.nodes.len() - 1);
+            for (i, n) in self.nodes.iter().enumerate() {
+                under[i] = i == keep || n.parent.is_some_and(|p| under[p]);
+                if under[i] {
+                    index[i] = kept.len();
+                    let mut n = n.clone();
+                    n.parent = n.parent.filter(|_| i != keep).map(|p| index[p]);
+                    kept.push(n);
+                }
+            }
+            for n in &mut kept {
+                n.child = n.child.filter(|c| under[*c]).map(|c| index[c]);
+            }
+            self.current = index[self.current];
+            self.nodes = kept;
+        }
+    }
+
+    /// Whether the open checkpoint has typing past it at `version`.
+    fn pending(&self, version: Version) -> bool {
+        self.open.as_ref().is_some_and(|(_, v0)| *v0 != version)
+    }
+
+    /// The node with the greatest seq under `seq`, or the least over it.
+    fn by_seq(&self, seq: u64, older: bool) -> Option<usize> {
+        if older {
+            self.nodes
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.seq < seq)
+                .max_by_key(|(_, n)| n.seq)
+                .map(|(i, _)| i)
+        } else {
+            self.nodes
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.seq > seq)
+                .min_by_key(|(_, n)| n.seq)
+                .map(|(i, _)| i)
+        }
+    }
+}
+
+/// One state of a buffer's undo tree, as [`Editor::history`] lists
+/// them: what the text was at one point, what made it so from its
+/// parent, and where it sits in the tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryRow {
+    /// The change that made this state from its parent; `None` for the
+    /// root — the text as opened, or, past a thousand changes, the
+    /// oldest kept.
+    pub change: Option<Change>,
+    /// The parent's index in the list; `None` for the root.
+    pub parent: Option<usize>,
+    /// The state's place in time over the whole tree, the root 0.
+    pub seq: u64,
+    /// When the change was made; `None` for the root.
+    pub at: Option<Instant>,
+    /// This is the text now.
+    pub current: bool,
+    /// This is the text on disk, or what the buffer was filled with:
+    /// stepping to it leaves the buffer clean.
+    pub saved: bool,
+    /// This is insert mode's typing in progress — a state once the
+    /// mode ends, and what `u` takes back until then.
+    pub pending: bool,
+}
+
+/// One change between two states of the history, read as one edit —
+/// the span between the two texts' common prefix and suffix
+/// (`diff_trees`) — with the text it put in and took out, clipped for a
+/// row ([`Change::SNIPPET`] chars, a newline as `⏎`, a tab as `⇥`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Change {
+    /// The line the change starts on, from 1, in the text before it.
+    pub line: usize,
+    /// Bytes taken out and put in.
+    pub removed: usize,
+    pub inserted: usize,
+    pub removed_text: String,
+    pub inserted_text: String,
+}
+
+impl Change {
+    /// How many chars of each side's text a change carries.
+    pub const SNIPPET: usize = 40;
+
+    fn between(old: &text_buffer::Buffer, new: &text_buffer::Buffer) -> Self {
+        let edit = kawoosh_doc::diff_trees(old, new);
+        let removed = edit.removed();
+        let inserted = edit.new_len;
+        Self {
+            line: old.line_of_offset(edit.range.start) + 1,
+            removed,
+            inserted,
+            removed_text: snippet(old, edit.range.clone()),
+            inserted_text: snippet(new, edit.range.start..edit.range.start + inserted),
+        }
+    }
+}
+
+/// The first [`Change::SNIPPET`] chars of `range`, one line, `…` when
+/// there was more. Reads at most what a snippet can hold, so a
+/// thousand-line paste costs a row a few bytes.
+fn snippet(text: &text_buffer::Buffer, range: Range<usize>) -> String {
+    let end = range.end.min(range.start + Change::SNIPPET * 4);
+    let bytes = text.collect_range(range.start..end);
+    let mut out = String::new();
+    let text = String::from_utf8_lossy(&bytes);
+    let mut chars = text.chars();
+    for c in chars.by_ref().take(Change::SNIPPET) {
+        out.push(match c {
+            '\n' => '⏎',
+            '\t' => '⇥',
+            c if c.is_control() => ' ',
+            c => c,
+        });
+    }
+    if chars.next().is_some() || end < range.end {
+        out.push('…');
+    }
+    out
 }
 
 /// What the engine asks the shell to do — things only the shell can.
@@ -643,10 +823,24 @@ impl Editor {
 
     // ------------------------------------------------------------ undo
 
+    /// The tree's root is the text as it is when the first command
+    /// runs: what there is to come back to.
     fn open_checkpoint(&mut self, view: ViewId) {
         let v = &self.views[view];
         let buf = &self.buffers[v.buffer];
         let h = self.history.entry(v.buffer).or_default();
+        if h.nodes.is_empty() {
+            h.nodes.push(Node {
+                root: buf.text_root(),
+                sels: v.sels.clone(),
+                parent: None,
+                child: None,
+                seq: 0,
+                at: None,
+            });
+            h.next_seq = 1;
+            h.current = 0;
+        }
         if h.open.is_none() {
             h.open = Some((
                 Checkpoint {
@@ -663,58 +857,220 @@ impl Editor {
         if self.mode == Mode::Insert {
             return;
         }
-        let id = self.views[view].buffer;
+        self.settle_checkpoint(self.views[view].buffer);
+    }
+
+    /// The open checkpoint becomes a node if the text moved since it
+    /// was taken — a child of the text's node, whatever was made from
+    /// there before staying as a branch — and is dropped if not.
+    fn settle_checkpoint(&mut self, id: BufferId) {
         let Some(buf) = self.buffers.get(id) else {
             return;
         };
         let version = buf.version();
         let h = self.history.entry(id).or_default();
-        if let Some((cp, v0)) = h.open.take()
-            && v0 != version
-        {
-            h.undo.push(cp);
-            h.redo.clear();
-            if h.undo.len() > 1000 {
-                h.undo.remove(0);
-            }
-        }
-    }
-
-    pub fn undo(&mut self, view: ViewId) -> bool {
-        self.step_history(view, true)
-    }
-
-    pub fn redo(&mut self, view: ViewId) -> bool {
-        self.step_history(view, false)
-    }
-
-    fn step_history(&mut self, view: ViewId, undo: bool) -> bool {
-        let id = self.views[view].buffer;
-        let h = self.history.entry(id).or_default();
-        // A step discards the checkpoint the running command opened.
-        h.open = None;
-        let (from, to) = if undo {
-            (&mut h.undo, &mut h.redo)
-        } else {
-            (&mut h.redo, &mut h.undo)
+        let Some((cp, v0)) = h.open.take() else {
+            return;
         };
-        let Some(cp) = from.pop() else {
+        if v0 == version {
+            return;
+        }
+        // Coming back to the parent lands where the change began, on
+        // the text it began from — which an edit made outside any
+        // command (a plugin's `set_text`, a reload) may have moved
+        // since the node was made.
+        h.nodes[h.current].root = cp.root;
+        h.nodes[h.current].sels = cp.sels.clone();
+        let node = h.nodes.len();
+        h.nodes.push(Node {
+            root: buf.text_root(),
+            sels: cp.sels,
+            parent: Some(h.current),
+            child: None,
+            seq: h.next_seq,
+            at: Some(Instant::now()),
+        });
+        h.next_seq += 1;
+        h.nodes[h.current].child = Some(node);
+        h.current = node;
+        h.prune();
+    }
+
+    /// Back to the parent state; false at the root.
+    pub fn undo(&mut self, view: ViewId) -> bool {
+        let id = self.views[view].buffer;
+        self.settle_checkpoint(id);
+        let h = self.history.entry(id).or_default();
+        let Some(target) = h.nodes.get(h.current).and_then(|n| n.parent) else {
             return false;
         };
+        self.go_to(view, target)
+    }
+
+    /// Forward to the child last stepped to or made; false at a leaf.
+    pub fn redo(&mut self, view: ViewId) -> bool {
+        let id = self.views[view].buffer;
+        self.settle_checkpoint(id);
+        let h = self.history.entry(id).or_default();
+        let Some(target) = h.nodes.get(h.current).and_then(|n| n.child) else {
+            return false;
+        };
+        self.go_to(view, target)
+    }
+
+    /// To the state made just before (or after) the one the text is
+    /// at, in time over the whole tree — vim's `g-` and `g+`, which
+    /// reach a branch `u` cannot. False at the ends.
+    pub fn undo_by_time(&mut self, view: ViewId, older: bool) -> bool {
+        let id = self.views[view].buffer;
+        self.settle_checkpoint(id);
+        let h = self.history.entry(id).or_default();
+        let Some(seq) = h.nodes.get(h.current).map(|n| n.seq) else {
+            return false;
+        };
+        let Some(target) = h.by_seq(seq, older) else {
+            return false;
+        };
+        self.go_to(view, target)
+    }
+
+    /// Puts node `target` in the buffer: the selections of the state
+    /// left are kept for coming back, the redo pointers along the way
+    /// are turned to point down the path taken — so `<C-r>` retraces
+    /// it — and the text is restored once, as one journaled edit.
+    /// `restore` says whether this is the saved text: undone back to it,
+    /// the buffer is clean again.
+    fn go_to(&mut self, view: ViewId, target: usize) -> bool {
+        let id = self.views[view].buffer;
+        let h = self.history.entry(id).or_default();
+        if target == h.current || target >= h.nodes.len() {
+            return false;
+        }
+        // The path up from the text's node and down to the target
+        // meet at their common ancestor.
+        let ancestors = |h: &History, mut n: usize| -> Vec<usize> {
+            let mut path = vec![n];
+            while let Some(p) = h.nodes[n].parent {
+                path.push(p);
+                n = p;
+            }
+            path
+        };
+        let up = ancestors(h, h.current);
+        let down = ancestors(h, target);
+        let meet = up.iter().find(|n| down.contains(n)).copied();
+        let from = h.current;
+        h.nodes[from].sels = self.views[view].sels.clone();
+        for w in up
+            .iter()
+            .take_while(|n| Some(**n) != meet)
+            .zip(up.iter().skip(1))
+        {
+            h.nodes[*w.1].child = Some(*w.0);
+        }
+        for w in down
+            .iter()
+            .take_while(|n| Some(**n) != meet)
+            .zip(down.iter().skip(1))
+        {
+            h.nodes[*w.1].child = Some(*w.0);
+        }
+        h.current = target;
+        let root = h.nodes[target].root.clone();
+        let sels = h.nodes[target].sels.clone();
         let buf = &mut self.buffers[id];
-        to.push(Checkpoint {
-            root: buf.text_root(),
-            sels: self.views[view].sels.clone(),
-        });
-        // `restore` says whether this is the saved text: undone back
-        // to it, the buffer is clean again.
-        buf.restore(cp.root);
+        buf.restore(root);
         let len = buf.len();
         let v = &mut self.views[view];
-        v.sels = cp.sels;
+        v.sels = sels;
         v.sels
             .map(|s| Selection::new(s.anchor.min(len), s.head.min(len)));
         true
+    }
+
+    /// The buffer's undo tree as its states, in the order made (a
+    /// parent before its children, the root first) — then, while insert
+    /// mode is typing, the typing as one more, a child of the text's
+    /// node. Every row past the root carries the change from its
+    /// parent. It walks every root, so a panel reads it once per change
+    /// ([`Editor::history_key`] says when), not once a frame.
+    pub fn history(&self, buffer: BufferId) -> Vec<HistoryRow> {
+        let Some(buf) = self.buffers.get(buffer) else {
+            return Vec::new();
+        };
+        let Some(h) = self.history.get(&buffer) else {
+            return Vec::new();
+        };
+        let pending = h.pending(buf.version());
+        let now = buf.tree();
+        let mut rows: Vec<HistoryRow> = h
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| HistoryRow {
+                change: n.parent.map(|p| Change::between(&h.nodes[p].root, &n.root)),
+                parent: n.parent,
+                seq: n.seq,
+                at: n.at,
+                current: i == h.current && !pending,
+                saved: buf.is_saved_text(&n.root),
+                pending: false,
+            })
+            .collect();
+        if pending && let Some(parent) = h.nodes.get(h.current) {
+            rows.push(HistoryRow {
+                change: Some(Change::between(&parent.root, now)),
+                parent: Some(h.current),
+                seq: h.next_seq,
+                at: None,
+                current: true,
+                saved: buf.is_saved_text(now),
+                pending: true,
+            });
+        }
+        rows
+    }
+
+    /// What [`Editor::history`] would be read at: the states kept, the
+    /// one the text is at, and whether typing is in progress — with
+    /// the buffer's version, enough to know the rows are still the ones.
+    pub fn history_key(&self, buffer: BufferId) -> (usize, usize, bool) {
+        let Some(h) = self.history.get(&buffer) else {
+            return (0, 0, false);
+        };
+        let version = self.buffers.get(buffer).map(|b| b.version());
+        let pending = version.is_some_and(|v| h.pending(v));
+        (h.nodes.len(), h.current, pending)
+    }
+
+    /// Row `index`'s change as lines ([`Hunk::between`] the parent's
+    /// text and the row's). `None` for the root.
+    pub fn history_hunk(&self, buffer: BufferId, index: usize) -> Option<Hunk> {
+        let buf = self.buffers.get(buffer)?;
+        let h = self.history.get(&buffer)?;
+        let (old, new) = if let Some(n) = h.nodes.get(index) {
+            (&h.nodes[n.parent?].root, &n.root)
+        } else if index == h.nodes.len() && h.pending(buf.version()) {
+            (&h.nodes.get(h.current)?.root, buf.tree())
+        } else {
+            return None;
+        };
+        Some(Hunk::between(old, new))
+    }
+
+    /// Steps the view's buffer to row `index` of [`Editor::history`] and
+    /// says whether it moved. Typing in progress is settled first, into
+    /// a node, so the indexes are the list's; in insert mode the
+    /// checkpoint is opened again after, so what is typed next is its
+    /// own state.
+    pub fn history_seek(&mut self, view: ViewId, index: usize) -> bool {
+        let id = self.views[view].buffer;
+        self.settle_checkpoint(id);
+        let moved = self.go_to(view, index);
+        if self.mode == Mode::Insert {
+            self.open_checkpoint(view);
+        }
+        moved
     }
 
     // ------------------------------------------------------------ dispatch

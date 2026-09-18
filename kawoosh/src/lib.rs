@@ -8,6 +8,8 @@ pub mod app;
 pub mod cmdline;
 pub mod compile;
 pub mod devtab;
+pub mod diff;
+pub mod graph;
 pub mod inspector;
 pub mod layout;
 pub mod logger;
@@ -22,6 +24,7 @@ pub mod scripting;
 pub mod session;
 pub mod settings;
 pub mod terminals;
+pub mod undo;
 
 pub use app::Kawoosh;
 pub use palette::Pal;

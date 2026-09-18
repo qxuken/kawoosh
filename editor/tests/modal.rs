@@ -235,6 +235,208 @@ fn undo_back_to_the_saved_text_is_clean() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The history as a list of states: each past the root carries the
+/// change that made it — its line, its bytes, its text clipped — and
+/// its parent; the text now is marked, so is the saved one, and a seek
+/// walks the tree to any of them.
+#[test]
+fn history_lists_the_states_and_seeks_among_them() {
+    let mut t = T::new("abc\ndef");
+    let b = t.ed.views[t.v].buffer;
+    assert!(t.ed.history(b).is_empty(), "nothing until a command runs");
+    t.keys("x");
+    t.keys("jione two<Esc>");
+    let rows = t.ed.history(b);
+    assert_eq!(rows.len(), 3);
+    assert!(rows[0].change.is_none() && rows[0].parent.is_none());
+    assert_eq!((rows[0].seq, rows[0].at), (0, None));
+    assert_eq!(t.ed.history_key(b), (3, 2, false));
+    let c1 = rows[1].change.as_ref().unwrap();
+    assert_eq!((c1.line, c1.removed, c1.inserted), (1, 1, 0));
+    assert_eq!(c1.removed_text, "a");
+    assert_eq!((rows[1].parent, rows[1].seq), (Some(0), 1));
+    assert!(rows[1].at.is_some());
+    let c2 = rows[2].change.as_ref().unwrap();
+    assert_eq!((c2.line, c2.removed, c2.inserted), (2, 0, 7));
+    assert_eq!(c2.inserted_text, "one two");
+    assert_eq!((rows[2].parent, rows[2].seq), (Some(1), 2));
+    assert!(rows[2].current && !rows[2].pending);
+    assert!(rows[0].saved && !rows[1].saved && !rows[2].saved);
+    // Typing in progress is a state of its own, pending, the root
+    // still listed under it.
+    t.keys("A!");
+    let rows = t.ed.history(b);
+    assert_eq!(rows.len(), 4);
+    assert!(rows[3].current && rows[3].pending && !rows[2].current);
+    assert_eq!(rows[3].parent, Some(2));
+    assert_eq!(rows[3].change.as_ref().unwrap().inserted_text, "!");
+    assert_eq!(t.ed.history_key(b), (3, 2, true));
+    t.keys("<Esc>");
+    assert!(!t.ed.history(b)[3].pending);
+    assert_eq!(t.ed.history_key(b), (4, 3, false));
+    // A seek back is undos: the text, the selection and the clean flag
+    // are the state's.
+    assert!(t.ed.history_seek(t.v, 0));
+    assert_eq!(t.text(), "abc\ndef");
+    assert!(!t.ed.buffer_of(t.v).modified);
+    let rows = t.ed.history(b);
+    assert_eq!(rows.len(), 4, "the undone states stay");
+    assert!(rows[0].current);
+    assert_eq!(rows[3].change.as_ref().unwrap().inserted_text, "!");
+    assert_eq!(t.ed.history_key(b), (4, 0, false));
+    // Forward again, part way; a seek to where it is moves nothing.
+    assert!(t.ed.history_seek(t.v, 2));
+    assert_eq!(t.text(), "bc\none twodef");
+    assert!(!t.ed.history_seek(t.v, 2));
+    // A newline and a tab are one char each in a snippet; a long change
+    // is clipped.
+    t.keys(":set noexpandtab<CR>o\t<Esc>");
+    let rows = t.ed.history(b);
+    let c = rows.last().unwrap().change.as_ref().unwrap();
+    assert_eq!(c.inserted_text, "⏎⇥");
+    t.keys(&format!("o{}<Esc>", "x".repeat(60)));
+    let rows = t.ed.history(b);
+    let c = rows.last().unwrap().change.as_ref().unwrap();
+    // The newline, the indent `o` keeps from the tab line, the sixty.
+    assert_eq!(c.inserted, 62);
+    assert_eq!(c.inserted_text.chars().count(), 41, "{}", c.inserted_text);
+    assert!(c.inserted_text.ends_with('…'));
+}
+
+/// The history is a tree: an edit after an undo is a branch, and the
+/// state undone stays — `u` and `<C-r>` follow the branch last taken,
+/// `g-` and `g+` walk every state in the order made, and a seek
+/// crosses from one branch to another.
+#[test]
+fn undo_is_a_tree() {
+    let mut t = T::new("");
+    let b = t.ed.views[t.v].buffer;
+    t.keys("ia<Esc>");
+    t.keys("ab<Esc>");
+    t.keys("u");
+    assert_eq!(t.text(), "a");
+    t.keys("ac<Esc>");
+    assert_eq!(t.text(), "ac");
+    let rows = t.ed.history(b);
+    assert_eq!(rows.len(), 4, "the `b` state is kept as a branch");
+    assert_eq!(rows[2].change.as_ref().unwrap().inserted_text, "b");
+    assert_eq!(rows[3].change.as_ref().unwrap().inserted_text, "c");
+    assert_eq!((rows[2].parent, rows[3].parent), (Some(1), Some(1)));
+    assert_eq!((rows[2].seq, rows[3].seq), (2, 3));
+    assert!(rows[3].current);
+    // `u` goes to the parent; `<C-r>` to the branch last taken.
+    t.keys("u");
+    assert_eq!(t.text(), "a");
+    t.keys("<C-r>");
+    assert_eq!(t.text(), "ac");
+    // `g-` is back in time: to `b`, the state made before `c`, on the
+    // other branch; `g+` forward again.
+    t.keys("g-");
+    assert_eq!(t.text(), "ab");
+    t.keys("g-");
+    assert_eq!(t.text(), "a");
+    t.keys("g-");
+    assert_eq!(t.text(), "");
+    t.keys("g-");
+    assert_eq!(t.ed.message, "already at oldest change");
+    t.keys("g+g+");
+    assert_eq!(t.text(), "ab");
+    t.keys("g+");
+    assert_eq!(t.text(), "ac");
+    t.keys("g+");
+    assert_eq!(t.ed.message, "already at newest change");
+    // A seek across branches: `ac` to `ab` is up to `a` and down; the
+    // redo pointers now retrace that, so `u` then `<C-r>` lands on `ab`.
+    assert!(t.ed.history_seek(t.v, 2));
+    assert_eq!(t.text(), "ab");
+    t.keys("u<C-r>");
+    assert_eq!(t.text(), "ab");
+    // The change as lines.
+    let hunk = t.ed.history_hunk(b, 3).unwrap();
+    assert_eq!(
+        (hunk.line, hunk.old, hunk.new),
+        (1, vec!["a".into()], vec!["ac".into()])
+    );
+    assert!(t.ed.history_hunk(b, 0).is_none(), "the root has no change");
+    // Typing in progress is a hunk against the text's node.
+    t.keys("A!");
+    let hunk = t.ed.history_hunk(b, 4).unwrap();
+    assert_eq!(
+        (hunk.old, hunk.new),
+        (vec!["ab".into()], vec!["ab!".into()])
+    );
+    t.keys("<Esc>");
+}
+
+/// A multi-line change is one hunk of whole lines; a huge one is
+/// clipped.
+#[test]
+fn a_hunk_is_the_lines_the_change_touched() {
+    let mut t = T::new("one\ntwo\nthree\nfour\n");
+    let b = t.ed.views[t.v].buffer;
+    t.keys("jcwTWO<Esc>jdd");
+    let rows = t.ed.history(b);
+    let h = t.ed.history_hunk(b, 1).unwrap();
+    assert_eq!(h.line, 2);
+    assert_eq!(h.old, vec!["two"]);
+    assert_eq!(h.new, vec!["TWO"]);
+    // `dd`: the line out, nothing in — not the line after it.
+    let h = t.ed.history_hunk(b, 2).unwrap();
+    assert_eq!(rows[2].change.as_ref().unwrap().removed, 6);
+    assert_eq!(h.old, vec!["three"]);
+    assert!(h.new.is_empty());
+    assert!(!h.clipped());
+    assert_eq!((h.old_total, h.new_total), (1, 0));
+    // A line put in whole: nothing out.
+    t.keys("Oadded<Esc>");
+    let h = t.ed.history_hunk(b, 3).unwrap();
+    assert!(h.old.is_empty());
+    assert_eq!(h.new, vec!["added"]);
+    // A join across a newline: the two lines out, the one they became in.
+    t.keys("ggJ");
+    let h = t.ed.history_hunk(b, 4).unwrap();
+    assert_eq!(h.old, vec!["one", "TWO"]);
+    assert_eq!(h.new, vec!["one TWO"]);
+    let mut t = T::new("");
+    let b = t.ed.views[t.v].buffer;
+    t.keys(&format!("i{}<Esc>", "l\n".repeat(300)));
+    let h = t.ed.history_hunk(b, 1).unwrap();
+    assert_eq!(h.new.len(), 200);
+    assert!(h.clipped());
+    assert_eq!((h.old_total, h.new_total), (0, 300));
+}
+
+/// Past a thousand states the oldest go: the root and the branches
+/// off it the text is not under, so the tree stays a tree.
+#[test]
+fn the_tree_is_pruned_from_the_root() {
+    let mut t = T::new("");
+    let b = t.ed.views[t.v].buffer;
+    t.keys("ia<Esc>");
+    t.keys("u");
+    t.keys("ib<Esc>");
+    // Two branches off the root; then a thousand more on the second.
+    for _ in 0..999 {
+        t.keys("x");
+        t.keys("ib<Esc>");
+    }
+    let rows = t.ed.history(b);
+    assert_eq!(rows.len(), 1000);
+    assert!(rows[0].change.is_none() && rows[0].parent.is_none());
+    assert!(rows[0].seq > 0, "the root now is a state that was made");
+    assert!(
+        rows.iter()
+            .all(|r| r.change.as_ref().is_none_or(|c| c.inserted_text != "a")),
+        "the branch off the old root is gone"
+    );
+    assert!(rows.last().unwrap().current);
+    for (i, r) in rows.iter().enumerate().skip(1) {
+        assert_eq!(r.parent, Some(i - 1));
+    }
+    t.keys("u");
+    assert_eq!(t.text(), "");
+}
+
 #[test]
 fn visual_mode_selects_and_operates() {
     let mut t = T::new("hello world");

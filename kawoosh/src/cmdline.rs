@@ -91,6 +91,7 @@ pub const SHELL_COMMANDS: &[(&str, &[ArgKind], bool)] = &[
     ("tab_prev", &[], false),
     ("terminal", &[ArgKind::Text], true),
     ("tool", &[ArgKind::Tool], false),
+    ("undo_history", &[], false),
     ("view", &[ArgKind::View], false),
     ("vsplit", &[ArgKind::Path], false),
 ];

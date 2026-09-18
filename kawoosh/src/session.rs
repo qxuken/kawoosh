@@ -62,6 +62,9 @@ pub enum PaneData {
         name: String,
     },
     Terminal,
+    /// The undo history pane: it follows the keyboard, so it carries
+    /// nothing of its own.
+    Undo,
 }
 
 impl Kawoosh {
@@ -99,6 +102,7 @@ impl Kawoosh {
                 }
             }
             Some(Content::Lua(name)) => PaneData::Lua { name },
+            Some(Content::Undo) => PaneData::Undo,
             _ => PaneData::Terminal,
         }
     }
@@ -236,6 +240,7 @@ impl Kawoosh {
                         Content::Editor(v)
                     }
                     PaneData::Lua { name } => Content::Lua(name.clone()),
+                    PaneData::Undo => Content::Undo,
                     PaneData::Terminal => return None,
                 };
                 Some(Node::Pane(layout.new_pane(content)))

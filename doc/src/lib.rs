@@ -437,6 +437,14 @@ impl Buffer {
         &self.journal
     }
 
+    /// Whether `root` is the text that was last written or loaded — the
+    /// undo history asking which of its states is the clean one. One
+    /// pointer compare when it is the very tree; else the pieces they
+    /// share are skipped and the rest read.
+    pub fn is_saved_text(&self, root: &text_buffer::Buffer) -> bool {
+        root.same_text(&self.saved)
+    }
+
     pub fn len(&self) -> usize {
         self.text.len()
     }
@@ -814,6 +822,78 @@ impl Buffer {
     }
 }
 
+/// Two texts' one difference as lines: the lines of `old` the change
+/// touched and what they are in `new` — for a diff view of an undo
+/// state against its parent, or a buffer against its file. One edit is
+/// one span ([`diff_trees`]), so one hunk; a long one is clipped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hunk {
+    /// The first line of the hunk, from 1, in `old`.
+    pub line: usize,
+    /// The lines carried: the first [`Hunk::MAX_LINES`] of each side.
+    pub old: Vec<String>,
+    pub new: Vec<String>,
+    /// How many lines each side's span crosses, carried or not: a
+    /// side is clipped when its total is past what it carries.
+    pub old_total: usize,
+    pub new_total: usize,
+}
+
+impl Hunk {
+    /// How many lines a side of a hunk carries at most.
+    pub const MAX_LINES: usize = 200;
+
+    /// Whether either side has lines past the ones carried.
+    pub fn clipped(&self) -> bool {
+        self.old.len() < self.old_total || self.new.len() < self.new_total
+    }
+
+    /// The hunk between two texts. A side's lines are the ones its
+    /// span crosses. A span that ends in a line takes the whole line,
+    /// on both sides — the rest of it is text they share — so a join
+    /// shows the two lines it took and the one it made. Spans that both
+    /// end at a line start are whole lines: `dd` takes lines out and
+    /// puts none in.
+    pub fn between(old: &text_buffer::Buffer, new: &text_buffer::Buffer) -> Self {
+        let edit = diff_trees(old, new);
+        let start = edit.range.start;
+        let line = old.line_of_offset(start);
+        let new_end = start + edit.new_len;
+        let at_line_start =
+            |t: &text_buffer::Buffer, off: usize| off == 0 || t.byte_at(off - 1) == Some(b'\n');
+        let mid = !at_line_start(old, edit.range.end) || !at_line_start(new, new_end);
+        // A side's lines, and how many there are: the count is one
+        // line lookup, whatever the span's size.
+        let lines = |text: &text_buffer::Buffer, end: usize| -> (Vec<String>, usize) {
+            if end == start && !mid {
+                return (Vec::new(), 0);
+            }
+            let last = text.line_of_offset(if mid { end } else { end - 1 });
+            let mut out = Vec::new();
+            for ln in line..=last.min(line + Hunk::MAX_LINES - 1) {
+                let Some(r) = text.get_line_range(ln) else {
+                    break;
+                };
+                let mut bytes = text.collect_range(r);
+                if bytes.last() == Some(&b'\n') {
+                    bytes.pop();
+                }
+                out.push(String::from_utf8_lossy(&bytes).into_owned());
+            }
+            (out, last - line + 1)
+        };
+        let (old_lines, old_total) = lines(old, edit.range.end);
+        let (new_lines, new_total) = lines(new, new_end);
+        Self {
+            line: line + 1,
+            old: old_lines,
+            new: new_lines,
+            old_total,
+            new_total,
+        }
+    }
+}
+
 /// [`diff_edit`] over two piece trees, without collecting either: the
 /// pieces they share are skipped by identity (an undo's snapshot and the
 /// text it came from share all but the edited ones), and the boundary
@@ -828,10 +908,58 @@ pub fn diff_trees(old: &text_buffer::Buffer, new: &text_buffer::Buffer) -> Edit 
     while suffix > 0 && !is_boundary(old.byte_at(old.len() - suffix)) {
         suffix -= 1;
     }
-    Edit {
-        range: prefix..old.len() - suffix,
-        new_len: new.len() - prefix - suffix,
+    slide_to_line(
+        Edit {
+            range: prefix..old.len() - suffix,
+            new_len: new.len() - prefix - suffix,
+        },
+        |i| old.byte_at(i),
+        |i| new.byte_at(i),
+    )
+}
+
+/// How far back an edit is slid looking for a line start.
+const SLIDE_MAX: usize = 4096;
+
+/// Slides an edit back onto whole lines when the text allows. The span
+/// between a common prefix and suffix is one of several when the text
+/// repeats: `300dd` at line 2 of `line 1`, `line 2`, … reads as
+/// `2⏎line 3⏎…line ` cut out after `line 1⏎line `, where a reader sees
+/// `line 2⏎…line 301⏎` cut out after `line 1⏎`. A one-byte slide is
+/// sound when the byte leaving the old span's end is the byte the new
+/// text has at the same place — it becomes shared suffix and the byte
+/// before becomes span, on both sides alike — and the first slide
+/// whose span starts on a line and ends on one, on both sides, is
+/// taken; none within [`SLIDE_MAX`], and the edit stays.
+fn slide_to_line(
+    edit: Edit,
+    old: impl Fn(usize) -> Option<u8>,
+    new: impl Fn(usize) -> Option<u8>,
+) -> Edit {
+    // A line's edge: the text's start or end, or after a newline.
+    let edge = |t: &dyn Fn(usize) -> Option<u8>, p: usize| {
+        p == 0 || t(p).is_none() || t(p - 1) == Some(b'\n')
+    };
+    let (mut start, mut end, n) = (edit.range.start, edit.range.end, edit.new_len);
+    let whole =
+        |start: usize, end: usize| edge(&old, start) && edge(&old, end) && edge(&new, start + n);
+    if whole(start, end) || (start == end && n == 0) {
+        return edit;
     }
+    for _ in 0..SLIDE_MAX {
+        if start == 0 || old(end - 1) != new(start + n - 1) {
+            return edit;
+        }
+        start -= 1;
+        end -= 1;
+        if whole(start, end) {
+            return Edit {
+                range: start..end,
+                new_len: n,
+            };
+        }
+    }
+    edit
 }
 
 /// The one edit that turns `old` into `new`: what lies between their
@@ -856,10 +984,14 @@ pub fn diff_edit(old: &[u8], new: &[u8]) -> Edit {
     while suffix > 0 && !is_boundary(old[old.len() - suffix]) {
         suffix -= 1;
     }
-    Edit {
-        range: prefix..old.len() - suffix,
-        new_len: new.len() - prefix - suffix,
-    }
+    slide_to_line(
+        Edit {
+            range: prefix..old.len() - suffix,
+            new_len: new.len() - prefix - suffix,
+        },
+        |i| old.get(i).copied(),
+        |i| new.get(i).copied(),
+    )
 }
 
 /// Shifts sorted runs across one edit: runs before it stay, runs after it
@@ -1189,6 +1321,51 @@ mod tests {
                 assert_eq!(b.text_root().collect(), before);
             }
         }
+    }
+
+    /// A line taken out of, or put into, repeating text is the whole
+    /// line, not the span the prefix and suffix left between them; a
+    /// span that starts on a line already, or cannot slide, stays.
+    #[test]
+    fn a_diff_slides_to_the_line_start() {
+        let old = b"line 1\nline 2\nline 3\n";
+        let new = b"line 1\nline 3\n";
+        assert_eq!(
+            diff_edit(old, new),
+            Edit {
+                range: 7..14,
+                new_len: 0
+            }
+        );
+        assert_eq!(
+            diff_edit(new, old),
+            Edit {
+                range: 7..7,
+                new_len: 7
+            }
+        );
+        let (o, n) = (
+            text_buffer::Buffer::with_text(old),
+            text_buffer::Buffer::with_text(new),
+        );
+        assert_eq!(diff_trees(&o, &n), diff_edit(old, new));
+        assert_eq!(diff_trees(&n, &o), diff_edit(new, old));
+        // Mid-line, nothing repeating: as it was.
+        assert_eq!(
+            diff_edit(b"abc\ndef", b"abc\ndXf"),
+            Edit {
+                range: 5..6,
+                new_len: 1
+            }
+        );
+        // A run of one byte with no line start behind it: as it was.
+        assert_eq!(
+            diff_edit(b"xaaa", b"xaa"),
+            Edit {
+                range: 3..4,
+                new_len: 0
+            }
+        );
     }
 
     /// Past twice the natural piece count the next edit compacts: the

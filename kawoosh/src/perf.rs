@@ -266,16 +266,7 @@ pub fn bytes(n: u64) -> String {
 type Section = (String, Option<Vec<&'static str>>, Vec<Vec<String>>);
 
 fn count(n: usize) -> String {
-    // Thousands apart, for the eye.
-    let s = n.to_string();
-    let mut out = String::with_capacity(s.len() + s.len() / 3);
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i).is_multiple_of(3) {
-            out.push(' ');
-        }
-        out.push(c);
-    }
-    out
+    crate::diff::count(n)
 }
 
 impl Kawoosh {

@@ -63,6 +63,24 @@ impl Node {
         }
     }
 
+    /// The path ("a"/"b" steps from the root) of the split whose leaf
+    /// `target` is, or `None` when it is the root or not here.
+    pub fn split_of(&self, target: PaneId) -> Option<String> {
+        match self {
+            Node::Pane(_) => None,
+            Node::Split { a, b, .. } => {
+                if matches!(**a, Node::Pane(id) if id == target)
+                    || matches!(**b, Node::Pane(id) if id == target)
+                {
+                    return Some(String::new());
+                }
+                a.split_of(target)
+                    .map(|p| format!("a{p}"))
+                    .or_else(|| b.split_of(target).map(|p| format!("b{p}")))
+            }
+        }
+    }
+
     /// The split at `path` ("a"/"b" steps from the root).
     pub fn ratio_mut(&mut self, path: &str) -> Option<&mut f32> {
         match self {
@@ -110,6 +128,8 @@ pub enum Content {
     Terminal(u64),
     /// A Lua view by name, drawn through a kui slot.
     Lua(String),
+    /// The undo history of whichever buffer has the keyboard (`undo.rs`).
+    Undo,
 }
 
 #[derive(Clone, Debug)]
@@ -384,6 +404,21 @@ mod tests {
         l.split(SplitDir::H, view());
         l.only();
         assert_eq!(l.visible_panes().len(), 1);
+    }
+
+    #[test]
+    fn a_leaf_names_its_split() {
+        let mut l = Layout::new(view());
+        assert_eq!(l.tab().root.split_of(1), None, "the root is no split");
+        let b = l.split(SplitDir::H, view());
+        assert_eq!(l.tab().root.split_of(1).as_deref(), Some(""));
+        assert_eq!(l.tab().root.split_of(b).as_deref(), Some(""));
+        let c = l.split(SplitDir::V, view());
+        assert_eq!(l.tab().root.split_of(c).as_deref(), Some("b"));
+        assert_eq!(l.tab().root.split_of(b).as_deref(), Some("b"));
+        assert_eq!(l.tab().root.split_of(1).as_deref(), Some(""));
+        assert_eq!(l.tab().root.split_of(99), None);
+        *l.tab_mut().root.ratio_mut("b").unwrap() = 0.25;
     }
 
     #[test]
