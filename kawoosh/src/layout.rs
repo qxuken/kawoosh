@@ -192,6 +192,8 @@ pub enum Content {
     Undo,
     /// The histories in the store (`history_pane.rs`).
     History,
+    /// The command registry, searched (`commands_pane.rs`).
+    Commands,
 }
 
 #[derive(Clone, Debug)]

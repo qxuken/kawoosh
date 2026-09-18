@@ -94,6 +94,7 @@ pub struct Kawoosh {
     /// its rows and its cursor.
     pub undo: crate::undo::UndoPanel,
     pub history_pane: crate::history_pane::HistoryPanel,
+    pub commands_pane: crate::commands_pane::CommandsPanel,
     /// The app's devtools tab the last frame drew, if any — the panel on
     /// and the strip on it — which is what `:syntax_tree` and `:perf`
     /// toggle against.
@@ -185,6 +186,7 @@ impl Kawoosh {
             perf: Default::default(),
             undo: Default::default(),
             history_pane: Default::default(),
+            commands_pane: Default::default(),
             hud: false,
             wake,
             shared_wakes: Vec::new(),
@@ -826,6 +828,8 @@ impl Kawoosh {
             self.undo_key(self.layout.focused(), stroke);
         } else if self.layout.focused_content() == Some(Content::History) {
             self.history_key_press(self.layout.focused(), stroke);
+        } else if self.layout.focused_content() == Some(Content::Commands) {
+            self.commands_key_press(self.layout.focused(), stroke);
         }
         self.follow_caret = true;
         self.drain_effects();
@@ -1372,6 +1376,7 @@ impl kui::App for Kawoosh {
             Some("settings") => self.on_settings_click(p),
             Some("undo") => self.on_undo_click(p),
             Some("history") => self.on_history_click(p),
+            Some("commands") => self.on_commands_click(p),
             Some("modifiers") => {
                 let f = |k| p.get(k).and_then(Value::as_bool).unwrap_or(false);
                 self.mods = (f("ctrl"), f("alt"), f("super"), f("shift"));

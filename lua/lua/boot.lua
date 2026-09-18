@@ -39,16 +39,22 @@ function kawoosh.command(name, fn, opts)
   kawoosh._register(name, opts)
 end
 
--- kawoosh.map(mode, keys, cmd): `cmd` is a command name (with args, as
--- the command line would spell it) or a function, which becomes one.
-function kawoosh.map(mode, keys, cmd)
+-- kawoosh.map(mode, keys, cmd[, opts]): `cmd` is a command name (with
+-- args, as the command line would spell it) or a function, which
+-- becomes one. A key can be bound more than once: the newest binding
+-- whose `opts.when` holds and whose command can run is the one that
+-- runs, so `map("n", "<CR>", "goto_location", { when = { "!language:oil" } })`
+-- and then `map("n", "<CR>", "oil_enter")` (a command gated on the
+-- listing) make one key do the right thing in each place. A binding
+-- with no `when` on a command with none shadows the older ones.
+function kawoosh.map(mode, keys, cmd, opts)
   if type(cmd) == "function" then
     kawoosh._nonce = kawoosh._nonce + 1
     local name = "lua." .. mode .. "." .. keys:gsub("[<>%s]", "_") .. "." .. kawoosh._nonce
     kawoosh.command(name, cmd)
     cmd = name
   end
-  kawoosh._map(mode, keys, cmd)
+  kawoosh._map(mode, keys, cmd, opts and opts.when or nil)
 end
 
 -- kawoosh.notify(text[, opts]): a notification. `opts` is a level name

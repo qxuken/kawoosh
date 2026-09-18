@@ -250,7 +250,7 @@ impl Args {
 /// `modified`, `language:oil` — that the engine answers from the view
 /// ([`Editor::holds`]) or that the shell or a plugin published
 /// ([`Editor::fact`]). Written `"terminal"` / `"!terminal"`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Cond {
     pub fact: String,
     pub holds: bool,

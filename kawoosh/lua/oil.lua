@@ -169,18 +169,21 @@ end, {
   doc = "list DIR, or the current file's directory, as a buffer",
 })
 
--- `<CR>` everywhere: in a listing, open the entry under the caret;
--- elsewhere, the `path:line` under it — so it is not gated on the
--- listing but falls through.
+-- `<CR>` in a listing opens the entry under the caret. The command is
+-- gated on the listing; `<CR>` elsewhere is the binding below it,
+-- `goto_location` on a `when` of its own, which the engine falls
+-- through to when this one cannot run.
 kawoosh.command("oil_enter", function()
   local dir = listed()
-  if not dir then return kawoosh.cmd("goto_location") end
   local line = kawoosh.buf.line(kawoosh.buf.cursor().line)
   if not line or line == "" then return end
   if line == "../" then return up() end
   local target = fs.join(dir, (line:gsub("/$", "")))
   if line:sub(-1) == "/" then oil.open(target) else kawoosh.open(target) end
-end, { doc = "open the entry under the caret" })
+end, {
+  when = { "language:oil" },
+  doc = "open the entry under the caret",
+})
 
 -- `:oil cd`, or <leader>cd: the working directory follows the listing,
 -- so a terminal opened next starts here. A subcommand of `:oil`, so it
@@ -193,5 +196,6 @@ end, {
   doc = "make the listed directory the working directory",
 })
 
+kawoosh.map("n", "<CR>", "goto_location", { when = { "!language:oil" } })
 kawoosh.map("n", "<CR>", "oil_enter")
 kawoosh.map("n", "<leader>cd", "oil cd")

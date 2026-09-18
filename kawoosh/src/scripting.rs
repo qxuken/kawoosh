@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use kawoosh_doc::Buffer;
-use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Spec, ViewId};
+use kawoosh_editor::{ArgKind, Args, Cond, KeyStroke, Lookup, Mode, Spec, ViewId};
 use kawoosh_lua::{Msg, Runtime};
 use kawoosh_systems::lsp::ServerDef;
 use kawoosh_systems::ts::Token;
@@ -141,8 +141,12 @@ impl Kawoosh {
                 mode,
                 keys,
                 command,
+                when,
             } => match Mode::from_short(&mode) {
-                Some(m) => self.ed.keymap.bind(m, &keys, &command),
+                Some(m) => {
+                    let when: Vec<Cond> = when.iter().map(|c| Cond::parse(c)).collect();
+                    self.ed.keymap.bind_when(m, &keys, &command, &when);
+                }
                 None => self.ed.message = format!("map: unknown mode {mode}"),
             },
             Msg::Open(p) => self.open_in_editor(&p, None, None),
@@ -418,9 +422,9 @@ impl Kawoosh {
             }
             let keys = ["<C-w>".to_string(), note];
             self.ed.sync_settings();
-            if let Lookup::Exact(b) = self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
-                let b = b.clone();
-                self.shell_command(&b.command, &b.args, None);
+            if let Lookup::Exact(bs) = self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
+                let bs = bs.to_vec();
+                self.run_bindings(&bs);
             }
             return;
         }

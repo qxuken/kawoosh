@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use kawoosh_doc::{Buffer, BufferId};
-use kawoosh_editor::{ArgKind, Args, Command, Ctx, FnCommand, Spec, ViewId};
+use kawoosh_editor::{ArgKind, Args, Binding, Command, Ctx, FnCommand, Spec, ViewId};
 
 use crate::app::Kawoosh;
 use crate::layout::{Content, Drop, SplitDir};
@@ -45,6 +45,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::compile::commands());
     v.extend(crate::scripting::commands());
     v.extend(crate::undo::commands());
+    v.extend(crate::commands_pane::commands());
     v
 }
 
@@ -97,6 +98,17 @@ impl Kawoosh {
             return;
         };
         self.ed.run(v, name, args, count);
+        self.drain_effects();
+    }
+
+    /// Runs the binding of `bs` that can run now, from a pane without a
+    /// view — a `<C-w>` chord on a terminal, the undo pane's keys.
+    pub(crate) fn run_bindings(&mut self, bs: &[Binding]) {
+        self.sync_facts();
+        let Some(v) = self.focused_view().or_else(|| self.ed.views.keys().next()) else {
+            return;
+        };
+        self.ed.run_bindings(v, bs, None);
         self.drain_effects();
     }
 
@@ -163,7 +175,7 @@ impl Kawoosh {
             Some(Content::Terminal(t)) => {
                 self.terms.map.remove(&t);
             }
-            Some(Content::Lua(_) | Content::Undo | Content::History) => {}
+            Some(Content::Lua(_) | Content::Undo | Content::History | Content::Commands) => {}
             None => self.ed.message = "cannot close the last pane".into(),
         }
     }
@@ -287,7 +299,7 @@ fn panes() -> Vec<ShellCommand> {
                         Content::Terminal(t) => {
                             k.terms.map.remove(&t);
                         }
-                        Content::Lua(_) | Content::Undo | Content::History => {}
+                        Content::Lua(_) | Content::Undo | Content::History | Content::Commands => {}
                     }
                 }
             },

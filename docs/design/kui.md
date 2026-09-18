@@ -752,9 +752,29 @@ spec's fields as the table (`args`, `aliases`, `bang`, `query`, `when`,
 `doc`), `ctx.form` / `ctx.bang` / `ctx.query` reach the function, and
 `kawoosh.commands()` hands every spec back as such a table — the same
 data the completion reads, for a palette or a help pane to build from.
-The bundled oil is the acceptance test: `oil cd` is a subcommand gated on
-`language:oil`, `:oil?` says what is listed, and `<leader>cd` off a
-listing runs nothing and says why.
+**A key carries its bindings, newest first, and the engine takes the
+first that can run.** A binding has a `when` of its own beside its
+command's, so `kawoosh.map("n", "<CR>", "goto_location", { when = {
+"!language:oil" } })` and then `kawoosh.map("n", "<CR>", "oil_enter")`
+— a command gated on the listing — make one key do the right thing in
+each place without either command knowing about the other; when none
+can run, the message is the newest binding's reason; a bare binding on a
+bare command shadows the older ones, so a rebinding in `init.lua` still
+replaces the default. The bundled oil is the acceptance test: `oil cd`
+is a subcommand gated on `language:oil`, `oil_enter` is gated the same
+way and falls through to `goto_location`, `:oil?` says what is listed,
+and `<leader>cd` off a listing runs nothing and says why.
+
+**`:commands` is the registry as a pane** (`commands_pane.rs`), the
+help this design makes free: every spec a row — the name with its forms
+marked, the first ex spelling, the key bound to it, what it does or, in
+the danger colour, why it cannot run where the keyboard came from —
+typing filters it (the name's start first, then an alias, then anything
+in the row), `⏎` runs the cursor's command or opens the command line on
+it when it takes arguments, and under the rows the spec in full: the
+forms and what each means, the conditions and which hold, the keys in
+every mode, the subcommands. It reads only what `kawoosh.commands()`
+reads; a plugin could draw the same pane.
 
 ### Deliberately not in the MVP
 

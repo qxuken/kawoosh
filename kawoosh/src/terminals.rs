@@ -148,9 +148,9 @@ impl Kawoosh {
             }
             let keys = ["<C-w>".to_string(), note.clone()];
             self.ed.sync_settings();
-            if let Lookup::Exact(b) = self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
-                let b = b.clone();
-                self.shell_command(&b.command, &b.args, None);
+            if let Lookup::Exact(bs) = self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
+                let bs = bs.to_vec();
+                self.run_bindings(&bs);
             }
             return;
         }

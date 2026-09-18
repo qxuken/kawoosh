@@ -6,6 +6,8 @@
 
 use std::collections::HashMap;
 
+use crate::command::Cond;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Mode {
     Normal,
@@ -25,6 +27,17 @@ impl Mode {
             Mode::Visual => "VIS",
             Mode::Command => "CMD",
             Mode::OperatorPending => "OP",
+        }
+    }
+
+    /// The letter `kawoosh.map` and `:map` name the mode by.
+    pub fn short(self) -> &'static str {
+        match self {
+            Mode::Normal => "n",
+            Mode::Insert => "i",
+            Mode::Visual => "v",
+            Mode::Command => "c",
+            Mode::OperatorPending => "o",
         }
     }
 
@@ -240,21 +253,43 @@ fn normalize_chord(inner: &str) -> String {
     format!("<{m}{base_s}>")
 }
 
+/// What a key sequence runs. A key can carry several, newest first:
+/// the engine takes the first whose `when` holds and whose command can
+/// run ([`crate::Editor::pick_binding`]), so `<CR>` bound to
+/// `oil_enter` (`when` the listing) and, older, to `goto_location`
+/// (`when` not) is one key doing the right thing in each — and a bare
+/// binding on a bare command still shadows everything under it.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Binding {
     pub command: String,
     pub args: Vec<String>,
+    /// The binding's own conditions, beside its command's.
+    pub when: Vec<Cond>,
+}
+
+impl Binding {
+    /// `command args...` as the command line would spell it.
+    pub fn line(&self) -> String {
+        let mut s = self.command.clone();
+        for a in &self.args {
+            s.push(' ');
+            s.push_str(a);
+        }
+        s
+    }
 }
 
 #[derive(Default, Debug)]
 struct Node {
     children: HashMap<String, Node>,
-    binding: Option<Binding>,
+    /// Newest first.
+    bindings: Vec<Binding>,
 }
 
 #[derive(Debug)]
 pub enum Lookup<'a> {
-    Exact(&'a Binding),
+    /// The bindings on the sequence, newest first.
+    Exact(&'a [Binding]),
     Prefix,
     None,
 }
@@ -264,6 +299,9 @@ pub struct Keymap {
     modes: HashMap<Mode, Node>,
     /// The key `<leader>` stands for, in notation (`<Space>`, `,`).
     leader: String,
+    /// Bumped on every bind and unbind, for a reader that lists the
+    /// bindings only when they changed.
+    version: u64,
 }
 
 impl Keymap {
@@ -271,6 +309,7 @@ impl Keymap {
         Self {
             modes: HashMap::new(),
             leader: "<Space>".into(),
+            version: 0,
         }
     }
 
@@ -296,6 +335,13 @@ impl Keymap {
     /// binding on a prefix of another shadows it: the longer one is
     /// unreachable, which is neovim's behaviour too (timeout aside).
     pub fn bind(&mut self, mode: Mode, keys: &str, command: &str) {
+        self.bind_when(mode, keys, command, &[]);
+    }
+
+    /// [`Keymap::bind`] with the binding's own conditions (`"!terminal"`
+    /// negates). The new binding goes in front of the key's others;
+    /// one equal to it moves to the front.
+    pub fn bind_when(&mut self, mode: Mode, keys: &str, command: &str, when: &[Cond]) {
         let seq = parse_notation(keys);
         let mut parts = command.split_whitespace();
         let name = parts.next().unwrap_or_default().to_string();
@@ -304,10 +350,18 @@ impl Keymap {
         for k in seq {
             node = node.children.entry(k).or_default();
         }
-        node.binding = Some(Binding {
+        let b = Binding {
             command: name,
             args,
-        });
+            when: when.to_vec(),
+        };
+        node.bindings.retain(|o| *o != b);
+        node.bindings.insert(0, b);
+        self.version += 1;
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     pub fn unbind(&mut self, mode: Mode, keys: &str) {
@@ -321,7 +375,8 @@ impl Keymap {
                 None => return,
             }
         }
-        node.binding = None;
+        node.bindings.clear();
+        self.version += 1;
     }
 
     pub fn lookup(&self, mode: Mode, keys: &[String]) -> Lookup<'_> {
@@ -340,12 +395,14 @@ impl Keymap {
     /// chosen as leader waits for what follows, as vim's would.
     fn walk<'a>(&'a self, node: &'a Node, keys: &[String]) -> Lookup<'a> {
         let Some((k, rest)) = keys.split_first() else {
-            return match &node.binding {
-                // A binding with longer bindings beneath it: the shorter
-                // wins at once, like neovim without `timeoutlen`.
-                Some(b) => Lookup::Exact(b),
-                None if node.children.is_empty() => Lookup::None,
-                None => Lookup::Prefix,
+            // A binding with longer bindings beneath it: the shorter
+            // wins at once, like neovim without `timeoutlen`.
+            return if !node.bindings.is_empty() {
+                Lookup::Exact(&node.bindings)
+            } else if node.children.is_empty() {
+                Lookup::None
+            } else {
+                Lookup::Prefix
             };
         };
         let own = match node.children.get(k) {
@@ -390,19 +447,20 @@ impl Keymap {
         }
     }
 
-    /// Every binding in `mode`, for `:map` listings and the Lua API.
+    /// Every binding in `mode`, for `:map` listings and the Lua API — a
+    /// key with several listed once per binding, newest first.
     pub fn bindings(&self, mode: Mode) -> Vec<(String, Binding)> {
         let mut out = Vec::new();
         if let Some(root) = self.modes.get(&mode) {
             walk(root, String::new(), &mut out);
         }
-        out.sort();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
         out
     }
 }
 
 fn walk(node: &Node, prefix: String, out: &mut Vec<(String, Binding)>) {
-    if let Some(b) = &node.binding {
+    for b in &node.bindings {
         out.push((prefix.clone(), b.clone()));
     }
     for (k, n) in &node.children {
@@ -445,17 +503,17 @@ mod tests {
         km.bind(Mode::Normal, "<Space>x", "explicit");
         let keys = |s: &str| parse_notation(s);
         assert!(
-            matches!(km.lookup(Mode::Normal, &keys(" t")), Lookup::Exact(b) if b.command == "todo")
+            matches!(km.lookup(Mode::Normal, &keys(" t")), Lookup::Exact([b, ..]) if b.command == "todo")
         );
         assert!(matches!(
             km.lookup(Mode::Normal, &keys(" c")),
             Lookup::Prefix
         ));
         assert!(
-            matches!(km.lookup(Mode::Normal, &keys(" cd")), Lookup::Exact(b) if b.command == "chdir")
+            matches!(km.lookup(Mode::Normal, &keys(" cd")), Lookup::Exact([b, ..]) if b.command == "chdir")
         );
         assert!(
-            matches!(km.lookup(Mode::Normal, &keys(" x")), Lookup::Exact(b) if b.command == "explicit")
+            matches!(km.lookup(Mode::Normal, &keys(" x")), Lookup::Exact([b, ..]) if b.command == "explicit")
         );
         assert!(matches!(
             km.lookup(Mode::Normal, &keys(" ")),
@@ -472,7 +530,7 @@ mod tests {
         ));
         assert!(matches!(km.lookup(Mode::Normal, &keys(",q")), Lookup::None));
         assert!(
-            matches!(km.lookup(Mode::Normal, &keys(",t")), Lookup::Exact(b) if b.command == "todo")
+            matches!(km.lookup(Mode::Normal, &keys(",t")), Lookup::Exact([b, ..]) if b.command == "todo")
         );
         assert!(
             matches!(km.lookup(Mode::Normal, &keys(" t")), Lookup::None),
@@ -507,7 +565,7 @@ mod tests {
         assert!(matches!(km.lookup(Mode::Normal, &g), Lookup::Prefix));
         let gg = ["g".to_string(), "g".to_string()];
         assert!(
-            matches!(km.lookup(Mode::Normal, &gg), Lookup::Exact(b) if b.command == "goto_start")
+            matches!(km.lookup(Mode::Normal, &gg), Lookup::Exact([b, ..]) if b.command == "goto_start")
         );
         let cd = ["<C-d>".to_string()];
         assert!(matches!(km.lookup(Mode::Normal, &cd), Lookup::Exact(_)));
@@ -515,7 +573,7 @@ mod tests {
         let cw_cw = ["<C-w>".to_string(), "<C-w>".to_string()];
         assert!(matches!(km.lookup(Mode::Normal, &cw_cw), Lookup::None));
         assert!(
-            matches!(km.lookup_lenient(Mode::Normal, &cw_cw), Lookup::Exact(b) if b.command == "pane_next")
+            matches!(km.lookup_lenient(Mode::Normal, &cw_cw), Lookup::Exact([b, ..]) if b.command == "pane_next")
         );
         let x = ["x".to_string()];
         assert!(matches!(km.lookup(Mode::Normal, &x), Lookup::None));

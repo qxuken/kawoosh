@@ -952,3 +952,61 @@ fn commands_are_specs_with_forms_conditions_and_subcommands() {
         Some("reload the disk's text, as one undoable change")
     );
 }
+
+/// A key can carry several bindings, newest first: the first whose own
+/// `when` holds and whose command can run is the one that runs; none
+/// of them is the newest one's reason; a bare binding on a bare command
+/// shadows the older ones as it always did.
+#[test]
+fn a_key_falls_through_its_bindings_by_when() {
+    use kawoosh_editor::Cond;
+    let mut t = T::new("a\n");
+    t.ed.register("plain_enter", |ed, _| ed.message = "plain".into());
+    t.ed.register_spec(Spec::new("oil_enter").when(&["language:oil"]), |ed, _| {
+        ed.message = "oil".into()
+    });
+    t.ed.keymap.bind_when(
+        Mode::Normal,
+        "<CR>",
+        "plain_enter",
+        &[Cond::parse("!language:oil")],
+    );
+    t.ed.keymap.bind(Mode::Normal, "<CR>", "oil_enter");
+    t.keys("<CR>");
+    assert_eq!(t.ed.message, "plain");
+    let b = t.ed.views[t.v].buffer;
+    t.ed.buffers[b].language = "oil".into();
+    t.keys("<CR>");
+    assert_eq!(t.ed.message, "oil");
+    // Neither can run: the newest binding's reason.
+    t.ed.buffers[b].language = "rust".into();
+    t.ed.keymap.bind_when(
+        Mode::Normal,
+        "<C-x>",
+        "plain_enter",
+        &[Cond::parse("store")],
+    );
+    t.ed.keymap.bind(Mode::Normal, "<C-x>", "oil_enter");
+    t.keys("<C-x>");
+    assert_eq!(t.ed.message, "oil_enter needs language:oil");
+    t.ed.fact("store", true);
+    t.keys("<C-x>");
+    assert_eq!(t.ed.message, "plain");
+    // Bound again with no condition: the older ones are shadowed.
+    t.ed.keymap.bind(Mode::Normal, "<CR>", "plain_enter");
+    t.ed.buffers[b].language = "oil".into();
+    t.keys("<CR>");
+    assert_eq!(t.ed.message, "plain");
+    // The listing has them all, newest first, an equal one moved to
+    // the front, the default keymap's `goto_location` under them.
+    let bs = t.ed.keymap.bindings(Mode::Normal);
+    let cr: Vec<String> = bs
+        .iter()
+        .filter(|(k, _)| k == "<CR>")
+        .map(|(_, b)| b.line())
+        .collect();
+    assert_eq!(
+        cr,
+        ["plain_enter", "oil_enter", "plain_enter", "goto_location"]
+    );
+}

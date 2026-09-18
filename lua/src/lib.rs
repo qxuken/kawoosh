@@ -33,10 +33,12 @@ pub enum Msg {
         name: String,
         on: bool,
     },
+    /// `kawoosh.map(mode, keys, cmd, { when = {...} })`.
     Map {
         mode: String,
         keys: String,
         command: String,
+        when: Vec<String>,
     },
     Ex(String),
     Echo(String),
@@ -600,14 +602,17 @@ fn seed(
     let qq = q(queue);
     k.set(
         "_map",
-        lua.create_function(move |_, (mode, keys, command): (String, String, String)| {
-            qq.borrow_mut().push(Msg::Map {
-                mode,
-                keys,
-                command,
-            });
-            Ok(())
-        })?,
+        lua.create_function(
+            move |_, (mode, keys, command, when): (String, String, String, Option<Vec<String>>)| {
+                qq.borrow_mut().push(Msg::Map {
+                    mode,
+                    keys,
+                    command,
+                    when: when.unwrap_or_default(),
+                });
+                Ok(())
+            },
+        )?,
     )?;
     let qq = q(queue);
     k.set(
@@ -1331,7 +1336,8 @@ mod tests {
                 Msg::Map {
                     mode: "n".into(),
                     keys: "<leader>z".into(),
-                    command: "zap".into()
+                    command: "zap".into(),
+                    when: vec![],
                 }
             ]
         );

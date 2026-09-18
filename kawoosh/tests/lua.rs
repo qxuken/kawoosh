@@ -421,7 +421,31 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
     );
     assert_eq!(app.ed.message, "checked");
 
-    // In a listing: clear, and the working directory follows.
+    // `<CR>` off a listing is `goto_location`, the older binding with
+    // a `when` of its own that the gated `oil_enter` falls through to:
+    // on a `path:line` it opens the file; `oil_enter` itself is refused.
+    app.run_lua_source(
+        "t",
+        r#"assert(kawoosh.can("oil_enter") == "oil_enter needs language:oil")"#,
+    );
+    ex(&mut d, &mut app, "enew");
+    d.keys(&mut app, &format!("i{}:1", file.display()));
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "0");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        app.ed
+            .buffer_of(app.focused_view().unwrap())
+            .path
+            .as_deref(),
+        Some(file.as_path()),
+        "{}",
+        app.ed.message
+    );
+
+    // In a listing: clear, `<CR>` opens the entry, and the working
+    // directory follows `<leader>cd`.
     d.keys(&mut app, "-");
     ex(&mut d, &mut app, "oil?");
     assert_eq!(
@@ -429,6 +453,17 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
         format!("oil: {}", dir.join("inner").display())
     );
     app.run_lua_source("t", r#"assert(kawoosh.can("oil cd") == true)"#);
+    d.keys(&mut app, "j");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        app.ed
+            .buffer_of(app.focused_view().unwrap())
+            .path
+            .as_deref(),
+        Some(file.as_path())
+    );
+    d.keys(&mut app, "-");
     d.keys(&mut app, " cd");
     assert_eq!(app.cwd, dir.join("inner"));
 

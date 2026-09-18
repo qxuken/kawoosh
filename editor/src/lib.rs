@@ -657,6 +657,47 @@ impl Editor {
         }
     }
 
+    /// The binding of `bs` (newest first) to run on `view`: the first
+    /// whose own `when` holds and whose command can run. None of them
+    /// is the newest one's reason.
+    pub fn pick_binding<'b>(&self, view: ViewId, bs: &'b [Binding]) -> Result<&'b Binding, String> {
+        let facts = self.facts(Some(view));
+        let mut first = None;
+        for b in bs {
+            let own = b.when.iter().find(|c| facts.holds(&c.fact) != c.holds);
+            let result = match own {
+                Some(c) => Err(match c.holds {
+                    true => format!("{} needs {}", b.line(), c.fact),
+                    false => format!("{} is not for {}", b.line(), c.fact),
+                }),
+                None => {
+                    let name = self.commands.resolve(&b.command, &b.args).name;
+                    self.can(Some(view), &name)
+                }
+            };
+            match result {
+                Ok(()) => return Ok(b),
+                Err(reason) => first.get_or_insert(reason),
+            };
+        }
+        Err(first.unwrap_or_else(|| "nothing bound".into()))
+    }
+
+    /// Runs the binding [`Editor::pick_binding`] chooses, or says why
+    /// none can run.
+    pub fn run_bindings(&mut self, view: ViewId, bs: &[Binding], count: Option<usize>) {
+        match self.pick_binding(view, bs) {
+            Ok(b) => {
+                let b = b.clone();
+                self.run(view, &b.command, &b.args, count);
+            }
+            Err(reason) => {
+                self.pending_op = None;
+                self.message = reason;
+            }
+        }
+    }
+
     /// Runs a command by name (an alias, with `!` or `?`, with its
     /// subcommand among `args` — [`Registry::resolve`]) with `args` on
     /// `view`, with an undo checkpoint around it; a path among the
@@ -1153,9 +1194,9 @@ impl Editor {
             Mode::Command => return self.prompt_key(view, stroke),
             Mode::Insert => {
                 let note = stroke.notation();
-                if let Lookup::Exact(b) = self.keymap.lookup(Mode::Insert, &[note]) {
-                    let b = b.clone();
-                    self.run(view, &b.command, &b.args, None);
+                if let Lookup::Exact(bs) = self.keymap.lookup(Mode::Insert, &[note]) {
+                    let bs = bs.to_vec();
+                    self.run_bindings(view, &bs, None);
                     return true;
                 }
                 if let Some(t) = &stroke.text
@@ -1211,10 +1252,18 @@ impl Editor {
                 self.pending_op = None;
                 false
             }
-            Lookup::Exact(b) => {
-                let b = b.clone();
+            Lookup::Exact(bs) => {
+                let bs = bs.to_vec();
                 self.pending.clear();
                 let count = self.count.take();
+                let b = match self.pick_binding(view, &bs) {
+                    Ok(b) => b.clone(),
+                    Err(reason) => {
+                        self.pending_op = None;
+                        self.message = reason;
+                        return true;
+                    }
+                };
                 let name = self.commands.resolve(&b.command, &b.args).name;
                 if self.commands.spec(&name).is_some_and(|c| c.takes_char) {
                     self.awaiting_char = Some((b, count));
