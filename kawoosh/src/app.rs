@@ -90,7 +90,7 @@ pub struct Kawoosh {
     pub(crate) line_cells: rows::LineCellsCache,
     /// The Perf tab's readings: the frame's phases, the systems' reports.
     pub perf: crate::perf::Perf,
-    /// The undo history pane (`:undo_history`): which buffer it follows,
+    /// The undo history pane (`:undo history`): which buffer it follows,
     /// its rows and its cursor.
     pub undo: crate::undo::UndoPanel,
     pub history_pane: crate::history_pane::HistoryPanel,

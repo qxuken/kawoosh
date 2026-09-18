@@ -256,7 +256,7 @@ fn normalize_chord(inner: &str) -> String {
 /// What a key sequence runs. A key can carry several, newest first:
 /// the engine takes the first whose `when` holds and whose command can
 /// run ([`crate::Editor::pick_binding`]), so `<CR>` bound to
-/// `oil_enter` (`when` the listing) and, older, to `goto_location`
+/// `oil enter` (`when` the listing) and, older, to `goto location`
 /// (`when` not) is one key doing the right thing in each — and a bare
 /// binding on a bare command still shadows everything under it.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -523,7 +523,7 @@ mod tests {
         km.set_leader(",").unwrap();
         assert_eq!(km.leader(), ",");
         // A bound `,` waits while a leader map is open past it.
-        km.bind(Mode::Normal, ",", "keep_primary");
+        km.bind(Mode::Normal, ",", "cursor primary");
         assert!(matches!(
             km.lookup(Mode::Normal, &keys(",")),
             Lookup::Prefix
@@ -569,11 +569,11 @@ mod tests {
         );
         let cd = ["<C-d>".to_string()];
         assert!(matches!(km.lookup(Mode::Normal, &cd), Lookup::Exact(_)));
-        km.bind(Mode::Normal, "<C-w>w", "pane_next");
+        km.bind(Mode::Normal, "<C-w>w", "pane next");
         let cw_cw = ["<C-w>".to_string(), "<C-w>".to_string()];
         assert!(matches!(km.lookup(Mode::Normal, &cw_cw), Lookup::None));
         assert!(
-            matches!(km.lookup_lenient(Mode::Normal, &cw_cw), Lookup::Exact([b, ..]) if b.command == "pane_next")
+            matches!(km.lookup_lenient(Mode::Normal, &cw_cw), Lookup::Exact([b, ..]) if b.line() == "pane next")
         );
         let x = ["x".to_string()];
         assert!(matches!(km.lookup(Mode::Normal, &x), Lookup::None));

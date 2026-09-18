@@ -989,7 +989,7 @@ pub fn install(ed: &mut Editor) {
     use MotionKind::*;
 
     // ---- motions
-    ed.motion("move_left", Exclusive, |b, o, n| {
+    ed.motion("move left", Exclusive, |b, o, n| {
         let mut o = o;
         let ls = b.line_start(b.line_of(o));
         for _ in 0..n {
@@ -999,7 +999,7 @@ pub fn install(ed: &mut Editor) {
         }
         o
     });
-    ed.motion("move_right", Exclusive, |b, o, n| {
+    ed.motion("move right", Exclusive, |b, o, n| {
         let mut o = o;
         let le = b.line_range(b.line_of(o)).end;
         for _ in 0..n {
@@ -1009,19 +1009,19 @@ pub fn install(ed: &mut Editor) {
         }
         o
     });
-    ed.register_kind("move_down", Kind::Motion(Linewise), |ed, ctx| {
+    ed.register_kind("move down", Kind::Motion(Linewise), |ed, ctx| {
         vertical(ed, ctx, 1)
     });
-    ed.register_kind("move_up", Kind::Motion(Linewise), |ed, ctx| {
+    ed.register_kind("move up", Kind::Motion(Linewise), |ed, ctx| {
         vertical(ed, ctx, -1)
     });
-    ed.motion("line_start", Exclusive, |b, o, _| {
+    ed.motion("line start", Exclusive, |b, o, _| {
         b.line_start(b.line_of(o))
     });
-    ed.motion("first_nonblank", Exclusive, |b, o, _| {
+    ed.motion("line nonblank", Exclusive, |b, o, _| {
         m::first_nonblank(b, b.line_of(o))
     });
-    ed.motion("line_end", Inclusive, |b, o, n| {
+    ed.motion("line end", Inclusive, |b, o, n| {
         // Onto the last char, as vim's `$`; an empty line stays put.
         let ln = (b.line_of(o) + n - 1).min(b.line_count() - 1);
         let r = b.line_range(ln);
@@ -1031,10 +1031,10 @@ pub fn install(ed: &mut Editor) {
             r.end
         }
     });
-    ed.motion("line_end_insert", Exclusive, |b, o, _| {
+    ed.motion("line end insert", Exclusive, |b, o, _| {
         b.line_range(b.line_of(o)).end
     });
-    ed.register_kind("word_next", Kind::Motion(Exclusive), |ed, ctx| {
+    ed.register_kind("word next", Kind::Motion(Exclusive), |ed, ctx| {
         // Under an operator, `w` stops at the end of its line (`dw` on the
         // last word never joins lines) — vim's one special case.
         let op = ed.pending_op.is_some();
@@ -1044,17 +1044,17 @@ pub fn install(ed: &mut Editor) {
             if op && target > le { le } else { target }
         });
     });
-    ed.motion("word_prev", Exclusive, |b, o, n| {
+    ed.motion("word prev", Exclusive, |b, o, n| {
         (0..n).fold(o, |o, _| m::prev_word_start(b, o))
     });
-    ed.motion("word_end", Inclusive, |b, o, n| {
+    ed.motion("word end", Inclusive, |b, o, n| {
         (0..n).fold(o, |o, _| m::next_word_end(b, o))
     });
-    ed.register_kind("goto_file_start", Kind::Motion(Linewise), |ed, ctx| {
+    ed.register_kind("goto file start", Kind::Motion(Linewise), |ed, ctx| {
         let n = if ctx.has_count { ctx.count } else { 1 };
         goto_line(ed, ctx.view, n);
     });
-    ed.register_kind("goto_file_end", Kind::Motion(Linewise), |ed, ctx| {
+    ed.register_kind("goto file end", Kind::Motion(Linewise), |ed, ctx| {
         let n = if ctx.has_count {
             ctx.count
         } else {
@@ -1062,10 +1062,10 @@ pub fn install(ed: &mut Editor) {
         };
         goto_line(ed, ctx.view, n);
     });
-    ed.register_kind("goto_line", Kind::Motion(Linewise), |ed, ctx| {
+    ed.register_kind("goto line", Kind::Motion(Linewise), |ed, ctx| {
         goto_line(ed, ctx.view, ctx.count)
     });
-    ed.register_kind("half_page_down", Kind::Motion(Linewise), |ed, ctx| {
+    ed.register_kind("page half down", Kind::Motion(Linewise), |ed, ctx| {
         let n = (ed.views[ctx.view].rows / 2).max(1) as i64;
         vertical(
             ed,
@@ -1076,7 +1076,7 @@ pub fn install(ed: &mut Editor) {
             n,
         );
     });
-    ed.register_kind("half_page_up", Kind::Motion(Linewise), |ed, ctx| {
+    ed.register_kind("page half up", Kind::Motion(Linewise), |ed, ctx| {
         let n = (ed.views[ctx.view].rows / 2).max(1) as i64;
         vertical(
             ed,
@@ -1087,7 +1087,7 @@ pub fn install(ed: &mut Editor) {
             -n,
         );
     });
-    ed.register_kind("page_down", Kind::Motion(Linewise), |ed, ctx| {
+    ed.register_kind("page down", Kind::Motion(Linewise), |ed, ctx| {
         let n = (ed.views[ctx.view].rows.saturating_sub(2)).max(1) as i64;
         vertical(
             ed,
@@ -1098,7 +1098,7 @@ pub fn install(ed: &mut Editor) {
             n,
         );
     });
-    ed.register_kind("page_up", Kind::Motion(Linewise), |ed, ctx| {
+    ed.register_kind("page up", Kind::Motion(Linewise), |ed, ctx| {
         let n = (ed.views[ctx.view].rows.saturating_sub(2)).max(1) as i64;
         vertical(
             ed,
@@ -1113,10 +1113,10 @@ pub fn install(ed: &mut Editor) {
         motion(ed, ctx, |b, o, _| m::matching_bracket(b, o).unwrap_or(o));
     });
     for (name, forward, till) in [
-        ("find_char", true, false),
-        ("find_char_back", false, false),
-        ("till_char", true, true),
-        ("till_char_back", false, true),
+        ("find char", true, false),
+        ("find char back", false, false),
+        ("till char", true, true),
+        ("till char back", false, true),
     ] {
         ed.register_kind_char(
             name,
@@ -1164,14 +1164,14 @@ pub fn install(ed: &mut Editor) {
             },
         );
     }
-    ed.register_kind("search_next", Kind::Motion(Exclusive), |ed, ctx| {
+    ed.register_kind("search next", Kind::Motion(Exclusive), |ed, ctx| {
         search(ed, ctx, true)
     });
-    ed.register_kind("search_prev", Kind::Motion(Exclusive), |ed, ctx| {
+    ed.register_kind("search prev", Kind::Motion(Exclusive), |ed, ctx| {
         search(ed, ctx, false)
     });
     ed.register_with_args("substitute", Args::rest(&[ArgKind::Text]), substitute);
-    ed.register("search_word", |ed, ctx| {
+    ed.register("search word", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let (a, b) = m::word_at(buf, ed.views[ctx.view].sels.primary().head);
@@ -1187,10 +1187,10 @@ pub fn install(ed: &mut Editor) {
     });
 
     // ---- text objects (operator-pending and visual)
-    ed.register_kind_char("textobject_inner", Kind::TextObject, |ed, ctx| {
+    ed.register_kind_char("textobject inner", Kind::TextObject, |ed, ctx| {
         textobject(ed, ctx, false)
     });
-    ed.register_kind_char("textobject_around", Kind::TextObject, |ed, ctx| {
+    ed.register_kind_char("textobject around", Kind::TextObject, |ed, ctx| {
         textobject(ed, ctx, true)
     });
 
@@ -1220,7 +1220,7 @@ pub fn install(ed: &mut Editor) {
         }
         apply_operator(ed, ctx.view, "join", ranges);
     });
-    ed.register("delete_char", |ed, ctx| {
+    ed.register("delete char", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
@@ -1245,7 +1245,7 @@ pub fn install(ed: &mut Editor) {
         }
         apply_operator(ed, ctx.view, "delete", ranges);
     });
-    ed.register("delete_char_back", |ed, ctx| {
+    ed.register("delete char back", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
@@ -1264,7 +1264,7 @@ pub fn install(ed: &mut Editor) {
             .collect();
         apply_operator(ed, ctx.view, "delete", ranges);
     });
-    ed.register("change_char", |ed, ctx| {
+    ed.register("change char", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
@@ -1287,7 +1287,7 @@ pub fn install(ed: &mut Editor) {
         ed.mode = Mode::Normal;
         apply_operator(ed, ctx.view, "change", ranges);
     });
-    ed.register("delete_to_end", |ed, ctx| {
+    ed.register("delete to end", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let ranges = ed.views[ctx.view]
@@ -1297,7 +1297,7 @@ pub fn install(ed: &mut Editor) {
             .collect();
         apply_operator(ed, ctx.view, "delete", ranges);
     });
-    ed.register("change_to_end", |ed, ctx| {
+    ed.register("change to end", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let ranges = ed.views[ctx.view]
@@ -1307,7 +1307,7 @@ pub fn install(ed: &mut Editor) {
             .collect();
         apply_operator(ed, ctx.view, "change", ranges);
     });
-    ed.register_with_char("replace_char", |ed, ctx| {
+    ed.register_with_char("replace char", |ed, ctx| {
         let Some(c) = ctx.arg_char else { return };
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
@@ -1325,7 +1325,7 @@ pub fn install(ed: &mut Editor) {
     });
 
     // ---- insert
-    ed.register("insert_mode", |ed, _| ed.mode = Mode::Insert);
+    ed.register("insert", |ed, _| ed.mode = Mode::Insert);
     ed.register("append", |ed, ctx| {
         motion(ed, ctx, |b, o, _| {
             let le = b.line_range(b.line_of(o)).end;
@@ -1333,17 +1333,17 @@ pub fn install(ed: &mut Editor) {
         });
         ed.mode = Mode::Insert;
     });
-    ed.register("insert_line_start", |ed, ctx| {
+    ed.register("insert line start", |ed, ctx| {
         motion(ed, ctx, |b, o, _| m::first_nonblank(b, b.line_of(o)));
         ed.mode = Mode::Insert;
     });
-    ed.register("append_line_end", |ed, ctx| {
+    ed.register("append line end", |ed, ctx| {
         motion(ed, ctx, |b, o, _| b.line_range(b.line_of(o)).end);
         ed.mode = Mode::Insert;
     });
-    ed.register("open_below", |ed, ctx| open_line(ed, ctx, true));
-    ed.register("open_above", |ed, ctx| open_line(ed, ctx, false));
-    ed.register("normal_mode", |ed, ctx| {
+    ed.register("open below", |ed, ctx| open_line(ed, ctx, true));
+    ed.register("open above", |ed, ctx| open_line(ed, ctx, false));
+    ed.register("normal", |ed, ctx| {
         let was_insert = ed.mode == Mode::Insert;
         ed.mode = Mode::Normal;
         ed.visual_linewise = false;
@@ -1368,15 +1368,15 @@ pub fn install(ed: &mut Editor) {
             v.sels.map(Selection::collapse);
         }
     });
-    ed.register("insert_newline", |ed, ctx| {
+    ed.register("insert newline", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let ln = buf.line_of(ed.views[ctx.view].sels.primary().head);
         let indent = m::indent_of(buf, ln);
         ed.insert_text(ctx.view, &format!("\n{indent}"));
     });
-    ed.register("insert_tab", |ed, ctx| ed.insert_text(ctx.view, "\t"));
-    ed.register("delete_word_back", |ed, ctx| {
+    ed.register("insert tab", |ed, ctx| ed.insert_text(ctx.view, "\t"));
+    ed.register("delete word back", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let ranges = ed.views[ctx.view]
@@ -1392,7 +1392,7 @@ pub fn install(ed: &mut Editor) {
             .collect();
         apply_operator(ed, ctx.view, "delete", ranges);
     });
-    ed.register("delete_forward", |ed, ctx| {
+    ed.register("delete forward", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let ranges = ed.views[ctx.view]
@@ -1402,9 +1402,9 @@ pub fn install(ed: &mut Editor) {
             .collect();
         apply_operator(ed, ctx.view, "delete", ranges);
     });
-    ed.register("paste_after", |ed, ctx| paste(ed, ctx, true));
-    ed.register("paste_before", |ed, ctx| paste(ed, ctx, false));
-    ed.register("paste_clipboard", |ed, _| {
+    ed.register("paste after", |ed, ctx| paste(ed, ctx, true));
+    ed.register("paste before", |ed, ctx| paste(ed, ctx, false));
+    ed.register("paste clipboard", |ed, _| {
         ed.effects.push(Effect::RequestPaste)
     });
     ed.register("undo", |ed, ctx| {
@@ -1424,7 +1424,7 @@ pub fn install(ed: &mut Editor) {
         }
     });
     // In time over the whole tree, where `u` follows one branch.
-    ed.register("undo_older", |ed, ctx| {
+    ed.register("undo older", |ed, ctx| {
         for _ in 0..ctx.count.max(1) {
             if !ed.undo_by_time(ctx.view, true) {
                 ed.message = "already at oldest change".into();
@@ -1432,7 +1432,7 @@ pub fn install(ed: &mut Editor) {
             }
         }
     });
-    ed.register("undo_newer", |ed, ctx| {
+    ed.register("undo newer", |ed, ctx| {
         for _ in 0..ctx.count.max(1) {
             if !ed.undo_by_time(ctx.view, false) {
                 ed.message = "already at newest change".into();
@@ -1442,7 +1442,7 @@ pub fn install(ed: &mut Editor) {
     });
 
     // ---- visual and selections
-    ed.register("visual_mode", |ed, _| {
+    ed.register("visual", |ed, _| {
         if ed.mode == Mode::Visual && !ed.visual_linewise {
             ed.mode = Mode::Normal;
         } else {
@@ -1450,7 +1450,7 @@ pub fn install(ed: &mut Editor) {
             ed.visual_linewise = false;
         }
     });
-    ed.register("visual_line_mode", |ed, _| {
+    ed.register("visual line", |ed, _| {
         if ed.mode == Mode::Visual && ed.visual_linewise {
             ed.mode = Mode::Normal;
             ed.visual_linewise = false;
@@ -1459,30 +1459,30 @@ pub fn install(ed: &mut Editor) {
             ed.visual_linewise = true;
         }
     });
-    ed.register("swap_ends", |ed, ctx| {
+    ed.register("cursor swap", |ed, ctx| {
         ed.views[ctx.view]
             .sels
             .map(|s| Selection::new(s.head, s.anchor));
     });
-    ed.register("keep_primary", |ed, ctx| {
+    ed.register("cursor primary", |ed, ctx| {
         ed.views[ctx.view].sels.keep_primary()
     });
-    ed.register("select_all", |ed, ctx| {
+    ed.register("select all", |ed, ctx| {
         let len = ed.buffer_of(ctx.view).len();
         ed.views[ctx.view].sels = crate::Selections::single(Selection::new(0, len));
         ed.mode = Mode::Visual;
     });
-    ed.register("add_cursor_below", |ed, ctx| add_cursor(ed, ctx, 1));
-    ed.register("add_cursor_above", |ed, ctx| add_cursor(ed, ctx, -1));
+    ed.register("cursor below", |ed, ctx| add_cursor(ed, ctx, 1));
+    ed.register("cursor above", |ed, ctx| add_cursor(ed, ctx, -1));
 
     // ---- prompts and ex commands
-    ed.register("command_mode", |ed, _| {
+    ed.register("command", |ed, _| {
         ed.mode = Mode::Command;
         ed.prompt = Prompt::Command;
         ed.cmdline.clear();
     });
-    ed.register("search_mode", |ed, ctx| ed.open_search(ctx.view, false));
-    ed.register("search_mode_back", |ed, ctx| ed.open_search(ctx.view, true));
+    ed.register("search", |ed, ctx| ed.open_search(ctx.view, false));
+    ed.register("search back", |ed, ctx| ed.open_search(ctx.view, true));
     ed.register_spec(
         Spec::new("write")
             .alias(&["w"])
@@ -1506,7 +1506,7 @@ pub fn install(ed: &mut Editor) {
         },
     );
     ed.register_spec(
-        Spec::new("quit_all")
+        Spec::new("quit all")
             .alias(&["qa", "qall", "quitall"])
             .bang("discard unsaved changes")
             .doc("close the app, whatever is open"),
@@ -1515,7 +1515,7 @@ pub fn install(ed: &mut Editor) {
         },
     );
     ed.register_spec(
-        Spec::new("write_quit")
+        Spec::new("write quit")
             .alias(&["wq", "x"])
             .args(Args::new(&[ArgKind::Path]))
             .bang("nothing yet: taken for the fingers that type :wq!")
@@ -1527,7 +1527,7 @@ pub fn install(ed: &mut Editor) {
         },
     );
     ed.register_spec(
-        Spec::new("write_quit_all")
+        Spec::new("write quit all")
             .alias(&["wqa", "xa"])
             .doc("write every file, then quit"),
         |ed, _| {
@@ -1682,139 +1682,139 @@ fn add_cursor(ed: &mut Editor, ctx: &Ctx, dy: i64) {
 pub fn default_keymap(km: &mut Keymap) {
     use Mode::*;
     let n = [
-        ("h", "move_left"),
-        ("<Left>", "move_left"),
-        ("<BS>", "move_left"),
-        ("l", "move_right"),
-        ("<Right>", "move_right"),
-        ("j", "move_down"),
-        ("<Down>", "move_down"),
-        ("k", "move_up"),
-        ("<Up>", "move_up"),
-        ("0", "line_start"),
-        ("<Home>", "line_start"),
-        ("^", "first_nonblank"),
-        ("$", "line_end"),
-        ("<End>", "line_end"),
-        ("w", "word_next"),
-        ("b", "word_prev"),
-        ("e", "word_end"),
-        ("gg", "goto_file_start"),
-        ("G", "goto_file_end"),
-        ("<C-d>", "half_page_down"),
-        ("<C-u>", "half_page_up"),
-        ("<C-f>", "page_down"),
-        ("<PageDown>", "page_down"),
-        ("<C-b>", "page_up"),
-        ("<PageUp>", "page_up"),
+        ("h", "move left"),
+        ("<Left>", "move left"),
+        ("<BS>", "move left"),
+        ("l", "move right"),
+        ("<Right>", "move right"),
+        ("j", "move down"),
+        ("<Down>", "move down"),
+        ("k", "move up"),
+        ("<Up>", "move up"),
+        ("0", "line start"),
+        ("<Home>", "line start"),
+        ("^", "line nonblank"),
+        ("$", "line end"),
+        ("<End>", "line end"),
+        ("w", "word next"),
+        ("b", "word prev"),
+        ("e", "word end"),
+        ("gg", "goto file start"),
+        ("G", "goto file end"),
+        ("<C-d>", "page half down"),
+        ("<C-u>", "page half up"),
+        ("<C-f>", "page down"),
+        ("<PageDown>", "page down"),
+        ("<C-b>", "page up"),
+        ("<PageUp>", "page up"),
         ("%", "match_bracket"),
-        ("f", "find_char"),
-        ("F", "find_char_back"),
-        ("t", "till_char"),
-        ("T", "till_char_back"),
-        ("n", "search_next"),
-        ("N", "search_prev"),
-        ("*", "search_word"),
-        ("/", "search_mode"),
-        ("?", "search_mode_back"),
-        (":", "command_mode"),
+        ("f", "find char"),
+        ("F", "find char back"),
+        ("t", "till char"),
+        ("T", "till char back"),
+        ("n", "search next"),
+        ("N", "search prev"),
+        ("*", "search word"),
+        ("/", "search"),
+        ("?", "search back"),
+        (":", "command"),
         ("d", "delete"),
         ("c", "change"),
         ("y", "yank"),
         (">", "indent"),
         ("<", "dedent"),
         ("J", "join"),
-        ("x", "delete_char"),
-        ("<Del>", "delete_char"),
-        ("X", "delete_char_back"),
-        ("D", "delete_to_end"),
-        ("C", "change_to_end"),
-        ("s", "change_char"),
-        ("r", "replace_char"),
-        ("i", "insert_mode"),
+        ("x", "delete char"),
+        ("<Del>", "delete char"),
+        ("X", "delete char back"),
+        ("D", "delete to end"),
+        ("C", "change to end"),
+        ("s", "change char"),
+        ("r", "replace char"),
+        ("i", "insert"),
         ("a", "append"),
-        ("I", "insert_line_start"),
-        ("A", "append_line_end"),
-        ("o", "open_below"),
-        ("O", "open_above"),
-        ("p", "paste_after"),
-        ("P", "paste_before"),
+        ("I", "insert line start"),
+        ("A", "append line end"),
+        ("o", "open below"),
+        ("O", "open above"),
+        ("p", "paste after"),
+        ("P", "paste before"),
         ("u", "undo"),
         ("<C-r>", "redo"),
         ("U", "redo"),
-        ("g-", "undo_older"),
-        ("g+", "undo_newer"),
-        ("v", "visual_mode"),
-        ("V", "visual_line_mode"),
-        (",", "keep_primary"),
-        ("<A-j>", "add_cursor_below"),
-        ("<A-k>", "add_cursor_above"),
-        ("<Esc>", "normal_mode"),
-        ("<C-c>", "normal_mode"),
+        ("g-", "undo older"),
+        ("g+", "undo newer"),
+        ("v", "visual"),
+        ("V", "visual line"),
+        (",", "cursor primary"),
+        ("<A-j>", "cursor below"),
+        ("<A-k>", "cursor above"),
+        ("<Esc>", "normal"),
+        ("<C-c>", "normal"),
         // Panes, tabs, the dock: the shell's commands (Effect::Shell).
         ("<C-w>v", "vsplit"),
         ("<C-w>s", "split"),
         ("<C-w>q", "close"),
         ("<C-w>c", "close"),
         ("<C-w>o", "only"),
-        ("<C-w>w", "pane_next"),
-        ("<C-w>x", "pane_swap"),
-        ("<C-w>h", "pane_left"),
-        ("<C-w>j", "pane_down"),
-        ("<C-w>k", "pane_up"),
-        ("<C-w>l", "pane_right"),
-        ("<C-w><Left>", "pane_left"),
-        ("<C-w><Down>", "pane_down"),
-        ("<C-w><Up>", "pane_up"),
-        ("<C-w><Right>", "pane_right"),
-        ("<C-w>t", "tab_new"),
-        ("gt", "tab_next"),
-        ("gT", "tab_prev"),
-        ("<C-w>d", "dock_toggle"),
+        ("<C-w>w", "pane next"),
+        ("<C-w>x", "pane swap"),
+        ("<C-w>h", "pane left"),
+        ("<C-w>j", "pane down"),
+        ("<C-w>k", "pane up"),
+        ("<C-w>l", "pane right"),
+        ("<C-w><Left>", "pane left"),
+        ("<C-w><Down>", "pane down"),
+        ("<C-w><Up>", "pane up"),
+        ("<C-w><Right>", "pane right"),
+        ("<C-w>t", "tab new"),
+        ("gt", "tab next"),
+        ("gT", "tab prev"),
+        ("<C-w>d", "dock"),
         ("<C-w>n", "toast"),
-        ("gd", "lsp_definition"),
-        ("K", "lsp_hover"),
-        ("<CR>", "goto_location"),
-        ("]q", "error_next"),
-        ("[q", "error_prev"),
+        ("gd", "lsp definition"),
+        ("K", "lsp hover"),
+        ("<CR>", "goto location"),
+        ("]q", "error next"),
+        ("[q", "error prev"),
         ("-", "oil"),
     ];
     for (k, c) in n {
         km.bind(Normal, k, c);
     }
     let v = [
-        ("o", "swap_ends"),
-        ("x", "delete_char"),
-        ("i", "textobject_inner"),
-        ("a", "textobject_around"),
-        ("<Esc>", "normal_mode"),
-        ("<C-c>", "normal_mode"),
+        ("o", "cursor swap"),
+        ("x", "delete char"),
+        ("i", "textobject inner"),
+        ("a", "textobject around"),
+        ("<Esc>", "normal"),
+        ("<C-c>", "normal"),
     ];
     for (k, c) in v {
         km.bind(Visual, k, c);
     }
-    let op = [("i", "textobject_inner"), ("a", "textobject_around")];
+    let op = [("i", "textobject inner"), ("a", "textobject around")];
     for (k, c) in op {
         km.bind(OperatorPending, k, c);
     }
     let i = [
-        ("<Esc>", "normal_mode"),
-        ("<C-c>", "normal_mode"),
-        ("<CR>", "insert_newline"),
-        ("<Tab>", "insert_tab"),
-        ("<BS>", "delete_char_back"),
-        ("<C-h>", "delete_char_back"),
-        ("<Del>", "delete_forward"),
-        ("<C-w>", "delete_word_back"),
-        ("<Left>", "move_left"),
-        ("<Right>", "move_right"),
-        ("<Up>", "move_up"),
-        ("<Down>", "move_down"),
-        ("<Home>", "line_start"),
-        ("<End>", "line_end_insert"),
-        ("<D-v>", "paste_clipboard"),
-        ("<C-S-v>", "paste_clipboard"),
-        ("<C-Space>", "lsp_complete"),
+        ("<Esc>", "normal"),
+        ("<C-c>", "normal"),
+        ("<CR>", "insert newline"),
+        ("<Tab>", "insert tab"),
+        ("<BS>", "delete char back"),
+        ("<C-h>", "delete char back"),
+        ("<Del>", "delete forward"),
+        ("<C-w>", "delete word back"),
+        ("<Left>", "move left"),
+        ("<Right>", "move right"),
+        ("<Up>", "move up"),
+        ("<Down>", "move down"),
+        ("<Home>", "line start"),
+        ("<End>", "line end insert"),
+        ("<D-v>", "paste clipboard"),
+        ("<C-S-v>", "paste clipboard"),
+        ("<C-Space>", "lsp complete"),
     ];
     for (k, c) in i {
         km.bind(Insert, k, c);

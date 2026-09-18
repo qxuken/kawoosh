@@ -51,12 +51,15 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
     d.frame(&mut app);
+    // A namespace word typed bare asks which subcommand.
+    ex(&mut d, &mut app, "tab");
+    assert_eq!(app.ed.message, "tab what? (close, new, next, prev)");
     ex(&mut d, &mut app, "commands");
     assert_eq!(app.layout.focused_content(), Some(Content::Commands));
     // Every spec, the shell's and the plugin's among them, a subcommand
     // as its two-word name, sorted.
     let all = names(&app);
-    assert!(all.contains(&"buffer_delete".to_string()));
+    assert!(all.contains(&"buffer delete".to_string()));
     assert!(all.contains(&"history drop".to_string()));
     assert!(all.contains(&"oil cd".to_string()));
     assert!(all.windows(2).all(|w| w[0] <= w[1]), "sorted");
@@ -70,13 +73,13 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
     // — a scratch is no oil listing, and there is no store.
     d.keys(&mut app, "oil");
     d.frame(&mut app);
-    assert_eq!(names(&app), ["oil", "oil cd", "oil_enter"]);
+    assert_eq!(names(&app), ["oil", "oil cd", "oil enter"]);
     let t = texts(&d);
     assert!(
         t.contains(&"oil cd needs language:oil".to_string()),
         "{t:?}"
     );
-    assert!(t.contains(&"oil_enter needs language:oil".to_string()));
+    assert!(t.contains(&"oil enter needs language:oil".to_string()));
     assert!(
         t.contains(&"n <leader>cd".to_string()),
         "the key bound to oil cd"

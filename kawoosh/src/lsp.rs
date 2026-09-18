@@ -505,7 +505,7 @@ impl Kawoosh {
 pub(crate) fn commands() -> Vec<ShellCommand> {
     vec![
         cmd(
-            Spec::new("lsp_definition")
+            Spec::new("lsp definition")
                 .when(&["lsp"])
                 .doc("go to the definition under the caret"),
             |k, _| {
@@ -515,7 +515,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
-            Spec::new("lsp_hover")
+            Spec::new("lsp hover")
                 .when(&["lsp"])
                 .doc("what the server says of the symbol under the caret"),
             |k, _| {
@@ -525,15 +525,13 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
-            Spec::new("lsp_complete")
+            Spec::new("lsp complete")
                 .when(&["lsp"])
                 .doc("ask the server for completions at the caret"),
             |k, _| k.request_completion(),
         ),
         cmd(
-            Spec::new("lsp_status")
-                .alias(&["lsp"])
-                .doc("the servers running, and what they hold"),
+            Spec::new("lsp").doc("the servers running, and what they hold"),
             |k, _| k.ed.message = k.lsp_status_line(),
         ),
     ]

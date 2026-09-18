@@ -556,16 +556,27 @@ impl Registry {
         v
     }
 
-    /// Every top-level name, sorted.
+    /// Every top-level name, sorted: a command's, or the first word of
+    /// a subcommand's (`tab` for `tab new`, which needs no `tab`).
     pub fn names(&self) -> Vec<&str> {
         let mut v: Vec<&str> = self
             .entries
             .keys()
-            .filter(|n| !n.contains(' '))
-            .map(String::as_str)
+            .map(|n| n.split(' ').next().unwrap_or(n))
             .collect();
         v.sort_unstable();
+        v.dedup();
         v
+    }
+
+    /// Whether `name` is a command or a word on the way to one.
+    pub fn is_name(&self, name: &str) -> bool {
+        self.entries.contains_key(name) || self.has_children(name)
+    }
+
+    fn has_children(&self, name: &str) -> bool {
+        let prefix = format!("{name} ");
+        self.entries.keys().any(|n| n.starts_with(&prefix))
     }
 
     /// Every alias, sorted.
@@ -580,30 +591,30 @@ impl Registry {
         self.aliases.get(name).map(String::as_str).unwrap_or(name)
     }
 
-    /// The subcommands of `name`, sorted by their word.
-    pub fn subcommands(&self, name: &str) -> Vec<&Spec> {
+    /// The words that follow `name`, sorted, each once: `char`, `to`,
+    /// `word` under `delete` — a subcommand's, or the next word on the
+    /// way to one (`to` of `delete to end`).
+    pub fn subcommands(&self, name: &str) -> Vec<&str> {
         let prefix = format!("{name} ");
-        let mut v: Vec<&Spec> = self
+        let mut v: Vec<&str> = self
             .entries
-            .values()
-            .map(|e| &e.spec)
-            .filter(|s| {
-                s.name
-                    .strip_prefix(&prefix)
-                    .is_some_and(|w| !w.contains(' '))
-            })
+            .keys()
+            .filter_map(|n| n.strip_prefix(&prefix))
+            .map(|rest| rest.split(' ').next().unwrap_or(rest))
             .collect();
-        v.sort_by(|a, b| a.name.cmp(&b.name));
+        v.sort_unstable();
+        v.dedup();
         v
     }
 
     /// Takes `name` (an alias, perhaps, with `!` or `?` on its end)
     /// and `args` apart: the alias is resolved, then each leading
-    /// argument that names a subcommand is consumed into the name —
-    /// `history` + `[drop, k]` is `history drop` + `[k]` — a marker on
-    /// any of those words setting the form (`:history clear!` and
-    /// `:history! clear` alike). A name nothing is known by stays as
-    /// written, for the shell to answer.
+    /// argument that names a subcommand, or a word on the way to one,
+    /// is consumed into the name — `history` + `[drop, k]` is `history
+    /// drop` + `[k]`, `delete` + `[to, end]` is `delete to end` — a
+    /// marker on any of those words setting the form (`:history clear!`
+    /// and `:history! clear` alike). A name nothing is known by stays
+    /// as written, for the shell to answer.
     pub fn resolve(&self, name: &str, args: &[String]) -> Invocation {
         let (head, mut form) = Form::split(name);
         let mut name = self.canonical(head).to_string();
@@ -611,7 +622,7 @@ impl Registry {
         while let Some(word) = args.get(i) {
             let (w, f) = Form::split(word);
             let sub = format!("{name} {w}");
-            if !self.entries.contains_key(&sub) {
+            if !self.is_name(&sub) {
                 break;
             }
             name = sub;
@@ -687,8 +698,25 @@ mod tests {
     #[test]
     fn subcommands_and_names() {
         let r = reg();
-        let subs: Vec<&str> = r.subcommands("history").iter().map(|s| s.word()).collect();
-        assert_eq!(subs, ["clear", "drop"]);
+        assert_eq!(r.subcommands("history"), ["clear", "drop"]);
+        assert_eq!(r.names(), ["history", "quit"]);
+        // A word on the way to a subcommand needs no command of its
+        // own: it is walked, listed under its parent, and lists on.
+        let mut r2 = Registry::default();
+        r2.declare(Spec::new("delete to end"));
+        r2.declare(Spec::new("delete char"));
+        assert_eq!(r2.names(), ["delete"]);
+        assert_eq!(r2.subcommands("delete"), ["char", "to"]);
+        assert_eq!(r2.subcommands("delete to"), ["end"]);
+        assert_eq!(
+            r2.resolve("delete", &s(&["to", "end", "x"])),
+            Invocation {
+                name: "delete to end".into(),
+                form: Form::Run,
+                args: s(&["x"])
+            }
+        );
+        assert!(r2.is_name("delete to") && !r2.spec("delete to").is_some());
         assert_eq!(r.names(), ["history", "quit"]);
         assert_eq!(r.alias_names(), ["hist", "q"]);
         assert_eq!(r.spec("history drop").unwrap().parent(), Some("history"));

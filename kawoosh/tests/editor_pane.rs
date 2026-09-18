@@ -387,7 +387,7 @@ fn kui_instruments_are_commands() {
             .count()
     };
     assert_eq!(hud_floats(&d), 0);
-    ex(&mut d, &mut app, "kui_framerate_hud");
+    ex(&mut d, &mut app, "kui hud");
     assert!(app.hud);
     assert_eq!(app.ed.message, "kui framerate hud on");
     assert_eq!(hud_floats(&d), 1);
@@ -395,16 +395,16 @@ fn kui_instruments_are_commands() {
     assert!(!app.hud);
     assert_eq!(hud_floats(&d), 0);
     // The debugger: the same door F12 opens.
-    ex(&mut d, &mut app, "kui_debugger");
+    ex(&mut d, &mut app, "kui debugger");
     assert!(app.devtools);
     assert!(d.core.devtools());
-    ex(&mut d, &mut app, "kui_debugger off");
+    ex(&mut d, &mut app, "kui debugger off");
     assert!(!app.devtools);
     assert_eq!(app.ed.message, "kui devtools off");
     // The other direction: the panel's own close button (or `KUI_DEVTOOLS`
     // at launch) is the core's say, and the app takes it rather than
     // forcing its own flag back every frame.
-    ex(&mut d, &mut app, "kui_debugger on");
+    ex(&mut d, &mut app, "kui debugger on");
     assert!(app.devtools && d.core.devtools());
     d.core.set_devtools(false);
     d.frame(&mut app);

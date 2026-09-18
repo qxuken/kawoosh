@@ -332,7 +332,7 @@ impl Kawoosh {
 pub(crate) fn commands() -> Vec<ShellCommand> {
     vec![
         cmd(
-            Spec::new("session_save")
+            Spec::new("session save")
                 .alias(&["mks", "mksession"])
                 .when(&["store"])
                 .doc("write the layout to the store now"),
@@ -342,7 +342,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
-            Spec::new("session_restore")
+            Spec::new("session restore")
                 .when(&["store"])
                 .doc("bring the saved layout back"),
             |k, _| {

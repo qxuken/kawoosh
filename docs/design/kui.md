@@ -39,7 +39,7 @@ gaps are records rather than surprises:
   `:map` listing; no macros or `.`; the tab strip has no close button.
   (The undo history was linear until 2026-09-18; it is a tree now —
   mvp.md's retained roots kept instead of dropped — with `g-`/`g+` and
-  the `:undo_history` pane.)
+  the `:undo history` pane.)
 
 ## What changed
 
@@ -718,15 +718,28 @@ Lua's — and the shell keeps its bodies by name; running a command without
 a body here is `Effect::Shell` with the context ready, as before, only
 now the form, the subcommand and the paths are resolved in it.
 
-**A subcommand is a command whose name is two words.** `history drop`
-is registered as one, and the engine walks a line's words as far as they
-name subcommands, carrying a `!` or `?` from any of them (`:history
-clear!` and `:history! clear` alike), then hands the rest as arguments.
-The same walk serves a keymap's binding (`kawoosh.map("n", "<leader>cd",
-"oil cd")`) and the command line's completion: under `:history ` the
-words are `clear`, `drop`, `list`, and after one the subcommand's own
-arguments. Not a second trait — a subcommand needs nothing a command
-does not have.
+**A subcommand is a command whose name is more than one word.** `history
+drop` is registered as one, and the engine walks a line's words as far
+as they name subcommands or lead to them, carrying a `!` or `?` from any
+of them (`:history clear!` and `:history! clear` alike), then hands the
+rest as arguments. The same walk serves a keymap's binding
+(`kawoosh.map("n", "<leader>cd", "oil cd")`) and the command line's
+completion: under `:history ` the words are `clear`, `drop`, `list`, and
+after one the subcommand's own arguments. Not a second trait — a
+subcommand needs nothing a command does not have. The names are
+hierarchical where the grammar is: `delete char`, `delete char back`,
+`delete to end`, `delete word back` under the `delete` operator; `change
+char`, `change to end`; `goto line`, `goto file start`, `goto location`;
+`page down`, `page half up`; `search next`, `search word`, `search back`;
+`paste after`, `paste clipboard`; `undo older`, `undo history`; `cursor
+below`, `cursor primary`, `cursor swap`; `buffer next`, `buffer delete
+others`; `tab new`, `pane left`, `lsp hover`, `session save`, `error
+next`, `kui hud`; `oil cd`, `oil enter`. A word that only leads on —
+`tab`, `delete to`, `page` — needs no command of its own: it is walked,
+listed under its parent and on the command line, and typed bare it asks
+which (`tab what? (close, new, next, prev)`). The vim spellings stay as
+aliases (`:bd`, `:tabnew`, `:cn`), and an alias walks on too: `:bd
+others` is `buffer delete others`.
 
 **`when` is a list of facts, not a closure.** A closure could not cross
 to Lua, could not be shown, and could not be evaluated inside the engine
@@ -754,15 +767,15 @@ spec's fields as the table (`args`, `aliases`, `bang`, `query`, `when`,
 data the completion reads, for a palette or a help pane to build from.
 **A key carries its bindings, newest first, and the engine takes the
 first that can run.** A binding has a `when` of its own beside its
-command's, so `kawoosh.map("n", "<CR>", "goto_location", { when = {
-"!language:oil" } })` and then `kawoosh.map("n", "<CR>", "oil_enter")`
+command's, so `kawoosh.map("n", "<CR>", "goto location", { when = {
+"!language:oil" } })` and then `kawoosh.map("n", "<CR>", "oil enter")`
 — a command gated on the listing — make one key do the right thing in
 each place without either command knowing about the other; when none
 can run, the message is the newest binding's reason; a bare binding on a
 bare command shadows the older ones, so a rebinding in `init.lua` still
 replaces the default. The bundled oil is the acceptance test: `oil cd`
-is a subcommand gated on `language:oil`, `oil_enter` is gated the same
-way and falls through to `goto_location`, `:oil?` says what is listed,
+is a subcommand gated on `language:oil`, `oil enter` is gated the same
+way and falls through to `goto location`, `:oil?` says what is listed,
 and `<leader>cd` off a listing runs nothing and says why.
 
 **`:commands` is the registry as a pane** (`commands_pane.rs`), the

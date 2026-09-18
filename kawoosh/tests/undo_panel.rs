@@ -55,7 +55,7 @@ fn the_panel_lists_the_states_and_restores_one() {
 
     // A pane of its own, the keyboard on it, the buffer keeping most of
     // the width.
-    ex(&mut d, &mut app, "undo_history");
+    ex(&mut d, &mut app, "undo history");
     assert_eq!(app.layout.focused_content(), Some(Content::Undo));
     assert_eq!(app.layout.visible_panes().len(), 2);
     d.frame(&mut app);
@@ -164,10 +164,10 @@ fn the_panel_lists_the_states_and_restores_one() {
     assert_eq!(app.undo.current(), 2);
 
     // `:undo_history` from the panel closes it; `q` would too.
-    ex(&mut d, &mut app, "undo_history");
+    ex(&mut d, &mut app, "undo history");
     assert_eq!(app.layout.visible_panes().len(), 1);
     assert!(app.focused_view().is_some());
-    ex(&mut d, &mut app, "undo_history");
+    ex(&mut d, &mut app, "undo history");
     assert_eq!(app.layout.visible_panes().len(), 2);
     d.keys(&mut app, "q");
     assert_eq!(app.layout.visible_panes().len(), 1);
@@ -184,7 +184,7 @@ fn a_click_restores_and_the_panel_follows_the_keyboard() {
     let mut d = Drive::new(1000.0, 600.0);
     d.frame(&mut app);
     d.keys(&mut app, "xx");
-    ex(&mut d, &mut app, "undo_history");
+    ex(&mut d, &mut app, "undo history");
     d.frame(&mut app);
     let panel = app.layout.focused();
     assert_eq!(app.undo.rows().len(), 3);
@@ -212,18 +212,18 @@ fn a_click_restores_and_the_panel_follows_the_keyboard() {
     assert!(ts.iter().any(|t| t.contains("undo · other.txt")), "{ts:?}");
     assert!(ts.iter().any(|t| t == "x"), "{ts:?}");
     // Back to the first buffer, and the panel is back on it.
-    ex(&mut d, &mut app, "buffer_prev");
+    ex(&mut d, &mut app, "buffer prev");
     d.frame(&mut app);
     assert_eq!(app.undo.rows().len(), 3);
     assert!(texts(&d).iter().any(|t| t.contains("undo · t")));
     // The pane it watched closed: it takes the one still on show.
-    ex(&mut d, &mut app, "undo_history");
+    ex(&mut d, &mut app, "undo history");
     assert_eq!(app.layout.focused(), panel);
     d.ctrl(&mut app, "w");
     d.keys(&mut app, "v");
     assert!(app.focused_view().is_some());
     let extra = app.layout.focused();
-    ex(&mut d, &mut app, "undo_history");
+    ex(&mut d, &mut app, "undo history");
     assert_eq!(app.layout.focused(), panel);
     d.ctrl(&mut app, "w");
     d.keys(&mut app, "l");
@@ -248,7 +248,7 @@ fn the_panel_is_kept_by_a_session() {
     d.extension("lua", ext);
     app.open_store(Some(&db));
     d.frame(&mut app);
-    ex(&mut d, &mut app, "undo_history");
+    ex(&mut d, &mut app, "undo history");
     ex(&mut d, &mut app, "qa");
     assert!(app.quit);
     drop(app);

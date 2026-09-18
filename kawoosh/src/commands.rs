@@ -304,35 +304,35 @@ fn panes() -> Vec<ShellCommand> {
                 }
             },
         ),
-        cmd(Spec::new("pane_next").doc("focus the next pane"), |k, _| {
+        cmd(Spec::new("pane next").doc("focus the next pane"), |k, _| {
             let p = k.layout.next_pane();
             k.layout.focus(p);
         }),
         // `<C-w>x`: trade places with the next pane, as vim does.
         cmd(
-            Spec::new("pane_swap").doc("trade places with the next pane"),
+            Spec::new("pane swap").doc("trade places with the next pane"),
             |k, _| {
                 let (from, to) = (k.layout.focused(), k.layout.next_pane());
                 k.layout.move_pane(from, to, Drop::Swap);
             },
         ),
         cmd(
-            Spec::new("pane_left").doc("focus the pane to the left"),
+            Spec::new("pane left").doc("focus the pane to the left"),
             |k, _| k.focus_neighbour(SplitDir::H, false),
         ),
         cmd(
-            Spec::new("pane_right").doc("focus the pane to the right"),
+            Spec::new("pane right").doc("focus the pane to the right"),
             |k, _| k.focus_neighbour(SplitDir::H, true),
         ),
-        cmd(Spec::new("pane_up").doc("focus the pane above"), |k, _| {
+        cmd(Spec::new("pane up").doc("focus the pane above"), |k, _| {
             k.focus_neighbour(SplitDir::V, false)
         }),
         cmd(
-            Spec::new("pane_down").doc("focus the pane below"),
+            Spec::new("pane down").doc("focus the pane below"),
             |k, _| k.focus_neighbour(SplitDir::V, true),
         ),
         cmd(
-            Spec::new("tab_new")
+            Spec::new("tab new")
                 .alias(&["tabnew", "tabe"])
                 .args(Args::new(&[ArgKind::Path]))
                 .doc("a new tab, on PATH or a scratch"),
@@ -348,19 +348,19 @@ fn panes() -> Vec<ShellCommand> {
             },
         ),
         cmd(
-            Spec::new("tab_next")
+            Spec::new("tab next")
                 .alias(&["tabn", "tabnext"])
                 .doc("the next tab, or the COUNTth on"),
             |k, ctx| k.layout.next_tab(ctx.count as i64),
         ),
         cmd(
-            Spec::new("tab_prev")
+            Spec::new("tab prev")
                 .alias(&["tabp", "tabprev"])
                 .doc("the previous tab, or the COUNTth back"),
             |k, ctx| k.layout.next_tab(-(ctx.count as i64)),
         ),
         cmd(
-            Spec::new("tab_close")
+            Spec::new("tab close")
                 .alias(&["tabc", "tabclose"])
                 .doc("close the tab and its panes"),
             |k, _| {
@@ -384,7 +384,7 @@ fn panes() -> Vec<ShellCommand> {
             },
         ),
         cmd(
-            Spec::new("dock_toggle").doc("show or hide the dock, a terminal"),
+            Spec::new("dock").doc("show or hide the dock, a terminal"),
             |k, _| {
                 if k.layout.dock.is_none() {
                     // The dock's tenant is a terminal (mvp.md D5).
@@ -406,13 +406,13 @@ fn panes() -> Vec<ShellCommand> {
 fn buffers() -> Vec<ShellCommand> {
     vec![
         cmd(
-            Spec::new("buffer_next")
+            Spec::new("buffer next")
                 .alias(&["bn", "bnext"])
                 .doc("show the next buffer"),
             |k, ctx| k.buffer_step(ctx, true),
         ),
         cmd(
-            Spec::new("buffer_prev")
+            Spec::new("buffer prev")
                 .alias(&["bp", "bprev", "bprevious"])
                 .doc("show the previous buffer"),
             |k, ctx| k.buffer_step(ctx, false),
@@ -446,13 +446,13 @@ fn buffers() -> Vec<ShellCommand> {
             },
         ),
         cmd(
-            Spec::new("buffer_list")
+            Spec::new("buffer list")
                 .alias(&["ls", "buffers"])
                 .doc("list the buffers"),
             |k, _| k.ed.message = k.buffer_listing(),
         ),
         cmd(
-            Spec::new("buffer_delete")
+            Spec::new("buffer delete")
                 .alias(&["bd", "bdelete"])
                 .bang("discard unsaved changes")
                 .doc("close the buffer"),
@@ -477,7 +477,7 @@ fn buffers() -> Vec<ShellCommand> {
         // `:bdo`: every buffer but the current one goes; a modified
         // one stays unless `!`, and the message says how many.
         cmd(
-            Spec::new("buffer_delete_others")
+            Spec::new("buffer delete others")
                 .alias(&["bdo", "bdother", "bdothers"])
                 .bang("discard unsaved changes")
                 .doc("close every other buffer"),
@@ -578,7 +578,7 @@ fn instruments() -> Vec<ShellCommand> {
     }
     vec![
         cmd(
-            Spec::new("kui_debugger")
+            Spec::new("kui debugger")
                 .alias(&["kui_devtools"])
                 .args(Args::new(&[ArgKind::Text]))
                 .doc("kui's devtools panel (on, off, or toggle)"),
@@ -588,8 +588,8 @@ fn instruments() -> Vec<ShellCommand> {
             },
         ),
         cmd(
-            Spec::new("kui_framerate_hud")
-                .alias(&["kui_framerate_hub", "kui_hud"])
+            Spec::new("kui hud")
+                .alias(&["kui_framerate_hud", "kui_framerate_hub", "kui_hud"])
                 .args(Args::new(&[ArgKind::Text]))
                 .doc("kui's latency HUD (on, off, or toggle)"),
             |k, ctx| {

@@ -934,17 +934,26 @@ fn commands_are_specs_with_forms_conditions_and_subcommands() {
         [("hist drop".to_string(), Form::Run, vec!["k".to_string()])]
     );
 
+    // A word on the way to subcommands, with no command of its own,
+    // asks which — `page`, `delete to` — and the walk goes through it:
+    // `:delete to end` is `D`.
+    t.keys(":page<CR>");
+    assert_eq!(t.ed.message, "page what? (down, half, up)");
+    t.keys(":delete to<CR>");
+    assert_eq!(t.ed.message, "delete to what? (end)");
+    t.keys("ggiabc def<Esc>0w:delete to end<CR>");
+    assert_eq!(t.text().lines().next(), Some("abc "));
+    assert_eq!(
+        t.ed.commands.subcommands("delete"),
+        ["char", "forward", "to", "word"]
+    );
+    assert!(t.ed.command_names().contains(&"page"));
+    assert!(!t.ed.command_names().contains(&"page down"));
+
     // The registry as data: names, aliases, subcommands, the specs.
     assert!(t.ed.command_names().contains(&"hist"));
     assert!(!t.ed.command_names().contains(&"hist drop"));
-    assert_eq!(
-        t.ed.commands
-            .subcommands("hist")
-            .iter()
-            .map(|s| s.word())
-            .collect::<Vec<_>>(),
-        ["clear", "drop"]
-    );
+    assert_eq!(t.ed.commands.subcommands("hist"), ["clear", "drop"]);
     assert_eq!(t.ed.commands.canonical("hi"), "hist");
     assert_eq!(t.ed.spec("quit").unwrap().aliases, ["q"]);
     assert_eq!(
@@ -962,7 +971,7 @@ fn a_key_falls_through_its_bindings_by_when() {
     use kawoosh_editor::Cond;
     let mut t = T::new("a\n");
     t.ed.register("plain_enter", |ed, _| ed.message = "plain".into());
-    t.ed.register_spec(Spec::new("oil_enter").when(&["language:oil"]), |ed, _| {
+    t.ed.register_spec(Spec::new("oil enter").when(&["language:oil"]), |ed, _| {
         ed.message = "oil".into()
     });
     t.ed.keymap.bind_when(
@@ -971,7 +980,7 @@ fn a_key_falls_through_its_bindings_by_when() {
         "plain_enter",
         &[Cond::parse("!language:oil")],
     );
-    t.ed.keymap.bind(Mode::Normal, "<CR>", "oil_enter");
+    t.ed.keymap.bind(Mode::Normal, "<CR>", "oil enter");
     t.keys("<CR>");
     assert_eq!(t.ed.message, "plain");
     let b = t.ed.views[t.v].buffer;
@@ -986,9 +995,9 @@ fn a_key_falls_through_its_bindings_by_when() {
         "plain_enter",
         &[Cond::parse("store")],
     );
-    t.ed.keymap.bind(Mode::Normal, "<C-x>", "oil_enter");
+    t.ed.keymap.bind(Mode::Normal, "<C-x>", "oil enter");
     t.keys("<C-x>");
-    assert_eq!(t.ed.message, "oil_enter needs language:oil");
+    assert_eq!(t.ed.message, "oil enter needs language:oil");
     t.ed.fact("store", true);
     t.keys("<C-x>");
     assert_eq!(t.ed.message, "plain");
@@ -1007,6 +1016,6 @@ fn a_key_falls_through_its_bindings_by_when() {
         .collect();
     assert_eq!(
         cr,
-        ["plain_enter", "oil_enter", "plain_enter", "goto_location"]
+        ["plain_enter", "oil enter", "plain_enter", "goto location"]
     );
 }

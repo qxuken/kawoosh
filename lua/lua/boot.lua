@@ -43,8 +43,8 @@ end
 -- args, as the command line would spell it) or a function, which
 -- becomes one. A key can be bound more than once: the newest binding
 -- whose `opts.when` holds and whose command can run is the one that
--- runs, so `map("n", "<CR>", "goto_location", { when = { "!language:oil" } })`
--- and then `map("n", "<CR>", "oil_enter")` (a command gated on the
+-- runs, so `map("n", "<CR>", "goto location", { when = { "!language:oil" } })`
+-- and then `map("n", "<CR>", "oil enter")` (a command gated on the
 -- listing) make one key do the right thing in each place. A binding
 -- with no `when` on a command with none shadows the older ones.
 function kawoosh.map(mode, keys, cmd, opts)

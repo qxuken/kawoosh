@@ -277,7 +277,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
-            Spec::new("goto_location").doc("open the path:line under the caret"),
+            Spec::new("goto location").doc("open the path:line under the caret"),
             |k, ctx| {
                 if let Some(v) = k
                     .focused_view()
@@ -288,13 +288,13 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
-            Spec::new("error_next")
+            Spec::new("error next")
                 .alias(&["cn", "cnext"])
                 .doc("the next location in the compile output"),
             |k, _| k.error_step(true),
         ),
         cmd(
-            Spec::new("error_prev")
+            Spec::new("error prev")
                 .alias(&["cp", "cprev", "cprevious"])
                 .doc("the previous location in the compile output"),
             |k, _| k.error_step(false),

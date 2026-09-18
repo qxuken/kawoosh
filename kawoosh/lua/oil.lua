@@ -171,9 +171,9 @@ end, {
 
 -- `<CR>` in a listing opens the entry under the caret. The command is
 -- gated on the listing; `<CR>` elsewhere is the binding below it,
--- `goto_location` on a `when` of its own, which the engine falls
+-- `goto location` on a `when` of its own, which the engine falls
 -- through to when this one cannot run.
-kawoosh.command("oil_enter", function()
+kawoosh.command("oil enter", function()
   local dir = listed()
   local line = kawoosh.buf.line(kawoosh.buf.cursor().line)
   if not line or line == "" then return end
@@ -196,6 +196,6 @@ end, {
   doc = "make the listed directory the working directory",
 })
 
-kawoosh.map("n", "<CR>", "goto_location", { when = { "!language:oil" } })
-kawoosh.map("n", "<CR>", "oil_enter")
+kawoosh.map("n", "<CR>", "goto location", { when = { "!language:oil" } })
+kawoosh.map("n", "<CR>", "oil enter")
 kawoosh.map("n", "<leader>cd", "oil cd")

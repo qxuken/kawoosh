@@ -323,6 +323,7 @@ impl Kawoosh {
         self.sync_facts();
         self.sync_command_rows();
         let tm = Tab::of(&ui.metrics());
+        let blink_on = ui.caret_visible();
         let pal = self.pal;
         let font = self.font;
         let (cell_w, _) = self.cell;
@@ -369,19 +370,35 @@ impl Kawoosh {
                     ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
                     ui.text("type to search · ⏎ run · <Esc> back", small(pal.faint));
                 });
-                // The query line: what is typed, a caret after it.
-                ui.with(tm.line(&pal, 0).hover_bg(Color::TRANSPARENT), |ui| {
-                    ui.text("/", style().color(pal.accent));
-                    ui.with(tm.rest(), |ui| {
-                        if query.is_empty() {
-                            ui.text("search commands, keys, docs", style().color(pal.faint));
-                        } else {
-                            ui.text(&query, style());
-                        }
-                        if focused {
-                            ui.text("▏", style().color(pal.accent));
-                        }
-                    });
+                // The query line: what is typed, then the caret — a bar
+                // on kui's blink, as the editor's insert caret is: the
+                // line declares its caret (`Role::Line` + `caret`, kui's
+                // custom-editor contract), which arms the blink clock,
+                // and `caret_visible` is the phase read back. Unfocused,
+                // no caret. The placeholder sits after the caret, so
+                // the caret is where typing would start.
+                let mut line = tm.line(&pal, 0).hover_bg(Color::TRANSPARENT).gap(0.0);
+                if focused {
+                    line = line.role(kui::Role::Line).caret(query.len() as u32);
+                }
+                ui.with(line, |ui| {
+                    if !query.is_empty() {
+                        ui.text(&query, style());
+                    }
+                    ui.with(
+                        NodeSpec::column()
+                            .width(Sizing::Fixed(2.0))
+                            .height(Sizing::Fixed(tm.line_h - 4.0))
+                            .bg(if focused && blink_on {
+                                pal.accent
+                            } else {
+                                Color::TRANSPARENT
+                            }),
+                        |_| {},
+                    );
+                    if query.is_empty() {
+                        ui.text("search commands, keys, docs", style().color(pal.faint));
+                    }
                 });
                 ui.with(tm.line(&pal, 0).hover_bg(Color::TRANSPARENT), |ui| {
                     ui.with(col(26.0), |ui| ui.text("command", small(pal.faint)));
@@ -540,13 +557,7 @@ impl Kawoosh {
                         ));
                         let subs = self.ed.commands.subcommands(&s.name);
                         if !subs.is_empty() {
-                            lines.push((
-                                "subcommands",
-                                subs.iter()
-                                    .map(|s| s.word().to_string())
-                                    .collect::<Vec<_>>()
-                                    .join(" "),
-                            ));
+                            lines.push(("subcommands", subs.join(" ")));
                         }
                         for (k, (name, value)) in lines.iter().enumerate() {
                             ui.with(tm.line(&pal, k).hover_bg(Color::TRANSPARENT), |ui| {

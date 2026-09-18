@@ -729,6 +729,15 @@ impl Editor {
         };
         let Some(cmd) = self.commands.body(&inv.name) else {
             self.pending_op = None;
+            // A word with subcommands and no command of its own — `tab`,
+            // `delete to` — asks which.
+            if self.commands.spec(&inv.name).is_none() {
+                let subs = self.commands.subcommands(&inv.name);
+                if !subs.is_empty() {
+                    self.message = format!("{} what? ({})", inv.name, subs.join(", "));
+                    return;
+                }
+            }
             self.effects.push(Effect::Shell {
                 name: inv.name,
                 ctx,
@@ -1296,7 +1305,7 @@ impl Editor {
             _ => {
                 self.registers.insert('"', text.to_string());
                 self.register_linewise = text.ends_with('\n');
-                self.run(view, "paste_after", &[], None);
+                self.run(view, "paste after", &[], None);
             }
         }
     }
@@ -1382,9 +1391,9 @@ impl Editor {
                             return true;
                         }
                         let cmd = if backwards {
-                            "search_prev"
+                            "search prev"
                         } else {
-                            "search_next"
+                            "search next"
                         };
                         self.run(view, cmd, &[], None);
                     }
@@ -1588,7 +1597,7 @@ impl Editor {
             return;
         }
         if let Ok(n) = line.parse::<usize>() {
-            self.run(view, "goto_line", &[], Some(n));
+            self.run(view, "goto line", &[], Some(n));
             return;
         }
         // `[range]s/pat/rep/[flags]`: the one ex line whose parts are not

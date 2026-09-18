@@ -1,4 +1,4 @@
-//! The undo tree as a pane of its own (`:undo_history`), beside the
+//! The undo tree as a pane of its own (`:undo history`), beside the
 //! buffer like a terminal is: every state the buffer has been through,
 //! newest at the top, drawn as a graph — a branch is what an edit after
 //! an undo makes, and the tree keeps it (`Editor::history`) — with the
@@ -88,7 +88,7 @@ impl UndoPanel {
 }
 
 impl Kawoosh {
-    /// `:undo_history`: opens the panel in a split beside the focused
+    /// `:undo history`: opens the panel in a split beside the focused
     /// pane, or focuses it when it is on show, or — focused already —
     /// closes it: a toggle, as `:tool` is for the dock.
     pub(crate) fn toggle_undo_panel(&mut self) {
@@ -184,7 +184,7 @@ impl Kawoosh {
             return;
         };
         if self.ed.mode == Mode::Insert {
-            self.ed.run(v, "normal_mode", &[], None);
+            self.ed.run(v, "normal", &[], None);
         }
         step(&mut self.ed, v);
         self.follow_caret = true;
@@ -530,7 +530,7 @@ impl Kawoosh {
 
 pub(crate) fn commands() -> Vec<ShellCommand> {
     vec![cmd(
-        Spec::new("undo_history").doc("the undo tree as a pane beside the buffer"),
+        Spec::new("undo history").doc("the undo tree as a pane beside the buffer"),
         |k, _| k.toggle_undo_panel(),
     )]
 }

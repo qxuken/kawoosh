@@ -76,8 +76,8 @@ impl Kawoosh {
                     .commands
                     .subcommands(&inv.name)
                     .into_iter()
-                    .map(|s| s.word().to_string())
-                    .filter(|w| w.starts_with(token)),
+                    .filter(|w| w.starts_with(token))
+                    .map(str::to_string),
             );
         }
         let kind = self
