@@ -128,6 +128,39 @@ fn a_toast_with_actions_waits_for_a_click() {
     assert!(!corner_has(&d, "build failed"), "acted on, gone");
     assert!(app.notes.shown.is_empty());
 
+    // A long toast wraps at the toasts' width — under half the window,
+    // more than one line tall — instead of running off the edge.
+    let long = "t.txt: changed on disk while its unsaved changes were kept; \
+                :w writes them over it, :e! loads the disk (u brings them back)";
+    app.notify(Level::Error, long);
+    d.frame(&mut app);
+    let find = |d: &Drive| {
+        d.core
+            .nodes()
+            .into_iter()
+            .find(|n| {
+                n.text
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("t.txt: changed"))
+            })
+            .expect("the long toast's text")
+    };
+    let n = find(&d);
+    assert!(n.rect.w <= 900.0 * 0.45, "capped: {}", n.rect.w);
+    assert!(
+        n.rect.w > 300.0,
+        "and wide, not a column of letters: {}",
+        n.rect.w
+    );
+    assert!(
+        n.rect.h > 20.0 && n.rect.h < 80.0,
+        "a few lines: {}",
+        n.rect.h
+    );
+    assert!(n.rect.x + n.rect.w <= 900.0, "inside the window");
+    d.click(&mut app, n.rect.x + 2.0, n.rect.y + 2.0);
+    assert!(!corner_has(&d, long));
+
     // A toast without actions: a click on it takes it down.
     app.notify(Level::Warn, "plain");
     d.frame(&mut app);

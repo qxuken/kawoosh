@@ -812,8 +812,11 @@ impl Kawoosh {
                 for s in self.notes.shown.iter().filter(|s| s.toast) {
                     let color = level_color(s.level);
                     let focused = focus.is_some_and(|f| f.id == s.id);
+                    // A toast is one width — the toasts' — so its text
+                    // has a width to wrap at: a fit column takes the
+                    // unwrapped line and runs off the window.
                     let mut spec = NodeSpec::column()
-                        .max_width(max_w)
+                        .width(Sizing::Fixed(max_w))
                         .bg(if focused { pal.strip } else { pal.panel })
                         .border(if focused { 2.0 } else { 1.0 }, color)
                         .radius(4.0)
@@ -827,18 +830,29 @@ impl Kawoosh {
                         ]));
                     }
                     ui.with_indexed(s.id, spec, |ui| {
-                        ui.with(NodeSpec::row().gap(6.0), |ui| {
-                            if s.count > 1 {
-                                ui.text(
-                                    &format!("({}x)", s.count),
-                                    TextStyle::new(12.0).color(pal.dim).nowrap(),
-                                );
-                            }
-                            if let Some(src) = &s.source {
-                                ui.text(src, TextStyle::new(12.0).color(color).nowrap());
-                            }
-                            ui.text(&s.text, TextStyle::new(12.0).color(pal.fg));
-                        });
+                        // The row takes the toast's width and the text
+                        // what the count and source leave of it, and
+                        // wraps there.
+                        ui.with(
+                            NodeSpec::row()
+                                .gap(6.0)
+                                .width(Sizing::Grow(1.0))
+                                .cross_align(Align::Start),
+                            |ui| {
+                                if s.count > 1 {
+                                    ui.text(
+                                        &format!("({}x)", s.count),
+                                        TextStyle::new(12.0).color(pal.dim).nowrap(),
+                                    );
+                                }
+                                if let Some(src) = &s.source {
+                                    ui.text(src, TextStyle::new(12.0).color(color).nowrap());
+                                }
+                                ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |ui| {
+                                    ui.text(&s.text, TextStyle::new(12.0).color(pal.fg));
+                                });
+                            },
+                        );
                         if !s.actions.is_empty() {
                             ui.with(NodeSpec::row().gap(6.0).cross_align(Align::Center), |ui| {
                                 for (i, a) in s.actions.iter().enumerate() {
