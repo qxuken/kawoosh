@@ -1019,3 +1019,18 @@ fn a_key_falls_through_its_bindings_by_when() {
         ["plain_enter", "oil enter", "plain_enter", "goto location"]
     );
 }
+
+/// Every engine command says what it does: the `:commands` pane is the
+/// help, and a row without a line is a hole in it.
+#[test]
+fn every_engine_command_is_documented() {
+    let ed = Editor::new();
+    let bare: Vec<&str> = ed
+        .commands
+        .specs()
+        .into_iter()
+        .filter(|s| s.doc.is_empty())
+        .map(|s| s.name.as_str())
+        .collect();
+    assert!(bare.is_empty(), "undocumented: {bare:?}");
+}

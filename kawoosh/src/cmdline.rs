@@ -11,9 +11,10 @@
 //! subcommand's own. Nothing is a popup: the candidates are a row in
 //! the strip.
 
+use std::collections::HashSet;
 use std::path::{MAIN_SEPARATOR, Path};
 
-use kawoosh_editor::{ArgKind, KeyStroke, Mode, Prompt, Spec};
+use kawoosh_editor::{ArgKind, KeyStroke, Mode, Prompt};
 
 use crate::app::Kawoosh;
 
@@ -53,7 +54,7 @@ fn token_start(line: &str) -> usize {
 impl Kawoosh {
     /// The token the command line is on and its candidates: command
     /// names for the first word, what the command takes after it.
-    pub(crate) fn cmd_candidates(&self, line: &str) -> (usize, Vec<String>) {
+    pub(crate) fn cmd_candidates(&mut self, line: &str) -> (usize, Vec<String>) {
         let start = token_start(line);
         let token = &line[start..];
         if start == 0 {
@@ -149,11 +150,21 @@ impl Kawoosh {
     }
 
     /// Every name the engine knows a command by, the ones meant for
-    /// the command line first: the ex spellings and the commands with
-    /// a line of doc (`:view`, `:vsplit`), then the rest — the
-    /// keymap's `visual_mode` and its kind, typed rarely. Each group
-    /// sorted, a name once.
-    fn command_name_candidates(&self, token: &str) -> Vec<String> {
+    /// the command line first: the ex spellings, the commands that have
+    /// one (`:vsplit`, `:tab` for `:tabnew`) and the ones no key runs
+    /// (`:view`); then the keymap's — `visual`, `move`, typed rarely.
+    /// Each group sorted, a name once.
+    fn command_name_candidates(&mut self, token: &str) -> Vec<String> {
+        self.refresh_bound_names();
+        let aliased: HashSet<&str> = self
+            .ed
+            .commands
+            .specs()
+            .into_iter()
+            .filter(|s| !s.aliases.is_empty())
+            .map(|s| s.name.split(' ').next().unwrap_or(&s.name))
+            .collect();
+        let bound = &self.bound_names.1;
         let mut out: Vec<String> = Vec::new();
         let mut push = |names: Vec<&str>| {
             let mut names: Vec<&str> = names.into_iter().filter(|n| n.starts_with(token)).collect();
@@ -164,18 +175,38 @@ impl Kawoosh {
                 }
             }
         };
-        let (documented, bare): (Vec<&Spec>, Vec<&Spec>) = self
+        let (keyed, typed): (Vec<&str>, Vec<&str>) = self
             .ed
-            .commands
-            .specs()
+            .command_names()
             .into_iter()
-            .filter(|s| !s.name.contains(' '))
-            .partition(|s| !s.doc.is_empty());
-        let mut typed = self.ed.commands.alias_names();
-        typed.extend(documented.iter().map(|s| s.name.as_str()));
-        push(typed);
-        push(bare.iter().map(|s| s.name.as_str()).collect());
+            .partition(|n| bound.contains(*n) && !aliased.contains(n));
+        let mut first = self.ed.commands.alias_names();
+        first.extend(typed);
+        push(first);
+        push(keyed);
         out
+    }
+
+    /// The first word of every command a key runs, read off the keymap
+    /// once per change of it.
+    fn refresh_bound_names(&mut self) {
+        let version = self.ed.keymap.version();
+        if self.bound_names.0 != version || self.bound_names.1.is_empty() {
+            let mut set = HashSet::new();
+            for mode in [
+                Mode::Normal,
+                Mode::Visual,
+                Mode::Insert,
+                Mode::OperatorPending,
+                Mode::Command,
+            ] {
+                for (_, b) in self.ed.keymap.bindings(mode) {
+                    let name = self.ed.commands.resolve(&b.command, &b.args).name;
+                    set.insert(name.split(' ').next().unwrap_or(&name).to_string());
+                }
+            }
+            self.bound_names = (version, set);
+        }
     }
 
     /// The entries of the directory the token names, with the token's

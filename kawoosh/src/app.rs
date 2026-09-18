@@ -95,6 +95,9 @@ pub struct Kawoosh {
     pub undo: crate::undo::UndoPanel,
     pub history_pane: crate::history_pane::HistoryPanel,
     pub commands_pane: crate::commands_pane::CommandsPanel,
+    /// The keymap version and, at it, the first words of the commands
+    /// keys run — the command line ranks them after the typed ones.
+    pub(crate) bound_names: (u64, std::collections::HashSet<String>),
     /// The app's devtools tab the last frame drew, if any — the panel on
     /// and the strip on it — which is what `:syntax_tree` and `:perf`
     /// toggle against.
@@ -187,6 +190,7 @@ impl Kawoosh {
             undo: Default::default(),
             history_pane: Default::default(),
             commands_pane: Default::default(),
+            bound_names: Default::default(),
             hud: false,
             wake,
             shared_wakes: Vec::new(),

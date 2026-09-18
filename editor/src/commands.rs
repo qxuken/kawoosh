@@ -1628,7 +1628,167 @@ pub fn install(ed: &mut Editor) {
             _ => ed.message = "map what? (:map MODE KEYS COMMAND)".into(),
         },
     );
+
+    for (name, doc) in DOCS {
+        match ed.commands.spec_mut(name) {
+            Some(spec) => spec.doc = doc.to_string(),
+            None => debug_assert!(false, "DOCS names no command: {name}"),
+        }
+    }
 }
+
+/// What each command of the keymap does, one line, for the `:commands`
+/// pane — the ex commands carry theirs on the spec above; these are
+/// the ones written as a key. Every command has one (the modal test
+/// checks), and a name here that is no command is a debug assertion.
+/// "Every selection" is the rule (mvp.md Decision 4), so a line says
+/// "the caret" only where the primary alone is meant.
+const DOCS: &[(&str, &str)] = &[
+    // motions
+    ("move left", "a character left, within the line"),
+    ("move right", "a character right, within the line"),
+    ("move down", "a line down, keeping the column aimed for"),
+    ("move up", "a line up, keeping the column aimed for"),
+    ("line start", "the line's first column"),
+    ("line nonblank", "the line's first non-blank"),
+    ("line end", "the line's last character"),
+    (
+        "line end insert",
+        "past the line's last character (insert mode's End)",
+    ),
+    ("word next", "the start of the next word"),
+    ("word prev", "the start of the previous word"),
+    ("word end", "the end of the word"),
+    ("goto file start", "the first line, or line COUNT"),
+    ("goto file end", "the last line, or line COUNT"),
+    ("goto line", "line COUNT (`:42` too)"),
+    ("page half down", "half a screen down"),
+    ("page half up", "half a screen up"),
+    ("page down", "a screen down"),
+    ("page up", "a screen up"),
+    (
+        "match_bracket",
+        "the bracket matching the one under the caret",
+    ),
+    ("find char", "onto the next CHAR in the line"),
+    ("find char back", "onto the previous CHAR in the line"),
+    ("till char", "before the next CHAR in the line"),
+    ("till char back", "after the previous CHAR in the line"),
+    ("search next", "the next match of the search, wrapping"),
+    ("search prev", "the previous match of the search, wrapping"),
+    (
+        "search word",
+        "search for the word under the caret, forward",
+    ),
+    ("search", "open the search prompt, forward"),
+    ("search back", "open the search prompt, backward"),
+    (
+        "substitute",
+        "`[range]s/PAT/REP/[g]`: replace in the range, or the line",
+    ),
+    // text objects
+    (
+        "textobject inner",
+        "select inside a pair or word: iw, i(, i\", ...",
+    ),
+    (
+        "textobject around",
+        "select a pair or word with what surrounds it: aw, a(, ...",
+    ),
+    // operators
+    (
+        "delete",
+        "delete the selection, or wait for a motion; the text goes to the register",
+    ),
+    ("change", "delete as `delete` does, then insert"),
+    (
+        "yank",
+        "copy the selection, or what a motion covers, to the register",
+    ),
+    (
+        "indent",
+        "indent the lines a tabstop (spaces under `expandtab`)",
+    ),
+    ("dedent", "dedent the lines a tabstop"),
+    (
+        "join",
+        "join COUNT lines (the selection's, in visual) with a space between",
+    ),
+    ("delete char", "delete the character under the caret (`x`)"),
+    (
+        "delete char back",
+        "delete the character before the caret (`X`, insert's Backspace)",
+    ),
+    ("delete to end", "delete to the end of the line (`D`)"),
+    (
+        "delete forward",
+        "delete the character after the caret (insert's Delete)",
+    ),
+    (
+        "delete word back",
+        "delete the word before the caret (insert's <C-w>)",
+    ),
+    (
+        "change char",
+        "replace the character under the caret with typing (`s`)",
+    ),
+    (
+        "change to end",
+        "delete to the end of the line, then insert (`C`)",
+    ),
+    (
+        "replace char",
+        "replace the character under the caret with CHAR (`r`)",
+    ),
+    // insert
+    ("insert", "insert before the caret"),
+    (
+        "insert line start",
+        "insert at the line's first non-blank (`I`)",
+    ),
+    (
+        "insert newline",
+        "break the line at the caret, keeping the indent",
+    ),
+    ("insert tab", "insert a tab (spaces under `expandtab`)"),
+    ("append", "insert after the caret (`a`)"),
+    ("append line end", "insert at the end of the line (`A`)"),
+    ("open below", "a new line below, and insert (`o`)"),
+    ("open above", "a new line above, and insert (`O`)"),
+    ("normal", "back to normal mode"),
+    (
+        "paste after",
+        "put the register after the caret, or below a linewise one",
+    ),
+    (
+        "paste before",
+        "put the register before the caret, or above a linewise one",
+    ),
+    ("paste clipboard", "put the system clipboard at the caret"),
+    // undo
+    ("undo", "back to the state before"),
+    ("redo", "forward again, along the branch last taken"),
+    (
+        "undo older",
+        "the state made before this one, on any branch (`g-`)",
+    ),
+    (
+        "undo newer",
+        "the state made after this one, on any branch (`g+`)",
+    ),
+    // visual and selections
+    ("visual", "extend selections with motions"),
+    ("visual line", "extend selections by whole lines"),
+    ("cursor swap", "swap each selection's ends (`o`)"),
+    (
+        "cursor primary",
+        "keep the primary selection, drop the rest",
+    ),
+    ("cursor below", "add a caret on the line below (<A-j>)"),
+    ("cursor above", "add a caret on the line above (<A-k>)"),
+    ("select all", "select the whole buffer"),
+    ("command", "open the command line"),
+];
 
 fn goto_line(ed: &mut Editor, view: ViewId, n: usize) {
     let ext = extend(ed);
