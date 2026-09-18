@@ -1,0 +1,70 @@
+[package]
+name = "kawoosh-languages"
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# One feature per grammar, all on by default: a build that wants a few
+# turns the default off and names them (`--no-default-features
+# --features rust,lua`). A language whose feature is off is still in the
+# table — detected, nameable — with no grammar, as `text` is.
+[features]
+default = [
+    "rust", "toml", "css", "javascript", "typescript", "go", "lua",
+    "bash", "zsh", "nu", "c", "cpp", "python", "json", "yaml", "sql",
+    "regex", "diff", "gitcommit", "gomod", "jsdoc", "markdown",
+]
+rust = ["dep:tree-sitter-rust"]
+toml = ["dep:tree-sitter-toml-ng"]
+css = ["dep:tree-sitter-css"]
+javascript = ["dep:tree-sitter-javascript"]
+# typescript's query is the additions over javascript's.
+typescript = ["dep:tree-sitter-typescript", "javascript"]
+go = ["dep:tree-sitter-go"]
+lua = ["dep:tree-sitter-lua"]
+bash = ["dep:tree-sitter-bash"]
+zsh = ["dep:tree-sitter-zsh"]
+nu = ["dep:tree-sitter-nu"]
+c = ["dep:tree-sitter-c"]
+# cpp's query is the additions over c's.
+cpp = ["dep:tree-sitter-cpp", "c"]
+python = ["dep:tree-sitter-python"]
+# jsonc is json's grammar under another name.
+json = ["dep:tree-sitter-json"]
+yaml = ["dep:tree-sitter-yaml"]
+sql = ["dep:tree-sitter-sequel"]
+regex = ["dep:tree-sitter-regex"]
+diff = ["dep:tree-sitter-diff"]
+gitcommit = ["dep:tree-sitter-gitcommit"]
+gomod = ["dep:tree-sitter-gomod"]
+jsdoc = ["dep:tree-sitter-jsdoc"]
+# The block grammar and the inline one it injects.
+markdown = ["dep:tree-sitter-md"]
+
+[dependencies]
+log.workspace = true
+tree-sitter.workspace = true
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-toml-ng = { workspace = true, optional = true }
+tree-sitter-css = { workspace = true, optional = true }
+tree-sitter-javascript = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-lua = { workspace = true, optional = true }
+tree-sitter-bash = { workspace = true, optional = true }
+tree-sitter-zsh = { workspace = true, optional = true }
+tree-sitter-nu = { workspace = true, optional = true }
+tree-sitter-c = { workspace = true, optional = true }
+tree-sitter-cpp = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-yaml = { workspace = true, optional = true }
+tree-sitter-sequel = { workspace = true, optional = true }
+tree-sitter-regex = { workspace = true, optional = true }
+tree-sitter-diff = { workspace = true, optional = true }
+tree-sitter-gitcommit = { workspace = true, optional = true }
+tree-sitter-gomod = { workspace = true, optional = true }
+tree-sitter-jsdoc = { workspace = true, optional = true }
+tree-sitter-md = { workspace = true, optional = true }

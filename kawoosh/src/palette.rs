@@ -76,5 +76,16 @@ pub fn syntax_color(token: kawoosh_systems::ts::Token, dark: bool) -> Option<Col
         T::Label => hue(0xE08A8A, 0xA02020),
         T::Constructor => hue(0x6FC3D6, 0x1A7A8F),
         T::Tag => hue(0xE69AC0, 0xA0307A),
+        // Markup: a heading in the function blue, strong in the
+        // attribute gold, emphasis in the tag pink, a link in the type
+        // cyan, raw in the string green — hues until a rendered buffer
+        // gives them weight and size.
+        T::Heading => hue(0x82AAFF, 0x2455B8),
+        T::Strong => hue(0xE0B070, 0x8A5A10),
+        T::Emphasis => hue(0xE69AC0, 0xA0307A),
+        T::Link => hue(0x6FC3D6, 0x1A7A8F),
+        T::Raw => hue(0x9CC87A, 0x3E7A1F),
+        T::Added => hue(0x9CC87A, 0x3E7A1F),
+        T::Removed => hue(0xE08A8A, 0xA02020),
     }
 }

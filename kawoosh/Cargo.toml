@@ -13,6 +13,7 @@ kawoosh-doc.workspace = true
 kawoosh-editor.workspace = true
 kawoosh-term.workspace = true
 kawoosh-systems.workspace = true
+kawoosh-languages.workspace = true
 tree-sitter.workspace = true
 crossbeam-channel.workspace = true
 kawoosh-lua.workspace = true

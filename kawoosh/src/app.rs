@@ -413,6 +413,9 @@ impl Kawoosh {
                         && b.loading.is_some()
                     {
                         b.attach(text);
+                        if &*b.language == kawoosh_languages::FALLBACK {
+                            b.language = kawoosh_languages::detect(&path, &first_line(b)).into();
+                        }
                         self.open_progress(&path, None, true);
                         let b = &self.ed.buffers[id];
                         self.ed.message = format!(
@@ -692,7 +695,10 @@ impl Kawoosh {
             return Some(self.open_on_io_thread(path, meta.len() as usize));
         }
         let buf = match Buffer::from_file(path) {
-            Ok(b) => b,
+            Ok(mut b) => {
+                b.language = kawoosh_languages::detect(path, &first_line(&b)).into();
+                b
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let mut b = Buffer::new(
                     path.file_name()
@@ -701,7 +707,7 @@ impl Kawoosh {
                     "",
                 );
                 b.path = Some(path.to_path_buf());
-                b.language = kawoosh_doc::language_of(path).into();
+                b.language = kawoosh_languages::detect(path, "").into();
                 self.ed.message = format!("\"{}\" [new file]", path.display());
                 b
             }
@@ -720,7 +726,9 @@ impl Kawoosh {
     /// maps and indexes the file and `drain_io` attaches it. What a file
     /// past [`ASYNC_OPEN_BYTES`] takes; a test takes it with a small one.
     pub fn open_on_io_thread(&mut self, path: &Path, total: usize) -> BufferId {
-        let buf = Buffer::opening(path, total);
+        let mut buf = Buffer::opening(path, total);
+        // By the name alone; the `#!` line is read when the text lands.
+        buf.language = kawoosh_languages::detect(path, "").into();
         self.io.open_file(path.to_path_buf());
         self.ed.add_buffer(buf)
     }
@@ -1458,4 +1466,14 @@ impl kui::App for Kawoosh {
             _ => {}
         }
     }
+}
+
+/// A buffer's first line — the `#!` a language is detected by — read
+/// off its first bytes, not the whole.
+fn first_line(b: &Buffer) -> String {
+    b.slice(0..b.len().min(256))
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_owned()
 }

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["text-buffer", "doc", "editor", "term", "systems", "lua", "kawoosh"]
+members = ["text-buffer", "doc", "editor", "term", "systems", "lua", "kawoosh", "languages"]
 
 [workspace.package]
 publish = false
@@ -15,6 +15,7 @@ kawoosh-doc = { path = "./doc" }
 kawoosh-editor = { path = "./editor" }
 kawoosh-term = { path = "./term" }
 kawoosh-systems = { path = "./systems" }
+kawoosh-languages = { path = "./languages" }
 kawoosh-lua = { path = "./lua" }
 
 # kui at one exact pre-release from the forgejo registry
@@ -35,6 +36,9 @@ alacritty_terminal = "0.26"
 portable-pty = "0.9"
 crossbeam-channel = "0.5"
 tree-sitter = "0.27"
+# The grammars (kui.md Decision 13): each behind a feature of
+# `kawoosh-languages`, all on by default. Two are git pins — nu and
+# go.mod publish no crate that binds through `tree-sitter-language`.
 tree-sitter-rust = "0.24"
 tree-sitter-toml-ng = "0.7"
 tree-sitter-css = "0.25"
@@ -42,6 +46,21 @@ tree-sitter-javascript = "0.25"
 tree-sitter-typescript = "0.23"
 tree-sitter-go = "0.25"
 tree-sitter-lua = "0.5"
+tree-sitter-bash = "0.25"
+tree-sitter-zsh = "0.63"
+tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "4f577aaa735154f934594b598a69ed7b1b707cf6" }
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-python = "0.25"
+tree-sitter-json = "0.24"
+tree-sitter-yaml = "0.7"
+tree-sitter-sequel = "0.3"
+tree-sitter-regex = "0.25"
+tree-sitter-diff = "0.1"
+tree-sitter-gitcommit = "0.5"
+tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "2e886870578eeba1927a2dc4bd2e2b3f598c5f9a" }
+tree-sitter-jsdoc = "0.25"
+tree-sitter-md = "0.5"
 lsp-types = "0.97"
 rusqlite = { version = "0.40", features = ["bundled"] }
 blake3 = "1"

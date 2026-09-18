@@ -14,122 +14,34 @@
 //! that span alone; the journal carries the runs outside it. A first
 //! sight of a buffer, edits the journal no longer has, or a change of
 //! language parse and answer for the whole.
+//!
+//! The languages are `kawoosh_languages`'s (kui.md Decision 13): a
+//! grammar is loaded the first time a job names it. A grammar with an
+//! injections query has other languages inside it — a fenced code
+//! block, a JSDoc comment, a regex literal — and each such node
+//! reaching into an answered span is parsed over that node alone by
+//! its own grammar, its captures painted over the host's, its
+//! injections under it in turn; those parses start over every time,
+//! since the spans are small and the tree kept is the host's.
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use kawoosh_doc::{BufferId, Edit, Run, Snapshot, Update};
-use tree_sitter::{InputEdit, Parser, Point, Query, QueryCursor, StreamingIterator, Tree};
+use kawoosh_languages::Grammar;
+pub use kawoosh_languages::Token;
+use tree_sitter::{InputEdit, Node, Parser, Point, QueryCursor, StreamingIterator, Tree};
 
 use crate::WakeHandle;
 
 pub const SYNTAX_LAYER: &str = "syntax";
 
-/// Token classes a run's `style` names — the app maps them to colours
-/// (tokens from Lua, kui.md D7). Fixed so a theme is a table, not code.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(u32)]
-pub enum Token {
-    Plain = 0,
-    Keyword,
-    Function,
-    Type,
-    String,
-    Number,
-    Comment,
-    Variable,
-    Property,
-    Operator,
-    Punctuation,
-    Attribute,
-    Constant,
-    Macro,
-    Label,
-    Constructor,
-    /// A markup element's name — a JSX `<div>`, a CSS `div` selector.
-    Tag,
-}
-
-impl Token {
-    pub const ALL: &[Token] = &[
-        Token::Plain,
-        Token::Keyword,
-        Token::Function,
-        Token::Type,
-        Token::String,
-        Token::Number,
-        Token::Comment,
-        Token::Variable,
-        Token::Property,
-        Token::Operator,
-        Token::Punctuation,
-        Token::Attribute,
-        Token::Constant,
-        Token::Macro,
-        Token::Label,
-        Token::Constructor,
-        Token::Tag,
-    ];
-
-    pub fn from_style(style: u32) -> Token {
-        Token::ALL
-            .get(style as usize)
-            .copied()
-            .unwrap_or(Token::Plain)
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Token::Plain => "plain",
-            Token::Keyword => "keyword",
-            Token::Function => "function",
-            Token::Type => "type",
-            Token::String => "string",
-            Token::Number => "number",
-            Token::Comment => "comment",
-            Token::Variable => "variable",
-            Token::Property => "property",
-            Token::Operator => "operator",
-            Token::Punctuation => "punctuation",
-            Token::Attribute => "attribute",
-            Token::Constant => "constant",
-            Token::Macro => "macro",
-            Token::Label => "label",
-            Token::Constructor => "constructor",
-            Token::Tag => "tag",
-        }
-    }
-
-    /// A tree-sitter capture name to a class: `keyword.control` is a
-    /// keyword, `function.method` a function, `punctuation.bracket`
-    /// punctuation. nvim's older spellings — `repeat`, `conditional`
-    /// for the loop and branch keywords, `preproc` for a `#!` line —
-    /// read as their class (lua's query is written in them).
-    pub fn from_capture(name: &str) -> Option<Token> {
-        let head = name.split('.').next().unwrap_or(name);
-        Some(match head {
-            "keyword" | "repeat" | "conditional" => Token::Keyword,
-            "function" | "method" => Token::Function,
-            "type" => Token::Type,
-            "string" | "character" | "escape" => Token::String,
-            "number" | "float" | "boolean" => Token::Number,
-            "comment" => Token::Comment,
-            "variable" | "parameter" => Token::Variable,
-            "property" | "field" => Token::Property,
-            "operator" => Token::Operator,
-            "punctuation" => Token::Punctuation,
-            "attribute" => Token::Attribute,
-            "constant" => Token::Constant,
-            "macro" | "preproc" => Token::Macro,
-            "label" => Token::Label,
-            "constructor" => Token::Constructor,
-            "tag" => Token::Tag,
-            _ => return None,
-        })
-    }
-}
+/// How deep injections nest: markdown's inline in its blocks, and one
+/// more under that.
+const INJECTION_DEPTH: usize = 3;
 
 pub struct Job {
     pub buffer: BufferId,
@@ -178,7 +90,7 @@ impl Ts {
             .name("ts".into())
             .spawn(move || {
                 let mut parser = Parser::new();
-                let mut grammars = Grammars::load();
+                let mut grammars = Grammars::default();
                 let mut parsed = Parsed::default();
                 while let Ok(job) = job_rx.recv() {
                     // Only the newest job per buffer matters: skip ahead,
@@ -222,143 +134,31 @@ impl Ts {
         self.answers.try_iter().collect()
     }
 
+    /// Whether a buffer of `language` is worth a job: this build has a
+    /// grammar for it (`kawoosh_languages::has_grammar`).
     pub fn supports(language: &str) -> bool {
-        matches!(
-            language,
-            "rust" | "toml" | "css" | "javascript" | "typescript" | "tsx" | "go" | "lua"
-        )
+        kawoosh_languages::has_grammar(language)
     }
 }
 
-struct Grammar {
-    language: tree_sitter::Language,
-    query: Query,
-    /// Capture index → token class.
-    classes: Vec<Option<Token>>,
-}
-
-/// The grammars, each loaded with its own crate's highlight query on the
-/// thread's first job; `Ts::supports` is the same list.
+/// The grammars the thread has loaded, by their language's name (an
+/// alias resolves to it): each on its first job — a query compiles in
+/// a moment, but there are two dozen — and a language without one, or
+/// whose query failed, remembered as `None` so it is not asked again.
+/// Shared handles, so a host grammar and the one it injects are held
+/// at once.
+#[derive(Default)]
 struct Grammars {
-    rust: Option<Grammar>,
-    toml: Option<Grammar>,
-    css: Option<Grammar>,
-    javascript: Option<Grammar>,
-    typescript: Option<Grammar>,
-    tsx: Option<Grammar>,
-    go: Option<Grammar>,
-    lua: Option<Grammar>,
+    loaded: HashMap<&'static str, Option<Arc<Grammar>>>,
 }
 
 impl Grammars {
-    fn load() -> Self {
-        Self {
-            // rust's query colours by naming convention — an uppercase
-            // identifier is a constructor — so a lowercase variant name
-            // got nothing; a variant is a constructor by where it is.
-            rust: Grammar::new(
-                tree_sitter_rust::LANGUAGE.into(),
-                &[
-                    tree_sitter_rust::HIGHLIGHTS_QUERY,
-                    "(enum_variant name: (identifier) @constructor)\n",
-                ]
-                .concat(),
-            ),
-            // toml-ng captures every bare key as `@type` (the `@property`
-            // is on the pair around it, so the key wins); a key is a
-            // property here, as in every other table-shaped language.
-            toml: Grammar::new(
-                tree_sitter_toml_ng::LANGUAGE.into(),
-                tree_sitter_toml_ng::HIGHLIGHTS_QUERY,
-            )
-            .map(|g| g.recapture("type", Token::Property)),
-            css: Grammar::new(
-                tree_sitter_css::LANGUAGE.into(),
-                tree_sitter_css::HIGHLIGHTS_QUERY,
-            ),
-            javascript: Grammar::new(
-                tree_sitter_javascript::LANGUAGE.into(),
-                tree_sitter_javascript::HIGHLIGHT_QUERY,
-            ),
-            // The typescript crate's query is the additions over
-            // javascript's (its `tree-sitter.json` inherits it), so the
-            // one query is javascript's, JSX's for tsx, then typescript's
-            // — later patterns winning, a capitalised identifier reads as
-            // a type rather than a variable.
-            typescript: Grammar::new(
-                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-                &[
-                    tree_sitter_javascript::HIGHLIGHT_QUERY,
-                    tree_sitter_typescript::HIGHLIGHTS_QUERY,
-                ]
-                .concat(),
-            ),
-            tsx: Grammar::new(
-                tree_sitter_typescript::LANGUAGE_TSX.into(),
-                &[
-                    tree_sitter_javascript::HIGHLIGHT_QUERY,
-                    tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
-                    tree_sitter_typescript::HIGHLIGHTS_QUERY,
-                ]
-                .concat(),
-            ),
-            go: Grammar::new(
-                tree_sitter_go::LANGUAGE.into(),
-                tree_sitter_go::HIGHLIGHTS_QUERY,
-            ),
-            lua: Grammar::new(
-                tree_sitter_lua::LANGUAGE.into(),
-                tree_sitter_lua::HIGHLIGHTS_QUERY,
-            ),
-        }
-    }
-
-    fn get(&mut self, language: &str) -> Option<&Grammar> {
-        match language {
-            "rust" => self.rust.as_ref(),
-            "toml" => self.toml.as_ref(),
-            "css" => self.css.as_ref(),
-            "javascript" => self.javascript.as_ref(),
-            "typescript" => self.typescript.as_ref(),
-            "tsx" => self.tsx.as_ref(),
-            "go" => self.go.as_ref(),
-            "lua" => self.lua.as_ref(),
-            _ => None,
-        }
-    }
-}
-
-impl Grammar {
-    fn new(language: tree_sitter::Language, highlights: &str) -> Option<Self> {
-        let query = match Query::new(&language, highlights) {
-            Ok(q) => q,
-            Err(e) => {
-                log::error!("highlight query: {e}");
-                return None;
-            }
-        };
-        let classes = query
-            .capture_names()
-            .iter()
-            .map(|n| Token::from_capture(n))
-            .collect();
-        Some(Self {
-            language,
-            query,
-            classes,
-        })
-    }
-}
-
-impl Grammar {
-    /// Reads capture `name` (its head) as `token` instead of the default.
-    fn recapture(mut self, name: &str, token: Token) -> Self {
-        for (i, n) in self.query.capture_names().iter().enumerate() {
-            if n.split('.').next() == Some(name) {
-                self.classes[i] = Some(token);
-            }
-        }
-        self
+    fn get(&mut self, language: &str) -> Option<Arc<Grammar>> {
+        let lang = kawoosh_languages::by_name(language)?;
+        self.loaded
+            .entry(lang.name)
+            .or_insert_with(|| lang.grammar.and_then(|load| load()).map(Arc::new))
+            .clone()
     }
 }
 
@@ -535,7 +335,9 @@ fn highlight(
                     }
                     let runs = spans
                         .iter()
-                        .map(|span| capture_runs(g, tree.root_node(), text, span.clone()))
+                        .map(|span| {
+                            capture_runs(parser, grammars, &g, tree.root_node(), text, span.clone())
+                        })
                         .collect();
                     let handle = tree.clone();
                     parsed
@@ -569,22 +371,56 @@ fn highlight(
     }
 }
 
-/// Paints every capture in `span` over a byte map, outer captures first
-/// so an inner one wins (tree-sitter's own precedence), then coalesces.
-/// A capture reaching past the span is cut at it: the layer keeps its
-/// own run for the part outside.
+/// The runs of `span`: the host grammar's captures painted over a byte
+/// map, the languages injected into the span painted over them, then
+/// coalesced into runs. A capture reaching past the span is cut at it:
+/// the layer keeps its own run for the part outside.
 fn capture_runs(
+    parser: &mut Parser,
+    grammars: &mut Grammars,
     g: &Grammar,
-    root: tree_sitter::Node,
+    root: Node,
     text: &text_buffer::Buffer,
     span: Range<usize>,
 ) -> Vec<Run> {
+    let base = span.start;
+    let mut paint = vec![0u8; span.len()];
+    paint_captures(g, root, text, span.clone(), base, &mut paint);
+    paint_injections(parser, grammars, g, root, text, span, base, &mut paint, 0);
+    let mut runs = Vec::new();
+    let mut start = 0;
+    for i in 1..=paint.len() {
+        if i == paint.len() || paint[i] != paint[start] {
+            if paint[start] != 0 {
+                runs.push(Run {
+                    range: base + start..base + i,
+                    style: paint[start] as u32,
+                    tag: 0,
+                });
+            }
+            start = i;
+        }
+    }
+    runs
+}
+
+/// Paints every capture of `g` in `span` over `paint` (whose byte 0 is
+/// document byte `base`), outer captures first so an inner one wins
+/// (tree-sitter's own precedence).
+fn paint_captures(
+    g: &Grammar,
+    root: Node,
+    text: &text_buffer::Buffer,
+    span: Range<usize>,
+    base: usize,
+    paint: &mut [u8],
+) {
     let mut caps: Vec<(Range<usize>, Token)> = Vec::new();
     let mut cursor = QueryCursor::new();
     cursor.set_byte_range(span.clone());
     // A node's text, for the predicates (`#match?` on a builtin's name):
     // asked for that node alone, off the pieces.
-    let mut node_text = |n: tree_sitter::Node| std::iter::once(text.collect_range(n.byte_range()));
+    let mut node_text = |n: Node| std::iter::once(text.collect_range(n.byte_range()));
     let mut it = cursor.captures(&g.query, root, &mut node_text);
     while let Some((m, i)) = it.next() {
         let c = m.captures()[*i];
@@ -616,28 +452,122 @@ fn capture_runs(
         }
         true
     });
-    let base = span.start;
-    let mut paint = vec![0u8; span.len()];
     for (r, tok) in caps {
         for p in &mut paint[r.start - base..r.end - base] {
             *p = tok as u8;
         }
     }
-    let mut runs = Vec::new();
-    let mut start = 0;
-    for i in 1..=paint.len() {
-        if i == paint.len() || paint[i] != paint[start] {
-            if paint[start] != 0 {
-                runs.push(Run {
-                    range: base + start..base + i,
-                    style: paint[start] as u32,
-                    tag: 0,
-                });
+}
+
+/// Paints the languages inside `span` over the host's paint: each
+/// `@injection.content` node of `g`'s injections query that reaches
+/// into the span, whose language — a `#set!` on the pattern, or the
+/// `@injection.language` node's text, its first word (a fence's
+/// `rust,ignore`) — this build has a grammar for, is parsed by that
+/// grammar over the node alone and its captures painted on top (JSDoc's
+/// tags over the comment's colour), then its own injections under it,
+/// [`INJECTION_DEPTH`] deep. A `#set! injection.combined` pattern (a
+/// tagged template's pieces as one document) is not followed.
+#[allow(clippy::too_many_arguments)]
+fn paint_injections(
+    parser: &mut Parser,
+    grammars: &mut Grammars,
+    g: &Grammar,
+    root: Node,
+    text: &text_buffer::Buffer,
+    span: Range<usize>,
+    base: usize,
+    paint: &mut [u8],
+    depth: usize,
+) {
+    let Some(inj) = &g.injections else {
+        return;
+    };
+    if depth >= INJECTION_DEPTH {
+        return;
+    }
+    let mut found: Vec<(String, Range<usize>)> = Vec::new();
+    {
+        let mut cursor = QueryCursor::new();
+        cursor.set_byte_range(span.clone());
+        let mut node_text = |n: Node| std::iter::once(text.collect_range(n.byte_range()));
+        let mut it = cursor.matches(&inj.query, root, &mut node_text);
+        while let Some(m) = it.next() {
+            let settings = inj.query.property_settings(m.pattern_index);
+            if settings.iter().any(|p| &*p.key == "injection.combined") {
+                continue;
             }
-            start = i;
+            let name = settings
+                .iter()
+                .find(|p| &*p.key == "injection.language")
+                .and_then(|p| p.value.as_deref().map(str::to_owned))
+                .or_else(|| {
+                    let n = m.nodes_for_capture_index(inj.language?).next()?;
+                    let word = text.collect_range(n.byte_range());
+                    Some(String::from_utf8_lossy(&word).into_owned())
+                });
+            let Some(name) = name else {
+                continue;
+            };
+            for n in m.nodes_for_capture_index(inj.content) {
+                let r = n.byte_range();
+                if r.start < r.end {
+                    found.push((name.clone(), r));
+                }
+            }
         }
     }
-    runs
+    for (name, range) in found {
+        let word = name
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .next()
+            .unwrap_or("");
+        let Some(ig) = grammars.get(word) else {
+            continue;
+        };
+        let Some(tree) = parse_range(parser, &ig, text, range.clone()) else {
+            continue;
+        };
+        let inner = range.start.max(span.start)..range.end.min(span.end);
+        let root = tree.root_node();
+        paint_captures(&ig, root, text, inner.clone(), base, paint);
+        paint_injections(
+            parser,
+            grammars,
+            &ig,
+            root,
+            text,
+            inner,
+            base,
+            paint,
+            depth + 1,
+        );
+    }
+}
+
+/// Parses `range` of the text alone with `g` — tree-sitter's included
+/// ranges, reset after — for an injection. Its nodes' positions are
+/// the document's.
+fn parse_range(
+    parser: &mut Parser,
+    g: &Grammar,
+    text: &text_buffer::Buffer,
+    range: Range<usize>,
+) -> Option<Tree> {
+    parser.set_language(&g.language).ok()?;
+    let included = tree_sitter::Range {
+        start_byte: range.start,
+        end_byte: range.end,
+        start_point: point_at(text, range.start),
+        end_point: point_at(text, range.end),
+    };
+    if parser.set_included_ranges(&[included]).is_err() {
+        return None;
+    }
+    let mut read = |byte: usize, _: Point| text.chunk_at(byte);
+    let tree = parser.parse_with_options(&mut read, None, None);
+    let _ = parser.set_included_ranges(&[]);
+    tree
 }
 
 #[cfg(test)]
@@ -647,7 +577,7 @@ mod tests {
 
     #[test]
     fn rust_gets_keywords_strings_and_comments() {
-        let mut g = Grammars::load();
+        let mut g = Grammars::default();
         let mut parser = Parser::new();
         let src = "// hi\nfn main() { let s = \"x\"; }\n";
         let buf = Buffer::new("t", src);
@@ -675,7 +605,7 @@ mod tests {
     /// is by an uppercase first letter.
     #[test]
     fn rust_enum_variants_are_constructors_by_position() {
-        let mut g = Grammars::load();
+        let mut g = Grammars::default();
         let mut parser = Parser::new();
         let src = "enum E {\n    Value,\n    value,\n    Pair(u8),\n}\n";
         let buf = Buffer::new("t", src);
@@ -701,7 +631,7 @@ mod tests {
     /// colours: a keyword, a string, a comment, and one of its own.
     #[test]
     fn the_other_grammars_highlight() {
-        let mut g = Grammars::load();
+        let mut g = Grammars::default();
         let mut parser = Parser::new();
         type Case = (&'static str, &'static str, &'static [(&'static str, Token)]);
         let cases: &[Case] = &[
@@ -796,7 +726,174 @@ mod tests {
                     ("\"x\"", Token::String),
                 ],
             ),
+            (
+                "bash",
+                "# c\nif [ -f x ]; then echo \"hi\"; fi\nfoo() { ls; }\n",
+                &[
+                    ("# c", Token::Comment),
+                    ("if", Token::Keyword),
+                    ("echo", Token::Function),
+                    ("\"hi\"", Token::String),
+                    ("foo()", Token::Function),
+                ],
+            ),
+            (
+                "zsh",
+                "# c\nif [[ -f x ]]; then echo \"hi\"; fi\nfoo() { ls; }\n",
+                &[
+                    ("# c", Token::Comment),
+                    ("if", Token::Keyword),
+                    ("echo", Token::Function),
+                    ("\"hi\"", Token::String),
+                    ("foo()", Token::Function),
+                ],
+            ),
+            (
+                "nu",
+                "# c\ndef greet [name: string] { $\"hi ($name)\" }\nlet x = 1\n",
+                &[
+                    ("# c", Token::Comment),
+                    ("def", Token::Keyword),
+                    ("greet", Token::Function),
+                    ("let", Token::Keyword),
+                    ("1\n", Token::Number),
+                ],
+            ),
+            (
+                "c",
+                "// c\n#include <stdio.h>\nint main(void) { return 0; }\n",
+                &[
+                    ("// c", Token::Comment),
+                    ("int", Token::Type),
+                    ("main", Token::Function),
+                    ("return", Token::Keyword),
+                    ("0;", Token::Number),
+                ],
+            ),
+            (
+                "cpp",
+                "// c\nclass A { public: int f() { return 1; } };\n",
+                &[
+                    ("// c", Token::Comment),
+                    ("class", Token::Keyword),
+                    ("int", Token::Type),
+                    ("f()", Token::Function),
+                    ("1;", Token::Number),
+                ],
+            ),
+            (
+                "python",
+                "# c\ndef f(a):\n    return \"s\" + str(1)\n",
+                &[
+                    ("# c", Token::Comment),
+                    ("def", Token::Keyword),
+                    ("f(", Token::Function),
+                    ("return", Token::Keyword),
+                    ("\"s\"", Token::String),
+                    ("1)", Token::Number),
+                ],
+            ),
+            // json: a key is a property, not the `string.special.key`
+            // the query says.
+            (
+                "json",
+                "{\"a\": 1, \"b\": [true, null], \"c\": \"s\"}\n",
+                &[
+                    ("\"a\"", Token::Property),
+                    ("1", Token::Number),
+                    ("true", Token::Constant),
+                    ("\"s\"", Token::String),
+                ],
+            ),
+            (
+                "jsonc",
+                "// c\n{\"a\": 1}\n",
+                &[("// c", Token::Comment), ("\"a\"", Token::Property)],
+            ),
+            (
+                "yaml",
+                "# c\nkey: value\nn: 1\nlist:\n  - \"s\"\n",
+                &[
+                    ("# c", Token::Comment),
+                    ("key", Token::Property),
+                    ("1\n", Token::Number),
+                    ("\"s\"", Token::String),
+                ],
+            ),
+            (
+                "sql",
+                "-- c\nSELECT name FROM users WHERE id = 1;\n",
+                &[
+                    ("-- c", Token::Comment),
+                    ("SELECT", Token::Keyword),
+                    ("FROM", Token::Keyword),
+                    ("1;", Token::Number),
+                ],
+            ),
+            (
+                "regex",
+                "(a|b)+\\d{2}\n",
+                &[
+                    ("(", Token::Punctuation),
+                    ("|", Token::Operator),
+                    ("+", Token::Operator),
+                    ("2}", Token::Number),
+                ],
+            ),
+            (
+                "jsdoc",
+                "/** @param {number} x */\n",
+                &[("@param", Token::Keyword), ("number", Token::Type)],
+            ),
+            // diff: the query here names what the crate's calls a
+            // string and a keyword.
+            (
+                "diff",
+                "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n-old\n+new\n",
+                &[
+                    ("--- a/x", Token::Removed),
+                    ("+++ b/x", Token::Added),
+                    ("@@", Token::Attribute),
+                    ("-old", Token::Removed),
+                    ("+new", Token::Added),
+                ],
+            ),
+            (
+                "gitcommit",
+                "feat(api): add thing\n\nbody\n\n# Please enter the commit message\n",
+                &[
+                    ("feat", Token::Keyword),
+                    ("api", Token::Variable),
+                    ("add thing", Token::Heading),
+                    ("# Please", Token::Comment),
+                ],
+            ),
+            (
+                "gomod",
+                "module example.com/m\n\ngo 1.22\n\nrequire (\n\tx.io/y v1.2.3 // c\n)\n",
+                &[
+                    ("module", Token::Keyword),
+                    ("go 1", Token::Keyword),
+                    ("1.22", Token::String),
+                    ("require", Token::Keyword),
+                    ("v1.2.3", Token::String),
+                    ("// c", Token::Comment),
+                ],
+            ),
+            // markdown: the block grammar's own — a heading, a list
+            // marker; the paragraph's inside is the inline grammar's,
+            // an injection (the next test).
+            (
+                "markdown",
+                "# Title\n\n- item\n\n```\ncode\n```\n",
+                &[
+                    ("Title", Token::Heading),
+                    ("- item", Token::Punctuation),
+                    ("```", Token::Punctuation),
+                ],
+            ),
         ];
+        let mut wrong = Vec::new();
         for (lang, src, want) in cases {
             let buf = Buffer::new("t", src);
             let job = Job {
@@ -814,9 +911,163 @@ mod tests {
                     .iter()
                     .find(|r| r.range.contains(&o))
                     .map(|r| Token::from_style(r.style));
-                assert_eq!(got, Some(*tok), "{lang}: {needle:?}");
+                if got != Some(*tok) {
+                    wrong.push(format!("{lang}: {needle:?} is {got:?}, not {tok:?}"));
+                }
             }
         }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    /// A language inside another: markdown's paragraphs are its inline
+    /// grammar's (emphasis, a code span, a link) and a fence's content
+    /// its language's, over a plain background between raw fences; a
+    /// javascript comment's tags are JSDoc's over the comment's colour,
+    /// a regex literal's operators regex's over the string's. A fence
+    /// naming no grammar this build has stays plain.
+    #[test]
+    fn injections_paint_over_the_host() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        type Case = (
+            &'static str,
+            &'static str,
+            &'static [(&'static str, Option<Token>)],
+        );
+        let cases: &[Case] = &[
+            (
+                "markdown",
+                "# Title\n\nSome *em* and **strong**, `code`, [l](http://x).\n\n```rust\nfn main() { let s = \"x\"; }\n```\n\n```brainfuck\n+++\n```\n",
+                &[
+                    ("Title", Some(Token::Heading)),
+                    ("em*", Some(Token::Emphasis)),
+                    ("strong**", Some(Token::Strong)),
+                    ("code`", Some(Token::Raw)),
+                    ("l](", Some(Token::Link)),
+                    ("http://x", Some(Token::Link)),
+                    ("Some", None),
+                    ("```rust", Some(Token::Punctuation)),
+                    ("fn", Some(Token::Keyword)),
+                    ("main", Some(Token::Function)),
+                    ("let", Some(Token::Keyword)),
+                    ("\"x\"", Some(Token::String)),
+                    (" s ", None),
+                    ("+++", None),
+                ],
+            ),
+            (
+                "javascript",
+                "/** @param {number} x */\nconst r = /a+b/g;\n",
+                &[
+                    ("/**", Some(Token::Comment)),
+                    ("@param", Some(Token::Keyword)),
+                    ("number", Some(Token::Type)),
+                    ("x */", Some(Token::Comment)),
+                    ("const", Some(Token::Keyword)),
+                    ("a+b", Some(Token::String)),
+                    ("+b", Some(Token::Operator)),
+                ],
+            ),
+            (
+                "typescript",
+                "/** @returns {string} y */\nconst r = /[a-z]+/;\n",
+                &[
+                    ("@returns", Some(Token::Keyword)),
+                    ("string", Some(Token::Type)),
+                    ("+/", Some(Token::Operator)),
+                ],
+            ),
+        ];
+        let mut wrong = Vec::new();
+        for (lang, src, want) in cases {
+            let buf = Buffer::new("t", src);
+            let job = Job {
+                buffer: BufferId::default(),
+                language: (*lang).into(),
+                snapshot: buf.snapshot(),
+                edits: None,
+            };
+            let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job).update();
+            for (needle, tok) in *want {
+                let o = src.find(needle).unwrap();
+                let got = a
+                    .runs
+                    .iter()
+                    .find(|r| r.range.contains(&o))
+                    .map(|r| Token::from_style(r.style));
+                if got != *tok {
+                    wrong.push(format!("{lang}: {needle:?} is {got:?}, not {tok:?}"));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    /// The injected languages survive the incremental path: an edit in
+    /// one paragraph answers for a span around it, the inline runs and
+    /// a fence's recomputed there, and the layer reads as a whole parse
+    /// would.
+    #[test]
+    fn injections_survive_a_reparse() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let body: String = (0..60)
+            .map(|i| {
+                format!("Para {i} with *em{i}* and `c{i}`.\n\n```rust\nfn f{i}() {{}}\n```\n\n")
+            })
+            .collect();
+        let mut buf = Buffer::new("t", &body);
+        buf.language = "markdown".into();
+        let mut sent: Option<kawoosh_doc::Version> = None;
+        let mut job = |buf: &Buffer| {
+            let edits = sent
+                .and_then(|v| buf.journal().edits_since(v).ok())
+                .map(|it| it.cloned().collect());
+            sent = Some(buf.version());
+            Job {
+                buffer: BufferId::default(),
+                language: "markdown".into(),
+                snapshot: buf.snapshot(),
+                edits,
+            }
+        };
+        let whole_job = |buf: &Buffer| Job {
+            buffer: BufferId::default(),
+            language: "markdown".into(),
+            snapshot: buf.snapshot(),
+            edits: None,
+        };
+        let first = highlight(&mut parser, &mut g, &mut parsed, &job(&buf)).update();
+        buf.apply(first).unwrap();
+        let at = buf.text().find("Para 30 ").unwrap() + "Para 30".len();
+        buf.replace(at..at, " more");
+        let second = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
+        let spanned: usize = second.updates.iter().map(|u| u.span.len()).sum();
+        assert!(spanned < buf.len() / 2, "{spanned} of {} bytes", buf.len());
+        for u in second.updates {
+            buf.apply(u).unwrap();
+        }
+        let whole = highlight(
+            &mut parser,
+            &mut g,
+            &mut Parsed::default(),
+            &whole_job(&buf),
+        )
+        .update();
+        assert_eq!(
+            joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())),
+            joined(&whole.runs)
+        );
+        let tok_at = |needle: &str, buf: &Buffer| {
+            let o = buf.text().find(needle).unwrap();
+            buf.runs(SYNTAX_LAYER, o..o + 1)
+                .first()
+                .map(|r| Token::from_style(r.style))
+        };
+        assert_eq!(tok_at("em30", &buf), Some(Token::Emphasis));
+        assert_eq!(tok_at("c30`", &buf), Some(Token::Raw));
+        assert_eq!(tok_at("fn f30", &buf), Some(Token::Keyword));
     }
 
     impl Answer {
@@ -847,7 +1098,7 @@ mod tests {
     /// the new text would.
     #[test]
     fn a_reparse_answers_for_the_changed_span_alone() {
-        let mut g = Grammars::load();
+        let mut g = Grammars::default();
         let mut parser = Parser::new();
         let mut parsed = Parsed::default();
         let body: String = (0..200)
@@ -1007,7 +1258,7 @@ mod tests {
     /// carried run where it agrees with a whole parse.
     #[test]
     fn typing_inside_a_token_keeps_its_colour() {
-        let mut g = Grammars::load();
+        let mut g = Grammars::default();
         let mut parser = Parser::new();
         let mut parsed = Parsed::default();
         let src = "// a comment here\nfn main() {\n    let greeting = \"hello world\";\n    println!(\"{greeting}\");\n}\n";
@@ -1114,7 +1365,7 @@ mod tests {
     /// language without a grammar with none.
     #[test]
     fn an_answer_carries_its_tree() {
-        let mut g = Grammars::load();
+        let mut g = Grammars::default();
         let mut parser = Parser::new();
         let buf = Buffer::new("t", "let x: number = 1;\n");
         let job = |language: &str| Job {
@@ -1146,7 +1397,7 @@ mod tests {
 
     #[test]
     fn unknown_language_answers_empty() {
-        let mut g = Grammars::load();
+        let mut g = Grammars::default();
         let mut parser = Parser::new();
         let buf = Buffer::new("t", "whatever");
         let job = Job {

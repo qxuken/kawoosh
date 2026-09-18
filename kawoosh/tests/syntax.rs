@@ -5,7 +5,7 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kawoosh_systems::ts::SYNTAX_LAYER;
+use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
 use kui::KeyMods;
 
 #[test]
@@ -63,6 +63,58 @@ fn rust_is_highlighted_and_stays_so_across_edits() {
         .iter()
         .any(|r| buf.slice(r.range.clone()) == "// c");
     assert!(comment, "the comment got a run");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A file's language is detected in the shell (kui.md Decision 13): a
+/// markdown file gets its block grammar's heading, its inline
+/// grammar's emphasis and a fence's rust — two injections — through
+/// the app, and a file with no extension is named by its `#!` line.
+#[test]
+fn markdown_and_a_shebang_file_are_their_languages() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-langs-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let md = dir.join("notes.md");
+    std::fs::write(
+        &md,
+        "# Title\n\nSome *em* here.\n\n```rust\nfn main() {}\n```\n",
+    )
+    .unwrap();
+    let script = dir.join("run");
+    std::fs::write(&script, "#!/usr/bin/env nu\ndef f [] { 1 }\n").unwrap();
+    let mut app = Kawoosh::from_file(&md);
+    let mut d = Drive::new(900.0, 500.0);
+    let tokens = |app: &mut Kawoosh, d: &mut Drive, needles: &[(&str, Token)]| {
+        d.frame(app);
+        app.wait_for_syntax();
+        d.frame(app);
+        let v = app.focused_view().unwrap();
+        let buf = app.ed.buffer_of(v);
+        let text = buf.text();
+        for (needle, tok) in needles {
+            let o = text.find(needle).unwrap();
+            let got = buf
+                .runs(SYNTAX_LAYER, o..o + 1)
+                .first()
+                .map(|r| Token::from_style(r.style));
+            assert_eq!(got, Some(*tok), "{needle:?}");
+        }
+        buf.language.to_string()
+    };
+    let lang = tokens(
+        &mut app,
+        &mut d,
+        &[
+            ("Title", Token::Heading),
+            ("em*", Token::Emphasis),
+            ("fn", Token::Keyword),
+        ],
+    );
+    assert_eq!(lang, "markdown");
+    app.open(&script);
+    let lang = tokens(&mut app, &mut d, &[("def", Token::Keyword)]);
+    assert_eq!(lang, "nu");
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }

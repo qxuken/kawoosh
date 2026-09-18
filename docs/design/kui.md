@@ -30,9 +30,9 @@ gaps are records rather than surprises:
   primary button, drags and the wheel (kui routes the other buttons
   nowhere, and hover motion without a button is not sent); document sync to LSP is whole-text per change, not
   incremental from the journal; the journal is never pruned (bounded by
-  the buffer's life, not by memory); only Rust has a tree-sitter grammar
-  and only rust-analyzer a builtin server definition (`kawoosh.lsp.server`
-  adds others; grammars need a build); a workspace's
+  the buffer's life, not by memory); only rust-analyzer has a builtin
+  server definition (`kawoosh.lsp.server` adds others; the grammars are
+  Decision 13's, two dozen); a workspace's
   `.kawoosh/settings.lua` is loaded (Decision 10) but its `init.lua`
   (7b's code half) is not — one global `init.lua`, since code from a
   repository wants the trust prompt 7b describes and data does not; no
@@ -100,7 +100,8 @@ devtools and the headless harness are kui's.
 | `doc` | buffers, layers (style runs, selections, constraints), versioned journal, provider `Update`s | `text-buffer` | rewrite; `core/src/version.rs` is salvage |
 | `editor` | modal engine: selection sets, commands, keymap tree, undo, macros — no UI types | `doc` | rewrite; `kawoosh/src/editor.rs` is salvage |
 | `term` | `alacritty_terminal` + `portable-pty` behind a facade that yields a `kui_core::CellGrid` | `kui-core` | rewrite against `CellGrid` |
-| `systems` | `io`, `ts`, `lsp`, `store` threads; message enums; a `Wake` callback | `doc`, `term` | rewrite; `systems/src/lsp.rs` JSON-RPC plumbing is salvage |
+| `languages` | the language contract and table: names, detection, a tree-sitter grammar per feature (Decision 13) | `tree-sitter` | new |
+| `systems` | `io`, `ts`, `lsp`, `store` threads; message enums; a `Wake` callback | `doc`, `term`, `languages` | rewrite; `systems/src/lsp.rs` JSON-RPC plumbing is salvage |
 | `lua` | `kawoosh.*` API seeded into a `kui_lua::LuaExtension`; the bootstrap script | `kui-lua`, `doc`, `editor` | rewrite |
 | `kawoosh` | the `kui::App`: pane tree, tabs, docks, the three pane kinds, status/command strips, wiring, CLI shim | everything, `kui` | rewrite |
 | ~~`ui`~~ | — | — | **deleted** (kui-core) |
@@ -835,13 +836,76 @@ forms and what each means, the conditions and which hold, the keys in
 every mode, the subcommands. It reads only what `kawoosh.commands()`
 reads; a plugin could draw the same pane.
 
+### 13. Languages: one contract, one module each
+
+Every grammar was a field of the ts thread's `Grammars`, its name a
+line of `Ts::supports`, its extensions an arm of `doc::language_of`,
+its query's fixes in the thread's `load` — four places per language,
+and `doc`, which knows no pixel and no selection, deciding what a
+`.rs` was. Now **a language is one value of one contract**,
+`kawoosh_languages::Language`, one module each: its name (what a
+buffer carries, a keymap's `language:rust`, an LSP `languageId`); the
+other spellings that mean it (`sh`, `js`, `c++` — a fence's info
+string, what a user types); the whole file names (`go.mod`,
+`COMMIT_EDITMSG`, `.zshrc`), extensions and `#!` interpreters that
+detect it; and, behind a cargo feature of its own, all on by default —
+a build that wants a few turns the default off and names them — a
+`Grammar`: the parser, the highlight query with each capture read as a
+`Token` class, the injections query. `LANGUAGES` is the table,
+`detect(path, first_line)` names a file's (the name wins over the
+extension, the extension over the line), `by_name` finds one. The ts
+thread loads a grammar the first time a job names it and reads nothing
+else; `doc` sets no language — the shell detects on open, and again by
+the `#!` line when a big file's text lands.
+
+Twenty-six entries: `text` (the fallback), rust, toml, css,
+javascript, typescript, tsx, go, gomod, lua, bash (and `sh`), zsh, nu,
+c, cpp, python, json, jsonc, yaml, sql, regex, jsdoc, diff, gitcommit,
+markdown, markdown_inline. Two grammars are git pins (nu and go.mod
+publish no crate on the current binding); `gomod`'s and `diff`'s
+queries are written here (the one crate exports none, the other paints
+an addition as a string "arbitrarily", by its own comment — here it is
+`added`, and a deletion `removed`, the two classes a gutter will want
+too); `jsonc` is json's grammar under the name the files that allow
+comments go by; `regex`, `jsdoc` and `markdown_inline` are injection
+languages no file is. A module's fixes stay in the module: rust's
+variant-as-constructor, toml's and json's key-as-property, a commit's
+path as a link.
+
+**Injections** — mvp.md's "deliberately not", pulled forward because
+markdown is nothing without its inline grammar and jsdoc and regex are
+nothing outside a host. A grammar's injections query names the
+languages inside it; for each `@injection.content` node reaching into
+an answered span, the thread parses that node alone (tree-sitter's
+included ranges) with its language's grammar — the language a `#set!`
+on the pattern or the `@injection.language` node's first word (a
+fence's `rust,ignore`), through `by_name` — and paints its captures
+over the host's, then its own injections under it, three deep. Those
+parses start over on every answer: the spans are small, and the one
+tree kept and handed to the inspector is the host's. A `#set!
+injection.combined` pattern (a tagged template's pieces as one
+document) is not followed, and a language this build has no grammar
+for stays the host's colour. nvim's `@none` paints plain, so a fence's
+content is a plain ground the injected language colours.
+
+The token classes grew for it: `heading`, `strong`, `emphasis`,
+`link`, `raw` for markup, `added` and `removed` for a diff — a theme
+names them like the rest (D7). They are also what a rendered markdown
+buffer will read: a heading drawn larger, strong drawn heavy, a link
+underlined, a fence's markers hidden, are a row reading the same runs
+for weight and size instead of hue only. That buffer is its own
+decision, after this one: it needs a per-run size and weight on kui's
+`rich_text` spans and a view that folds marker bytes out of its
+columns, neither of which the plain pane has.
+
 ### Deliberately not in the MVP
 
 Unchanged from mvp.md: detachable daemon, soft wrap, proportional fonts,
-images, ligatures, plugin manager, treesitter injections, DAP, multiple
-windows. kui makes several of these cheaper (multi-window is a `ui.window`
-declaration; soft wrap is Decision 3's `rich_text` path; images are an
-`image` node) and none of them is pulled forward for it.
+images, ligatures, plugin manager, DAP, multiple windows (treesitter
+injections were on this list; Decision 13 has them). kui makes several
+of these cheaper (multi-window is a `ui.window` declaration; soft wrap
+is Decision 3's `rich_text` path; images are an `image` node) and none
+of them is pulled forward for it.
 
 ## Build order
 

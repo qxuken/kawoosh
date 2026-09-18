@@ -308,7 +308,8 @@ pub struct Buffer {
     /// on disk; `None` for a scratch buffer.
     pub disk_len: Option<usize>,
     /// The kind of thing this is, for the systems: `"rust"`, `"lua"`,
-    /// `"text"`… From the extension, or set by whoever made it.
+    /// `"text"`… Set by whoever made it — the shell detects a file's
+    /// (`kawoosh_languages::detect`); `doc` knows no language.
     pub language: Arc<str>,
     /// For a buffer that is not a file: who handles its writes (a Lua
     /// `on_write` — the file manager's directory listing).
@@ -364,7 +365,6 @@ impl Buffer {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
         let mut buf = Self::new(name, "");
-        buf.language = Arc::from(language_of(path));
         buf.path = Some(path.to_path_buf());
         buf.read_only = true;
         buf.loading = Some((0, total));
@@ -413,7 +413,6 @@ impl Buffer {
         let mut buf = Self::new(name, "");
         buf.text = text_buffer::Buffer::from_bytes(bytes);
         buf.saved = buf.text.clone();
-        buf.language = Arc::from(language_of(path));
         buf.path = Some(path.to_path_buf());
         buf.disk_len = Some(len);
         Ok(buf)
@@ -1080,25 +1079,6 @@ fn shift_runs_many_from(runs: &mut Vec<Run>, edits: &[Edit], ei: &mut usize, del
         }
     }
     runs.truncate(write);
-}
-
-pub fn language_of(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("rs") => "rust",
-        Some("lua") => "lua",
-        Some("md") => "markdown",
-        Some("toml") => "toml",
-        Some("json") => "json",
-        Some("js" | "mjs" | "cjs") => "javascript",
-        Some("ts" | "mts" | "cts") => "typescript",
-        Some("tsx") => "tsx",
-        Some("py") => "python",
-        Some("css") => "css",
-        Some("go") => "go",
-        Some("c" | "h") => "c",
-        Some("sh" | "bash" | "zsh") => "shell",
-        _ => "text",
-    }
 }
 
 #[cfg(test)]
