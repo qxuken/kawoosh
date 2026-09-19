@@ -831,7 +831,21 @@ only its name, paired the same way with a name another listing
 deletes or lists; a name twice in a listing is refused rather than
 guessed at; renames and moves run in two steps, every source to a temporary
 name first, so a swap of names never writes one file over the other,
-and a destination that is taken is refused; as a listing is edited its
+and a destination that is taken is refused, and a delete whose name
+another op writes to vacates first, the file put aside until the
+other has arrived; a listing's edits are kept — left for a file and
+come back to, or gone up from (a listing with edits is not moved on
+in place) — until `:w` applies them or `<C-l>` drops them, which asks
+first with what they would have done; `,s` `,m` `,a` `,e` (`,S` `,M`
+`,A` `,E` reversed) list it again by size, mtime, name or type, the
+order remembered per directory — `,` is the sort prefix in a listing
+alone, the engine's `cursor primary` on it unmapped and mapped back
+`when` off one (`kawoosh.unmap`), and a binding whose `when` does not
+hold no longer shadows the longer ones beneath it (keys.md); above a
+root on Windows `-` lists the drives (`kawoosh.fs.drives`); a listing
+comes back with a session, filled again where it was, through
+`kawoosh.on_restore` (a session keeps a plugin's scratch by its
+`hook` name) and `kawoosh.buf.show`; as a listing is edited its
 lines say what the write would make of them — `← was a.txt`, `← new`,
 `← copy from ../b/`, `← move from ../b/`, `← twice` — recomputed by
 its `on_change`, a scratch buffer's hook told once a frame that its

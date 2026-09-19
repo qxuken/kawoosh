@@ -1740,10 +1740,19 @@ impl Editor {
             }
             Lookup::Exact(bs) => {
                 let bs = bs.to_vec();
+                // A binding that cannot run here does not shadow the
+                // longer ones beneath it: the sequence stays open for
+                // them (`,` keeps the primary selection off a listing,
+                // and in one is the sort prefix, `,s`).
+                let deeper = self.keymap.has_deeper(lookup_mode, &self.pending);
+                let picked = self.pick_binding(view, &bs).cloned();
+                if picked.is_err() && deeper {
+                    return true;
+                }
                 self.pending.clear();
                 let count = self.count.take();
-                let b = match self.pick_binding(view, &bs) {
-                    Ok(b) => b.clone(),
+                let b = match picked {
+                    Ok(b) => b,
                     Err(reason) => {
                         self.pending_op = None;
                         self.message = reason;

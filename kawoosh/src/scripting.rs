@@ -186,13 +186,18 @@ impl Kawoosh {
                         let b = &mut self.ed.buffers[id];
                         b.set_text(&text);
                         b.mark_saved();
+                        // A buffer a session brought back has the name
+                        // and nothing else: the hook and the language
+                        // are put on it as on a new one.
+                        if hooked {
+                            b.hook = Some(name.clone());
+                        }
+                        if let Some(l) = &language {
+                            b.language = l.as_str().into();
+                        }
                         if existing.is_none() {
                             b.name = name.clone();
                             b.read_only = read_only;
-                            b.hook = hooked.then(|| name.clone());
-                            if let Some(l) = language {
-                                b.language = l.into();
-                            }
                             // Another listing now: where the caret was in
                             // the last one is not where it goes in this.
                             self.last_pos.remove(&id);
@@ -260,6 +265,18 @@ impl Kawoosh {
                     self.ed.views[v].sels =
                         kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(off));
                     self.ed.views[v].goal_col = None;
+                }
+            }
+            Msg::Unmap { mode, keys } => match Mode::from_short(&mode) {
+                Some(m) => self.ed.keymap.unbind(m, &keys),
+                None => self.ed.message = format!("unmap: unknown mode {mode}"),
+            },
+            Msg::ShowBuffer(h) => {
+                let id = kawoosh_lua::id_of(h);
+                if self.ed.buffers.get(id).is_some()
+                    && let Some(v) = self.focused_view()
+                {
+                    self.show_buffer(v, id);
                 }
             }
             Msg::OpenView { name, focus } => self.open_lua_view(&name, focus),
@@ -452,6 +469,29 @@ impl Kawoosh {
                 // was no view at all.
             }
         }
+    }
+
+    /// Tells the plugins about every scratch buffer a session brought
+    /// back, so the one that made it fills it again (`kawoosh.on_restore`).
+    pub(crate) fn fire_restores(&mut self) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        let scratch: Vec<(String, u64)> = self
+            .ed
+            .buffers
+            .iter()
+            .filter(|(id, b)| b.path.is_none() && !self.ed.is_field_buffer(*id))
+            .map(|(id, b)| (b.name.clone(), kawoosh_lua::handle_of(id)))
+            .collect();
+        if scratch.is_empty() {
+            return;
+        }
+        rt.publish(&self.ed, self.focused_view());
+        for (name, h) in scratch {
+            rt.restore_hook(&name, h);
+        }
+        self.drain_lua();
     }
 
     /// Tells every watched scratch buffer's `on_change` about a text

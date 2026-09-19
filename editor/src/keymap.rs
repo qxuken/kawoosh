@@ -416,6 +416,21 @@ impl Keymap {
         self.version += 1;
     }
 
+    /// Whether longer bindings lie beneath `keys` in `mode` — a key
+    /// that is a prefix as well as a binding.
+    pub fn has_deeper(&self, mode: Mode, keys: &[String]) -> bool {
+        let Some(mut node) = self.modes.get(&mode) else {
+            return false;
+        };
+        for k in keys {
+            match node.children.get(k) {
+                Some(n) => node = n,
+                None => return false,
+            }
+        }
+        !node.children.is_empty()
+    }
+
     pub fn lookup(&self, mode: Mode, keys: &[String]) -> Lookup<'_> {
         match self.modes.get(&mode) {
             Some(root) => self.walk(root, keys),

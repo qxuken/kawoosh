@@ -209,6 +209,23 @@ pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
+/// The roots there are above every directory: the drives on Windows
+/// (`C:\`, `D:\`, whichever exist), none elsewhere, where `/` has no
+/// parent and nothing is above it.
+pub fn drives() -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        (b'A'..=b'Z')
+            .map(|c| PathBuf::from(format!("{}:\\", c as char)))
+            .filter(|p| p.exists())
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
 pub fn exists(path: &Path) -> bool {
     path.exists()
 }
@@ -316,6 +333,16 @@ mod tests {
         }
         let err = stat(&dir.join("nope")).unwrap_err().to_string();
         assert!(err.contains("nope"), "{err}");
+        // The drives: each a root that exists, none where there are none.
+        for drive in drives() {
+            assert!(
+                drive.is_dir() && drive.parent().is_none(),
+                "{}",
+                drive.display()
+            );
+        }
+        #[cfg(not(windows))]
+        assert!(drives().is_empty());
         let err = create(&dir.join("b.txt"), false).unwrap_err().to_string();
         assert!(err.contains("b.txt"), "{err}");
         let err = list(&dir.join("nope")).unwrap_err().to_string();

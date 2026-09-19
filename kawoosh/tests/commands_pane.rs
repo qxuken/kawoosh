@@ -78,7 +78,17 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
         n.iter()
             .filter(|s| s.starts_with("dir"))
             .collect::<Vec<_>>(),
-        ["dir", "dir cd", "dir enter", "dir preview", "dir refresh"],
+        [
+            "dir",
+            "dir cd",
+            "dir enter",
+            "dir preview",
+            "dir refresh",
+            "dir sort mtime",
+            "dir sort name",
+            "dir sort size",
+            "dir sort type"
+        ],
         "{n:?}"
     );
     let t = texts(&d);

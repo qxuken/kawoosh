@@ -53,6 +53,14 @@ pub enum Msg {
         command: String,
         when: Vec<String>,
     },
+    /// `kawoosh.unmap(mode, keys)`: the key's bindings gone, the
+    /// longer ones beneath it kept.
+    Unmap {
+        mode: String,
+        keys: String,
+    },
+    /// `kawoosh.buf.show(buffer)`: the buffer into the focused pane.
+    ShowBuffer(u64),
     Ex(String),
     Echo(String),
     /// `kawoosh.notify(text, opts)`: a level by name, where to show it
@@ -585,6 +593,24 @@ impl Runtime {
         }
     }
 
+    /// Tells the plugins a scratch buffer came back with a session,
+    /// empty, by name and handle (`kawoosh.on_restore`).
+    pub fn restore_hook(&self, name: &str, handle: u64) {
+        let Ok(f) = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Function>("_restore"))
+        else {
+            return;
+        };
+        if let Err(e) = f.call::<()>((name, handle)) {
+            self.queue
+                .borrow_mut()
+                .push(Msg::Echo(format!("{name}: {e}")));
+        }
+    }
+
     /// Tells a watched scratch buffer's `on_change` its text changed.
     pub fn change_hook(&self, name: &str) {
         let Ok(f) = self
@@ -902,6 +928,14 @@ fn seed(
                 Ok(())
             },
         )?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "unmap",
+        lua.create_function(move |_, (mode, keys): (String, String)| {
+            qq.borrow_mut().push(Msg::Unmap { mode, keys });
+            Ok(())
+        })?,
     )?;
     let qq = q(queue);
     k.set(
@@ -1351,6 +1385,14 @@ fn seed(
         })?,
     )?;
     let qq = q(queue);
+    buf.set(
+        "show",
+        lua.create_function(move |_, h: u64| {
+            qq.borrow_mut().push(Msg::ShowBuffer(h));
+            Ok(())
+        })?,
+    )?;
+    let qq = q(queue);
     let pp = published.clone();
     buf.set(
         "track",
@@ -1570,6 +1612,15 @@ fn seed(
     fs.set(
         "is_file",
         lua.create_function(|_, p: String| Ok(kfs::is_file(&expand(&p))))?,
+    )?;
+    fs.set(
+        "drives",
+        lua.create_function(|_, ()| {
+            Ok(kfs::drives()
+                .iter()
+                .map(|p| kfs::display(p))
+                .collect::<Vec<_>>())
+        })?,
     )?;
     fs.set(
         "cwd",

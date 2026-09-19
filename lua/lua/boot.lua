@@ -12,6 +12,7 @@ kawoosh._handlers = {}
 kawoosh._commands = {}
 kawoosh._writers = {}
 kawoosh._changers = {}
+kawoosh._restorers = {}
 kawoosh._nonce = 0
 
 -- kawoosh.command(name, fn[, opts]): a named command, callable from a
@@ -100,6 +101,20 @@ local function actions_of(list, prefix)
   return labels, commands
 end
 
+-- kawoosh.unmap(mode, keys): the key's bindings gone — the longer ones
+-- beneath it stay. A binding whose `when` does not hold where the key
+-- is pressed does not shadow those either, so a plugin that unmaps a
+-- key and maps it back `when` elsewhere has it as a prefix of its own
+-- where it needs one.
+
+-- kawoosh.on_restore(fn): `fn(name, buffer)` for every scratch buffer a
+-- session brings back — empty, named as it was — so the plugin that
+-- made it can fill it again (`open_scratch` by that name, `show =
+-- false`).
+function kawoosh.on_restore(fn)
+  kawoosh._restorers[#kawoosh._restorers + 1] = fn
+end
+
 -- kawoosh.notify(text[, opts]): a notification. `opts` is a level name
 -- ("debug", "info", "warn", "error"; info when omitted) or a table:
 -- `level`, `source` (who says so), `show` ("toast", "corner", "log" —
@@ -168,6 +183,9 @@ end
 -- `tracked()`'s what it became; `kawoosh.buf.track(line[, buffer])`
 -- follows one more line from now on, after those — a line pasted in —
 -- and it is the next index of both.
+--
+-- kawoosh.buf.show(buffer): the buffer into the focused pane, as `:b`
+-- would, its caret where it was left.
 --
 -- kawoosh.buf.register(): the `"` register — `text`, `linewise`, and,
 -- when one yank or delete filled it, `buffer` (the handle it came
@@ -366,6 +384,14 @@ function kawoosh._run(name, ctx)
   if not fn then return end
   local ok, err = pcall(fn, ctx)
   if not ok then kawoosh.echo("command `" .. name .. "`: " .. tostring(err)) end
+end
+
+-- Called from Rust for each scratch buffer a session restored.
+function kawoosh._restore(name, h)
+  for _, fn in ipairs(kawoosh._restorers) do
+    local ok, err = pcall(fn, name, h)
+    if not ok then kawoosh.echo("restore `" .. name .. "`: " .. tostring(err)) end
+  end
 end
 
 -- Called from Rust when a watched scratch buffer's text changed.

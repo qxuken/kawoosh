@@ -62,6 +62,10 @@ pub enum PaneData {
         /// A pane on a scratch with a row in the store: its number.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scratch: Option<u64>,
+        /// A pane on a plugin's scratch (`Buffer::hook`): its name, for
+        /// the plugin to fill again (`kawoosh.on_restore`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hook: Option<String>,
         line: usize,
         col: usize,
         top: usize,
@@ -114,6 +118,7 @@ impl Kawoosh {
                         Some(_) => None,
                         None => self.histories.scratch_of(view.buffer),
                     },
+                    hook: buf.hook.clone(),
                     line,
                     col,
                     top: view.top,
@@ -245,20 +250,39 @@ impl Kawoosh {
                     PaneData::Editor {
                         path,
                         scratch,
+                        hook,
                         line,
                         col,
                         top,
                     } => {
-                        let id =
-                            match path {
-                                Some(p) => self.buffer_for(p)?,
-                                None => scratch
-                                    .and_then(|n| self.scratch_buffer(n))
-                                    .unwrap_or_else(|| {
-                                        self.ed
-                                            .add_buffer(kawoosh_doc::Buffer::new("*scratch*", ""))
-                                    }),
-                            };
+                        let id = match (path, hook) {
+                            (Some(p), _) => self.buffer_for(p)?,
+                            // A plugin's scratch comes back empty under
+                            // its name, once, for the plugin to fill
+                            // (`fire_restores`); two panes on it share it.
+                            (None, Some(name)) => {
+                                match self
+                                    .ed
+                                    .buffers
+                                    .iter()
+                                    .find(|(_, b)| b.path.is_none() && b.name == *name)
+                                    .map(|(id, _)| id)
+                                {
+                                    Some(id) => id,
+                                    None => {
+                                        let mut b = kawoosh_doc::Buffer::new(name.clone(), "");
+                                        b.hook = Some(name.clone());
+                                        self.ed.add_buffer(b)
+                                    }
+                                }
+                            }
+                            (None, None) => scratch
+                                .and_then(|n| self.scratch_buffer(n))
+                                .unwrap_or_else(|| {
+                                    self.ed
+                                        .add_buffer(kawoosh_doc::Buffer::new("*scratch*", ""))
+                                }),
+                        };
                         let v = self.ed.add_view(id);
                         let buf = &self.ed.buffers[id];
                         let ln = (*line).min(buf.line_count().saturating_sub(1));
@@ -309,6 +333,9 @@ impl Kawoosh {
         });
         let ok = data.is_some_and(|d| self.restore_session_data(&d));
         let unsaved = self.restore_hidden_histories();
+        if ok {
+            self.fire_restores();
+        }
         if ok {
             self.ed.message = match unsaved {
                 0 => format!("session restored ({} tab(s))", self.layout.tabs.len()),

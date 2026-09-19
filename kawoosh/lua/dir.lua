@@ -9,9 +9,14 @@
 --
 -- Bundled: the extension API's acceptance test. `-` opens the directory
 -- of the current file (or the cwd) with the caret on that file; in a
--- listing, `-` goes up with the caret on the directory it left, `<CR>`
--- opens the entry under the caret, `<C-l>` reads the directory again,
--- `<C-p>` opens a preview of the entry beside the listing. `:dir PATH`
+-- listing, `-` goes up with the caret on the directory it left (above
+-- a root on Windows, to the drives), `<CR>` opens the entry under the
+-- caret, `<C-l>` reads the directory again (a listing with edits is
+-- asked first), `<C-p>` opens a preview of the entry beside the
+-- listing, and `,s` `,m` `,a` `,e` (`,S` `,M` `,A` `,E` for the reverse)
+-- list it again by size, mtime, name or type. A listing's edits are
+-- kept — leaving it and coming back finds them — until `:w` applies
+-- them or `<C-l>` drops them. `:dir PATH`
 -- lists a directory, or a file's directory with the caret on the file
 -- — `:dir %` the current file's. A listing's buffer is reused as it
 -- moves to the next directory, so browsing leaves no trail in `:ls`;
@@ -50,10 +55,14 @@ local fs = kawoosh.fs
 -- directory and its lines (with their meta), the write's baseline —
 -- and `extra`, the lines pasted in since, each the entry of a listing
 -- it came from.
-local dir = { state = {}, followed = nil }
+local dir = { state = {}, followed = nil, sorts = {} }
 
 local PREFIX = "dir: "
 local PREVIEW = "dir preview"
+-- The listing above every root on Windows: the drives.
+local DRIVES = "<drives>"
+-- The platform's path separator, as `fs.join` puts it.
+local SEP = fs.join("a", "b"):sub(2, 2)
 -- The space fonts keep (a run's trailing spaces are unreliable).
 local NBSP = "\u{A0}"
 
@@ -70,10 +79,39 @@ local function when(secs)
   return secs and os.date("%Y-%m-%d %H:%M", secs) or ""
 end
 
+-- The order a directory is listed in, by key — `name`, `size`,
+-- `mtime`, `type` (the extension, then the name) — reversed or not,
+-- directories first either way; remembered per directory (`dir.sorts`).
+local SORT_KEYS = { name = true, size = true, mtime = true, type = true }
+
+local function sort_of(d)
+  return dir.sorts[d] or { key = "name", reverse = false }
+end
+
+local function ext_of(name)
+  return name:match("^.+%.([^.]+)$") or ""
+end
+
+local function sorted(entries, sort)
+  local key, rev = sort.key, sort.reverse
+  table.sort(entries, function(a, b)
+    if a.is_dir ~= b.is_dir then return a.is_dir end
+    local x, y
+    if key == "size" then x, y = a.size, b.size
+    elseif key == "mtime" then x, y = a.modified or 0, b.modified or 0
+    elseif key == "type" then x, y = ext_of(a.name):lower(), ext_of(b.name):lower()
+    else x, y = a.name:lower(), b.name:lower() end
+    if x == y then x, y = a.name, b.name end
+    if rev then return x > y end
+    return x < y
+  end)
+  return entries
+end
+
 -- The listing's lines and, by line, what each entry is: a file's size
 -- right-aligned past the longest name, then the mtime.
 local function listing(d)
-  local entries = fs.list(d)
+  local entries = sorted(fs.list(d), sort_of(d))
   local lines, meta, width = { "../" }, {}, 3
   for _, e in ipairs(entries) do
     local line = e.is_dir and (e.name .. "/") or e.name
@@ -134,11 +172,43 @@ local function line_of(lines, entry)
   return nil
 end
 
+-- The listing buffer of `d`, if one is open.
+local function buffer_of(d)
+  for _, h in ipairs(kawoosh.buf.list()) do
+    if lists(h) == d then return h end
+  end
+end
+
+-- The offset of line `ln` (from 1) in `lines`.
+local function offset_of(lines, ln)
+  local off = 0
+  for i = 1, (ln or 1) - 1 do off = off + #lines[i] + 1 end
+  return off
+end
+
+-- The drives, on Windows, as a listing above the roots: `C:\`, `D:\`,
+-- each entered with `<CR>`; not for writing.
+local function open_drives(fresh)
+  local drives = fs.drives()
+  local name = PREFIX .. DRIVES
+  dir.state[name] = { dir = DRIVES, entries = { "../" }, meta = {}, width = 3, extra = {} }
+  for _, d in ipairs(drives) do dir.state[name].entries[#dir.state[name].entries + 1] = d end
+  local reuse = (listed() and not fresh and not kawoosh.buf.modified()) and kawoosh.buf.current() or nil
+  kawoosh.buf.open_scratch {
+    name = name, text = table.concat(drives, "\n"), language = "dir",
+    read_only = true, reuse = reuse,
+  }
+end
+
 -- Opens `path` as a listing, the caret on `from` (an entry's name) when
 -- given; a file's path lists its directory with the caret on the file.
--- The listing the keyboard is in is reused — renamed and refilled —
--- unless `fresh` asks for a buffer of its own.
-function dir.open(path, from, fresh)
+-- A listing of it with edits is shown as it is — the edits are kept
+-- until `:w` applies them or `<C-l>` drops them — else, or with
+-- `reread`, it is read again. The listing the keyboard is in is reused — renamed and
+-- refilled — unless it has edits or `fresh` asks for a buffer of its
+-- own.
+function dir.open(path, from, fresh, reread)
+  if path == DRIVES then return open_drives(fresh) end
   path = fs.expand(path)
   if fs.is_file(path) then
     from = fs.basename(path)
@@ -148,14 +218,22 @@ function dir.open(path, from, fresh)
     kawoosh.echo("not a directory: " .. path)
     return
   end
+  local name = PREFIX .. path
+  local open = buffer_of(path)
+  if open and not reread and kawoosh.buf.modified(open) and dir.state[name] then
+    kawoosh.buf.show(open)
+    local lines = kawoosh.buf.lines(open)
+    local ln = line_of(lines, from)
+    if ln then kawoosh.buf.set_cursor(offset_of(lines, ln), open) end
+    return
+  end
   local ok, lines, meta, width = pcall(listing, path)
   if not ok then
     kawoosh.echo(tostring(lines))
     return
   end
-  local name = PREFIX .. path
   dir.state[name] = { dir = path, entries = lines, meta = meta, width = width, extra = {} }
-  local reuse = (listed() and not fresh) and kawoosh.buf.current() or nil
+  local reuse = (listed() and not fresh and not kawoosh.buf.modified()) and kawoosh.buf.current() or nil
   kawoosh.buf.open_scratch {
     name = name,
     text = table.concat(lines, "\n"),
@@ -525,7 +603,7 @@ local function apply(groups, between, here, from)
     local d = lists(h)
     if d and touched[d] and d ~= here then relist(d, h) end
   end
-  dir.open(here, from)
+  dir.open(here, from, false, true)
   if #failed > 0 then
     for _, f in ipairs(failed) do
       kawoosh.notify(f, { level = "error", source = "dir", show = "log" })
@@ -598,7 +676,7 @@ end
 -- `to` as a path from `from`: `../b/`, `sub/`, `../`, or the whole.
 local function relative(from, to)
   if to == from then return "./" end
-  if to:sub(1, #from + 1) == from .. "/" then return to:sub(#from + 2) .. "/" end
+  if to:sub(1, #from + 1) == from .. SEP then return to:sub(#from + 2) .. "/" end
   if fs.parent(from) == to then return "../" end
   if fs.parent(from) == fs.parent(to) then return "../" .. (fs.basename(to) or to) .. "/" end
   return to .. "/"
@@ -653,10 +731,12 @@ end
 -- listing says what it means as it is edited; a line just pasted is
 -- adopted first, and the annotations follow at the next change.
 function dir.refresh_annotations()
+  -- Adopted whether or not the listing counts as modified: a line cut
+  -- and undone reads as it did, and is still the entry come back.
   for _, h in ipairs(kawoosh.buf.list()) do
     local d = lists(h)
     local st = d and dir.state[PREFIX .. d]
-    if st and kawoosh.buf.modified(h) then
+    if st and d ~= DRIVES then
       adopt(st, h, kawoosh.buf.tracked_lines(h), kawoosh.buf.lines(h))
     end
   end
@@ -682,17 +762,37 @@ function dir.refresh_annotations()
     local d = lists(h)
     local st = d and dir.state[PREFIX .. d]
     if st then
-      local ann = {}
+      local ann, owned = {}, {}
       local at_line = kawoosh.buf.tracked_lines(h)
       local lines = kawoosh.buf.lines(h)
       local n = #st.entries
       for i, e in ipairs(st.entries) do
-        if at_line[i] and e ~= "../" then ann[at_line[i]] = st.meta[i] or "" end
+        if at_line[i] and e ~= "../" then
+          ann[at_line[i]] = st.meta[i] or ""
+          owned[at_line[i]] = true
+        end
       end
       for k, x in ipairs(st.extra) do
         local ln = at_line[n + k]
         if #at_line < n + k then ln = x.ln end
-        if ln then ann[ln] = x.meta or "" end
+        if ln then
+          ann[ln] = x.meta or ""
+          owned[ln] = true
+        end
+      end
+      -- A deleted entry's name on a line no entry owns — deleted and
+      -- undone, or typed back — is the entry as it was, as the plan
+      -- reads it; a listing that reads as it opened is that listing.
+      for i, e in ipairs(st.entries) do
+        if not at_line[i] and e ~= "../" then
+          for ln, l in ipairs(lines) do
+            if l == e and not owned[ln] then
+              ann[ln] = st.meta[i]
+              owned[ln] = true
+              break
+            end
+          end
+        end
       end
       local function pad(ln)
         local l = lines[ln] or ""
@@ -724,9 +824,14 @@ end
 -- file; from anything else to the cwd.
 local function up(fresh)
   local here = listed()
+  if here == DRIVES then return kawoosh.echo("at the top") end
   if here then
     local parent = fs.parent(here)
-    if not parent then return kawoosh.echo("at the root") end
+    if not parent then
+      -- Above a root: the drives, where there are drives.
+      if #fs.drives() > 0 then return dir.open(DRIVES, nil, fresh) end
+      return kawoosh.echo("at the root")
+    end
     return dir.open(parent, fs.basename(here), fresh)
   end
   local ok, path = pcall(kawoosh.buf.path)
@@ -762,6 +867,7 @@ kawoosh.command("dir enter", function()
   local line = kawoosh.buf.line(kawoosh.buf.cursor().line)
   if not line or line == "" then return end
   if line == "../" then return up() end
+  if d == DRIVES then return dir.open(line) end
   local target = fs.join(d, (line:gsub("/$", "")))
   if line:sub(-1) == "/" then dir.open(target) else kawoosh.open(target) end
 end, {
@@ -780,18 +886,61 @@ end, {
   doc = "make the listed directory the working directory",
 })
 
--- `:dir refresh`, or <C-l>: the directory read again, the caret kept
--- on its entry. A listing with edits keeps them unless `!`.
-kawoosh.command("dir refresh", function(ctx)
-  if kawoosh.buf.modified() and not ctx.bang then
-    return kawoosh.echo("the listing has edits: :w applies them, :dir refresh! drops them")
+-- The directory `here` read again, the caret kept on its entry; with
+-- edits, asked first — what they would have done shown — unless
+-- `force`.
+local function refresh(here, force, from)
+  local h = buffer_of(here)
+  if h and kawoosh.buf.modified(h) and not force then
+    local groups, between = pending()
+    local lines = {}
+    for _, g in ipairs(groups) do
+      if g.dir == here then
+        for _, op in ipairs(g.ops) do lines[#lines + 1] = describe(op) end
+      end
+    end
+    for _, op in ipairs(between) do
+      if op.dir == here or op.from == here then lines[#lines + 1] = describe(op, shortener { op.from, op.dir }) end
+    end
+    return kawoosh.confirm {
+      title = "Drop the edits to " .. here .. "?",
+      lines = lines,
+      actions = {
+        { label = "Drop", run = function() refresh(here, true, from) end },
+        { label = "Keep" },
+      },
+      default = 2,
+    }
   end
-  dir.open(listed(), under_caret())
+  dir.open(here, from, false, true)
+end
+
+-- `:dir refresh`, or <C-l>: the directory read again, the caret kept
+-- on its entry. A listing with edits asks before dropping them; `!`
+-- drops them without asking.
+kawoosh.command("dir refresh", function(ctx)
+  refresh(listed(), ctx.bang, under_caret())
 end, {
   when = { "language:dir" },
-  bang = "drop the listing's edits",
+  bang = "drop the listing's edits without asking",
   doc = "read the listed directory again",
 })
+
+-- `:dir sort name|size|mtime|type`, `!` for the reverse — yazi's keys,
+-- `,a` `,s` `,m` `,e` and the capitals for the reverse: the listing
+-- read again in that order, remembered for the directory. A listing
+-- with edits is asked first, as `<C-l>` asks.
+for key in pairs(SORT_KEYS) do
+  kawoosh.command("dir sort " .. key, function(ctx)
+    local here = listed()
+    dir.sorts[here] = { key = key, reverse = ctx.bang }
+    refresh(here, false, under_caret())
+  end, {
+    when = { "language:dir" },
+    bang = "the reverse: largest, newest, or z first",
+    doc = "list again by " .. key,
+  })
+end
 
 -- ------------------------------------------------------------ preview
 
@@ -897,8 +1046,23 @@ end, {
   doc = "show the entry under the caret in a pane beside, or hide it",
 })
 
+-- A listing a session brings back, empty, is read again where it is.
+kawoosh.on_restore(function(name, h)
+  local d = name:match("^dir: (.*)$")
+  if d and d ~= DRIVES and fs.is_dir(d) then relist(d, h) end
+end)
+
 kawoosh.map("n", "<CR>", "goto location", { when = { "!language:dir" } })
 kawoosh.map("n", "<CR>", "dir enter")
 kawoosh.map("n", "<leader>cd", "dir cd")
 kawoosh.map("n", "<C-l>", "dir refresh", { when = { "language:dir" } })
 kawoosh.map("n", "<C-p>", "dir preview", { when = { "language:dir" } })
+-- `,` keeps the primary selection everywhere but a listing, where it
+-- is the sort prefix: the engine's bare binding goes, and comes back
+-- `when` off a listing, so in one `,` waits for its key.
+kawoosh.unmap("n", ",")
+kawoosh.map("n", ",", "cursor primary", { when = { "!language:dir" } })
+for key, letter in pairs { name = "a", size = "s", mtime = "m", type = "e" } do
+  kawoosh.map("n", "," .. letter, "dir sort " .. key, { when = { "language:dir" } })
+  kawoosh.map("n", "," .. letter:upper(), "dir sort " .. key .. "!", { when = { "language:dir" } })
+end

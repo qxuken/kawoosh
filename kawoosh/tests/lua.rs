@@ -731,6 +731,8 @@ fn a_language_from_lua_names_its_files_and_warns_of_a_missing_grammar() {
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A listing's entries carry what they are past their lines
 /// (`kawoosh.buf.annotate`): a file's size and its mtime, a directory's
 /// mtime alone, none on `../` — drawn under `Role::None`, so the rows'
@@ -805,14 +807,23 @@ fn a_listing_is_annotated_and_refreshed() {
         "{e:?}"
     );
     d.keys(&mut app, "u");
-    // Refresh: refused with edits, `!` drops them; a file made behind
-    // the listing's back appears, the caret still on its entry.
+    // Refresh: asked with edits, kept on `Keep`; `!` drops them; a file
+    // made behind the listing's back appears, the caret still on its
+    // entry.
     d.keys(&mut app, "jjjj");
     d.ctrl(&mut app, "l");
+    d.frame(&mut app);
     assert!(
-        app.ed.message.starts_with("the listing has edits"),
-        "{}",
-        app.ed.message
+        d.confirm_texts()[0].starts_with("Drop the edits to "),
+        "{:?}",
+        d.confirm_texts()
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        d.line_rows(),
+        ["new.txt", "../", "sub/", "a.txt", "b.txt"],
+        "kept"
     );
     std::fs::write(dir.join("c.txt"), "").unwrap();
     ex(&mut d, &mut app, "dir refresh!");
@@ -1295,7 +1306,7 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     d.keys(&mut app, "Gp");
     d.frame(&mut app);
     let e = extras(&d);
-    assert!(e[3].ends_with("← twice"), "{e:?}");
+    assert!(e[3].ends_with("← twice"), "{e:?} / {}", app.ed.message);
     d.keys(&mut app, "ggjdd");
     d.ctrl(&mut app, "w");
     d.keys(&mut app, "h");
@@ -1444,6 +1455,258 @@ fn a_file_replaced_by_a_copy_is_kept_until_the_copy_arrives() {
         app.notes.log.iter().map(|e| &e.text).collect::<Vec<_>>()
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// An entry cut and undone in a listing with no other edits — which
+/// reads as it opened, and counts as unmodified — keeps its size and
+/// date: the register says the line come back is the entry.
+#[test]
+fn an_entry_cut_and_undone_keeps_its_meta() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-ddu-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("a.txt"), "alpha").unwrap();
+    std::fs::write(dir.join("b.txt"), "be").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    d.frame(&mut app);
+    let extras = |d: &Drive| -> Vec<String> {
+        d.row_extras()
+            .iter()
+            .map(|s| s.replace('\u{a0}', " "))
+            .collect()
+    };
+    assert!(extras(&d)[1].contains(" 5 B"));
+    d.keys(&mut app, "jddu");
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "a.txt", "b.txt"]);
+    assert!(!app.ed.buffer_of(app.focused_view().unwrap()).modified);
+    let e = extras(&d);
+    assert!(e[1].contains(" 5 B") && e[2].contains(" 2 B"), "{e:?}");
+    // And the same on the last line, in two frames.
+    d.keys(&mut app, "jdd");
+    d.frame(&mut app);
+    d.keys(&mut app, "u");
+    d.frame(&mut app);
+    let e = extras(&d);
+    assert!(e[2].contains(" 2 B"), "{e:?}");
+    // Renamed after, the entry come back is still the entry.
+    d.keys(&mut app, "ccb2.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..],
+        ["rename b.txt → b2.txt", "Apply", "Cancel"]
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A listing's edits are kept: open a file from it and come back with
+/// `-`, or go up and come down again, and the edits are there; `<C-l>`
+/// asks before dropping them, with what they would have done, and
+/// `Keep` keeps them; going up from a listing with edits leaves it in
+/// its buffer rather than moving that buffer on.
+#[test]
+fn a_listings_edits_are_kept_until_written_or_dropped() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-keep-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("inner")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("inner/a.txt"), "a").unwrap();
+    std::fs::write(dir.join("inner/b.txt"), "b").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    let name = |app: &Kawoosh| app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
+    let inner = format!("dir: {}", dir.join("inner").display());
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("inner").display()),
+    );
+    d.keys(&mut app, "jdd");
+    assert_eq!(d.line_rows(), ["../", "b.txt"]);
+    // Into b.txt and back: the edit is there, the caret on b.txt.
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(app.ed.buffer_of(app.focused_view().unwrap()).path.is_some());
+    d.keys(&mut app, "-");
+    assert_eq!(name(&app), inner);
+    assert_eq!(d.line_rows(), ["../", "b.txt"]);
+    let v = app.focused_view().unwrap();
+    assert_eq!(
+        app.ed
+            .buffer_of(v)
+            .line_of(app.ed.views[v].sels.primary().head),
+        1
+    );
+    // Up and down again: the parent in a buffer of its own, the edited
+    // listing kept and found again.
+    let n = app.ed.buffers.len();
+    d.keys(&mut app, "-");
+    assert_eq!(name(&app), format!("dir: {}", dir.display()));
+    assert_eq!(app.ed.buffers.len(), n + 1, "not moved on in place");
+    d.keys(&mut app, "j");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(name(&app), inner);
+    assert_eq!(d.line_rows(), ["../", "b.txt"]);
+    assert!(app.ed.buffer_of(app.focused_view().unwrap()).modified);
+    // <C-l> asks; Keep keeps; Drop drops.
+    d.ctrl(&mut app, "l");
+    d.frame(&mut app);
+    let t = d.confirm_texts();
+    assert!(t[0].starts_with("Drop the edits to "), "{t:?}");
+    assert_eq!(&t[1..], ["delete a.txt", "Drop", "Keep"]);
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "b.txt"], "kept");
+    d.ctrl(&mut app, "l");
+    d.frame(&mut app);
+    d.keys(&mut app, "1");
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "a.txt", "b.txt"], "dropped");
+    assert!(!app.ed.buffer_of(app.focused_view().unwrap()).modified);
+    assert!(dir.join("inner/a.txt").is_file(), "nothing written");
+    // `-` at the root of the tree says so, there being no drives here.
+    ex(&mut d, &mut app, "dir /");
+    d.keys(&mut app, "-");
+    assert!(
+        app.ed.message == "at the root" || app.ed.message == "at the top",
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `,s` `,m` `,a` `,e` list a directory again by size, mtime, name or
+/// type, the capitals reversed, directories first either way, the
+/// order remembered for the directory; `,` off a listing still keeps
+/// the primary selection.
+#[test]
+fn a_listing_sorts_with_yazis_keys() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-sort-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("d")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("b.md"), "bb").unwrap();
+    std::fs::write(dir.join("a.txt"), "aaaa").unwrap();
+    std::fs::write(dir.join("c.rs"), "c").unwrap();
+    let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+    let older = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_500_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(dir.join("a.txt"))
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(dir.join("c.rs"))
+        .unwrap()
+        .set_modified(older)
+        .unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "x y");
+    d.frame(&mut app);
+    // Off a listing: `,` is the primary selection, at once.
+    d.keys(&mut app, ",");
+    assert!(app.ed.pending.is_empty(), "no prefix here");
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    assert_eq!(d.line_rows(), ["../", "d/", "a.txt", "b.md", "c.rs"]);
+    d.keys(&mut app, ",s");
+    assert_eq!(
+        d.line_rows(),
+        ["../", "d/", "c.rs", "b.md", "a.txt"],
+        "by size"
+    );
+    d.keys(&mut app, ",S");
+    assert_eq!(
+        d.line_rows(),
+        ["../", "d/", "a.txt", "b.md", "c.rs"],
+        "largest first"
+    );
+    d.keys(&mut app, ",m");
+    assert_eq!(
+        d.line_rows(),
+        ["../", "d/", "c.rs", "a.txt", "b.md"],
+        "oldest first"
+    );
+    d.keys(&mut app, ",M");
+    assert_eq!(
+        d.line_rows(),
+        ["../", "d/", "b.md", "a.txt", "c.rs"],
+        "newest first"
+    );
+    d.keys(&mut app, ",e");
+    assert_eq!(
+        d.line_rows(),
+        ["../", "d/", "b.md", "c.rs", "a.txt"],
+        "by type"
+    );
+    d.keys(&mut app, ",A");
+    assert_eq!(
+        d.line_rows(),
+        ["../", "d/", "c.rs", "b.md", "a.txt"],
+        "z first"
+    );
+    // Remembered: away and back, the same order.
+    d.keys(&mut app, "-");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    assert_eq!(d.line_rows(), ["../", "d/", "c.rs", "b.md", "a.txt"]);
+    // With edits, a sort asks as <C-l> does.
+    d.keys(&mut app, "Gdd");
+    d.keys(&mut app, ",a");
+    d.frame(&mut app);
+    assert!(d.confirm_texts()[0].starts_with("Drop the edits to "));
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A listing comes back with a session: filled again where it was,
+/// its entries known, writable.
+#[test]
+fn a_listing_comes_back_with_a_session() {
+    let root = std::env::temp_dir().join(format!("kawoosh-dirsession-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("listed")).unwrap();
+    let root = root.canonicalize().unwrap();
+    let dir = root.join("listed");
+    std::fs::write(dir.join("a.txt"), "a").unwrap();
+    let db = root.join("state.db");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "*scratch*", "");
+    app.open_store(Some(&db));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    ex(&mut d, &mut app, "qa");
+    d.frame(&mut app);
+    assert!(app.quit);
+    drop(app);
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "*scratch*", "");
+    app.open_store(Some(&db));
+    assert!(app.restore_session());
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).name, format!("dir: {}", dir.display()));
+    assert_eq!(d.line_rows(), ["../", "a.txt"]);
+    assert!(d.row_extras()[1].contains('B'), "{:?}", d.row_extras());
+    d.keys(&mut app, "jcca2.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..],
+        ["rename a.txt → a2.txt", "Apply", "Cancel"]
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(dir.join("a2.txt").is_file());
+    std::fs::remove_dir_all(&root).ok();
 }
 
 /// Renames and moves never write one file over another, whatever the
