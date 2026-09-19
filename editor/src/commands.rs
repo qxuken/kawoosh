@@ -190,6 +190,23 @@ pub(crate) fn apply_operator(
                 }
             }
         }
+        // `gsa` + a motion: the ranges wait for the pair's character
+        // (`surround wrap`); a linewise one keeps its newline outside.
+        "surround add" => {
+            let buf = &ed.buffers[id];
+            let ranges = ranges
+                .iter()
+                .map(|(r, lw)| {
+                    if *lw && r.end > r.start && buf.char_at(buf.prev_char(r.end)) == Some('\n') {
+                        r.start..buf.prev_char(r.end)
+                    } else {
+                        r.clone()
+                    }
+                })
+                .collect();
+            ed.surround.ranges = Some(ranges);
+            ed.await_char("surround wrap");
+        }
         "indent" | "dedent" => {
             let ts = ed.tabstop();
             let unit = if ed.expandtab() {
@@ -308,12 +325,14 @@ fn textobject(ed: &mut Editor, ctx: &Ctx, around: bool) {
     let Some(c) = ctx.arg_char else {
         return;
     };
+    let visual = ed.mode(ctx.view) == Mode::Visual;
     let id = view(ed, ctx).buffer;
     let buf = &ed.buffers[id];
     let v = &mut ed.views[ctx.view];
     let mut ok = true;
     v.sels.map(|s| {
         let range = match c {
+            'p' => paragraph_object(buf, s.head, around),
             'w' => {
                 let (a, b) = m::word_at(buf, s.head);
                 if around {
@@ -334,6 +353,9 @@ fn textobject(ed: &mut Editor, ctx: &Ctx, around: bool) {
             _ => None,
         };
         match range {
+            // A paragraph is lines: in visual mode the head sits on the
+            // last one's newline, and the selection goes linewise.
+            Some(r) if c == 'p' && visual => Selection::new(r.start, buf.prev_char(r.end)),
             Some(r) => Selection::new(r.start, r.end),
             None => {
                 ok = false;
@@ -341,9 +363,44 @@ fn textobject(ed: &mut Editor, ctx: &Ctx, around: bool) {
             }
         }
     });
+    if c == 'p' && visual {
+        v.visual_linewise = true;
+    }
     if !ok {
         ed.message = format!("no text object for {c}");
     }
+}
+
+/// The paragraph at `o`: its run of non-blank lines — or of blank ones,
+/// on a blank — whole, the newline of the last included; around it, the
+/// blank lines after it, or before it when none follow, or the
+/// paragraph after a run of blanks.
+fn paragraph_object(buf: &Buffer, o: usize, around: bool) -> Option<Range<usize>> {
+    let blank = |ln: usize| buf.slice(buf.line_range(ln)).trim().is_empty();
+    let last = buf.line_count().saturating_sub(1);
+    let ln = buf.line_of(o);
+    let kind = blank(ln);
+    let mut a = ln;
+    while a > 0 && blank(a - 1) == kind {
+        a -= 1;
+    }
+    let mut b = ln;
+    while b < last && blank(b + 1) == kind {
+        b += 1;
+    }
+    if around {
+        if b < last {
+            let want = !kind;
+            while b < last && blank(b + 1) == want {
+                b += 1;
+            }
+        } else if !kind {
+            while a > 0 && blank(a - 1) {
+                a -= 1;
+            }
+        }
+    }
+    Some(buf.line_start(a)..buf.next_char(buf.line_range(b).end))
 }
 
 fn bracket_object(
@@ -1122,6 +1179,7 @@ pub fn install(ed: &mut Editor) {
             Kind::Motion(if forward { Inclusive } else { Exclusive }),
             move |ed, ctx| {
                 let Some(c) = ctx.arg_char else { return };
+                ed.last_find = Some((c, forward, till));
                 motion(ed, ctx, |b, o, n| {
                     let ln = b.line_of(o);
                     let range = b.line_range(ln);
@@ -1162,6 +1220,20 @@ pub fn install(ed: &mut Editor) {
                 });
             },
         );
+    }
+    // `;`: the last `f` / `t` again, across lines, as many as COUNT.
+    for (name, back) in [("find repeat", false), ("find repeat back", true)] {
+        let kind = Kind::Motion(if back { Exclusive } else { Inclusive });
+        ed.register_kind(name, kind, move |ed, ctx| {
+            let Some((c, fwd, till)) = ed.last_find else {
+                ed.message = "no previous find".into();
+                return;
+            };
+            let forward = fwd != back;
+            motion(ed, ctx, move |b, o, n| {
+                find_across(b, o, c, forward, till, n).unwrap_or(o)
+            });
+        });
     }
     ed.register_kind("search next", Kind::Motion(Exclusive), |ed, ctx| {
         search(ed, ctx, true)
@@ -1489,6 +1561,27 @@ pub fn install(ed: &mut Editor) {
     ed.register("cursor above", |ed, ctx| add_cursor(ed, ctx, -1));
     ed.register("select next", select_next);
     ed.register("select all matches", select_all_matches);
+    // `S`: `cc` in one key.
+    ed.register("change line", |ed, ctx| {
+        let id = view(ed, ctx).buffer;
+        let buf = &ed.buffers[id];
+        let n = ctx.count.max(1);
+        let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
+            .sels
+            .iter()
+            .map(|s| (line_range_of_sel(buf, s, n - 1), true))
+            .collect();
+        apply_operator(ed, ctx.view, "change", ranges);
+    });
+    // Surrounds (`gs`, as mini.surround's): an operator that then takes
+    // the pair's character, a delete and a replace by character.
+    ed.register_kind("surround add", Kind::Operator, |ed, ctx| {
+        operator(ed, ctx, "surround add")
+    });
+    ed.register_with_char("surround wrap", surround_wrap);
+    ed.register_with_char("surround delete", surround_delete);
+    ed.register_with_char("surround replace", surround_replace);
+    ed.register_with_char("surround replace with", surround_replace_with);
 
     // ---- prompts and ex commands
     ed.register("command", |ed, ctx| {
@@ -1734,11 +1827,11 @@ const DOCS: &[(&str, &str)] = &[
     // text objects
     (
         "textobject inner",
-        "select inside a pair or word: iw, i(, i\", ...",
+        "select inside a pair, word or paragraph: iw, i(, i\", ip, ...",
     ),
     (
         "textobject around",
-        "select a pair or word with what surrounds it: aw, a(, ...",
+        "select a pair, word or paragraph with what surrounds it: aw, a(, ap, ...",
     ),
     // operators
     (
@@ -1843,6 +1936,38 @@ const DOCS: &[(&str, &str)] = &[
         "select all matches",
         "select every match of the selection, or of the word under the caret (<A-l>, <D-L>)",
     ),
+    (
+        "change line",
+        "change the line, keeping its indent (`S`, `cc`)",
+    ),
+    (
+        "find repeat",
+        "the next CHAR of the last `f` or `t`, across lines (`;`)",
+    ),
+    (
+        "find repeat back",
+        "the last `f` or `t` the other way, across lines",
+    ),
+    (
+        "surround add",
+        "wrap what a motion or object covers, or the selection, in the pair CHAR names (`gsa`)",
+    ),
+    (
+        "surround wrap",
+        "the pair's character `surround add` waits for",
+    ),
+    (
+        "surround delete",
+        "take the pair CHAR names off from around the caret (`gsd`)",
+    ),
+    (
+        "surround replace",
+        "swap the pair CHAR names around the caret for the pair the next character names (`gsr`)",
+    ),
+    (
+        "surround replace with",
+        "the second character `surround replace` waits for",
+    ),
     ("select all", "select the whole buffer"),
     ("command", "open the command line"),
 ];
@@ -1894,6 +2019,159 @@ fn add_cursor(ed: &mut Editor, ctx: &Ctx, dy: i64) {
     }
     let head = m::offset_at(buf, target as usize, col);
     v.sels.push(Selection::point(head), true);
+}
+
+/// The `n`th `c` from `o` on — or back — across lines: what `;` does
+/// after an `f`. A till stops before it, and starts past the one the
+/// caret is already before, so a repeat moves.
+fn find_across(
+    buf: &Buffer,
+    o: usize,
+    c: char,
+    forward: bool,
+    till: bool,
+    n: usize,
+) -> Option<usize> {
+    let len = buf.len();
+    let mut left = n.max(1);
+    if forward {
+        let mut p = buf.next_char(o);
+        if till && buf.char_at(p) == Some(c) {
+            p = buf.next_char(p);
+        }
+        while p < len {
+            if buf.char_at(p) == Some(c) {
+                left -= 1;
+                if left == 0 {
+                    return Some(if till { buf.prev_char(p) } else { p });
+                }
+            }
+            p = buf.next_char(p);
+        }
+    } else {
+        let mut p = o;
+        if till && p > 0 && buf.char_at(buf.prev_char(p)) == Some(c) {
+            p = buf.prev_char(p);
+        }
+        while p > 0 {
+            p = buf.prev_char(p);
+            if buf.char_at(p) == Some(c) {
+                left -= 1;
+                if left == 0 {
+                    return Some(if till { buf.next_char(p) } else { p });
+                }
+            }
+        }
+    }
+    None
+}
+
+/// A surround under way (`gsa`, `gsr`): what the next character is for.
+#[derive(Default, Debug)]
+pub struct Surround {
+    /// The ranges `surround add` collected, waiting for the character
+    /// to wrap them in.
+    pub ranges: Option<Vec<Range<usize>>>,
+    /// The pair `surround replace` will swap, waiting for the new one.
+    pub from: Option<char>,
+}
+
+/// The pair a surround character stands for: a bracket either way
+/// round (`b` and `B` for the round and curly ones, as vim's objects),
+/// else the character on both sides.
+fn pair_of(c: char) -> (char, char) {
+    match c {
+        '(' | ')' | 'b' => ('(', ')'),
+        '[' | ']' => ('[', ']'),
+        '{' | '}' | 'B' => ('{', '}'),
+        '<' | '>' => ('<', '>'),
+        c => (c, c),
+    }
+}
+
+/// The range of the pair `c` names around `o`, both ends included.
+fn pair_around(buf: &Buffer, o: usize, c: char) -> Option<Range<usize>> {
+    let (open, close) = pair_of(c);
+    if open == close {
+        quote_object(buf, o, open, true)
+    } else {
+        bracket_object(buf, o, open, close, true)
+    }
+}
+
+/// The character after `gsa` and its motion: each range collected is
+/// wrapped in the pair it names, one edit per selection.
+fn surround_wrap(ed: &mut Editor, ctx: &Ctx) {
+    let (Some(c), Some(ranges)) = (ctx.arg_char, ed.surround.ranges.take()) else {
+        return;
+    };
+    let (open, close) = pair_of(c);
+    let id = view(ed, ctx).buffer;
+    let edits = ranges
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let inner = ed.buffers[id].slice(r.clone());
+            (i, r.clone(), format!("{open}{inner}{close}"))
+        })
+        .collect();
+    ed.edit_each(ctx.view, edits, |start, _| Selection::point(start));
+    ed.set_mode(ctx.view, Mode::Normal);
+}
+
+/// `gsd` + a character: the pair around each caret goes, its inside
+/// stays.
+fn surround_delete(ed: &mut Editor, ctx: &Ctx) {
+    let Some(c) = ctx.arg_char else {
+        return;
+    };
+    let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
+    let mut edits = Vec::new();
+    for (i, s) in ed.views[ctx.view].sels.iter().enumerate() {
+        if let Some(r) = pair_around(buf, s.head, c) {
+            let inner = buf.slice(buf.next_char(r.start)..buf.prev_char(r.end));
+            edits.push((i, r, inner));
+        }
+    }
+    if edits.is_empty() {
+        ed.message = format!("no {c} around the caret");
+        return;
+    }
+    ed.edit_each(ctx.view, edits, |start, _| Selection::point(start));
+}
+
+/// `gsr` + the pair's character: kept until the new pair's comes
+/// (`surround replace with`).
+fn surround_replace(ed: &mut Editor, ctx: &Ctx) {
+    let Some(c) = ctx.arg_char else {
+        return;
+    };
+    ed.surround.from = Some(c);
+    ed.await_char("surround replace with");
+}
+
+/// The second character after `gsr`: the pair the first named, around
+/// each caret, becomes the pair this one names.
+fn surround_replace_with(ed: &mut Editor, ctx: &Ctx) {
+    let (Some(to), Some(from)) = (ctx.arg_char, ed.surround.from.take()) else {
+        return;
+    };
+    let (open, close) = pair_of(to);
+    let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
+    let mut edits = Vec::new();
+    for (i, s) in ed.views[ctx.view].sels.iter().enumerate() {
+        if let Some(r) = pair_around(buf, s.head, from) {
+            let inner = buf.slice(buf.next_char(r.start)..buf.prev_char(r.end));
+            edits.push((i, r, format!("{open}{inner}{close}")));
+        }
+    }
+    if edits.is_empty() {
+        ed.message = format!("no {from} around the caret");
+        return;
+    }
+    ed.edit_each(ctx.view, edits, |start, _| Selection::point(start));
 }
 
 /// What `select next` and `select all matches` look for: the primary
@@ -2073,6 +2351,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("F", "find char back"),
         ("t", "till char"),
         ("T", "till char back"),
+        (";", "find repeat"),
         ("n", "search next"),
         ("N", "search prev"),
         ("*", "search word"),
@@ -2091,6 +2370,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("D", "delete to end"),
         ("C", "change to end"),
         ("s", "change char"),
+        ("S", "change line"),
         ("r", "replace char"),
         ("i", "insert"),
         ("a", "append"),
@@ -2116,6 +2396,11 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<A-l>", "select all matches"),
         ("<D-S-l>", "select all matches"),
         ("<D-a>", "select all"),
+        // The syntax tree's nodes, helix's way: out, back in, along.
+        ("<A-o>", "select node"),
+        ("<A-i>", "select node child"),
+        ("<A-n>", "select node next"),
+        ("<A-p>", "select node prev"),
         ("<Esc>", "normal"),
         ("<C-c>", "normal"),
         // The file: `<C-s>` from any mode, and vim's `ZZ` / `ZQ`.
@@ -2124,9 +2409,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("ZZ", "write quit"),
         ("ZQ", "quit!"),
         // Panes, tabs, the dock: the shell's commands (Effect::Shell),
-        // under `<C-w>` as vim's, and the four moves on `<C-hjkl>`
-        // straight — with shift too, which is their spelling in every
-        // kind of pane (`Kawoosh::pane_chord`).
+        // under `<C-w>` as vim's, and the four moves on `<C-S-hjkl>` —
+        // one spelling, the same in every mode and every kind of pane
+        // (`Kawoosh::pane_chord`).
         ("<C-w>v", "vsplit"),
         ("<C-w>s", "split"),
         ("<C-w>q", "close"),
@@ -2142,10 +2427,6 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w><Down>", "pane down"),
         ("<C-w><Up>", "pane up"),
         ("<C-w><Right>", "pane right"),
-        ("<C-h>", "pane left"),
-        ("<C-j>", "pane down"),
-        ("<C-k>", "pane up"),
-        ("<C-l>", "pane right"),
         ("<C-S-h>", "pane left"),
         ("<C-S-j>", "pane down"),
         ("<C-S-k>", "pane up"),
@@ -2168,6 +2449,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("K", "lsp hover"),
         ("<CR>", "goto location"),
         ("-", "oil"),
+        // Surrounds under `gs`, as mini.surround's: add, delete, replace.
+        ("gsa", "surround add"),
+        ("gsd", "surround delete"),
+        ("gsr", "surround replace"),
         // `<leader>` groups: b buffers, t tabs, s search and lists, w
         // the workspace, c code, and single letters for the daily few.
         ("<leader><leader>", "buffer list"),

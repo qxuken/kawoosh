@@ -134,7 +134,7 @@ pub struct HistoryPanel {
     /// The cursor's row inspected, and which row (its key) and change
     /// it was read at.
     inspect: Option<(String, u64, Option<Inspect>)>,
-    prefix: bool,
+    pub(crate) prefix: bool,
     reveal: bool,
 }
 

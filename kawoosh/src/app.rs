@@ -85,6 +85,8 @@ pub struct Kawoosh {
     devtools_synced: Option<bool>,
     /// The syntax tab in it: the focused buffer's tree.
     pub inspector: Inspector,
+    /// Selections walking the syntax tree (`nodes.rs`).
+    pub(crate) nodes: crate::nodes::NodeSelect,
     /// A devtools tab to show on the next frame — `:syntax_tree` asks
     /// for the syntax tab. Once, not every frame: kui's
     /// `set_devtools_tab` is edge-triggered, so a standing request would
@@ -187,6 +189,7 @@ impl Kawoosh {
             devtools: false,
             devtools_synced: None,
             inspector: Inspector::new(wake.clone()),
+            nodes: Default::default(),
             show_tab: None,
             tab_shown: None,
             settings_default_open: false,
@@ -1366,6 +1369,7 @@ impl kui::App for Kawoosh {
             self.command_line(ui);
             self.toasts(ui);
             self.corner(ui);
+            self.whichkey(ui);
         });
         self.line_cells.sweep();
         self.perf.end_frame(ms(frame_started));

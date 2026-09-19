@@ -58,7 +58,7 @@ pub struct UndoPanel {
     /// The cursor's change as lines, and which row it is for.
     hunk: Option<(usize, Option<Hunk>)>,
     /// `<C-w>` pressed: the next key is a pane command.
-    prefix: bool,
+    pub(crate) prefix: bool,
     /// `g` pressed: `-` or `+` next.
     g: bool,
     /// Scroll the cursor's row into view at the next frame.

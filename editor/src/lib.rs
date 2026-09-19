@@ -429,7 +429,13 @@ pub struct Editor {
     /// An operator waiting for its motion, with the count typed before it.
     pub pending_op: Option<(&'static str, usize)>,
     /// A command waiting for its character argument.
-    awaiting_char: Option<(Binding, Option<usize>)>,
+    pub(crate) awaiting_char: Option<(Binding, Option<usize>)>,
+    /// The last `f` / `t`: the character, whether forward, whether
+    /// till — what `;` repeats, across lines.
+    pub last_find: Option<(char, bool, bool)>,
+    /// A surround under way: the ranges `gsa` collected and waits for
+    /// a character to wrap in, the pair `gsr` is about to swap out.
+    pub(crate) surround: commands::Surround,
     /// Every field, by its view ([`Field`]).
     fields: HashMap<ViewId, Field>,
     prompt: Option<PromptState>,
@@ -477,6 +483,8 @@ impl Editor {
             count: None,
             pending_op: None,
             awaiting_char: None,
+            last_find: None,
+            surround: Default::default(),
             fields: HashMap::new(),
             prompt: None,
             cwd: std::env::current_dir().unwrap_or_default(),
@@ -1540,6 +1548,20 @@ impl Editor {
         let taken = self.key_on(view, stroke);
         self.after_prompt_key(view);
         taken
+    }
+
+    /// Makes the next key the character argument of `command` — how a
+    /// command that needs one more character than its binding gave it
+    /// (`gsr`'s second pair, `gsa`'s pair after its motion) asks.
+    pub(crate) fn await_char(&mut self, command: &str) {
+        self.awaiting_char = Some((
+            Binding {
+                command: command.to_string(),
+                args: Vec::new(),
+                when: Vec::new(),
+            },
+            None,
+        ));
     }
 
     fn key_on(&mut self, view: ViewId, stroke: KeyStroke) -> bool {

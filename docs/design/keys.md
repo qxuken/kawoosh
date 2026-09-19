@@ -44,8 +44,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>q` `<C-w>c` `<C-w>o` | close, close, only |
 | `<C-w>w` `<C-w>x` | next pane, swap with it |
 | `<C-w>h/j/k/l`, `<C-w>` + arrows | focus by direction |
-| `<C-h>` `<C-j>` `<C-k>` `<C-l>` | the same, straight (normal mode) |
-| `<C-S-h>` `<C-S-j>` `<C-S-k>` `<C-S-l>` | the same, from **every** pane and mode |
+| `<C-S-h>` `<C-S-j>` `<C-S-k>` `<C-S-l>` | the same, straight — one spelling, from **every** pane and mode |
 | `<C-w>t` `<leader>tn` | a new tab |
 | `<C-w>d` | the dock |
 | `<C-w>!` | a terminal below (`:!` runs a shell, so does this) |
@@ -58,8 +57,10 @@ The shifted chord is the wezterm habit and the reason it works
 everywhere: a pty cannot tell `<C-S-l>` from `<C-l>` (the legacy encoding
 has no room for shift on a control letter), so the shifted spelling is
 free in a terminal pane and `<C-l>` stays the shell's clear. In insert
-mode `<C-h>` is a backspace and `<C-l>` would be text, so there too the
-shifted one moves. `Kawoosh::pane_chord` runs a ctrl-shift chord's
+mode `<C-h>` is a backspace and `<C-l>` would be text. So the shifted
+one is the only straight spelling — the plain `<C-hjkl>` is deliberately
+not a second one, since two spellings for one move by mode is what a
+hand trips on. `Kawoosh::pane_chord` runs a ctrl-shift chord's
 normal-mode binding from any pane without a view of its own — a
 terminal's, a Lua view's, the undo and history panes' — before the
 pane's own keys see it; editor panes have the chords in their normal and
@@ -83,6 +84,7 @@ panes (`<C-w>.` sends a literal `<C-w>` to the pty).
 |---|---|
 | `gg` `G` | the file's ends |
 | `gh` `gl` | the line's ends (helix; `^` and `$` stay) |
+| `gsa` `gsd` `gsr` | surrounds: add, delete, replace (mini.surround's letters) |
 | `gd` | definition |
 | `K` | hover (vim's, not `g`, but the same family) |
 | `gt` `gT` | tabs |
@@ -96,6 +98,8 @@ panes (`<C-w>.` sends a literal `<C-w>` to the pty).
 | `<A-j>` `<A-k>` | a caret on the line below, above |
 | `<A-d>` `<D-d>` | `select next`: the word under a bare caret, then its next match, each press one more |
 | `<A-l>` `<D-L>` | `select all matches`: every match at once (spelled `<D-S-l>` in a map: a chord's bare letter is lower-cased) |
+| `<A-o>` `<A-i>` | `select node`: the syntax node under the caret, then the one around it; back in |
+| `<A-n>` `<A-p>` | the next, the previous sibling node |
 | `<D-a>` | select all |
 | `,` | keep the primary selection |
 | `o` (visual) | swap the selection's ends |
@@ -112,6 +116,14 @@ so `n` goes on from wherever the caret is. When every match is selected
 the message says so and nothing moves. `select all matches` is the same
 in one press, the primary the match under the caret.
 
+The node selections are helix's `Alt-o` / `Alt-i` / `Alt-n` / `Alt-p`
+on the tree `ts` last answered for the buffer (`nodes.rs`): a bare caret
+takes the named node under it, a selection that is a node takes the
+first ancestor spanning more, and `<A-i>` returns to what `<A-o>`
+replaced (a stack per view), or to the node's first child. The tree
+must be the text's own version — a press right after typing says the
+tree is behind and does nothing, rather than selecting by stale offsets.
+
 Alt is the modifier because vim leaves it free, `<C-d>` is half a page,
 and Alt is already where the caret-below and caret-above live. The ⌘
 spellings are for the hand that reaches for `⌘d` without thinking; on a
@@ -119,6 +131,23 @@ keyboard without ⌘ the Alt ones are the same thing. They work on macOS
 because kui reports the layout's letter under Alt, not the composed
 character (⌥d arrives as `d`, not `∂`; kui's `keys.rs`), and the
 US-QWERTY letter at that position when the layout's is not ASCII.
+
+### Editing: vim's letters, and the few it lacks
+
+| keys | what |
+|---|---|
+| `S` | change the line, keeping its indent (`cc`) |
+| `ip` `ap` | a paragraph: its lines, or with the blank lines after it — linewise in visual mode |
+| `;` | the last `f` / `t` again, **across lines**; a till skips the character it already sits before |
+| `gsa` + motion + char | wrap what the motion covers in the pair (`gsaiw)`, `viwgsa"`) |
+| `gsd` + char | take the pair off from around the caret |
+| `gsr` + char + char | swap the pair for another (`gsr)]`) |
+
+`f` / `t` stay within the line as vim's; it is `;` that crosses lines,
+so `f=` then `;;;` walks every `=` in the file. `,` is the primary
+selection's, so the reverse (`find repeat back`) is unbound. A pair's
+character is either bracket, `b` / `B` for round and curly as vim's
+objects, or any other character on both sides.
 
 ### The file
 
@@ -151,6 +180,16 @@ The groups are the which-key ones from the neovim config: `b` buffers,
 letters for the daily few. A picker that does not exist yet has its
 spelling kept for it below rather than given to something else.
 
+## The which-key
+
+While a sequence is open — `<leader>`, `g`, `gs`, `]`, `<C-w>` from any
+pane — a small float at the bottom-left lists what can follow: each key
+with its command, a group with how many keys it holds (`b +4`). It is
+there the moment the prefix is pressed and gone the moment the sequence
+resolves, with no delay to tune; `whichkey = false` in `settings.lua`
+(`:set nowhichkey`) turns it off. `Keymap::next_keys` is the listing,
+`whichkey.rs` the float.
+
 ## Reserved: spellings kept for commands that do not exist yet
 
 These are the neovim habits with no command behind them here. They are
@@ -164,6 +203,7 @@ so that nothing else takes the key meanwhile.
 | `<leader>/` | the buffer's lines |
 | `<leader>.` | the smart picker |
 | `<leader>e` | the pinned files (harpoon-shaped); `<leader>e1`…`9` and `<A-1>`…`9` to jump |
+| `gsf` `gsh` | find, highlight a surrounding pair |
 | `<leader>E` | an explorer |
 | `<leader>sr` `<leader>sh` | resume the last picker, help |
 | `<leader>m` | marks |

@@ -19,6 +19,7 @@ pub mod languages;
 pub mod layout;
 pub mod logger;
 pub mod lsp;
+pub mod nodes;
 pub mod notify;
 pub mod palette;
 pub mod panes;
@@ -30,6 +31,7 @@ pub mod session;
 pub mod settings;
 pub mod terminals;
 pub mod undo;
+pub mod whichkey;
 
 pub use app::Kawoosh;
 pub use palette::Pal;

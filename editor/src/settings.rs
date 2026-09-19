@@ -312,6 +312,8 @@ impl Settings {
         defaults.set("expandtab", Setting::Bool(true));
         defaults.set("scrolloff", Setting::Int(3));
         defaults.set("leader", Setting::Str(" ".into()));
+        // The which-key float while a key sequence is open.
+        defaults.set("whichkey", Setting::Bool(true));
         // Days a history (a buffer's undo tree in the store, with its
         // unsaved text while it has one) may go untouched; 0 keeps
         // every row.
@@ -595,7 +597,8 @@ mod tests {
                 "history.max_mb",
                 "leader",
                 "scrolloff",
-                "tabstop"
+                "tabstop",
+                "whichkey"
             ]
         );
     }

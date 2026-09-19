@@ -8,6 +8,62 @@ use kawoosh::Kawoosh;
 use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
 use kui::KeyMods;
 
+/// `<A-o>` selects the node under the caret, then the one around it;
+/// `<A-i>` comes back; `<A-n>` / `<A-p>` go along the siblings.
+#[test]
+fn selections_walk_the_syntax_tree() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-nodes-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("n.rs");
+    std::fs::write(&file, "fn main() {\n    let x = 1;\n    let y = 2;\n}\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    let alt = kui::KeyMods {
+        alt: true,
+        ..Default::default()
+    };
+    let selected = |app: &Kawoosh| {
+        let v = app.focused_view().unwrap();
+        let s = app.ed.views[v].sels.primary();
+        let buf = app.ed.buffer_of(v);
+        buf.slice(s.start()..buf.next_char(s.end()))
+    };
+    d.keys(&mut app, "jww");
+    d.key(&mut app, "o", alt);
+    assert_eq!(selected(&app), "x", "the node under the caret");
+    d.key(&mut app, "o", alt);
+    assert_eq!(selected(&app), "let x = 1;", "then the one around it");
+    d.key(&mut app, "n", alt);
+    assert_eq!(selected(&app), "let y = 2;", "the next sibling");
+    d.key(&mut app, "p", alt);
+    assert_eq!(selected(&app), "let x = 1;");
+    d.key(&mut app, "o", alt);
+    assert_eq!(selected(&app), "{\n    let x = 1;\n    let y = 2;\n}");
+    d.key(&mut app, "i", alt);
+    assert_eq!(
+        selected(&app),
+        "let x = 1;",
+        "back to what was selected before"
+    );
+    d.key(&mut app, "i", alt);
+    assert_eq!(selected(&app), "x");
+    // The tree follows an edit once the parser has answered for it.
+    d.key(&mut app, "escape", kui::KeyMods::default());
+    d.keys(&mut app, "x");
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    d.key(&mut app, "o", alt);
+    assert!(!app.ed.message.contains("behind"), "{}", app.ed.message);
+    assert_eq!(
+        app.ed.mode(app.focused_view().unwrap()),
+        kawoosh_editor::Mode::Visual
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn rust_is_highlighted_and_stays_so_across_edits() {
     let dir = std::env::temp_dir().join(format!("kawoosh-syntax-{}", std::process::id()));

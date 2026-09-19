@@ -540,6 +540,49 @@ fn select_next_and_all_matches() {
     assert!(t.ed.take_effects().contains(&Effect::Quit { force: true }));
 }
 
+/// `S` is `cc`; `ip` / `ap` take whole lines, linewise in visual mode;
+/// `;` repeats the last `f` or `t` across lines; `gsa` / `gsd` / `gsr`
+/// add, take off and swap a pair.
+#[test]
+fn change_line_paragraphs_find_repeat_and_surrounds() {
+    let mut t = T::new("  foo\nbar");
+    t.keys("Sx<Esc>");
+    assert_eq!(t.text(), "  x\nbar");
+    let mut t = T::new("a\nb\n\n\nc\nd\n");
+    t.keys("jdap");
+    assert_eq!(t.text(), "c\nd\n", "around takes the blank lines after");
+    let mut t = T::new("a\nb\n\n\nc\nd\n");
+    t.keys("Gkvipy");
+    assert_eq!(t.ed.registers[&'"'], "c\nd\n", "linewise in visual mode");
+    let mut t = T::new("a\n\n\nb");
+    t.keys("jdip");
+    assert_eq!(t.text(), "a\nb", "on a blank, the blanks");
+    let mut t = T::new("x = 1\ny = 2\nz == 3");
+    t.keys("f=");
+    assert_eq!(t.head(), 2);
+    t.keys(";");
+    assert_eq!(t.head(), 8, "across the line");
+    t.keys(";;");
+    assert_eq!(t.head(), 15);
+    t.keys("ggt=;");
+    assert_eq!(t.head(), 7, "a till repeats past the char it is before");
+    t.keys("ggf=d;");
+    assert_eq!(t.text(), "x  2\nz == 3", "an operator takes it, inclusive");
+    let mut t = T::new("foo bar");
+    t.keys("gsaiw)");
+    assert_eq!(t.text(), "(foo) bar");
+    t.keys("$viwgsa\"");
+    assert_eq!(t.text(), "(foo) \"bar\"");
+    assert_eq!(t.ed.mode(t.v), Mode::Normal);
+    t.keys("gsd\"");
+    assert_eq!(t.text(), "(foo) bar");
+    t.keys("0lgsr)]");
+    assert_eq!(t.text(), "[foo] bar");
+    t.keys("gsd'");
+    assert_eq!(t.ed.message, "no ' around the caret");
+    assert_eq!(t.text(), "[foo] bar");
+}
+
 #[test]
 fn counts_and_paste() {
     let mut t = T::new("abc\n");

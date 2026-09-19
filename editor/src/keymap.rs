@@ -453,6 +453,42 @@ impl Keymap {
         }
     }
 
+    /// What can follow `prefix` in `mode`, sorted: each next key with
+    /// its first binding, or none for a key that is a prefix of its own
+    /// — a which-key's rows. A pressed key that is the leader's follows
+    /// the `<leader>` branch as well as its own, as lookup does.
+    pub fn next_keys(&self, mode: Mode, prefix: &[String]) -> Vec<(String, Option<Binding>)> {
+        let Some(root) = self.modes.get(&mode) else {
+            return Vec::new();
+        };
+        let mut nodes = vec![root];
+        for k in prefix {
+            let mut next = Vec::new();
+            for n in nodes {
+                if let Some(c) = n.children.get(k) {
+                    next.push(c);
+                }
+                if *k == self.leader
+                    && let Some(c) = n.children.get(LEADER)
+                {
+                    next.push(c);
+                }
+            }
+            nodes = next;
+        }
+        let mut out: Vec<(String, Option<Binding>)> = Vec::new();
+        for n in nodes {
+            for (k, c) in &n.children {
+                if out.iter().any(|(o, _)| o == k) {
+                    continue;
+                }
+                out.push((k.clone(), c.bindings.first().cloned()));
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
     /// Every binding in `mode`, for `:map` listings and the Lua API — a
     /// key with several listed once per binding, newest first.
     pub fn bindings(&self, mode: Mode) -> Vec<(String, Binding)> {

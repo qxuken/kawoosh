@@ -319,10 +319,10 @@ fn a_pane_is_dragged_by_its_title_bar() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
-/// The pane moves are one chord from every kind of pane: `<C-hjkl>` in
-/// normal mode, and `<C-S-hjkl>` there, in insert mode, and from a
-/// terminal — whose pty could not tell the shifted chord from the
-/// plain one, which stays the shell's. `]b` / `[b` step the buffers.
+/// The pane moves are one chord from every kind of pane: `<C-S-hjkl>`
+/// in normal mode, in insert mode, and from a terminal — whose pty
+/// could not tell the shifted chord from the plain one, which stays
+/// the shell's; the plain one is nobody's in normal mode either.
 #[test]
 fn pane_moves_are_one_chord_everywhere() {
     let shifted = KeyMods {
@@ -336,8 +336,10 @@ fn pane_moves_are_one_chord_everywhere() {
     ctrl_w(&mut d, &mut app, "v");
     d.frame(&mut app);
     assert_eq!(app.layout.focused(), 2);
-    d.ctrl(&mut app, "h");
-    assert_eq!(app.layout.focused(), 1, "<C-h> moves left");
+    d.key(&mut app, "H", shifted);
+    assert_eq!(app.layout.focused(), 1, "<C-S-h> moves left");
+    d.ctrl(&mut app, "l");
+    assert_eq!(app.layout.focused(), 1, "<C-l> is not a pane move");
     d.key(&mut app, "L", shifted);
     assert_eq!(app.layout.focused(), 2, "<C-S-l> moves right");
     // From insert mode the shifted spelling moves; `<C-h>` is a backspace.
