@@ -815,14 +815,21 @@ keyboard is in (a listing is a buffer among the others — any number
 open at once, in panes or in the background for `:b`; one shown in
 two panes moves on in a buffer of its own rather than under the other
 pane; `:w` in any listing plans every listing's changes as one
-confirm, and a name one listing deletes and another creates is that
-file moved — `dd` here, `p` there — and one an open listing keeps as
-it is and another creates is that file copied — `yy` here, `p` there
-— the one identity a line has between buffers, since the journal is a
-buffer's own, so a name twice in a listing is refused rather than
-guessed at, and a swap of two files of one name between two listings,
-which leaves both listings' text as it was, is no change, as an undo
-is; renames and moves run in two steps, every source to a temporary
+confirm. A line cut or yanked in one listing and pasted in another is
+that entry: the engine's register remembers where its text came from
+(`Editor::register_origin`: the buffer, its version then, the bytes),
+the runtime says which tracked lines those were (`kawoosh.buf.register`,
+each register line carried back through the journal —
+`Buffer::line_carried`, a replay stopped at a version), and a listing
+adopts a pasted line whose text is one of them, tracked from then on
+(`kawoosh.buf.track`) as the entry of the listing it came from — so
+the plan makes it a move (deleted there) or a copy (still there),
+under its new name when its line was renamed after, two files of one
+name each way between two listings included, and pasted back into
+its own listing it is the entry as it was. A line typed by hand has
+only its name, paired the same way with a name another listing
+deletes or lists; a name twice in a listing is refused rather than
+guessed at; renames and moves run in two steps, every source to a temporary
 name first, so a swap of names never writes one file over the other,
 and a destination that is taken is refused; as a listing is edited its
 lines say what the write would make of them — `← was a.txt`, `← new`,

@@ -193,6 +193,26 @@ impl Journal {
             .map(|(_, edit)| edit))
     }
 
+    /// The edits after version `from` up to and including `to`, oldest
+    /// first — a replay stopped at a version, for where a line was then.
+    pub fn edits_between(
+        &self,
+        from: Version,
+        to: Version,
+    ) -> Result<impl Iterator<Item = &Edit>, Stale> {
+        if from > self.current || to > self.current {
+            return Err(Stale::FutureVersion);
+        }
+        if from < self.oldest {
+            return Err(Stale::HistoryPruned);
+        }
+        Ok(self
+            .entries
+            .iter()
+            .filter(move |(version, _)| *version > from && *version <= to)
+            .map(|(_, edit)| edit))
+    }
+
     /// Carry an offset from `from` forward to the current version.
     pub fn transform_offset(
         &self,

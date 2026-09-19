@@ -550,8 +550,22 @@ impl Buffer {
     /// a tracker treats a deletion and a creation of one name as no
     /// change, and a listing reads the directory again.
     pub fn line_now(&self, line: Range<usize>, from: Version) -> Option<usize> {
+        let r = self.line_carried(line, from, self.version())?;
+        Some(self.line_of(r.start))
+    }
+
+    /// The bytes of the line `line` was at version `from` as of version
+    /// `to` — where it was then, by the same carry as [`Buffer::line_now`]
+    /// — or `None` once it was deleted by then. A range in the text of
+    /// version `to`, which is not this text unless `to` is now.
+    pub fn line_carried(
+        &self,
+        line: Range<usize>,
+        from: Version,
+        to: Version,
+    ) -> Option<Range<usize>> {
         let mut r = line;
-        for edit in self.journal.edits_since(from).ok()? {
+        for edit in self.journal.edits_between(from, to).ok()? {
             let before = r.clone();
             let (start_bias, end_bias) = if r.is_empty() {
                 (Bias::Left, Bias::Right)
@@ -566,7 +580,7 @@ impl Buffer {
                 return None;
             }
         }
-        Some(self.line_of(r.start))
+        Some(r)
     }
 
     pub fn line_text(&self, ln: usize) -> String {

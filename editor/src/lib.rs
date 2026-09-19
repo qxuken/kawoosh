@@ -412,6 +412,14 @@ struct SearchOrigin {
     search: Option<search::Search>,
 }
 
+/// See `Editor::register_origin`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegisterOrigin {
+    pub buffer: BufferId,
+    pub version: Version,
+    pub range: Range<usize>,
+}
+
 pub struct Editor {
     pub buffers: SlotMap<BufferId, Buffer>,
     pub views: SlotMap<ViewId, View>,
@@ -422,6 +430,13 @@ pub struct Editor {
     pub commands: Registry,
     pub registers: HashMap<char, String>,
     pub register_linewise: bool,
+    /// Where the `"` register's text came from, when one yank or
+    /// delete of one range filled it: the buffer, its version before
+    /// the edit, and the bytes there (the text as the register has it,
+    /// a last line's newline moved after it). What a plugin needs to
+    /// know which of a buffer's lines were taken — the file manager's
+    /// entries pasted into another listing.
+    pub register_origin: Option<RegisterOrigin>,
     /// Keys of a multi-key sequence so far.
     pub pending: Vec<String>,
     /// A count typed before a command, e.g. `3` of `3j`.
@@ -479,6 +494,7 @@ impl Editor {
             commands: Registry::default(),
             registers: HashMap::new(),
             register_linewise: false,
+            register_origin: None,
             pending: Vec::new(),
             count: None,
             pending_op: None,
@@ -1771,6 +1787,7 @@ impl Editor {
             _ => {
                 self.registers.insert('"', text.to_string());
                 self.register_linewise = text.ends_with('\n');
+                self.register_origin = None;
                 self.run(view, "paste after", &[], None);
             }
         }

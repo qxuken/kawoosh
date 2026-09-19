@@ -1251,6 +1251,124 @@ fn a_yanked_line_pasted_into_another_listing_is_a_copy() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A line cut or yanked in one listing and pasted in another is that
+/// entry, by the register's word on where its text came from: two
+/// files of one name swapped between two listings are two moves, and
+/// a pasted line renamed after is the entry moved under its new name;
+/// each pasted line says so, with the entry's own size and date.
+#[test]
+fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-ident-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::fs::create_dir_all(dir.join("b")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("a/file.txt"), "from a").unwrap();
+    std::fs::write(dir.join("b/file.txt"), "from b, longer").unwrap();
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    let read = |p: &str| std::fs::read_to_string(dir.join(p)).unwrap();
+    let extras = |d: &Drive| -> Vec<String> {
+        d.row_extras()
+            .iter()
+            .map(|s| s.replace('\u{a0}', " "))
+            .collect()
+    };
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("a").display()),
+    );
+    ex(&mut d, &mut app, "vsplit");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("b").display()),
+    );
+    // a's file.txt cut and pasted below b's; then b's own cut and pasted
+    // into a.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    d.keys(&mut app, "jdd");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "l");
+    d.keys(&mut app, "Gp");
+    d.frame(&mut app);
+    let e = extras(&d);
+    assert!(e[3].ends_with("← twice"), "{e:?}");
+    d.keys(&mut app, "ggjdd");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    d.keys(&mut app, "p");
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "file.txt", "../", "file.txt"]);
+    let e = extras(&d);
+    assert!(
+        e[1].contains("14 B") && e[1].ends_with("← move from ../b/"),
+        "{e:?}"
+    );
+    assert!(
+        e[3].contains(" 6 B") && e[3].ends_with("← move from ../a/"),
+        "{e:?}"
+    );
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        d.confirm_texts(),
+        [
+            "2 change(s) in 2 directories?",
+            "between them:",
+            "  move file.txt: a/ → b/",
+            "  move file.txt: b/ → a/",
+            "Apply",
+            "Cancel",
+        ]
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        (read("a/file.txt"), read("b/file.txt")),
+        ("from b, longer".into(), "from a".into())
+    );
+    // Pasted and renamed: moved under the new name.
+    d.keys(&mut app, "jdd");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "l");
+    d.keys(&mut app, "Gp");
+    d.keys(&mut app, "ccrenamed.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    let e = extras(&d);
+    assert!(e[3].ends_with("← move from ../a/file.txt"), "{e:?}");
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..],
+        [
+            "between them:",
+            "  move file.txt: a/ → b/renamed.txt",
+            "Apply",
+            "Cancel"
+        ]
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(read("b/renamed.txt"), "from b, longer");
+    assert!(!dir.join("a/file.txt").exists());
+    assert_eq!(read("b/file.txt"), "from a");
+    // Cut and pasted back in its own listing: the entry as it was, its
+    // meta with it, and nothing to write.
+    d.keys(&mut app, "ggjddp");
+    d.frame(&mut app);
+    assert_eq!(d.line_rows()[1..], ["../", "renamed.txt", "file.txt"]);
+    let e = extras(&d);
+    assert!(e[3].contains(" 6 B") && !e[3].contains("←"), "{e:?}");
+    ex(&mut d, &mut app, "w");
+    assert_eq!(app.ed.message, "nothing to apply");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Renames and moves never write one file over another, whatever the
 /// order they would run in: two entries' names swapped in one listing,
 /// and a file moved in from one listing while the file of that name

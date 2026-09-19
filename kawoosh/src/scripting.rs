@@ -440,6 +440,9 @@ impl Kawoosh {
                 };
                 self.ed.set_field_text(v, &text);
             }
+            Msg::TrackLine { buffer, line } => {
+                rt.track_more(&self.ed, kawoosh_lua::id_of(buffer), line);
+            }
             Msg::Edit { .. }
             | Msg::SetText { .. }
             | Msg::SetCursor { .. }

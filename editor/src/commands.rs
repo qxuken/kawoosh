@@ -112,12 +112,19 @@ pub(crate) fn op_range(
     }
 }
 
-fn set_register(ed: &mut Editor, texts: &[String], linewise: bool) {
+fn set_register(
+    ed: &mut Editor,
+    id: kawoosh_doc::BufferId,
+    ranges: &[(Range<usize>, bool)],
+    texts: &[String],
+    linewise: bool,
+) {
     let mut joined = if texts.len() == 1 {
         texts[0].clone()
     } else {
         texts.join("\n")
     };
+    let mut origin = (ranges.len() == 1).then(|| ranges[0].0.clone());
     // A linewise range on the last line is the newline before it and
     // the line (`line_range_of_sel`); in the register the line is a
     // line like any other, its newline after it — so `p` puts it below
@@ -125,9 +132,17 @@ fn set_register(ed: &mut Editor, texts: &[String], linewise: bool) {
     if linewise && !joined.ends_with('\n') && joined.starts_with('\n') {
         joined.remove(0);
         joined.push('\n');
+        if let Some(r) = &mut origin {
+            r.start += 1;
+        }
     }
     ed.registers.insert('"', joined.clone());
     ed.register_linewise = linewise;
+    ed.register_origin = origin.map(|range| crate::RegisterOrigin {
+        buffer: id,
+        version: ed.buffers[id].version(),
+        range,
+    });
     ed.effects.push(Effect::SetClipboard(joined));
 }
 
@@ -146,7 +161,7 @@ pub(crate) fn apply_operator(
     let linewise = ranges.iter().any(|(_, l)| *l);
     match op {
         "yank" => {
-            set_register(ed, &texts, linewise);
+            set_register(ed, id, &ranges, &texts, linewise);
             // The caret goes to the start of what was yanked; on a
             // linewise yank it stays (`yy` on the last line: the range
             // starts with the newline before it, which is not its line).
@@ -166,7 +181,7 @@ pub(crate) fn apply_operator(
             );
         }
         "delete" | "change" => {
-            set_register(ed, &texts, linewise);
+            set_register(ed, id, &ranges, &texts, linewise);
             let edits = ranges
                 .iter()
                 .enumerate()

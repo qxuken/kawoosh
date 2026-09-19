@@ -168,6 +168,13 @@ pub enum Msg {
         buffer: u64,
         offset: usize,
     },
+    /// `kawoosh.buf.track(line, buffer)`: a line (from 1) of a hooked
+    /// buffer followed from now on, after the lines it opened with —
+    /// a line pasted in, which is an entry of another listing.
+    TrackLine {
+        buffer: u64,
+        line: usize,
+    },
 }
 
 impl Msg {
@@ -232,6 +239,19 @@ pub struct Published {
     pub tracked: HashMap<u64, Vec<Option<String>>>,
     /// And where: each original line's line now (from 1), or `None`.
     pub tracked_at: HashMap<u64, Vec<Option<usize>>>,
+    /// The `"` register, with where its text came from when the engine
+    /// knows (`Editor::register_origin`): the buffer, and for each of
+    /// the register's lines the tracked line of that buffer it was —
+    /// its index in `tracked`, or `None` for a line that was not one.
+    pub register: Option<RegisterSnap>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegisterSnap {
+    pub text: String,
+    pub linewise: bool,
+    pub buffer: Option<u64>,
+    pub entries: Vec<Option<usize>>,
 }
 
 impl Default for Published {
@@ -250,6 +270,7 @@ impl Default for Published {
             field_focus: HashMap::new(),
             tracked: HashMap::new(),
             tracked_at: HashMap::new(),
+            register: None,
         }
     }
 }
@@ -262,8 +283,10 @@ pub fn id_of(handle: u64) -> BufferId {
     BufferId::from(KeyData::from_ffi(handle))
 }
 
-/// A buffer's lines as they were when tracking began.
-type Tracked = (kawoosh_doc::Version, Vec<std::ops::Range<usize>>);
+/// A buffer's lines as they were when tracking began, and the lines
+/// tracked since (`Runtime::track_more`), each with the version it was
+/// taken at.
+type Tracked = Vec<(kawoosh_doc::Version, std::ops::Range<usize>)>;
 
 pub struct Runtime {
     lua: Lua,
@@ -368,8 +391,25 @@ impl Runtime {
     /// or unchanged — however the text was edited in between.
     pub fn track_lines(&self, ed: &Editor, id: BufferId) {
         let Some(b) = ed.buffers.get(id) else { return };
-        let ranges = (0..b.line_count()).map(|ln| b.line_range(ln)).collect();
-        self.tracked.borrow_mut().insert(id, (b.version(), ranges));
+        let v = b.version();
+        let lines = (0..b.line_count())
+            .map(|ln| (v, b.line_range(ln)))
+            .collect();
+        self.tracked.borrow_mut().insert(id, lines);
+    }
+
+    /// Follows line `ln` (from 0) of `id` from now on, after the lines
+    /// tracked so far: the next index of `kawoosh.buf.tracked()`.
+    pub fn track_more(&self, ed: &Editor, id: BufferId, ln: usize) {
+        let Some(b) = ed.buffers.get(id) else { return };
+        if ln >= b.line_count() {
+            return;
+        }
+        self.tracked
+            .borrow_mut()
+            .entry(id)
+            .or_default()
+            .push((b.version(), b.line_range(ln)));
     }
 
     /// The snapshot Lua reads from, refreshed before every call in.
@@ -378,16 +418,16 @@ impl Runtime {
         p.buffers.clear();
         p.tracked.clear();
         p.tracked_at.clear();
-        for (id, (version, ranges)) in self.tracked.borrow().iter() {
+        for (id, lines) in self.tracked.borrow().iter() {
             let Some(b) = ed.buffers.get(*id) else {
                 continue;
             };
             // The line each became (`Buffer::line_now`): what was typed
             // at its edges is its own, a line opened above or below is
             // not; an emptied line is as good as gone.
-            let at: Vec<Option<usize>> = ranges
+            let at: Vec<Option<usize>> = lines
                 .iter()
-                .map(|r| {
+                .map(|(version, r)| {
                     let ln = b.line_now(r.clone(), *version)?;
                     (!b.line_text(ln).is_empty()).then_some(ln)
                 })
@@ -429,6 +469,41 @@ impl Runtime {
                 },
             );
         }
+        // The register and, when the engine knows where its text came
+        // from, which tracked lines of that buffer its lines were: each
+        // tracked line carried to the version the text was taken at,
+        // and, lying in the taken bytes, its line among them.
+        p.register = ed.registers.get(&'"').map(|text| {
+            let mut entries = vec![None; text.lines().count()];
+            let origin = ed.register_origin.as_ref();
+            let buffer = origin.map(|o| handle_of(o.buffer));
+            if let Some(o) = origin
+                && let Some(b) = ed.buffers.get(o.buffer)
+                && let Some(lines) = self.tracked.borrow().get(&o.buffer)
+            {
+                for (i, (version, r)) in lines.iter().enumerate() {
+                    let Some(then) = b.line_carried(r.clone(), *version, o.version) else {
+                        continue;
+                    };
+                    if then.is_empty() || then.start < o.range.start || then.start >= o.range.end {
+                        continue;
+                    }
+                    let k = text
+                        .get(..then.start - o.range.start)
+                        .map(|t| t.matches('\n').count())
+                        .unwrap_or(usize::MAX);
+                    if let Some(slot) = entries.get_mut(k) {
+                        *slot = Some(i + 1);
+                    }
+                }
+            }
+            RegisterSnap {
+                text: text.clone(),
+                linewise: ed.register_linewise,
+                buffer,
+                entries,
+            }
+        });
         p.current = current.map(|v| handle_of(ed.views[v].buffer));
         p.mode = current
             .map(|v| ed.mode(v))
@@ -1250,6 +1325,44 @@ fn seed(
                 }
             }
             Ok(t)
+        })?,
+    )?;
+    let pp = published.clone();
+    buf.set(
+        "register",
+        lua.create_function(move |lua, ()| {
+            let p = pp.borrow();
+            let Some(r) = &p.register else {
+                return Ok(LV::Nil);
+            };
+            let t = lua.create_table()?;
+            t.set("text", r.text.as_str())?;
+            t.set("linewise", r.linewise)?;
+            t.set("buffer", r.buffer)?;
+            let e = lua.create_table()?;
+            for (i, x) in r.entries.iter().enumerate() {
+                match x {
+                    Some(n) => e.set(i + 1, *n)?,
+                    None => e.set(i + 1, false)?,
+                }
+            }
+            t.set("entries", e)?;
+            Ok(LV::Table(t))
+        })?,
+    )?;
+    let qq = q(queue);
+    let pp = published.clone();
+    buf.set(
+        "track",
+        lua.create_function(move |_, (line, h): (usize, Option<u64>)| {
+            let h = h
+                .or(pp.borrow().current)
+                .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
+            qq.borrow_mut().push(Msg::TrackLine {
+                buffer: h,
+                line: line.saturating_sub(1),
+            });
+            Ok(())
         })?,
     )?;
     let qq = q(queue);

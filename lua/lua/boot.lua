@@ -165,7 +165,15 @@ end
 -- one. Spaces in it are `\u{A0}`, which every font keeps.
 -- `kawoosh.buf.tracked_lines([buffer])` is where each line a hooked
 -- buffer opened with is now (a line number from 1, or false), beside
--- `tracked()`'s what it became.
+-- `tracked()`'s what it became; `kawoosh.buf.track(line[, buffer])`
+-- follows one more line from now on, after those — a line pasted in —
+-- and it is the next index of both.
+--
+-- kawoosh.buf.register(): the `"` register — `text`, `linewise`, and,
+-- when one yank or delete filled it, `buffer` (the handle it came
+-- from) and `entries`, for each line of the text the tracked line of
+-- that buffer it was (an index of `tracked()`, or false): how a line
+-- pasted into one listing is known to be an entry of another.
 --
 -- kawoosh.view_open(name[, { focus = false }]) puts a Lua view in a
 -- split, or focuses its pane — `focus = false` leaves the keyboard
