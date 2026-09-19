@@ -321,8 +321,9 @@ one, against the working directory the shell keeps the process in step
 with; `join`, `parent`, `basename` do what a pattern on `/` did, on every
 platform; `list` (each entry with its size and mtime), `stat`, `create`,
 `rename`, `remove`, `read`, `write`, `exists`, `is_dir`, `is_file` are
-the operations, each taking its path as written and raising with the
-path in the message. The Rust half is `kawoosh_systems::fs`, and the
+the operations (`copy` a directory with everything in it, never over
+something there), each taking its path as written and raising with
+the path in the message. The Rust half is `kawoosh_systems::fs`, and the
 shell's `:e`, `:cd`, `:dir` and the status line's `~` go through the
 same functions, so what the command line accepts and what a plugin
 accepts are one thing (the case that filed this: `:dir ~/projects`
@@ -815,8 +816,10 @@ open at once, in panes or in the background for `:b`; one shown in
 two panes moves on in a buffer of its own rather than under the other
 pane; `:w` in any listing plans every listing's changes as one
 confirm, and a name one listing deletes and another creates is that
-file moved — `dd` here, `p` there — the one identity a line has
-between buffers, since the journal is a buffer's own; the listings
+file moved — `dd` here, `p` there — and one an open listing keeps as
+it is and another creates is that file copied — `yy` here, `p` there
+— the one identity a line has between buffers, since the journal is a
+buffer's own; the listings
 touched are read again where they are, `open_scratch{ show = false
 }`), and `<leader>cd` off a listing runs nothing and says why.
 

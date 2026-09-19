@@ -1141,6 +1141,101 @@ fn a_split_listing_moves_on_alone() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A line yanked in one listing and pasted in another is that entry
+/// copied — a file, or a directory with everything in it — from the
+/// listing that still has it, which need not have changes of its own;
+/// beside a move in the same write. The copy never writes over a file
+/// that is there.
+#[test]
+fn a_yanked_line_pasted_into_another_listing_is_a_copy() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-copy-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::fs::create_dir_all(dir.join("b/sub")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("a/a1.txt"), "alpha").unwrap();
+    std::fs::write(dir.join("b/b1.txt"), "beta").unwrap();
+    std::fs::write(dir.join("b/sub/inner.txt"), "inner").unwrap();
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("a").display()),
+    );
+    ex(&mut d, &mut app, "vsplit");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("b").display()),
+    );
+    assert_eq!(d.line_rows(), ["../", "a1.txt", "../", "sub/", "b1.txt"]);
+    // `yy` on b1.txt and on sub/, pasted into a; a1.txt moved to b.
+    d.keys(&mut app, "jyy");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    d.keys(&mut app, "jp");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "l");
+    d.keys(&mut app, "jyy");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    d.keys(&mut app, "p");
+    d.keys(&mut app, "ggjdd");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "l");
+    d.keys(&mut app, "Gp");
+    assert_eq!(
+        d.line_rows(),
+        ["../", "sub/", "b1.txt", "../", "sub/", "b1.txt", "a1.txt"],
+        "{:?}",
+        d.line_rows()
+    );
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        d.confirm_texts(),
+        [
+            "3 change(s) in 2 directories?",
+            "between them:",
+            "  move a1.txt: a/ → b/",
+            "  copy b1.txt: b/ → a/",
+            "  copy sub/: b/ → a/",
+            "Apply",
+            "Cancel",
+        ]
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a/b1.txt")).unwrap(),
+        "beta"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b/b1.txt")).unwrap(),
+        "beta"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a/sub/inner.txt")).unwrap(),
+        "inner"
+    );
+    assert!(dir.join("b/sub/inner.txt").is_file());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b/a1.txt")).unwrap(),
+        "alpha"
+    );
+    assert!(!dir.join("a/a1.txt").exists());
+    assert_eq!(
+        d.line_rows(),
+        ["../", "sub/", "b1.txt", "../", "sub/", "a1.txt", "b1.txt"]
+    );
+    for (_, buf) in app.ed.buffers.iter() {
+        assert!(!buf.modified, "{} written", buf.name);
+    }
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Listings are many: a listing shown in two panes is not renamed under
 /// the other pane when one of them moves on — that pane gets a buffer
 /// of its own — `:dir!` opens a new buffer outright, every listing

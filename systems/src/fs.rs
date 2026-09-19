@@ -180,6 +180,35 @@ pub fn create(path: &Path, is_dir: bool) -> io::Result<()> {
         .map_err(|e| named(path, e))
 }
 
+/// Copies `from` to `to` — a file, or a directory with everything in
+/// it — creating `to`'s directory when it is missing, and refusing a
+/// `to` that exists: a copy never writes over anything.
+pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
+    if to.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{}: exists", to.display()),
+        ));
+    }
+    if let Some(p) = to.parent()
+        && !p.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(p).map_err(|e| named(p, e))?;
+    }
+    if from.is_dir() {
+        std::fs::create_dir(to).map_err(|e| named(to, e))?;
+        for e in std::fs::read_dir(from).map_err(|e| named(from, e))? {
+            let e = e.map_err(|e| named(from, e))?;
+            copy(&e.path(), &to.join(e.file_name()))?;
+        }
+        Ok(())
+    } else {
+        std::fs::copy(from, to)
+            .map(|_| ())
+            .map_err(|e| named(from, e))
+    }
+}
+
 pub fn exists(path: &Path) -> bool {
     path.exists()
 }
@@ -291,6 +320,18 @@ mod tests {
         assert!(err.contains("b.txt"), "{err}");
         let err = list(&dir.join("nope")).unwrap_err().to_string();
         assert!(err.contains("nope"), "{err}");
+        // A copy: a file, a directory with what is in it, never over
+        // something there.
+        copy(&dir.join("b.txt"), &dir.join("copies/b.txt")).unwrap();
+        assert_eq!(read(&dir.join("copies/b.txt")).unwrap(), "hello");
+        assert!(dir.join("b.txt").is_file(), "the original stays");
+        copy(&dir.join("deep"), &dir.join("copies/deep")).unwrap();
+        assert!(dir.join("copies/deep/a.txt").is_file());
+        let err = copy(&dir.join("deep"), &dir.join("copies/deep"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("exists"), "{err}");
+        remove(&dir.join("copies")).unwrap();
         // A rename into a directory that is not there yet makes it.
         rename(&dir.join("b.txt"), &dir.join("new/dir/c.txt")).unwrap();
         assert!(dir.join("new/dir/c.txt").is_file());

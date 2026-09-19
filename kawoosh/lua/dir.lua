@@ -19,9 +19,10 @@
 -- asks for a new buffer outright, so any number of listings can be
 -- open at once — in panes, or in the background for `:b` — each with
 -- its own entries. `:w` in any of them plans every listing's changes
--- as one confirm, and a name deleted in one listing and created in
--- another is that file moved (`dd` here, `p` there): the one identity
--- a line has between buffers.
+-- as one confirm; a name deleted in one listing and created in
+-- another is that file moved (`dd` here, `p` there), and one listed
+-- as it is in one and created in another is that file copied (`yy`
+-- here, `p` there): the one identity a line has between buffers.
 --
 -- What each entry is — a file's size, the mtime — is drawn past its
 -- line (`kawoosh.buf.annotate`), never in the buffer's text, so the
@@ -200,19 +201,30 @@ local function plan(entries, lines, h)
   return kept
 end
 
--- Every listing with changes, each with its plan; then, across them,
--- a name one listing deletes and another creates is that file moved
--- — `dd` here, `p` there — which is how a line has an identity between
--- buffers: its name. Renames first, then moves, creates, deletes.
-local ORDER = { rename = 1, move = 2, create = 3, delete = 4 }
+-- Every listing with changes, each with its plan; then, across every
+-- open listing, a name one deletes and another creates is that file
+-- moved — `dd` here, `p` there — and a name one still lists as it is
+-- and another creates is that file copied — `yy` here, `p` there —
+-- which is how a line has an identity between buffers: its name.
+-- Renames first, then moves, copies, creates, deletes.
+local ORDER = { rename = 1, move = 2, copy = 3, create = 4, delete = 5 }
 
 local function pending()
-  local groups = {}
+  local groups, sources = {}, {}
   for _, h in ipairs(kawoosh.buf.list()) do
     local d = lists(h)
     local st = d and dir.state[PREFIX .. d]
-    if st and kawoosh.buf.modified(h) then
-      groups[#groups + 1] = { dir = d, ops = plan(st.entries, kawoosh.buf.lines(h), h) }
+    if st then
+      local ops = kawoosh.buf.modified(h) and plan(st.entries, kawoosh.buf.lines(h), h) or {}
+      -- The entries the listing keeps as they are: a copy's sources.
+      local gone = {}
+      for _, op in ipairs(ops) do
+        if op[1] == "rename" or op[1] == "delete" then gone[op[2]] = true end
+      end
+      for _, e in ipairs(st.entries) do
+        if e ~= "../" and not gone[e] and not sources[e] then sources[e] = d end
+      end
+      if #ops > 0 then groups[#groups + 1] = { dir = d, ops = ops } end
     end
   end
   table.sort(groups, function(x, y) return x.dir < y.dir end)
@@ -222,16 +234,21 @@ local function pending()
       if op[1] == "delete" and not deletes[op[2]] then deletes[op[2]] = { gi, oi } end
     end
   end
-  local moves = {}
+  local between = {}
   for gi, g in ipairs(groups) do
     for oi, op in ipairs(g.ops) do
       -- `false` is an op already paired.
-      local from = op and op[1] == "create" and deletes[op[2]]
-      if from and from[1] ~= gi then
-        moves[#moves + 1] = { "move", op[2], groups[from[1]].dir, g.dir }
-        groups[from[1]].ops[from[2]] = false
-        g.ops[oi] = false
-        deletes[op[2]] = nil
+      if op and op[1] == "create" then
+        local from = deletes[op[2]]
+        if from and from[1] ~= gi then
+          between[#between + 1] = { "move", op[2], groups[from[1]].dir, g.dir }
+          groups[from[1]].ops[from[2]] = false
+          g.ops[oi] = false
+          deletes[op[2]] = nil
+        elseif sources[op[2]] and sources[op[2]] ~= g.dir then
+          between[#between + 1] = { "copy", op[2], sources[op[2]], g.dir }
+          g.ops[oi] = false
+        end
       end
     end
   end
@@ -244,8 +261,11 @@ local function pending()
     end)
     g.ops = ops
   end
-  table.sort(moves, function(x, y) return x[2] < y[2] end)
-  return groups, moves
+  table.sort(between, function(x, y)
+    if ORDER[x[1]] ~= ORDER[y[1]] then return ORDER[x[1]] < ORDER[y[1]] end
+    return x[2] < y[2]
+  end)
+  return groups, between
 end
 
 -- An op as a line. A move names its directories by `short`, when
@@ -253,9 +273,9 @@ end
 -- among the directories involved, else its path.
 local function describe(op, short)
   if op[1] == "rename" then return "rename " .. op[2] .. " → " .. op[3] end
-  if op[1] == "move" then
+  if op[1] == "move" or op[1] == "copy" then
     local f = short or function(d) return d end
-    return "move " .. op[2] .. ": " .. f(op[3]) .. " → " .. f(op[4])
+    return op[1] .. " " .. op[2] .. ": " .. f(op[3]) .. " → " .. f(op[4])
   end
   return op[1] .. " " .. op[2]
 end
@@ -280,6 +300,8 @@ local function run(op, d)
     fs.rename(at(d, op[2]), at(d, op[3]))
   elseif op[1] == "move" then
     fs.rename(at(op[3], op[2]), at(op[4], op[2]))
+  elseif op[1] == "copy" then
+    fs.copy(at(op[3], op[2]), at(op[4], op[2]))
   elseif op[1] == "create" then
     fs.create(at(d, op[2]), op[2]:sub(-1) == "/")
   else
@@ -302,7 +324,8 @@ local function relist(d, h)
   kawoosh.buf.annotate(meta, name)
 end
 
--- Applies every group's ops and the moves, then lists every directory
+-- Applies every group's ops and the moves and copies between them,
+-- then lists every directory
 -- touched again: the written listing in its pane, the caret on `from`,
 -- the others where they are.
 local function apply(groups, moves, here, from)
@@ -323,7 +346,8 @@ local function apply(groups, moves, here, from)
     end
   end
   for _, m in ipairs(moves) do
-    touched[m[3]], touched[m[4]] = true, true
+    if m[1] == "move" then touched[m[3]] = true end
+    touched[m[4]] = true
     each(m)
   end
   for _, g in ipairs(groups) do

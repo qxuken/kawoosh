@@ -1372,6 +1372,12 @@ fn seed(
         })?,
     )?;
     fs.set(
+        "copy",
+        lua.create_function(|_, (a, b): (String, String)| {
+            kfs::copy(&expand(&a), &expand(&b)).map_err(io_err)
+        })?,
+    )?;
+    fs.set(
         "remove",
         lua.create_function(|_, p: String| kfs::remove(&expand(&p)).map_err(io_err))?,
     )?;
