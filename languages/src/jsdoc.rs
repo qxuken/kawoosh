@@ -14,7 +14,7 @@ pub static LANGUAGE: Language = Language {
 };
 
 #[cfg(feature = "jsdoc")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(
         tree_sitter_jsdoc::LANGUAGE.into(),
         tree_sitter_jsdoc::HIGHLIGHTS_QUERY,

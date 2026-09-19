@@ -16,7 +16,7 @@ pub static LANGUAGE: Language = Language {
 };
 
 #[cfg(feature = "typescript")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(
         tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         &[

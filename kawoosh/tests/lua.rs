@@ -635,3 +635,65 @@ fn a_lua_view_has_fields_with_modes() {
     assert_eq!(app.layout.visible_panes().len(), 1, "q closed the pane");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// `kawoosh.language` (kui.md D13): a language of files alone names
+/// them — one opened after, and one already open that nothing had
+/// claimed — and a grammar that is not where it was said to be is a
+/// warning under the `language` source, the language in regardless.
+#[test]
+fn a_language_from_lua_names_its_files_and_warns_of_a_missing_grammar() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lua-lang-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let before = dir.join("early.zig");
+    std::fs::write(&before, "const x = 1;\n").unwrap();
+    let after = dir.join("late.zig");
+    std::fs::write(&after, "const y = 2;\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "hello\n");
+    app.open(&before);
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    assert_eq!(&*app.ed.buffer_of(v).language, "text");
+    app.run_lua_source(
+        "init",
+        &format!(
+            r#"
+            kawoosh.language("zig", {{ extensions = {{ "zig" }}, aliases = {{ "zg" }} }})
+            kawoosh.language("nim", {{ extensions = {{ "nim" }}, path = "{}/nowhere/nim" }})
+            "#,
+            dir.display()
+        ),
+    );
+    d.frame(&mut app);
+    assert_eq!(
+        &*app.ed.buffer_of(v).language,
+        "zig",
+        "an open file, claimed now"
+    );
+    assert!(app.languages.by_name("zg").is_some_and(|l| l.name == "zig"));
+    assert!(!app.languages.has_grammar("zig"));
+    app.open(&after);
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    assert_eq!(&*app.ed.buffer_of(v).language, "zig");
+    // The toast's own text: the drawn row ends the long path in an
+    // ellipsis.
+    let texts: Vec<&str> = app.notes.shown.iter().map(|s| s.text.as_str()).collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.starts_with("no parser for nim") && t.contains("nowhere")),
+        "{texts:?}"
+    );
+    assert!(
+        d.corner_texts()
+            .iter()
+            .any(|t| t.contains("no parser for nim"))
+    );
+    assert!(
+        app.languages.get("nim").is_some(),
+        "in, without its grammar"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

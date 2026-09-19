@@ -37,6 +37,6 @@ const HIGHLIGHTS: &str = r#"
 "#;
 
 #[cfg(feature = "gomod")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(tree_sitter_gomod::LANGUAGE.into(), HIGHLIGHTS, None)
 }

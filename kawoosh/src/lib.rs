@@ -15,6 +15,7 @@ pub mod graph;
 pub mod history;
 pub mod history_pane;
 pub mod inspector;
+pub mod languages;
 pub mod layout;
 pub mod logger;
 pub mod lsp;

@@ -15,8 +15,12 @@
 //! sight of a buffer, edits the journal no longer has, or a change of
 //! language parse and answer for the whole.
 //!
-//! The languages are `kawoosh_languages`'s (kui.md Decision 13): a
-//! grammar is loaded the first time a job names it. A grammar with an
+//! The languages are a `kawoosh_languages::Registry`'s (kui.md Decision
+//! 13): the builtins, and what the shell adds with [`Ts::add_language`]
+//! — a language of its own, its grammar from a shared library, loaded
+//! on the shell's side so its errors are the user's to see, and handed
+//! over here. A builtin grammar is loaded the first time a job names
+//! it. A grammar with an
 //! injections query has other languages inside it — a fenced code
 //! block, a JSDoc comment, a regex literal — and each such node
 //! reaching into an answered span is parsed over that node alone by
@@ -31,8 +35,8 @@ use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use kawoosh_doc::{BufferId, Edit, Run, Snapshot, Update};
-use kawoosh_languages::Grammar;
 pub use kawoosh_languages::Token;
+use kawoosh_languages::{Grammar, LanguageDef, Registry};
 use tree_sitter::{InputEdit, Node, Parser, Point, QueryCursor, StreamingIterator, Tree};
 
 use crate::WakeHandle;
@@ -74,8 +78,20 @@ pub struct Answer {
 /// since each is a query of its own.
 const SPANS_MAX: usize = 64;
 
+/// What the thread is told.
+enum Cmd {
+    Job(Job),
+    /// A language registered: the registry entry, and its grammar when
+    /// the shell loaded one — `None` for a language of files alone,
+    /// or a builtin, which the thread loads itself.
+    Language {
+        def: LanguageDef,
+        grammar: Option<Arc<Grammar>>,
+    },
+}
+
 pub struct Ts {
-    jobs: Sender<Job>,
+    cmds: Sender<Cmd>,
     pub answers: Receiver<Answer>,
 }
 
@@ -84,7 +100,7 @@ impl Ts {
     /// an empty layer, so a file that lost its grammar loses its colours
     /// rather than keeping stale ones.
     pub fn spawn(wake: WakeHandle) -> Self {
-        let (jobs, job_rx) = unbounded::<Job>();
+        let (cmds, cmd_rx) = unbounded::<Cmd>();
         let (answer_tx, answers) = unbounded::<Answer>();
         thread::Builder::new()
             .name("ts".into())
@@ -92,11 +108,24 @@ impl Ts {
                 let mut parser = Parser::new();
                 let mut grammars = Grammars::default();
                 let mut parsed = Parsed::default();
-                while let Ok(job) = job_rx.recv() {
+                while let Ok(cmd) = cmd_rx.recv() {
+                    let mut job = match cmd {
+                        Cmd::Job(job) => job,
+                        Cmd::Language { def, grammar } => {
+                            grammars.add(def, grammar, &mut parsed);
+                            continue;
+                        }
+                    };
                     // Only the newest job per buffer matters: skip ahead,
                     // the skipped job's edits carried into the next one's.
-                    let mut job = job;
-                    while let Ok(mut next) = job_rx.try_recv() {
+                    while let Ok(next) = cmd_rx.try_recv() {
+                        let mut next = match next {
+                            Cmd::Job(job) => job,
+                            Cmd::Language { def, grammar } => {
+                                grammars.add(def, grammar, &mut parsed);
+                                continue;
+                            }
+                        };
                         if next.buffer == job.buffer {
                             next.edits = match (job.edits.take(), next.edits.take()) {
                                 (Some(mut a), Some(b)) => {
@@ -123,42 +152,73 @@ impl Ts {
                 }
             })
             .expect("spawning the ts thread");
-        Self { jobs, answers }
+        Self { cmds, answers }
     }
 
     pub fn submit(&self, job: Job) {
-        let _ = self.jobs.send(job);
+        let _ = self.cmds.send(Cmd::Job(job));
+    }
+
+    /// Tells the thread a language: its registry entry, and the grammar
+    /// the shell loaded for it (the same `LanguageDef` the shell's own
+    /// registry took, so both name the same files). A buffer of the
+    /// language parses whole at its next job.
+    pub fn add_language(&self, def: LanguageDef, grammar: Option<Grammar>) {
+        let grammar = grammar.map(Arc::new);
+        let _ = self.cmds.send(Cmd::Language { def, grammar });
     }
 
     pub fn drain(&self) -> Vec<Answer> {
         self.answers.try_iter().collect()
     }
-
-    /// Whether a buffer of `language` is worth a job: this build has a
-    /// grammar for it (`kawoosh_languages::has_grammar`).
-    pub fn supports(language: &str) -> bool {
-        kawoosh_languages::has_grammar(language)
-    }
 }
 
-/// The grammars the thread has loaded, by their language's name (an
-/// alias resolves to it): each on its first job — a query compiles in
-/// a moment, but there are two dozen — and a language without one, or
-/// whose query failed, remembered as `None` so it is not asked again.
-/// Shared handles, so a host grammar and the one it injects are held
-/// at once.
+/// The thread's registry and the grammars it has loaded, by their
+/// language's name (an alias resolves to it): a builtin's on its first
+/// job — a query compiles in a moment, but there are two dozen — a
+/// registered one as it came; a language without one, or whose load
+/// failed, remembered as `None` so it is not asked again. Shared
+/// handles, so a host grammar and the one it injects are held at once.
 #[derive(Default)]
 struct Grammars {
-    loaded: HashMap<&'static str, Option<Arc<Grammar>>>,
+    registry: Registry,
+    loaded: HashMap<String, Option<Arc<Grammar>>>,
 }
 
 impl Grammars {
     fn get(&mut self, language: &str) -> Option<Arc<Grammar>> {
-        let lang = kawoosh_languages::by_name(language)?;
-        self.loaded
-            .entry(lang.name)
-            .or_insert_with(|| lang.grammar.and_then(|load| load()).map(Arc::new))
-            .clone()
+        let def = self.registry.by_name(language)?;
+        if let Some(g) = self.loaded.get(&def.name) {
+            return g.clone();
+        }
+        let name = def.name.clone();
+        let g = match def.load() {
+            Ok(g) => g,
+            Err(e) => {
+                log::error!("{name}: {e}");
+                None
+            }
+        }
+        .map(Arc::new);
+        self.loaded.insert(name, g.clone());
+        g
+    }
+
+    /// A language registered: in the registry, its grammar as given
+    /// (or loaded at the next job, for one without), and every tree
+    /// kept under its name dropped, so its buffers parse whole.
+    fn add(&mut self, def: LanguageDef, grammar: Option<Arc<Grammar>>, parsed: &mut Parsed) {
+        let name = def.name.clone();
+        self.registry.add(def);
+        match grammar {
+            Some(g) => {
+                self.loaded.insert(name.clone(), Some(g));
+            }
+            None => {
+                self.loaded.remove(&name);
+            }
+        }
+        parsed.by_buffer.retain(|_, (lang, _, _)| *lang != name);
     }
 }
 
@@ -1068,6 +1128,47 @@ mod tests {
         assert_eq!(tok_at("em30", &buf), Some(Token::Emphasis));
         assert_eq!(tok_at("c30`", &buf), Some(Token::Raw));
         assert_eq!(tok_at("fn f30", &buf), Some(Token::Keyword));
+    }
+
+    /// A language told to the thread highlights with the grammar it
+    /// came with — json's, under a name of its own — and one told
+    /// without a grammar answers empty, its kept tree gone.
+    #[test]
+    fn a_registered_language_highlights_with_its_grammar() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let json = g
+            .registry
+            .get("json")
+            .and_then(|d| d.load().ok().flatten())
+            .expect("json's grammar");
+        let mut def = LanguageDef::named("jsonx");
+        def.extensions = vec!["jsonx".into()];
+        g.add(def, Some(Arc::new(json)), &mut parsed);
+        let buf = Buffer::new("t", "{\"a\": 1}\n");
+        let job = |lang: &str| Job {
+            buffer: BufferId::default(),
+            language: lang.into(),
+            snapshot: buf.snapshot(),
+            edits: None,
+        };
+        let a = highlight(&mut parser, &mut g, &mut parsed, &job("jsonx")).update();
+        let tok_at = |a: &Update, needle: &str| {
+            let o = buf.text().find(needle).unwrap();
+            a.runs
+                .iter()
+                .find(|r| r.range.contains(&o))
+                .map(|r| Token::from_style(r.style))
+        };
+        assert_eq!(tok_at(&a, "\"a\""), Some(Token::Property));
+        assert_eq!(tok_at(&a, "1"), Some(Token::Number));
+        assert!(parsed.by_buffer.contains_key(&BufferId::default()));
+        g.add(LanguageDef::named("jsonx"), None, &mut parsed);
+        assert!(!parsed.by_buffer.contains_key(&BufferId::default()));
+        let a = highlight(&mut parser, &mut g, &mut parsed, &job("jsonx"));
+        assert!(a.tree.is_none());
+        assert!(a.update().runs.is_empty());
     }
 
     impl Answer {

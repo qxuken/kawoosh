@@ -24,6 +24,6 @@ const HIGHLIGHTS: &str = r#"
 "#;
 
 #[cfg(feature = "diff")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(tree_sitter_diff::LANGUAGE.into(), HIGHLIGHTS, None)
 }

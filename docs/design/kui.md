@@ -890,7 +890,42 @@ content is a plain ground the injected language colours.
 
 The token classes grew for it: `heading`, `strong`, `emphasis`,
 `link`, `raw` for markup, `added` and `removed` for a diff — a theme
-names them like the rest (D7). They are also what a rendered markdown
+names them like the rest (D7).
+
+**A grammar is pluggable.** The table at run time is a `Registry`: the
+builtins as `LanguageDef`s, and what `kawoosh.language(name, opts)`
+adds — a language of its own, or a builtin's name to replace it, with
+its files (`extensions`, `filenames`, `shebangs`, `aliases`) and its
+grammar from a shared library as `tree-sitter build` makes one: the
+`tree_sitter_<name>` symbol opened with `libloading`, the library kept
+open for the process, the ABI checked against what this tree-sitter
+reads, the query files compiled. Convention fills in what is not said
+(`Library::find`): the library is `parsers/<name>.<ext>` under the
+config directory (`.dylib`, `.so`, `.dll` by platform, and `.so` on
+any, as nvim-treesitter names them all), the queries
+`queries/<name>/highlights.scm` and `injections.scm` there; a `path`
+may be the library, a directory holding it — a grammar's checkout
+after `tree-sitter build`, whose `queries/` serve unless the config
+directory's say otherwise — or the path without its extension; `~` is
+home. Nothing said and nothing there is a language of files alone,
+which a keymap's `language:zig` or a server can still name. The shell
+loads the grammar, so a path that leads nowhere, a symbol the library
+lacks, a grammar built for another tree-sitter or a query that does
+not compile is a toast under the `language` source and the language
+goes in without colours; the loaded grammar crosses to the ts thread
+in the same message as the registry entry (`Ts::add_language`), whose
+kept trees under that name are dropped so its buffers parse whole, and
+the shell looks at its buffers again — one of the language is resent,
+and a file nothing had claimed may be the language's now. The newest
+registration goes first in the table, so it wins a file name or a
+spelling. What is not there: a query language of kawoosh's own (a
+plugged query is tree-sitter's `.scm`, read through the same
+`Token::from_capture`, so nvim's spellings work and its Lua-only
+predicates do not), and wasm grammars, which would be sandboxed and
+portable at the cost of a wasmtime in the binary — the shared library
+is what every grammar repository already builds.
+
+They are also what a rendered markdown
 buffer will read: a heading drawn larger, strong drawn heavy, a link
 underlined, a fence's markers hidden, are a row reading the same runs
 for weight and size instead of hue only. That buffer is its own

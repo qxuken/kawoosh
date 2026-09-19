@@ -14,7 +14,7 @@ pub static LANGUAGE: Language = Language {
 };
 
 #[cfg(feature = "toml")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(
         tree_sitter_toml_ng::LANGUAGE.into(),
         tree_sitter_toml_ng::HIGHLIGHTS_QUERY,

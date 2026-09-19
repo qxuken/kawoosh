@@ -16,7 +16,7 @@ pub static LANGUAGE: Language = Language {
 };
 
 #[cfg(feature = "rust")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(
         tree_sitter_rust::LANGUAGE.into(),
         &[

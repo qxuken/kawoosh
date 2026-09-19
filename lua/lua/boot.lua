@@ -42,6 +42,26 @@ function kawoosh.command(name, fn, opts)
   kawoosh._register(name, opts)
 end
 
+-- kawoosh.language(name[, opts]) (Rust): a language of your own, or
+-- a builtin's replaced — its files, and its grammar from a shared
+-- library as `tree-sitter build` makes one. `opts`:
+--   extensions, filenames, shebangs   what detects it: `{ "zig" }`,
+--           `{ "build.zig.zon" }`, `{ "zig" }` for a `#!` line.
+--   aliases other spellings — a fence's ` ```zg `.
+--   path    the library, a directory holding it (a grammar's checkout
+--           after `tree-sitter build`), or its path without the
+--           extension; `~` is home. Nothing said: `parsers/<name>.<ext>`
+--           under the config directory (`~/.config/kawoosh`), and
+--           nothing there is a language of files alone.
+--   symbol  when it is not `tree_sitter_<name>`.
+--   highlights, injections   the query files. Nothing said:
+--           `queries/<name>/*.scm` under the config directory, else the
+--           checkout's `queries/`.
+-- A path that leads nowhere, a symbol the library lacks, a grammar
+-- built for another tree-sitter, a query that does not compile: a
+-- warning, and the language goes in without colours. The newest
+-- registration wins a file name or a spelling.
+--
 -- kawoosh.map(mode, keys, cmd[, opts]): `cmd` is a command name (with
 -- args, as the command line would spell it) or a function, which
 -- becomes one. A key can be bound more than once: the newest binding

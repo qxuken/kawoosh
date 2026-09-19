@@ -94,6 +94,20 @@ pub enum Msg {
         args: Vec<String>,
         roots: Vec<String>,
     },
+    /// `kawoosh.language(name, t)`: a language — its files, and where
+    /// its grammar is, if anything was said (kui.md D13). The shell
+    /// resolves the paths.
+    Language {
+        name: String,
+        aliases: Vec<String>,
+        extensions: Vec<String>,
+        filenames: Vec<String>,
+        shebangs: Vec<String>,
+        path: Option<String>,
+        symbol: Option<String>,
+        highlights: Option<String>,
+        injections: Option<String>,
+    },
     Colors(Vec<(String, String)>),
     /// `kawoosh.opt(path, value)`: a setting by dotted path, `None` to
     /// take the session's value back out. Which layer it lands in is
@@ -908,6 +922,33 @@ fn seed(
         })?,
     )?;
     k.set("lsp", lsp)?;
+
+    // ---- languages
+    let qq = q(queue);
+    k.set(
+        "language",
+        lua.create_function(move |lua, (name, t): (String, Option<Table>)| {
+            let t = match t {
+                Some(t) => t,
+                None => lua.create_table()?,
+            };
+            let list = |key: &str| -> mlua::Result<Vec<String>> {
+                Ok(t.get::<Option<Vec<String>>>(key)?.unwrap_or_default())
+            };
+            qq.borrow_mut().push(Msg::Language {
+                aliases: list("aliases")?,
+                extensions: list("extensions")?,
+                filenames: list("filenames")?,
+                shebangs: list("shebangs")?,
+                path: t.get("path")?,
+                symbol: t.get("symbol")?,
+                highlights: t.get("highlights")?,
+                injections: t.get("injections")?,
+                name,
+            });
+            Ok(())
+        })?,
+    )?;
 
     // ---- buffers: reads from the snapshot, writes as messages
     let buf = lua.create_table()?;

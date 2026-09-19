@@ -13,7 +13,7 @@ pub static LANGUAGE: Language = Language {
 };
 
 #[cfg(feature = "nu")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(
         tree_sitter_nu::LANGUAGE.into(),
         tree_sitter_nu::HIGHLIGHTS_QUERY,

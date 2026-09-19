@@ -13,7 +13,7 @@ pub static LANGUAGE: Language = Language {
 };
 
 #[cfg(feature = "regex")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(
         tree_sitter_regex::LANGUAGE.into(),
         tree_sitter_regex::HIGHLIGHTS_QUERY,

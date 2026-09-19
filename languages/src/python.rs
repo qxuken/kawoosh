@@ -12,7 +12,7 @@ pub static LANGUAGE: Language = Language {
 };
 
 #[cfg(feature = "python")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(
         tree_sitter_python::LANGUAGE.into(),
         tree_sitter_python::HIGHLIGHTS_QUERY,

@@ -12,7 +12,7 @@ pub static LANGUAGE: Language = Language {
 };
 
 #[cfg(feature = "yaml")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(
         tree_sitter_yaml::LANGUAGE.into(),
         tree_sitter_yaml::HIGHLIGHTS_QUERY,

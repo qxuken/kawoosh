@@ -16,7 +16,7 @@ pub static LANGUAGE: Language = Language {
 };
 
 #[cfg(feature = "markdown")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(
         tree_sitter_md::LANGUAGE.into(),
         tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,

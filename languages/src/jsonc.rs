@@ -26,6 +26,6 @@ pub static LANGUAGE: Language = Language {
 };
 
 #[cfg(feature = "json")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::json::grammar()
 }

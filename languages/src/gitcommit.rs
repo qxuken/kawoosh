@@ -22,7 +22,7 @@ pub static LANGUAGE: Language = Language {
 };
 
 #[cfg(feature = "gitcommit")]
-fn grammar() -> Option<crate::Grammar> {
+fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(
         tree_sitter_gitcommit::LANGUAGE.into(),
         tree_sitter_gitcommit::HIGHLIGHTS_QUERY,

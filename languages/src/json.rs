@@ -14,7 +14,7 @@ pub static LANGUAGE: Language = Language {
 };
 
 #[cfg(feature = "json")]
-pub(crate) fn grammar() -> Option<crate::Grammar> {
+pub(crate) fn grammar() -> Result<crate::Grammar, String> {
     crate::Grammar::new(
         tree_sitter_json::LANGUAGE.into(),
         &[

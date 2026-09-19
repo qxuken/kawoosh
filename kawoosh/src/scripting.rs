@@ -292,6 +292,20 @@ impl Kawoosh {
                     roots,
                 });
             }
+            Msg::Language {
+                name,
+                aliases,
+                extensions,
+                filenames,
+                shebangs,
+                path,
+                symbol,
+                highlights,
+                injections,
+            } => self.language_from_lua(
+                name, aliases, extensions, filenames, shebangs, path, symbol, highlights,
+                injections,
+            ),
             Msg::Colors(list) => {
                 for (name, hex) in list {
                     let tok = Token::ALL.iter().copied().find(|t| t.name() == name);

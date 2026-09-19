@@ -44,6 +44,10 @@ pub struct Kawoosh {
     pub terms: Terminals,
     pub io: Io,
     pub ts: Ts,
+    /// The languages: the builtins and what `kawoosh.language` added
+    /// (kui.md D13). What a file is detected as, and which buffers
+    /// `ts` gets; the thread holds the same table.
+    pub languages: kawoosh_languages::Registry,
     pub lsp: LspState,
     pub scripting: Scripting,
     /// The config files, their watch, and the last reload.
@@ -161,6 +165,7 @@ impl Kawoosh {
             terms: Terminals::default(),
             io: Io::new(wake.clone()),
             ts: Ts::spawn(wake.clone()),
+            languages: kawoosh_languages::Registry::builtin(),
             lsp: LspState::new(wake.clone()),
             scripting: Scripting {
                 servers: kawoosh_systems::lsp::ServerDef::builtin(),
@@ -314,7 +319,7 @@ impl Kawoosh {
             let Some(b) = self.ed.buffers.get(id) else {
                 continue;
             };
-            if !Ts::supports(&b.language) {
+            if !self.languages.has_grammar(&b.language) {
                 continue;
             }
             if self.ts_sent.get(&id) == Some(&b.version()) {
@@ -414,7 +419,7 @@ impl Kawoosh {
                     {
                         b.attach(text);
                         if &*b.language == kawoosh_languages::FALLBACK {
-                            b.language = kawoosh_languages::detect(&path, &first_line(b)).into();
+                            b.language = self.languages.detect(&path, &first_line(b)).into();
                         }
                         self.open_progress(&path, None, true);
                         let b = &self.ed.buffers[id];
@@ -696,7 +701,7 @@ impl Kawoosh {
         }
         let buf = match Buffer::from_file(path) {
             Ok(mut b) => {
-                b.language = kawoosh_languages::detect(path, &first_line(&b)).into();
+                b.language = self.languages.detect(path, &first_line(&b)).into();
                 b
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -707,7 +712,7 @@ impl Kawoosh {
                     "",
                 );
                 b.path = Some(path.to_path_buf());
-                b.language = kawoosh_languages::detect(path, "").into();
+                b.language = self.languages.detect(path, "").into();
                 self.ed.message = format!("\"{}\" [new file]", path.display());
                 b
             }
@@ -728,7 +733,7 @@ impl Kawoosh {
     pub fn open_on_io_thread(&mut self, path: &Path, total: usize) -> BufferId {
         let mut buf = Buffer::opening(path, total);
         // By the name alone; the `#!` line is read when the text lands.
-        buf.language = kawoosh_languages::detect(path, "").into();
+        buf.language = self.languages.detect(path, "").into();
         self.io.open_file(path.to_path_buf());
         self.ed.add_buffer(buf)
     }
@@ -1470,7 +1475,7 @@ impl kui::App for Kawoosh {
 
 /// A buffer's first line — the `#!` a language is detected by — read
 /// off its first bytes, not the whole.
-fn first_line(b: &Buffer) -> String {
+pub(crate) fn first_line(b: &Buffer) -> String {
     b.slice(0..b.len().min(256))
         .lines()
         .next()
