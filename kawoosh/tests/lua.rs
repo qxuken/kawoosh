@@ -1369,6 +1369,83 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A file replaced by one copied in — its line cut, the other's pasted
+/// under the same name — is put aside until the copy has arrived, and
+/// then removed; when nothing arrives (the source gone behind the
+/// listing's back), it stays, and the plan says so. Never a delete
+/// after a failed copy.
+#[test]
+fn a_file_replaced_by_a_copy_is_kept_until_the_copy_arrives() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-replace-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::fs::create_dir_all(dir.join("b")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("a/f.txt"), "from a").unwrap();
+    std::fs::write(dir.join("b/f.txt"), "from b").unwrap();
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    let read = |p: &str| std::fs::read_to_string(dir.join(p)).unwrap();
+    let replace = |d: &mut Drive, app: &mut Kawoosh| {
+        ex(d, app, &format!("dir {}", dir.join("a").display()));
+        ex(d, app, "vsplit");
+        ex(d, app, &format!("dir {}", dir.join("b").display()));
+        d.ctrl(app, "w");
+        d.keys(app, "h");
+        d.keys(app, "jyy");
+        d.ctrl(app, "w");
+        d.keys(app, "l");
+        d.keys(app, "jpkdd");
+        ex(d, app, "w");
+        d.frame(app);
+        assert!(!d.confirm_texts().is_empty(), "{}", app.ed.message);
+        assert_eq!(
+            &d.confirm_texts()[2..],
+            [
+                "  delete f.txt",
+                "between them:",
+                "  copy f.txt: a/ → b/",
+                "Apply",
+                "Cancel"
+            ]
+        );
+    };
+    replace(&mut d, &mut app);
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        (read("a/f.txt"), read("b/f.txt")),
+        ("from a".into(), "from a".into())
+    );
+    let names = |p: &str| -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir.join(p))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(names("b"), ["f.txt"], "nothing put aside is left");
+    // The same, the source gone before Apply: b's file stays.
+    std::fs::write(dir.join("b/f.txt"), "from b").unwrap();
+    ex(&mut d, &mut app, "only");
+    replace(&mut d, &mut app);
+    std::fs::remove_file(dir.join("a/f.txt")).unwrap();
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(read("b/f.txt"), "from b");
+    assert_eq!(names("b"), ["f.txt"]);
+    assert!(
+        app.notes
+            .log
+            .iter()
+            .any(|e| e.text.contains("nothing came in its place")),
+        "{:?}",
+        app.notes.log.iter().map(|e| &e.text).collect::<Vec<_>>()
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Renames and moves never write one file over another, whatever the
 /// order they would run in: two entries' names swapped in one listing,
 /// and a file moved in from one listing while the file of that name

@@ -433,11 +433,16 @@ local function relist(d, h)
   kawoosh.buf.annotate(meta, name)
 end
 
--- Applies every group's ops and the ops between listings — copies
--- first (their sources may be renamed or moved by the rest), then the
--- renames and moves as two steps, then creates, then deletes — and
--- lists every directory touched again: the written listing in its
--- pane, the caret on `from`, the others where they are.
+-- Applies every group's ops and the ops between listings, and lists
+-- every directory touched again: the written listing in its pane,
+-- the caret on `from`, the others where they are. The order is what
+-- keeps a file from being lost: a delete whose name another op writes
+-- to (a file replaced by one copied or moved in) vacates first, its
+-- file put aside under a temporary name; then the copies (their
+-- sources may be renamed or moved by the rest), the renames and moves
+-- as two steps, the creates; then what was put aside goes — or, when
+-- nothing arrived in its place, comes back; and the other deletes go
+-- last.
 local function apply(groups, between, here, from)
   -- An error's first line, without the runtime's prefix and traceback.
   local function reason(err)
@@ -452,28 +457,50 @@ local function apply(groups, between, here, from)
     local ok, err = pcall(f, ...)
     outcome(op, ok, err)
   end
-  local steps = {}
+  -- What the plan writes to, and the deletes that make way for it.
+  local targets, steps, aside = {}, {}, {}
   for _, g in ipairs(groups) do
     touched[g.dir] = true
     for _, op in ipairs(g.ops) do
-      if op.kind == "copy" then try(op, fs.copy, at(g.dir, op.name), at(g.dir, op.to)) end
+      if op.kind == "rename" then
+        steps[#steps + 1] = { op = op, from = at(g.dir, op.name), to = at(g.dir, op.to) }
+        targets[at(g.dir, op.to)] = true
+      elseif op.kind == "copy" or op.kind == "create" then
+        targets[at(g.dir, op.to or op.name)] = true
+      end
     end
   end
   for _, op in ipairs(between) do
     touched[op.dir] = true
-    if op.kind == "copy" then
-      try(op, fs.copy, at(op.from, op.name), at(op.dir, op.to))
-    else
+    targets[at(op.dir, op.to)] = true
+    if op.kind == "move" then
       touched[op.from] = true
       steps[#steps + 1] = { op = op, from = at(op.from, op.name), to = at(op.dir, op.to) }
     end
   end
   for _, g in ipairs(groups) do
     for _, op in ipairs(g.ops) do
-      if op.kind == "rename" then
-        steps[#steps + 1] = { op = op, from = at(g.dir, op.name), to = at(g.dir, op.to) }
+      if op.kind == "delete" and targets[at(g.dir, op.name)] then
+        local path = at(g.dir, op.name)
+        local tmp = path .. ".~gone" .. (#aside + 1) .. "~"
+        local ok, err = pcall(fs.rename, path, tmp)
+        if ok then
+          aside[#aside + 1] = { op = op, path = path, tmp = tmp }
+          op.aside = true
+        else
+          outcome(op, false, err)
+          op.aside = true
+        end
       end
     end
+  end
+  for _, g in ipairs(groups) do
+    for _, op in ipairs(g.ops) do
+      if op.kind == "copy" then try(op, fs.copy, at(g.dir, op.name), at(g.dir, op.to)) end
+    end
+  end
+  for _, op in ipairs(between) do
+    if op.kind == "copy" then try(op, fs.copy, at(op.from, op.name), at(op.dir, op.to)) end
   end
   rename_all(steps, outcome)
   for _, g in ipairs(groups) do
@@ -481,9 +508,17 @@ local function apply(groups, between, here, from)
       if op.kind == "create" then try(op, fs.create, at(g.dir, op.name), op.name:sub(-1) == "/") end
     end
   end
+  for _, a in ipairs(aside) do
+    if fs.exists(a.path) then
+      try(a.op, fs.remove, a.tmp)
+    else
+      local back, err = pcall(fs.rename, a.tmp, a.path)
+      outcome(a.op, false, back and "kept, nothing came in its place" or err)
+    end
+  end
   for _, g in ipairs(groups) do
     for _, op in ipairs(g.ops) do
-      if op.kind == "delete" then try(op, fs.remove, at(g.dir, op.name)) end
+      if op.kind == "delete" and not op.aside then try(op, fs.remove, at(g.dir, op.name)) end
     end
   end
   for _, h in ipairs(kawoosh.buf.list()) do
