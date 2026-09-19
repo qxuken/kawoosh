@@ -87,6 +87,8 @@ pub struct Kawoosh {
     pub inspector: Inspector,
     /// Selections walking the syntax tree (`nodes.rs`).
     pub(crate) nodes: crate::nodes::NodeSelect,
+    /// `:keys` asked for the root which-key: shown until the next key.
+    pub(crate) keys_help: bool,
     /// A devtools tab to show on the next frame — `:syntax_tree` asks
     /// for the syntax tab. Once, not every frame: kui's
     /// `set_devtools_tab` is edge-triggered, so a standing request would
@@ -190,6 +192,7 @@ impl Kawoosh {
             devtools_synced: None,
             inspector: Inspector::new(wake.clone()),
             nodes: Default::default(),
+            keys_help: false,
             show_tab: None,
             tab_shown: None,
             settings_default_open: false,
@@ -811,6 +814,8 @@ impl Kawoosh {
             sup: flag("super"),
             text: p.get("text").and_then(Value::as_str).map(str::to_string),
         };
+        // The root which-key (`:keys`) stays until a key is pressed.
+        self.keys_help = false;
         // F12 is the shell's everywhere: kui's devtools.
         if stroke.code == "f12" {
             self.devtools = !self.devtools;
@@ -1368,8 +1373,7 @@ impl kui::App for Kawoosh {
             self.status(ui);
             self.command_line(ui);
             self.toasts(ui);
-            self.corner(ui);
-            self.whichkey(ui);
+            self.right_stack(ui);
         });
         self.line_cells.sweep();
         self.perf.end_frame(ms(frame_started));

@@ -23,7 +23,6 @@ use kui::{Align, FloatConfig, NodeSpec, Sizing, Span, TextStyle, Ui, Value};
 
 use crate::app::{Kawoosh, TAB_H};
 use crate::commands::{ShellCommand, cmd};
-use crate::rows::STRIP_H;
 
 /// How long a toast without actions stays.
 pub const TOAST_TTL: Duration = Duration::from_secs(8);
@@ -943,11 +942,16 @@ impl Kawoosh {
         );
     }
 
-    /// The corner: a float over the body's bottom-right, above the
-    /// strips — the corner lines and progress under their sources, dim,
-    /// fidget-style.
+    /// Whether the corner has anything to show.
+    pub(crate) fn corner_shown(&self) -> bool {
+        self.notes.shown.iter().any(|s| !s.toast) || !self.notes.progress.is_empty()
+    }
+
+    /// The corner: the corner lines and progress under their sources,
+    /// dim, fidget-style — drawn into the bottom-right stack
+    /// (`Kawoosh::right_stack`), above the which-key.
     pub(crate) fn corner(&self, ui: &mut Ui<'_>) {
-        if !self.notes.shown.iter().any(|s| !s.toast) && self.notes.progress.is_empty() {
+        if !self.corner_shown() {
             return;
         }
         let pal = self.pal;
@@ -955,12 +959,6 @@ impl Kawoosh {
         ui.with_keyed(
             "corner",
             NodeSpec::column()
-                .float(
-                    FloatConfig::viewport()
-                        .at(Align::End, Align::End)
-                        .self_at(Align::End, Align::End)
-                        .offset(-12.0, -(2.0 * STRIP_H + 8.0)),
-                )
                 .max_width(max_w)
                 .gap(6.0)
                 .cross_align(Align::End),

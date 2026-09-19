@@ -172,6 +172,7 @@ objects, or any other character on both sides.
 | `<leader>cc` | compile |
 | `<leader>cd` | the listed directory as the working one (oil's) |
 | `<leader>u` | the undo history |
+| `<leader>?` | the which-key for every first key (`:keys`) |
 | `<leader>Q` | quit all |
 | `-` | oil: the file's directory |
 
@@ -183,12 +184,23 @@ spelling kept for it below rather than given to something else.
 ## The which-key
 
 While a sequence is open — `<leader>`, `g`, `gs`, `]`, `<C-w>` from any
-pane — a small float at the bottom-left lists what can follow: each key
-with its command, a group with how many keys it holds (`b +4`). It is
-there the moment the prefix is pressed and gone the moment the sequence
-resolves, with no delay to tune; `whichkey = false` in `settings.lua`
-(`:set nowhichkey`) turns it off. `Keymap::next_keys` is the listing,
-`whichkey.rs` the float.
+pane — a small card at the bottom-right lists what can follow: each key
+with its command, each group with its name (`b +buffers`), and the
+open keys with their group's name as the title (`SPC b · buffers`). It
+is there the moment the prefix is pressed and gone the moment the
+sequence resolves, with no delay to tune. `:keys` — `<leader>?`, as the
+neovim config had it — shows the root, every first key of the mode in
+a few columns, until the next press. `whichkey = false` in
+`settings.lua` (`:set nowhichkey`) turns it off.
+
+The names come from `Keymap::describe`: the engine names its own
+prefixes (`<leader>b` buffers, `g` goto, `gs` surround, `<C-w>` panes,
+`]` next…), and `:map group KEYS NAME` — `kawoosh.cmd("map group
+<leader>x extras")` from `init.lua` — names a new one; a group without
+a name shows how many keys it holds. The card sits in the bottom-right
+stack with the notification corner, the corner's lines above it, so the
+two never cover each other. `Keymap::next_keys` is the listing,
+`whichkey.rs` the card.
 
 ## Reserved: spellings kept for commands that do not exist yet
 

@@ -1767,6 +1767,17 @@ pub fn install(ed: &mut Editor) {
         },
     );
 
+    // `:map group KEYS NAME...`: what the keys open, for the which-key.
+    ed.register_spec(
+        Spec::new("map group")
+            .args(Args::rest(&[ArgKind::Text]))
+            .doc("name what KEYS open, for the which-key (`:map group <leader>x extras`)"),
+        |ed, ctx| match ctx.args.as_slice() {
+            [keys, name @ ..] if !name.is_empty() => ed.keymap.describe(keys, &name.join(" ")),
+            _ => ed.message = "map group what? (:map group KEYS NAME)".into(),
+        },
+    );
+
     for (name, doc) in DOCS {
         match ed.commands.spec_mut(name) {
             Some(spec) => spec.doc = doc.to_string(),
@@ -2470,9 +2481,27 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>cc", "compile"),
         ("<leader>u", "undo history"),
         ("<leader>Q", "quit all"),
+        ("<leader>?", "keys"),
     ];
     for (k, c) in n {
         km.bind(Normal, k, c);
+    }
+    // What each prefix is for, as the which-key names it.
+    for (keys, name) in [
+        ("<leader>", "leader"),
+        ("<leader>b", "buffers"),
+        ("<leader>t", "tabs"),
+        ("<leader>s", "search, lists"),
+        ("<leader>w", "workspace"),
+        ("<leader>c", "code"),
+        ("g", "goto"),
+        ("gs", "surround"),
+        ("<C-w>", "panes, tabs, dock"),
+        ("]", "next"),
+        ("[", "previous"),
+        ("Z", "write, quit"),
+    ] {
+        km.describe(keys, name);
     }
     let v = [
         ("o", "cursor swap"),

@@ -308,6 +308,9 @@ pub struct Keymap {
     /// Bumped on every bind and unbind, for a reader that lists the
     /// bindings only when they changed.
     version: u64,
+    /// What a prefix is for, by its notation (`<leader>b`: `buffers`)
+    /// — the which-key's name for a group.
+    groups: HashMap<String, String>,
 }
 
 impl Keymap {
@@ -316,7 +319,35 @@ impl Keymap {
             modes: HashMap::new(),
             leader: "<Space>".into(),
             version: 0,
+            groups: HashMap::new(),
         }
+    }
+
+    /// Names what the keys of `prefix` (map notation) open, for the
+    /// which-key: `describe("<leader>b", "buffers")`.
+    pub fn describe(&mut self, prefix: &str, name: &str) {
+        self.groups
+            .insert(parse_notation(prefix).concat(), name.to_string());
+        self.version += 1;
+    }
+
+    /// The name [`Keymap::describe`] gave `prefix`, the keys as pressed:
+    /// one that is the leader's is found under `<leader>` too.
+    pub fn group_name(&self, prefix: &[String]) -> Option<&str> {
+        if let Some(n) = self.groups.get(&prefix.concat()) {
+            return Some(n);
+        }
+        let as_leader: String = prefix
+            .iter()
+            .map(|k| {
+                if *k == self.leader {
+                    LEADER
+                } else {
+                    k.as_str()
+                }
+            })
+            .collect();
+        self.groups.get(&as_leader).map(String::as_str)
     }
 
     /// The key `<leader>` stands for.
@@ -454,10 +485,12 @@ impl Keymap {
     }
 
     /// What can follow `prefix` in `mode`, sorted: each next key with
-    /// its first binding, or none for a key that is a prefix of its own
-    /// — a which-key's rows. A pressed key that is the leader's follows
-    /// the `<leader>` branch as well as its own, as lookup does.
-    pub fn next_keys(&self, mode: Mode, prefix: &[String]) -> Vec<(String, Option<Binding>)> {
+    /// its bindings, newest first — none for a key that is a prefix of
+    /// its own — a which-key's rows, which picks the binding that can
+    /// run ([`crate::Editor::pick_binding`]). A pressed key that is the
+    /// leader's follows the `<leader>` branch as well as its own, as
+    /// lookup does.
+    pub fn next_keys(&self, mode: Mode, prefix: &[String]) -> Vec<(String, Vec<Binding>)> {
         let Some(root) = self.modes.get(&mode) else {
             return Vec::new();
         };
@@ -476,13 +509,13 @@ impl Keymap {
             }
             nodes = next;
         }
-        let mut out: Vec<(String, Option<Binding>)> = Vec::new();
+        let mut out: Vec<(String, Vec<Binding>)> = Vec::new();
         for n in nodes {
             for (k, c) in &n.children {
                 if out.iter().any(|(o, _)| o == k) {
                     continue;
                 }
-                out.push((k.clone(), c.bindings.first().cloned()));
+                out.push((k.clone(), c.bindings.clone()));
             }
         }
         out.sort_by(|a, b| a.0.cmp(&b.0));

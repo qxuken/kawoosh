@@ -50,6 +50,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::commands_pane::commands());
     v.extend(crate::cmdline::commands());
     v.extend(crate::nodes::commands());
+    v.extend(crate::whichkey::commands());
     v
 }
 
