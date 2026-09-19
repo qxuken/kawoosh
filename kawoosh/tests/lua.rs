@@ -773,13 +773,14 @@ fn a_listing_is_annotated_and_refreshed() {
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["new.txt", "../", "sub/", "a.txt", "b.txt"]);
     let e = extras(&d);
-    assert_eq!(e[0], "", "the new line has none");
     assert!(e[3].contains(" 5 B"), "{e:?}");
-    // The entry's line deleted: its annotation is gone, and stays gone
-    // when the deletion is undone — the journal cannot tell an undo
-    // from a line typed where it was — until the directory is listed
-    // again; the entries around it keep theirs. Retyped whole, a line
-    // keeps its annotation.
+    // The line typed above says what it is: new. The entry's line
+    // deleted: its annotation is gone; the deletion undone, it is back
+    // — the journal cannot tell an undo from a line typed where it
+    // was, but a line of the entry's name that no entry owns is the
+    // entry as it was, as the plan has it. Retyped whole, a line keeps
+    // its annotation and says what it was.
+    assert!(e[0].contains("← new"), "{e:?}");
     d.keys(&mut app, "jjjdd");
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["new.txt", "../", "sub/", "b.txt"]);
@@ -789,7 +790,7 @@ fn a_listing_is_annotated_and_refreshed() {
     d.keys(&mut app, "u");
     d.frame(&mut app);
     let e = extras(&d);
-    assert!(!e.iter().any(|x| x.contains(" 5 B")), "{e:?}");
+    assert!(e[3].contains(" 5 B"), "back: {e:?}");
     assert!(e[4].contains(" 2.0 KB"), "{e:?}");
     d.keys(&mut app, "ggjjjjccrenamed.txt");
     d.key(&mut app, "escape", KeyMods::default());
@@ -798,7 +799,11 @@ fn a_listing_is_annotated_and_refreshed() {
         d.line_rows(),
         ["new.txt", "../", "sub/", "a.txt", "renamed.txt"]
     );
-    assert!(extras(&d)[4].contains(" 2.0 KB"), "{:?}", extras(&d));
+    let e = extras(&d);
+    assert!(
+        e[4].contains(" 2.0 KB") && e[4].ends_with("← was b.txt"),
+        "{e:?}"
+    );
     d.keys(&mut app, "u");
     // Refresh: refused with edits, `!` drops them; a file made behind
     // the listing's back appears, the caret still on its entry.
@@ -1191,6 +1196,16 @@ fn a_yanked_line_pasted_into_another_listing_is_a_copy() {
         "{:?}",
         d.line_rows()
     );
+    // Before the write, each pasted line says where it comes from.
+    d.frame(&mut app);
+    let e: Vec<String> = d
+        .row_extras()
+        .iter()
+        .map(|s| s.replace('\u{a0}', " "))
+        .collect();
+    assert!(e[1].ends_with("← copy from ../b/"), "{e:?}");
+    assert!(e[2].ends_with("← copy from ../b/"), "{e:?}");
+    assert!(e[6].ends_with("← move from ../a/"), "{e:?}");
     ex(&mut d, &mut app, "w");
     d.frame(&mut app);
     assert_eq!(
@@ -1233,6 +1248,135 @@ fn a_yanked_line_pasted_into_another_listing_is_a_copy() {
         assert!(!buf.modified, "{} written", buf.name);
     }
     assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Renames and moves never write one file over another, whatever the
+/// order they would run in: two entries' names swapped in one listing,
+/// and a file moved in from one listing while the file of that name
+/// moves on to a third, both come out whole — each source goes to a
+/// temporary name first. A name still taken by a file no plan moves is
+/// refused, the file put back.
+#[test]
+fn renames_and_moves_swap_without_writing_over_anything() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-swap-{}", std::process::id()));
+    for d in ["a", "b", "c"] {
+        std::fs::create_dir_all(dir.join(d)).unwrap();
+    }
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("a/one.txt"), "one").unwrap();
+    std::fs::write(dir.join("a/two.txt"), "two").unwrap();
+    std::fs::write(dir.join("a/x.txt"), "from a").unwrap();
+    std::fs::write(dir.join("b/x.txt"), "from b").unwrap();
+    std::fs::write(dir.join("c/x.txt"), "from c").unwrap();
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    let read = |p: &str| std::fs::read_to_string(dir.join(p)).unwrap();
+    // one ↔ two, by editing the names.
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("a").display()),
+    );
+    d.keys(&mut app, "jcctwo.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "jccone.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..3],
+        ["rename one.txt → two.txt", "rename two.txt → one.txt"]
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        (read("a/one.txt"), read("a/two.txt")),
+        ("two".into(), "one".into())
+    );
+    assert!(
+        app.notes
+            .shown
+            .iter()
+            .any(|s| s.text == "2 change(s) applied")
+    );
+    // a's x pasted into b, which has an x of its own: a name twice in
+    // a listing, which the line says and the write refuses — never a
+    // bare delete of a's x.
+    ex(&mut d, &mut app, "vsplit");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("b").display()),
+    );
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    d.keys(&mut app, "Gdd");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "l");
+    d.keys(&mut app, "Gp");
+    d.frame(&mut app);
+    assert_eq!(
+        d.line_rows(),
+        ["../", "one.txt", "two.txt", "../", "x.txt", "x.txt"]
+    );
+    let e: Vec<String> = d
+        .row_extras()
+        .iter()
+        .map(|s| s.replace('\u{a0}', " "))
+        .collect();
+    assert!(e[4].contains(" B") && e[5].ends_with("← twice"), "{e:?}");
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert!(d.confirm_texts().is_empty(), "refused");
+    assert!(
+        app.notes
+            .shown
+            .iter()
+            .any(|s| s.text.starts_with("x.txt twice in ")),
+        "{:?}",
+        app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        (read("a/x.txt"), read("b/x.txt")),
+        ("from a".into(), "from b".into())
+    );
+    d.keys(&mut app, "u");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    d.keys(&mut app, "u");
+    // A name taken by a file the listing does not know (made behind
+    // its back): refused, the file back where it was, nothing of the
+    // temporary name left behind.
+    ex(&mut d, &mut app, "only");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("c").display()),
+    );
+    assert_eq!(d.line_rows(), ["../", "x.txt"]);
+    std::fs::write(dir.join("c/keep.txt"), "kept").unwrap();
+    d.keys(&mut app, "jcckeep.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    let names: Vec<String> = std::fs::read_dir(dir.join("c"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert_eq!(
+        (read("c/keep.txt"), read("c/x.txt")),
+        ("kept".into(), "from c".into())
+    );
+    assert!(
+        app.notes.shown.iter().any(|s| s.text.contains("exists")),
+        "{:?}",
+        app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -1326,8 +1470,13 @@ fn listings_are_many_and_each_writes_its_own_directory() {
         d.line_rows()
     );
     d.frame(&mut app);
-    assert_eq!(d.row_extras()[1], "", "b2.txt is no entry in a yet");
-    assert_eq!(d.row_extras()[3], "", "a2.txt is no entry in b yet");
+    let e: Vec<String> = d
+        .row_extras()
+        .iter()
+        .map(|s| s.replace('\u{a0}', " "))
+        .collect();
+    assert!(e[1].ends_with("← move from ../b/"), "{e:?}");
+    assert!(e[3].ends_with("← move from ../a/"), "{e:?}");
     ex(&mut d, &mut app, "w");
     d.frame(&mut app);
     let t = d.confirm_texts();

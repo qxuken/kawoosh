@@ -11,6 +11,7 @@ kawoosh._views = {}
 kawoosh._handlers = {}
 kawoosh._commands = {}
 kawoosh._writers = {}
+kawoosh._changers = {}
 kawoosh._nonce = 0
 
 -- kawoosh.command(name, fn[, opts]): a named command, callable from a
@@ -140,11 +141,13 @@ function kawoosh.view(name, fn, on_event)
   kawoosh._handlers[name] = on_event
 end
 
--- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, read_only=bool,
--- language=, reuse=handle, line=n }: a buffer that is not a file.
--- `on_write(lines)` handles :w; it returns `false` when the write is
--- not done yet (a `kawoosh.confirm` is up), and the buffer stays
--- modified until it is. A buffer named `name` already open is
+-- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, on_change=fn,
+-- read_only=bool, language=, reuse=handle, line=n }: a buffer that is
+-- not a file. `on_write(lines)` handles :w; it returns `false` when
+-- the write is not done yet (a `kawoosh.confirm` is up), and the
+-- buffer stays modified until it is. `on_change(name)` is told, once
+-- a frame, that the text changed — an edit, an undo — so what a
+-- plugin draws from it (annotations) can follow. A buffer named `name` already open is
 -- refilled; else `reuse`, a scratch buffer's handle, is renamed and
 -- refilled instead of a new buffer being made beside it — unless it
 -- is shown in another pane too, which keeps it; `line` is where the
@@ -160,6 +163,9 @@ end
 -- `buffer` is a handle, a name (a scratch just asked for by
 -- `open_scratch`, which is not in the snapshot yet), or the current
 -- one. Spaces in it are `\u{A0}`, which every font keeps.
+-- `kawoosh.buf.tracked_lines([buffer])` is where each line a hooked
+-- buffer opened with is now (a line number from 1, or false), beside
+-- `tracked()`'s what it became.
 --
 -- kawoosh.view_open(name[, { focus = false }]) puts a Lua view in a
 -- split, or focuses its pane — `focus = false` leaves the keyboard
@@ -167,8 +173,9 @@ end
 -- kawoosh.view_toggle(name[, opts]) does one or the other.
 function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
+  if t.on_change then kawoosh._changers[t.name] = t.on_change end
   kawoosh._open_scratch(t.name, t.text or "", t.on_write ~= nil, t.read_only or false, t.language,
-    t.reuse, t.line, t.show ~= false)
+    t.reuse, t.line, t.show ~= false, t.on_change ~= nil)
 end
 
 -- ---------------------------------------------------------------- fields
@@ -351,6 +358,14 @@ function kawoosh._run(name, ctx)
   if not fn then return end
   local ok, err = pcall(fn, ctx)
   if not ok then kawoosh.echo("command `" .. name .. "`: " .. tostring(err)) end
+end
+
+-- Called from Rust when a watched scratch buffer's text changed.
+function kawoosh._change(name)
+  local fn = kawoosh._changers[name]
+  if not fn then return end
+  local ok, err = pcall(fn, name)
+  if not ok then kawoosh.echo("change `" .. name .. "`: " .. tostring(err)) end
 end
 
 -- Called from Rust when a scratch buffer with an on_write is written:

@@ -147,13 +147,15 @@ pub(crate) fn apply_operator(
     match op {
         "yank" => {
             set_register(ed, &texts, linewise);
-            let starts: Vec<usize> = ranges.iter().map(|(r, _)| r.start).collect();
+            // The caret goes to the start of what was yanked; on a
+            // linewise yank it stays (`yy` on the last line: the range
+            // starts with the newline before it, which is not its line).
             let v = &mut ed.views[view];
             let mut i = 0;
-            v.sels.map(|_| {
-                let s = Selection::point(starts[i.min(starts.len() - 1)]);
+            v.sels.map(|s| {
+                let (r, lw) = &ranges[i.min(ranges.len() - 1)];
                 i += 1;
-                s
+                Selection::point(if *lw { s.head } else { r.start })
             });
             ed.message = format!(
                 "yanked {} line(s)",

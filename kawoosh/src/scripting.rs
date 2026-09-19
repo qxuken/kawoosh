@@ -37,6 +37,9 @@ pub struct Scripting {
     pub colors: HashMap<Token, Color>,
     /// `<C-w>` pressed in a Lua pane.
     pub prefix: bool,
+    /// Scratch buffers with an `on_change`, each at the version its
+    /// hook last saw (`Kawoosh::fire_changes`).
+    pub watched: HashMap<kawoosh_doc::BufferId, kawoosh_doc::Version>,
 }
 
 impl Kawoosh {
@@ -159,6 +162,7 @@ impl Kawoosh {
                 reuse,
                 line,
                 show,
+                watched,
             } => {
                 let existing = self
                     .ed
@@ -209,6 +213,13 @@ impl Kawoosh {
                 };
                 if hooked {
                     rt.track_lines(&self.ed, id);
+                }
+                // A watched buffer starts from this fill: the plugin that
+                // filled it annotated it itself.
+                if watched {
+                    self.scripting
+                        .watched
+                        .insert(id, self.ed.buffers[id].version());
                 }
                 // Filled where it is (`show = false`): every view on it
                 // starts over at the line asked for, and the focused
@@ -437,6 +448,35 @@ impl Kawoosh {
                 // Editor messages already applied; here only when there
                 // was no view at all.
             }
+        }
+    }
+
+    /// Tells every watched scratch buffer's `on_change` about a text
+    /// changed since the hook last saw it — once a frame, before the
+    /// frame's messages are drained, so what the hook asks for (an
+    /// annotation) lands on the text as it is.
+    pub(crate) fn fire_changes(&mut self) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        let changed: Vec<(kawoosh_doc::BufferId, String)> = self
+            .scripting
+            .watched
+            .iter()
+            .filter_map(|(id, seen)| {
+                let b = self.ed.buffers.get(*id)?;
+                (b.version() != *seen).then(|| (*id, b.name.clone()))
+            })
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        rt.publish(&self.ed, self.focused_view());
+        for (id, name) in changed {
+            self.scripting
+                .watched
+                .insert(id, self.ed.buffers[id].version());
+            rt.change_hook(&name);
         }
     }
 

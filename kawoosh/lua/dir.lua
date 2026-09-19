@@ -26,7 +26,10 @@
 --
 -- What each entry is — a file's size, the mtime — is drawn past its
 -- line (`kawoosh.buf.annotate`), never in the buffer's text, so the
--- listing stays a list of names to edit.
+-- listing stays a list of names to edit; as it is edited (`on_change`)
+-- the lines say what the write would make of them: a renamed entry
+-- what it was, a line no entry became `← new`, or `← copy from ../b/`
+-- and `← move from ../b/` where it came from.
 --
 -- Paths go through `kawoosh.fs` — `expand`, `parent`, `basename`,
 -- `join` — never through a pattern on `/`, so the plugin is the same
@@ -78,7 +81,7 @@ local function listing(d)
     local cols = string.format("%9s", size):gsub(" ", NBSP)
     meta[i + 1] = NBSP:rep(pad) .. cols .. NBSP:rep(2) .. when(e.modified)
   end
-  return lines, meta
+  return lines, meta, width
 end
 
 -- The directory the current buffer lists; nil elsewhere, and nil where
@@ -139,19 +142,20 @@ function dir.open(path, from, fresh)
     kawoosh.echo("not a directory: " .. path)
     return
   end
-  local ok, lines, meta = pcall(listing, path)
+  local ok, lines, meta, width = pcall(listing, path)
   if not ok then
     kawoosh.echo(tostring(lines))
     return
   end
   local name = PREFIX .. path
-  dir.state[name] = { dir = path, entries = lines }
+  dir.state[name] = { dir = path, entries = lines, meta = meta, width = width }
   local reuse = (listed() and not fresh) and kawoosh.buf.current() or nil
   kawoosh.buf.open_scratch {
     name = name,
     text = table.concat(lines, "\n"),
     language = "dir",
     on_write = dir.write,
+    on_change = dir.changed,
     reuse = reuse,
     line = line_of(lines, from),
   }
@@ -178,10 +182,17 @@ local function plan(entries, lines, h)
       end
     end
   end
+  -- A name twice is a listing that cannot be written: which line is
+  -- the entry, and what is the other, is not for the plan to guess.
+  local seen, twice = {}, nil
   for _, l in ipairs(lines) do
-    if l ~= "" and l ~= "../" and not taken[l] then
-      ops[#ops + 1] = { "create", l }
-      taken[l] = true
+    if l ~= "" and l ~= "../" then
+      if seen[l] then twice = twice or l end
+      seen[l] = true
+      if not taken[l] then
+        ops[#ops + 1] = { "create", l }
+        taken[l] = true
+      end
     end
   end
   -- An entry deleted and one of its name created is the entry as it
@@ -198,7 +209,7 @@ local function plan(entries, lines, h)
     local same = (op[1] == "delete" and created[op[2]]) or (op[1] == "create" and deleted[op[2]])
     if not same then kept[#kept + 1] = op end
   end
-  return kept
+  return kept, twice
 end
 
 -- Every listing with changes, each with its plan; then, across every
@@ -210,12 +221,14 @@ end
 local ORDER = { rename = 1, move = 2, copy = 3, create = 4, delete = 5 }
 
 local function pending()
-  local groups, sources = {}, {}
+  local groups, sources, problems = {}, {}, {}
   for _, h in ipairs(kawoosh.buf.list()) do
     local d = lists(h)
     local st = d and dir.state[PREFIX .. d]
     if st then
-      local ops = kawoosh.buf.modified(h) and plan(st.entries, kawoosh.buf.lines(h), h) or {}
+      local ops, twice = {}, nil
+      if kawoosh.buf.modified(h) then ops, twice = plan(st.entries, kawoosh.buf.lines(h), h) end
+      if twice then problems[#problems + 1] = twice .. " twice in " .. d end
       -- The entries the listing keeps as they are: a copy's sources.
       local gone = {}
       for _, op in ipairs(ops) do
@@ -228,10 +241,16 @@ local function pending()
     end
   end
   table.sort(groups, function(x, y) return x.dir < y.dir end)
+  -- Every listing's deletes of a name: a name moved on from one
+  -- listing while another's of that name moves in pairs each create
+  -- with a delete from elsewhere.
   local deletes = {}
   for gi, g in ipairs(groups) do
     for oi, op in ipairs(g.ops) do
-      if op[1] == "delete" and not deletes[op[2]] then deletes[op[2]] = { gi, oi } end
+      if op[1] == "delete" then
+        deletes[op[2]] = deletes[op[2]] or {}
+        table.insert(deletes[op[2]], { gi, oi })
+      end
     end
   end
   local between = {}
@@ -239,12 +258,15 @@ local function pending()
     for oi, op in ipairs(g.ops) do
       -- `false` is an op already paired.
       if op and op[1] == "create" then
-        local from = deletes[op[2]]
-        if from and from[1] ~= gi then
+        local from, at
+        for k, d in ipairs(deletes[op[2]] or {}) do
+          if d[1] ~= gi then from, at = d, k break end
+        end
+        if from then
           between[#between + 1] = { "move", op[2], groups[from[1]].dir, g.dir }
           groups[from[1]].ops[from[2]] = false
           g.ops[oi] = false
-          deletes[op[2]] = nil
+          table.remove(deletes[op[2]], at)
         elseif sources[op[2]] and sources[op[2]] ~= g.dir then
           between[#between + 1] = { "copy", op[2], sources[op[2]], g.dir }
           g.ops[oi] = false
@@ -265,7 +287,7 @@ local function pending()
     if ORDER[x[1]] ~= ORDER[y[1]] then return ORDER[x[1]] < ORDER[y[1]] end
     return x[2] < y[2]
   end)
-  return groups, between
+  return groups, between, problems
 end
 
 -- An op as a line. A move names its directories by `short`, when
@@ -293,14 +315,12 @@ local function shortener(dirs)
   end
 end
 
--- Runs one op; raises with the reason.
+local function at(base, entry) return fs.join(base, (entry:gsub("/$", ""))) end
+
+-- Runs a copy, a create or a delete; raises with the reason. A rename
+-- or a move is run by `rename_all`.
 local function run(op, d)
-  local function at(base, entry) return fs.join(base, (entry:gsub("/$", ""))) end
-  if op[1] == "rename" then
-    fs.rename(at(d, op[2]), at(d, op[3]))
-  elseif op[1] == "move" then
-    fs.rename(at(op[3], op[2]), at(op[4], op[2]))
-  elseif op[1] == "copy" then
+  if op[1] == "copy" then
     fs.copy(at(op[3], op[2]), at(op[4], op[2]))
   elseif op[1] == "create" then
     fs.create(at(d, op[2]), op[2]:sub(-1) == "/")
@@ -309,19 +329,129 @@ local function run(op, d)
   end
 end
 
+-- Runs every rename and move as two steps: each source to a temporary
+-- name beside its destination, then each to its name — so a swap (`a`
+-- to `b` and `b` to `a`; a file moved in where the file of that name
+-- moves on) never writes one over the other, whatever the order — and
+-- a destination that is still taken is refused, the file put back
+-- where it was. `each(op, ok, err)` takes the outcomes.
+local function rename_all(steps, each)
+  for i, r in ipairs(steps) do
+    r.tmp = r.to .. ".~" .. i .. "~"
+    local ok, err = pcall(fs.rename, r.from, r.tmp)
+    if not ok then
+      r.tmp = nil
+      each(r.op, false, err)
+    end
+  end
+  for _, r in ipairs(steps) do
+    if r.tmp then
+      if fs.exists(r.to) then
+        local back = not fs.exists(r.from) and pcall(fs.rename, r.tmp, r.from)
+        each(r.op, false, r.to .. ": exists" .. (back and "" or (", left at " .. r.tmp)))
+      else
+        local ok, err = pcall(fs.rename, r.tmp, r.to)
+        each(r.op, ok, err)
+      end
+    end
+  end
+end
+
 -- Lists `d` again in its buffer `h` where it is — another pane, the
 -- background — without touching the focused pane, the caret kept on
 -- its entry.
 local function relist(d, h)
-  local ok, lines, meta = pcall(listing, d)
+  local ok, lines, meta, width = pcall(listing, d)
   if not ok then return end
   local name = PREFIX .. d
-  dir.state[name] = { dir = d, entries = lines }
+  dir.state[name] = { dir = d, entries = lines, meta = meta, width = width }
   kawoosh.buf.open_scratch {
     name = name, text = table.concat(lines, "\n"), language = "dir",
-    on_write = dir.write, show = false, line = line_of(lines, under_caret(h)),
+    on_write = dir.write, on_change = dir.changed, show = false,
+    line = line_of(lines, under_caret(h)),
   }
   kawoosh.buf.annotate(meta, name)
+end
+
+-- `to` as a path from `from`: `../b/`, `sub/`, `../`, or the whole.
+local function relative(from, to)
+  if to == from then return "./" end
+  if to:sub(1, #from + 1) == from .. "/" then return to:sub(#from + 2) .. "/" end
+  if fs.parent(from) == to then return "../" end
+  if fs.parent(from) == fs.parent(to) then return "../" .. (fs.basename(to) or to) .. "/" end
+  return to .. "/"
+end
+
+local ARROW = "\u{2190} "
+
+-- Every listing's annotations again, as its text is now: each entry's
+-- meta on the line it is on (`tracked_lines`), a renamed one saying
+-- what it was; a deleted entry's back on a line of its name no entry
+-- owns (deleted and undone, which the journal cannot follow but the
+-- plan calls no change); and, in the meta's place, what the write
+-- would do with a line no entry became — `new`, or `copy from` /
+-- `move from` where — or `twice`, a name already on another line,
+-- which the write refuses. Told by `on_change`, so the listing says
+-- what it means as it is edited.
+function dir.refresh_annotations()
+  local groups, between = pending()
+  local status = {}
+  local function note(d, name, text)
+    status[d] = status[d] or {}
+    status[d][name] = text
+  end
+  for _, g in ipairs(groups) do
+    for _, op in ipairs(g.ops) do
+      if op[1] == "create" then note(g.dir, op[2], "new") end
+    end
+  end
+  for _, m in ipairs(between) do
+    note(m[4], m[2], m[1] .. " from " .. relative(m[4], m[3]))
+  end
+  for _, h in ipairs(kawoosh.buf.list()) do
+    local d = lists(h)
+    local st = d and dir.state[PREFIX .. d]
+    if st then
+      local ann, owned = {}, {}
+      local at = kawoosh.buf.tracked_lines(h)
+      local now = kawoosh.buf.tracked(h)
+      local lines = kawoosh.buf.lines(h)
+      for i, e in ipairs(st.entries) do
+        local ln = at[i]
+        if ln and e ~= "../" then
+          ann[ln] = st.meta[i] or ""
+          if now[i] ~= e then ann[ln] = ann[ln] .. NBSP:rep(2) .. ARROW .. "was " .. e end
+          owned[ln] = true
+        end
+      end
+      for i, e in ipairs(st.entries) do
+        if not at[i] and e ~= "../" then
+          for ln, l in ipairs(lines) do
+            if l == e and not owned[ln] then
+              ann[ln] = st.meta[i]
+              owned[ln] = true
+              break
+            end
+          end
+        end
+      end
+      local seen = {}
+      for ln, l in ipairs(lines) do
+        local what = status[d] and status[d][l]
+        if seen[l] and l ~= "" and l ~= "../" then what = "twice" end
+        seen[l] = true
+        if what and not owned[ln] then
+          ann[ln] = NBSP:rep(st.width - (utf8.len(l) or #l) + 2) .. ARROW .. what
+          owned[ln] = true
+        end
+      end
+      kawoosh.buf.annotate(ann, h)
+    end
+  end
+end
+
+function dir.changed()
+  dir.refresh_annotations()
 end
 
 -- Applies every group's ops and the moves and copies between them,
@@ -334,21 +464,33 @@ local function apply(groups, moves, here, from)
     return (tostring(err):gsub("^runtime error: ", ""):match("^[^\n]*"))
   end
   local done, total, failed, touched = 0, 0, {}, {}
-  local function each(op, d)
+  local function outcome(op, ok, err)
     total = total + 1
-    local ok, err = pcall(run, op, d)
     if ok then done = done + 1 else failed[#failed + 1] = describe(op) .. ": " .. reason(err) end
   end
+  local function each(op, d)
+    local ok, err = pcall(run, op, d)
+    outcome(op, ok, err)
+  end
+  local steps = {}
   for _, g in ipairs(groups) do
     touched[g.dir] = true
     for _, op in ipairs(g.ops) do
-      if op[1] == "rename" then each(op, g.dir) end
+      if op[1] == "rename" then
+        steps[#steps + 1] = { op = op, from = at(g.dir, op[2]), to = at(g.dir, op[3]) }
+      end
     end
   end
   for _, m in ipairs(moves) do
-    if m[1] == "move" then touched[m[3]] = true end
     touched[m[4]] = true
-    each(m)
+    if m[1] == "move" then
+      touched[m[3]] = true
+      steps[#steps + 1] = { op = m, from = at(m[3], m[2]), to = at(m[4], m[2]) }
+    end
+  end
+  rename_all(steps, outcome)
+  for _, m in ipairs(moves) do
+    if m[1] == "copy" then each(m) end
   end
   for _, g in ipairs(groups) do
     for _, op in ipairs(g.ops) do
@@ -383,7 +525,11 @@ function dir.write(lines)
     kawoosh.echo("this listing was not opened here: :dir refresh! first")
     return false
   end
-  local groups, moves = pending()
+  local groups, moves, problems = pending()
+  if #problems > 0 then
+    kawoosh.notify(problems[1], { level = "error", source = "dir" })
+    return false
+  end
   local n = #moves
   for _, g in ipairs(groups) do n = n + #g.ops end
   if n == 0 then

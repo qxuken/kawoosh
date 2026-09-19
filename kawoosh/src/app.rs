@@ -662,6 +662,7 @@ impl Kawoosh {
         self.last_pos.remove(&id);
         self.ts_sent.remove(&id);
         self.annotations.remove(&id);
+        self.scripting.watched.remove(&id);
         self.histories.forget(id);
         self.lsp
             .lsp
@@ -1299,6 +1300,7 @@ impl kui::App for Kawoosh {
         self.perf.cur.lsp = ms(t);
         self.sync_notifications();
         let t = Instant::now();
+        self.fire_changes();
         self.drain_lua();
         if let Some(rt) = self.scripting.rt.clone() {
             rt.publish(&self.ed, self.focused_view());

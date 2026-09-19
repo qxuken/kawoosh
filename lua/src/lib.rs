@@ -82,6 +82,8 @@ pub enum Msg {
         /// Whether the focused pane shows it; `false` fills it where
         /// it is (or makes it in the background) and leaves the pane.
         show: bool,
+        /// Whether `on_change` is to be told when its text changes.
+        watched: bool,
     },
     /// `kawoosh.view_open(name, { focus = })`: the view in a split, or
     /// its pane focused; `focus = false` leaves the keyboard where it
@@ -228,6 +230,8 @@ pub struct Published {
     /// For a tracked buffer: what each original line has become — its
     /// current text, or `None` when deleted (see `Runtime::track_lines`).
     pub tracked: HashMap<u64, Vec<Option<String>>>,
+    /// And where: each original line's line now (from 1), or `None`.
+    pub tracked_at: HashMap<u64, Vec<Option<usize>>>,
 }
 
 impl Default for Published {
@@ -245,6 +249,7 @@ impl Default for Published {
             fields: HashMap::new(),
             field_focus: HashMap::new(),
             tracked: HashMap::new(),
+            tracked_at: HashMap::new(),
         }
     }
 }
@@ -372,22 +377,27 @@ impl Runtime {
         let mut p = self.published.borrow_mut();
         p.buffers.clear();
         p.tracked.clear();
+        p.tracked_at.clear();
         for (id, (version, ranges)) in self.tracked.borrow().iter() {
             let Some(b) = ed.buffers.get(*id) else {
                 continue;
             };
-            let lines = ranges
+            // The line each became (`Buffer::line_now`): what was typed
+            // at its edges is its own, a line opened above or below is
+            // not; an emptied line is as good as gone.
+            let at: Vec<Option<usize>> = ranges
                 .iter()
                 .map(|r| {
-                    // The line it became (`Buffer::line_now`): what was
-                    // typed at its edges is its own, a line opened
-                    // above or below is not.
                     let ln = b.line_now(r.clone(), *version)?;
-                    let text = b.line_text(ln);
-                    (!text.is_empty()).then_some(text)
+                    (!b.line_text(ln).is_empty()).then_some(ln)
                 })
                 .collect();
+            let lines = at.iter().map(|ln| ln.map(|ln| b.line_text(ln))).collect();
             p.tracked.insert(handle_of(*id), lines);
+            p.tracked_at.insert(
+                handle_of(*id),
+                at.iter().map(|ln| ln.map(|l| l + 1)).collect(),
+            );
         }
         for (id, b) in ed.buffers.iter() {
             // The buffer's selections are the current view's when it
@@ -494,6 +504,23 @@ impl Runtime {
         let _ = t.set("bang", ctx.bang());
         let _ = t.set("query", ctx.query());
         if let Err(e) = f.call::<()>((name, t)) {
+            self.queue
+                .borrow_mut()
+                .push(Msg::Echo(format!("{name}: {e}")));
+        }
+    }
+
+    /// Tells a watched scratch buffer's `on_change` its text changed.
+    pub fn change_hook(&self, name: &str) {
+        let Ok(f) = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Function>("_change"))
+        else {
+            return;
+        };
+        if let Err(e) = f.call::<()>(name) {
             self.queue
                 .borrow_mut()
                 .push(Msg::Echo(format!("{name}: {e}")));
@@ -914,7 +941,7 @@ fn seed(
         "_open_scratch",
         lua.create_function(
             move |_,
-                  (name, text, hooked, read_only, language, reuse, line, show): (
+                  (name, text, hooked, read_only, language, reuse, line, show, watched): (
                 String,
                 String,
                 bool,
@@ -922,6 +949,7 @@ fn seed(
                 Option<String>,
                 Option<u64>,
                 Option<usize>,
+                Option<bool>,
                 Option<bool>,
             )| {
                 qq.borrow_mut().push(Msg::OpenScratch {
@@ -933,6 +961,7 @@ fn seed(
                     reuse,
                     line,
                     show: show.unwrap_or(true),
+                    watched: watched.unwrap_or(false),
                 });
                 Ok(())
             },
@@ -1196,6 +1225,26 @@ fn seed(
                 for (i, l) in lines.iter().enumerate() {
                     match l {
                         Some(s) => t.set(i + 1, s.as_str())?,
+                        None => t.set(i + 1, false)?,
+                    }
+                }
+            }
+            Ok(t)
+        })?,
+    )?;
+    let pp = published.clone();
+    buf.set(
+        "tracked_lines",
+        lua.create_function(move |lua, h: Option<u64>| {
+            let p = pp.borrow();
+            let h = h
+                .or(p.current)
+                .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
+            let t = lua.create_table()?;
+            if let Some(lines) = p.tracked_at.get(&h) {
+                for (i, l) in lines.iter().enumerate() {
+                    match l {
+                        Some(ln) => t.set(i + 1, *ln)?,
                         None => t.set(i + 1, false)?,
                     }
                 }

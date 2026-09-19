@@ -879,6 +879,28 @@ fn indent_and_change_line() {
     assert_eq!(t.text(), "a\nb\nx");
 }
 
+/// `yy` leaves the caret where it is — on the last line too, whose
+/// linewise range starts with the newline before it — and a charwise
+/// yank puts it at the start of what was yanked.
+#[test]
+fn a_yank_keeps_the_caret_on_its_line() {
+    let mut t = T::new("abc\ndef\nghi");
+    t.keys("Gllyy");
+    assert_eq!(
+        t.ed.views[t.v].sels.primary().head,
+        10,
+        "still on ghi, col 2"
+    );
+    t.keys("p");
+    assert_eq!(t.text(), "abc\ndef\nghi\nghi");
+    t.keys("ggllyb");
+    assert_eq!(
+        t.ed.views[t.v].sels.primary().head,
+        0,
+        "at the start of the yank"
+    );
+}
+
 /// `dd` on the last line takes the newline before it, but what lands
 /// in the register is the line with its newline after it, so `p` puts
 /// it below the caret's line and `P` above — not an empty line first.

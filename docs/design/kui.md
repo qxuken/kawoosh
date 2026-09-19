@@ -819,7 +819,17 @@ confirm, and a name one listing deletes and another creates is that
 file moved — `dd` here, `p` there — and one an open listing keeps as
 it is and another creates is that file copied — `yy` here, `p` there
 — the one identity a line has between buffers, since the journal is a
-buffer's own; the listings
+buffer's own, so a name twice in a listing is refused rather than
+guessed at, and a swap of two files of one name between two listings,
+which leaves both listings' text as it was, is no change, as an undo
+is; renames and moves run in two steps, every source to a temporary
+name first, so a swap of names never writes one file over the other,
+and a destination that is taken is refused; as a listing is edited its
+lines say what the write would make of them — `← was a.txt`, `← new`,
+`← copy from ../b/`, `← move from ../b/`, `← twice` — recomputed by
+its `on_change`, a scratch buffer's hook told once a frame that its
+text changed, with `kawoosh.buf.tracked_lines` saying where each entry
+is now; the listings
 touched are read again where they are, `open_scratch{ show = false
 }`), and `<leader>cd` off a listing runs nothing and says why.
 
