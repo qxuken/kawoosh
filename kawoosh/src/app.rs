@@ -87,8 +87,9 @@ pub struct Kawoosh {
     pub inspector: Inspector,
     /// Selections walking the syntax tree (`nodes.rs`).
     pub(crate) nodes: crate::nodes::NodeSelect,
-    /// `:keys` asked for the root which-key: shown until the next key.
-    pub(crate) keys_help: bool,
+    /// `:keys` asked for a mode's root which-key: shown until the
+    /// next key.
+    pub(crate) keys_help: Option<Mode>,
     /// A devtools tab to show on the next frame — `:syntax_tree` asks
     /// for the syntax tab. Once, not every frame: kui's
     /// `set_devtools_tab` is edge-triggered, so a standing request would
@@ -192,7 +193,7 @@ impl Kawoosh {
             devtools_synced: None,
             inspector: Inspector::new(wake.clone()),
             nodes: Default::default(),
-            keys_help: false,
+            keys_help: None,
             show_tab: None,
             tab_shown: None,
             settings_default_open: false,
@@ -815,7 +816,7 @@ impl Kawoosh {
             text: p.get("text").and_then(Value::as_str).map(str::to_string),
         };
         // The root which-key (`:keys`) stays until a key is pressed.
-        self.keys_help = false;
+        self.keys_help = None;
         // F12 is the shell's everywhere: kui's devtools.
         if stroke.code == "f12" {
             self.devtools = !self.devtools;

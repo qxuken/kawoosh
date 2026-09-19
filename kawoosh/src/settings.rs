@@ -431,13 +431,52 @@ impl Kawoosh {
         // its text wraps, so a long dotted key folds instead of pushing
         // the value off the edge; the value and, in the effective table,
         // where it came from sit at their columns. Every other row is
-        // washed, and a hovered one lit.
+        // washed, and a hovered one lit. In the effective table a
+        // boolean is a switch: its row flips it for the session, as
+        // `:set` would — the feature toggles (`whichkey`, `expandtab`)
+        // are a click.
         let leaf = move |ui: &mut Ui<'_>, i: usize, path: &str, value: &str, from: Option<&str>| {
-            ui.with(tm.row(&pal, i), |ui| {
+            let switch = from.is_some() && matches!(value, "true" | "false");
+            let mut spec = tm.row(&pal, i);
+            if switch {
+                spec = spec
+                    .hover_bg(pal.hover)
+                    .on_click(Value::map([
+                        ("kind", "settings".into()),
+                        ("what", "toggle".into()),
+                        ("path", path.into()),
+                    ]))
+                    .label(format!("toggle {path}").as_str());
+            }
+            // Keyed `toggle PATH` when it is a switch, so a test and a
+            // reader find the switch by that name.
+            let key = if switch {
+                format!("toggle {path}")
+            } else {
+                path.to_string()
+            };
+            ui.with_keyed(&key, spec, |ui| {
                 ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |ui| {
                     ui.text(path, wrapping());
                 });
-                ui.text(value, style().color(pal.accent));
+                if switch {
+                    let on = value == "true";
+                    ui.with(
+                        NodeSpec::row()
+                            .pad_xy(8.0, 1.0)
+                            .radius(3.0)
+                            .bg(if on { pal.select } else { pal.panel })
+                            .border(1.0, pal.border),
+                        |ui| {
+                            ui.text(
+                                if on { "on" } else { "off" },
+                                style().color(if on { pal.fg } else { pal.dim }),
+                            )
+                        },
+                    );
+                } else {
+                    ui.text(value, style().color(pal.accent));
+                }
                 if let Some(from) = from {
                     ui.text(from, dim());
                 }
@@ -609,6 +648,17 @@ impl Kawoosh {
                 self.reclaim_focus = true;
             }
             (Some("reload"), _) => self.reload_all_settings(),
+            // A boolean's switch: flipped in the session layer, over
+            // whatever file set it, as `:set` and `:set no…` do.
+            (Some("toggle"), Some(path)) => {
+                let path = path.to_string_lossy().into_owned();
+                let on = !self.ed.settings.bool(&path).unwrap_or(false);
+                self.ed
+                    .settings
+                    .set(Layer::Session, &path, Setting::Bool(on));
+                self.ed.message = format!("{path} = {on}");
+                self.reclaim_focus = true;
+            }
             (Some("toggle-default"), _) => {
                 self.settings_default_open = !self.settings_default_open;
                 // A fold is not a place for the keyboard: back to the pane.

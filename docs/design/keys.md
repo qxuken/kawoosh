@@ -190,8 +190,12 @@ open keys with their group's name as the title (`SPC b · buffers`). It
 is there the moment the prefix is pressed and gone the moment the
 sequence resolves, with no delay to tune. `:keys` — `<leader>?`, as the
 neovim config had it — shows the root, every first key of the mode in
-a few columns, until the next press. `whichkey = false` in
-`settings.lua` (`:set nowhichkey`) turns it off.
+a few columns, until the next press; `:keys i`, `:keys v`, `:keys o`
+show another mode's (insert mode's alone, since its lookup does not
+fall through to normal mode's). `whichkey = false` in `settings.lua`
+(`:set nowhichkey`) turns it off, and so does its switch in the
+Settings tab (`:settings`), where every boolean of the effective table
+is a click that flips it for the session.
 
 The names come from `Keymap::describe`: the engine names its own
 prefixes (`<leader>b` buffers, `g` goto, `gs` surround, `<C-w>` panes,

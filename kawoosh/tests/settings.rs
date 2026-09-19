@@ -536,6 +536,41 @@ fn the_settings_tab_shows_the_layers_and_opens_a_file() {
 /// A layer with no file offers to make one: `:set x!` leaves no empty
 /// session behind, and the project's `· create` row writes the stub,
 /// opens it, and the watch lists it as a source.
+/// A boolean in the effective table is a switch: a click flips it for
+/// the session, as `:set` would, and the row says so.
+#[test]
+fn a_boolean_setting_is_a_switch_in_the_tab() {
+    let mut d = Drive::new(1100.0, 700.0);
+    let mut app = app_with_lua(&mut d);
+    ex(&mut d, &mut app, "settings");
+    assert_eq!(app.ed.settings.bool("whichkey"), Some(true));
+    let rect = d.rect_of("toggle whichkey").expect("the switch row");
+    d.click(&mut app, rect.0 + 20.0, rect.1 + rect.3 / 2.0);
+    d.frame(&mut app);
+    assert_eq!(app.ed.settings.bool("whichkey"), Some(false));
+    assert_eq!(app.ed.message, "whichkey = false");
+    assert_eq!(
+        app.ed.settings.origin("whichkey").as_deref(),
+        Some("session")
+    );
+    // Off means off: the leader opens nothing on screen.
+    d.keys(&mut app, " ");
+    assert!(
+        !d.core
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some("SPC · leader")),
+        "the which-key is off"
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    let rect = d.rect_of("toggle whichkey").expect("the switch row");
+    d.click(&mut app, rect.0 + 20.0, rect.1 + rect.3 / 2.0);
+    d.frame(&mut app);
+    assert_eq!(app.ed.settings.bool("whichkey"), Some(true));
+    // A number is not a switch.
+    assert!(d.rect_of("toggle tabstop").is_none());
+}
+
 #[test]
 fn an_empty_layer_offers_a_file_to_create() {
     let t = tree("create");

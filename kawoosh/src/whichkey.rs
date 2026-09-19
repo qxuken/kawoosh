@@ -12,7 +12,7 @@
 //! corner: the corner's lines above, the which-key below, so the two
 //! never cover each other.
 
-use kawoosh_editor::{Binding, Mode, Spec};
+use kawoosh_editor::{ArgKind, Args, Binding, Mode, Spec};
 use kui::{Align, FloatConfig, NodeSpec, TextStyle, Ui};
 
 use crate::app::Kawoosh;
@@ -70,8 +70,8 @@ impl Kawoosh {
         {
             return Some((vec!["<C-w>".into()], Mode::Normal));
         }
-        if self.keys_help {
-            return Some((Vec::new(), self.focused_mode()));
+        if let Some(mode) = self.keys_help {
+            return Some((Vec::new(), mode));
         }
         None
     }
@@ -87,9 +87,10 @@ impl Kawoosh {
         let (keys, mode) = self.open_sequence()?;
         let km = &self.ed.keymap;
         let mut rows = km.next_keys(mode, &keys);
-        // A mode's lookup falls through to normal mode's, so its
-        // sequences are open here too.
-        if mode != Mode::Normal {
+        // Visual and operator-pending lookups fall through to normal
+        // mode's, so its sequences are open there too; insert mode's
+        // do not.
+        if matches!(mode, Mode::Visual | Mode::OperatorPending) {
             for (k, b) in km.next_keys(Mode::Normal, &keys) {
                 if !rows.iter().any(|(o, _)| *o == k) {
                     rows.push((k, b));
@@ -183,6 +184,13 @@ impl Kawoosh {
                 .gap(4.0),
             |ui| {
                 ui.text(&title, TextStyle::new(12.0).color(pal.dim).nowrap());
+                // The root says how to see the other modes' roots.
+                if keys.is_empty() {
+                    ui.text(
+                        "also :keys n · i · v · o",
+                        TextStyle::new(11.0).color(pal.dim).nowrap(),
+                    );
+                }
                 ui.with_keyed("cols", NodeSpec::row().gap(18.0), |ui| {
                     for (ci, chunk) in rows.chunks(per_column).enumerate() {
                         let chunk: Vec<&(String, Vec<Binding>)> = chunk.to_vec();
@@ -219,7 +227,17 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
     vec![cmd(
         Spec::new("keys")
             .alias(&["whichkey"])
-            .doc("the which-key for every first key, until the next press (<leader>?)"),
-        |k, _| k.keys_help = true,
+            .args(Args::new(&[ArgKind::Text]))
+            .doc("the which-key for every first key of MODE (n, i, v, o; the current one bare), until the next press (<leader>?)"),
+        |k, ctx| {
+            let mode = match ctx.args.first() {
+                None => Some(k.focused_mode()),
+                Some(m) => Mode::from_short(m),
+            };
+            match mode {
+                Some(m) => k.keys_help = Some(m),
+                None => k.ed.message = "keys of which mode? (n, i, v, o)".into(),
+            }
+        },
     )]
 }

@@ -110,6 +110,26 @@ fn a_which_key_lists_what_can_follow_and_a_setting_hides_it() {
     );
     d.keys(&mut app, "j");
     assert!(texts(&d).is_empty(), "a key takes the root listing down");
+    // Another mode's root by name: insert mode's keys alone, since its
+    // lookup does not fall through to normal mode's.
+    ex(&mut d, &mut app, "keys i");
+    let t = texts(&d);
+    assert!(
+        has(&t, "insert mode") && has(&t, "C-s") && has(&t, "write") && has(&t, "insert newline"),
+        "{t:?}"
+    );
+    assert!(!has(&t, "j") && !has(&t, "+leader"), "{t:?}");
+    d.keys(&mut app, "j");
+    ex(&mut d, &mut app, "keys v");
+    let t = texts(&d);
+    assert!(
+        has(&t, "visual mode") && has(&t, "cursor swap") && has(&t, "+leader"),
+        "{t:?}"
+    );
+    d.keys(&mut app, "j");
+    ex(&mut d, &mut app, "keys x");
+    assert_eq!(app.ed.message, "keys of which mode? (n, i, v, o)");
+    assert!(texts(&d).is_empty());
     // Off by the setting.
     ex(&mut d, &mut app, "set nowhichkey");
     d.keys(&mut app, " ");
