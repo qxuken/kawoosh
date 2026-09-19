@@ -207,14 +207,15 @@ What this buys, each of which was a milestone-sized piece of work before:
   A plugin's is the same node: `kawoosh.buf.annotate(lines, buffer)`
   puts text past a line's end — the file manager's sizes and mtimes
   beside the names — anchored to the line's identity through the
-  journal (`Buffer::line_now`: a line is its bytes and its newline,
-  carried as a result is; text typed at its edges is its own, a line
-  opened above or below is not, a line retyped whole keeps its newline
-  and so itself, a line deleted is gone — undone or not, since the
-  journal cannot tell an undo from a line typed where it was, which is
-  why the file manager's plan calls a delete and a create of one name
-  no change), so it follows its line through edits and goes with it,
-  and never becomes a byte the write would see.
+  journal (`Buffer::line_now`: a line is its bytes, carried as a
+  result is; text typed at its edges is its own, a line opened above
+  or below is not, a line retyped whole — `cc` takes exactly its bytes
+  — is itself, a line deleted — the one edit that leaves none of its
+  bytes and took a newline with them — is gone, undone or not, since
+  the journal cannot tell an undo from a line typed where it was,
+  which is why the file manager's plan calls a delete and a create of
+  one name no change), so it follows its line through edits and goes
+  with it, and never becomes a byte the write would see.
 - **Multicursor is free.** A selection set is N carets and N selected
   ranges on the visible lines; emitting them is the same loop.
 - **The mouse comes back as data.** A sink declaring `on_drag` over

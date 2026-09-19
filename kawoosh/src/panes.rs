@@ -752,8 +752,8 @@ impl Kawoosh {
             .map(|(version, list)| {
                 let mut seen = std::collections::HashSet::new();
                 let mut out = std::collections::HashMap::new();
-                for (a, text) in list {
-                    let Some(ln) = buf.line_now(a, *version) else {
+                for (r, text) in list {
+                    let Some(ln) = buf.line_now(r.clone(), *version) else {
                         continue;
                     };
                     if !seen.insert(ln) {

@@ -844,6 +844,32 @@ fn a_listing_is_annotated_and_refreshed() {
     );
     d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "dir refresh!");
+    // The annotation keeps its place under a block caret past the
+    // line's end (`$` then `l`, or `A` and `<Esc>` at the end).
+    let extra_x = |d: &Drive| -> Vec<f32> {
+        let nodes = d.core.nodes();
+        nodes
+            .iter()
+            .filter(|n| n.role == Some(kui::Role::None))
+            .flat_map(|n| {
+                nodes
+                    .iter()
+                    .filter(move |c| c.parent == Some(n.key) && c.text.is_some())
+                    .map(|c| c.rect.x)
+            })
+            .collect()
+    };
+    d.keys(&mut app, "gg");
+    d.keys(&mut app, "jj");
+    d.frame(&mut app);
+    let at_start = extra_x(&d);
+    d.keys(&mut app, "$l");
+    d.frame(&mut app);
+    assert_eq!(
+        extra_x(&d),
+        at_start,
+        "the caret past the end shifts nothing"
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -1123,6 +1149,42 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert!(dir.join("b/b2.txt").is_file() && dir.join("a/a2.txt").is_file());
+    // A line moved between listings — `dd` in one, `p` in the other —
+    // is a delete there and a create here, never the entry it landed
+    // beside renamed, and the entry it replaced (`dd` after the paste,
+    // which takes the newline after it now) is a delete.
+    d.keys(&mut app, "jdd");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    assert_eq!(name(&app), a);
+    d.keys(&mut app, "jp");
+    d.keys(&mut app, "kdd");
+    assert_eq!(
+        d.line_rows()[..3],
+        ["../".to_string(), "b2.txt".to_string(), "../".to_string()],
+        "{:?}",
+        d.line_rows()
+    );
+    d.frame(&mut app);
+    assert_eq!(d.row_extras()[1], "", "b2.txt is no entry here yet");
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..],
+        ["create b2.txt", "delete a2.txt", "Apply", "Cancel"]
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "dir refresh!");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "l");
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..],
+        ["delete b2.txt", "Apply", "Cancel"]
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "dir refresh!");
     // `:dir!` lists in a new buffer; the one it came from stays listed
     // and `:b` reaches it. A plain `:dir` in one pane still moves on
     // in place.

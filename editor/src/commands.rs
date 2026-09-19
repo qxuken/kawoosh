@@ -113,11 +113,19 @@ pub(crate) fn op_range(
 }
 
 fn set_register(ed: &mut Editor, texts: &[String], linewise: bool) {
-    let joined = if texts.len() == 1 {
+    let mut joined = if texts.len() == 1 {
         texts[0].clone()
     } else {
         texts.join("\n")
     };
+    // A linewise range on the last line is the newline before it and
+    // the line (`line_range_of_sel`); in the register the line is a
+    // line like any other, its newline after it — so `p` puts it below
+    // the caret's line, not an empty line and then it.
+    if linewise && !joined.ends_with('\n') && joined.starts_with('\n') {
+        joined.remove(0);
+        joined.push('\n');
+    }
     ed.registers.insert('"', joined.clone());
     ed.register_linewise = linewise;
     ed.effects.push(Effect::SetClipboard(joined));

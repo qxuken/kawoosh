@@ -271,7 +271,7 @@ impl Kawoosh {
                 let anchored = lines
                     .into_iter()
                     .filter(|(ln, _)| (1..=count).contains(ln))
-                    .map(|(ln, text)| (b.line_anchor(ln - 1), text))
+                    .map(|(ln, text)| (b.line_range(ln - 1), text))
                     .collect();
                 self.annotations
                     .insert(id.unwrap(), (b.version(), anchored));

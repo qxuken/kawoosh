@@ -879,6 +879,21 @@ fn indent_and_change_line() {
     assert_eq!(t.text(), "a\nb\nx");
 }
 
+/// `dd` on the last line takes the newline before it, but what lands
+/// in the register is the line with its newline after it, so `p` puts
+/// it below the caret's line and `P` above — not an empty line first.
+#[test]
+fn a_last_line_deleted_pastes_as_a_line() {
+    let mut t = T::new("a\nb\nc");
+    t.keys("Gdd");
+    assert_eq!(t.text(), "a\nb");
+    t.keys("kp");
+    assert_eq!(t.text(), "a\nc\nb");
+    t.keys("Gdd");
+    t.keys("ggP");
+    assert_eq!(t.text(), "b\na\nc");
+}
+
 #[test]
 fn insert_mode_keys() {
     let mut t = T::new("");

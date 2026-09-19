@@ -34,6 +34,10 @@ use crate::terminals::{TermId, Terminals};
 
 pub const TITLE_H: f32 = 22.0;
 pub const TAB_H: f32 = 26.0;
+
+/// A buffer's annotations: the version they were set at, and each
+/// line's range then with the text past its end.
+pub(crate) type Annotations = (Version, Vec<(std::ops::Range<usize>, String)>);
 pub(crate) const DIVIDER: f32 = 4.0;
 
 pub struct Kawoosh {
@@ -157,11 +161,11 @@ pub struct Kawoosh {
     /// The question on show, if one (`confirm.rs`): the keys are its.
     pub confirm: Option<crate::confirm::Confirm>,
     /// A buffer's annotations (`kawoosh.buf.annotate`): text drawn past
-    /// a line's end, each anchored to its line at the version it was
-    /// set (`Buffer::line_anchor`), carried through the journal to
-    /// where the line is now — the way `Runtime::track_lines` follows a
-    /// line's identity.
-    pub(crate) annotations: HashMap<BufferId, (Version, Vec<(kawoosh_doc::LineAnchor, String)>)>,
+    /// a line's end, each anchored to its line's range at the version
+    /// it was set, carried through the journal to where the line is
+    /// now (`Buffer::line_now`) — the way `Runtime::track_lines`
+    /// follows a line's identity.
+    pub(crate) annotations: HashMap<BufferId, Annotations>,
 }
 
 impl Kawoosh {

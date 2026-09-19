@@ -17,6 +17,12 @@ use crate::Pal;
 
 pub const FONT: f32 = 13.0;
 pub const LH: f32 = 20.0;
+/// The box a block caret past a line's end, or a selection past its
+/// newline, takes in the row.
+const PAST_END_W: f32 = 8.0;
+/// The gap before a row's trailing text (an annotation, a diagnostic's
+/// message); the past-end boxes are taken out of it.
+const TRAILING_GAP: f32 = 12.0;
 pub const GUTTER_W: f32 = 56.0;
 pub const STRIP_H: f32 = 24.0;
 /// How many escapes a line may have and still draw them dim; see
@@ -809,7 +815,10 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
             }
             caret_bar(ui, pal.accent, line.caret_on, x);
         }
-        // A block caret past the end of the line.
+        // A block caret past the end of the line, and a selection
+        // running past the newline: boxes in the row's flow, so the
+        // trailing text's gap gives way to them and keeps its place.
+        let mut boxes = 0.0;
         if line
             .carets
             .iter()
@@ -817,26 +826,32 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
         {
             ui.with(
                 NodeSpec::column()
-                    .width(Sizing::Fixed(8.0))
+                    .width(Sizing::Fixed(PAST_END_W))
                     .height(Sizing::Fixed(LH - 4.0))
                     .bg(pal.accent),
                 |_| {},
             );
+            boxes += PAST_END_W;
         }
-        // A selection running past the newline.
         if line.selected.iter().any(|r| r.end > len) {
             ui.with(
                 NodeSpec::column()
-                    .width(Sizing::Fixed(8.0))
+                    .width(Sizing::Fixed(PAST_END_W))
                     .height(Sizing::Fixed(LH))
                     .bg(pal.select),
                 |_| {},
             );
+            boxes += PAST_END_W;
         }
         if let Some((t, color)) = line.trailing {
             ui.with(
                 NodeSpec::row()
-                    .pad_xy(12.0, 0.0)
+                    .padding(kui::Edges {
+                        l: (TRAILING_GAP - boxes).max(0.0),
+                        r: TRAILING_GAP,
+                        t: 0.0,
+                        b: 0.0,
+                    })
                     .cross_align(Align::Center)
                     .role(Role::None),
                 |ui| ui.text(t, base.color(color)),

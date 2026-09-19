@@ -24,16 +24,6 @@ use unicode_segmentation::UnicodeSegmentation;
 use slotmap::new_key_type;
 pub use version::{Bias, Edit, Journal, Stale, Version};
 
-/// A line at one version, for `Buffer::line_now`: its bytes, the byte
-/// of the newline that is its own — after it, or, for the last line
-/// (`last`, placed by its end), before it; none in a one-line buffer —
-/// from `Buffer::line_anchor`.
-pub struct LineAnchor {
-    pub content: Range<usize>,
-    pub slot: Option<usize>,
-    pub last: bool,
-}
-
 new_key_type! {
     /// A buffer's identity in the editor's table.
     pub struct BufferId;
@@ -543,53 +533,26 @@ impl Buffer {
         self.line_range(ln).start
     }
 
-    /// A line's identity at a version, for [`Buffer::line_now`].
-    pub fn line_anchor(&self, ln: usize) -> LineAnchor {
-        let content = self.line_range(ln);
-        let (slot, last) = if ln + 1 < self.line_count() {
-            (Some(content.end), false)
-        } else if ln > 0 {
-            (Some(self.line_range(ln - 1).end), true)
-        } else {
-            (None, true)
-        };
-        LineAnchor {
-            content,
-            slot,
-            last,
-        }
-    }
-
-    /// Where the line `anchor` was at version `from` is now — the line
-    /// it became, however the text was edited since — or `None` once it
-    /// was deleted. A line's identity through the journal: its bytes,
-    /// carried through every edit since as `Journal::carry_range`
-    /// carries a result — text typed at the edges falls out, which is
-    /// what keeps a line opened above (or, for the last line, below)
-    /// from being it — and, while none are left, typing at the edge
-    /// they were typed from is the line again: `cc` takes the bytes
-    /// and keeps the newline, and what is typed then is the same line.
-    /// The line is deleted by the one edit that takes its last bytes
-    /// and its newline together (`dd`; a range of lines), and nothing
-    /// typed where it was — an undo among them, which the journal
-    /// cannot tell from typing — brings it back, so a tracker treats a
-    /// deletion and a creation of one name as no change, and a listing
-    /// reads the directory again. A newline taken by a neighbour's
-    /// deletion, before or after, is not the line's death: its bytes
-    /// are there, and a retype after that is still a retype.
-    pub fn line_now(&self, anchor: &LineAnchor, from: Version) -> Option<usize> {
-        let mut r = anchor.content.clone();
-        let mut slot = anchor.slot.map(|s| s..s + 1);
+    /// Where the line whose bytes were `line` (its `line_range`) at
+    /// version `from` is now — the line it became, however the text
+    /// was edited since — or `None` once it was deleted. A line's
+    /// identity through the journal: its bytes, carried through every
+    /// edit since as `Journal::carry_range` carries a result — text
+    /// typed at the edges falls out, which is what keeps a line opened
+    /// above or below from being it — and, while none are left,
+    /// growing over what is typed where they were: `cc` takes exactly
+    /// a line's bytes, and what is typed then is the same line. The
+    /// line is deleted by the one edit that leaves none of its bytes
+    /// and took bytes beyond them — its newline, before or after,
+    /// whichever `dd` takes where the line is by then; a range of
+    /// lines — and nothing typed where it was, an undo among them
+    /// (which the journal cannot tell from typing), brings it back, so
+    /// a tracker treats a deletion and a creation of one name as no
+    /// change, and a listing reads the directory again.
+    pub fn line_now(&self, line: Range<usize>, from: Version) -> Option<usize> {
+        let mut r = line;
         for edit in self.journal.edits_since(from).ok()? {
-            let slot_before = slot.as_ref().is_some_and(|s| !s.is_empty());
-            if let Some(s) = &mut slot {
-                let a = edit.transform_offset(s.start, Bias::Right);
-                let b = edit.transform_offset(s.end, Bias::Left);
-                *s = a..b.max(a);
-            }
-            // No bytes left: typing where they were is the line
-            // retyped, and is taken in (the range grows over it, as a
-            // scope's does under `clamp_range`).
+            let before = r.clone();
             let (start_bias, end_bias) = if r.is_empty() {
                 (Bias::Left, Bias::Right)
             } else {
@@ -598,16 +561,12 @@ impl Buffer {
             let a = edit.transform_offset(r.start, start_bias);
             let b = edit.transform_offset(r.end, end_bias);
             r = a..b.max(a);
-            let slot_after = slot.as_ref().is_some_and(|s| !s.is_empty());
-            if r.is_empty() && slot_before && !slot_after {
+            let beyond = edit.range.start < before.start || edit.range.end > before.end;
+            if r.is_empty() && edit.removed() > 0 && beyond {
                 return None;
             }
         }
-        Some(if anchor.last {
-            self.line_of(r.end)
-        } else {
-            self.line_of(r.start)
-        })
+        Some(self.line_of(r.start))
     }
 
     pub fn line_text(&self, ln: usize) -> String {
@@ -1692,39 +1651,33 @@ mod line_now_tests {
         Buffer::new("t", "../\nsub/\na.txt\nb.txt")
     }
 
-    /// `cc` (the content replaced, the newline kept) and typing at
-    /// either edge keep a line's identity; a line opened above or below
-    /// is its own; `dd` ends it, and an insertion where it was — an
-    /// undo among them — does not bring it back; a neighbour deleted,
-    /// even the last line with the newline before it, leaves it.
+    /// `cc` (exactly the line's bytes taken, then typed again) and
+    /// typing at either edge keep a line's identity; a line opened
+    /// above or below is its own; `dd` ends it — whichever newline it
+    /// takes, the one after a line that was last when the listing
+    /// opened and has a pasted line below it now, or the one before a
+    /// last line — and an insertion where it was, an undo among them,
+    /// does not bring it back; a neighbour deleted leaves it.
     #[test]
     fn a_line_is_itself_through_edits_until_deleted() {
         let mut b = buf();
         let v = b.version();
-        let a = b.line_anchor(2);
-        let last = b.line_anchor(3);
-        assert_eq!(
-            (a.content.clone(), a.slot, a.last),
-            (9..14, Some(14), false)
-        );
-        assert_eq!(
-            (last.content.clone(), last.slot, last.last),
-            (15..20, Some(14), true)
-        );
+        let a = b.line_range(2);
+        let last = b.line_range(3);
+        assert_eq!((a.clone(), last.clone()), (9..14, 15..20));
         // cc: the content goes, then "renamed" is typed a char at a time.
         b.replace(9..14, "");
         for (i, c) in "renamed".char_indices() {
             b.replace(9 + i..9 + i, &c.to_string());
         }
         assert_eq!(b.text(), "../\nsub/\nrenamed\nb.txt");
-        assert_eq!(b.line_now(&a, v), Some(2));
-        assert_eq!(b.line_now(&last, v), Some(3));
-        // Then dd on the last line, whose newline before it was the
-        // retyped line's own after it: the retyped line stays.
+        assert_eq!(b.line_now(a.clone(), v), Some(2));
+        assert_eq!(b.line_now(last.clone(), v), Some(3));
+        // Then dd on the last line: the retyped line stays.
         b.replace(16..22, "");
         assert_eq!(b.text(), "../\nsub/\nrenamed");
-        assert_eq!(b.line_now(&a, v), Some(2));
-        assert_eq!(b.line_now(&last, v), None);
+        assert_eq!(b.line_now(a.clone(), v), Some(2));
+        assert_eq!(b.line_now(last.clone(), v), None);
         // A line opened above, one below, text at both edges.
         let mut b = buf();
         b.replace(9..9, "new\n");
@@ -1732,47 +1685,47 @@ mod line_now_tests {
         b.replace(13..13, "X");
         b.replace(19..19, "Y");
         assert_eq!(b.text(), "../\nsub/\nnew\nXa.txtY\nbelow\nb.txt");
-        assert_eq!(b.line_now(&a, v), Some(3));
-        assert_eq!(b.line_now(&last, v), Some(5));
+        assert_eq!(b.line_now(a.clone(), v), Some(3));
+        assert_eq!(b.line_now(last.clone(), v), Some(5));
         // dd on a.txt: gone; the same text typed back where it was is
-        // not it; b.txt is still b.txt.
+        // not it; b.txt is still b.txt, and cc on it after that too.
         let mut b = buf();
         b.replace(9..15, "");
-        assert_eq!(b.line_now(&a, v), None);
-        assert_eq!(b.line_now(&last, v), Some(2));
+        assert_eq!(b.line_now(a.clone(), v), None);
+        assert_eq!(b.line_now(last.clone(), v), Some(2));
         b.replace(9..9, "a.txt\n");
-        assert_eq!(b.line_now(&a, v), None);
-        assert_eq!(b.line_now(&last, v), Some(3));
-        // dd on the last line (its newline before it goes): gone; cc on
-        // it, and `o` below it, keep it; dd on the line above it too.
-        let mut b = buf();
-        b.replace(14..20, "");
-        assert_eq!(b.line_now(&last, v), None);
-        assert_eq!(b.line_now(&a, v), Some(2));
-        let mut b = buf();
-        b.replace(15..20, "");
-        b.replace(15..15, "z");
-        assert_eq!(b.line_now(&last, v), Some(3));
-        b.replace(16..16, "\nunder");
-        assert_eq!(b.line_now(&last, v), Some(3));
-        let mut b = buf();
-        b.replace(9..15, "");
-        assert_eq!(b.text(), "../\nsub/\nb.txt");
-        assert_eq!(b.line_now(&last, v), Some(2));
-        // ... and undone, then cc on the last line: still the last
-        // line, its newline before it long since another's.
-        b.replace(9..9, "a.txt\n");
+        assert_eq!(b.line_now(a.clone(), v), None);
+        assert_eq!(b.line_now(last.clone(), v), Some(3));
         b.replace(15..20, "");
         b.replace(15..15, "z");
         assert_eq!(b.text(), "../\nsub/\na.txt\nz");
-        assert_eq!(b.line_now(&last, v), Some(3));
-        assert_eq!(b.line_now(&a, v), None);
+        assert_eq!(b.line_now(last.clone(), v), Some(3));
+        // dd on the last line (the newline before it goes): gone; cc on
+        // it, and `o` below it, keep it.
+        let mut b = buf();
+        b.replace(14..20, "");
+        assert_eq!(b.line_now(last.clone(), v), None);
+        assert_eq!(b.line_now(a.clone(), v), Some(2));
+        let mut b = buf();
+        b.replace(15..20, "");
+        b.replace(15..15, "z");
+        b.replace(16..16, "\nunder");
+        assert_eq!(b.line_now(last.clone(), v), Some(3));
+        // A line pasted below the last line, then dd on the last line —
+        // which takes the newline after it now: gone, and the pasted
+        // line is not it.
+        let mut b = buf();
+        b.replace(20..20, "\nc.txt");
+        b.replace(15..21, "");
+        assert_eq!(b.text(), "../\nsub/\na.txt\nc.txt");
+        assert_eq!(b.line_now(last.clone(), v), None);
+        assert_eq!(b.line_now(a.clone(), v), Some(2));
         // cc leaving the line empty keeps it (empty, so a tracker calls
         // it gone) until something is typed; dd on it then ends it.
         let mut b = buf();
         b.replace(9..14, "");
-        assert_eq!(b.line_now(&a, v), Some(2));
+        assert_eq!(b.line_now(a.clone(), v), Some(2));
         b.replace(9..10, "");
-        assert_eq!(b.line_now(&a, v), None);
+        assert_eq!(b.line_now(a.clone(), v), None);
     }
 }

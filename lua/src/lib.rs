@@ -255,7 +255,7 @@ pub fn id_of(handle: u64) -> BufferId {
 }
 
 /// A buffer's lines as they were when tracking began.
-type Tracked = (kawoosh_doc::Version, Vec<kawoosh_doc::LineAnchor>);
+type Tracked = (kawoosh_doc::Version, Vec<std::ops::Range<usize>>);
 
 pub struct Runtime {
     lua: Lua,
@@ -360,8 +360,8 @@ impl Runtime {
     /// or unchanged — however the text was edited in between.
     pub fn track_lines(&self, ed: &Editor, id: BufferId) {
         let Some(b) = ed.buffers.get(id) else { return };
-        let anchors = (0..b.line_count()).map(|ln| b.line_anchor(ln)).collect();
-        self.tracked.borrow_mut().insert(id, (b.version(), anchors));
+        let ranges = (0..b.line_count()).map(|ln| b.line_range(ln)).collect();
+        self.tracked.borrow_mut().insert(id, (b.version(), ranges));
     }
 
     /// The snapshot Lua reads from, refreshed before every call in.
@@ -369,17 +369,17 @@ impl Runtime {
         let mut p = self.published.borrow_mut();
         p.buffers.clear();
         p.tracked.clear();
-        for (id, (version, anchors)) in self.tracked.borrow().iter() {
+        for (id, (version, ranges)) in self.tracked.borrow().iter() {
             let Some(b) = ed.buffers.get(*id) else {
                 continue;
             };
-            let lines = anchors
+            let lines = ranges
                 .iter()
-                .map(|a| {
+                .map(|r| {
                     // The line it became (`Buffer::line_now`): what was
                     // typed at its edges is its own, a line opened
                     // above or below is not.
-                    let ln = b.line_now(a, *version)?;
+                    let ln = b.line_now(r.clone(), *version)?;
                     let text = b.line_text(ln);
                     (!text.is_empty()).then_some(text)
                 })
