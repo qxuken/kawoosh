@@ -324,13 +324,16 @@ end
 local ORDER = { rename = 1, move = 2, copy = 3, create = 4, delete = 5 }
 
 local function pending()
-  local groups, bydir, sources, problems = {}, {}, {}, {}
+  local groups, bydir, sources, problems, edited = {}, {}, {}, {}, {}
   for _, h in ipairs(kawoosh.buf.list()) do
     local d = lists(h)
     local st = d and dir.state[PREFIX .. d]
     if st then
       local ops, twice = {}, nil
-      if kawoosh.buf.modified(h) then ops, twice = plan(st, h) end
+      if kawoosh.buf.modified(h) then
+        ops, twice = plan(st, h)
+        edited[#edited + 1] = d
+      end
       if twice then problems[#problems + 1] = twice .. " twice in " .. d end
       local gone = {}
       for _, op in ipairs(ops) do
@@ -366,29 +369,35 @@ local function pending()
     return false
   end
   local between = {}
+  -- A line pasted back into its own listing first: it is the entry put
+  -- back (or renamed), so a paste of it elsewhere finds the entry
+  -- still there and is a copy, not a move.
+  for _, g in ipairs(groups) do
+    for i, op in ipairs(g.ops) do
+      if op and op.kind == "paste" and op.from == g.dir then
+        if deletes(g.dir, op.name) then
+          claim(g.dir, op.name)
+          if op.to == op.name then
+            g.ops[i] = false
+          else
+            g.ops[i] = { kind = "rename", name = op.name, to = op.to, ln = op.ln, meta = op.meta }
+          end
+        else
+          g.ops[i] = { kind = "copy", name = op.name, to = op.to, ln = op.ln, meta = op.meta }
+        end
+      end
+    end
+  end
   for _, g in ipairs(groups) do
     for i, op in ipairs(g.ops) do
       if op and op.kind == "paste" then
         local moved = deletes(op.from, op.name)
-        if op.from == g.dir then
-          if moved then
-            claim(g.dir, op.name)
-            if op.to == op.name then
-              g.ops[i] = false
-            else
-              g.ops[i] = { kind = "rename", name = op.name, to = op.to, ln = op.ln, meta = op.meta }
-            end
-          else
-            g.ops[i] = { kind = "copy", name = op.name, to = op.to, ln = op.ln, meta = op.meta }
-          end
-        else
-          local kind = moved and "move" or "copy"
-          if moved then claim(op.from, op.name) end
-          g.ops[i] = false
-          between[#between + 1] = {
-            kind = kind, name = op.name, to = op.to, from = op.from, dir = g.dir, ln = op.ln, meta = op.meta,
-          }
-        end
+        local kind = moved and "move" or "copy"
+        if moved then claim(op.from, op.name) end
+        g.ops[i] = false
+        between[#between + 1] = {
+          kind = kind, name = op.name, to = op.to, from = op.from, dir = g.dir, ln = op.ln, meta = op.meta,
+        }
       end
     end
   end
@@ -436,7 +445,7 @@ local function pending()
     if x.name ~= y.name then return x.name < y.name end
     return x.from < y.from
   end)
-  return kept, between, problems
+  return kept, between, problems, edited
 end
 
 -- An op as a line. One across listings names its directories by
@@ -512,7 +521,8 @@ local function relist(d, h)
 end
 
 -- Applies every group's ops and the ops between listings, and lists
--- every directory touched again: the written listing in its pane,
+-- every directory touched again — and every listing with edits, whose
+-- edits came to nothing too: the written listing in its pane,
 -- the caret on `from`, the others where they are. The order is what
 -- keeps a file from being lost: a delete whose name another op writes
 -- to (a file replaced by one copied or moved in) vacates first, its
@@ -521,7 +531,7 @@ end
 -- as two steps, the creates; then what was put aside goes — or, when
 -- nothing arrived in its place, comes back; and the other deletes go
 -- last.
-local function apply(groups, between, here, from)
+local function apply(groups, between, edited, here, from)
   -- An error's first line, without the runtime's prefix and traceback.
   local function reason(err)
     return (tostring(err):gsub("^runtime error: ", ""):match("^[^\n]*"))
@@ -537,6 +547,7 @@ local function apply(groups, between, here, from)
   end
   -- What the plan writes to, and the deletes that make way for it.
   local targets, steps, aside = {}, {}, {}
+  for _, d in ipairs(edited) do touched[d] = true end
   for _, g in ipairs(groups) do
     touched[g.dir] = true
     for _, op in ipairs(g.ops) do
@@ -627,7 +638,7 @@ function dir.write(lines)
     kawoosh.echo("this listing was not opened here: :dir refresh! first")
     return false
   end
-  local groups, between, problems = pending()
+  local groups, between, problems, edited = pending()
   if #problems > 0 then
     kawoosh.notify(problems[1], { level = "error", source = "dir" })
     return false
@@ -666,7 +677,7 @@ function dir.write(lines)
     title = title,
     lines = desc,
     actions = {
-      { label = "Apply", run = function() apply(groups, between, here, from) end },
+      { label = "Apply", run = function() apply(groups, between, edited, here, from) end },
       { label = "Cancel" },
     },
   }
@@ -705,13 +716,22 @@ local function adopt(st, h, at_line, lines)
   local adopted = false
   for k, t in ipairs(texts) do
     local idx = reg.entries[k]
-    local name = idx and sst.entries[idx]
-    if name and name ~= "../" then
+    -- One of the listing's entries, or a line pasted into it before,
+    -- which is an entry of wherever that came from.
+    local id
+    if idx and idx <= #sst.entries then
+      if sst.entries[idx] ~= "../" then id = { dir = src, name = sst.entries[idx], meta = sst.meta[idx] } end
+    elseif idx then
+      local x = sst.extra[idx - #sst.entries]
+      if x then id = { dir = x.dir, name = x.name, meta = x.meta } end
+    end
+    if id then
       for ln, l in ipairs(lines) do
         if l == t and not owned[ln] then
           owned[ln] = true
           kawoosh.buf.track(ln, h)
-          st.extra[#st.extra + 1] = { dir = src, name = name, meta = sst.meta[idx], ln = ln }
+          id.ln = ln
+          st.extra[#st.extra + 1] = id
           adopted = true
           break
         end

@@ -1709,6 +1709,84 @@ fn a_listing_comes_back_with_a_session() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// A line pasted into a listing and yanked from there again is still
+/// the entry it was — `yy`, `p`, `k`, `dd`, `yy` leaves the listing's
+/// own copy standing in for the entry — and pasted into another
+/// listing it is that entry copied; the listing it stands in has
+/// nothing to write.
+#[test]
+fn a_pasted_line_yanked_again_is_still_its_entry() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-reyank-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("dir1")).unwrap();
+    std::fs::create_dir_all(dir.join("dir2")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("dir1/file.txt"), "one").unwrap();
+    std::fs::write(dir.join("dir2/file2.txt"), "two!").unwrap();
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("dir1").display()),
+    );
+    ex(&mut d, &mut app, "vsplit");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("dir2").display()),
+    );
+    d.keys(&mut app, "jyyp");
+    d.frame(&mut app);
+    d.keys(&mut app, "kdd");
+    d.frame(&mut app);
+    d.keys(&mut app, "yy");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    d.keys(&mut app, "jp");
+    d.frame(&mut app);
+    assert_eq!(
+        d.line_rows(),
+        ["../", "file.txt", "file2.txt", "../", "file2.txt"]
+    );
+    let e: Vec<String> = d
+        .row_extras()
+        .iter()
+        .map(|s| s.replace('\u{a0}', " "))
+        .collect();
+    assert!(
+        e[2].contains(" 4 B") && e[2].ends_with("← copy from ../dir2/"),
+        "{e:?}"
+    );
+    assert!(
+        e[4].contains(" 4 B") && !e[4].contains("←"),
+        "the entry put back: {e:?}"
+    );
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..],
+        [
+            "between them:",
+            "  copy file2.txt: dir2/ → dir1/",
+            "Apply",
+            "Cancel"
+        ]
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("dir1/file2.txt")).unwrap(),
+        "two!"
+    );
+    assert!(dir.join("dir2/file2.txt").is_file());
+    for (_, buf) in app.ed.buffers.iter() {
+        assert!(!buf.modified, "{} written", buf.name);
+    }
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Renames and moves never write one file over another, whatever the
 /// order they would run in: two entries' names swapped in one listing,
 /// and a file moved in from one listing while the file of that name
