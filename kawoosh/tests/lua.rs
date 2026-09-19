@@ -1082,6 +1082,65 @@ fn a_plugin_asks_with_a_confirm() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A listing split into two panes (`<C-w>v`) has a caret in each, and
+/// `<CR>` and `-` in one act on that pane's line and move that pane
+/// alone: the snapshot Lua reads gives a buffer the focused view's
+/// selections, not the first view's on it.
+#[test]
+fn a_split_listing_moves_on_alone() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-splitdir-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("sub/f.txt"), "x").unwrap();
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    let names = |app: &Kawoosh| -> Vec<String> {
+        app.layout
+            .visible_panes()
+            .into_iter()
+            .map(|p| match app.layout.content(p) {
+                Some(Content::Editor(v)) => app.ed.buffer_of(v).name.clone(),
+                _ => String::new(),
+            })
+            .collect()
+    };
+    let top = format!("dir: {}", dir.display());
+    let sub = format!("dir: {}", dir.join("sub").display());
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "v");
+    assert_eq!(names(&app), [top.clone(), top.clone()]);
+    // The left pane's caret stays on `../`; the right pane's goes to
+    // `sub/` and enters it.
+    d.keys(&mut app, "j");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(names(&app), [top.clone(), sub.clone()]);
+    d.keys(&mut app, "-");
+    assert_eq!(
+        names(&app),
+        [top.clone(), top.clone()],
+        "back up, on the same buffer"
+    );
+    d.keys(&mut app, "j");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(names(&app), [top.clone(), sub.clone()]);
+    // And from the left pane, with the right one in `sub`: `<CR>` on
+    // `../` in the left goes up in the left alone.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(
+        names(&app),
+        [
+            format!("dir: {}", dir.parent().unwrap().display()),
+            sub.clone()
+        ]
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Listings are many: a listing shown in two panes is not renamed under
 /// the other pane when one of them moves on — that pane gets a buffer
 /// of its own — `:dir!` opens a new buffer outright, every listing

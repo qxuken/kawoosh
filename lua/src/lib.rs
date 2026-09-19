@@ -390,16 +390,21 @@ impl Runtime {
             p.tracked.insert(handle_of(*id), lines);
         }
         for (id, b) in ed.buffers.iter() {
-            let (sels, primary) = ed
-                .views
-                .iter()
-                .find(|(v, view)| Some(*v) == current || view.buffer == id)
-                .map(|(_, v)| {
-                    (
-                        v.sels.iter().map(|s| (s.anchor, s.head)).collect(),
-                        v.sels.primary,
-                    )
-                })
+            // The buffer's selections are the current view's when it
+            // shows the buffer, else some view's on it — a listing in
+            // two panes has a caret in each, and a command run in one
+            // acts on that one's line.
+            let of = |v: &kawoosh_editor::View| {
+                (
+                    v.sels.iter().map(|s| (s.anchor, s.head)).collect(),
+                    v.sels.primary,
+                )
+            };
+            let (sels, primary) = current
+                .and_then(|c| ed.views.get(c))
+                .filter(|v| v.buffer == id)
+                .map(of)
+                .or_else(|| ed.views.values().find(|v| v.buffer == id).map(of))
                 .unwrap_or_default();
             p.buffers.insert(
                 handle_of(id),
