@@ -148,7 +148,9 @@ end
 -- refilled; else `reuse`, a scratch buffer's handle, is renamed and
 -- refilled instead of a new buffer being made beside it — unless it
 -- is shown in another pane too, which keeps it; `line` is where the
--- caret goes (from 1).
+-- caret goes (from 1); `show = false` fills the buffer where it is —
+-- another pane, the background — without putting it in the focused
+-- pane, or makes it in the background.
 --
 -- kawoosh.buf.annotate(lines[, buffer]): text after a line's end that
 -- is not the buffer's — what an entry is, beside its name — `{ [n] =
@@ -166,7 +168,7 @@ end
 function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
   kawoosh._open_scratch(t.name, t.text or "", t.on_write ~= nil, t.read_only or false, t.language,
-    t.reuse, t.line)
+    t.reuse, t.line, t.show ~= false)
 end
 
 -- ---------------------------------------------------------------- fields

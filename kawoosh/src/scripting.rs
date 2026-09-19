@@ -158,6 +158,7 @@ impl Kawoosh {
                 language,
                 reuse,
                 line,
+                show,
             } => {
                 let existing = self
                     .ed
@@ -208,6 +209,28 @@ impl Kawoosh {
                 };
                 if hooked {
                     rt.track_lines(&self.ed, id);
+                }
+                // Filled where it is (`show = false`): every view on it
+                // starts over at the line asked for, and the focused
+                // pane is left alone.
+                if !show {
+                    let ln = line
+                        .unwrap_or(1)
+                        .max(1)
+                        .min(self.ed.buffers[id].line_count())
+                        - 1;
+                    let off = self.ed.buffers[id].line_start(ln);
+                    for v in self.ed.views.values_mut() {
+                        if v.buffer == id {
+                            v.sels = kawoosh_editor::Selections::single(
+                                kawoosh_editor::Selection::point(off),
+                            );
+                            v.goal_col = None;
+                            v.top = 0;
+                        }
+                    }
+                    self.last_pos.remove(&id);
+                    return;
                 }
                 match self.focused_view() {
                     Some(v) => self.show_buffer(v, id),

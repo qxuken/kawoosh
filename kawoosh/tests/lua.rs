@@ -1149,41 +1149,91 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert!(dir.join("b/b2.txt").is_file() && dir.join("a/a2.txt").is_file());
-    // A line moved between listings — `dd` in one, `p` in the other —
-    // is a delete there and a create here, never the entry it landed
-    // beside renamed, and the entry it replaced (`dd` after the paste,
-    // which takes the newline after it now) is a delete.
+    // Lines swapped between listings — `dd` in one, `p` in the other,
+    // both ways — are two moves: a name one listing deletes and the
+    // other creates. `:w` in either plans both listings' changes, the
+    // pasted line has no annotation until then (it is no entry here
+    // yet, never the entry it landed beside renamed), and `Apply`
+    // moves the files and lists both directories again, the other
+    // pane's listing where it is.
     d.keys(&mut app, "jdd");
     d.ctrl(&mut app, "w");
     d.keys(&mut app, "h");
     assert_eq!(name(&app), a);
     d.keys(&mut app, "jp");
     d.keys(&mut app, "kdd");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "l");
+    d.keys(&mut app, "p");
     assert_eq!(
-        d.line_rows()[..3],
-        ["../".to_string(), "b2.txt".to_string(), "../".to_string()],
+        d.line_rows(),
+        ["../", "b2.txt", "../", "a2.txt"],
         "{:?}",
         d.line_rows()
     );
     d.frame(&mut app);
-    assert_eq!(d.row_extras()[1], "", "b2.txt is no entry here yet");
+    assert_eq!(d.row_extras()[1], "", "b2.txt is no entry in a yet");
+    assert_eq!(d.row_extras()[3], "", "a2.txt is no entry in b yet");
     ex(&mut d, &mut app, "w");
     d.frame(&mut app);
+    let t = d.confirm_texts();
+    // A group's header is the full path, cut here by the node listing;
+    // a move names the directories short, each the only one of its name.
+    let da = dir.join("a").display().to_string();
+    assert!(!t.is_empty(), "no confirm: {}", app.ed.message);
+    assert_eq!(t[0], "2 change(s) in 2 directories?");
     assert_eq!(
-        &d.confirm_texts()[1..],
-        ["create b2.txt", "delete a2.txt", "Apply", "Cancel"]
+        &t[1..],
+        [
+            "between them:".to_string(),
+            "  move a2.txt: a/ → b/".to_string(),
+            "  move b2.txt: b/ → a/".to_string(),
+            "Apply".to_string(),
+            "Cancel".to_string(),
+        ]
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(dir.join("a/b2.txt").is_file() && dir.join("b/a2.txt").is_file());
+    assert!(!dir.join("a/a2.txt").exists() && !dir.join("b/b2.txt").exists());
+    assert_eq!(d.line_rows(), ["../", "b2.txt", "../", "a2.txt"]);
+    let e = d.row_extras();
+    assert!(
+        e[1].contains("4") && e[3].contains("5"),
+        "both listed again: {e:?}"
+    );
+    assert_eq!(name(&app), b, "the keyboard where it was");
+    for (_, buf) in app.ed.buffers.iter() {
+        assert!(!buf.modified, "{} written", buf.name);
+    }
+    // A move and a rename together, planned from the other listing,
+    // grouped under their directories; cancelled, and both listings
+    // read again.
+    d.keys(&mut app, "jdd");
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    d.keys(&mut app, "p");
+    d.keys(&mut app, "kcca3.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    let t = d.confirm_texts();
+    assert_eq!(t[0], "2 change(s) in 2 directories?");
+    assert!(t[1].starts_with(&da[..da.len().min(40)]), "{t:?}");
+    assert_eq!(
+        &t[2..],
+        [
+            "  rename b2.txt → a3.txt",
+            "between them:",
+            "  move a2.txt: b/ → a/",
+            "Apply",
+            "Cancel",
+        ]
     );
     d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "dir refresh!");
     d.ctrl(&mut app, "w");
     d.keys(&mut app, "l");
-    ex(&mut d, &mut app, "w");
-    d.frame(&mut app);
-    assert_eq!(
-        &d.confirm_texts()[1..],
-        ["delete b2.txt", "Apply", "Cancel"]
-    );
-    d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "dir refresh!");
     // `:dir!` lists in a new buffer; the one it came from stays listed
     // and `:b` reaches it. A plain `:dir` in one pane still moves on
@@ -1221,8 +1271,8 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     d.keys(&mut app, "j");
     d.frame(&mut app);
     assert!(
-        texts(&d).contains(&"alpha".to_string()),
-        "the other listing's entry: {:?}",
+        texts(&d).contains(&"beta".to_string()),
+        "the other listing's entry, b2.txt moved into a: {:?}",
         texts(&d)
     );
     assert_eq!(d.warnings(), Vec::<String>::new());

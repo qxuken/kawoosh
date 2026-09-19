@@ -79,6 +79,9 @@ pub enum Msg {
         reuse: Option<u64>,
         /// The line (from 1) to put the caret on.
         line: Option<usize>,
+        /// Whether the focused pane shows it; `false` fills it where
+        /// it is (or makes it in the background) and leaves the pane.
+        show: bool,
     },
     /// `kawoosh.view_open(name, { focus = })`: the view in a split, or
     /// its pane focused; `focus = false` leaves the keyboard where it
@@ -901,11 +904,12 @@ fn seed(
         )?,
     )?;
     let qq = q(queue);
+    #[allow(clippy::type_complexity)]
     k.set(
         "_open_scratch",
         lua.create_function(
             move |_,
-                  (name, text, hooked, read_only, language, reuse, line): (
+                  (name, text, hooked, read_only, language, reuse, line, show): (
                 String,
                 String,
                 bool,
@@ -913,6 +917,7 @@ fn seed(
                 Option<String>,
                 Option<u64>,
                 Option<usize>,
+                Option<bool>,
             )| {
                 qq.borrow_mut().push(Msg::OpenScratch {
                     name,
@@ -922,6 +927,7 @@ fn seed(
                     language,
                     reuse,
                     line,
+                    show: show.unwrap_or(true),
                 });
                 Ok(())
             },
