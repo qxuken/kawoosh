@@ -247,15 +247,17 @@ impl Kawoosh {
             .unwrap_or_default();
         let count = self.ed.count.map(|c| c.to_string()).unwrap_or_default();
         let keys = format!("{count}{op}{pending}");
-        self.strip(
-            ui,
-            &[
-                (mode, mode_color),
-                (name.as_str(), pal.fg),
-                (keys.as_str(), pal.dim),
-            ],
-            &right,
-        );
+        // A recording under way, vim's `recording @a`, beside the mode.
+        let rec = self.ed.recording().map(|c| format!("REC @{c}"));
+        let mut items = vec![
+            (mode, mode_color),
+            (name.as_str(), pal.fg),
+            (keys.as_str(), pal.dim),
+        ];
+        if let Some(rec) = &rec {
+            items.insert(1, (rec.as_str(), pal.insert));
+        }
+        self.strip(ui, &items, &right);
     }
 
     /// A field's one line, drawn as a pane's row is (`rows::emit_line`):

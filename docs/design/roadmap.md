@@ -106,12 +106,21 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   in the `normal` command: a pending operator, the extra cursors, the
   search highlight (`Editor::search_hl`; the pattern stays for `n`, a
   search or `n` turns the paint back on), nothing.
-- **`.` repeat, and macros with it** — open [todo, kui.md]. mvp.md D4
-  says how: commands are named data through one registry, so recording
-  is capturing the command stream and replay is re-dispatching it. `.`
-  is the last *editing* command's stream (the insert-mode text after it
-  included; `Editor::last_insert` already keeps it), `q`/`@` the same
-  over a named span. One design, both keys.
+- **`.` repeat, and macros with it** — done 2026-09-21 [todo, kui.md].
+  mvp.md D4's way: a key that ran a command is a `Step` (the command as
+  it ran — name, arguments, count, the character it asked for), a run
+  of insert-mode text is one, and `Editor::repeat` keeps them two ways
+  (`editor/src/repeat.rs`): the change under way, complete and `.`'s
+  once nothing is left open on the view (an operator, a character to
+  come, insert or visual mode, the prompt) and an undo node was made
+  by it; and `q`'s span. `.` (`repeat`) replays the change on the
+  selections as they are, a count replacing its count; `q` (`macro
+  record`) and `@` (`macro play`, `@@`, `@:`) the registers. Replay is
+  re-dispatch through the registry with the prompt's routing, so `:s`
+  lines and searches replay; nothing fails the way vim's motions do,
+  so a recursive macro stops at a depth. `Editor::last_insert` went
+  with it. On the way: a count before an operator now reaches the
+  motion (`2dw` deleted one word, `d2j` four lines).
 - **The primary caret** — done 2026-09-21 [todo]. `(` / `)` rotate it
   (`cursor rotate back` / `cursor rotate`, helix's spelling), and the
   other selections' block carets are washed (`Caret::Extra`, the accent
@@ -383,9 +392,11 @@ then breadth.
    the tests' shape.~~ Landed 2026-09-21, all seven, with
    `kawoosh/tests/normal_mode.rs` and the terminal test; see the
    engine and terminal tracks.
-3. **`.` and macros.** The command-stream recorder (mvp.md D4's "nearly
+3. ~~**`.` and macros.** The command-stream recorder (mvp.md D4's "nearly
    free"): `.` replays the last edit with its insert text, `q`/`@`
-   record and replay a named span. Closes kui.md's "no macros or `.`".
+   record and replay a named span. Closes kui.md's "no macros or `.`".~~
+   Landed 2026-09-21 (`editor/src/repeat.rs`, keys.md's "Editing"); see
+   the engine track.
 4. **The picker.** `picker.lua` as the compositional module; files,
    buffers, grep, lines; `<leader>f` `<leader>bb` `<leader>g` `<leader>/`
    `<leader>sr`; `kawoosh.fuzzy` in Rust; the commands pane migrated

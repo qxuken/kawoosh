@@ -1,7 +1,9 @@
 //! The modal engine driven by key sequences, no UI anywhere.
 
 use kawoosh_doc::Buffer;
-use kawoosh_editor::{ArgKind, Args, Editor, Effect, KeyStroke, Mode, Selection, Spec, ViewId};
+use kawoosh_editor::{
+    ArgKind, Args, Editor, Effect, KeyStroke, Mode, Selection, Spec, Step, ViewId,
+};
 
 struct T {
     ed: Editor,
@@ -1214,4 +1216,221 @@ fn every_engine_command_is_documented() {
         .map(|s| s.name.as_str())
         .collect();
     assert!(bare.is_empty(), "undocumented: {bare:?}");
+}
+
+/// A count before the operator is the motion's, as vim's: `2dw` is
+/// `d2w`, `2d3w` six words, `d2j` three lines — and `2dd` two.
+#[test]
+fn a_count_before_the_operator_is_the_motions() {
+    let w = "one two three four five six seven\n";
+    let mut t = T::new(w);
+    t.keys("2dw");
+    assert_eq!(t.text(), "three four five six seven\n");
+    let mut t = T::new(w);
+    t.keys("2d3w");
+    assert_eq!(t.text(), "seven\n");
+    let mut t = T::new(w);
+    t.keys("2cwX<Esc>");
+    assert_eq!(t.text(), "Xthree four five six seven\n");
+    let l = "1\n2\n3\n4\n5\n6\n";
+    let mut t = T::new(l);
+    t.keys("d2j");
+    assert_eq!(t.text(), "4\n5\n6\n");
+    let mut t = T::new(l);
+    t.keys("2dj");
+    assert_eq!(t.text(), "4\n5\n6\n");
+    let mut t = T::new(l);
+    t.keys("2dd");
+    assert_eq!(t.text(), "3\n4\n5\n6\n");
+    let mut t = T::new(l);
+    t.keys("2>>");
+    assert_eq!(t.text(), "    1\n    2\n3\n4\n5\n6\n");
+}
+
+/// `.` replays the last change's steps — the command stream, the text
+/// typed in insert mode with it — on the selections as they are; a
+/// count replaces the change's count and stays its count.
+#[test]
+fn dot_repeats_the_last_change() {
+    let mut t = T::new("one two three four five six\n");
+    t.keys(".");
+    assert_eq!(t.ed.message, "nothing to repeat");
+    t.keys("dw.");
+    assert_eq!(t.text(), "three four five six\n");
+    t.keys("2.");
+    assert_eq!(t.text(), "five six\n", "a count replaces the change's");
+    assert_eq!(
+        t.ed.repeat.last_change,
+        vec![
+            Step::Command {
+                name: "delete".into(),
+                args: vec![],
+                count: Some(2),
+                arg_char: None,
+            },
+            Step::Command {
+                name: "word next".into(),
+                args: vec![],
+                count: None,
+                arg_char: None,
+            },
+        ]
+    );
+
+    // `x` with a count, undo between: undo is not a change.
+    let mut t = T::new("abcdef\n");
+    t.keys("x3.");
+    assert_eq!(t.text(), "ef\n");
+    t.keys("u.");
+    assert_eq!(t.text(), "ef\n", "the count is the change's from then on");
+
+    // Insert mode: the text typed goes with the command that opened it,
+    // and a motion between is no change.
+    let mut t = T::new("foo\nbar\n");
+    t.keys("ihi <Esc>");
+    assert_eq!(t.text(), "hi foo\nbar\n");
+    t.keys("j.");
+    assert_eq!(t.text(), "hi foo\nbahi r\n");
+    assert_eq!(
+        t.ed.repeat.last_change,
+        vec![
+            Step::Command {
+                name: "insert".into(),
+                args: vec![],
+                count: None,
+                arg_char: None,
+            },
+            Step::Text("hi ".into()),
+            Step::Command {
+                name: "normal".into(),
+                args: vec![],
+                count: None,
+                arg_char: None,
+            },
+        ],
+        "a run of text is one step"
+    );
+    let mut t = T::new("foo bar\n");
+    t.keys("ciwxx<Esc>w.");
+    assert_eq!(t.text(), "xx xx\n", "an operator, its object, and the text");
+    t.keys("A;<Esc>0.");
+    assert_eq!(t.text(), "xx xx;;\n");
+
+    // A character argument rides with its command.
+    let mut t = T::new("abab\n");
+    t.keys("rxl.");
+    assert_eq!(t.text(), "xxab\n");
+    t.keys("0dfa.");
+    assert_eq!(t.text(), "\n");
+
+    // A visual change replays from `v`: the same shape from the caret.
+    let mut t = T::new("a\nb\nc\nd\ne\n");
+    t.keys("Vjd");
+    assert_eq!(t.text(), "c\nd\ne\n");
+    t.keys(".");
+    assert_eq!(t.text(), "e\n");
+    t.keys("vy.");
+    assert_eq!(
+        t.text(),
+        "",
+        "a yank is not a change: the deletion is still `.`'s"
+    );
+
+    // `p`, the numbers, and a `:s` line — each a change.
+    let mut t = T::new("ab\n");
+    t.keys("ylp.");
+    assert_eq!(t.text(), "aaab\n");
+    let mut t = T::new("1 1\n");
+    t.keys("<C-a>w.");
+    assert_eq!(t.text(), "2 2\n");
+    t.keys("5.");
+    assert_eq!(t.text(), "2 7\n");
+    let mut t = T::new("aa\naa\n");
+    t.keys(":s/a/b/<CR>");
+    assert_eq!(t.text(), "ba\naa\n");
+    t.keys("j.");
+    assert_eq!(t.text(), "ba\nba\n", "a `:` line that edited is a change");
+    t.keys(":foo<Esc><Esc>");
+    assert_eq!(t.ed.prompt_text(), None);
+    t.keys(".");
+    assert_eq!(t.text(), "ba\nbb\n", "a cancelled prompt is no change");
+}
+
+/// `q` records the steps into a register and `@` replays them, with a
+/// count, `@@` the last one, `@:` the last command line; `.` after a
+/// macro is the macro's last change; a macro that plays itself stops.
+#[test]
+fn macros_record_and_replay_the_stream() {
+    let mut t = T::new("a\nb\nc\nd\ne\n");
+    t.keys("qa");
+    assert_eq!(t.ed.recording(), Some('a'));
+    t.keys("I- <Esc>j");
+    assert_eq!(t.ed.recording(), Some('a'));
+    t.keys("q");
+    assert_eq!(t.ed.recording(), None);
+    assert_eq!(t.ed.message, "recorded @a");
+    assert_eq!(t.text(), "- a\nb\nc\nd\ne\n");
+    assert_eq!(
+        t.ed.repeat.macros[&'a'],
+        vec![
+            Step::Command {
+                name: "insert line start".into(),
+                args: vec![],
+                count: None,
+                arg_char: None,
+            },
+            Step::Text("- ".into()),
+            Step::Command {
+                name: "normal".into(),
+                args: vec![],
+                count: None,
+                arg_char: None,
+            },
+            Step::Command {
+                name: "move down".into(),
+                args: vec![],
+                count: None,
+                arg_char: None,
+            },
+        ],
+        "the `q`s are not in it"
+    );
+    t.keys("@a");
+    assert_eq!(t.text(), "- a\n- b\nc\nd\ne\n");
+    t.keys("2@@");
+    assert_eq!(t.text(), "- a\n- b\n- c\n- d\ne\n");
+    t.keys(".");
+    assert_eq!(
+        t.text(),
+        "- a\n- b\n- c\n- d\n- e\n",
+        "`.` after a macro is the macro's last change, on the line its `j` reached"
+    );
+    t.keys("@z");
+    assert_eq!(t.ed.message, "no macro @z");
+
+    // An upper-case register appends.
+    t.keys("qAxq");
+    assert_eq!(t.ed.repeat.macros[&'a'].len(), 5);
+    assert_eq!(
+        t.text(),
+        "- a\n- b\n- c\n- d\n-e\n",
+        "the `x` took the space"
+    );
+    t.keys("gg@a");
+    assert_eq!(t.text(), "- - a\n-b\n- c\n- d\n-e\n");
+
+    // `@:` runs the last command line again.
+    let mut t = T::new("aa\naa\n");
+    t.keys(":s/a/b/g<CR>j@:");
+    assert_eq!(t.text(), "bb\nbb\n");
+
+    // A macro that plays itself: no step fails, so the depth stops it.
+    let mut t = T::new("1\n2\n3\n");
+    t.keys("qcj@c");
+    assert_eq!(t.ed.message, "no macro @c", "the old `c`, while recording");
+    t.keys("q");
+    assert_eq!(t.ed.message, "recorded @c");
+    t.keys("gg@c");
+    assert_eq!(t.head(), 6, "on the last line, the empty one after the newline");
+    assert!(t.ed.message.contains("deep"), "{}", t.ed.message);
 }

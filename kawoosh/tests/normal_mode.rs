@@ -1,7 +1,8 @@
 //! The normal-mode polish batch (docs/design/roadmap.md, step 2): the
 //! `<Esc>` ladder, the primary caret and its rotation, the yank flash,
 //! `<C-a>` / `<C-x>`, an inner object in visual mode, and Alt moving
-//! one selection's lines and shape.
+//! one selection's lines and shape — and step 3's `.` and macros
+//! through the shell's keys, with the recording on the status line.
 
 mod drive;
 
@@ -354,4 +355,44 @@ fn alt_h_and_alt_l_nudge_by_the_selections_kind() {
     assert_eq!(app.focused_mode(), Mode::Insert);
     assert_eq!(sels(&app), [(u.len(), u.len())]);
     assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// `.` and a macro through the shell's own key path: the steps are
+/// the commands the keys ran, and the status line says what `q` is
+/// recording into while it does.
+#[test]
+fn dot_and_macros_run_through_the_shell() {
+    let mut app = Kawoosh::new("t", "a\nb\nc\n");
+    let mut d = Drive::new(600.0, 200.0);
+    d.frame(&mut app);
+    let strip = |d: &Drive| -> Vec<String> {
+        d.core
+            .nodes()
+            .iter()
+            .filter_map(|n| n.text.clone())
+            .filter(|t| t.starts_with("REC") || t == "NOR" || t == "INS")
+            .collect()
+    };
+    d.keys(&mut app, "qa");
+    d.frame(&mut app);
+    assert_eq!(app.ed.recording(), Some('a'));
+    assert!(
+        strip(&d).iter().any(|t| t == "REC @a"),
+        "the status line: {:?}",
+        strip(&d)
+    );
+    d.keys(&mut app, "A;");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "jq");
+    d.frame(&mut app);
+    assert_eq!(app.ed.recording(), None);
+    assert!(!strip(&d).iter().any(|t| t.starts_with("REC")));
+    assert_eq!(text(&app), "a;\nb\nc\n");
+    d.keys(&mut app, "@a");
+    assert_eq!(text(&app), "a;\nb;\nc\n");
+    d.keys(&mut app, ".");
+    assert_eq!(text(&app), "a;\nb;\nc;\n", "`.` is the macro's last change");
+    d.keys(&mut app, "ggx..");
+    assert_eq!(text(&app), "\nb;\nc;\n");
+    assert!(d.warnings().is_empty());
 }

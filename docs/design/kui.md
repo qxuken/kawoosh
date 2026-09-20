@@ -40,10 +40,11 @@ gaps are records rather than surprises:
   `.kawoosh/settings.lua` is loaded (Decision 10) but its `init.lua`
   (7b's code half) is not — one global `init.lua`, since code from a
   repository wants the trust prompt 7b describes and data does not; no
-  `:map` listing; no macros or `.`; the tab strip has no close button.
-  (The undo history was linear until 2026-09-18; it is a tree now —
-  mvp.md's retained roots kept instead of dropped — with `g-`/`g+` and
-  the `:undo history` pane.)
+  `:map` listing; the tab strip has no close button. (The undo history
+  was linear until 2026-09-18; it is a tree now — mvp.md's retained
+  roots kept instead of dropped — with `g-`/`g+` and the `:undo
+  history` pane. `.` and macros came 2026-09-21: the command stream
+  recorded and re-dispatched, keys.md's "Editing".)
 
 ## What changed
 

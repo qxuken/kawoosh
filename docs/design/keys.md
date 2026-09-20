@@ -164,6 +164,27 @@ lines pair if one is wanted.
 | `gsa` + motion + char | wrap what the motion covers in the pair (`gsaiw)`, `viwgsa"`) |
 | `gsd` + char | take the pair off from around the caret |
 | `gsr` + char + char | swap the pair for another (`gsr)]`) |
+| `.` | the last change again, on the selections as they are; a count replaces the change's count and is its count from then on |
+| `q` + char … `q` | record into the register; an upper-case letter appends to its lower-case one; the status line says `REC @a` meanwhile |
+| `@` + char | play the register COUNT times; `@@` the one played last, `@:` the last command line |
+
+**A change and a macro are the command stream, not the keys.** Every
+key that ran a command is a step — the command as it ran: its name,
+arguments, count and the character it asked for — and a run of text
+typed in insert mode is one; the prompt's line and its `<CR>` are steps
+too, so a `:s` line is a change and a macro can search. `.` keeps the
+steps from the first that left something open (an operator, a
+character to come, insert or visual mode, the prompt) to the one that
+closed it, if they edited: `ciw` with its text and its `<Esc>`, `Vjd`
+from the `V`, `rx` with its `x`; a yank, an undo, a motion and what the
+shell runs are none. `q` keeps every step until the next `q`, `.` and
+`@` among them, and `@` re-dispatches through the registry the keys
+went through, so a macro survives a remap, and `.` after `@a` is the
+macro's last change. Nothing here fails the way vim's motions do, so a
+macro runs to its end and a count runs it that many times: `100@a`
+where vim's hand writes a recursive one, which stops here at a depth of
+a hundred. Both live with the editor and die with it, by the memory's
+design (memory.md: not `.`, not macros).
 
 `f` / `t` stay within the line as vim's; it is `;` that crosses lines,
 so `f=` then `;;;` walks every `=` in the file. `,` is the primary

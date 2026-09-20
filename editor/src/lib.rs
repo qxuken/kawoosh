@@ -7,6 +7,7 @@ pub mod command;
 pub mod commands;
 pub mod keymap;
 pub mod motions;
+pub mod repeat;
 pub mod search;
 pub mod selection;
 pub mod settings;
@@ -24,6 +25,7 @@ pub use command::{
 pub use kawoosh_doc::Hunk;
 use kawoosh_doc::{Buffer, BufferId, Version};
 pub use keymap::{Binding, KeyStroke, Keymap, Lookup, Mode};
+pub use repeat::Step;
 pub use selection::{Selection, Selections};
 pub use settings::{Layer, Setting, Settings};
 use slotmap::{SlotMap, new_key_type};
@@ -603,7 +605,12 @@ pub struct Editor {
     pub settings: Settings,
     /// The settings version the keymap last took its leader from.
     settings_applied: u64,
-    pub last_insert: String,
+    /// The command stream: the last change for `.`, and the macros
+    /// ([`repeat`]).
+    pub repeat: repeat::Recorder,
+    /// Whether a command made an undo node since the step began
+    /// (`settle_checkpoint`): what makes the steps so far a change.
+    edited: bool,
 }
 
 impl Default for Editor {
@@ -639,7 +646,8 @@ impl Editor {
             effects: Vec::new(),
             settings: Settings::new(),
             settings_applied: 0,
-            last_insert: String::new(),
+            repeat: Default::default(),
+            edited: false,
         };
         commands::install(&mut ed);
         commands::default_keymap(&mut ed.keymap);
@@ -1260,13 +1268,29 @@ impl Editor {
         match self.pick_binding(view, bs) {
             Ok(b) => {
                 let b = b.clone();
-                self.run(view, &b.command, &b.args, count);
+                self.run_step(view, &b.command, &b.args, count);
             }
             Err(reason) => {
                 self.pending_op = None;
                 self.message = reason;
             }
         }
+    }
+
+    /// [`Editor::run`] as a step of the stream: what `.` and a macro
+    /// keep ([`repeat`]).
+    fn run_step(&mut self, view: ViewId, name: &str, args: &[String], count: Option<usize>) {
+        self.step_begin();
+        self.run(view, name, args, count);
+        self.step_end(
+            view,
+            Step::Command {
+                name: name.to_string(),
+                args: args.to_vec(),
+                count,
+                arg_char: None,
+            },
+        );
     }
 
     /// Runs a command by name (an alias, with `!` or `?`, with its
@@ -1277,6 +1301,20 @@ impl Editor {
     /// message. A command without a body here — declared, or unknown —
     /// is the shell's ([`Effect::Shell`]).
     pub fn run(&mut self, view: ViewId, name: &str, args: &[String], count: Option<usize>) {
+        self.run_with(view, name, args, count, None);
+    }
+
+    /// [`Editor::run`] with the character a `takes_char` command asked
+    /// for: how the key after `f` or `r` runs it, and how a replayed
+    /// step does.
+    fn run_with(
+        &mut self,
+        view: ViewId,
+        name: &str,
+        args: &[String],
+        count: Option<usize>,
+        arg_char: Option<char>,
+    ) {
         let inv = self.commands.resolve(name, args);
         if let Some(spec) = self.commands.spec(&inv.name)
             && !spec.takes(inv.form)
@@ -1298,13 +1336,25 @@ impl Editor {
                 return;
             }
         };
+        let kind = self
+            .commands
+            .spec(&inv.name)
+            .map(|s| s.kind)
+            .unwrap_or_default();
+        // A count before the operator is the motion's, multiplied
+        // with the motion's own as vim's is: `2dw` is `d2w`, `2d3w`
+        // six words. (`2dd` is the operator's own doubling.)
+        let count = match (kind, self.pending_op) {
+            (Kind::Motion(_), Some((_, n))) if n > 0 => Some(count.unwrap_or(1).max(1) * n),
+            _ => count,
+        };
         let ctx = Ctx {
             view,
             count: count.unwrap_or(1).max(1),
             has_count: count.is_some(),
             form: inv.form,
             args,
-            arg_char: None,
+            arg_char,
         };
         let Some(cmd) = self.commands.body(&inv.name) else {
             self.pending_op = None;
@@ -1323,11 +1373,6 @@ impl Editor {
             });
             return;
         };
-        let kind = self
-            .commands
-            .spec(&inv.name)
-            .map(|s| s.kind)
-            .unwrap_or_default();
         self.run_cmd(&cmd, kind, ctx);
     }
 
@@ -1341,23 +1386,20 @@ impl Editor {
         // An operator waiting on a motion: the motion just extended every
         // selection, so apply the operator now (mvp.md D4: operators
         // compose with the selection set, not with "the cursor").
-        if let Some((op, op_count)) = op_before
+        if let Some((op, _)) = op_before
             && self.pending_op == op_before
         {
             match kind {
                 Kind::Motion(kind) => {
+                    // The motion ran with the whole count (`run_with`),
+                    // so the range is what it covers, no line more.
                     self.pending_op = None;
-                    let count = if ctx.has_count {
-                        ctx.count
-                    } else {
-                        op_count.max(1)
-                    };
                     let id = self.views[ctx.view].buffer;
                     let buf = &self.buffers[id];
                     let ranges = self.views[ctx.view]
                         .sels
                         .iter()
-                        .map(|s| commands_op_range(buf, s, kind, count))
+                        .map(|s| commands_op_range(buf, s, kind, 1))
                         .collect();
                     commands::apply_operator(self, ctx.view, op, ranges);
                 }
@@ -1377,6 +1419,154 @@ impl Editor {
         if self.views.contains_key(ctx.view) {
             self.close_checkpoint(ctx.view);
         }
+    }
+
+    // ------------------------------------------------------------ the stream
+
+    /// The register `q` is recording into, for the status line.
+    pub fn recording(&self) -> Option<char> {
+        self.repeat.recording()
+    }
+
+    fn step_begin(&mut self) {
+        self.edited = false;
+    }
+
+    /// A step done on `view`: into the macro being recorded, and into
+    /// the change under way — complete, and `.`'s if it edited, once
+    /// nothing is left open on the view ([`repeat`]).
+    fn step_end(&mut self, view: ViewId, step: Step) {
+        // A pane's own field is typed into, not edited.
+        if self.is_field(view) && self.prompt.as_ref().map(|p| p.field) != Some(view) {
+            return;
+        }
+        // A command step is kept resolved — `insert line start` as one
+        // name, an alias by what it names, the form's marker on it —
+        // whatever the binding spelled.
+        let (step, resolved) = match step {
+            Step::Command {
+                name,
+                args,
+                count,
+                arg_char,
+            } => {
+                let inv = self.commands.resolve(&name, &args);
+                let step = Step::Command {
+                    name: format!("{}{}", inv.name, inv.form.marker()),
+                    args: inv.args,
+                    count,
+                    arg_char,
+                };
+                (step, Some(inv.name))
+            }
+            text => (text, None),
+        };
+        let resolved = resolved.as_deref();
+        // `q` is never in what it records; nothing inside a replay is,
+        // the step that started it having been.
+        if self.repeat.depth == 0 && resolved != Some("macro record") {
+            self.repeat.record(&step);
+        }
+        // `.` is the engine's own edits: what the shell runs is not one,
+        // and `.` and `@` are made of steps rather than being one.
+        let own = matches!(resolved, Some("repeat" | "macro record" | "macro play"));
+        if own || resolved.is_some_and(|n| self.commands.body(n).is_none()) {
+            return;
+        }
+        repeat::push(&mut self.repeat.current, step);
+        let open = self.pending_op.is_some()
+            || self.awaiting_char.is_some()
+            || self.surround.ranges.is_some()
+            || self.surround.from.is_some()
+            || self.prompt.is_some()
+            || matches!(self.mode(view), Mode::Insert | Mode::Visual);
+        if open {
+            return;
+        }
+        if self.edited {
+            self.repeat.last_change = std::mem::take(&mut self.repeat.current);
+        } else {
+            self.repeat.current.clear();
+        }
+    }
+
+    /// Runs `steps` on `view` as the keys would have — one to the
+    /// prompt while it is open — with the stream tracked as for keys,
+    /// so `.` after a macro is the macro's last change. Replays nest
+    /// to [`repeat::DEPTH`] and the outermost has [`repeat::BUDGET`]
+    /// steps in all: a macro that plays itself ends there, since no
+    /// step here fails the way vim's motions do.
+    pub fn replay(&mut self, view: ViewId, steps: &[Step]) {
+        if self.repeat.depth >= repeat::DEPTH {
+            self.message = format!("replay {} deep, stopped", repeat::DEPTH);
+            return;
+        }
+        if self.repeat.depth == 0 {
+            self.repeat.budget = repeat::BUDGET;
+        }
+        self.repeat.depth += 1;
+        for step in steps {
+            if self.repeat.budget == 0 {
+                self.message = format!("replay past {} steps, stopped", repeat::BUDGET);
+                break;
+            }
+            self.repeat.budget -= 1;
+            let view = match self.prompt_view() {
+                Some(p) if !self.is_field(view) => p,
+                _ => view,
+            };
+            if !self.views.contains_key(view) {
+                break;
+            }
+            self.step_begin();
+            match step {
+                Step::Text(t) => {
+                    if self.mode(view) == Mode::Insert {
+                        self.insert_text(view, t);
+                    }
+                }
+                Step::Command {
+                    name,
+                    args,
+                    count,
+                    arg_char,
+                } => {
+                    // The step carries the character its command asked
+                    // for; the asking is not left waiting on a key.
+                    if arg_char.is_some() {
+                        self.awaiting_char = None;
+                    }
+                    self.run_with(view, name, args, *count, *arg_char);
+                }
+            }
+            self.after_prompt_key(view);
+            self.step_end(view, step.clone());
+        }
+        self.repeat.depth -= 1;
+    }
+
+    /// `.`: the last change again, on the selections as they are. A
+    /// count replaces the change's — the first command's that had one,
+    /// else the first command's — and is the change's from then on.
+    pub fn repeat_change(&mut self, view: ViewId, count: Option<usize>) {
+        let mut steps = self.repeat.last_change.clone();
+        if steps.is_empty() {
+            self.message = "nothing to repeat".into();
+            return;
+        }
+        if let Some(n) = count {
+            let counted = |s: &Step| matches!(s, Step::Command { count: Some(_), .. });
+            let at = steps
+                .iter()
+                .position(counted)
+                .or_else(|| steps.iter().position(|s| matches!(s, Step::Command { .. })));
+            for (i, s) in steps.iter_mut().enumerate() {
+                if let Step::Command { count, .. } = s {
+                    *count = (Some(i) == at).then_some(n);
+                }
+            }
+        }
+        self.replay(view, &steps);
     }
 
     // ------------------------------------------------------------ undo
@@ -1452,6 +1642,7 @@ impl Editor {
         h.nodes[h.current].child = Some(node);
         h.current = node;
         h.prune();
+        self.edited = true;
     }
 
     /// Back to the parent state; false at the root.
@@ -1785,23 +1976,17 @@ impl Editor {
             let Some(c) = c else {
                 return true;
             };
-            let inv = self.commands.resolve(&binding.command, &binding.args);
-            if let Some(cmd) = self.commands.body(&inv.name) {
-                let kind = self
-                    .commands
-                    .spec(&inv.name)
-                    .map(|s| s.kind)
-                    .unwrap_or_default();
-                let ctx = Ctx {
-                    view,
-                    count: count.unwrap_or(1).max(1),
-                    has_count: count.is_some(),
-                    form: inv.form,
-                    args: inv.args,
+            self.step_begin();
+            self.run_with(view, &binding.command, &binding.args, count, Some(c));
+            self.step_end(
+                view,
+                Step::Command {
+                    name: binding.command,
+                    args: binding.args,
+                    count,
                     arg_char: Some(c),
-                };
-                self.run_cmd(&cmd, kind, ctx);
-            }
+                },
+            );
             return true;
         }
 
@@ -1819,7 +2004,9 @@ impl Editor {
                     && !stroke.sup
                 {
                     let t = t.clone();
+                    self.step_begin();
                     self.insert_text(view, &t);
+                    self.step_end(view, Step::Text(t));
                     return true;
                 }
                 return false;
@@ -1892,7 +2079,7 @@ impl Editor {
                     self.awaiting_char = Some((b, count));
                     return true;
                 }
-                self.run(view, &b.command, &b.args, count);
+                self.run_step(view, &b.command, &b.args, count);
                 true
             }
         }
@@ -1907,7 +2094,9 @@ impl Editor {
             _ => view,
         };
         if self.mode(view) == Mode::Insert {
+            self.step_begin();
             self.insert_text(view, text);
+            self.step_end(view, Step::Text(text.to_string()));
         }
         self.after_prompt_key(view);
     }
@@ -1930,7 +2119,7 @@ impl Editor {
                     from: "clipboard".into(),
                     at: Instant::now(),
                 });
-                self.run(view, "paste after", &[], None);
+                self.run_step(view, "paste after", &[], None);
             }
         }
     }
@@ -2205,7 +2394,6 @@ impl Editor {
             .map(|(i, s)| (i, s.head..s.head, text.clone()))
             .collect();
         self.edit_each(view, edits, |start, len| Selection::point(start + len));
-        self.last_insert.push_str(&text);
     }
 
     pub fn take_effects(&mut self) -> Vec<Effect> {

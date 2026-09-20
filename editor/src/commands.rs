@@ -1525,7 +1525,6 @@ pub fn install(ed: &mut Editor) {
                 };
                 Selection::point(h)
             });
-            ed.last_insert.clear();
         } else {
             v.sels.map(Selection::collapse);
         }
@@ -1686,6 +1685,60 @@ pub fn install(ed: &mut Editor) {
     ed.register_with_char("surround delete", surround_delete);
     ed.register_with_char("surround replace", surround_replace);
     ed.register_with_char("surround replace with", surround_replace_with);
+
+    // ---- the stream: `.` and macros (docs/design/keys.md; `repeat`)
+    ed.register("repeat", |ed, ctx| {
+        ed.repeat_change(ctx.view, ctx.has_count.then_some(ctx.count));
+    });
+    // `q` ends a recording at once, so it asks for its register only
+    // when none is on — `takes_char` would wait for one either way.
+    ed.register("macro record", |ed, ctx| {
+        if let Some(c) = ed.repeat.stop() {
+            ed.message = format!("recorded @{c}");
+            return;
+        }
+        match ctx.arg_char {
+            None => ed.await_char("macro record"),
+            Some(c) if c.is_ascii_alphanumeric() => {
+                ed.repeat.start(c);
+                ed.message.clear();
+            }
+            Some(c) => ed.message = format!("no register {c} to record into"),
+        }
+    });
+    ed.register_with_char("macro play", |ed, ctx| {
+        let Some(c) = ctx.arg_char else {
+            return;
+        };
+        if c == ':' {
+            let Some(line) = ed.cmd_history.last().cloned() else {
+                ed.message = "no command line yet".into();
+                return;
+            };
+            for _ in 0..ctx.count.max(1) {
+                ed.execute(ctx.view, &line);
+            }
+            return;
+        }
+        let c = match c {
+            '@' => match ed.repeat.last_played {
+                Some(c) => c,
+                None => {
+                    ed.message = "no macro played yet".into();
+                    return;
+                }
+            },
+            c => c.to_ascii_lowercase(),
+        };
+        let Some(steps) = ed.repeat.macros.get(&c).cloned() else {
+            ed.message = format!("no macro @{c}");
+            return;
+        };
+        ed.repeat.last_played = Some(c);
+        for _ in 0..ctx.count.max(1) {
+            ed.replay(ctx.view, &steps);
+        }
+    });
 
     // ---- prompts and ex commands
     ed.register("command", |ed, ctx| {
@@ -2057,6 +2110,19 @@ const DOCS: &[(&str, &str)] = &[
     (
         "undo older",
         "the state made before this one, on any branch (`g-`)",
+    ),
+    // the stream
+    (
+        "repeat",
+        "the last change again, on the selections as they are (`.`); a count replaces its count",
+    ),
+    (
+        "macro record",
+        "record the commands into the register named by the next key (`q`), until `q` again; an upper-case letter appends",
+    ),
+    (
+        "macro play",
+        "replay the register named by the next key (`@a`), COUNT times; `@@` the one played last, `@:` the last command line",
     ),
     (
         "undo newer",
@@ -2847,6 +2913,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("U", "redo"),
         ("g-", "undo older"),
         ("g+", "undo newer"),
+        // The stream: `.` and macros, vim's keys.
+        (".", "repeat"),
+        ("q", "macro record"),
+        ("@", "macro play"),
         ("v", "visual"),
         ("V", "visual line"),
         // Selections (docs/design/keys.md): Ctrl counts them, Alt moves
