@@ -245,6 +245,74 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 
 ### Terminal
 
+Added 2026-09-20, the wezterm habits. What is there already, since the
+todo did not know: every pty is spawned with `TERM_PROGRAM=kawoosh` and
+`TERM_APPEARANCE=dark|light` (`terminals.rs`, beside `KAWOOSH_SOCKET`
+and the `$EDITOR` shim); `:scrollback` makes the terminal's scrollback
+a `*scrollback*` buffer with full modal editing (mvp.md D3's answer to
+copy mode); `kawoosh.tool(name, { cmd, cwd, dock })` with `:tool NAME`
+and a `kawoosh.map` on it is a launch target; the pane's `fg`/`bg`
+follow the theme every frame (`panes.rs`).
+
+- **Copy mode on `<C-S-x>`** — open, small. wezterm's `Ctrl+Shift+X`,
+  and the shifted-control spelling is exactly what keys.md says is free
+  in a terminal pane (a pty cannot tell it from `<C-x>`): a chord in
+  `pane_chord` running `scrollback`. With it: the buffer takes the
+  pane's place rather than a split, the caret lands on the last line
+  (where the prompt was), and `q` closes it back to the terminal, so
+  the round trip is two keys. An hour, plus the test.
+- **The environment** — done, with one recommendation. The todo's
+  `KAWOOSH_TERM=…` is `TERM_PROGRAM=kawoosh`, the spelling iTerm,
+  WezTerm and Apple's terminal use and nushell, starship and every
+  prompt already read; a second name buys nothing. Add
+  `TERM_PROGRAM_VERSION` (the crate's), as the others do. The theme
+  half of the ask — `TERM_APPEARANCE` — is set at spawn and frozen
+  there, which is the next item's problem.
+- **The shell following the theme** — investigate, with the leads
+  found. A running shell cannot see an environment change, so a flip
+  of the OS theme after spawn reaches nothing in the pane today; and
+  the 16 ANSI colours are one fixed table (`term::ANSI`) for light and
+  dark, so a `ls` in a light pane is a dark pane's `ls`. Three
+  mechanisms, cheapest first, and the recommendation is all three:
+  (1) **the ANSI palette from the theme** — a light and a dark sixteen
+  in `palette.rs`, as the syntax hues are, put in the `term::Palette`
+  each frame: every program that uses colours follows at once, the
+  shell not knowing; (2) **answer the questions** — alacritty's
+  `Event::ColorRequest` (a program's `OSC 10`/`11 ; ?`, how neovim and
+  helix detect `background`) is dropped in `drain_events` today, so
+  askers time out; answer with the pane's colours, and raise DEC mode
+  2031 (`CSI ? 2031 h`, contour's, in kitty and neovim 0.10+): a
+  program that set it is told `CSI ? 997 ; 1 n` (dark) / `; 2 n`
+  (light) when the theme flips, and a neovim in a pane switches its
+  own colourscheme; (3) **a signal the shell can poll** — `kawoosh
+  theme` on the CLI shim answering `dark`/`light` over the socket, so
+  a nushell `pre_prompt` hook (or `term query` with `OSC 11`, once (2)
+  answers it) picks its base16 variant each prompt. The investigation
+  is which of (2) and (3) nushell's own colour config can actually
+  consume; (1) needs none.
+- **Launch targets** — partly. `kawoosh.tool` is the target and
+  `:tool` bare lists names in the message line; what wezterm's launch
+  menu adds is the *list as a picker* — `<leader>tt` (free) opening
+  the tools with their command and domain, `<CR>` running one — which
+  is the picker round's list block with a tools source, so it lands
+  there. Ship a few registrations in the bundled config as examples
+  (`git` = lazygit at the workspace root, `claude` in the cwd, `top`).
+- **Domains: ssh, wsl** — later, design first; systemic, as the todo
+  says. A domain is *where a pty spawns*, and the cheap form exists
+  today as a tool whose `cmd` is `ssh host` — nothing to build. The
+  real thing is what wezterm's multiplexer domain gives and a tool
+  cannot: the `$EDITOR` handoff from the remote (`kawoosh edit --wait`
+  there reaching this instance through a forwarded socket, `ssh -R`
+  on a unix socket) and the editor opening the remote's files — which
+  means the `io` system reading, writing, listing and watching through
+  the domain, so `dir` lists a remote directory and `:e` opens a
+  remote file. That is an `io` per domain (`Domain::Local`,
+  `Domain::Ssh`) and a path type that knows its domain, the same
+  corridor the detachable daemon is on (mvp.md's non-goals). WSL is
+  the local case of it — the pty is `wsl.exe`, the paths translate
+  (`/mnt/c` ↔ `C:\`) — and Windows-only. **Recommended**: the design
+  note names ssh alone, after the picker and the LSP round; until
+  then `kawoosh.tool("box", { cmd = "ssh box" })`.
 - **Mouse buttons and OSC 8** — later [kui.md, req §10]. kui routes
   only the primary button; the middle button and hyperlinks are kui's
   wish list, not kawoosh's.
@@ -270,9 +338,10 @@ then breadth.
    Russian".*
 2. **The normal-mode polish batch.** The `<Esc>` ladder (Decision 3);
    `(` / `)` rotate the primary and the primary drawn distinct; the
-   yank flash; `<C-a>` / `<C-x>`; the `vi(` fix; the Ctrl/Alt remap
+   yank flash; `<C-a>` / `<C-x>`; the `vi(` fix; `<C-S-x>` copy mode
+   in a terminal pane; the Ctrl/Alt remap
    with `<A-hjkl>` moving the selection (Decision 1) and keys.md's
-   "Selections" section rewritten. Six small things that are felt on
+   "Selections" section rewritten. Seven small things that are felt on
    every line, one round because each is under a day and they share
    the tests' shape.
 3. **`.` and macros.** The command-stream recorder (mvp.md D4's "nearly
@@ -286,13 +355,18 @@ then breadth.
 5. **Config reaches kui: fonts and tokens.** `font.*` settings, syntax
    tokens from config, `set_theme`; trusted `.kawoosh/init.lua` in the
    same round since it is the same file's other half.
-6. **LSP, round two.** Completion as you type with buffer words as a
+6. **The terminal's theme.** The ANSI sixteen from the theme, the
+   colour questions answered with mode 2031, `kawoosh theme` on the
+   shim — the palette work of step 5 carried into the pane; the tools
+   picker rides on step 4, and `<C-S-x>` copy mode is in step 2.
+7. **LSP, round two.** Completion as you type with buffer words as a
    fallback source and the candidates pane; rename, references,
    code action, format; the server table.
-7. **Lua DX.** The test harness (`kawoosh test`), eval under the caret,
+8. **Lua DX.** The test harness (`kawoosh test`), eval under the caret,
    the `:map` listing, the plugin-pane example written up.
-8. **Design notes, then decide**: the scrolling tab; the markdown
-   buffer's kui half; auto-closing brackets as a plugin.
+9. **Design notes, then decide**: the scrolling tab; the markdown
+   buffer's kui half; ssh as a domain; auto-closing brackets as a
+   plugin.
 
 Not on this list on purpose: everything mvp.md and kui.md call
 "deliberately not in the MVP" (daemon, soft wrap, images, ligatures,
