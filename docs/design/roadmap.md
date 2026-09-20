@@ -47,8 +47,18 @@ name too.
    characters (`v`) drag the text one column left / right; `<A-o>`
    `<A-i>` `<A-n>` `<A-p>` the syntax node stay where they are, since
    they shape one selection. `<A-d>` goes. Optional in the same round:
-   `<A-S-j>` `<A-S-k>` duplicate the lines. keys.md's "Selections"
-   section is rewritten when this lands. `<C-j>` `<C-k>` `<C-n>` and
+   `<A-S-j>` `<A-S-k>` duplicate the lines — **not spellable today**
+   (found 2026-09-21): under Alt kui reports the logical key with every
+   modifier stripped, Shift included (`keys.rs`, so ⌥o is `o` and not
+   `ø`), and `KeyStroke::notation` spells a character's shift as the
+   character, so ⌥⇧j arrives as code `j` with `shift` set and is
+   spelled `<A-j>`, the same as ⌥j; under ⌘ the logical key keeps its
+   shift (`<D-S-l>` is `<D-L>`, and works). The fix is kawoosh's: a
+   chord whose code is one lower-case ASCII letter with `shift` set is
+   spelled with the upper-case letter, `<A-J>`, which is what
+   `normalize_chord` already turns `<A-S-j>` into — one line in
+   `notation()`, before the remap binds anything to it. keys.md's
+   "Selections" section is rewritten when this lands. `<C-j>` `<C-k>` `<C-n>` and
    `<C-S-n>` are free in normal and visual mode (checked); `<C-l>` was
    avoided because a listing has it for `dir refresh` and selecting
    every `.txt` line in one is a real use of "all matches".
