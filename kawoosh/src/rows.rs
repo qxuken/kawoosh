@@ -542,6 +542,17 @@ impl Drawn {
 pub enum Caret {
     Bar,
     Block,
+    /// Another selection's block: the primary is `Block`, drawn solid,
+    /// and the rest are washed so the eye finds the one `,` keeps.
+    Extra,
+}
+
+/// A block caret's colour by which selection it is.
+fn caret_bg(pal: &Pal, kind: Caret) -> Color {
+    match kind {
+        Caret::Extra => pal.accent.with_alpha(0.55),
+        _ => pal.accent,
+    }
 }
 
 /// Everything one row needs, in drawn-byte coordinates.
@@ -551,6 +562,8 @@ pub struct LineDraw<'a> {
     pub selected: &'a [Range<usize>],
     /// Search hits.
     pub hits: &'a [Range<usize>],
+    /// What the last yank took, washed for a moment after (`Flash`).
+    pub flashed: &'a [Range<usize>],
     /// Syntax runs: `(range, color)`.
     pub styled: &'a [(Range<usize>, Color)],
     /// Carets: the drawn bytes under each and its shape — a bar's range
@@ -640,7 +653,12 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
     // a flag's two indicators or a letter and its mark shape as one
     // cluster, and a cut inside one would draw its halves.
     let mut cuts: Vec<usize> = vec![0, len];
-    for r in line.selected.iter().chain(line.hits.iter()) {
+    for r in line
+        .selected
+        .iter()
+        .chain(line.hits.iter())
+        .chain(line.flashed.iter())
+    {
         cuts.push(r.start.min(len));
         cuts.push(r.end.min(len));
     }
@@ -682,10 +700,12 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
         let block = line
             .carets
             .iter()
-            .any(|(r, k)| *k == Caret::Block && r.start <= a && b <= r.end);
+            .find(|(r, k)| *k != Caret::Bar && r.start <= a && b <= r.end)
+            .map(|(_, k)| *k);
         let escape = escapes.iter().any(|r| r.start <= a && b <= r.end);
         let selected = line.selected.iter().any(|r| r.start <= a && b <= r.end);
         let hit = line.hits.iter().any(|r| r.start <= a && b <= r.end);
+        let flashed = line.flashed.iter().any(|r| r.start <= a && b <= r.end);
         let color = if escape {
             Some(pal.dim)
         } else {
@@ -699,10 +719,10 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
             .iter()
             .find(|(r, _)| r.start <= a && b <= r.end)
             .map(|(_, c)| *c);
-        let look = if block {
+        let look = if let Some(kind) = block {
             Look {
                 color: Some(pal.bg),
-                bg: Some(pal.accent),
+                bg: Some(caret_bg(pal, kind)),
                 underline,
             }
         } else {
@@ -710,6 +730,8 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
                 color,
                 bg: if selected {
                     Some(pal.select)
+                } else if flashed {
+                    Some(pal.insert.with_alpha(0.45))
                 } else if hit {
                     Some(pal.command.with_alpha(0.35))
                 } else {
@@ -734,7 +756,7 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
         .role(Role::Line);
     if let Some(c) = line.access.0 {
         row = row.caret(c);
-        if line.carets.iter().any(|(_, k)| *k == Caret::Block) {
+        if line.carets.iter().any(|(_, k)| *k != Caret::Bar) {
             row = row.caret_solid();
         }
     }
@@ -819,16 +841,16 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
         // running past the newline: boxes in the row's flow, so the
         // trailing text's gap gives way to them and keeps its place.
         let mut boxes = 0.0;
-        if line
+        if let Some((_, kind)) = line
             .carets
             .iter()
-            .any(|(r, k)| r.start >= len && *k == Caret::Block)
+            .find(|(r, k)| r.start >= len && *k != Caret::Bar)
         {
             ui.with(
                 NodeSpec::column()
                     .width(Sizing::Fixed(PAST_END_W))
                     .height(Sizing::Fixed(LH - 4.0))
-                    .bg(pal.accent),
+                    .bg(caret_bg(pal, *kind)),
                 |_| {},
             );
             boxes += PAST_END_W;

@@ -179,6 +179,16 @@ pub(crate) fn apply_operator(
     match op {
         "yank" => {
             set_register(ed, id, &ranges, &texts, linewise, crate::Took::Yank);
+            let len = ed.buffers[id].len();
+            ed.flash = Some(crate::Flash {
+                buffer: id,
+                version: ed.buffers[id].version(),
+                ranges: ranges
+                    .iter()
+                    .map(|(r, _)| r.start.min(len)..r.end.min(len))
+                    .collect(),
+                at: std::time::Instant::now(),
+            });
             // The caret goes to the start of what was yanked; on a
             // linewise yank it stays (`yy` on the last line: the range
             // starts with the newline before it, which is not its line).
@@ -412,6 +422,11 @@ fn textobject(ed: &mut Editor, ctx: &Ctx, around: bool) {
             // A paragraph is lines: in visual mode the head sits on the
             // last one's newline, and the selection goes linewise.
             Some(r) if c == 'p' && visual => Selection::new(r.start, buf.prev_char(r.end)),
+            // A visual selection's head is on its last character (the
+            // range's end is exclusive), so `vi(` ends on the byte
+            // before `)` and `d` takes exactly the inside; under an
+            // operator the range is taken as it is.
+            Some(r) if visual && r.end > r.start => Selection::new(r.start, buf.prev_char(r.end)),
             Some(r) => Selection::new(r.start, r.end),
             None => {
                 ok = false;
@@ -552,6 +567,7 @@ fn search(ed: &mut Editor, ctx: &Ctx, forward: bool) {
         ed.message = "no previous search".into();
         return;
     };
+    ed.search_hl = true;
     use crate::search::{FRAME_BUDGET, Walk, walk_backward, walk_forward};
     let re = &search.re;
     let pat = &search.pattern;
@@ -1474,7 +1490,25 @@ pub fn install(ed: &mut Editor) {
     ed.register("open above", |ed, ctx| open_line(ed, ctx, false));
     ed.register("normal", |ed, ctx| {
         let was_insert = ed.mode(ctx.view) == Mode::Insert;
+        let was_normal = ed.mode(ctx.view) == Mode::Normal;
         ed.set_mode(ctx.view, Mode::Normal);
+        // `<Esc>` in normal mode is a ladder, the top rung with
+        // something to do (docs/design/roadmap.md, decision 3): a
+        // pending operator, the extra cursors, the search highlight,
+        // nothing. A prompt has its own `<Esc>` (`prompt cancel`).
+        if was_normal {
+            if ed.pending_op.take().is_some() {
+                return;
+            }
+            if ed.views[ctx.view].sels.len() > 1 {
+                ed.views[ctx.view].sels.keep_primary();
+                return;
+            }
+            if ed.search.is_some() && ed.search_hl {
+                ed.search_hl = false;
+            }
+            return;
+        }
         ed.pending_op = None;
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
@@ -1610,6 +1644,18 @@ pub fn install(ed: &mut Editor) {
     ed.register("cursor primary", |ed, ctx| {
         ed.views[ctx.view].sels.keep_primary()
     });
+    ed.register("cursor rotate", |ed, ctx| {
+        ed.views[ctx.view].sels.rotate(ctx.count.max(1) as i64)
+    });
+    ed.register("cursor rotate back", |ed, ctx| {
+        ed.views[ctx.view].sels.rotate(-(ctx.count.max(1) as i64))
+    });
+    ed.register("increment", |ed, ctx| number_step(ed, ctx, 1));
+    ed.register("decrement", |ed, ctx| number_step(ed, ctx, -1));
+    ed.register("move line down", |ed, ctx| move_lines(ed, ctx, true));
+    ed.register("move line up", |ed, ctx| move_lines(ed, ctx, false));
+    ed.register("nudge left", |ed, ctx| nudge(ed, ctx, false));
+    ed.register("nudge right", |ed, ctx| nudge(ed, ctx, true));
     ed.register("select all", |ed, ctx| {
         let len = ed.buffer_of(ctx.view).len();
         ed.views[ctx.view].sels = crate::Selections::single(Selection::new(0, len));
@@ -1921,6 +1967,35 @@ const DOCS: &[(&str, &str)] = &[
         "join",
         "join COUNT lines (the selection's, in visual) with a space between",
     ),
+    (
+        "move line down",
+        "move every selection's lines one line down, the selection kept (`<A-j>`)",
+    ),
+    (
+        "move line up",
+        "move every selection's lines one line up, the selection kept (`<A-k>`)",
+    ),
+    (
+        "nudge left",
+        "dedent the selection's lines, keeping it; drag a `v` selection one column left (`<A-h>`)",
+    ),
+    (
+        "nudge right",
+        "indent the selection's lines, keeping it; drag a `v` selection one column right (`<A-l>`)",
+    ),
+    (
+        "increment",
+        "add COUNT to the number under or after the caret, per selection (`<C-a>`)",
+    ),
+    (
+        "decrement",
+        "subtract COUNT from the number under or after the caret, per selection (`<C-x>`)",
+    ),
+    ("cursor rotate", "make the next selection the primary (`)`)"),
+    (
+        "cursor rotate back",
+        "make the previous selection the primary (`(`)",
+    ),
     ("delete char", "delete the character under the caret (`x`)"),
     (
         "delete char back",
@@ -2074,6 +2149,324 @@ fn open_line(ed: &mut Editor, ctx: &Ctx, below: bool) {
         Selection::point(if below { start + len } else { start + len - 1 })
     });
     ed.set_mode(ctx.view, Mode::Insert);
+}
+
+/// `<C-a>` / `<C-x>`: the number under or after each caret on its line,
+/// stepped by the count — a `-` right before it is its sign — with the
+/// caret left on its last digit, as vim leaves it. A selection with no
+/// number on its line from the caret on stays.
+fn number_step(ed: &mut Editor, ctx: &Ctx, sign: i64) {
+    let by = ctx.count.max(1) as i64 * sign;
+    let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
+    let sels = ed.views[ctx.view].sels.items.clone();
+    let mut edits = Vec::new();
+    for (i, s) in sels.iter().enumerate() {
+        let ln = buf.line_of(s.head);
+        let range = buf.line_range(ln);
+        let text = buf.line_text(ln);
+        let rel = s.head.saturating_sub(range.start).min(text.len());
+        let bytes = text.as_bytes();
+        // The first digit at or after the caret, then back to the run's
+        // start (the caret may be mid-number).
+        let Some(mut start) = (rel..bytes.len()).find(|&j| bytes[j].is_ascii_digit()) else {
+            continue;
+        };
+        while start > 0 && bytes[start - 1].is_ascii_digit() {
+            start -= 1;
+        }
+        let mut end = start;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        let negative = start > 0 && bytes[start - 1] == b'-';
+        let digits = &text[start..end];
+        let value: i64 = digits.parse::<i64>().unwrap_or(i64::MAX);
+        let value = if negative { -value } else { value };
+        let stepped = value.saturating_add(by);
+        let from = if negative { start - 1 } else { start };
+        // Leading zeros are kept to the width they had (`007` → `008`).
+        let width = digits.len();
+        let mag = stepped.unsigned_abs().to_string();
+        let mut out = String::new();
+        if stepped < 0 {
+            out.push('-');
+        }
+        if digits.starts_with('0') && mag.len() < width {
+            out.push_str(&"0".repeat(width - mag.len()));
+        }
+        out.push_str(&mag);
+        edits.push((i, range.start + from..range.start + end, out));
+    }
+    if edits.is_empty() {
+        ed.message = "no number here".into();
+        return;
+    }
+    ed.edit_each(ctx.view, edits, |start, len| {
+        Selection::point(start + len.saturating_sub(1))
+    });
+}
+
+/// Where `pos` lands after `edits` (ascending, non-overlapping) are
+/// applied, riding right with an insertion at its own byte — a caret
+/// at the line start stays on its character when the line is indented
+/// — and collapsing to a deletion's start when it was inside one.
+fn carried(pos: usize, edits: &[(Range<usize>, usize)]) -> usize {
+    let mut delta: isize = 0;
+    for (r, new_len) in edits {
+        if r.start > pos {
+            break;
+        }
+        if pos >= r.end {
+            delta += *new_len as isize - (r.end - r.start) as isize;
+        } else {
+            return (r.start as isize + delta) as usize;
+        }
+    }
+    (pos as isize + delta) as usize
+}
+
+/// Applies `edits` (one per line touched, ascending, keyed by line) and
+/// carries every selection through them as [`carried`] says, keeping
+/// the mode: what `<A-h>`/`<A-l>` and the line moves want, where an
+/// operator would collapse the selection.
+fn edit_keeping(ed: &mut Editor, view: ViewId, edits: Vec<(Range<usize>, String)>) {
+    if edits.is_empty() {
+        return;
+    }
+    let mut edits = edits;
+    edits.sort_by_key(|(r, _)| r.start);
+    let shape: Vec<(Range<usize>, usize)> =
+        edits.iter().map(|(r, t)| (r.clone(), t.len())).collect();
+    let items: Vec<Selection> = ed.views[view]
+        .sels
+        .iter()
+        .map(|s| Selection::new(carried(s.anchor, &shape), carried(s.head, &shape)))
+        .collect();
+    let primary = ed.views[view].sels.primary;
+    let keyed: Vec<(usize, Range<usize>, String)> = edits
+        .into_iter()
+        .enumerate()
+        .map(|(i, (r, t))| (usize::MAX - i, r, t))
+        .collect();
+    ed.edit_each(view, keyed, |start, _| Selection::point(start));
+    let v = &mut ed.views[view];
+    v.sels.items = items;
+    v.sels.primary = primary;
+    v.sels.normalize();
+}
+
+/// `<A-j>` / `<A-k>`: every selection's lines one line down or up, the
+/// selections riding along and the mode kept. Selections on touching
+/// lines are one block — they travel together and never pass one
+/// another — and a block against the buffer's edge stays put.
+fn move_lines(ed: &mut Editor, ctx: &Ctx, down: bool) {
+    for _ in 0..ctx.count.max(1) {
+        if !move_lines_once(ed, ctx.view, down) {
+            break;
+        }
+    }
+}
+
+fn move_lines_once(ed: &mut Editor, view: ViewId, down: bool) -> bool {
+    let id = ed.views[view].buffer;
+    let buf = &ed.buffers[id];
+    let last = buf.line_count().saturating_sub(1);
+    let mut spans: Vec<(usize, usize)> = ed.views[view]
+        .sels
+        .iter()
+        .map(|s| (buf.line_of(s.start()), buf.line_of(s.end())))
+        .collect();
+    spans.sort_unstable();
+    let mut blocks: Vec<(usize, usize)> = Vec::new();
+    for (a, b) in spans {
+        match blocks.last_mut() {
+            Some((_, lb)) if a <= *lb + 1 => *lb = (*lb).max(b),
+            _ => blocks.push((a, b)),
+        }
+    }
+    let mut edits = Vec::new();
+    for (a, b) in blocks {
+        let block = buf.line_start(a)..buf.line_range(b).end;
+        let text = buf.slice(block.clone());
+        if down {
+            if b >= last {
+                continue;
+            }
+            let next = buf.line_range(b + 1);
+            let other = buf.slice(next.clone());
+            edits.push((block.start..next.end, format!("{other}\n{text}")));
+        } else {
+            if a == 0 {
+                continue;
+            }
+            let prev = buf.line_range(a - 1);
+            let other = buf.slice(prev.clone());
+            edits.push((prev.start..block.end, format!("{text}\n{other}")));
+        }
+    }
+    if edits.is_empty() {
+        return false;
+    }
+    // A swapped block's selections move by the other line's length and
+    // its newline; `carried` would collapse them into the replaced range,
+    // so they are placed by hand.
+    let shifts: Vec<(Range<usize>, isize)> = edits
+        .iter()
+        .map(|(r, t)| {
+            let other_len = if down {
+                t.find('\n').unwrap_or(0)
+            } else {
+                t.len() - t.rfind('\n').map_or(t.len(), |i| i + 1)
+            };
+            let d = other_len as isize + 1;
+            (r.clone(), if down { d } else { -d })
+        })
+        .collect();
+    let items: Vec<Selection> = ed.views[view]
+        .sels
+        .iter()
+        .map(|s| {
+            let d = shifts
+                .iter()
+                .find(|(r, _)| r.start <= s.start() && s.end() <= r.end)
+                .map_or(0, |(_, d)| *d);
+            let at = |p: usize| (p as isize + d).max(0) as usize;
+            Selection::new(at(s.anchor), at(s.head))
+        })
+        .collect();
+    let primary = ed.views[view].sels.primary;
+    let keyed: Vec<(usize, Range<usize>, String)> = edits
+        .into_iter()
+        .enumerate()
+        .map(|(i, (r, t))| (usize::MAX - i, r, t))
+        .collect();
+    ed.edit_each(view, keyed, |start, _| Selection::point(start));
+    let v = &mut ed.views[view];
+    v.sels.items = items;
+    v.sels.primary = primary;
+    v.sels.normalize();
+    true
+}
+
+/// `<A-h>` / `<A-l>`: one selection's shape moved a step by its kind. On
+/// lines — a bare caret, `V`, insert mode — the lines are dedented or
+/// indented a tabstop with the selection kept, so `V<A-l><A-l><A-j>` is
+/// one gesture; on characters (`v`) the text is dragged one column
+/// left or right within its line, swapping with its neighbour.
+fn nudge(ed: &mut Editor, ctx: &Ctx, right: bool) {
+    let charwise = ed.mode(ctx.view) == Mode::Visual && !ed.views[ctx.view].visual_linewise;
+    for _ in 0..ctx.count.max(1) {
+        if charwise {
+            drag_chars(ed, ctx, right);
+        } else {
+            shift_lines(ed, ctx, right);
+        }
+    }
+}
+
+fn shift_lines(ed: &mut Editor, ctx: &Ctx, right: bool) {
+    let ts = ed.tabstop();
+    let unit = if ed.expandtab() {
+        " ".repeat(ts)
+    } else {
+        "\t".into()
+    };
+    let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
+    let mut lines: Vec<usize> = ed.views[ctx.view]
+        .sels
+        .iter()
+        .flat_map(|s| buf.line_of(s.start())..=buf.line_of(s.end()))
+        .collect();
+    lines.sort_unstable();
+    lines.dedup();
+    let mut edits = Vec::new();
+    for &ln in &lines {
+        let start = buf.line_start(ln);
+        if right {
+            if !buf.line_range(ln).is_empty() {
+                edits.push((start..start, unit.clone()));
+            }
+        } else {
+            let text = buf.line_text(ln);
+            let n = if text.starts_with('\t') {
+                1
+            } else {
+                text.chars().take(ts).take_while(|c| *c == ' ').count()
+            };
+            if n > 0 {
+                edits.push((start..start + n, String::new()));
+            }
+        }
+    }
+    edit_keeping(ed, ctx.view, edits);
+}
+
+fn drag_chars(ed: &mut Editor, ctx: &Ctx, right: bool) {
+    let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
+    let sels = ed.views[ctx.view].sels.items.clone();
+    let taken: Vec<Range<usize>> = sels
+        .iter()
+        .map(|s| s.start()..buf.next_char(s.end()))
+        .collect();
+    let mut edits = Vec::new();
+    let mut moved: Vec<Option<isize>> = vec![None; sels.len()];
+    for (i, r) in taken.iter().enumerate() {
+        let (edit, text, d) = if right {
+            if r.end >= buf.len() || buf.char_at(r.end) == Some('\n') {
+                continue;
+            }
+            let after = buf.next_char(r.end);
+            (
+                r.start..after,
+                format!("{}{}", buf.slice(r.end..after), buf.slice(r.clone())),
+                (after - r.end) as isize,
+            )
+        } else {
+            if r.start == 0 {
+                continue;
+            }
+            let before = buf.prev_char(r.start);
+            if buf.char_at(before) == Some('\n') {
+                continue;
+            }
+            (
+                before..r.end,
+                format!("{}{}", buf.slice(r.clone()), buf.slice(before..r.start)),
+                -((r.start - before) as isize),
+            )
+        };
+        // The neighbour is another selection's: the two stay.
+        if taken
+            .iter()
+            .enumerate()
+            .any(|(j, o)| j != i && o.start < edit.end && edit.start < o.end)
+        {
+            continue;
+        }
+        edits.push((usize::MAX - i, edit, text));
+        moved[i] = Some(d);
+    }
+    if edits.is_empty() {
+        return;
+    }
+    let items: Vec<Selection> = sels
+        .iter()
+        .zip(&moved)
+        .map(|(s, d)| {
+            let d = d.unwrap_or(0);
+            let at = |p: usize| (p as isize + d).max(0) as usize;
+            Selection::new(at(s.anchor), at(s.head))
+        })
+        .collect();
+    let primary = ed.views[ctx.view].sels.primary;
+    ed.edit_each(ctx.view, edits, |start, _| Selection::point(start));
+    let v = &mut ed.views[ctx.view];
+    v.sels.items = items;
+    v.sels.primary = primary;
+    v.sels.normalize();
 }
 
 fn add_cursor(ed: &mut Editor, ctx: &Ctx, dy: i64) {
@@ -2456,15 +2849,31 @@ pub fn default_keymap(km: &mut Keymap) {
         ("g+", "undo newer"),
         ("v", "visual"),
         ("V", "visual line"),
-        // Selections: Alt is the modifier, ⌘ the same for Zed's fingers.
+        // Selections (docs/design/keys.md): Ctrl counts them, Alt moves
+        // one — vim-visual-multi's Ctrl keys, ⌘ the same for Zed's
+        // fingers — and `(` `)` walk the primary round.
         (",", "cursor primary"),
-        ("<A-j>", "cursor below"),
-        ("<A-k>", "cursor above"),
-        ("<A-d>", "select next"),
+        ("(", "cursor rotate back"),
+        (")", "cursor rotate"),
+        ("<C-j>", "cursor below"),
+        ("<C-k>", "cursor above"),
+        ("<C-Down>", "cursor below"),
+        ("<C-Up>", "cursor above"),
+        ("<C-n>", "select next"),
         ("<D-d>", "select next"),
-        ("<A-l>", "select all matches"),
+        ("<C-S-n>", "select all matches"),
         ("<D-S-l>", "select all matches"),
         ("<D-a>", "select all"),
+        ("<A-j>", "move line down"),
+        ("<A-k>", "move line up"),
+        ("<A-h>", "nudge left"),
+        ("<A-l>", "nudge right"),
+        // Numbers: vim's, per selection.
+        ("<C-a>", "increment"),
+        ("<C-x>", "decrement"),
+        // A terminal pane's copy mode: wezterm's chord, run from the
+        // pane by `Kawoosh::pane_chord` (the shell's `scrollback`).
+        ("<C-S-x>", "scrollback"),
         // The syntax tree's nodes, helix's way: out, back in, along.
         ("<A-o>", "select node"),
         ("<A-i>", "select node child"),
@@ -2599,6 +3008,12 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-u>", "delete to start"),
         ("<C-s>", "write"),
         ("<D-s>", "write"),
+        // The line under the caret moves and shifts from insert mode
+        // too, per selection.
+        ("<A-j>", "move line down"),
+        ("<A-k>", "move line up"),
+        ("<A-h>", "nudge left"),
+        ("<A-l>", "nudge right"),
         // The pane moves from insert mode too: the shifted spelling,
         // since `<C-h>` is a backspace here.
         ("<C-S-h>", "pane left"),

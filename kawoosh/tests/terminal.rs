@@ -40,7 +40,8 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
         app.layout.focused_content(),
         Some(Content::Editor(_))
     ));
-    // Back down; ctrl-\ ctrl-n materialises the scrollback in a split.
+    // Back down; ctrl-\ ctrl-n materialises the scrollback in the
+    // terminal's own pane, and `q` gives the pane back.
     d.ctrl(&mut app, "w");
     d.keys(&mut app, "j");
     assert!(matches!(
@@ -54,13 +55,81 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
         .expect("an editor pane with the scrollback");
     let text = app.ed.buffer_of(v).text();
     assert!(text.starts_with("$ echo hi\nhi\n"), "{text:?}");
-    assert_eq!(app.layout.visible_panes().len(), 3);
+    assert_eq!(app.layout.visible_panes().len(), 2, "in place, not a split");
+    d.keys(&mut app, "q");
+    assert!(matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t));
+    assert_eq!(app.layout.visible_panes().len(), 2);
     // `:scrollback` is the terminal pane's (`when = terminal`): from the
-    // editor pane it now has, the engine says so and nothing opens.
+    // editor pane above, the engine says so and nothing opens.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "k");
     d.keys(&mut app, ":scrollback");
     d.key(&mut app, "enter", KeyMods::default());
     assert_eq!(app.ed.message, "scrollback needs terminal");
-    assert_eq!(app.layout.visible_panes().len(), 3);
+    assert_eq!(app.layout.visible_panes().len(), 2);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// Copy mode on wezterm's chord: `<C-S-x>` from a terminal pane is its
+/// scrollback as a buffer in the same pane, the caret on the last line
+/// where the prompt was, and `q` is the terminal again — two keys round
+/// trip. From an editor pane the chord says what it needs.
+#[test]
+fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
+    let mut app = Kawoosh::new("t", "editor text");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    app.feed_terminal(t, b"$ ls\r\nCargo.toml\r\n$ ");
+    d.frame(&mut app);
+    let shifted = KeyMods {
+        ctrl: true,
+        shift: true,
+        ..Default::default()
+    };
+    let pane = app.layout.focused();
+    d.key(&mut app, "X", shifted);
+    let v = app
+        .focused_view()
+        .expect("the scrollback buffer in the pane");
+    assert_eq!(app.layout.focused(), pane, "the same pane");
+    assert_eq!(app.layout.visible_panes().len(), 2);
+    let buf = app.ed.buffer_of(v);
+    assert!(buf.name.starts_with("*scrollback"), "{}", buf.name);
+    assert_eq!(&*buf.language, "scrollback");
+    let text = buf.text();
+    assert!(text.starts_with("$ ls\nCargo.toml\n$"), "{text:?}");
+    let head = app.ed.views[v].sels.primary().head;
+    assert_eq!(
+        buf.line_of(head),
+        buf.line_count() - 1,
+        "the caret on the last line"
+    );
+    // Modal editing works there; then `q` is the terminal again.
+    d.keys(&mut app, "ggyy");
+    assert_eq!(app.ed.memory.head().unwrap().text, "$ ls\n");
+    d.keys(&mut app, "q");
+    assert!(matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t));
+    assert_eq!(app.layout.visible_panes().len(), 2);
+    assert!(
+        !app.ed
+            .buffers
+            .iter()
+            .any(|(_, b)| b.name.starts_with("*scrollback")),
+        "the buffer is gone"
+    );
+    app.feed_terminal(t, b"still here\r\n");
+    d.frame(&mut app);
+    // From the editor pane the chord is refused with its reason.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "k");
+    assert!(matches!(
+        app.layout.focused_content(),
+        Some(Content::Editor(_))
+    ));
+    d.key(&mut app, "X", shifted);
+    assert_eq!(app.ed.message, "scrollback needs terminal");
+    assert_eq!(app.layout.visible_panes().len(), 2);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

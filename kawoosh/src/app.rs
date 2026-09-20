@@ -122,6 +122,8 @@ pub struct Kawoosh {
     /// toggled with `:kui_framerate_hud`.
     pub hud: bool,
     pub(crate) wake: WakeHandle,
+    /// Brings the frame that ends a yank's wash (`sync_flash`).
+    flash_alarm: kawoosh_systems::Alarm,
     /// Wake handles made before the app was — the logger's — set with
     /// the app's own in `setup`.
     shared_wakes: Vec<WakeHandle>,
@@ -166,6 +168,9 @@ pub struct Kawoosh {
     /// in the same frame, so a listing is there when the key returns.
     pub jobs_inline: bool,
 }
+
+/// How long a yank's ranges stay washed.
+pub const FLASH: std::time::Duration = std::time::Duration::from_millis(150);
 
 impl Kawoosh {
     pub fn new(title: impl Into<String>, text: &str) -> Self {
@@ -216,6 +221,7 @@ impl Kawoosh {
             commands_pane: Default::default(),
             bound_names: Default::default(),
             hud: false,
+            flash_alarm: kawoosh_systems::Alarm::spawn(wake.clone()),
             wake,
             shared_wakes: Vec::new(),
             ts_sent: HashMap::new(),
@@ -645,6 +651,25 @@ impl Kawoosh {
     }
 
     /// Answers `--wait` callers on `id` — a buffer that was closed.
+    /// The yank flash: the ranges the last yank took are washed for
+    /// [`FLASH`] after it, and the alarm brings the frame that takes the
+    /// wash off; an edit since, or the buffer gone, ends it at once.
+    fn sync_flash(&mut self) {
+        let Some(f) = self.ed.flash.as_ref() else {
+            return;
+        };
+        let live = self
+            .ed
+            .buffers
+            .get(f.buffer)
+            .is_some_and(|b| b.version() == f.version);
+        if !live || f.at.elapsed() >= FLASH {
+            self.ed.flash = None;
+        } else {
+            self.flash_alarm.set(f.at + FLASH);
+        }
+    }
+
     pub(crate) fn release_waiters(&mut self, id: BufferId) {
         if let Some(ws) = self.waiters.remove(&id) {
             for w in ws {
@@ -1353,6 +1378,7 @@ impl kui::App for Kawoosh {
         let t = Instant::now();
         self.sync_lsp();
         self.perf.cur.lsp = ms(t);
+        self.sync_flash();
         self.sync_notifications();
         let t = Instant::now();
         self.fire_changes();

@@ -98,6 +98,15 @@ impl Selections {
         self.normalize();
     }
 
+    /// Makes the `by`th selection after the primary — before it, when
+    /// negative — the primary, round the ends: `)` and `(`.
+    pub fn rotate(&mut self, by: i64) {
+        let n = self.items.len() as i64;
+        if n > 1 {
+            self.primary = (self.primary as i64 + by).rem_euclid(n) as usize;
+        }
+    }
+
     pub fn keep_primary(&mut self) {
         let p = self.primary();
         self.items.clear();

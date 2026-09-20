@@ -313,7 +313,12 @@ impl Kawoosh {
             } else {
                 clip(s.head)
             };
-            carets.push((clip(s.head)..end, caret_kind));
+            let kind = if caret_kind == Caret::Block && *s != primary {
+                Caret::Extra
+            } else {
+                caret_kind
+            };
+            carets.push((clip(s.head)..end, kind));
             if *s == primary {
                 access.0 = Some(clip(s.head) as u32);
                 if !s.is_empty() {
@@ -329,6 +334,7 @@ impl Kawoosh {
                 text: &drawn.text,
                 selected: &selected,
                 hits: &[],
+                flashed: &[],
                 styled: &[],
                 carets: &carets,
                 escapes: &drawn.escapes,
@@ -725,7 +731,22 @@ impl Kawoosh {
 
         let v = &self.ed.views[view];
         let buf = &self.ed.buffers[buf_id];
-        let search = self.ed.search.as_ref().map(|s| s.re.clone());
+        let search = self
+            .ed
+            .search
+            .as_ref()
+            .filter(|_| self.ed.search_hl)
+            .map(|s| s.re.clone());
+        // The last yank's ranges, while they are washed (`sync_flash`
+        // ends it; an edit since makes the ranges another text's).
+        let flash: Vec<Range<usize>> = self
+            .ed
+            .flash
+            .as_ref()
+            .filter(|f| f.buffer == buf_id && f.version == buf.version())
+            .filter(|f| f.at.elapsed() < crate::app::FLASH)
+            .map(|f| f.ranges.clone())
+            .unwrap_or_default();
         // One caret on the screen: the view the keyboard is on. A pane
         // whose keyboard is on the prompt draws none — while a search
         // prompt previews, the match it landed on is drawn as a
@@ -929,7 +950,12 @@ impl Kawoosh {
                                     } else {
                                         clip(s.head)
                                     };
-                                    carets.push((clip(s.head)..end, caret_kind));
+                                    let kind = if caret_kind == Caret::Block && *s != primary {
+                                        Caret::Extra
+                                    } else {
+                                        caret_kind
+                                    };
+                                    carets.push((clip(s.head)..end, kind));
                                 }
                                 if *s == primary && head_line == ln && keyed {
                                     access.0 = Some(clip(s.head) as u32);
@@ -955,6 +981,12 @@ impl Kawoosh {
                                     selected.push(h.clone());
                                 }
                             }
+                            let flashed: Vec<Range<usize>> = flash
+                                .iter()
+                                .filter(|r| r.start < range.end && r.end > range.start)
+                                .map(|r| clip(r.start.max(range.start))..clip(r.end.min(range.end)))
+                                .filter(|r| r.start < r.end)
+                                .collect();
                             let styled: Vec<(Range<usize>, kui::Color)> = buf
                                 .runs(SYNTAX_LAYER, src.clone())
                                 .iter()
@@ -995,6 +1027,7 @@ impl Kawoosh {
                                     text: &drawn.text,
                                     selected: &selected,
                                     hits: &hits,
+                                    flashed: &flashed,
                                     styled: &styled,
                                     carets: &carets,
                                     escapes: &drawn.escapes,

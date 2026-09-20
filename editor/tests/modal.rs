@@ -463,7 +463,7 @@ fn visual_mode_selects_and_operates() {
 #[test]
 fn multicursor_edits_every_selection() {
     let mut t = T::new("aa\nbb\ncc");
-    t.keys("<A-j><A-j>");
+    t.keys("<C-j><C-j>");
     assert_eq!(t.sels().len(), 3);
     t.keys("ix<Esc>");
     assert_eq!(t.text(), "xaa\nxbb\nxcc");
@@ -475,9 +475,9 @@ fn multicursor_edits_every_selection() {
     assert_eq!(t.sels().len(), 1);
 }
 
-/// `<D-d>` (and `<A-d>`): the first press selects the word under the
+/// `<D-d>` (and `<C-n>`): the first press selects the word under the
 /// caret, each after adds the next whole-word match and makes it
-/// primary, round the end, until every one is selected; `<A-l>` takes
+/// primary, round the end, until every one is selected; `<C-S-n>` takes
 /// them all at once. From a selection the text is looked for as is.
 #[test]
 fn select_next_and_all_matches() {
@@ -489,7 +489,7 @@ fn select_next_and_all_matches() {
     assert_eq!(t.sels(), [(0, 2), (8, 10)]);
     assert_eq!(t.sel(), Selection::new(8, 10), "the newest is primary");
     // `foobar` is not the word; the third `foo` is on the next line.
-    t.keys("<A-d>");
+    t.keys("<C-n>");
     assert_eq!(t.sels(), [(0, 2), (8, 10), (19, 21)]);
     t.keys("<D-d>");
     assert_eq!(t.sels().len(), 3, "round the end: nothing new");
@@ -512,7 +512,7 @@ fn select_next_and_all_matches() {
     assert_eq!(t.ed.message, "no word under the caret");
     // Every match at once, the primary the one under the caret.
     let mut t = T::new("a b a b a");
-    t.keys("4l<A-l>");
+    t.keys("4l<C-S-n>");
     assert_eq!(t.sels(), [(0, 0), (4, 4), (8, 8)]);
     assert_eq!(t.sel(), Selection::new(4, 4));
     t.keys("cx<Esc>");
@@ -1166,15 +1166,15 @@ fn a_key_falls_through_its_bindings_by_when() {
     t.ed.buffers[b].language = "rust".into();
     t.ed.keymap.bind_when(
         Mode::Normal,
-        "<C-x>",
+        "<C-g>",
         "plain_enter",
         &[Cond::parse("store")],
     );
-    t.ed.keymap.bind(Mode::Normal, "<C-x>", "oil enter");
-    t.keys("<C-x>");
+    t.ed.keymap.bind(Mode::Normal, "<C-g>", "oil enter");
+    t.keys("<C-g>");
     assert_eq!(t.ed.message, "oil enter needs language:oil");
     t.ed.fact("store", true);
-    t.keys("<C-x>");
+    t.keys("<C-g>");
     assert_eq!(t.ed.message, "plain");
     // Bound again with no condition: the older ones are shadowed.
     t.ed.keymap.bind(Mode::Normal, "<CR>", "plain_enter");

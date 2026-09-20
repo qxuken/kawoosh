@@ -92,6 +92,17 @@ impl KeyStroke {
         let base = named
             .map(str::to_string)
             .unwrap_or_else(|| self.code.clone());
+        // A chord on a letter carries Shift as the upper-case letter —
+        // what a map's `<A-S-j>` normalizes to (`<A-J>`), and what the
+        // logical key already is under Ctrl and ⌘. Under Alt kui reports
+        // the key with every modifier stripped (⌥o is `o`, not `ø`), so
+        // the shift bit has to put the case back, or ⌥⇧j is `<A-j>`.
+        let chord = self.ctrl || self.alt || self.sup;
+        let base = if chord && self.shift && named.is_none() && base.len() == 1 {
+            base.to_ascii_uppercase()
+        } else {
+            base
+        };
         let mut mods = String::new();
         if self.ctrl {
             mods.push_str("C-");
@@ -573,6 +584,16 @@ mod tests {
         let mut k = KeyStroke::plain("tab");
         k.shift = true;
         assert_eq!(k.notation(), "<S-Tab>");
+        // ⌥⇧j as kui reports it — the modifier-stripped `j` with the
+        // shift bit — is what `<A-S-j>` normalizes to.
+        let mut k = KeyStroke::plain("j");
+        k.alt = true;
+        k.shift = true;
+        assert_eq!(k.notation(), "<A-J>");
+        assert_eq!(parse_notation("<A-S-j>"), ["<A-J>"]);
+        let mut k = KeyStroke::plain("j");
+        k.alt = true;
+        assert_eq!(k.notation(), "<A-j>");
         assert_eq!(parse_notation("gg"), ["g", "g"]);
         assert_eq!(parse_notation("<C-w>v"), ["<C-w>", "v"]);
         assert_eq!(parse_notation("<c-D>"), ["<C-d>"]);

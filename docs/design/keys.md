@@ -11,9 +11,10 @@ in the right cluster instead of the first free key.
 **One family, one prefix or one modifier.** A hand that knows one member
 of a family should find the rest without looking: everything about panes
 is under `<C-w>` and on `<C-hjkl>`; the next and the previous of anything
-are `]x` and `[x`; going somewhere is `g`; selections are Alt; the
-file's few are `<C-s>`, `ZZ`, `ZQ`; and the daily verbs that are none of
-those are `<leader>` groups by noun. Vim's letters stay vim's — nothing
+are `]x` and `[x`; going somewhere is `g`; selections are Ctrl to count
+them and Alt to move one; the file's few are `<C-s>`, `ZZ`, `ZQ`; and
+the daily verbs that are none of those are `<leader>` groups by noun.
+Vim's letters stay vim's — nothing
 here shadows a default a vim hand has — and where a spelling exists in
 two places the keymap has both, since a chord that works in the
 terminal, in insert mode and in normal mode is worth more than one key
@@ -54,6 +55,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>!` | a terminal below (`:!` runs a shell, so does this) |
 | `<C-w>n` | the keyboard onto the toasts |
 | `<C-w>:` | the command line, from a pane without one |
+| `<C-S-x>` | copy mode (wezterm's chord): the terminal's scrollback as a buffer in the terminal's own pane, full modal editing, the caret on the last line; `q` gives the pane back — two keys round trip |
 | `gt` `gT` `]t` `[t` | next and previous tab |
 | `<leader>tq` | close the tab |
 
@@ -95,19 +97,32 @@ panes (`<C-w>.` sends a literal `<C-w>` to the pty).
 | `g-` `g+` | undo by time |
 | `gr` `gI` `gD` | *reserved*: references, implementation, declaration |
 
-### Selections: Alt, and ⌘ for the Zed fingers
+### Selections: Ctrl counts them, Alt moves one
 
 | keys | what |
 |---|---|
-| `<A-j>` `<A-k>` | a caret on the line below, above |
-| `<A-d>` `<D-d>` | `select next`: the word under a bare caret, then its next match, each press one more |
-| `<A-l>` `<D-L>` | `select all matches`: every match at once (spelled `<D-S-l>` in a map: a chord's bare letter is lower-cased) |
+| `<C-j>` `<C-k>`, `<C-Down>` `<C-Up>` | a caret on the line below, above |
+| `<C-n>` `<D-d>` | `select next`: the word under a bare caret, then its next match, each press one more |
+| `<C-S-n>` `<D-L>` | `select all matches`: every match at once (spelled `<C-S-n>` / `<D-S-l>` in a map: a chord's letter under Shift is the upper-case letter) |
+| `,` | keep the primary selection |
+| `(` `)` | make the previous, the next selection the primary — the one drawn solid; the others are washed |
+| `<A-j>` `<A-k>` | move the selection's lines a line down, up — per selection, in every mode, the selection riding along; selections on touching lines are one block, and blocks never pass each other |
+| `<A-h>` `<A-l>` | nudge the selection by its kind: on lines (a bare caret, `V`, insert mode) dedent, indent a tabstop with the selection kept, so `V<A-l><A-l><A-j>` is one gesture; on characters (`v`) drag the text a column left, right within its line |
 | `<A-o>` `<A-i>` | `select node`: the syntax node under the caret, then the one around it; back in |
 | `<A-n>` `<A-p>` | the next, the previous sibling node |
 | `<D-a>` | select all |
-| `,` | keep the primary selection |
 | `o` (visual) | swap the selection's ends |
 | `<D-c>` (visual) | yank — the register and the clipboard |
+
+Ctrl is *how many* selections, Alt is *this one's shape and place*
+(roadmap.md, decision 1 of 2026-09-20). The Ctrl keys are
+vim-visual-multi's, so the hand that knows `<C-n>` from neovim finds
+`<C-j>` `<C-k>` beside it; vim leaves them free in normal mode, `<C-l>`
+was left alone because a listing has it for `dir refresh`. The Alt keys
+are the neovim habit of `<A-hjkl>` moving the selected lines, which
+neovim could afford because it has no multicursor; here they move one
+selection each, every selection at once. The ⌘ spellings stay for the
+hand that reaches for `⌘d` without thinking.
 
 `select next` is Zed's `⌘d` on the selection-set engine (mvp.md D4): the
 first press on a bare caret selects the word under it, whole; each press
@@ -127,20 +142,23 @@ first ancestor spanning more, and `<A-i>` returns to what `<A-o>`
 replaced (a stack per view), or to the node's first child. The tree
 must be the text's own version — a press right after typing says the
 tree is behind and does nothing, rather than selecting by stale offsets.
+They stay under Alt because each shapes one selection.
 
-Alt is the modifier because vim leaves it free, `<C-d>` is half a page,
-and Alt is already where the caret-below and caret-above live. The ⌘
-spellings are for the hand that reaches for `⌘d` without thinking; on a
-keyboard without ⌘ the Alt ones are the same thing. They work on macOS
-because kui reports the layout's letter under Alt, not the composed
-character (⌥d arrives as `d`, not `∂`; kui's `keys.rs`), and the
-US-QWERTY letter at that position when the layout's is not ASCII.
+The Alt keys work on macOS because kui reports the layout's letter under
+Alt, not the composed character (⌥d arrives as `d`, not `∂`; kui's
+`keys.rs`), and the US-QWERTY letter at that position when the layout's
+is not ASCII. Under Alt kui strips every modifier from the key, Shift
+included, so the shift bit spells the letter's case: ⌥⇧j is `<A-J>`,
+which is what a map's `<A-S-j>` normalizes to — free, for a duplicate-
+lines pair if one is wanted.
 
 ### Editing: vim's letters, and the few it lacks
 
 | keys | what |
 |---|---|
 | `S` | change the line, keeping its indent (`cc`) |
+| `<C-a>` `<C-x>` | add, subtract COUNT to the number under or after the caret, per selection — a column of numbers under a multicursor is the point; a `-` before it is its sign, leading zeros keep their width |
+| `<Esc>` (normal mode) | a ladder, the top rung that has something to do: a pending operator, the extra cursors (what `,` does), the search highlight (the pattern stays for `n`), nothing — so one key backs out of whatever is open |
 | `ip` `ap` | a paragraph: its lines, or with the blank lines after it — linewise in visual mode |
 | `;` | the last `f` / `t` again, **across lines**; a till skips the character it already sits before |
 | `gsa` + motion + char | wrap what the motion covers in the pair (`gsaiw)`, `viwgsa"`) |
@@ -236,7 +254,6 @@ so that nothing else takes the key meanwhile.
 | `<leader>h*` `<leader>bg` `<leader>bl` `<leader>wd` `<leader>wc` | hunks, git, log, diff, commit |
 | `<leader>y*` | copy the path, the directory, the name |
 | `<leader>G*` | the debugger |
-| `<Esc>` in normal mode | clearing the search highlight, once there is one to clear |
 
 ## Not done, deliberately
 

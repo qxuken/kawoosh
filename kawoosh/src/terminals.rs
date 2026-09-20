@@ -27,6 +27,9 @@ pub struct Terminals {
     pub backslash: bool,
     /// The wheel's fraction of a line carried per terminal.
     pub carry: HashMap<TermId, f32>,
+    /// The scrollback buffers open, each with the terminal it stands in
+    /// for: `q` in one goes back to it (`scrollback close`).
+    pub scrollbacks: HashMap<kawoosh_doc::BufferId, TermId>,
 }
 
 impl Terminals {
@@ -186,8 +189,12 @@ impl Kawoosh {
         }
     }
 
-    /// The scrollback and screen of terminal `id` as a buffer in a new
-    /// split, with full modal editing (Decision 3).
+    /// The scrollback and screen of terminal `id` as a buffer with full
+    /// modal editing (Decision 3) — copy mode, wezterm's `<C-S-x>`. The
+    /// buffer takes the terminal's pane, the caret lands on the last
+    /// line, where the prompt was, and `q` gives the pane back
+    /// (`scrollback_close`), so the round trip is two keys. A terminal
+    /// with no pane of its own gets a split.
     pub fn scrollback_to_buffer(&mut self, id: TermId) {
         let Some(t) = self.terms.map.get(&id) else {
             return;
@@ -201,7 +208,8 @@ impl Kawoosh {
                 t.title.clone()
             }
         );
-        let buf = Buffer::new(name, &text);
+        let mut buf = Buffer::new(name, &text);
+        buf.language = "scrollback".into();
         let bid = self.ed.add_buffer(buf);
         let v = self.ed.add_view(bid);
         // Land at the end, where the prompt was.
@@ -209,7 +217,46 @@ impl Kawoosh {
         let last =
             self.ed.buffers[bid].line_start(self.ed.buffers[bid].line_count().saturating_sub(1));
         self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(last.min(len)));
-        self.layout.split(SplitDir::V, Content::Editor(v));
+        self.terms.scrollbacks.insert(bid, id);
+        let pane = self
+            .layout
+            .all_panes()
+            .into_iter()
+            .find(|p| matches!(self.layout.content(*p), Some(Content::Terminal(t)) if t == id));
+        match pane {
+            Some(p) => {
+                self.layout.panes.insert(p, Content::Editor(v));
+                self.layout.focus(p);
+            }
+            None => {
+                self.layout.split(SplitDir::V, Content::Editor(v));
+            }
+        }
+    }
+
+    /// `q` in a scrollback buffer: the buffer goes and its terminal has
+    /// the pane again. A terminal that is gone leaves the buffer as it
+    /// is, an ordinary pane to `:close`.
+    pub fn scrollback_close(&mut self) {
+        let pane = self.layout.focused();
+        let Some(v) = self.view_of(pane) else {
+            return;
+        };
+        let bid = self.ed.views[v].buffer;
+        let Some(t) = self.terms.scrollbacks.get(&bid).copied() else {
+            return;
+        };
+        if !self.terms.map.contains_key(&t) {
+            self.ed.message = "the terminal is gone".into();
+            return;
+        }
+        self.terms.scrollbacks.remove(&bid);
+        self.layout.panes.insert(pane, Content::Terminal(t));
+        self.ed.views.remove(v);
+        if !self.buffer_shown(bid) {
+            self.ed.remove_buffer(bid);
+            self.release_waiters(bid);
+        }
     }
 
     /// Opens the file named at `(row, col)` of terminal `id`'s screen —
@@ -295,14 +342,20 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
-            Spec::new("scrollback")
-                .when(&["terminal"])
-                .doc("the terminal's scrollback as a buffer"),
+            Spec::new("scrollback").when(&["terminal"]).doc(
+                "the terminal's scrollback as a buffer in its pane (`<C-S-x>`; `q` goes back)",
+            ),
             |k, _| {
                 if let Some(t) = k.term_of(k.layout.focused()) {
                     k.scrollback_to_buffer(t);
                 }
             },
+        ),
+        cmd(
+            Spec::new("scrollback close")
+                .when(&["language:scrollback"])
+                .doc("close the scrollback buffer, its terminal back in the pane (`q`)"),
+            |k, _| k.scrollback_close(),
         ),
     ]
 }

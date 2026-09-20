@@ -77,6 +77,14 @@ impl Kawoosh {
         }
         crate::cmdline::bind(&mut self.ed.keymap);
         crate::commands_pane::bind(&mut self.ed.keymap);
+        // A terminal's copy mode: `q` in the scrollback buffer gives the
+        // pane back to the terminal (`terminals.rs`).
+        self.ed.keymap.bind_when(
+            Mode::Normal,
+            "q",
+            "scrollback close",
+            &[Cond::parse("language:scrollback")],
+        );
         // A view's field: `<Esc>` in normal mode hands the keys back.
         self.ed.keymap.bind_when(
             Mode::Normal,

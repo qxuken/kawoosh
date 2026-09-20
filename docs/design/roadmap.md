@@ -17,7 +17,8 @@ as specs, the key clusters and which-key, settings in layers, the
 language contract with two dozen grammars, notifications, the `dir`
 file manager through its identity-and-plan design at forty thousand
 entries, and the working memory (2026-09-20). 141 commits, 21
-integration test files in `kawoosh/tests`.
+integration test files in `kawoosh/tests` (22 with the polish batch's
+`normal_mode.rs`, 2026-09-21).
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -101,35 +102,45 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   back for the newline before its first line (`dd`'s business) and the
   join began a line up; `join` takes whole lines now, with a test of
   its own.
-- **`<Esc>` ladder** — open [todo ×3, keys.md]. Decision 3.
+- **`<Esc>` ladder** — done 2026-09-21 [todo ×3, keys.md]. Decision 3,
+  in the `normal` command: a pending operator, the extra cursors, the
+  search highlight (`Editor::search_hl`; the pattern stays for `n`, a
+  search or `n` turns the paint back on), nothing.
 - **`.` repeat, and macros with it** — open [todo, kui.md]. mvp.md D4
   says how: commands are named data through one registry, so recording
   is capturing the command stream and replay is re-dispatching it. `.`
   is the last *editing* command's stream (the insert-mode text after it
   included; `Editor::last_insert` already keeps it), `q`/`@` the same
   over a named span. One design, both keys.
-- **The primary caret** — partly [todo]. `,` keeps the primary and drops
-  the rest (`cursor primary`); nothing rotates which one is primary,
-  and `panes.rs` draws every caret alike. Wanted: the primary drawn
-  otherwise (a stronger block, or the accent), and `(` / `)` to rotate
-  it (helix's spelling; both are free in normal mode). Part of the
-  Ctrl/Alt remap, Decision 1.
-- **Yank flash** — open [todo]. The yanked range washed for ~150 ms
-  after `y`; the memory already records the moment, so the shell has
-  the range and the time. A `kui::Waker` alarm, as the diagnostics hold
-  uses.
-- **`<C-a>` / `<C-x>`** — open [todo]. Increment / decrement the number
-  under the caret, per selection (a multicursor over a column of
-  numbers is the point). Both keys free in normal mode.
-- **`vi(` ends on `)`** — open, a bug [todo]. Inner pair objects should
-  end on the last character inside the pair; `select inside` in
-  `editor/src/commands.rs` ends one past. Test with `vi(`, `ci"`, `yi[`.
-- **Line moves and the Ctrl/Alt remap** — open [todo]. Decision 1:
-  the cursor family to Ctrl, `<A-hjkl>` moving one selection by its
-  kind. The mover is one command over `&[Selection]` with a direction
-  and the unit read off the selection; the tests are a single line, a
-  `V` block, two carets one line apart meeting, and an indent that
-  keeps the selection.
+- **The primary caret** — done 2026-09-21 [todo]. `(` / `)` rotate it
+  (`cursor rotate back` / `cursor rotate`, helix's spelling), and the
+  other selections' block carets are washed (`Caret::Extra`, the accent
+  at half alpha) so the primary is the solid one.
+- **Yank flash** — done 2026-09-21 [todo]. The yank's ranges (all of
+  them, per selection — the memory keeps one origin) are `Editor::flash`
+  with the buffer's version; the shell washes them for `FLASH` (150 ms)
+  and an `Alarm` brings the frame that takes it off, an edit since ends
+  it at once.
+- **`<C-a>` / `<C-x>`** — done 2026-09-21 [todo]. `increment` /
+  `decrement`: the number under or after each caret on its line, by
+  the count, a `-` before it its sign, leading zeros keeping their
+  width, the caret left on the last digit as vim leaves it.
+- **`vi(` ends on `)`** — done 2026-09-21 [todo]. A visual selection's
+  head sits on the object's last character now (the range's end is
+  exclusive), for every object and not only `ip`; under an operator the
+  range was already taken as it is, so `ci"` was right and `vi"d` was
+  not.
+- **Line moves and the Ctrl/Alt remap** — done 2026-09-21 [todo].
+  Decision 1: `<C-j>` `<C-k>` `<C-Down>` `<C-Up>` the carets, `<C-n>`
+  `<C-S-n>` the matches, `(` `)` the primary; `<A-j>` `<A-k>` `move
+  line down` / `up` per selection in every mode, touching lines one
+  block that never passes another, a block on the edge staying;
+  `<A-h>` `<A-l>` `nudge left` / `right` by the selection's kind —
+  lines dedent and indent with the selection carried through the edit
+  (`edit_keeping`), a `v` selection is dragged a column. `<A-d>` gone.
+  keys.md's "Selections" is rewritten. The `<A-S-j>` spelling is fixed
+  on the way (a chord's letter under Shift is the upper-case letter),
+  but nothing is bound to it.
 - **Align (`ga=`)** — open [todo]. Align the selected lines on the first
   match of a character (or pattern) per line, padding before it.
   Note `ga` is free (`g` is "going somewhere" in keys.md, but `ga` has
@@ -279,13 +290,11 @@ copy mode); `kawoosh.tool(name, { cmd, cwd, dock })` with `:tool NAME`
 and a `kawoosh.map` on it is a launch target; the pane's `fg`/`bg`
 follow the theme every frame (`panes.rs`).
 
-- **Copy mode on `<C-S-x>`** — open, small. wezterm's `Ctrl+Shift+X`,
-  and the shifted-control spelling is exactly what keys.md says is free
-  in a terminal pane (a pty cannot tell it from `<C-x>`): a chord in
-  `pane_chord` running `scrollback`. With it: the buffer takes the
-  pane's place rather than a split, the caret lands on the last line
-  (where the prompt was), and `q` closes it back to the terminal, so
-  the round trip is two keys. An hour, plus the test.
+- **Copy mode on `<C-S-x>`** — done 2026-09-21. wezterm's chord, run
+  by `pane_chord`; `scrollback` puts the buffer in the terminal's own
+  pane (a split only for a terminal with no pane), the caret on the
+  last line, and `q` (`scrollback close`, when `language:scrollback`)
+  gives the pane back. `<C-\><C-n>` and `:scrollback` do the same.
 - **The environment** — done, with one recommendation. The todo's
   `KAWOOSH_TERM=…` is `TERM_PROGRAM=kawoosh`, the spelling iTerm,
   WezTerm and Apple's terminal use and nushell, starship and every
@@ -364,14 +373,16 @@ then breadth.
    rule was in kui and in the keymap already, with the test; what was
    missing was Shift under the fallback, fixed in kui (F76), and the
    join bug the test turned up. See the engine track's first item.
-2. **The normal-mode polish batch.** The `<Esc>` ladder (Decision 3);
+2. ~~**The normal-mode polish batch.** The `<Esc>` ladder (Decision 3);
    `(` / `)` rotate the primary and the primary drawn distinct; the
    yank flash; `<C-a>` / `<C-x>`; the `vi(` fix; `<C-S-x>` copy mode
    in a terminal pane; the Ctrl/Alt remap
    with `<A-hjkl>` moving the selection (Decision 1) and keys.md's
    "Selections" section rewritten. Seven small things that are felt on
    every line, one round because each is under a day and they share
-   the tests' shape.
+   the tests' shape.~~ Landed 2026-09-21, all seven, with
+   `kawoosh/tests/normal_mode.rs` and the terminal test; see the
+   engine and terminal tracks.
 3. **`.` and macros.** The command-stream recorder (mvp.md D4's "nearly
    free"): `.` replays the last edit with its insert text, `q`/`@`
    record and replay a named span. Closes kui.md's "no macros or `.`".

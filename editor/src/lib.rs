@@ -463,6 +463,16 @@ pub struct Moment {
 /// How many moments the memory keeps; past it, the oldest go.
 pub const MEMORY_MAX: usize = 100;
 
+/// What a yank lit up, for the shell to wash for a moment: the ranges
+/// taken, in the buffer's text as of `version` — an edit since ends it.
+#[derive(Clone, Debug)]
+pub struct Flash {
+    pub buffer: BufferId,
+    pub version: Version,
+    pub ranges: Vec<Range<usize>>,
+    pub at: Instant,
+}
+
 /// The working memory: every moment, oldest first, at most
 /// [`MEMORY_MAX`]. The `"` register is its head — `p` puts the newest
 /// moment — and a moment recalled ([`Memory::recall`]) is the newest
@@ -579,6 +589,12 @@ pub struct Editor {
     /// the cursor and what the view paints in the visible lines
     /// (`search::hits_in`). Set through [`Editor::set_search`].
     pub search: Option<search::Search>,
+    /// Whether the view paints the search's matches: a search turns it
+    /// on, `<Esc>` in normal mode turns it off (vim's `:noh`); the
+    /// pattern stays for `n`.
+    pub search_hl: bool,
+    /// The last yank's ranges, while the shell washes them.
+    pub flash: Option<Flash>,
     pub message: String,
     pub effects: Vec<Effect>,
     /// What commands and the shell read — `tabstop`, `expandtab`,
@@ -617,6 +633,8 @@ impl Editor {
             cmd_history: Vec::new(),
             search_history: Vec::new(),
             search: None,
+            search_hl: true,
+            flash: None,
             message: String::new(),
             effects: Vec::new(),
             settings: Settings::new(),
@@ -1983,6 +2001,7 @@ impl Editor {
             }
         };
         self.search = Some(compiled);
+        self.search_hl = true;
         if let Walk::Found(r) = walk {
             let primary = self.views[view].sels.primary();
             self.views[view].sels.map(|s| {
@@ -2000,9 +2019,11 @@ impl Editor {
     /// The same pattern again keeps its count.
     pub fn set_search(&mut self, pattern: &str) -> Result<(), String> {
         if self.search.as_ref().is_some_and(|s| s.pattern == pattern) {
+            self.search_hl = true;
             return Ok(());
         }
         self.search = Some(search::Search::new(pattern)?);
+        self.search_hl = true;
         Ok(())
     }
 
