@@ -1668,6 +1668,7 @@ dependencies = [
  "tree-sitter",
  "unicode-segmentation",
  "unicode-width",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

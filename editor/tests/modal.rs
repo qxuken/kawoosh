@@ -962,7 +962,7 @@ fn a_path_argument_is_resolved_before_the_command_runs() {
     t.keys(":cd! ../up<CR>");
     assert!(matches!(
         t.ed.take_effects().as_slice(),
-        [Effect::Shell { name, ctx }] if name == "cd" && ctx.args == ["/work/up"] && ctx.bang()
+        [Effect::Shell { name, ctx }] if name == "cd" && ctx.args.len() == 1 && std::path::Path::new(&ctx.args[0]) == std::path::Path::new("/work/up") && ctx.bang()
     ));
     // A plugin's: `args = { "path", "text..." }`.
     let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -973,7 +973,12 @@ fn a_path_argument_is_resolved_before_the_command_runs() {
         move |_, ctx| s2.borrow_mut().extend(ctx.args.clone()),
     );
     t.keys(":plug ./f.txt ~/not-a-path more<CR>");
-    assert_eq!(*seen.borrow(), ["/work/dir/f.txt", "~/not-a-path", "more"]);
+    let seen = seen.borrow();
+    assert_eq!(
+        std::path::Path::new(&seen[0]),
+        std::path::Path::new("/work/dir/f.txt")
+    );
+    assert_eq!(&seen[1..], ["~/not-a-path", "more"]);
     assert_eq!(
         Args::parse(&["text...".into(), "path".into()]).unwrap_err(),
         "`text...` must be the last argument"

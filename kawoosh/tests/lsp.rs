@@ -9,13 +9,39 @@ use kawoosh_editor::Mode;
 use kawoosh_systems::lsp::{DIAG_LAYER, ServerDef};
 use kui::KeyMods;
 
+/// A Python that runs: `python3`, `python`, or uv's — Windows puts Store
+/// aliases named `python3` and `python` on the path that only say to
+/// install one, so each is asked its version first.
+fn python() -> (String, Vec<String>) {
+    let candidates: [(&str, &[&str]); 3] = [
+        ("python3", &[]),
+        ("python", &[]),
+        ("uv", &["run", "--no-project", "python"]),
+    ];
+    for (cmd, args) in candidates {
+        let ok = std::process::Command::new(cmd)
+            .args(args)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| {
+                o.status.success() && String::from_utf8_lossy(&o.stdout).starts_with("Python 3")
+            });
+        if ok {
+            return (cmd.into(), args.iter().map(|a| a.to_string()).collect());
+        }
+    }
+    panic!("no python 3 to run the fake language server");
+}
+
 fn fake_server() -> ServerDef {
     let script =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_lsp.py");
+    let (command, mut args) = python();
+    args.push(script.display().to_string());
     ServerDef {
         language: "rust".into(),
-        command: "python3".into(),
-        args: vec![script.display().to_string()],
+        command,
+        args,
         roots: vec!["Cargo.toml".into()],
     }
 }
@@ -255,6 +281,8 @@ fn diagnostics_wait_for_the_typing_to_pause() {
 /// a toast by type, its `window/logMessage` the log's alone.
 #[test]
 fn progress_and_messages_land_in_the_corner() {
+    // The server is named by its command, whichever python ran it.
+    let server = fake_server().command;
     let dir = std::env::temp_dir().join(format!("kawoosh-lsp-notify-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
@@ -280,7 +308,7 @@ fn progress_and_messages_land_in_the_corner() {
         "{texts:?}"
     );
     assert!(
-        texts.iter().any(|t| t == "python3"),
+        texts.contains(&server),
         "the server's name: {texts:?}"
     );
     assert!(texts.iter().any(|t| t == "…"), "running: {texts:?}");
@@ -305,7 +333,7 @@ fn progress_and_messages_land_in_the_corner() {
     assert!(texts.iter().any(|t| t == "✓"), "done: {texts:?}");
     // A toast is one paragraph, its source first.
     assert!(
-        texts.iter().any(|t| t == "python3 the warning"),
+        texts.iter().any(|t| *t == format!("{server} the warning")),
         "a toast: {texts:?}"
     );
     let warning = app
@@ -315,7 +343,7 @@ fn progress_and_messages_land_in_the_corner() {
         .find(|s| s.text == "the warning")
         .unwrap();
     assert!(warning.toast);
-    assert_eq!(warning.source.as_deref(), Some("python3"));
+    assert_eq!(warning.source.as_deref(), Some(server.as_str()));
     assert!(
         !texts.iter().any(|t| t == "the log line"),
         "the log's alone"

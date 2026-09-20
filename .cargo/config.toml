@@ -1,0 +1,5 @@
+# The Forgejo cargo registry kui publishes to (docs/design/kui-requirements.md
+# R1.1). Needed to resolve `kui = { version = "...", registry = "forgejo" }`,
+# and to read kui's own manifests when the three crates are taken by path.
+[registries.forgejo]
+index = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"

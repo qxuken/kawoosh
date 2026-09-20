@@ -132,7 +132,10 @@ fn the_command_line_completes_commands_paths_and_buffers() {
         "nothing typed is nothing to extend"
     );
     let cands = app.cmd_completion.as_ref().unwrap().candidates.clone();
-    assert_eq!(cands, ["src/", "a.txt"]);
+    assert_eq!(
+        cands,
+        [format!("src{}", std::path::MAIN_SEPARATOR), "a.txt".into()]
+    );
     d.ctrl(&mut app, "n");
     tab(&mut d, &mut app);
     assert_eq!(
@@ -142,16 +145,23 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     );
     leave(&mut d, &mut app);
     d.keys(&mut app, ":e s");
-    assert_eq!(app.cmdline_ghost().as_deref(), Some("rc/"));
+    let sep = std::path::MAIN_SEPARATOR;
+    assert_eq!(app.cmdline_ghost(), Some(format!("rc{sep}")));
     tab(&mut d, &mut app);
-    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "e src/");
+    assert_eq!(
+        app.ed.prompt_text().unwrap_or_default(),
+        format!("e src{sep}")
+    );
     assert_eq!(
         app.cmdline_ghost().as_deref(),
         Some("main.rs"),
         "the one candidate opened onto its entries"
     );
     tab(&mut d, &mut app);
-    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "e src/main.rs");
+    assert_eq!(
+        app.ed.prompt_text().unwrap_or_default(),
+        format!("e src{sep}main.rs")
+    );
     d.key(&mut app, "enter", KeyMods::default());
     assert_eq!(d.line_rows()[0], "fn main() {}");
     d.keys(&mut app, ":e .h");
@@ -183,7 +193,8 @@ fn the_command_line_completes_commands_paths_and_buffers() {
         "#,
     );
     d.keys(&mut app, ":visit s");
-    assert_eq!(app.cmdline_ghost().as_deref(), Some("rc/"));
+    let sep = std::path::MAIN_SEPARATOR;
+    assert_eq!(app.cmdline_ghost(), Some(format!("rc{sep}")));
     tab(&mut d, &mut app);
     d.keys(&mut app, " ~/x");
     assert_eq!(app.cmdline_ghost(), None, "text is not completed");
@@ -231,7 +242,14 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     assert_eq!(
         cands,
         [
-            "cd", "enter", "join", "preview", "refresh", "sort", "src/", "a.txt"
+            "cd",
+            "enter",
+            "join",
+            "preview",
+            "refresh",
+            "sort",
+            &format!("src{sep}"),
+            "a.txt"
         ],
         "the subcommands, then the path"
     );

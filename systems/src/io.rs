@@ -170,6 +170,8 @@ impl Io {
                     // renamed over); another program's write is the risk
                     // `text_buffer::Block` names.
                     let map = unsafe { memmap2::Mmap::map(&file) }?;
+                    // madvise is a unix call; Windows reads ahead on its own.
+                    #[cfg(unix)]
                     let _ = map.advise(memmap2::Advice::Sequential);
                     // Validated and indexed in one read, the progress
                     // posted stride by stride.
@@ -181,6 +183,7 @@ impl Io {
                         });
                         wake.wake();
                     });
+                    #[cfg(unix)]
                     let _ = map.advise(memmap2::Advice::Normal);
                     let Some(counts) = counts else {
                         let repaired = String::from_utf8_lossy(&map).into_owned().into_bytes();
@@ -286,7 +289,9 @@ pub struct Incoming {
     pub reply: Sender<String>,
 }
 
-/// Where this process's socket lives.
+/// Where this process's socket lives. On unix a socket file; elsewhere a
+/// file holding the loopback port the editor listens on, since only unix
+/// has domain sockets in `std`.
 pub fn socket_path() -> std::path::PathBuf {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
@@ -298,64 +303,76 @@ impl Io {
     /// Listens on `path`; each connection's request lands as
     /// [`IoMsg::Request`], and the connection stays open until the reply
     /// is sent (so `--wait` blocks the caller).
-    #[cfg(unix)]
     pub fn listen(&self, path: &std::path::Path) -> std::io::Result<()> {
-        use std::io::{BufRead, BufReader, Write};
-        use std::os::unix::net::UnixListener;
         let _ = std::fs::remove_file(path);
-        let listener = UnixListener::bind(path)?;
         let tx = self.tx.clone();
         let wake = self.wake.clone();
+        #[cfg(unix)]
+        let listener = std::os::unix::net::UnixListener::bind(path)?;
+        #[cfg(not(unix))]
+        let listener = {
+            let l = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+            std::fs::write(path, l.local_addr()?.port().to_string())?;
+            l
+        };
         thread::Builder::new()
             .name("socket".into())
             .spawn(move || {
                 for stream in listener.incoming() {
-                    let Ok(mut stream) = stream else { continue };
+                    let Ok(stream) = stream else { continue };
                     let tx = tx.clone();
                     let wake = wake.clone();
-                    thread::spawn(move || {
-                        let mut line = String::new();
-                        let mut reader = BufReader::new(match stream.try_clone() {
-                            Ok(s) => s,
-                            Err(_) => return,
-                        });
-                        if reader.read_line(&mut line).is_err() {
-                            return;
-                        }
-                        let request: Request = match serde_json::from_str(line.trim()) {
-                            Ok(r) => r,
-                            Err(e) => {
-                                let _ = writeln!(stream, "{{\"error\":\"{e}\"}}");
-                                return;
-                            }
-                        };
-                        let (reply_tx, reply_rx) = unbounded();
-                        if tx
-                            .send(IoMsg::Request(Incoming {
-                                request,
-                                reply: reply_tx,
-                            }))
-                            .is_err()
-                        {
-                            return;
-                        }
-                        wake.wake();
-                        if let Ok(reply) = reply_rx.recv() {
-                            let _ = writeln!(stream, "{reply}");
-                        }
-                    });
+                    thread::spawn(move || serve(stream, &tx, &wake));
                 }
             })?;
         Ok(())
     }
 }
 
+/// One connection: a request line in, the reply line out once the
+/// editor has answered it.
+fn serve<S: std::io::Read + std::io::Write>(mut stream: S, tx: &Sender<IoMsg>, wake: &WakeHandle) {
+    use std::io::{BufRead, BufReader};
+    let mut line = String::new();
+    if BufReader::new(&mut stream).read_line(&mut line).is_err() {
+        return;
+    }
+    let request: Request = match serde_json::from_str(line.trim()) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = writeln!(stream, "{{\"error\":\"{e}\"}}");
+            return;
+        }
+    };
+    let (reply_tx, reply_rx) = unbounded();
+    if tx
+        .send(IoMsg::Request(Incoming {
+            request,
+            reply: reply_tx,
+        }))
+        .is_err()
+    {
+        return;
+    }
+    wake.wake();
+    if let Ok(reply) = reply_rx.recv() {
+        let _ = writeln!(stream, "{reply}");
+    }
+}
+
 /// The CLI shim's side: sends one request and waits for the reply line.
-#[cfg(unix)]
 pub fn send_request(path: &std::path::Path, request: &Request) -> std::io::Result<String> {
     use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::UnixStream;
-    let mut stream = UnixStream::connect(path)?;
+    #[cfg(unix)]
+    let mut stream = std::os::unix::net::UnixStream::connect(path)?;
+    #[cfg(not(unix))]
+    let mut stream = {
+        let port: u16 = std::fs::read_to_string(path)?
+            .trim()
+            .parse()
+            .map_err(|_| std::io::Error::other("not a kawoosh socket file"))?;
+        std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))?
+    };
     let line = serde_json::to_string(request).map_err(std::io::Error::other)?;
     writeln!(stream, "{line}")?;
     let mut reader = BufReader::new(stream);

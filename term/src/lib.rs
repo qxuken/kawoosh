@@ -116,19 +116,31 @@ impl Terminal {
                 pixel_height: 0,
             })
             .context("opening pty")?;
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-        let mut builder = match cmd {
-            Some(c) => {
-                let mut b = CommandBuilder::new(&shell);
-                b.args(["-lc", c]);
-                b
+        // `$SHELL` where there is one (an MSYS bash sets it on Windows
+        // too); else `/bin/sh`, or `%ComSpec%` on Windows, whose flags
+        // are its own.
+        let shell = std::env::var("SHELL").ok();
+        let cmd_exe = cfg!(windows) && shell.is_none();
+        let shell = shell.unwrap_or_else(|| {
+            if cmd_exe {
+                std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into())
+            } else {
+                "/bin/sh".into()
             }
-            None => {
-                let mut b = CommandBuilder::new(&shell);
-                b.arg("-l");
-                b
+        });
+        let mut builder = CommandBuilder::new(&shell);
+        match (cmd, cmd_exe) {
+            (Some(c), false) => {
+                builder.args(["-lc", c]);
             }
-        };
+            (Some(c), true) => {
+                builder.args(["/c", c]);
+            }
+            (None, false) => {
+                builder.arg("-l");
+            }
+            (None, true) => {}
+        }
         builder.env("TERM", "xterm-256color");
         builder.env("COLORTERM", "truecolor");
         for (k, v) in envs {

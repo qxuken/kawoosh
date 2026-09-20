@@ -241,7 +241,32 @@ pub fn read_mem() -> Mem {
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// The working set and its peak, and the private commit as the
+/// footprint — what Task Manager calls memory.
+#[cfg(windows)]
+pub fn read_mem() -> Mem {
+    use windows_sys::Win32::System::ProcessStatus::{
+        K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    // SAFETY: the counters struct is ours and the size passed is its
+    // own; `GetCurrentProcess` is a pseudo-handle needing no close.
+    unsafe {
+        let mut c: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+        let size = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+        c.cb = size;
+        if K32GetProcessMemoryInfo(GetCurrentProcess(), (&raw mut c).cast(), size) == 0 {
+            return Mem::default();
+        }
+        Mem {
+            resident: c.WorkingSetSize as u64,
+            peak: c.PeakWorkingSetSize as u64,
+            footprint: c.PrivateUsage as u64,
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub fn read_mem() -> Mem {
     Mem::default()
 }

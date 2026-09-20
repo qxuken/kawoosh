@@ -231,7 +231,7 @@ fn dir_confirms_then_renames_creates_and_deletes_on_write() {
         app.ed
             .buffer_of(app.focused_view().unwrap())
             .name
-            .ends_with("/d")
+            .ends_with(&format!("{}d", std::path::MAIN_SEPARATOR))
     );
     d.keys(&mut app, "-");
     assert!(
@@ -296,7 +296,7 @@ fn compile_mode_streams_and_jumps_to_locations() {
 fn dash_opens_the_files_directory_and_can_move_the_cwd() {
     let dir = std::env::temp_dir().join(format!("kawoosh-dash-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("inner")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     let file = dir.join("inner/f.txt");
     std::fs::write(&file, "x").unwrap();
     let mut d = Drive::new(900.0, 500.0);
@@ -314,19 +314,21 @@ fn dash_opens_the_files_directory_and_can_move_the_cwd() {
     // <leader>cd moves the working directory to the listing.
     d.keys(&mut app, " cd");
     assert_eq!(app.cwd, dir);
-    // And a terminal opened now starts there.
+    // And a terminal opened now starts there (by the directory's own
+    // name: an MSYS shell on Windows spells the temp directory `/tmp`).
     ex(&mut d, &mut app, "term pwd; sleep 1");
     let t = app.term_of_focused().unwrap();
+    let there = dir.file_name().unwrap().to_string_lossy().into_owned();
     let mut seen = String::new();
     for _ in 0..300 {
         d.frame(&mut app);
         seen = app.terms.map[&t].row_text(0);
-        if seen.contains(&dir.display().to_string()) {
+        if seen.contains(&there) {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(seen.contains(&dir.display().to_string()), "{seen}");
+    assert!(seen.contains(&there), "{seen}");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -334,7 +336,7 @@ fn dash_opens_the_files_directory_and_can_move_the_cwd() {
 fn dash_lands_on_the_entry_it_came_from_and_reuses_the_listing() {
     let dir = std::env::temp_dir().join(format!("kawoosh-dirfrom-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("inner")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("inner/a.txt"), "1\n2\n3\n").unwrap();
     std::fs::write(dir.join("inner/b.txt"), "x").unwrap();
     std::fs::write(dir.join("z.txt"), "x").unwrap();
@@ -398,10 +400,15 @@ fn dash_lands_on_the_entry_it_came_from_and_reuses_the_listing() {
         format!("dir: {}", kawoosh_systems::fs::home().unwrap().display())
     );
     ex(&mut d, &mut app, "dir ~/definitely-not-a-directory-here");
-    assert!(
-        app.ed.message.starts_with("not a directory: /"),
-        "{}",
-        app.ed.message
+    assert_eq!(
+        app.ed.message,
+        format!(
+            "not a directory: {}",
+            kawoosh_systems::fs::home()
+                .unwrap()
+                .join("definitely-not-a-directory-here")
+                .display()
+        )
     );
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -418,7 +425,7 @@ fn dash_lands_on_the_entry_it_came_from_and_reuses_the_listing() {
 fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
     let dir = std::env::temp_dir().join(format!("kawoosh-when-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("inner")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     let file = dir.join("inner/f.txt");
     std::fs::write(&file, "x").unwrap();
     let mut d = Drive::new(900.0, 500.0);
@@ -699,7 +706,7 @@ fn a_language_from_lua_names_its_files_and_warns_of_a_missing_grammar() {
         &format!(
             r#"
             kawoosh.language("zig", {{ extensions = {{ "zig" }}, aliases = {{ "zg" }} }})
-            kawoosh.language("nim", {{ extensions = {{ "nim" }}, path = "{}/nowhere/nim" }})
+            kawoosh.language("nim", {{ extensions = {{ "nim" }}, path = [[{}/nowhere/nim]] }})
             "#,
             dir.display()
         ),
@@ -749,7 +756,7 @@ fn a_language_from_lua_names_its_files_and_warns_of_a_missing_grammar() {
 fn a_listing_is_annotated_and_refreshed() {
     let dir = std::env::temp_dir().join(format!("kawoosh-dirmeta-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("sub")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "alpha").unwrap();
     std::fs::write(dir.join("b.txt"), vec![b'x'; 2048]).unwrap();
     let mut d = Drive::new(900.0, 500.0);
@@ -904,7 +911,7 @@ fn a_listing_is_annotated_and_refreshed() {
 fn a_path_argument_knows_the_current_file() {
     let dir = std::env::temp_dir().join(format!("kawoosh-pct-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("inner")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("inner/a.txt"), "1").unwrap();
     std::fs::write(dir.join("inner/f.txt"), "x").unwrap();
     let mut d = Drive::new(900.0, 500.0);
@@ -949,7 +956,7 @@ fn a_path_argument_knows_the_current_file() {
 fn a_listing_previews_the_entry_under_the_caret() {
     let dir = std::env::temp_dir().join(format!("kawoosh-preview-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("sub")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("sub/inside.txt"), "").unwrap();
     std::fs::write(dir.join("a.txt"), "alpha\nbeta\n").unwrap();
     std::fs::write(dir.join("b.txt"), "gamma\n").unwrap();
@@ -1125,7 +1132,7 @@ fn a_plugin_asks_with_a_confirm() {
 fn a_split_listing_moves_on_alone() {
     let dir = std::env::temp_dir().join(format!("kawoosh-splitdir-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("sub")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("sub/f.txt"), "x").unwrap();
     let mut d = Drive::new(1200.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "");
@@ -1186,7 +1193,7 @@ fn a_yanked_line_pasted_into_another_listing_is_a_copy() {
     let dir = std::env::temp_dir().join(format!("kawoosh-copy-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("a")).unwrap();
     std::fs::create_dir_all(dir.join("b/sub")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("a/a1.txt"), "alpha").unwrap();
     std::fs::write(dir.join("b/b1.txt"), "beta").unwrap();
     std::fs::write(dir.join("b/sub/inner.txt"), "inner").unwrap();
@@ -1291,7 +1298,7 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     let dir = std::env::temp_dir().join(format!("kawoosh-ident-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("a")).unwrap();
     std::fs::create_dir_all(dir.join("b")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("a/file.txt"), "from a").unwrap();
     std::fs::write(dir.join("b/file.txt"), "from b, longer").unwrap();
     let mut d = Drive::new(1200.0, 500.0);
@@ -1409,7 +1416,7 @@ fn a_file_replaced_by_a_copy_is_kept_until_the_copy_arrives() {
     let dir = std::env::temp_dir().join(format!("kawoosh-replace-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("a")).unwrap();
     std::fs::create_dir_all(dir.join("b")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("a/f.txt"), "from a").unwrap();
     std::fs::write(dir.join("b/f.txt"), "from b").unwrap();
     let mut d = Drive::new(1200.0, 500.0);
@@ -1483,7 +1490,7 @@ fn a_file_replaced_by_a_copy_is_kept_until_the_copy_arrives() {
 fn an_entry_cut_and_undone_keeps_its_meta() {
     let dir = std::env::temp_dir().join(format!("kawoosh-ddu-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "alpha").unwrap();
     std::fs::write(dir.join("b.txt"), "be").unwrap();
     let mut d = Drive::new(900.0, 500.0);
@@ -1533,7 +1540,7 @@ fn an_entry_cut_and_undone_keeps_its_meta() {
 fn a_listings_edits_are_kept_until_written_or_dropped() {
     let dir = std::env::temp_dir().join(format!("kawoosh-keep-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("inner")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("inner/a.txt"), "a").unwrap();
     std::fs::write(dir.join("inner/b.txt"), "b").unwrap();
     let mut d = Drive::new(900.0, 500.0);
@@ -1588,14 +1595,25 @@ fn a_listings_edits_are_kept_until_written_or_dropped() {
     assert_eq!(d.line_rows(), ["../", "a.txt", "b.txt"], "dropped");
     assert!(!app.ed.buffer_of(app.focused_view().unwrap()).modified);
     assert!(dir.join("inner/a.txt").is_file(), "nothing written");
-    // `-` at the root of the tree says so, there being no drives here.
+    // `-` at the root of the tree says so where there are no drives;
+    // on Windows it lists them.
     ex(&mut d, &mut app, "dir /");
     d.keys(&mut app, "-");
+    #[cfg(not(windows))]
     assert!(
         app.ed.message == "at the root" || app.ed.message == "at the top",
         "{}",
         app.ed.message
     );
+    #[cfg(windows)]
+    {
+        assert_eq!(name(&app), "dir: <drives>");
+        assert!(
+            d.line_rows().iter().any(|r| r == "C:\\"),
+            "{:?}",
+            d.line_rows()
+        );
+    }
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -1608,7 +1626,7 @@ fn a_listings_edits_are_kept_until_written_or_dropped() {
 fn a_listing_sorts_with_yazis_keys() {
     let dir = std::env::temp_dir().join(format!("kawoosh-sort-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("d")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("b.md"), "bb").unwrap();
     std::fs::write(dir.join("a.txt"), "aaaa").unwrap();
     std::fs::write(dir.join("c.rs"), "c").unwrap();
@@ -1697,7 +1715,7 @@ fn a_listing_sorts_with_yazis_keys() {
 fn a_listing_comes_back_with_a_session() {
     let root = std::env::temp_dir().join(format!("kawoosh-dirsession-{}", std::process::id()));
     std::fs::create_dir_all(root.join("listed")).unwrap();
-    let root = root.canonicalize().unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
     let dir = root.join("listed");
     std::fs::write(dir.join("a.txt"), "a").unwrap();
     let db = root.join("state.db");
@@ -1744,7 +1762,7 @@ fn a_pasted_line_yanked_again_is_still_its_entry() {
     let dir = std::env::temp_dir().join(format!("kawoosh-reyank-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("dir1")).unwrap();
     std::fs::create_dir_all(dir.join("dir2")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("dir1/file.txt"), "one").unwrap();
     std::fs::write(dir.join("dir2/file2.txt"), "two!").unwrap();
     let mut d = Drive::new(1200.0, 500.0);
@@ -1824,7 +1842,7 @@ fn renames_and_moves_swap_without_writing_over_anything() {
     for d in ["a", "b", "c"] {
         std::fs::create_dir_all(dir.join(d)).unwrap();
     }
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("a/one.txt"), "one").unwrap();
     std::fs::write(dir.join("a/two.txt"), "two").unwrap();
     std::fs::write(dir.join("a/x.txt"), "from a").unwrap();
@@ -1952,7 +1970,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     let dir = std::env::temp_dir().join(format!("kawoosh-many-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("a")).unwrap();
     std::fs::create_dir_all(dir.join("b")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("a/a1.txt"), "alpha").unwrap();
     std::fs::write(dir.join("b/b1.txt"), "beta").unwrap();
     let mut d = Drive::new(1200.0, 500.0);
@@ -2107,7 +2125,11 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     assert_eq!(app.ed.buffers.len(), n + 2);
     let names: Vec<String> = app.ed.buffers.values().map(|b| b.name.clone()).collect();
     assert!(names.contains(&a) && names.contains(&b), "{names:?}");
-    ex(&mut d, &mut app, "b /b");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("b {}b", std::path::MAIN_SEPARATOR),
+    );
     assert_eq!(name(&app), b, "reached by a substring of its name");
     d.keys(&mut app, "-");
     assert_eq!(name(&app), format!("dir: {}", dir.display()));
@@ -2150,7 +2172,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
 fn a_renamed_file_is_still_its_buffer() {
     let dir = std::env::temp_dir().join(format!("kawoosh-retarget-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("sub")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "alpha").unwrap();
     std::fs::write(dir.join("sub/inner.txt"), "inner").unwrap();
     let mut d = Drive::new(900.0, 500.0);
@@ -2215,7 +2237,7 @@ fn joined_lines_are_refused_and_a_typed_name_is_new() {
     let dir = std::env::temp_dir().join(format!("kawoosh-join-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("a")).unwrap();
     std::fs::create_dir_all(dir.join("b")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("a/a1.txt"), "one").unwrap();
     std::fs::write(dir.join("a/a2.txt"), "two").unwrap();
     std::fs::write(dir.join("b/b1.txt"), "bee").unwrap();
@@ -2307,7 +2329,7 @@ fn joined_lines_are_refused_and_a_typed_name_is_new() {
 fn a_write_with_nothing_to_apply_reads_the_listing_again() {
     let dir = std::env::temp_dir().join(format!("kawoosh-nothing-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "a").unwrap();
     std::fs::write(dir.join("b.txt"), "b").unwrap();
     let mut d = Drive::new(900.0, 500.0);
@@ -2349,7 +2371,7 @@ fn a_write_with_nothing_to_apply_reads_the_listing_again() {
 fn a_directory_opens_as_a_listing() {
     let dir = std::env::temp_dir().join(format!("kawoosh-opendir-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("sub")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "alpha").unwrap();
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "");
@@ -2398,7 +2420,7 @@ fn a_moment_recalled_keeps_its_entry() {
     let dir = std::env::temp_dir().join(format!("kawoosh-memdir-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("a")).unwrap();
     std::fs::create_dir_all(dir.join("b")).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     std::fs::write(dir.join("a/a1.txt"), "one").unwrap();
     std::fs::write(dir.join("a/a2.txt"), "two!").unwrap();
     let mut d = Drive::new(1000.0, 600.0);

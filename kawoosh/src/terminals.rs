@@ -40,7 +40,8 @@ impl Terminals {
 /// A `path[:line[:col]]` in `text` around byte `at` — rustc, tsc, grep
 /// and shell spellings. Extensible from Lua later (Decision 5c).
 pub fn location_at(text: &str, at: usize) -> Option<(String, Option<usize>, Option<usize>)> {
-    let is_path_char = |c: char| c.is_alphanumeric() || "./_-~+@:%".contains(c);
+    // `\` for the paths Windows tools print (`src\main.rs:42`).
+    let is_path_char = |c: char| c.is_alphanumeric() || "./_-~+@:%\\".contains(c);
     let at = at.min(text.len());
     let start = text[..at]
         .char_indices()
@@ -57,11 +58,17 @@ pub fn location_at(text: &str, at: usize) -> Option<(String, Option<usize>, Opti
     let token = text[start..end]
         .trim_end_matches(|c: char| ":.,;".contains(c))
         .trim_start_matches([':', ',', ';']);
-    if token.is_empty() || !token.contains(['/', '.']) {
+    if token.is_empty() || !token.contains(['/', '.', '\\']) {
         return None;
     }
-    let mut parts = token.split(':');
-    let path = parts.next()?.to_string();
+    // A drive's colon (`C:\x`) is the path's, not a line's.
+    let drive = token
+        .as_bytes()
+        .get(..3)
+        .filter(|b| b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
+        .map_or(0, |_| 2);
+    let mut parts = token[drive..].split(':');
+    let path = format!("{}{}", &token[..drive], parts.next()?);
     let line = parts.next().and_then(|s| s.parse().ok());
     let col = parts.next().and_then(|s| s.parse().ok());
     Some((path, line, col))
@@ -320,6 +327,15 @@ mod tests {
         assert_eq!(
             location_at("lib/foo.rb:10: warning", 4),
             Some(("lib/foo.rb".into(), Some(10), None))
+        );
+        // Windows spellings: a backslash path, and a drive's colon.
+        assert_eq!(
+            location_at("  --> src\\main.rs:42:7", 8),
+            Some(("src\\main.rs".into(), Some(42), Some(7)))
+        );
+        assert_eq!(
+            location_at("at C:\\work\\a.rs:3 here", 6),
+            Some(("C:\\work\\a.rs".into(), Some(3), None))
         );
     }
 }

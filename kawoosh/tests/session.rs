@@ -105,6 +105,7 @@ fn a_session_saves_and_restores_panes_files_and_carets() {
 /// saves through a file beside it, the mapping untouched.
 #[test]
 fn a_file_opened_on_the_io_thread_arrives_mapped_and_saves_beside_itself() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let dir = std::env::temp_dir().join(format!("kawoosh-mapped-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -113,6 +114,7 @@ fn a_file_opened_on_the_io_thread_arrives_mapped_and_saves_beside_itself() {
         .map(|i| format!("line {i} · строка {i}\n"))
         .collect();
     std::fs::write(&file, &text).unwrap();
+    #[cfg(unix)]
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o750)).unwrap();
     let mut app = Kawoosh::new("*scratch*", "");
     let id = app.open_on_io_thread(&file, text.len());
@@ -140,6 +142,7 @@ fn a_file_opened_on_the_io_thread_arrives_mapped_and_saves_beside_itself() {
     let saved = std::fs::read_to_string(&file).unwrap();
     assert_eq!(saved.lines().next(), Some("ine 1 · строка 1"));
     assert_eq!(saved.len(), text.len() - 1);
+    #[cfg(unix)]
     assert_eq!(
         std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
         0o750

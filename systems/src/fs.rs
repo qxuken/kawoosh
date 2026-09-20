@@ -248,6 +248,47 @@ pub fn is_file(path: &Path) -> bool {
     path.is_file()
 }
 
+/// `path` with every link followed, as `std::fs::canonicalize` has it
+/// but without the `\\?\` Windows puts before it, which no one writes,
+/// no tool prints, and a buffer should not be named by. The error names
+/// the path.
+pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
+    let p = std::fs::canonicalize(path).map_err(|e| named(path, e))?;
+    Ok(unverbatim(p))
+}
+
+/// `\\?\C:\x` as `C:\x`, `\\?\UNC\s\r\x` as `\\s\r\x`; any other path as
+/// it is.
+#[cfg(windows)]
+fn unverbatim(p: PathBuf) -> PathBuf {
+    use std::path::{Component, Prefix};
+    let mut comps = p.components();
+    let head = match comps.next() {
+        Some(Component::Prefix(pre)) => match pre.kind() {
+            Prefix::VerbatimDisk(d) => format!("{}:\\", d as char),
+            Prefix::VerbatimUNC(server, share) => format!(
+                "\\\\{}\\{}\\",
+                server.to_string_lossy(),
+                share.to_string_lossy()
+            ),
+            _ => return p,
+        },
+        _ => return p,
+    };
+    let mut out = PathBuf::from(head);
+    for c in comps {
+        if !matches!(c, Component::RootDir) {
+            out.push(c.as_os_str());
+        }
+    }
+    out
+}
+
+#[cfg(not(windows))]
+fn unverbatim(p: PathBuf) -> PathBuf {
+    p
+}
+
 /// The process's working directory, which the shell keeps in step with
 /// its own (`Kawoosh::set_cwd`).
 pub fn cwd() -> PathBuf {

@@ -218,13 +218,56 @@ pub fn position_of_offset(text: &str, offset: usize) -> (u32, u32) {
     (line, col)
 }
 
+/// `file:///a/b%20c`, and on Windows `file:///C:/a/b` — the drive
+/// behind a `/`, upper-cased, the separators forward — as every server
+/// reads it.
 fn uri_of(path: &Path) -> String {
-    format!("file://{}", path.display())
+    let s = path.display().to_string();
+    let s = if cfg!(windows) {
+        upper_drive(s.replace('\\', "/"))
+    } else {
+        s
+    };
+    let mut out = String::from("file://");
+    if !s.starts_with('/') {
+        out.push('/');
+    }
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 fn path_of_uri(uri: &str) -> Option<PathBuf> {
-    let rest = uri.strip_prefix("file://")?;
-    Some(PathBuf::from(percent_decode(rest)))
+    let rest = percent_decode(uri.strip_prefix("file://")?);
+    if cfg!(windows) {
+        // `/C:/a/b` is `C:\a\b`.
+        let b = rest.as_bytes();
+        let drive = b.len() > 2 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':';
+        let rest = if drive { &rest[1..] } else { &rest[..] };
+        return Some(PathBuf::from(upper_drive(rest.replace('/', "\\"))));
+    }
+    Some(PathBuf::from(rest))
+}
+
+/// `c:\x` as `C:\x`: one spelling of a drive, whichever a server or a
+/// user gave.
+fn upper_drive(mut s: String) -> String {
+    if s.as_bytes().get(1) == Some(&b':') && s.as_bytes()[0].is_ascii_lowercase() {
+        s[..1].make_ascii_uppercase();
+    }
+    s
+}
+
+/// A server's spelling of a URI as ours (`file:///c%3A/x` and
+/// `file:///C:/x` are one document).
+fn canonical_uri(uri: &str) -> String {
+    path_of_uri(uri).map_or_else(|| uri.to_string(), |p| uri_of(&p))
 }
 
 fn percent_decode(s: &str) -> String {
@@ -723,7 +766,7 @@ impl Pool {
             Some("textDocument/publishDiagnostics") => {
                 if let Some(params) = params
                     && let Some(uri) = params.get("uri").and_then(Value::as_str)
-                    && let Some(doc) = server.documents.get(uri)
+                    && let Some(doc) = server.documents.get(&canonical_uri(uri))
                 {
                     let (update, messages) = diagnostics_update(params, doc);
                     let buffer = doc.buffer;
@@ -937,7 +980,20 @@ mod tests {
     fn uris_and_locations() {
         let p = PathBuf::from("/tmp/a b/main.rs");
         assert_eq!(path_of_uri("file:///tmp/a%20b/main.rs"), Some(p.clone()));
+        assert_eq!(uri_of(&p), "file:///tmp/a%20b/main.rs");
         assert_eq!(path_of_uri(&uri_of(&p)), Some(p));
+        #[cfg(windows)]
+        {
+            let p = PathBuf::from("C:\\work\\a b\\main.rs");
+            assert_eq!(uri_of(&p), "file:///C:/work/a%20b/main.rs");
+            assert_eq!(path_of_uri(&uri_of(&p)), Some(p.clone()));
+            // As rust-analyzer spells a drive.
+            assert_eq!(path_of_uri("file:///c%3A/work/a%20b/main.rs"), Some(p));
+            assert_eq!(
+                canonical_uri("file:///c%3A/work/a%20b/main.rs"),
+                "file:///C:/work/a%20b/main.rs"
+            );
+        }
         let plain = json!([{ "uri": "file:///x/y.rs", "range": { "start": { "line": 3, "character": 7 }, "end": { "line": 3, "character": 9 } } }]);
         assert_eq!(
             first_location(Some(&plain)),

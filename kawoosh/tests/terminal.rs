@@ -206,7 +206,7 @@ fn a_program_that_asks_for_the_mouse_gets_clicks_drags_and_the_wheel() {
 fn terminals_start_in_the_working_directory_with_the_appearance() {
     let dir = std::env::temp_dir().join(format!("kawoosh-cwd-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let dir = dir.canonicalize().unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     let mut app = Kawoosh::new("t", "");
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
@@ -235,7 +235,10 @@ fn terminals_start_in_the_working_directory_with_the_appearance() {
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(seen.contains(&dir.display().to_string()), "{seen}");
+    // By the directory's own name: an MSYS shell on Windows spells the
+    // temp directory `/tmp`.
+    let there = dir.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(seen.contains(&there), "{seen}");
     assert!(seen.contains("APPEARANCE=dark"), "{seen}");
     std::fs::remove_dir_all(&dir).ok();
 }

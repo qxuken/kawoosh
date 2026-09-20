@@ -13,6 +13,11 @@ use kawoosh::Kawoosh;
 use kawoosh::settings::{PROJECT_DIR, SETTINGS_FILE};
 use kui::KeyMods;
 
+/// `s` with the platform's separator, as the settings tab spells a path.
+fn rel(s: &str) -> String {
+    s.replace('/', std::path::MAIN_SEPARATOR_STR)
+}
+
 fn app_with_lua(d: &mut Drive) -> Kawoosh {
     let mut app = Kawoosh::new("t", "hello\n");
     app.jobs_inline = true;
@@ -81,7 +86,7 @@ fn tree(tag: &str) -> Tree {
     )
     .unwrap();
     // The directories as the app will spell them.
-    let canon = |p: &Path| p.canonicalize().unwrap();
+    let canon = |p: &Path| kawoosh_systems::fs::canonicalize(p).unwrap();
     Tree {
         root: canon(&root),
         sub: canon(&sub),
@@ -277,7 +282,9 @@ fn a_saved_config_file_reloads_its_layer() {
     );
     let corner = d.corner_texts();
     assert!(
-        corner.iter().any(|t| t == "reloaded .kawoosh/settings.lua"),
+        corner
+            .iter()
+            .any(|t| *t == rel("reloaded .kawoosh/settings.lua")),
         "the file under the cwd, relative to it: {corner:?}"
     );
 
@@ -327,7 +334,7 @@ fn a_saved_config_file_reloads_its_layer() {
     assert!(
         d.corner_texts()
             .iter()
-            .any(|c| *c == format!("reloaded {dirname}/.kawoosh/settings.lua")),
+            .any(|c| *c == rel(&format!("reloaded {dirname}/.kawoosh/settings.lua"))),
         "a file above the cwd, by its directory: {:?}",
         d.corner_texts()
     );
@@ -443,14 +450,19 @@ fn the_settings_tab_shows_the_layers_and_opens_a_file() {
     assert!(has("default — "), "{texts:?}");
     assert!(has("effective — "), "{texts:?}");
     assert!(
-        texts.iter().any(|x| x == ".kawoosh/settings.lua"),
+        texts.iter().any(|x| *x == rel(".kawoosh/settings.lua")),
         "the file under the cwd is a row, relative: {texts:?}"
     );
     assert!(
-        texts.iter().any(|x| x == "repo/.kawoosh/settings.lua"),
+        texts
+            .iter()
+            .any(|x| *x == rel("repo/.kawoosh/settings.lua")),
         "the file above by its directory: {texts:?}"
     );
-    assert!(has("project: repo/.kawoosh/settings.lua"), "{texts:?}");
+    assert!(
+        has(&rel("project: repo/.kawoosh/settings.lua")),
+        "{texts:?}"
+    );
     assert!(has("compile.command") && has(r#""make""#), "{texts:?}");
     assert!(has("session"), "the effective tabstop names its layer");
     let top = texts.iter().position(|t| t.contains("session — ")).unwrap();
@@ -587,7 +599,10 @@ fn an_empty_layer_offers_a_file_to_create() {
         !now.iter().any(|x| x == "{}") && !now.iter().any(|x| x == "session"),
         "an unset session is not a source: {now:?}"
     );
-    assert!(now.iter().any(|x| x == ".kawoosh/settings.lua"), "{now:?}");
+    assert!(
+        now.iter().any(|x| *x == rel(".kawoosh/settings.lua")),
+        "{now:?}"
+    );
     assert!(now.iter().any(|x| x == "· new"), "{now:?}");
     let file = t.other.join(PROJECT_DIR).join(SETTINGS_FILE);
     let key = d
@@ -624,7 +639,10 @@ fn an_empty_layer_offers_a_file_to_create() {
     d.frame(&mut app);
     let now = texts(&d);
     assert!(!now.iter().any(|x| x == "· new"), "{now:?}");
-    assert!(now.iter().any(|x| x == ".kawoosh/settings.lua"), "{now:?}");
+    assert!(
+        now.iter().any(|x| *x == rel(".kawoosh/settings.lua")),
+        "{now:?}"
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&t.dir).ok();
 }

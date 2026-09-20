@@ -2459,7 +2459,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("kawoosh-luafs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let dir = dir.canonicalize().unwrap();
+        let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
         let home = kawoosh_systems::fs::home().unwrap();
         rt.load_source(
             "t",

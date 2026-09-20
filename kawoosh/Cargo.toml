@@ -30,6 +30,10 @@ smallvec.workspace = true
 libc = "0.2"
 blake3.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# The process's memory for the perf tab (`perf::read_mem`).
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+
 [[bin]]
 name = "kawoosh-gen"
 path = "src/bin/gen.rs"
