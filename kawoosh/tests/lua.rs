@@ -1610,42 +1610,48 @@ fn a_listing_sorts_with_yazis_keys() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "x y");
     d.frame(&mut app);
-    // Off a listing: `,` is the primary selection, at once.
-    d.keys(&mut app, ",");
-    assert!(app.ed.pending.is_empty(), "no prefix here");
+    // Off a listing the sort keys lead nowhere, and say so.
+    d.keys(&mut app, "ms");
+    assert!(app.ed.pending.is_empty());
+    assert!(
+        app.ed.message.ends_with("needs language:dir"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(app.ed.buffer_of(app.focused_view().unwrap()).text(), "x y");
     ex(&mut d, &mut app, &format!("dir {}", dir.display()));
     assert_eq!(d.line_rows(), ["../", "d/", "a.txt", "b.md", "c.rs"]);
-    d.keys(&mut app, ",s");
+    d.keys(&mut app, "ms");
     assert_eq!(
         d.line_rows(),
         ["../", "d/", "c.rs", "b.md", "a.txt"],
         "by size"
     );
-    d.keys(&mut app, ",S");
+    d.keys(&mut app, "mS");
     assert_eq!(
         d.line_rows(),
         ["../", "d/", "a.txt", "b.md", "c.rs"],
         "largest first"
     );
-    d.keys(&mut app, ",m");
+    d.keys(&mut app, "mm");
     assert_eq!(
         d.line_rows(),
         ["../", "d/", "c.rs", "a.txt", "b.md"],
         "oldest first"
     );
-    d.keys(&mut app, ",M");
+    d.keys(&mut app, "mM");
     assert_eq!(
         d.line_rows(),
         ["../", "d/", "b.md", "a.txt", "c.rs"],
         "newest first"
     );
-    d.keys(&mut app, ",e");
+    d.keys(&mut app, "me");
     assert_eq!(
         d.line_rows(),
         ["../", "d/", "b.md", "c.rs", "a.txt"],
         "by type"
     );
-    d.keys(&mut app, ",A");
+    d.keys(&mut app, "mA");
     assert_eq!(
         d.line_rows(),
         ["../", "d/", "c.rs", "b.md", "a.txt"],
@@ -1658,7 +1664,7 @@ fn a_listing_sorts_with_yazis_keys() {
     assert_eq!(d.line_rows(), ["../", "d/", "c.rs", "b.md", "a.txt"]);
     // With edits, a sort asks as <C-l> does.
     d.keys(&mut app, "Gdd");
-    d.keys(&mut app, ",a");
+    d.keys(&mut app, "ma");
     d.frame(&mut app);
     assert!(d.confirm_texts()[0].starts_with("Drop the edits to "));
     d.key(&mut app, "escape", KeyMods::default());
@@ -2114,6 +2120,202 @@ fn listings_are_many_and_each_writes_its_own_directory() {
         "the other listing's entry, b2.txt moved into a: {:?}",
         texts(&d)
     );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A file renamed or moved by the listing while a buffer has it open
+/// is that buffer's path from then on — and one under a directory
+/// renamed follows the directory.
+#[test]
+fn a_renamed_file_is_still_its_buffer() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-retarget-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("a.txt"), "alpha").unwrap();
+    std::fs::write(dir.join("sub/inner.txt"), "inner").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&dir.join("a.txt"));
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("sub/inner.txt").display()),
+    );
+    app.wait_for_open();
+    d.keys(&mut app, "-");
+    d.keys(&mut app, "-");
+    assert_eq!(d.line_rows(), ["../", "sub/", "a.txt"]);
+    // The caret is on `sub/`, the directory `-` came up from.
+    d.keys(&mut app, "ccmoved/");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "jccb.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        d.line_rows(),
+        ["../", "moved/", "b.txt"],
+        "{:?} / {}",
+        app.notes.log.iter().map(|e| &e.text).collect::<Vec<_>>(),
+        app.ed.message
+    );
+    let at = |app: &Kawoosh, p: &str| -> Option<String> {
+        app.ed
+            .buffer_at(&dir.join(p))
+            .map(|id| app.ed.buffers[id].name.clone())
+    };
+    assert_eq!(at(&app, "b.txt").as_deref(), Some("b.txt"));
+    assert_eq!(at(&app, "moved/inner.txt").as_deref(), Some("inner.txt"));
+    assert_eq!(at(&app, "a.txt"), None);
+    assert_eq!(at(&app, "sub/inner.txt"), None);
+    // And the buffer writes where the file is now.
+    ex(&mut d, &mut app, "b b.txt");
+    d.keys(&mut app, "Abeta");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "alphabeta"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Two entries on one line is nothing the write could do: `J` is
+/// refused in a listing, and a join made some other way is marked on
+/// the line and refused by the write, nothing on disk touched. A name
+/// typed by hand is a new file, whatever other listings hold.
+#[test]
+fn joined_lines_are_refused_and_a_typed_name_is_new() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-join-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::fs::create_dir_all(dir.join("b")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("a/a1.txt"), "one").unwrap();
+    std::fs::write(dir.join("a/a2.txt"), "two").unwrap();
+    std::fs::write(dir.join("b/b1.txt"), "bee").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("a").display()),
+    );
+    d.keys(&mut app, "jJ");
+    assert_eq!(d.line_rows(), ["../", "a1.txt", "a2.txt"]);
+    assert_eq!(
+        app.ed.message,
+        "a line is one entry: no joining in a listing"
+    );
+    app.run_lua_source(
+        "join",
+        "local l = kawoosh.buf.lines(); local off = #l[1] + 1 + #l[2]; kawoosh.buf.replace(off, off + 1, ' ')",
+    );
+    d.frame(&mut app);
+    assert_eq!(
+        d.line_rows(),
+        ["../", "a1.txt a2.txt"],
+        "{} / {:?}",
+        app.ed.message,
+        d.warnings()
+    );
+    let e: Vec<String> = d
+        .row_extras()
+        .iter()
+        .map(|s| s.replace('\u{a0}', " "))
+        .collect();
+    assert!(
+        e[1].contains(" 3 B  ") && e[1].ends_with("← joined") && !e[1].contains("was"),
+        "{e:?}"
+    );
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert!(d.confirm_texts().is_empty(), "refused");
+    assert!(
+        app.notes
+            .shown
+            .iter()
+            .any(|s| s.text.starts_with("2 entries on one line in ")),
+        "{:?}",
+        app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
+    );
+    assert!(dir.join("a/a1.txt").is_file() && dir.join("a/a2.txt").is_file());
+    ex(&mut d, &mut app, "dir refresh!");
+    d.frame(&mut app);
+    // b's name typed into a: a new file, not b's copied.
+    ex(&mut d, &mut app, "vsplit");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("b").display()),
+    );
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    d.keys(&mut app, "Gob1.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    let e: Vec<String> = d
+        .row_extras()
+        .iter()
+        .map(|s| s.replace('\u{a0}', " "))
+        .collect();
+    assert!(e[3].ends_with("← new"), "{e:?}");
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..],
+        ["create b1.txt", "Apply", "Cancel"]
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(std::fs::read_to_string(dir.join("a/b1.txt")).unwrap(), "");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A write with nothing to apply — an entry cut and pasted back
+/// elsewhere in its listing — reads the listing again, so what the
+/// plugin knows of its lines and what the engine tracks are one thing,
+/// and the next rename is of the entry on the line.
+#[test]
+fn a_write_with_nothing_to_apply_reads_the_listing_again() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-nothing-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("a.txt"), "a").unwrap();
+    std::fs::write(dir.join("b.txt"), "b").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    d.keys(&mut app, "jddp");
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "b.txt", "a.txt"]);
+    let listing = app.focused_view().unwrap();
+    assert!(app.ed.buffer_of(listing).modified);
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(app.ed.message, "nothing to apply");
+    assert_eq!(d.line_rows(), ["../", "a.txt", "b.txt"], "read again");
+    assert!(!app.ed.buffer_of(listing).modified);
+    d.keys(&mut app, "Gccx.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..],
+        ["rename b.txt → x.txt", "Apply", "Cancel"]
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(dir.join("a.txt").is_file() && dir.join("x.txt").is_file());
+    assert!(!dir.join("b.txt").exists());
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }

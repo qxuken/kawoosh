@@ -1,11 +1,10 @@
 -- The file manager, oil-shaped (mvp.md Decision 5b): a directory is a
 -- buffer holding its listing as editable text. Rename a file by editing
 -- its line, create one by adding a line (a trailing `/` makes a
--- directory), delete one by deleting its line; `:w` diffs the buffer
--- against the listing it opened with, shows the changes in a confirm,
--- and applies them on `Apply`. Every modal editing feature —
--- multicursors above all — is a bulk file operation, which is the
--- point.
+-- directory), delete one by deleting its line; `:w` reads what the
+-- lines have become, shows the changes in a confirm, and applies them
+-- on `Apply`. Every modal editing feature — multicursors above all —
+-- is a bulk file operation, which is the point.
 --
 -- Bundled: the extension API's acceptance test. `-` opens the directory
 -- of the current file (or the cwd) with the caret on that file; in a
@@ -13,36 +12,47 @@
 -- a root on Windows, to the drives), `<CR>` opens the entry under the
 -- caret, `<C-l>` reads the directory again (a listing with edits is
 -- asked first), `<C-p>` opens a preview of the entry beside the
--- listing, and `,s` `,m` `,a` `,e` (`,S` `,M` `,A` `,E` for the reverse)
--- list it again by size, mtime, name or type. A listing's edits are
--- kept — leaving it and coming back finds them — until `:w` applies
--- them or `<C-l>` drops them. `:dir PATH`
--- lists a directory, or a file's directory with the caret on the file
--- — `:dir %` the current file's. A listing's buffer is reused as it
--- moves to the next directory, so browsing leaves no trail in `:ls`;
--- one shown in two panes is not renamed under the other, and `:dir!`
--- asks for a new buffer outright, so any number of listings can be
--- open at once — in panes, or in the background for `:b` — each with
--- its own entries. `:w` in any of them plans every listing's changes
--- as one confirm. A line cut or yanked in one listing and pasted in
--- another is that entry: the register remembers where its text came
--- from (`kawoosh.buf.register`), the pasted line is adopted and
--- tracked, and the plan makes it a move (`dd` here, `p` there) or a
--- copy (`yy` here, `p` there), renamed after if its line was — two
--- files of one name each way between two listings included. A line
--- typed by hand has only its name, paired the same way with a name
--- deleted or listed elsewhere.
+-- listing, and `ms` `mm` `ma` `me` (`mS` `mM` `mA` `mE` for the reverse)
+-- list it again by size, mtime, name or type, yazi's keys under `m`. A
+-- listing's edits are kept — leaving it and coming back finds them —
+-- until `:w` applies them or `<C-l>` drops them. `:dir PATH` lists a
+-- directory, or a file's directory with the caret on the file — `:dir
+-- %` the current file's. A listing's buffer is reused as it moves to
+-- the next directory, so browsing leaves no trail in `:ls`; one shown
+-- in two panes is not renamed under the other, and `:dir!` asks for a
+-- new buffer outright, so any number of listings can be open at once —
+-- in panes, or in the background for `:b` — each with its own entries.
+-- `:w` in any of them plans every listing's changes as one confirm.
+--
+-- Identity, not names. Every line a listing opens with is tracked
+-- through the edit journal (`kawoosh.buf.tracked`, by id), so an entry
+-- is its line however the line is edited; and a line cut or yanked in
+-- one listing and pasted in another is that entry too — the register
+-- says which tracked line its text was (`kawoosh.buf.register`), the
+-- pasted line is tracked from then on (`kawoosh.buf.track`) and given
+-- the entry's identity. The plan is one rule over where each entry's
+-- lines are: an entry still on a line of its own listing stays (renamed
+-- when the line reads otherwise), and every other line of it is a copy
+-- of it; an entry whose own line is gone is moved to the first other
+-- line of it, and copied to the rest; one with no line left anywhere is
+-- deleted. A line no entry is behind is a new file — a name typed by
+-- hand pairs with nothing. Two files of one name swapped between two
+-- listings are two moves; a name on two lines of one listing, or two
+-- entries on one line (`J`, which is refused in a listing), is a
+-- question the write will not guess at.
 --
 -- What each entry is — a file's size, the mtime — is drawn past its
 -- line (`kawoosh.buf.annotate`), never in the buffer's text, so the
 -- listing stays a list of names to edit; as it is edited (`on_change`)
 -- the lines say what the write would make of them: a renamed entry
 -- what it was, a line no entry became `← new`, or `← copy from ../b/`
--- and `← move from ../b/` where it came from.
+-- and `← move from ../b/` where it came from. A file renamed or moved
+-- while a buffer has it open is that buffer's path from then on
+-- (`kawoosh.buf.retarget`).
 --
 -- Paths go through `kawoosh.fs` — `expand`, `parent`, `basename`,
 -- `join` — never through a pattern on `/`, so the plugin is the same
--- on every platform.
+-- on every platform; a move to another disk is the engine's to make.
 --
 -- Messages go two ways: the answer to a command the user just gave
 -- (`not a directory`) is `kawoosh.echo`, the command line's; what a
@@ -51,10 +61,11 @@
 -- failure in `:messages`.
 
 local fs = kawoosh.fs
--- `state[name]` is what the listing buffer `name` opened with: its
--- directory and its lines (with their meta), the write's baseline —
--- and `extra`, the lines pasted in since, each the entry of a listing
--- it came from.
+-- `state[name]` is what the listing buffer `name` holds: its directory,
+-- the width of its longest name, and `ids` — for each tracked line of
+-- the buffer, by id, the entry behind it: `{ dir, name, meta }`, the
+-- listing's own entries and every line pasted in since (an entry of
+-- wherever it came from); the `../` line is `{ up = true }`.
 local dir = { state = {}, followed = nil, sorts = {} }
 
 local PREFIX = "dir: "
@@ -65,6 +76,7 @@ local DRIVES = "<drives>"
 local SEP = fs.join("a", "b"):sub(2, 2)
 -- The space fonts keep (a run's trailing spaces are unreliable).
 local NBSP = "\u{A0}"
+local ARROW = "\u{2190} "
 
 -- A size for people: `512 B`, `1.5 KB`, `12 MB`.
 local function human(n)
@@ -126,6 +138,15 @@ local function listing(d)
     meta[i + 1] = NBSP:rep(pad) .. cols .. NBSP:rep(2) .. when(e.modified)
   end
   return lines, meta, width
+end
+
+-- The state of a listing of `d` just filled with `lines`: its lines'
+-- entries by id, which is their line — `open_scratch` tracks a buffer's
+-- lines from 1 whenever it fills it.
+local function state_of(d, lines, meta, width)
+  local ids = { { up = true } }
+  for i = 2, #lines do ids[i] = { dir = d, name = lines[i], meta = meta[i] or "" } end
+  return { dir = d, width = width, ids = ids }
 end
 
 -- The directory the current buffer lists; nil elsewhere, and nil where
@@ -191,8 +212,7 @@ end
 local function open_drives(fresh)
   local drives = fs.drives()
   local name = PREFIX .. DRIVES
-  dir.state[name] = { dir = DRIVES, entries = { "../" }, meta = {}, width = 3, extra = {} }
-  for _, d in ipairs(drives) do dir.state[name].entries[#dir.state[name].entries + 1] = d end
+  dir.state[name] = { dir = DRIVES, width = 3, ids = {} }
   local reuse = (listed() and not fresh and not kawoosh.buf.modified()) and kawoosh.buf.current() or nil
   kawoosh.buf.open_scratch {
     name = name, text = table.concat(drives, "\n"), language = "dir",
@@ -204,9 +224,9 @@ end
 -- given; a file's path lists its directory with the caret on the file.
 -- A listing of it with edits is shown as it is — the edits are kept
 -- until `:w` applies them or `<C-l>` drops them — else, or with
--- `reread`, it is read again. The listing the keyboard is in is reused — renamed and
--- refilled — unless it has edits or `fresh` asks for a buffer of its
--- own.
+-- `reread`, it is read again. The listing the keyboard is in is reused
+-- — renamed and refilled — unless it has edits or `fresh` asks for a
+-- buffer of its own.
 function dir.open(path, from, fresh, reread)
   if path == DRIVES then return open_drives(fresh) end
   path = fs.expand(path)
@@ -232,7 +252,7 @@ function dir.open(path, from, fresh, reread)
     kawoosh.echo(tostring(lines))
     return
   end
-  dir.state[name] = { dir = path, entries = lines, meta = meta, width = width, extra = {} }
+  dir.state[name] = state_of(path, lines, meta, width)
   local reuse = (listed() and not fresh and not kawoosh.buf.modified()) and kawoosh.buf.current() or nil
   kawoosh.buf.open_scratch {
     name = name,
@@ -246,206 +266,183 @@ function dir.open(path, from, fresh, reread)
   kawoosh.buf.annotate(meta, name)
 end
 
-local function at(base, entry) return fs.join(base, (entry:gsub("/$", ""))) end
-
--- What a listing's lines mean now, each op a record with the line it
--- is about where it has one (`ln`, from 1):
---   { kind = "delete", name }               an entry's line gone
---   { kind = "rename", name, to, ln }       an entry's line changed
---   { kind = "create", name, ln }           a line no entry became
---   { kind = "paste", name, to, from, ln }  a line pasted in, entry
---                                           `name` of listing `from`,
---                                           reading `to` now
--- Every line the listing opened with is tracked through the edit
--- journal (`kawoosh.buf.tracked(h)`), and every pasted line adopted
--- since (`st.extra`, tracked after them), so a line's identity
--- survives being edited. A name on two lines is `twice`: which is the
--- entry is not for the plan to guess, and the write refuses.
-local function plan(st, h)
-  local tracked = kawoosh.buf.tracked(h)
-  local at_line = kawoosh.buf.tracked_lines(h)
-  local lines = kawoosh.buf.lines(h)
-  local n = #st.entries
-  local ops, taken = {}, {}
-  for i, old in ipairs(st.entries) do
-    if old ~= "../" then
-      local now = tracked[i]
-      if not now then
-        ops[#ops + 1] = { kind = "delete", name = old }
-      elseif now ~= old then
-        ops[#ops + 1] = { kind = "rename", name = old, to = now, ln = at_line[i] }
-        taken[at_line[i]] = true
-      else
-        taken[at_line[i]] = true
-      end
-    end
-  end
-  for k, x in ipairs(st.extra) do
-    local now, ln = tracked[n + k], at_line[n + k]
-    -- Adopted this frame, tracked from the next: at the line it was.
-    if #tracked < n + k then now, ln = lines[x.ln], x.ln end
-    if now and ln then
-      ops[#ops + 1] = { kind = "paste", name = x.name, to = now, from = x.dir, ln = ln, meta = x.meta }
-      taken[ln] = true
-    end
-  end
-  local seen, twice = {}, nil
-  for ln, l in ipairs(lines) do
-    if l ~= "" and l ~= "../" then
-      if seen[l] then twice = twice or l end
-      seen[l] = true
-      if not taken[ln] then ops[#ops + 1] = { kind = "create", name = l, ln = ln } end
-    end
-  end
-  -- An entry deleted and one of its name typed back is the entry as
-  -- it was — a line deleted and undone without the register's word —
-  -- never a delete that would take the file.
-  local deleted, created = {}, {}
-  for _, op in ipairs(ops) do
-    if op.kind == "delete" then deleted[op.name] = true end
-    if op.kind == "create" then created[op.name] = true end
-  end
-  local kept = {}
-  for _, op in ipairs(ops) do
-    local same = (op.kind == "delete" and created[op.name]) or (op.kind == "create" and deleted[op.name])
-    if not same then kept[#kept + 1] = op end
-  end
-  return kept, twice
+-- Lists `d` again in its buffer `h` where it is — another pane, the
+-- background — without touching the focused pane, the caret kept on
+-- its entry.
+local function relist(d, h)
+  local ok, lines, meta, width = pcall(listing, d)
+  if not ok then return end
+  local name = PREFIX .. d
+  dir.state[name] = state_of(d, lines, meta, width)
+  kawoosh.buf.open_scratch {
+    name = name, text = table.concat(lines, "\n"), language = "dir",
+    on_write = dir.write, on_change = dir.changed, show = false,
+    line = line_of(lines, under_caret(h)),
+  }
+  kawoosh.buf.annotate(meta, name)
 end
 
--- Every listing's plan, resolved against each other. A pasted line is
--- its entry, wherever it came from: deleted in its listing, the entry
--- moved here (`move`, and the delete is that move); still there, the
--- entry copied (`copy`); pasted back into its own listing, put back
--- or renamed. A line typed by hand has only its name: deleted in
--- another listing, moved from there; listed there as it is, copied.
--- Renames first, then moves, copies, creates, deletes; the ops across
--- listings (`between`) beside the groups per directory.
+local function at(base, entry) return fs.join(base, (entry:gsub("/$", ""))) end
+
+-- ----------------------------------------------------------- the plan
+
+-- A listing's lines, read: for each tracked line still there, the entry
+-- behind it and what the line reads now (`seen`, with `ln`); the
+-- listing's own entries whose line is gone (`gone`); the lines no entry
+-- is behind (`creates`); and what the write cannot take — a name on
+-- two lines (`twice`), two entries on one line (`joined`), the `../`
+-- line edited — as `problems` and the lines to mark.
+local function read(L)
+  local st, h = L.st, L.h
+  local texts, at_line = kawoosh.buf.tracked(h), kawoosh.buf.tracked_lines(h)
+  L.lines = kawoosh.buf.lines(h)
+  L.seen, L.gone, L.creates, L.marks = {}, {}, {}, {}
+  local onto, taken = {}, {}
+  for id, who in pairs(st.ids) do
+    local ln = at_line[id]
+    if ln then
+      taken[ln] = true
+      onto[ln] = (onto[ln] or 0) + 1
+      if who.up then
+        if texts[id] ~= "../" then
+          L.marks[ln] = "was ../"
+          L.problems[#L.problems + 1] = "the `../` line edited in " .. L.dir
+        end
+      else
+        L.seen[#L.seen + 1] = { who = who, to = texts[id], ln = ln, L = L }
+      end
+    elseif who.dir == L.dir and not who.up then
+      L.gone[#L.gone + 1] = who
+    end
+  end
+  for ln, n in pairs(onto) do
+    if n > 1 then
+      L.marks[ln] = "joined"
+      L.problems[#L.problems + 1] = n .. " entries on one line in " .. L.dir
+    end
+  end
+  local seen = {}
+  for ln, l in ipairs(L.lines) do
+    if l ~= "" and l ~= "../" then
+      if seen[l] then
+        L.marks[ln] = "twice"
+        L.problems[#L.problems + 1] = l .. " twice in " .. L.dir
+      end
+      seen[l] = true
+      if not taken[ln] then L.creates[#L.creates + 1] = { name = l, ln = ln } end
+    end
+  end
+end
+
+-- Renames first, then moves, copies, creates, deletes.
 local ORDER = { rename = 1, move = 2, copy = 3, create = 4, delete = 5 }
 
+-- Every listing's plan: the ops per directory (`groups`), the moves and
+-- copies between directories (`between`), what the write refuses
+-- (`problems`), and the listings read (`listings`, each with its
+-- `marks` and the meta its lines get back). One rule over where each
+-- entry's lines are, its own listing first: on a line there, the entry
+-- stays — renamed when the line reads otherwise — and its other lines
+-- are copies; its own line gone, it moves to the first other line of it
+-- and is copied to the rest; no line anywhere, it is deleted. A delete
+-- and a create of one name in one listing — a line cut and undone
+-- without the register's word, which the journal cannot tell from a
+-- line typed where it was — is the entry as it was.
 local function pending()
-  local groups, bydir, sources, problems, edited = {}, {}, {}, {}, {}
+  local listings, edited, problems = {}, {}, {}
   for _, h in ipairs(kawoosh.buf.list()) do
     local d = lists(h)
     local st = d and dir.state[PREFIX .. d]
-    if st then
-      local ops, twice = {}, nil
-      if kawoosh.buf.modified(h) then
-        ops, twice = plan(st, h)
-        edited[#edited + 1] = d
-      end
-      if twice then problems[#problems + 1] = twice .. " twice in " .. d end
-      local gone = {}
-      for _, op in ipairs(ops) do
-        if op.kind == "rename" or op.kind == "delete" then gone[op.name] = true end
-      end
-      for _, e in ipairs(st.entries) do
-        if e ~= "../" and not gone[e] and not sources[e] then sources[e] = d end
-      end
-      local g = { dir = d, ops = ops }
-      groups[#groups + 1] = g
-      bydir[d] = g
+    if st and d ~= DRIVES then
+      local L = { dir = d, h = h, st = st, problems = problems }
+      read(L)
+      listings[#listings + 1] = L
+      if kawoosh.buf.modified(h) then edited[#edited + 1] = d end
     end
   end
-  table.sort(groups, function(x, y) return x.dir < y.dir end)
-  -- A delete an entry's move accounts for is claimed: once.
-  local function claim(d, name)
-    local g = bydir[d]
-    if not g then return false end
-    for i, op in ipairs(g.ops) do
-      if op and op.kind == "delete" and op.name == name then
-        g.ops[i] = false
-        return true
-      end
+  table.sort(listings, function(x, y) return x.dir < y.dir end)
+  local function key(who) return who.dir .. "\n" .. who.name end
+  local appear, gone = {}, {}
+  for _, L in ipairs(listings) do
+    for _, a in ipairs(L.seen) do
+      local k = key(a.who)
+      appear[k] = appear[k] or {}
+      table.insert(appear[k], a)
     end
-    return false
+    for _, who in ipairs(L.gone) do gone[key(who)] = who end
   end
-  local function deletes(d, name)
-    local g = bydir[d]
-    if not g then return false end
-    for _, op in ipairs(g.ops) do
-      if op and op.kind == "delete" and op.name == name then return true end
-    end
-    return false
+  local bydir, between = {}, {}
+  local function ops_of(d)
+    bydir[d] = bydir[d] or { dir = d, ops = {} }
+    return bydir[d].ops
   end
-  local between = {}
-  -- A line pasted back into its own listing first: it is the entry put
-  -- back (or renamed), so a paste of it elsewhere finds the entry
-  -- still there and is a copy, not a move.
-  for _, g in ipairs(groups) do
-    for i, op in ipairs(g.ops) do
-      if op and op.kind == "paste" and op.from == g.dir then
-        if deletes(g.dir, op.name) then
-          claim(g.dir, op.name)
-          if op.to == op.name then
-            g.ops[i] = false
-          else
-            g.ops[i] = { kind = "rename", name = op.name, to = op.to, ln = op.ln, meta = op.meta }
-          end
-        else
-          g.ops[i] = { kind = "copy", name = op.name, to = op.to, ln = op.ln, meta = op.meta }
+  local keys = {}
+  for k in pairs(appear) do keys[#keys + 1] = k end
+  table.sort(keys)
+  for _, k in ipairs(keys) do
+    local list = appear[k]
+    table.sort(list, function(x, y)
+      local xh, yh = x.L.dir == x.who.dir, y.L.dir == y.who.dir
+      if xh ~= yh then return xh end
+      if x.L.dir ~= y.L.dir then return x.L.dir < y.L.dir end
+      return x.ln < y.ln
+    end)
+    local who = list[1].who
+    for i, a in ipairs(list) do
+      local home = a.L.dir == who.dir
+      local op = { name = who.name, to = a.to, ln = a.ln, meta = who.meta }
+      if i == 1 and home then
+        gone[k] = nil
+        if a.to ~= who.name then
+          op.kind = "rename"
+          table.insert(ops_of(who.dir), op)
         end
+      elseif home then
+        op.kind = "copy"
+        table.insert(ops_of(who.dir), op)
+      else
+        op.kind = (i == 1 and gone[k]) and "move" or "copy"
+        if op.kind == "move" then gone[k] = nil end
+        op.from, op.dir = who.dir, a.L.dir
+        between[#between + 1] = op
       end
     end
   end
-  for _, g in ipairs(groups) do
-    for i, op in ipairs(g.ops) do
-      if op and op.kind == "paste" then
-        local moved = deletes(op.from, op.name)
-        local kind = moved and "move" or "copy"
-        if moved then claim(op.from, op.name) end
-        g.ops[i] = false
-        between[#between + 1] = {
-          kind = kind, name = op.name, to = op.to, from = op.from, dir = g.dir, ln = op.ln, meta = op.meta,
-        }
+  for _, L in ipairs(listings) do
+    L.restored = {}
+    local deleted = {}
+    for _, who in ipairs(L.gone) do
+      if gone[key(who)] then deleted[who.name] = who end
+    end
+    for _, c in ipairs(L.creates) do
+      local who = deleted[c.name]
+      if who then
+        deleted[c.name] = nil
+        gone[key(who)] = nil
+        L.restored[c.ln] = who.meta
+      else
+        table.insert(ops_of(L.dir), { kind = "create", name = c.name, ln = c.ln })
       end
     end
   end
-  -- Lines typed by hand, paired by name.
-  local first = {}
-  for _, g in ipairs(groups) do
-    for i, op in ipairs(g.ops) do
-      if op and op.kind == "delete" then
-        first[op.name] = first[op.name] or {}
-        table.insert(first[op.name], g.dir)
-      end
-    end
+  for _, who in pairs(gone) do
+    table.insert(ops_of(who.dir), { kind = "delete", name = who.name })
   end
-  for _, g in ipairs(groups) do
-    for i, op in ipairs(g.ops) do
-      if op and op.kind == "create" then
-        local from
-        for k, d in ipairs(first[op.name] or {}) do
-          if d ~= g.dir then from = d; table.remove(first[op.name], k); break end
-        end
-        if from then
-          claim(from, op.name)
-          g.ops[i] = false
-          between[#between + 1] = { kind = "move", name = op.name, to = op.name, from = from, dir = g.dir, ln = op.ln }
-        elseif sources[op.name] and sources[op.name] ~= g.dir then
-          g.ops[i] = false
-          between[#between + 1] = { kind = "copy", name = op.name, to = op.name, from = sources[op.name], dir = g.dir, ln = op.ln }
-        end
-      end
-    end
-  end
-  local kept = {}
-  for _, g in ipairs(groups) do
-    local ops = {}
-    for _, op in ipairs(g.ops) do if op then ops[#ops + 1] = op end end
-    table.sort(ops, function(x, y)
+  local groups = {}
+  for _, g in pairs(bydir) do
+    table.sort(g.ops, function(x, y)
       if ORDER[x.kind] ~= ORDER[y.kind] then return ORDER[x.kind] < ORDER[y.kind] end
       return x.name < y.name
     end)
-    g.ops = ops
-    if #ops > 0 then kept[#kept + 1] = g end
+    groups[#groups + 1] = g
   end
+  table.sort(groups, function(x, y) return x.dir < y.dir end)
   table.sort(between, function(x, y)
     if ORDER[x.kind] ~= ORDER[y.kind] then return ORDER[x.kind] < ORDER[y.kind] end
     if x.name ~= y.name then return x.name < y.name end
     return x.from < y.from
   end)
-  return kept, between, problems, edited
+  return groups, between, problems, edited, listings
 end
 
 -- An op as a line. One across listings names its directories by
@@ -476,12 +473,24 @@ local function shortener(dirs)
   end
 end
 
+-- `to` as a path from `from`: `../b/`, `sub/`, `../`, or the whole.
+local function relative(from, to)
+  if to == from then return "./" end
+  if to:sub(1, #from + 1) == from .. SEP then return to:sub(#from + 2) .. "/" end
+  if fs.parent(from) == to then return "../" end
+  if fs.parent(from) == fs.parent(to) then return "../" .. (fs.basename(to) or to) .. "/" end
+  return to .. "/"
+end
+
+-- ---------------------------------------------------------- the write
+
 -- Runs every rename and move as two steps: each source to a temporary
 -- name beside its destination, then each to its name — so a swap (`a`
 -- to `b` and `b` to `a`; two files of one name each way between two
 -- listings) never writes one over the other, whatever the order — and
 -- a destination that is still taken is refused, the file put back
--- where it was. `each(op, ok, err)` takes the outcomes.
+-- where it was. A file that went has any buffer open on it follow.
+-- `each(op, ok, err)` takes the outcomes.
 local function rename_all(steps, each)
   for i, r in ipairs(steps) do
     r.tmp = r.to .. ".~" .. i .. "~"
@@ -498,35 +507,28 @@ local function rename_all(steps, each)
         each(r.op, false, r.to .. ": exists" .. (back and "" or (", left at " .. r.tmp)))
       else
         local ok, err = pcall(fs.rename, r.tmp, r.to)
+        if ok then kawoosh.buf.retarget(r.from, r.to) end
         each(r.op, ok, err)
       end
     end
   end
 end
 
--- Lists `d` again in its buffer `h` where it is — another pane, the
--- background — without touching the focused pane, the caret kept on
--- its entry.
-local function relist(d, h)
-  local ok, lines, meta, width = pcall(listing, d)
-  if not ok then return end
-  local name = PREFIX .. d
-  dir.state[name] = { dir = d, entries = lines, meta = meta, width = width, extra = {} }
-  kawoosh.buf.open_scratch {
-    name = name, text = table.concat(lines, "\n"), language = "dir",
-    on_write = dir.write, on_change = dir.changed, show = false,
-    line = line_of(lines, under_caret(h)),
-  }
-  kawoosh.buf.annotate(meta, name)
+-- Every directory touched listed again — and every listing with edits,
+-- whose edits came to nothing too: the listing `here` in its pane, the
+-- caret on `from`, the others where they are.
+local function relist_all(touched, here, from)
+  for _, h in ipairs(kawoosh.buf.list()) do
+    local d = lists(h)
+    if d and touched[d] and d ~= here then relist(d, h) end
+  end
+  dir.open(here, from, false, true)
 end
 
--- Applies every group's ops and the ops between listings, and lists
--- every directory touched again — and every listing with edits, whose
--- edits came to nothing too: the written listing in its pane,
--- the caret on `from`, the others where they are. The order is what
--- keeps a file from being lost: a delete whose name another op writes
--- to (a file replaced by one copied or moved in) vacates first, its
--- file put aside under a temporary name; then the copies (their
+-- Applies every group's ops and the ops between listings. The order is
+-- what keeps a file from being lost: a delete whose name another op
+-- writes to (a file replaced by one copied or moved in) vacates first,
+-- its file put aside under a temporary name; then the copies (their
 -- sources may be renamed or moved by the rest), the renames and moves
 -- as two steps, the creates; then what was put aside goes — or, when
 -- nothing arrived in its place, comes back; and the other deletes go
@@ -575,11 +577,10 @@ local function apply(groups, between, edited, here, from)
         local ok, err = pcall(fs.rename, path, tmp)
         if ok then
           aside[#aside + 1] = { op = op, path = path, tmp = tmp }
-          op.aside = true
         else
           outcome(op, false, err)
-          op.aside = true
         end
+        op.aside = true
       end
     end
   end
@@ -610,11 +611,7 @@ local function apply(groups, between, edited, here, from)
       if op.kind == "delete" and not op.aside then try(op, fs.remove, at(g.dir, op.name)) end
     end
   end
-  for _, h in ipairs(kawoosh.buf.list()) do
-    local d = lists(h)
-    if d and touched[d] and d ~= here then relist(d, h) end
-  end
-  dir.open(here, from, false, true)
+  relist_all(touched, here, from)
   if #failed > 0 then
     for _, f in ipairs(failed) do
       kawoosh.notify(f, { level = "error", source = "dir", show = "log" })
@@ -627,11 +624,11 @@ local function apply(groups, between, edited, here, from)
 end
 
 -- The write: every listing's changes as one confirm — one listing's
--- as its lines, several listings' grouped under their directories,
--- the moves and copies between them last — applied on `Apply`.
--- Returning false keeps the buffer modified until then; with nothing
--- to do the write is done as it is.
-function dir.write(lines)
+-- as its lines, several listings' grouped under their directories, the
+-- moves and copies between them last — applied on `Apply`. Returning
+-- false keeps the buffer modified until then; with nothing to do the
+-- listings with edits are read again and the write is done as it is.
+function dir.write()
   local here = listed()
   local st = dir.state[PREFIX .. (here or "")]
   if not st then
@@ -645,7 +642,11 @@ function dir.write(lines)
   end
   local n = #between
   for _, g in ipairs(groups) do n = n + #g.ops end
+  local from = under_caret()
   if n == 0 then
+    local touched = {}
+    for _, d in ipairs(edited) do touched[d] = true end
+    relist_all(touched, here, from)
     kawoosh.echo("nothing to apply")
     return true
   end
@@ -672,7 +673,6 @@ function dir.write(lines)
       for _, op in ipairs(between) do desc[#desc + 1] = "  " .. describe(op, short) end
     end
   end
-  local from = under_caret()
   kawoosh.confirm {
     title = title,
     lines = desc,
@@ -684,86 +684,58 @@ function dir.write(lines)
   return false
 end
 
--- `to` as a path from `from`: `../b/`, `sub/`, `../`, or the whole.
-local function relative(from, to)
-  if to == from then return "./" end
-  if to:sub(1, #from + 1) == from .. SEP then return to:sub(#from + 2) .. "/" end
-  if fs.parent(from) == to then return "../" end
-  if fs.parent(from) == fs.parent(to) then return "../" .. (fs.basename(to) or to) .. "/" end
-  return to .. "/"
-end
+-- ---------------------------------------------------- the annotations
 
-local ARROW = "\u{2190} "
-
--- A line pasted into listing `st` (buffer `h`) that is an entry of
--- another — or this — listing is adopted: the `"` register says which
--- buffer its text came from and which tracked lines of it the lines
--- were (`kawoosh.buf.register`), so a line no entry owns whose text is
--- one of the register's lines becomes that entry, tracked from now on
--- (`kawoosh.buf.track`) and remembered in `st.extra` with its
--- directory, name and meta. Adopted once, the line carries the entry
--- through a rename.
-local function adopt(st, h, at_line, lines)
+-- A line pasted into listing `st` (buffer `h`) that is an entry of a
+-- listing — another, or this one — is given that entry: the `"`
+-- register says which buffer its text came from and which tracked
+-- lines of it the lines were (`kawoosh.buf.register`), so a line no
+-- entry is behind whose text is one of the register's lines is tracked
+-- from now on (`kawoosh.buf.track`) and its id given the entry, which
+-- it carries through a rename.
+local function adopt(st, h)
   local reg = kawoosh.buf.register()
-  if not reg or not reg.linewise or not reg.buffer then return false end
+  if not reg or not reg.linewise or not reg.buffer then return end
   local src = lists(reg.buffer)
   local sst = src and dir.state[PREFIX .. src]
-  if not sst then return false end
+  if not sst then return end
   local owned = {}
-  for _, ln in ipairs(at_line) do if ln then owned[ln] = true end end
-  local texts = {}
-  for l in (reg.text .. "\n"):gmatch("(.-)\n") do texts[#texts + 1] = l end
-  local adopted = false
-  for k, t in ipairs(texts) do
-    local idx = reg.entries[k]
-    -- One of the listing's entries, or a line pasted into it before,
-    -- which is an entry of wherever that came from.
-    local id
-    if idx and idx <= #sst.entries then
-      if sst.entries[idx] ~= "../" then id = { dir = src, name = sst.entries[idx], meta = sst.meta[idx] } end
-    elseif idx then
-      local x = sst.extra[idx - #sst.entries]
-      if x then id = { dir = x.dir, name = x.name, meta = x.meta } end
-    end
-    if id then
+  for _, ln in pairs(kawoosh.buf.tracked_lines(h)) do if ln then owned[ln] = true end end
+  local lines = kawoosh.buf.lines(h)
+  local k = 0
+  for t in (reg.text .. "\n"):gmatch("(.-)\n") do
+    k = k + 1
+    local who = reg.entries[k] and sst.ids[reg.entries[k]]
+    if who and not who.up then
       for ln, l in ipairs(lines) do
         if l == t and not owned[ln] then
           owned[ln] = true
-          kawoosh.buf.track(ln, h)
-          id.ln = ln
-          st.extra[#st.extra + 1] = id
-          adopted = true
+          local id = kawoosh.buf.track(ln, h)
+          if id then st.ids[id] = who end
           break
         end
       end
     end
   end
-  return adopted
 end
 
 -- Every listing's annotations again, as its text is now: each entry's
--- meta on the line it is on (`tracked_lines`), a pasted line's the
--- meta of the entry it is; and after it what the write would make of
--- the line — a renamed entry `← was a.txt`, a line no entry became
--- `← new`, a pasted one `← copy from ../b/` / `← move from ../b/`
--- (its name after, when it changed), a name already on another line
--- `← twice`, which the write refuses. Told by `on_change`, so the
--- listing says what it means as it is edited; a line just pasted is
--- adopted first, and the annotations follow at the next change.
-function dir.refresh_annotations()
-  -- Adopted whether or not the listing counts as modified: a line cut
-  -- and undone reads as it did, and is still the entry come back.
+-- meta on each line it is behind, and after it what the write would
+-- make of the line — a renamed entry `← was a.txt`, a line no entry
+-- became `← new`, a pasted one `← copy from ../b/` / `← move from
+-- ../b/` (its name after, when it changed), and what the write refuses:
+-- `← twice`, `← joined`. Told by `on_change`, so the listing says what
+-- it means as it is edited; a line just pasted is given its entry
+-- first.
+function dir.changed()
   for _, h in ipairs(kawoosh.buf.list()) do
     local d = lists(h)
     local st = d and dir.state[PREFIX .. d]
-    if st and d ~= DRIVES then
-      adopt(st, h, kawoosh.buf.tracked_lines(h), kawoosh.buf.lines(h))
-    end
+    if st and d ~= DRIVES then adopt(st, h) end
   end
-  local groups, between = pending()
+  local groups, between, _, _, listings = pending()
   local notes = {}
   local function note(d, ln, text, meta)
-    if not ln then return end
     notes[d] = notes[d] or {}
     notes[d][ln] = { text = text, meta = meta }
   end
@@ -778,66 +750,29 @@ function dir.refresh_annotations()
     local from = relative(op.dir, op.from) .. (op.to ~= op.name and op.name or "")
     note(op.dir, op.ln, op.kind .. " from " .. from, op.meta)
   end
-  for _, h in ipairs(kawoosh.buf.list()) do
-    local d = lists(h)
-    local st = d and dir.state[PREFIX .. d]
-    if st then
-      local ann, owned = {}, {}
-      local at_line = kawoosh.buf.tracked_lines(h)
-      local lines = kawoosh.buf.lines(h)
-      local n = #st.entries
-      for i, e in ipairs(st.entries) do
-        if at_line[i] and e ~= "../" then
-          ann[at_line[i]] = st.meta[i] or ""
-          owned[at_line[i]] = true
-        end
-      end
-      for k, x in ipairs(st.extra) do
-        local ln = at_line[n + k]
-        if #at_line < n + k then ln = x.ln end
-        if ln then
-          ann[ln] = x.meta or ""
-          owned[ln] = true
-        end
-      end
-      -- A deleted entry's name on a line no entry owns — deleted and
-      -- undone, or typed back — is the entry as it was, as the plan
-      -- reads it; a listing that reads as it opened is that listing.
-      for i, e in ipairs(st.entries) do
-        if not at_line[i] and e ~= "../" then
-          for ln, l in ipairs(lines) do
-            if l == e and not owned[ln] then
-              ann[ln] = st.meta[i]
-              owned[ln] = true
-              break
-            end
-          end
-        end
-      end
-      local function pad(ln)
-        local l = lines[ln] or ""
-        return NBSP:rep(st.width - (utf8.len(l) or #l))
-      end
-      for ln, nt in pairs(notes[d] or {}) do
-        local base = nt.meta or ann[ln]
-        if not base or base == "" then base = pad(ln) end
-        ann[ln] = base .. NBSP:rep(2) .. ARROW .. nt.text
-      end
-      local seen = {}
-      for ln, l in ipairs(lines) do
-        if l ~= "" and l ~= "../" then
-          if seen[l] then ann[ln] = (ann[ln] or pad(ln)) .. NBSP:rep(2) .. ARROW .. "twice" end
-          seen[l] = true
-        end
-      end
-      kawoosh.buf.annotate(ann, h)
+  for _, L in ipairs(listings) do
+    local meta = {}
+    for _, a in ipairs(L.seen) do meta[a.ln] = a.who.meta end
+    for ln, m in pairs(L.restored) do meta[ln] = m end
+    local ann = {}
+    for ln, m in pairs(meta) do ann[ln] = m end
+    local function pad(ln)
+      local l = L.lines[ln] or ""
+      return NBSP:rep(L.st.width - (utf8.len(l) or #l))
     end
+    local function say(ln, text, m)
+      local base = m or meta[ln]
+      if not base or base == "" then base = pad(ln) end
+      ann[ln] = base .. NBSP:rep(2) .. ARROW .. text
+    end
+    for ln, nt in pairs(notes[L.dir] or {}) do say(ln, nt.text, nt.meta) end
+    -- A mark is the line's whole story: what the write refuses.
+    for ln, mark in pairs(L.marks) do say(ln, mark) end
+    kawoosh.buf.annotate(ann, L.h)
   end
 end
 
-function dir.changed()
-  dir.refresh_annotations()
-end
+-- --------------------------------------------------------- navigation
 
 -- Up one level: from a listing to its parent with the caret on the
 -- directory left; from a file to its directory with the caret on the
@@ -946,10 +881,10 @@ end, {
   doc = "read the listed directory again",
 })
 
--- `:dir sort name|size|mtime|type`, `!` for the reverse — yazi's keys,
--- `,a` `,s` `,m` `,e` and the capitals for the reverse: the listing
--- read again in that order, remembered for the directory. A listing
--- with edits is asked first, as `<C-l>` asks.
+-- `:dir sort name|size|mtime|type`, `!` for the reverse — yazi's keys
+-- under `m`, `ma` `ms` `mm` `me` and the capitals for the reverse: the
+-- listing read again in that order, remembered for the directory. A
+-- listing with edits is asked first, as `<C-l>` asks.
 for key in pairs(SORT_KEYS) do
   kawoosh.command("dir sort " .. key, function(ctx)
     local here = listed()
@@ -961,6 +896,15 @@ for key in pairs(SORT_KEYS) do
     doc = "list again by " .. key,
   })
 end
+
+-- `J` in a listing: refused. A line is one entry; two on a line is
+-- nothing the write could do, and it says so rather than plan it.
+kawoosh.command("dir join", function()
+  kawoosh.echo("a line is one entry: no joining in a listing")
+end, {
+  when = { "language:dir" },
+  doc = "refuse to join lines in a listing",
+})
 
 -- ------------------------------------------------------------ preview
 
@@ -1077,12 +1021,10 @@ kawoosh.map("n", "<CR>", "dir enter")
 kawoosh.map("n", "<leader>cd", "dir cd")
 kawoosh.map("n", "<C-l>", "dir refresh", { when = { "language:dir" } })
 kawoosh.map("n", "<C-p>", "dir preview", { when = { "language:dir" } })
--- `,` keeps the primary selection everywhere but a listing, where it
--- is the sort prefix: the engine's bare binding goes, and comes back
--- `when` off a listing, so in one `,` waits for its key.
-kawoosh.unmap("n", ",")
-kawoosh.map("n", ",", "cursor primary", { when = { "!language:dir" } })
+kawoosh.map("n", "J", "dir join", { when = { "language:dir" } })
+kawoosh.map("v", "J", "dir join", { when = { "language:dir" } })
+-- `m` is nothing elsewhere, and the sort prefix in a listing.
 for key, letter in pairs { name = "a", size = "s", mtime = "m", type = "e" } do
-  kawoosh.map("n", "," .. letter, "dir sort " .. key, { when = { "language:dir" } })
-  kawoosh.map("n", "," .. letter:upper(), "dir sort " .. key .. "!", { when = { "language:dir" } })
+  kawoosh.map("n", "m" .. letter, "dir sort " .. key, { when = { "language:dir" } })
+  kawoosh.map("n", "m" .. letter:upper(), "dir sort " .. key .. "!", { when = { "language:dir" } })
 end

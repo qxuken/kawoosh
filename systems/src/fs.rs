@@ -138,7 +138,11 @@ pub fn list(dir: &Path) -> io::Result<Vec<Entry>> {
 }
 
 /// Moves `from` to `to`, creating `to`'s directory when it is missing —
-/// a rename into a directory the listing does not have yet.
+/// a rename into a directory the listing does not have yet. Across
+/// devices (another disk, a drive on Windows), where a rename cannot
+/// go, it is a copy and then the removal of the source — the copy
+/// refusing a `to` that exists, as a rename does not write over one
+/// here either.
 pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
     if let Some(p) = to.parent()
         && !p.as_os_str().is_empty()
@@ -146,7 +150,13 @@ pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
     {
         std::fs::create_dir_all(p).map_err(|e| named(p, e))?;
     }
-    std::fs::rename(from, to).map_err(|e| named(from, e))
+    match std::fs::rename(from, to) {
+        Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
+            copy(from, to)?;
+            remove(from)
+        }
+        r => r.map_err(|e| named(from, e)),
+    }
 }
 
 /// Removes a file, a link, or a directory with everything in it.

@@ -240,9 +240,12 @@ so that nothing else takes the key meanwhile.
   designed so this never bites — `<leader>b` has no binding of its own
   because `<leader>bd` does. The one refinement: a binding whose `when`
   does not hold where the key was pressed does not shadow, and the
-  sequence stays open for what lies beneath — `,` keeps the primary
-  selection everywhere but a directory listing, where it is the sort
-  prefix (`,s`, `,S`, `,m`, `,M`, `,a`, `,A`, `,e`, `,E`, yazi's).
+  sequence stays open for what lies beneath (`<CR>` is `dir enter` in a
+  listing and `goto location` elsewhere by this). A plugin's prefix is
+  a key the engine leaves alone: the listing's sort keys are yazi's
+  under `m` (`ms`, `mS`, `mm`, `mM`, `ma`, `mA`, `me`, `mE`), which is
+  nothing anywhere else, rather than under `,`, which keeps the primary
+  selection.
 - **No `<C-9>`/`<C-0>` tab moves, no workspace switching.** The wezterm
   ones; there is no command to move a tab yet.
 - **No `<D-v>` in normal mode.** `paste clipboard` types the clipboard's

@@ -279,6 +279,23 @@ impl Kawoosh {
                     self.show_buffer(v, id);
                 }
             }
+            Msg::Retarget { from, to } => {
+                for b in self.ed.buffers.values_mut() {
+                    let Some(p) = &b.path else { continue };
+                    let moved = if p == &from {
+                        to.clone()
+                    } else if let Ok(rest) = p.strip_prefix(&from) {
+                        to.join(rest)
+                    } else {
+                        continue;
+                    };
+                    b.name = moved
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| moved.display().to_string());
+                    b.path = Some(moved);
+                }
+            }
             Msg::OpenView { name, focus } => self.open_lua_view(&name, focus),
             Msg::CloseView(name) => self.close_lua_view(&name),
             Msg::ToggleView { name, focus } => {

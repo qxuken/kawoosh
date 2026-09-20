@@ -82,6 +82,7 @@ fn the_pane_lists_searches_says_what_can_run_and_runs() {
             "dir",
             "dir cd",
             "dir enter",
+            "dir join",
             "dir preview",
             "dir refresh",
             "dir sort mtime",

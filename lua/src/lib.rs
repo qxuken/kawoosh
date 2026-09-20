@@ -61,6 +61,13 @@ pub enum Msg {
     },
     /// `kawoosh.buf.show(buffer)`: the buffer into the focused pane.
     ShowBuffer(u64),
+    /// `kawoosh.buf.retarget(from, to)`: every buffer open at path
+    /// `from`, or under it, is at `to` from now on — a file the file
+    /// manager renamed or moved, still open.
+    Retarget {
+        from: PathBuf,
+        to: PathBuf,
+    },
     Ex(String),
     Echo(String),
     /// `kawoosh.notify(text, opts)`: a level by name, where to show it
@@ -1458,6 +1465,17 @@ fn seed(
         "show",
         lua.create_function(move |_, h: u64| {
             qq.borrow_mut().push(Msg::ShowBuffer(h));
+            Ok(())
+        })?,
+    )?;
+    let qq = q(queue);
+    buf.set(
+        "retarget",
+        lua.create_function(move |_, (from, to): (String, String)| {
+            qq.borrow_mut().push(Msg::Retarget {
+                from: PathBuf::from(from),
+                to: PathBuf::from(to),
+            });
             Ok(())
         })?,
     )?;

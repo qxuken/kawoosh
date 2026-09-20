@@ -189,6 +189,11 @@ end
 -- kawoosh.buf.show(buffer): the buffer into the focused pane, as `:b`
 -- would, its caret where it was left.
 --
+-- kawoosh.buf.retarget(from, to): every buffer open at path `from`, or
+-- under it, is at `to` from now on, named after it — a file renamed or
+-- moved by the file manager while it was open, so its `:w` goes where
+-- the file went.
+--
 -- kawoosh.buf.register(): the `"` register — `text`, `linewise`, and,
 -- when one yank or delete filled it, `buffer` (the handle it came
 -- from) and `entries`, for each line of the text the tracked line of

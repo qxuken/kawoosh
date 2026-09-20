@@ -230,7 +230,9 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     let cands = app.cmd_completion.as_ref().unwrap().candidates.clone();
     assert_eq!(
         cands,
-        ["cd", "enter", "preview", "refresh", "sort", "src/", "a.txt"],
+        [
+            "cd", "enter", "join", "preview", "refresh", "sort", "src/", "a.txt"
+        ],
         "the subcommands, then the path"
     );
     d.keys(&mut app, "c");
