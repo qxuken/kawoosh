@@ -453,7 +453,7 @@ fn visual_mode_selects_and_operates() {
     assert_eq!(t.text(), "c");
     let mut t = T::new("one two");
     t.keys("wviwy");
-    assert_eq!(t.ed.registers[&'"'], "two");
+    assert_eq!(t.ed.memory.head().unwrap().text, "two");
     assert!(
         t.ed.take_effects()
             .contains(&Effect::SetClipboard("two".into()))
@@ -553,7 +553,11 @@ fn change_line_paragraphs_find_repeat_and_surrounds() {
     assert_eq!(t.text(), "c\nd\n", "around takes the blank lines after");
     let mut t = T::new("a\nb\n\n\nc\nd\n");
     t.keys("Gkvipy");
-    assert_eq!(t.ed.registers[&'"'], "c\nd\n", "linewise in visual mode");
+    assert_eq!(
+        t.ed.memory.head().unwrap().text,
+        "c\nd\n",
+        "linewise in visual mode"
+    );
     let mut t = T::new("a\n\n\nb");
     t.keys("jdip");
     assert_eq!(t.text(), "a\nb", "on a blank, the blanks");

@@ -68,6 +68,9 @@ pub enum Msg {
         token: u64,
         path: PathBuf,
     },
+    /// `kawoosh.recall(i)`: moment `i` of the memory (1 the newest)
+    /// made the `"` register.
+    Recall(usize),
     /// `kawoosh.buf.retarget(from, to)`: every buffer open at path
     /// `from`, or under it, is at `to` from now on — a file the file
     /// manager renamed or moved, still open.
@@ -254,11 +257,26 @@ pub struct Published {
     /// `Runtime::track_lines`), shared with the runtime's cache — the
     /// same allocation frame after frame while the buffer stands.
     pub tracked: HashMap<u64, Rc<TrackedSnap>>,
-    /// The `"` register, with where its text came from when the engine
-    /// knows (`Editor::register_origin`): the buffer, and for each of
-    /// the register's lines the tracked line of that buffer it was —
-    /// its id, or `None` for a line that was not one.
+    /// The `"` register — the memory's head — with where its text came
+    /// from when the engine knows (`Moment::origin`): the buffer, and
+    /// for each of the register's lines the tracked line of that
+    /// buffer it was — its id, or `None` for a line that was not one.
     pub register: Option<RegisterSnap>,
+    /// The working memory, newest first (`kawoosh.memory`), shared
+    /// with the runtime's cache while the memory stands.
+    pub memory: Rc<Vec<MomentSnap>>,
+}
+
+/// One moment of the memory as Lua reads it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MomentSnap {
+    pub text: String,
+    pub linewise: bool,
+    pub took: &'static str,
+    pub from: String,
+    /// The buffer it came from, while it is open.
+    pub buffer: Option<u64>,
+    pub at: std::time::Instant,
 }
 
 /// What a buffer's tracked lines have become, by id (an index from 1
@@ -294,6 +312,7 @@ impl Default for Published {
             field_focus: HashMap::new(),
             tracked: HashMap::new(),
             register: None,
+            memory: Rc::new(Vec::new()),
         }
     }
 }
@@ -373,6 +392,8 @@ pub struct Runtime {
     register_map: RefCell<Option<(RegisterKey, Vec<Option<usize>>)>>,
     /// The jobs out, waiting for their answer.
     jobs: JobsCell,
+    /// The memory as last published, by the memory's version.
+    memory_snap: RefCell<Option<(u64, Rc<Vec<MomentSnap>>)>>,
 }
 
 impl Runtime {
@@ -399,6 +420,7 @@ impl Runtime {
                 tracked,
                 register_map: RefCell::new(None),
                 jobs,
+                memory_snap: RefCell::new(None),
             },
             ext,
         ))
@@ -609,8 +631,9 @@ impl Runtime {
         // from, which tracked lines of that buffer its lines were: each
         // tracked line carried to the version the text was taken at,
         // and, lying in the taken bytes, its line among them.
-        p.register = ed.registers.get(&'"').map(|text| {
-            let origin = ed.register_origin.as_ref();
+        p.register = ed.memory.head().map(|head| {
+            let text = &head.text;
+            let origin = head.origin.as_ref();
             let buffer = origin.map(|o| handle_of(o.buffer));
             let entries = match origin {
                 Some(o) => {
@@ -657,11 +680,40 @@ impl Runtime {
             };
             RegisterSnap {
                 text: text.clone(),
-                linewise: ed.register_linewise,
+                linewise: head.linewise,
                 buffer,
                 entries,
             }
         });
+        p.memory = {
+            let mut cached = self.memory_snap.borrow_mut();
+            match &*cached {
+                Some((v, snap)) if *v == ed.memory.version => snap.clone(),
+                _ => {
+                    let snap = Rc::new(
+                        ed.memory
+                            .moments()
+                            .iter()
+                            .rev()
+                            .map(|m| MomentSnap {
+                                text: m.text.clone(),
+                                linewise: m.linewise,
+                                took: m.took.word(),
+                                from: m.from.clone(),
+                                buffer: m
+                                    .origin
+                                    .as_ref()
+                                    .filter(|o| ed.buffers.contains_key(o.buffer))
+                                    .map(|o| handle_of(o.buffer)),
+                                at: m.at,
+                            })
+                            .collect::<Vec<_>>(),
+                    );
+                    *cached = Some((ed.memory.version, snap.clone()));
+                    snap
+                }
+            }
+        };
         p.current = current.map(|v| handle_of(ed.views[v].buffer));
         p.mode = current
             .map(|v| ed.mode(v))
@@ -1854,6 +1906,37 @@ fn seed(
         })?,
     )?;
     k.set("buf", buf)?;
+
+    // ---- the working memory: what passed through the hands, newest
+    // first, the `"` register its head.
+    let pp = published.clone();
+    k.set(
+        "memory",
+        lua.create_function(move |lua, ()| {
+            let p = pp.borrow();
+            let now = std::time::Instant::now();
+            let t = lua.create_table()?;
+            for (i, m) in p.memory.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("text", m.text.as_str())?;
+                e.set("linewise", m.linewise)?;
+                e.set("took", m.took)?;
+                e.set("from", m.from.as_str())?;
+                e.set("buffer", m.buffer)?;
+                e.set("age", now.saturating_duration_since(m.at).as_secs_f64())?;
+                t.set(i + 1, e)?;
+            }
+            Ok(t)
+        })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "recall",
+        lua.create_function(move |_, i: usize| {
+            qq.borrow_mut().push(Msg::Recall(i));
+            Ok(())
+        })?,
+    )?;
 
     // ---- fs: for the file manager and any plugin that touches a
     // path; synchronous but for `list` with a callback, which reads on

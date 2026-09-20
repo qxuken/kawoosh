@@ -2387,3 +2387,60 @@ fn a_directory_opens_as_a_listing() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A moment recalled from the memory is the register, origin and all:
+/// two lines yanked in one listing, the older put in another from the
+/// pane, and the plugin reads it as the entry it was — a copy from
+/// there. `kawoosh.memory()` lists the moments newest first, and
+/// `kawoosh.recall` is the pane's `y`.
+#[test]
+fn a_moment_recalled_keeps_its_entry() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-memdir-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::fs::create_dir_all(dir.join("b")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("a/a1.txt"), "one").unwrap();
+    std::fs::write(dir.join("a/a2.txt"), "two!").unwrap();
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("a").display()),
+    );
+    d.keys(&mut app, "jyyjyy");
+    ex(&mut d, &mut app, "vsplit");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("b").display()),
+    );
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "a1.txt", "a2.txt", "../"]);
+    d.keys(&mut app, " p");
+    d.frame(&mut app);
+    d.keys(&mut app, "j");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "a1.txt", "a2.txt", "../", "a1.txt"]);
+    let e: Vec<String> = d
+        .row_extras()
+        .iter()
+        .map(|s| s.replace('\u{a0}', " "))
+        .collect();
+    assert!(
+        e[4].contains(" 3 B") && e[4].ends_with("← copy from ../a/"),
+        "{e:?}"
+    );
+    ex(
+        &mut d,
+        &mut app,
+        "lua local m = kawoosh.memory(); kawoosh.echo(m[1].took .. \" \" .. m[1].text .. \"|\" .. m[2].text .. \"|\" .. #m)",
+    );
+    assert_eq!(app.ed.message, "yank a1.txt\n|a2.txt\n|2");
+    ex(&mut d, &mut app, "lua kawoosh.recall(2)");
+    assert_eq!(app.ed.memory.head().unwrap().text, "a2.txt\n");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

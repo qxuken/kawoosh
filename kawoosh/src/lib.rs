@@ -20,6 +20,7 @@ pub mod languages;
 pub mod layout;
 pub mod logger;
 pub mod lsp;
+pub mod memory;
 pub mod nodes;
 pub mod notify;
 pub mod palette;

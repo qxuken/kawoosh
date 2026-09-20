@@ -69,6 +69,7 @@ impl Kawoosh {
                         Some(Content::Lua(n)) => n,
                         Some(Content::Undo) => "undo".into(),
                         Some(Content::History) => "history".into(),
+                        Some(Content::Memory) => "memory".into(),
                         Some(Content::Commands) => "commands".into(),
                         None => "?".into(),
                     };
@@ -177,6 +178,7 @@ impl Kawoosh {
             let what = match self.layout.focused_content() {
                 Some(Content::Undo) => "UNDO",
                 Some(Content::History) => "HISTORY",
+                Some(Content::Memory) => "MEMORY",
                 Some(Content::Commands) => "COMMANDS",
                 _ => "TERM",
             };
@@ -484,6 +486,7 @@ impl Kawoosh {
                 false,
             ),
             Some(Content::History) => ("history".into(), false),
+            Some(Content::Memory) => ("memory".into(), false),
             Some(Content::Commands) => ("commands".into(), false),
             None => ("?".into(), false),
         };
@@ -576,6 +579,7 @@ impl Kawoosh {
                     Some(Content::Lua(n)) => self.render_lua_pane(ui, pane, n, focused),
                     Some(Content::Undo) => self.render_undo(ui, pane, focused),
                     Some(Content::History) => self.render_history(ui, pane, focused),
+                    Some(Content::Memory) => self.render_memory(ui, pane, focused),
                     Some(Content::Commands) => self.render_commands(ui, pane, focused),
                     None => {}
                 }

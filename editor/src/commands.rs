@@ -112,12 +112,15 @@ pub(crate) fn op_range(
     }
 }
 
+/// The text an operator took, remembered: the `"` register and the
+/// memory's newest moment.
 fn set_register(
     ed: &mut Editor,
     id: kawoosh_doc::BufferId,
     ranges: &[(Range<usize>, bool)],
     texts: &[String],
     linewise: bool,
+    took: crate::Took,
 ) {
     let mut joined = if texts.len() == 1 {
         texts[0].clone()
@@ -136,12 +139,18 @@ fn set_register(
             r.start += 1;
         }
     }
-    ed.registers.insert('"', joined.clone());
-    ed.register_linewise = linewise;
-    ed.register_origin = origin.map(|range| crate::RegisterOrigin {
-        buffer: id,
-        version: ed.buffers[id].version(),
-        range,
+    let version = ed.buffers[id].version();
+    ed.memory.remember(crate::Moment {
+        text: joined.clone(),
+        linewise,
+        took,
+        origin: origin.map(|range| crate::RegisterOrigin {
+            buffer: id,
+            version,
+            range,
+        }),
+        from: ed.buffers[id].name.clone(),
+        at: std::time::Instant::now(),
     });
     ed.effects.push(Effect::SetClipboard(joined));
 }
@@ -161,7 +170,7 @@ pub(crate) fn apply_operator(
     let linewise = ranges.iter().any(|(_, l)| *l);
     match op {
         "yank" => {
-            set_register(ed, id, &ranges, &texts, linewise);
+            set_register(ed, id, &ranges, &texts, linewise, crate::Took::Yank);
             // The caret goes to the start of what was yanked; on a
             // linewise yank it stays (`yy` on the last line: the range
             // starts with the newline before it, which is not its line).
@@ -181,7 +190,12 @@ pub(crate) fn apply_operator(
             );
         }
         "delete" | "change" => {
-            set_register(ed, id, &ranges, &texts, linewise);
+            let took = if op == "change" {
+                crate::Took::Change
+            } else {
+                crate::Took::Delete
+            };
+            set_register(ed, id, &ranges, &texts, linewise, took);
             let edits = ranges
                 .iter()
                 .enumerate()
@@ -1012,12 +1026,12 @@ fn reload(ed: &mut Editor, ctx: &Ctx) {
 }
 
 fn paste(ed: &mut Editor, ctx: &Ctx, after: bool) {
-    let Some(text) = ed.registers.get(&'"').cloned() else {
+    let Some(head) = ed.memory.head() else {
         ed.message = "nothing to paste".into();
         return;
     };
-    let text = text.repeat(ctx.count.max(1));
-    let linewise = ed.register_linewise;
+    let text = head.text.repeat(ctx.count.max(1));
+    let linewise = head.linewise;
     let id = view(ed, ctx).buffer;
     let sels = ed.views[ctx.view].sels.items.clone();
     let buf = &ed.buffers[id];
@@ -2516,6 +2530,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>wr", "session restore"),
         ("<leader>cc", "compile"),
         ("<leader>u", "undo history"),
+        ("<leader>p", "memory"),
         ("<leader>Q", "quit all"),
         ("<leader>?", "keys"),
     ];

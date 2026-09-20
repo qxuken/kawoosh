@@ -412,12 +412,131 @@ struct SearchOrigin {
     search: Option<search::Search>,
 }
 
-/// See `Editor::register_origin`.
+/// Where a moment's text came from, when one yank or delete of one
+/// range took it: the buffer, its version before the edit, and the
+/// bytes there (the text as the moment has it, a last line's newline
+/// moved after it). What a plugin needs to know which of a buffer's
+/// lines were taken — the file manager's entries pasted into another
+/// listing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegisterOrigin {
     pub buffer: BufferId,
     pub version: Version,
     pub range: Range<usize>,
+}
+
+/// How a moment's text came to hand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Took {
+    Yank,
+    Delete,
+    Change,
+    /// Pasted in from the system clipboard.
+    Clipboard,
+}
+
+impl Took {
+    pub fn word(self) -> &'static str {
+        match self {
+            Took::Yank => "yank",
+            Took::Delete => "delete",
+            Took::Change => "change",
+            Took::Clipboard => "clipboard",
+        }
+    }
+}
+
+/// One piece of text that passed through the user's hands — yanked,
+/// deleted, changed away, pasted in from the clipboard: the text,
+/// whether it was whole lines, how it came, where from when the engine
+/// knows (`origin`), the name of the buffer it came from, and when.
+#[derive(Clone, Debug)]
+pub struct Moment {
+    pub text: String,
+    pub linewise: bool,
+    pub took: Took,
+    pub origin: Option<RegisterOrigin>,
+    pub from: String,
+    pub at: Instant,
+}
+
+/// How many moments the memory keeps; past it, the oldest go.
+pub const MEMORY_MAX: usize = 100;
+
+/// The working memory: every moment, oldest first, at most
+/// [`MEMORY_MAX`]. The `"` register is its head — `p` puts the newest
+/// moment — and a moment recalled ([`Memory::recall`]) is the newest
+/// from then on, so anything that passed through the hands can be put
+/// again, and a plugin reading the register (`kawoosh.buf.register`)
+/// reads a recalled moment's origin as it would a fresh yank's. A text
+/// taken again while it is the head is not remembered twice: the head
+/// takes the newer origin.
+#[derive(Default, Debug)]
+pub struct Memory {
+    moments: Vec<Moment>,
+    /// Bumped whenever the moments change: what a snapshot of them is
+    /// good for.
+    pub version: u64,
+}
+
+impl Memory {
+    /// The newest moment: the `"` register.
+    pub fn head(&self) -> Option<&Moment> {
+        self.moments.last()
+    }
+
+    /// Every moment, oldest first.
+    pub fn moments(&self) -> &[Moment] {
+        &self.moments
+    }
+
+    pub fn len(&self) -> usize {
+        self.moments.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.moments.is_empty()
+    }
+
+    /// A moment taken: the head from now on.
+    pub fn remember(&mut self, m: Moment) {
+        self.version += 1;
+        if let Some(head) = self.moments.last_mut()
+            && head.text == m.text
+            && head.linewise == m.linewise
+        {
+            *head = m;
+            return;
+        }
+        self.moments.push(m);
+        if self.moments.len() > MEMORY_MAX {
+            self.moments.remove(0);
+        }
+    }
+
+    /// Moment `i` (an index of `moments`) made the head, to be put
+    /// next; false for none.
+    pub fn recall(&mut self, i: usize) -> bool {
+        if i >= self.moments.len() {
+            return false;
+        }
+        if i + 1 != self.moments.len() {
+            let m = self.moments.remove(i);
+            self.moments.push(m);
+        }
+        self.version += 1;
+        true
+    }
+
+    /// Moment `i` forgotten; false for none.
+    pub fn forget(&mut self, i: usize) -> bool {
+        if i >= self.moments.len() {
+            return false;
+        }
+        self.moments.remove(i);
+        self.version += 1;
+        true
+    }
 }
 
 pub struct Editor {
@@ -428,15 +547,8 @@ pub struct Editor {
     /// Every command's spec, and its body when the engine runs it
     /// ([`command`]).
     pub commands: Registry,
-    pub registers: HashMap<char, String>,
-    pub register_linewise: bool,
-    /// Where the `"` register's text came from, when one yank or
-    /// delete of one range filled it: the buffer, its version before
-    /// the edit, and the bytes there (the text as the register has it,
-    /// a last line's newline moved after it). What a plugin needs to
-    /// know which of a buffer's lines were taken — the file manager's
-    /// entries pasted into another listing.
-    pub register_origin: Option<RegisterOrigin>,
+    /// What passed through the hands, the `"` register its head.
+    pub memory: Memory,
     /// Keys of a multi-key sequence so far.
     pub pending: Vec<String>,
     /// A count typed before a command, e.g. `3` of `3j`.
@@ -492,9 +604,7 @@ impl Editor {
             history: HashMap::new(),
             keymap: Keymap::new(),
             commands: Registry::default(),
-            registers: HashMap::new(),
-            register_linewise: false,
-            register_origin: None,
+            memory: Memory::default(),
             pending: Vec::new(),
             count: None,
             pending_op: None,
@@ -1794,9 +1904,14 @@ impl Editor {
         match self.mode(view) {
             Mode::Insert => self.text(view, text),
             _ => {
-                self.registers.insert('"', text.to_string());
-                self.register_linewise = text.ends_with('\n');
-                self.register_origin = None;
+                self.memory.remember(Moment {
+                    text: text.to_string(),
+                    linewise: text.ends_with('\n'),
+                    took: Took::Clipboard,
+                    origin: None,
+                    from: "clipboard".into(),
+                    at: Instant::now(),
+                });
                 self.run(view, "paste after", &[], None);
             }
         }

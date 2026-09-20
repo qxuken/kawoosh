@@ -104,6 +104,8 @@ pub struct Kawoosh {
     /// its rows and its cursor.
     pub undo: crate::undo::UndoPanel,
     pub history_pane: crate::history_pane::HistoryPanel,
+    /// The working memory pane (`:memory`): the register's past.
+    pub memory_pane: crate::memory::MemoryPanel,
     pub commands_pane: crate::commands_pane::CommandsPanel,
     /// The keymap version and, at it, the first words of the commands
     /// keys run — the command line ranks them after the typed ones.
@@ -210,6 +212,7 @@ impl Kawoosh {
             perf: Default::default(),
             undo: Default::default(),
             history_pane: Default::default(),
+            memory_pane: Default::default(),
             commands_pane: Default::default(),
             bound_names: Default::default(),
             hud: false,
@@ -931,6 +934,8 @@ impl Kawoosh {
             self.undo_key(self.layout.focused(), stroke);
         } else if self.layout.focused_content() == Some(Content::History) {
             self.history_key_press(self.layout.focused(), stroke);
+        } else if self.layout.focused_content() == Some(Content::Memory) {
+            self.memory_key_press(self.layout.focused(), stroke);
         } else if self.layout.focused_content() == Some(Content::Commands) {
             self.commands_key_press(self.layout.focused(), stroke);
         }
@@ -1497,6 +1502,7 @@ impl kui::App for Kawoosh {
             Some("settings") => self.on_settings_click(p),
             Some("undo") => self.on_undo_click(p),
             Some("history") => self.on_history_click(p),
+            Some("memory") => self.on_memory_click(p),
             Some("commands") => self.on_commands_click(p),
             Some("modifiers") => {
                 let f = |k| p.get(k).and_then(Value::as_bool).unwrap_or(false);

@@ -26,8 +26,10 @@ gaps are records rather than surprises:
   panes, scratch buffers with `on_write`, tools, `kawoosh.store`; the
   `dir` file manager with line identity through the journal
   (`Buffer::line_now`), what each entry is annotated past its line, a
-  preview pane, and a write that asks first; compile mode with `]q`;
-  sessions and oldfiles.
+  preview pane, and a write that asks first; the working memory
+  (`:memory`), every yank, delete and clipboard paste a moment with its
+  origin, the `"` register its head; compile mode with `]q`; sessions
+  and oldfiles.
 - **Thinner than designed, still open**: mouse reporting covers the
   primary button, drags and the wheel (kui routes the other buttons
   nowhere, and hover motion without a button is not sent); document sync to LSP is whole-text per change, not

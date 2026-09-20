@@ -47,6 +47,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::compile::commands());
     v.extend(crate::scripting::commands());
     v.extend(crate::undo::commands());
+    v.extend(crate::memory::commands());
     v.extend(crate::commands_pane::commands());
     v.extend(crate::cmdline::commands());
     v.extend(crate::nodes::commands());
@@ -225,7 +226,7 @@ impl Kawoosh {
                 self.terms.map.remove(&t);
             }
             Some(Content::Commands) => self.close_commands_field(),
-            Some(Content::Lua(_) | Content::Undo | Content::History) => {}
+            Some(Content::Lua(_) | Content::Undo | Content::History | Content::Memory) => {}
             None => self.ed.message = "cannot close the last pane".into(),
         }
     }
@@ -351,7 +352,7 @@ fn panes() -> Vec<ShellCommand> {
                             k.terms.map.remove(&t);
                         }
                         Content::Commands => k.close_commands_field(),
-                        Content::Lua(_) | Content::Undo | Content::History => {}
+                        Content::Lua(_) | Content::Undo | Content::History | Content::Memory => {}
                     }
                 }
             },

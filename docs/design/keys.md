@@ -172,6 +172,7 @@ objects, or any other character on both sides.
 | `<leader>cc` | compile |
 | `<leader>cd` | the listed directory as the working one (oil's) |
 | `<leader>u` | the undo history |
+| `<leader>p` | the working memory: what was yanked, deleted or pasted in, to put again |
 | `<leader>?` | the which-key for every first key (`:keys`) |
 | `<leader>Q` | quit all |
 | `-` | oil: the file's directory |
@@ -250,4 +251,10 @@ so that nothing else takes the key meanwhile.
   ones; there is no command to move a tab yet.
 - **No `<D-v>` in normal mode.** `paste clipboard` types the clipboard's
   answer as insert mode would; in normal mode `p` puts the register,
-  which every yank also puts on the clipboard.
+  which every yank also puts on the clipboard. The register is the
+  head of the *working memory* (`:memory`, `<leader>p`): every yank,
+  delete, change and clipboard paste is a moment it keeps, newest
+  first, with where it came from; a moment put from the pane (`⏎`) or
+  recalled (`y`) is the register from then on, `o` goes to where it
+  came from, carried through the edits since. There are no named
+  registers: the memory is what they were for.

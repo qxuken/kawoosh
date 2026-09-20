@@ -80,6 +80,8 @@ pub enum PaneData {
     /// The history pane (`drafts` in a session from before the name).
     #[serde(alias = "drafts")]
     History,
+    /// The working memory pane.
+    Memory,
     /// The command registry pane.
     Commands,
 }
@@ -127,6 +129,7 @@ impl Kawoosh {
             Some(Content::Lua(name)) => PaneData::Lua { name },
             Some(Content::Undo) => PaneData::Undo,
             Some(Content::History) => PaneData::History,
+            Some(Content::Memory) => PaneData::Memory,
             Some(Content::Commands) => PaneData::Commands,
             _ => PaneData::Terminal,
         }
@@ -295,6 +298,7 @@ impl Kawoosh {
                     PaneData::Lua { name } => Content::Lua(name.clone()),
                     PaneData::Undo => Content::Undo,
                     PaneData::History => Content::History,
+                    PaneData::Memory => Content::Memory,
                     PaneData::Commands => Content::Commands,
                     PaneData::Terminal => return None,
                 };

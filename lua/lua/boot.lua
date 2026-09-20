@@ -218,6 +218,14 @@ end
 -- moved by the file manager while it was open, so its `:w` goes where
 -- the file went.
 --
+-- kawoosh.memory(): the working memory, newest first — what passed
+-- through the hands: each moment's `text`, `linewise`, `took` ("yank",
+-- "delete", "change", "clipboard"), `from` (the buffer's name then),
+-- `buffer` (its handle, while it is open) and `age` in seconds. The
+-- `"` register is the newest moment; `kawoosh.recall(i)` makes moment
+-- `i` the newest, so the next `p` — or a plugin reading the register's
+-- origin — has it.
+--
 -- kawoosh.buf.register(): the `"` register — `text`, `linewise`, and,
 -- when one yank or delete filled it, `buffer` (the handle it came
 -- from) and `entries`, for each line of the text the tracked line of

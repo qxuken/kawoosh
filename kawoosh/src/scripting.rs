@@ -299,6 +299,12 @@ impl Kawoosh {
                     });
                 }
             }
+            Msg::Recall(i) => {
+                let n = self.ed.memory.len();
+                if i == 0 || i > n || !self.ed.memory.recall(n - i) {
+                    self.ed.message = format!("recall: no moment {i}");
+                }
+            }
             Msg::Retarget { from, to } => {
                 for b in self.ed.buffers.values_mut() {
                     let Some(p) = &b.path else { continue };
