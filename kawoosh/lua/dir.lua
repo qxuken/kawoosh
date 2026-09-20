@@ -25,29 +25,36 @@
 -- `:w` in any of them plans every listing's changes as one confirm.
 --
 -- Identity, not names. Every line a listing opens with is tracked
--- through the edit journal (`kawoosh.buf.tracked`, by id), so an entry
--- is its line however the line is edited; and a line cut or yanked in
--- one listing and pasted in another is that entry too — the register
--- says which tracked line its text was (`kawoosh.buf.register`), the
--- pasted line is tracked from then on (`kawoosh.buf.track`) and given
--- the entry's identity. The plan is one rule over where each entry's
--- lines are: an entry still on a line of its own listing stays (renamed
--- when the line reads otherwise), and every other line of it is a copy
--- of it; an entry whose own line is gone is moved to the first other
--- line of it, and copied to the rest; one with no line left anywhere is
--- deleted. A line no entry is behind is a new file — a name typed by
--- hand pairs with nothing. Two files of one name swapped between two
--- listings are two moves; a name on two lines of one listing, or two
--- entries on one line (`J`, which is refused in a listing), is a
--- question the write will not guess at.
+-- through the edit journal (by id), so an entry is its line however the
+-- line is edited; a line typed in is tracked as it appears; and a line
+-- cut or yanked in one listing and pasted in another is that entry too
+-- — the register says which tracked line its text was
+-- (`kawoosh.buf.register`), and the pasted line is given the entry's
+-- identity. The plan is one rule over where each entry's lines are: an
+-- entry still on a line of its own listing stays (renamed when the line
+-- reads otherwise), and every other line of it is a copy of it; an
+-- entry whose own line is gone is moved to the first other line of it,
+-- and copied to the rest; one with no line left anywhere is deleted. A
+-- line no entry is behind is a new file — a name typed by hand pairs
+-- with nothing. Two files of one name swapped between two listings are
+-- two moves; a name on two lines of one listing, or two entries on one
+-- line (`J`, which is refused in a listing), is a question the write
+-- will not guess at.
+--
+-- The plan reads only what differs from the lines as tracked
+-- (`kawoosh.buf.changes`: the lines that read otherwise, the lines
+-- gone, the lines nothing is behind, the lines two are on) and the
+-- lines pasted or typed in since, so a keystroke in a listing of forty
+-- thousand entries costs what the keystroke changed.
 --
 -- What each entry is — a file's size, the mtime — is drawn past its
--- line (`kawoosh.buf.annotate`), never in the buffer's text, so the
--- listing stays a list of names to edit; as it is edited (`on_change`)
--- the lines say what the write would make of them: a renamed entry
--- what it was, a line no entry became `← new`, or `← copy from ../b/`
--- and `← move from ../b/` where it came from. A file renamed or moved
--- while a buffer has it open is that buffer's path from then on
+-- line (`kawoosh.buf.annotate`, a note on the tracked line, which goes
+-- where the line goes), never in the buffer's text, so the listing
+-- stays a list of names to edit; as it is edited (`on_change`) the
+-- lines say what the write would make of them: a renamed entry what it
+-- was, a line no entry became `← new`, or `← copy from ../b/` and `←
+-- move from ../b/` where it came from. A file renamed or moved while a
+-- buffer has it open is that buffer's path from then on
 -- (`kawoosh.buf.retarget`).
 --
 -- Paths go through `kawoosh.fs` — `expand`, `parent`, `basename`,
@@ -65,8 +72,12 @@ local fs = kawoosh.fs
 -- the width of its longest name, and `ids` — for each tracked line of
 -- the buffer, by id, the entry behind it: `{ dir, name, meta }`, the
 -- listing's own entries and every line pasted in since (an entry of
--- wherever it came from); the `../` line is `{ up = true }`.
+-- wherever it came from), `NEW` for a line typed in; the `../` line is
+-- `{ up = true }`. See `state_of`.
 local dir = { state = {}, followed = nil, sorts = {} }
+
+-- The entry behind a line no entry is: a file to create.
+local NEW = { new = true }
 
 local PREFIX = "dir: "
 local PREVIEW = "dir preview"
@@ -156,11 +167,17 @@ end
 
 -- The state of a listing of `d` just filled with `lines`: its lines'
 -- entries by id, which is their line — `open_scratch` tracks a buffer's
--- lines from 1 whenever it fills it.
+-- lines from 1 whenever it fills it — and by name (`byname`); `odd`,
+-- the ids tracked since (lines pasted or typed in), which the plan
+-- looks at whatever they read; and `noted`, the ids whose note says
+-- more than what the entry is.
 local function state_of(d, lines, meta, width)
-  local ids = { { up = true } }
-  for i = 2, #lines do ids[i] = { dir = d, name = lines[i], meta = meta[i] or "" } end
-  return { dir = d, width = width, ids = ids }
+  local ids, byname = { { up = true } }, {}
+  for i = 2, #lines do
+    ids[i] = { dir = d, name = lines[i], meta = meta[i] or "" }
+    byname[lines[i]] = i
+  end
+  return { dir = d, width = width, ids = ids, byname = byname, odd = {}, noted = {} }
 end
 
 -- The directory the current buffer lists; nil elsewhere, and nil where
@@ -306,51 +323,109 @@ local function at(base, entry) return fs.join(base, (entry:gsub("/$", ""))) end
 
 -- ----------------------------------------------------------- the plan
 
--- A listing's lines, read: for each tracked line still there, the entry
--- behind it and what the line reads now (`seen`, with `ln`); the
--- listing's own entries whose line is gone (`gone`); the lines no entry
--- is behind (`creates`); and what the write cannot take — a name on
--- two lines (`twice`), two entries on one line (`joined`), the `../`
--- line edited — as `problems` and the lines to mark.
-local function read(L)
+-- The entries the `"` register holds, when one yank or delete in a
+-- listing filled it: `take(text)` gives the entry of the first of its
+-- lines reading `text` not given out yet — what a line pasted in is.
+local function register_entries()
+  local reg = kawoosh.buf.register()
+  if not reg or not reg.linewise or not reg.buffer then return nil end
+  local src = lists(reg.buffer)
+  local sst = src and dir.state[PREFIX .. src]
+  if not sst then return nil end
+  local held, k = {}, 0
+  for t in (reg.text .. "\n"):gmatch("(.-)\n") do
+    k = k + 1
+    local who = reg.entries[k] and sst.ids[reg.entries[k]]
+    if who and not who.up and not who.new then held[#held + 1] = { text = t, who = who } end
+  end
+  return function(text)
+    for _, l in ipairs(held) do
+      if not l.taken and l.text == text then
+        l.taken = true
+        return l.who
+      end
+    end
+  end
+end
+
+-- A listing, read: what differs from its lines as tracked
+-- (`kawoosh.buf.changes`) and the odd lines, nothing else. A line
+-- nothing is behind is tracked from now on and given the entry the
+-- register says it is (`take`), else `NEW`. Then, for each line that
+-- reads otherwise than when tracked and each odd one: the entry behind
+-- it and what it reads (`seen`, or `creates` for a new line, each with
+-- `id` and `ln`); the listing's own entries whose line is gone
+-- (`gone`); and what the write cannot take — a name on two lines
+-- (`twice`), two entries on one line (`joined`), the `../` line edited
+-- — as `problems` and the ids to mark. `fresh` is the ids given an
+-- entry just now, whose note is to be drawn.
+local function read(L, take)
   local st, h = L.st, L.h
-  local texts, at_line = kawoosh.buf.tracked(h), kawoosh.buf.tracked_lines(h)
-  L.lines = kawoosh.buf.lines(h)
-  L.seen, L.gone, L.creates, L.marks = {}, {}, {}, {}
-  local onto, taken = {}, {}
-  for id, who in pairs(st.ids) do
-    local ln = at_line[id]
-    if ln then
-      taken[ln] = true
-      onto[ln] = (onto[ln] or 0) + 1
-      if who.up then
-        if texts[id] ~= "../" then
-          L.marks[ln] = "was ../"
-          L.problems[#L.problems + 1] = "the `../` line edited in " .. L.dir
-        end
-      else
-        L.seen[#L.seen + 1] = { who = who, to = texts[id], ln = ln, L = L }
-      end
-    elseif who.dir == L.dir and not who.up then
-      L.gone[#L.gone + 1] = who
+  local ch = kawoosh.buf.changes(h)
+  L.seen, L.gone, L.creates, L.marks, L.fresh = {}, {}, {}, {}, {}
+  local lns = {}
+  for ln, text in pairs(ch.untracked) do
+    if text ~= "" and text ~= "../" then lns[#lns + 1] = ln end
+  end
+  table.sort(lns)
+  for _, ln in ipairs(lns) do
+    local id = kawoosh.buf.track(ln, h)
+    if id then
+      st.ids[id] = (take and take(ch.untracked[ln])) or NEW
+      st.odd[id] = true
+      L.fresh[id] = true
     end
   end
-  for ln, n in pairs(onto) do
-    if n > 1 then
-      L.marks[ln] = "joined"
-      L.problems[#L.problems + 1] = n .. " entries on one line in " .. L.dir
+  local function problem(text) L.problems[#L.problems + 1] = text .. " in " .. L.dir end
+  local names = {}
+  local function look(id, to, ln)
+    local who = st.ids[id]
+    if not who then return end
+    if who.up then
+      if to ~= "../" then
+        L.marks[id] = "was ../"
+        problem("the `../` line edited")
+      end
+      return
+    end
+    local a = { who = who, to = to, id = id, ln = ln, L = L }
+    if who.new then L.creates[#L.creates + 1] = a else L.seen[#L.seen + 1] = a end
+    names[to] = names[to] or { ids = {}, lines = {} }
+    table.insert(names[to].ids, id)
+    names[to].lines[ln] = true
+  end
+  for id, to in pairs(ch.edited) do look(id, to, ch.lines[id]) end
+  for id in pairs(st.odd) do
+    if not ch.edited[id] then
+      local to, ln = kawoosh.buf.tracked_line(id, h)
+      if to then look(id, to, ln) else st.odd[id] = nil end
     end
   end
-  local seen = {}
-  for ln, l in ipairs(L.lines) do
-    if l ~= "" and l ~= "../" then
-      if seen[l] then
-        L.marks[ln] = "twice"
-        L.problems[#L.problems + 1] = l .. " twice in " .. L.dir
-      end
-      seen[l] = true
-      if not taken[ln] then L.creates[#L.creates + 1] = { name = l, ln = ln } end
+  local gone = {}
+  for _, id in ipairs(ch.gone) do
+    gone[id] = true
+    local who = st.ids[id]
+    if who and who.dir == L.dir and not who.up and not who.new then L.gone[#L.gone + 1] = who end
+  end
+  -- A name on two lines: among the lines read (two entries joined on
+  -- one line are one line of it), and the listing's own line of that
+  -- name where it still reads so.
+  for name, n in pairs(names) do
+    local home = st.byname[name]
+    local lines = 0
+    for _ in pairs(n.lines) do lines = lines + 1 end
+    if home and not ch.edited[home] and not gone[home] then
+      table.insert(n.ids, home)
+      lines = lines + 1
     end
+    if lines > 1 then
+      for _, id in ipairs(n.ids) do L.marks[id] = "twice" end
+      problem(name .. " twice")
+    end
+  end
+  for _, ids in pairs(ch.shared) do
+    for _, id in ipairs(ids) do L.marks[id] = "joined" end
+    problem(#ids .. " entries on one line")
   end
 end
 
@@ -370,12 +445,13 @@ local ORDER = { rename = 1, move = 2, copy = 3, create = 4, delete = 5 }
 -- line typed where it was — is the entry as it was.
 local function pending()
   local listings, edited, problems = {}, {}, {}
+  local take = register_entries()
   for _, h in ipairs(kawoosh.buf.list()) do
     local d = lists(h)
     local st = d and dir.state[PREFIX .. d]
     if st and d ~= DRIVES then
       local L = { dir = d, h = h, st = st, problems = problems }
-      read(L)
+      read(L, take)
       listings[#listings + 1] = L
       if kawoosh.buf.modified(h) then edited[#edited + 1] = d end
     end
@@ -410,7 +486,7 @@ local function pending()
     local who = list[1].who
     for i, a in ipairs(list) do
       local home = a.L.dir == who.dir
-      local op = { name = who.name, to = a.to, ln = a.ln, meta = who.meta }
+      local op = { name = who.name, to = a.to, id = a.id, meta = who.meta }
       if i == 1 and home then
         gone[k] = nil
         if a.to ~= who.name then
@@ -429,19 +505,20 @@ local function pending()
     end
   end
   for _, L in ipairs(listings) do
-    L.restored = {}
     local deleted = {}
     for _, who in ipairs(L.gone) do
       if gone[key(who)] then deleted[who.name] = who end
     end
     for _, c in ipairs(L.creates) do
-      local who = deleted[c.name]
+      local who = deleted[c.to]
       if who then
-        deleted[c.name] = nil
+        -- The entry as it was: the line is given it from now on.
+        deleted[c.to] = nil
         gone[key(who)] = nil
-        L.restored[c.ln] = who.meta
+        L.st.ids[c.id] = who
+        L.fresh[c.id] = true
       else
-        table.insert(ops_of(L.dir), { kind = "create", name = c.name, ln = c.ln })
+        table.insert(ops_of(L.dir), { kind = "create", name = c.to, id = c.id })
       end
     end
   end
@@ -706,89 +783,56 @@ end
 
 -- ---------------------------------------------------- the annotations
 
--- A line pasted into listing `st` (buffer `h`) that is an entry of a
--- listing — another, or this one — is given that entry: the `"`
--- register says which buffer its text came from and which tracked
--- lines of it the lines were (`kawoosh.buf.register`), so a line no
--- entry is behind whose text is one of the register's lines is tracked
--- from now on (`kawoosh.buf.track`) and its id given the entry, which
--- it carries through a rename.
-local function adopt(st, h)
-  local reg = kawoosh.buf.register()
-  if not reg or not reg.linewise or not reg.buffer then return end
-  local src = lists(reg.buffer)
-  local sst = src and dir.state[PREFIX .. src]
-  if not sst then return end
-  local owned = {}
-  for _, ln in pairs(kawoosh.buf.tracked_lines(h)) do if ln then owned[ln] = true end end
-  local lines = kawoosh.buf.lines(h)
-  local k = 0
-  for t in (reg.text .. "\n"):gmatch("(.-)\n") do
-    k = k + 1
-    local who = reg.entries[k] and sst.ids[reg.entries[k]]
-    if who and not who.up then
-      for ln, l in ipairs(lines) do
-        if l == t and not owned[ln] then
-          owned[ln] = true
-          local id = kawoosh.buf.track(ln, h)
-          if id then st.ids[id] = who end
-          break
-        end
-      end
-    end
-  end
-end
-
--- Every listing's annotations again, as its text is now: each entry's
--- meta on each line it is behind, and after it what the write would
--- make of the line — a renamed entry `← was a.txt`, a line no entry
--- became `← new`, a pasted one `← copy from ../b/` / `← move from
--- ../b/` (its name after, when it changed), and what the write refuses:
--- `← twice`, `← joined`. Told by `on_change`, so the listing says what
--- it means as it is edited; a line just pasted is given its entry
--- first.
+-- Every listing's notes, as its text is now: on each line whose story
+-- changed, what the write would make of it after the entry's meta — a
+-- renamed entry `← was a.txt`, a line no entry became `← new`, a pasted
+-- one `← copy from ../b/` / `← move from ../b/` (its name after, when
+-- it changed), and what the write refuses: `← twice`, `← joined`, a
+-- mark being the line's whole story — and the meta alone again on a
+-- line whose story is over, or that was just given its entry. Told by
+-- `on_change`, so the listing says what it means as it is edited; only
+-- the lines whose note changes are touched.
 function dir.changed()
-  for _, h in ipairs(kawoosh.buf.list()) do
-    local d = lists(h)
-    local st = d and dir.state[PREFIX .. d]
-    if st and d ~= DRIVES then adopt(st, h) end
-  end
   local groups, between, _, _, listings = pending()
-  local notes = {}
-  local function note(d, ln, text, meta)
-    notes[d] = notes[d] or {}
-    notes[d][ln] = { text = text, meta = meta }
+  local stories = {}
+  local function tell(d, id, text)
+    stories[d] = stories[d] or {}
+    stories[d][id] = text
   end
   for _, g in ipairs(groups) do
     for _, op in ipairs(g.ops) do
-      if op.kind == "rename" then note(g.dir, op.ln, "was " .. op.name, op.meta)
-      elseif op.kind == "create" then note(g.dir, op.ln, "new")
-      elseif op.kind == "copy" then note(g.dir, op.ln, "copy of " .. op.name, op.meta) end
+      if op.kind == "rename" then tell(g.dir, op.id, "was " .. op.name)
+      elseif op.kind == "create" then tell(g.dir, op.id, "new")
+      elseif op.kind == "copy" then tell(g.dir, op.id, "copy of " .. op.name) end
     end
   end
   for _, op in ipairs(between) do
     local from = relative(op.dir, op.from) .. (op.to ~= op.name and op.name or "")
-    note(op.dir, op.ln, op.kind .. " from " .. from, op.meta)
+    tell(op.dir, op.id, op.kind .. " from " .. from)
   end
   for _, L in ipairs(listings) do
-    local meta = {}
-    for _, a in ipairs(L.seen) do meta[a.ln] = a.who.meta end
-    for ln, m in pairs(L.restored) do meta[ln] = m end
-    local ann = {}
-    for ln, m in pairs(meta) do ann[ln] = m end
-    local function pad(ln)
-      local l = L.lines[ln] or ""
-      return NBSP:rep(L.st.width - (utf8.len(l) or #l))
+    local st = L.st
+    local story = stories[L.dir] or {}
+    for id, mark in pairs(L.marks) do story[id] = mark end
+    local reads = {}
+    for _, a in ipairs(L.seen) do reads[a.id] = a.to end
+    for _, c in ipairs(L.creates) do reads[c.id] = c.to end
+    -- What the entry is; for a line that is none, the width's worth of
+    -- space, so the story lines up with the rest.
+    local function base(id)
+      local who = st.ids[id]
+      local m = who and who.meta
+      if m and m ~= "" then return m end
+      local l = reads[id] or ""
+      return NBSP:rep(math.max(st.width - (utf8.len(l) or #l), 0))
     end
-    local function say(ln, text, m)
-      local base = m or meta[ln]
-      if not base or base == "" then base = pad(ln) end
-      ann[ln] = base .. NBSP:rep(2) .. ARROW .. text
-    end
-    for ln, nt in pairs(notes[L.dir] or {}) do say(ln, nt.text, nt.meta) end
-    -- A mark is the line's whole story: what the write refuses.
-    for ln, mark in pairs(L.marks) do say(ln, mark) end
-    kawoosh.buf.annotate(ann, L.h)
+    local notes = {}
+    for id in pairs(st.noted) do if not story[id] then notes[id] = base(id) end end
+    for id in pairs(L.fresh) do if not story[id] then notes[id] = base(id) end end
+    for id, text in pairs(story) do notes[id] = base(id) .. NBSP:rep(2) .. ARROW .. text end
+    st.noted = {}
+    for id in pairs(story) do st.noted[id] = true end
+    if next(notes) then kawoosh.buf.annotate(notes, L.h) end
   end
 end
 

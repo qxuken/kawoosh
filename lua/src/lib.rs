@@ -131,15 +131,16 @@ pub enum Msg {
         actions: Vec<(String, String)>,
         default: usize,
     },
-    /// `kawoosh.buf.annotate(lines, buffer)`: text after a line's end
+    /// `kawoosh.buf.annotate(notes, buffer)`: text after a line's end
     /// that is not the buffer's — what an entry is, beside its name —
-    /// by line (from 1), replacing the buffer's. The buffer by handle,
+    /// on the buffer's tracked lines by id, set or (`false`) taken
+    /// off, the rest kept (`Runtime::annotate`). The buffer by handle,
     /// by name (a scratch just asked for, not yet in the snapshot), or
     /// the current one.
     Annotate {
         buffer: Option<u64>,
         name: Option<String>,
-        lines: Vec<(usize, String)>,
+        notes: Vec<(usize, Option<String>)>,
     },
     Tool {
         name: String,
@@ -307,16 +308,21 @@ pub fn id_of(handle: u64) -> BufferId {
 
 /// One line a hooked buffer follows: the version it was taken at and
 /// its bytes then (`origin`, what the register's provenance is read
-/// against), and where the carry through the journal has brought it
-/// (`now` as of version `at`; `None` once deleted). Carried on from
-/// `at` at each publish — the edits since the last frame, not since
-/// the line was taken — which comes to the same as `Buffer::line_now`
-/// from the origin, the carry being a fold over the edits.
+/// against), what it read then (`text`, what `kawoosh.buf.changes`
+/// compares against), and where the carry through the journal has
+/// brought it (`now` as of version `at`; `None` once deleted). Carried
+/// on from `at` at each publish — the edits since the last frame, not
+/// since the line was taken — which comes to the same as
+/// `Buffer::line_now` from the origin, the carry being a fold over the
+/// edits. Its `note` is what a plugin draws past it
+/// (`kawoosh.buf.annotate`), which goes where the line goes.
 #[derive(Clone, Debug)]
 struct Followed {
     origin: (kawoosh_doc::Version, std::ops::Range<usize>),
+    text: String,
     at: kawoosh_doc::Version,
     now: Option<std::ops::Range<usize>>,
+    note: Option<String>,
 }
 
 /// A buffer's tracked lines — the lines it was tracked with, then
@@ -470,14 +476,62 @@ impl Runtime {
                 let r = b.line_range_in(&starts, ln);
                 Followed {
                     origin: (v, r.clone()),
+                    text: b.slice(r.clone()),
                     at: v,
                     now: Some(r),
+                    note: None,
                 }
             })
             .collect();
         self.tracked
             .borrow_mut()
             .insert(id, Tracked { lines, snap: None });
+    }
+
+    /// Sets the notes on `id`'s tracked lines — `(id, note)`, `None`
+    /// taking one off — the rest kept; an id the buffer has no line
+    /// for is nothing.
+    pub fn annotate(&self, id: BufferId, notes: Vec<(usize, Option<String>)>) {
+        let mut tracked = self.tracked.borrow_mut();
+        let Some(t) = tracked.get_mut(&id) else {
+            return;
+        };
+        for (n, note) in notes {
+            if let Some(f) = n.checked_sub(1).and_then(|i| t.lines.get_mut(i)) {
+                f.note = note;
+            }
+        }
+    }
+
+    /// The notes on `id`'s tracked lines that lie on `rows` (lines
+    /// from 0) as of `version` — the last publish's reading, nothing
+    /// when the buffer moved on since (the pane draws after a publish).
+    /// Two tracked lines on one line: the first's note.
+    pub fn notes_on(
+        &self,
+        id: BufferId,
+        version: kawoosh_doc::Version,
+        rows: std::ops::Range<usize>,
+    ) -> HashMap<usize, String> {
+        let tracked = self.tracked.borrow();
+        let mut out = HashMap::new();
+        let Some(t) = tracked.get(&id) else {
+            return out;
+        };
+        let Some((v, snap)) = &t.snap else { return out };
+        if *v != version {
+            return out;
+        }
+        for (f, at) in t.lines.iter().zip(&snap.at) {
+            let (Some(note), Some(ln)) = (&f.note, at) else {
+                continue;
+            };
+            let ln = ln - 1;
+            if rows.contains(&ln) {
+                out.entry(ln).or_insert_with(|| note.clone());
+            }
+        }
+        out
     }
 
     /// The snapshot Lua reads from, refreshed before every call in.
@@ -1505,6 +1559,89 @@ fn seed(
     )?;
     let pp = published.clone();
     buf.set(
+        "tracked_line",
+        lua.create_function(move |_, (id, h): (usize, Option<u64>)| {
+            let p = pp.borrow();
+            let h = h
+                .or(p.current)
+                .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
+            let Some(snap) = p.tracked.get(&h) else {
+                return Ok((None, None));
+            };
+            let i = id.wrapping_sub(1);
+            match (snap.texts.get(i), snap.at.get(i)) {
+                (Some(Some(text)), Some(Some(ln))) => Ok((Some(text.clone()), Some(*ln))),
+                _ => Ok((None, None)),
+            }
+        })?,
+    )?;
+    let pp = published.clone();
+    let tr = tracked.clone();
+    buf.set(
+        "changes",
+        lua.create_function(move |lua, h: Option<u64>| {
+            let p = pp.borrow();
+            let h = h
+                .or(p.current)
+                .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
+            let out = lua.create_table()?;
+            let edited = lua.create_table()?;
+            let lines = lua.create_table()?;
+            let gone = lua.create_table()?;
+            let untracked = lua.create_table()?;
+            let shared = lua.create_table()?;
+            let tracked = tr.borrow();
+            if let (Some(snap), Some(b), Some(t)) =
+                (p.tracked.get(&h), p.buffers.get(&h), tracked.get(&id_of(h)))
+            {
+                let count = b.snapshot.text.newline_count() + 1;
+                let mut on = vec![0u32; count];
+                for (i, f) in t.lines.iter().enumerate() {
+                    match (&snap.texts[i], snap.at[i]) {
+                        (Some(text), Some(ln)) => {
+                            if let Some(n) = on.get_mut(ln - 1) {
+                                *n += 1;
+                            }
+                            if *text != f.text {
+                                edited.set(i + 1, text.as_str())?;
+                                lines.set(i + 1, ln)?;
+                            }
+                        }
+                        _ => gone.push(i + 1)?,
+                    }
+                }
+                for (ln, n) in on.iter().enumerate() {
+                    if *n == 0 {
+                        let Some(mut r) = b.snapshot.text.get_line_range(ln) else {
+                            continue;
+                        };
+                        for nl in *b"\n\r" {
+                            if r.end > r.start && b.snapshot.text.byte_at(r.end - 1) == Some(nl) {
+                                r.end -= 1;
+                            }
+                        }
+                        untracked.set(ln + 1, b.snapshot.slice(r))?;
+                    } else if *n > 1 {
+                        let ids = lua.create_table()?;
+                        for (i, at) in snap.at.iter().enumerate() {
+                            if *at == Some(ln + 1) {
+                                ids.push(i + 1)?;
+                            }
+                        }
+                        shared.set(ln + 1, ids)?;
+                    }
+                }
+            }
+            out.set("edited", edited)?;
+            out.set("lines", lines)?;
+            out.set("gone", gone)?;
+            out.set("untracked", untracked)?;
+            out.set("shared", shared)?;
+            Ok(out)
+        })?,
+    )?;
+    let pp = published.clone();
+    buf.set(
         "register",
         lua.create_function(move |lua, ()| {
             let p = pp.borrow();
@@ -1578,8 +1715,10 @@ fn seed(
             let t = tr.entry(id_of(h)).or_default();
             t.lines.push(Followed {
                 origin: (version, range.clone()),
+                text: text.clone(),
                 at: version,
                 now: Some(range),
+                note: None,
             });
             let id = t.lines.len();
             if let Some((sv, snap)) = &mut t.snap
@@ -1655,7 +1794,7 @@ fn seed(
     let pp = published.clone();
     buf.set(
         "annotate",
-        lua.create_function(move |_, (lines, which): (Table, LV)| {
+        lua.create_function(move |_, (notes, which): (Table, LV)| {
             let (buffer, name) = match which {
                 LV::String(s) => (None, Some(s.to_str()?.to_string())),
                 LV::Integer(n) => (Some(n as u64), None),
@@ -1670,14 +1809,24 @@ fn seed(
                 ),
             };
             let mut out = Vec::new();
-            for pair in lines.pairs::<usize, String>() {
-                let (ln, text) = pair?;
-                out.push((ln, text));
+            for pair in notes.pairs::<usize, LV>() {
+                let (id, note) = pair?;
+                let note = match note {
+                    LV::String(s) => Some(s.to_str()?.to_string()),
+                    LV::Boolean(false) | LV::Nil => None,
+                    other => {
+                        return Err(mlua::Error::runtime(format!(
+                            "annotate: a note is text or false, not {}",
+                            other.type_name()
+                        )));
+                    }
+                };
+                out.push((id, note));
             }
             qq.borrow_mut().push(Msg::Annotate {
                 buffer,
                 name,
-                lines: out,
+                notes: out,
             });
             Ok(())
         })?,

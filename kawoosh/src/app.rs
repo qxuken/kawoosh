@@ -35,13 +35,6 @@ use crate::terminals::{TermId, Terminals};
 pub const TITLE_H: f32 = 22.0;
 pub const TAB_H: f32 = 26.0;
 
-/// A buffer's annotations: each line's bytes as of version `at` with
-/// the text past its end — `None` once the line was deleted — carried
-/// on through the edits since at each frame (`Kawoosh::carry_annotations`).
-pub(crate) struct Annotations {
-    pub at: Version,
-    pub lines: Vec<(Option<std::ops::Range<usize>>, String)>,
-}
 pub(crate) const DIVIDER: f32 = 4.0;
 
 pub struct Kawoosh {
@@ -164,12 +157,6 @@ pub struct Kawoosh {
     pub(crate) mods: (bool, bool, bool, bool),
     /// The question on show, if one (`confirm.rs`): the keys are its.
     pub confirm: Option<crate::confirm::Confirm>,
-    /// A buffer's annotations (`kawoosh.buf.annotate`): text drawn past
-    /// a line's end, each anchored to its line's range at the version
-    /// it was set, carried through the journal to where the line is
-    /// now (`Buffer::line_now`) — the way `Runtime::track_lines`
-    /// follows a line's identity.
-    pub(crate) annotations: HashMap<BufferId, Annotations>,
     /// Jobs a plugin asked for (`kawoosh.fs.list(path, fn)`) whose
     /// answer is still out on the io thread.
     pub(crate) pending_jobs: usize,
@@ -244,7 +231,6 @@ impl Kawoosh {
             cell: (7.8, LH),
             mods: (false, false, false, false),
             confirm: None,
-            annotations: HashMap::new(),
             pending_jobs: 0,
             jobs_inline: false,
         };
@@ -693,7 +679,6 @@ impl Kawoosh {
         self.release_waiters(id);
         self.last_pos.remove(&id);
         self.ts_sent.remove(&id);
-        self.annotations.remove(&id);
         self.scripting.watched.remove(&id);
         self.histories.forget(id);
         self.lsp
@@ -1337,7 +1322,6 @@ impl kui::App for Kawoosh {
         if let Some(rt) = self.scripting.rt.clone() {
             rt.publish(&self.ed, self.focused_view());
         }
-        self.carry_annotations();
         self.perf.cur.lua = ms(t);
         if self.quit {
             if !self.session_saved {
@@ -1579,26 +1563,4 @@ pub(crate) fn first_line(b: &Buffer) -> String {
         .next()
         .unwrap_or("")
         .to_owned()
-}
-
-impl Kawoosh {
-    /// Every buffer's annotations carried through the edits since they
-    /// were last looked at, as a tracked line is (`Buffer::line_carried`)
-    /// — the edits of the frame, not since they were set — so drawing
-    /// them is a lookup per row on show, not per annotation.
-    pub(crate) fn carry_annotations(&mut self) {
-        self.annotations
-            .retain(|id, _| self.ed.buffers.contains_key(*id));
-        for (id, a) in self.annotations.iter_mut() {
-            let b = &self.ed.buffers[*id];
-            let v = b.version();
-            if a.at == v {
-                continue;
-            }
-            for (r, _) in a.lines.iter_mut() {
-                *r = r.take().and_then(|r| b.line_carried(r, a.at, v));
-            }
-            a.at = v;
-        }
-    }
 }

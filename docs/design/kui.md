@@ -204,10 +204,10 @@ What this buys, each of which was a milestone-sized piece of work before:
   byte and the access tree never count it). mvp.md's governing rule —
   *virtual text may shift real text, never occlude it* — stops being a
   rule the leaf enforces and becomes the only thing the shape can do.
-  A plugin's is the same node: `kawoosh.buf.annotate(lines, buffer)`
+  A plugin's is the same node: `kawoosh.buf.annotate(notes, buffer)`
   puts text past a line's end — the file manager's sizes and mtimes
-  beside the names — anchored to the line's identity through the
-  journal (`Buffer::line_now`: a line is its bytes, carried as a
+  beside the names — as a note on the tracked line, which goes where
+  the line's identity goes through the journal (`Buffer::line_now`: a line is its bytes, carried as a
   result is; text typed at its edges is its own, a line opened above
   or below is not, a line retyped whole — `cc` takes exactly its bytes
   — is itself, a line deleted — the one edit that leaves none of its

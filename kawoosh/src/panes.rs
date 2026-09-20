@@ -743,36 +743,16 @@ impl Kawoosh {
         let dark = ui.theme().is_dark();
         let diag_messages = self.lsp.messages.get(&buf_id);
         let diag_colors = [pal.dim, pal.danger, pal.command, pal.dim, pal.faint];
-        // The annotations on the rows drawn, each on the line it was
-        // set on has become (carried as of this frame, `Kawoosh::carry_annotations`)
-        // — none once that line is deleted, and none where two would
-        // land on one line. Only those within the rows' bytes are
-        // looked up: a listing of forty thousand lines annotates them
-        // all, and draws forty.
-        let annotated: std::collections::HashMap<usize, &str> = self
-            .annotations
-            .get(&buf_id)
-            .filter(|a| a.at == buf.version())
-            .map(|a| {
-                let shown = buf.line_start(top)..buf.line_range(last.saturating_sub(1)).end + 1;
-                let mut seen = std::collections::HashSet::new();
-                let mut out = std::collections::HashMap::new();
-                for (r, text) in &a.lines {
-                    let Some(r) = r else { continue };
-                    if !shown.contains(&r.start) {
-                        continue;
-                    }
-                    let ln = buf.line_of(r.start);
-                    if !seen.insert(ln) {
-                        out.remove(&ln);
-                        continue;
-                    }
-                    if (top..last).contains(&ln) {
-                        out.insert(ln, text.as_str());
-                    }
-                }
-                out
-            })
+        // The notes on the rows drawn (`kawoosh.buf.annotate`): each
+        // on the tracked line it was put on, wherever the line is now
+        // (`Runtime::notes_on`, as of this frame's publish) — none once
+        // the line is deleted. A listing of forty thousand lines notes
+        // them all, and draws forty.
+        let annotated: std::collections::HashMap<usize, String> = self
+            .scripting
+            .rt
+            .as_ref()
+            .map(|rt| rt.notes_on(buf_id, buf.version(), top..last))
             .unwrap_or_default();
         let ghost = self
             .completion_typed()
@@ -998,7 +978,7 @@ impl Kawoosh {
                                     let m = diag_messages?.get(r.tag as usize)?;
                                     Some((m.as_str(), diag_colors[(r.style as usize).min(4)]))
                                 })
-                                .or_else(|| annotated.get(&ln).map(|t| (*t, pal.dim)));
+                                .or_else(|| annotated.get(&ln).map(|t| (t.as_str(), pal.dim)));
                             let ghost_here = ghost
                                 .as_deref()
                                 .filter(|_| ln == cur_line)

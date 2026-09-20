@@ -339,7 +339,7 @@ impl Kawoosh {
             Msg::Annotate {
                 buffer,
                 name,
-                lines,
+                notes,
             } => {
                 let id = match (buffer, name) {
                     (Some(h), _) => Some(kawoosh_lua::id_of(h)),
@@ -351,24 +351,11 @@ impl Kawoosh {
                         .map(|(id, _)| id),
                     (None, None) => None,
                 };
-                let Some(b) = id.and_then(|id| self.ed.buffers.get(id)) else {
+                let Some(id) = id.filter(|id| self.ed.buffers.contains_key(*id)) else {
                     self.ed.message = "annotate: no such buffer".into();
                     return;
                 };
-                let starts = b.line_starts();
-                let count = starts.len();
-                let anchored = lines
-                    .into_iter()
-                    .filter(|(ln, _)| (1..=count).contains(ln))
-                    .map(|(ln, text)| (Some(b.line_range_in(&starts, ln - 1)), text))
-                    .collect();
-                self.annotations.insert(
-                    id.unwrap(),
-                    crate::app::Annotations {
-                        at: b.version(),
-                        lines: anchored,
-                    },
-                );
+                rt.annotate(id, notes);
             }
             Msg::Tool {
                 name,

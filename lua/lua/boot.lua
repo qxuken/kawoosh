@@ -170,21 +170,32 @@ end
 -- another pane, the background — without putting it in the focused
 -- pane, or makes it in the background.
 --
--- kawoosh.buf.annotate(lines[, buffer]): text after a line's end that
--- is not the buffer's — what an entry is, beside its name — `{ [n] =
--- "text" }` by line from 1, drawn dim past the line and never in its
--- bytes; it replaces the buffer's, and follows its line through edits
--- (a line typed above moves it down, its line deleted takes it away).
--- `buffer` is a handle, a name (a scratch just asked for by
--- `open_scratch`, which is not in the snapshot yet), or the current
--- one. Spaces in it are `\u{A0}`, which every font keeps.
+-- kawoosh.buf.annotate(notes[, buffer]): text after a line's end that
+-- is not the buffer's — what an entry is, beside its name — `{ [id] =
+-- "text" }` by tracked line, drawn dim past the line and never in its
+-- bytes; a note goes where its line goes (a line typed above moves it
+-- down, its line deleted takes it away) and stays until set again or
+-- taken off with `false`; the notes not named are kept. `buffer` is a
+-- handle, a name (a scratch just asked for by `open_scratch`, which is
+-- not in the snapshot yet — its ids are its line numbers then), or the
+-- current one. Spaces in it are `\u{A0}`, which every font keeps.
 -- `kawoosh.buf.tracked_lines([buffer])` is where each line a hooked
 -- buffer opened with is now (a line number from 1, or false), beside
 -- `tracked()`'s what it became, both by the line's id — its index;
--- `kawoosh.buf.track(line[, buffer])` follows one more line from now
--- on — a line pasted in — and returns its id, which both know at once
--- (nil for a line the buffer does not have). A buffer's lines are
--- tracked again, from 1, whenever `open_scratch` fills it.
+-- `kawoosh.buf.tracked_line(id[, buffer])` is one line's text and line
+-- number (nil once deleted); `kawoosh.buf.track(line[, buffer])`
+-- follows one more line from now on — a line pasted in — and returns
+-- its id, which all of them know at once (nil for a line the buffer
+-- does not have). A buffer's lines are tracked again, from 1, whenever
+-- `open_scratch` fills it, its notes going with the old ones.
+--
+-- kawoosh.buf.changes([buffer]): what differs from the buffer's lines
+-- as tracked, so a plugin reads what changed and not the buffer —
+-- `edited`, by id, the text of each tracked line that reads otherwise
+-- than when it was tracked, with `lines` its line number; `gone`, the
+-- ids deleted; `untracked`, by line number, the text of each line no
+-- tracked line is on (typed or pasted in); and `shared`, by line
+-- number, the ids of the tracked lines that landed on one line (`J`).
 --
 -- kawoosh.buf.show(buffer): the buffer into the focused pane, as `:b`
 -- would, its caret where it was left.
