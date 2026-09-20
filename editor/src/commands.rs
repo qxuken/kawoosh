@@ -89,6 +89,14 @@ fn line_range_of_sel(buf: &Buffer, s: &Selection, extra_lines: usize) -> Range<u
     }
 }
 
+/// The lines a selection is on, and `extra_lines` after them, from the
+/// first's start to the last's end — no newline on either side.
+fn whole_lines_of_sel(buf: &Buffer, s: &Selection, extra_lines: usize) -> Range<usize> {
+    let a = buf.line_of(s.start());
+    let b = (buf.line_of(s.end()) + extra_lines).min(buf.line_count() - 1);
+    buf.line_start(a)..buf.line_range(b).end
+}
+
 /// The range an operator applies to, per the motion's kind.
 pub(crate) fn op_range(
     buf: &Buffer,
@@ -1323,19 +1331,19 @@ pub fn install(ed: &mut Editor) {
         let n = ctx.count.max(2) - 1;
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
-        let ranges: Vec<(Range<usize>, bool)> = if ed.mode(ctx.view) == Mode::Visual {
-            ed.views[ctx.view]
-                .sels
-                .iter()
-                .map(|s| (line_range_of_sel(buf, s, 0), true))
-                .collect()
+        // Whole lines, not `line_range_of_sel`: a range that reaches the
+        // last line takes the newline *before* its first line (`dd`'s
+        // rule), and a join that began on that newline began a line up.
+        let extra = if ed.mode(ctx.view) == Mode::Visual {
+            0
         } else {
-            ed.views[ctx.view]
-                .sels
-                .iter()
-                .map(|s| (line_range_of_sel(buf, s, n), true))
-                .collect()
+            n
         };
+        let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
+            .sels
+            .iter()
+            .map(|s| (whole_lines_of_sel(buf, s, extra), true))
+            .collect();
         if ed.mode(ctx.view) == Mode::Visual {
             ed.set_mode(ctx.view, Mode::Normal);
         }

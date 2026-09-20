@@ -24,9 +24,13 @@ letter, and a press is matched by what kui resolves it to (mvp.md D4b,
 kui.md D5): the layout's key while it is ASCII — Dvorak's `j` is where
 Dvorak puts it — and the US-QWERTY letter at that position when it is
 not, so on a Russian layout `о` on the J key is `j`, `ч` on X is `x` and
-ctrl with `ц` on W opens `<C-w>`, with no layout switch; insert mode
-types the layout's text either way. `kawoosh/tests/editor_pane.rs` pins
-it (`a_cyrillic_layout_drives_the_motions_and_types_itself`).
+ctrl with `ц` on W opens `<C-w>`, with no layout switch — and as Shift
+prints it, so `О` on that key is `J` and `Ж` on the key printed `;` is
+`:`, the command line, where the layout's own `:` sits on Shift+6 (kui
+F76, 2026-09-21: before it the stand-in was the unshifted key, and `J`
+moved down); insert mode types the layout's text either way.
+`kawoosh/tests/editor_pane.rs` pins it
+(`a_cyrillic_layout_drives_the_motions_and_types_itself`).
 
 The spellings are taken from what the hands already do: the neovim
 config (which-key groups, `<C-hjkl>` for panes, `[x`/`]x` pairs, `<C-s>`,

@@ -576,6 +576,9 @@ fn typing_a_run_is_one_piece() {
 /// printed J — falls back to the US-QWERTY letter at that position,
 /// so `j` moves down, `x` deletes and a chord is a chord without
 /// switching layouts, while insert mode types what the layout says.
+/// Shift is part of the press: `О` on that key is `J`, and Shift on the
+/// key printed `;` — `Ж` — is `:`, the command line, where the layout's
+/// own `:` sits on Shift+6.
 #[test]
 fn a_cyrillic_layout_drives_the_motions_and_types_itself() {
     use kui::{InputEvent, KeyCode, KeyPress};
@@ -584,7 +587,7 @@ fn a_cyrillic_layout_drives_the_motions_and_types_itself() {
     d.frame(&mut app);
     let ru = |d: &mut Drive, app: &mut Kawoosh, letter: char, at: char, mods: KeyMods| {
         let press = KeyPress::from_layout(KeyCode::Char(letter), KeyCode::Char(at), mods);
-        let press = if mods == KeyMods::default() {
+        let press = if !mods.ctrl && !mods.alt && !mods.super_key {
             press.with_text(letter.to_string())
         } else {
             press
@@ -625,5 +628,64 @@ fn a_cyrillic_layout_drives_the_motions_and_types_itself() {
         2,
         "`<C-w>v` from a Russian layout"
     );
+    // Shift: `О` on J is `J`, which joins; `Ж` on `;` is `:`, which opens
+    // the command line; and insert mode still types the layout's own
+    // upper-case letter.
+    let shift = KeyMods {
+        shift: true,
+        ..Default::default()
+    };
+    ru(&mut d, &mut app, 'О', 'j', shift);
+    assert_eq!(
+        text(&app),
+        "one\nпwo three",
+        "`J` from a Russian layout joins"
+    );
+    ru(&mut d, &mut app, 'Ж', ';', shift);
+    assert!(
+        app.ed.prompt_view().is_some(),
+        "shift on the `;` key is `:` on a Russian layout"
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(app.ed.prompt_view().is_none());
+    ru(&mut d, &mut app, 'ш', 'i', KeyMods::default());
+    ru(&mut d, &mut app, 'О', 'j', shift);
+    assert_eq!(text(&app), "one\nпwoО three");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// `J` on the line before the last joins the two and nothing above: the
+/// range an operator takes on the last line reaches back for the newline
+/// before it (`dd`'s rule), which is not the join's business — it began
+/// a line up, and `jJ` on three lines joined all three.
+#[test]
+fn a_join_reaching_the_last_line_starts_on_its_own_line() {
+    let shift = KeyMods {
+        shift: true,
+        ..Default::default()
+    };
+    let mut app = Kawoosh::new("t", "one\ntwo\nthree");
+    let mut d = Drive::new(800.0, 400.0);
+    d.frame(&mut app);
+    d.keys(&mut app, "j");
+    d.key(&mut app, "J", shift);
+    assert_eq!(text(&app), "one\ntwo three");
+    // The same in visual mode, and a count.
+    let mut app = Kawoosh::new("t", "one\ntwo\nthree\nfour");
+    d.frame(&mut app);
+    d.keys(&mut app, "j");
+    d.key(&mut app, "V", shift);
+    d.keys(&mut app, "j");
+    d.key(&mut app, "J", shift);
+    assert_eq!(text(&app), "one\ntwo three\nfour");
+    d.key(&mut app, "J", shift);
+    assert_eq!(text(&app), "one\ntwo three four");
+    let mut app = Kawoosh::new("t", "one\ntwo\nthree\nfour");
+    d.frame(&mut app);
+    d.keys(&mut app, "j3");
+    d.key(&mut app, "J", shift);
+    assert_eq!(text(&app), "one\ntwo three four", "`3J`");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }

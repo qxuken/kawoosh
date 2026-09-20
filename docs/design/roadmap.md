@@ -72,17 +72,25 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 
 ### Engine: keys, selections, motions
 
-- **`:` in a Russian layout** — open [todo]. The hybrid rule (mvp.md
-  4b, kui.md D5: keycode first, physical fallback when the layout gives
-  a non-latin symbol) is decided and not built: `Kawoosh::on_key` reads
-  kui's `code` only. With a Cyrillic layout `:` is Shift+6 and every
-  letter is a non-latin code, so normal mode dies with it. The build
-  order said "tested with synthesized non-latin presses"; the test does
-  not exist. keys.md notes kui already gives the US letter under Alt
-  when the layout's is not ASCII (`keys.rs`), so half the rule lives in
-  kui for chords and none of it for bare keys — the round starts by
-  reading what kui's payload carries. *This is a correctness gap
-  against a stated decision, and it is first.*
+- **`:` in a Russian layout** — done 2026-09-21 [todo]. What this
+  list said on 2026-09-20 was wrong: the hybrid rule (mvp.md 4b, kui.md
+  D5) was built before the list was written — kui's
+  `KeyPress::from_layout` resolves the layout's key while it is ASCII
+  and the US-QWERTY key at the position otherwise, for every key and
+  not only under Alt, `Kawoosh::on_key` reads the result, and the
+  keymap-clusters round (e50f861) pinned it with synthesized Cyrillic
+  presses in `kawoosh/tests/editor_pane.rs`. What was missing was
+  Shift: a window reports the position unshifted, so on a Russian
+  layout `J` was `j`, `~` was `` ` `` and Shift on the key printed `;`
+  — where a vim hand goes for `:`, the layout's own `:` being on
+  Shift+6 — was `;`, the repeat of a find. Fixed in kui (backlog F76):
+  the stand-in is what US-QWERTY prints for the same press, Shift
+  included; the test presses `О` for `J` and `Ж` for `:` now. The same
+  test found `J` itself off on every layout: `jJ` on three lines joined
+  all three, because the last-line rule of `line_range_of_sel` reaches
+  back for the newline before its first line (`dd`'s business) and the
+  join began a line up; `join` takes whole lines now, with a test of
+  its own.
 - **`<Esc>` ladder** — open [todo ×3, keys.md]. Decision 3.
 - **`.` repeat, and macros with it** — open [todo, kui.md]. mvp.md D4
   says how: commands are named data through one registry, so recording
@@ -336,13 +344,16 @@ struck through when it lands. The order front-loads the two cheap
 correctness gaps, then the one feature the daily driver is missing,
 then breadth.
 
-1. **The hybrid key rule.** kui's payload gives `code` and, if it does
+1. ~~**The hybrid key rule.** kui's payload gives `code` and, if it does
    not yet give the physical key, that is the first kui ask of this
    round; `KeyStroke` gains `physical`, the keymap looks up `code`
    when it is a latin symbol or a name and the US meaning of `physical`
    otherwise, `text` untouched for insert mode. Tests synthesize a
    Cyrillic `:` and `j`, and a Dvorak `j`. *The todo's "`:` in
-   Russian".*
+   Russian".*~~ Landed 2026-09-21 — as a correction, not a build: the
+   rule was in kui and in the keymap already, with the test; what was
+   missing was Shift under the fallback, fixed in kui (F76), and the
+   join bug the test turned up. See the engine track's first item.
 2. **The normal-mode polish batch.** The `<Esc>` ladder (Decision 3);
    `(` / `)` rotate the primary and the primary drawn distinct; the
    yank flash; `<C-a>` / `<C-x>`; the `vi(` fix; `<C-S-x>` copy mode
