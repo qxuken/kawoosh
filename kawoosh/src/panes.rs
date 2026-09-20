@@ -744,18 +744,25 @@ impl Kawoosh {
         let diag_messages = self.lsp.messages.get(&buf_id);
         let diag_colors = [pal.dim, pal.danger, pal.command, pal.dim, pal.faint];
         // The annotations on the rows drawn, each on the line it was
-        // set on has become (`Buffer::line_now`) — none once that line
-        // is deleted, and none where two would land on one line.
+        // set on has become (carried as of this frame, `Kawoosh::carry_annotations`)
+        // — none once that line is deleted, and none where two would
+        // land on one line. Only those within the rows' bytes are
+        // looked up: a listing of forty thousand lines annotates them
+        // all, and draws forty.
         let annotated: std::collections::HashMap<usize, &str> = self
             .annotations
             .get(&buf_id)
-            .map(|(version, list)| {
+            .filter(|a| a.at == buf.version())
+            .map(|a| {
+                let shown = buf.line_start(top)..buf.line_range(last.saturating_sub(1)).end + 1;
                 let mut seen = std::collections::HashSet::new();
                 let mut out = std::collections::HashMap::new();
-                for (r, text) in list {
-                    let Some(ln) = buf.line_now(r.clone(), *version) else {
+                for (r, text) in &a.lines {
+                    let Some(r) = r else { continue };
+                    if !shown.contains(&r.start) {
                         continue;
-                    };
+                    }
+                    let ln = buf.line_of(r.start);
                     if !seen.insert(ln) {
                         out.remove(&ln);
                         continue;

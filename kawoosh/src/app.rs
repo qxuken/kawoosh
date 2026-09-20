@@ -35,9 +35,13 @@ use crate::terminals::{TermId, Terminals};
 pub const TITLE_H: f32 = 22.0;
 pub const TAB_H: f32 = 26.0;
 
-/// A buffer's annotations: the version they were set at, and each
-/// line's range then with the text past its end.
-pub(crate) type Annotations = (Version, Vec<(std::ops::Range<usize>, String)>);
+/// A buffer's annotations: each line's bytes as of version `at` with
+/// the text past its end — `None` once the line was deleted — carried
+/// on through the edits since at each frame (`Kawoosh::carry_annotations`).
+pub(crate) struct Annotations {
+    pub at: Version,
+    pub lines: Vec<(Option<std::ops::Range<usize>>, String)>,
+}
 pub(crate) const DIVIDER: f32 = 4.0;
 
 pub struct Kawoosh {
@@ -1305,6 +1309,7 @@ impl kui::App for Kawoosh {
         if let Some(rt) = self.scripting.rt.clone() {
             rt.publish(&self.ed, self.focused_view());
         }
+        self.carry_annotations();
         self.perf.cur.lua = ms(t);
         if self.quit {
             if !self.session_saved {
@@ -1546,4 +1551,26 @@ pub(crate) fn first_line(b: &Buffer) -> String {
         .next()
         .unwrap_or("")
         .to_owned()
+}
+
+impl Kawoosh {
+    /// Every buffer's annotations carried through the edits since they
+    /// were last looked at, as a tracked line is (`Buffer::line_carried`)
+    /// — the edits of the frame, not since they were set — so drawing
+    /// them is a lookup per row on show, not per annotation.
+    pub(crate) fn carry_annotations(&mut self) {
+        self.annotations
+            .retain(|id, _| self.ed.buffers.contains_key(*id));
+        for (id, a) in self.annotations.iter_mut() {
+            let b = &self.ed.buffers[*id];
+            let v = b.version();
+            if a.at == v {
+                continue;
+            }
+            for (r, _) in a.lines.iter_mut() {
+                *r = r.take().and_then(|r| b.line_carried(r, a.at, v));
+            }
+            a.at = v;
+        }
+    }
 }

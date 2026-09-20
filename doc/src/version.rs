@@ -186,11 +186,15 @@ impl Journal {
             return Err(Stale::HistoryPruned);
         }
 
-        Ok(self
-            .entries
-            .iter()
-            .filter(move |(version, _)| *version > from)
-            .map(|(_, edit)| edit))
+        Ok(self.after(from).map(|(_, edit)| edit))
+    }
+
+    /// The entries after version `from`, oldest first — found by
+    /// binary search, since the versions run up: a caller carrying a
+    /// line through a recent edit does not walk the whole log for it.
+    fn after(&self, from: Version) -> impl Iterator<Item = &(Version, Edit)> {
+        let start = self.entries.partition_point(|(v, _)| *v <= from);
+        self.entries.range(start..)
     }
 
     /// The edits after version `from` up to and including `to`, oldest
@@ -207,9 +211,8 @@ impl Journal {
             return Err(Stale::HistoryPruned);
         }
         Ok(self
-            .entries
-            .iter()
-            .filter(move |(version, _)| *version > from && *version <= to)
+            .after(from)
+            .take_while(move |(version, _)| *version <= to)
             .map(|(_, edit)| edit))
     }
 

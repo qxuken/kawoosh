@@ -533,6 +533,42 @@ impl Buffer {
         self.line_range(ln).start
     }
 
+    /// Where every line starts, in one pass over the text: the way to
+    /// ask about every line at once — each line's range, or the line
+    /// of each of many offsets by binary search — where asking one at a
+    /// time would scan a piece per question.
+    pub fn line_starts(&self) -> Vec<usize> {
+        let mut starts = vec![0];
+        let mut base = 0;
+        self.visit_range(0..self.len(), |chunk| {
+            starts.extend(
+                chunk
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, b)| **b == b'\n')
+                    .map(|(i, _)| base + i + 1),
+            );
+            base += chunk.len();
+        });
+        starts
+    }
+
+    /// The line (from 0) at `offset`, given [`Buffer::line_starts`].
+    pub fn line_at(starts: &[usize], offset: usize) -> usize {
+        starts.partition_point(|s| *s <= offset).saturating_sub(1)
+    }
+
+    /// The range of line `ln` without its newline, given
+    /// [`Buffer::line_starts`] — the last line runs to the end.
+    pub fn line_range_in(&self, starts: &[usize], ln: usize) -> Range<usize> {
+        let start = starts[ln.min(starts.len() - 1)];
+        let mut end = starts.get(ln + 1).map_or(self.len(), |s| s - 1);
+        if end > start && self.byte_at(end - 1) == Some(b'\r') {
+            end -= 1;
+        }
+        start..end
+    }
+
     /// Where the line whose bytes were `line` (its `line_range`) at
     /// version `from` is now — the line it became, however the text
     /// was edited since — or `None` once it was deleted. A line's
@@ -575,8 +611,16 @@ impl Buffer {
             let a = edit.transform_offset(r.start, start_bias);
             let b = edit.transform_offset(r.end, end_bias);
             r = a..b.max(a);
-            let beyond = edit.range.start < before.start || edit.range.end > before.end;
-            if r.is_empty() && edit.removed() > 0 && beyond {
+            // Gone when the edit left none of its bytes and took bytes
+            // beyond them; a line with no bytes left (emptied, or empty
+            // from the start) goes when the byte where it was is taken
+            // — an edit elsewhere is not its business.
+            let gone = if before.is_empty() {
+                edit.range.start <= before.start && edit.range.end > before.start
+            } else {
+                edit.range.start < before.start || edit.range.end > before.end
+            };
+            if r.is_empty() && edit.removed() > 0 && gone {
                 return None;
             }
         }
@@ -1741,5 +1785,218 @@ mod line_now_tests {
         assert_eq!(b.line_now(a.clone(), v), Some(2));
         b.replace(9..10, "");
         assert_eq!(b.line_now(a.clone(), v), None);
+    }
+
+    /// A small deterministic generator for the property below.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n.max(1) as u64) as usize
+        }
+    }
+
+    /// Random edits — insertions with and without newlines, deletions
+    /// within and across lines, replacements, whole lines cut — over a
+    /// tracked buffer, against what holds whatever the edit:
+    ///   - a line no edit touched (none of its bytes or its newline
+    ///     removed, nothing inserted inside it) is where its bytes are,
+    ///     as they were: checked against a model that tags every byte
+    ///     with the line it came from, which knows nothing of biases;
+    ///   - the lines still there keep their order (two may share a
+    ///     line, joined);
+    ///   - an insertion alone deletes nothing;
+    ///   - the carry is a fold: carried to a version between and on
+    ///     from there, a line lands where the carry from its origin
+    ///     lands it — what lets the runtime carry lines on frame by
+    ///     frame instead of from the start each time;
+    ///   - `line_starts` agrees with `line_of` and `line_range`.
+    #[test]
+    fn identity_holds_under_random_edits() {
+        for seed in 1..=300u64 {
+            let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+            let n = 3 + rng.below(10);
+            let lines: Vec<String> = (0..n)
+                .map(|i| {
+                    let len = rng.below(6);
+                    (0..len)
+                        .map(|j| (b'a' + ((i + j) % 26) as u8) as char)
+                        .collect()
+                })
+                .collect();
+            let mut b = Buffer::new("t", &lines.join("\n"));
+            let v0 = b.version();
+            let origins: Vec<Range<usize>> = (0..n).map(|ln| b.line_range(ln)).collect();
+            // The model: each byte's line at v0 (its newline included),
+            // `None` for a byte typed since; and which lines an edit
+            // has touched.
+            let mut cells: Vec<Option<usize>> = Vec::new();
+            for (ln, l) in lines.iter().enumerate() {
+                cells.extend(std::iter::repeat_n(Some(ln), l.len()));
+                if ln + 1 < n {
+                    cells.push(Some(ln));
+                }
+            }
+            let mut touched = vec![false; n];
+            // And whose text an insertion beside it changed.
+            let mut typed = vec![false; n];
+            let mut mid: Option<(Version, Vec<Option<Range<usize>>>)> = None;
+            for step in 0..24 {
+                let len = b.len();
+                let (range, text): (Range<usize>, String) = match rng.below(6) {
+                    0 => {
+                        let at = rng.below(len + 1);
+                        (at..at, "xy".into())
+                    }
+                    1 => {
+                        let at = rng.below(len + 1);
+                        (at..at, "\nq".into())
+                    }
+                    2 => {
+                        let a = rng.below(len + 1);
+                        let e = (a + rng.below(4)).min(len);
+                        (a..e, String::new())
+                    }
+                    3 => {
+                        let ln = rng.below(b.line_count());
+                        let r = b.line_range(ln);
+                        if ln + 1 < b.line_count() {
+                            (r.start..r.end + 1, String::new())
+                        } else {
+                            (r.start.saturating_sub(1)..r.end, String::new())
+                        }
+                    }
+                    4 => {
+                        let a = rng.below(len + 1);
+                        let e = (a + rng.below(3)).min(len);
+                        (a..e, "Z".into())
+                    }
+                    _ => {
+                        let ln = rng.below(b.line_count());
+                        let r = b.line_range(ln);
+                        (r, "re".into())
+                    }
+                };
+                let range = range.start.min(len)..range.end.min(len);
+                if range.is_empty() && text.is_empty() {
+                    continue;
+                }
+                // The model's edit.
+                for ln in cells[range.clone()].iter().flatten() {
+                    touched[*ln] = true;
+                }
+                // The lines either side of the edit have their text
+                // changed by it — joined to a neighbour, typed into at
+                // an edge — and one with the edit inside it is touched.
+                let before = range.start.checked_sub(1).and_then(|i| cells[i]);
+                let after = cells.get(range.end).copied().flatten();
+                if let Some(ln) = before
+                    && !text.is_empty()
+                    && before == after
+                {
+                    touched[ln] = true;
+                }
+                for c in [before, after].into_iter().flatten() {
+                    typed[c] = true;
+                }
+                cells.splice(range.clone(), std::iter::repeat_n(None, text.len()));
+                let insertion = range.is_empty();
+                let before: Vec<Option<usize>> =
+                    origins.iter().map(|r| b.line_now(r.clone(), v0)).collect();
+                let v = b.replace(range, &text);
+                assert_eq!(b.text().len(), cells.len(), "seed {seed} step {step}");
+                let now: Vec<Option<usize>> =
+                    origins.iter().map(|r| b.line_now(r.clone(), v0)).collect();
+                // Order kept; an insertion deletes nothing.
+                let mut last = 0;
+                for (i, ln) in now.iter().enumerate() {
+                    if let Some(ln) = ln {
+                        assert!(*ln >= last, "seed {seed} step {step}: out of order {now:?}");
+                        last = *ln;
+                    }
+                    if insertion && before[i].is_some() {
+                        assert!(
+                            ln.is_some(),
+                            "seed {seed} step {step}: an insertion deleted line {i}"
+                        );
+                    }
+                }
+                // Untouched lines are where their bytes are, as they were.
+                let mut newlines = 0;
+                let mut first: Vec<Option<usize>> = vec![None; n];
+                for (i, c) in cells.iter().enumerate() {
+                    if let Some(ln) = c
+                        && first[*ln].is_none()
+                    {
+                        first[*ln] = Some(newlines);
+                    }
+                    if b.byte_at(i) == Some(b'\n') {
+                        newlines += 1;
+                    }
+                }
+                for ln in 0..n {
+                    // An empty line typed at grows over what is typed,
+                    // a newline among it (`cc`, then a name and `<CR>`):
+                    // the model, which knows only its newline, has it
+                    // below; and an empty last line has no byte of its
+                    // own in the model at all.
+                    if touched[ln] || (lines[ln].is_empty() && (typed[ln] || ln + 1 == n)) {
+                        continue;
+                    }
+                    assert_eq!(
+                        now[ln],
+                        first[ln],
+                        "seed {seed} step {step}: untouched line {ln} of {:?}",
+                        b.text()
+                    );
+                    if !typed[ln] {
+                        assert_eq!(b.line_text(now[ln].unwrap()), lines[ln]);
+                    }
+                }
+                // The carry folds.
+                if let Some((mv, at_mid)) = &mid {
+                    for (i, r) in origins.iter().enumerate() {
+                        let stepwise = at_mid[i]
+                            .clone()
+                            .and_then(|r| b.line_carried(r, *mv, v))
+                            .map(|r| b.line_of(r.start));
+                        assert_eq!(
+                            stepwise, now[i],
+                            "seed {seed} step {step}: the fold, line {i}"
+                        );
+                        let _ = r;
+                    }
+                }
+                if step % 5 == 2 {
+                    mid = Some((
+                        v,
+                        origins
+                            .iter()
+                            .map(|r| b.line_carried(r.clone(), v0, v))
+                            .collect(),
+                    ));
+                }
+                // The bulk line index agrees with the one-at-a-time one.
+                let starts = b.line_starts();
+                assert_eq!(starts.len(), b.line_count());
+                for ln in 0..b.line_count() {
+                    assert_eq!(b.line_range_in(&starts, ln), b.line_range(ln));
+                }
+                for off in 0..=b.len() {
+                    assert_eq!(
+                        Buffer::line_at(&starts, off),
+                        b.line_of(off),
+                        "offset {off}"
+                    );
+                }
+            }
+        }
     }
 }

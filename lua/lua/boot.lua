@@ -180,9 +180,11 @@ end
 -- one. Spaces in it are `\u{A0}`, which every font keeps.
 -- `kawoosh.buf.tracked_lines([buffer])` is where each line a hooked
 -- buffer opened with is now (a line number from 1, or false), beside
--- `tracked()`'s what it became; `kawoosh.buf.track(line[, buffer])`
--- follows one more line from now on, after those — a line pasted in —
--- and it is the next index of both.
+-- `tracked()`'s what it became, both by the line's id — its index;
+-- `kawoosh.buf.track(line[, buffer])` follows one more line from now
+-- on — a line pasted in — and returns its id, which both know at once
+-- (nil for a line the buffer does not have). A buffer's lines are
+-- tracked again, from 1, whenever `open_scratch` fills it.
 --
 -- kawoosh.buf.show(buffer): the buffer into the focused pane, as `:b`
 -- would, its caret where it was left.

@@ -318,14 +318,20 @@ impl Kawoosh {
                     self.ed.message = "annotate: no such buffer".into();
                     return;
                 };
-                let count = b.line_count();
+                let starts = b.line_starts();
+                let count = starts.len();
                 let anchored = lines
                     .into_iter()
                     .filter(|(ln, _)| (1..=count).contains(ln))
-                    .map(|(ln, text)| (b.line_range(ln - 1), text))
+                    .map(|(ln, text)| (Some(b.line_range_in(&starts, ln - 1)), text))
                     .collect();
-                self.annotations
-                    .insert(id.unwrap(), (b.version(), anchored));
+                self.annotations.insert(
+                    id.unwrap(),
+                    crate::app::Annotations {
+                        at: b.version(),
+                        lines: anchored,
+                    },
+                );
             }
             Msg::Tool {
                 name,
@@ -456,9 +462,6 @@ impl Kawoosh {
                     None => self.ed.open_field(&name, ""),
                 };
                 self.ed.set_field_text(v, &text);
-            }
-            Msg::TrackLine { buffer, line } => {
-                rt.track_more(&self.ed, kawoosh_lua::id_of(buffer), line);
             }
             Msg::Edit { .. }
             | Msg::SetText { .. }
@@ -779,19 +782,15 @@ impl Kawoosh {
         };
         rt.publish(&self.ed, Some(view));
         let written = rt.write_hook(&hook, &text);
-        // The hook rewrote the listing (`kawoosh.buf.set_text`, queued):
-        // apply that first, then track the lines as they now are — a
-        // tracking of the old text would call every line of the next
-        // write renamed. A hook that asked first (`false`) leaves the
-        // buffer modified until the answer writes it.
+        // A hook that wrote (`true`) has the buffer saved; the lines it
+        // tracks are as the hook left them — one that refilled the
+        // buffer (`open_scratch` again) tracked the new text there, and
+        // one that did not keeps following the lines it had. A hook
+        // that asked first (`false`) leaves the buffer modified until
+        // the answer writes it.
         self.drain_lua();
-        if written {
-            if let Some(b) = self.ed.buffers.get_mut(buffer) {
-                b.mark_saved();
-            }
-            if let Some(rt) = self.scripting.rt.clone() {
-                rt.track_lines(&self.ed, buffer);
-            }
+        if written && let Some(b) = self.ed.buffers.get_mut(buffer) {
+            b.mark_saved();
         }
     }
 }

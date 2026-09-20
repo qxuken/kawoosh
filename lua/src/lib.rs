@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use kawoosh_doc::{BufferId, Snapshot};
+use kawoosh_doc::{Buffer, BufferId, Snapshot};
 use std::collections::BTreeSet;
 
 use kawoosh_editor::{Args, Ctx, Editor, Facts, Setting, Spec, ViewId};
@@ -176,13 +176,6 @@ pub enum Msg {
         buffer: u64,
         offset: usize,
     },
-    /// `kawoosh.buf.track(line, buffer)`: a line (from 1) of a hooked
-    /// buffer followed from now on, after the lines it opened with —
-    /// a line pasted in, which is an entry of another listing.
-    TrackLine {
-        buffer: u64,
-        line: usize,
-    },
 }
 
 impl Msg {
@@ -242,16 +235,24 @@ pub struct Published {
     pub fields: HashMap<String, FieldSnap>,
     /// Which field each view's keys are on.
     pub field_focus: HashMap<String, String>,
-    /// For a tracked buffer: what each original line has become — its
-    /// current text, or `None` when deleted (see `Runtime::track_lines`).
-    pub tracked: HashMap<u64, Vec<Option<String>>>,
-    /// And where: each original line's line now (from 1), or `None`.
-    pub tracked_at: HashMap<u64, Vec<Option<usize>>>,
+    /// For a tracked buffer: what each tracked line has become (see
+    /// `Runtime::track_lines`), shared with the runtime's cache — the
+    /// same allocation frame after frame while the buffer stands.
+    pub tracked: HashMap<u64, Rc<TrackedSnap>>,
     /// The `"` register, with where its text came from when the engine
     /// knows (`Editor::register_origin`): the buffer, and for each of
     /// the register's lines the tracked line of that buffer it was —
-    /// its index in `tracked`, or `None` for a line that was not one.
+    /// its id, or `None` for a line that was not one.
     pub register: Option<RegisterSnap>,
+}
+
+/// What a buffer's tracked lines have become, by id (an index from 1
+/// in Lua, from 0 here): each one's text now and its line (from 1),
+/// or `None` once it was deleted.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TrackedSnap {
+    pub texts: Vec<Option<String>>,
+    pub at: Vec<Option<usize>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -277,7 +278,6 @@ impl Default for Published {
             fields: HashMap::new(),
             field_focus: HashMap::new(),
             tracked: HashMap::new(),
-            tracked_at: HashMap::new(),
             register: None,
         }
     }
@@ -291,10 +291,40 @@ pub fn id_of(handle: u64) -> BufferId {
     BufferId::from(KeyData::from_ffi(handle))
 }
 
-/// A buffer's lines as they were when tracking began, and the lines
-/// tracked since (`Runtime::track_more`), each with the version it was
-/// taken at.
-type Tracked = Vec<(kawoosh_doc::Version, std::ops::Range<usize>)>;
+/// One line a hooked buffer follows: the version it was taken at and
+/// its bytes then (`origin`, what the register's provenance is read
+/// against), and where the carry through the journal has brought it
+/// (`now` as of version `at`; `None` once deleted). Carried on from
+/// `at` at each publish — the edits since the last frame, not since
+/// the line was taken — which comes to the same as `Buffer::line_now`
+/// from the origin, the carry being a fold over the edits.
+#[derive(Clone, Debug)]
+struct Followed {
+    origin: (kawoosh_doc::Version, std::ops::Range<usize>),
+    at: kawoosh_doc::Version,
+    now: Option<std::ops::Range<usize>>,
+}
+
+/// A buffer's tracked lines — the lines it was tracked with, then
+/// every line `kawoosh.buf.track` added, in order, an id each — and
+/// what the last publish made of them, reused while the buffer's
+/// version holds.
+#[derive(Default)]
+struct Tracked {
+    lines: Vec<Followed>,
+    snap: Option<(kawoosh_doc::Version, Rc<TrackedSnap>)>,
+}
+
+type TrackedCell = Rc<RefCell<HashMap<BufferId, Tracked>>>;
+
+/// The register's provenance, computed once per register: the origin
+/// it was read against and how many lines were tracked then.
+type RegisterKey = (
+    BufferId,
+    kawoosh_doc::Version,
+    std::ops::Range<usize>,
+    usize,
+);
 
 pub struct Runtime {
     lua: Lua,
@@ -304,9 +334,13 @@ pub struct Runtime {
     /// opened it.
     store: Rc<RefCell<Option<Rc<kawoosh_systems::store::Store>>>>,
     /// Line identity through the journal (core.md's hidden-id idea, done
-    /// with edits instead of runs): the version a buffer was tracked at
-    /// and each line's range then.
-    tracked: RefCell<HashMap<BufferId, Tracked>>,
+    /// with edits instead of runs): each tracked line of a buffer,
+    /// carried through the edits as they come. Shared with
+    /// `kawoosh.buf.track`, which adds a line during a call in.
+    tracked: TrackedCell,
+    /// Which tracked lines the `"` register's lines were, for the
+    /// register that was last looked at.
+    register_map: RefCell<Option<(RegisterKey, Vec<Option<usize>>)>>,
 }
 
 impl Runtime {
@@ -320,7 +354,8 @@ impl Runtime {
         let queue = Rc::new(RefCell::new(Vec::new()));
         let published = Rc::new(RefCell::new(Published::default()));
         let store = Rc::new(RefCell::new(None));
-        seed(&lua, &queue, &published, &store)?;
+        let tracked: TrackedCell = Rc::new(RefCell::new(HashMap::new()));
+        seed(&lua, &queue, &published, &store, &tracked)?;
         lua.load(BOOT).set_name("kawoosh:boot").exec()?;
         Ok((
             Self {
@@ -328,7 +363,8 @@ impl Runtime {
                 queue,
                 published,
                 store,
-                tracked: RefCell::new(HashMap::new()),
+                tracked,
+                register_map: RefCell::new(None),
             },
             ext,
         ))
@@ -400,24 +436,20 @@ impl Runtime {
     pub fn track_lines(&self, ed: &Editor, id: BufferId) {
         let Some(b) = ed.buffers.get(id) else { return };
         let v = b.version();
-        let lines = (0..b.line_count())
-            .map(|ln| (v, b.line_range(ln)))
+        let starts = b.line_starts();
+        let lines = (0..starts.len())
+            .map(|ln| {
+                let r = b.line_range_in(&starts, ln);
+                Followed {
+                    origin: (v, r.clone()),
+                    at: v,
+                    now: Some(r),
+                }
+            })
             .collect();
-        self.tracked.borrow_mut().insert(id, lines);
-    }
-
-    /// Follows line `ln` (from 0) of `id` from now on, after the lines
-    /// tracked so far: the next index of `kawoosh.buf.tracked()`.
-    pub fn track_more(&self, ed: &Editor, id: BufferId, ln: usize) {
-        let Some(b) = ed.buffers.get(id) else { return };
-        if ln >= b.line_count() {
-            return;
-        }
         self.tracked
             .borrow_mut()
-            .entry(id)
-            .or_default()
-            .push((b.version(), b.line_range(ln)));
+            .insert(id, Tracked { lines, snap: None });
     }
 
     /// The snapshot Lua reads from, refreshed before every call in.
@@ -425,27 +457,41 @@ impl Runtime {
         let mut p = self.published.borrow_mut();
         p.buffers.clear();
         p.tracked.clear();
-        p.tracked_at.clear();
-        for (id, lines) in self.tracked.borrow().iter() {
-            let Some(b) = ed.buffers.get(*id) else {
+        let mut tracked = self.tracked.borrow_mut();
+        tracked.retain(|id, _| ed.buffers.contains_key(*id));
+        for (id, t) in tracked.iter_mut() {
+            let b = &ed.buffers[*id];
+            let v = b.version();
+            if let Some((sv, snap)) = &t.snap
+                && *sv == v
+            {
+                p.tracked.insert(handle_of(*id), snap.clone());
                 continue;
-            };
-            // The line each became (`Buffer::line_now`): what was typed
-            // at its edges is its own, a line opened above or below is
-            // not; an emptied line is as good as gone.
-            let at: Vec<Option<usize>> = lines
-                .iter()
-                .map(|(version, r)| {
-                    let ln = b.line_now(r.clone(), *version)?;
-                    (!b.line_text(ln).is_empty()).then_some(ln)
-                })
-                .collect();
-            let lines = at.iter().map(|ln| ln.map(|ln| b.line_text(ln))).collect();
-            p.tracked.insert(handle_of(*id), lines);
-            p.tracked_at.insert(
-                handle_of(*id),
-                at.iter().map(|ln| ln.map(|l| l + 1)).collect(),
-            );
+            }
+            // Each line carried on through the edits since the last
+            // frame, and the line it is by now (`Buffer::line_now`'s
+            // reading): what was typed at its edges is its own, a line
+            // opened above or below is not; an emptied line is as good
+            // as gone. The lines are found in one pass over the text.
+            let starts = b.line_starts();
+            let mut snap = TrackedSnap::default();
+            for f in &mut t.lines {
+                if f.at != v {
+                    f.now = f.now.take().and_then(|r| b.line_carried(r, f.at, v));
+                    f.at = v;
+                }
+                let ln = f
+                    .now
+                    .as_ref()
+                    .map(|r| Buffer::line_at(&starts, r.start))
+                    .map(|ln| (ln, b.line_range_in(&starts, ln)))
+                    .filter(|(_, r)| !r.is_empty());
+                snap.at.push(ln.as_ref().map(|(ln, _)| ln + 1));
+                snap.texts.push(ln.map(|(_, r)| b.slice(r)));
+            }
+            let snap = Rc::new(snap);
+            t.snap = Some((v, snap.clone()));
+            p.tracked.insert(handle_of(*id), snap);
         }
         for (id, b) in ed.buffers.iter() {
             // The buffer's selections are the current view's when it
@@ -482,29 +528,51 @@ impl Runtime {
         // tracked line carried to the version the text was taken at,
         // and, lying in the taken bytes, its line among them.
         p.register = ed.registers.get(&'"').map(|text| {
-            let mut entries = vec![None; text.lines().count()];
             let origin = ed.register_origin.as_ref();
             let buffer = origin.map(|o| handle_of(o.buffer));
-            if let Some(o) = origin
-                && let Some(b) = ed.buffers.get(o.buffer)
-                && let Some(lines) = self.tracked.borrow().get(&o.buffer)
-            {
-                for (i, (version, r)) in lines.iter().enumerate() {
-                    let Some(then) = b.line_carried(r.clone(), *version, o.version) else {
-                        continue;
-                    };
-                    if then.is_empty() || then.start < o.range.start || then.start >= o.range.end {
-                        continue;
-                    }
-                    let k = text
-                        .get(..then.start - o.range.start)
-                        .map(|t| t.matches('\n').count())
-                        .unwrap_or(usize::MAX);
-                    if let Some(slot) = entries.get_mut(k) {
-                        *slot = Some(i + 1);
+            let entries = match origin {
+                Some(o) => {
+                    let n = tracked.get(&o.buffer).map_or(0, |t| t.lines.len());
+                    let key = (o.buffer, o.version, o.range.clone(), n);
+                    let mut cached = self.register_map.borrow_mut();
+                    match &*cached {
+                        Some((k, e)) if *k == key => e.clone(),
+                        _ => {
+                            let mut entries = vec![None; text.lines().count()];
+                            if let Some(b) = ed.buffers.get(o.buffer)
+                                && let Some(t) = tracked.get(&o.buffer)
+                            {
+                                for (i, f) in t.lines.iter().enumerate() {
+                                    let (version, r) = &f.origin;
+                                    if *version > o.version {
+                                        continue;
+                                    }
+                                    let Some(then) = b.line_carried(r.clone(), *version, o.version)
+                                    else {
+                                        continue;
+                                    };
+                                    if then.is_empty()
+                                        || then.start < o.range.start
+                                        || then.start >= o.range.end
+                                    {
+                                        continue;
+                                    }
+                                    let k = text
+                                        .get(..then.start - o.range.start)
+                                        .map(|t| t.matches('\n').count())
+                                        .unwrap_or(usize::MAX);
+                                    if let Some(slot) = entries.get_mut(k) {
+                                        *slot = Some(i + 1);
+                                    }
+                                }
+                            }
+                            *cached = Some((key, entries.clone()));
+                            entries
+                        }
                     }
                 }
-            }
+                None => vec![None; text.lines().count()],
+            };
             RegisterSnap {
                 text: text.clone(),
                 linewise: ed.register_linewise,
@@ -749,6 +817,7 @@ fn seed(
     queue: &Rc<RefCell<Vec<Msg>>>,
     published: &Rc<RefCell<Published>>,
     store: &StoreCell,
+    tracked: &TrackedCell,
 ) -> mlua::Result<()> {
     let k = lua.create_table()?;
     let q = |queue: &Rc<RefCell<Vec<Msg>>>| queue.clone();
@@ -1330,8 +1399,8 @@ fn seed(
                 .or(p.current)
                 .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
             let t = lua.create_table()?;
-            if let Some(lines) = p.tracked.get(&h) {
-                for (i, l) in lines.iter().enumerate() {
+            if let Some(snap) = p.tracked.get(&h) {
+                for (i, l) in snap.texts.iter().enumerate() {
                     match l {
                         Some(s) => t.set(i + 1, s.as_str())?,
                         None => t.set(i + 1, false)?,
@@ -1350,8 +1419,8 @@ fn seed(
                 .or(p.current)
                 .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
             let t = lua.create_table()?;
-            if let Some(lines) = p.tracked_at.get(&h) {
-                for (i, l) in lines.iter().enumerate() {
+            if let Some(snap) = p.tracked.get(&h) {
+                for (i, l) in snap.at.iter().enumerate() {
                     match l {
                         Some(ln) => t.set(i + 1, *ln)?,
                         None => t.set(i + 1, false)?,
@@ -1392,19 +1461,52 @@ fn seed(
             Ok(())
         })?,
     )?;
-    let qq = q(queue);
+    // Followed from the snapshot's version on — the buffer's, since
+    // nothing edits it during a call in — and in the snapshot at once,
+    // so `tracked()` and `tracked_lines()` know the line by its id in
+    // the same call.
+    let tr = tracked.clone();
     let pp = published.clone();
     buf.set(
         "track",
         lua.create_function(move |_, (line, h): (usize, Option<u64>)| {
-            let h = h
-                .or(pp.borrow().current)
-                .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
-            qq.borrow_mut().push(Msg::TrackLine {
-                buffer: h,
-                line: line.saturating_sub(1),
+            let (h, version, range, text) = {
+                let p = pp.borrow();
+                let h = h
+                    .or(p.current)
+                    .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
+                let b = p
+                    .buffers
+                    .get(&h)
+                    .ok_or_else(|| mlua::Error::runtime(format!("no buffer {h}")))?;
+                let ln = line.saturating_sub(1);
+                let Some(mut r) = b.snapshot.text.get_line_range(ln) else {
+                    return Ok(LV::Nil);
+                };
+                for nl in *b"\n\r" {
+                    if r.end > r.start && b.snapshot.text.byte_at(r.end - 1) == Some(nl) {
+                        r.end -= 1;
+                    }
+                }
+                (h, b.snapshot.version, r.clone(), b.snapshot.slice(r))
+            };
+            let mut tr = tr.borrow_mut();
+            let t = tr.entry(id_of(h)).or_default();
+            t.lines.push(Followed {
+                origin: (version, range.clone()),
+                at: version,
+                now: Some(range),
             });
-            Ok(())
+            let id = t.lines.len();
+            if let Some((sv, snap)) = &mut t.snap
+                && *sv == version
+            {
+                let s = Rc::make_mut(snap);
+                s.texts.push(Some(text));
+                s.at.push(Some(line));
+                pp.borrow_mut().tracked.insert(h, snap.clone());
+            }
+            Ok(LV::Integer(id as i64))
         })?,
     )?;
     let qq = q(queue);
@@ -1831,7 +1933,6 @@ fn lua_str(v: &LV) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kawoosh_doc::Buffer;
 
     #[test]
     fn reads_publish_and_writes_queue() {
