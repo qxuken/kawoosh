@@ -238,10 +238,17 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   watcher re-reading a listing the io thread's `watch.rs` sees change,
   an image preview once kui's `image` is on the road (req §9), and
   hidden-file toggling. None urgent.
-- **The working memory, round two** — later [kui.md]. Persisting the
-  memory in the store across launches (the histories' shape), and a
-  yank-pop after `p` (`<C-p>`/`<C-n>` right after a put cycling the
-  moment put, as Emacs).
+- **The working memory, round two** — decided 2026-09-21
+  ([memory.md](memory.md)), not built. The memory as the one place the
+  editor remembers: a row per subject (texts, files, command lines,
+  searches, runs) with weak signals and a bounded ring of recent
+  transitions for the timeline, in the store with
+  increments that two windows cannot clobber, limits per kind with
+  eviction by score and holds; `oldfiles`, the prompt histories and
+  the histories' bookkeeping (touched, aging, the `:history` pane)
+  retire into it, the blobs stay. Pinned files are a flag on it and
+  the picker ranks by it, so the note comes before step 4. The
+  yank-pop after `p` is the round after.
 
 ### Terminal
 
@@ -364,7 +371,8 @@ then breadth.
    code action, format; the server table.
 8. **Lua DX.** The test harness (`kawoosh test`), eval under the caret,
    the `:map` listing, the plugin-pane example written up.
-9. **Design notes, then decide**: the scrolling tab; the markdown
+9. **Design notes, then decide**: the memory ([memory.md](memory.md),
+   decided; build before step 4); the scrolling tab; the markdown
    buffer's kui half; ssh as a domain; auto-closing brackets as a
    plugin.
 
