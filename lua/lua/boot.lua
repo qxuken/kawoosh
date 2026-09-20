@@ -13,6 +13,7 @@ kawoosh._commands = {}
 kawoosh._writers = {}
 kawoosh._changers = {}
 kawoosh._restorers = {}
+kawoosh._openers = {}
 kawoosh._nonce = 0
 
 -- kawoosh.command(name, fn[, opts]): a named command, callable from a
@@ -106,6 +107,18 @@ end
 -- is pressed does not shadow those either, so a plugin that unmaps a
 -- key and maps it back `when` elsewhere has it as a prefix of its own
 -- where it needs one.
+
+-- kawoosh.on_open(fn): `fn(path)` for every path the editor is asked
+-- to open — `:e`, the command line's argument, a location, a
+-- `kawoosh.open` — before it is read as a file; an opener that returns
+-- true has taken it (the file manager takes a directory and lists it),
+-- and the rest, and the editor, do not see it. The path arrives
+-- resolved. An opener shows what it opens itself (`open_scratch`, a
+-- view); one that asked `kawoosh.open` of the same path would be asked
+-- again.
+function kawoosh.on_open(fn)
+  kawoosh._openers[#kawoosh._openers + 1] = fn
+end
 
 -- kawoosh.on_restore(fn): `fn(name, buffer)` for every scratch buffer a
 -- session brings back — empty, named as it was — so the plugin that
@@ -402,6 +415,16 @@ function kawoosh._run(name, ctx)
   if not fn then return end
   local ok, err = pcall(fn, ctx)
   if not ok then kawoosh.echo("command `" .. name .. "`: " .. tostring(err)) end
+end
+
+-- Called from Rust for each path to open: true when an opener took it.
+function kawoosh._open(path)
+  for _, fn in ipairs(kawoosh._openers) do
+    local ok, taken = pcall(fn, path)
+    if not ok then kawoosh.echo("open `" .. path .. "`: " .. tostring(taken)) end
+    if ok and taken then return true end
+  end
+  return false
 end
 
 -- Called from Rust for each scratch buffer a session restored.

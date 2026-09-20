@@ -696,15 +696,29 @@ impl Kawoosh {
 
     pub fn from_file(path: &Path) -> Self {
         let mut app = Self::new("*scratch*", "");
-        let scratch = app.ed.buffers.keys().next().unwrap();
-        app.open(path);
-        if app
-            .focused_view()
-            .is_some_and(|v| app.ed.views[v].buffer != scratch)
-        {
-            app.ed.remove_buffer(scratch);
-        }
+        app.open_first(path);
         app
+    }
+
+    /// Opens the command line's path in the app as it starts — after
+    /// the config, so the plugins' openers see it: `kawoosh DIR` lists
+    /// the directory. The scratch buffer the app began with goes when
+    /// the pane left it.
+    pub fn open_first(&mut self, path: &Path) {
+        let scratch = self
+            .ed
+            .buffers
+            .iter()
+            .find(|(_, b)| b.name == "*scratch*" && b.path.is_none())
+            .map(|(id, _)| id);
+        self.open(path);
+        if let Some(scratch) = scratch
+            && self
+                .focused_view()
+                .is_some_and(|v| self.ed.views[v].buffer != scratch)
+        {
+            self.ed.remove_buffer(scratch);
+        }
     }
 
     /// The focused pane's view, if it is an editor pane.
@@ -779,8 +793,11 @@ impl Kawoosh {
     }
 
     /// Opens `path` in the focused editor pane (or a new pane if the
-    /// focus is elsewhere).
+    /// focus is elsewhere) — unless a plugin's opener takes it.
     pub fn open(&mut self, path: &Path) {
+        if self.opened_by_plugin(path) {
+            return;
+        }
         let Some(id) = self.buffer_for(path) else {
             return;
         };
@@ -791,6 +808,22 @@ impl Kawoosh {
                 self.layout.split(SplitDir::H, Content::Editor(v));
             }
         }
+    }
+
+    /// Whether a plugin's opener took `path` (`kawoosh.on_open`): a
+    /// directory is the file manager's, which lists it. Asked with the
+    /// path resolved, and what the opener asked for is done here.
+    pub(crate) fn opened_by_plugin(&mut self, path: &Path) -> bool {
+        let Some(rt) = self.scripting.rt.clone() else {
+            return false;
+        };
+        let resolved = self.resolve(path);
+        rt.publish(&self.ed, self.focused_view());
+        let taken = rt.open_hook(&resolved.to_string_lossy());
+        if taken {
+            self.drain_lua();
+        }
+        taken
     }
 
     /// Shows buffer `id` in `view`. The caret and scroll of the buffer

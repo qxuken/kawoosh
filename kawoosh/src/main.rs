@@ -113,10 +113,7 @@ fn main() -> anyhow::Result<()> {
     let log_sink = Logger::install(wake.clone(), keep);
     let mut core = Core::new();
     let font = load_fonts(&mut core);
-    let mut app = match &path {
-        Some(p) => Kawoosh::from_file(Path::new(p)),
-        None => Kawoosh::new("*scratch*", SCRATCH),
-    };
+    let mut app = Kawoosh::new("*scratch*", if path.is_some() { "" } else { SCRATCH });
     app.font = font;
     app.log_sink = log_sink;
     app.notes.stderr = stderr;
@@ -125,9 +122,14 @@ fn main() -> anyhow::Result<()> {
     let ext = app.attach_lua().map_err(|e| anyhow::anyhow!("lua: {e}"))?;
     app.open_store(None);
     app.load_config();
-    // A bare launch picks up where the last one left off (mvp.md D7).
-    if path.is_none() {
-        app.restore_session();
+    // The path opens after the config, so a plugin's opener sees it — a
+    // directory is listed; a bare launch picks up where the last one
+    // left off (mvp.md D7).
+    match &path {
+        Some(p) => app.open_first(Path::new(p)),
+        None => {
+            app.restore_session();
+        }
     }
     kui::app("kawoosh")
         .size(1100.0, 760.0)

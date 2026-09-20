@@ -2339,3 +2339,51 @@ fn a_write_with_nothing_to_apply_reads_the_listing_again() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A directory opened as a file is a listing: `:e DIR`, and the
+/// command line's argument (`Kawoosh::open_first`, which leaves no
+/// scratch buffer behind). Every path goes past the plugins' openers
+/// first (`kawoosh.on_open`); the file manager takes the directories,
+/// and a file is still the editor's.
+#[test]
+fn a_directory_opens_as_a_listing() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-opendir-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(dir.join("a.txt"), "alpha").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("e {}", dir.display()));
+    d.frame(&mut app);
+    assert_eq!(
+        d.line_rows(),
+        ["../", "sub/", "a.txt"],
+        "{}",
+        app.ed.message
+    );
+    d.keys(&mut app, "jj");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["alpha"]);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    app.open_first(&dir);
+    d.frame(&mut app);
+    assert_eq!(
+        d.line_rows(),
+        ["../", "sub/", "a.txt"],
+        "{}",
+        app.ed.message
+    );
+    assert!(
+        app.ed.buffers.values().all(|b| b.name != "*scratch*"),
+        "the scratch buffer is gone"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

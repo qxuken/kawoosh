@@ -743,6 +743,28 @@ impl Runtime {
         }
     }
 
+    /// Asks the plugins' openers for `path` (`kawoosh.on_open`): true
+    /// when one took it — a directory, which the file manager lists.
+    pub fn open_hook(&self, path: &str) -> bool {
+        let Ok(f) = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Function>("_open"))
+        else {
+            return false;
+        };
+        match f.call::<bool>(path) {
+            Ok(taken) => taken,
+            Err(e) => {
+                self.queue
+                    .borrow_mut()
+                    .push(Msg::Echo(format!("open {path}: {e}")));
+                false
+            }
+        }
+    }
+
     /// Tells the plugins a scratch buffer came back with a session,
     /// empty, by name and handle (`kawoosh.on_restore`).
     pub fn restore_hook(&self, name: &str, handle: u64) {

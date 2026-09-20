@@ -7,7 +7,9 @@
 -- is a bulk file operation, which is the point.
 --
 -- Bundled: the extension API's acceptance test. `-` opens the directory
--- of the current file (or the cwd) with the caret on that file; in a
+-- of the current file (or the cwd) with the caret on that file, and a
+-- directory opened as a file (`:e DIR`, `kawoosh DIR`) is listed
+-- (`kawoosh.on_open`); in a
 -- listing, `-` goes up with the caret on the directory it left (above
 -- a root on Windows, to the drives), `<CR>` opens the entry under the
 -- caret, `<C-l>` reads the directory again (a listing with edits is
@@ -1078,6 +1080,15 @@ end, {
   when = { "language:dir" },
   doc = "show the entry under the caret in a pane beside, or hide it",
 })
+
+-- A directory opened as a file — `:e DIR`, `kawoosh DIR` on the command
+-- line — is listed.
+kawoosh.on_open(function(path)
+  if fs.is_dir(path) then
+    dir.open(path)
+    return true
+  end
+end)
 
 -- A listing a session brings back, empty, is read again where it is.
 kawoosh.on_restore(function(name, h)

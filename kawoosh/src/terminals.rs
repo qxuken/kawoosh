@@ -234,6 +234,9 @@ impl Kawoosh {
     /// Opens `path` in an editor pane — the focused one, or a split
     /// beside a terminal — and moves to `line:col` when given.
     pub fn open_in_editor(&mut self, path: &Path, line: Option<usize>, col: Option<usize>) {
+        if self.opened_by_plugin(path) {
+            return;
+        }
         if self.focused_view().is_none() {
             // From a terminal: prefer an editor pane already on screen.
             let editor_pane = self
