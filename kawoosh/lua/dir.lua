@@ -104,15 +104,19 @@ local function ext_of(name)
   return name:match("^.+%.([^.]+)$") or ""
 end
 
+-- Each entry's key is taken once, not per comparison: forty thousand
+-- names sort in a blink rather than a beat.
 local function sorted(entries, sort)
   local key, rev = sort.key, sort.reverse
+  for _, e in ipairs(entries) do
+    if key == "size" then e.k = e.size
+    elseif key == "mtime" then e.k = e.modified or 0
+    elseif key == "type" then e.k = ext_of(e.name):lower()
+    else e.k = e.name:lower() end
+  end
   table.sort(entries, function(a, b)
     if a.is_dir ~= b.is_dir then return a.is_dir end
-    local x, y
-    if key == "size" then x, y = a.size, b.size
-    elseif key == "mtime" then x, y = a.modified or 0, b.modified or 0
-    elseif key == "type" then x, y = ext_of(a.name):lower(), ext_of(b.name):lower()
-    else x, y = a.name:lower(), b.name:lower() end
+    local x, y = a.k, b.k
     if x == y then x, y = a.name, b.name end
     if rev then return x > y end
     return x < y
@@ -122,8 +126,8 @@ end
 
 -- The listing's lines and, by line, what each entry is: a file's size
 -- right-aligned past the longest name, then the mtime.
-local function listing(d)
-  local entries = sorted(fs.list(d), sort_of(d))
+local function shape(d, entries)
+  entries = sorted(entries, sort_of(d))
   local lines, meta, width = { "../" }, {}, 3
   for _, e in ipairs(entries) do
     local line = e.is_dir and (e.name .. "/") or e.name
@@ -138,6 +142,16 @@ local function listing(d)
     meta[i + 1] = NBSP:rep(pad) .. cols .. NBSP:rep(2) .. when(e.modified)
   end
   return lines, meta, width
+end
+
+-- Reads `d` on the io thread and hands `done(lines, meta, width)` its
+-- listing when it is read — or `done(nil, why)` — so nothing waits on
+-- the disk: a slow share, forty thousand entries.
+local function listing(d, done)
+  fs.list(d, function(entries, err)
+    if not entries then return done(nil, err) end
+    done(shape(d, entries))
+  end)
 end
 
 -- The state of a listing of `d` just filled with `lines`: its lines'
@@ -247,39 +261,45 @@ function dir.open(path, from, fresh, reread)
     if ln then kawoosh.buf.set_cursor(offset_of(lines, ln), open) end
     return
   end
-  local ok, lines, meta, width = pcall(listing, path)
-  if not ok then
-    kawoosh.echo(tostring(lines))
-    return
-  end
-  dir.state[name] = state_of(path, lines, meta, width)
   local reuse = (listed() and not fresh and not kawoosh.buf.modified()) and kawoosh.buf.current() or nil
-  kawoosh.buf.open_scratch {
-    name = name,
-    text = table.concat(lines, "\n"),
-    language = "dir",
-    on_write = dir.write,
-    on_change = dir.changed,
-    reuse = reuse,
-    line = line_of(lines, from),
-  }
-  kawoosh.buf.annotate(meta, name)
+  -- The keyboard's last ask is the one that lands: a `-` pressed twice
+  -- while the first read is out shows the second's directory.
+  dir.nav = (dir.nav or 0) + 1
+  local nav = dir.nav
+  listing(path, function(lines, meta, width)
+    if dir.nav ~= nav then return end
+    if not lines then return kawoosh.echo(tostring(meta)) end
+    -- The listing to reuse is still one, and not edited meanwhile.
+    if reuse and (not lists(reuse) or kawoosh.buf.modified(reuse)) then reuse = nil end
+    dir.state[name] = state_of(path, lines, meta, width)
+    kawoosh.buf.open_scratch {
+      name = name,
+      text = table.concat(lines, "\n"),
+      language = "dir",
+      on_write = dir.write,
+      on_change = dir.changed,
+      reuse = reuse,
+      line = line_of(lines, from),
+    }
+    kawoosh.buf.annotate(meta, name)
+  end)
 end
 
 -- Lists `d` again in its buffer `h` where it is — another pane, the
 -- background — without touching the focused pane, the caret kept on
 -- its entry.
 local function relist(d, h)
-  local ok, lines, meta, width = pcall(listing, d)
-  if not ok then return end
-  local name = PREFIX .. d
-  dir.state[name] = state_of(d, lines, meta, width)
-  kawoosh.buf.open_scratch {
-    name = name, text = table.concat(lines, "\n"), language = "dir",
-    on_write = dir.write, on_change = dir.changed, show = false,
-    line = line_of(lines, under_caret(h)),
-  }
-  kawoosh.buf.annotate(meta, name)
+  listing(d, function(lines, meta, width)
+    if not lines or lists(h) ~= d then return end
+    local name = PREFIX .. d
+    dir.state[name] = state_of(d, lines, meta, width)
+    kawoosh.buf.open_scratch {
+      name = name, text = table.concat(lines, "\n"), language = "dir",
+      on_write = dir.write, on_change = dir.changed, show = false,
+      line = line_of(lines, under_caret(h)),
+    }
+    kawoosh.buf.annotate(meta, name)
+  end)
 end
 
 local function at(base, entry) return fs.join(base, (entry:gsub("/$", ""))) end
@@ -909,8 +929,9 @@ end, {
 -- ------------------------------------------------------------ preview
 
 -- What the preview shows of one path, kept for as long as the file is
--- the same (its size and mtime): a directory's names, a text file's
--- first lines, or a word on why not.
+-- the same (its size and mtime): a directory's names — read on the io
+-- thread, `reading…` until they come, the pane drawn again when they
+-- do — a text file's first lines, or a word on why not.
 local cache = {}
 local PREVIEW_MAX = 512 * 1024
 local PREVIEW_LINES = 400
@@ -920,16 +941,21 @@ local function preview_of(path, st)
   local c = cache[path]
   if c and c.key == key then return c end
   c = { key = key, lines = {} }
+  cache = { [path] = c }
   if st.is_dir then
-    local ok, entries = pcall(fs.list, path)
-    if ok then
+    c.note = "reading…"
+    fs.list(path, function(entries, err)
+      if cache[path] ~= c then return end
+      c.note = nil
+      if not entries then
+        c.note = tostring(err)
+        return
+      end
       for _, e in ipairs(entries) do
         c.lines[#c.lines + 1] = e.is_dir and (e.name .. "/") or e.name
       end
       if #c.lines == 0 then c.note = "empty" end
-    else
-      c.note = tostring(entries)
-    end
+    end)
   elseif st.size > PREVIEW_MAX then
     c.note = "too big to preview (" .. human(st.size) .. ")"
   else
@@ -945,7 +971,6 @@ local function preview_of(path, st)
       end
     end
   end
-  cache = { [path] = c }
   return c
 end
 

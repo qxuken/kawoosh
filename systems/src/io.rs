@@ -34,6 +34,13 @@ pub enum IoMsg {
         id: u64,
         code: Option<i32>,
     },
+    /// A directory listed on a thread of its own for a plugin
+    /// (`kawoosh.fs.list(path, fn)`): the job's token, and the entries
+    /// or why not.
+    Listed {
+        token: u64,
+        result: Result<Vec<crate::fs::Entry>, String>,
+    },
     /// A file being opened ([`Io::open_file`]): the bytes indexed so far.
     Opening {
         path: PathBuf,

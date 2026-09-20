@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+use kawoosh_systems::io::IoMsg;
 use std::rc::Rc;
 
 use kawoosh_doc::Buffer;
@@ -110,17 +112,22 @@ impl Kawoosh {
             return;
         };
         self.sync_facts();
-        let msgs = rt.take_msgs();
-        if msgs.is_empty() {
-            return;
-        }
-        let view = self.focused_view().or_else(|| self.ed.any_view());
-        let rest = match view {
-            Some(v) => Runtime::apply_editor_msgs(&mut self.ed, v, msgs),
-            None => msgs,
-        };
-        for m in rest {
-            self.apply_lua_msg(&rt, m);
+        // What a message's handling queues in turn — a job answered
+        // where it was asked, a hook's messages — goes in the same
+        // drain, up to a depth no plugin reaches without a loop.
+        for _ in 0..8 {
+            let msgs = rt.take_msgs();
+            if msgs.is_empty() {
+                break;
+            }
+            let view = self.focused_view().or_else(|| self.ed.any_view());
+            let rest = match view {
+                Some(v) => Runtime::apply_editor_msgs(&mut self.ed, v, msgs),
+                None => msgs,
+            };
+            for m in rest {
+                self.apply_lua_msg(&rt, m);
+            }
         }
         self.drain_effects();
     }
@@ -277,6 +284,19 @@ impl Kawoosh {
                     && let Some(v) = self.focused_view()
                 {
                     self.show_buffer(v, id);
+                }
+            }
+            Msg::ListDir { token, path } => {
+                if self.jobs_inline {
+                    let result = kawoosh_systems::fs::list(&path).map_err(|e| e.to_string());
+                    rt.publish(&self.ed, self.focused_view());
+                    rt.listed(token, result);
+                } else {
+                    self.pending_jobs += 1;
+                    self.io.run("list", move || IoMsg::Listed {
+                        token,
+                        result: kawoosh_systems::fs::list(&path).map_err(|e| e.to_string()),
+                    });
                 }
             }
             Msg::Retarget { from, to } => {

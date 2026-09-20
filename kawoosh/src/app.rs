@@ -170,6 +170,12 @@ pub struct Kawoosh {
     /// now (`Buffer::line_now`) — the way `Runtime::track_lines`
     /// follows a line's identity.
     pub(crate) annotations: HashMap<BufferId, Annotations>,
+    /// Jobs a plugin asked for (`kawoosh.fs.list(path, fn)`) whose
+    /// answer is still out on the io thread.
+    pub(crate) pending_jobs: usize,
+    /// For tests: a job runs where it is asked for and its answer lands
+    /// in the same frame, so a listing is there when the key returns.
+    pub jobs_inline: bool,
 }
 
 impl Kawoosh {
@@ -239,6 +245,8 @@ impl Kawoosh {
             mods: (false, false, false, false),
             confirm: None,
             annotations: HashMap::new(),
+            pending_jobs: 0,
+            jobs_inline: false,
         };
         app.install_commands();
         app
@@ -420,6 +428,14 @@ impl Kawoosh {
                     self.terms.map.remove(&id);
                 }
                 IoMsg::Request(incoming) => self.on_request(incoming),
+                IoMsg::Listed { token, result } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    if let Some(rt) = self.scripting.rt.clone() {
+                        rt.publish(&self.ed, self.focused_view());
+                        rt.listed(token, result);
+                        self.drain_lua();
+                    }
+                }
                 other @ (IoMsg::ProcLine { .. } | IoMsg::ProcExit { .. }) => {
                     self.on_proc_msg(other)
                 }
@@ -524,6 +540,18 @@ impl Kawoosh {
                     }
                 }
             }
+        }
+    }
+
+    /// Blocks until every job a plugin asked for has been answered —
+    /// for tests, which have no loop to be woken.
+    pub fn wait_for_jobs(&mut self) {
+        for _ in 0..12_000 {
+            self.drain_io();
+            if self.pending_jobs == 0 {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
 

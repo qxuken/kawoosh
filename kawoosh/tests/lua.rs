@@ -11,6 +11,7 @@ use kui::KeyMods;
 
 fn app_with_lua(d: &mut Drive, title: &str, text: &str) -> Kawoosh {
     let mut app = Kawoosh::new(title, text);
+    app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
     app
@@ -251,6 +252,7 @@ fn compile_mode_streams_and_jumps_to_locations() {
     std::fs::write(dir.join("src/b.rs"), "x\ny\n").unwrap();
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::from_file(&dir.join("src/a.rs"));
+    app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
     d.frame(&mut app);
@@ -299,6 +301,7 @@ fn dash_opens_the_files_directory_and_can_move_the_cwd() {
     std::fs::write(&file, "x").unwrap();
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::from_file(&file);
+    app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
     d.frame(&mut app);
@@ -337,6 +340,7 @@ fn dash_lands_on_the_entry_it_came_from_and_reuses_the_listing() {
     std::fs::write(dir.join("z.txt"), "x").unwrap();
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::from_file(&dir.join("inner/b.txt"));
+    app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
     d.frame(&mut app);
@@ -419,6 +423,7 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
     std::fs::write(&file, "x").unwrap();
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::from_file(&file);
+    app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
     d.frame(&mut app);
@@ -904,6 +909,7 @@ fn a_path_argument_knows_the_current_file() {
     std::fs::write(dir.join("inner/f.txt"), "x").unwrap();
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::from_file(&dir.join("inner/f.txt"));
+    app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
     d.frame(&mut app);
@@ -950,7 +956,13 @@ fn a_listing_previews_the_entry_under_the_caret() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "");
     d.frame(&mut app);
+    // This one reads its directories on the io thread, as the app does.
+    app.jobs_inline = false;
     ex(&mut d, &mut app, &format!("dir {}", dir.display()));
+    assert_eq!(d.line_rows(), [""], "the scratch, not read yet");
+    app.wait_for_jobs();
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);
     d.keys(&mut app, "jj");
     d.ctrl(&mut app, "p");
     d.frame(&mut app);
@@ -988,7 +1000,14 @@ fn a_listing_previews_the_entry_under_the_caret() {
     d.frame(&mut app);
     let t = texts(&d);
     assert!(
-        t.iter().any(|s| s.starts_with("directory")) && t.contains(&"inside.txt".to_string()),
+        t.iter().any(|s| s.starts_with("directory")) && t.contains(&"reading…".to_string()),
+        "{t:?}"
+    );
+    app.wait_for_jobs();
+    d.frame(&mut app);
+    let t = texts(&d);
+    assert!(
+        t.contains(&"inside.txt".to_string()) && !t.contains(&"reading…".to_string()),
         "{t:?}"
     );
     d.ctrl(&mut app, "p");
@@ -2136,6 +2155,7 @@ fn a_renamed_file_is_still_its_buffer() {
     std::fs::write(dir.join("sub/inner.txt"), "inner").unwrap();
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::from_file(&dir.join("a.txt"));
+    app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
     d.frame(&mut app);

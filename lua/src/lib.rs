@@ -61,6 +61,13 @@ pub enum Msg {
     },
     /// `kawoosh.buf.show(buffer)`: the buffer into the focused pane.
     ShowBuffer(u64),
+    /// `kawoosh.fs.list(path, fn)`: the directory read on a thread of
+    /// its own, the answer to `Runtime::listed` under `token` when it
+    /// comes (`IoMsg::Listed`).
+    ListDir {
+        token: u64,
+        path: PathBuf,
+    },
     /// `kawoosh.buf.retarget(from, to)`: every buffer open at path
     /// `from`, or under it, is at `to` from now on — a file the file
     /// manager renamed or moved, still open.
@@ -324,6 +331,16 @@ struct Tracked {
 
 type TrackedCell = Rc<RefCell<HashMap<BufferId, Tracked>>>;
 
+/// The callbacks of the jobs out (`kawoosh.fs.list(path, fn)`), by
+/// token, and the next token.
+#[derive(Default)]
+struct Jobs {
+    waiting: HashMap<u64, mlua::RegistryKey>,
+    next: u64,
+}
+
+type JobsCell = Rc<RefCell<Jobs>>;
+
 /// The register's provenance, computed once per register: the origin
 /// it was read against and how many lines were tracked then.
 type RegisterKey = (
@@ -348,6 +365,8 @@ pub struct Runtime {
     /// Which tracked lines the `"` register's lines were, for the
     /// register that was last looked at.
     register_map: RefCell<Option<(RegisterKey, Vec<Option<usize>>)>>,
+    /// The jobs out, waiting for their answer.
+    jobs: JobsCell,
 }
 
 impl Runtime {
@@ -362,7 +381,8 @@ impl Runtime {
         let published = Rc::new(RefCell::new(Published::default()));
         let store = Rc::new(RefCell::new(None));
         let tracked: TrackedCell = Rc::new(RefCell::new(HashMap::new()));
-        seed(&lua, &queue, &published, &store, &tracked)?;
+        let jobs: JobsCell = Rc::new(RefCell::new(Jobs::default()));
+        seed(&lua, &queue, &published, &store, &tracked, &jobs)?;
         lua.load(BOOT).set_name("kawoosh:boot").exec()?;
         Ok((
             Self {
@@ -372,6 +392,7 @@ impl Runtime {
                 store,
                 tracked,
                 register_map: RefCell::new(None),
+                jobs,
             },
             ext,
         ))
@@ -742,6 +763,34 @@ impl Runtime {
             .unwrap_or_default()
     }
 
+    /// A directory listed for `kawoosh.fs.list(path, fn)`: the job's
+    /// callback called with the entries, or with nil and why not; the
+    /// messages it queues are the caller's to drain.
+    pub fn listed(&self, token: u64, result: Result<Vec<kawoosh_systems::fs::Entry>, String>) {
+        let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
+            return;
+        };
+        let Ok(f) = self.lua.registry_value::<mlua::Function>(&key) else {
+            return;
+        };
+        let _ = self.lua.remove_registry_value(key);
+        let args = match result {
+            Ok(entries) => match entries_table(&self.lua, entries) {
+                Ok(t) => (LV::Table(t), LV::Nil),
+                Err(e) => (
+                    LV::Nil,
+                    LV::String(self.lua.create_string(e.to_string()).unwrap()),
+                ),
+            },
+            Err(e) => (LV::Nil, LV::String(self.lua.create_string(e).unwrap())),
+        };
+        if let Err(e) = f.call::<()>(args) {
+            self.queue
+                .borrow_mut()
+                .push(Msg::Echo(format!("fs.list: {e}")));
+        }
+    }
+
     pub fn take_msgs(&self) -> Vec<Msg> {
         std::mem::take(&mut *self.queue.borrow_mut())
     }
@@ -819,12 +868,29 @@ impl Runtime {
 
 type StoreCell = Rc<RefCell<Option<Rc<kawoosh_systems::store::Store>>>>;
 
+/// A listing's entries as Lua sees them: `{ name, is_dir, is_symlink,
+/// size, modified }` each.
+fn entries_table(lua: &Lua, entries: Vec<kawoosh_systems::fs::Entry>) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    for (i, e) in entries.into_iter().enumerate() {
+        let et = lua.create_table()?;
+        et.set("name", e.name)?;
+        et.set("is_dir", e.is_dir)?;
+        et.set("is_symlink", e.is_symlink)?;
+        et.set("size", e.size)?;
+        et.set("modified", e.modified)?;
+        t.set(i + 1, et)?;
+    }
+    Ok(t)
+}
+
 fn seed(
     lua: &Lua,
     queue: &Rc<RefCell<Vec<Msg>>>,
     published: &Rc<RefCell<Published>>,
     store: &StoreCell,
     tracked: &TrackedCell,
+    jobs: &JobsCell,
 ) -> mlua::Result<()> {
     let k = lua.create_table()?;
     let q = |queue: &Rc<RefCell<Vec<Msg>>>| queue.clone();
@@ -1618,8 +1684,9 @@ fn seed(
     )?;
     k.set("buf", buf)?;
 
-    // ---- fs: synchronous, for the file manager and any plugin that
-    // touches a path. Every path is taken as written — `~/x`, `../y`,
+    // ---- fs: for the file manager and any plugin that touches a
+    // path; synchronous but for `list` with a callback, which reads on
+    // the io thread. Every path is taken as written — `~/x`, `../y`,
     // `C:\z` — and expanded against the working directory
     // (`kawoosh_systems::fs::expand`); the path functions do what a
     // plugin would otherwise do with `/` and a pattern, on every
@@ -1659,21 +1726,31 @@ fn seed(
         "home",
         lua.create_function(|_, ()| Ok(kfs::home().map(|h| kfs::display(&h))))?,
     )?;
+    // `fs.list(path)` answers now; `fs.list(path, fn)` reads the
+    // directory on a thread of its own and calls `fn(entries)` — or
+    // `fn(nil, why)` — when it is read, so a listing of forty thousand
+    // entries on a slow disk holds up nothing.
+    let qq = q(queue);
+    let jj = jobs.clone();
     fs.set(
         "list",
-        lua.create_function(|lua, dir: String| {
-            let t = lua.create_table()?;
-            let entries = kfs::list(&expand(&dir)).map_err(io_err)?;
-            for (i, e) in entries.into_iter().enumerate() {
-                let et = lua.create_table()?;
-                et.set("name", e.name)?;
-                et.set("is_dir", e.is_dir)?;
-                et.set("is_symlink", e.is_symlink)?;
-                et.set("size", e.size)?;
-                et.set("modified", e.modified)?;
-                t.set(i + 1, et)?;
-            }
-            Ok(t)
+        lua.create_function(move |lua, (dir, cb): (String, Option<mlua::Function>)| {
+            let Some(cb) = cb else {
+                let entries = kfs::list(&expand(&dir)).map_err(io_err)?;
+                return Ok(LV::Table(entries_table(lua, entries)?));
+            };
+            let token = {
+                let mut j = jj.borrow_mut();
+                j.next += 1;
+                let token = j.next;
+                j.waiting.insert(token, lua.create_registry_value(cb)?);
+                token
+            };
+            qq.borrow_mut().push(Msg::ListDir {
+                token,
+                path: expand(&dir),
+            });
+            Ok(LV::Nil)
         })?,
     )?;
     fs.set(

@@ -15,6 +15,7 @@ use kui::KeyMods;
 
 fn app_with_lua(d: &mut Drive) -> Kawoosh {
     let mut app = Kawoosh::new("t", "hello\n");
+    app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
     // The first frame declares the key sink the keys go to.
