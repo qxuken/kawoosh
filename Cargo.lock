@@ -1800,7 +1800,7 @@ dependencies = [
 
 [[package]]
 name = "kui"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -1818,7 +1818,7 @@ dependencies = [
 
 [[package]]
 name = "kui-core"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "cosmic-text",
  "naga",
@@ -1831,14 +1831,14 @@ dependencies = [
 
 [[package]]
 name = "kui-ffi"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "kui-core",
 ]
 
 [[package]]
 name = "kui-lua"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "kui-core",
  "kui-ffi",
@@ -1847,7 +1847,7 @@ dependencies = [
 
 [[package]]
 name = "kui-wgpu"
-version = "0.1.0-alpha.15"
+version = "0.1.0-alpha.16"
 dependencies = [
  "bytemuck",
  "kui-core",
