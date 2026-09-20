@@ -1,0 +1,300 @@
+# Roadmap: what is left, in the order it pays
+
+Status: written 2026-09-20 from the personal todo (`~/projects/todo.md`),
+the open items recorded in [kui.md](kui.md)'s implementation notes,
+[keys.md](keys.md)'s reserved spellings, and
+[kui-requirements.md](kui-requirements.md) §9, each checked against the
+code and the log. This is the one list; the todo is retired into it.
+Companion to [mvp.md](mvp.md) and [kui.md](kui.md), which say *why*; this
+says *what next*.
+
+## Where it stands
+
+Both build orders are done: mvp.md's nine milestones (2026-08-28) and
+kui.md's eight (2026-09-15), plus five days of rounds after them — the
+undo tree and its pane, histories in the store with hot exit, commands
+as specs, the key clusters and which-key, settings in layers, the
+language contract with two dozen grammars, notifications, the `dir`
+file manager through its identity-and-plan design at forty thousand
+entries, and the working memory (2026-09-20). 141 commits, 21
+integration test files in `kawoosh/tests`.
+
+The todo's items that are done and were not checked (verified in the
+code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
+`:dir refresh` / `<C-l>` reads again, `:dir PATH` / `:dir %` / `-` from
+a file, size and mtime annotated past the line with `<C-p>` for a
+preview pane, and `:w` showing the plan in a confirm before it writes —
+and the working memory. `KAWOOSH_SOCKET` is already in every pty's
+environment, which is the "are we inside kawoosh" signal the todo asked
+for; nothing more is needed unless a shell wants a `TERM_PROGRAM`-shaped
+name too.
+
+## Three decisions, taken 2026-09-20
+
+1. **Ctrl counts, Alt moves.** keys.md had Alt for selections and the
+   todo wanted `<A-hjkl>` to move the selected lines — the neovim habit,
+   which neovim could afford because it has no multicursor. Decided:
+   the cursor family moves to Ctrl, vim-visual-multi's keys, and Alt
+   becomes one selection's shape and place. Ctrl, *how many
+   selections*: `<C-j>` `<C-k>` (and `<C-Down>` `<C-Up>`) a caret
+   below / above; `<C-n>` `<D-d>` select next; `<C-S-n>` `<D-S-l>`
+   select all matches; `,` keeps the primary, `(` `)` rotate it.
+   Alt, *this selection*: `<A-j>` `<A-k>` move its lines down / up,
+   per selection in every mode, adjacent selections travelling as one
+   block that never passes another; `<A-h>` `<A-l>` by the selection's
+   kind — on lines (normal mode, `V`) dedent / indent by a tabstop with
+   the selection kept, so `V<A-l><A-l><A-j>` is one gesture, on
+   characters (`v`) drag the text one column left / right; `<A-o>`
+   `<A-i>` `<A-n>` `<A-p>` the syntax node stay where they are, since
+   they shape one selection. `<A-d>` goes. Optional in the same round:
+   `<A-S-j>` `<A-S-k>` duplicate the lines. keys.md's "Selections"
+   section is rewritten when this lands. `<C-j>` `<C-k>` `<C-n>` and
+   `<C-S-n>` are free in normal and visual mode (checked); `<C-l>` was
+   avoided because a listing has it for `dir refresh` and selecting
+   every `.txt` line in one is a real use of "all matches".
+2. **The scrolling tab** is a design note before code, shaped as a
+   per-tab layout kind (`tree` | `scroll`) beside the splitmux tree,
+   not instead of it, and not before the picker. It wants kui's
+   `enter`/`exit`/keyframes (kui-requirements §9), so the note names
+   the kui ask.
+3. **`<Esc>` in normal mode is a ladder**, top rung first that has
+   something to do: a pending operator → a prompt → the extra cursors
+   (what `,` does) → the search highlight → nothing. keys.md reserved
+   `<Esc>` for the highlight; this is the same key with the ladder
+   under it.
+
+## The list, by track
+
+Status marks: **done** (in the code), **partly** (the door is open, the
+room is not built), **open**, **later** (decided, not scheduled),
+**deferred** (decided against for now, in mvp.md/kui.md). Source in
+brackets: todo, kui.md, keys.md, req (kui-requirements).
+
+### Engine: keys, selections, motions
+
+- **`:` in a Russian layout** — open [todo]. The hybrid rule (mvp.md
+  4b, kui.md D5: keycode first, physical fallback when the layout gives
+  a non-latin symbol) is decided and not built: `Kawoosh::on_key` reads
+  kui's `code` only. With a Cyrillic layout `:` is Shift+6 and every
+  letter is a non-latin code, so normal mode dies with it. The build
+  order said "tested with synthesized non-latin presses"; the test does
+  not exist. keys.md notes kui already gives the US letter under Alt
+  when the layout's is not ASCII (`keys.rs`), so half the rule lives in
+  kui for chords and none of it for bare keys — the round starts by
+  reading what kui's payload carries. *This is a correctness gap
+  against a stated decision, and it is first.*
+- **`<Esc>` ladder** — open [todo ×3, keys.md]. Decision 3.
+- **`.` repeat, and macros with it** — open [todo, kui.md]. mvp.md D4
+  says how: commands are named data through one registry, so recording
+  is capturing the command stream and replay is re-dispatching it. `.`
+  is the last *editing* command's stream (the insert-mode text after it
+  included; `Editor::last_insert` already keeps it), `q`/`@` the same
+  over a named span. One design, both keys.
+- **The primary caret** — partly [todo]. `,` keeps the primary and drops
+  the rest (`cursor primary`); nothing rotates which one is primary,
+  and `panes.rs` draws every caret alike. Wanted: the primary drawn
+  otherwise (a stronger block, or the accent), and `(` / `)` to rotate
+  it (helix's spelling; both are free in normal mode). Part of the
+  Ctrl/Alt remap, Decision 1.
+- **Yank flash** — open [todo]. The yanked range washed for ~150 ms
+  after `y`; the memory already records the moment, so the shell has
+  the range and the time. A `kui::Waker` alarm, as the diagnostics hold
+  uses.
+- **`<C-a>` / `<C-x>`** — open [todo]. Increment / decrement the number
+  under the caret, per selection (a multicursor over a column of
+  numbers is the point). Both keys free in normal mode.
+- **`vi(` ends on `)`** — open, a bug [todo]. Inner pair objects should
+  end on the last character inside the pair; `select inside` in
+  `editor/src/commands.rs` ends one past. Test with `vi(`, `ci"`, `yi[`.
+- **Line moves and the Ctrl/Alt remap** — open [todo]. Decision 1:
+  the cursor family to Ctrl, `<A-hjkl>` moving one selection by its
+  kind. The mover is one command over `&[Selection]` with a direction
+  and the unit read off the selection; the tests are a single line, a
+  `V` block, two carets one line apart meeting, and an indent that
+  keeps the selection.
+- **Align (`ga=`)** — open [todo]. Align the selected lines on the first
+  match of a character (or pattern) per line, padding before it.
+  Note `ga` is free (`g` is "going somewhere" in keys.md, but `ga` has
+  no binding); vim's `ga` shows the character code, which nobody misses.
+- **Delete the line in insert mode** — open [todo]. `<C-u>` kills to
+  the line start, `<C-w>` the word; there is no kill-whole-line. Vim
+  has none either; the modal answer is `<Esc>dd`. If wanted: `<C-S-k>`
+  or `<A-d>` in insert mode (Alt is free there). Low.
+- **Auto-closing brackets** — open [todo]. Contested in modal editors
+  and cheap to get wrong with multicursors. **Recommended** as a
+  bundled Lua plugin over insert-mode `kawoosh.map` and
+  `kawoosh.buf.insert`, off by default — it is exactly the kind of
+  behaviour "hackable by design" says a user should be able to switch
+  and rewrite, and `gsa` (surround) already covers the after-the-fact
+  case.
+- **Press-and-hold toggle** — later [todo]. `press_and_hold` was removed
+  (a946b61); the idea of switching macOS's accent popup on in insert
+  mode and off in normal is a per-mode `NSUserDefaults` flip. Cheap if
+  kui exposes it; a kui backlog item, not a kawoosh one.
+
+### Panes and pickers
+
+- **The picker pane** — open [todo, keys.md]. The biggest daily gap and
+  the reason the reserved keys exist: `<leader>f` files, `<leader>g`
+  grep, `<leader>/` the buffer's lines, `<leader>.` smart, `<leader>bb`
+  buffers (`<leader>b` is a prefix with no timeout, so the picker takes
+  `bb`; `:buffer list` is a pane already, `:commands` too),
+  `<leader>sr` resume. The building blocks are there: a Lua view is a
+  slot pane with `ctx.field` (ea80f65), `kawoosh.fs.list` reads
+  off-thread, `dir` has the preview pane. **Shape**: compositional, as
+  the todo says — a `picker` module in Lua offering `input`, `list`,
+  `preview` and a layout that a plugin can take whole
+  (`picker.open { source = files }`) or in parts. Files first (the
+  source is a walk on the io thread, the match a fuzzy scorer in
+  Rust exposed as `kawoosh.fuzzy(needle, haystacks)` so forty thousand
+  paths cost a frame what forty do), then buffers, grep (`rg` through
+  `kawoosh.compile`'s spawn path, its locations the D5c table), lines,
+  and the commands pane migrated onto it last. Sessions do not keep a
+  picker.
+- **Pinned files (harpoon)** — open [todo, keys.md]. `<leader>e` the
+  list, `<leader>e1`…`9` and `<A-1>`…`9` to jump. A `kawoosh.store`
+  table per workspace and a Lua view; rides on the picker's list
+  block, so after it, and a day's work.
+- **The scrolling tab** — later, design first [todo]. Decision 2 above.
+- **Tab strip close button, `:map` listing** — open [kui.md]. Small;
+  fold into whichever round touches the strip or the keymap.
+
+### LSP and completion
+
+- **Completion, round two** — partly [todo]. `lsp complete`
+  (`<C-Space>`) puts the candidate as a ghost and cycles; the command
+  line completes with `<C-n>`/`<C-p>`. Missing: the trigger as you type
+  (on the server's trigger characters and after a word's third
+  character, held quiet the way diagnostics are), buffer words as a
+  source when no server answers, and the on-demand candidates *pane*
+  mvp.md D5 describes. The ghost rule stays: virtual text shifts, never
+  occludes.
+- **The rest of the reserved LSP keys** — open [keys.md]: `<leader>r`
+  rename, `<leader>ca` code action, `<leader>cF` format, `<leader>cI`
+  inlay hints, `<leader>cs` / `<leader>bs` symbols, `<leader>D` type
+  definition, `<C-e>` the diagnostic under the caret in a pane,
+  `gr` references (a locations list — D5c's table, so `]q` walks it).
+  Rename and references first; symbols wait for the picker.
+- **Incremental sync from the journal** — open [kui.md]. Whole-text per
+  change today. Correct, and fine until a big file is edited with a
+  server attached; measure before doing it (the perf tab exists).
+- **Server definitions** — partly [kui.md]. Only rust-analyzer is
+  builtin; `kawoosh.lsp.server` adds others. Ship a table of the
+  obvious ones (ts, lua, python, go, c) with the grammars they match.
+
+### Config, theme, fonts
+
+- **Font settings** — open [todo]. The face is loaded from
+  `assets/fonts/IosevkaNavcon` by path in `main.rs` and there is no
+  size. Wanted: `font.family`, `font.size`, `font.features` in
+  `settings.lua` (Decision 10's layers), reloaded on save like every
+  setting; the family through kui's `add_system_font`, the features as
+  kui tokens. The terminal's cell size follows.
+- **Theming** — partly [todo, kui.md D7]. Chrome follows kui's theme
+  roles (OS light/dark, accent) already; syntax hues are `palette.rs`'s
+  own. Missing: the `tokens = { colors = { keyword = {light, dark} } }`
+  table from config that D7 promises, and `set_theme` for a palette
+  that follows nothing. Same round as fonts: both are "config reaches
+  kui tokens".
+- **Trusted `.kawoosh/init.lua`** — open [todo, kui.md, mvp.md 7b].
+  `settings.lua` per workspace loads (data); `init.lua` (code) does not,
+  wanting the one-time trust prompt with the record in the global db.
+  The confirm exists (`confirm.rs`), the store exists; this is a
+  day. It unlocks project commands and tool registrations shipped in a
+  repo.
+
+### Lua and plugins
+
+- **A Lua test harness** — open [todo]. `kawoosh/tests/lua.rs` drives
+  the Lua API from Rust; a plugin author has nothing. Wanted:
+  `kawoosh test PATH` (the CLI) running a Lua file headless against the
+  same `Kawoosh` the tests use, with `kawoosh.press(keys)`,
+  `kawoosh.buf.text()` and an assertion that fails the run — the
+  bundled plugins' tests rewritten on it are the acceptance test.
+- **Eval under the caret / the selection** — open [todo]. `:lua CODE`
+  exists; `<leader>x` (free) evaluating the line, or the visual
+  selection, in the Lua state with the result echoed. An afternoon,
+  once the harness exists to test it.
+- **Plugin-built panes** — partly [todo]. `kawoosh.view` is a slot pane
+  filled from a Lua table of kui nodes, with fields; `kawoosh.map` with
+  `when = { "view:NAME" }` gives it keys. What is missing is the
+  *documentation* that this is the "direct kui access" the todo asks
+  for, and a worked example beyond `dir`'s preview — the picker will be
+  that example.
+- **Native extensions** — deferred [todo, mvp.md D8]. Decided against
+  for the MVP: no stable Rust ABI, so a real dylib surface is a C-ABI
+  project of its own. The rule kept — Lua talks through the same
+  messages the systems do — is what makes it a packaging change later.
+  Nothing to schedule.
+
+### Buffers with a shape
+
+- **Markdown, the fancy buffer** — later [todo, kui.md D13]. The
+  grammar is in; the rendered buffer (headings sized, emphasis weighted,
+  fence markers folded) needs a per-run size and weight on kui's
+  `rich_text` and a view that folds bytes out of its columns. A kui
+  round first (the size/weight spans), then a kawoosh one.
+- **`dir`, round three** — partly [todo]. Left from the design: a
+  watcher re-reading a listing the io thread's `watch.rs` sees change,
+  an image preview once kui's `image` is on the road (req §9), and
+  hidden-file toggling. None urgent.
+- **The working memory, round two** — later [kui.md]. Persisting the
+  memory in the store across launches (the histories' shape), and a
+  yank-pop after `p` (`<C-p>`/`<C-n>` right after a put cycling the
+  moment put, as Emacs).
+
+### Terminal
+
+- **Mouse buttons and OSC 8** — later [kui.md, req §10]. kui routes
+  only the primary button; the middle button and hyperlinks are kui's
+  wish list, not kawoosh's.
+- **Kitty graphics** — deferred [req §9]. A `term` APC hook before it is
+  a kui matter.
+- **Terminals in sessions** — open [mvp.md notes]. A terminal pane's cwd
+  and command restored, not its scrollback. Small; fold into a sessions
+  touch.
+
+## Next steps, in order
+
+Each is one round: one commit with its tests, a paragraph in this file
+struck through when it lands. The order front-loads the two cheap
+correctness gaps, then the one feature the daily driver is missing,
+then breadth.
+
+1. **The hybrid key rule.** kui's payload gives `code` and, if it does
+   not yet give the physical key, that is the first kui ask of this
+   round; `KeyStroke` gains `physical`, the keymap looks up `code`
+   when it is a latin symbol or a name and the US meaning of `physical`
+   otherwise, `text` untouched for insert mode. Tests synthesize a
+   Cyrillic `:` and `j`, and a Dvorak `j`. *The todo's "`:` in
+   Russian".*
+2. **The normal-mode polish batch.** The `<Esc>` ladder (Decision 3);
+   `(` / `)` rotate the primary and the primary drawn distinct; the
+   yank flash; `<C-a>` / `<C-x>`; the `vi(` fix; the Ctrl/Alt remap
+   with `<A-hjkl>` moving the selection (Decision 1) and keys.md's
+   "Selections" section rewritten. Six small things that are felt on
+   every line, one round because each is under a day and they share
+   the tests' shape.
+3. **`.` and macros.** The command-stream recorder (mvp.md D4's "nearly
+   free"): `.` replays the last edit with its insert text, `q`/`@`
+   record and replay a named span. Closes kui.md's "no macros or `.`".
+4. **The picker.** `picker.lua` as the compositional module; files,
+   buffers, grep, lines; `<leader>f` `<leader>bb` `<leader>g` `<leader>/`
+   `<leader>sr`; `kawoosh.fuzzy` in Rust; the commands pane migrated
+   onto it. Pinned files (`<leader>e`) in the same round if the list
+   block came out clean, the next one if not.
+5. **Config reaches kui: fonts and tokens.** `font.*` settings, syntax
+   tokens from config, `set_theme`; trusted `.kawoosh/init.lua` in the
+   same round since it is the same file's other half.
+6. **LSP, round two.** Completion as you type with buffer words as a
+   fallback source and the candidates pane; rename, references,
+   code action, format; the server table.
+7. **Lua DX.** The test harness (`kawoosh test`), eval under the caret,
+   the `:map` listing, the plugin-pane example written up.
+8. **Design notes, then decide**: the scrolling tab; the markdown
+   buffer's kui half; auto-closing brackets as a plugin.
+
+Not on this list on purpose: everything mvp.md and kui.md call
+"deliberately not in the MVP" (daemon, soft wrap, images, ligatures,
+plugin manager, DAP, multiple windows) — kui makes several cheaper, and
+none is pulled forward for it.
