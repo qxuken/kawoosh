@@ -232,6 +232,16 @@ function picker.search(it, columns)
   return table.concat(parts, "  ")
 end
 
+-- The width column `j` is fixed at, if it is: its own `width` or
+-- `widths[j]`, at least `min`, at most its `share` of `list_w`.
+local function fixed_width(c, widths, j, list_w)
+  local fixed = c.width or widths[j]
+  if not fixed then return nil end
+  fixed = math.max(fixed, c.min or 0)
+  if c.share and list_w then fixed = math.min(fixed, math.floor(list_w * c.share)) end
+  return fixed
+end
+
 -- picker.widths(items, columns): a floor for each column that does
 -- not grow, from the widest cell among every item — an estimate from
 -- the mono glyph's width, since a cell's text is not measured here —
@@ -288,9 +298,10 @@ end
 -- a preview, and a cell past its column is cut; without either it
 -- sits at its widest cell; or it `grow`s into the rest; the match
 -- is lit where it falls (`picker.search`), and `item.can` ends the
--- last cell. With `opts.wrap` the text (the growing cell's) folds to its
--- width so the whole of a long path shows, `opts.lines(i)` saying how
--- many lines row `i` takes (one, when not given).
+-- last cell. With `opts.wrap` a text folds to its width — every
+-- cell's, so the whole of a long path or name shows — and
+-- `opts.lines(i)` says how many lines row `i` takes (one, when not
+-- given).
 function picker.rows(ctx, hits, opts)
   local t = ctx.env.theme
   local top = opts.top or 1
@@ -313,10 +324,12 @@ function picker.rows(ctx, hits, opts)
   -- test finds it by name.
   local seen = {}
   local used = 0
+  -- Rows while the budget lasts, and the one that crosses it: the
+  -- lines are an estimate and the column clips, so a row too many is
+  -- cut where a row too few would leave a gap.
   for i = top, #hits do
-    local n = lines_of(i)
-    if used + n > budget and used > 0 then break end
-    used = used + n
+    if used >= budget then break end
+    used = used + lines_of(i)
     local h = hits[i]
     local it = h.item
     local selected = i == opts.cursor
@@ -354,15 +367,11 @@ function picker.rows(ctx, hits, opts)
         if j == #columns and off then
           spans[#spans + 1] = { (#spans > 0 and "  " or "") .. it.can, color = t.danger }
         end
-        local fixed = c.width or widths[j]
-        if fixed then
-          fixed = math.max(fixed, c.min or 0)
-          if c.share and opts.width then fixed = math.min(fixed, math.floor(opts.width * c.share)) end
-        end
+        local fixed = fixed_width(c, widths, j, opts.width)
         local cell = row { width = c.grow and "grow" or fixed or "fit", min_width = not fixed and c.min or nil,
           clip = true, cross_align = "center" }
         if #spans > 0 then
-          cell[#cell + 1] = text(spans, { family = c.family, size = SIZE, wrap = c.grow and wrap or "none" })
+          cell[#cell + 1] = text(spans, { family = c.family, size = SIZE, wrap = wrap })
         end
         r[#r + 1] = cell
       end
@@ -430,14 +439,31 @@ local function lines_of(i)
   local cols = math.max(P.cols or 40, 1)
   local len
   if P.src.columns then
-    -- The growing cell's text folds; the others sit at their width.
-    local fixed = 0
-    len = 0
-    for _, c in ipairs(P.src.columns) do
+    -- Every cell folds to its column: the row is as tall as the
+    -- tallest, a fixed column's width what the rows give it and the
+    -- growing one's the rest — in pixels, a proportional face's
+    -- glyph narrower than the mono's.
+    local rest, lines = (P.list_w or 800) - 16, 1
+    local grow = {}
+    for j, c in ipairs(P.src.columns) do
       local n = utf8.len(tostring(it[c[1]] or "")) or 0
-      if c.grow then len = len + n else fixed = fixed + n + 2 end
+      if c.dim then
+        local d = tostring(it[c.dim] or "")
+        if d ~= "" then n = n + 2 + (utf8.len(d) or #d) end
+      end
+      local glyph = SIZE * (c.family == "mono" and 0.6 or 0.5)
+      local w = fixed_width(c, P.widths or {}, j, P.list_w)
+      if w then
+        lines = math.max(lines, math.ceil(n * glyph / math.max(w, 1)))
+        rest = rest - w - 8
+      else
+        grow[#grow + 1] = n * glyph
+      end
     end
-    cols = math.max(cols - fixed, 10)
+    for _, px in ipairs(grow) do
+      lines = math.max(lines, math.ceil(px / math.max(rest, 40)))
+    end
+    return lines
   else
     len = utf8.len(it.text) or #it.text
     if it.sub and it.sub ~= "" then len = len + 2 + (utf8.len(it.sub) or #it.sub) end

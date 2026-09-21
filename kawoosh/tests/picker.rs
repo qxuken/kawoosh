@@ -551,6 +551,33 @@ fn the_commands_source_is_the_registry_as_a_picker() {
         docs_x.iter().all(|x| (x - doc_x).abs() < 0.5),
         "the doc column after a page: {docs_x:?} vs {doc_x}"
     );
+    // `<A-w>`: every cell folds to its column, the name too, so a long
+    // name with its alias takes two lines and the row grows with it.
+    d.ctrl(&mut app, "u");
+    d.keys(&mut app, "buffer delete others");
+    d.frame(&mut app);
+    let one = d.rect_of("row buffer delete others!").expect("the row").3;
+    assert!((one - ROW_H).abs() < 1.0, "one line, cut: {one}");
+    d.key(
+        &mut app,
+        "w",
+        KeyMods {
+            alt: true,
+            ..Default::default()
+        },
+    );
+    d.frame(&mut app);
+    let two = d.rect_of("row buffer delete others!").expect("the row").3;
+    assert!(two > ROW_H * 1.5, "the name folded, the row taller: {two}");
+    d.key(
+        &mut app,
+        "w",
+        KeyMods {
+            alt: true,
+            ..Default::default()
+        },
+    );
+    d.frame(&mut app);
     // A query the names do not match is looked for in the rest of the
     // row: an alias, a key, the doc.
     d.ctrl(&mut app, "u");
