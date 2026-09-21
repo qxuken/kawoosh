@@ -217,6 +217,14 @@ impl Kawoosh {
                 }
                 self.open_in_editor(&path, line, col);
             }
+            Msg::CloseBuffer { buffer, force } => {
+                let id = kawoosh_lua::id_of(buffer);
+                if self.ed.buffers.contains_key(id)
+                    && let Err(why) = self.close_buffer(id, force)
+                {
+                    self.ed.message = why.into();
+                }
+            }
             Msg::Run(line) => {
                 if let Some(v) = self.focused_view().or_else(|| self.ed.any_view()) {
                     self.ed.execute(v, &line);

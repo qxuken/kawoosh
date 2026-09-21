@@ -336,6 +336,54 @@ fn buffers_lines_recent_and_smart() {
     );
     assert_eq!(r[2], "src/lib.rs");
     d.ctrl(&mut app, "c");
+    // `<C-x>` in the buffers picker closes the row's buffer and the
+    // list is read again; one with unsaved changes is asked about —
+    // `<Esc>` keeps it, `<CR>` (Discard) drops the changes.
+    d.keys(&mut app, " bb");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), ["main.rs", "README.md"]);
+    d.ctrl(&mut app, "x");
+    d.frame(&mut app);
+    assert!(picker_open(&app), "the picker stays");
+    assert_eq!(rows(&d), ["README.md"], "main.rs closed");
+    assert!(
+        d.confirm_texts().is_empty(),
+        "a clean buffer is not asked about"
+    );
+    d.ctrl(&mut app, "c");
+    d.keys(&mut app, "ihello");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, " bb");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), ["README.md"]);
+    d.ctrl(&mut app, "x");
+    d.frame(&mut app);
+    let t = d.confirm_texts();
+    assert!(
+        t.first().is_some_and(|s| s.starts_with("Close README.md?")),
+        "asked: {t:?}"
+    );
+    assert_eq!(&t[t.len() - 2..], ["Discard", "Keep"]);
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert!(d.confirm_texts().is_empty());
+    assert_eq!(rows(&d), ["README.md"], "kept");
+    d.ctrl(&mut app, "x");
+    d.frame(&mut app);
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(d.confirm_texts().is_empty());
+    assert_eq!(rows(&d), ["*scratch*"], "the last buffer closed: a scratch");
+    assert!(picker_open(&app));
+    d.ctrl(&mut app, "c");
+    assert!(
+        !app.ed
+            .buffers
+            .values()
+            .any(|b| b.path.is_some() && b.modified),
+        "the changes dropped"
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
     std::fs::remove_dir_all(dir.with_extension("db")).ok();
@@ -431,9 +479,32 @@ fn the_commands_source_is_the_registry_as_a_picker() {
         "what a command needs, from the pane the keyboard came from: {t:?}"
     );
     assert!(
-        t.iter().any(|s| s.contains("n <leader>cd")),
-        "the key bound to dir cd: {t:?}"
+        t.iter().any(|s| s == "n <leader>cd"),
+        "the key bound to dir cd, a cell of its own: {t:?}"
     );
+    // The cells line up: every key cell at one x, every doc cell at
+    // one x, past the name column.
+    let cell_x = |d: &Drive, text: &str| -> f32 {
+        let nodes = d.core.nodes();
+        let at = nodes
+            .iter()
+            .position(|n| n.text.as_deref() == Some(text))
+            .unwrap_or_else(|| panic!("no cell {text}"));
+        nodes[at].rect.x
+    };
+    let key_x = cell_x(&d, "n <leader>cd");
+    assert_eq!(key_x, cell_x(&d, "n J"), "the key column");
+    let name_x = cell_x(&d, "dir cd");
+    assert!(key_x > name_x + 100.0, "{key_x} past the names at {name_x}");
+    let doc_x = cell_x(&d, "dir cd needs language:dir");
+    assert!(doc_x > key_x + 100.0, "{doc_x} past the keys at {key_x}");
+    assert_eq!(doc_x, cell_x(&d, "dir cd needs language:dir"));
+    // A query the names do not match is looked for in the rest of the
+    // row: an alias, a key, the doc.
+    d.ctrl(&mut app, "u");
+    d.keys(&mut app, "chdir");
+    d.frame(&mut app);
+    assert_eq!(rows(&d)[0], "cd?", "found by its alias: {:?}", rows(&d));
     d.ctrl(&mut app, "u");
     d.keys(&mut app, "history");
     d.frame(&mut app);
@@ -667,12 +738,27 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     );
     d.frame(&mut app);
     app.run_lua_source("t", r#"assert(kawoosh.opt("picker.wrap") == true)"#);
-    let tall = d.rect_of(&format!("row {long}")).expect("the long row").3;
+    let (_, ly, _, tall) = d.rect_of(&format!("row {long}")).expect("the long row");
     assert!(tall > ROW_H * 2.0, "folded to several lines: {tall}");
+    let shown = rows(&d);
     assert!(
-        rows(&d).len() < before,
+        shown.len() < before,
         "fewer rows fit: {} < {before}",
-        rows(&d).len()
+        shown.len()
+    );
+    // The rows after it sit below it, not squeezed into it (kui
+    // compresses a column's fit children toward their floors when
+    // they overflow; the list's floor is its content).
+    let at = shown.iter().position(|r| *r == long).unwrap();
+    let (_, ny, _, nh) = d.rect_of(&format!("row {}", shown[at + 1])).unwrap();
+    assert!(
+        ny >= ly + tall - 0.5,
+        "the next row at {ny}, the long one ends at {}",
+        ly + tall
+    );
+    assert!(
+        (nh - ROW_H).abs() < 1.0,
+        "a short row keeps its height: {nh}"
     );
     d.key(
         &mut app,

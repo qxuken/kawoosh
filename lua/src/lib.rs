@@ -69,6 +69,13 @@ pub enum Msg {
         buffer: u64,
         split: Option<String>,
     },
+    /// `kawoosh.buf.close(buffer, { force = })`: the buffer closed as
+    /// `:bd` closes it, every pane on it moved to another; one with
+    /// unsaved changes stays unless `force`, and the message says so.
+    CloseBuffer {
+        buffer: u64,
+        force: bool,
+    },
     /// `kawoosh.fs.list(path, fn)`: the directory read on a thread of
     /// its own, the answer to `Runtime::listed` under `token` when it
     /// comes (`IoMsg::Listed`).
@@ -2124,6 +2131,19 @@ fn seed(
             qq.borrow_mut().push(Msg::ShowBuffer {
                 buffer: h,
                 split: opts.and_then(|t| t.get::<Option<String>>("split").ok().flatten()),
+            });
+            Ok(())
+        })?,
+    )?;
+    let qq = q(queue);
+    buf.set(
+        "close",
+        lua.create_function(move |_, (h, opts): (u64, Option<Table>)| {
+            qq.borrow_mut().push(Msg::CloseBuffer {
+                buffer: h,
+                force: opts
+                    .and_then(|t| t.get::<Option<bool>>("force").ok().flatten())
+                    .unwrap_or(false),
             });
             Ok(())
         })?,

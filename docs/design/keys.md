@@ -204,7 +204,7 @@ objects, or any other character on both sides.
 
 | keys | what |
 |---|---|
-| `<leader><leader>` `<leader>bb` | the buffers, as a picker — the current one last, so `<CR>` at once is the one before |
+| `<leader><leader>` `<leader>bb` | the buffers, as a picker — the current one last, so `<CR>` at once is the one before; `<C-x>` closes the row's |
 | `<leader>bd` `<leader>bo` | delete the buffer, every other buffer |
 | `<leader>bn` `<leader>bp` | next, previous buffer |
 | `<leader>tn` `<leader>tq` | a new tab, close the tab |
@@ -244,8 +244,13 @@ scrolls the list, and the preview. `<A-p>` hides the preview and shows
 it again, `<A-w>` folds a row's text to the list's width so the whole
 of a long path shows — the `picker.preview` and `picker.wrap`
 settings, flipped for the session (a `settings.lua` sets them for
-good). The pane opens below the keyboard's and hands the keyboard back
-where it came from.
+good). A source may put keys of its own on the row: `<C-x>` in the
+buffers picker closes the row's buffer as `:bd` does, asking first
+when it has unsaved changes, and the list is read again. The commands
+picker draws its rows in columns — the name with its alias, the key,
+what it does — and looks for the query in the names first, then in
+the rest of the row. The pane opens below the keyboard's and hands the
+keyboard back where it came from.
 
 ## The which-key
 

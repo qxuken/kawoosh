@@ -716,6 +716,24 @@ impl Kawoosh {
         size
     }
 
+    /// Closes buffer `id` as `:bd` does: its unsaved changes kept
+    /// unless `force` (the reason is the error), the panes on it moved
+    /// to another listed buffer — a new scratch when it was the last.
+    pub(crate) fn close_buffer(&mut self, id: BufferId, force: bool) -> Result<(), &'static str> {
+        if self.ed.buffers[id].modified {
+            if !force {
+                return Err("unsaved changes (:bd! to discard)");
+            }
+            self.discard(id);
+        }
+        let next = match self.ed.listed_buffers().into_iter().find(|b| *b != id) {
+            Some(n) => n,
+            None => self.ed.add_buffer(Buffer::new("*scratch*", "")),
+        };
+        self.delete_buffer(id, next);
+        Ok(())
+    }
+
     /// Removes buffer `id`: every view on it moves to `next`, a
     /// `--wait` caller on it is answered, the server told, and what
     /// was remembered about it forgotten.

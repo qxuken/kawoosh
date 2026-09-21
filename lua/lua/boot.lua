@@ -255,6 +255,11 @@ end
 -- kawoosh.buf.show(buffer): the buffer into the focused pane, as `:b`
 -- would, its caret where it was left.
 --
+-- kawoosh.buf.close(buffer[, { force = true }]): the buffer closed as
+-- `:bd` closes it, every pane on it moved to another listed buffer (a
+-- new scratch when it was the last); one with unsaved changes stays,
+-- the message saying so, unless `force` drops them as `:bd!` does.
+--
 -- kawoosh.buf.retarget(from, to): every buffer open at path `from`, or
 -- under it, is at `to` from now on, named after it — a file renamed or
 -- moved by the file manager while it was open, so its `:w` goes where

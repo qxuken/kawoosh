@@ -19,7 +19,8 @@
 -- ranking Lua's: `picker.rank(item, hit)` is the score plus the item's
 -- `boost`, and a config replaces it; an open buffer and a file opened
 -- before are boosted, which is where the memory's rank (memory.md
--- D8) will plug in.
+-- D8) will plug in. A row with columns is matched on its name first
+-- and on the rest of its text after.
 --
 -- The query is a field (kui.md D12): typing filters, `<Esc>` is normal
 -- mode over the line, `<Esc>` again closes; `<C-n>` `<C-p>` `<Down>`
@@ -32,7 +33,11 @@
 -- `<A-p>` shows or hides the preview and `<A-w>` folds a row's text to
 -- the list's width or cuts it — the `picker.preview` and `picker.wrap`
 -- settings, flipped for the session (`settings.lua` sets them for
--- good). The pane is not kept by a session.
+-- good). A source's own keys ride on the row: `<C-x>` in `buffers`
+-- closes the row's buffer, asking first when it has unsaved changes.
+-- A source with `columns` draws its rows as a grid, the cells lined up
+-- (the commands: name, key, what it does). The pane is not kept by a
+-- session.
 
 local fs = kawoosh.fs
 local picker = { sources = {}, last = nil }
@@ -195,6 +200,47 @@ function picker.spans(text, positions, theme)
   return out
 end
 
+-- The pieces a row with columns shows, in order: each column's field
+-- and its `dim` field after it, with where each starts (a byte, from
+-- 1) in the row's search text — the pieces joined by two spaces — so
+-- a match's positions, found in that text, land on the piece they
+-- are in.
+local function pieces_of(it, columns)
+  local out, at = {}, 1
+  for j, c in ipairs(columns) do
+    local main = tostring(it[c[1]] or "")
+    out[#out + 1] = { text = main, col = j, from = at }
+    at = at + #main + 2
+    if c.dim then
+      local d = tostring(it[c.dim] or "")
+      if d ~= "" then
+        out[#out + 1] = { text = d, col = j, from = at, dim = true }
+        at = at + #d + 2
+      end
+    end
+  end
+  return out
+end
+
+-- picker.search(item, columns): the text a row with columns is matched
+-- on — its columns' fields and their `dim` ones, joined by two spaces
+-- — what a source with `columns` has its items matched by (`search`,
+-- set when the items load unless the item brought its own).
+function picker.search(it, columns)
+  local parts = {}
+  for _, p in ipairs(pieces_of(it, columns)) do parts[#parts + 1] = p.text end
+  return table.concat(parts, "  ")
+end
+
+-- The positions inside piece `p`, as positions in its own text.
+local function lit_in(positions, p)
+  local out = {}
+  for _, pos in ipairs(positions or {}) do
+    if pos >= p.from and pos < p.from + #p.text then out[#out + 1] = pos - p.from + 1 end
+  end
+  return out
+end
+
 -- picker.rows(ctx, hits, opts): the rows of a list — each hit
 -- `{ item =, positions = }` — as a column showing the window from
 -- `opts.top` down as far as `opts.rows` lines allow, `opts.cursor`
@@ -202,18 +248,32 @@ end
 -- the wheel over the column `{ kind = "scroll", tag = { kind =
 -- opts.scroll or "list" } }`. A row is one text: `opts.text(item)`
 -- (default `item.text`) with the match lit, `item.sub` dim after it,
--- `item.can` in the danger colour when it is not true; with
--- `opts.wrap` the text folds to the column's width so the whole of a
--- long path shows, `opts.lines(i)` saying how many lines row `i`
--- takes (one, when not given).
+-- `item.can` in the danger colour when it is not true. With
+-- `opts.columns` — `{ { FIELD, dim = FIELD, family =, muted =, min =,
+-- width =, grow = }, … }` — the rows are a grid, a cell per column
+-- holding the item's field (its `dim` field faint after it), the
+-- cells lined up: a column sits at its widest cell, at least `min`
+-- wide, or at `width`, or `grow`s into the rest; the match is lit
+-- where it falls (`picker.search`), and `item.can` ends the last
+-- cell. With `opts.wrap` the text (the growing cell's) folds to its
+-- width so the whole of a long path shows, `opts.lines(i)` saying how
+-- many lines row `i` takes (one, when not given).
 function picker.rows(ctx, hits, opts)
   local t = ctx.env.theme
   local top = opts.top or 1
   local budget = opts.rows or #hits
   local lines_of = opts.lines or function() return 1 end
-  local col = column { width = "grow", height = "grow", clip = true, gap = 0,
+  local columns = opts.columns
+  local wrap = opts.wrap and "glyph" or "none"
+  -- The window is a column that clips, and inside it the rows as tall
+  -- as they are: `min_height = "fit"` is the floor kui compresses a
+  -- child toward when its parent overflows, so a folded row keeps its
+  -- lines and the last row is cut instead of every row squeezed. A
+  -- grid when the rows have columns, so the cells line up.
+  local outer = column { width = "grow", height = "grow", clip = true, gap = 0,
     on_scroll = { kind = opts.scroll or "list" } }
-  local mono = { family = "mono", size = SIZE, wrap = opts.wrap and "glyph" or "none" }
+  local inner = (columns and grid or column) { width = "grow", height = "fit", min_height = "fit", gap = 0 }
+  outer[#outer + 1] = inner
   -- A row is keyed by its text (`row NAME`), the second of one text
   -- numbered, so a row keeps its state as the window slides and a
   -- test finds it by name.
@@ -237,24 +297,50 @@ function picker.rows(ctx, hits, opts)
     local r = row {
       key = key,
       width = "grow", min_height = ROW_H,
-      pad = { x = 8, y = opts.wrap and 2 or 0 }, gap = 8, cross_align = "center",
+      pad = { x = 8 }, gap = 8, cross_align = "center",
       bg = selected and (ctx.focused and t.selection or t.sunken) or nil,
       hover_bg = not selected and t.sunken or nil,
       on_click = { kind = opts.kind or "row", i = i },
     }
-    local spans = picker.spans(text_of, h.positions, t)
-    local color = it.can ~= nil and it.can ~= true and t.muted or t.fg
-    for _, s in ipairs(spans) do if not s.color then s.color = color end end
-    if it.sub and it.sub ~= "" then
-      spans[#spans + 1] = { "  " .. it.sub, color = t.muted }
+    local off = it.can ~= nil and it.can ~= true
+    local color = off and t.muted or t.fg
+    if columns then
+      local ps = pieces_of(it, columns)
+      for j, c in ipairs(columns) do
+        local spans = {}
+        for _, p in ipairs(ps) do
+          if p.col == j and p.text ~= "" then
+            if #spans > 0 then spans[#spans + 1] = { "  " } end
+            for _, sp in ipairs(picker.spans(p.text, lit_in(h.positions, p), t)) do
+              if not sp.color then sp.color = p.dim and t.faint or (c.muted and t.muted or color) end
+              spans[#spans + 1] = sp
+            end
+          end
+        end
+        if j == #columns and off then
+          spans[#spans + 1] = { (#spans > 0 and "  " or "") .. it.can, color = t.danger }
+        end
+        local cell = row { width = c.grow and "grow" or c.width or "fit", min_width = c.min, clip = true,
+          cross_align = "center" }
+        if #spans > 0 then
+          cell[#cell + 1] = text(spans, { family = c.family, size = SIZE, wrap = c.grow and wrap or "none" })
+        end
+        r[#r + 1] = cell
+      end
+    else
+      local spans = picker.spans(text_of, h.positions, t)
+      for _, sp in ipairs(spans) do if not sp.color then sp.color = color end end
+      if it.sub and it.sub ~= "" then
+        spans[#spans + 1] = { "  " .. it.sub, color = t.muted }
+      end
+      if off then
+        spans[#spans + 1] = { "  " .. it.can, color = t.danger }
+      end
+      r[#r + 1] = text(spans, { family = "mono", size = SIZE, wrap = wrap })
     end
-    if it.can ~= nil and it.can ~= true then
-      spans[#spans + 1] = { "  " .. it.can, color = t.danger }
-    end
-    r[#r + 1] = text(spans, mono)
-    col[#col + 1] = r
+    inner[#inner + 1] = r
   end
-  return col
+  return outer
 end
 
 -- picker.preview(ctx, pv, rows, from): a preview `{ title =, lines =,
@@ -302,9 +388,22 @@ local function previewing() return kawoosh.opt("picker.preview") ~= false end
 local function lines_of(i)
   if not P or not P.wrap then return 1 end
   local it = P.hits[i].item
-  local len = utf8.len(it.text) or #it.text
-  if it.sub and it.sub ~= "" then len = len + 2 + (utf8.len(it.sub) or #it.sub) end
-  return math.max(1, math.ceil(len / math.max(P.cols or 40, 1)))
+  local cols = math.max(P.cols or 40, 1)
+  local len
+  if P.src.columns then
+    -- The growing cell's text folds; the others sit at their width.
+    local fixed = 0
+    len = 0
+    for _, c in ipairs(P.src.columns) do
+      local n = utf8.len(tostring(it[c[1]] or "")) or 0
+      if c.grow then len = len + n else fixed = fixed + n + 2 end
+    end
+    cols = math.max(cols - fixed, 10)
+  else
+    len = utf8.len(it.text) or #it.text
+    if it.sub and it.sub ~= "" then len = len + 2 + (utf8.len(it.sub) or #it.sub) end
+  end
+  return math.max(1, math.ceil(len / cols))
 end
 
 -- The window slid so the cursor is in it: up to the cursor, or down
@@ -357,10 +456,11 @@ end
 
 
 -- The hits for `q` over a static source's items: the matcher's best,
--- ranked by `picker.rank`.
-local function filter_static(q)
-  if not P.matcher then P.hits = {} return end
-  local hits = P.matcher:query(q, LIMIT)
+-- ranked by `picker.rank`. With columns, the rows whose name matched
+-- come first, ranked among themselves, then the ones the query found
+-- elsewhere in (a key, the doc) — so `dir` lists the `dir` commands
+-- before every command whose doc mentions a directory.
+local function ranked(hits, q)
   local out = {}
   for i, h in ipairs(hits) do
     local item = P.items[h.index]
@@ -371,6 +471,24 @@ local function filter_static(q)
       if a.rank ~= b.rank then return a.rank > b.rank end
       return a.i < b.i
     end)
+  end
+  return out
+end
+
+local function filter_static(q)
+  if not P.matcher then P.hits = {} return end
+  local out = ranked(P.matcher:query(q, LIMIT), q)
+  if P.wide and q ~= "" and #out < LIMIT then
+    local seen = {}
+    for _, h in ipairs(out) do seen[h.item] = true end
+    local more = {}
+    for _, h in ipairs(P.wide:query(q, LIMIT)) do
+      if not seen[P.items[h.index]] then more[#more + 1] = h end
+    end
+    for _, h in ipairs(ranked(more, q)) do
+      if #out >= LIMIT then break end
+      out[#out + 1] = h
+    end
   end
   P.hits = out
 end
@@ -427,10 +545,37 @@ local function loaded(items, err)
   end
   items = boosted(items)
   P.items = items
-  local texts = {}
-  for i, it in ipairs(items) do texts[i] = it.text end
+  local texts, wide = {}, {}
+  for i, it in ipairs(items) do
+    if P.src.columns and not it.search then it.search = picker.search(it, P.src.columns) end
+    texts[i] = it.text
+    wide[i] = it.search or it.text
+  end
   P.matcher = kawoosh.matcher(texts)
+  -- The name is what a match on a row lights and ranks by; the rest
+  -- of the row (`search`) is looked in after it.
+  P.wide = P.src.columns and kawoosh.matcher(wide) or nil
   P.dirty = true
+end
+
+-- The source's items asked for: `load` on the io thread, `items` at
+-- once; a `search` source has none until a query.
+local function load_items()
+  local src, ctx = P.src, P.ctx
+  if src.search then return end
+  P.loading = true
+  if src.load then
+    local this = P
+    src.load(ctx, function(items, err)
+      if P ~= this then return end
+      loaded(items, err)
+    end)
+  elseif src.items then
+    local items = type(src.items) == "function" and src.items(ctx) or src.items
+    loaded(items)
+  else
+    loaded({})
+  end
 end
 
 local function close()
@@ -465,9 +610,11 @@ end
 -- picker.open(name | def): the picker on a registered source by name,
 -- or on a definition given whole — `{ title =, items = {…} | load =
 -- fn(ctx, done) | search = fn(query, job), pick = fn(item, how),
--- preview = fn(item), keys = { ["<C-x>"] = fn(item) }, query = "" }`.
--- An item is `{ text =, sub =, path =, line =, col =, buffer =,
--- offset =, run =, boost = }`. A picker already open switches to it.
+-- preview = fn(item), keys = { ["<C-x>"] = fn(item) }, columns =
+-- {…} (as `picker.rows` takes them), query = "" }`. An item is
+-- `{ text =, sub =, path =, line =, col =, buffer =, offset =, run =,
+-- boost = }`, and a column's field. A picker already open switches to
+-- it.
 function picker.open(what, opts)
   opts = opts or {}
   local name, src
@@ -484,22 +631,15 @@ function picker.open(what, opts)
   kawoosh.view_open(VIEW, { below = true, share = 0.5 })
   kawoosh.field_set(VIEW, FIELD, opts.query or "")
   kawoosh.field_focus(VIEW, FIELD)
-  if src.search then
-    return
-  end
-  P.loading = true
-  if src.load then
-    local this = P
-    src.load(ctx, function(items, err)
-      if P ~= this then return end
-      loaded(items, err)
-    end)
-  elseif src.items then
-    local items = type(src.items) == "function" and src.items(ctx) or src.items
-    loaded(items)
-  else
-    loaded({})
-  end
+  load_items()
+end
+
+-- picker.reload(): the open picker's items read again on the next
+-- frame — after a key of the source's own changed what they are, a
+-- buffer closed — the query and the cursor kept.
+function picker.reload()
+  if not P then return end
+  P.stale = true
 end
 
 -- picker.source(name, def): a source to open by name.
@@ -544,10 +684,16 @@ kawoosh.view(VIEW, function(ctx)
   if not P then
     return column { pad = 12, text("no picker open", { color = t.muted }) }
   end
+  if P.stale then
+    P.stale = nil
+    P.keep = P.cursor
+    load_items()
+  end
   local q = ctx.field_text(FIELD)
   if q ~= P.query or P.dirty then
     P.dirty = nil
-    local cursor = (P.query == nil) and P.cursor or nil
+    local cursor = (P.query == nil) and P.cursor or P.keep
+    P.keep = nil
     refilter(q)
     if cursor then P.cursor = cursor ensure_visible() end
   end
@@ -582,9 +728,10 @@ kawoosh.view(VIEW, function(ctx)
   field.width = "grow"
   head[#head + 1] = field
   head[#head + 1] = text(count, { size = SIZE - 1, color = t.faint, wrap = "none" })
-  local list = picker.rows(ctx, P.hits, { top = P.top, cursor = P.cursor, rows = rows, wrap = P.wrap, lines = lines_of })
+  local list = picker.rows(ctx, P.hits, { top = P.top, cursor = P.cursor, rows = rows, wrap = P.wrap, lines = lines_of,
+                                          columns = P.src.columns })
   if #P.hits == 0 and not P.loading then
-    list[#list + 1] = row { pad = { x = 8, y = 4 }, text(P.src.empty or (P.query ~= "" and "no matches" or "nothing here"), { size = SIZE, color = t.muted }) }
+    list[#list + 1] = row { pad = { x = 8, y = 4 }, text((P.query ~= "" and "no matches") or P.src.empty or "nothing here", { size = SIZE, color = t.muted }) }
   end
   local body = row { width = "grow", height = "grow", gap = 0, list }
   local hit = P.hits[P.cursor]
@@ -727,9 +874,28 @@ local function buffer_items(ctx)
   return items
 end
 
+-- `<C-x>` on a row: its buffer closed as `:bd` closes it, the list
+-- read again; one with unsaved changes is asked about first.
+local function close_row(item)
+  local function shut()
+    kawoosh.buf.close(item.buffer, { force = true })
+    picker.reload()
+  end
+  if item.modified then
+    kawoosh.confirm {
+      title = "Close " .. item.text .. "? Its changes are not saved.",
+      lines = { "close " .. item.text .. ", the changes dropped" },
+      actions = { { "Discard", shut }, { "Keep" } },
+    }
+  else
+    shut()
+  end
+end
+
 picker.source("buffers", {
-  title = "buffers", placeholder = "find a buffer",
+  title = "buffers", placeholder = "find a buffer · <C-x> closes one",
   items = buffer_items,
+  keys = { ["<C-x>"] = close_row },
   empty = "no buffers",
 })
 
@@ -865,6 +1031,14 @@ picker.source("lines", {
 -- the command line on it when it takes arguments, and the spec in
 -- full as the preview: aliases, the forms and what each means, the
 -- conditions and which hold, the keys in every mode, the subcommands.
+-- The rows' columns: the name with its first alias faint, the first
+-- key bound to it, and what it does — or why it cannot run here.
+local COMMAND_COLUMNS = {
+  { "text", dim = "alias", family = "mono", min = 200 },
+  { "key", family = "mono", muted = true, min = 120 },
+  { "doc", grow = true },
+}
+
 local function command_items()
   local specs = kawoosh.commands()
   local names = {}
@@ -873,11 +1047,10 @@ local function command_items()
   for _, s in ipairs(specs) do
     local marks = s.name .. (s.bang and "!" or "") .. (s.query and "?" or "")
     local can = kawoosh.can(s.name)
-    local key = s.keys[1] or ""
-    local sub = key ~= "" and (key .. "  ") or ""
     local it = { text = marks, name = s.name, spec = s, can = can, keys = s.keys,
-                 sub = sub .. (can == true and s.doc or "") }
-    if can ~= true then it.sub = sub end
+                 alias = s.aliases[1] and (":" .. s.aliases[1]) or "",
+                 key = s.keys[1] or "",
+                 doc = can == true and s.doc or "" }
     if #s.args == 0 then it.run = s.name else it.cmdline = s.name .. " " end
     -- The subcommands: the names one word longer.
     local subs = {}
@@ -903,6 +1076,7 @@ end
 picker.source("commands", {
   title = "commands", placeholder = "search commands, keys, docs",
   items = command_items,
+  columns = COMMAND_COLUMNS,
   pick = function(item)
     if item.cmdline then kawoosh.cmdline(item.cmdline) else kawoosh.run(item.run) end
   end,

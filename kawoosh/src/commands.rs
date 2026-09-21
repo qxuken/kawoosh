@@ -515,19 +515,9 @@ fn buffers() -> Vec<ShellCommand> {
             |k, ctx| {
                 let Some(v) = k.view_arg(ctx) else { return };
                 let cur = k.ed.views[v].buffer;
-                if k.ed.buffers[cur].modified {
-                    if !ctx.bang() {
-                        k.ed.message = "unsaved changes (:bd! to discard)".into();
-                        return;
-                    }
-                    k.discard(cur);
+                if let Err(why) = k.close_buffer(cur, ctx.bang()) {
+                    k.ed.message = why.into();
                 }
-                let ids: Vec<BufferId> = k.ed.listed_buffers();
-                let next = match ids.iter().copied().find(|b| *b != cur) {
-                    Some(n) => n,
-                    None => k.ed.add_buffer(Buffer::new("*scratch*", "")),
-                };
-                k.delete_buffer(cur, next);
             },
         ),
         // `:bdo`: every buffer but the current one goes; a modified
