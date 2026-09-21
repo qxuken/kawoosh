@@ -16,9 +16,11 @@ undo tree and its pane, histories in the store with hot exit, commands
 as specs, the key clusters and which-key, settings in layers, the
 language contract with two dozen grammars, notifications, the `dir`
 file manager through its identity-and-plan design at forty thousand
-entries, and the working memory (2026-09-20). 166 commits, 23
+entries, and the working memory (2026-09-20). 167 commits, 23
 integration test files in `kawoosh/tests` (the polish batch's
-`normal_mode.rs` and the picker's `picker.rs`, 2026-09-21).
+`normal_mode.rs` and the picker's `picker.rs`, 2026-09-21), and the
+"next steps" below through step 9 — the four design notes of
+2026-09-21, with steps 10–14 the order they are built in.
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -67,7 +69,8 @@ name too.
    per-tab layout kind (`tree` | `scroll`) beside the splitmux tree,
    not instead of it, and not before the picker. It wants kui's
    `enter`/`exit`/keyframes (kui-requirements §9), so the note names
-   the kui ask.
+   the kui ask. *Designed 2026-09-21:* [scrolling-tab.md](scrolling-tab.md);
+   the kui ask had been built by then.
 3. **`<Esc>` in normal mode is a ladder**, top rung first that has
    something to do: a pending operator → a prompt → the extra cursors
    (what `,` does) → the search highlight → nothing. keys.md reserved
@@ -158,13 +161,17 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   the line start, `<C-w>` the word; there is no kill-whole-line. Vim
   has none either; the modal answer is `<Esc>dd`. If wanted: `<C-S-k>`
   or `<A-d>` in insert mode (Alt is free there). Low.
-- **Auto-closing brackets** — open [todo]. Contested in modal editors
-  and cheap to get wrong with multicursors. **Recommended** as a
-  bundled Lua plugin over insert-mode `kawoosh.map` and
-  `kawoosh.buf.insert`, off by default — it is exactly the kind of
-  behaviour "hackable by design" says a user should be able to switch
-  and rewrite, and `gsa` (surround) already covers the after-the-fact
-  case.
+- **Auto-closing brackets** — decided 2026-09-21 ([pairs.md](pairs.md)),
+  not built; step 12. Contested in modal editors
+  and cheap to get wrong with multicursors, so a bundled Lua plugin
+  over insert-mode `kawoosh.map`, off by default — it is exactly the
+  kind of behaviour "hackable by design" says a user should be able to
+  switch and rewrite, and `gsa` (surround) already covers the
+  after-the-fact case. The note's answer to the multicursor problem:
+  one engine call for every caret when the carets agree, and one
+  `kawoosh.buf.edits` (over `Editor::apply_edits`) when they do not;
+  the three engine doors it needs are `buf.type`, `buf.edits` and
+  `buf.set_selections`.
 - **Press-and-hold toggle** — later [todo]. `press_and_hold` was removed
   (a946b61); the idea of switching macOS's accent popup on in insert
   mode and off in normal is a per-mode `NSUserDefaults` flip. Cheap if
@@ -224,7 +231,16 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   round: memory.md decided a pin is a flag on a moment (its Decision
   5), so it lands with the memory's third round, as a boost the
   picker's `rank` reads and a `pins` source on its list.
-- **The scrolling tab** — later, design first [todo]. Decision 2 above.
+- **The scrolling tab** — decided 2026-09-21
+  ([scrolling-tab.md](scrolling-tab.md)), not built; step 11. Decision
+  2 above, worked out: `Kind::Scroll(Strip)` beside `Kind::Tree(Node)`
+  on the tab, a column a `Node` of its own so the tree's code runs
+  inside it, the tree's keys read on the strip's axis (`<C-w>H`
+  `<C-w>L` move a column, `<A-S-h>` `<A-S-l>` step its width through
+  the presets), the viewport a kui `scroll_x` row revealed on the
+  focus frame and left alone otherwise, `:layout scroll` \| `tree`
+  converting both ways. The kui ask Decision 2 named is built (kui's
+  `enter`, `exit`, `slide`, `reveal`).
 - **`:map` listing** — done 2026-09-21 [kui.md]. `:map list` (`:maps`;
   `:map` itself binds) is a `*maps*` pane: each mode's bindings, keys
   then the command line and its conditions; `:map list i` one mode,
@@ -351,11 +367,16 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 
 ### Buffers with a shape
 
-- **Markdown, the fancy buffer** — later [todo, kui.md D13]. The
-  grammar is in; the rendered buffer (headings sized, emphasis weighted,
-  fence markers folded) needs a per-run size and weight on kui's
-  `rich_text` and a view that folds bytes out of its columns. A kui
-  round first (the size/weight spans), then a kawoosh one.
+- **Markdown, the fancy buffer** — decided 2026-09-21
+  ([markdown.md](markdown.md)), not built; step 13. The grammar is in;
+  the rendered buffer is the source drawn with its marks folded and
+  its structure weighted (the caret's line raw), not a preview. The
+  kui round this item expected is not needed: a row is one
+  `rich_text` with its own size, and a span has had `bold`, `italic`,
+  `underline` and `bg` since kui's C22; what the buffer pulls in is
+  soft wrap on its rows (`wrap = word`, `Ui::caret_rect`) and the
+  `image` node, both there — the round's first day checks them
+  headless.
 - **`dir`, round three** — partly [todo]. Left from the design: a
   watcher re-reading a listing the io thread's `watch.rs` sees change,
   an image preview once kui's `image` is on the road (req §9), and
@@ -448,9 +469,16 @@ follow the theme every frame (`panes.rs`).
   `Domain::Ssh`) and a path type that knows its domain, the same
   corridor the detachable daemon is on (mvp.md's non-goals). WSL is
   the local case of it — the pty is `wsl.exe`, the paths translate
-  (`/mnt/c` ↔ `C:\`) — and Windows-only. **Recommended**: the design
-  note names ssh alone, after the picker and the LSP round; until
-  then `kawoosh.tool("box", { cmd = "ssh box" })`.
+  (`/mnt/c` ↔ `C:\`) — and Windows-only. Decided 2026-09-21
+  ([domains.md](domains.md)), ssh alone, not built; step 14: a
+  `domains` settings table, `box:/path` as the spelling and `Loc` as
+  the type, OpenSSH's binary as the transport (a master per domain in
+  a pane, so prompts are answered where they appear), an `Fs` trait
+  with SFTP as its second implementation, polling for the watch, the
+  shim back over `-R` to a TCP port with bash's `/dev/tcp`, every
+  process — pty, tool, compile, language server — spawned where its
+  cwd is. Four rounds. Until then `kawoosh.tool("box", { cmd = "ssh
+  box" })`.
 - **Mouse buttons and OSC 8** — later [kui.md, req §10]. kui routes
   only the primary button; the middle button and hyperlinks are kui's
   wish list, not kawoosh's.
@@ -524,10 +552,49 @@ then breadth.
    the `:map` listing, the plugin-pane example written up.~~ Landed
    2026-09-21 (`harness.rs`, `Runtime::{start_test, resume_test,
    eval}`, `kawoosh/lua/tests`, `plugin-panes.md`); see the Lua track.
-9. **Design notes, then decide**: the memory ([memory.md](memory.md),
+9. ~~**Design notes, then decide**: the memory ([memory.md](memory.md),
    decided; build before step 4); the scrolling tab; the markdown
    buffer's kui half; ssh as a domain; auto-closing brackets as a
-   plugin.
+   plugin.~~ Landed 2026-09-21 as four notes, each with its
+   decisions, the alternatives they beat, a build order and its
+   risks: [scrolling-tab.md](scrolling-tab.md),
+   [markdown.md](markdown.md), [domains.md](domains.md),
+   [pairs.md](pairs.md); memory.md stood as written. What deciding
+   found: the scrolling tab's kui ask (Decision 2's `enter` / `exit` /
+   keyframes) was built while the steps above landed, so nothing in
+   kui precedes it; the markdown buffer's kui half is smaller than
+   kui.md D13 thought — a row is a `rich_text` with its own size and a
+   span has its weight since C22 — and what it really pulls in is soft
+   wrap for its rows; ssh is four rounds on a `Loc` type and an `Fs`
+   trait with OpenSSH's own binary as the transport and no agent on
+   the host; the brackets are an afternoon of Lua over three engine
+   doors. The order they are built in is the list's continuation
+   below.
+10. **The memory, rounds one to three** (memory.md's build order): the
+    table, the ring and files with `:oldfiles` retired; texts and the
+    prompts; pins and the picker's boost — `<leader>e`, and the files
+    source ranked by what was attended to. First because it was owed
+    before step 4 and the picker has been ranking blind since.
+11. **The scrolling tab** ([scrolling-tab.md](scrolling-tab.md)): one
+    round — `Kind::Scroll` beside the tree, the keys read on the
+    strip's axis, `reveal` on the focus frame, `:layout` both ways,
+    sessions. The daily driver's one layout complaint.
+12. **Auto-closing brackets** ([pairs.md](pairs.md)): an afternoon —
+    the three Lua doors (`buf.type`, `buf.edits`,
+    `buf.set_selections`), `pairs.lua` off by default, its test a
+    `kawoosh test` script. Slotted here because it is small and
+    independent, not because it is urgent.
+13. **The markdown buffer** ([markdown.md](markdown.md)): one round
+    whose first day is three headless checks against kui (a wrapped
+    row's fit height, `caret_rect` on it, an image in a row), then
+    `markdown.rs`, the fold table, wrap on rendered rows, images and
+    tables.
+14. **ssh as a domain** ([domains.md](domains.md)): four rounds —
+    `Loc` everywhere with no behaviour change, then ssh (the master in
+    a pane, SFTP, `:e box:`, `dir`, the poll), then processes through
+    the domain with the shim over a forwarded port, then the LSP
+    through it. Last because it is the widest, and until then
+    `kawoosh.tool("box", { cmd = "ssh box" })`.
 
 Not on this list on purpose: everything mvp.md and kui.md call
 "deliberately not in the MVP" (daemon, soft wrap, images, ligatures,

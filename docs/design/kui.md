@@ -1027,7 +1027,11 @@ underlined, a fence's markers hidden, are a row reading the same runs
 for weight and size instead of hue only. That buffer is its own
 decision, after this one: it needs a per-run size and weight on kui's
 `rich_text` spans and a view that folds marker bytes out of its
-columns, neither of which the plain pane has.
+columns, neither of which the plain pane has. *Decided 2026-09-21 in
+[markdown.md](markdown.md), which found the kui half already there: a
+row is one `rich_text` with its own size, a span has its weight (C22),
+and what the buffer pulls in from kui is wrap on its rows and the
+`image` node; the fold is kawoosh's.*
 
 ### Deliberately not in the MVP
 

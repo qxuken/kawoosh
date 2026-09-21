@@ -139,7 +139,10 @@ kawoosh's account — these are on the road, in roughly this order:
   float, which exists.
 - **Multi-window** (`ui.window`) — a detached pane on a second monitor.
 - **`enter` / `exit` / keyframes** — beyond the split-ratio transition,
-  once the chrome is settled enough to animate.
+  once the chrome is settled enough to animate. *Built by alpha.16*
+  (props.md's `enter`, `exit`, `keyframes`, `slide`, and `Ui::reveal`
+  beside them); the first consumer is the scrolling tab
+  ([scrolling-tab.md](scrolling-tab.md)).
 - **The `edit` widget** for plugin-authored fields inside Lua views only;
   the editor pane never uses it.
 - Not on the road: the Node binding, the C runner (`kui_run`). Accessibility

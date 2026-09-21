@@ -327,6 +327,9 @@ so that nothing else takes the key meanwhile.
 | `<leader>h*` `<leader>bg` `<leader>bl` `<leader>wd` `<leader>wc` | hunks, git, log, diff, commit |
 | `<leader>y*` | copy the path, the directory, the name |
 | `<leader>G*` | the debugger |
+| `<C-w>H` `<C-w>L` | move a column in a scrolling tab ([scrolling-tab.md](scrolling-tab.md)); unbound in a tree |
+| `<leader>cr` | render the markdown buffer, toggled ([markdown.md](markdown.md)) |
+| `gx` | open the link under the caret: a path here, a URL in the OS ([markdown.md](markdown.md)) |
 
 ## Not done, deliberately
 
