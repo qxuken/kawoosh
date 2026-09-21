@@ -1101,7 +1101,17 @@ providers) where they were.
   churn and expect to file kui backlog items from here (K1 and K2 are the
   first two). Mitigation: pin `=0.1.0-alpha.N`, bump deliberately, and
   keep the kui-touching surface in `kawoosh` and `lua` only, so a bump is
-  two crates' worth of diff.
+  two crates' worth of diff. *2026-09-22:* the memory and undo panes
+  found two more, both fixed in kui the same day (its F77 and F78): a
+  `virtual_column` slices by the frame before and nothing asked for the
+  frame that closes the lag, so a list in a split that had just opened
+  showed five rows of a hundred and flickered at the edge under the
+  wheel — the core now owes a frame when a geometry a view sliced by
+  came out otherwise; and a `line` or `polygon` is a float that escaped
+  every clip, so the undo graph's lanes drew over the strip above the
+  list once it scrolled — a stroke anchored in its parent's box takes
+  the parent's clip now. Neither was kawoosh's io: the rows were there,
+  the frame that would have drawn them was not asked for.
 - **Lua 5.5** closes the door on LuaJIT-only libraries (ffi, in
   particular). Nothing in the MVP wants it.
 - **Per-line row building** is O(visible runs) per dirty frame and runs
