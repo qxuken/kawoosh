@@ -649,8 +649,7 @@ fn tabs_move_along_the_strip_and_switch_from_a_pane() {
     ex(&mut d, &mut app, "tabnew");
     ex(&mut d, &mut app, "tabnew");
     // Tabs 0 1 2, on 2. Their identities are their roots' pane ids.
-    let ids =
-        |app: &Kawoosh| -> Vec<u64> { app.layout.tabs.iter().map(|t| t.focused as u64).collect() };
+    let ids = |app: &Kawoosh| -> Vec<u64> { app.layout.tabs.iter().map(|t| t.focused).collect() };
     let before = ids(&app);
     assert_eq!(app.layout.tab, 2);
     d.keys(&mut app, "[T");
