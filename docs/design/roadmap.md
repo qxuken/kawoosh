@@ -260,10 +260,12 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   `:` asks nothing), the buffer's identifiers as the source when no
   server answers (`word_items`: a language nobody serves answers at
   once, a server with nothing to say falls back; three characters or
-  longer, nearest the caret first, capped), and the candidates pane —
-  `<C-x>` in insert mode, a `*candidates*` buffer with a row per
-  candidate and its detail, `<CR>` taking the line's into the text and
-  the keys back where they came from. The "third character" and "held
+  longer, nearest the caret first, capped), and the candidates —
+  `<C-x>` in insert mode: since 2026-09-22 a picker (the `candidates`
+  source: label, kind, detail as columns, the word as the query, the
+  signature and documentation as the preview, `⏎` replacing the word
+  through `lsp accept N`) where it was a `*candidates*` buffer pane
+  that did not reliably take the keys. The "third character" and "held
   quiet" ideas were not taken: one request per word at its first
   character costs nothing a server notices, and the ghost lands
   between keystrokes already. The ghost rule stands.

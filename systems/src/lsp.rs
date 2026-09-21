@@ -241,7 +241,42 @@ pub struct CompletionItem {
     pub label: String,
     pub insert: String,
     pub kind: Option<u64>,
+    /// The server's one-liner: a signature, a type, a path.
     pub detail: Option<String>,
+    /// The server's documentation, plain or markdown.
+    pub documentation: Option<String>,
+}
+
+/// The name of a `CompletionItemKind` (LSP 3.17's table).
+pub fn completion_kind_name(kind: u64) -> &'static str {
+    match kind {
+        1 => "text",
+        2 => "method",
+        3 => "function",
+        4 => "constructor",
+        5 => "field",
+        6 => "variable",
+        7 => "class",
+        8 => "interface",
+        9 => "module",
+        10 => "property",
+        11 => "unit",
+        12 => "value",
+        13 => "enum",
+        14 => "keyword",
+        15 => "snippet",
+        16 => "color",
+        17 => "file",
+        18 => "reference",
+        19 => "folder",
+        20 => "enum member",
+        21 => "constant",
+        22 => "struct",
+        23 => "event",
+        24 => "operator",
+        25 => "type parameter",
+        _ => "",
+    }
 }
 
 pub enum Event {
@@ -1449,11 +1484,18 @@ fn completion_items(result: Option<&Value>) -> Vec<CompletionItem> {
                 }
                 _ => insert,
             };
+            // `documentation` is a string or a `MarkupContent`.
+            let documentation = it.get("documentation").and_then(|d| {
+                d.as_str()
+                    .or_else(|| d.get("value").and_then(Value::as_str))
+                    .map(str::to_string)
+            });
             Some(CompletionItem {
                 label,
                 insert,
                 kind: it.get("kind").and_then(Value::as_u64),
                 detail: it.get("detail").and_then(Value::as_str).map(str::to_string),
+                documentation,
             })
         })
         .collect()

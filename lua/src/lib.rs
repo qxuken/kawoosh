@@ -365,6 +365,26 @@ pub struct Published {
     /// The working memory, newest first (`kawoosh.memory`), shared
     /// with the runtime's cache while the memory stands.
     pub memory: Rc<Vec<MomentSnap>>,
+    /// The completion's candidates while the picker on them is open,
+    /// and which one was current when it opened.
+    pub candidates: Option<Rc<Vec<CandidateSnap>>>,
+    pub candidate: usize,
+}
+
+/// One completion candidate as `kawoosh.lsp.candidates()` reads it
+/// (the shell's `lsp candidates`, the picker's `candidates` source).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CandidateSnap {
+    /// 1-based, what `lsp accept N` takes.
+    pub index: usize,
+    pub label: String,
+    pub insert: String,
+    /// The kind's name (`function`, `field`, …), or empty.
+    pub kind: String,
+    /// The server's one-liner: a signature, a type.
+    pub detail: String,
+    /// The documentation, plain or markdown, or empty.
+    pub documentation: String,
 }
 
 /// One moment of the memory as Lua reads it.
@@ -417,6 +437,8 @@ impl Default for Published {
             tracked: HashMap::new(),
             register: None,
             memory: Rc::new(Vec::new()),
+            candidates: None,
+            candidate: 0,
         }
     }
 }
@@ -649,6 +671,19 @@ impl Runtime {
         if p.workspace != ws {
             p.workspace = ws.to_string();
         }
+    }
+
+    /// The completion's candidates for `kawoosh.lsp.candidates()`, or
+    /// none once the picker picked or closed.
+    pub fn set_candidates(&self, candidates: Option<Rc<Vec<CandidateSnap>>>, current: usize) {
+        let mut p = self.published.borrow_mut();
+        p.candidates = candidates;
+        p.candidate = current;
+    }
+
+    /// The candidates as last set.
+    pub fn candidates(&self) -> Option<Rc<Vec<CandidateSnap>>> {
+        self.published.borrow().candidates.clone()
     }
 
     /// What the memory has not flushed yet (memory.md Decision 3):
@@ -1963,6 +1998,33 @@ fn seed(
 
     // ---- lsp
     let lsp = lua.create_table()?;
+    // ---- kawoosh.lsp.candidates(): the completion's candidates while
+    // `lsp candidates` has them up — `{ index, label, insert, kind,
+    // detail, documentation }` each — and `.current`, the one the ghost
+    // showed; nil when none.
+    let pp = published.clone();
+    lsp.set(
+        "candidates",
+        lua.create_function(move |lua, ()| {
+            let p = pp.borrow();
+            let Some(cs) = &p.candidates else {
+                return Ok(LV::Nil);
+            };
+            let t = lua.create_table()?;
+            for (i, c) in cs.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("index", c.index)?;
+                e.set("label", c.label.as_str())?;
+                e.set("insert", c.insert.as_str())?;
+                e.set("kind", c.kind.as_str())?;
+                e.set("detail", c.detail.as_str())?;
+                e.set("documentation", c.documentation.as_str())?;
+                t.set(i + 1, e)?;
+            }
+            t.set("current", p.candidate)?;
+            Ok(LV::Table(t))
+        })?,
+    )?;
     let qq = q(queue);
     lsp.set(
         "server",

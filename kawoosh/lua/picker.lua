@@ -223,14 +223,14 @@ end
 -- (`pv.runs`) when they come, with where each line starts in the
 -- text they cover — the next frame paints them.
 local function highlight_preview(pv)
-  if pv.runs or pv.asked or not pv.path or #pv.lines == 0 then return end
+  if pv.runs or pv.asked or not (pv.path or pv.language) or #pv.lines == 0 then return end
   pv.asked = true
   local starts, at = {}, 1
   for i, l in ipairs(pv.lines) do
     starts[i] = at
     at = at + #l + 1
   end
-  kawoosh.highlight(table.concat(pv.lines, "\n"), { path = pv.path }, function(runs)
+  kawoosh.highlight(table.concat(pv.lines, "\n"), { path = pv.path, language = pv.language }, function(runs)
     if not runs then return end
     pv.runs = runs
     pv.starts = starts
@@ -1060,6 +1060,50 @@ for _, mode in ipairs { "i", "n", "p" } do
   kawoosh.map(mode, "<A-S-l>", "picker list wider", when)
   kawoosh.map(mode, "<A-S-h>", "picker list narrower", when)
 end
+
+-- The completion's candidates (`<C-x>` in insert mode, `lsp
+-- candidates`): a row per candidate — its label, its kind, the
+-- server's detail (a signature, a type) — the query the word typed so
+-- far, the cursor's signature and documentation as the preview,
+-- `⏎` taking one into the text (`lsp accept N`). The rows are what
+-- `kawoosh.lsp.candidates()` says while the picker is up.
+local CANDIDATE_COLUMNS = {
+  { "text", family = "mono", min = 140, max = 360, share = 0.4 },
+  { "kind", muted = true, min = 70, max = 140, share = 0.15 },
+  { "detail", family = "mono", muted = true, grow = true },
+}
+picker.source("candidates", {
+  title = "candidates", placeholder = "a candidate",
+  columns = CANDIDATE_COLUMNS,
+  items = function()
+    local cs = kawoosh.lsp.candidates()
+    local items = {}
+    if not cs then return items end
+    for _, c in ipairs(cs) do
+      items[#items + 1] = {
+        text = c.label, kind = c.kind, detail = c.detail, index = c.index,
+        insert = c.insert, documentation = c.documentation,
+        boost = c.index == cs.current and 1 or 0,
+      }
+    end
+    return items
+  end,
+  pick = function(item) kawoosh.run("lsp accept " .. item.index) end,
+  preview = function(item)
+    local lines = {}
+    if item.detail ~= "" then
+      lines[#lines + 1] = item.detail
+    end
+    if item.documentation ~= "" then
+      if #lines > 0 then lines[#lines + 1] = "" end
+      for l in (item.documentation .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = l end
+    end
+    if #lines == 0 then lines[1] = item.insert end
+    local title = item.text .. (item.kind ~= "" and ("  ·  " .. item.kind) or "")
+    return { title = title, lines = lines, language = "markdown" }
+  end,
+  empty = "no candidate matches",
+})
 
 -- `:picker [SOURCE]`: bare, the smart one.
 kawoosh.command("picker", function(ctx)

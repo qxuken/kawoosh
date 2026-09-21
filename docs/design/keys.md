@@ -225,8 +225,13 @@ on the server's trigger characters (`.` and `:` for a server that names
 none), and when no server answers — a language nobody serves, a server
 with nothing to say — the buffer's own identifiers are the candidates,
 nearest the caret first. `<C-x>` in insert mode puts the candidates in
-a `*candidates*` pane to browse: `j` `k`, `<CR>` takes the one on the
-line and the keys come back to the text, `q` or `<Esc>` closes it.
+a picker to browse (2026-09-22; it was a `*candidates*` buffer pane,
+which took the keys unreliably): a row per candidate with its kind and
+the server's detail — a signature, a type — as columns, the word
+typed so far as the query, the cursor's signature and documentation
+as the preview (markdown), `<CR>` replaces the word with the one
+picked and the keys come back to the text in insert mode, `<Esc>`
+closes it (`kawoosh.lsp.candidates()`, `lsp accept N`).
 | `@` + char | play the register COUNT times; `@@` the one played last, `@:` the last command line |
 
 **A change and a macro are the command stream, not the keys.** Every

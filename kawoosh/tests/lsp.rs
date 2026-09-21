@@ -5,6 +5,7 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
+use kawoosh::layout::Content;
 use kawoosh_editor::Mode;
 use kawoosh_systems::lsp::{DIAG_LAYER, ServerDef};
 use kui::KeyMods;
@@ -588,17 +589,21 @@ fn rename_references_actions_format_and_diagnostics() {
 }
 
 /// No server for the language: the buffer's own identifiers complete
-/// the word, nearest first; `<C-x>` puts the candidates in a pane,
-/// `j` and `<CR>` there take the second, and the keys come back to the
-/// text in insert mode.
+/// the word, nearest first; `<C-x>` puts the candidates in a picker
+/// with the word as its query and the cursor's detail as the preview,
+/// `⏎` there takes one into the text and the keys come back in insert
+/// mode; a word with no candidates offers nothing.
 #[test]
-fn buffer_words_complete_and_the_candidates_pane_browses_them() {
+fn buffer_words_complete_and_the_candidates_picker_browses_them() {
     let dir = std::env::temp_dir().join(format!("kawoosh-lsp-words-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("notes.txt");
     std::fs::write(&file, "helium helper\nhello_world here\n\n").unwrap();
     let mut app = Kawoosh::from_file(&file);
+    app.jobs_inline = true;
     let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
     d.frame(&mut app);
     let v = app.focused_view().unwrap();
     let buf_id = app.ed.views[v].buffer;
@@ -614,20 +619,32 @@ fn buffer_words_complete_and_the_candidates_pane_browses_them() {
         .collect();
     assert_eq!(labels, ["hello_world", "helper", "helium"], "nearest first");
     assert_eq!(c.ghost("hel").as_deref(), Some("lo_world"));
-    // The pane: a row per candidate, the cursor on the current one.
+    // The picker: a row per candidate with its kind and detail, the
+    // query the word so far, the keys on the query; the preview is
+    // the cursor's detail.
     d.ctrl(&mut app, "x");
-    let pane_v = app
-        .focused_view()
-        .expect("the candidates pane has the keys");
-    let cand = app.ed.views[pane_v].buffer;
-    assert_eq!(app.ed.buffers[cand].name, "*candidates*");
-    assert_eq!(
-        app.ed.buffers[cand].text(),
-        "hello_world\tbuffer\nhelper\tbuffer\nhelium\tbuffer"
+    d.frame(&mut app);
+    assert!(
+        matches!(app.layout.focused_content(), Some(Content::Lua(_))),
+        "the picker has the keys"
     );
-    assert_eq!(app.focused_mode(), Mode::Normal);
-    d.keys(&mut app, "j");
+    app.run_lua_source(
+        "t",
+        "local s = kawoosh.picker.state(); kawoosh.echo(s.query .. ' ' .. s.count .. ' ' .. tostring(s.text))",
+    );
+    assert_eq!(app.ed.message, "hel 3 hello_world");
+    let drawn: Vec<String> = d
+        .core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect();
+    assert!(drawn.iter().any(|t| t == "buffer"), "{drawn:?}");
+    // Down one row and `⏎`: `helper` replaces the word, the keys are
+    // back in the text, insert mode still.
+    d.ctrl(&mut app, "n");
     d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
     assert_eq!(
         app.ed.buffers[buf_id].text(),
         "helium helper\nhello_world here\n\nhelper"
@@ -636,10 +653,18 @@ fn buffer_words_complete_and_the_candidates_pane_browses_them() {
     assert_eq!(app.ed.views[v].buffer, buf_id, "back in the text");
     assert_eq!(app.ed.mode(v), Mode::Insert);
     assert!(
-        app.ed.buffers.values().all(|b| b.name != "*candidates*"),
-        "the pane is gone"
+        !matches!(app.layout.focused_content(), Some(Content::Lua(_))),
+        "the picker is gone"
     );
     assert!(app.lsp.completion.is_none());
+    d.keys(&mut app, "!");
+    assert_eq!(
+        app.ed.buffers[buf_id].text(),
+        "helium helper\nhello_world here\n\nhelper!",
+        "the caret after the candidate"
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "A");
     // A word with no candidates offers nothing; the pane says so.
     d.keys(&mut app, " zq");
     d.frame(&mut app);

@@ -9,7 +9,8 @@
 //! for a server that names none), and the buffer's own identifiers
 //! answer when no server does (`word_items`: a language nobody serves,
 //! a server with nothing to say); `<C-x>` in insert mode puts the
-//! candidates in a `*candidates*` pane to browse, `<CR>` there taking
+//! candidates in a picker to browse — kind, signature, documentation
+//! as the preview (`picker.lua`'s `candidates` source) — `<CR>` there taking
 //! one. `<leader>r` renames (the prompt filled with `lsp rename WORD`),
 //! `gr` lists references as a locations buffer `]q` walks, `<leader>ca`
 //! offers the code actions in a confirm, `<leader>cF` formats, `<leader>D`
@@ -25,11 +26,13 @@ use std::time::{Duration, Instant};
 
 use kawoosh_doc::{Buffer, BufferId, Update, Version};
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Mode, Prompt, Selection, Spec, ViewId};
+use kawoosh_lua::CandidateSnap;
 use kawoosh_systems::lsp::{
     Caps, Cmd, CodeAction, CompletionItem, DIAG_LAYER, Event, Location, Lsp, ServerDef, TextEdit,
-    WorkspaceEdit, offset_of_position,
+    WorkspaceEdit, completion_kind_name, offset_of_position,
 };
 use kawoosh_systems::{Alarm, WakeHandle};
+use std::rc::Rc;
 
 use crate::confirm::Confirm;
 
@@ -48,8 +51,7 @@ const WORDS_MAX_BYTES: usize = 2 << 20;
 const WORDS_MAX: usize = 500;
 /// The most code actions a confirm offers: its buttons are the digits.
 const ACTIONS_MAX: usize = 9;
-/// The candidates pane's buffer, and the language its keys hang on.
-pub const CANDIDATES_BUFFER: &str = "*candidates*";
+
 pub const REFERENCES_BUFFER: &str = "*references*";
 
 use crate::app::Kawoosh;
@@ -187,6 +189,7 @@ fn word_items(buf: &Buffer, start: usize, typed: &str) -> Vec<CompletionItem> {
             insert: w.to_string(),
             kind: None,
             detail: Some("buffer".into()),
+            documentation: None,
         })
         .collect()
 }
@@ -774,117 +777,91 @@ impl Kawoosh {
         self.ed.set_field_text(pv, &format!("lsp rename {word}"));
     }
 
-    /// `<C-x>` in insert mode: the candidates as a pane to browse, the
-    /// cursor on the current one; `<CR>` there takes it.
+    /// `<C-x>` in insert mode: the completion's candidates as a picker
+    /// (`picker.lua`'s `candidates` source) — a row per candidate with
+    /// its kind and detail, the query the word typed so far, the
+    /// cursor's signature and documentation as the preview — and `⏎`
+    /// there takes one (`lsp accept N`). The keys come back to the
+    /// text, in insert mode, when the picker closes.
     fn open_candidates(&mut self) {
         let Some((_, typed)) = self.completion_typed() else {
             self.ed.message = "no candidates".into();
             return;
         };
         let c = self.lsp.completion.as_ref().unwrap();
-        let rows: Vec<String> = c
-            .filtered
+        if c.items.is_empty() {
+            self.ed.message = "no candidates".into();
+            return;
+        }
+        let snap: Vec<CandidateSnap> = c
+            .items
             .iter()
-            .map(|i| {
-                let it = &c.items[*i];
-                match &it.detail {
-                    Some(d) if !d.is_empty() => format!("{}\t{d}", it.label),
-                    _ => it.label.clone(),
-                }
+            .enumerate()
+            .map(|(i, it)| CandidateSnap {
+                index: i + 1,
+                label: it.label.clone(),
+                insert: it.insert.clone(),
+                kind: it.kind.map(completion_kind_name).unwrap_or("").to_string(),
+                detail: it.detail.clone().unwrap_or_default(),
+                documentation: it.documentation.clone().unwrap_or_default(),
             })
             .collect();
-        let index = c.index;
-        let _ = typed;
-        let from = self.layout.focused();
-        self.show_in_pane(CANDIDATES_BUFFER, &rows.join("\n"));
-        let Some(id) = self
-            .ed
-            .buffers
-            .iter()
-            .find(|(_, b)| b.name == CANDIDATES_BUFFER)
-            .map(|(id, _)| id)
-        else {
+        let current = c.filtered.get(c.index).map(|i| i + 1).unwrap_or(1);
+        let Some(rt) = self.scripting.rt.clone() else {
+            self.ed.message = "the candidates picker needs lua".into();
             return;
         };
-        self.ed.buffers[id].language = "candidates".into();
-        let pane = self
-            .layout
-            .visible_panes()
-            .into_iter()
-            .find(|p| matches!(self.view_of(*p), Some(v) if self.ed.views[v].buffer == id));
-        if let Some(p) = pane {
-            self.layout.focus(p);
-            if let Some(v) = self.view_of(p) {
-                let off = self.ed.buffers[id].line_start(index);
-                self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(off));
-            }
-        }
-        self.lsp.candidates_from = Some(from);
-        self.reclaim_focus = true;
+        rt.set_candidates(Some(Rc::new(snap)), current);
+        self.lsp.candidates_from = Some(self.layout.focused());
+        let query = typed.replace('\\', "\\\\").replace('"', "\\\"");
+        self.run_lua_source(
+            "candidates",
+            &format!("kawoosh.picker.open(\"candidates\", {{ query = \"{query}\" }})"),
+        );
     }
 
-    /// `<CR>` in the candidates pane: the candidate on the cursor's line
-    /// into the buffer being completed, the pane closed, the keyboard
-    /// back where it came from. `q` / `<Esc>` there: the pane alone.
-    fn accept_candidate(&mut self, take: bool) {
-        let Some(id) = self
-            .ed
-            .buffers
-            .iter()
-            .find(|(_, b)| b.name == CANDIDATES_BUFFER)
-            .map(|(id, _)| id)
-        else {
+    /// `lsp accept N`: candidate N (of the picker's list) into the
+    /// buffer being completed, the word typed so far replaced by it,
+    /// and the completion done with. The view is the one the picker
+    /// was opened from, else any on the buffer.
+    fn accept_candidate(&mut self, n: usize) {
+        let Some(rt) = self.scripting.rt.clone() else {
             return;
         };
-        let pane = self.layout.focused();
-        let line = self
-            .view_of(pane)
-            .filter(|v| self.ed.views[*v].buffer == id)
-            .map(|v| self.ed.buffers[id].line_of(self.ed.views[v].sels.primary().head));
-        if take
-            && let Some(line) = line
-            && let Some(c) = self.lsp.completion.as_ref()
-            && let Some(&i) = c.filtered.get(line)
-        {
-            let insert = c.items[i].insert.clone();
-            let (buffer, start) = (c.buffer, c.start);
-            // The view being completed: the one in the pane the keys came
-            // from, else any on the buffer.
-            let target = self
-                .lsp
-                .candidates_from
-                .and_then(|p| self.view_of(p))
-                .filter(|v| self.ed.views[*v].buffer == buffer)
-                .or_else(|| {
-                    self.ed
-                        .views
-                        .iter()
-                        .find(|(_, v)| v.buffer == buffer)
-                        .map(|(k, _)| k)
-                });
-            if let Some(v) = target {
-                let caret = self.ed.views[v].sels.primary().head;
-                let typed = if caret >= start {
-                    self.ed.buffers[buffer].slice(start..caret)
-                } else {
-                    String::new()
-                };
-                if let Some(rest) = insert.strip_prefix(typed.as_str()) {
-                    self.ed.insert_text(v, rest);
-                }
-            }
-        }
-        self.lsp.completion = None;
-        if let Some(crate::layout::Content::Editor(v)) = self.layout.close(pane) {
-            self.ed.views.remove(v);
-        }
-        self.ed.remove_buffer(id);
-        if let Some(from) = self.lsp.candidates_from.take()
-            && self.layout.visible_panes().contains(&from)
-        {
-            self.layout.focus(from);
-        }
-        self.reclaim_focus = true;
+        let Some(snap) = rt
+            .candidates()
+            .and_then(|c| c.get(n.wrapping_sub(1)).cloned())
+        else {
+            self.ed.message = format!("no candidate {n}");
+            return;
+        };
+        rt.set_candidates(None, 0);
+        let Some(c) = self.lsp.completion.take() else {
+            self.ed.message = "the completion is gone".into();
+            return;
+        };
+        let (buffer, start) = (c.buffer, c.start);
+        let target = self
+            .lsp
+            .candidates_from
+            .take()
+            .and_then(|p| self.view_of(p))
+            .filter(|v| self.ed.views[*v].buffer == buffer)
+            .or_else(|| {
+                self.ed
+                    .views
+                    .iter()
+                    .find(|(_, v)| v.buffer == buffer)
+                    .map(|(k, _)| k)
+            });
+        let Some(v) = target else {
+            self.ed.message = "the buffer being completed is not on show".into();
+            return;
+        };
+        let caret = self.ed.views[v].sels.primary().head;
+        let end = caret.max(start);
+        self.ed.apply_edits(buffer, &[(start..end, snap.insert)]);
+        self.follow_caret = true;
     }
 
     /// A request about the caret: the document goes first, so the
@@ -1038,13 +1015,10 @@ impl Kawoosh {
     /// key typed into the text (`was_insert`), not the `i` that opened
     /// insert mode.
     pub(crate) fn completion_after_key(&mut self, stroke: &KeyStroke, was_insert: bool) {
-        // The key that opened the candidates pane took the keys there:
-        // the completion is what the pane shows, and stays.
-        if self.lsp.candidates_from.is_some()
-            && self
-                .focused_view()
-                .is_some_and(|v| self.ed.buffer_of(v).name == CANDIDATES_BUFFER)
-        {
+        // The key that opened the candidates picker took the keys
+        // there: the completion is what the picker lists, and stays
+        // until it picks or closes.
+        if self.lsp.candidates_from.is_some() && self.focused_view().is_none() {
             return;
         }
         if self.pane_mode() != Mode::Insert {
@@ -1112,20 +1086,18 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             |k, _| k.request_completion(),
         ),
         cmd(
-            Spec::new("lsp candidates").doc("the completion's candidates in a pane to browse"),
+            Spec::new("lsp candidates")
+                .doc("the completion's candidates as a picker: kind, signature, documentation"),
             |k, _| k.open_candidates(),
         ),
         cmd(
-            Spec::new("candidate accept")
-                .when(&["language:candidates"])
-                .doc("the candidate on this line, into the buffer being completed"),
-            |k, _| k.accept_candidate(true),
-        ),
-        cmd(
-            Spec::new("candidates close")
-                .when(&["language:candidates"])
-                .doc("close the candidates pane"),
-            |k, _| k.accept_candidate(false),
+            Spec::new("lsp accept")
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("candidate N of the picker's list into the buffer being completed"),
+            |k, ctx| match ctx.args.first().and_then(|a| a.parse().ok()) {
+                Some(n) => k.accept_candidate(n),
+                None => k.ed.message = "accept which? (lsp accept N)".into(),
+            },
         ),
         cmd(
             Spec::new("lsp rename")
