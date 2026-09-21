@@ -1122,14 +1122,26 @@ fn the_pane_filters_its_rows_from_a_field() {
     assert_eq!(app.memory_pane.cursor, 1);
     d.key(&mut app, "up", KeyMods::default());
     assert_eq!(app.memory_pane.cursor, 0);
+    // `<Esc>` once: normal mode over the line, where `j` `k` `gg` `G`
+    // walk the rows as `<C-n>` `<C-p>` do, and the line is still the
+    // editor's (`A` appends).
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(app.focused_mode(), Mode::Normal);
+    d.keys(&mut app, "j");
+    assert_eq!(app.memory_pane.cursor, 1);
+    d.keys(&mut app, "k");
+    assert_eq!(app.memory_pane.cursor, 0);
+    d.keys(&mut app, "G");
+    assert_eq!(app.memory_pane.cursor, app.memory_pane.rows().len() - 1);
+    d.keys(&mut app, "gg");
+    assert_eq!(app.memory_pane.cursor, 0);
     // A narrower line: fewer rows, the cursor back on the best.
-    d.keys(&mut app, "9");
+    d.keys(&mut app, "A9");
     d.frame(&mut app);
     assert_eq!(app.memory_pane.rows().len(), 1);
     assert_eq!(app.memory_pane.cursor, 0);
     // `<Esc>` twice: the keys back to the pane, the filter kept.
     d.key(&mut app, "escape", KeyMods::default());
-    assert_eq!(app.focused_mode(), Mode::Normal);
     d.key(&mut app, "escape", KeyMods::default());
     assert!(app.memory_pane.filter_focused().is_none());
     assert!(app.memory_pane.filter.is_some());

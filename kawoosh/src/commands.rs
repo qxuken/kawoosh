@@ -115,6 +115,16 @@ impl Kawoosh {
                 self.ed.keymap.bind_when(mode, k, c, &filter);
             }
         }
+        // Normal mode over the line: `j` `k` walk the rows, as `<C-n>`
+        // `<C-p>` do — a one-line field has no line to move to.
+        for (k, c) in [
+            ("j", "list down"),
+            ("k", "list up"),
+            ("gg", "list first"),
+            ("G", "list last"),
+        ] {
+            self.ed.keymap.bind_when(Mode::Normal, k, c, &filter);
+        }
     }
 
     /// Adds one shell command after start (a test's, a plugin's).

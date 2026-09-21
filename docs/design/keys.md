@@ -116,7 +116,8 @@ mean each pane's thing: the memory pane's `y` `o` `x` `m` `p` `/` are
 in the pane: the cursor's row), `list open`, `memory filter` (a field
 in the pane — `field:memory/q` — whose line narrows the view's rows
 as it is typed, fzy-ranked, `<C-n>` `<C-p>` `<C-d>` `<C-u>` moving
-the cursor from the line, `<CR>` taking the row, `<Esc>` twice
+the cursor from the line — and `j` `k` `gg` `G` too in normal mode
+over it, since a one-line field has no line to move to — `<CR>` taking the row, `<Esc>` twice
 handing the keys back with the filter kept, `<Esc>` in the pane
 clearing it), under `memory`; the undo
 pane's `u` `<C-r>` `g-` `g+` are `undo pane undo` / `redo` / `older` /
