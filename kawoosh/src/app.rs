@@ -645,6 +645,11 @@ impl Kawoosh {
                     }
                 }
             }
+            // `kawoosh theme`: the base the panes are on, for a shell's
+            // prompt hook (roadmap step 6).
+            Request::Theme => {
+                let _ = reply.send(if self.dark { "dark" } else { "light" }.into());
+            }
             Request::Ex { line } => {
                 // Any view will do for a command that needs one.
                 let view = self.focused_view().or_else(|| self.ed.any_view());
@@ -1509,6 +1514,7 @@ impl kui::App for Kawoosh {
         self.sync_look(ui);
         self.pal = ui.theme().into();
         self.dark = ui.theme().is_dark();
+        self.sync_term_palettes();
         let pal = self.pal;
         if self.devtools_synced.is_some_and(|s| s != self.devtools) {
             ui.core().set_devtools(self.devtools);

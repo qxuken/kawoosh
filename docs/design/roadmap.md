@@ -16,7 +16,7 @@ undo tree and its pane, histories in the store with hot exit, commands
 as specs, the key clusters and which-key, settings in layers, the
 language contract with two dozen grammars, notifications, the `dir`
 file manager through its identity-and-plan design at forty thousand
-entries, and the working memory (2026-09-20). 163 commits, 22
+entries, and the working memory (2026-09-20). 164 commits, 22
 integration test files in `kawoosh/tests` (the polish batch's
 `normal_mode.rs` and the picker's `picker.rs`, 2026-09-21).
 
@@ -354,35 +354,43 @@ follow the theme every frame (`panes.rs`).
   pane (a split only for a terminal with no pane), the caret on the
   last line, and `q` (`scrollback close`, when `language:scrollback`)
   gives the pane back. `<C-\><C-n>` and `:scrollback` do the same.
-- **The environment** — done, with one recommendation. The todo's
-  `KAWOOSH_TERM=…` is `TERM_PROGRAM=kawoosh`, the spelling iTerm,
-  WezTerm and Apple's terminal use and nushell, starship and every
-  prompt already read; a second name buys nothing. Add
-  `TERM_PROGRAM_VERSION` (the crate's), as the others do. The theme
-  half of the ask — `TERM_APPEARANCE` — is set at spawn and frozen
-  there, which is the next item's problem.
-- **The shell following the theme** — investigate, with the leads
-  found. A running shell cannot see an environment change, so a flip
-  of the OS theme after spawn reaches nothing in the pane today; and
-  the 16 ANSI colours are one fixed table (`term::ANSI`) for light and
-  dark, so a `ls` in a light pane is a dark pane's `ls`. Three
-  mechanisms, cheapest first, and the recommendation is all three:
-  (1) **the ANSI palette from the theme** — a light and a dark sixteen
-  in `palette.rs`, as the syntax hues are, put in the `term::Palette`
-  each frame: every program that uses colours follows at once, the
-  shell not knowing; (2) **answer the questions** — alacritty's
-  `Event::ColorRequest` (a program's `OSC 10`/`11 ; ?`, how neovim and
-  helix detect `background`) is dropped in `drain_events` today, so
-  askers time out; answer with the pane's colours, and raise DEC mode
-  2031 (`CSI ? 2031 h`, contour's, in kitty and neovim 0.10+): a
-  program that set it is told `CSI ? 997 ; 1 n` (dark) / `; 2 n`
-  (light) when the theme flips, and a neovim in a pane switches its
-  own colourscheme; (3) **a signal the shell can poll** — `kawoosh
-  theme` on the CLI shim answering `dark`/`light` over the socket, so
-  a nushell `pre_prompt` hook (or `term query` with `OSC 11`, once (2)
-  answers it) picks its base16 variant each prompt. The investigation
-  is which of (2) and (3) nushell's own colour config can actually
-  consume; (1) needs none.
+- **The environment** — done 2026-09-21. The todo's `KAWOOSH_TERM=…`
+  is `TERM_PROGRAM=kawoosh`, the spelling iTerm, WezTerm and Apple's
+  terminal use and nushell, starship and every prompt already read;
+  `TERM_PROGRAM_VERSION` (the crate's) beside it now, as the others
+  do, and `KAWOOSH_BIN` (the binary, for a hook that runs `kawoosh
+  theme` without it on the PATH). `TERM_APPEARANCE` is set at spawn
+  and frozen there, which the next item answers.
+- **The shell following the theme** — done 2026-09-21, all three
+  mechanisms. (1) **The ANSI sixteen from the theme**: `palette::ansi`
+  is a dark and a light set (Tomorrow Night's, Tomorrow's), put in
+  every terminal's `Palette` each frame with the theme's fg, the
+  panel and the base (`sync_term_palettes`, shown or not), so a
+  pane's `ls` follows the theme with the shell knowing nothing.
+  (2) **The questions answered**: alacritty's `Event::ColorRequest`
+  (a program's `OSC 4`/`10`/`11`/`12 ; ?`) is answered with what the
+  program set, else the palette's, in the asker's terminator; DEC
+  mode 2031 is kawoosh's — `term::Hooked` fronts alacritty's `Term`
+  as the parser's `Handler`, every method the term's and 2031 set,
+  reset and DECRQM-reported here — and a flip of the base tells a
+  program under it `CSI ? 997 ; 1 n` (dark) / `; 2 n` (light), so a
+  neovim in a pane switches its own colourscheme. Contour's `CSI ?
+  996 n` query is not answered: vte drops a DSR with the private
+  prefix before any handler sees it, and `OSC 11 ; ?` asks the same
+  thing. (3) **`kawoosh theme` on the shim**: `Request::Theme` over
+  the socket, answered `dark` or `light` from the frame. The
+  investigation's answer: nushell can consume neither the 2031 report
+  (it would land in the line editor as keys) nor an `OSC 11` query per
+  prompt (its own `theme.nu` says why: typeahead breaks the read, and
+  there is no timeout), so its hook is (3) — `kawoosh-follow-theme`
+  in the user's `theme.nu`, a string `pre_prompt` hook added while
+  `KAWOOSH_SOCKET` is set, running `$KAWOOSH_BIN theme` and
+  re-applying the gruvbox variant when the answer moved; the same
+  file reads `TERM_APPEARANCE` at start beside wezterm's
+  `TERM_APEARANCE`. Tests: term's
+  `colour_questions_and_the_appearance_mode`, terminal.rs's
+  `the_pane_answers_colour_questions_and_reports_a_flip` (the theme
+  flipped by `:set theme.appearance`).
 - **Launch targets** — done 2026-09-21. `kawoosh.tool` is the target
   and `:tool` bare lists names in the message line; `<leader>tt`
   (`picker tools`) is the list as a picker — each tool with its command
@@ -466,10 +474,12 @@ then breadth.
    2026-09-21 (`kawoosh/src/look.rs`, `trust.rs`, two tests in
    `settings.rs`); see the config track. `set_theme` is `theme.*` in
    the settings tree rather than a Lua call: a palette is data.
-6. **The terminal's theme.** The ANSI sixteen from the theme, the
+6. ~~**The terminal's theme.** The ANSI sixteen from the theme, the
    colour questions answered with mode 2031, `kawoosh theme` on the
    shim — the palette work of step 5 carried into the pane; the tools
-   picker rides on step 4, and `<C-S-x>` copy mode is in step 2.
+   picker rides on step 4, and `<C-S-x>` copy mode is in step 2.~~
+   Landed 2026-09-21 (`term::Hooked`, `palette::ansi`,
+   `Request::Theme`, the nushell hook); see the terminal track.
 7. **LSP, round two.** Completion as you type with buffer words as a
    fallback source and the candidates pane; rename, references,
    code action, format; the server table.

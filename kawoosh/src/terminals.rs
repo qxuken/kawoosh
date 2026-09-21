@@ -84,6 +84,10 @@ impl Kawoosh {
         let mut envs = vec![
             ("TERM_PROGRAM".to_string(), "kawoosh".to_string()),
             (
+                "TERM_PROGRAM_VERSION".to_string(),
+                env!("CARGO_PKG_VERSION").to_string(),
+            ),
+            (
                 "TERM_APPEARANCE".to_string(),
                 if self.dark { "dark" } else { "light" }.to_string(),
             ),
@@ -91,6 +95,9 @@ impl Kawoosh {
         if let Some(sock) = &self.socket {
             envs.push(("KAWOOSH_SOCKET".into(), sock.display().to_string()));
             if let Ok(exe) = std::env::current_exe() {
+                // The binary itself, for a hook that asks it something
+                // (`kawoosh theme`) without it being on the PATH.
+                envs.push(("KAWOOSH_BIN".into(), exe.display().to_string()));
                 let shim = format!("{} edit --wait", exe.display());
                 envs.push(("EDITOR".into(), shim.clone()));
                 envs.push(("VISUAL".into(), shim));
@@ -124,6 +131,25 @@ impl Kawoosh {
         let id = self.terms.add(t);
         self.layout.split(SplitDir::V, Content::Terminal(id));
         id
+    }
+
+    /// The frame's palette into every terminal, shown or not: the
+    /// theme's fg and panel, the ANSI sixteen of its base
+    /// (`palette::ansi`), and the base itself — what a program's colour
+    /// question is answered with, and a flip of the base is what one
+    /// under mode 2031 is told of (`Terminal::set_palette`).
+    pub(crate) fn sync_term_palettes(&mut self) {
+        let pal = kawoosh_term::Palette {
+            fg: self.pal.fg.to_hex(),
+            bg: self.pal.panel.to_hex(),
+            ansi: crate::palette::ansi(self.dark),
+            dark: self.dark,
+        };
+        for term in self.terms.map.values_mut() {
+            if term.palette() != pal {
+                term.set_palette(pal);
+            }
+        }
     }
 
     pub fn feed_terminal(&mut self, id: TermId, bytes: &[u8]) {

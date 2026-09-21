@@ -11,9 +11,9 @@ use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, Term, TermMode};
-use alacritty_terminal::vte::ansi::{Color, CursorShape as VtCursor, NamedColor, Processor, Rgb};
+use alacritty_terminal::vte::ansi::*;
 use anyhow::{Context as _, Result};
-use kui_core::cells::{Cell, CursorShape, flags};
+use kui_core::cells::{Cell, CursorShape as CellCursor, flags};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,18 +56,22 @@ pub struct Screen {
     pub rows: usize,
     pub cols: usize,
     pub cells: Vec<Cell>,
-    pub cursor: Option<(usize, usize, CursorShape)>,
+    pub cursor: Option<(usize, usize, CellCursor)>,
     /// The absolute session line of the top row.
     pub origin_line: u64,
 }
 
-/// Default colours a screen is painted with, from the theme.
-#[derive(Clone, Copy, Debug)]
+/// Default colours a screen is painted with, from the theme
+/// ([`Terminal::set_palette`]), and which base they are: what a
+/// program's `OSC 10` / `11` question is answered with, and a flip of
+/// `dark` is what a program that set mode 2031 is told about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Palette {
     pub fg: u32,
     pub bg: u32,
     /// The 16 ANSI colours as 0xRRGGBBAA.
     pub ansi: [u32; 16],
+    pub dark: bool,
 }
 
 impl Default for Palette {
@@ -76,13 +80,40 @@ impl Default for Palette {
             fg: 0xE6E6E6FF,
             bg: 0x1D1F21FF,
             ansi: ANSI,
+            dark: true,
         }
     }
+}
+
+/// What the parser's hooks keep beside alacritty's `Term`
+/// ([`Hooked`]): the modes alacritty does not know, and the replies
+/// they owe the process.
+#[derive(Default)]
+struct Modes {
+    /// DEC private mode 2031 (contour's, in kitty and neovim 0.10+): the
+    /// program wants `CSI ? 997 ; 1 n` (dark) / `; 2 n` (light) when the
+    /// appearance flips.
+    report_appearance: bool,
+    /// Bytes to the process, written once the parser's pass is over.
+    replies: Vec<u8>,
+}
+
+/// Mode 2031, and the report a program under it gets on a flip, in
+/// contour's spelling. (Its `CSI ? 996 n` query is not answered: vte
+/// drops a DSR with the private prefix before any handler sees it, and
+/// `OSC 11 ; ?` asks the same thing.)
+const MODE_APPEARANCE: u16 = 2031;
+
+fn appearance_report(dark: bool) -> String {
+    format!("\x1b[?997;{}n", if dark { 1 } else { 2 })
 }
 
 pub struct Terminal {
     term: Term<Proxy>,
     parser: Processor,
+    modes: Modes,
+    /// The colours the screen is painted with, as last set.
+    palette: Palette,
     pty: Option<Box<dyn MasterPty + Send>>,
     writer: Option<Box<dyn Write + Send>>,
     child: Option<Box<dyn Child + Send + Sync>>,
@@ -165,6 +196,8 @@ impl Terminal {
             Self {
                 term,
                 parser: Processor::new(),
+                modes: Modes::default(),
+                palette: Palette::default(),
                 pty: Some(pair.master),
                 writer: Some(writer),
                 child: Some(child),
@@ -186,6 +219,8 @@ impl Terminal {
         Self {
             term: Term::new(config(), &size, Proxy { tx }),
             parser: Processor::new(),
+            modes: Modes::default(),
+            palette: Palette::default(),
             pty: None,
             writer: None,
             child: None,
@@ -228,14 +263,74 @@ impl Terminal {
     /// Bytes from the pty: parsed, replies (a DA answer, a cursor report)
     /// written back, and the terminal's own events read out.
     pub fn feed(&mut self, bytes: &[u8]) {
-        self.parser.advance(&mut self.term, bytes);
+        self.parser.advance(
+            &mut Hooked {
+                term: &mut self.term,
+                modes: &mut self.modes,
+            },
+            bytes,
+        );
+        let replies = std::mem::take(&mut self.modes.replies);
+        if !replies.is_empty() {
+            self.input(&replies);
+        }
         self.drain_events();
+    }
+
+    /// The colours the screen is painted with, from the theme: kept for
+    /// the next [`Terminal::screen`] and for a program's colour question.
+    /// A flip of the base tells a program that asked (mode 2031).
+    pub fn set_palette(&mut self, pal: Palette) {
+        let flipped = pal.dark != self.palette.dark;
+        self.palette = pal;
+        if flipped && self.modes.report_appearance {
+            self.input(appearance_report(pal.dark).as_bytes());
+        }
+    }
+
+    pub fn palette(&self) -> Palette {
+        self.palette
+    }
+
+    /// Whether the program asked to be told when the appearance flips.
+    pub fn reports_appearance(&self) -> bool {
+        self.modes.report_appearance
+    }
+
+    /// The colour a program's `OSC 4` / `10` / `11` / `12` question is
+    /// about: what the program set itself, else the palette's.
+    fn query_color(&self, index: usize) -> Rgb {
+        if index <= NamedColor::DimForeground as usize
+            && let Some(c) = self.term.colors()[index]
+        {
+            return c;
+        }
+        let pal = &self.palette;
+        let hex = match index {
+            i if i == NamedColor::Foreground as usize => pal.fg,
+            i if i == NamedColor::Background as usize => pal.bg,
+            i if i == NamedColor::Cursor as usize => pal.fg,
+            i if i < 256 => indexed(i as u8, pal),
+            _ => pal.fg,
+        };
+        Rgb {
+            r: (hex >> 24) as u8,
+            g: (hex >> 16) as u8,
+            b: (hex >> 8) as u8,
+        }
     }
 
     fn drain_events(&mut self) {
         while let Ok(ev) = self.events.try_recv() {
             match ev {
                 Event::PtyWrite(text) => self.input(text.as_bytes()),
+                // `OSC 10 ; ?` and its kin: answered with the pane's
+                // colours, so a neovim or a shell that asks how dark the
+                // background is gets an answer rather than a timeout.
+                Event::ColorRequest(index, format) => {
+                    let reply = format(self.query_color(index));
+                    self.input(reply.as_bytes());
+                }
                 Event::Title(t) => self.title = t,
                 Event::ResetTitle => self.title.clear(),
                 Event::Bell => self.bell = true,
@@ -390,8 +485,9 @@ impl Terminal {
         self.term.grid().history_size()
     }
 
-    /// The screen as cells, painted with `pal`.
-    pub fn screen(&self, pal: &Palette) -> Screen {
+    /// The screen as cells, painted with the palette last set.
+    pub fn screen(&self) -> Screen {
+        let pal = &self.palette;
         let grid = self.term.grid();
         let rows = self.size.rows as usize;
         let cols = self.size.cols as usize;
@@ -458,9 +554,9 @@ impl Terminal {
             let row = point.line.0 + display_offset;
             usize::try_from(row).ok().filter(|r| *r < rows).map(|r| {
                 let shape = match self.term.cursor_style().shape {
-                    VtCursor::Beam => CursorShape::Bar,
-                    VtCursor::Underline => CursorShape::Underline,
-                    _ => CursorShape::Block,
+                    CursorShape::Beam => CellCursor::Bar,
+                    CursorShape::Underline => CellCursor::Underline,
+                    _ => CellCursor::Block,
                 };
                 (r, point.column.0.min(cols - 1), shape)
             })
@@ -686,17 +782,246 @@ fn color(c: Color, pal: &Palette, default: u32) -> u32 {
     }
 }
 
+/// The sixteen on a dark base (Tomorrow Night).
 pub const ANSI: [u32; 16] = [
     0x1D1F21FF, 0xCC6666FF, 0xB5BD68FF, 0xF0C674FF, 0x81A2BEFF, 0xB294BBFF, 0x8ABEB7FF, 0xC5C8C6FF,
     0x666666FF, 0xD54E53FF, 0xB9CA4AFF, 0xE7C547FF, 0x7AA6DAFF, 0xC397D8FF, 0x70C0B1FF, 0xEAEAEAFF,
 ];
+
+/// The sixteen on a light base (Tomorrow): the same hues, each dark
+/// enough to read on white, the "bright" eight a shade lighter than the
+/// plain ones rather than lighter than the page.
+pub const ANSI_LIGHT: [u32; 16] = [
+    0x4D4D4CFF, 0xC82829FF, 0x718C00FF, 0xB58900FF, 0x4271AEFF, 0x8959A8FF, 0x3E999FFF, 0x8E908CFF,
+    0x6E7070FF, 0xD84C4DFF, 0x85A000FF, 0xC79C00FF, 0x5A87C4FF, 0xA070BFFF, 0x50ADB3FF, 0xB4B4B0FF,
+];
+
+/// alacritty's `Term` with the hooks kawoosh adds in front of it: every
+/// `Handler` method is the term's, and the few the term does not know
+/// — mode 2031 set, reset and reported, the `? 996` colour-scheme
+/// query — are answered here (the replies in [`Modes`], written after
+/// the parser's pass).
+struct Hooked<'a> {
+    term: &'a mut Term<Proxy>,
+    modes: &'a mut Modes,
+}
+
+impl Handler for Hooked<'_> {
+    fn set_private_mode(&mut self, mode: PrivateMode) {
+        if mode == PrivateMode::Unknown(MODE_APPEARANCE) {
+            self.modes.report_appearance = true;
+            return;
+        }
+        self.term.set_private_mode(mode)
+    }
+
+    fn unset_private_mode(&mut self, mode: PrivateMode) {
+        if mode == PrivateMode::Unknown(MODE_APPEARANCE) {
+            self.modes.report_appearance = false;
+            return;
+        }
+        self.term.unset_private_mode(mode)
+    }
+
+    /// DECRQM on 2031: `CSI ? 2031 ; 1 $ y` while set, `; 2` while
+    /// reset — the "recognised" answers, where alacritty's would be
+    /// "not recognised" (`; 0`).
+    fn report_private_mode(&mut self, mode: PrivateMode) {
+        if mode == PrivateMode::Unknown(MODE_APPEARANCE) {
+            let state = if self.modes.report_appearance { 1 } else { 2 };
+            self.modes
+                .replies
+                .extend_from_slice(format!("\x1b[?{MODE_APPEARANCE};{state}$y").as_bytes());
+            return;
+        }
+        self.term.report_private_mode(mode)
+    }
+
+    fn set_title(&mut self, a0: Option<String>) {
+        self.term.set_title(a0)
+    }
+    fn set_cursor_style(&mut self, a0: Option<CursorStyle>) {
+        self.term.set_cursor_style(a0)
+    }
+    fn set_cursor_shape(&mut self, shape: CursorShape) {
+        self.term.set_cursor_shape(shape)
+    }
+    fn input(&mut self, c: char) {
+        self.term.input(c)
+    }
+    fn goto(&mut self, line: i32, col: usize) {
+        self.term.goto(line, col)
+    }
+    fn goto_line(&mut self, line: i32) {
+        self.term.goto_line(line)
+    }
+    fn goto_col(&mut self, col: usize) {
+        self.term.goto_col(col)
+    }
+    fn insert_blank(&mut self, a0: usize) {
+        self.term.insert_blank(a0)
+    }
+    fn move_up(&mut self, a0: usize) {
+        self.term.move_up(a0)
+    }
+    fn move_down(&mut self, a0: usize) {
+        self.term.move_down(a0)
+    }
+    fn identify_terminal(&mut self, intermediate: Option<char>) {
+        self.term.identify_terminal(intermediate)
+    }
+    fn device_status(&mut self, a0: usize) {
+        self.term.device_status(a0)
+    }
+    fn move_forward(&mut self, col: usize) {
+        self.term.move_forward(col)
+    }
+    fn move_backward(&mut self, col: usize) {
+        self.term.move_backward(col)
+    }
+    fn move_down_and_cr(&mut self, row: usize) {
+        self.term.move_down_and_cr(row)
+    }
+    fn move_up_and_cr(&mut self, row: usize) {
+        self.term.move_up_and_cr(row)
+    }
+    fn put_tab(&mut self, count: u16) {
+        self.term.put_tab(count)
+    }
+    fn backspace(&mut self) {
+        self.term.backspace()
+    }
+    fn carriage_return(&mut self) {
+        self.term.carriage_return()
+    }
+    fn linefeed(&mut self) {
+        self.term.linefeed()
+    }
+    fn bell(&mut self) {
+        self.term.bell()
+    }
+    fn substitute(&mut self) {
+        self.term.substitute()
+    }
+    fn newline(&mut self) {
+        self.term.newline()
+    }
+    fn set_horizontal_tabstop(&mut self) {
+        self.term.set_horizontal_tabstop()
+    }
+    fn scroll_up(&mut self, a0: usize) {
+        self.term.scroll_up(a0)
+    }
+    fn scroll_down(&mut self, a0: usize) {
+        self.term.scroll_down(a0)
+    }
+    fn insert_blank_lines(&mut self, a0: usize) {
+        self.term.insert_blank_lines(a0)
+    }
+    fn delete_lines(&mut self, a0: usize) {
+        self.term.delete_lines(a0)
+    }
+    fn erase_chars(&mut self, a0: usize) {
+        self.term.erase_chars(a0)
+    }
+    fn delete_chars(&mut self, a0: usize) {
+        self.term.delete_chars(a0)
+    }
+    fn move_backward_tabs(&mut self, count: u16) {
+        self.term.move_backward_tabs(count)
+    }
+    fn move_forward_tabs(&mut self, count: u16) {
+        self.term.move_forward_tabs(count)
+    }
+    fn save_cursor_position(&mut self) {
+        self.term.save_cursor_position()
+    }
+    fn restore_cursor_position(&mut self) {
+        self.term.restore_cursor_position()
+    }
+    fn clear_line(&mut self, mode: LineClearMode) {
+        self.term.clear_line(mode)
+    }
+    fn clear_screen(&mut self, mode: ClearMode) {
+        self.term.clear_screen(mode)
+    }
+    fn clear_tabs(&mut self, mode: TabulationClearMode) {
+        self.term.clear_tabs(mode)
+    }
+    fn set_tabs(&mut self, interval: u16) {
+        self.term.set_tabs(interval)
+    }
+    fn reset_state(&mut self) {
+        self.term.reset_state()
+    }
+    fn reverse_index(&mut self) {
+        self.term.reverse_index()
+    }
+    fn terminal_attribute(&mut self, attr: Attr) {
+        self.term.terminal_attribute(attr)
+    }
+    fn set_mode(&mut self, mode: Mode) {
+        self.term.set_mode(mode)
+    }
+    fn unset_mode(&mut self, mode: Mode) {
+        self.term.unset_mode(mode)
+    }
+    fn report_mode(&mut self, mode: Mode) {
+        self.term.report_mode(mode)
+    }
+    fn set_scrolling_region(&mut self, top: usize, bottom: Option<usize>) {
+        self.term.set_scrolling_region(top, bottom)
+    }
+    fn set_keypad_application_mode(&mut self) {
+        self.term.set_keypad_application_mode()
+    }
+    fn unset_keypad_application_mode(&mut self) {
+        self.term.unset_keypad_application_mode()
+    }
+    fn set_active_charset(&mut self, a0: CharsetIndex) {
+        self.term.set_active_charset(a0)
+    }
+    fn configure_charset(&mut self, a0: CharsetIndex, a1: StandardCharset) {
+        self.term.configure_charset(a0, a1)
+    }
+    fn set_color(&mut self, a0: usize, a1: Rgb) {
+        self.term.set_color(a0, a1)
+    }
+    fn dynamic_color_sequence(&mut self, a0: String, a1: usize, a2: &str) {
+        self.term.dynamic_color_sequence(a0, a1, a2)
+    }
+    fn reset_color(&mut self, a0: usize) {
+        self.term.reset_color(a0)
+    }
+    fn clipboard_store(&mut self, a0: u8, a1: &[u8]) {
+        self.term.clipboard_store(a0, a1)
+    }
+    fn clipboard_load(&mut self, a0: u8, a1: &str) {
+        self.term.clipboard_load(a0, a1)
+    }
+    fn decaln(&mut self) {
+        self.term.decaln()
+    }
+    fn push_title(&mut self) {
+        self.term.push_title()
+    }
+    fn pop_title(&mut self) {
+        self.term.pop_title()
+    }
+    fn text_area_size_pixels(&mut self) {
+        self.term.text_area_size_pixels()
+    }
+    fn text_area_size_chars(&mut self) {
+        self.term.text_area_size_chars()
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn rows(term: &Terminal) -> Vec<String> {
-        let s = term.screen(&Palette::default());
+        let s = term.screen();
         (0..s.rows)
             .map(|r| {
                 s.cells[r * s.cols..(r + 1) * s.cols]
@@ -713,7 +1038,7 @@ mod tests {
     fn output_cursor_and_colours() {
         let mut t = Terminal::headless(TermSize { rows: 5, cols: 20 });
         t.feed(b"hello\r\n\x1b[31mworld\x1b[0m");
-        let s = t.screen(&Palette::default());
+        let s = t.screen();
         assert_eq!(rows(&t)[..2], ["hello", "world"]);
         assert_eq!(s.cursor.map(|(r, c, _)| (r, c)), Some((1, 5)));
         assert_eq!(s.cells[s.cols].fg, ANSI[1]);
@@ -728,7 +1053,7 @@ mod tests {
         assert_eq!(t.history_size(), 4);
         assert!(t.scrollback_text().starts_with("l0\nl1\n"));
         t.scroll(2);
-        let s = t.screen(&Palette::default());
+        let s = t.screen();
         assert_eq!(s.origin_line, 2);
         assert_eq!(rows(&t)[0], "l2");
         t.scroll_to_bottom();
@@ -759,6 +1084,49 @@ mod tests {
         t.feed(b"\x1b[?1006l");
         t.mouse(0, MouseAction::Press, 0, 0, (false, false, false));
         assert_eq!(t.take_sent(), b"\x1b[M !!");
+    }
+
+    /// `OSC 11 ; ?` is answered with the palette's background in the
+    /// asker's terminator, a program's own `OSC 11` colour over it;
+    /// mode 2031 set is reported by DECRQM and told of a flip of the
+    /// base, and reset is neither.
+    #[test]
+    fn colour_questions_and_the_appearance_mode() {
+        let mut t = Terminal::headless(TermSize { rows: 3, cols: 20 });
+        t.feed(b"\x1b]11;?\x1b\\");
+        assert_eq!(t.take_sent(), b"\x1b]11;rgb:1d1d/1f1f/2121\x1b\\");
+        t.set_palette(Palette {
+            bg: 0xFFFFFFFF,
+            dark: false,
+            ..Palette::default()
+        });
+        assert_eq!(t.take_sent(), b"", "nothing asked to hear of the flip");
+        t.feed(b"\x1b]11;?\x07");
+        assert_eq!(t.take_sent(), b"\x1b]11;rgb:ffff/ffff/ffff\x07");
+        t.feed(b"\x1b]11;rgb:10/20/30\x1b\\\x1b]11;?\x1b\\");
+        assert_eq!(
+            t.take_sent(),
+            b"\x1b]11;rgb:1010/2020/3030\x1b\\",
+            "what the program set is what it is told"
+        );
+        t.feed(b"\x1b[?2031$p");
+        assert_eq!(t.take_sent(), b"\x1b[?2031;2$y", "recognised, reset");
+        t.feed(b"\x1b[?2031h\x1b[?2031$p");
+        assert!(t.reports_appearance());
+        assert_eq!(t.take_sent(), b"\x1b[?2031;1$y");
+        t.set_palette(Palette::default());
+        assert_eq!(t.take_sent(), b"\x1b[?997;1n", "dark now");
+        t.set_palette(Palette {
+            dark: false,
+            ..Palette::default()
+        });
+        assert_eq!(t.take_sent(), b"\x1b[?997;2n", "light now");
+        t.feed(b"\x1b[?2031l");
+        t.set_palette(Palette::default());
+        assert_eq!(t.take_sent(), b"");
+        // The other modes still reach the term through the hook.
+        t.feed(b"\x1b[?1049h");
+        assert!(t.is_alt_screen());
     }
 
     #[test]

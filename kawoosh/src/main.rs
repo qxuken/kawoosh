@@ -21,21 +21,28 @@ fn load_fonts(core: &mut Core) -> Option<kui::FontId> {
     core.add_system_font(&family)
 }
 
-/// `kawoosh edit [--wait] [+LINE] PATH…` and `kawoosh ex LINE`: the CLI
-/// shim, talking to the running instance over `$KAWOOSH_SOCKET` (mvp.md
-/// Decision 3b). `EDITOR="kawoosh edit --wait"` is what every pty gets.
+/// `kawoosh edit [--wait] [+LINE] PATH…`, `kawoosh ex LINE` and `kawoosh
+/// theme`: the CLI shim, talking to the running instance over
+/// `$KAWOOSH_SOCKET` (mvp.md Decision 3b). `EDITOR="kawoosh edit --wait"`
+/// is what every pty gets, and `theme` answers `dark` or `light` — what a
+/// shell's prompt hook reads to pick its palette, since a running shell
+/// cannot see `TERM_APPEARANCE` change (roadmap step 6).
 fn shim(args: &[String]) -> anyhow::Result<bool> {
     use kawoosh_systems::io::{Request, send_request};
     let Some(verb) = args.first().map(String::as_str) else {
         return Ok(false);
     };
-    if verb != "edit" && verb != "ex" {
+    if verb != "edit" && verb != "ex" && verb != "theme" {
         return Ok(false);
     }
     let Some(sock) = std::env::var_os("KAWOOSH_SOCKET") else {
         anyhow::bail!("{verb}: no running kawoosh (KAWOOSH_SOCKET is not set)");
     };
     let sock = std::path::PathBuf::from(sock);
+    if verb == "theme" {
+        println!("{}", send_request(&sock, &Request::Theme)?);
+        return Ok(true);
+    }
     if verb == "ex" {
         let reply = send_request(
             &sock,

@@ -319,6 +319,8 @@ pub enum Request {
     },
     /// Run an ex command line.
     Ex { line: String },
+    /// Which base the theme is on: answered `dark` or `light`.
+    Theme,
 }
 
 /// A socket request with the channel its reply goes down.

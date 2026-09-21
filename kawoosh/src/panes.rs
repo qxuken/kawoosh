@@ -613,15 +613,11 @@ impl Kawoosh {
             .map(|r| (r.w - 2.0 - 2.0 * pad, r.h - TITLE_H - 2.0 - 2.0 * pad))
             .unwrap_or((800.0, self.body_h - TITLE_H));
         self.fit_terminal(id, w, h);
-        let term_pal = kawoosh_term::Palette {
-            fg: pal.fg.to_hex(),
-            bg: pal.panel.to_hex(),
-            ..Default::default()
-        };
         let Some(term) = self.terms.map.get(&id) else {
             return;
         };
-        let screen = term.screen(&term_pal);
+        // The palette is the frame's (`sync_term_palettes`).
+        let screen = term.screen();
         let cursor = screen.cursor.map(|(r, c, shape)| {
             (
                 r,

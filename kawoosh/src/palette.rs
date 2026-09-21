@@ -89,3 +89,16 @@ pub fn syntax_color(token: kawoosh_systems::ts::Token, dark: bool) -> Option<Col
         T::Removed => hue(0xE08A8A, 0xA02020),
     }
 }
+
+/// The terminal's sixteen ANSI colours on each base (roadmap step 6):
+/// the dark set is Tomorrow Night's, what `term::ANSI` always was; the
+/// light set is Tomorrow's, each hue darkened to read on a light
+/// surface, so a pane's `ls` follows the theme with the shell knowing
+/// nothing. Programs that set their own (OSC 4) still win.
+pub fn ansi(dark: bool) -> [u32; 16] {
+    if dark {
+        kawoosh_term::ANSI
+    } else {
+        kawoosh_term::ANSI_LIGHT
+    }
+}

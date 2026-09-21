@@ -342,3 +342,67 @@ fn ctrl_w_ctrl_w_is_ctrl_w_w_and_f12_toggles_devtools() {
     d.frame(&mut app);
     assert!(!d.core.devtools());
 }
+
+/// A program in a pane asks the colours (`OSC 11 ; ?`) and gets the
+/// theme's, in its base's sixteen; one that set mode 2031 is told when
+/// `theme.appearance` flips the base — the palette reaches every
+/// terminal each frame, so a shell in a hidden pane hears too.
+#[test]
+fn the_pane_answers_colour_questions_and_reports_a_flip() {
+    let mut app = Kawoosh::new("t", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    assert!(app.dark, "kui's default base");
+    let dark_bg = app.pal.panel.to_hex();
+    app.feed_terminal(t, b"\x1b]11;?\x1b\\\x1b[?2031h");
+    let sent = String::from_utf8(app.terms.map.get_mut(&t).unwrap().take_sent()).unwrap();
+    let rgb = |hex: u32| {
+        format!(
+            "rgb:{0:02x}{0:02x}/{1:02x}{1:02x}/{2:02x}{2:02x}",
+            (hex >> 24) as u8,
+            (hex >> 16) as u8,
+            (hex >> 8) as u8
+        )
+    };
+    assert_eq!(sent, format!("\x1b]11;{}\x1b\\", rgb(dark_bg)));
+    let term = &app.terms.map[&t];
+    assert_eq!(term.palette().ansi, kawoosh::palette::ansi(true));
+    assert!(term.palette().dark);
+    // A light base from the settings (typed in the editor pane above —
+    // the terminal has the keys): the report, the light sixteen, and
+    // the question answered with the light panel.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "k");
+    assert!(matches!(
+        app.layout.focused_content(),
+        Some(Content::Editor(_))
+    ));
+    d.keys(&mut app, ":");
+    d.keys(&mut app, "set theme.appearance=light");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!app.dark);
+    let term = app.terms.map.get_mut(&t).unwrap();
+    assert_eq!(term.take_sent(), b"\x1b[?997;2n");
+    assert_eq!(term.palette().ansi, kawoosh::palette::ansi(false));
+    assert_ne!(dark_bg, app.pal.panel.to_hex());
+    app.feed_terminal(t, b"\x1b]11;?\x07");
+    let sent = String::from_utf8(app.terms.map.get_mut(&t).unwrap().take_sent()).unwrap();
+    assert_eq!(sent, format!("\x1b]11;{}\x07", rgb(app.pal.panel.to_hex())));
+    // Back to dark: told again; a frame with nothing changed says nothing.
+    d.keys(&mut app, ":");
+    d.keys(&mut app, "set theme.appearance!");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(
+        app.terms.map.get_mut(&t).unwrap().take_sent(),
+        b"\x1b[?997;1n"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
