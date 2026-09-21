@@ -16,10 +16,13 @@ undo tree and its pane, histories in the store with hot exit, commands
 as specs, the key clusters and which-key, settings in layers, the
 language contract with two dozen grammars, notifications, the `dir`
 file manager through its identity-and-plan design at forty thousand
-entries, and the working memory (2026-09-20). 168 commits, 22
+entries, and the working memory (2026-09-20). 169 commits, 22
 integration test files in `kawoosh/tests` (the histories pane's folded
 into the memory's, 2026-09-21), and the "next steps" below through
 step 10 — the memory, with steps 11–14 the order the rest is built in.
+Steps 5–10 were built on one branch and merged to `main` 2026-09-21
+after a full regression pass (fmt, clippy, the workspace's 309 tests,
+the Lua acceptance scripts through `kawoosh test`).
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),

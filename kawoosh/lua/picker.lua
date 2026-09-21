@@ -17,11 +17,11 @@
 -- its own view and `picker.spans(text, positions)` lighting a match.
 -- Matching is `kawoosh.matcher` (fzy's scoring, in Rust), the
 -- ranking Lua's: `picker.rank(item, hit)` is the score plus the item's
--- `boost`, and a config replaces it; an open buffer and a file opened
--- before are boosted and a binary (`picker.binary`, by extension)
--- held back, which is where the memory's rank (memory.md D8) will
--- plug in. A row with columns is matched on its name first
--- and on the rest of its text after.
+-- `boost`, and a config replaces it; an open buffer and a file
+-- attended before are boosted by the memory's rank (memory.md D8,
+-- `kawoosh.memory_rank`) and a binary (`picker.binary`, by
+-- extension) held back. A row with columns is matched on its name
+-- first and on the rest of its text after.
 --
 -- The query is a field (kui.md D12): typing filters, `<Esc>` is normal
 -- mode over the line, `<Esc>` again closes; `<C-n>` `<C-p>` `<Down>`

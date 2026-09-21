@@ -621,10 +621,10 @@ impl Registry {
     /// Takes `name` (an alias, perhaps, with `!` or `?` on its end)
     /// and `args` apart: the alias is resolved, then each leading
     /// argument that names a subcommand, or a word on the way to one,
-    /// is consumed into the name — `history` + `[drop, k]` is `history
-    /// drop` + `[k]`, `delete` + `[to, end]` is `delete to end` — a
-    /// marker on any of those words setting the form (`:history clear!`
-    /// and `:history! clear` alike). A name nothing is known by stays
+    /// is consumed into the name — `memory` + `[forget, k]` is `memory
+    /// forget` + `[k]`, `delete` + `[to, end]` is `delete to end` — a
+    /// marker on any of those words setting the form (`:memory clear!`
+    /// and `:memory! clear` alike). A name nothing is known by stays
     /// as written, for the shell to answer.
     pub fn resolve(&self, name: &str, args: &[String]) -> Invocation {
         let (head, mut form) = Form::split(name);
