@@ -445,6 +445,19 @@ impl Layout {
         self.dock_focused = false;
     }
 
+    /// The current tab moved to position `to` in the strip (clamped),
+    /// the others shifting to make room; the keyboard stays on it.
+    /// Returns where it landed.
+    pub fn move_tab_to(&mut self, to: usize) -> usize {
+        let to = to.min(self.tabs.len().saturating_sub(1));
+        if to != self.tab {
+            let t = self.tabs.remove(self.tab);
+            self.tabs.insert(to, t);
+            self.tab = to;
+        }
+        self.tab
+    }
+
     /// The tab's other pane nearest in `dir` from the focused one, by
     /// last frame's rects.
     pub fn neighbour(&self, dir: SplitDir, forward: bool) -> Option<PaneId> {

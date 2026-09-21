@@ -519,14 +519,18 @@ impl Keymap {
     /// `<C-w><C-w>` is `<C-w>w` and `<C-w><C-v>` is `<C-w>v`, as in vim.
     /// Whether a sequence begun in pane mode is one every pane shares
     /// with normal mode — the `<C-w>` cluster, the leader's groups,
-    /// `:`, and a ctrl- or alt-shift chord (the pane cluster from a
-    /// terminal too) — so a miss in pane mode looks it up there.
-    /// Anything else (`dd`, `i`) is not: a list does not edit.
+    /// `:`, the next-and-previous cluster (`]t` `[t` `]q` `[q`), and a
+    /// ctrl- or alt-shift chord (the pane cluster from a terminal too)
+    /// — so a miss in pane mode looks it up there. Anything else
+    /// (`dd`, `i`) is not: a list does not edit.
     pub fn shared_from_pane(&self, keys: &[String]) -> bool {
         let Some(first) = keys.first() else {
             return false;
         };
-        if first == "<C-w>" || first == ":" || first == LEADER || *first == self.leader {
+        if matches!(first.as_str(), "<C-w>" | ":" | "]" | "[")
+            || first == LEADER
+            || *first == self.leader
+        {
             return true;
         }
         is_shift_chord(first)

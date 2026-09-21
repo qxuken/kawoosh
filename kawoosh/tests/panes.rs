@@ -635,3 +635,61 @@ fn a_pane_without_a_view_has_the_pane_keys() {
     assert!(maps.contains("list half down"), "{maps}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A tab moves along the strip: `]T` `[T` a place right and left
+/// (COUNT places), `:tabmove +N` / `-N` / `N` / bare to the end, the
+/// keyboard staying on it; and from a pane without a view the
+/// next-and-previous cluster is shared, so `]t` `[t` (and `gt` `gT`)
+/// switch tabs there too, while `]b` needs an editor and says so.
+#[test]
+fn tabs_move_along_the_strip_and_switch_from_a_pane() {
+    let mut app = Kawoosh::new("t", "one");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, "tabnew");
+    // Tabs 0 1 2, on 2. Their identities are their roots' pane ids.
+    let ids =
+        |app: &Kawoosh| -> Vec<u64> { app.layout.tabs.iter().map(|t| t.focused as u64).collect() };
+    let before = ids(&app);
+    assert_eq!(app.layout.tab, 2);
+    d.keys(&mut app, "[T");
+    assert_eq!(app.layout.tab, 1);
+    assert_eq!(ids(&app), [before[0], before[2], before[1]]);
+    d.keys(&mut app, "[T");
+    assert_eq!(app.layout.tab, 0);
+    assert_eq!(ids(&app), [before[2], before[0], before[1]]);
+    d.keys(&mut app, "[T");
+    assert_eq!(app.layout.tab, 0, "already first");
+    d.keys(&mut app, "2]T");
+    assert_eq!(app.layout.tab, 2);
+    assert_eq!(ids(&app), before);
+    ex(&mut d, &mut app, "tabmove 1");
+    assert_eq!(app.layout.tab, 0);
+    ex(&mut d, &mut app, "tabmove +1");
+    assert_eq!(app.layout.tab, 1);
+    ex(&mut d, &mut app, "tabmove");
+    assert_eq!(app.layout.tab, 2);
+    assert_eq!(ids(&app), before);
+    assert_eq!(app.ed.message, "tab 3 of 3");
+    // From the memory pane: the cluster is shared.
+    d.keys(&mut app, "yy p");
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+    d.keys(&mut app, "[t");
+    assert_eq!(app.layout.tab, 1);
+    d.keys(&mut app, "]t");
+    assert_eq!(app.layout.tab, 2);
+    assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+    d.keys(&mut app, "gT");
+    assert_eq!(app.layout.tab, 1);
+    d.keys(&mut app, "gt");
+    assert_eq!(app.layout.tab, 2);
+    d.keys(&mut app, "]b");
+    assert!(
+        app.ed.message.contains("needs editor"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

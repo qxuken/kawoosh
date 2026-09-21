@@ -58,6 +58,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>:` | the command line, from a pane without one |
 | `<C-S-x>` | copy mode (wezterm's chord): the terminal's scrollback as a buffer in the terminal's own pane, full modal editing, the caret on the last line; `q` gives the pane back — two keys round trip |
 | `gt` `gT` `]t` `[t` | next and previous tab |
+| `]T` `[T` `:tabmove` | move the tab along the strip |
 | `<leader>tq` | close the tab |
 
 The shifted chord is the wezterm habit and the reason it works
@@ -90,7 +91,7 @@ view* (a field named `pane`, made once, unlisted) in that mode, so a
 key there resolves as any key does: counts, prefixes, the which-key,
 `:map list p`, a plugin's own maps. A miss in pane mode falls through
 to normal mode for what every pane shares — `<C-w>…`, `<leader>…`,
-`:`, the shift chords (`Keymap::shared_from_pane`) — and for nothing
+`:`, `]x` / `[x`, the shift chords (`Keymap::shared_from_pane`) — and for nothing
 else: `dd` in a list does nothing rather than editing a hidden buffer.
 The prompt opens over the pane view, and a command that shows a
 buffer splits an editor pane for it, which is what makes `:tabnew`
@@ -107,6 +108,7 @@ and `:e` reachable when the memory pane is the only pane there is.
 | `q` | `close` — the pane, not the last one |
 | `<Esc>` | `pane back`: the keyboard to the editor pane it came from |
 | `:` | the command line |
+| `]t` `[t` `gt` `gT` `]q` `[q` | the next-and-previous cluster is shared too (`]b` needs an editor pane and says so) |
 
 A pane's own keys are commands gated by its fact, so one key can
 mean each pane's thing: the memory pane's `y` `o` `x` `m` `p` are
@@ -126,8 +128,9 @@ stays the pty's, with the chords and `<C-w>…` as before.
 
 | keys | what |
 |---|---|
-| `]b` `[b` | buffer |
+| `]b` `[b` | buffer (an editor pane's) |
 | `]t` `[t` | tab |
+| `]T` `[T` | *move* the tab a place right / left, COUNT places (`:tabmove +N` `-N` `N`, bare to the end) — the shifted letter, as `gT` is `gt` the other way |
 | `]q` `[q` | location in the compile output, or in the references `gr` listed |
 | `]d` `[d` | diagnostic (the message on the status line) |
 | `]h` `[h` | *reserved*: hunk |
@@ -394,7 +397,7 @@ so that nothing else takes the key meanwhile.
   nothing anywhere else, rather than under `,`, which keeps the primary
   selection.
 - **No `<C-9>`/`<C-0>` tab moves, no workspace switching.** The wezterm
-  ones; there is no command to move a tab yet.
+  ones; a tab moves by `]T` `[T` and `:tabmove` (2026-09-22).
 - **No `<D-v>` in normal mode.** `paste clipboard` types the clipboard's
   answer as insert mode would; in normal mode `p` puts the register,
   which every yank also puts on the clipboard. The register is the

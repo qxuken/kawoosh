@@ -2998,6 +2998,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("[b", "buffer prev"),
         ("]t", "tab next"),
         ("[t", "tab prev"),
+        // The tab itself moved along the strip: the shifted letter,
+        // as `gT` is `gt` the other way.
+        ("]T", "tab move right"),
+        ("[T", "tab move left"),
         ("]q", "error next"),
         ("[q", "error prev"),
         ("]d", "lsp diagnostic next"),
@@ -3119,6 +3123,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<Tab>", "list view"),
         ("q", "close"),
         ("<Esc>", "pane back"),
+        // `g` is a prefix here (`gg`), so the tab keys under it are
+        // bound rather than shared; `]x` / `[x` fall through.
+        ("gt", "tab next"),
+        ("gT", "tab prev"),
         // The memory pane's.
         ("p", "list open"),
         ("y", "memory recall"),

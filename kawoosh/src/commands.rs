@@ -468,6 +468,54 @@ fn panes() -> Vec<ShellCommand> {
             |k, ctx| k.layout.next_tab(-(ctx.count as i64)),
         ),
         cmd(
+            Spec::new("tab move")
+                .alias(&["tabm", "tabmove"])
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("move the tab: +N right, -N left, N to the Nth place (1 first), bare to the end; COUNT as +COUNT"),
+            |k, ctx| {
+                let n = k.layout.tabs.len();
+                let at = k.layout.tab;
+                let to = match ctx.args.first().map(String::as_str) {
+                    Some(a) if a.starts_with('+') || a.starts_with('-') => {
+                        match a.parse::<i64>() {
+                            Ok(by) => (at as i64 + by).clamp(0, n as i64 - 1) as usize,
+                            Err(_) => {
+                                k.ed.message = format!("tab move: not a number: {a}");
+                                return;
+                            }
+                        }
+                    }
+                    Some(a) => match a.parse::<usize>() {
+                        Ok(p) if p >= 1 => p - 1,
+                        _ => {
+                            k.ed.message = format!("tab move: not a place: {a}");
+                            return;
+                        }
+                    },
+                    None if ctx.has_count => (at + ctx.count).min(n - 1),
+                    None => n - 1,
+                };
+                let landed = k.layout.move_tab_to(to);
+                k.ed.message = format!("tab {} of {n}", landed + 1);
+            },
+        ),
+        cmd(
+            Spec::new("tab move left")
+                .doc("move the tab one place left, COUNT places"),
+            |k, ctx| {
+                let at = k.layout.tab;
+                k.layout.move_tab_to(at.saturating_sub(ctx.count.max(1)));
+            },
+        ),
+        cmd(
+            Spec::new("tab move right")
+                .doc("move the tab one place right, COUNT places"),
+            |k, ctx| {
+                let at = k.layout.tab;
+                k.layout.move_tab_to(at + ctx.count.max(1));
+            },
+        ),
+        cmd(
             Spec::new("tab close")
                 .alias(&["tabc", "tabclose"])
                 .doc("close the tab and its panes"),
@@ -516,12 +564,14 @@ fn buffers() -> Vec<ShellCommand> {
         cmd(
             Spec::new("buffer next")
                 .alias(&["bn", "bnext"])
+                .when(&["editor"])
                 .doc("show the next buffer"),
             |k, ctx| k.buffer_step(ctx, true),
         ),
         cmd(
             Spec::new("buffer prev")
                 .alias(&["bp", "bprev", "bprevious"])
+                .when(&["editor"])
                 .doc("show the previous buffer"),
             |k, ctx| k.buffer_step(ctx, false),
         ),
