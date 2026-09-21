@@ -306,10 +306,10 @@ impl Kawoosh {
     fn perf_body(&mut self, ui: &mut Ui<'_>) {
         self.tab_shown = Some(TAB);
         let pal = self.pal;
-        let font = self.font;
+        let font = self.face;
         // Every size from kui's metrics (`devtab::Tab`), as the Settings
         // tab's are, so the two agree with the panel and each other.
-        let tm = Tab::of(&ui.metrics());
+        let tm = Tab::of(&ui.metrics(), self.face.line_height);
         let style = move || tm.style(&pal, font);
         let dim = move || style().color(pal.dim);
         // The readings, gathered before the tree is built.

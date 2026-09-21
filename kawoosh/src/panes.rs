@@ -10,7 +10,7 @@ use kui::{Align, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2
 
 use crate::app::{DIVIDER, Kawoosh, TAB_H, TITLE_H};
 use crate::layout::{Content, Drop, Node, PaneId, SplitDir};
-use crate::rows::{self, Caret, Drawn, GUTTER_W, LH, LineDraw, STRIP_H, Window};
+use crate::rows::{self, Caret, Drawn, GUTTER_W, LineDraw, STRIP_H, Window};
 use crate::terminals::TermId;
 use kawoosh_systems::lsp::DIAG_LAYER;
 use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
@@ -31,11 +31,11 @@ impl Kawoosh {
             |ui| {
                 for (t, c) in items {
                     if !t.is_empty() {
-                        ui.text(t, rows::mono(self.font, &pal).color(*c));
+                        ui.text(t, rows::mono(self.face, &pal).color(*c));
                     }
                 }
                 ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
-                ui.text(right, rows::mono(self.font, &pal).color(pal.dim));
+                ui.text(right, rows::mono(self.face, &pal).color(pal.dim));
             },
         );
     }
@@ -45,7 +45,7 @@ impl Kawoosh {
     /// right (the working directory, the LSP pool).
     pub(crate) fn tab_strip(&self, ui: &mut Ui<'_>) {
         let pal = self.pal;
-        let font = self.font;
+        let font = self.face;
         let theme = ui.theme();
         ui.with(
             NodeSpec::row()
@@ -278,7 +278,7 @@ impl Kawoosh {
         ghost: Option<&str>,
     ) {
         let pal = self.pal;
-        let font = self.font;
+        let font = self.face;
         let Some(v) = self.ed.views.get(view) else {
             return;
         };
@@ -356,7 +356,7 @@ impl Kawoosh {
 
     pub(crate) fn command_line(&self, ui: &mut Ui<'_>) {
         let pal = self.pal;
-        let font = self.font;
+        let font = self.face;
         ui.with(
             NodeSpec::row()
                 .width(Sizing::Grow(1.0))
@@ -604,7 +604,7 @@ impl Kawoosh {
         focused: bool,
     ) {
         let pal = self.pal;
-        let font = self.font;
+        let font = self.face;
         let pad = 4.0;
         let (w, h) = self
             .layout
@@ -686,14 +686,14 @@ impl Kawoosh {
         focused: bool,
     ) {
         let pal = self.pal;
-        let font = self.font;
+        let font = self.face;
         let height = self
             .layout
             .rects
             .get(&pane)
             .map(|r| r.h - TITLE_H - 2.0)
             .unwrap_or(self.body_h - TITLE_H);
-        let rows_n = ((height / LH).floor().max(1.0)) as usize;
+        let rows_n = ((height / self.face.line_height).floor().max(1.0)) as usize;
         let scrolloff = self
             .ed
             .settings

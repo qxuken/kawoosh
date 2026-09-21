@@ -19,10 +19,14 @@
 //! that did not.
 //!
 //! **Hot reload.** The files — the two of the user's and every
-//! candidate `.kawoosh/settings.lua` above the working directory,
-//! whether it exists yet — are on a [`Watcher`]; a save re-layers the
-//! file's layer at the next frame, and a saved `init.lua` runs again
-//! with what it set before taken out first. A corner line says which.
+//! candidate `.kawoosh/settings.lua` and `.kawoosh/init.lua` above the
+//! working directory, whether it exists yet — are on a [`Watcher`]; a
+//! save re-layers the file's layer at the next frame, and a saved
+//! `init.lua` runs again with what it set before taken out first (a
+//! project's behind its trust, `trust.rs`). A corner line says which.
+//!
+//! What the tree says about the look — `font.*`, `theme.*`,
+//! `tokens.colors` — reaches kui at the next frame (`look.rs`).
 //!
 //! **The Settings tab** of the devtools (`:settings`): the layers from
 //! the one that wins down, each source's leaves as `path = value`, a
@@ -107,12 +111,15 @@ pub struct Config {
     pub user: Option<PathBuf>,
     /// The project candidates the watch was last set from.
     pub project: Vec<PathBuf>,
+    /// The project `init.lua` candidates on the watch (`trust.rs`).
+    pub project_init: Vec<PathBuf>,
     watch: Watcher,
     /// The last reload: when, and the file's name.
     pub reloaded: Option<(Instant, String)>,
-    /// True while `init.lua` runs: what it sets is the user's, not the
-    /// session's.
-    pub loading: bool,
+    /// The layer an `init.lua` under way sets into: the user's for the
+    /// config dir's, the project's for a `.kawoosh/init.lua`; none
+    /// between, when what a command sets is the session's.
+    pub loading: Option<Layer>,
 }
 
 impl Config {
@@ -121,9 +128,10 @@ impl Config {
             init: None,
             user: None,
             project: Vec::new(),
+            project_init: Vec::new(),
             watch: Watcher::spawn(wake),
             reloaded: None,
-            loading: false,
+            loading: None,
         }
     }
 }
@@ -169,6 +177,18 @@ impl Kawoosh {
                 self.cwd.display()
             );
         }
+        // What a trusted `.kawoosh/init.lua` set stays beside the files,
+        // as `init.lua`'s does in the user layer; `reload_project_init`
+        // is what takes it out.
+        let mut sources = sources;
+        sources.extend(
+            self.ed
+                .settings
+                .sources(Layer::Project)
+                .iter()
+                .filter(|(name, _)| name == Layer::Project.name())
+                .cloned(),
+        );
         self.ed.settings.replace(Layer::Project, sources);
     }
 
@@ -182,16 +202,18 @@ impl Kawoosh {
         if !path.is_file() {
             return;
         }
-        self.config.loading = true;
+        self.config.loading = Some(Layer::User);
         self.run_lua_file(path);
-        self.config.loading = false;
+        self.config.loading = None;
     }
 
     /// Puts the config files on the watch: the user's two and every
     /// project candidate above the working directory.
     pub(crate) fn rewatch_config(&mut self) {
         self.config.project = project_settings_candidates(&self.cwd);
+        self.config.project_init = crate::trust::project_init_candidates(&self.cwd);
         let mut paths = self.config.project.clone();
+        paths.extend(self.config.project_init.clone());
         paths.extend(self.config.user.clone());
         paths.extend(self.config.init.clone());
         self.config.watch.watch(paths);
@@ -210,6 +232,7 @@ impl Kawoosh {
     /// says so.
     pub(crate) fn reload_changed(&mut self, paths: &[PathBuf]) {
         let mut project = false;
+        let mut project_init = false;
         let mut names = Vec::new();
         for p in paths {
             if Some(p) == self.config.user.as_ref() {
@@ -220,6 +243,8 @@ impl Kawoosh {
                 self.run_init(&p);
             } else if self.config.project.contains(p) {
                 project = true;
+            } else if self.config.project_init.contains(p) {
+                project_init = true;
             } else {
                 continue;
             }
@@ -227,6 +252,9 @@ impl Kawoosh {
         }
         if project {
             self.reload_project_settings();
+        }
+        if project_init {
+            self.reload_project_init();
         }
         if names.is_empty() {
             return;
@@ -239,7 +267,7 @@ impl Kawoosh {
     /// A config file's name for a line: under the working directory,
     /// relative to it; a project file above, by its directory's name
     /// (`repo/.kawoosh/settings.lua`); else as the shell displays a path.
-    fn short_name(&self, path: &Path) -> String {
+    pub(crate) fn short_name(&self, path: &Path) -> String {
         if let Ok(rel) = path.strip_prefix(&self.cwd) {
             return kawoosh_systems::fs::display(rel);
         }
@@ -251,7 +279,7 @@ impl Kawoosh {
             Some(name) => {
                 let mut p = PathBuf::from(name);
                 p.push(PROJECT_DIR);
-                p.push(SETTINGS_FILE);
+                p.push(path.file_name().unwrap_or_default());
                 kawoosh_systems::fs::display(&p)
             }
             None => kawoosh_systems::fs::display(path),
@@ -294,10 +322,10 @@ impl Kawoosh {
     fn settings_body(&mut self, ui: &mut Ui<'_>) {
         self.tab_shown = Some(TAB);
         let pal = self.pal;
-        let font = self.font;
+        let font = self.face;
         // Every size from kui's metrics (`devtab::Tab`), so the tab's
         // rows, captions and toolbar agree with the panel and each other.
-        let tm = Tab::of(&ui.metrics());
+        let tm = Tab::of(&ui.metrics(), self.face.line_height);
         let theme = ui.theme();
         let style = move || tm.style(&pal, font);
         let dim = move || style().color(pal.dim);
@@ -306,6 +334,7 @@ impl Kawoosh {
         let default_open = self.settings_default_open;
         // The facts, gathered before the tree is built.
         let watched = self.config.project.len()
+            + self.config.project_init.len()
             + self.config.user.iter().count()
             + self.config.init.iter().count();
         let reloaded = self
@@ -530,7 +559,7 @@ impl Kawoosh {
                         ui.with(block(), |ui| {
                             let title = match layer {
                                 Layer::Session => "session — :set, and what a plugin sets",
-                                Layer::Project => "project — .kawoosh/settings.lua, root to cwd",
+                                Layer::Project => "project — .kawoosh/settings.lua, root to cwd, then its init.lua",
                                 Layer::User => "user — settings.lua, then what init.lua sets",
                                 Layer::Default => "default — what the editor ships",
                             };
@@ -672,6 +701,7 @@ impl Kawoosh {
     /// files again, `init.lua` included.
     pub(crate) fn reload_all_settings(&mut self) {
         let mut paths = self.config.project.clone();
+        paths.extend(self.config.project_init.clone());
         paths.extend(self.config.user.clone());
         paths.extend(self.config.init.clone());
         if paths.is_empty() {

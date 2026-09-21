@@ -9,11 +9,12 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use kawoosh_doc::{BufferId, Version};
-use kui::{Align, Color, FloatConfig, FontId, Min, NodeSpec, Role, Sizing, Span, TextStyle, Ui};
+use kui::{Align, Color, FloatConfig, Min, NodeSpec, Role, Sizing, Span, TextStyle, Ui};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
 use crate::Pal;
+use crate::look::Face;
 
 pub const FONT: f32 = 13.0;
 pub const LH: f32 = 20.0;
@@ -40,13 +41,14 @@ const OVERSCAN_COLS: usize = 64;
 /// A run never wraps: a line wider than the pane runs past its edge (the
 /// lines column scrolls it into view), where kui's default would fold
 /// the run's tail onto a second line, painted over the row below.
-pub fn mono(font: Option<FontId>, pal: &Pal) -> TextStyle {
-    let s = TextStyle::new(FONT)
+pub fn mono(face: Face, pal: &Pal) -> TextStyle {
+    let s = TextStyle::new(face.size)
         .mono()
         .nowrap()
-        .line_height(LH)
+        .line_height(face.line_height)
+        .features(face.features)
         .color(pal.fg);
-    match font {
+    match face.id {
         Some(id) => s.font(id),
         None => s,
     }
@@ -597,16 +599,16 @@ pub struct LineDraw<'a> {
 }
 
 /// The gutter cell for line `ln` (0-based), decoration rather than text.
-pub fn gutter_row(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, ln: usize, current: bool) {
+pub fn gutter_row(ui: &mut Ui<'_>, face: Face, pal: &Pal, ln: usize, current: bool) {
     let color = if current { pal.dim } else { pal.faint };
     ui.with(
         NodeSpec::row()
             .width(Sizing::Grow(1.0))
-            .height(Sizing::Fixed(LH))
+            .height(Sizing::Fixed(face.line_height))
             .main_align(Align::End)
             .cross_align(Align::Center),
         |ui| {
-            ui.text(&format!("{}", ln + 1), mono(font, pal).color(color));
+            ui.text(&format!("{}", ln + 1), mono(face, pal).color(color));
         },
     );
 }
@@ -616,10 +618,10 @@ pub fn gutter_row(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, ln: usize, c
 /// inert to input (a plain box has no hit region). It takes no room in
 /// the row, and on the blink's off phase it stays and only its colour
 /// goes.
-fn caret_bar(ui: &mut Ui<'_>, color: Color, on: bool, x: f32) {
+fn caret_bar(ui: &mut Ui<'_>, color: Color, on: bool, x: f32, lh: f32) {
     let bar = NodeSpec::column()
         .width(Sizing::Fixed(2.0))
-        .height(Sizing::Fixed(LH - 4.0))
+        .height(Sizing::Fixed(lh - 4.0))
         .float(FloatConfig::parent().offset(x - 1.0, 2.0));
     ui.with(if on { bar.bg(color) } else { bar }, |_| {});
 }
@@ -645,7 +647,8 @@ struct Look {
 /// sized by column — a monospace grid's placement (a fallback glyph can
 /// drift it a pixel or two), the tolerance kui's own chunked long line
 /// accepts.
-pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDraw<'_>) {
+pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
+    let lh = face.line_height;
     let (before, after) = (line.before, line.after);
     let text = line.text;
     let len = text.len();
@@ -751,7 +754,7 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
     let mut row = NodeSpec::row()
         .width(Sizing::Grow(1.0))
         .min_width(Min::FIT)
-        .height(Sizing::Fixed(LH))
+        .height(Sizing::Fixed(lh))
         .cross_align(Align::Center)
         .role(Role::Line);
     if let Some(c) = line.access.0 {
@@ -769,7 +772,7 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
         }
     };
     ui.with(row, |ui| {
-        let base = mono(font, pal);
+        let base = mono(face, pal);
         spacer(ui, before);
         let flush = |ui: &mut Ui<'_>, segs: &[(Range<usize>, Look)]| {
             if segs.is_empty() {
@@ -835,7 +838,7 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
             {
                 x += w;
             }
-            caret_bar(ui, pal.accent, line.caret_on, x);
+            caret_bar(ui, pal.accent, line.caret_on, x, lh);
         }
         // A block caret past the end of the line, and a selection
         // running past the newline: boxes in the row's flow, so the
@@ -849,7 +852,7 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
             ui.with(
                 NodeSpec::column()
                     .width(Sizing::Fixed(PAST_END_W))
-                    .height(Sizing::Fixed(LH - 4.0))
+                    .height(Sizing::Fixed(lh - 4.0))
                     .bg(caret_bg(pal, *kind)),
                 |_| {},
             );
@@ -859,7 +862,7 @@ pub fn emit_line(ui: &mut Ui<'_>, font: Option<FontId>, pal: &Pal, line: &LineDr
             ui.with(
                 NodeSpec::column()
                     .width(Sizing::Fixed(PAST_END_W))
-                    .height(Sizing::Fixed(LH))
+                    .height(Sizing::Fixed(lh))
                     .bg(pal.select),
                 |_| {},
             );

@@ -27,7 +27,7 @@ use crate::inspector::Inspector;
 use crate::layout::{Content, Layout, PaneId, SplitDir};
 use crate::lsp::LspState;
 use crate::notify::Notifications;
-use crate::rows::{self, Drawn, GUTTER_W, LH, STRIP_H};
+use crate::rows::{self, Drawn, GUTTER_W, STRIP_H};
 use crate::scripting::Scripting;
 use crate::settings::Config;
 use crate::terminals::{TermId, Terminals};
@@ -39,7 +39,12 @@ pub(crate) const DIVIDER: f32 = 4.0;
 
 pub struct Kawoosh {
     pub pal: Pal,
-    pub font: Option<FontId>,
+    /// The face every mono run is shaped in, from `font.*` (`look.rs`).
+    pub face: crate::look::Face,
+    /// The face kawoosh ships (`main.rs`), what an empty `font.family` names.
+    pub bundled_font: Option<FontId>,
+    /// What the look was last built from (`look.rs`).
+    pub(crate) look: crate::look::Look,
     pub ed: Editor,
     pub layout: Layout,
     pub terms: Terminals,
@@ -53,6 +58,8 @@ pub struct Kawoosh {
     pub scripting: Scripting,
     /// The config files, their watch, and the last reload.
     pub config: Config,
+    /// The project `init.lua` records and the question up (`trust.rs`).
+    pub trust: crate::trust::Trust,
     pub compile: Compile,
     /// Toasts, the corner log and the full log (`notify.rs`).
     pub notes: Notifications,
@@ -77,7 +84,7 @@ pub struct Kawoosh {
     /// start; `:cd` and the file manager move it.
     pub cwd: PathBuf,
     /// The theme's base, for `TERM_APPEARANCE` and the syntax palette.
-    pub(crate) dark: bool,
+    pub dark: bool,
     /// kui's devtools panel, toggled with F12 or `:kui_debugger`.
     pub devtools: bool,
     /// What the core was last told (or last said): a change on this side
@@ -179,7 +186,9 @@ impl Kawoosh {
         let wake = WakeHandle::new();
         let mut app = Self {
             pal: Pal::default(),
-            font: None,
+            face: Default::default(),
+            bundled_font: None,
+            look: Default::default(),
             ed,
             layout: Layout::new(Content::Editor(view)),
             terms: Terminals::default(),
@@ -192,6 +201,7 @@ impl Kawoosh {
                 ..Default::default()
             },
             config: Config::new(wake.clone()),
+            trust: Default::default(),
             compile: Compile::default(),
             notes: Notifications::new(wake.clone()),
             messages_shown: 0,
@@ -235,7 +245,7 @@ impl Kawoosh {
             dragging: None,
             pane_drag: None,
             body_h: 600.0,
-            cell: (7.8, LH),
+            cell: (7.8, crate::rows::LH),
             mods: (false, false, false, false),
             confirm: None,
             pending_jobs: 0,
@@ -282,6 +292,7 @@ impl Kawoosh {
         // Another directory is another project: its `.kawoosh` files
         // are the project layer now, and the ones to watch.
         self.reload_project_settings();
+        self.reload_project_init();
         self.rewatch_config();
     }
 
@@ -1320,7 +1331,7 @@ impl Kawoosh {
             }
         }
         let dy = p.get("dy").and_then(Value::as_float).unwrap_or(0.0) as f32;
-        let total = self.scroll_carry - dy / LH;
+        let total = self.scroll_carry - dy / self.face.line_height;
         let whole = total.trunc();
         self.scroll_carry = total - whole;
         if whole == 0.0 {
@@ -1495,6 +1506,7 @@ impl kui::App for Kawoosh {
             }
             ui.window_command(WindowCommand::Close(ui.env().window.id));
         }
+        self.sync_look(ui);
         self.pal = ui.theme().into();
         self.dark = ui.theme().is_dark();
         let pal = self.pal;
@@ -1513,8 +1525,8 @@ impl kui::App for Kawoosh {
         self.perf_tab(ui);
         self.settings_tab(ui);
         self.sync_undo_view();
-        let m = ui.measure_text("M", &rows::mono(self.font, &pal), None);
-        self.cell = (m.width.max(1.0), LH);
+        let m = ui.measure_text("M", &rows::mono(self.face, &pal), None);
+        self.cell = (m.width.max(1.0), self.face.line_height);
         if let Some(text) = self.clip_out.take() {
             ui.set_clipboard(text, None);
         }
@@ -1523,7 +1535,8 @@ impl kui::App for Kawoosh {
         }
         ui.window_title(&format!("{} — kawoosh", self.title()));
         let vp = ui.viewport();
-        self.body_h = (vp.h - TAB_H - 2.0 * STRIP_H).max(LH);
+        let lh = self.face.line_height;
+        self.body_h = (vp.h - TAB_H - 2.0 * STRIP_H).max(lh);
         let body_h = self.body_h;
         ui.with(NodeSpec::column().fill().bg(pal.bg), |ui| {
             self.tab_strip(ui);
@@ -1535,7 +1548,7 @@ impl kui::App for Kawoosh {
                     let root = self.layout.tab().root.clone();
                     let dock = self.layout.dock.filter(|_| self.layout.dock_open);
                     let dock_h = if dock.is_some() {
-                        (body_h * self.layout.dock_ratio).clamp(LH * 3.0, body_h - LH * 3.0)
+                        (body_h * self.layout.dock_ratio).clamp(lh * 3.0, body_h - lh * 3.0)
                     } else {
                         0.0
                     };

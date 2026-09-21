@@ -80,7 +80,7 @@ fn tree(tag: &str) -> Tree {
         assert(kawoosh.opt("tabstop") == 2)
         assert(kawoosh.opt("expandtab") == false)
         kawoosh.opt("scrolloff", 5)
-        kawoosh.opt("theme.name", "dusk")
+        kawoosh.opt("me.name", "dusk")
         kawoosh.command("later", function() kawoosh.opt("scrolloff", 7) end)
         "#,
     )
@@ -106,7 +106,7 @@ fn layers_merge_in_order_and_a_cd_swaps_the_project() {
     app.run_init(&t.init);
     // init.lua's `opt` is the user's layer, beside the file.
     assert_eq!(app.ed.settings.int("scrolloff"), Some(5));
-    assert_eq!(app.ed.settings.str("theme.name"), Some("dusk"));
+    assert_eq!(app.ed.settings.str("me.name"), Some("dusk"));
     assert_eq!(app.ed.settings.origin("scrolloff").as_deref(), Some("user"));
     assert_eq!(app.ed.tabstop(), 2);
     assert!(!app.ed.expandtab());
@@ -314,7 +314,7 @@ fn a_saved_config_file_reloads_its_layer() {
         a.ed.settings.int("scrolloff") == Some(6)
     });
     assert_eq!(
-        app.ed.settings.get("theme.name"),
+        app.ed.settings.get("me.name"),
         None,
         "a line removed is a setting gone"
     );
@@ -644,5 +644,249 @@ fn an_empty_layer_offers_a_file_to_create() {
         "{now:?}"
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&t.dir).ok();
+}
+
+/// `font.*`, `theme.*` and `tokens.colors` reach kui at the next frame
+/// (`look.rs`): the face's size, row height and features; a pinned
+/// palette with its accent and a role written over it, the shell's
+/// palette read from it; the syntax tokens' halves for the tree's runs
+/// and for `$name` from Lua. A family kui cannot see is a toast and the
+/// face stays; a file without them is the OS's theme again.
+#[test]
+fn the_look_reaches_kui() {
+    use kawoosh_systems::ts::Token;
+    use kui::{Appearance, Color, FontFeatures, ThemeSource};
+    let t = tree("look");
+    std::fs::write(
+        &t.user,
+        r##"return {
+          font = { size = 15, features = "-liga tnum" },
+          theme = { appearance = "light", accent = "#ff0000", bg = "#ffffff" },
+          tokens = { colors = {
+            keyword = "#123456",
+            string = { light = "#111111", dark = "#222222" },
+            comment = { "#333333", "#444444" },
+          } },
+        }"##,
+    )
+    .unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d);
+    app.load_user_settings(&t.user);
+    app.set_cwd(&t.other);
+    d.frame(&mut app);
+    // The face: the size, the row from the ratio, the features; the
+    // cell every pane measures by follows.
+    assert_eq!(app.face.size, 15.0);
+    assert_eq!(app.face.line_height, 23.0);
+    assert_eq!(app.cell_metrics().1, 23.0);
+    assert_eq!(app.face.features, FontFeatures::parse("liga=0 tnum=1"));
+    // The theme: pinned light, the accent and the role over it.
+    let theme = *d.core.theme();
+    assert_eq!(theme.appearance, Appearance::Light);
+    assert_eq!(theme.accent, Color::hex(0xff0000ff));
+    assert_eq!(theme.bg, Color::hex(0xffffffff));
+    assert_eq!(app.pal.bg, Color::hex(0xffffffff));
+    assert!(!app.dark);
+    // The tokens: the config's, the light half now, and the palette's
+    // hue for one the file did not name.
+    assert_eq!(
+        app.syntax_color_for(Token::Keyword, false),
+        Some(Color::hex(0x123456ff))
+    );
+    assert_eq!(
+        app.syntax_color_for(Token::String, false),
+        Some(Color::hex(0x111111ff))
+    );
+    assert_eq!(
+        app.syntax_color_for(Token::String, true),
+        Some(Color::hex(0x222222ff))
+    );
+    let lookup = d.core.token_lookup();
+    assert_eq!(lookup.color("keyword"), Ok(Color::hex(0x123456ff)));
+    assert_eq!(lookup.color("string"), Ok(Color::hex(0x111111ff)));
+    assert_eq!(lookup.color("comment"), Ok(Color::hex(0x333333ff)));
+    assert_eq!(
+        lookup.color("function"),
+        Ok(kawoosh::palette::syntax_color(Token::Function, false).unwrap())
+    );
+
+    // `:set` flips the base for the session: the dark halves, the role
+    // still written over the dark base.
+    ex(&mut d, &mut app, "set theme.appearance=dark");
+    assert!(d.core.theme().is_dark());
+    assert!(app.dark);
+    assert_eq!(d.core.theme().bg, Color::hex(0xffffffff));
+    assert_eq!(
+        d.core.token_lookup().color("string"),
+        Ok(Color::hex(0x222222ff))
+    );
+
+    // A family kui can see: the face is it. One it cannot: a toast, and
+    // the face stays.
+    let families = d.core.system_font_families();
+    if let Some(family) = families.first().cloned() {
+        ex(&mut d, &mut app, &format!("set font.family={family}"));
+        let id = app.face.id.expect("a face");
+        assert_eq!(d.core.font_family(id), Some(family.as_str()));
+    }
+    let before = app.face;
+    ex(&mut d, &mut app, "set font.family=No Such Family 9000");
+    assert_eq!(app.face, before, "the face stays");
+    assert!(
+        app.notes.shown.iter().any(|s| s.toast
+            && s.text
+                .starts_with("font: no family \"No Such Family 9000\"")),
+        "{:?}",
+        app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
+    );
+    ex(&mut d, &mut app, "set font.family!");
+
+    // The file without any of it: the OS's theme, the bundled face at
+    // the default size.
+    ex(&mut d, &mut app, "set theme.appearance!");
+    std::fs::write(&t.user, "return {}").unwrap();
+    app.load_user_settings(&t.user);
+    d.frame(&mut app);
+    assert_eq!(d.core.theme_source(), ThemeSource::Derived);
+    assert_eq!(app.face.size, 13.0);
+    assert_eq!(app.face.line_height, 20.0);
+    assert_eq!(
+        app.syntax_color_for(Token::Keyword, true),
+        kawoosh::palette::syntax_color(Token::Keyword, true)
+    );
+    // A role misspelt is a toast naming it.
+    ex(&mut d, &mut app, "set theme.background=#000000");
+    assert!(
+        app.notes
+            .shown
+            .iter()
+            .any(|s| s.toast && s.text == "theme: no role \"background\""),
+        "{:?}",
+        app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&t.dir).ok();
+}
+
+/// A project's `.kawoosh/init.lua` is code from the repository
+/// (`trust.rs`): asked about in a confirm and not run until trusted;
+/// `:trust` runs it into the project layer and records its text in the
+/// store, so another instance on the same db runs it without asking,
+/// `:cd` out takes what it set with the layer; a text that changed since
+/// is asked about again, and `:trust revoke` forgets the record.
+#[test]
+fn a_project_init_lua_runs_once_trusted() {
+    use kawoosh::trust::INIT_FILE;
+    let t = tree("trust");
+    let init = t.root.join(PROJECT_DIR).join(INIT_FILE);
+    std::fs::write(
+        &init,
+        "kawoosh.opt('from_init', 1)\nkawoosh.command('proj', function() kawoosh.echo('project command') end)\n",
+    )
+    .unwrap();
+    let db = t.dir.join("state.db");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d);
+    app.open_store(Some(&db));
+    app.set_cwd(&t.root);
+    d.frame(&mut app);
+    // Not run: a question instead, the file's lines in it.
+    assert_eq!(app.ed.settings.get("from_init"), None);
+    let texts = d.confirm_texts();
+    assert_eq!(
+        texts.first().map(String::as_str),
+        Some(
+            format!(
+                "{} is code from the repository. Run it?",
+                rel(".kawoosh/init.lua")
+            )
+            .as_str()
+        ),
+        "{texts:?}"
+    );
+    assert!(texts.iter().any(|l| l == "kawoosh.opt('from_init', 1)"));
+    assert!(texts.iter().any(|l| l == "trust and run"));
+    // `not now`: nothing runs, and `:trust?` says where it stands.
+    d.key(&mut app, "n", KeyMods::default());
+    assert!(d.confirm_texts().is_empty());
+    assert_eq!(app.ed.settings.get("from_init"), None);
+    ex(&mut d, &mut app, "trust?");
+    assert_eq!(
+        app.ed.message,
+        format!("{} (not trusted)", rel(".kawoosh/init.lua"))
+    );
+    // `:trust` runs it, into the project layer, and records it.
+    ex(&mut d, &mut app, "trust");
+    assert_eq!(app.ed.settings.int("from_init"), Some(1));
+    assert_eq!(
+        app.ed.settings.origin("from_init").as_deref(),
+        Some("project")
+    );
+    ex(&mut d, &mut app, "proj");
+    assert_eq!(app.ed.message, "project command");
+    ex(&mut d, &mut app, "trust?");
+    assert_eq!(
+        app.ed.message,
+        format!("{} (trusted)", rel(".kawoosh/init.lua"))
+    );
+    // Out of the project: what it set goes with the layer.
+    app.set_cwd(&t.other);
+    d.frame(&mut app);
+    assert_eq!(app.ed.settings.get("from_init"), None);
+    // Back in: no question, the record is the text's.
+    app.set_cwd(&t.root);
+    d.frame(&mut app);
+    assert!(d.confirm_texts().is_empty());
+    assert_eq!(app.ed.settings.int("from_init"), Some(1));
+
+    // Another instance on the same db: trusted still.
+    let mut d2 = Drive::new(900.0, 500.0);
+    let mut app2 = app_with_lua(&mut d2);
+    app2.open_store(Some(&db));
+    app2.set_cwd(&t.root);
+    d2.frame(&mut app2);
+    assert!(d2.confirm_texts().is_empty());
+    assert_eq!(
+        app2.ed.settings.int("from_init"),
+        Some(1),
+        "the record persists"
+    );
+    // The file changes under it: what the old text set goes, the
+    // question comes back saying so, and its button trusts the new
+    // text.
+    std::fs::write(&init, "kawoosh.opt('from_init', 2)\n").unwrap();
+    until(&mut d2, &mut app2, "the changed init.lua", |a| {
+        a.trust.asked.is_some()
+    });
+    d2.frame(&mut app2);
+    let texts = d2.confirm_texts();
+    assert_eq!(
+        texts.first().map(String::as_str),
+        Some(
+            format!(
+                "{} changed since you trusted it. Run it?",
+                rel(".kawoosh/init.lua")
+            )
+            .as_str()
+        ),
+        "{texts:?}"
+    );
+    assert_eq!(app2.ed.settings.get("from_init"), None);
+    d2.key(&mut app2, "y", KeyMods::default());
+    assert!(d2.confirm_texts().is_empty());
+    assert_eq!(app2.ed.settings.int("from_init"), Some(2));
+    // `:trust revoke` forgets: the next `:cd` in asks again.
+    ex(&mut d2, &mut app2, "trust revoke");
+    assert_eq!(app2.ed.message, "1 record revoked");
+    app2.set_cwd(&t.other);
+    d2.frame(&mut app2);
+    app2.set_cwd(&t.root);
+    d2.frame(&mut app2);
+    assert!(!d2.confirm_texts().is_empty(), "asked again");
+    assert_eq!(app2.ed.settings.get("from_init"), None);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    assert_eq!(d2.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&t.dir).ok();
 }

@@ -12,7 +12,6 @@
 use kui::{Align, Color, Metrics, NodeSpec, Sizing, TextStyle};
 
 use crate::palette::Pal;
-use crate::rows::LH;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Tab {
@@ -48,7 +47,7 @@ pub(crate) struct Tab {
 }
 
 impl Tab {
-    pub(crate) fn of(m: &Metrics) -> Self {
+    pub(crate) fn of(m: &Metrics, line_h: f32) -> Self {
         Self {
             text: m.hint_text,
             row_h: m.hint_text + m.hint_pad_y,
@@ -60,7 +59,7 @@ impl Tab {
             radius: m.radius_inner,
             button_pad: (m.menu_pad_x, 1.0),
             small_text: m.hint_text - 1.0,
-            line_h: LH,
+            line_h,
         }
     }
 
@@ -180,9 +179,13 @@ impl Tab {
     }
 
     /// The tabs' text: the app's mono face at the row size, one line.
-    pub(crate) fn style(&self, pal: &Pal, font: Option<kui::FontId>) -> TextStyle {
-        let s = TextStyle::new(self.text).mono().nowrap().color(pal.fg);
-        match font {
+    pub(crate) fn style(&self, pal: &Pal, face: crate::look::Face) -> TextStyle {
+        let s = TextStyle::new(self.text)
+            .mono()
+            .nowrap()
+            .features(face.features)
+            .color(pal.fg);
+        match face.id {
             Some(id) => s.font(id),
             None => s,
         }

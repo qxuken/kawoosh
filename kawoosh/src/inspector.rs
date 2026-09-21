@@ -29,7 +29,6 @@ use crate::app::Kawoosh;
 pub const TAB: &str = "syntax";
 const ROW_H: f32 = 18.0;
 const INDENT: f32 = 12.0;
-const FONT: f32 = 12.0;
 /// A tree up to this many nodes is flattened in the frame — a
 /// millisecond or so — and a larger one on the worker.
 const SYNC_MAX_NODES: usize = 20_000;
@@ -320,10 +319,15 @@ impl Kawoosh {
     fn syntax_body(&mut self, ui: &mut Ui<'_>) {
         self.tab_shown = Some(TAB);
         let pal = self.pal;
-        let font = self.font;
+        let font = self.face;
         let style = || {
-            let s = TextStyle::new(FONT).mono().nowrap().color(pal.fg);
-            match font {
+            // A step under the buffer's size, as the tab always was.
+            let s = TextStyle::new(font.size - 1.0)
+                .mono()
+                .nowrap()
+                .features(font.features)
+                .color(pal.fg);
+            match font.id {
                 Some(id) => s.font(id),
                 None => s,
             }

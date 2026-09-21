@@ -115,7 +115,7 @@ impl Kawoosh {
         let vp = ui.viewport();
         let max_w = (vp.w * 0.6).clamp(280.0, 720.0);
         let tag = Value::map([("kind", "confirm".into())]);
-        let mono = rows::mono(self.font, &pal);
+        let mono = rows::mono(self.face, &pal);
         let sink = ui.with_keyed(
             "confirm",
             NodeSpec::column()

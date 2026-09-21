@@ -296,7 +296,7 @@ impl Kawoosh {
         self.sync_undo_rows();
         // Every size from kui's metrics (`devtab::Tab`), as the tabs
         // and the history pane take theirs.
-        let tm = Tab::of(&ui.metrics());
+        let tm = Tab::of(&ui.metrics(), self.face.line_height);
         let graph_geometry = Geometry {
             lane_w: LANE_W,
             row_h: tm.line_h,
@@ -304,7 +304,7 @@ impl Kawoosh {
             dot: DOT,
         };
         let pal = self.pal;
-        let font = self.font;
+        let font = self.face;
         let (cell_w, _) = self.cell;
         let style = move || rows::mono(font, &pal);
         let dim = move || style().color(pal.dim);

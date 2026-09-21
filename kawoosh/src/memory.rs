@@ -251,9 +251,9 @@ impl Kawoosh {
     }
 
     pub(crate) fn render_memory(&mut self, ui: &mut Ui<'_>, pane: PaneId, focused: bool) {
-        let tm = Tab::of(&ui.metrics());
+        let tm = Tab::of(&ui.metrics(), self.face.line_height);
         let pal = self.pal;
-        let font = self.font;
+        let font = self.face;
         let (cell_w, _) = self.cell;
         let style = move || rows::mono(font, &pal);
         let dim = move || style().color(pal.dim);

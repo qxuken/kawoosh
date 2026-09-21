@@ -102,6 +102,7 @@ impl Kawoosh {
             }
         }
         self.reload_project_settings();
+        self.reload_project_init();
         self.rewatch_config();
     }
 
@@ -619,10 +620,12 @@ impl Kawoosh {
             Msg::Colors(list) => {
                 for (name, hex) in list {
                     let tok = Token::ALL.iter().copied().find(|t| t.name() == name);
-                    let color = hex.trim_start_matches('#').parse_hex();
+                    let color = crate::look::parse_color(&hex);
                     match (tok, color) {
                         (Some(t), Some(c)) => {
                             self.scripting.colors.insert(t, c);
+                            // The tokens again at the next frame.
+                            self.look.seen = None;
                         }
                         _ => self.ed.message = format!("colors: bad entry {name} = {hex}"),
                     }
@@ -631,11 +634,10 @@ impl Kawoosh {
             // What `init.lua` sets is the user's layer, under a project's
             // files; what runs later is the session's, over them.
             Msg::Option { path, value } => {
-                let layer = if self.config.loading {
-                    kawoosh_editor::Layer::User
-                } else {
-                    kawoosh_editor::Layer::Session
-                };
+                let layer = self
+                    .config
+                    .loading
+                    .unwrap_or(kawoosh_editor::Layer::Session);
                 match value {
                     Some(v) => self.ed.settings.set(layer, &path, v),
                     None => self.ed.settings.unset(layer, &path),
@@ -1053,16 +1055,6 @@ impl Kawoosh {
         }
     }
 
-    /// A view's `focused` param and the shell's colours: the current
-    /// syntax colour for a token, config first.
-    pub(crate) fn syntax_color_for(&self, token: Token, dark: bool) -> Option<Color> {
-        self.scripting
-            .colors
-            .get(&token)
-            .copied()
-            .or_else(|| crate::palette::syntax_color(token, dark))
-    }
-
     /// The shell's part of `:w` on a hooked scratch buffer.
     pub(crate) fn write_hooked(&mut self, buffer: kawoosh_doc::BufferId, view: ViewId) {
         let Some(rt) = self.scripting.rt.clone() else {
@@ -1086,21 +1078,6 @@ impl Kawoosh {
         if written && let Some(b) = self.ed.buffers.get_mut(buffer) {
             b.mark_saved();
         }
-    }
-}
-
-trait ParseHex {
-    fn parse_hex(&self) -> Option<Color>;
-}
-
-impl ParseHex for str {
-    fn parse_hex(&self) -> Option<Color> {
-        let v = u32::from_str_radix(self, 16).ok()?;
-        Some(match self.len() {
-            6 => Color::hex((v << 8) | 0xFF),
-            8 => Color::hex(v),
-            _ => return None,
-        })
     }
 }
 

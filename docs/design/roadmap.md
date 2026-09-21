@@ -16,7 +16,7 @@ undo tree and its pane, histories in the store with hot exit, commands
 as specs, the key clusters and which-key, settings in layers, the
 language contract with two dozen grammars, notifications, the `dir`
 file manager through its identity-and-plan design at forty thousand
-entries, and the working memory (2026-09-20). 161 commits, 22
+entries, and the working memory (2026-09-20). 163 commits, 22
 integration test files in `kawoosh/tests` (the polish batch's
 `normal_mode.rs` and the picker's `picker.rs`, 2026-09-21).
 
@@ -253,24 +253,42 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 
 ### Config, theme, fonts
 
-- **Font settings** — open [todo]. The face is loaded from
-  `assets/fonts/IosevkaNavcon` by path in `main.rs` and there is no
-  size. Wanted: `font.family`, `font.size`, `font.features` in
-  `settings.lua` (Decision 10's layers), reloaded on save like every
-  setting; the family through kui's `add_system_font`, the features as
-  kui tokens. The terminal's cell size follows.
-- **Theming** — partly [todo, kui.md D7]. Chrome follows kui's theme
-  roles (OS light/dark, accent) already; syntax hues are `palette.rs`'s
-  own. Missing: the `tokens = { colors = { keyword = {light, dark} } }`
-  table from config that D7 promises, and `set_theme` for a palette
-  that follows nothing. Same round as fonts: both are "config reaches
-  kui tokens".
-- **Trusted `.kawoosh/init.lua`** — open [todo, kui.md, mvp.md 7b].
-  `settings.lua` per workspace loads (data); `init.lua` (code) does not,
-  wanting the one-time trust prompt with the record in the global db.
-  The confirm exists (`confirm.rs`), the store exists; this is a
-  day. It unlocks project commands and tool registrations shipped in a
-  repo.
+- **Font settings** — done 2026-09-21 [todo]. `font.family`,
+  `font.size`, `font.line_height` (a ratio; 13 × 1.5 is the 20 px row)
+  and `font.features` (kui's spelling: `-liga tnum`) in the settings
+  tree, defaults in the engine's layer, read at the frame after the
+  tree moves (`look.rs`, `Kawoosh::sync_look`) — the family through
+  `add_system_font` on the core, an empty family the face kawoosh
+  ships (`Kawoosh::bundled_font`), a family kui cannot see a toast
+  once and the face kept. Every mono run is `rows::mono` over the one
+  `Face` (id, size, row height, features), so the gutter, the panes'
+  tables, the terminals' cells and the measured cell follow; the
+  devtools tabs take the row height from it.
+- **Theming** — done 2026-09-21 [todo, kui.md D7]. `theme.appearance`
+  (`system`, `dark`, `light`), `theme.accent`, and any of kui's theme
+  roles by name under `theme` (`bg`, `surface`, `fg`, `selection`, …):
+  the OS's appearance with no role keeps `ThemeSource::Derived` (with
+  the accent when given); a base named or a role set is a pinned
+  `Theme`, derived from the base and the accent with the roles
+  written over it, derived again when the OS flips under `system`.
+  `tokens.colors` is D7's table — a token by `Token::name`, one colour
+  or `{ light, dark }` — resolved in Rust for the tree's runs
+  (`syntax_color_for`, `kawoosh.colors` from code over it) and
+  declared as the host's kui tokens with the palette's defaults filled
+  in, so a Lua view's `$keyword` is the frame's half. Chrome roles
+  still come off `ui.theme()`, pinned or not.
+- **Trusted `.kawoosh/init.lua`** — done 2026-09-21 [todo, kui.md,
+  mvp.md 7b]. `trust.rs`: the candidates are the settings files' (every
+  `.kawoosh/init.lua` above the cwd, on the same watch), a file's first
+  sight a confirm with its lines — *trust and run* records the text's
+  blake3 in the store's `trust` namespace, *not now* leaves it — and
+  the record is of a text, so a file that changed since is asked
+  about again. A trusted file runs after the project settings at
+  start, on `:cd` and on save, what it sets landing in the project
+  layer (`Config::loading` is the layer now) and going with it on
+  `:cd` out. `:trust` allows the cwd's untrusted files, `:trust
+  revoke` forgets, `:trust?` says where each stands. Without a store
+  the grant holds for the run.
 
 ### Lua and plugins
 
@@ -442,9 +460,12 @@ then breadth.
    the splits, the columns, the highlighted preview, the pane keys.
    Pinned files wait for the memory's third round, where memory.md
    put them.
-5. **Config reaches kui: fonts and tokens.** `font.*` settings, syntax
+5. ~~**Config reaches kui: fonts and tokens.** `font.*` settings, syntax
    tokens from config, `set_theme`; trusted `.kawoosh/init.lua` in the
-   same round since it is the same file's other half.
+   same round since it is the same file's other half.~~ Landed
+   2026-09-21 (`kawoosh/src/look.rs`, `trust.rs`, two tests in
+   `settings.rs`); see the config track. `set_theme` is `theme.*` in
+   the settings tree rather than a Lua call: a palette is data.
 6. **The terminal's theme.** The ANSI sixteen from the theme, the
    colour questions answered with mode 2031, `kawoosh theme` on the
    shim — the palette work of step 5 carried into the pane; the tools

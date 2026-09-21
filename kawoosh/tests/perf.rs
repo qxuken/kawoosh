@@ -27,10 +27,14 @@ fn load_fonts(d: &mut Drive, app: &mut Kawoosh) {
         .system_font_families()
         .into_iter()
         .find(|f| f.contains("Iosevka"));
-    app.font = family.and_then(|f| d.core.add_system_font(&f));
+    app.face.id = family.and_then(|f| d.core.add_system_font(&f));
     eprintln!(
         "fonts: {n} faces loaded, iosevka {}",
-        if app.font.is_some() { "on" } else { "missing" }
+        if app.face.id.is_some() {
+            "on"
+        } else {
+            "missing"
+        }
     );
 }
 

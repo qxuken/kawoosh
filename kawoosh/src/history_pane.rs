@@ -479,9 +479,9 @@ impl Kawoosh {
         self.sync_history_rows();
         // Every size from kui's metrics (`devtab::Tab`), as the undo
         // pane's and the tabs'.
-        let tm = Tab::of(&ui.metrics());
+        let tm = Tab::of(&ui.metrics(), self.face.line_height);
         let pal = self.pal;
-        let font = self.font;
+        let font = self.face;
         let (cell_w, _) = self.cell;
         let style = move || rows::mono(font, &pal);
         let dim = move || style().color(pal.dim);

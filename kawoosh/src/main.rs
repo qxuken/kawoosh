@@ -114,7 +114,8 @@ fn main() -> anyhow::Result<()> {
     let mut core = Core::new();
     let font = load_fonts(&mut core);
     let mut app = Kawoosh::new("*scratch*", if path.is_some() { "" } else { SCRATCH });
-    app.font = font;
+    app.bundled_font = font;
+    app.face.id = font;
     app.log_sink = log_sink;
     app.notes.stderr = stderr;
     app.notes.keep = keep;
@@ -163,7 +164,9 @@ scrollback as a buffer, and ctrl/cmd-click on src/main.rs:42 opens it.
 $EDITOR inside a terminal opens a pane here and waits.
 Settings: :set tabstop=2, :set path? for a value and where it is from,
 :settings for the devtools tab of every layer — ~/.config/kawoosh/
-settings.lua, a project's .kawoosh/settings.lua, :set — reloaded on save.
+settings.lua, a project's .kawoosh/settings.lua, :set — reloaded on save;
+font.family / font.size / theme.appearance / tokens.colors are settings
+too. A project's .kawoosh/init.lua runs once :trust says so.
 kui's instruments: :kui_debugger (F12) and :kui_framerate_hud;
 :syntax_tree opens it on the buffer's tree-sitter tree, :perf on what
 a frame and the systems cost and what the process holds.

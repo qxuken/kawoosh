@@ -334,6 +334,19 @@ impl Settings {
         defaults.set("picker.wrap", Setting::Bool(false));
         defaults.set("picker.share", Setting::Float(0.5));
         defaults.set("picker.split", Setting::Float(0.5));
+        // The look (kawoosh's `look.rs`): the mono face — a family kui can
+        // see, the empty string for the face the editor ships — its size
+        // in logical px, the row's height as a ratio of it, and OpenType
+        // features in kui's spelling (`-liga tnum`); the chrome's palette
+        // follows the OS (`system`) or is pinned `dark` or `light`, with
+        // `theme.accent` and any role of the theme by name beside it;
+        // `tokens.colors` names a syntax token's colour, one or a light
+        // and a dark half.
+        defaults.set("font.family", Setting::Str(String::new()));
+        defaults.set("font.size", Setting::Int(13));
+        defaults.set("font.line_height", Setting::Float(1.5));
+        defaults.set("font.features", Setting::Str(String::new()));
+        defaults.set("theme.appearance", Setting::Str("system".into()));
         let mut s = Self {
             layers: Default::default(),
             effective: Setting::table(),
@@ -605,6 +618,10 @@ mod tests {
             s.effective().paths(),
             [
                 "expandtab",
+                "font.family",
+                "font.features",
+                "font.line_height",
+                "font.size",
                 "history.keep_days",
                 "history.max_mb",
                 "leader",
@@ -614,6 +631,7 @@ mod tests {
                 "picker.wrap",
                 "scrolloff",
                 "tabstop",
+                "theme.appearance",
                 "whichkey"
             ]
         );

@@ -41,9 +41,9 @@ gaps are records rather than surprises:
   the buffer's life, not by memory); only rust-analyzer has a builtin
   server definition (`kawoosh.lsp.server` adds others; the grammars are
   Decision 13's, two dozen); a workspace's
-  `.kawoosh/settings.lua` is loaded (Decision 10) but its `init.lua`
-  (7b's code half) is not — one global `init.lua`, since code from a
-  repository wants the trust prompt 7b describes and data does not; no
+  `.kawoosh/settings.lua` is loaded (Decision 10) and, since
+  2026-09-21, its `init.lua` too, behind 7b's trust prompt
+  (`trust.rs`: the text's hash recorded in the store); no
   `:map` listing; the tab strip has no close button. (The undo history
   was linear until 2026-09-18; it is a tree now — mvp.md's retained
   roots kept instead of dropped — with `g-`/`g+` and the `:undo
@@ -411,6 +411,14 @@ from `init.lua`, referenced as `$keyword` from Lua and resolved by name in
 Rust when `ts` runs assign captures to colors. A user theme is a token
 table plus, optionally, `set_theme` for a palette that follows nothing.
 
+*Built 2026-09-21 (roadmap step 5), with one change: the table is
+`settings.lua`'s, not `init.lua`'s, since Decision 10 made a setting
+data — `tokens.colors` in the tree, `kawoosh.colors {}` from code over
+it, and `theme.appearance` / `theme.accent` / a role by name under
+`theme` in place of a `set_theme` call (`look.rs`: `ThemeSource::Derived`
+while nothing pins, a pinned `Theme` once a base or a role is named).
+The face is the same tree's `font.*`.*
+
 ### 8. Testing: kui's headless core is the harness
 
 mvp.md planned a headless harness in milestone 4. kui *is* one: a `Core`
@@ -540,10 +548,12 @@ nothing that reaches out, no `os`, `io`, `require`, no `kawoosh`. So a
 file in a repository is read the way a `.editorconfig` is read: on
 open, without asking, because it cannot do anything but describe. A
 file that reaches for `os` is an error toast naming its line, and the
-files beside it still load. (7b's `.kawoosh/init.lua` stays unbuilt:
-code from a repository still wants the prompt, and most of what 7b
+files beside it still load. (7b's `.kawoosh/init.lua` was built
+2026-09-21 behind its prompt — `trust.rs`, the text's hash in the
+store — for what is code: project commands, maps; most of what 7b
 listed for it — compile commands, LSP settings, tool definitions — is
-data, which this file carries.)
+data, which this file carries. What the code file sets is the project
+layer's, beside its settings files.)
 
 **A `Setting` is a tree** — `Bool`, `Int`, `Float`, `Str`, `List`,
 `Table` — read by dotted path (`lsp.rust.cmd`), typed at the reader
