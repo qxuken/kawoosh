@@ -882,6 +882,72 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     d.wheel(&mut app, x + w / 2.0, y + h * 3.0, 0.0, ROW_H * 10.0);
     d.frame(&mut app);
     assert_eq!(state(&mut app), (1, 2), "up stops at the top");
+    // `J` `K` in normal mode scroll the preview by half of it; a
+    // count multiplies; the top is the floor.
+    d.ctrl(&mut app, "p");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    let pv_top = |app: &mut Kawoosh| -> String {
+        app.run_lua_source(
+            "t",
+            r#"local s = kawoosh.picker.state(); kawoosh.echo(s.preview.lines[1] .. "|" .. #s.preview.lines)"#,
+        );
+        app.ed.message.clone()
+    };
+    assert_eq!(cursor_text(&mut app), "README.md");
+    assert_eq!(pv_top(&mut app), "# notes|3");
+    // README.md is three lines: too short to scroll. A longer preview:
+    // the long file has one line too, so make one.
+    std::fs::write(
+        dir.join("tall.txt"),
+        (1..=60)
+            .map(|i| {
+                format!(
+                    "line {i}
+"
+                )
+            })
+            .collect::<String>(),
+    )
+    .unwrap();
+    d.keys(&mut app, "i");
+    d.keys(&mut app, "tall");
+    d.frame(&mut app);
+    // Not walked yet: the file was written after the walk. Reopen.
+    d.ctrl(&mut app, "c");
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    d.keys(&mut app, "tall");
+    d.frame(&mut app);
+    assert_eq!(cursor_text(&mut app), "tall.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    let first_shown = |d: &Drive| -> String {
+        texts(d)
+            .into_iter()
+            .find(|s| s.starts_with("line "))
+            .unwrap_or_default()
+    };
+    assert_eq!(first_shown(&d), "line 1");
+    d.keys(&mut app, "J");
+    d.frame(&mut app);
+    let after_one: usize = first_shown(&d)[5..].parse().unwrap();
+    assert!(after_one > 3, "half a preview down: {after_one}");
+    d.keys(&mut app, "2J");
+    d.frame(&mut app);
+    let after_three: usize = first_shown(&d)[5..].parse().unwrap();
+    assert_eq!(after_three, 1 + (after_one - 1) * 3, "a count multiplies");
+    d.keys(&mut app, "K");
+    d.keys(&mut app, "K");
+    d.keys(&mut app, "K");
+    d.keys(&mut app, "K");
+    d.frame(&mut app);
+    assert_eq!(first_shown(&d), "line 1", "held at the top");
+    d.ctrl(&mut app, "c");
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    d.ctrl(&mut app, "n");
     // The preview off and on again, a setting for the session (the
     // cursor is on the second row, the long file).
     assert!(texts(&d).iter().any(|s| s == "long"), "the preview");

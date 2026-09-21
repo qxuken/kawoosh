@@ -241,8 +241,9 @@ spelling kept for it below rather than given to something else.
 **In a picker** (roadmap.md step 4, `picker.lua`), the query is a
 field: typing filters, `<C-n>` `<C-p>` `<Down>` `<Up>` `<C-j>` `<C-k>`
 walk the rows and `<PageDown>` `<PageUp>` by a page; `<Esc>` is normal
-mode over the query — `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `0` `D`
-`ciw` edit it — and `<Esc>` again closes; `<C-c>` closes from either
+mode over the query — `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `J` `K`
+scroll the preview by half of it (a count multiplies), `0` `D` `ciw`
+edit it — and `<Esc>` again closes; `<C-c>` closes from either
 mode. `<CR>` takes the row: a file at its line, a buffer, a command
 (the command line opened on one that takes arguments); `<C-v>` `<C-s>`
 `<C-t>` take it into a split beside, a split below, a new tab. A click

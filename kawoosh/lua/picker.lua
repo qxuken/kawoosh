@@ -26,7 +26,8 @@
 -- The query is a field (kui.md D12): typing filters, `<Esc>` is normal
 -- mode over the line, `<Esc>` again closes; `<C-n>` `<C-p>` `<Down>`
 -- `<Up>` `<C-j>` `<C-k>` (and `j` `k` in normal mode) walk the rows,
--- `<PageDown>` `<PageUp>` (and `<C-d>` `<C-u>`) by a page, `<CR>`
+-- `<PageDown>` `<PageUp>` (and `<C-d>` `<C-u>`) by a page, `J` `K` in
+-- normal mode scroll the preview by half of it (a count multiplies), `<CR>`
 -- takes the row — a file at its line, a buffer, a command — `<C-v>`
 -- `<C-s>` `<C-t>` take it into a split beside, below, a new tab, and
 -- `<C-c>` closes from either mode. A click lands the cursor on a row,
@@ -586,6 +587,13 @@ local function move(by)
   ensure_visible()
 end
 
+-- The preview scrolled by `step` lines, held to its lines.
+local function preview_by(step)
+  if not P then return end
+  local n = P.preview and #P.preview.lines or 0
+  P.pv_top = math.max(1, math.min((P.pv_top or 1) + step, math.max(n - (P.prows or 1) + 1, 1)))
+end
+
 -- The wheel over the list or the preview: `dy` logical pixels (up is
 -- positive), kept in an accumulator so a trackpad's small steps add
 -- up to rows.
@@ -596,8 +604,7 @@ local function scroll(what, dy)
     local step = P.pv_acc >= 0 and math.floor(P.pv_acc / PREVIEW_ROW) or -math.floor(-P.pv_acc / PREVIEW_ROW)
     if step ~= 0 then
       P.pv_acc = P.pv_acc - step * PREVIEW_ROW
-      local n = P.preview and #P.preview.lines or 0
-      P.pv_top = math.max(1, math.min((P.pv_top or 1) + step, math.max(n - (P.prows or 1) + 1, 1)))
+      preview_by(step)
     end
     return
   end
@@ -974,6 +981,12 @@ on("pick vsplit", function() pick("vsplit") end, "take the cursor's row into a s
 on("pick split", function() pick("split") end, "take the cursor's row into a split below")
 on("pick tab", function() pick("tab") end, "take the cursor's row into a new tab")
 on("close", function() close() end, "close the picker")
+-- The preview by half of its height a step, COUNT steps.
+local function half() return math.max(math.floor((P and P.prows or 10) / 2), 1) end
+kawoosh.command("picker preview down", function(ctx) preview_by(half() * math.max(ctx.count or 1, 1)) end,
+  { when = { FIELD_FACT }, doc = "the preview half a screen down, COUNT times" })
+kawoosh.command("picker preview up", function(ctx) preview_by(-half() * math.max(ctx.count or 1, 1)) end,
+  { when = { FIELD_FACT }, doc = "the preview half a screen up, COUNT times" })
 on("preview", function() kawoosh.opt("picker.preview", not previewing()) end,
   "show the cursor's row beside the list, or not (the `picker.preview` setting, for the session)")
 on("wrap", function() kawoosh.opt("picker.wrap", not wrapping()) end,
@@ -1015,6 +1028,8 @@ kawoosh.map("n", "<C-d>", "picker page down", at)
 kawoosh.map("n", "<C-u>", "picker page up", at)
 kawoosh.map("n", "gg", "picker first", at)
 kawoosh.map("n", "G", "picker last", at)
+kawoosh.map("n", "J", "picker preview down", at)
+kawoosh.map("n", "K", "picker preview up", at)
 for _, mode in ipairs { "i", "n" } do
   kawoosh.map(mode, "<A-p>", "picker preview", at)
   kawoosh.map(mode, "<A-w>", "picker wrap", at)
