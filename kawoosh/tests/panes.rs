@@ -472,3 +472,144 @@ fn buffers_step_on_brackets_and_the_leader() {
     assert_eq!(app.layout.tabs.len(), 1);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A pane without a view of its own takes its keys in pane mode
+/// (`listing.rs`): with every editor pane closed and the memory pane
+/// the only one, `:` still opens the command line, `:tabnew` makes a
+/// tab, `:e` splits an editor pane for the file; `j` `k` `<C-d>`
+/// `<C-u>` `G` `gg` and a count move the list's cursor in the memory
+/// and undo panes alike; `<C-w>…` and `<leader>…` are the shared keys;
+/// a plugin's view binds its own under `p`, and an unbound key does
+/// nothing rather than editing anything.
+#[test]
+fn a_pane_without_a_view_has_the_pane_keys() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-pane-keys-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    std::fs::write(&a, (1..=40).map(|i| format!("l{i}\n")).collect::<String>()).unwrap();
+    let mut app = Kawoosh::from_file(&a);
+    app.jobs_inline = true;
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    // Forty texts in the memory, then the pane on them.
+    for _ in 0..40 {
+        d.keys(&mut app, "yyj");
+    }
+    d.keys(&mut app, " p");
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+    // Close the editor pane from the memory pane: the cluster's keys.
+    ctrl_w(&mut d, &mut app, "h");
+    assert!(
+        app.focused_view().is_some(),
+        "<C-w>h went to the editor pane"
+    );
+    ctrl_w(&mut d, &mut app, "c");
+    d.frame(&mut app);
+    assert_eq!(app.layout.visible_panes().len(), 1);
+    assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+    assert!(app.focused_view().is_none());
+    // The list keys: down, a count, half a screen, the ends.
+    d.keys(&mut app, "j");
+    assert_eq!(app.memory_pane.cursor, 1);
+    d.keys(&mut app, "3j");
+    assert_eq!(app.memory_pane.cursor, 4);
+    d.ctrl(&mut app, "d");
+    assert!(app.memory_pane.cursor > 4, "{}", app.memory_pane.cursor);
+    let after_half = app.memory_pane.cursor;
+    d.ctrl(&mut app, "u");
+    assert_eq!(app.memory_pane.cursor, 4);
+    d.keys(&mut app, "G");
+    assert_eq!(app.memory_pane.cursor, 39);
+    d.keys(&mut app, "gg");
+    assert_eq!(app.memory_pane.cursor, 0);
+    d.keys(&mut app, "dd");
+    assert_eq!(app.memory_pane.cursor, 0, "an unbound key does nothing");
+    assert!(after_half >= 4);
+    // The command line from the only pane: a new tab, a file opened
+    // into a new editor pane.
+    ex(&mut d, &mut app, "tabnew");
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 2);
+    ex(&mut d, &mut app, "tabclose");
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 1);
+    assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+    ex(&mut d, &mut app, &format!("e {}", a.display()));
+    d.frame(&mut app);
+    assert!(
+        app.focused_view().is_some(),
+        "an editor pane split for the file"
+    );
+    assert_eq!(app.layout.visible_panes().len(), 2);
+    // The undo pane: the same keys, its rows the states.
+    for _ in 0..30 {
+        d.keys(&mut app, "x");
+    }
+    d.keys(&mut app, " u");
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused_content(), Some(Content::Undo));
+    let top = app.undo.cursor;
+    d.keys(&mut app, "j");
+    assert_eq!(app.undo.cursor, top - 1, "down the list is back in time");
+    d.ctrl(&mut app, "d");
+    assert!(app.undo.cursor < top - 1);
+    d.keys(&mut app, "G");
+    assert_eq!(app.undo.cursor, 0);
+    d.keys(&mut app, "gg");
+    assert_eq!(app.undo.cursor, top);
+    d.keys(&mut app, "u");
+    assert_eq!(
+        app.undo.cursor,
+        top - 1,
+        "`u` from the pane undoes the buffer"
+    );
+    d.ctrl(&mut app, "r");
+    assert_eq!(app.undo.cursor, top);
+    // `<leader>…` from a pane: the picker opens; its list, blurred,
+    // has the plugin's own pane-mode keys, and `:` still works.
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "field blur");
+    d.frame(&mut app);
+    assert!(matches!(
+        app.layout.focused_content(),
+        Some(Content::Lua(_))
+    ));
+    assert!(app.keyed_view().is_none(), "the field blurred: pane mode");
+    app.run_lua_source("t", "kawoosh.echo(tostring(kawoosh.picker.state().cursor))");
+    assert_eq!(app.ed.message, "1");
+    d.keys(&mut app, "j");
+    app.run_lua_source("t", "kawoosh.echo(tostring(kawoosh.picker.state().cursor))");
+    assert_eq!(app.ed.message, "2", "the picker's own `p` map");
+    d.keys(&mut app, ":");
+    assert!(app.ed.prompt_view().is_some(), "the prompt from a Lua pane");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    assert!(!matches!(
+        app.layout.focused_content(),
+        Some(Content::Lua(_))
+    ));
+    // `:map list p` lists the mode.
+    ex(&mut d, &mut app, "map list p");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let names: Vec<String> = app.ed.buffers.values().map(|b| b.name.clone()).collect();
+    assert!(names.iter().any(|n| n == "*maps*"), "{names:?}");
+    let maps = app
+        .ed
+        .buffers
+        .values()
+        .find(|b| b.name == "*maps*")
+        .map(|b| b.text())
+        .unwrap_or_default();
+    assert!(maps.contains("── pane"), "{maps}");
+    assert!(maps.contains("list half down"), "{maps}");
+    std::fs::remove_dir_all(&dir).ok();
+}

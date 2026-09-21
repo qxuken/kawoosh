@@ -20,7 +20,7 @@
 use std::time::Instant;
 
 use kawoosh_doc::{BufferId, Version};
-use kawoosh_editor::{HistoryRow, Hunk, KeyStroke, Lookup, Mode, Spec, ViewId};
+use kawoosh_editor::{HistoryRow, Hunk, Mode, Spec, ViewId};
 use kui::{Align, Color, NodeSpec, Sizing, Ui, Value, Vec2};
 
 use crate::app::Kawoosh;
@@ -57,12 +57,31 @@ pub struct UndoPanel {
     built: Option<(BufferId, Version, (usize, usize, bool))>,
     /// The cursor's change as lines, and which row it is for.
     hunk: Option<(usize, Option<Hunk>)>,
-    /// `<C-w>` pressed: the next key is a pane command.
-    pub(crate) prefix: bool,
-    /// `g` pressed: `-` or `+` next.
-    g: bool,
     /// Scroll the cursor's row into view at the next frame.
     reveal: bool,
+    /// Rows on show, as the last frame drew them.
+    page: usize,
+}
+
+impl crate::listing::Listing for UndoPanel {
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+    fn cursor(&self) -> usize {
+        self.cursor
+    }
+    fn set_cursor(&mut self, i: usize) {
+        self.cursor = i;
+        self.reveal = true;
+    }
+    fn page(&self) -> usize {
+        self.page
+    }
+    /// Row 0 (the oldest state) is drawn at the bottom: down the
+    /// list is back in time.
+    fn top_is_zero(&self) -> bool {
+        false
+    }
 }
 
 impl UndoPanel {
@@ -119,6 +138,17 @@ impl Kawoosh {
         }
     }
 
+    /// The editor pane a `pane back` goes to: the one on the watched
+    /// buffer.
+    pub(crate) fn undo_back_pane(&self) -> Option<PaneId> {
+        self.undo.view.and_then(|v| {
+            self.layout
+                .visible_panes()
+                .into_iter()
+                .find(|p| self.view_of(*p) == Some(v))
+        })
+    }
+
     /// The panel follows the keyboard: the focused editor pane's view,
     /// else the one it had — or, that pane closed, any editor pane on
     /// show.
@@ -144,7 +174,7 @@ impl Kawoosh {
     /// The rows for the watched buffer, read again when it or its tree
     /// moved; the cursor lands on the text now. Then the cursor's hunk,
     /// read when the cursor or the rows moved.
-    fn sync_undo_rows(&mut self) {
+    pub(crate) fn sync_undo_rows(&mut self) {
         let Some(v) = self.undo.view.filter(|v| self.ed.views.contains_key(*v)) else {
             self.undo.rows.clear();
             self.undo.graph = Graph::default();
@@ -191,91 +221,37 @@ impl Kawoosh {
         self.drain_effects();
     }
 
-    /// A key while the panel has the keyboard.
-    pub(crate) fn undo_key(&mut self, pane: PaneId, stroke: KeyStroke) {
-        let note = stroke.notation();
-        if self.undo.prefix {
-            self.undo.prefix = false;
-            if note == ":" {
-                self.open_prompt();
-                return;
+    /// `undo older` / `newer` from the pane: `u` and `<C-r>` on the
+    /// watched buffer; `undo back` / `forward`: `g-` and `g+`, by time.
+    fn undo_older(&mut self) {
+        self.undo_step(|ed, v| {
+            if !ed.undo(v) {
+                ed.message = "already at oldest change".into();
             }
-            let keys = ["<C-w>".to_string(), note];
-            self.ed.sync_settings();
-            if let Lookup::Exact(bs) = self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
-                let bs = bs.to_vec();
-                self.run_bindings(&bs);
-            }
-            return;
-        }
-        if std::mem::take(&mut self.undo.g) {
-            match note.as_str() {
-                "-" => self.undo_step(|ed, v| {
-                    if !ed.undo_by_time(v, true) {
-                        ed.message = "already at oldest change".into();
-                    }
-                    true
-                }),
-                "+" => self.undo_step(|ed, v| {
-                    if !ed.undo_by_time(v, false) {
-                        ed.message = "already at newest change".into();
-                    }
-                    true
-                }),
-                _ => {}
-            }
-            return;
-        }
-        self.sync_undo_rows();
-        let n = self.undo.rows.len();
-        match note.as_str() {
-            "<C-w>" => self.undo.prefix = true,
-            "g" => self.undo.g = true,
-            ":" => self.open_prompt(),
-            // Down the list is back in time.
-            "j" | "<Down>" => {
-                self.undo.cursor = self.undo.cursor.saturating_sub(1);
-                self.undo.reveal = true;
-            }
-            "k" | "<Up>" => {
-                self.undo.cursor = (self.undo.cursor + 1).min(n.saturating_sub(1));
-                self.undo.reveal = true;
-            }
-            "G" => {
-                self.undo.cursor = 0;
-                self.undo.reveal = true;
-            }
-            "<CR>" | "<Space>" => self.undo_seek(self.undo.cursor),
-            "u" => self.undo_step(|ed, v| {
-                if !ed.undo(v) {
-                    ed.message = "already at oldest change".into();
-                }
-                true
-            }),
-            "<C-r>" => self.undo_step(|ed, v| {
-                if !ed.redo(v) {
-                    ed.message = "already at newest change".into();
-                }
-                true
-            }),
-            "q" => self.close_undo_panel(pane),
-            "<Esc>" => {
-                let back = self.undo.view.and_then(|v| {
-                    self.layout
-                        .visible_panes()
-                        .into_iter()
-                        .find(|p| self.view_of(*p) == Some(v))
-                });
-                if let Some(p) = back {
-                    self.layout.focus(p);
-                }
-            }
-            _ => {}
-        }
+            true
+        });
     }
 
-    fn open_prompt(&mut self) {
-        self.open_cmdline();
+    fn undo_newer(&mut self) {
+        self.undo_step(|ed, v| {
+            if !ed.redo(v) {
+                ed.message = "already at newest change".into();
+            }
+            true
+        });
+    }
+
+    fn undo_by_time(&mut self, back: bool) {
+        self.undo_step(move |ed, v| {
+            if !ed.undo_by_time(v, back) {
+                ed.message = if back {
+                    "already at oldest change".into()
+                } else {
+                    "already at newest change".into()
+                };
+            }
+            true
+        });
     }
 
     /// A click on a row: the pane takes the keyboard and the row's
@@ -480,6 +456,9 @@ impl Kawoosh {
                 );
                 // The cursor's row into view when it moved.
                 let list = ui.child_key("rows");
+                self.undo.page = ui
+                    .scroll_geometry(list)
+                    .map_or(0, |g| (g.rect.h / tm.line_h).floor() as usize);
                 if reveal && n > 0 {
                     let y = (n - 1 - cursor) as f32 * tm.line_h;
                     let seen = ui
@@ -527,8 +506,37 @@ impl Kawoosh {
 }
 
 pub(crate) fn commands() -> Vec<ShellCommand> {
-    vec![cmd(
-        Spec::new("undo history").doc("the undo tree as a pane beside the buffer"),
-        |k, _| k.toggle_undo_panel(),
-    )]
+    vec![
+        cmd(
+            Spec::new("undo history").doc("the undo tree as a pane beside the buffer"),
+            |k, _| k.toggle_undo_panel(),
+        ),
+        // The pane's own, on the watched buffer (the engine's `undo`,
+        // `undo older` and `undo newer` act on the keyboard's view,
+        // which in the pane is nobody's).
+        cmd(
+            Spec::new("undo pane undo")
+                .when(&["undo"])
+                .doc("from the undo pane: the watched buffer one state back (`u`)"),
+            |k, _| k.undo_older(),
+        ),
+        cmd(
+            Spec::new("undo pane redo")
+                .when(&["undo"])
+                .doc("from the undo pane: the watched buffer one state forward (`<C-r>`)"),
+            |k, _| k.undo_newer(),
+        ),
+        cmd(
+            Spec::new("undo pane older")
+                .when(&["undo"])
+                .doc("from the undo pane: the state before in time, across branches (`g-`)"),
+            |k, _| k.undo_by_time(true),
+        ),
+        cmd(
+            Spec::new("undo pane newer")
+                .when(&["undo"])
+                .doc("from the undo pane: the state after in time, across branches (`g+`)"),
+            |k, _| k.undo_by_time(false),
+        ),
+    ]
 }

@@ -514,13 +514,19 @@ function on_event(ev)
   end
 end
 
--- Called from Rust for a key in a focused Lua pane.
+-- Called from Rust for a key in a focused Lua pane whose field does
+-- not have it: the view's handler keeps the key by returning true;
+-- otherwise it is pane mode's (the view's `kawoosh.map("p", …)`, the
+-- list keys, and what every pane shares).
 function kawoosh._key(name, ev)
   local h = kawoosh._handlers[name]
-  if h then
-    local ok, err = pcall(h, ev)
-    if not ok then kawoosh.echo("view `" .. name .. "`: " .. tostring(err)) end
+  if not h then return false end
+  local ok, taken = pcall(h, ev)
+  if not ok then
+    kawoosh.echo("view `" .. name .. "`: " .. tostring(taken))
+    return false
   end
+  return taken == true
 end
 
 -- Called from Rust when a command registered here runs.

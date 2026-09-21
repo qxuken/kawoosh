@@ -1069,6 +1069,7 @@ kawoosh.view(PREVIEW, function(ctx)
 end, function(ev)
   if ev.kind == "key" and (ev.key == "q" or ev.key == "<Esc>" or ev.key == "<C-p>") then
     kawoosh.view_close(PREVIEW)
+    return true
   end
 end)
 

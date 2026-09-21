@@ -48,6 +48,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::scripting::commands());
     v.extend(crate::undo::commands());
     v.extend(crate::memory::commands());
+    v.extend(crate::listing::commands());
     v.extend(crate::cmdline::commands());
     v.extend(crate::nodes::commands());
     v.extend(crate::whichkey::commands());
@@ -142,8 +143,9 @@ impl Kawoosh {
     /// view — a `<C-w>` chord on a terminal, the undo pane's keys.
     pub(crate) fn run_bindings(&mut self, bs: &[Binding]) {
         self.sync_facts();
-        let Some(v) = self.focused_view().or_else(|| self.ed.any_view()) else {
-            return;
+        let v = match self.focused_view() {
+            Some(v) => v,
+            None => self.ed.pane_view(),
         };
         self.ed.run_bindings(v, bs, None);
         self.drain_effects();
@@ -162,21 +164,29 @@ impl Kawoosh {
             })
     }
 
-    /// The mode of the view the keyboard is on; normal where there is
-    /// none (a terminal pane).
+    /// The mode of the view the keyboard is on; pane mode on a pane
+    /// without one (`listing.rs`), normal on a terminal, whose keys
+    /// are the pty's but for the chords.
     pub fn focused_mode(&self) -> Mode {
-        self.keyed_view()
-            .map(|v| self.ed.mode(v))
-            .unwrap_or(Mode::Normal)
+        match self.keyed_view() {
+            Some(v) => self.ed.mode(v),
+            None => match self.layout.focused_content() {
+                Some(Content::Terminal(_)) | None => Mode::Normal,
+                _ => Mode::Pane,
+            },
+        }
     }
 
-    /// Opens the `:` prompt over the keyboard's view, or over some view
-    /// when the keyboard is on a pane without one — a terminal's, the
-    /// undo pane's `<C-w>:`.
+    /// Opens the `:` prompt over the keyboard's view, or over the
+    /// resident pane view when the keyboard is on a pane without one
+    /// — a terminal's, the memory pane's `:` — so the line runs with
+    /// no editor pane open at all.
     pub(crate) fn open_cmdline(&mut self) {
-        if let Some(v) = self.focused_view().or_else(|| self.ed.any_view()) {
-            self.ed.open_prompt(v, Prompt::Command);
-        }
+        let v = match self.focused_view() {
+            Some(v) => v,
+            None => self.ed.pane_view(),
+        };
+        self.ed.open_prompt(v, Prompt::Command);
     }
 
     /// Tells the engine what the shell has, so a `when` can ask.
@@ -190,10 +200,32 @@ impl Kawoosh {
             ("editor", matches!(content, Some(Content::Editor(_)))),
             ("terminal", matches!(content, Some(Content::Terminal(_)))),
             ("lua", matches!(content, Some(Content::Lua(_)))),
+            ("memory", content == Some(Content::Memory)),
+            ("undo", content == Some(Content::Undo)),
+            (
+                "listing",
+                matches!(content, Some(Content::Memory | Content::Undo)),
+            ),
             ("dock", dock),
         ];
         for (name, on) in facts {
             self.ed.fact(name, on);
+        }
+        // `lua:NAME`: the focused pane is the Lua view NAME, its field
+        // under the keys or not — what a view's own pane-mode maps
+        // are gated by.
+        let lua = match content {
+            Some(Content::Lua(name)) => Some(format!("lua:{name}")),
+            _ => None,
+        };
+        if self.lua_fact != lua {
+            if let Some(old) = self.lua_fact.take() {
+                self.ed.fact(&old, false);
+            }
+            if let Some(new) = &lua {
+                self.ed.fact(new, true);
+            }
+            self.lua_fact = lua;
         }
     }
 

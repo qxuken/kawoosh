@@ -10,7 +10,7 @@ use kawoosh_systems::io::IoMsg;
 use std::rc::Rc;
 
 use kawoosh_doc::{Buffer, BufferId};
-use kawoosh_editor::{ArgKind, Args, Cond, KeyStroke, Lookup, Mode, Spec, ViewId};
+use kawoosh_editor::{ArgKind, Args, Cond, KeyStroke, Mode, Spec, ViewId};
 use kawoosh_lua::{Msg, Runtime};
 use kawoosh_systems::lsp::ServerDef;
 use kawoosh_systems::ts::Token;
@@ -60,8 +60,6 @@ pub struct Scripting {
     pub servers: Vec<ServerDef>,
     /// Syntax colours a config set, by token class.
     pub colors: HashMap<Token, Color>,
-    /// `<C-w>` pressed in a Lua pane.
-    pub prefix: bool,
     /// Scratch buffers with an `on_change`, each at the version its
     /// hook last saw (`Kawoosh::fire_changes`).
     pub watched: HashMap<kawoosh_doc::BufferId, kawoosh_doc::Version>,
@@ -171,6 +169,7 @@ impl Kawoosh {
             Mode::Visual,
             Mode::Insert,
             Mode::OperatorPending,
+            Mode::Pane,
         ];
         let (only, prefix) = match arg.map(str::trim).filter(|a| !a.is_empty()) {
             Some(a) => match Mode::from_short(a) {
@@ -1059,9 +1058,9 @@ impl Kawoosh {
         }
     }
 
-    /// A key in a focused Lua pane: the pane prefix, else the view's
+    /// A key in a focused Lua pane: the field's, else the view's
     /// `on_event` as `{kind="key", ...}`.
-    pub(crate) fn lua_pane_key(&mut self, name: &str, stroke: KeyStroke) {
+    pub(crate) fn lua_pane_key(&mut self, name: &str, stroke: KeyStroke) -> bool {
         // A field of the view with the keys: the editor's own — insert
         // mode types, `<Esc>` is normal mode over the line, `<C-w>l` in
         // it moves panes as everywhere — until `field blur` (`<Esc>` in
@@ -1070,31 +1069,18 @@ impl Kawoosh {
             self.ed.key(f, stroke);
             self.drain_effects();
             self.drain_lua();
-            return;
+            return true;
         }
+        // The view's handler (`on_event`): a key it returns `true` for
+        // is its; the rest are pane mode's (`listing.rs`), where the
+        // view's own `kawoosh.map("p", …)` bindings live beside the
+        // list keys and the shared ones.
         let note = stroke.notation();
-        if self.scripting.prefix {
-            self.scripting.prefix = false;
-            if note == ":" {
-                self.open_cmdline();
-                return;
-            }
-            let keys = ["<C-w>".to_string(), note];
-            self.ed.sync_settings();
-            if let Lookup::Exact(bs) = self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
-                let bs = bs.to_vec();
-                self.run_bindings(&bs);
-            }
-            return;
-        }
-        if note == "<C-w>" {
-            self.scripting.prefix = true;
-            return;
-        }
         let Some(rt) = self.scripting.rt.clone() else {
-            return;
+            return false;
         };
         rt.publish(&self.ed, self.focused_view());
+        let mut taken = false;
         if let Ok(f) = rt
             .lua()
             .globals()
@@ -1109,11 +1095,13 @@ impl Kawoosh {
             let _ = t.set("ctrl", stroke.ctrl);
             let _ = t.set("alt", stroke.alt);
             let _ = t.set("shift", stroke.shift);
-            if let Err(e) = f.call::<()>((name, t)) {
-                self.ed.message = format!("{name}: {e}");
+            match f.call::<Option<bool>>((name, t)) {
+                Ok(r) => taken = r.unwrap_or(false),
+                Err(e) => self.ed.message = format!("{name}: {e}"),
             }
         }
         self.drain_lua();
+        taken
     }
 
     /// The field the view `name`'s keys are on, if it has one and the
@@ -1260,7 +1248,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             Spec::new("map list")
                 .alias(&["maps"])
                 .args(Args::new(&[ArgKind::Text]))
-                .doc("the keymap in a pane: every mode's bindings, or MODE's (n v i o), or the keys under a prefix"),
+                .doc("the keymap in a pane: every mode's bindings, or MODE's (n v i o p), or the keys under a prefix"),
             |k, ctx| k.show_maps(ctx.args.first().map(String::as_str)),
         ),
         cmd(

@@ -300,7 +300,11 @@ focused means kawoosh never takes focus to have somewhere for chords to
 land, and kui's Tab ring never engages (a modal editor owns Tab). The
 keymap dispatches by (focused pane kind, mode): editor panes to the modal
 engine, terminal panes to the pty (with a prefix chord for pane commands,
-as tmux), Lua panes to whatever `kawoosh.map` bound for that view.
+as tmux), and every other pane — a Lua view, the memory and undo panes
+— to the engine in *pane mode* on its resident pane view (keys.md
+"Panes without a view", 2026-09-22), so their keys are maps like any
+other and `<C-w>…`, `<leader>…` and `:` reach normal mode's from
+anywhere, with no editor pane open at all.
 Modifier state arrives as `{kind="modifiers"}` and is kept in the model,
 which is how ⌘-drag pane moves and plain clicks coexist (splitmux).
 

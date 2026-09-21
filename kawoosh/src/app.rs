@@ -100,6 +100,9 @@ pub struct Kawoosh {
     /// `:keys` asked for a mode's root which-key: shown until the
     /// next key.
     pub(crate) keys_help: Option<Mode>,
+    /// The `lua:NAME` fact published for the focused Lua view, to be
+    /// taken back when the keys leave it (`sync_facts`).
+    pub(crate) lua_fact: Option<String>,
     /// A devtools tab to show on the next frame — `:syntax_tree` asks
     /// for the syntax tab. Once, not every frame: kui's
     /// `set_devtools_tab` is edge-triggered, so a standing request would
@@ -223,6 +226,7 @@ impl Kawoosh {
             inspector: Inspector::new(wake.clone()),
             nodes: Default::default(),
             keys_help: None,
+            lua_fact: None,
             show_tab: None,
             tab_shown: None,
             settings_default_open: false,
@@ -1043,22 +1047,16 @@ impl Kawoosh {
         if stroke.code == "escape" {
             self.ed.message.clear();
         }
-        // A ctrl-shift or alt-shift chord is the pane cluster's from
-        // every kind of pane (docs/design/keys.md): `<C-S-l>` moves
-        // right from a terminal too, whose pty could not tell it from
-        // `<C-l>` anyway, and `<A-S-l>` widens it. An editor pane has
-        // them in its own maps.
-        // A Lua view's field is a view of the editor's with the maps
-        // of one (the picker's `<A-S-l>` over the pane's), so the
-        // field takes the chord the way an editor pane does.
-        let in_field = self
-            .lua_name_of(self.layout.focused())
-            .is_some_and(|name| self.lua_field_focused(&name).is_some());
+        // A ctrl-shift or alt-shift chord is the pane cluster's from a
+        // terminal pane too (docs/design/keys.md): `<C-S-l>` moves
+        // right from one, whose pty could not tell it from `<C-l>`
+        // anyway, and `<A-S-l>` widens it. An editor pane has them in
+        // its own maps, and every other pane reaches them through pane
+        // mode (`listing.rs`).
         let chord = (stroke.ctrl || stroke.alt)
             && stroke.shift
-            && self.focused_view().is_none()
             && self.ed.prompt_view().is_none()
-            && !in_field
+            && self.term_of(self.layout.focused()).is_some()
             && self.pane_chord(&stroke);
         // The prompt takes the keys while it is open, from any pane —
         // the engine sends a key on any view to its field — so one
@@ -1078,19 +1076,23 @@ impl Kawoosh {
         } else if let Some(t) = self.term_of(self.layout.focused()) {
             self.term_key(t, stroke);
         } else if let Some(name) = self.lua_name_of(self.layout.focused()) {
-            self.lua_pane_key(&name, stroke);
-        } else if self.layout.focused_content() == Some(Content::Undo) {
-            self.undo_key(self.layout.focused(), stroke);
-        } else if self.layout.focused_content() == Some(Content::Memory) {
-            self.memory_key_press(self.layout.focused(), stroke);
+            // The view's field, or its handler, first; a key neither
+            // took is pane mode's.
+            if !self.lua_pane_key(&name, stroke.clone()) {
+                self.pane_key(stroke);
+            }
+        } else if matches!(
+            self.layout.focused_content(),
+            Some(Content::Undo | Content::Memory)
+        ) {
+            self.pane_key(stroke);
         }
         self.follow_caret = true;
         self.drain_effects();
         self.drain_lua();
     }
 
-    /// Runs the normal-mode binding of a chord from a pane without a
-    /// view of its own — a terminal's, a Lua pane's, the undo pane's —
+    /// Runs the normal-mode binding of a chord from a terminal pane,
     /// and says whether there was one.
     fn pane_chord(&mut self, stroke: &KeyStroke) -> bool {
         let note = stroke.notation();

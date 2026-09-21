@@ -53,6 +53,10 @@ kawoosh.picker = picker
 local VIEW = "picker"
 local FIELD = "q"
 local FIELD_FACT = "field:lua:" .. VIEW .. "/" .. FIELD
+-- The keys are on the picker's pane, its field under them or not:
+-- what the commands are gated by, so a pane-mode map (the list
+-- blurred, `<Esc>` twice) runs them too.
+local PANE_FACT = "lua:" .. VIEW
 -- The rows' text: the field's size, so the query and its answers line
 -- up; a row is the field's height too.
 local SIZE = 13
@@ -963,23 +967,19 @@ end, function(ev)
   elseif ev.kind == "row" then
     kawoosh.field_focus(VIEW, FIELD)
     if ev.i == P.cursor then pick() else P.cursor = ev.i ensure_visible() end
-  elseif ev.kind == "key" then
-    local k = ev.key
-    if k == "q" or k == "<Esc>" or k == "<C-c>" then close()
-    elseif k == "i" or k == "/" or k == "a" then kawoosh.field_focus(VIEW, FIELD)
-    elseif k == "j" then move(1)
-    elseif k == "k" then move(-1)
-    elseif k == "<CR>" then pick()
-    end
   end
+  -- A key with the field blurred is pane mode's: the maps below under
+  -- `p`, and every pane's shared keys (`<C-w>…`, `<leader>…`, `:`).
 end, { session = false })
 
 -- ------------------------------------------------------- the commands
 
 local at = { when = { FIELD_FACT } }
+local on_pane = { when = { PANE_FACT } }
 local function on(name, fn, doc)
-  kawoosh.command("picker " .. name, fn, { when = { FIELD_FACT }, doc = doc })
+  kawoosh.command("picker " .. name, fn, { when = { PANE_FACT }, doc = doc })
 end
+on("query", function() kawoosh.field_focus(VIEW, FIELD) end, "the keys to the query field")
 on("next", function() move(1) end, "the cursor a row down")
 on("prev", function() move(-1) end, "the cursor a row up")
 on("page down", function() move(P and P.rows or 10) end, "the cursor a page down")
@@ -994,9 +994,9 @@ on("close", function() close() end, "close the picker")
 -- The preview by half of its height a step, COUNT steps.
 local function half() return math.max(math.floor((P and P.prows or 10) / 2), 1) end
 kawoosh.command("picker preview down", function(ctx) preview_by(half() * math.max(ctx.count or 1, 1)) end,
-  { when = { FIELD_FACT }, doc = "the preview half a screen down, COUNT times" })
+  { when = { PANE_FACT }, doc = "the preview half a screen down, COUNT times" })
 kawoosh.command("picker preview up", function(ctx) preview_by(-half() * math.max(ctx.count or 1, 1)) end,
-  { when = { FIELD_FACT }, doc = "the preview half a screen up, COUNT times" })
+  { when = { PANE_FACT }, doc = "the preview half a screen up, COUNT times" })
 on("preview", function() kawoosh.opt("picker.preview", not previewing()) end,
   "show the cursor's row beside the list, or not (the `picker.preview` setting, for the session)")
 on("wrap", function() kawoosh.opt("picker.wrap", not wrapping()) end,
@@ -1014,7 +1014,7 @@ kawoosh.command("picker key", function(ctx)
   local fn = P.src.keys and P.src.keys[key]
   local hit = P.hits[P.cursor]
   if fn and hit then fn(hit.item, P) end
-end, { when = { FIELD_FACT }, args = { "text" }, doc = "a source's own key on the cursor's row" })
+end, { when = { PANE_FACT }, args = { "text" }, doc = "a source's own key on the cursor's row" })
 
 for _, mode in ipairs { "i", "n" } do
   kawoosh.map(mode, "<CR>", "picker pick", at)
@@ -1031,20 +1031,34 @@ for _, mode in ipairs { "i", "n" } do
   kawoosh.map(mode, "<C-t>", "picker pick tab", at)
   kawoosh.map(mode, "<C-c>", "picker close", at)
 end
-kawoosh.map("n", "<Esc>", "picker close", at)
-kawoosh.map("n", "j", "picker next", at)
-kawoosh.map("n", "k", "picker prev", at)
-kawoosh.map("n", "<C-d>", "picker page down", at)
-kawoosh.map("n", "<C-u>", "picker page up", at)
-kawoosh.map("n", "gg", "picker first", at)
-kawoosh.map("n", "G", "picker last", at)
-kawoosh.map("n", "J", "picker preview down", at)
-kawoosh.map("n", "K", "picker preview up", at)
-for _, mode in ipairs { "i", "n" } do
-  kawoosh.map(mode, "<A-p>", "picker preview", at)
-  kawoosh.map(mode, "<A-w>", "picker wrap", at)
-  kawoosh.map(mode, "<A-S-l>", "picker list wider", at)
-  kawoosh.map(mode, "<A-S-h>", "picker list narrower", at)
+-- Normal mode over the field, and pane mode with the field blurred
+-- (`<Esc>` again): the same list keys.
+for _, m in ipairs { { "n", at }, { "p", on_pane } } do
+  local mode, when = m[1], m[2]
+  kawoosh.map(mode, "<Esc>", "picker close", when)
+  kawoosh.map(mode, "j", "picker next", when)
+  kawoosh.map(mode, "k", "picker prev", when)
+  kawoosh.map(mode, "<C-d>", "picker page down", when)
+  kawoosh.map(mode, "<C-u>", "picker page up", when)
+  kawoosh.map(mode, "gg", "picker first", when)
+  kawoosh.map(mode, "G", "picker last", when)
+  kawoosh.map(mode, "J", "picker preview down", when)
+  kawoosh.map(mode, "K", "picker preview up", when)
+end
+kawoosh.map("p", "<CR>", "picker pick", on_pane)
+kawoosh.map("p", "<Down>", "picker next", on_pane)
+kawoosh.map("p", "<Up>", "picker prev", on_pane)
+kawoosh.map("p", "q", "picker close", on_pane)
+kawoosh.map("p", "<C-c>", "picker close", on_pane)
+kawoosh.map("p", "i", "picker query", on_pane)
+kawoosh.map("p", "a", "picker query", on_pane)
+kawoosh.map("p", "/", "picker query", on_pane)
+for _, mode in ipairs { "i", "n", "p" } do
+  local when = mode == "p" and on_pane or at
+  kawoosh.map(mode, "<A-p>", "picker preview", when)
+  kawoosh.map(mode, "<A-w>", "picker wrap", when)
+  kawoosh.map(mode, "<A-S-l>", "picker list wider", when)
+  kawoosh.map(mode, "<A-S-h>", "picker list narrower", when)
 end
 
 -- `:picker [SOURCE]`: bare, the smart one.

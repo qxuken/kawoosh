@@ -2969,6 +2969,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w>s", "split"),
         ("<C-w>q", "close"),
         ("<C-w>c", "close"),
+        // The command line from a pane whose `:` is the pty's or a
+        // view's own (a terminal, a Lua view): the cluster's spelling.
+        ("<C-w>:", "command"),
         ("<C-w>o", "only"),
         ("<C-w>w", "pane next"),
         ("<C-w>x", "pane swap"),
@@ -3092,6 +3095,44 @@ pub fn default_keymap(km: &mut Keymap) {
     let op = [("i", "textobject inner"), ("a", "textobject around")];
     for (k, c) in op {
         km.bind(OperatorPending, k, c);
+    }
+    // Pane mode (docs/design/keys.md "Panes without a view"): the
+    // list keys every listing pane answers through `list …`, and the
+    // memory and undo panes' own, gated by their facts. `<C-w>…`,
+    // `<leader>…` and the shift chords fall through to normal mode's
+    // (`Keymap::shared_from_pane`), so nothing is mirrored here.
+    let p = [
+        (":", "command"),
+        ("j", "list down"),
+        ("<Down>", "list down"),
+        ("k", "list up"),
+        ("<Up>", "list up"),
+        ("gg", "list first"),
+        ("G", "list last"),
+        ("<C-d>", "list half down"),
+        ("<C-u>", "list half up"),
+        ("<C-f>", "list page down"),
+        ("<PageDown>", "list page down"),
+        ("<C-b>", "list page up"),
+        ("<PageUp>", "list page up"),
+        ("<CR>", "list open"),
+        ("<Tab>", "list view"),
+        ("q", "close"),
+        ("<Esc>", "pane back"),
+        // The memory pane's.
+        ("p", "list open"),
+        ("y", "memory recall"),
+        ("o", "memory origin"),
+        ("x", "memory forget"),
+        ("m", "memory pin"),
+        // The undo pane's.
+        ("u", "undo pane undo"),
+        ("<C-r>", "undo pane redo"),
+        ("g-", "undo pane older"),
+        ("g+", "undo pane newer"),
+    ];
+    for (k, c) in p {
+        km.bind(Pane, k, c);
     }
     let i = [
         ("<Esc>", "normal"),

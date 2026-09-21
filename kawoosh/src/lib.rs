@@ -17,6 +17,7 @@ pub mod history;
 pub mod inspector;
 pub mod languages;
 pub mod layout;
+pub mod listing;
 pub mod logger;
 pub mod look;
 pub mod lsp;

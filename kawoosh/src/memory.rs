@@ -38,9 +38,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use kawoosh_doc::{BufferId, Hunk};
-use kawoosh_editor::{
-    ArgKind, Args, KeyStroke, Lookup, Mode, Selection, Selections, Spec, Took, ViewId,
-};
+use kawoosh_editor::{ArgKind, Args, Selection, Selections, Spec, Took, ViewId};
 use kawoosh_systems::store::{MomentKey, MomentQuery, MomentRow, RingRow, history_key_of, now};
 use kui::{Color, NodeSpec, Sizing, Ui, Value, Vec2};
 
@@ -227,8 +225,9 @@ pub struct MemoryPanel {
     pub cursor: usize,
     /// The editor pane the keyboard came from: where a put goes.
     pub back: Option<ViewId>,
-    pub(crate) prefix: bool,
     reveal: bool,
+    /// Rows on show, as the last frame drew them.
+    page: usize,
     rows: Vec<Row>,
     /// What the rows were built at: the memory's version, the store's
     /// changes, the histories' and the view.
@@ -244,12 +243,31 @@ impl Default for MemoryPanel {
             view: View::Texts,
             cursor: 0,
             back: None,
-            prefix: false,
             reveal: false,
+            page: 0,
             rows: Vec::new(),
             built: None,
             inspect: None,
         }
+    }
+}
+
+impl crate::listing::Listing for MemoryPanel {
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+    fn cursor(&self) -> usize {
+        self.cursor
+    }
+    fn set_cursor(&mut self, i: usize) {
+        self.cursor = i;
+        self.reveal = true;
+    }
+    fn page(&self) -> usize {
+        self.page
+    }
+    fn top_is_zero(&self) -> bool {
+        true
     }
 }
 
@@ -342,6 +360,16 @@ impl Kawoosh {
                 self.set_view(view.unwrap_or(self.memory_pane.view));
             }
         }
+    }
+
+    /// `list view` (`<Tab>`): the next view.
+    pub(crate) fn memory_next_view(&mut self) {
+        self.set_view(self.memory_pane.view.next());
+    }
+
+    /// The editor pane a `pane back` goes to.
+    pub(crate) fn memory_back_pane(&self) -> Option<PaneId> {
+        self.memory_target().map(|(p, _)| p)
     }
 
     fn set_view(&mut self, view: View) {
@@ -533,7 +561,7 @@ impl Kawoosh {
     /// The cursor's file or scratch row read, once per row and change:
     /// what a held buffer has now against what it was loaded from, or
     /// the row's text against the disk (or nothing, for a scratch).
-    fn sync_memory_inspect(&mut self) {
+    pub(crate) fn sync_memory_inspect(&mut self) {
         let Some(Row::Moment {
             row, holder, draft, ..
         }) = self.memory_pane.rows.get(self.memory_pane.cursor).cloned()
@@ -816,7 +844,7 @@ impl Kawoosh {
     }
 
     /// `⏎` on the cursor's row.
-    fn open_row(&mut self, i: usize) {
+    pub(crate) fn open_memory_row(&mut self, i: usize) {
         self.sync_memory_rows();
         let Some(row) = self.memory_pane.rows.get(i).cloned() else {
             return;
@@ -836,70 +864,34 @@ impl Kawoosh {
         }
     }
 
-    /// A key while the pane has the keyboard.
-    pub(crate) fn memory_key_press(&mut self, pane: PaneId, stroke: KeyStroke) {
-        let note = stroke.notation();
-        if self.memory_pane.prefix {
-            self.memory_pane.prefix = false;
-            if note == ":" {
-                self.open_cmdline();
-                return;
-            }
-            let keys = ["<C-w>".to_string(), note];
-            self.ed.sync_settings();
-            if let Lookup::Exact(bs) = self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
-                let bs = bs.to_vec();
-                self.run_bindings(&bs);
-            }
-            return;
-        }
+    /// `memory recall` in the pane: the cursor's text made the register
+    /// without putting it; `memory origin`: where the cursor's row came
+    /// from — a text's, carried through the edits since; a file's
+    /// line; a transition's subject.
+    fn memory_recall_cursor(&mut self) {
         self.sync_memory_rows();
-        let n = self.memory_pane.rows.len();
-        let cursor = self.memory_pane.cursor.min(n.saturating_sub(1));
-        self.memory_pane.cursor = cursor;
-        match note.as_str() {
-            "<C-w>" => self.memory_pane.prefix = true,
-            ":" => self.open_cmdline(),
-            // Newest at the top: down is older.
-            "j" | "<Down>" => {
-                self.memory_pane.cursor = (cursor + 1).min(n.saturating_sub(1));
-                self.memory_pane.reveal = true;
-                self.sync_memory_inspect();
-            }
-            "k" | "<Up>" => {
-                self.memory_pane.cursor = cursor.saturating_sub(1);
-                self.memory_pane.reveal = true;
-                self.sync_memory_inspect();
-            }
-            "G" => {
-                self.memory_pane.cursor = n.saturating_sub(1);
-                self.memory_pane.reveal = true;
-                self.sync_memory_inspect();
-            }
-            "gg" => {}
-            "<Tab>" => self.set_view(self.memory_pane.view.next()),
-            "<CR>" | "<Space>" | "p" => self.open_row(cursor),
-            "y" => {
-                if let Some(Row::Text(t)) = self.memory_pane.rows.get(cursor) {
-                    self.recall_text(*t);
-                }
-            }
-            "o" => match self.memory_pane.rows.get(cursor).cloned() {
-                Some(Row::Text(t)) => self.goto_text_origin(t),
-                Some(Row::Moment { row, .. }) => self.open_subject(&row.key, &row.meta),
-                Some(Row::Recent(_)) => self.open_row(cursor),
-                None => {}
-            },
-            "x" => self.forget_row(cursor),
-            "m" => self.pin_row(cursor),
-            "q" => self.close_memory_panel(pane),
-            "<Esc>" => {
-                if let Some((p, _)) = self.memory_target() {
-                    self.layout.focus(p);
-                }
-            }
-            _ => {}
+        let cursor = self.memory_pane.cursor;
+        match self.memory_pane.rows.get(cursor) {
+            Some(Row::Text(t)) => self.recall_text(*t),
+            Some(_) => self.ed.message = "recall is for a text row (`⏎` opens this one)".into(),
+            None => {}
         }
+    }
+
+    fn memory_origin_cursor(&mut self) {
+        self.sync_memory_rows();
+        let cursor = self.memory_pane.cursor;
+        match self.memory_pane.rows.get(cursor).cloned() {
+            Some(Row::Text(t)) => self.goto_text_origin(t),
+            Some(Row::Moment { row, .. }) => self.open_subject(&row.key, &row.meta),
+            Some(Row::Recent(_)) => self.open_memory_row(cursor),
+            None => {}
+        }
+    }
+
+    /// Whether the keyboard is on the memory pane.
+    fn in_memory_pane(&self) -> bool {
+        self.layout.focused_content() == Some(Content::Memory)
     }
 
     /// `m` on a row: pinned, or unpinned.
@@ -986,7 +978,7 @@ impl Kawoosh {
             self.sync_memory_rows();
             let i = (i.max(0) as usize).min(self.memory_pane.rows.len().saturating_sub(1));
             self.memory_pane.cursor = i;
-            self.open_row(i);
+            self.open_memory_row(i);
         }
     }
 
@@ -1298,6 +1290,9 @@ impl Kawoosh {
                     },
                 );
                 let list = ui.child_key("rows");
+                self.memory_pane.page = ui
+                    .scroll_geometry(list)
+                    .map_or(0, |g| (g.rect.h / tm.line_h).floor() as usize);
                 if reveal && n > 0 {
                     let y = cursor as f32 * tm.line_h;
                     let seen = ui
@@ -1535,8 +1530,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("memory forget")
                 .args(Args::new(&[ArgKind::Text, ArgKind::Text]))
-                .when(&["store"])
-                .doc("forget SUBJECT (a path, scratch:N, or a KIND's subject), its draft with it"),
+                .doc("forget SUBJECT (a path, scratch:N, or a KIND's subject), its draft with it; bare in the pane, the cursor's row"),
             |k, ctx| match ctx.args.first() {
                 Some(arg) => {
                     let key = key_of_arg(k, arg, ctx.args.get(1).map(String::as_str));
@@ -1544,14 +1538,17 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                         Ok(m) | Err(m) => m,
                     };
                 }
+                None if k.in_memory_pane() => {
+                    k.sync_memory_rows();
+                    k.forget_row(k.memory_pane.cursor);
+                }
                 None => k.ed.message = "forget what? (:memory forget SUBJECT [KIND])".into(),
             },
         ),
         cmd(
             Spec::new("memory pin")
                 .args(Args::new(&[ArgKind::Text]))
-                .when(&["store"])
-                .doc("pin the buffer's file (again: unpin); N opens the Nth pin"),
+                .doc("pin the buffer's file (again: unpin), or the cursor's row in the pane; N opens the Nth pin"),
             |k, ctx| {
                 let n = ctx
                     .has_count
@@ -1559,9 +1556,25 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     .or_else(|| ctx.args.first().and_then(|a| a.parse().ok()));
                 match n {
                     Some(n) => k.open_pin(n),
+                    None if k.in_memory_pane() => {
+                        k.sync_memory_rows();
+                        k.pin_row(k.memory_pane.cursor);
+                    }
                     None => k.pin_current(),
                 }
             },
+        ),
+        cmd(
+            Spec::new("memory recall")
+                .when(&["memory"])
+                .doc("the pane's cursor text made the register, without putting it"),
+            |k, _| k.memory_recall_cursor(),
+        ),
+        cmd(
+            Spec::new("memory origin")
+                .when(&["memory"])
+                .doc("go to where the pane's cursor row came from"),
+            |k, _| k.memory_origin_cursor(),
         ),
         cmd(
             Spec::new("memory clear")

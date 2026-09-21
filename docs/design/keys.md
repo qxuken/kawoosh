@@ -67,18 +67,60 @@ free in a terminal pane and `<C-l>` stays the shell's clear. In insert
 mode `<C-h>` is a backspace and `<C-l>` would be text. So the shifted
 one is the only straight spelling — the plain `<C-hjkl>` is deliberately
 not a second one, since two spellings for one move by mode is what a
-hand trips on. `Kawoosh::pane_chord` runs a ctrl-shift or alt-shift
-chord's normal-mode binding from any pane without a view of its own —
-a terminal's, a Lua view's, the undo and memory panes' — before the
-pane's own keys see it, unless a Lua view's field has the keys, which
-is a view of the editor's and takes the chord through its own maps
-(the picker's `<A-S-l>` over the pane's); editor panes have the chords
-in their normal and insert maps. Sizing is Alt with Shift because Alt
+hand trips on. From a terminal pane `Kawoosh::pane_chord` runs a
+ctrl-shift or alt-shift chord's normal-mode binding before the pty
+sees it; every other pane without a view reaches the chords through
+pane mode (below); a Lua view's field is a view of the editor's and
+takes the chord through its own maps (the picker's `<A-S-l>` over the
+pane's); editor panes have the chords in their normal and insert
+maps. Sizing is Alt with Shift because Alt
 alone moves the selection (`<A-hjkl>`: the line, the indent) and Shift
 on it reads as the same motion made of the pane; a chord's letter
 under Shift is spelled upper-case, so a map writes `<A-S-l>` or
 `<A-L>`, never `<A-L>` meaning `<A-l>`. `<C-w>` as a prefix stays the tmux-shaped way from those
 panes (`<C-w>.` sends a literal `<C-w>` to the pty).
+
+### Panes without a view: pane mode
+
+A pane that is not an editor's — the memory pane, the undo pane, a Lua
+view whose field does not have the keys — takes its keys in **pane
+mode** (`p` in `kawoosh.map` and `:map list`, 2026-09-22,
+`kawoosh/src/listing.rs`). The keys go to the engine's resident *pane
+view* (a field named `pane`, made once, unlisted) in that mode, so a
+key there resolves as any key does: counts, prefixes, the which-key,
+`:map list p`, a plugin's own maps. A miss in pane mode falls through
+to normal mode for what every pane shares — `<C-w>…`, `<leader>…`,
+`:`, the shift chords (`Keymap::shared_from_pane`) — and for nothing
+else: `dd` in a list does nothing rather than editing a hidden buffer.
+The prompt opens over the pane view, and a command that shows a
+buffer splits an editor pane for it, which is what makes `:tabnew`
+and `:e` reachable when the memory pane is the only pane there is.
+
+| keys | `list …` |
+|---|---|
+| `j` `k` `<Down>` `<Up>` | the cursor a row down / up, COUNT rows |
+| `<C-d>` `<C-u>` | half a screen down / up, COUNT times |
+| `<C-f>` `<C-b>` `<PageDown>` `<PageUp>` | a screen |
+| `gg` `G` | the first / last row |
+| `<CR>` | `list open`: put the text, open the file at its line, seek the state |
+| `<Tab>` | `list view`: the pane's next view (the memory pane's) |
+| `q` | `close` — the pane, not the last one |
+| `<Esc>` | `pane back`: the keyboard to the editor pane it came from |
+| `:` | the command line |
+
+A pane's own keys are commands gated by its fact, so one key can
+mean each pane's thing: the memory pane's `y` `o` `x` `m` `p` are
+`memory recall`, `memory origin`, `memory forget`, `memory pin` (bare
+in the pane: the cursor's row), `list open`, under `memory`; the undo
+pane's `u` `<C-r>` `g-` `g+` are `undo pane undo` / `redo` / `older` /
+`newer` under `undo`. A Lua view binds its own under the fact
+`lua:NAME`, which holds while that view's pane has the keys, field or
+not — the picker's `j` `k` `<C-d>` `<C-u>` `gg` `G` `<CR>` `q` `i`
+with the list blurred are `kawoosh.map("p", …, { when = { "lua:picker"
+} })` — and its `on_event` keeps a key by returning `true`. A pane
+that is a list implements `Listing` (its cursor, its length, the rows
+on show) and the `list …` commands move that cursor; a terminal pane
+stays the pty's, with the chords and `<C-w>…` as before.
 
 ### Next and previous: `]x` / `[x`
 

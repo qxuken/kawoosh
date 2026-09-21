@@ -348,6 +348,8 @@ pub enum Effect {
 
 /// How many lines a prompt's history keeps.
 pub const HISTORY_CAP: usize = 200;
+/// The name of the resident pane view's field ([`Editor::pane_view`]).
+pub const PANE_FIELD: &str = "pane";
 
 /// What the command line is prompting for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -752,6 +754,26 @@ impl Editor {
     /// that has none.
     pub fn any_view(&self) -> Option<ViewId> {
         self.views.keys().find(|v| !self.is_field(*v))
+    }
+
+    /// The resident pane view: the view a pane without one of its own
+    /// — the memory pane, the undo pane, a Lua view — takes its keys
+    /// on, in [`Mode::Pane`], and opens the prompt over, so a command
+    /// from such a pane has a view to be run on when no editor pane
+    /// is open at all. A field named `pane`, made once: unlisted, no
+    /// history, nobody's moment.
+    pub fn pane_view(&mut self) -> ViewId {
+        let v = match self.find_field(PANE_FIELD) {
+            Some(v) => v,
+            None => self.open_field(PANE_FIELD, ""),
+        };
+        self.set_mode(v, Mode::Pane);
+        v
+    }
+
+    /// Whether `view` is the resident pane view.
+    pub fn is_pane_view(&self, view: ViewId) -> bool {
+        self.field_name(view) == Some(PANE_FIELD)
     }
 
     pub fn field_name(&self, view: ViewId) -> Option<&str> {
@@ -2081,7 +2103,7 @@ impl Editor {
                 }
                 return false;
             }
-            Mode::Normal | Mode::Visual | Mode::OperatorPending => {}
+            Mode::Normal | Mode::Visual | Mode::OperatorPending | Mode::Pane => {}
         }
 
         // A count: digits before a command (`0` alone is a motion).
@@ -2109,7 +2131,16 @@ impl Editor {
         } else {
             self.mode(view)
         };
+        // Visual and operator-pending sequences fall through to normal
+        // mode's; a pane's only for what every pane shares with it.
         let lookup = match self.keymap.lookup_lenient(lookup_mode, &self.pending) {
+            Lookup::None if lookup_mode == Mode::Pane => {
+                if self.keymap.shared_from_pane(&self.pending) {
+                    self.keymap.lookup_lenient(Mode::Normal, &self.pending)
+                } else {
+                    Lookup::None
+                }
+            }
             Lookup::None if lookup_mode != Mode::Normal => {
                 self.keymap.lookup_lenient(Mode::Normal, &self.pending)
             }

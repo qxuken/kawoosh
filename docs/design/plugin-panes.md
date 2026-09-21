@@ -71,10 +71,24 @@ which is how the picker keeps `picker.share` as the setting.
 Every `on_click = { … }` payload in the tree comes back as `ev` with
 its fields, plus `ev.slot` (which pane). A key pressed while the pane
 has the keyboard — and no field has it — arrives as `{ kind = "key",
-key = "<C-w>", … }` in the keymap's notation, after the editor's own
-pane chords (`<C-w>…`, the alt-shift resizes) have had their turn:
-`pane_chord` in `app.rs`. A click on a field node focuses it before the
-handler sees anything.
+key = "j", … }` in the keymap's notation; the handler keeps it by
+returning `true`, and any other key is **pane mode's** (keys.md
+"Panes without a view"): the view's own `kawoosh.map("p", …)` bindings,
+the list keys, and what every pane shares — `<C-w>…`, `<leader>…`,
+`:`, the shift chords — which is how a plugin's pane gets the
+command line and the pane cluster without handling a key. A view's
+pane-mode maps are gated on the fact `lua:NAME`, which holds while
+the view's pane has the keys, its field under them or not:
+
+```lua
+kawoosh.map("p", "j", "finder next", { when = { "lua:finder" } })
+kawoosh.map("p", "<CR>", "finder pick", { when = { "lua:finder" } })
+```
+
+Prefer a map to handling `ev.kind == "key"`: a map is listed by `:map
+list p`, remapped by a user, counted (`3j`) and shown by the which-key,
+and a handler is none of those. A click on a field node focuses it
+before the handler sees anything.
 
 ## Fields: a line of the editor in the pane
 

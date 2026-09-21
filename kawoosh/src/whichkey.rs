@@ -63,7 +63,7 @@ impl Kawoosh {
             };
             return Some((self.ed.pending.clone(), mode));
         }
-        if self.terms.prefix || self.scripting.prefix || self.undo.prefix {
+        if self.terms.prefix {
             return Some((vec!["<C-w>".into()], Mode::Normal));
         }
         if let Some(mode) = self.keys_help {
@@ -84,9 +84,12 @@ impl Kawoosh {
         let km = &self.ed.keymap;
         let mut rows = km.next_keys(mode, &keys);
         // Visual and operator-pending lookups fall through to normal
-        // mode's, so its sequences are open there too; insert mode's
+        // mode's, so its sequences are open there too; a pane's for
+        // what every pane shares (`<C-w>`, the leader); insert mode's
         // do not.
-        if matches!(mode, Mode::Visual | Mode::OperatorPending) {
+        if matches!(mode, Mode::Visual | Mode::OperatorPending)
+            || (mode == Mode::Pane && (keys.is_empty() || km.shared_from_pane(&keys)))
+        {
             for (k, b) in km.next_keys(Mode::Normal, &keys) {
                 if !rows.iter().any(|(o, _)| *o == k) {
                     rows.push((k, b));

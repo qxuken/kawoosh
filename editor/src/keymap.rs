@@ -16,6 +16,13 @@ pub enum Mode {
     /// The command line and the search prompt: `:` and `/`.
     /// An operator is waiting for its motion or text object.
     OperatorPending,
+    /// A pane that is not an editor's — the memory pane, the undo
+    /// pane, a Lua view with no field under the keys — takes its keys
+    /// in this mode, on the engine's resident pane view: the list keys
+    /// (`j` `k` `gg` `G` `<C-d>` `<C-u>` `<CR>` `q`) and the pane's
+    /// own, and through to normal mode for what every pane shares
+    /// ([`Keymap::shared_from_pane`]).
+    Pane,
 }
 
 impl Mode {
@@ -25,6 +32,7 @@ impl Mode {
             Mode::Insert => "INS",
             Mode::Visual => "VIS",
             Mode::OperatorPending => "OP",
+            Mode::Pane => "PANE",
         }
     }
 
@@ -35,6 +43,7 @@ impl Mode {
             Mode::Insert => "insert",
             Mode::Visual => "visual",
             Mode::OperatorPending => "operator",
+            Mode::Pane => "pane",
         }
     }
 
@@ -45,6 +54,7 @@ impl Mode {
             Mode::Insert => "i",
             Mode::Visual => "v",
             Mode::OperatorPending => "o",
+            Mode::Pane => "p",
         }
     }
 
@@ -54,6 +64,7 @@ impl Mode {
             "i" | "insert" => Some(Mode::Insert),
             "v" | "visual" => Some(Mode::Visual),
             "o" | "op" | "operator" => Some(Mode::OperatorPending),
+            "p" | "pane" => Some(Mode::Pane),
             _ => None,
         }
     }
@@ -164,6 +175,23 @@ fn named_key(code: &str) -> Option<&'static str> {
 /// set after the map was made — from a settings file, reloaded on
 /// save — retargets every map at once.
 pub const LEADER: &str = "<leader>";
+
+/// Whether `note` is a ctrl- or alt-shift chord: `<C-S-x>`, `<A-S-x>`,
+/// or a letter's shift spelled as the letter (`<C-L>`, `<A-J>`).
+pub fn is_shift_chord(note: &str) -> bool {
+    let Some(inner) = note.strip_prefix('<').and_then(|s| s.strip_suffix('>')) else {
+        return false;
+    };
+    let mut parts: Vec<&str> = inner.split('-').collect();
+    let Some(key) = parts.pop() else {
+        return false;
+    };
+    let mods: Vec<&str> = parts;
+    let held = mods.iter().any(|m| matches!(*m, "C" | "A" | "M"));
+    let shifted = mods.contains(&"S")
+        || (key.chars().count() == 1 && key.chars().next().is_some_and(|c| c.is_ascii_uppercase()));
+    held && shifted
+}
 
 /// Splits `"<C-w>v"` into `["<C-w>", "v"]`; `<leader>` stays [`LEADER`].
 pub fn parse_notation(s: &str) -> Vec<String> {
@@ -489,6 +517,21 @@ impl Keymap {
     /// [`Keymap::lookup`], then — when nothing matched and the last key is
     /// a ctrl chord — the same sequence with the chord's letter bare, so
     /// `<C-w><C-w>` is `<C-w>w` and `<C-w><C-v>` is `<C-w>v`, as in vim.
+    /// Whether a sequence begun in pane mode is one every pane shares
+    /// with normal mode — the `<C-w>` cluster, the leader's groups,
+    /// `:`, and a ctrl- or alt-shift chord (the pane cluster from a
+    /// terminal too) — so a miss in pane mode looks it up there.
+    /// Anything else (`dd`, `i`) is not: a list does not edit.
+    pub fn shared_from_pane(&self, keys: &[String]) -> bool {
+        let Some(first) = keys.first() else {
+            return false;
+        };
+        if first == "<C-w>" || first == ":" || first == LEADER || *first == self.leader {
+            return true;
+        }
+        is_shift_chord(first)
+    }
+
     pub fn lookup_lenient(&self, mode: Mode, keys: &[String]) -> Lookup<'_> {
         match self.lookup(mode, keys) {
             Lookup::None if keys.len() > 1 => {
