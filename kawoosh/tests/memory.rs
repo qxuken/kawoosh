@@ -944,3 +944,134 @@ fn a_round_trip_is_no_visit_and_a_recall_no_yank() {
     assert!(store.moment(&kawoosh::moments::text_key("two\n")).is_none());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Round four: a `location` row per `path:line` jumped to (`]q`, with
+/// the listing it came from and the line that named it), a `tool` row
+/// per `:tool NAME` and per compile (with the command), a terminal
+/// pane's dwell to its tool, `⏎` in the pane opening a location at
+/// its line, and a run's row gone after thirty days whatever
+/// `memory.keep_days` says.
+#[test]
+fn runs_are_remembered_as_tools_and_locations() {
+    let dir = tmp("runs");
+    let db = dir.join("state.db");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "").unwrap();
+    let a = dir.join("src/a.rs");
+    std::fs::write(&a, "one\ntwo\nthree\n").unwrap();
+    let (mut d, mut app) = launch(&db, &a);
+    d.frame(&mut app);
+    let store = app.store.clone().unwrap();
+    ex(
+        &mut d,
+        &mut app,
+        "compile printf 'error at src/a.rs:3:1 boom\\n'; exit 1",
+    );
+    let mut done = false;
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if !app.compile.running && app.compile.buffer.is_some() {
+            done = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(done);
+    d.keys(&mut app, "]q");
+    d.frame(&mut app);
+    app.flush_moments();
+    let ws = app.moments.workspace().to_string();
+    let loc = MomentKey::new("location", &format!("{}:3", a.display()), &ws);
+    let row = store.moment(&loc).expect("the location row");
+    assert_eq!(row.visits, 1);
+    let meta: serde_json::Value = serde_json::from_str(&row.meta).unwrap();
+    assert_eq!(meta["from"], "compile");
+    assert!(
+        meta["message"].as_str().unwrap().contains("boom"),
+        "{}",
+        row.meta
+    );
+    let compile = store
+        .moment(&MomentKey::new("tool", "compile", &ws))
+        .expect("the compile's tool row");
+    assert!(
+        compile.meta.contains("printf"),
+        "the command: {}",
+        compile.meta
+    );
+    // A tool: its row, and the terminal's dwell to it.
+    lua(
+        &mut app,
+        r#"kawoosh.tool("catter", { cmd = "cat", dock = true })"#,
+    );
+    ex(&mut d, &mut app, "tool catter");
+    d.frame(&mut app);
+    assert!(
+        matches!(app.layout.focused_content(), Some(Content::Terminal(_))),
+        "the tool's terminal has the keys"
+    );
+    for _ in 0..5 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        d.frame(&mut app);
+    }
+    app.flush_moments();
+    let tool = store
+        .moment(&MomentKey::new("tool", "catter", &ws))
+        .expect("the tool's row");
+    assert_eq!(tool.visits, 1);
+    assert!(tool.dwell_ms > 0, "dwell in the terminal: {tool:?}");
+    assert!(tool.meta.contains("\"cmd\":\"cat\""), "{}", tool.meta);
+    // `:memory all` lists both (from the terminal the command line is
+    // `<C-w>:`); `⏎` on the location opens the file at its line.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, ":memory all");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    let rows = app.memory_pane.rows();
+    let at = rows
+        .iter()
+        .position(|r| r.key().is_some_and(|k| k.kind == "location"))
+        .unwrap_or_else(|| {
+            panic!(
+                "the location row in the pane: {:?} / view {:?} / focused {:?}",
+                rows.iter()
+                    .map(|r| r.key().map(|k| (k.kind.clone(), k.subject.clone())))
+                    .collect::<Vec<_>>(),
+                app.memory_pane.view,
+                app.layout.focused_content()
+            )
+        });
+    assert!(rows.iter().any(|r| {
+        r.key()
+            .is_some_and(|k| k.kind == "tool" && k.subject == "catter")
+    }));
+    for _ in 0..at {
+        d.keys(&mut app, "j");
+    }
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    let v = app.focused_view().expect("an editor pane");
+    let buf = app.ed.buffer_of(v);
+    assert_eq!(buf.path.as_deref(), Some(a.as_path()));
+    assert_eq!(buf.line_of(app.ed.views[v].sels.primary().head), 2);
+    // A run's row is stale in a month: thirty-one days on, gone at the
+    // next launch, though `memory.keep_days` is ninety.
+    store
+        .set_moment_last(&loc, kawoosh_systems::store::now() - 31 * 86_400)
+        .unwrap();
+    ex(&mut d, &mut app, "qa!");
+    d.frame(&mut app);
+    drop(app);
+    drop(store);
+    let (mut d, mut app) = launch(&db, &a);
+    d.frame(&mut app);
+    let store = app.store.clone().unwrap();
+    assert!(store.moment(&loc).is_none(), "aged out at thirty days");
+    assert!(
+        store
+            .moment(&MomentKey::new("tool", "catter", &ws))
+            .is_some(),
+        "the tool's row, a day old, stays"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

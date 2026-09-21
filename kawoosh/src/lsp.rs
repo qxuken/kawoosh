@@ -262,6 +262,7 @@ impl Kawoosh {
                     line,
                     character,
                 } => {
+                    self.note_location(&path, Some(line as usize + 1), "definition", "");
                     self.open_in_editor(&path, Some(line as usize + 1), None);
                     if let Some(v) = self.focused_view() {
                         let buf = self.ed.buffer_of(v);

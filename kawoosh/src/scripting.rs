@@ -1004,6 +1004,10 @@ impl Kawoosh {
             self.ed.message = format!("no tool named {name}");
             return;
         };
+        self.note_tool(
+            name,
+            serde_json::json!({ "cmd": def.cmd, "dock": def.dock, "cwd": def.cwd }),
+        );
         if let Some(&t) = self.scripting.tool_terms.get(name)
             && self.terms.map.contains_key(&t)
         {

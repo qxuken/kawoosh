@@ -398,9 +398,12 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   the blobs stay. Pinned files are a flag on it and the picker ranks
   by it (`memory.lua`'s `rank`, replaceable); the pane's views, the
   pins and the picker's boosts are the workspace's (a history is the
-  path's under every root, corrected 2026-09-22). Not built: `tool`
-  and `location` rows (round four), co-occurrence, the yank-pop after
-  `p`.
+  path's under every root, corrected 2026-09-22). Round four built
+  2026-09-22: `location` rows from `]q` `[q` `<CR>` and a definition
+  jump (the listing and the line that named it in `meta`), `tool`
+  rows from `:tool` and the compile (the command in `meta`), a
+  terminal pane's dwell to its tool, both opened from the pane, aged
+  at thirty days. Not built: co-occurrence, the yank-pop after `p`.
 
 ### Terminal
 
@@ -595,7 +598,8 @@ then breadth.
     and a recall a yank; a text that may not be written still left
     its hash; Decision 2's workspace was never read. Two tests more
     in `memory.rs` (a workspace, the round trips) and two in the
-    store's.
+    store's. Round four (`tool` and `location` rows, a terminal's
+    dwell) landed the same day: `runs_are_remembered_as_tools_and_locations`.
 11. **The scrolling tab** ([scrolling-tab.md](scrolling-tab.md)): one
     round — `Kind::Scroll` beside the tree, the keys read on the
     strip's axis, `reveal` on the focus frame, `:layout` both ways,

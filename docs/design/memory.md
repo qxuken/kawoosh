@@ -40,7 +40,16 @@ not yet flushed in (the pending map is one cell the shell and the
 runtime share), so a file opened a moment ago has its row; a delta's
 `meta` merges over the row's (`json_patch`) instead of replacing it,
 so the caret line and a plugin's keys keep out of each other's way.
-The four forks were put as
+*Round four built 2026-09-22*: a `location` row per `path:line`
+jumped to — `]q` `[q` and `<CR>` on a listing's line, a server's
+definition — with `meta.from` (the listing's name, `definition`) and
+`meta.message` (the line that named it, two hundred characters at
+most); a `tool` row per `:tool NAME` (run or focused again) and per
+`kawoosh.compile` (`compile`, with `meta.cmd`); a terminal pane's
+dwell to its tool's row while it is a tool's; `⏎` on either in the
+pane opens the file at the line or runs the tool again; and a run's
+row goes at thirty days whatever `memory.keep_days` says
+(`keep_days_for`). Left: co-occurrence and the yank-pop.
 options and taken: the unit is a subject row *plus a bounded ring of
 recent transitions* (Decision 1); the histories lose their bookkeeping
 and keep their blob (Decision 6); eviction is a fixed score in Rust

@@ -54,6 +54,10 @@ impl Kawoosh {
                 kawoosh_systems::lsp::workspace_root(&p, &def)
             })
             .or_else(|| std::env::current_dir().ok());
+        self.note_tool(
+            "compile",
+            serde_json::json!({ "cmd": cmd, "cwd": cwd.as_ref().map(|c| c.display().to_string()) }),
+        );
         self.compile.proc_id += 1;
         let id = self.compile.proc_id;
         let header = format!("$ {cmd}\n");
@@ -177,19 +181,30 @@ impl Kawoosh {
             self.ed.message = "no location on this line".into();
             return false;
         };
-        self.open_location(&path, line, col, Some(buffer));
+        self.open_location(&path, line, col, Some((buffer, ln)));
         true
     }
 
     /// Opens a location in an editor pane other than the one showing
-    /// `from` (the compile buffer stays visible).
+    /// `from` (the compile buffer stays visible), and remembers it (a
+    /// `location` moment, memory.md round four) with the listing it
+    /// came from and the line that named it.
     fn open_location(
         &mut self,
         path: &Path,
         line: Option<usize>,
         col: Option<usize>,
-        from: Option<BufferId>,
+        from: Option<(BufferId, usize)>,
     ) {
+        let (source, message) = match from {
+            Some((b, ln)) => {
+                let buf = &self.ed.buffers[b];
+                (buf.name.trim_matches('*').to_string(), buf.line_text(ln))
+            }
+            None => ("location".to_string(), String::new()),
+        };
+        self.note_location(path, line, &source, &message);
+        let from = from.map(|(b, _)| b);
         let other =
             self.layout.visible_panes().into_iter().find(
                 |p| matches!(self.view_of(*p), Some(v) if Some(self.ed.views[v].buffer) != from),
@@ -244,7 +259,7 @@ impl Kawoosh {
                         v.sels = kawoosh_editor::Selections::single(Selection::point(off));
                     }
                 }
-                self.open_location(&path, line, col, Some(buffer));
+                self.open_location(&path, line, col, Some((buffer, ln)));
                 return;
             }
         }

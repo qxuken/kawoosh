@@ -544,6 +544,24 @@ impl Kawoosh {
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_else(|| row.key.subject.clone()),
                     "text" => row.text_head.clone().unwrap_or_default(),
+                    // `path:line` as `name:line`, the path under it.
+                    "location" => {
+                        let (p, l) = row
+                            .key
+                            .subject
+                            .rsplit_once(':')
+                            .filter(|(_, l)| l.parse::<usize>().is_ok())
+                            .unwrap_or((row.key.subject.as_str(), ""));
+                        let name = Path::new(p)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| p.to_string());
+                        if l.is_empty() {
+                            name
+                        } else {
+                            format!("{name}:{l}")
+                        }
+                    }
                     _ => row.key.subject.clone(),
                 };
                 let draft = history_key_of(&row.key).and_then(|k| histories.get(&k).copied());
@@ -794,6 +812,36 @@ impl Kawoosh {
                 self.ed.run(v, "search", &[], None);
                 if let Some(pv) = self.ed.prompt_view() {
                     self.ed.set_field_text(pv, &key.subject);
+                }
+            }
+            // A `path:line`: the file at the line, in the editor pane
+            // the keyboard came from.
+            "location" => {
+                let (path, line) = match key.subject.rsplit_once(':') {
+                    Some((p, l)) if l.parse::<usize>().is_ok() => (p, l.parse().ok()),
+                    _ => (key.subject.as_str(), None),
+                };
+                let path = PathBuf::from(path);
+                if let Some((p, _)) = self.memory_target() {
+                    self.layout.focus(p);
+                }
+                self.open_in_editor(&path, line, None);
+                self.follow_caret = true;
+            }
+            // A tool: run or focused again, as `:tool NAME`; the
+            // compile with the command it ran.
+            "tool" => {
+                if key.subject == "compile" {
+                    let cmd: Option<String> = serde_json::from_str::<serde_json::Value>(meta)
+                        .ok()
+                        .and_then(|m| m.get("cmd")?.as_str().map(str::to_string));
+                    match cmd {
+                        Some(c) => self.compile(&c),
+                        None => self.ed.message = "the compile's command is not remembered".into(),
+                    }
+                } else {
+                    let name = key.subject.clone();
+                    self.tool(&name);
                 }
             }
             _ => {
@@ -1239,8 +1287,21 @@ impl Kawoosh {
                                             pal.dim
                                         };
                                         ui.text(label, style().color(color));
-                                        if row.key.kind == "file" {
-                                            ui.text(&row.key.subject, small(pal.faint));
+                                        match row.key.kind.as_str() {
+                                            "file" => ui.text(&row.key.subject, small(pal.faint)),
+                                            // A location's line as it was
+                                            // named; a tool's command.
+                                            "location" | "tool" => {
+                                                let meta: serde_json::Value =
+                                                    serde_json::from_str(&row.meta).unwrap_or_default();
+                                                let field = if row.key.kind == "tool" { "cmd" } else { "message" };
+                                                if let Some(m) = meta.get(field).and_then(|v| v.as_str())
+                                                    && !m.is_empty()
+                                                {
+                                                    ui.text(m, small(pal.faint));
+                                                }
+                                            }
+                                            _ => {}
                                         }
                                     });
                                     ui.with(col(22.0).main_align(kui::Align::Start), |ui| {

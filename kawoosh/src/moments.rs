@@ -18,6 +18,13 @@
 //! per frame while the window has the keyboard and a key or a click
 //! came within `memory.idle_secs`.
 //!
+//! Round four (memory.md's build order): a *location* row per
+//! `path:line` jumped to — `]q` `[q`, `<CR>` on a `path:line`, a
+//! server's definition — with where it came from and the line that
+//! named it; a *tool* row per `:tool NAME` and per `kawoosh.compile`,
+//! with the command; and a terminal pane's dwell to its tool's row
+//! when it is a tool's.
+//!
 //! Cadence: the histories' — written once the memory has been still
 //! for [`QUIET`], or every [`LAG`] while it keeps changing; the session
 //! save flushes. A text moment is flushed at once (round two).
@@ -69,6 +76,19 @@ pub const IDLE_SECS: &str = "memory.idle_secs";
 /// The keys the histories had; read when the memory's are not set.
 pub const LEGACY_KEEP_DAYS: &str = "history.keep_days";
 pub const LEGACY_MAX_MB: &str = "history.max_mb";
+
+/// Days a kind's rows are kept at most, whatever `memory.keep_days`
+/// says: a run is stale in a month (Decision 4's table); the rest have
+/// no cap of their own.
+pub fn keep_days_for(kind: &str) -> Option<u64> {
+    match kind {
+        "tool" | "location" => Some(30),
+        _ => None,
+    }
+}
+
+/// How much of a location's line is kept as its message.
+pub const MESSAGE_MAX: usize = 200;
 
 /// Rows a kind may hold (Decision 4's table).
 pub fn cap_for(kind: &str) -> usize {
@@ -442,7 +462,8 @@ impl Kawoosh {
             }
         }
         // Dwell: while the window has the keyboard and it was used
-        // within `memory.idle_secs`.
+        // within `memory.idle_secs` — to the focused buffer's subject,
+        // or to a terminal pane's tool when it is a tool's.
         let idle = self
             .ed
             .settings
@@ -453,8 +474,9 @@ impl Kawoosh {
         if self.moments.window_focused
             && now.duration_since(self.moments.last_input) < idle
             && frame_ms > 0
-            && let Some(b) = current
-            && let Some(key) = self.subject_of(b)
+            && let Some(key) = current
+                .and_then(|b| self.subject_of(b))
+                .or_else(|| self.tool_of_pane(focused))
         {
             self.moments.delta(key).dwell_ms += frame_ms;
         }
@@ -615,7 +637,14 @@ impl Kawoosh {
         let (mut dropped, mut texts) = (0, 0);
         for r in store.moments(&MomentQuery::default()) {
             let text = r.key.kind == "text";
-            let limit = if text { text_days } else { days };
+            let limit = if text {
+                text_days
+            } else {
+                match (days, keep_days_for(&r.key.kind)) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                }
+            };
             let Some(d) = limit else { continue };
             if r.last_at >= t - (d * 86_400) as i64 {
                 continue;
@@ -1138,6 +1167,49 @@ impl Kawoosh {
     /// A key or a click: the idle guard's clock.
     pub(crate) fn note_input(&mut self) {
         self.moments.last_input = Instant::now();
+    }
+
+    /// The tool a terminal pane runs, as a moment key, if it is one's.
+    fn tool_of_pane(&self, pane: crate::layout::PaneId) -> Option<MomentKey> {
+        let t = self.term_of(pane)?;
+        let name = self
+            .scripting
+            .tool_terms
+            .iter()
+            .find(|(_, id)| **id == t)
+            .map(|(n, _)| n.clone())?;
+        Some(MomentKey::new("tool", &name, self.moments.workspace()))
+    }
+
+    /// A location jumped to (round four): a `location` row for
+    /// `path:line`, visited, with where the jump came from (`from`: a
+    /// listing's name, `definition`) and the line that named it.
+    pub(crate) fn note_location(
+        &mut self,
+        path: &Path,
+        line: Option<usize>,
+        from: &str,
+        message: &str,
+    ) {
+        let path = self.resolve(path).display().to_string();
+        let subject = match line {
+            Some(l) => format!("{path}:{l}"),
+            None => path,
+        };
+        let key = MomentKey::new("location", &subject, self.moments.workspace());
+        let message: String = message.trim().chars().take(MESSAGE_MAX).collect();
+        self.moments.visit(key.clone());
+        self.moments.set_meta(
+            key,
+            serde_json::json!({ "from": from, "message": message }).to_string(),
+        );
+    }
+
+    /// A tool run or focused (round four): `:tool NAME`, a compile.
+    pub(crate) fn note_tool(&mut self, name: &str, meta: serde_json::Value) {
+        let key = MomentKey::new("tool", name, self.moments.workspace());
+        self.moments.visit(key.clone());
+        self.moments.set_meta(key, meta.to_string());
     }
 }
 
