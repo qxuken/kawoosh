@@ -86,8 +86,8 @@ panes (`<C-w>.` sends a literal `<C-w>` to the pty).
 |---|---|
 | `]b` `[b` | buffer |
 | `]t` `[t` | tab |
-| `]q` `[q` | location in the compile output |
-| `]d` `[d` | *reserved*: diagnostic |
+| `]q` `[q` | location in the compile output, or in the references `gr` listed |
+| `]d` `[d` | diagnostic (the message on the status line) |
 | `]h` `[h` | *reserved*: hunk |
 | `]e` `[e` | *reserved*: the pinned files (harpoon-shaped) |
 
@@ -99,10 +99,12 @@ panes (`<C-w>.` sends a literal `<C-w>` to the pty).
 | `gh` `gl` | the line's ends (helix; `^` and `$` stay) |
 | `gsa` `gsd` `gsr` | surrounds: add, delete, replace (mini.surround's letters) |
 | `gd` | definition |
+| `gr` | references, as a locations list beside the code (`<CR>` opens one, `]q` walks them) |
 | `K` | hover (vim's, not `g`, but the same family) |
+| `<C-e>` | the diagnostic under the caret, whole, in a pane |
 | `gt` `gT` | tabs |
 | `g-` `g+` | undo by time |
-| `gr` `gI` `gD` | *reserved*: references, implementation, declaration |
+| `gI` `gD` | *reserved*: implementation, declaration |
 
 ### Selections: Ctrl counts them, Alt moves one
 
@@ -173,6 +175,16 @@ the panes table.
 | `gsr` + char + char | swap the pair for another (`gsr)]`) |
 | `.` | the last change again, on the selections as they are; a count replaces the change's count and is its count from then on |
 | `q` + char … `q` | record into the register; an upper-case letter appends to its lower-case one; the status line says `REC @a` meanwhile |
+
+**Completion** is in place (mvp.md D5): the candidate's rest is a
+ghost after the caret, `<C-n>` `<C-p>` cycle, `<Tab>` `<C-y>` `<CR>`
+take it, `<C-e>` in insert mode drops it. It asks as a word starts and
+on the server's trigger characters (`.` and `:` for a server that names
+none), and when no server answers — a language nobody serves, a server
+with nothing to say — the buffer's own identifiers are the candidates,
+nearest the caret first. `<C-x>` in insert mode puts the candidates in
+a `*candidates*` pane to browse: `j` `k`, `<CR>` takes the one on the
+line and the keys come back to the text, `q` or `<Esc>` closes it.
 | `@` + char | play the register COUNT times; `@@` the one played last, `@:` the last command line |
 
 **A change and a macro are the command stream, not the keys.** Every
@@ -226,6 +238,10 @@ objects, or any other character on both sides.
 | `<leader>sm` | the messages |
 | `<leader>ws` `<leader>wr` | save, restore the session |
 | `<leader>cc` | compile |
+| `<leader>ca` | the code actions at the caret (or over the selection), a confirm to choose from; `:lsp action N` runs the Nth |
+| `<leader>cF` | format the buffer through its server |
+| `<leader>r` | rename the symbol: the prompt filled with `lsp rename WORD`, the name edited, `<CR>` |
+| `<leader>D` | the type definition |
 | `<leader>cd` | the listed directory as the working one (oil's) |
 | `<leader>u` | the undo history |
 | `<leader>p` | the working memory: what was yanked, deleted or pasted in, to put again |
@@ -304,11 +320,9 @@ so that nothing else takes the key meanwhile.
 | `<leader>E` | an explorer |
 | `<leader>sh` | help |
 | `<leader>m` | marks |
-| `<leader>r` | rename the symbol |
 | `<leader>R` | rename the file |
-| `<leader>ca` `<leader>cF` `<leader>cI` | code action, format, inlay hints |
-| `<leader>cs` `<leader>bs` `<leader>D` | workspace symbols, buffer symbols, type definition |
-| `<C-e>` | the diagnostic under the caret |
+| `<leader>cI` | inlay hints |
+| `<leader>cs` `<leader>bs` | workspace symbols, buffer symbols (on the picker) |
 | `<leader>h*` `<leader>bg` `<leader>bl` `<leader>wd` `<leader>wc` | hunks, git, log, diff, commit |
 | `<leader>y*` | copy the path, the directory, the name |
 | `<leader>G*` | the debugger |

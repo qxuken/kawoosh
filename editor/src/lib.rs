@@ -1645,6 +1645,63 @@ impl Editor {
         self.edited = true;
     }
 
+    /// Edits made outside any command — a server's rename, a format, a
+    /// code action's — applied to `id` at once, ascending and disjoint
+    /// in the text as it is, as one undo node when no checkpoint is
+    /// open (inside a typing session they join it), every view's
+    /// selections carried through them. False for a read-only buffer,
+    /// one that is not there, or nothing to apply.
+    pub fn apply_edits(&mut self, id: BufferId, edits: &[(Range<usize>, String)]) -> bool {
+        let Some(buf) = self.buffers.get(id) else {
+            return false;
+        };
+        if buf.read_only || edits.is_empty() {
+            return false;
+        }
+        let view = self
+            .views
+            .iter()
+            .find(|(_, v)| v.buffer == id)
+            .map(|(k, _)| k);
+        let had_open = self.history.get(&id).is_some_and(|h| h.open.is_some());
+        if let (Some(v), false) = (view, had_open) {
+            self.open_checkpoint(v);
+        }
+        let buf = &mut self.buffers[id];
+        let len = buf.len();
+        let mut sorted: Vec<(Range<usize>, String)> = edits
+            .iter()
+            .map(|(r, t)| {
+                let start = buf.floor_char(r.start.min(len));
+                let end = buf.floor_char(r.end.min(len)).max(start);
+                (start..end, t.clone())
+            })
+            .collect();
+        sorted.sort_by_key(|(r, _)| (r.start, r.end));
+        let refs: Vec<(Range<usize>, &str)> = sorted
+            .iter()
+            .map(|(r, t)| (r.clone(), t.as_str()))
+            .collect();
+        buf.replace_many(&refs);
+        let shape: Vec<(Range<usize>, usize)> =
+            sorted.iter().map(|(r, t)| (r.clone(), t.len())).collect();
+        for v in self.views.values_mut().filter(|v| v.buffer == id) {
+            v.sels.map(|s| {
+                Selection::new(
+                    commands::carried(s.anchor, &shape),
+                    commands::carried(s.head, &shape),
+                )
+            });
+            v.sels.normalize();
+            v.goal_col = None;
+        }
+        if !had_open {
+            self.settle_checkpoint(id);
+        }
+        self.edited = true;
+        true
+    }
+
     /// Back to the parent state; false at the root.
     pub fn undo(&mut self, view: ViewId) -> bool {
         let id = self.views[view].buffer;

@@ -22,8 +22,14 @@ pub struct Compile {
     pub proc_id: u64,
     pub cwd: Option<PathBuf>,
     pub running: bool,
-    /// The last location jumped to with `]q` / `[q`, by line in the
-    /// compile buffer.
+}
+
+/// The buffer `]q` / `[q` walk: the last list of locations made — a
+/// compile's output, a server's references (`lsp.rs`) — and the line
+/// last jumped to in it.
+#[derive(Default)]
+pub struct Locations {
+    pub buffer: Option<BufferId>,
     pub cursor_line: Option<usize>,
 }
 
@@ -60,7 +66,10 @@ impl Kawoosh {
             .map(|(id, _)| id);
         self.compile.buffer = buffer;
         self.compile.cwd = cwd.clone();
-        self.compile.cursor_line = None;
+        self.locations = Locations {
+            buffer,
+            cursor_line: None,
+        };
         match self.io.run_process(id, cmd, cwd.as_deref()) {
             Ok(_) => self.compile.running = true,
             Err(e) => {
@@ -202,15 +211,19 @@ impl Kawoosh {
         }
     }
 
-    /// `]q` / `[q`: the next or previous line of `*compile*` naming a
-    /// location, opened.
+    /// `]q` / `[q`: the next or previous line of the locations buffer
+    /// (`*compile*`, `*references*`) naming a location, opened.
     pub(crate) fn error_step(&mut self, forward: bool) {
-        let Some(buffer) = self.compile.buffer else {
-            self.ed.message = "no compile buffer (:compile CMD)".into();
+        let Some(buffer) = self
+            .locations
+            .buffer
+            .filter(|b| self.ed.buffers.contains_key(*b))
+        else {
+            self.ed.message = "no locations (:compile CMD, or gr)".into();
             return;
         };
         let count = self.ed.buffers[buffer].line_count();
-        let start = self.compile.cursor_line;
+        let start = self.locations.cursor_line;
         let range: Box<dyn Iterator<Item = usize>> = match (forward, start) {
             (true, Some(s)) => Box::new(s + 1..count),
             (true, None) => Box::new(0..count),
@@ -219,7 +232,7 @@ impl Kawoosh {
         };
         for ln in range {
             if let Some((path, line, col)) = self.location_on(buffer, ln) {
-                self.compile.cursor_line = Some(ln);
+                self.locations.cursor_line = Some(ln);
                 for v in self.ed.views.values_mut() {
                     if v.buffer == buffer {
                         v.sels = kawoosh_editor::Selections::single(Selection::point(0));
@@ -290,13 +303,13 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("error next")
                 .alias(&["cn", "cnext"])
-                .doc("the next location in the compile output"),
+                .doc("the next location in the compile output or the references"),
             |k, _| k.error_step(true),
         ),
         cmd(
             Spec::new("error prev")
                 .alias(&["cp", "cprev", "cprevious"])
-                .doc("the previous location in the compile output"),
+                .doc("the previous location in the compile output or the references"),
             |k, _| k.error_step(false),
         ),
     ]

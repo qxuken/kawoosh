@@ -2277,7 +2277,7 @@ fn number_step(ed: &mut Editor, ctx: &Ctx, sign: i64) {
 /// applied, riding right with an insertion at its own byte — a caret
 /// at the line start stays on its character when the line is indented
 /// — and collapsing to a deletion's start when it was inside one.
-fn carried(pos: usize, edits: &[(Range<usize>, usize)]) -> usize {
+pub(crate) fn carried(pos: usize, edits: &[(Range<usize>, usize)]) -> usize {
     let mut delta: isize = 0;
     for (r, new_len) in edits {
         if r.start > pos {
@@ -2997,9 +2997,13 @@ pub fn default_keymap(km: &mut Keymap) {
         ("[t", "tab prev"),
         ("]q", "error next"),
         ("[q", "error prev"),
+        ("]d", "lsp diagnostic next"),
+        ("[d", "lsp diagnostic prev"),
         // `g`: going somewhere.
         ("gd", "lsp definition"),
+        ("gr", "lsp references"),
         ("K", "lsp hover"),
+        ("<C-e>", "lsp diagnostic"),
         ("<CR>", "goto location"),
         ("-", "dir"),
         // Surrounds under `gs`, as mini.surround's: add, delete, replace.
@@ -3021,6 +3025,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>ws", "session save"),
         ("<leader>wr", "session restore"),
         ("<leader>cc", "compile"),
+        ("<leader>ca", "lsp action"),
+        ("<leader>cF", "lsp format"),
+        ("<leader>r", "lsp rename"),
+        ("<leader>D", "lsp type definition"),
         ("<leader>u", "undo history"),
         ("<leader>p", "memory"),
         ("<leader>Q", "quit all"),
@@ -3080,6 +3088,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<D-v>", "paste clipboard"),
         ("<C-S-v>", "paste clipboard"),
         ("<C-Space>", "lsp complete"),
+        ("<C-x>", "lsp candidates"),
         ("<C-u>", "delete to start"),
         ("<C-s>", "write"),
         ("<D-s>", "write"),

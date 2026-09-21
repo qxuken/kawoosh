@@ -12,7 +12,17 @@ the same file); progress: on `initialized` a work-done token
 3/12 at 50%, and the first didChange ends it — and sends a
 window/showMessage warning ("the warning") and a window/logMessage
 ("the log line"), so a test can see where each lands; a line on stderr
-at start ("fake server starting"), which is the log's too."""
+at start ("fake server starting"), which is the log's too. Round two
+(roadmap step 7): `initialize` declares `.` as the completion trigger
+and the rename, references, code action, formatting and type
+definition providers; rename answers a WorkspaceEdit renaming the word
+at the position and adding a `// renamed` line at the top; references
+lists two places (0:0 and 1:4); a code action request offers "Add
+semicolon" (an edit: `;` at the end of the line) and "Run the command"
+(a bare command `fake.apply`, whose execution sends a
+`workspace/applyEdit` putting `// applied` at the top); formatting is
+one edit replacing the text with `// formatted` above it; the type
+definition is line 0 of the same file."""
 import json, sys
 
 docs = {}
@@ -52,7 +62,11 @@ while True:
     if method is None:
         continue  # a response to a request of ours
     if method == "initialize":
-        send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {}}})
+        send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {
+            "completionProvider": {"triggerCharacters": ["."]},
+            "renameProvider": True, "referencesProvider": True,
+            "codeActionProvider": True, "documentFormattingProvider": True,
+            "typeDefinitionProvider": True}}})
     elif method == "initialized":
         send({"jsonrpc": "2.0", "id": 1000, "method": "window/workDoneProgress/create",
               "params": {"token": "ws"}})
@@ -99,5 +113,57 @@ while True:
         uri = m["params"]["textDocument"]["uri"]
         send({"jsonrpc": "2.0", "id": mid, "result": [{"uri": uri, "range": {
             "start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 2}}}]})
+    elif method == "textDocument/rename":
+        p = m["params"]
+        uri = p["textDocument"]["uri"]
+        lines = docs.get(uri, "").split("\n")
+        ln, ch = p["position"]["line"], p["position"]["character"]
+        line = lines[ln] if ln < len(lines) else ""
+        a = ch
+        while a > 0 and (line[a - 1].isalnum() or line[a - 1] == "_"):
+            a -= 1
+        b = ch
+        while b < len(line) and (line[b].isalnum() or line[b] == "_"):
+            b += 1
+        send({"jsonrpc": "2.0", "id": mid, "result": {"changes": {uri: [
+            {"range": {"start": {"line": ln, "character": a}, "end": {"line": ln, "character": b}},
+             "newText": p["newName"]},
+            {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+             "newText": "// renamed\n"}]}}})
+    elif method == "textDocument/references":
+        uri = m["params"]["textDocument"]["uri"]
+        send({"jsonrpc": "2.0", "id": mid, "result": [
+            {"uri": uri, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 2}}},
+            {"uri": uri, "range": {"start": {"line": 1, "character": 4}, "end": {"line": 1, "character": 7}}}]})
+    elif method == "textDocument/typeDefinition":
+        uri = m["params"]["textDocument"]["uri"]
+        send({"jsonrpc": "2.0", "id": mid, "result": {"uri": uri, "range": {
+            "start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 7}}}})
+    elif method == "textDocument/codeAction":
+        p = m["params"]
+        uri = p["textDocument"]["uri"]
+        ln = p["range"]["start"]["line"]
+        lines = docs.get(uri, "").split("\n")
+        end = len(lines[ln]) if ln < len(lines) else 0
+        send({"jsonrpc": "2.0", "id": mid, "result": [
+            {"title": "Add semicolon", "kind": "quickfix", "edit": {"changes": {uri: [
+                {"range": {"start": {"line": ln, "character": end}, "end": {"line": ln, "character": end}},
+                 "newText": ";"}]}}},
+            {"title": "Run the command", "command": "fake.apply", "arguments": [uri]}]})
+    elif method == "workspace/executeCommand":
+        uri = m["params"]["arguments"][0]
+        send({"jsonrpc": "2.0", "id": mid, "result": None})
+        send({"jsonrpc": "2.0", "id": 2000, "method": "workspace/applyEdit", "params": {
+            "label": "the command", "edit": {"documentChanges": [{"textDocument": {"uri": uri, "version": None},
+                "edits": [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+                           "newText": "// applied\n"}]}]}}})
+    elif method == "textDocument/formatting":
+        uri = m["params"]["textDocument"]["uri"]
+        text = docs.get(uri, "")
+        lines = text.split("\n")
+        send({"jsonrpc": "2.0", "id": mid, "result": [
+            {"range": {"start": {"line": 0, "character": 0},
+                       "end": {"line": len(lines) - 1, "character": len(lines[-1])}},
+             "newText": "// formatted\n" + text}]})
     elif mid is not None:
         send({"jsonrpc": "2.0", "id": mid, "result": None})

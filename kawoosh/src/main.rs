@@ -169,6 +169,9 @@ Terminals: :term, ctrl-w d for the dock. In a terminal ctrl-w is the
 pane prefix (ctrl-w . sends a literal ^W), ctrl-\\ ctrl-n opens the
 scrollback as a buffer, and ctrl/cmd-click on src/main.rs:42 opens it.
 $EDITOR inside a terminal opens a pane here and waits.
+LSP: gd K gr, <leader>r rename, <leader>ca actions, <leader>cF format,
+<C-e> and ]d for diagnostics; completion is a ghost as you type — the
+buffer's words when no server answers — and <C-x> lists it in a pane.
 Settings: :set tabstop=2, :set path? for a value and where it is from,
 :settings for the devtools tab of every layer — ~/.config/kawoosh/
 settings.lua, a project's .kawoosh/settings.lua, :set — reloaded on save;

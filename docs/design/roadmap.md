@@ -16,7 +16,7 @@ undo tree and its pane, histories in the store with hot exit, commands
 as specs, the key clusters and which-key, settings in layers, the
 language contract with two dozen grammars, notifications, the `dir`
 file manager through its identity-and-plan design at forty thousand
-entries, and the working memory (2026-09-20). 164 commits, 22
+entries, and the working memory (2026-09-20). 165 commits, 22
 integration test files in `kawoosh/tests` (the polish batch's
 `normal_mode.rs` and the picker's `picker.rs`, 2026-09-21).
 
@@ -230,26 +230,49 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 
 ### LSP and completion
 
-- **Completion, round two** — partly [todo]. `lsp complete`
-  (`<C-Space>`) puts the candidate as a ghost and cycles; the command
-  line completes with `<C-n>`/`<C-p>`. Missing: the trigger as you type
-  (on the server's trigger characters and after a word's third
-  character, held quiet the way diagnostics are), buffer words as a
-  source when no server answers, and the on-demand candidates *pane*
-  mvp.md D5 describes. The ghost rule stays: virtual text shifts, never
-  occludes.
-- **The rest of the reserved LSP keys** — open [keys.md]: `<leader>r`
-  rename, `<leader>ca` code action, `<leader>cF` format, `<leader>cI`
-  inlay hints, `<leader>cs` / `<leader>bs` symbols, `<leader>D` type
-  definition, `<C-e>` the diagnostic under the caret in a pane,
-  `gr` references (a locations list — D5c's table, so `]q` walks it).
-  Rename and references first; symbols wait for the picker.
+- **Completion, round two** — done 2026-09-21 [todo]. The trigger as
+  you type was there (a word's first identifier character, once per
+  word, the filter local after) and stays; what landed: the server's
+  trigger characters (`Caps::triggers` out of `initialize`, `.` and
+  `:` for a server that names none — the fake server names `.`, and
+  `:` asks nothing), the buffer's identifiers as the source when no
+  server answers (`word_items`: a language nobody serves answers at
+  once, a server with nothing to say falls back; three characters or
+  longer, nearest the caret first, capped), and the candidates pane —
+  `<C-x>` in insert mode, a `*candidates*` buffer with a row per
+  candidate and its detail, `<CR>` taking the line's into the text and
+  the keys back where they came from. The "third character" and "held
+  quiet" ideas were not taken: one request per word at its first
+  character costs nothing a server notices, and the ghost lands
+  between keystrokes already. The ghost rule stands.
+- **The reserved LSP keys** — mostly done 2026-09-21 [keys.md].
+  `<leader>r` rename (bare, the prompt filled with `lsp rename WORD`;
+  the answer's `WorkspaceEdit` applied through `Editor::apply_edits`,
+  one undo node per file, files not open loaded and left unsaved and
+  said so), `gr` references (a `*references*` locations buffer —
+  `path:line:col: the line` — that `<CR>` opens and `]q` walks: the
+  walk is `Kawoosh::locations` now, the last list made, a compile's or
+  this), `<leader>ca` code actions (the diagnostics at the caret sent
+  as the context, the answers a confirm of buttons, an action's edit
+  applied and its command run with the server's `workspace/applyEdit`
+  answered and applied), `<leader>cF` format (the edits at the version
+  asked, refused if the text moved), `<leader>D` type definition,
+  `<C-e>` the diagnostic under the caret in a pane, `]d` `[d` the next
+  and previous diagnostic. A request a server did not declare (its
+  `Caps`) is a message, not a timeout. Left: `<leader>cI` inlay hints
+  (kui's virtual text spans), `<leader>cs` / `<leader>bs` symbols (a
+  picker source), `gI` `gD`. Not done on the way: incremental sync;
+  and a buffer a rename edited without a pane is not sent to the
+  server until it is shown.
 - **Incremental sync from the journal** — open [kui.md]. Whole-text per
   change today. Correct, and fine until a big file is edited with a
   server attached; measure before doing it (the perf tab exists).
-- **Server definitions** — partly [kui.md]. Only rust-analyzer is
-  builtin; `kawoosh.lsp.server` adds others. Ship a table of the
-  obvious ones (ts, lua, python, go, c) with the grammars they match.
+- **Server definitions** — done 2026-09-21 [kui.md].
+  `ServerDef::builtin` is the table: rust-analyzer,
+  typescript-language-server (typescript, tsx, javascript — one
+  server, since the pool keys by root and command), lua-language-server,
+  pyright-langserver, gopls, clangd (c, cpp), each with its root
+  markers; `kawoosh.lsp.server` replaces a language's.
 
 ### Config, theme, fonts
 
@@ -480,9 +503,12 @@ then breadth.
    picker rides on step 4, and `<C-S-x>` copy mode is in step 2.~~
    Landed 2026-09-21 (`term::Hooked`, `palette::ansi`,
    `Request::Theme`, the nushell hook); see the terminal track.
-7. **LSP, round two.** Completion as you type with buffer words as a
+7. ~~**LSP, round two.** Completion as you type with buffer words as a
    fallback source and the candidates pane; rename, references,
-   code action, format; the server table.
+   code action, format; the server table.~~ Landed 2026-09-21
+   (`systems/src/lsp.rs`'s round two, `kawoosh/src/lsp.rs`,
+   `Editor::apply_edits`, two tests in `lsp.rs` against the fake
+   server); see the LSP track — inlay hints and symbols stay open.
 8. **Lua DX.** The test harness (`kawoosh test`), eval under the caret,
    the `:map` listing, the plugin-pane example written up.
 9. **Design notes, then decide**: the memory ([memory.md](memory.md),

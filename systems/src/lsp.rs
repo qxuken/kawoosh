@@ -3,7 +3,9 @@
 //! every pane on a file in a workspace shares one server by construction.
 //! Documents sync from the buffer's version; diagnostics come back as an
 //! `Update` at the version the server saw, and `doc` carries them
-//! forward. Definition, hover and completion are request/response.
+//! forward. Definition, hover, completion, rename, references, code
+//! actions and formatting are request/response; a server's own
+//! `workspace/applyEdit` is answered and handed up as an edit.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -30,13 +32,79 @@ pub struct ServerDef {
 }
 
 impl ServerDef {
+    /// The obvious servers for the grammars kawoosh ships, each by the
+    /// command its project installs it as (roadmap step 7); a
+    /// `kawoosh.lsp.server` from Lua replaces a language's. Two
+    /// languages on one command share a server: the pool keys by
+    /// `(root, command)`.
     pub fn builtin() -> Vec<ServerDef> {
-        vec![ServerDef {
-            language: "rust".into(),
-            command: "rust-analyzer".into(),
-            args: vec![],
-            roots: vec!["Cargo.toml".into()],
-        }]
+        let def = |language: &str, command: &str, args: &[&str], roots: &[&str]| ServerDef {
+            language: language.into(),
+            command: command.into(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+            roots: roots.iter().map(|r| r.to_string()).collect(),
+        };
+        vec![
+            def("rust", "rust-analyzer", &[], &["Cargo.toml"]),
+            def(
+                "typescript",
+                "typescript-language-server",
+                &["--stdio"],
+                &["tsconfig.json", "package.json"],
+            ),
+            def(
+                "tsx",
+                "typescript-language-server",
+                &["--stdio"],
+                &["tsconfig.json", "package.json"],
+            ),
+            def(
+                "javascript",
+                "typescript-language-server",
+                &["--stdio"],
+                &["jsconfig.json", "package.json"],
+            ),
+            def(
+                "lua",
+                "lua-language-server",
+                &[],
+                &[".luarc.json", ".luarc.jsonc"],
+            ),
+            def(
+                "python",
+                "pyright-langserver",
+                &["--stdio"],
+                &[
+                    "pyproject.toml",
+                    "pyrightconfig.json",
+                    "setup.py",
+                    "requirements.txt",
+                ],
+            ),
+            def("go", "gopls", &[], &["go.work", "go.mod"]),
+            def(
+                "c",
+                "clangd",
+                &[],
+                &[
+                    "compile_commands.json",
+                    ".clangd",
+                    "CMakeLists.txt",
+                    "Makefile",
+                ],
+            ),
+            def(
+                "cpp",
+                "clangd",
+                &[],
+                &[
+                    "compile_commands.json",
+                    ".clangd",
+                    "CMakeLists.txt",
+                    "Makefile",
+                ],
+            ),
+        ]
     }
 }
 
@@ -90,6 +158,82 @@ pub enum Cmd {
     },
     /// Replace the server table (from Lua).
     Servers(Vec<ServerDef>),
+    Rename {
+        buffer: BufferId,
+        offset: usize,
+        new_name: String,
+    },
+    References {
+        buffer: BufferId,
+        offset: usize,
+    },
+    TypeDefinition {
+        buffer: BufferId,
+        offset: usize,
+    },
+    /// The actions for `start..end`, with the diagnostics there —
+    /// `(start, end, severity, message)` — since a quick fix is offered
+    /// for a diagnostic the client names.
+    CodeAction {
+        buffer: BufferId,
+        start: usize,
+        end: usize,
+        diagnostics: Vec<(usize, usize, u32, String)>,
+    },
+    Format {
+        buffer: BufferId,
+        version: Version,
+        tab_size: usize,
+        insert_spaces: bool,
+    },
+    /// A code action's command, run on the server (which answers with
+    /// a `workspace/applyEdit` of its own).
+    Execute {
+        buffer: BufferId,
+        command: String,
+        arguments: Vec<Value>,
+    },
+}
+
+/// One replacement in a document, in the protocol's positions (line,
+/// UTF-16 character); resolved against the buffer's text when applied.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextEdit {
+    pub start: (u32, u32),
+    pub end: (u32, u32),
+    pub text: String,
+}
+
+/// A `WorkspaceEdit`: each file's edits, in the order given. Resource
+/// operations (a file created, renamed, deleted) are not carried.
+pub type WorkspaceEdit = Vec<(PathBuf, Vec<TextEdit>)>;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodeAction {
+    pub title: String,
+    pub kind: Option<String>,
+    pub edit: Option<WorkspaceEdit>,
+    /// `(command, arguments)`, run after the edit when both are given.
+    pub command: Option<(String, Vec<Value>)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Location {
+    pub path: PathBuf,
+    pub line: u32,
+    pub character: u32,
+}
+
+/// What a server said it does, out of `initialize`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Caps {
+    /// The characters that ask for a completion as they are typed.
+    pub triggers: Vec<String>,
+    pub rename: bool,
+    pub references: bool,
+    pub code_action: bool,
+    pub format: bool,
+    pub type_definition: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,6 +266,38 @@ pub enum Event {
         version: Version,
         offset: usize,
         items: Vec<CompletionItem>,
+    },
+    /// A server said what it does, at `initialize`.
+    Capabilities {
+        language: String,
+        caps: Caps,
+    },
+    /// Edits to apply — a rename's answer, a code action's, a server's
+    /// own `workspace/applyEdit` (already answered as applied).
+    WorkspaceEdit {
+        title: String,
+        edit: WorkspaceEdit,
+    },
+    /// The places a request listed: references.
+    Locations {
+        title: String,
+        items: Vec<Location>,
+    },
+    CodeActions {
+        buffer: BufferId,
+        actions: Vec<CodeAction>,
+    },
+    /// A formatting answer, for the text at `version`.
+    Formatted {
+        buffer: BufferId,
+        version: Version,
+        edits: Vec<TextEdit>,
+    },
+    /// A request the server answered with an error: what was asked and
+    /// what it said.
+    Failed {
+        what: &'static str,
+        message: String,
     },
     /// A server could not start; the app says so once.
     Unavailable {
@@ -537,9 +713,20 @@ impl Pool {
                         "definition": { "linkSupport": true },
                         "hover": { "contentFormat": ["markdown", "plaintext"] },
                         "completion": { "completionItem": { "snippetSupport": false, "insertReplaceSupport": true } },
-                        "synchronization": { "didSave": true }
+                        "synchronization": { "didSave": true },
+                        "rename": { "prepareSupport": false },
+                        "references": {},
+                        "typeDefinition": { "linkSupport": true },
+                        "formatting": {},
+                        "codeAction": { "codeActionLiteralSupport": { "codeActionKind": { "valueSet": [
+                            "", "quickfix", "refactor", "refactor.extract", "refactor.inline",
+                            "refactor.rewrite", "source", "source.organizeImports"
+                        ] } } }
                     },
-                    "workspace": { "configuration": true, "workspaceFolders": true },
+                    "workspace": {
+                        "configuration": true, "workspaceFolders": true, "applyEdit": true,
+                        "workspaceEdit": { "documentChanges": true }
+                    },
                     "window": { "workDoneProgress": true }
                 }
             }
@@ -646,7 +833,145 @@ impl Pool {
                 version,
                 Some(json!({ "triggerKind": 1 })),
             ),
+            Cmd::Rename {
+                buffer,
+                offset,
+                new_name,
+            } => self.positional_with(
+                "textDocument/rename",
+                buffer,
+                offset,
+                Version::INITIAL,
+                json!({ "newName": new_name }),
+            ),
+            Cmd::References { buffer, offset } => self.positional_with(
+                "textDocument/references",
+                buffer,
+                offset,
+                Version::INITIAL,
+                json!({ "context": { "includeDeclaration": true } }),
+            ),
+            Cmd::TypeDefinition { buffer, offset } => self.positional(
+                "textDocument/typeDefinition",
+                buffer,
+                offset,
+                Version::INITIAL,
+                None,
+            ),
+            Cmd::CodeAction {
+                buffer,
+                start,
+                end,
+                diagnostics,
+            } => {
+                let Some((uri, text)) = self.doc_text(buffer) else {
+                    return;
+                };
+                let range = |a: usize, b: usize| {
+                    let (l0, c0) = position_of_offset(&text, a);
+                    let (l1, c1) = position_of_offset(&text, b);
+                    json!({ "start": { "line": l0, "character": c0 }, "end": { "line": l1, "character": c1 } })
+                };
+                let diags: Vec<Value> = diagnostics
+                    .iter()
+                    .map(|(a, b, severity, message)| {
+                        json!({ "range": range(*a, *b), "severity": severity, "message": message })
+                    })
+                    .collect();
+                let params = json!({
+                    "textDocument": { "uri": uri },
+                    "range": range(start, end),
+                    "context": { "diagnostics": diags }
+                });
+                self.request_for(
+                    buffer,
+                    "textDocument/codeAction",
+                    params,
+                    Version::INITIAL,
+                    start,
+                );
+            }
+            Cmd::Format {
+                buffer,
+                version,
+                tab_size,
+                insert_spaces,
+            } => {
+                let Some((uri, _)) = self.doc_text(buffer) else {
+                    return;
+                };
+                let params = json!({
+                    "textDocument": { "uri": uri },
+                    "options": { "tabSize": tab_size, "insertSpaces": insert_spaces }
+                });
+                self.request_for(buffer, "textDocument/formatting", params, version, 0);
+            }
+            Cmd::Execute {
+                buffer,
+                command,
+                arguments,
+            } => {
+                let params = json!({ "command": command, "arguments": arguments });
+                self.request_for(
+                    buffer,
+                    "workspace/executeCommand",
+                    params,
+                    Version::INITIAL,
+                    0,
+                );
+            }
         }
+    }
+
+    /// The document the server holds for `buffer`: its uri and text.
+    fn doc_text(&self, buffer: BufferId) -> Option<(String, String)> {
+        let key = *self.homes.get(&buffer)?;
+        let server = self.servers[key].as_ref()?;
+        let (uri, doc) = server.doc_of(buffer)?;
+        Some((uri, doc.text.clone()))
+    }
+
+    /// A request on `buffer`'s server, whatever its params.
+    fn request_for(
+        &mut self,
+        buffer: BufferId,
+        method: &'static str,
+        params: Value,
+        version: Version,
+        offset: usize,
+    ) {
+        let Some(&key) = self.homes.get(&buffer) else {
+            return;
+        };
+        let Some(server) = self.servers[key].as_mut() else {
+            return;
+        };
+        server.request(method, params, (buffer, version, offset));
+    }
+
+    /// A positional request with more in its params than the position.
+    fn positional_with(
+        &mut self,
+        method: &'static str,
+        buffer: BufferId,
+        offset: usize,
+        version: Version,
+        extra: Value,
+    ) {
+        let Some((uri, text)) = self.doc_text(buffer) else {
+            return;
+        };
+        let (line, character) = position_of_offset(&text, offset);
+        let mut params = json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character }
+        });
+        if let Value::Object(extra) = extra {
+            for (k, v) in extra {
+                params[k] = v;
+            }
+        }
+        self.request_for(buffer, method, params, version, offset);
     }
 
     fn positional(
@@ -707,6 +1032,20 @@ impl Pool {
                 return;
             };
             let result = message.get("result");
+            if let Some(err) = message.get("error")
+                && method != "initialize"
+            {
+                let text = err
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("error")
+                    .to_string();
+                self.emit(Event::Failed {
+                    what: method,
+                    message: text,
+                });
+                return;
+            }
             match method {
                 "initialize" => {
                     server.send(json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }));
@@ -714,6 +1053,49 @@ impl Pool {
                     for q in std::mem::take(&mut server.queued) {
                         server.send(q);
                     }
+                    let language = server.language.clone();
+                    let caps = capabilities(result);
+                    self.emit(Event::Capabilities { language, caps });
+                }
+                "textDocument/rename" => {
+                    let edit = workspace_edit(result);
+                    self.emit(Event::WorkspaceEdit {
+                        title: "rename".into(),
+                        edit,
+                    });
+                }
+                "textDocument/references" => {
+                    let items = locations(result);
+                    self.emit(Event::Locations {
+                        title: "references".into(),
+                        items,
+                    });
+                }
+                "textDocument/typeDefinition" => {
+                    if let Some((path, line, character)) = first_location(result) {
+                        self.emit(Event::Definition {
+                            path,
+                            line,
+                            character,
+                        });
+                    } else {
+                        self.emit(Event::Failed {
+                            what: method,
+                            message: "no type definition".into(),
+                        });
+                    }
+                }
+                "textDocument/codeAction" => {
+                    let actions = code_actions(result);
+                    self.emit(Event::CodeActions { buffer, actions });
+                }
+                "textDocument/formatting" => {
+                    let edits = text_edits(result);
+                    self.emit(Event::Formatted {
+                        buffer,
+                        version,
+                        edits,
+                    });
                 }
                 "textDocument/definition" => {
                     if let Some((path, line, character)) = first_location(result) {
@@ -746,6 +1128,7 @@ impl Pool {
             message.get("id").and_then(Value::as_i64),
             message.get("method").and_then(Value::as_str),
         ) {
+            let mut handed_up = None;
             let result = match method {
                 "workspace/configuration" => {
                     let n = message
@@ -754,9 +1137,24 @@ impl Pool {
                         .map_or(0, Vec::len);
                     Value::Array(vec![Value::Null; n])
                 }
+                // A server's own edit — a code action's command, a
+                // refactoring — handed up, and answered as applied.
+                "workspace/applyEdit" => {
+                    let title = message
+                        .pointer("/params/label")
+                        .and_then(Value::as_str)
+                        .unwrap_or("edit")
+                        .to_string();
+                    let edit = workspace_edit(message.pointer("/params/edit"));
+                    handed_up = Some(Event::WorkspaceEdit { title, edit });
+                    json!({ "applied": true })
+                }
                 _ => Value::Null,
             };
             server.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+            if let Some(ev) = handed_up {
+                self.emit(ev);
+            }
             return;
         }
         // A notification.
@@ -843,6 +1241,164 @@ fn first_location(result: Option<&Value>) -> Option<(PathBuf, u32, u32)> {
     let line = range.pointer("/start/line")?.as_u64()? as u32;
     let character = range.pointer("/start/character")?.as_u64()? as u32;
     Some((path, line, character))
+}
+
+/// What the server does, from `initialize`'s `capabilities`. A
+/// provider is a boolean or an options object; either is "yes".
+fn capabilities(result: Option<&Value>) -> Caps {
+    let caps = result.and_then(|r| r.get("capabilities"));
+    let provides = |name: &str| {
+        caps.and_then(|c| c.get(name))
+            .is_some_and(|v| v.as_bool().unwrap_or(v.is_object()))
+    };
+    let triggers = caps
+        .and_then(|c| c.pointer("/completionProvider/triggerCharacters"))
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    Caps {
+        triggers,
+        rename: provides("renameProvider"),
+        references: provides("referencesProvider"),
+        code_action: provides("codeActionProvider"),
+        format: provides("documentFormattingProvider"),
+        type_definition: provides("typeDefinitionProvider"),
+    }
+}
+
+fn position(v: Option<&Value>) -> Option<(u32, u32)> {
+    let v = v?;
+    Some((
+        v.get("line")?.as_u64()? as u32,
+        v.get("character")?.as_u64()? as u32,
+    ))
+}
+
+fn text_edit(v: &Value) -> Option<TextEdit> {
+    let range = v.get("range")?;
+    Some(TextEdit {
+        start: position(range.get("start"))?,
+        end: position(range.get("end"))?,
+        text: v.get("newText")?.as_str()?.to_string(),
+    })
+}
+
+/// A `TextEdit[]` result, as `formatting` answers.
+fn text_edits(result: Option<&Value>) -> Vec<TextEdit> {
+    result
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(text_edit).collect())
+        .unwrap_or_default()
+}
+
+/// A `WorkspaceEdit`: `documentChanges` when given (a text document
+/// edit's edits; a resource operation is skipped), else `changes`.
+fn workspace_edit(v: Option<&Value>) -> WorkspaceEdit {
+    let Some(v) = v else {
+        return Vec::new();
+    };
+    let mut out: WorkspaceEdit = Vec::new();
+    let mut push = |uri: &str, edits: Vec<TextEdit>| {
+        if let Some(path) = path_of_uri(uri) {
+            match out.iter_mut().find(|(p, _)| *p == path) {
+                Some((_, have)) => have.extend(edits),
+                None => out.push((path, edits)),
+            }
+        }
+    };
+    if let Some(changes) = v.get("documentChanges").and_then(Value::as_array) {
+        for change in changes {
+            let Some(uri) = change.pointer("/textDocument/uri").and_then(Value::as_str) else {
+                continue;
+            };
+            let edits = change
+                .get("edits")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(text_edit).collect())
+                .unwrap_or_default();
+            push(uri, edits);
+        }
+    } else if let Some(changes) = v.get("changes").and_then(Value::as_object) {
+        for (uri, edits) in changes {
+            let edits = edits
+                .as_array()
+                .map(|a| a.iter().filter_map(text_edit).collect())
+                .unwrap_or_default();
+            push(uri, edits);
+        }
+    }
+    out
+}
+
+/// A `Location[]` result (or one), each at its range's start.
+fn locations(result: Option<&Value>) -> Vec<Location> {
+    let Some(result) = result else {
+        return Vec::new();
+    };
+    let list: Vec<&Value> = match result.as_array() {
+        Some(a) => a.iter().collect(),
+        None if result.is_object() => vec![result],
+        None => Vec::new(),
+    };
+    list.iter()
+        .filter_map(|l| {
+            let path = path_of_uri(l.get("uri")?.as_str()?)?;
+            let (line, character) = position(l.pointer("/range/start"))?;
+            Some(Location {
+                path,
+                line,
+                character,
+            })
+        })
+        .collect()
+}
+
+/// A `codeAction` result: literals with their edit and command, and
+/// bare commands as actions of their own.
+fn code_actions(result: Option<&Value>) -> Vec<CodeAction> {
+    let Some(list) = result.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|a| {
+            let title = a.get("title")?.as_str()?.to_string();
+            let command = match a.get("command") {
+                // A bare `Command`: its `command` is a string.
+                Some(Value::String(c)) => Some((
+                    c.clone(),
+                    a.get("arguments")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default(),
+                )),
+                Some(c) => c.get("command").and_then(Value::as_str).map(|name| {
+                    (
+                        name.to_string(),
+                        c.get("arguments")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default(),
+                    )
+                }),
+                None => None,
+            };
+            let edit = a.get("edit").map(|e| workspace_edit(Some(e)));
+            if a.get("disabled").is_some() {
+                return None;
+            }
+            Some(CodeAction {
+                title,
+                kind: a.get("kind").and_then(Value::as_str).map(str::to_string),
+                edit,
+                command,
+            })
+        })
+        .collect()
 }
 
 fn hover_text(result: Option<&Value>) -> String {

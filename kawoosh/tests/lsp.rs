@@ -361,3 +361,292 @@ fn progress_and_messages_land_in_the_corner() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Round two (roadmap step 7), against the fake server: `<leader>r`
+/// fills the prompt with the word and the rename's edits land as one
+/// undo node; `gr` lists the references as a locations buffer `]q`
+/// walks; `<leader>ca` offers the actions in a confirm — an edit
+/// applied, a command run on the server and its `applyEdit` taken;
+/// `<leader>cF` formats; `<leader>D` goes to the type; `<C-e>` shows
+/// the diagnostic in a pane and `]d` walks to one; and the server's
+/// trigger character asks, `:` no longer being one.
+#[test]
+fn rename_references_actions_format_and_diagnostics() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-two-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n    hello()\n}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.messages.get(&buf_id)
+            == Some(&vec!["boom".into()])),
+        "the open's diagnostics"
+    );
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.caps.contains_key("rust")),
+        "capabilities"
+    );
+    assert_eq!(app.lsp.caps["rust"].triggers, ["."]);
+    assert!(app.lsp.caps["rust"].rename);
+
+    // The diagnostic under the caret in a pane; `]d` from elsewhere —
+    // first, since the undo below restores the text as one replacement,
+    // which takes the runs inside it, and the fake server publishes
+    // only at the open.
+    d.keys(&mut app, "G");
+    d.keys(&mut app, "[d");
+    let v = app.focused_view().unwrap();
+    let diag_line = app
+        .ed
+        .buffer_of(v)
+        .line_of(app.ed.views[v].sels.primary().head);
+    assert_eq!(app.ed.message, "boom");
+    d.ctrl(&mut app, "e");
+    assert!(
+        app.ed
+            .buffers
+            .values()
+            .any(|b| b.name == "*diagnostic*" && b.text() == "error: boom"),
+        "the diagnostic pane"
+    );
+    d.keys(&mut app, "G");
+    d.keys(&mut app, "]d");
+    assert_eq!(app.ed.message, "no diagnostic after the caret");
+    d.keys(&mut app, "gg");
+    d.keys(&mut app, "]d");
+    let v = app.focused_view().unwrap();
+    assert_eq!(
+        app.ed
+            .buffer_of(v)
+            .line_of(app.ed.views[v].sels.primary().head),
+        diag_line
+    );
+
+    // The rename: the prompt filled with the word, edited, submitted.
+    d.keys(&mut app, "jw");
+    d.keys(&mut app, " r");
+    assert!(app.ed.prompt_view().is_some(), "the prompt is open");
+    d.text(&mut app, "_again");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
+            .text()
+            .contains("hello_again()")),
+        "renamed: {:?}",
+        app.ed.buffers[buf_id].text()
+    );
+    assert_eq!(
+        app.ed.buffers[buf_id].text(),
+        "// renamed\nfn main() {\n    hello_again()\n}\n"
+    );
+    assert!(
+        app.ed.message.starts_with("rename: 2 edits in 1 file"),
+        "{}",
+        app.ed.message
+    );
+    // One undo node for the lot.
+    d.keys(&mut app, "u");
+    assert_eq!(
+        app.ed.buffers[buf_id].text(),
+        "fn main() {\n    hello()\n}\n"
+    );
+    d.ctrl(&mut app, "r");
+    assert_eq!(
+        app.ed.buffers[buf_id].text(),
+        "// renamed\nfn main() {\n    hello_again()\n}\n"
+    );
+
+    // References: a locations pane beside, the keys staying; `]q` walks.
+    d.keys(&mut app, "gr");
+    assert!(
+        until(&mut d, &mut app, |a| a
+            .ed
+            .buffers
+            .values()
+            .any(|b| b.name == "*references*")),
+        "the references pane"
+    );
+    let refs = app
+        .ed
+        .buffers
+        .values()
+        .find(|b| b.name == "*references*")
+        .unwrap();
+    let text = refs.text();
+    assert!(text.contains("main.rs:1:1: // renamed"), "{text}");
+    assert!(text.contains("main.rs:2:5: fn main() {"), "{text}");
+    assert_eq!(
+        app.ed.views[app.focused_view().unwrap()].buffer,
+        buf_id,
+        "focus stayed"
+    );
+    d.keys(&mut app, "]q");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[v].buffer, buf_id);
+    assert_eq!(
+        app.ed
+            .buffer_of(v)
+            .line_of(app.ed.views[v].sels.primary().head),
+        0
+    );
+    d.keys(&mut app, "]q");
+    let v = app.focused_view().unwrap();
+    assert_eq!(
+        app.ed
+            .buffer_of(v)
+            .line_of(app.ed.views[v].sels.primary().head),
+        1
+    );
+    d.keys(&mut app, "]q");
+    assert_eq!(app.ed.message, "no more locations");
+
+    // A code action on the call's line: the confirm lists both; the
+    // first is an edit.
+    d.keys(&mut app, "j");
+    d.keys(&mut app, " ca");
+    assert!(
+        until(&mut d, &mut app, |a| a.confirm.is_some()),
+        "the actions confirm"
+    );
+    let texts = d.confirm_texts();
+    assert!(texts.iter().any(|t| t == "Add semicolon"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "Run the command"), "{texts:?}");
+    d.keys(&mut app, "1");
+    assert!(app.confirm.is_none());
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
+            .text()
+            .contains("hello_again();")),
+        "the action's edit: {:?}",
+        app.ed.buffers[buf_id].text()
+    );
+    // The second is a command: run on the server, whose applyEdit lands.
+    d.keys(&mut app, " ca");
+    assert!(until(&mut d, &mut app, |a| a.confirm.is_some()));
+    d.keys(&mut app, "2");
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
+            .text()
+            .starts_with("// applied\n")),
+        "the command's edit: {:?}",
+        app.ed.buffers[buf_id].text()
+    );
+    assert!(
+        app.ed.message.starts_with("the command: 1 edit in 1 file"),
+        "{}",
+        app.ed.message
+    );
+
+    // Formatting: one edit over the whole text.
+    d.keys(&mut app, " cF");
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
+            .text()
+            .starts_with("// formatted\n// applied\n")),
+        "formatted: {:?}",
+        app.ed.buffers[buf_id].text()
+    );
+    assert_eq!(app.ed.message, "formatted (1 edit)");
+
+    // The type definition: line 0, character 3.
+    d.keys(&mut app, "G");
+    d.keys(&mut app, " D");
+    assert!(
+        until(&mut d, &mut app, |a| {
+            let v = a.focused_view().unwrap();
+            a.ed.views[v].sels.primary().head == 3
+        }),
+        "type definition"
+    );
+
+    // `:` is not the server's trigger; `.` is.
+    d.keys(&mut app, "G");
+    d.keys(&mut app, "o");
+    d.keys(&mut app, ":");
+    for _ in 0..5 {
+        d.frame(&mut app);
+    }
+    assert!(app.lsp.completion.is_none(), "`:` asked for nothing");
+    d.keys(&mut app, ".");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.completion.is_some()),
+        "`.` asked"
+    );
+    assert_eq!(
+        app.lsp.completion.as_ref().unwrap().ghost("").as_deref(),
+        Some("member_a")
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// No server for the language: the buffer's own identifiers complete
+/// the word, nearest first; `<C-x>` puts the candidates in a pane,
+/// `j` and `<CR>` there take the second, and the keys come back to the
+/// text in insert mode.
+#[test]
+fn buffer_words_complete_and_the_candidates_pane_browses_them() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-words-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("notes.txt");
+    std::fs::write(&file, "helium helper\nhello_world here\n\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    d.keys(&mut app, "G");
+    d.keys(&mut app, "i");
+    d.keys(&mut app, "hel");
+    d.frame(&mut app);
+    let c = app.lsp.completion.as_ref().expect("the buffer's words");
+    let labels: Vec<&str> = c
+        .filtered
+        .iter()
+        .map(|i| c.items[*i].label.as_str())
+        .collect();
+    assert_eq!(labels, ["hello_world", "helper", "helium"], "nearest first");
+    assert_eq!(c.ghost("hel").as_deref(), Some("lo_world"));
+    // The pane: a row per candidate, the cursor on the current one.
+    d.ctrl(&mut app, "x");
+    let pane_v = app
+        .focused_view()
+        .expect("the candidates pane has the keys");
+    let cand = app.ed.views[pane_v].buffer;
+    assert_eq!(app.ed.buffers[cand].name, "*candidates*");
+    assert_eq!(
+        app.ed.buffers[cand].text(),
+        "hello_world\tbuffer\nhelper\tbuffer\nhelium\tbuffer"
+    );
+    assert_eq!(app.focused_mode(), Mode::Normal);
+    d.keys(&mut app, "j");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(
+        app.ed.buffers[buf_id].text(),
+        "helium helper\nhello_world here\n\nhelper"
+    );
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[v].buffer, buf_id, "back in the text");
+    assert_eq!(app.ed.mode(v), Mode::Insert);
+    assert!(
+        app.ed.buffers.values().all(|b| b.name != "*candidates*"),
+        "the pane is gone"
+    );
+    assert!(app.lsp.completion.is_none());
+    // A word with no candidates offers nothing; the pane says so.
+    d.keys(&mut app, " zq");
+    d.frame(&mut app);
+    assert!(app.lsp.completion.is_none());
+    d.ctrl(&mut app, "x");
+    assert_eq!(app.ed.message, "no candidates");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

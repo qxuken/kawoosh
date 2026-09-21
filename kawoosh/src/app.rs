@@ -61,6 +61,8 @@ pub struct Kawoosh {
     /// The project `init.lua` records and the question up (`trust.rs`).
     pub trust: crate::trust::Trust,
     pub compile: Compile,
+    /// The buffer `]q` walks (`compile.rs`).
+    pub locations: crate::compile::Locations,
     /// Toasts, the corner log and the full log (`notify.rs`).
     pub notes: Notifications,
     /// The log version the `*messages*` buffer was last filled from.
@@ -203,6 +205,7 @@ impl Kawoosh {
             config: Config::new(wake.clone()),
             trust: Default::default(),
             compile: Compile::default(),
+            locations: Default::default(),
             notes: Notifications::new(wake.clone()),
             messages_shown: 0,
             log_sink: None,
@@ -1065,8 +1068,11 @@ impl Kawoosh {
                 self.follow_caret = true;
                 return;
             }
+            // Whether the key was typed into the text (the one that
+            // enters insert mode is not), for the completion's trigger.
+            let was_insert = self.pane_mode() == Mode::Insert;
             self.ed.key(v, stroke.clone());
-            self.completion_after_key(&stroke);
+            self.completion_after_key(&stroke, was_insert);
             self.cmdline_refresh();
         } else if let Some(t) = self.term_of(self.layout.focused()) {
             self.term_key(t, stroke);

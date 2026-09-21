@@ -84,6 +84,18 @@ impl Kawoosh {
             "scrollback close",
             &[Cond::parse("language:scrollback")],
         );
+        // The candidates pane (`lsp.rs`): `<CR>` takes the candidate on
+        // the line, `q` and `<Esc>` close the pane.
+        let candidates = [Cond::parse("language:candidates")];
+        self.ed
+            .keymap
+            .bind_when(Mode::Normal, "<CR>", "candidate accept", &candidates);
+        self.ed
+            .keymap
+            .bind_when(Mode::Normal, "q", "candidates close", &candidates);
+        self.ed
+            .keymap
+            .bind_when(Mode::Normal, "<Esc>", "candidates close", &candidates);
         // A view's field: `<Esc>` in normal mode hands the keys back.
         self.ed.keymap.bind_when(
             Mode::Normal,

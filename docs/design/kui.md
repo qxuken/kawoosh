@@ -38,9 +38,11 @@ gaps are records rather than surprises:
   primary button, drags and the wheel (kui routes the other buttons
   nowhere, and hover motion without a button is not sent); document sync to LSP is whole-text per change, not
   incremental from the journal; the journal is never pruned (bounded by
-  the buffer's life, not by memory); only rust-analyzer has a builtin
-  server definition (`kawoosh.lsp.server` adds others; the grammars are
-  Decision 13's, two dozen); a workspace's
+  the buffer's life, not by memory); the builtin server table
+  (rust-analyzer, typescript-language-server, lua-language-server,
+  pyright, gopls, clangd — since 2026-09-21; `kawoosh.lsp.server` adds
+  or replaces one) covers nine of Decision 13's two dozen grammars; a
+  workspace's
   `.kawoosh/settings.lua` is loaded (Decision 10) and, since
   2026-09-21, its `init.lua` too, behind 7b's trust prompt
   (`trust.rs`: the text's hash recorded in the store); no
