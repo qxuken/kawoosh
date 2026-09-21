@@ -92,6 +92,18 @@ pub struct RingRow {
     pub key: MomentKey,
 }
 
+/// What the memory holds that the store does not yet (memory.md
+/// Decision 3): a delta per subject since the last flush, and the ring
+/// rows pending, in order. Shared between the shell's `moments.rs`,
+/// which writes it, and the Lua runtime, which folds it into what
+/// `kawoosh.memory { … }` answers — so a file opened a moment ago has
+/// its row before the flush.
+#[derive(Clone, Debug, Default)]
+pub struct PendingMoments {
+    pub deltas: std::collections::HashMap<MomentKey, MomentDelta>,
+    pub ring: Vec<RingRow>,
+}
+
 /// A query over the moments (`kawoosh.memory { … }`, the pane).
 #[derive(Clone, Debug, Default)]
 pub struct MomentQuery<'a> {
@@ -177,7 +189,10 @@ impl Store {
         // time they were opened with the line they were left at, and
         // the table goes; a history without a moment gets one, last
         // attended when its row was written. Both idempotent, so a db
-        // that is current is left as it is.
+        // that is current is left as it is — a history's moment may
+        // live under a workspace (the shell keys a file by the root it
+        // was opened under), so one under *any* workspace counts, else
+        // every launch would twin it with an empty row under none.
         let _ = conn.execute(
             "INSERT OR IGNORE INTO moments (kind, subject, workspace, first_at, last_at, visits, meta)
              SELECT 'file', path, '', opened_at, opened_at, 1, json_object('line', line)
@@ -186,12 +201,15 @@ impl Store {
         );
         let _ = conn.execute("DROP TABLE IF EXISTS oldfiles", []);
         conn.execute(
-            "INSERT OR IGNORE INTO moments (kind, subject, workspace, first_at, last_at, visits)
-             SELECT CASE WHEN key LIKE 'file:%' THEN 'file' ELSE 'scratch' END,
-                    CASE WHEN key LIKE 'file:%' THEN substr(key, 6) ELSE key END,
-                    '', saved_at, saved_at, 0
-             FROM histories
-             WHERE key LIKE 'file:%' OR key LIKE 'scratch:%'",
+            "INSERT INTO moments (kind, subject, workspace, first_at, last_at, visits)
+             SELECT h.kind, h.subject, '', h.saved_at, h.saved_at, 0
+             FROM (SELECT CASE WHEN key LIKE 'file:%' THEN 'file' ELSE 'scratch' END AS kind,
+                          CASE WHEN key LIKE 'file:%' THEN substr(key, 6) ELSE key END AS subject,
+                          saved_at
+                   FROM histories
+                   WHERE key LIKE 'file:%' OR key LIKE 'scratch:%') AS h
+             WHERE NOT EXISTS (SELECT 1 FROM moments m
+                               WHERE m.kind = h.kind AND m.subject = h.subject)",
             [],
         )?;
         Ok(Self { conn })
@@ -261,11 +279,14 @@ impl Store {
 
     // ---------------------------------------------------------------- moments
 
-    /// Every delta as one upsert whose counters are increments, the
-    /// ring's new rows after them and the ring trimmed to `ring_max`,
-    /// in one transaction: whole or nothing. A `SQLITE_BUSY` (another
-    /// window held the lock past [`BUSY_MS`]) comes back as the error,
-    /// and the caller keeps its deltas for the next tick.
+    /// Every delta as one upsert whose counters are increments and
+    /// whose `meta` is merged over the row's (SQLite's `json_patch`, so
+    /// the engine's caret line and a plugin's keys keep out of each
+    /// other's way), the ring's new rows after them and the ring
+    /// trimmed to `ring_max`, in one transaction: whole or nothing. A
+    /// `SQLITE_BUSY` (another window held the lock past [`BUSY_MS`])
+    /// comes back as the error, and the caller keeps its deltas for
+    /// the next tick.
     pub fn flush_moments(
         &self,
         deltas: &[(MomentKey, MomentDelta)],
@@ -285,7 +306,7 @@ impl Store {
                      dwell_ms = dwell_ms + excluded.dwell_ms,
                      edits    = edits + excluded.edits,
                      yanks    = yanks + excluded.yanks,
-                     meta     = coalesce(?10, meta),
+                     meta     = json_patch(meta, coalesce(?10, '{}')),
                      text     = coalesce(excluded.text, text)",
             )?;
             for (k, d) in deltas {
@@ -412,7 +433,9 @@ impl Store {
     }
 
     /// The row and its ring rows gone. The history under a `file` or
-    /// `scratch` subject goes with it (memory.md Decision 6).
+    /// `scratch` subject goes with it (memory.md Decision 6) — once no
+    /// row of the same subject under another workspace still owns it:
+    /// a history is the path's, a moment the path's under a root.
     pub fn forget_moment(&self, key: &MomentKey) -> rusqlite::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
@@ -424,7 +447,11 @@ impl Store {
             params![key.kind, key.subject, key.workspace],
         )?;
         if let Some(hk) = history_key_of(key) {
-            tx.execute("DELETE FROM histories WHERE key = ?1", params![hk])?;
+            tx.execute(
+                "DELETE FROM histories WHERE key = ?1
+                 AND NOT EXISTS (SELECT 1 FROM moments WHERE kind = ?2 AND subject = ?3)",
+                params![hk, key.kind, key.subject],
+            )?;
         }
         tx.commit()
     }
@@ -582,6 +609,79 @@ impl Store {
     /// not stay at its high-water mark.
     pub fn vacuum(&self) -> rusqlite::Result<()> {
         self.conn.execute_batch("VACUUM")
+    }
+}
+
+/// `rows` (a query's answer) with the pending deltas folded in for the
+/// subjects `q` names — so a file opened a moment ago is listed before
+/// the flush, by the pane and by `kawoosh.memory` alike. The order and
+/// the limit are re-applied after.
+pub fn fold_pending(rows: &mut Vec<MomentRow>, pending: &PendingMoments, q: &MomentQuery<'_>) {
+    for (k, d) in &pending.deltas {
+        if q.kind.is_some_and(|kind| kind != k.kind)
+            || q.workspace.is_some_and(|w| w != k.workspace)
+            || q.subject.is_some_and(|s| s != k.subject)
+            || q.pinned
+        {
+            continue;
+        }
+        match rows.iter_mut().find(|r| r.key == *k) {
+            Some(r) => {
+                r.visits += d.visits;
+                r.edits += d.edits;
+                r.yanks += d.yanks;
+                r.dwell_ms += d.dwell_ms;
+                r.last_at = r.last_at.max(d.last_at);
+                if let Some(m) = &d.meta {
+                    r.meta = merge_meta(&r.meta, m);
+                }
+            }
+            None => {
+                if q.since.is_some_and(|t| d.last_at < t) {
+                    continue;
+                }
+                rows.push(MomentRow {
+                    key: k.clone(),
+                    first_at: d.first_at,
+                    last_at: d.last_at,
+                    visits: d.visits,
+                    dwell_ms: d.dwell_ms,
+                    edits: d.edits,
+                    yanks: d.yanks,
+                    pinned: 0,
+                    meta: d.meta.clone().unwrap_or_else(|| "{}".into()),
+                    text_len: d.text.as_ref().map(Vec::len),
+                    text_head: d.text.as_ref().map(|t| {
+                        String::from_utf8_lossy(t)
+                            .lines()
+                            .next()
+                            .unwrap_or("")
+                            .to_string()
+                    }),
+                });
+            }
+        }
+    }
+    if !q.pinned {
+        rows.sort_by_key(|r| std::cmp::Reverse(r.last_at));
+    }
+    if q.limit > 0 {
+        rows.truncate(q.limit);
+    }
+}
+
+/// `patch`'s keys written over `meta`'s (what `json_patch` does in the
+/// flush), both JSON objects; a side that is not one is taken whole.
+pub fn merge_meta(meta: &str, patch: &str) -> String {
+    let base: serde_json::Value = serde_json::from_str(meta).unwrap_or_default();
+    let over: serde_json::Value = serde_json::from_str(patch).unwrap_or_default();
+    match (base, over) {
+        (serde_json::Value::Object(mut b), serde_json::Value::Object(o)) => {
+            b.extend(o);
+            serde_json::Value::Object(b).to_string()
+        }
+        (_, over) if over.is_object() => over.to_string(),
+        (base, _) => base.to_string(),
     }
 }
 
@@ -877,8 +977,74 @@ mod tests {
                 .visits,
             1
         );
+        // A history whose moment lives under a workspace is not
+        // twinned with an empty row under none at the next open.
+        s.forget_moment(&MomentKey::new("file", "/old/b.rs", ""))
+            .unwrap();
+        s.save_history("file:/old/b.rs", b"b", "{}", false).unwrap();
+        s.flush_moments(&[visit("file", "/old/b.rs", 5000)], &[], 10)
+            .unwrap();
+        let ws = MomentKey::new("file", "/old/b.rs", "/old");
+        s.flush_moments(
+            &[(
+                ws.clone(),
+                MomentDelta {
+                    visits: 1,
+                    first_at: 6000,
+                    last_at: 6000,
+                    ..Default::default()
+                },
+            )],
+            &[],
+            10,
+        )
+        .unwrap();
+        s.forget_moment(&MomentKey::new("file", "/old/b.rs", ""))
+            .unwrap();
+        assert!(
+            s.load_history("file:/old/b.rs").is_some(),
+            "the workspace's row still owns the history"
+        );
+        drop(s);
+        let s = Store::open(&db).unwrap();
+        let b = s.moments(&MomentQuery {
+            subject: Some("/old/b.rs"),
+            ..Default::default()
+        });
+        assert_eq!(b.len(), 1, "{b:?}");
+        assert_eq!(b[0].key.workspace, "/old");
+        // The last row of the subject takes the history with it.
+        s.forget_moment(&ws).unwrap();
+        assert!(s.load_history("file:/old/b.rs").is_none());
         drop(s);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A flush merges a delta's meta over the row's: the engine's caret
+    /// line and a plugin's keys keep out of each other's way.
+    #[test]
+    fn meta_is_merged_not_replaced() {
+        let s = Store::in_memory().unwrap();
+        let k = MomentKey::new("file", "/m", "");
+        let delta = |meta: &str| MomentDelta {
+            first_at: 1,
+            last_at: 1,
+            meta: Some(meta.into()),
+            ..Default::default()
+        };
+        s.flush_moments(&[(k.clone(), delta("{\"from\":\"/old\"}"))], &[], 10)
+            .unwrap();
+        s.flush_moments(&[(k.clone(), delta("{\"line\":4}"))], &[], 10)
+            .unwrap();
+        let meta: serde_json::Value = serde_json::from_str(&s.moment(&k).unwrap().meta).unwrap();
+        assert_eq!(meta["from"], "/old");
+        assert_eq!(meta["line"], 4);
+        assert_eq!(meta_line(&meta.to_string()), 4);
+        assert_eq!(
+            merge_meta("{\"a\":1,\"b\":2}", "{\"b\":3}"),
+            "{\"a\":1,\"b\":3}"
+        );
+        assert_eq!(merge_meta("bad", "{\"b\":3}"), "{\"b\":3}");
     }
 
     /// A writer that meets another connection's lock gets `SQLITE_BUSY`

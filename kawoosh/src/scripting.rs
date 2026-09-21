@@ -74,6 +74,9 @@ impl Kawoosh {
         let (rt, ext) = Runtime::new().map_err(|e| e.to_string())?;
         let rt = Rc::new(rt);
         self.scripting.rt = Some(rt.clone());
+        // The memory's pending deltas are the runtime's to read
+        // (`kawoosh.memory { … }` folds them in).
+        self.moments.adopt_pending(rt.pending_moments());
         for (name, src) in crate::plugins::BUNDLED {
             if let Err(e) = rt.load_source(name, src) {
                 log::error!("{name}: {e}");
@@ -503,6 +506,8 @@ impl Kawoosh {
                 let n = self.ed.memory.len();
                 if i == 0 || i > n || !self.ed.memory.recall(n - i) {
                     self.ed.message = format!("recall: no moment {i}");
+                } else {
+                    self.note_recall();
                 }
             }
             Msg::Remember {

@@ -394,8 +394,11 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   holds; `oldfiles`, the prompt histories and the histories'
   bookkeeping (touched, aging, the `:history` pane) retired into it,
   the blobs stay. Pinned files are a flag on it and the picker ranks
-  by it (`memory.lua`'s `rank`, replaceable). Not built: `tool` and
-  `location` rows (round four), co-occurrence, the yank-pop after `p`.
+  by it (`memory.lua`'s `rank`, replaceable); the pane's views, the
+  pins and the picker's boosts are the workspace's (a history is the
+  path's under every root, corrected 2026-09-22). Not built: `tool`
+  and `location` rows (round four), co-occurrence, the yank-pop after
+  `p`.
 
 ### Terminal
 
@@ -583,7 +586,14 @@ then breadth.
     `moments.rs`, the `:memory` pane with its views, `memory.lua`,
     five tests in `memory.rs` and the histories' three rewritten);
     see the buffers track — memory.md's status says where the build
-    departed from the text.
+    departed from the text. Checked for soundness 2026-09-22 and
+    corrected (memory.md's status, "corrected"): the migration twinned
+    a workspace's file rows with empty ones that took the histories
+    with them when evicted; a round trip through a picker was a visit
+    and a recall a yank; a text that may not be written still left
+    its hash; Decision 2's workspace was never read. Two tests more
+    in `memory.rs` (a workspace, the round trips) and two in the
+    store's.
 11. **The scrolling tab** ([scrolling-tab.md](scrolling-tab.md)): one
     round — `Kind::Scroll` beside the tree, the keys read on the
     strip's axis, `reveal` on the focus frame, `:layout` both ways,

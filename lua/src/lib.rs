@@ -16,6 +16,7 @@ use kawoosh_doc::{Buffer, BufferId, Snapshot};
 use std::collections::BTreeSet;
 
 use kawoosh_editor::{Args, Ctx, Editor, Facts, Setting, Spec, ViewId};
+use kawoosh_systems::store::{PendingMoments, RingRow};
 use kui_lua::LuaExtension;
 use mlua::{Function, Lua, Table, Value as LV};
 use slotmap::{Key, KeyData};
@@ -495,6 +496,10 @@ pub struct Runtime {
     /// The KV store `kawoosh.store(ns)` reads and writes, once the shell
     /// opened it.
     store: Rc<RefCell<Option<Rc<kawoosh_systems::store::Store>>>>,
+    /// The memory's deltas not yet flushed, the shell's `Moments`
+    /// writing them (memory.md Decision 3), folded into what
+    /// `kawoosh.memory { … }` and `kawoosh.oldfiles` answer.
+    pending: Rc<RefCell<PendingMoments>>,
     /// Line identity through the journal (core.md's hidden-id idea, done
     /// with edits instead of runs): each tracked line of a buffer,
     /// carried through the edits as they come. Shared with
@@ -536,9 +541,10 @@ impl Runtime {
         let queue = Rc::new(RefCell::new(Vec::new()));
         let published = Rc::new(RefCell::new(Published::default()));
         let store = Rc::new(RefCell::new(None));
+        let pending = Rc::new(RefCell::new(PendingMoments::default()));
         let tracked: TrackedCell = Rc::new(RefCell::new(HashMap::new()));
         let jobs: JobsCell = Rc::new(RefCell::new(Jobs::default()));
-        seed(&lua, &queue, &published, &store, &tracked, &jobs)?;
+        seed(&lua, &queue, &published, &store, &pending, &tracked, &jobs)?;
         lua.load(BOOT).set_name("kawoosh:boot").exec()?;
         Ok((
             Self {
@@ -546,6 +552,7 @@ impl Runtime {
                 queue,
                 published,
                 store,
+                pending,
                 tracked,
                 register_map: RefCell::new(None),
                 jobs,
@@ -642,6 +649,13 @@ impl Runtime {
         if p.workspace != ws {
             p.workspace = ws.to_string();
         }
+    }
+
+    /// What the memory has not flushed yet (memory.md Decision 3):
+    /// the shell's `Moments` adopts this and writes it, and
+    /// `kawoosh.memory { … }` folds it into the store's rows.
+    pub fn pending_moments(&self) -> Rc<RefCell<PendingMoments>> {
+        self.pending.clone()
     }
 
     /// Runs a config or plugin file; the error is a message, not a crash.
@@ -1382,6 +1396,7 @@ fn seed(
     queue: &Rc<RefCell<Vec<Msg>>>,
     published: &Rc<RefCell<Published>>,
     store: &StoreCell,
+    pending: &Rc<RefCell<PendingMoments>>,
     tracked: &TrackedCell,
     jobs: &JobsCell,
 ) -> mlua::Result<()> {
@@ -1566,21 +1581,29 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- `kawoosh.oldfiles()`: the files opened before, newest first,
-    // each `{ path, line }`, from the store.
+    // ---- `kawoosh.oldfiles([limit], [all])`: the files attended
+    // before, newest first, each `{ path, line }` — the workspace's
+    // `file` rows (memory.md Decision 2), every workspace's with `all`;
+    // what the memory has not flushed yet folded in.
     let st = store.clone();
+    let pp = published.clone();
+    let pd = pending.clone();
     k.set(
         "oldfiles",
-        lua.create_function(move |lua, limit: Option<usize>| {
+        lua.create_function(move |lua, (limit, all): (Option<usize>, Option<bool>)| {
             let out = lua.create_table()?;
             let Some(s) = st.borrow().clone() else {
                 return Ok(out);
             };
-            let rows = s.moments(&kawoosh_systems::store::MomentQuery {
+            let p = pp.borrow();
+            let q = kawoosh_systems::store::MomentQuery {
                 kind: Some("file"),
+                workspace: (!all.unwrap_or(false)).then_some(p.workspace.as_str()),
                 limit: limit.unwrap_or(200),
                 ..Default::default()
-            });
+            };
+            let mut rows = s.moments(&q);
+            kawoosh_systems::store::fold_pending(&mut rows, &pd.borrow(), &q);
             for (i, r) in rows.into_iter().enumerate() {
                 let t = lua.create_table()?;
                 t.set(
@@ -2481,10 +2504,12 @@ fn seed(
     k.set("buf", buf)?;
 
     // ---- the memory (memory.md Decision 9): bare, the working
-    // memory's texts, newest first; with a query, the store's rows —
-    // as of the last flush, a second behind at most — or the ring.
+    // memory's texts, newest first; with a query, the store's rows
+    // with what the memory has not flushed yet folded in (so a file
+    // opened a moment ago has its row), or the ring the same way.
     let pp = published.clone();
     let st = store.clone();
+    let pd = pending.clone();
     k.set(
         "memory",
         lua.create_function(move |lua, q: Option<mlua::Table>| {
@@ -2509,8 +2534,12 @@ fn seed(
             };
             let limit: usize = q.get::<Option<usize>>("limit")?.unwrap_or(200);
             let now = kawoosh_systems::store::now();
+            let p = pp.borrow();
             if q.get::<Option<bool>>("recent")?.unwrap_or(false) {
-                for (i, r) in s.recent(limit).into_iter().enumerate() {
+                let mut ring: Vec<RingRow> = pd.borrow().ring.iter().rev().cloned().collect();
+                ring.extend(s.recent(limit));
+                ring.truncate(limit);
+                for (i, r) in ring.into_iter().enumerate() {
                     let e = lua.create_table()?;
                     e.set("at", r.at)?;
                     e.set("age", (now - r.at).max(0))?;
@@ -2525,19 +2554,21 @@ fn seed(
             let subject: Option<String> = q.get("subject")?;
             let workspace: Option<String> = match q.get::<Option<mlua::Value>>("workspace")? {
                 Some(mlua::Value::String(w)) => Some(w.to_str()?.to_string()),
-                Some(mlua::Value::Boolean(true)) => Some(pp.borrow().workspace.clone()),
+                Some(mlua::Value::Boolean(true)) => Some(p.workspace.clone()),
                 _ => None,
             };
             let since: Option<i64> = q.get::<Option<i64>>("since")?.map(|secs| now - secs);
             let pinned = q.get::<Option<bool>>("pinned")?.unwrap_or(false);
-            let rows = s.moments(&kawoosh_systems::store::MomentQuery {
+            let query = kawoosh_systems::store::MomentQuery {
                 kind: kind.as_deref(),
                 workspace: workspace.as_deref(),
                 subject: subject.as_deref(),
                 since,
                 pinned,
                 limit,
-            });
+            };
+            let mut rows = s.moments(&query);
+            kawoosh_systems::store::fold_pending(&mut rows, &pd.borrow(), &query);
             let row_of =
                 |lua: &Lua, r: kawoosh_systems::store::MomentRow| -> mlua::Result<mlua::Table> {
                     let e = lua.create_table()?;

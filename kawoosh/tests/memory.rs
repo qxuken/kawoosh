@@ -197,7 +197,11 @@ fn file_key(p: &std::path::Path) -> MomentKey {
 /// Runs Lua that may `assert`, and fails the test when it did.
 fn lua(app: &mut Kawoosh, src: &str) {
     app.run_lua_source("t", &format!("{src}\nkawoosh.echo('lua ok')"));
-    assert_eq!(app.ed.message, "lua ok", "the Lua failed: {src}");
+    assert_eq!(
+        app.ed.message, "lua ok",
+        "the Lua failed ({}): {src}",
+        app.ed.message
+    );
 }
 
 /// A file focused is a visit and a ring row; edits and yanks count to
@@ -412,18 +416,16 @@ fn texts_and_prompt_lines_survive_a_restart() {
     d.keys(&mut app, "/thr");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
-    // A text over the cap: remembered, not written.
+    // A text over the cap: remembered for the session, and no row at
+    // all — not its hash, not where it came from.
     let big = "x".repeat(kawoosh::moments::TEXT_MAX + 1);
     let v = app.focused_view().unwrap();
     app.ed.paste_text(v, &big);
     d.frame(&mut app);
     d.keys(&mut app, "u");
     app.flush_moments();
-    assert!(
-        store
-            .moment(&kawoosh::moments::text_key(&big))
-            .is_some_and(|r| r.text_len.is_none())
-    );
+    assert!(app.ed.memory.head().is_some_and(|m| m.text == big));
+    assert!(store.moment(&kawoosh::moments::text_key(&big)).is_none());
     ex(&mut d, &mut app, "qa");
     d.frame(&mut app);
     drop(app);
@@ -431,7 +433,7 @@ fn texts_and_prompt_lines_survive_a_restart() {
         kind: Some("text"),
         ..Default::default()
     });
-    assert_eq!(texts_on_disk.len(), 3, "{texts_on_disk:?}");
+    assert_eq!(texts_on_disk.len(), 2, "{texts_on_disk:?}");
 
     let (mut d, mut app) = launch(&db, &a);
     d.frame(&mut app);
@@ -455,7 +457,8 @@ fn texts_and_prompt_lines_survive_a_restart() {
     d.key(&mut app, "escape", KeyMods::default());
     d.frame(&mut app);
     // Texts trimmed past `memory.text.max_mb`: with the cap at zero
-    // nothing new is written and the register still works.
+    // nothing of a new text touches the disk — no row, no hash — and
+    // the register still works; a text the store knows is attended.
     ex(&mut d, &mut app, "set memory.text.max_mb=0");
     d.keys(&mut app, "jyy");
     d.frame(&mut app);
@@ -463,13 +466,32 @@ fn texts_and_prompt_lines_survive_a_restart() {
     assert!(
         store
             .moment(&kawoosh::moments::text_key("three\n"))
-            .is_some_and(|r| r.text_len.is_none()),
-        "no bytes on disk: {:?} / head {:?} / {:?}",
+            .is_none(),
+        "nothing on disk: {:?} / head {:?} / {:?}",
         store.moment(&kawoosh::moments::text_key("three\n")),
         app.ed.memory.head().map(|m| m.text.clone()),
         app.ed.settings.int("memory.text.max_mb")
     );
     assert_eq!(app.ed.memory.head().unwrap().text, "three\n");
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    d.keys(&mut app, "ggyy");
+    d.frame(&mut app);
+    app.flush_moments();
+    assert_eq!(
+        store.moment(&key).unwrap().visits,
+        3,
+        "one known, attended again"
+    );
+    ex(&mut d, &mut app, "set memory.text.max_mb=8");
+    d.keys(&mut app, "jjyy");
+    d.frame(&mut app);
+    app.flush_moments();
+    assert!(
+        store
+            .moment(&kawoosh::moments::text_key("three\n"))
+            .is_some_and(|r| r.text_len == Some(6)),
+        "written once the cap allows"
+    );
     // The text rows' cap: the register's text is held, the rest go
     // lowest score first.
     ex(&mut d, &mut app, "set memory.text.max_mb=1");
@@ -647,5 +669,278 @@ kawoosh.forget("dir.rename", "{b}")
             .moment(&MomentKey::new("dir.rename", &b.display().to_string(), ""))
             .is_none()
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Under a `.kawoosh` root the moments carry the workspace, and a
+/// history is the path's whatever root it was attended under: a
+/// launch never twins a workspace's row with an empty one under none,
+/// the pane's views, the pins, `oldfiles` and the boosts are the
+/// workspace's with `:memory all` everything, and a path's history
+/// lives as long as any of its rows.
+#[test]
+fn a_workspace_scopes_the_memory_and_a_history_is_the_paths() {
+    let dir = tmp("ws");
+    std::fs::create_dir_all(dir.join(".kawoosh")).unwrap();
+    let db = tmp("ws-db").join("state.db");
+    let a = dir.join("a.txt");
+    let b = dir.join("b.txt");
+    std::fs::write(&a, "aaa\n").unwrap();
+    std::fs::write(&b, "bbb\n").unwrap();
+    let ws = dir.display().to_string();
+    let in_ws = |p: &std::path::Path| MomentKey::new("file", &p.display().to_string(), &ws);
+    // The app's cwd alone, not the process's (`set_cwd` would move
+    // it): the suite's other tests share the process, and a `.kawoosh`
+    // above their cwd would put their rows under this workspace.
+    let launch_in = |db: &std::path::Path, path: &std::path::Path| {
+        let (d, mut app) = launch(db, path);
+        app.cwd = dir.clone();
+        app.ed.cwd = dir.clone();
+        (d, app)
+    };
+    let (mut d, mut app) = launch_in(&db, &a);
+    d.frame(&mut app);
+    // b edited and saved: a clean history; a edited, a draft.
+    ex(&mut d, &mut app, &format!("e {}", b.display()));
+    d.keys(&mut app, "x");
+    ex(&mut d, &mut app, "w");
+    ex(&mut d, &mut app, &format!("e {}", a.display()));
+    d.keys(&mut app, "x");
+    d.frame(&mut app);
+    app.sync_histories(true);
+    app.flush_moments();
+    let store = app.store.clone().unwrap();
+    assert_eq!(app.moments.workspace(), ws);
+    assert!(store.moment(&in_ws(&a)).is_some_and(|r| r.visits == 2));
+    assert!(
+        store.moment(&file_key(&a)).is_none(),
+        "under the root, not none"
+    );
+    // Rows made elsewhere: another root's file, pinned, and a command.
+    let z = MomentKey::new("file", "/other/z.txt", "/other");
+    store
+        .flush_moments(
+            &[
+                (
+                    z.clone(),
+                    kawoosh_systems::store::MomentDelta {
+                        visits: 9,
+                        first_at: kawoosh_systems::store::now(),
+                        last_at: kawoosh_systems::store::now(),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    MomentKey::new("command", "other", "/other"),
+                    kawoosh_systems::store::MomentDelta {
+                        visits: 1,
+                        first_at: kawoosh_systems::store::now(),
+                        last_at: kawoosh_systems::store::now(),
+                        ..Default::default()
+                    },
+                ),
+            ],
+            &[kawoosh_systems::store::RingRow {
+                at: kawoosh_systems::store::now(),
+                key: z.clone(),
+            }],
+            1000,
+        )
+        .unwrap();
+    store.set_pinned(&z, 1).unwrap();
+    // The pane: files, commands, recent and pins are the workspace's;
+    // all is everything.
+    ex(&mut d, &mut app, "memory files");
+    let subjects = |app: &Kawoosh| -> Vec<String> {
+        app.memory_pane
+            .rows()
+            .iter()
+            .filter_map(|r| r.key().map(|k| k.subject.clone()))
+            .collect()
+    };
+    let s = subjects(&app);
+    assert_eq!(s.len(), 2, "{s:?}");
+    assert!(!s.contains(&z.subject), "{s:?}");
+    assert!(
+        texts(&d)
+            .iter()
+            .any(|t| t.contains("in ") && t.contains("2 files")),
+        "{:?}",
+        texts(&d)
+    );
+    ex(&mut d, &mut app, "memory recent");
+    assert!(!subjects(&app).contains(&z.subject));
+    ex(&mut d, &mut app, "memory commands");
+    assert!(!subjects(&app).contains(&"other".to_string()));
+    ex(&mut d, &mut app, "memory pins");
+    assert!(subjects(&app).is_empty());
+    ex(&mut d, &mut app, "memory all");
+    let s = subjects(&app);
+    assert!(
+        s.contains(&z.subject) && s.contains(&"other".to_string()),
+        "{s:?}"
+    );
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    // `<leader>ea` pins a here; `<leader>e1` is a, not the other root's
+    // first pin; Lua sees the same.
+    d.keys(&mut app, " ea");
+    d.frame(&mut app);
+    assert!(app.ed.message.contains("pinned #2"), "{}", app.ed.message);
+    ex(&mut d, &mut app, &format!("e {}", b.display()));
+    d.keys(&mut app, " e1");
+    d.frame(&mut app);
+    assert_eq!(
+        app.ed
+            .buffer_of(app.focused_view().unwrap())
+            .path
+            .as_deref(),
+        Some(a.as_path())
+    );
+    lua(
+        &mut app,
+        &format!(
+            r#"
+local pins = kawoosh.memory {{ pinned = true, workspace = true }}
+assert(#pins == 1 and pins[1].subject == "{a}", "the workspace's pin")
+assert(#kawoosh.memory {{ pinned = true }} == 2, "every pin")
+local here = kawoosh.oldfiles(10)
+assert(#here == 2, "the workspace's files: " .. #here)
+local all = kawoosh.oldfiles(10, true)
+assert(#all == 3, "every file: " .. #all)
+local by = kawoosh.memory_rank.boosts("file", 10)
+assert(by["{a}"] > 10 and by["{b}"] and not by["/other/z.txt"], "boosts are the workspace's")
+-- What is not flushed yet is folded in: a visit a frame ago counts.
+local row = kawoosh.memory {{ kind = "file", subject = "{a}" }}
+assert(row.visits >= 3, "pending folded: " .. tostring(row.visits))
+"#,
+            a = a.display(),
+            b = b.display()
+        ),
+    );
+    // A restart: one row per path still, the pending flushed with the
+    // session and the workspace read back from the cwd.
+    ex(&mut d, &mut app, "qa!");
+    d.frame(&mut app);
+    drop(app);
+    for p in [&a, &b] {
+        let rows = store.moments(&kawoosh_systems::store::MomentQuery {
+            subject: Some(&p.display().to_string()),
+            ..Default::default()
+        });
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].key.workspace, ws);
+    }
+    // b's history is the path's: a row for b under no workspace, aged
+    // out at the next launch, leaves the history to the workspace's
+    // row; once that row ages out too, the history goes.
+    let bh = format!("file:{}", b.display());
+    assert!(store.load_history(&bh).is_some(), "b's clean history");
+    store
+        .flush_moments(
+            &[(
+                file_key(&b),
+                kawoosh_systems::store::MomentDelta {
+                    first_at: 1000,
+                    last_at: 1000,
+                    ..Default::default()
+                },
+            )],
+            &[],
+            1000,
+        )
+        .unwrap();
+    drop(store);
+    let (mut d, mut app) = launch_in(&db, &a);
+    d.frame(&mut app);
+    let store = app.store.clone().unwrap();
+    assert!(store.moment(&file_key(&b)).is_none(), "aged out");
+    assert!(
+        store.moment(&in_ws(&b)).is_some(),
+        "the workspace's row stays"
+    );
+    assert!(store.load_history(&bh).is_some(), "and owns the history");
+    store.set_moment_last(&in_ws(&b), 1000).unwrap();
+    ex(&mut d, &mut app, "qa!");
+    d.frame(&mut app);
+    drop(app);
+    drop(store);
+    let (mut d, mut app) = launch_in(&db, &a);
+    d.frame(&mut app);
+    let store = app.store.clone().unwrap();
+    assert!(store.moment(&in_ws(&b)).is_none());
+    assert!(store.load_history(&bh).is_none(), "the last row took it");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The keyboard coming back to a file from the memory pane, a picker
+/// or the dock is not a visit; a text forgotten at the head or
+/// recalled is not a yank of its origin.
+#[test]
+fn a_round_trip_is_no_visit_and_a_recall_no_yank() {
+    let dir = tmp("trip");
+    let db = dir.join("state.db");
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "one\ntwo\nthree\n").unwrap();
+    let (mut d, mut app) = launch(&db, &a);
+    d.frame(&mut app);
+    let store = app.store.clone().unwrap();
+    for _ in 0..2 {
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        d.keys(&mut app, " p");
+        d.frame(&mut app);
+        assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+        d.keys(&mut app, "q");
+        d.frame(&mut app);
+        d.keys(&mut app, " f");
+        d.frame(&mut app);
+        d.key(&mut app, "escape", KeyMods::default());
+        d.key(&mut app, "escape", KeyMods::default());
+        d.frame(&mut app);
+    }
+    app.flush_moments();
+    let row = store.moment(&file_key(&a)).unwrap();
+    assert_eq!(row.visits, 1, "{row:?}");
+    assert_eq!(
+        store
+            .recent(50)
+            .iter()
+            .filter(|r| r.key.kind == "file")
+            .count(),
+        1
+    );
+    // Two texts taken; `x` on the head and `y` (recall) on the other
+    // leave the yanks at two, and the recall is the text attended.
+    d.keys(&mut app, "yy");
+    d.frame(&mut app);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    d.keys(&mut app, "jyy");
+    d.frame(&mut app);
+    app.flush_moments();
+    assert_eq!(store.moment(&file_key(&a)).unwrap().yanks, 2);
+    let one = kawoosh::moments::text_key("one\n");
+    assert_eq!(store.moment(&one).unwrap().visits, 1);
+    d.keys(&mut app, " p");
+    d.frame(&mut app);
+    d.keys(&mut app, "x");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(app.ed.memory.head().unwrap().text, "one\n");
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    d.keys(&mut app, "y");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    app.flush_moments();
+    assert_eq!(
+        store.moment(&file_key(&a)).unwrap().yanks,
+        2,
+        "no yank for a forget or a recall"
+    );
+    assert_eq!(
+        store.moment(&one).unwrap().visits,
+        2,
+        "the recall attended it"
+    );
+    assert!(store.moment(&kawoosh::moments::text_key("two\n")).is_none());
     std::fs::remove_dir_all(&dir).ok();
 }

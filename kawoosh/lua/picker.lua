@@ -1116,8 +1116,9 @@ picker.source("buffers", {
   empty = "no buffers",
 })
 
--- The files attended before (the memory's `file` rows), newest first,
--- each at the line it was left; ranked by the memory.
+-- The files attended before (the memory's `file` rows, the
+-- workspace's — memory.md D2), newest first, each at the line it was
+-- left; ranked by the memory.
 local function recent_items()
   local items = {}
   local by = kawoosh.memory_rank and kawoosh.memory_rank.boosts("file", 500) or {}
@@ -1127,12 +1128,13 @@ local function recent_items()
   return items
 end
 
--- The pinned files, in pin order (`<leader>ee` is the pane).
+-- The workspace's pinned files, in pin order (`<leader>ee` is the
+-- pane).
 picker.source("pins", {
   title = "pins", placeholder = "a pinned file",
   items = function()
     local items = {}
-    for _, r in ipairs(kawoosh.memory { pinned = true }) do
+    for _, r in ipairs(kawoosh.memory { pinned = true, workspace = true }) do
       if r.kind == "file" then
         items[#items + 1] = {
           text = "#" .. r.pinned .. "  " .. short_path(r.subject), path = r.subject,

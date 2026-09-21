@@ -19,6 +19,27 @@ the pins live under `<leader>e` as a prefix — `<leader>ee` the list,
 `<leader>ea` pin — since a key cannot be both a binding and a prefix;
 the undo root made with the first edit is not counted as one. Round
 four (`tool` and `location` rows) and the notes after are not built.
+*Corrected 2026-09-22*, after a soundness pass over the build: a
+history is the *path's* where a moment is the path's under a root —
+the migration at init twinned every workspace's `file` row with an
+empty one under no workspace at each launch, and that twin, scoring
+nothing, went first past a cap and took the real row's history with
+it; now a history that has a moment under any workspace gets none,
+and `forget_moment` drops a history only when no row of the path
+remains. The keyboard coming back to a file from a picker, the dock or
+the memory pane was a visit (the frame compared panes, not subjects);
+`x` on the register's head and a recall counted a yank on the origin;
+a text that may not be written (over 1 MiB, or `memory.text.max_mb` at
+0) still got a row with its hash and origin — none now, which is what
+"nothing I copied is on disk" has to mean. Decision 2's workspace was
+written and never read: the pane's views but `all`, the pins
+(`<leader>e1` is the workspace's first pin), `kawoosh.oldfiles` (an
+`all` argument for every root's) and `memory.boosts` are the
+workspace's now. `kawoosh.memory { … }` and `oldfiles` fold the deltas
+not yet flushed in (the pending map is one cell the shell and the
+runtime share), so a file opened a moment ago has its row; a delta's
+`meta` merges over the row's (`json_patch`) instead of replacing it,
+so the caret line and a plugin's keys keep out of each other's way.
 The four forks were put as
 options and taken: the unit is a subject row *plus a bounded ring of
 recent transitions* (Decision 1); the histories lose their bookkeeping

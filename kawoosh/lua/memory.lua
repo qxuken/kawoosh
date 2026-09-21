@@ -21,12 +21,13 @@ function memory.rank(row, now)
   return signals * 0.5 ^ (days / memory.half_life_days)
 end
 
--- memory.boosts([kind], [limit]): the `kind` rows (files by default)
--- as a table of subject → boost, the best-ranked row 0.5 and the
--- rest in proportion; a pinned row 10 plus its place, so pins come
--- first in pin order.
+-- memory.boosts([kind], [limit]): the workspace's `kind` rows (files
+-- by default; memory.md D2 — the picker asks for the workspace's) as
+-- a table of subject → boost, the best-ranked row 0.5 and the rest in
+-- proportion; a pinned row 10 plus its place, so pins come first in
+-- pin order.
 function memory.boosts(kind, limit)
-  local rows = kawoosh.memory { kind = kind or "file", limit = limit or 500 }
+  local rows = kawoosh.memory { kind = kind or "file", workspace = true, limit = limit or 500 }
   local now = kawoosh.now()
   local ranks, max = {}, 0
   for i, r in ipairs(rows) do

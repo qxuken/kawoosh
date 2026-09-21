@@ -8,12 +8,15 @@
 //! windows on one `state.db` add their halves. Nothing here ever
 //! writes a row whole.
 //!
-//! What counts (Decision 7): a *visit* when a pane is focused onto a
-//! buffer it was not showing (one within a second of the last to the
-//! same subject is the same visit), and each visit is a ring row; an
-//! *edit* per undo state made in the focused buffer; a *yank* per text
-//! taken from a buffer; *dwell* per frame while the window has the
-//! keyboard and a key or a click came within `memory.idle_secs`.
+//! What counts (Decision 7): a *visit* when the keyboard lands on a
+//! subject other than the one it last attended — a pane focused onto a
+//! buffer it was not showing, not the keyboard coming back from a
+//! picker or the dock to the file it left (one within a second of the
+//! last to the same subject is the same visit), and each visit is a
+//! ring row; an *edit* per undo state made in the focused buffer; a
+//! *yank* per text taken from a buffer (a recall is not one); *dwell*
+//! per frame while the window has the keyboard and a key or a click
+//! came within `memory.idle_secs`.
 //!
 //! Cadence: the histories' — written once the memory has been still
 //! for [`QUIET`], or every [`LAG`] while it keeps changing; the session
@@ -26,19 +29,21 @@
 //! a history with unsaved text hanging off it. A `file` or `scratch`
 //! row's history goes with it (Decision 6).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use kawoosh_doc::BufferId;
 use kawoosh_editor::Layer;
 use kawoosh_systems::store::{
-    MomentDelta, MomentKey, MomentQuery, MomentRow, RingRow, history_key_of, now,
+    MomentDelta, MomentKey, MomentQuery, MomentRow, PendingMoments, RingRow, fold_pending,
+    history_key_of, merge_meta, now,
 };
 use kawoosh_systems::{Alarm, WakeHandle};
 
 use crate::app::Kawoosh;
-use crate::layout::PaneId;
 use crate::notify::Level;
 
 /// How long the memory is still before a flush.
@@ -90,12 +95,15 @@ pub fn score(r: &MomentRow, now: i64) -> f64 {
 /// The app's side: the deltas, the pending ring rows, what the frame
 /// before saw, the flush alarm.
 pub struct Moments {
-    deltas: HashMap<MomentKey, MomentDelta>,
-    ring: Vec<RingRow>,
+    /// The deltas and the pending ring rows, shared with the Lua
+    /// runtime once one is attached (`adopt_pending`) so its reads
+    /// fold them in.
+    pending: Rc<RefCell<PendingMoments>>,
     /// The last visit made: to dedupe one within [`SAME_VISIT`].
     last_visit: Option<(MomentKey, Instant)>,
-    /// The pane and buffer the keyboard was in last frame.
-    attended: Option<(PaneId, BufferId)>,
+    /// The subject the keyboard last attended, with the buffer it was
+    /// in: the next visit is to another subject.
+    attended: Option<(BufferId, MomentKey)>,
     /// Each buffer's undo states as last counted.
     states_seen: HashMap<BufferId, usize>,
     /// `Editor::memory`'s version as last seen: a new head is a yank.
@@ -127,8 +135,7 @@ impl Moments {
     pub fn new(wake: WakeHandle) -> Self {
         let now = Instant::now();
         Self {
-            deltas: HashMap::new(),
-            ring: Vec::new(),
+            pending: Rc::new(RefCell::new(PendingMoments::default())),
             last_visit: None,
             attended: None,
             states_seen: HashMap::new(),
@@ -149,12 +156,27 @@ impl Moments {
 
     /// The deltas not yet flushed, for a test or the perf tab.
     pub fn pending(&self) -> usize {
-        self.deltas.len()
+        self.pending.borrow().deltas.len()
     }
 
     /// The ring rows not yet flushed.
-    pub fn pending_ring(&self) -> &[RingRow] {
-        &self.ring
+    pub fn pending_ring(&self) -> Vec<RingRow> {
+        self.pending.borrow().ring.clone()
+    }
+
+    /// Takes the runtime's shared pending as this memory's, what was
+    /// pending so far moved into it: from then on Lua reads the same
+    /// deltas the flush writes.
+    pub fn adopt_pending(&mut self, shared: Rc<RefCell<PendingMoments>>) {
+        let mine = std::mem::take(&mut *self.pending.borrow_mut());
+        {
+            let mut p = shared.borrow_mut();
+            for (k, d) in mine.deltas {
+                p.deltas.insert(k, d);
+            }
+            p.ring.extend(mine.ring);
+        }
+        self.pending = shared;
     }
 
     /// The workspace moments are made under.
@@ -162,19 +184,21 @@ impl Moments {
         &self.workspace.1
     }
 
-    /// Something happened to a subject: its delta.
-    fn delta(&mut self, key: MomentKey) -> &mut MomentDelta {
+    /// Something happened to a subject: its delta, changed in place.
+    fn delta(&mut self, key: MomentKey) -> std::cell::RefMut<'_, MomentDelta> {
         let at = now();
-        let d = self.deltas.entry(key).or_insert_with(|| MomentDelta {
-            first_at: at,
-            last_at: at,
-            ..Default::default()
-        });
-        d.last_at = at;
         let now = Instant::now();
         self.dirty_since.get_or_insert(now);
         self.changed_at = now;
-        d
+        std::cell::RefMut::map(self.pending.borrow_mut(), |p| {
+            let d = p.deltas.entry(key).or_insert_with(|| MomentDelta {
+                first_at: at,
+                last_at: at,
+                ..Default::default()
+            });
+            d.last_at = at;
+            d
+        })
     }
 
     /// A subject attended: a visit and a ring row, unless the last
@@ -188,7 +212,7 @@ impl Moments {
             return;
         }
         self.last_visit = Some((key.clone(), at));
-        self.ring.push(RingRow {
+        self.pending.borrow_mut().ring.push(RingRow {
             at: now(),
             key: key.clone(),
         });
@@ -199,6 +223,16 @@ impl Moments {
     /// next flush.
     pub fn touch(&mut self, key: MomentKey) {
         self.delta(key);
+    }
+
+    /// `patch`'s keys over the subject's pending meta (the flush merges
+    /// them over the row's the same way).
+    fn set_meta(&mut self, key: MomentKey, patch: String) {
+        let mut d = self.delta(key);
+        d.meta = Some(match &d.meta {
+            Some(m) => merge_meta(m, &patch),
+            None => patch,
+        });
     }
 
     /// Signals a plugin adds (`kawoosh.remember`), and what a kind
@@ -213,24 +247,26 @@ impl Moments {
         meta: Option<String>,
     ) {
         if visits > 0 {
-            self.ring.push(RingRow {
+            self.pending.borrow_mut().ring.push(RingRow {
                 at: now(),
                 key: key.clone(),
             });
         }
-        let d = self.delta(key);
-        d.visits += visits;
-        d.edits += edits;
-        d.yanks += yanks;
-        d.dwell_ms += dwell_ms;
-        if meta.is_some() {
-            d.meta = meta;
+        {
+            let mut d = self.delta(key.clone());
+            d.visits += visits;
+            d.edits += edits;
+            d.yanks += yanks;
+            d.dwell_ms += dwell_ms;
+        }
+        if let Some(m) = meta {
+            self.set_meta(key, m);
         }
     }
 
     /// A text taken (round two): its row, flushed at once by the tick.
     pub fn text(&mut self, key: MomentKey, bytes: Vec<u8>, meta: String) {
-        let d = self.delta(key);
+        let mut d = self.delta(key);
         d.text = Some(bytes);
         d.meta = Some(meta);
     }
@@ -238,8 +274,9 @@ impl Moments {
     /// The pending deltas and ring rows forgotten for `key` — after a
     /// forget, so a flush does not bring the row back.
     fn drop_pending(&mut self, key: &MomentKey) {
-        self.deltas.remove(key);
-        self.ring.retain(|r| r.key != *key);
+        let mut p = self.pending.borrow_mut();
+        p.deltas.remove(key);
+        p.ring.retain(|r| r.key != *key);
     }
 }
 
@@ -331,34 +368,33 @@ impl Kawoosh {
         if self.moments.workspace.0 != self.cwd {
             self.moments.workspace = (self.cwd.clone(), workspace_of(&self.cwd));
         }
-        // The focused pane's buffer: a visit when it is not the one
-        // last frame's was.
+        // The focused pane's buffer: a visit when its subject is not
+        // the one the keyboard last attended — a pane onto another
+        // file, not the keyboard back from a picker, the dock or the
+        // memory pane to the file it left.
         let focused = self.layout.focused();
-        let buffer = self.view_of(focused).map(|v| self.ed.views[v].buffer);
-        let attended = buffer.map(|b| (focused, b));
-        if attended != self.moments.attended {
+        let current = self.view_of(focused).map(|v| self.ed.views[v].buffer);
+        let subject = current.and_then(|b| self.subject_of(b).map(|k| (b, k)));
+        if let Some((b, key)) = subject
+            && self.moments.attended.as_ref().map(|(_, k)| k) != Some(&key)
+        {
             // Leaving a file: its caret line is the row's meta.
-            if let Some((_, old)) = self.moments.attended
-                && let Some(key) = self.subject_of(old)
-                && key.kind == "file"
+            if let Some((old, old_key)) = self.moments.attended.take()
+                && old_key.kind == "file"
                 && let Some(meta) = self.line_meta(old)
             {
-                self.moments.delta(key).meta = Some(meta);
+                self.moments.set_meta(old_key, meta);
             }
-            self.moments.attended = attended;
-            if let Some((_, b)) = attended
-                && let Some(key) = self.subject_of(b)
-            {
-                let meta = (key.kind == "file").then(|| self.line_meta(b)).flatten();
-                self.moments.visit(key.clone());
-                if meta.is_some() {
-                    self.moments.delta(key).meta = meta;
-                }
+            self.moments.attended = Some((b, key.clone()));
+            let meta = (key.kind == "file").then(|| self.line_meta(b)).flatten();
+            self.moments.visit(key.clone());
+            if let Some(meta) = meta {
+                self.moments.set_meta(key, meta);
             }
         }
         // Edits: the focused buffer's undo states since last counted
         // (the root, made with the first edit, is not one).
-        if let Some((_, b)) = attended {
+        if let Some(b) = current {
             let states = self.ed.history_key(b).0;
             let seen = self.moments.states_seen.insert(b, states).unwrap_or(states);
             let made = states.saturating_sub(seen.max(1));
@@ -371,7 +407,11 @@ impl Kawoosh {
         }
         // The working memory moved: a new head is a text attended
         // (a `text` row, its bytes written once, at once) and a yank
-        // of the buffer it came from.
+        // of the buffer it came from. A text that may not be written
+        // — over [`TEXT_MAX`], or `memory.text.max_mb` at 0 — has no
+        // row at all: not its hash, not where it came from (Decision
+        // 4's "nothing I copied is on disk"); one the store knows
+        // already is attended again.
         if self.ed.memory.version != self.moments.memory_seen {
             self.moments.memory_seen = self.ed.memory.version;
             let head = self.ed.memory.head().cloned();
@@ -391,12 +431,12 @@ impl Kawoosh {
                         .is_some_and(|s| s.moment(&key).is_some());
                     let write =
                         self.max_bytes(TEXT_MAX_MB, None).is_some() && m.text.len() <= TEXT_MAX;
-                    self.moments.visit(key.clone());
-                    if !known && write {
+                    if known {
+                        self.moments.visit(key);
+                    } else if write {
+                        self.moments.visit(key.clone());
                         self.moments
                             .text(key, m.text.as_bytes().to_vec(), text_meta(m));
-                    } else if !known {
-                        self.moments.delta(key).meta = Some(text_meta(m));
                     }
                 }
             }
@@ -413,7 +453,7 @@ impl Kawoosh {
         if self.moments.window_focused
             && now.duration_since(self.moments.last_input) < idle
             && frame_ms > 0
-            && let Some((_, b)) = attended
+            && let Some(b) = current
             && let Some(key) = self.subject_of(b)
         {
             self.moments.delta(key).dwell_ms += frame_ms;
@@ -428,7 +468,13 @@ impl Kawoosh {
         let Some(since) = self.moments.dirty_since else {
             return;
         };
-        let text_pending = self.moments.deltas.values().any(|d| d.text.is_some());
+        let text_pending = self
+            .moments
+            .pending
+            .borrow()
+            .deltas
+            .values()
+            .any(|d| d.text.is_some());
         let quiet = now.duration_since(self.moments.changed_at) >= self.moments.quiet;
         let lagging = now.duration_since(since) >= LAG;
         if force || quiet || lagging || text_pending {
@@ -460,31 +506,48 @@ impl Kawoosh {
         let Some(store) = self.store.clone() else {
             return;
         };
-        if self.moments.deltas.is_empty() && self.moments.ring.is_empty() {
+        if self.moments.pending.borrow().deltas.is_empty()
+            && self.moments.pending.borrow().ring.is_empty()
+        {
             self.moments.dirty_since = None;
             return;
         }
         // A file row's meta is its caret line as of now, for the open
         // ones; a text over the cap is not written.
-        let keys: Vec<MomentKey> = self.moments.deltas.keys().cloned().collect();
+        let keys: Vec<MomentKey> = self
+            .moments
+            .pending
+            .borrow()
+            .deltas
+            .keys()
+            .cloned()
+            .collect();
         for k in keys {
             if k.kind == "file"
                 && let Some(id) = self.buffer_of_subject(&k)
                 && let Some(meta) = self.line_meta(id)
             {
-                self.moments.deltas.get_mut(&k).unwrap().meta = Some(meta);
+                self.moments.set_meta(k, meta);
             }
         }
-        let deltas: Vec<(MomentKey, MomentDelta)> = self
-            .moments
-            .deltas
-            .iter()
-            .map(|(k, d)| (k.clone(), d.clone()))
-            .collect();
-        match store.flush_moments(&deltas, &self.moments.ring, RECENT_MAX) {
+        let (deltas, ring): (Vec<(MomentKey, MomentDelta)>, Vec<RingRow>) = {
+            let p = self.moments.pending.borrow();
+            (
+                p.deltas
+                    .iter()
+                    .map(|(k, d)| (k.clone(), d.clone()))
+                    .collect(),
+                p.ring.clone(),
+            )
+        };
+        match store.flush_moments(&deltas, &ring, RECENT_MAX) {
             Ok(()) => {
-                self.moments.deltas.clear();
-                self.moments.ring.clear();
+                // Cleared only now, after the upsert returned: nothing
+                // is dropped and nothing doubled.
+                let mut p = self.moments.pending.borrow_mut();
+                p.deltas.clear();
+                p.ring.clear();
+                drop(p);
                 self.moments.dirty_since = None;
                 self.moments.changed += 1;
                 self.evict_moments();
@@ -549,30 +612,39 @@ impl Kawoosh {
         let days = self.keep_days(KEEP_DAYS, Some(LEGACY_KEEP_DAYS));
         let text_days = self.keep_days(TEXT_KEEP_DAYS, None);
         let t = now();
-        let mut dropped = 0;
+        let (mut dropped, mut texts) = (0, 0);
         for r in store.moments(&MomentQuery::default()) {
-            let limit = if r.key.kind == "text" {
-                text_days
-            } else {
-                days
-            };
+            let text = r.key.kind == "text";
+            let limit = if text { text_days } else { days };
             let Some(d) = limit else { continue };
             if r.last_at >= t - (d * 86_400) as i64 {
                 continue;
             }
             if self.forget_moment_row(&r, true) {
-                dropped += 1;
+                if text {
+                    texts += 1;
+                } else {
+                    dropped += 1;
+                }
             }
         }
+        let mut said = Vec::new();
         if dropped > 0 {
-            self.notify(
-                Level::Info,
-                format!(
-                    "{dropped} moment{} unattended for {} days forgotten ({KEEP_DAYS})",
-                    if dropped == 1 { "" } else { "s" },
-                    days.unwrap_or(0)
-                ),
-            );
+            said.push(format!(
+                "{dropped} moment{} unattended for {} days ({KEEP_DAYS})",
+                if dropped == 1 { "" } else { "s" },
+                days.unwrap_or(0)
+            ));
+        }
+        if texts > 0 {
+            said.push(format!(
+                "{texts} text{} unattended for {} days ({TEXT_KEEP_DAYS})",
+                if texts == 1 { "" } else { "s" },
+                text_days.unwrap_or(0)
+            ));
+        }
+        if !said.is_empty() {
+            self.notify(Level::Info, format!("forgotten: {}", said.join("; ")));
         }
         self.evict_moments();
     }
@@ -721,7 +793,8 @@ impl Kawoosh {
         let Some(store) = self.store.clone() else {
             return Err("no store".into());
         };
-        let known = store.moment(key).is_some() || self.moments.deltas.contains_key(key);
+        let known =
+            store.moment(key).is_some() || self.moments.pending.borrow().deltas.contains_key(key);
         if !known {
             return Err(format!("no {} moment {}", key.kind, key.subject));
         }
@@ -758,8 +831,37 @@ impl Kawoosh {
             .position(|m| text_key(&m.text).subject == key.subject);
         if let Some(i) = at {
             self.ed.memory.forget(i);
-            self.moments.memory_seen = self.ed.memory.version;
         }
+        self.settle_memory();
+    }
+
+    /// The working memory as it stands taken as seen: what moved it
+    /// was not a text taken — a forget, a recall, the seed at launch —
+    /// so the next tick counts no yank for it.
+    pub(crate) fn settle_memory(&mut self) {
+        self.moments.memory_seen = self.ed.memory.version;
+        self.moments.head_seen = self
+            .ed
+            .memory
+            .head()
+            .map(|m| (text_key(&m.text).subject, m.at));
+    }
+
+    /// A text recalled to the register (the pane's `y` and `⏎`,
+    /// `kawoosh.recall`): the text attended again, its origin's yanks
+    /// left alone.
+    pub(crate) fn note_recall(&mut self) {
+        if let Some(m) = self.ed.memory.head() {
+            let key = text_key(&m.text);
+            let known = self
+                .store
+                .as_ref()
+                .is_some_and(|s| s.moment(&key).is_some());
+            if known {
+                self.moments.visit(key);
+            }
+        }
+        self.settle_memory();
     }
 
     /// At the store's open: the working memory seeded with the `text`
@@ -805,12 +907,7 @@ impl Kawoosh {
                 at: Instant::now().checked_sub(age).unwrap_or_else(Instant::now),
             });
         }
-        self.moments.memory_seen = self.ed.memory.version;
-        self.moments.head_seen = self
-            .ed
-            .memory
-            .head()
-            .map(|m| (text_key(&m.text).subject, m.at));
+        self.settle_memory();
     }
 
     /// `:memory clear[!]`: every moment, ring row and history goes and
@@ -844,8 +941,9 @@ impl Kawoosh {
         }
         if kept == 0 {
             let _ = store.clear_moments();
-            self.moments.deltas.clear();
-            self.moments.ring.clear();
+            let mut p = self.moments.pending.borrow_mut();
+            p.deltas.clear();
+            p.ring.clear();
         }
         if let Err(e) = store.vacuum() {
             log::warn!("vacuum: {e}");
@@ -874,65 +972,32 @@ impl Kawoosh {
             .as_ref()
             .map(|s| s.moments(q))
             .unwrap_or_default();
-        for (k, d) in &self.moments.deltas {
-            if q.kind.is_some_and(|kind| kind != k.kind)
-                || q.workspace.is_some_and(|w| w != k.workspace)
-                || q.subject.is_some_and(|s| s != k.subject)
-                || q.pinned
-            {
-                continue;
-            }
-            match rows.iter_mut().find(|r| r.key == *k) {
-                Some(r) => {
-                    r.visits += d.visits;
-                    r.edits += d.edits;
-                    r.yanks += d.yanks;
-                    r.dwell_ms += d.dwell_ms;
-                    r.last_at = r.last_at.max(d.last_at);
-                    if let Some(m) = &d.meta {
-                        r.meta = m.clone();
-                    }
-                }
-                None => {
-                    if q.since.is_some_and(|t| d.last_at < t) {
-                        continue;
-                    }
-                    rows.push(MomentRow {
-                        key: k.clone(),
-                        first_at: d.first_at,
-                        last_at: d.last_at,
-                        visits: d.visits,
-                        dwell_ms: d.dwell_ms,
-                        edits: d.edits,
-                        yanks: d.yanks,
-                        pinned: 0,
-                        meta: d.meta.clone().unwrap_or_else(|| "{}".into()),
-                        text_len: d.text.as_ref().map(Vec::len),
-                        text_head: d.text.as_ref().map(|t| {
-                            String::from_utf8_lossy(t)
-                                .lines()
-                                .next()
-                                .unwrap_or("")
-                                .to_string()
-                        }),
-                    });
-                }
-            }
-        }
-        if !q.pinned {
-            rows.sort_by_key(|r| std::cmp::Reverse(r.last_at));
-        }
-        if q.limit > 0 {
-            rows.truncate(q.limit);
-        }
+        fold_pending(&mut rows, &self.moments.pending.borrow(), q);
         rows
     }
 
-    /// The ring, newest first, the pending rows first.
-    pub(crate) fn recent_rows(&self, limit: usize) -> Vec<RingRow> {
-        let mut out: Vec<RingRow> = self.moments.ring.iter().rev().cloned().collect();
+    /// The ring, newest first, the pending rows first; under
+    /// `workspace`, the rows made there and the texts (a text is under
+    /// none).
+    pub(crate) fn recent_rows(&self, limit: usize, workspace: Option<&str>) -> Vec<RingRow> {
+        let mut out: Vec<RingRow> = self
+            .moments
+            .pending
+            .borrow()
+            .ring
+            .iter()
+            .rev()
+            .cloned()
+            .collect();
         if let Some(store) = &self.store {
-            out.extend(store.recent(limit));
+            out.extend(store.recent(if workspace.is_some() {
+                RECENT_MAX
+            } else {
+                limit
+            }));
+        }
+        if let Some(ws) = workspace {
+            out.retain(|r| r.key.workspace == ws || r.key.kind == "text");
         }
         if limit > 0 {
             out.truncate(limit);
@@ -998,13 +1063,15 @@ impl Kawoosh {
         })
     }
 
-    /// The pins, in pin order.
+    /// The workspace's pins, in pin order (Decision 5: harpoon is
+    /// per project).
     pub(crate) fn pins(&self) -> Vec<MomentRow> {
         self.store
             .as_ref()
             .map(|s| {
                 s.moments(&MomentQuery {
                     pinned: true,
+                    workspace: Some(self.moments.workspace()),
                     ..Default::default()
                 })
             })

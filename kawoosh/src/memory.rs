@@ -10,7 +10,11 @@
 //! disk as a diff (what the `:history` pane was); **recent** — the ring,
 //! one row per transition, newest at the top, so a morning reads as a
 //! list; **commands**, **searches**, **pins**, **all**. `<Tab>` cycles
-//! them; `:memory files` opens on one.
+//! them; `:memory files` opens on one. Every view but **all** is the
+//! workspace's (memory.md Decision 2): the rows made under the
+//! outermost `.kawoosh` root above the cwd, or outside any when there
+//! is none; **all** is every row there is, whatever root it was made
+//! under.
 //!
 //! The `"` register is the texts' head, so that view is the register's
 //! past: anything that passed through the hands can be put again, and
@@ -439,18 +443,21 @@ impl Kawoosh {
         match view {
             View::Texts => (0..self.ed.memory.len()).rev().map(Row::Text).collect(),
             View::Recent => self
-                .recent_rows(ROWS_MAX)
+                .recent_rows(ROWS_MAX, Some(self.moments.workspace()))
                 .into_iter()
                 .map(Row::Recent)
                 .collect(),
             View::Files => {
+                let ws = self.moments.workspace();
                 let mut rows = self.moment_rows(&MomentQuery {
                     kind: Some("file"),
+                    workspace: Some(ws),
                     limit: ROWS_MAX,
                     ..Default::default()
                 });
                 rows.extend(self.moment_rows(&MomentQuery {
                     kind: Some("scratch"),
+                    workspace: Some(ws),
                     limit: ROWS_MAX,
                     ..Default::default()
                 }));
@@ -460,6 +467,7 @@ impl Kawoosh {
             View::Commands => {
                 let rows = self.moment_rows(&MomentQuery {
                     kind: Some("command"),
+                    workspace: Some(self.moments.workspace()),
                     limit: ROWS_MAX,
                     ..Default::default()
                 });
@@ -468,16 +476,14 @@ impl Kawoosh {
             View::Searches => {
                 let rows = self.moment_rows(&MomentQuery {
                     kind: Some("search"),
+                    workspace: Some(self.moments.workspace()),
                     limit: ROWS_MAX,
                     ..Default::default()
                 });
                 self.moment_rows_of(rows)
             }
             View::Pins => {
-                let rows = self.moment_rows(&MomentQuery {
-                    pinned: true,
-                    ..Default::default()
-                });
+                let rows = self.pins();
                 self.moment_rows_of(rows)
             }
             View::All => {
@@ -631,6 +637,7 @@ impl Kawoosh {
         if !self.ed.memory.recall(i) {
             return;
         }
+        self.note_recall();
         self.memory_pane.cursor = 0;
         let Some((pane, view)) = self.memory_target() else {
             self.ed.message = "no editor pane to put it in".into();
@@ -646,6 +653,7 @@ impl Kawoosh {
         if !self.ed.memory.recall(i) {
             return;
         }
+        self.note_recall();
         self.memory_pane.cursor = 0;
         let head = self
             .ed
@@ -773,17 +781,24 @@ impl Kawoosh {
         };
         match row {
             Row::Text(t) => {
+                // The store's row and the working memory's together
+                // (`forget_moment` takes both, and settles the memory
+                // so the text now at the head is not counted as taken
+                // again); without a store the memory's alone.
                 let key = self
                     .ed
                     .memory
                     .moments()
                     .get(t)
                     .map(|m| crate::moments::text_key(&m.text));
-                self.ed.memory.forget(t);
-                if let Some(key) = key
-                    && self.store.is_some()
-                {
-                    let _ = self.forget_moment(&key);
+                match key {
+                    Some(key) if self.store.is_some() => {
+                        let _ = self.forget_moment(&key);
+                    }
+                    _ => {
+                        self.ed.memory.forget(t);
+                        self.settle_memory();
+                    }
                 }
             }
             Row::Moment { row, .. } => {
@@ -1040,6 +1055,17 @@ impl Kawoosh {
                     })
                     .count();
                 let mut s = format!("{n} {}", v.name());
+                if v != View::All {
+                    let ws = self.moments.workspace();
+                    s.push_str(&format!(
+                        " · {}",
+                        if ws.is_empty() {
+                            "outside any workspace".to_string()
+                        } else {
+                            format!("in {}", kawoosh_systems::fs::display(Path::new(ws)))
+                        }
+                    ));
+                }
                 if drafts > 0 {
                     s.push_str(&format!(
                         " · {drafts} draft{}",
@@ -1483,7 +1509,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("memory")
                 .args(Args::new(&[ArgKind::Text]))
-                .doc("the memory pane: texts, files, recent, commands, searches, pins, all"),
+                .doc("the memory pane: texts, files, recent, commands, searches, pins (the workspace's), all (every workspace's)"),
             |k, ctx| match ctx.args.first().map(String::as_str) {
                 Some(name) => match View::parse(name) {
                     Some(v) => k.toggle_memory_panel(Some(v)),

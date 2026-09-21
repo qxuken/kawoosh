@@ -233,10 +233,10 @@ objects, or any other character on both sides.
 | `<leader>/` | the buffer's lines |
 | `<leader>.` | the smart picker: the buffers, then the files opened before, then the walk |
 | `<leader>sp` | the commands (the palette): every spec, what it needs where the keyboard came from, `<CR>` runs it |
-| `<leader>so` | the files attended before, ranked by the memory (the picker's `recent`) |
+| `<leader>so` | the workspace's files attended before, ranked by the memory (the picker's `recent`) |
 | `<leader>sr` | the last picker again, its query and cursor as they were |
 | `<leader>sm` | the messages |
-| `<leader>sl` | the memory's ring (`:memory recent`): where was I — every subject attended, in order, newest first |
+| `<leader>sl` | the memory's ring (`:memory recent`): where was I — every subject attended in this workspace, in order, newest first |
 | `<leader>ws` `<leader>wr` | save, restore the session |
 | `<leader>cc` | compile |
 | `<leader>ca` | the code actions at the caret (or over the selection), a confirm to choose from; `:lsp action N` runs the Nth |
@@ -246,9 +246,9 @@ objects, or any other character on both sides.
 | `<leader>x` | evaluate the line (the selection, in visual mode) as Lua; the result on the status line, or in a pane when it has lines |
 | `<leader>cd` | the listed directory as the working one (oil's) |
 | `<leader>u` | the undo history |
-| `<leader>p` | the memory pane (`:memory`): texts — what was yanked, deleted or pasted in, to put again — and `<Tab>` through files (with their drafts), recent, commands, searches, pins, all |
-| `<leader>ee` `<leader>ea` | the pinned files (`:memory pins`), pin or unpin the buffer's file |
-| `<leader>e1`…`9` `<A-1>`…`9` | open the Nth pin |
+| `<leader>p` | the memory pane (`:memory`): texts — what was yanked, deleted or pasted in, to put again — and `<Tab>` through files (with their drafts), recent, commands, searches, pins (each the workspace's), all (every workspace's) |
+| `<leader>ee` `<leader>ea` | the workspace's pinned files (`:memory pins`), pin or unpin the buffer's file |
+| `<leader>e1`…`9` `<A-1>`…`9` | open the workspace's Nth pin |
 | `<leader>?` | the which-key for every first key (`:keys`) |
 | `<leader>Q` | quit all |
 | `-` | oil: the file's directory |

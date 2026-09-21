@@ -702,7 +702,11 @@ those too, and either `VACUUM`s the db. A moment aged out
 (`memory.keep_days`, 90; the old `history.keep_days` still read while
 the new key is unset) or evicted (`memory.max_mb`, the histories'
 bytes counted) takes its history with it; a history with unsaved text
-holds its moment, and a moment on show is never aged.
+holds its moment, and a moment on show is never aged. A history is
+the path's where a moment is the path's under a workspace (memory.md
+Decision 2): a path attended under two roots has two rows and one
+history, which goes with the last of them. The pane's views but `all`
+are the workspace's rows.
 
 Every size in the pane is `devtab::Tab`'s — the tokens the devtools
 tabs already read off kui's metrics: the strip, the inset, the cell

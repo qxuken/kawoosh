@@ -721,10 +721,9 @@ fn old_moments_expire_and_broken_rows_degrade() {
             .is_none()
     );
     assert!(
-        app.notes
-            .log
-            .iter()
-            .any(|e| e.text.contains("1 moment unattended for 90 days forgotten")),
+        app.notes.log.iter().any(|e| e
+            .text
+            .contains("forgotten: 1 moment unattended for 90 days")),
         "{:?}",
         app.notes
             .log
