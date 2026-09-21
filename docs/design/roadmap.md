@@ -16,9 +16,9 @@ undo tree and its pane, histories in the store with hot exit, commands
 as specs, the key clusters and which-key, settings in layers, the
 language contract with two dozen grammars, notifications, the `dir`
 file manager through its identity-and-plan design at forty thousand
-entries, and the working memory (2026-09-20). 141 commits, 21
-integration test files in `kawoosh/tests` (22 with the polish batch's
-`normal_mode.rs`, 2026-09-21).
+entries, and the working memory (2026-09-20). 161 commits, 22
+integration test files in `kawoosh/tests` (the polish batch's
+`normal_mode.rs` and the picker's `picker.rs`, 2026-09-21).
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -198,6 +198,27 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   spec's keys, `kawoosh.holds` a fact); `<leader>sr` resumes the last
   picker with its query and cursor; a session does not keep the pane
   (`kawoosh.view`'s `session = false`). `kawoosh/tests/picker.rs`.
+  The rounds after it, the same day: the wheel over the list and the
+  preview; `<A-p>` and `<A-w>` (`picker.preview`, `picker.wrap` —
+  every cell folds under wrap, the rows never squeezed); the pane's
+  height and the list's width beside the preview as `picker.share`
+  and `picker.split`, dragged or keyed, kept for the session; a
+  source's own keys on the row (`<C-x>` in `buffers`, a modified one
+  asked about, `picker.reload`); rows as a kui grid when a source
+  declares `columns`, the widths from the whole list so they hold
+  still (`picker.widths`), the query matched on names first and the
+  rest of the row after — the commands source as the old pane's
+  table; binaries ranked under the text (`picker.binary`); the
+  preview highlighted through `kawoosh.highlight`, a text of no
+  buffer's on the ts thread, and `J` `K` scrolling it; `tools.lua`
+  bundled (git, top, shell, compile, run, a `settings.lua`'s `tools`
+  table through `kawoosh.on_settings`).
+- **Pane resizing from the keyboard** — done 2026-09-21 [keys.md].
+  `<A-S-hjkl>` the focused pane narrower, wider, shorter, taller by
+  a twentieth of its split, COUNT steps, from every pane and mode
+  (`Node::resize`, `pane_chord` taking alt-shift as it takes
+  ctrl-shift); the dock's height when it has the keys. Alt with Shift
+  because Alt alone moves the selection.
 - **Pinned files (harpoon)** — open [todo, keys.md]. `<leader>e` the
   list, `<leader>e1`…`9` and `<A-1>`…`9` to jump. Not in the picker's
   round: memory.md decided a pin is a flag on a moment (its Decision
@@ -417,8 +438,10 @@ then breadth.
    onto it. Pinned files (`<leader>e`) in the same round if the list
    block came out clean, the next one if not.~~ Landed 2026-09-21
    (`kawoosh/lua/picker.lua`, `lua/src/fuzzy.rs`, keys.md's `<leader>`
-   groups); see the panes track. Pinned files wait for the memory's
-   third round, where memory.md put them.
+   groups); see the panes track, and its rounds after — the toggles,
+   the splits, the columns, the highlighted preview, the pane keys.
+   Pinned files wait for the memory's third round, where memory.md
+   put them.
 5. **Config reaches kui: fonts and tokens.** `font.*` settings, syntax
    tokens from config, `set_theme`; trusted `.kawoosh/init.lua` in the
    same round since it is the same file's other half.
