@@ -33,7 +33,11 @@
 -- `<A-p>` shows or hides the preview and `<A-w>` folds a row's text to
 -- the list's width or cuts it — the `picker.preview` and `picker.wrap`
 -- settings, flipped for the session (`settings.lua` sets them for
--- good). A source's own keys ride on the row: `<C-x>` in `buffers`
+-- good). The pane opens at `picker.share` of the height and the list
+-- takes `picker.split` of its width beside the preview: `<A-k>`
+-- `<A-j>` make the pane taller and shorter, `<A-h>` `<A-l>` move the
+-- divider between list and preview, which drags too — the session's,
+-- as the two above. A source's own keys ride on the row: `<C-x>` in `buffers`
 -- closes the row's buffer, asking first when it has unsaved changes.
 -- A source with `columns` draws its rows as a grid, the cells lined up
 -- (the commands: name, key, what it does). The pane is not kept by a
@@ -430,6 +434,18 @@ end
 local function wrapping() return kawoosh.opt("picker.wrap") == true end
 local function previewing() return kawoosh.opt("picker.preview") ~= false end
 
+-- A fraction setting, clamped; `picker.share` the pane's height and
+-- `picker.split` the list's width beside the preview.
+local function fraction(name, default)
+  local v = tonumber(kawoosh.opt(name)) or default
+  return math.max(0.1, math.min(0.9, v))
+end
+local function share() return fraction("picker.share", 0.5) end
+local function split() return fraction("picker.split", 0.5) end
+
+-- The width of the divider between the list and the preview.
+local DIVIDER = 4
+
 -- How many lines row `i` takes: one, or with wrapping what its text
 -- folds to at the list's width (`P.cols` characters, an estimate from
 -- the mono size — kui lays the real lines out and clips).
@@ -694,7 +710,7 @@ function picker.open(what, opts)
   local ctx = { buffer = kawoosh.buf.current(), cwd = fs.cwd() }
   P = { name = name, src = src, ctx = ctx, items = {}, hits = {}, cursor = opts.cursor or 1, top = 1,
         query = nil, loading = false, rows = 20 }
-  kawoosh.view_open(VIEW, { below = true, share = 0.5 })
+  kawoosh.view_open(VIEW, { below = true, share = share() })
   kawoosh.field_set(VIEW, FIELD, opts.query or "")
   kawoosh.field_focus(VIEW, FIELD)
   load_items()
@@ -763,13 +779,19 @@ kawoosh.view(VIEW, function(ctx)
     refilter(q)
     if cursor then P.cursor = cursor ensure_visible() end
   end
+  -- The pane's height as it is — a divider drag's — kept as the
+  -- setting, so the picker opens next at the size it was left.
+  if ctx.share and math.abs(ctx.share - share()) > 0.005 then
+    kawoosh.opt("picker.share", math.max(0.1, math.min(0.9, ctx.share)))
+  end
   local h = (ctx.height or 0) > 0 and ctx.height or 400
   local w = (ctx.width or 0) > 0 and ctx.width or 800
   local preview_on = previewing()
   P.wrap = wrapping()
-  -- The list's width in characters, for the wrap estimate: half the
-  -- pane beside a preview, the whole of it without.
-  P.list_w = preview_on and w / 2 or w
+  P.split = split()
+  -- The list's width: its share of the pane beside a preview, the
+  -- whole of it without; and in characters, for the wrap estimate.
+  P.list_w = preview_on and math.floor((w - DIVIDER) * P.split) or w
   P.cols = math.floor((P.list_w - 16) / (SIZE * 0.6))
   local rows = math.max(math.floor((h - TITLE_H - ROW_H - 4) / ROW_H), 1)
   P.rows = rows
@@ -801,6 +823,7 @@ kawoosh.view(VIEW, function(ctx)
     list[#list + 1] = row { pad = { x = 8, y = 4 }, text((P.query ~= "" and "no matches") or P.src.empty or "nothing here", { size = SIZE, color = t.muted }) }
   end
   local body = row { width = "grow", height = "grow", gap = 0, list }
+  if preview_on then list.width = P.list_w end
   local hit = P.hits[P.cursor]
   if preview_on then
     local pv
@@ -819,6 +842,10 @@ kawoosh.view(VIEW, function(ctx)
     end
     local prows = math.max(math.floor((h - TITLE_H - ROW_H - 4 - 16 - 2 * PREVIEW_ROW) / PREVIEW_ROW), 1)
     P.prows = prows
+    -- The divider: dragged, the list's share follows the pointer.
+    body[#body + 1] = column { key = "picker divider", width = DIVIDER, height = "grow",
+      bg = P.dragging and t.accent or t.border, hover_bg = t.accent, cursor = "ewResize",
+      on_drag = { kind = "divide" } }
     body[#body + 1] = picker.preview(ctx, pv, prows, P.pv_top)
   end
 
@@ -827,6 +854,19 @@ end, function(ev)
   if not P then return end
   if ev.kind == "scroll" then
     scroll(ev.tag and ev.tag.kind, ev.dy or 0)
+  elseif ev.kind == "drag" then
+    -- The divider under the pointer: its x over the body's width is
+    -- the list's share, kept for the session.
+    if ev.phase == "end" then
+      P.dragging = nil
+    else
+      P.dragging = true
+      local par = ev.parent or {}
+      if par.w and par.w > 0 then
+        local at = ((ev.x or 0) - (par.x or 0)) / par.w
+        kawoosh.opt("picker.split", math.max(0.1, math.min(0.9, at)))
+      end
+    end
   elseif ev.kind == "row" then
     kawoosh.field_focus(VIEW, FIELD)
     if ev.i == P.cursor then pick() else P.cursor = ev.i ensure_visible() end
@@ -862,6 +902,19 @@ on("preview", function() kawoosh.opt("picker.preview", not previewing()) end,
   "show the cursor's row beside the list, or not (the `picker.preview` setting, for the session)")
 on("wrap", function() kawoosh.opt("picker.wrap", not wrapping()) end,
   "fold a row's text to the list's width, or cut it (the `picker.wrap` setting, for the session)")
+-- The pane's height and the list's width, stepped: the settings for
+-- the session, the pane resized at once.
+local function step_share(by)
+  local s = math.max(0.1, math.min(0.9, share() + by))
+  kawoosh.opt("picker.share", s)
+  kawoosh.view_open(VIEW, { share = s })
+end
+on("taller", function() step_share(0.05) end, "the pane taller (the `picker.share` setting, for the session)")
+on("shorter", function() step_share(-0.05) end, "the pane shorter (the `picker.share` setting, for the session)")
+on("list wider", function() kawoosh.opt("picker.split", math.min(0.9, split() + 0.05)) end,
+  "the list wider beside the preview (the `picker.split` setting, for the session)")
+on("list narrower", function() kawoosh.opt("picker.split", math.max(0.1, split() - 0.05)) end,
+  "the list narrower beside the preview (the `picker.split` setting, for the session)")
 kawoosh.command("picker key", function(ctx)
   if not P then return end
   local key = ctx.args[1]
@@ -895,6 +948,10 @@ kawoosh.map("n", "G", "picker last", at)
 for _, mode in ipairs { "i", "n" } do
   kawoosh.map(mode, "<A-p>", "picker preview", at)
   kawoosh.map(mode, "<A-w>", "picker wrap", at)
+  kawoosh.map(mode, "<A-k>", "picker taller", at)
+  kawoosh.map(mode, "<A-j>", "picker shorter", at)
+  kawoosh.map(mode, "<A-l>", "picker list wider", at)
+  kawoosh.map(mode, "<A-h>", "picker list narrower", at)
 end
 
 -- `:picker [SOURCE]`: bare, the smart one.

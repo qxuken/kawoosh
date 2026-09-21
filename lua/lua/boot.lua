@@ -184,7 +184,8 @@ end
 -- kawoosh.view(name, fn[, on_event[, opts]]): a pane whose content is
 -- what `fn` returns — a kui table tree (row, column, text, edit,
 -- button, ...). `fn(ctx)` gets { pane = id, focused = bool, width =,
--- height =, env = kui's env }. Events from the tree's on_click / on_key
+-- height =, share = (the pane's fraction of the split it is in, nil
+-- when it is the whole window), env = kui's env }. Events from the tree's on_click / on_key
 -- payloads reach `on_event(ev)`. `opts.session = false` keeps the view
 -- out of a session: a picker is asked for again, not brought back.
 function kawoosh.view(name, fn, on_event, opts)
@@ -281,8 +282,8 @@ end
 --
 -- kawoosh.view_open(name[, { focus = false, below = true, share = 0.5 }])
 -- puts a Lua view in a split — beside, or below with `below`, taking
--- `share` of the room — or focuses its pane; `focus = false` leaves
--- the keyboard where it is. kawoosh.view_close(name) closes that pane
+-- `share` of the room — or focuses its pane, resized to `share` when
+-- one is given; `focus = false` leaves the keyboard where it is. kawoosh.view_close(name) closes that pane
 -- and hands the keyboard back to the pane it came from;
 -- kawoosh.view_toggle(name[, opts]) does one or the other.
 --
@@ -452,7 +453,7 @@ function view(env, slot)
   -- one-line input drawn through the editor (kui.md Decision 12), the
   -- node to put in the tree; `ctx.field_text("q")` is its line.
   local ctx = { pane = pane, focused = params.focused, width = params.width,
-                height = params.height, env = env, name = name }
+                height = params.height, share = params.share, env = env, name = name }
   ctx.field = function(opts) return field_node(name, env, opts) end
   ctx.field_text = function(field) return kawoosh.field_text(name, field) end
   local ok, tree = pcall(fn, ctx)

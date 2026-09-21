@@ -1583,6 +1583,10 @@ impl kui::App for Kawoosh {
                 _ => {
                     if let Some(pane) = pane_of(p) {
                         self.on_drag(pane, p);
+                    } else if ev.slot.is_some() {
+                        // A Lua view's own `on_drag`: its handler ran,
+                        // what it asked for is applied now.
+                        self.drain_lua();
                     }
                 }
             },

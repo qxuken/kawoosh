@@ -109,6 +109,24 @@ impl Node {
         }
     }
 
+    /// The share of its split that pane `target` takes: the ratio
+    /// when it is the first half, the rest when the second; None for
+    /// a pane that is the whole tree.
+    pub fn share_of(&self, target: PaneId) -> Option<f32> {
+        match self {
+            Node::Pane(_) => None,
+            Node::Split { ratio, a, b, .. } => {
+                if matches!(**a, Node::Pane(id) if id == target) {
+                    Some(*ratio)
+                } else if matches!(**b, Node::Pane(id) if id == target) {
+                    Some(1.0 - *ratio)
+                } else {
+                    a.share_of(target).or_else(|| b.share_of(target))
+                }
+            }
+        }
+    }
+
     /// The split at `path` ("a"/"b" steps from the root).
     pub fn ratio_mut(&mut self, path: &str) -> Option<&mut f32> {
         match self {

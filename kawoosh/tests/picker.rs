@@ -19,6 +19,14 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
     CWD.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Runs Lua that may `assert`, and fails the test when it did: a
+/// Lua error lands in the message line, which `run_lua_source` alone
+/// would let pass.
+fn lua(app: &mut Kawoosh, src: &str) {
+    app.run_lua_source("t", &format!("{src}\nkawoosh.echo('lua ok')"));
+    assert_eq!(app.ed.message, "lua ok", "the Lua failed: {src}");
+}
+
 /// The cursor's row, as the picker says it.
 fn cursor_text(app: &mut Kawoosh) -> String {
     app.run_lua_source(
@@ -704,12 +712,15 @@ fn resume_sessions_and_a_plugins_own_source() {
     );
     d.keys(&mut app, "gr");
     d.ctrl(&mut app, "x");
-    app.run_lua_source("t", r#"assert(starred == "green", tostring(starred))"#);
+    lua(&mut app, r#"assert(starred == "green", tostring(starred))"#);
     assert!(picker_open(&app), "a source's key leaves the picker up");
     d.ctrl(&mut app, "t");
     d.frame(&mut app);
     assert!(!picker_open(&app));
-    app.run_lua_source("t", r#"assert(picked == "green tab", tostring(picked))"#);
+    lua(
+        &mut app,
+        r#"assert(picked == "green tab", tostring(picked))"#,
+    );
     // Opened whole, with no name: the same.
     app.run_lua_source(
         "t",
@@ -719,7 +730,10 @@ fn resume_sessions_and_a_plugins_own_source() {
     d.frame(&mut app);
     assert_eq!(rows(&d), ["one"]);
     d.key(&mut app, "enter", KeyMods::default());
-    app.run_lua_source("t", r#"assert(picked == "adhoc one", tostring(picked))"#);
+    lua(
+        &mut app,
+        r#"assert(picked == "adhoc one", tostring(picked))"#,
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
     std::fs::remove_dir_all(dir.with_extension("db")).ok();
@@ -790,7 +804,10 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     );
     d.frame(&mut app);
     assert!(!texts(&d).iter().any(|s| s == "long"), "hidden");
-    app.run_lua_source("t", r#"assert(kawoosh.opt("picker.preview") == false)"#);
+    lua(
+        &mut app,
+        r#"assert(kawoosh.opt("picker.preview") == false)"#,
+    );
     let wide = d.rect_of("row many/f00.txt").unwrap().2;
     assert!(wide > w * 1.5, "the list takes the room: {wide} vs {w}");
     d.key(
@@ -816,7 +833,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         },
     );
     d.frame(&mut app);
-    app.run_lua_source("t", r#"assert(kawoosh.opt("picker.wrap") == true)"#);
+    lua(&mut app, r#"assert(kawoosh.opt("picker.wrap") == true)"#);
     let (_, ly, _, tall) = d.rect_of(&format!("row {long}")).expect("the long row");
     assert!(tall > ROW_H * 2.0, "folded to several lines: {tall}");
     let shown = rows(&d);
@@ -847,6 +864,92 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
             ..Default::default()
         },
     );
+    // The pane's height and the list's width beside the preview:
+    // `<A-k>` makes the pane taller and `<A-l>` the list wider, each a
+    // setting for the session; the divider between them drags.
+    let alt = |name: &str, app: &mut Kawoosh, d: &mut Drive| {
+        d.key(
+            app,
+            name,
+            KeyMods {
+                alt: true,
+                ..Default::default()
+            },
+        );
+        d.frame(app);
+    };
+    let (_, y0, w0, _) = d.rect_of("row README.md").unwrap();
+    alt("k", &mut app, &mut d);
+    let (_, y1, _, _) = d.rect_of("row README.md").unwrap();
+    assert!(
+        y1 < y0 - 20.0,
+        "the pane taller, its rows higher up: {y1} < {y0}"
+    );
+    lua(
+        &mut app,
+        r#"assert(math.abs(kawoosh.opt("picker.share") - 0.55) < 0.001)"#,
+    );
+    alt("j", &mut app, &mut d);
+    let (_, y2, _, _) = d.rect_of("row README.md").unwrap();
+    assert!((y2 - y0).abs() < 1.0, "and back: {y2} vs {y0}");
+    alt("l", &mut app, &mut d);
+    let (_, _, w1, _) = d.rect_of("row README.md").unwrap();
+    assert!(w1 > w0 + 20.0, "the list wider: {w1} > {w0}");
+    lua(
+        &mut app,
+        r#"assert(math.abs(kawoosh.opt("picker.split") - 0.55) < 0.001)"#,
+    );
+    alt("h", &mut app, &mut d);
+    let (_, _, w2, _) = d.rect_of("row README.md").unwrap();
+    assert!((w2 - w0).abs() < 1.0, "and back: {w2} vs {w0}");
+    let (dx, dy, dw, dh) = d.rect_of("picker divider").expect("the divider");
+    assert!(
+        (dx - w0).abs() < 1.0,
+        "the divider after the list: {dx} vs {w0}"
+    );
+    d.drag(
+        &mut app,
+        (dx + dw / 2.0, dy + dh / 2.0),
+        (dx + dw / 2.0 - 200.0, dy + dh / 2.0),
+    );
+    d.frame(&mut app);
+    let (_, _, w3, _) = d.rect_of("row README.md").unwrap();
+    assert!(w3 < w0 - 150.0, "dragged narrower: {w3} < {w0}");
+    lua(
+        &mut app,
+        r#"assert(kawoosh.opt("picker.split") < 0.35, kawoosh.opt("picker.split"))"#,
+    );
+    app.run_lua_source("t", r#"kawoosh.opt("picker.split", 0.5)"#);
+    // The pane's own divider dragged with the mouse: the height it
+    // was left at is the setting, so the picker opens there next.
+    let (px, py, pw, ph) = d.rect_of("divider").expect("the pane divider");
+    let (_, before, _, _) = d.rect_of("row README.md").unwrap();
+    d.drag(
+        &mut app,
+        (px + pw / 2.0, py + ph / 2.0),
+        (px + pw / 2.0, py + ph / 2.0 - 100.0),
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let (_, dragged, _, _) = d.rect_of("row README.md").unwrap();
+    assert!(
+        dragged < before - 80.0,
+        "the rows higher up: {dragged} < {before}"
+    );
+    lua(
+        &mut app,
+        r#"assert(kawoosh.opt("picker.share") > 0.6, kawoosh.opt("picker.share"))"#,
+    );
+    d.ctrl(&mut app, "c");
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let (_, again, _, _) = d.rect_of("row README.md").unwrap();
+    assert!(
+        (again - dragged).abs() < 2.0,
+        "opened at the dragged height: {again} vs {dragged}"
+    );
+    app.run_lua_source("t", r#"kawoosh.opt("picker.share", 0.5)"#);
     d.ctrl(&mut app, "c");
     // The tools: the bundled ones, and `compile` once the setting names it.
     d.keys(&mut app, " tt");

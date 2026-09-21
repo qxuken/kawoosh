@@ -244,7 +244,12 @@ scrolls the list, and the preview. `<A-p>` hides the preview and shows
 it again, `<A-w>` folds a row's text to the list's width so the whole
 of a long path shows — the `picker.preview` and `picker.wrap`
 settings, flipped for the session (a `settings.lua` sets them for
-good). A source may put keys of its own on the row: `<C-x>` in the
+good). The pane opens at `picker.share` of the height and the list
+takes `picker.split` of the width beside the preview: `<A-k>` `<A-j>`
+make the pane taller and shorter, `<A-h>` `<A-l>` move the divider
+between list and preview, and both dividers drag — each change is the
+setting for the session, so the picker opens next where it was left.
+A source may put keys of its own on the row: `<C-x>` in the
 buffers picker closes the row's buffer as `:bd` does, asking first
 when it has unsaved changes, and the list is read again. The commands
 picker draws its rows in columns — the name with its alias, the key,

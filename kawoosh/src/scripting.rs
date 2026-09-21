@@ -749,6 +749,13 @@ impl Kawoosh {
                 if focus {
                     self.layout.focus(p);
                 }
+                // A share given for a pane already open resizes it.
+                if let Some(share) = share
+                    && let Some(path) = self.layout.tab().root.split_of(p)
+                    && let Some(r) = self.layout.tab_mut().root.ratio_mut(&path)
+                {
+                    *r = (1.0 - share).clamp(0.1, 0.9);
+                }
             }
             None => {
                 let was = self.layout.focused();
@@ -984,6 +991,16 @@ impl Kawoosh {
             (
                 "height",
                 Value::Float(rect.map(|r| r.h as f64).unwrap_or(0.0)),
+            ),
+            // The pane's share of the split it sits in, as
+            // `view_open`'s `share` gave it, so a view can keep what a
+            // divider drag made it.
+            (
+                "share",
+                match self.layout.tab().root.share_of(pane) {
+                    Some(r) => Value::Float(r as f64),
+                    None => Value::Null,
+                },
             ),
         ]);
         let tag = Value::map([
