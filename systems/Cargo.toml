@@ -18,3 +18,4 @@ serde.workspace = true
 kawoosh-languages.workspace = true
 tree-sitter.workspace = true
 rusqlite.workspace = true
+ignore = "0.4"

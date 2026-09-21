@@ -106,7 +106,6 @@ pub struct Kawoosh {
     pub history_pane: crate::history_pane::HistoryPanel,
     /// The working memory pane (`:memory`): the register's past.
     pub memory_pane: crate::memory::MemoryPanel,
-    pub commands_pane: crate::commands_pane::CommandsPanel,
     /// The keymap version and, at it, the first words of the commands
     /// keys run — the command line ranks them after the typed ones.
     pub(crate) bound_names: (u64, std::collections::HashSet<String>),
@@ -218,7 +217,6 @@ impl Kawoosh {
             undo: Default::default(),
             history_pane: Default::default(),
             memory_pane: Default::default(),
-            commands_pane: Default::default(),
             bound_names: Default::default(),
             hud: false,
             flash_alarm: kawoosh_systems::Alarm::spawn(wake.clone()),
@@ -431,6 +429,32 @@ impl Kawoosh {
                         self.drain_lua();
                     }
                 }
+                IoMsg::Walked { token, result } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    if let Some(rt) = self.scripting.rt.clone() {
+                        rt.publish(&self.ed, self.focused_view());
+                        rt.walked(token, result);
+                        self.drain_lua();
+                    }
+                }
+                // A process a plugin spawned: its lines are gathered
+                // for one call after the drain (`flush_proc_lines`).
+                IoMsg::ProcLine { id, line } if self.scripting.procs.contains_key(&id) => {
+                    if let Some(p) = self.scripting.procs.get_mut(&id) {
+                        p.lines.push(line);
+                    }
+                }
+                IoMsg::ProcExit { id, code } if self.scripting.procs.contains_key(&id) => {
+                    self.flush_proc_lines();
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    if let Some(p) = self.scripting.procs.remove(&id)
+                        && let Some(rt) = self.scripting.rt.clone()
+                    {
+                        rt.publish(&self.ed, self.focused_view());
+                        rt.proc_exit(p.token, code);
+                        self.drain_lua();
+                    }
+                }
                 other @ (IoMsg::ProcLine { .. } | IoMsg::ProcExit { .. }) => {
                     self.on_proc_msg(other)
                 }
@@ -543,6 +567,7 @@ impl Kawoosh {
     pub fn wait_for_jobs(&mut self) {
         for _ in 0..12_000 {
             self.drain_io();
+            self.flush_proc_lines();
             if self.pending_jobs == 0 {
                 return;
             }
@@ -961,8 +986,6 @@ impl Kawoosh {
             self.history_key_press(self.layout.focused(), stroke);
         } else if self.layout.focused_content() == Some(Content::Memory) {
             self.memory_key_press(self.layout.focused(), stroke);
-        } else if self.layout.focused_content() == Some(Content::Commands) {
-            self.commands_key_press(self.layout.focused(), stroke);
         }
         self.follow_caret = true;
         self.drain_effects();
@@ -1369,6 +1392,7 @@ impl kui::App for Kawoosh {
         let frame_started = Instant::now();
         let t = Instant::now();
         self.drain_io();
+        self.flush_proc_lines();
         self.sync_settings();
         self.sync_histories(false);
         self.perf.cur.io = ms(t);
@@ -1529,7 +1553,6 @@ impl kui::App for Kawoosh {
             Some("undo") => self.on_undo_click(p),
             Some("history") => self.on_history_click(p),
             Some("memory") => self.on_memory_click(p),
-            Some("commands") => self.on_commands_click(p),
             Some("modifiers") => {
                 let f = |k| p.get(k).and_then(Value::as_bool).unwrap_or(false);
                 self.mods = (f("ctrl"), f("alt"), f("super"), f("shift"));

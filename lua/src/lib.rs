@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+pub mod fuzzy;
+pub use fuzzy::{Hit, Matcher};
+
 use kawoosh_doc::{Buffer, BufferId, Snapshot};
 use std::collections::BTreeSet;
 
@@ -59,8 +62,13 @@ pub enum Msg {
         mode: String,
         keys: String,
     },
-    /// `kawoosh.buf.show(buffer)`: the buffer into the focused pane.
-    ShowBuffer(u64),
+    /// `kawoosh.buf.show(buffer, { split = })`: the buffer into the
+    /// focused pane, or into a new one beside (`vsplit`), below
+    /// (`split`) or in a new tab (`tab`).
+    ShowBuffer {
+        buffer: u64,
+        split: Option<String>,
+    },
     /// `kawoosh.fs.list(path, fn)`: the directory read on a thread of
     /// its own, the answer to `Runtime::listed` under `token` when it
     /// comes (`IoMsg::Listed`).
@@ -68,6 +76,32 @@ pub enum Msg {
         token: u64,
         path: PathBuf,
     },
+    /// `kawoosh.fs.walk(root, fn)`: every file under the root as git
+    /// sees it, walked on a thread of its own, the answer to
+    /// `Runtime::walked` under `token` (`IoMsg::Walked`).
+    Walk {
+        token: u64,
+        root: PathBuf,
+    },
+    /// `kawoosh.spawn(cmd, { cwd, on_lines, on_exit })`: a process run
+    /// through the shell, its output lines handed to `Runtime::proc_lines`
+    /// under `token` as they come, its exit to `Runtime::proc_exit`.
+    Spawn {
+        token: u64,
+        cmd: String,
+        cwd: Option<PathBuf>,
+    },
+    /// `kawoosh.kill(token)`: the process stopped early.
+    Kill(u64),
+    /// `kawoosh.cmdline(text)`: the command line opened with `text` on
+    /// it, to finish and submit.
+    Cmdline(String),
+    /// `kawoosh.run(line)`: a command line run where the keyboard is
+    /// *after* the messages queued before it — `kawoosh.cmd` runs at
+    /// once, in the command that queued it — so a picker can close its
+    /// pane and then run what was picked in the pane that has the
+    /// keyboard back.
+    Run(String),
     /// `kawoosh.recall(i)`: moment `i` of the memory (1 the newest)
     /// made the `"` register.
     Recall(usize),
@@ -80,6 +114,16 @@ pub enum Msg {
     },
     Ex(String),
     Echo(String),
+    /// `kawoosh.open(path, { line =, col =, split = })`: the path
+    /// opened in an editor pane — the focused one, or one split beside
+    /// (`vsplit`), below (`split`) or in a new tab (`tab`) — the caret
+    /// on `line:col` when given.
+    Open {
+        path: PathBuf,
+        line: Option<usize>,
+        col: Option<usize>,
+        split: Option<String>,
+    },
     /// `kawoosh.notify(text, opts)`: a level by name, where to show it
     /// (`toast` / `corner` / `log`, else by the level), a timeout in
     /// milliseconds (0 never), and its actions as `(label, command)`.
@@ -91,7 +135,6 @@ pub enum Msg {
         timeout: Option<f64>,
         actions: Vec<(String, String)>,
     },
-    Open(PathBuf),
     OpenScratch {
         name: String,
         text: String,
@@ -110,20 +153,26 @@ pub enum Msg {
         /// Whether `on_change` is to be told when its text changes.
         watched: bool,
     },
-    /// `kawoosh.view_open(name, { focus = })`: the view in a split, or
-    /// its pane focused; `focus = false` leaves the keyboard where it
-    /// is (a preview beside a listing).
+    /// `kawoosh.view_open(name, { focus =, below =, share = })`: the
+    /// view in a split — beside, or below with `below` — taking
+    /// `share` of the room, or its pane focused; `focus = false` leaves
+    /// the keyboard where it is (a preview beside a listing).
     OpenView {
         name: String,
         focus: bool,
+        below: bool,
+        share: Option<f32>,
     },
     /// `kawoosh.view_close(name)`: the pane showing the view goes.
     CloseView(String),
-    /// `kawoosh.view_toggle(name, { focus = })`: the view's pane closed
-    /// when it is on show, opened in a split when it is not.
+    /// `kawoosh.view_toggle(name, { focus =, below =, share = })`: the
+    /// view's pane closed when it is on show, opened in a split when
+    /// it is not.
     ToggleView {
         name: String,
         focus: bool,
+        below: bool,
+        share: Option<f32>,
     },
     /// `kawoosh.confirm { title, lines, actions, default }`: a question
     /// over the window, its actions as `(label, command)` like a
@@ -231,6 +280,9 @@ pub struct BufSnap {
     pub sels: Vec<(usize, usize)>,
     pub primary: usize,
     pub modified: bool,
+    /// A field's one-line buffer — the prompt's, a query's — which
+    /// `kawoosh.buf.list` leaves out, as `:ls` does.
+    pub field: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -243,6 +295,10 @@ pub struct Published {
     /// Every command's spec, copied when the registry's version moved.
     pub commands: Vec<Spec>,
     pub commands_version: u64,
+    /// Every key bound to each command, `n <leader>cd`, rebuilt when
+    /// the registry or the keymap moved (`kawoosh.commands()`'s `keys`).
+    pub keys: HashMap<String, Vec<String>>,
+    pub keys_version: (u64, u64),
     /// What the shell and plugins published as holding.
     pub facts: BTreeSet<String>,
     /// The current view's field name, when it is one, and whether it
@@ -305,6 +361,8 @@ impl Default for Published {
             settings: Setting::table(),
             commands: Vec::new(),
             commands_version: 0,
+            keys: HashMap::new(),
+            keys_version: (u64::MAX, u64::MAX),
             facts: BTreeSet::new(),
             field: None,
             prompt: false,
@@ -356,12 +414,22 @@ struct Tracked {
 
 type TrackedCell = Rc<RefCell<HashMap<BufferId, Tracked>>>;
 
-/// The callbacks of the jobs out (`kawoosh.fs.list(path, fn)`), by
-/// token, and the next token.
+/// The callbacks of the jobs out (`kawoosh.fs.list(path, fn)`,
+/// `kawoosh.fs.walk`), by token, the processes running
+/// (`kawoosh.spawn`) with their line and exit callbacks, and the next
+/// token.
 #[derive(Default)]
 struct Jobs {
     waiting: HashMap<u64, mlua::RegistryKey>,
+    procs: HashMap<u64, (Option<mlua::RegistryKey>, Option<mlua::RegistryKey>)>,
     next: u64,
+}
+
+impl Jobs {
+    fn token(&mut self) -> u64 {
+        self.next += 1;
+        self.next
+    }
 }
 
 type JobsCell = Rc<RefCell<Jobs>>;
@@ -624,6 +692,7 @@ impl Runtime {
                     sels,
                     primary,
                     modified: b.modified,
+                    field: ed.is_field_buffer(id),
                 },
             );
         }
@@ -746,7 +815,38 @@ impl Runtime {
             p.commands = ed.commands.specs().into_iter().cloned().collect();
             p.commands_version = ed.commands.version();
         }
+        let kv = (ed.commands.version(), ed.keymap.version());
+        if p.keys_version != kv {
+            p.keys.clear();
+            for mode in [
+                kawoosh_editor::Mode::Normal,
+                kawoosh_editor::Mode::Visual,
+                kawoosh_editor::Mode::Insert,
+                kawoosh_editor::Mode::OperatorPending,
+            ] {
+                for (keys, b) in ed.keymap.bindings(mode) {
+                    let inv = ed.commands.resolve(&b.command, &b.args);
+                    p.keys
+                        .entry(inv.name.clone())
+                        .or_default()
+                        .push(format!("{} {keys}", mode.short()));
+                }
+            }
+            p.keys_version = kv;
+        }
         p.facts = ed.commands.facts.clone();
+    }
+
+    /// Whether the Lua view `name` is one a session leaves out
+    /// (`kawoosh.view(name, fn, on_event, { session = false })`: a
+    /// picker, which is asked for again rather than brought back).
+    pub fn view_transient(&self, name: &str) -> bool {
+        self.lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<Table>("_transient"))
+            .and_then(|t| t.get::<bool>(name))
+            .unwrap_or(false)
     }
 
     /// Notes which field `view`'s keys are on, for the snapshot's
@@ -895,6 +995,23 @@ impl Runtime {
     /// callback called with the entries, or with nil and why not; the
     /// messages it queues are the caller's to drain.
     pub fn listed(&self, token: u64, result: Result<Vec<kawoosh_systems::fs::Entry>, String>) {
+        let result =
+            result.and_then(|entries| entries_table(&self.lua, entries).map_err(|e| e.to_string()));
+        self.answer(token, result, "fs.list");
+    }
+
+    /// A tree walked for `kawoosh.fs.walk(root, fn)`: the callback
+    /// called with the paths, or with nil and why not.
+    pub fn walked(&self, token: u64, result: Result<Vec<String>, String>) {
+        let result = result.and_then(|paths| {
+            self.lua
+                .create_sequence_from(paths)
+                .map_err(|e| e.to_string())
+        });
+        self.answer(token, result, "fs.walk");
+    }
+
+    fn answer(&self, token: u64, result: Result<Table, String>, what: &str) {
         let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
             return;
         };
@@ -903,19 +1020,53 @@ impl Runtime {
         };
         let _ = self.lua.remove_registry_value(key);
         let args = match result {
-            Ok(entries) => match entries_table(&self.lua, entries) {
-                Ok(t) => (LV::Table(t), LV::Nil),
-                Err(e) => (
-                    LV::Nil,
-                    LV::String(self.lua.create_string(e.to_string()).unwrap()),
-                ),
-            },
+            Ok(t) => (LV::Table(t), LV::Nil),
             Err(e) => (LV::Nil, LV::String(self.lua.create_string(e).unwrap())),
         };
         if let Err(e) = f.call::<()>(args) {
             self.queue
                 .borrow_mut()
-                .push(Msg::Echo(format!("fs.list: {e}")));
+                .push(Msg::Echo(format!("{what}: {e}")));
+        }
+    }
+
+    /// Lines a process `kawoosh.spawn` started wrote since the last
+    /// frame, handed to its `on_lines` at once.
+    pub fn proc_lines(&self, token: u64, lines: Vec<String>) {
+        let f = {
+            let jobs = self.jobs.borrow();
+            let Some((Some(key), _)) = jobs.procs.get(&token) else {
+                return;
+            };
+            self.lua.registry_value::<mlua::Function>(key).ok()
+        };
+        if let Some(f) = f
+            && let Err(e) = f.call::<()>(lines)
+        {
+            self.queue
+                .borrow_mut()
+                .push(Msg::Echo(format!("spawn: {e}")));
+        }
+    }
+
+    /// The process exited (or was killed: no code): its `on_exit`, and
+    /// its callbacks let go.
+    pub fn proc_exit(&self, token: u64, code: Option<i32>) {
+        let Some((lines, exit)) = self.jobs.borrow_mut().procs.remove(&token) else {
+            return;
+        };
+        if let Some(k) = lines {
+            let _ = self.lua.remove_registry_value(k);
+        }
+        if let Some(k) = exit {
+            if let Ok(f) = self.lua.registry_value::<mlua::Function>(&k)
+                && let Err(e) = f.call::<()>(code)
+            {
+                self.queue
+                    .borrow_mut()
+                    .push(Msg::Echo(format!("spawn: {e}")));
+            }
+            let _ = self.lua.remove_registry_value(k);
         }
     }
 
@@ -995,6 +1146,39 @@ impl Runtime {
 }
 
 type StoreCell = Rc<RefCell<Option<Rc<kawoosh_systems::store::Store>>>>;
+
+/// `kawoosh.matcher(list)`: a list held in Rust for fuzzy queries.
+struct LuaMatcher(Matcher);
+
+impl mlua::UserData for LuaMatcher {
+    fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method(
+            "query",
+            |lua, this, (needle, limit): (String, Option<usize>)| {
+                hits_table(lua, &this.0.query(&needle, limit.unwrap_or(500)))
+            },
+        );
+        methods.add_method("count", |_, this, ()| Ok(this.0.len()));
+    }
+}
+
+/// Hits as Lua reads them: `{ index, score, positions }` each, the
+/// index and the positions from 1.
+fn hits_table(lua: &Lua, hits: &[Hit]) -> mlua::Result<Table> {
+    let out = lua.create_table_with_capacity(hits.len(), 0)?;
+    for (i, h) in hits.iter().enumerate() {
+        let t = lua.create_table_with_capacity(0, 3)?;
+        t.set("index", h.index + 1)?;
+        t.set("score", h.score)?;
+        let pos = lua.create_table_with_capacity(h.positions.len(), 0)?;
+        for (k, p) in h.positions.iter().enumerate() {
+            pos.set(k + 1, p + 1)?;
+        }
+        t.set("positions", pos)?;
+        out.set(i + 1, t)?;
+    }
+    Ok(out)
+}
 
 /// A listing's entries as Lua sees them: `{ name, is_dir, is_symlink,
 /// size, modified }` each.
@@ -1096,7 +1280,126 @@ fn seed(
             let p = pp.borrow();
             let out = lua.create_table()?;
             for (i, s) in p.commands.iter().enumerate() {
-                out.set(i + 1, spec_to_lua(lua, s)?)?;
+                let t = spec_to_lua(lua, s)?;
+                t.set("keys", p.keys.get(&s.name).cloned().unwrap_or_default())?;
+                out.set(i + 1, t)?;
+            }
+            Ok(out)
+        })?,
+    )?;
+    // ---- `kawoosh.holds(fact)`: whether a fact holds where the
+    // keyboard is, by the rule a `when` is checked with.
+    let pp = published.clone();
+    k.set(
+        "holds",
+        lua.create_function(move |_, fact: String| {
+            let p = pp.borrow();
+            let buf = p.current.and_then(|c| p.buffers.get(&c));
+            let facts = Facts {
+                published: Some(&p.facts),
+                visual: p.mode == "visual",
+                buffer: buf.map(|b| {
+                    (
+                        b.name.as_str(),
+                        b.language.as_str(),
+                        b.modified,
+                        b.path.is_some(),
+                    )
+                }),
+                field: p.field.as_deref(),
+                prompt: p.prompt,
+            };
+            Ok(facts.holds(&fact))
+        })?,
+    )?;
+    // ---- fuzzy matching (`fuzzy.rs`): `kawoosh.fuzzy(needle, list,
+    // limit)` over a small list; `kawoosh.matcher(list)` holds a big
+    // one — forty thousand paths — so a keystroke's query crosses one
+    // string, and `m:query(needle, limit)` answers `{ index, score,
+    // positions }` best first, `m:count()` how many it holds.
+    k.set(
+        "fuzzy",
+        lua.create_function(
+            |lua, (needle, list, limit): (String, Vec<String>, Option<usize>)| {
+                let hits = fuzzy::fuzzy(&needle, &list, limit.unwrap_or(500));
+                hits_table(lua, &hits)
+            },
+        )?,
+    )?;
+    k.set(
+        "matcher",
+        lua.create_function(|_, list: Vec<String>| Ok(LuaMatcher(Matcher::new(&list))))?,
+    )?;
+    // ---- `kawoosh.cmdline(text)`: the command line opened with the
+    // text on it.
+    let qq = q(queue);
+    k.set(
+        "run",
+        lua.create_function(move |_, line: String| {
+            qq.borrow_mut().push(Msg::Run(line));
+            Ok(())
+        })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "cmdline",
+        lua.create_function(move |_, text: String| {
+            qq.borrow_mut().push(Msg::Cmdline(text));
+            Ok(())
+        })?,
+    )?;
+    // ---- `kawoosh.spawn(cmd, { cwd =, on_lines = fn(lines), on_exit =
+    // fn(code) })`: a process through the shell, its output in lines
+    // as they come, once a frame; the token it answers to, for
+    // `kawoosh.kill(token)`.
+    let qq = q(queue);
+    let jj = jobs.clone();
+    k.set(
+        "spawn",
+        lua.create_function(move |lua, (cmd, opts): (String, Option<Table>)| {
+            let mut j = jj.borrow_mut();
+            let token = j.token();
+            let key = |name: &str| -> mlua::Result<Option<mlua::RegistryKey>> {
+                match opts.as_ref().map(|t| t.get::<Option<mlua::Function>>(name)) {
+                    Some(Ok(Some(f))) => Ok(Some(lua.create_registry_value(f)?)),
+                    Some(Err(e)) => Err(e),
+                    _ => Ok(None),
+                }
+            };
+            let lines = key("on_lines")?;
+            let exit = key("on_exit")?;
+            j.procs.insert(token, (lines, exit));
+            let cwd = opts
+                .as_ref()
+                .and_then(|t| t.get::<Option<String>>("cwd").ok().flatten())
+                .map(|c| expand(&c));
+            qq.borrow_mut().push(Msg::Spawn { token, cmd, cwd });
+            Ok(token)
+        })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "kill",
+        lua.create_function(move |_, token: u64| {
+            qq.borrow_mut().push(Msg::Kill(token));
+            Ok(())
+        })?,
+    )?;
+    // ---- `kawoosh.oldfiles()`: the files opened before, newest first,
+    // each `{ path, line }`, from the store.
+    let st = store.clone();
+    k.set(
+        "oldfiles",
+        lua.create_function(move |lua, limit: Option<usize>| {
+            let out = lua.create_table()?;
+            let Some(s) = st.borrow().clone() else {
+                return Ok(out);
+            };
+            for (i, (path, line)) in s.oldfiles(limit.unwrap_or(200)).into_iter().enumerate() {
+                let t = lua.create_table()?;
+                t.set("path", kawoosh_systems::fs::display(&path))?;
+                t.set("line", line + 1)?;
+                out.set(i + 1, t)?;
             }
             Ok(out)
         })?,
@@ -1253,22 +1556,47 @@ fn seed(
     let qq = q(queue);
     k.set(
         "open",
-        lua.create_function(move |_, p: String| {
-            qq.borrow_mut().push(Msg::Open(PathBuf::from(p)));
+        lua.create_function(move |_, (p, opts): (String, Option<Table>)| {
+            let get = |k: &str| {
+                opts.as_ref()
+                    .and_then(|t| t.get::<Option<usize>>(k).ok().flatten())
+            };
+            qq.borrow_mut().push(Msg::Open {
+                path: PathBuf::from(p),
+                line: get("line"),
+                col: get("col"),
+                split: opts
+                    .as_ref()
+                    .and_then(|t| t.get::<Option<String>>("split").ok().flatten()),
+            });
             Ok(())
         })?,
     )?;
     let qq = q(queue);
-    fn focus_opt(opts: Option<Table>) -> bool {
-        opts.and_then(|t| t.get::<Option<bool>>("focus").ok().flatten())
-            .unwrap_or(true)
+    /// `{ focus =, below =, share = }` as a view is opened with.
+    fn view_opts(opts: Option<Table>) -> (bool, bool, Option<f32>) {
+        let get = |k: &str| {
+            opts.as_ref()
+                .and_then(|t| t.get::<Option<bool>>(k).ok().flatten())
+        };
+        let share = opts
+            .as_ref()
+            .and_then(|t| t.get::<Option<f32>>("share").ok().flatten());
+        (
+            get("focus").unwrap_or(true),
+            get("below").unwrap_or(false),
+            share,
+        )
     }
     k.set(
         "view_open",
         lua.create_function(move |_, (name, opts): (String, Option<Table>)| {
+            let (focus, below, share) = view_opts(opts);
             qq.borrow_mut().push(Msg::OpenView {
                 name,
-                focus: focus_opt(opts),
+                focus,
+                below,
+                share,
             });
             Ok(())
         })?,
@@ -1285,9 +1613,12 @@ fn seed(
     k.set(
         "view_toggle",
         lua.create_function(move |_, (name, opts): (String, Option<Table>)| {
+            let (focus, below, share) = view_opts(opts);
             qq.borrow_mut().push(Msg::ToggleView {
                 name,
-                focus: focus_opt(opts),
+                focus,
+                below,
+                share,
             });
             Ok(())
         })?,
@@ -1470,7 +1801,12 @@ fn seed(
         lua.create_function(move |lua, ()| {
             let p = pp.borrow();
             let t = lua.create_table()?;
-            let mut hs: Vec<u64> = p.buffers.keys().copied().collect();
+            let mut hs: Vec<u64> = p
+                .buffers
+                .iter()
+                .filter(|(_, b)| !b.field)
+                .map(|(h, _)| *h)
+                .collect();
             hs.sort();
             for (i, h) in hs.into_iter().enumerate() {
                 t.set(i + 1, h)?;
@@ -1553,6 +1889,33 @@ fn seed(
                     .map(str::to_string)
                     .collect::<Vec<_>>()
             })
+        })?,
+    )?;
+    // `kawoosh.buf.lines_in(from, to[, buffer])`: the lines from `from`
+    // to `to` (from 1, inclusive, clamped), for a preview that wants a
+    // window of a big buffer and not its text.
+    let pp = published.clone();
+    buf.set(
+        "lines_in",
+        lua.create_function(move |lua, (from, to, h): (usize, usize, Option<u64>)| {
+            with_buf(&pp, h, |b| -> mlua::Result<Table> {
+                let out = lua.create_table()?;
+                let count = b.snapshot.text.newline_count() + 1;
+                let from = from.max(1);
+                let to = to.min(count);
+                for ln in from..=to {
+                    let Some(mut r) = b.snapshot.text.get_line_range(ln - 1) else {
+                        break;
+                    };
+                    for nl in *b"\n\r" {
+                        if r.end > r.start && b.snapshot.text.byte_at(r.end - 1) == Some(nl) {
+                            r.end -= 1;
+                        }
+                    }
+                    out.push(b.snapshot.slice(r))?;
+                }
+                Ok(out)
+            })?
         })?,
     )?;
     let pp = published.clone();
@@ -1740,8 +2103,11 @@ fn seed(
     let qq = q(queue);
     buf.set(
         "show",
-        lua.create_function(move |_, h: u64| {
-            qq.borrow_mut().push(Msg::ShowBuffer(h));
+        lua.create_function(move |_, (h, opts): (u64, Option<Table>)| {
+            qq.borrow_mut().push(Msg::ShowBuffer {
+                buffer: h,
+                split: opts.and_then(|t| t.get::<Option<String>>("split").ok().flatten()),
+            });
             Ok(())
         })?,
     )?;
@@ -1995,8 +2361,7 @@ fn seed(
             };
             let token = {
                 let mut j = jj.borrow_mut();
-                j.next += 1;
-                let token = j.next;
+                let token = j.token();
                 j.waiting.insert(token, lua.create_registry_value(cb)?);
                 token
             };
@@ -2005,6 +2370,27 @@ fn seed(
                 path: expand(&dir),
             });
             Ok(LV::Nil)
+        })?,
+    )?;
+    // `fs.walk(root, fn)`: every file under `root` as git sees it —
+    // ignored, hidden and `.git` left out — relative to it, walked on
+    // a thread of its own and handed to `fn(paths)`, or `fn(nil, why)`.
+    let qq = q(queue);
+    let jj = jobs.clone();
+    fs.set(
+        "walk",
+        lua.create_function(move |lua, (root, cb): (String, mlua::Function)| {
+            let token = {
+                let mut j = jj.borrow_mut();
+                let token = j.token();
+                j.waiting.insert(token, lua.create_registry_value(cb)?);
+                token
+            };
+            qq.borrow_mut().push(Msg::Walk {
+                token,
+                root: expand(&root),
+            });
+            Ok(token)
         })?,
     )?;
     fs.set(

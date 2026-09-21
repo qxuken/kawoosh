@@ -7,7 +7,6 @@
 pub mod app;
 pub mod cmdline;
 pub mod commands;
-pub mod commands_pane;
 pub mod compile;
 pub mod confirm;
 pub mod devtab;

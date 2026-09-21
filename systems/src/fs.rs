@@ -236,6 +236,49 @@ pub fn drives() -> Vec<PathBuf> {
     }
 }
 
+/// Every file under `root`, as paths relative to it, in the walk's
+/// order — what a file picker lists. What `git` would not see is not
+/// listed: `.gitignore` rules (the repository's, a parent's, the
+/// global one), hidden entries, and `.git` itself — ripgrep's own walk
+/// (`ignore`), so the picker and `:grep` agree on what the project is.
+/// A directory whose entries cannot be read is skipped, not an error.
+/// Stops at `max` paths, so a walk started in `/` costs a bounded
+/// amount rather than the disk.
+pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
+    if !root.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            format!("{}: not a directory", root.display()),
+        ));
+    }
+    let mut out = Vec::new();
+    for entry in ignore::WalkBuilder::new(root)
+        .hidden(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .follow_links(false)
+        .sort_by_file_name(|a, b| a.cmp(b))
+        .build()
+    {
+        let Ok(entry) = entry else { continue };
+        if !entry.file_type().is_some_and(|t| t.is_file()) {
+            continue;
+        }
+        let rel = entry
+            .path()
+            .strip_prefix(root)
+            .unwrap_or(entry.path())
+            .to_string_lossy()
+            .into_owned();
+        out.push(rel);
+        if out.len() >= max {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 pub fn exists(path: &Path) -> bool {
     path.exists()
 }
@@ -324,6 +367,27 @@ mod tests {
         assert_eq!(basename(Path::new("/a/b/")).as_deref(), Some("b"));
         assert_eq!(basename(Path::new("/a/c.txt")).as_deref(), Some("c.txt"));
         assert_eq!(basename(Path::new("/")), None);
+    }
+
+    /// A walk lists the files git would see, relative to the root, and
+    /// nothing under `.git`, a hidden directory or an ignored one.
+    #[test]
+    fn a_walk_lists_files_the_way_git_sees_them() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        create(&dir.join("src/main.rs"), false).unwrap();
+        create(&dir.join("src/lib.rs"), false).unwrap();
+        create(&dir.join("target/out.o"), false).unwrap();
+        create(&dir.join(".git/HEAD"), false).unwrap();
+        create(&dir.join(".hidden/x"), false).unwrap();
+        write(&dir.join(".gitignore"), "target/\n").unwrap();
+        let mut got = walk(&dir, 100).unwrap();
+        got.sort();
+        assert_eq!(got, ["src/lib.rs", "src/main.rs"]);
+        assert_eq!(walk(&dir, 1).unwrap().len(), 1, "capped");
+        let err = walk(&dir.join("src/main.rs"), 10).unwrap_err().to_string();
+        assert!(err.contains("not a directory"), "{err}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

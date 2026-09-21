@@ -194,8 +194,6 @@ pub enum Content {
     History,
     /// The working memory: the register's past (`memory.rs`).
     Memory,
-    /// The command registry, searched (`commands_pane.rs`).
-    Commands,
 }
 
 #[derive(Clone, Debug)]

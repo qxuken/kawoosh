@@ -29,7 +29,9 @@ gaps are records rather than surprises:
   preview pane, and a write that asks first; the working memory
   (`:memory`), every yank, delete and clipboard paste a moment with its
   origin, the `"` register its head; compile mode with `]q`; sessions
-  and oldfiles.
+  and oldfiles; the picker (`picker.lua`, roadmap step 4): files,
+  buffers, recent, smart, grep, lines, commands and tools as sources
+  on one pane, fzy's matching in Rust, the ranking in Lua.
 - **Thinner than designed, still open**: mouse reporting covers the
   primary button, drags and the wheel (kui routes the other buttons
   nowhere, and hover motion without a button is not sent); document sync to LSP is whole-text per change, not
@@ -901,16 +903,19 @@ line (`kawoosh.field_set`). The data-shaped boundary held: the field
 crosses to Lua as a table and back as three messages, and Lua draws it
 with the same tree it draws everything else with.
 
-**`:commands` is the registry as a pane** (`commands_pane.rs`), the
-help this design makes free: every spec a row — the name with its forms
-marked, the first ex spelling, the key bound to it, what it does or, in
-the danger colour, why it cannot run where the keyboard came from —
-typing filters it (the name's start first, then an alias, then anything
-in the row), `⏎` runs the cursor's command or opens the command line on
-it when it takes arguments, and under the rows the spec in full: the
-forms and what each means, the conditions and which hold, the keys in
-every mode, the subcommands. It reads only what `kawoosh.commands()`
-reads; a plugin could draw the same pane.
+**`:commands` is the registry as a picker** — a source of
+`picker.lua`, since 2026-09-21; before that a Rust pane of its own
+(`commands_pane.rs`), which the picker replaced — the help this design
+makes free: every spec a row — the name with its forms marked, the key
+bound to it and what it does, or, in the danger colour, why it cannot
+run where the keyboard came from — typing filters it (fzy's scoring
+over the names), `⏎` runs the cursor's command or opens the command
+line on it when it takes arguments, and the preview is the spec in
+full: the aliases, the forms and what each means, the conditions and
+which hold, the keys in every mode, the subcommands. It reads only what
+`kawoosh.commands()` (each spec with its `keys`), `kawoosh.can` and
+`kawoosh.holds` read — the proof that a plugin could draw the same
+pane is that one does.
 
 ### 13. Languages: one contract, one module each
 

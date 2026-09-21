@@ -1,0 +1,573 @@
+//! The picker (docs/design/roadmap.md, step 4): `picker.lua` as the
+//! compositional module — files, buffers, recent, smart, grep, lines,
+//! commands and tools as sources, `kawoosh.matcher` in Rust behind
+//! them — its keys on the query's field, the pane below the keyboard's
+//! and gone again on a pick, and the commands pane migrated onto it.
+
+mod drive;
+
+use drive::Drive;
+use kawoosh::Kawoosh;
+use kawoosh::layout::Content;
+use kui::KeyMods;
+
+/// The files sources walk the working directory, which is the
+/// process's: one test at a time.
+static CWD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    CWD.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The cursor's row, as the picker says it.
+fn cursor_text(app: &mut Kawoosh) -> String {
+    app.run_lua_source(
+        "t",
+        r#"local s = kawoosh.picker.state(); kawoosh.echo(s and s.text or "<none>")"#,
+    );
+    app.ed.message.clone()
+}
+
+fn app_with_lua(d: &mut Drive, path: &std::path::Path) -> Kawoosh {
+    let mut app = Kawoosh::from_file(path);
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    app
+}
+
+fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
+    d.keys(app, ":");
+    d.keys(app, line);
+    d.key(app, "enter", KeyMods::default());
+    d.frame(app);
+}
+
+fn texts(d: &Drive) -> Vec<String> {
+    d.core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect()
+}
+
+/// The rows drawn, top to bottom, by their labels.
+fn rows(d: &Drive) -> Vec<String> {
+    d.core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.label.as_deref()?.strip_prefix("row ").map(str::to_string))
+        .collect()
+}
+
+fn picker_open(app: &Kawoosh) -> bool {
+    app.lua_view_pane("picker").is_some()
+}
+
+fn keyed_on_query(app: &Kawoosh) -> bool {
+    app.layout.focused_content() == Some(Content::Lua("picker".into()))
+        && app.lua_field_focused("picker").is_some()
+}
+
+fn query_mode(app: &Kawoosh) -> kawoosh_editor::Mode {
+    app.ed.mode(
+        app.ed
+            .find_field("lua:picker/q")
+            .expect("the query's field"),
+    )
+}
+
+fn focused_path(app: &Kawoosh) -> Option<std::path::PathBuf> {
+    app.ed.buffer_of(app.focused_view()?).path.clone()
+}
+
+fn line_of_caret(app: &Kawoosh) -> usize {
+    let v = app.focused_view().unwrap();
+    app.ed
+        .buffer_of(v)
+        .line_of(app.ed.views[v].sels.primary().head)
+}
+
+/// A project: three files git would see, one ignored, one hidden.
+fn project(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("kawoosh-picker-{tag}-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("target")).unwrap();
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    std::fs::write(dir.join("src/main.rs"), "fn main() {}\nfn helper() {}\n").unwrap();
+    std::fs::write(dir.join("src/lib.rs"), "pub fn lib() {}\n").unwrap();
+    std::fs::write(dir.join("README.md"), "# notes\nalpha\nbeta\n").unwrap();
+    std::fs::write(dir.join("target/out.o"), "x").unwrap();
+    std::fs::write(dir.join(".git/HEAD"), "ref").unwrap();
+    std::fs::write(dir.join(".gitignore"), "target/\n").unwrap();
+    kawoosh_systems::fs::canonicalize(&dir).unwrap()
+}
+
+/// `<leader>f`: the files git sees, walked from the working directory,
+/// in a pane below the keyboard's with the query in insert mode; the
+/// open buffer's file first; typing narrows by fuzzy match with the
+/// matched letters lit; `<CR>` opens the cursor's file in the pane the
+/// keyboard came from and the picker is gone; the walk left the
+/// ignored and hidden files out.
+#[test]
+fn files_are_walked_filtered_and_opened() {
+    let _serial = serial();
+    let dir = project("files");
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    let from = app.layout.focused();
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(picker_open(&app), "the picker pane");
+    assert!(keyed_on_query(&app), "the keys on the query");
+    assert_eq!(query_mode(&app), kawoosh_editor::Mode::Insert);
+    assert_eq!(app.layout.visible_panes().len(), 2, "below the editor pane");
+    let r = rows(&d);
+    assert_eq!(r[0], "README.md", "the open buffer's file first: {r:?}");
+    assert_eq!(r.len(), 3, "{r:?}");
+    assert!(r.contains(&"src/main.rs".to_string()) && r.contains(&"src/lib.rs".to_string()));
+    let t = texts(&d);
+    assert!(t.iter().any(|s| s == "files"), "the source's title: {t:?}");
+    assert!(t.iter().any(|s| s == "3"), "the count: {t:?}");
+    assert!(
+        t.iter().any(|s| s.starts_with("# notes")),
+        "the preview of the cursor's file: {t:?}"
+    );
+    // Typing narrows: `sl` is `src/lib.rs` before `src/main.rs`'s
+    // scattered letters, and the matched letters are drawn lit.
+    d.keys(&mut app, "sl");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert_eq!(r[0], "src/lib.rs", "{r:?}");
+    assert!(!r.contains(&"README.md".to_string()), "{r:?}");
+    let t = texts(&d);
+    assert!(t.iter().any(|s| s == "1 of 3" || s == "2 of 3"), "{t:?}");
+    assert!(
+        t.iter().any(|s| s.starts_with("pub fn lib")),
+        "the preview follows the cursor: {t:?}"
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!picker_open(&app), "gone on a pick");
+    assert_eq!(
+        app.layout.focused(),
+        from,
+        "the keyboard back where it came from"
+    );
+    assert_eq!(focused_path(&app), Some(dir.join("src/lib.rs")));
+    assert_eq!(app.layout.visible_panes().len(), 1);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The query is a field: `<Esc>` is normal mode over it, where `j` and
+/// `k` walk the rows and `<Esc>` again closes; `<C-n>` `<C-p>` walk in
+/// insert mode; `<C-c>` closes from either; `<C-v>` takes the row
+/// into a split beside; a click lands the cursor and a second click
+/// takes the row; `q` off the field closes.
+#[test]
+fn the_querys_modes_and_keys() {
+    let _serial = serial();
+    let dir = project("keys");
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "picker files");
+    d.frame(&mut app);
+    assert_eq!(cursor_text(&mut app), "README.md");
+    d.ctrl(&mut app, "n");
+    assert_eq!(cursor_text(&mut app), "src/lib.rs");
+    d.ctrl(&mut app, "n");
+    assert_eq!(cursor_text(&mut app), "src/main.rs");
+    d.ctrl(&mut app, "n");
+    assert_eq!(cursor_text(&mut app), "src/main.rs", "stays on the last");
+    d.ctrl(&mut app, "p");
+    assert_eq!(cursor_text(&mut app), "src/lib.rs");
+    // Normal mode over the query: `j`, `k`, then `<Esc>` closes.
+    d.keys(&mut app, "ma");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(query_mode(&app), kawoosh_editor::Mode::Normal);
+    assert!(
+        texts(&d).iter().any(|s| s == "NOR"),
+        "the query's mode in the status"
+    );
+    let r = rows(&d);
+    assert_eq!(r, ["src/main.rs"], "narrowed by `ma`: {r:?}");
+    d.keys(&mut app, "0D");
+    d.frame(&mut app);
+    assert_eq!(rows(&d).len(), 3, "the line cleared as the editor would");
+    d.keys(&mut app, "jj");
+    assert_eq!(cursor_text(&mut app), "src/main.rs");
+    d.keys(&mut app, "k");
+    assert_eq!(cursor_text(&mut app), "src/lib.rs");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!picker_open(&app), "<Esc> in normal mode closes");
+    assert!(app.focused_view().is_some());
+    // `<C-c>` closes from insert mode.
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    assert!(picker_open(&app));
+    d.ctrl(&mut app, "c");
+    d.frame(&mut app);
+    assert!(!picker_open(&app));
+    // `<C-v>`: the row into a split beside; the picker gone.
+    d.keys(&mut app, " f");
+    d.keys(&mut app, "lib");
+    d.ctrl(&mut app, "v");
+    d.frame(&mut app);
+    assert!(!picker_open(&app));
+    assert_eq!(app.layout.visible_panes().len(), 2, "a split beside");
+    assert_eq!(focused_path(&app), Some(dir.join("src/lib.rs")));
+    let other = app
+        .layout
+        .visible_panes()
+        .into_iter()
+        .find(|p| *p != app.layout.focused())
+        .unwrap();
+    assert!(
+        matches!(app.layout.content(other), Some(Content::Editor(v)) if app.ed.buffer_of(v).path.as_deref() == Some(dir.join("README.md").as_path())),
+        "the pane it came from keeps its file"
+    );
+    ex(&mut d, &mut app, "only");
+    // A click lands the cursor on a row; a second one takes it.
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    let label = "row src/main.rs";
+    let (x, y, _, h) = d.rect_of(label).expect("the row on show");
+    d.click(&mut app, x + 10.0, y + h / 2.0);
+    d.frame(&mut app);
+    assert!(picker_open(&app));
+    assert_eq!(cursor_text(&mut app), "src/main.rs");
+    let (x, y, _, h) = d.rect_of(label).expect("still there");
+    d.click(&mut app, x + 10.0, y + h / 2.0);
+    d.frame(&mut app);
+    assert!(!picker_open(&app), "the second click takes it");
+    assert_eq!(focused_path(&app), Some(dir.join("src/main.rs")));
+    // `q` with the keys on the view itself (off the field) closes.
+    d.keys(&mut app, " f");
+    d.key(&mut app, "escape", KeyMods::default());
+    app.run_lua_source("t", r#"kawoosh.field_focus("picker", nil)"#);
+    d.frame(&mut app);
+    assert!(app.lua_field_focused("picker").is_none());
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    assert!(!picker_open(&app));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `<leader>bb` (and `<leader><leader>`): the listed buffers, the
+/// current one last so `<CR>` at once is the one before; a field's
+/// buffer is not among them; `<leader>/`: the buffer's lines, `<CR>`
+/// putting the caret on the line; `<leader>so`: the files opened
+/// before; `<leader>.`: buffers, recent files and the walk, each path
+/// once.
+#[test]
+fn buffers_lines_recent_and_smart() {
+    let _serial = serial();
+    let dir = project("buffers");
+    // The store beside the project, not in it: the walk would list it.
+    let db = dir.with_extension("db").join("state.db");
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.open_store(Some(&db));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("src/main.rs").display()),
+    );
+    d.keys(&mut app, " bb");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert_eq!(r, ["README.md", "main.rs"], "the current one last: {r:?}");
+    assert!(
+        !texts(&d).iter().any(|s| s.contains("*lua:")),
+        "no field's buffer in the list"
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!picker_open(&app));
+    assert_eq!(focused_path(&app), Some(dir.join("README.md")));
+    d.keys(&mut app, "  ");
+    d.frame(&mut app);
+    assert!(picker_open(&app), "<leader><leader> too");
+    assert_eq!(rows(&d), ["main.rs", "README.md"]);
+    d.ctrl(&mut app, "c");
+    // Lines: the third line taken.
+    d.keys(&mut app, " /");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert_eq!(r.len(), 3, "{r:?}");
+    assert!(r[1].ends_with("alpha"), "{r:?}");
+    d.keys(&mut app, "beta");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!picker_open(&app));
+    assert_eq!(focused_path(&app), Some(dir.join("README.md")));
+    assert_eq!(line_of_caret(&app), 2, "the caret on `beta`");
+    // Recent: what the store remembers, once the session was saved.
+    app.save_session();
+    d.keys(&mut app, " so");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert!(
+        r.iter().any(|s| s == "README.md") && r.iter().any(|s| s == "src/main.rs"),
+        "{r:?}"
+    );
+    d.ctrl(&mut app, "c");
+    // Smart: buffers first, then the rest of the walk, nothing twice.
+    d.keys(&mut app, " .");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert_eq!(r.len(), 3, "each path once: {r:?}");
+    assert_eq!(
+        &r[..2],
+        ["src/main.rs", "README.md"],
+        "the buffers first: {r:?}"
+    );
+    assert_eq!(r[2], "src/lib.rs");
+    d.ctrl(&mut app, "c");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(dir.with_extension("db")).ok();
+}
+
+/// `<leader>g`: `rg` run on the query as it is typed, a location a row,
+/// the preview on the hit's line, `<CR>` opening the file at line and
+/// column; a query that matches nothing says so.
+#[test]
+fn grep_runs_rg_as_the_query_is_typed() {
+    let _serial = serial();
+    if std::process::Command::new("rg")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("rg is not installed: the grep test is skipped");
+        return;
+    }
+    let dir = project("grep");
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.keys(&mut app, " g");
+    d.frame(&mut app);
+    assert!(picker_open(&app));
+    assert_eq!(rows(&d).len(), 0, "nothing before a query");
+    d.keys(&mut app, "fn helper");
+    app.wait_for_jobs();
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert_eq!(r, ["src/main.rs:2"], "{r:?}");
+    let t = texts(&d);
+    assert!(
+        t.iter().any(|s| s.starts_with("fn helper")),
+        "the line after: {t:?}"
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!picker_open(&app));
+    assert_eq!(focused_path(&app), Some(dir.join("src/main.rs")));
+    assert_eq!(line_of_caret(&app), 1);
+    // A pattern nobody has: no rows and the word for it.
+    d.keys(&mut app, " g");
+    d.keys(&mut app, "zzzznothing");
+    app.wait_for_jobs();
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(rows(&d).len(), 0);
+    assert!(texts(&d).iter().any(|s| s == "no matches"));
+    d.ctrl(&mut app, "c");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `:commands` (`<leader>sp`), the registry as a picker: every spec a
+/// row — the shell's and a plugin's among them, a subcommand as its
+/// two-word name — with what it needs where the keyboard came from
+/// said in the row; typing narrows, the name's start first; the
+/// cursor's spec in full as the preview; `<CR>` on a command without
+/// arguments runs it, on one with them opens the command line on it;
+/// `:commands QUERY` starts on the query.
+#[test]
+fn the_commands_source_is_the_registry_as_a_picker() {
+    let _serial = serial();
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = Kawoosh::new("*scratch*", "hello\n");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "commands");
+    d.frame(&mut app);
+    assert!(picker_open(&app));
+    assert!(keyed_on_query(&app));
+    let all = rows(&d);
+    assert!(all.len() > 10);
+    let t = texts(&d);
+    assert!(t.iter().any(|s| s == "commands"), "the title: {t:?}");
+    d.keys(&mut app, "dir");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert_eq!(
+        r[0], "dir!?",
+        "the name's start first, its forms marked: {r:?}"
+    );
+    assert!(r.contains(&"dir cd".to_string()), "{r:?}");
+    let t = texts(&d);
+    assert!(
+        t.iter().any(|s| s == "dir cd needs language:dir"),
+        "what a command needs, from the pane the keyboard came from: {t:?}"
+    );
+    assert!(
+        t.iter().any(|s| s.starts_with("n <leader>cd")),
+        "the key bound to dir cd: {t:?}"
+    );
+    d.ctrl(&mut app, "u");
+    d.keys(&mut app, "history");
+    d.frame(&mut app);
+    assert!(texts(&d).iter().any(|s| s == "history needs store"));
+    d.ctrl(&mut app, "u");
+    d.keys(&mut app, "buffer del");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert_eq!(r[0], "buffer delete!", "{r:?}");
+    let t = texts(&d);
+    assert!(
+        t.iter()
+            .any(|s| s.starts_with("aliases") && s.contains(":bd")),
+        "an alias in the preview: {t:?}"
+    );
+    assert!(
+        t.iter().any(|s| s.starts_with("with !")),
+        "the form's meaning: {t:?}"
+    );
+    // `⏎` on a command with arguments: the command line on it.
+    d.ctrl(&mut app, "u");
+    d.keys(&mut app, "vsplit");
+    d.frame(&mut app);
+    assert_eq!(rows(&d)[0], "vsplit");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!picker_open(&app));
+    assert!(app.ed.prompt_view().is_some());
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "vsplit ");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(app.ed.prompt_view().is_none());
+    // `:commands pwd` starts on the query; `⏎` runs it, in the pane
+    // the keyboard came back to.
+    ex(&mut d, &mut app, "commands pwd");
+    d.frame(&mut app);
+    assert_eq!(rows(&d)[0], "pwd");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(!picker_open(&app));
+    assert_eq!(app.ed.message, app.cwd.display().to_string());
+    // `<leader>sp` is the same picker.
+    d.keys(&mut app, " sp");
+    d.frame(&mut app);
+    assert!(picker_open(&app));
+    assert!(texts(&d).iter().any(|s| s == "commands"));
+    d.ctrl(&mut app, "c");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// `<leader>sr` brings the last picker back with its query and cursor;
+/// a session does not keep the picker's pane; and a plugin's own
+/// source — items given whole, a `pick` of its own and a key of its
+/// own — runs on the same pane.
+#[test]
+fn resume_sessions_and_a_plugins_own_source() {
+    let _serial = serial();
+    let dir = project("resume");
+    let db = dir.with_extension("db").join("state.db");
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.open_store(Some(&db));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.keys(&mut app, " f");
+    d.keys(&mut app, "rs");
+    d.ctrl(&mut app, "n");
+    d.frame(&mut app);
+    let before = rows(&d);
+    assert_eq!(before.len(), 2, "{before:?}");
+    d.ctrl(&mut app, "c");
+    assert!(!picker_open(&app));
+    d.keys(&mut app, " sr");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(picker_open(&app), "resumed");
+    assert_eq!(rows(&d), before, "the query as it was");
+    assert_eq!(
+        cursor_text(&mut app),
+        "src/main.rs",
+        "the cursor where it was"
+    );
+    // Saved with the picker open: restored without it.
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "qa");
+    drop(app);
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    app.open_store(Some(&db));
+    assert!(app.restore_session());
+    d.frame(&mut app);
+    assert!(!picker_open(&app), "a session does not keep a picker");
+    assert_eq!(app.layout.visible_panes().len(), 1);
+    // A plugin's source: its items, its pick, its key.
+    app.run_lua_source(
+        "init",
+        r#"
+        picked = nil
+        starred = nil
+        kawoosh.picker.source("colours", {
+          title = "colours",
+          items = function() return { { text = "red" }, { text = "green", sub = "go" }, { text = "blue" } } end,
+          pick = function(item, how) picked = item.text .. (how and (" " .. how) or "") end,
+          keys = { ["<C-x>"] = function(item) starred = item.text end },
+        })
+        "#,
+    );
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "picker colours");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), ["red", "green", "blue"]);
+    assert!(texts(&d).iter().any(|s| s == "go"), "an item's sub text");
+    d.keys(&mut app, "gr");
+    d.ctrl(&mut app, "x");
+    app.run_lua_source("t", r#"assert(starred == "green", tostring(starred))"#);
+    assert!(picker_open(&app), "a source's key leaves the picker up");
+    d.ctrl(&mut app, "t");
+    d.frame(&mut app);
+    assert!(!picker_open(&app));
+    app.run_lua_source("t", r#"assert(picked == "green tab", tostring(picked))"#);
+    // Opened whole, with no name: the same.
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.picker.open { title = "adhoc", items = { { text = "one" } }, pick = function(i) picked = "adhoc " .. i.text end }"#,
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(rows(&d), ["one"]);
+    d.key(&mut app, "enter", KeyMods::default());
+    app.run_lua_source("t", r#"assert(picked == "adhoc one", tostring(picked))"#);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(dir.with_extension("db")).ok();
+}

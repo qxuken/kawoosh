@@ -82,7 +82,8 @@ pub enum PaneData {
     History,
     /// The working memory pane.
     Memory,
-    /// The command registry pane.
+    /// The command registry pane of sessions from before 2026-09-21,
+    /// when `:commands` became the picker's; restored as nothing.
     Commands,
 }
 
@@ -126,13 +127,24 @@ impl Kawoosh {
                     top: view.top,
                 }
             }
-            Some(Content::Lua(name)) => PaneData::Lua { name },
+            // A view that asked to be left out of sessions — the
+            // picker — is dropped as a terminal is.
+            Some(Content::Lua(name)) if self.view_kept(&name) => PaneData::Lua { name },
             Some(Content::Undo) => PaneData::Undo,
             Some(Content::History) => PaneData::History,
             Some(Content::Memory) => PaneData::Memory,
-            Some(Content::Commands) => PaneData::Commands,
             _ => PaneData::Terminal,
         }
+    }
+
+    /// Whether a Lua view is one a session keeps (`kawoosh.view`'s
+    /// `session = false` says not).
+    fn view_kept(&self, name: &str) -> bool {
+        !self
+            .scripting
+            .rt
+            .as_ref()
+            .is_some_and(|rt| rt.view_transient(name))
     }
 
     fn node_data(&self, node: &Node) -> NodeData {
@@ -158,9 +170,11 @@ impl Kawoosh {
             .map(|t| {
                 let mut ps = Vec::new();
                 t.root.panes(&mut ps);
-                // Terminals are not restored, so the ordinal counts only
-                // what will be.
-                ps.retain(|p| !matches!(self.layout.content(*p), Some(Content::Terminal(_))));
+                // Terminals are not restored, nor a transient view, so
+                // the ordinal counts only what will be.
+                ps.retain(|p| {
+                    !matches!(self.pane_data(*p), PaneData::Terminal | PaneData::Commands)
+                });
                 TabData {
                     root: self.node_data(&t.root),
                     focused: ps.iter().position(|p| *p == t.focused).unwrap_or(0),
@@ -299,8 +313,7 @@ impl Kawoosh {
                     PaneData::Undo => Content::Undo,
                     PaneData::History => Content::History,
                     PaneData::Memory => Content::Memory,
-                    PaneData::Commands => Content::Commands,
-                    PaneData::Terminal => return None,
+                    PaneData::Commands | PaneData::Terminal => return None,
                 };
                 Some(Node::Pane(layout.new_pane(content)))
             }

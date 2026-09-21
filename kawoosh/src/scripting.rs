@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use kawoosh_systems::io::IoMsg;
 use std::rc::Rc;
 
-use kawoosh_doc::Buffer;
+use kawoosh_doc::{Buffer, BufferId};
 use kawoosh_editor::{ArgKind, Args, Cond, KeyStroke, Lookup, Mode, Spec, ViewId};
 use kawoosh_lua::{Msg, Runtime};
 use kawoosh_systems::lsp::ServerDef;
@@ -21,11 +21,25 @@ use crate::commands::{ShellCommand, cmd};
 use crate::layout::{Content, PaneId, SplitDir};
 use crate::notify::{Level, Note, Show, Ttl};
 
+/// The most paths a walk lists (`kawoosh.fs.walk`).
+const WALK_MAX: usize = 200_000;
+/// Where plugin processes' ids start, above compile mode's.
+const LUA_PROC_BASE: u64 = 1 << 32;
+
 #[derive(Clone, Debug)]
 pub struct ToolDef {
     pub cmd: String,
     pub cwd: Option<String>,
     pub dock: bool,
+}
+
+/// A process a plugin spawned (`kawoosh.spawn`): the token its
+/// callbacks answer to, the handle that kills it, and the lines that
+/// arrived since the last call in.
+pub struct Proc {
+    pub token: u64,
+    pub handle: kawoosh_systems::io::ProcHandle,
+    pub lines: Vec<String>,
 }
 
 #[derive(Default)]
@@ -34,6 +48,13 @@ pub struct Scripting {
     pub tools: HashMap<String, ToolDef>,
     /// A tool's running terminal, by tool name.
     pub tool_terms: HashMap<String, u64>,
+    /// The processes plugins spawned, by the io thread's process id —
+    /// numbered from a high mark so compile mode's never coincide.
+    pub procs: HashMap<u64, Proc>,
+    pub next_proc: u64,
+    /// The pane the keyboard was in when a Lua view opened with the
+    /// focus, so closing the view hands it back there.
+    pub view_from: HashMap<String, PaneId>,
     pub servers: Vec<ServerDef>,
     /// Syntax colours a config set, by token class.
     pub colors: HashMap<Token, Color>,
@@ -106,6 +127,30 @@ impl Kawoosh {
         self.drain_lua();
     }
 
+    /// Hands every spawned process's lines since the last call to its
+    /// `on_lines`, one call each, so a search that prints ten thousand
+    /// lines costs a frame one call in.
+    pub(crate) fn flush_proc_lines(&mut self) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        let batches: Vec<(u64, Vec<String>)> = self
+            .scripting
+            .procs
+            .values_mut()
+            .filter(|p| !p.lines.is_empty())
+            .map(|p| (p.token, std::mem::take(&mut p.lines)))
+            .collect();
+        if batches.is_empty() {
+            return;
+        }
+        rt.publish(&self.ed, self.focused_view());
+        for (token, lines) in batches {
+            rt.proc_lines(token, lines);
+        }
+        self.drain_lua();
+    }
+
     /// Applies everything Lua queued since the last drain.
     pub(crate) fn drain_lua(&mut self) {
         let Some(rt) = self.scripting.rt.clone() else {
@@ -159,7 +204,28 @@ impl Kawoosh {
                 }
                 None => self.ed.message = format!("map: unknown mode {mode}"),
             },
-            Msg::Open(p) => self.open_in_editor(&p, None, None),
+            Msg::Open {
+                path,
+                line,
+                col,
+                split,
+            } => {
+                if !self.split_for(split.as_deref(), None) {
+                    return;
+                }
+                self.open_in_editor(&path, line, col);
+            }
+            Msg::Run(line) => {
+                if let Some(v) = self.focused_view().or_else(|| self.ed.any_view()) {
+                    self.ed.execute(v, &line);
+                    self.drain_effects();
+                }
+            }
+            Msg::Cmdline(text) => {
+                self.open_cmdline();
+                self.ed.set_prompt_text(&text);
+                self.cmdline_refresh();
+            }
             Msg::OpenScratch {
                 name,
                 text,
@@ -278,12 +344,37 @@ impl Kawoosh {
                 Some(m) => self.ed.keymap.unbind(m, &keys),
                 None => self.ed.message = format!("unmap: unknown mode {mode}"),
             },
-            Msg::ShowBuffer(h) => {
-                let id = kawoosh_lua::id_of(h);
-                if self.ed.buffers.get(id).is_some()
-                    && let Some(v) = self.focused_view()
-                {
-                    self.show_buffer(v, id);
+            Msg::ShowBuffer { buffer, split } => {
+                let id = kawoosh_lua::id_of(buffer);
+                if !self.ed.buffers.contains_key(id) {
+                    return;
+                }
+                if !self.split_for(split.as_deref(), Some(id)) {
+                    return;
+                }
+                match self.focused_view() {
+                    Some(v) => self.show_buffer(v, id),
+                    None => {
+                        // From a pane without a view — a Lua pane's —
+                        // an editor pane on show, else a new one.
+                        let editor_pane = self
+                            .layout
+                            .visible_panes()
+                            .into_iter()
+                            .find(|p| self.view_of(*p).is_some());
+                        match editor_pane {
+                            Some(p) => {
+                                self.layout.focus(p);
+                                if let Some(v) = self.focused_view() {
+                                    self.show_buffer(v, id);
+                                }
+                            }
+                            None => {
+                                let v = self.ed.add_view(id);
+                                self.layout.split(SplitDir::H, Content::Editor(v));
+                            }
+                        }
+                    }
                 }
             }
             Msg::ListDir { token, path } => {
@@ -322,13 +413,65 @@ impl Kawoosh {
                     b.path = Some(moved);
                 }
             }
-            Msg::OpenView { name, focus } => self.open_lua_view(&name, focus),
+            Msg::OpenView {
+                name,
+                focus,
+                below,
+                share,
+            } => self.open_lua_view_with(&name, focus, below, share),
             Msg::CloseView(name) => self.close_lua_view(&name),
-            Msg::ToggleView { name, focus } => {
+            Msg::ToggleView {
+                name,
+                focus,
+                below,
+                share,
+            } => {
                 if self.lua_view_pane(&name).is_some() {
                     self.close_lua_view(&name);
                 } else {
-                    self.open_lua_view(&name, focus);
+                    self.open_lua_view_with(&name, focus, below, share);
+                }
+            }
+            Msg::Walk { token, root } => {
+                if self.jobs_inline {
+                    let result =
+                        kawoosh_systems::fs::walk(&root, WALK_MAX).map_err(|e| e.to_string());
+                    rt.publish(&self.ed, self.focused_view());
+                    rt.walked(token, result);
+                } else {
+                    self.pending_jobs += 1;
+                    self.io.run("walk", move || IoMsg::Walked {
+                        token,
+                        result: kawoosh_systems::fs::walk(&root, WALK_MAX)
+                            .map_err(|e| e.to_string()),
+                    });
+                }
+            }
+            Msg::Spawn { token, cmd, cwd } => {
+                self.scripting.next_proc += 1;
+                let id = LUA_PROC_BASE + self.scripting.next_proc;
+                let cwd = cwd.or_else(|| Some(self.cwd.clone()));
+                match self.io.run_process(id, &cmd, cwd.as_deref()) {
+                    Ok(handle) => {
+                        self.pending_jobs += 1;
+                        self.scripting.procs.insert(
+                            id,
+                            Proc {
+                                token,
+                                handle,
+                                lines: Vec::new(),
+                            },
+                        );
+                    }
+                    Err(e) => {
+                        self.ed.message = format!("spawn: {e}");
+                        rt.proc_exit(token, None);
+                    }
+                }
+            }
+            Msg::Kill(token) => {
+                if let Some(p) = self.scripting.procs.values().find(|p| p.token == token) {
+                    p.handle.kill();
                 }
             }
             Msg::Confirm {
@@ -564,10 +707,16 @@ impl Kawoosh {
             .find(|p| matches!(self.layout.content(*p), Some(Content::Lua(n)) if n == name))
     }
 
-    /// Opens Lua view `name` in a split, or focuses its pane; with
-    /// `focus` off the keyboard stays where it was — a preview beside
-    /// the listing it follows.
+    /// Opens Lua view `name` in a split beside, or focuses its pane;
+    /// with `focus` off the keyboard stays where it was — a preview
+    /// beside the listing it follows.
     pub fn open_lua_view(&mut self, name: &str, focus: bool) {
+        self.open_lua_view_with(name, focus, false, None);
+    }
+
+    /// The same, split below with `below`, the new pane taking `share`
+    /// of the room when given.
+    pub fn open_lua_view_with(&mut self, name: &str, focus: bool, below: bool, share: Option<f32>) {
         match self.lua_view_pane(name) {
             Some(p) => {
                 if focus {
@@ -576,23 +725,74 @@ impl Kawoosh {
             }
             None => {
                 let was = self.layout.focused();
-                self.layout
-                    .split(SplitDir::H, Content::Lua(name.to_string()));
-                if !focus {
+                let dir = if below { SplitDir::V } else { SplitDir::H };
+                let pane = self.layout.split(dir, Content::Lua(name.to_string()));
+                if let Some(share) = share
+                    && let Some(path) = self.layout.tab().root.split_of(pane)
+                    && let Some(r) = self.layout.tab_mut().root.ratio_mut(&path)
+                {
+                    *r = (1.0 - share).clamp(0.1, 0.9);
+                }
+                if focus {
+                    self.scripting.view_from.insert(name.to_string(), was);
+                } else {
                     self.layout.focus(was);
                 }
             }
         }
     }
 
-    /// Closes the pane showing Lua view `name`, if one does.
+    /// Closes the pane showing Lua view `name`, if one does, and hands
+    /// the keyboard back to the pane it took it from, when that pane
+    /// is still on show.
     pub fn close_lua_view(&mut self, name: &str) {
+        let from = self.scripting.view_from.remove(name);
         if let Some(p) = self.lua_view_pane(name) {
+            let had_focus = self.layout.focused() == p;
             self.layout.close(p);
+            if had_focus
+                && let Some(f) = from
+                && self.layout.visible_panes().contains(&f)
+            {
+                self.layout.focus(f);
+            }
             if let Some(rt) = &self.scripting.rt {
                 rt.set_field_focus(name, None);
             }
         }
+    }
+
+    /// Makes the pane a `split` asks for — `vsplit` beside, `split`
+    /// below, `tab` a new tab — showing `id` or the focused view's
+    /// buffer, and focuses it; no split is no change. False when there
+    /// was nothing to split from.
+    fn split_for(&mut self, split: Option<&str>, id: Option<BufferId>) -> bool {
+        let Some(how) = split else { return true };
+        let id = match id.or_else(|| self.focused_view().map(|v| self.ed.views[v].buffer)) {
+            Some(id) => id,
+            None => match self.ed.listed_buffers().first() {
+                Some(id) => *id,
+                None => return false,
+            },
+        };
+        let v = self.ed.add_view(id);
+        match how {
+            "vsplit" | "beside" => {
+                self.layout.split(SplitDir::H, Content::Editor(v));
+            }
+            "split" | "below" => {
+                self.layout.split(SplitDir::V, Content::Editor(v));
+            }
+            "tab" => {
+                self.layout.new_tab(Content::Editor(v));
+            }
+            other => {
+                self.ed.views.remove(v);
+                self.ed.message = format!("open: unknown split {other}");
+                return false;
+            }
+        }
+        true
     }
 
     /// `:tool NAME`: opens the tool's terminal (dock or split), or
@@ -874,7 +1074,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         ),
         cmd(
             Spec::new("field blur")
-                .when(&["field", "!prompt", "!field:commands"])
+                .when(&["field", "!prompt"])
                 .doc("the keys back from a view's field to the view"),
             |k, ctx| k.blur_lua_field(ctx.view),
         ),

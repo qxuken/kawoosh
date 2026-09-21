@@ -1431,6 +1431,10 @@ fn macros_record_and_replay_the_stream() {
     t.keys("q");
     assert_eq!(t.ed.message, "recorded @c");
     t.keys("gg@c");
-    assert_eq!(t.head(), 6, "on the last line, the empty one after the newline");
+    assert_eq!(
+        t.head(),
+        6,
+        "on the last line, the empty one after the newline"
+    );
     assert!(t.ed.message.contains("deep"), "{}", t.ed.message);
 }

@@ -4,6 +4,7 @@
 
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -40,6 +41,13 @@ pub enum IoMsg {
     Listed {
         token: u64,
         result: Result<Vec<crate::fs::Entry>, String>,
+    },
+    /// A tree walked on a thread of its own for a plugin
+    /// (`kawoosh.fs.walk(root, fn)`): the job's token, and the files
+    /// under the root, relative to it, or why not.
+    Walked {
+        token: u64,
+        result: Result<Vec<String>, String>,
     },
     /// A file being opened ([`Io::open_file`]): the bytes indexed so far.
     Opening {
@@ -82,6 +90,24 @@ pub enum IoMsg {
         hit: Option<(std::ops::Range<usize>, bool)>,
         elapsed: std::time::Duration,
     },
+}
+
+/// A process [`Io::run_process`] started, to be killed early — a search
+/// the next keystroke made stale. Its exit still arrives as
+/// [`IoMsg::ProcExit`], with no code.
+#[derive(Clone)]
+pub struct ProcHandle {
+    child: Arc<Mutex<Option<std::process::Child>>>,
+}
+
+impl ProcHandle {
+    pub fn kill(&self) {
+        if let Ok(mut c) = self.child.lock()
+            && let Some(child) = c.as_mut()
+        {
+            let _ = child.kill();
+        }
+    }
 }
 
 pub struct Io {
@@ -211,12 +237,13 @@ impl Io {
 
     /// Runs `cmd` through the shell in `cwd`, streaming its output line by
     /// line (stderr merged) as [`IoMsg::ProcLine`], then [`IoMsg::ProcExit`].
+    /// The handle kills it early; dropped, the process runs to its end.
     pub fn run_process(
         &self,
         id: u64,
         cmd: &str,
         cwd: Option<&std::path::Path>,
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<ProcHandle> {
         use std::io::{BufRead, BufReader};
         use std::process::{Command, Stdio};
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
@@ -233,6 +260,7 @@ impl Io {
         let mut child = command.spawn()?;
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
+        let child = Arc::new(Mutex::new(Some(child)));
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
         let pump = |reader: Box<dyn Read + Send>, tx: Sender<IoMsg>, wake: WakeHandle| {
             thread::spawn(move || {
@@ -246,14 +274,25 @@ impl Io {
         };
         let a = pump(Box::new(stdout), tx.clone(), wake.clone());
         let b = pump(Box::new(stderr), tx.clone(), wake.clone());
+        let handle = ProcHandle {
+            child: child.clone(),
+        };
         thread::spawn(move || {
+            // The pipes close when the process ends — or was killed —
+            // and only then is the child taken to be waited on, so a
+            // kill never waits on the lock a wait holds.
             let _ = a.join();
             let _ = b.join();
-            let code = child.wait().ok().and_then(|s| s.code());
+            let code = child
+                .lock()
+                .ok()
+                .and_then(|mut c| c.take())
+                .and_then(|mut c| c.wait().ok())
+                .and_then(|s| s.code());
             let _ = tx.send(IoMsg::ProcExit { id, code });
             wake.wake();
         });
-        Ok(())
+        Ok(handle)
     }
 
     /// Everything that arrived since the last drain.

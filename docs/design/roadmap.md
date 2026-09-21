@@ -172,27 +172,37 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 
 ### Panes and pickers
 
-- **The picker pane** — open [todo, keys.md]. The biggest daily gap and
-  the reason the reserved keys exist: `<leader>f` files, `<leader>g`
-  grep, `<leader>/` the buffer's lines, `<leader>.` smart, `<leader>bb`
-  buffers (`<leader>b` is a prefix with no timeout, so the picker takes
-  `bb`; `:buffer list` is a pane already, `:commands` too),
-  `<leader>sr` resume. The building blocks are there: a Lua view is a
-  slot pane with `ctx.field` (ea80f65), `kawoosh.fs.list` reads
-  off-thread, `dir` has the preview pane. **Shape**: compositional, as
-  the todo says — a `picker` module in Lua offering `input`, `list`,
-  `preview` and a layout that a plugin can take whole
-  (`picker.open { source = files }`) or in parts. Files first (the
-  source is a walk on the io thread, the match a fuzzy scorer in
-  Rust exposed as `kawoosh.fuzzy(needle, haystacks)` so forty thousand
-  paths cost a frame what forty do), then buffers, grep (`rg` through
-  `kawoosh.compile`'s spawn path, its locations the D5c table), lines,
-  and the commands pane migrated onto it last. Sessions do not keep a
-  picker.
+- **The picker pane** — done 2026-09-21 [todo, keys.md]. `picker.lua`,
+  a bundled plugin on the public API: one Lua view below the
+  keyboard's pane (`kawoosh.view_open { below, share }`), the query a
+  field, the rows drawn by `picker.rows` with the matched bytes lit,
+  the cursor's row previewed beside them; the keyboard goes back to
+  the pane it came from when the picker closes (`Scripting::view_from`).
+  A source is data — `items` or an off-thread `load`, or a `search`
+  run per query with a cancel — and the bundled ones are `files`
+  (`kawoosh.fs.walk`: ripgrep's `ignore` walk on the io thread, so
+  `.gitignore`, hidden and `.git` are left out and the picker and
+  `:grep` agree on what the project is), `buffers`, `recent`
+  (`kawoosh.oldfiles`), `smart` (the three, each path once), `grep`
+  (`rg --vimgrep` through `kawoosh.spawn`, a killable process whose
+  lines arrive once a frame, stopped past two thousand), `lines`,
+  `commands` and `tools`. Matching is `kawoosh.matcher` — fzy's
+  scoring in Rust (`lua/src/fuzzy.rs`), the list crossing the boundary
+  once, a query answering the top two hundred with positions — and the
+  ranking is `picker.rank(item, hit)` in Lua, the score plus a boost
+  (an open buffer's file, a file opened before), which is where the
+  memory's rank plugs in. `kawoosh.picker` is the module: a plugin
+  registers a source with its own `pick` and `keys`, or opens a list
+  whole, or draws rows into a view of its own. `:commands` migrated
+  onto it (`commands_pane.rs` gone; `kawoosh.commands()` carries each
+  spec's keys, `kawoosh.holds` a fact); `<leader>sr` resumes the last
+  picker with its query and cursor; a session does not keep the pane
+  (`kawoosh.view`'s `session = false`). `kawoosh/tests/picker.rs`.
 - **Pinned files (harpoon)** — open [todo, keys.md]. `<leader>e` the
-  list, `<leader>e1`…`9` and `<A-1>`…`9` to jump. A `kawoosh.store`
-  table per workspace and a Lua view; rides on the picker's list
-  block, so after it, and a day's work.
+  list, `<leader>e1`…`9` and `<A-1>`…`9` to jump. Not in the picker's
+  round: memory.md decided a pin is a flag on a moment (its Decision
+  5), so it lands with the memory's third round, as a boost the
+  picker's `rank` reads and a `pins` source on its list.
 - **The scrolling tab** — later, design first [todo]. Decision 2 above.
 - **Tab strip close button, `:map` listing** — open [kui.md]. Small;
   fold into whichever round touches the strip or the keymap.
@@ -255,10 +265,11 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   once the harness exists to test it.
 - **Plugin-built panes** — partly [todo]. `kawoosh.view` is a slot pane
   filled from a Lua table of kui nodes, with fields; `kawoosh.map` with
-  `when = { "view:NAME" }` gives it keys. What is missing is the
-  *documentation* that this is the "direct kui access" the todo asks
-  for, and a worked example beyond `dir`'s preview — the picker will be
-  that example.
+  `when = { "field:lua:NAME/FIELD" }` gives its field keys. The worked
+  example is `picker.lua` now (2026-09-21): a view with a field, rows
+  keyed by their text, a preview, keys on the field and clicks on the
+  rows. What is missing is the *documentation* that this is the
+  "direct kui access" the todo asks for — a page, not a plugin.
 - **Native extensions** — deferred [todo, mvp.md D8]. Decided against
   for the MVP: no stable Rust ABI, so a real dylib surface is a C-ABI
   project of its own. The rule kept — Lua talks through the same
@@ -333,13 +344,13 @@ follow the theme every frame (`panes.rs`).
   answers it) picks its base16 variant each prompt. The investigation
   is which of (2) and (3) nushell's own colour config can actually
   consume; (1) needs none.
-- **Launch targets** — partly. `kawoosh.tool` is the target and
-  `:tool` bare lists names in the message line; what wezterm's launch
-  menu adds is the *list as a picker* — `<leader>tt` (free) opening
-  the tools with their command and domain, `<CR>` running one — which
-  is the picker round's list block with a tools source, so it lands
-  there. Ship a few registrations in the bundled config as examples
-  (`git` = lazygit at the workspace root, `claude` in the cwd, `top`).
+- **Launch targets** — done 2026-09-21, but for the examples.
+  `kawoosh.tool` is the target and `:tool` bare lists names in the
+  message line; `<leader>tt` (`picker tools`) is the list as a picker
+  — each tool with its command and where it runs, `<CR>` running one
+  (`kawoosh.tools()` reads the registrations back). Still to do: a few
+  registrations in the bundled config as examples (`git` = lazygit at
+  the workspace root, `claude` in the cwd, `top`).
 - **Domains: ssh, wsl** — later, design first; systemic, as the todo
   says. A domain is *where a pty spawns*, and the cheap form exists
   today as a tool whose `cmd` is `ssh host` — nothing to build. The
@@ -397,11 +408,14 @@ then breadth.
    record and replay a named span. Closes kui.md's "no macros or `.`".~~
    Landed 2026-09-21 (`editor/src/repeat.rs`, keys.md's "Editing"); see
    the engine track.
-4. **The picker.** `picker.lua` as the compositional module; files,
+4. ~~**The picker.** `picker.lua` as the compositional module; files,
    buffers, grep, lines; `<leader>f` `<leader>bb` `<leader>g` `<leader>/`
    `<leader>sr`; `kawoosh.fuzzy` in Rust; the commands pane migrated
    onto it. Pinned files (`<leader>e`) in the same round if the list
-   block came out clean, the next one if not.
+   block came out clean, the next one if not.~~ Landed 2026-09-21
+   (`kawoosh/lua/picker.lua`, `lua/src/fuzzy.rs`, keys.md's `<leader>`
+   groups); see the panes track. Pinned files wait for the memory's
+   third round, where memory.md put them.
 5. **Config reaches kui: fonts and tokens.** `font.*` settings, syntax
    tokens from config, `set_theme`; trusted `.kawoosh/init.lua` in the
    same round since it is the same file's other half.

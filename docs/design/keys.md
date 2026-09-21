@@ -204,12 +204,18 @@ objects, or any other character on both sides.
 
 | keys | what |
 |---|---|
-| `<leader><leader>` | the buffer list |
+| `<leader><leader>` `<leader>bb` | the buffers, as a picker — the current one last, so `<CR>` at once is the one before |
 | `<leader>bd` `<leader>bo` | delete the buffer, every other buffer |
 | `<leader>bn` `<leader>bp` | next, previous buffer |
 | `<leader>tn` `<leader>tq` | a new tab, close the tab |
-| `<leader>sp` | the commands pane (the palette) |
-| `<leader>so` | old files |
+| `<leader>tt` | the tools (`kawoosh.tool`), as a picker |
+| `<leader>f` | the files git sees under the working directory, as a picker |
+| `<leader>g` | grep the project: `rg` run on the query as it is typed |
+| `<leader>/` | the buffer's lines |
+| `<leader>.` | the smart picker: the buffers, then the files opened before, then the walk |
+| `<leader>sp` | the commands (the palette): every spec, what it needs where the keyboard came from, `<CR>` runs it |
+| `<leader>so` | the files opened before |
+| `<leader>sr` | the last picker again, its query and cursor as they were |
 | `<leader>sm` | the messages |
 | `<leader>ws` `<leader>wr` | save, restore the session |
 | `<leader>cc` | compile |
@@ -224,6 +230,17 @@ The groups are the which-key ones from the neovim config: `b` buffers,
 `t` tabs, `s` search and lists, `w` the workspace, `c` code, single
 letters for the daily few. A picker that does not exist yet has its
 spelling kept for it below rather than given to something else.
+
+**In a picker** (roadmap.md step 4, `picker.lua`), the query is a
+field: typing filters, `<C-n>` `<C-p>` `<Down>` `<Up>` `<C-j>` `<C-k>`
+walk the rows and `<PageDown>` `<PageUp>` by a page; `<Esc>` is normal
+mode over the query — `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `0` `D`
+`ciw` edit it — and `<Esc>` again closes; `<C-c>` closes from either
+mode. `<CR>` takes the row: a file at its line, a buffer, a command
+(the command line opened on one that takes arguments); `<C-v>` `<C-s>`
+`<C-t>` take it into a split beside, a split below, a new tab. A click
+lands the cursor on a row and a second click takes it. The pane opens
+below the keyboard's and hands the keyboard back where it came from.
 
 ## The which-key
 
@@ -258,14 +275,10 @@ so that nothing else takes the key meanwhile.
 
 | keys | for |
 |---|---|
-| `<leader>f` | a file picker |
-| `<leader>g` | grep the project |
-| `<leader>/` | the buffer's lines |
-| `<leader>.` | the smart picker |
 | `<leader>e` | the pinned files (harpoon-shaped); `<leader>e1`…`9` and `<A-1>`…`9` to jump |
 | `gsf` `gsh` | find, highlight a surrounding pair |
 | `<leader>E` | an explorer |
-| `<leader>sr` `<leader>sh` | resume the last picker, help |
+| `<leader>sh` | help |
 | `<leader>m` | marks |
 | `<leader>r` | rename the symbol |
 | `<leader>R` | rename the file |

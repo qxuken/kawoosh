@@ -14,6 +14,8 @@ kawoosh._writers = {}
 kawoosh._changers = {}
 kawoosh._restorers = {}
 kawoosh._openers = {}
+kawoosh._transient = {}
+kawoosh._tools = {}
 kawoosh._nonce = 0
 
 -- kawoosh.command(name, fn[, opts]): a named command, callable from a
@@ -160,13 +162,34 @@ function kawoosh.confirm(opts)
   kawoosh._confirm(tostring(opts.title or "?"), lines, labels, commands, opts.default)
 end
 
--- kawoosh.view(name, fn[, on_event]): a pane whose content is what `fn`
--- returns — a kui table tree (row, column, text, edit, button, ...).
--- `fn(ctx)` gets { pane = id, focused = bool, env = kui's env }. Events
--- from the tree's on_click / on_key payloads reach `on_event(ev)`.
-function kawoosh.view(name, fn, on_event)
+-- kawoosh.view(name, fn[, on_event[, opts]]): a pane whose content is
+-- what `fn` returns — a kui table tree (row, column, text, edit,
+-- button, ...). `fn(ctx)` gets { pane = id, focused = bool, width =,
+-- height =, env = kui's env }. Events from the tree's on_click / on_key
+-- payloads reach `on_event(ev)`. `opts.session = false` keeps the view
+-- out of a session: a picker is asked for again, not brought back.
+function kawoosh.view(name, fn, on_event, opts)
   kawoosh._views[name] = fn
   kawoosh._handlers[name] = on_event
+  kawoosh._transient[name] = (opts and opts.session == false) or nil
+end
+
+-- kawoosh.tool(name, { cmd =, cwd =, dock = }): a launch target for
+-- `:tool NAME` and the tools picker; `kawoosh.tools()` lists them, by
+-- name, each with what was registered.
+local register_tool = kawoosh.tool
+function kawoosh.tool(name, t)
+  kawoosh._tools[name] = { cmd = t.cmd, cwd = t.cwd, dock = t.dock or false }
+  register_tool(name, t)
+end
+
+function kawoosh.tools()
+  local out = {}
+  for name, t in pairs(kawoosh._tools) do
+    out[#out + 1] = { name = name, cmd = t.cmd, cwd = t.cwd, dock = t.dock }
+  end
+  table.sort(out, function(a, b) return a.name < b.name end)
+  return out
 end
 
 -- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, on_change=fn,
@@ -232,10 +255,37 @@ end
 -- that buffer it was (an index of `tracked()`, or false): how a line
 -- pasted into one listing is known to be an entry of another.
 --
--- kawoosh.view_open(name[, { focus = false }]) puts a Lua view in a
--- split, or focuses its pane — `focus = false` leaves the keyboard
--- where it is; kawoosh.view_close(name) closes that pane;
+-- kawoosh.view_open(name[, { focus = false, below = true, share = 0.5 }])
+-- puts a Lua view in a split — beside, or below with `below`, taking
+-- `share` of the room — or focuses its pane; `focus = false` leaves
+-- the keyboard where it is. kawoosh.view_close(name) closes that pane
+-- and hands the keyboard back to the pane it came from;
 -- kawoosh.view_toggle(name[, opts]) does one or the other.
+--
+-- kawoosh.open(path[, { line =, col =, split = "vsplit" | "split" |
+-- "tab" }]): the path in an editor pane — the focused one, or a new
+-- one beside, below, or in a new tab — the caret on the line.
+-- `kawoosh.buf.show(buffer[, { split = }])` the same for a buffer.
+-- kawoosh.cmdline(text): the command line opened with `text` on it.
+-- kawoosh.run(line): a command line run where the keyboard is, after
+-- what was asked before it (a pane closed, a file opened) — where
+-- `kawoosh.cmd` runs at once, inside the command that asked.
+--
+-- kawoosh.fs.walk(root, fn): every file under `root` as git sees it —
+-- `.gitignore`d, hidden and `.git` left out — relative to it, read on
+-- a thread of its own; `fn(paths)` when done, or `fn(nil, why)`.
+-- kawoosh.spawn(cmd, { cwd =, on_lines = fn(lines), on_exit = fn(code)
+-- }) runs `cmd` through the shell and hands its output over in lines
+-- as they come, once a frame; it returns a token `kawoosh.kill(token)`
+-- stops the process with (its `on_exit` then gets no code).
+-- kawoosh.fuzzy(needle, list[, limit]) scores a small list;
+-- kawoosh.matcher(list) holds a big one — `m:query(needle, limit)`
+-- answers `{ index =, score =, positions = }` best first, positions
+-- the matched characters' bytes from 1; `m:count()`. Case is smart.
+-- kawoosh.oldfiles([limit]): the files opened before, newest first,
+-- `{ path =, line = }` each. kawoosh.holds(fact): whether a fact holds
+-- where the keyboard is. kawoosh.buf.lines_in(from, to[, buffer]): a
+-- window of a buffer's lines.
 function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
   if t.on_change then kawoosh._changers[t.name] = t.on_change end

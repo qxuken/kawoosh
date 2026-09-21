@@ -48,7 +48,6 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::scripting::commands());
     v.extend(crate::undo::commands());
     v.extend(crate::memory::commands());
-    v.extend(crate::commands_pane::commands());
     v.extend(crate::cmdline::commands());
     v.extend(crate::nodes::commands());
     v.extend(crate::whichkey::commands());
@@ -76,7 +75,6 @@ impl Kawoosh {
             self.commands.map.insert(spec.name, Rc::new(c));
         }
         crate::cmdline::bind(&mut self.ed.keymap);
-        crate::commands_pane::bind(&mut self.ed.keymap);
         // A terminal's copy mode: `q` in the scrollback buffer gives the
         // pane back to the terminal (`terminals.rs`).
         self.ed.keymap.bind_when(
@@ -147,7 +145,6 @@ impl Kawoosh {
             .prompt_view()
             .or_else(|| self.focused_view())
             .or_else(|| match self.layout.focused_content() {
-                Some(Content::Commands) => self.commands_pane.field,
                 Some(Content::Lua(name)) => self.lua_field_focused(&name),
                 _ => None,
             })
@@ -233,7 +230,6 @@ impl Kawoosh {
             Some(Content::Terminal(t)) => {
                 self.terms.map.remove(&t);
             }
-            Some(Content::Commands) => self.close_commands_field(),
             Some(Content::Lua(_) | Content::Undo | Content::History | Content::Memory) => {}
             None => self.ed.message = "cannot close the last pane".into(),
         }
@@ -359,7 +355,6 @@ fn panes() -> Vec<ShellCommand> {
                         Content::Terminal(t) => {
                             k.terms.map.remove(&t);
                         }
-                        Content::Commands => k.close_commands_field(),
                         Content::Lua(_) | Content::Undo | Content::History | Content::Memory => {}
                     }
                 }
@@ -439,7 +434,6 @@ fn panes() -> Vec<ShellCommand> {
                         Some(Content::Terminal(t)) => {
                             k.terms.map.remove(&t);
                         }
-                        Some(Content::Commands) => k.close_commands_field(),
                         _ => {}
                     }
                 }

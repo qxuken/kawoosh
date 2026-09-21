@@ -307,10 +307,7 @@ fn progress_and_messages_land_in_the_corner() {
         texts.iter().any(|t| t == "Loading workspace 3/12 50%"),
         "{texts:?}"
     );
-    assert!(
-        texts.contains(&server),
-        "the server's name: {texts:?}"
-    );
+    assert!(texts.contains(&server), "the server's name: {texts:?}");
     assert!(texts.iter().any(|t| t == "…"), "running: {texts:?}");
 
     // An edit: the server ends the token and speaks.

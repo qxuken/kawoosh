@@ -62,7 +62,7 @@ impl Kawoosh {
         self.compile.cwd = cwd.clone();
         self.compile.cursor_line = None;
         match self.io.run_process(id, cmd, cwd.as_deref()) {
-            Ok(()) => self.compile.running = true,
+            Ok(_) => self.compile.running = true,
             Err(e) => {
                 self.compile_append(&format!("cannot run: {e}\n"));
                 self.compile.running = false;
