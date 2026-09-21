@@ -524,8 +524,30 @@ fn a_pane_without_a_view_has_the_pane_keys() {
     assert_eq!(app.memory_pane.cursor, 4);
     d.keys(&mut app, "G");
     assert_eq!(app.memory_pane.cursor, 39);
+    // The frame that scrolls to the cursor builds the rows around it:
+    // the reveal runs before the list is sliced, so the last row is
+    // drawn in that very frame, not one late.
+    d.frame(&mut app);
+    let labels: Vec<String> = d
+        .core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.label.clone())
+        .filter(|l| l.starts_with("moment "))
+        .collect();
+    assert!(labels.iter().any(|l| l == "moment 1"), "{labels:?}");
+    assert!(!labels.iter().any(|l| l == "moment 40"), "{labels:?}");
     d.keys(&mut app, "gg");
     assert_eq!(app.memory_pane.cursor, 0);
+    d.frame(&mut app);
+    let labels: Vec<String> = d
+        .core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.label.clone())
+        .filter(|l| l.starts_with("moment "))
+        .collect();
+    assert!(labels.iter().any(|l| l == "moment 40"), "{labels:?}");
     d.keys(&mut app, "dd");
     assert_eq!(app.memory_pane.cursor, 0, "an unbound key does nothing");
     assert!(after_half >= 4);

@@ -1181,6 +1181,23 @@ impl Kawoosh {
                         ui.with(col(8.0), |ui| ui.text("when", small(pal.faint)));
                     }
                 });
+                // The cursor's row into view when it moved — before the
+                // list is built, so the frame that scrolls slices its
+                // rows by the offset it scrolls to (the geometry a view
+                // reads carries a `set_scroll` made in the same build)
+                // rather than a frame late.
+                let list = ui.child_key("rows");
+                self.memory_pane.page = ui
+                    .scroll_geometry(list)
+                    .map_or(0, |g| (g.rect.h / tm.line_h).floor() as usize);
+                if reveal && n > 0 {
+                    let y = cursor as f32 * tm.line_h;
+                    if let Some(g) = ui.scroll_geometry(list)
+                        && !(g.offset.y <= y && y + tm.line_h <= g.offset.y + g.rect.h)
+                    {
+                        ui.set_scroll(list, Vec2::new(0.0, (y - g.rect.h / 2.0).max(0.0)));
+                    }
+                }
                 kui::widgets::virtual_column(
                     ui,
                     "rows",
@@ -1350,20 +1367,6 @@ impl Kawoosh {
                         );
                     },
                 );
-                let list = ui.child_key("rows");
-                self.memory_pane.page = ui
-                    .scroll_geometry(list)
-                    .map_or(0, |g| (g.rect.h / tm.line_h).floor() as usize);
-                if reveal && n > 0 {
-                    let y = cursor as f32 * tm.line_h;
-                    let seen = ui
-                        .scroll_geometry(list)
-                        .is_some_and(|g| g.offset.y <= y && y + tm.line_h <= g.offset.y + g.rect.h);
-                    if !seen {
-                        let h = ui.scroll_geometry(list).map_or(0.0, |g| g.rect.h);
-                        ui.set_scroll(list, Vec2::new(0.0, (y - h / 2.0).max(0.0)));
-                    }
-                }
                 // The detail: a text's lines, a file's draft against
                 // the disk, a subject's facts.
                 ui.with(tm.strip(&pal), |ui| {
