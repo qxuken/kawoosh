@@ -251,7 +251,7 @@ function picker.widths(items, columns)
           if d ~= "" then dim = math.max(dim, (utf8.len(d) or #d) + 2) end
         end
       end
-      local w = math.ceil((main + dim) * SIZE * 0.62)
+      local w = math.ceil((main + dim) * SIZE * 0.6) + 4
       if c.max then w = math.min(w, c.max) end
       out[j] = w
     end
@@ -279,12 +279,14 @@ end
 -- `opts.columns` — `{ { FIELD, dim = FIELD, family =, muted =, min =,
 -- width =, grow = }, … }` — the rows are a grid, a cell per column
 -- holding the item's field (its `dim` field faint after it), the
--- cells lined up: a column sits at its widest cell, at least `min`
--- wide, or at `width`, or `grow`s into the rest; `opts.widths[j]` is
--- a floor for column `j` too (`picker.widths`: the widest of every
--- item, so the columns hold still as the window slides), a column's
--- `share` capping it at that fraction of `opts.width`, the list's,
--- so the growing column keeps room beside a preview; the match
+-- cells lined up: a column is `width` wide, or `opts.widths[j]` wide
+-- (`picker.widths`: the widest of every item, at least `min`, so the
+-- columns hold still as the window slides — a fixed width, since a
+-- floor would still let the window's widest cell push the column
+-- out), a column's `share` capping that at the fraction of
+-- `opts.width`, the list's, so the growing column keeps room beside
+-- a preview, and a cell past its column is cut; without either it
+-- sits at its widest cell; or it `grow`s into the rest; the match
 -- is lit where it falls (`picker.search`), and `item.can` ends the
 -- last cell. With `opts.wrap` the text (the growing cell's) folds to its
 -- width so the whole of a long path shows, `opts.lines(i)` saying how
@@ -352,9 +354,12 @@ function picker.rows(ctx, hits, opts)
         if j == #columns and off then
           spans[#spans + 1] = { (#spans > 0 and "  " or "") .. it.can, color = t.danger }
         end
-        local floor = math.max(c.min or 0, widths[j] or 0)
-        if c.share and opts.width then floor = math.min(floor, math.floor(opts.width * c.share)) end
-        local cell = row { width = c.grow and "grow" or c.width or "fit", min_width = floor > 0 and floor or nil,
+        local fixed = c.width or widths[j]
+        if fixed then
+          fixed = math.max(fixed, c.min or 0)
+          if c.share and opts.width then fixed = math.min(fixed, math.floor(opts.width * c.share)) end
+        end
+        local cell = row { width = c.grow and "grow" or fixed or "fit", min_width = not fixed and c.min or nil,
           clip = true, cross_align = "center" }
         if #spans > 0 then
           cell[#cell + 1] = text(spans, { family = c.family, size = SIZE, wrap = c.grow and wrap or "none" })
@@ -1071,7 +1076,7 @@ picker.source("lines", {
 -- key bound to it, and what it does — or why it cannot run here.
 local COMMAND_COLUMNS = {
   { "text", dim = "alias", family = "mono", min = 160, max = 340, share = 0.36 },
-  { "key", family = "mono", muted = true, min = 100, max = 220, share = 0.22 },
+  { "key", family = "mono", muted = true, min = 100, max = 220, share = 0.26 },
   { "doc", grow = true },
 }
 

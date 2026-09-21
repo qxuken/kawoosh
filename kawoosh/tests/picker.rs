@@ -522,6 +522,35 @@ fn the_commands_source_is_the_registry_as_a_picker() {
         some_key.1, key_x,
         "the key column after a page: {some_key:?}"
     );
+    // And the doc column: the key column is as wide as it was even
+    // when the page's widest key is wider than the first page's.
+    d.ctrl(&mut app, "u");
+    d.keys(&mut app, "picker b");
+    d.frame(&mut app);
+    let long_key_x = d
+        .core
+        .nodes()
+        .iter()
+        .find(|n| n.text.as_deref() == Some("n <leader><leader>"))
+        .map(|n| n.rect.x)
+        .expect("the wide key cell");
+    assert_eq!(long_key_x, key_x);
+    let docs_x: Vec<f32> = d
+        .core
+        .nodes()
+        .iter()
+        .filter(|n| {
+            n.text
+                .as_deref()
+                .is_some_and(|t| t.starts_with("the picker on "))
+        })
+        .map(|n| n.rect.x)
+        .collect();
+    assert!(!docs_x.is_empty());
+    assert!(
+        docs_x.iter().all(|x| (x - doc_x).abs() < 0.5),
+        "the doc column after a page: {docs_x:?} vs {doc_x}"
+    );
     // A query the names do not match is looked for in the rest of the
     // row: an alias, a key, the doc.
     d.ctrl(&mut app, "u");
