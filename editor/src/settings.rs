@@ -314,14 +314,22 @@ impl Settings {
         defaults.set("leader", Setting::Str(" ".into()));
         // The which-key float while a key sequence is open.
         defaults.set("whichkey", Setting::Bool(true));
-        // Days a history (a buffer's undo tree in the store, with its
-        // unsaved text while it has one) may go untouched; 0 keeps
-        // every row.
-        defaults.set("history.keep_days", Setting::Int(90));
-        // The most the histories may add up to in the store, in
-        // megabytes; past it the oldest untouched rows go, one by one.
-        // 0 for no cap.
-        defaults.set("history.max_mb", Setting::Int(64));
+        // The memory (docs/design/memory.md): days a moment — a file
+        // attended, with its history and draft — may go unattended
+        // before it is forgotten; 0 keeps every row.
+        defaults.set("memory.keep_days", Setting::Int(90));
+        // The most the memory and the histories may add up to in the
+        // store, in megabytes; past it the lowest-scored rows go. 0
+        // for no cap.
+        defaults.set("memory.max_mb", Setting::Int(64));
+        // Texts (yanks, deletes, clipboard pastes) kept across a
+        // restart: their days, and the most they may weigh — 0 writes
+        // none to disk, the register still works for the session.
+        defaults.set("memory.text.keep_days", Setting::Int(7));
+        defaults.set("memory.text.max_mb", Setting::Int(8));
+        // Seconds without a key or a click after which dwell stops
+        // counting.
+        defaults.set("memory.idle_secs", Setting::Int(60));
         // The picker (`picker.lua`): a preview of the cursor's row
         // beside the list, and whether a row's text wraps to show the
         // whole of a long path; `<A-p>` and `<A-w>` in the picker flip
@@ -622,9 +630,12 @@ mod tests {
                 "font.features",
                 "font.line_height",
                 "font.size",
-                "history.keep_days",
-                "history.max_mb",
                 "leader",
+                "memory.idle_secs",
+                "memory.keep_days",
+                "memory.max_mb",
+                "memory.text.keep_days",
+                "memory.text.max_mb",
                 "picker.preview",
                 "picker.share",
                 "picker.split",

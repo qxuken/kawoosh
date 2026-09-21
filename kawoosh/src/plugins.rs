@@ -2,6 +2,7 @@
 //! Decision 8): if the API cannot express them, it is not done.
 
 pub const BUNDLED: &[(&str, &str)] = &[
+    ("kawoosh:memory", include_str!("../lua/memory.lua")),
     ("kawoosh:dir", include_str!("../lua/dir.lua")),
     ("kawoosh:picker", include_str!("../lua/picker.lua")),
     ("kawoosh:tools", include_str!("../lua/tools.lua")),

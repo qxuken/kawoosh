@@ -221,18 +221,21 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     leave(&mut d, &mut app);
 
     // A subcommand completes as its parent's first word — the shell's
-    // `:history drop`, a plugin's `:dir cd` — and what follows it
+    // `:memory forget`, a plugin's `:dir cd` — and what follows it
     // completes as the subcommand's own; a subcommand and the parent's
     // first argument are offered side by side.
-    d.keys(&mut app, ":history ");
+    d.keys(&mut app, ":memory ");
     assert_eq!(
         app.cmd_completion.as_ref().unwrap().candidates,
-        ["clear", "drop", "list"]
+        [
+            "all", "clear", "commands", "files", "forget", "pin", "pins", "recent", "searches",
+            "texts"
+        ]
     );
-    d.keys(&mut app, "dr");
-    assert_eq!(app.cmdline_ghost().as_deref(), Some("op"));
+    d.keys(&mut app, "fo");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("rget"));
     tab(&mut d, &mut app);
-    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "history drop");
+    assert_eq!(app.ed.prompt_text().unwrap_or_default(), "memory forget");
     leave(&mut d, &mut app);
     d.keys(&mut app, ":settings re");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("load"));

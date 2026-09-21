@@ -1690,6 +1690,7 @@ dependencies = [
  "libc",
  "log",
  "mlua",
+ "rusqlite",
  "serde",
  "serde_json",
  "smallvec",
@@ -1763,6 +1764,7 @@ dependencies = [
  "kui-lua",
  "log",
  "mlua",
+ "serde_json",
  "slotmap",
 ]
 

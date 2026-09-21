@@ -69,7 +69,7 @@ one is the only straight spelling — the plain `<C-hjkl>` is deliberately
 not a second one, since two spellings for one move by mode is what a
 hand trips on. `Kawoosh::pane_chord` runs a ctrl-shift or alt-shift
 chord's normal-mode binding from any pane without a view of its own —
-a terminal's, a Lua view's, the undo and history panes' — before the
+a terminal's, a Lua view's, the undo and memory panes' — before the
 pane's own keys see it, unless a Lua view's field has the keys, which
 is a view of the editor's and takes the chord through its own maps
 (the picker's `<A-S-l>` over the pane's); editor panes have the chords
@@ -89,7 +89,7 @@ panes (`<C-w>.` sends a literal `<C-w>` to the pty).
 | `]q` `[q` | location in the compile output, or in the references `gr` listed |
 | `]d` `[d` | diagnostic (the message on the status line) |
 | `]h` `[h` | *reserved*: hunk |
-| `]e` `[e` | *reserved*: the pinned files (harpoon-shaped) |
+| `]e` `[e` | *reserved*: the next, previous pin |
 
 ### Going somewhere: `g`
 
@@ -233,9 +233,10 @@ objects, or any other character on both sides.
 | `<leader>/` | the buffer's lines |
 | `<leader>.` | the smart picker: the buffers, then the files opened before, then the walk |
 | `<leader>sp` | the commands (the palette): every spec, what it needs where the keyboard came from, `<CR>` runs it |
-| `<leader>so` | the files opened before |
+| `<leader>so` | the files attended before, ranked by the memory (the picker's `recent`) |
 | `<leader>sr` | the last picker again, its query and cursor as they were |
 | `<leader>sm` | the messages |
+| `<leader>sl` | the memory's ring (`:memory recent`): where was I — every subject attended, in order, newest first |
 | `<leader>ws` `<leader>wr` | save, restore the session |
 | `<leader>cc` | compile |
 | `<leader>ca` | the code actions at the caret (or over the selection), a confirm to choose from; `:lsp action N` runs the Nth |
@@ -245,7 +246,9 @@ objects, or any other character on both sides.
 | `<leader>x` | evaluate the line (the selection, in visual mode) as Lua; the result on the status line, or in a pane when it has lines |
 | `<leader>cd` | the listed directory as the working one (oil's) |
 | `<leader>u` | the undo history |
-| `<leader>p` | the working memory: what was yanked, deleted or pasted in, to put again |
+| `<leader>p` | the memory pane (`:memory`): texts — what was yanked, deleted or pasted in, to put again — and `<Tab>` through files (with their drafts), recent, commands, searches, pins, all |
+| `<leader>ee` `<leader>ea` | the pinned files (`:memory pins`), pin or unpin the buffer's file |
+| `<leader>e1`…`9` `<A-1>`…`9` | open the Nth pin |
 | `<leader>?` | the which-key for every first key (`:keys`) |
 | `<leader>Q` | quit all |
 | `-` | oil: the file's directory |
@@ -316,7 +319,6 @@ so that nothing else takes the key meanwhile.
 
 | keys | for |
 |---|---|
-| `<leader>e` | the pinned files (harpoon-shaped); `<leader>e1`…`9` and `<A-1>`…`9` to jump |
 | `gsf` `gsh` | find, highlight a surrounding pair |
 | `<leader>E` | an explorer |
 | `<leader>sh` | help |
@@ -349,9 +351,10 @@ so that nothing else takes the key meanwhile.
 - **No `<D-v>` in normal mode.** `paste clipboard` types the clipboard's
   answer as insert mode would; in normal mode `p` puts the register,
   which every yank also puts on the clipboard. The register is the
-  head of the *working memory* (`:memory`, `<leader>p`): every yank,
+  head of the *memory*'s texts (`:memory`, `<leader>p`): every yank,
   delete, change and clipboard paste is a moment it keeps, newest
-  first, with where it came from; a moment put from the pane (`⏎`) or
+  first, with where it came from, on disk before the next key and back
+  after a restart (memory.md); a moment put from the pane (`⏎`) or
   recalled (`y`) is the register from then on, `o` goes to where it
   came from, carried through the edits since. There are no named
   registers: the memory is what they were for.

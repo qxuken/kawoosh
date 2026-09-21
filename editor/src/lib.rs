@@ -307,6 +307,13 @@ pub enum Effect {
     },
     SetClipboard(String),
     RequestPaste,
+    /// A line submitted at a prompt: the shell remembers it as a
+    /// `command` or `search` moment (memory.md Decision 2), so `<Up>`
+    /// walks it after a restart.
+    PromptLine {
+        kind: Prompt,
+        line: String,
+    },
     /// Open `path` in the view (a new buffer, or an existing one).
     Open(PathBuf),
     /// A file was written, so the shell can tell the systems.
@@ -874,6 +881,12 @@ impl Editor {
         let line = self.field_text(p.field).unwrap_or_default();
         self.close_field(p.field);
         self.remember(p.kind, &line);
+        if !line.trim().is_empty() {
+            self.effects.push(Effect::PromptLine {
+                kind: p.kind,
+                line: line.clone(),
+            });
+        }
         let view = p.from;
         match p.kind {
             Prompt::Command => self.execute(view, &line),

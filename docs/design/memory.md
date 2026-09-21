@@ -1,6 +1,25 @@
 # The memory: what passed through the attention, kept as data
 
-Status: decided 2026-09-21, not built. The four forks were put as
+Status: decided 2026-09-21; built the same day as roadmap step 10, its
+three rounds in one commit (`systems/src/store.rs`'s `moments` and
+`recent`, `kawoosh/src/moments.rs`, the pane in `memory.rs`,
+`kawoosh/lua/memory.lua`; `kawoosh/tests/memory.rs`). What the build
+changed against the text below: the working memory's texts are read
+back whole at launch rather than as headers with the bytes on demand
+(Decision 3) — the store's caps bound them to what the RAM held before,
+a hundred rows under `memory.text.max_mb`, so the footprint claim
+holds by the cap and not by the lazier read, which stays for a round
+that needs it; dwell is counted while kui says the window has the
+keyboard and a key or a click came within `memory.idle_secs`
+(Decision 7), and a delete's text counts as a yank of its buffer
+(every text taken from it, as the decision says); a text taken again
+within a second is one visit, as any subject; the resume key is
+`<leader>sl` (`<leader>sr` went to the picker's resume in step 4) and
+the pins live under `<leader>e` as a prefix — `<leader>ee` the list,
+`<leader>ea` pin — since a key cannot be both a binding and a prefix;
+the undo root made with the first edit is not counted as one. Round
+four (`tool` and `location` rows) and the notes after are not built.
+The four forks were put as
 options and taken: the unit is a subject row *plus a bounded ring of
 recent transitions* (Decision 1); the histories lose their bookkeeping
 and keep their blob (Decision 6); eviction is a fixed score in Rust

@@ -632,7 +632,7 @@ fn command_line_and_search() {
     assert!(t.ed.take_effects().contains(&Effect::Quit { force: true }));
     t.keys(":nonsense a b<CR>");
     assert!(matches!(
-        t.ed.take_effects().as_slice(),
+        effects(&mut t).as_slice(),
         [Effect::Shell { name, ctx }] if name == "nonsense" && ctx.args == ["a", "b"]
     ));
     t.keys(":set tabstop=2<CR>");
@@ -710,7 +710,7 @@ fn search_walks_from_the_cursor_and_counts_off_the_frame_when_big() {
         t.ed.message
     );
     assert!(matches!(
-        t.ed.take_effects().as_slice(),
+        effects(&mut t).as_slice(),
         [Effect::CountMatches(_)]
     ));
     t.keys("3n");
@@ -728,7 +728,7 @@ fn search_walks_from_the_cursor_and_counts_off_the_frame_when_big() {
     t.keys("w*");
     assert_eq!(t.head(), 12, "`*` from `two` finds the next whole `two`");
     assert!(t.ed.message.contains("2 match(es)"), "{}", t.ed.message);
-    assert!(t.ed.take_effects().is_empty());
+    assert!(effects(&mut t).is_empty());
     t.keys("/(<CR>");
     assert!(t.ed.message.starts_with("bad pattern"), "{}", t.ed.message);
     assert_eq!(
@@ -939,19 +939,29 @@ fn insert_mode_keys() {
 /// the engine's own commands, for one the shell declared, and for one
 /// registered with `Args`; `!` is not a path, and an argument of another
 /// kind is left alone.
+/// The effects a key sequence left, minus the prompt's line — every
+/// submitted `:` or `/` line is an `Effect::PromptLine` for the shell's
+/// memory, beside whatever the line did.
+fn effects(t: &mut T) -> Vec<Effect> {
+    t.ed.take_effects()
+        .into_iter()
+        .filter(|e| !matches!(e, Effect::PromptLine { .. }))
+        .collect()
+}
+
 #[test]
 fn a_path_argument_is_resolved_before_the_command_runs() {
     let mut t = T::new("x");
     t.ed.cwd = std::path::PathBuf::from("/work/dir");
     t.keys(":e sub/../a.txt<CR>");
     assert!(matches!(
-        t.ed.take_effects().as_slice(),
+        effects(&mut t).as_slice(),
         [Effect::Open(p)] if p == std::path::Path::new("/work/dir/a.txt")
     ));
     t.keys(":e! ~/b.txt<CR>");
     let home = kawoosh_doc::paths::home().unwrap();
     assert!(matches!(
-        t.ed.take_effects().as_slice(),
+        effects(&mut t).as_slice(),
         [Effect::Open(p)] if *p == home.join("b.txt")
     ));
     // The shell's `:cd`, declared here: its argument comes back resolved
@@ -963,7 +973,7 @@ fn a_path_argument_is_resolved_before_the_command_runs() {
     );
     t.keys(":cd! ../up<CR>");
     assert!(matches!(
-        t.ed.take_effects().as_slice(),
+        effects(&mut t).as_slice(),
         [Effect::Shell { name, ctx }] if name == "cd" && ctx.args.len() == 1 && std::path::Path::new(&ctx.args[0]) == std::path::Path::new("/work/up") && ctx.bang()
     ));
     // A plugin's: `args = { "path", "text..." }`.
@@ -1068,11 +1078,11 @@ fn commands_are_specs_with_forms_conditions_and_subcommands() {
     t.ed.declare(Spec::new("scroll").when(&["terminal"]));
     t.keys(":scroll<CR>");
     assert_eq!(t.ed.message, "scroll needs terminal");
-    assert!(t.ed.take_effects().is_empty());
+    assert!(effects(&mut t).is_empty());
     t.ed.fact("terminal", true);
     t.keys(":scroll<CR>");
     assert!(matches!(
-        t.ed.take_effects().as_slice(),
+        effects(&mut t).as_slice(),
         [Effect::Shell { name, .. }] if name == "scroll"
     ));
     t.ed.fact("terminal", false);

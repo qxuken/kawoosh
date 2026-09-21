@@ -6,8 +6,8 @@
 //! and Lua's — and an argument to what the command declares it takes
 //! (`kawoosh_editor::ArgKind`): a path for `:e`, `:w`, `:cd`, `:vs`,
 //! `:dir`; a buffer for `:b`; a tool, a view, an option, a command.
-//! A command's subcommands complete as its first word (`:history dr`
-//! is `:history drop`), and the words after complete as the
+//! A command's subcommands complete as its first word (`:memory fo`
+//! is `:memory forget`), and the words after complete as the
 //! subcommand's own. Nothing is a popup: the candidates are a row in
 //! the strip. The keys are the shell's commands `prompt complete`
 //! (`<Tab>`, `<C-y>`) and `prompt cycle next|prev` (`<C-n>`, `<C-p>`),

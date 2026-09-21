@@ -14,4 +14,5 @@ kui-lua.workspace = true
 kui-core.workspace = true
 mlua.workspace = true
 slotmap.workspace = true
+serde_json.workspace = true
 log.workspace = true

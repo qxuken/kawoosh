@@ -94,8 +94,13 @@ fn a_session_saves_and_restores_panes_files_and_carets() {
     assert_eq!(buf.line_of(app.ed.views[v].sels.primary().head), 3);
     app.run_lua_source("t", r#"kawoosh.echo(kawoosh.store("plug").get("k"))"#);
     assert_eq!(app.ed.message, "v");
-    ex(&mut d, &mut app, "oldfiles");
-    assert!(app.ed.message.contains("a.txt") && app.ed.message.contains("b.txt"));
+    // Both files are the memory's, at the lines they were left.
+    let files = app.oldfiles(20);
+    assert!(
+        files.iter().any(|(p, l)| p == &a && *l == 3)
+            && files.iter().any(|(p, l)| p == &b && *l == 1),
+        "{files:?}"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

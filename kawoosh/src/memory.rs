@@ -1,53 +1,265 @@
-//! The working memory as a pane of its own (`:memory`, `<leader>p`),
-//! beside the buffer the way the undo tree is: every moment the
-//! engine remembers (`Editor::memory`) — what was yanked, deleted,
-//! changed away, or pasted in from the clipboard — newest at the top,
-//! with how it came, the buffer it came from and when; under the rows,
-//! the cursor's moment as lines. The `"` register is the memory's
-//! head, so the pane is the register's past: anything that passed
-//! through the hands can be put again, and a moment put again is the
-//! register from then on — a plugin that reads the register's origin
-//! (the file manager, adopting a pasted line) reads a recalled moment's
-//! as it would a fresh yank's.
+//! The memory as a pane of its own (`:memory`, `<leader>p`), beside
+//! the buffer the way the undo tree is, with kinds (memory.md Decision
+//! 10): **texts** — every moment the engine remembers
+//! (`Editor::memory`: what was yanked, deleted, changed away, or pasted
+//! in from the clipboard), newest at the top, with how it came, the
+//! buffer it came from and when, and under the rows the cursor's
+//! moment as lines; **files** — every file and scratch attended, with
+//! its signals (visits, dwell, edits, yanks), whether a draft hangs off
+//! it and how big, and under the rows the cursor's row against the
+//! disk as a diff (what the `:history` pane was); **recent** — the ring,
+//! one row per transition, newest at the top, so a morning reads as a
+//! list; **commands**, **searches**, **pins**, **all**. `<Tab>` cycles
+//! them; `:memory files` opens on one.
 //!
-//! `⏎` or a click puts the cursor's moment in the editor pane the
-//! keyboard came from, after the caret as `p` does; `y` recalls it —
-//! the register, without putting it; `o` goes to where it came from,
-//! its bytes carried through the buffer's edits since (`line_carried`);
-//! `x` forgets it; `q` closes the pane, `<Esc>` hands the keyboard to
-//! an editor pane.
+//! The `"` register is the texts' head, so that view is the register's
+//! past: anything that passed through the hands can be put again, and
+//! a moment put again is the register from then on — a plugin that
+//! reads the register's origin (the file manager, adopting a pasted
+//! line) reads a recalled moment's as it would a fresh yank's.
 //!
-//! Every size is `devtab::Tab`'s, as the undo and history panes' are.
+//! `⏎` or a click puts the cursor's text in the editor pane the
+//! keyboard came from (after the caret, as `p` does), opens a file at
+//! the line it was left, restores a scratch, puts a command line on the
+//! prompt; `y` recalls a text — the register, without putting it; `o`
+//! goes to where it came from (a text's bytes carried through the
+//! buffer's edits since, `line_carried`; a file's line); `x` forgets
+//! it — a draft's buffer reverted, as `:history drop` did; `m` pins
+//! or unpins; `q` closes the pane, `<Esc>` hands the keyboard to an
+//! editor pane.
+//!
+//! Every size is `devtab::Tab`'s, as the undo pane's are.
 
-use std::time::Instant;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-use kawoosh_doc::BufferId;
-use kawoosh_editor::{KeyStroke, Lookup, Mode, Selection, Selections, Spec, Took, ViewId};
+use kawoosh_doc::{BufferId, Hunk};
+use kawoosh_editor::{
+    ArgKind, Args, KeyStroke, Lookup, Mode, Selection, Selections, Spec, Took, ViewId,
+};
+use kawoosh_systems::store::{MomentKey, MomentQuery, MomentRow, RingRow, history_key_of, now};
 use kui::{Color, NodeSpec, Sizing, Ui, Value, Vec2};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
 use crate::devtab::Tab;
+use crate::diff;
+use crate::history::{Base, History, MAX_TEXT, fingerprint};
 use crate::layout::{Content, PaneId, SplitDir};
 use crate::rows;
 use crate::undo::PANEL_SHARE;
 
 /// How many of a moment's lines the pane shows under the rows.
 const LINES_SHOWN: usize = 200;
+/// How many rows a view lists at most.
+const ROWS_MAX: usize = 2000;
+
+/// The pane's views (Decision 10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum View {
+    Texts,
+    Files,
+    Recent,
+    Commands,
+    Searches,
+    Pins,
+    All,
+}
+
+impl View {
+    pub const ALL: [View; 7] = [
+        View::Texts,
+        View::Files,
+        View::Recent,
+        View::Commands,
+        View::Searches,
+        View::Pins,
+        View::All,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            View::Texts => "texts",
+            View::Files => "files",
+            View::Recent => "recent",
+            View::Commands => "commands",
+            View::Searches => "searches",
+            View::Pins => "pins",
+            View::All => "all",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<View> {
+        View::ALL.into_iter().find(|v| v.name() == s)
+    }
+
+    fn next(self) -> View {
+        let i = View::ALL.iter().position(|v| *v == self).unwrap_or(0);
+        View::ALL[(i + 1) % View::ALL.len()]
+    }
+}
+
+/// Where a file or scratch row's history stands (what the histories
+/// pane called a state).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    /// A buffer holds it and a pane shows the buffer.
+    OnShow,
+    /// A buffer holds it, no pane shows it.
+    Hidden,
+    /// A buffer holds it, saved: the row is its history.
+    Saved,
+    /// A file row whose file is not on disk.
+    FileGone,
+    /// A file draft nobody opened this launch.
+    NotOpened,
+    /// A saved file's history, waiting for the file to be opened.
+    History,
+    /// A scratch no session restored.
+    NotRestored,
+    /// A file attended before, with no history in the store.
+    Remembered,
+}
+
+impl State {
+    pub fn name(self) -> &'static str {
+        match self {
+            State::OnShow => "on show",
+            State::Hidden => "hidden",
+            State::Saved => "saved",
+            State::FileGone => "file gone",
+            State::NotOpened => "not opened",
+            State::History => "history",
+            State::NotRestored => "not restored",
+            State::Remembered => "remembered",
+        }
+    }
+}
+
+/// One row of the pane.
+#[derive(Clone, Debug)]
+pub enum Row {
+    /// A text of the working memory: its index in `Memory::moments`.
+    Text(usize),
+    /// A subject row, with what the app knows around it.
+    Moment {
+        row: MomentRow,
+        /// A file's name, a scratch's name, the line itself.
+        label: String,
+        /// The buffer holding the subject, while open.
+        holder: Option<BufferId>,
+        state: Option<State>,
+        /// The history row's size, when there is one, and whether it
+        /// is a draft (unsaved text) rather than history alone.
+        draft: Option<(usize, bool)>,
+    },
+    /// A transition of the ring.
+    Recent(RingRow),
+}
+
+impl Row {
+    /// The moment key a row stands for, if it is a subject's.
+    pub fn key(&self) -> Option<&MomentKey> {
+        match self {
+            Row::Moment { row, .. } => Some(&row.key),
+            Row::Recent(r) => Some(&r.key),
+            Row::Text(_) => None,
+        }
+    }
+
+    pub fn state(&self) -> Option<State> {
+        match self {
+            Row::Moment { state, .. } => *state,
+            _ => None,
+        }
+    }
+}
+
+/// Whether the disk still holds what a file row was taken from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Disk {
+    /// Not a file: a scratch is against nothing.
+    None,
+    Same,
+    Moved,
+    Gone,
+    /// Past twice the draft cap: not read to compare.
+    TooBig,
+    /// The row carries no fingerprint (its meta could not be read).
+    Unknown,
+}
+
+impl Disk {
+    pub fn name(self) -> &'static str {
+        match self {
+            Disk::None => "against nothing",
+            Disk::Same => "disk as loaded",
+            Disk::Moved => "disk changed since",
+            Disk::Gone => "file gone",
+            Disk::TooBig => "disk too big to compare",
+            Disk::Unknown => "disk not compared",
+        }
+    }
+}
+
+/// The cursor's file row inspected, read once.
+#[derive(Clone, Debug)]
+pub struct Inspect {
+    pub name: String,
+    pub language: String,
+    pub states: usize,
+    pub current: usize,
+    pub disk: Disk,
+    /// The disk's (or nothing's) lines against the draft's.
+    pub hunk: Option<Hunk>,
+    /// The draft's size in lines.
+    pub lines: usize,
+}
 
 /// What the pane keeps between frames.
-#[derive(Default)]
 pub struct MemoryPanel {
-    /// The panel's own cursor: a moment's index in `Memory::moments`
-    /// (oldest first; the top row is the last).
+    pub view: View,
+    /// The panel's own cursor: an index of `rows`, 0 the top (newest).
     pub cursor: usize,
     /// The editor pane the keyboard came from: where a put goes.
     pub back: Option<ViewId>,
     pub(crate) prefix: bool,
     reveal: bool,
+    rows: Vec<Row>,
+    /// What the rows were built at: the memory's version, the store's
+    /// changes, the histories' and the view.
+    built: Option<(u64, u64, u64, View)>,
+    /// The cursor's file row inspected: its subject, the stamp it was
+    /// read at, and the reading.
+    inspect: Option<(String, u64, Option<Inspect>)>,
 }
 
-/// Where a moment's origin stands now.
+impl Default for MemoryPanel {
+    fn default() -> Self {
+        Self {
+            view: View::Texts,
+            cursor: 0,
+            back: None,
+            prefix: false,
+            reveal: false,
+            rows: Vec::new(),
+            built: None,
+            inspect: None,
+        }
+    }
+}
+
+impl MemoryPanel {
+    pub fn rows(&self) -> &[Row] {
+        &self.rows
+    }
+
+    pub fn inspect(&self) -> Option<&Inspect> {
+        self.inspect.as_ref().and_then(|(_, _, i)| i.as_ref())
+    }
+}
+
+/// Where a text's origin stands now.
 enum Origin {
     Unknown,
     Closed,
@@ -55,12 +267,46 @@ enum Origin {
     At(BufferId, usize),
 }
 
+pub use kawoosh_systems::store::meta_line;
+
+/// `12 visits · 40 min · 3 edits · 2 yanks`, the parts that are not zero.
+pub fn signals(r: &MomentRow) -> String {
+    let mut parts = Vec::new();
+    if r.visits > 0 {
+        parts.push(format!(
+            "{} visit{}",
+            r.visits,
+            if r.visits == 1 { "" } else { "s" }
+        ));
+    }
+    if r.dwell_ms >= 60_000 {
+        parts.push(format!("{} min", r.dwell_ms / 60_000));
+    } else if r.dwell_ms > 0 {
+        parts.push(format!("{} s", r.dwell_ms / 1000));
+    }
+    if r.edits > 0 {
+        parts.push(format!(
+            "{} edit{}",
+            r.edits,
+            if r.edits == 1 { "" } else { "s" }
+        ));
+    }
+    if r.yanks > 0 {
+        parts.push(format!(
+            "{} yank{}",
+            r.yanks,
+            if r.yanks == 1 { "" } else { "s" }
+        ));
+    }
+    parts.join(" · ")
+}
+
 impl Kawoosh {
-    /// `:memory`: the pane in a split beside the focused pane, or
-    /// focused when on show, or — focused already — closed: a toggle,
-    /// as the undo pane is. The editor pane the keyboard leaves is
-    /// where a put goes.
-    pub(crate) fn toggle_memory_panel(&mut self) {
+    /// `:memory [VIEW]`: the pane in a split beside the focused pane on
+    /// the view, or focused when on show, or — focused already, on the
+    /// same view — closed: a toggle, as the undo pane is. The editor
+    /// pane the keyboard leaves is where a put goes.
+    pub(crate) fn toggle_memory_panel(&mut self, view: Option<View>) {
         if let Some(v) = self.focused_view() {
             self.memory_pane.back = Some(v);
         }
@@ -70,8 +316,18 @@ impl Kawoosh {
             .into_iter()
             .find(|p| self.layout.content(*p) == Some(Content::Memory));
         match shown {
-            Some(p) if self.layout.focused() == p => self.close_memory_panel(p),
-            Some(p) => self.layout.focus(p),
+            Some(p)
+                if self.layout.focused() == p
+                    && view.is_none_or(|v| v == self.memory_pane.view) =>
+            {
+                self.close_memory_panel(p)
+            }
+            Some(p) => {
+                self.layout.focus(p);
+                if let Some(v) = view {
+                    self.set_view(v);
+                }
+            }
             None => {
                 let pane = self.layout.split(SplitDir::H, Content::Memory);
                 if let Some(path) = self.layout.tab().root.split_of(pane)
@@ -79,10 +335,16 @@ impl Kawoosh {
                 {
                     *r = 1.0 - PANEL_SHARE;
                 }
-                self.memory_pane.cursor = self.ed.memory.len().saturating_sub(1);
-                self.memory_pane.reveal = true;
+                self.set_view(view.unwrap_or(self.memory_pane.view));
             }
         }
+    }
+
+    fn set_view(&mut self, view: View) {
+        self.memory_pane.view = view;
+        self.memory_pane.cursor = 0;
+        self.memory_pane.reveal = true;
+        self.sync_memory_rows();
     }
 
     fn close_memory_panel(&mut self, pane: PaneId) {
@@ -105,14 +367,271 @@ impl Kawoosh {
             .find_map(|p| self.view_of(p).map(|v| (p, v)))
     }
 
-    /// Moment `i` recalled — the `"` register — and put after the caret
+    // ------------------------------------------------------------ rows
+
+    /// The rows, built again when the memory, the store or the
+    /// histories moved, or the view changed; the holders' states read
+    /// every time, since a pane opening or closing changes them.
+    pub(crate) fn sync_memory_rows(&mut self) {
+        let stamp = (
+            self.ed.memory.version,
+            self.moments.changed,
+            self.histories.changed,
+            self.memory_pane.view,
+        );
+        if self.memory_pane.built != Some(stamp) {
+            let cursor_key = self
+                .memory_pane
+                .rows
+                .get(self.memory_pane.cursor)
+                .and_then(|r| r.key().cloned());
+            self.memory_pane.rows = self.build_rows(self.memory_pane.view);
+            self.memory_pane.built = Some(stamp);
+            let n = self.memory_pane.rows.len();
+            // The cursor stays on its row where the row stayed.
+            self.memory_pane.cursor = cursor_key
+                .and_then(|k| {
+                    self.memory_pane
+                        .rows
+                        .iter()
+                        .position(|r| r.key() == Some(&k))
+                })
+                .unwrap_or(self.memory_pane.cursor)
+                .min(n.saturating_sub(1));
+        }
+        let mut rows = std::mem::take(&mut self.memory_pane.rows);
+        for r in &mut rows {
+            if let Row::Moment {
+                row,
+                holder,
+                state,
+                draft,
+                label,
+            } = r
+                && matches!(row.key.kind.as_str(), "file" | "scratch")
+            {
+                *holder = self.buffer_of_subject(&row.key);
+                *state = Some(match *holder {
+                    Some(id) if !self.ed.buffers[id].modified => State::Saved,
+                    Some(id) if self.buffer_shown(id) => State::OnShow,
+                    Some(_) => State::Hidden,
+                    None => match (row.key.kind.as_str(), draft) {
+                        ("file", _) if !Path::new(&row.key.subject).exists() => State::FileGone,
+                        ("file", Some((_, false))) => State::History,
+                        ("file", Some((_, true))) => State::NotOpened,
+                        ("file", None) => State::Remembered,
+                        (_, Some(_)) => State::NotRestored,
+                        _ => State::Remembered,
+                    },
+                });
+                if let Some(id) = *holder
+                    && row.key.kind == "scratch"
+                {
+                    *label = self.ed.buffers[id].name.clone();
+                }
+            }
+        }
+        self.memory_pane.rows = rows;
+        self.sync_memory_inspect();
+    }
+
+    fn build_rows(&mut self, view: View) -> Vec<Row> {
+        match view {
+            View::Texts => (0..self.ed.memory.len()).rev().map(Row::Text).collect(),
+            View::Recent => self
+                .recent_rows(ROWS_MAX)
+                .into_iter()
+                .map(Row::Recent)
+                .collect(),
+            View::Files => {
+                let mut rows = self.moment_rows(&MomentQuery {
+                    kind: Some("file"),
+                    limit: ROWS_MAX,
+                    ..Default::default()
+                });
+                rows.extend(self.moment_rows(&MomentQuery {
+                    kind: Some("scratch"),
+                    limit: ROWS_MAX,
+                    ..Default::default()
+                }));
+                rows.sort_by_key(|r| std::cmp::Reverse(r.last_at));
+                self.moment_rows_of(rows)
+            }
+            View::Commands => {
+                let rows = self.moment_rows(&MomentQuery {
+                    kind: Some("command"),
+                    limit: ROWS_MAX,
+                    ..Default::default()
+                });
+                self.moment_rows_of(rows)
+            }
+            View::Searches => {
+                let rows = self.moment_rows(&MomentQuery {
+                    kind: Some("search"),
+                    limit: ROWS_MAX,
+                    ..Default::default()
+                });
+                self.moment_rows_of(rows)
+            }
+            View::Pins => {
+                let rows = self.moment_rows(&MomentQuery {
+                    pinned: true,
+                    ..Default::default()
+                });
+                self.moment_rows_of(rows)
+            }
+            View::All => {
+                let rows = self.moment_rows(&MomentQuery {
+                    limit: ROWS_MAX,
+                    ..Default::default()
+                });
+                self.moment_rows_of(rows)
+            }
+        }
+    }
+
+    /// Subject rows dressed: their labels and their histories' sizes.
+    fn moment_rows_of(&self, rows: Vec<MomentRow>) -> Vec<Row> {
+        let histories: std::collections::HashMap<String, (usize, bool)> = self
+            .store
+            .as_ref()
+            .map(|s| {
+                s.history_rows()
+                    .into_iter()
+                    .map(|h| (h.key, (h.bytes, !h.clean)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        rows.into_iter()
+            .map(|row| {
+                let label = match row.key.kind.as_str() {
+                    "file" => Path::new(&row.key.subject)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| row.key.subject.clone()),
+                    "text" => row.text_head.clone().unwrap_or_default(),
+                    _ => row.key.subject.clone(),
+                };
+                let draft = history_key_of(&row.key).and_then(|k| histories.get(&k).copied());
+                Row::Moment {
+                    row,
+                    label,
+                    holder: None,
+                    state: None,
+                    draft,
+                }
+            })
+            .collect()
+    }
+
+    /// The cursor's file or scratch row read, once per row and change:
+    /// what a held buffer has now against what it was loaded from, or
+    /// the row's text against the disk (or nothing, for a scratch).
+    fn sync_memory_inspect(&mut self) {
+        let Some(Row::Moment {
+            row, holder, draft, ..
+        }) = self.memory_pane.rows.get(self.memory_pane.cursor).cloned()
+        else {
+            self.memory_pane.inspect = None;
+            return;
+        };
+        if !matches!(row.key.kind.as_str(), "file" | "scratch") {
+            self.memory_pane.inspect = None;
+            return;
+        }
+        let stamp = match holder {
+            Some(id) => self.histories.changed ^ (self.ed.buffers[id].version().get() << 32),
+            None => self.histories.changed,
+        };
+        if self
+            .memory_pane
+            .inspect
+            .as_ref()
+            .is_some_and(|(k, s, _)| *k == row.key.subject && *s == stamp)
+        {
+            return;
+        }
+        let path = (row.key.kind == "file").then(|| PathBuf::from(&row.key.subject));
+        let inspect = match holder {
+            Some(id) => {
+                let b = &self.ed.buffers[id];
+                let (states, current, _) = self.ed.history_key(id);
+                let disk = match &path {
+                    Some(p) => disk_state(p, Some(fingerprint(b.saved_text()))),
+                    None => Disk::None,
+                };
+                Some(Inspect {
+                    name: b.name.clone(),
+                    language: b.language.to_string(),
+                    states,
+                    current,
+                    disk,
+                    hunk: b.modified.then(|| Hunk::between(b.saved_text(), b.tree())),
+                    lines: b.line_count(),
+                })
+            }
+            None if draft.is_some() => {
+                let key = history_key_of(&row.key).unwrap_or_default();
+                self.read_history(&key).map(|History { text, meta }| {
+                    let draft = text_buffer::Buffer::from_bytes(text);
+                    let (disk, against) = match &path {
+                        Some(p) => match read_disk(p) {
+                            Read::Text(t) => (
+                                match &meta.base {
+                                    Some(base) if fingerprint(&t) == *base => Disk::Same,
+                                    Some(_) => Disk::Moved,
+                                    None => Disk::Unknown,
+                                },
+                                t,
+                            ),
+                            Read::Gone => (Disk::Gone, text_buffer::Buffer::new()),
+                            Read::TooBig => (Disk::TooBig, text_buffer::Buffer::new()),
+                        },
+                        None => (Disk::None, text_buffer::Buffer::new()),
+                    };
+                    let name = if meta.name.is_empty() {
+                        row.key.subject.clone()
+                    } else {
+                        meta.name.clone()
+                    };
+                    let (hunk, lines) = if meta.clean {
+                        (None, against.line_count())
+                    } else {
+                        (Some(Hunk::between(&against, &draft)), draft.line_count())
+                    };
+                    Inspect {
+                        name,
+                        language: meta.language.clone(),
+                        states: meta.nodes.len(),
+                        current: meta.current,
+                        disk,
+                        hunk,
+                        lines,
+                    }
+                })
+            }
+            None => None,
+        };
+        if let Some(i) = &inspect
+            && row.key.kind == "scratch"
+            && let Some(Row::Moment { label, .. }) =
+                self.memory_pane.rows.get_mut(self.memory_pane.cursor)
+        {
+            *label = i.name.clone();
+        }
+        self.memory_pane.inspect = Some((row.key.subject, stamp, inspect));
+    }
+
+    // ------------------------------------------------------------ actions
+
+    /// Text `i` recalled — the `"` register — and put after the caret
     /// of the editor pane the keyboard came from, which takes the
     /// keyboard.
-    fn put_moment(&mut self, i: usize) {
+    fn put_text(&mut self, i: usize) {
         if !self.ed.memory.recall(i) {
             return;
         }
-        self.memory_pane.cursor = self.ed.memory.len().saturating_sub(1);
+        self.memory_pane.cursor = 0;
         let Some((pane, view)) = self.memory_target() else {
             self.ed.message = "no editor pane to put it in".into();
             return;
@@ -122,12 +641,12 @@ impl Kawoosh {
         self.follow_caret = true;
     }
 
-    /// Moment `i` recalled: the register, nothing put.
-    fn recall_moment(&mut self, i: usize) {
+    /// Text `i` recalled: the register, nothing put.
+    fn recall_text(&mut self, i: usize) {
         if !self.ed.memory.recall(i) {
             return;
         }
-        self.memory_pane.cursor = self.ed.memory.len().saturating_sub(1);
+        self.memory_pane.cursor = 0;
         let head = self
             .ed
             .memory
@@ -137,7 +656,7 @@ impl Kawoosh {
         self.ed.message = format!("recalled: {head}");
     }
 
-    /// Where moment `i` came from, as of now.
+    /// Where text `i` came from, as of now.
     fn origin_of(&self, i: usize) -> Origin {
         let Some(m) = self.ed.memory.moments().get(i) else {
             return Origin::Unknown;
@@ -154,9 +673,9 @@ impl Kawoosh {
         }
     }
 
-    /// The editor pane the keyboard came from shows where moment `i`
+    /// The editor pane the keyboard came from shows where text `i`
     /// came from, the caret on it.
-    fn goto_origin(&mut self, i: usize) {
+    fn goto_text_origin(&mut self, i: usize) {
         let from = self
             .ed
             .memory
@@ -182,6 +701,126 @@ impl Kawoosh {
         }
     }
 
+    /// A subject opened: a file at the line it was left (the buffer
+    /// that holds it shown, else opened — which claims its history), a
+    /// scratch restored from its row, a command line put on the prompt.
+    /// The keyboard goes with it.
+    fn open_subject(&mut self, key: &MomentKey, meta: &str) {
+        match key.kind.as_str() {
+            "file" | "scratch" => {
+                let id = match self.buffer_of_subject(key) {
+                    Some(id) => Some(id),
+                    None if key.kind == "file" => self.buffer_for(Path::new(&key.subject)),
+                    None => key
+                        .subject
+                        .strip_prefix("scratch:")
+                        .and_then(|n| n.parse().ok())
+                        .and_then(|n| self.scratch_buffer(n)),
+                };
+                let Some(id) = id else {
+                    self.ed.message = format!("{}: cannot open", key.subject);
+                    return;
+                };
+                let line = (key.kind == "file").then(|| meta_line(meta));
+                match self.memory_target() {
+                    Some((p, v)) => {
+                        self.layout.focus(p);
+                        self.show_buffer(v, id);
+                        if let Some(line) = line
+                            && line > 0
+                        {
+                            let b = &self.ed.buffers[id];
+                            let at = b.line_start(line.min(b.line_count().saturating_sub(1)));
+                            self.ed.views[v].sels = Selections::single(Selection::point(at));
+                        }
+                    }
+                    None => {
+                        let v = self.ed.add_view(id);
+                        self.layout.split(SplitDir::H, Content::Editor(v));
+                    }
+                }
+                self.follow_caret = true;
+            }
+            "command" => {
+                if let Some((p, _)) = self.memory_target() {
+                    self.layout.focus(p);
+                }
+                self.open_cmdline();
+                if let Some(pv) = self.ed.prompt_view() {
+                    self.ed.set_field_text(pv, &key.subject);
+                }
+            }
+            "search" => {
+                let Some((p, v)) = self.memory_target() else {
+                    return;
+                };
+                self.layout.focus(p);
+                self.ed.run(v, "search", &[], None);
+                if let Some(pv) = self.ed.prompt_view() {
+                    self.ed.set_field_text(pv, &key.subject);
+                }
+            }
+            _ => {
+                self.ed.message = format!("{}: a {} moment, nothing to open", key.subject, key.kind)
+            }
+        }
+    }
+
+    /// `x` on the cursor's row.
+    fn forget_row(&mut self, i: usize) {
+        let Some(row) = self.memory_pane.rows.get(i).cloned() else {
+            return;
+        };
+        match row {
+            Row::Text(t) => {
+                let key = self
+                    .ed
+                    .memory
+                    .moments()
+                    .get(t)
+                    .map(|m| crate::moments::text_key(&m.text));
+                self.ed.memory.forget(t);
+                if let Some(key) = key
+                    && self.store.is_some()
+                {
+                    let _ = self.forget_moment(&key);
+                }
+            }
+            Row::Moment { row, .. } => {
+                self.ed.message = match self.forget_moment(&row.key) {
+                    Ok(m) | Err(m) => m,
+                };
+            }
+            Row::Recent(_) => {
+                self.ed.message = "a transition is the ring's: forget its subject in files".into();
+            }
+        }
+        self.sync_memory_rows();
+        self.memory_pane.cursor = i.min(self.memory_pane.rows.len().saturating_sub(1));
+        self.memory_pane.reveal = true;
+    }
+
+    /// `⏎` on the cursor's row.
+    fn open_row(&mut self, i: usize) {
+        self.sync_memory_rows();
+        let Some(row) = self.memory_pane.rows.get(i).cloned() else {
+            return;
+        };
+        match row {
+            Row::Text(t) => self.put_text(t),
+            Row::Moment { row, .. } => self.open_subject(&row.key, &row.meta),
+            Row::Recent(r) => {
+                let meta = self
+                    .store
+                    .as_ref()
+                    .and_then(|s| s.moment(&r.key))
+                    .map(|m| m.meta)
+                    .unwrap_or_default();
+                self.open_subject(&r.key, &meta);
+            }
+        }
+    }
+
     /// A key while the pane has the keyboard.
     pub(crate) fn memory_key_press(&mut self, pane: PaneId, stroke: KeyStroke) {
         let note = stroke.notation();
@@ -199,34 +838,45 @@ impl Kawoosh {
             }
             return;
         }
-        let n = self.ed.memory.len();
+        self.sync_memory_rows();
+        let n = self.memory_pane.rows.len();
         let cursor = self.memory_pane.cursor.min(n.saturating_sub(1));
         self.memory_pane.cursor = cursor;
         match note.as_str() {
             "<C-w>" => self.memory_pane.prefix = true,
             ":" => self.open_cmdline(),
-            // Newest at the top, as the undo pane: down is older.
+            // Newest at the top: down is older.
             "j" | "<Down>" => {
-                self.memory_pane.cursor = cursor.saturating_sub(1);
-                self.memory_pane.reveal = true;
-            }
-            "k" | "<Up>" => {
                 self.memory_pane.cursor = (cursor + 1).min(n.saturating_sub(1));
                 self.memory_pane.reveal = true;
+                self.sync_memory_inspect();
+            }
+            "k" | "<Up>" => {
+                self.memory_pane.cursor = cursor.saturating_sub(1);
+                self.memory_pane.reveal = true;
+                self.sync_memory_inspect();
             }
             "G" => {
-                self.memory_pane.cursor = 0;
+                self.memory_pane.cursor = n.saturating_sub(1);
                 self.memory_pane.reveal = true;
+                self.sync_memory_inspect();
             }
-            "<CR>" | "<Space>" | "p" => self.put_moment(cursor),
-            "y" => self.recall_moment(cursor),
-            "o" => self.goto_origin(cursor),
-            "x" => {
-                if self.ed.memory.forget(cursor) {
-                    self.memory_pane.cursor = cursor.min(self.ed.memory.len().saturating_sub(1));
-                    self.memory_pane.reveal = true;
+            "gg" => {}
+            "<Tab>" => self.set_view(self.memory_pane.view.next()),
+            "<CR>" | "<Space>" | "p" => self.open_row(cursor),
+            "y" => {
+                if let Some(Row::Text(t)) = self.memory_pane.rows.get(cursor) {
+                    self.recall_text(*t);
                 }
             }
+            "o" => match self.memory_pane.rows.get(cursor).cloned() {
+                Some(Row::Text(t)) => self.goto_text_origin(t),
+                Some(Row::Moment { row, .. }) => self.open_subject(&row.key, &row.meta),
+                Some(Row::Recent(_)) => self.open_row(cursor),
+                None => {}
+            },
+            "x" => self.forget_row(cursor),
+            "m" => self.pin_row(cursor),
             "q" => self.close_memory_panel(pane),
             "<Esc>" => {
                 if let Some((p, _)) = self.memory_target() {
@@ -237,20 +887,98 @@ impl Kawoosh {
         }
     }
 
-    /// A click on a row: the pane takes the keyboard and the moment is
-    /// put.
+    /// `m` on a row: pinned, or unpinned.
+    fn pin_row(&mut self, i: usize) {
+        let Some(row) = self.memory_pane.rows.get(i).cloned() else {
+            return;
+        };
+        let (key, on) = match row {
+            Row::Moment { row, .. } => (row.key.clone(), row.pinned == 0),
+            Row::Recent(r) => {
+                let on = self
+                    .store
+                    .as_ref()
+                    .and_then(|s| s.moment(&r.key))
+                    .is_none_or(|m| m.pinned == 0);
+                (r.key, on)
+            }
+            Row::Text(t) => {
+                let Some(m) = self.ed.memory.moments().get(t) else {
+                    return;
+                };
+                let key = crate::moments::text_key(&m.text);
+                let on = self
+                    .store
+                    .as_ref()
+                    .and_then(|s| s.moment(&key))
+                    .is_none_or(|m| m.pinned == 0);
+                (key, on)
+            }
+        };
+        self.ed.message = match self.pin_moment(&key, on) {
+            Ok(m) | Err(m) => m,
+        };
+        self.sync_memory_rows();
+    }
+
+    /// `memory pin`: the focused buffer's file pinned, or unpinned
+    /// when it is; `memory pin N` opens the Nth pin.
+    fn pin_current(&mut self) {
+        let Some(v) = self.focused_view() else {
+            self.ed.message = "no buffer to pin".into();
+            return;
+        };
+        let id = self.ed.views[v].buffer;
+        let Some(key) = self.subject_of(id) else {
+            self.ed.message = "this buffer has no file to pin".into();
+            return;
+        };
+        let on = self
+            .store
+            .as_ref()
+            .and_then(|s| s.moment(&key))
+            .is_none_or(|m| m.pinned == 0);
+        self.ed.message = match self.pin_moment(&key, on) {
+            Ok(m) | Err(m) => m,
+        };
+    }
+
+    /// The Nth pin opened, the keyboard with it.
+    fn open_pin(&mut self, n: usize) {
+        let pins = self.pins();
+        match pins.get(n.saturating_sub(1)) {
+            Some(r) => {
+                let (key, meta) = (r.key.clone(), r.meta.clone());
+                if self.memory_pane.back.is_none() {
+                    self.memory_pane.back = self.focused_view();
+                }
+                self.open_subject(&key, &meta);
+            }
+            None => self.ed.message = format!("no pin #{n} ({} pinned)", pins.len()),
+        }
+    }
+
+    /// A click on a row: the pane takes the keyboard and the row opens.
     pub(crate) fn on_memory_click(&mut self, p: &Value) {
         if let Some(pane) = p.get("pane").and_then(Value::as_int) {
             self.layout.focus(pane as PaneId);
         }
+        if let Some(view) = p.get("view").and_then(Value::as_str).and_then(View::parse) {
+            self.set_view(view);
+            return;
+        }
         if let Some(i) = p.get("row").and_then(Value::as_int) {
-            let i = (i.max(0) as usize).min(self.ed.memory.len().saturating_sub(1));
+            self.sync_memory_rows();
+            let i = (i.max(0) as usize).min(self.memory_pane.rows.len().saturating_sub(1));
             self.memory_pane.cursor = i;
-            self.put_moment(i);
+            self.open_row(i);
         }
     }
 
+    // ------------------------------------------------------------ render
+
     pub(crate) fn render_memory(&mut self, ui: &mut Ui<'_>, pane: PaneId, focused: bool) {
+        self.sync_memory_rows();
         let tm = Tab::of(&ui.metrics(), self.face.line_height);
         let pal = self.pal;
         let font = self.face;
@@ -259,18 +987,16 @@ impl Kawoosh {
         let dim = move || style().color(pal.dim);
         let small = move |c: Color| tm.small(c);
         let col = move |cells: f32| tm.cell(cells, cell_w);
-        let n = self.ed.memory.len();
+        let view = self.memory_pane.view;
+        let rows = std::mem::take(&mut self.memory_pane.rows);
+        let n = rows.len();
         let cursor = self.memory_pane.cursor.min(n.saturating_sub(1));
         self.memory_pane.cursor = cursor;
         let reveal = std::mem::take(&mut self.memory_pane.reveal);
-        let now = Instant::now();
-        let origin = match self.origin_of(cursor) {
-            Origin::Unknown => "where from is not known",
-            Origin::Closed => "its buffer is closed",
-            Origin::Gone => "its text is gone from there",
-            Origin::At(..) => "still there (o)",
-        };
-        let moments: Vec<(Took, bool, String, String, std::time::Duration)> = self
+        let inspect = self.memory_pane.inspect().cloned();
+        let now_i = Instant::now();
+        let now_s = now();
+        let texts: Vec<(Took, bool, String, String, Duration)> = self
             .ed
             .memory
             .moments()
@@ -281,11 +1007,53 @@ impl Kawoosh {
                     m.linewise,
                     m.text.clone(),
                     m.from.clone(),
-                    now.saturating_duration_since(m.at),
+                    now_i.saturating_duration_since(m.at),
                 )
             })
             .collect();
+        let origin = match rows.get(cursor) {
+            Some(Row::Text(t)) => match self.origin_of(*t) {
+                Origin::Unknown => "where from is not known",
+                Origin::Closed => "its buffer is closed",
+                Origin::Gone => "its text is gone from there",
+                Origin::At(..) => "still there (o)",
+            },
+            _ => "",
+        };
+        let has_store = self.store.is_some();
+        let pending = self.moments.pending();
         let tag = Value::map([("kind", "memory".into()), ("pane", Value::Int(pane as i64))]);
+        let head = match view {
+            View::Texts => format!("{n} text{}", if n == 1 { "" } else { "s" }),
+            View::Recent => format!("{n} transition{}", if n == 1 { "" } else { "s" }),
+            v => {
+                let drafts = rows
+                    .iter()
+                    .filter(|r| {
+                        matches!(
+                            r,
+                            Row::Moment {
+                                draft: Some((_, true)),
+                                ..
+                            }
+                        )
+                    })
+                    .count();
+                let mut s = format!("{n} {}", v.name());
+                if drafts > 0 {
+                    s.push_str(&format!(
+                        " · {drafts} draft{}",
+                        if drafts == 1 { "" } else { "s" }
+                    ));
+                }
+                if !has_store {
+                    s.push_str(" · no store: kept for the session");
+                } else if pending > 0 {
+                    s.push_str(&format!(" · {pending} pending"));
+                }
+                s
+            }
+        };
         let sink = ui.with_keyed(
             "memory",
             NodeSpec::column()
@@ -297,23 +1065,55 @@ impl Kawoosh {
                 .label("memory"),
             |ui| {
                 ui.with(tm.strip(&pal).on_click(tag.clone()), |ui| {
-                    let head = format!("{n} moment{}", if n == 1 { "" } else { "s" });
                     ui.text(&head, small(pal.dim));
                     ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
-                    ui.text(
-                        "⏎ put · y recall · o origin · x forget · q close",
-                        small(pal.faint),
-                    );
+                    for v in View::ALL {
+                        let on = v == view;
+                        ui.with_keyed(
+                            v.name(),
+                            NodeSpec::row()
+                                .pad_xy(4.0, 0.0)
+                                .on_click(Value::map([
+                                    ("kind", "memory".into()),
+                                    ("pane", Value::Int(pane as i64)),
+                                    ("view", v.name().into()),
+                                ]))
+                                .cursor(kui::CursorShape::Pointer)
+                                .label(v.name()),
+                            |ui| {
+                                ui.text(v.name(), small(if on { pal.accent } else { pal.faint }));
+                            },
+                        );
+                    }
                 });
-                ui.with(tm.line(&pal, 0).hover_bg(Color::TRANSPARENT), |ui| {
-                    ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
-                        ui.text("took", small(pal.faint))
-                    });
-                    ui.with(tm.rest(), |ui| ui.text("text", small(pal.faint)));
-                    ui.with(col(14.0).main_align(kui::Align::Start), |ui| {
-                        ui.text("from", small(pal.faint))
-                    });
-                    ui.with(col(8.0), |ui| ui.text("when", small(pal.faint)));
+                ui.with(tm.line(&pal, 0).hover_bg(Color::TRANSPARENT), |ui| match view {
+                    View::Texts => {
+                        ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
+                            ui.text("took", small(pal.faint))
+                        });
+                        ui.with(tm.rest(), |ui| ui.text("text", small(pal.faint)));
+                        ui.with(col(14.0).main_align(kui::Align::Start), |ui| {
+                            ui.text("from", small(pal.faint))
+                        });
+                        ui.with(col(8.0), |ui| ui.text("when", small(pal.faint)));
+                    }
+                    View::Recent => {
+                        ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
+                            ui.text("kind", small(pal.faint))
+                        });
+                        ui.with(tm.rest(), |ui| ui.text("subject", small(pal.faint)));
+                        ui.with(col(8.0), |ui| ui.text("when", small(pal.faint)));
+                    }
+                    _ => {
+                        ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
+                            ui.text(if view == View::Files { "state" } else { "kind" }, small(pal.faint))
+                        });
+                        ui.with(tm.rest(), |ui| ui.text("subject", small(pal.faint)));
+                        ui.with(col(22.0).main_align(kui::Align::Start), |ui| {
+                            ui.text("signals", small(pal.faint))
+                        });
+                        ui.with(col(8.0), |ui| ui.text("when", small(pal.faint)));
+                    }
                 });
                 kui::widgets::virtual_column(
                     ui,
@@ -324,9 +1124,8 @@ impl Kawoosh {
                     n,
                     tm.line_h,
                     |ui, d| {
-                        // Newest at the top.
-                        let i = n - 1 - d;
-                        let (took, _, text, from, age) = &moments[i];
+                        let i = d;
+                        let r = &rows[i];
                         let mut line = tm.line(&pal, d);
                         if i == cursor {
                             line = line.bg(if focused {
@@ -334,7 +1133,10 @@ impl Kawoosh {
                             } else {
                                 pal.select.with_alpha(0.4)
                             });
-                        } else if i + 1 == n {
+                        } else if (i == 0 && view == View::Texts)
+                            || r.state() == Some(State::OnShow)
+                        {
+                            // The register's text, a buffer on show.
                             line = line.bg(pal.strip);
                         }
                         let payload = Value::map([
@@ -342,48 +1144,136 @@ impl Kawoosh {
                             ("pane", Value::Int(pane as i64)),
                             ("row", Value::Int(i as i64)),
                         ]);
-                        let label = format!("moment {}", i + 1);
-                        let lines = text.matches('\n').count() + usize::from(!text.ends_with('\n'));
+                        let label = match r {
+                            Row::Text(t) => format!("moment {}", t + 1),
+                            Row::Moment { row, .. } => {
+                                format!("memory {} {}", row.key.kind, row.key.subject)
+                            }
+                            Row::Recent(rr) => format!("recent {} {} {}", rr.at, rr.key.kind, rr.key.subject),
+                        };
                         ui.with_keyed(
                             &label,
                             line.on_click(payload)
                                 .cursor(kui::CursorShape::Pointer)
                                 .label(label.as_str()),
-                            |ui| {
-                                ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
-                                    let color = match took {
-                                        Took::Yank => pal.insert,
-                                        Took::Delete | Took::Change => pal.danger,
-                                        Took::Clipboard => pal.dim,
-                                    };
-                                    ui.text(took.word(), small(color));
-                                });
-                                ui.with(tm.rest(), |ui| {
-                                    ui.text(&preview(text), style().color(pal.fg));
-                                    if lines > 1 {
-                                        ui.text(
-                                            &format!(
-                                                "+{} line{}",
-                                                lines - 1,
-                                                if lines == 2 { "" } else { "s" }
-                                            ),
-                                            small(pal.faint),
-                                        );
-                                    }
-                                });
-                                ui.with(col(14.0).main_align(kui::Align::Start), |ui| {
-                                    ui.text(from, dim());
-                                });
-                                ui.with(col(8.0), |ui| {
-                                    ui.text(&crate::settings::ago(*age), style().color(pal.faint));
-                                });
+                            |ui| match r {
+                                Row::Text(t) => {
+                                    let (took, _, text, from, age) = &texts[*t];
+                                    let lines =
+                                        text.matches('\n').count() + usize::from(!text.ends_with('\n'));
+                                    ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
+                                        let color = match took {
+                                            Took::Yank => pal.insert,
+                                            Took::Delete | Took::Change => pal.danger,
+                                            Took::Clipboard => pal.dim,
+                                        };
+                                        ui.text(took.word(), small(color));
+                                    });
+                                    ui.with(tm.rest(), |ui| {
+                                        ui.text(&preview(text), style().color(pal.fg));
+                                        if lines > 1 {
+                                            ui.text(
+                                                &format!(
+                                                    "+{} line{}",
+                                                    lines - 1,
+                                                    if lines == 2 { "" } else { "s" }
+                                                ),
+                                                small(pal.faint),
+                                            );
+                                        }
+                                    });
+                                    ui.with(col(14.0).main_align(kui::Align::Start), |ui| {
+                                        ui.text(from, dim());
+                                    });
+                                    ui.with(col(8.0), |ui| {
+                                        ui.text(&crate::settings::ago(*age), style().color(pal.faint));
+                                    });
+                                }
+                                Row::Moment {
+                                    row,
+                                    label,
+                                    holder,
+                                    state,
+                                    draft,
+                                } => {
+                                    ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
+                                        match state {
+                                            Some(s) if view == View::Files => {
+                                                let color = match s {
+                                                    State::OnShow | State::Hidden => pal.insert,
+                                                    State::Saved
+                                                    | State::History
+                                                    | State::NotOpened
+                                                    | State::Remembered => pal.dim,
+                                                    State::FileGone | State::NotRestored => pal.danger,
+                                                };
+                                                ui.text(s.name(), small(color));
+                                            }
+                                            _ => ui.text(&row.key.kind, small(pal.dim)),
+                                        }
+                                    });
+                                    ui.with(tm.rest(), |ui| {
+                                        let color = if row.pinned > 0 {
+                                            pal.accent
+                                        } else if holder.is_some() {
+                                            pal.fg
+                                        } else {
+                                            pal.dim
+                                        };
+                                        ui.text(label, style().color(color));
+                                        if row.key.kind == "file" {
+                                            ui.text(&row.key.subject, small(pal.faint));
+                                        }
+                                    });
+                                    ui.with(col(22.0).main_align(kui::Align::Start), |ui| {
+                                        let mut s = signals(row);
+                                        if let Some((bytes, is_draft)) = draft {
+                                            if !s.is_empty() {
+                                                s.push_str(" · ");
+                                            }
+                                            s.push_str(&format!(
+                                                "{} {}",
+                                                if *is_draft { "draft" } else { "history" },
+                                                crate::perf::bytes(*bytes as u64)
+                                            ));
+                                        }
+                                        ui.text(&s, small(pal.faint));
+                                    });
+                                    ui.with(col(8.0), |ui| {
+                                        let age = Duration::from_secs((now_s - row.last_at).max(0) as u64);
+                                        ui.text(&crate::settings::ago(age), style().color(pal.faint));
+                                    });
+                                }
+                                Row::Recent(rr) => {
+                                    ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
+                                        ui.text(&rr.key.kind, small(pal.dim));
+                                    });
+                                    ui.with(tm.rest(), |ui| {
+                                        let label = if rr.key.kind == "file" {
+                                            Path::new(&rr.key.subject)
+                                                .file_name()
+                                                .map(|n| n.to_string_lossy().into_owned())
+                                                .unwrap_or_else(|| rr.key.subject.clone())
+                                        } else {
+                                            rr.key.subject.clone()
+                                        };
+                                        ui.text(&label, style().color(pal.fg));
+                                        if rr.key.kind == "file" {
+                                            ui.text(&rr.key.subject, small(pal.faint));
+                                        }
+                                    });
+                                    ui.with(col(8.0), |ui| {
+                                        let age = Duration::from_secs((now_s - rr.at).max(0) as u64);
+                                        ui.text(&crate::settings::ago(age), style().color(pal.faint));
+                                    });
+                                }
                             },
                         );
                     },
                 );
                 let list = ui.child_key("rows");
                 if reveal && n > 0 {
-                    let y = (n - 1 - cursor) as f32 * tm.line_h;
+                    let y = cursor as f32 * tm.line_h;
                     let seen = ui
                         .scroll_geometry(list)
                         .is_some_and(|g| g.offset.y <= y && y + tm.line_h <= g.offset.y + g.rect.h);
@@ -392,10 +1282,12 @@ impl Kawoosh {
                         ui.set_scroll(list, Vec2::new(0.0, (y - h / 2.0).max(0.0)));
                     }
                 }
-                // The cursor's moment: what it is, then its lines.
+                // The detail: a text's lines, a file's draft against
+                // the disk, a subject's facts.
                 ui.with(tm.strip(&pal), |ui| {
-                    let head = match moments.get(cursor) {
-                        Some((took, linewise, text, from, age)) => {
+                    let head = match rows.get(cursor) {
+                        Some(Row::Text(t)) => {
+                            let (took, linewise, text, from, age) = &texts[*t];
                             let lines =
                                 text.matches('\n').count() + usize::from(!text.ends_with('\n'));
                             format!(
@@ -407,48 +1299,121 @@ impl Kawoosh {
                                 crate::settings::ago(*age),
                             )
                         }
-                        None => {
-                            "nothing remembered yet: a yank, a delete, a paste from the clipboard"
-                                .into()
-                        }
+                        Some(Row::Moment { row, label, .. }) => match &inspect {
+                            Some(i) => format!(
+                                "{label} · {} · {} state{} · {}",
+                                i.disk.name(),
+                                i.states,
+                                if i.states == 1 { "" } else { "s" },
+                                i.hunk
+                                    .as_ref()
+                                    .map(diff::summary)
+                                    .unwrap_or_else(|| "nothing unsaved".into())
+                            ),
+                            None => format!(
+                                "{} {} · first {} · {}",
+                                row.key.kind,
+                                label,
+                                crate::settings::ago(Duration::from_secs(
+                                    (now_s - row.first_at).max(0) as u64
+                                )),
+                                signals(row)
+                            ),
+                        },
+                        Some(Row::Recent(rr)) => format!("{} {}", rr.key.kind, rr.key.subject),
+                        None => match view {
+                            View::Texts => {
+                                "nothing remembered yet: a yank, a delete, a paste from the clipboard"
+                                    .into()
+                            }
+                            _ => "nothing remembered yet".into(),
+                        },
                     };
                     ui.text(&head, small(pal.dim));
+                    ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
+                    ui.text(
+                        "⏎ open · y recall · o origin · x forget · ⇥ view · q close",
+                        small(pal.faint),
+                    );
                 });
+                let diff_style = tm.diff(&pal, style());
                 ui.with_keyed(
-                    "moment",
+                    "detail",
                     NodeSpec::column()
                         .width(Sizing::Grow(1.0))
                         .height(Sizing::Grow(2.0))
                         .scroll_y()
                         .clip(),
-                    |ui| {
-                        let Some((_, _, text, _, _)) = moments.get(cursor) else {
-                            return;
-                        };
-                        let shown: Vec<&str> = text.lines().take(LINES_SHOWN).collect();
-                        for (k, l) in shown.iter().enumerate() {
-                            ui.with(tm.line(&pal, k).hover_bg(Color::TRANSPARENT), |ui| {
-                                ui.with(tm.rest(), |ui| {
-                                    ui.text(&l.replace('\t', "    "), style());
+                    |ui| match rows.get(cursor) {
+                        Some(Row::Text(t)) => {
+                            let text = &texts[*t].2;
+                            let shown: Vec<&str> = text.lines().take(LINES_SHOWN).collect();
+                            for (k, l) in shown.iter().enumerate() {
+                                ui.with(tm.line(&pal, k).hover_bg(Color::TRANSPARENT), |ui| {
+                                    ui.with(tm.rest(), |ui| {
+                                        ui.text(&l.replace('\t', "    "), style());
+                                    });
                                 });
-                            });
+                            }
+                            let all = text.lines().count();
+                            if all > shown.len() {
+                                ui.with(
+                                    tm.line(&pal, shown.len()).hover_bg(Color::TRANSPARENT),
+                                    |ui| {
+                                        ui.text(
+                                            &format!("… {} more", all - shown.len()),
+                                            small(pal.faint),
+                                        );
+                                    },
+                                );
+                            }
                         }
-                        let all = text.lines().count();
-                        if all > shown.len() {
-                            ui.with(
-                                tm.line(&pal, shown.len()).hover_bg(Color::TRANSPARENT),
-                                |ui| {
-                                    ui.text(
-                                        &format!("… {} more", all - shown.len()),
-                                        small(pal.faint),
-                                    );
-                                },
-                            );
+                        Some(Row::Moment { row, draft, .. }) => {
+                            let mut facts: Vec<(&str, String)> = vec![
+                                ("subject", row.key.subject.clone()),
+                                ("kind", row.key.kind.clone()),
+                            ];
+                            if !row.key.workspace.is_empty() {
+                                facts.push(("workspace", row.key.workspace.clone()));
+                            }
+                            if let Some(i) = &inspect {
+                                facts.push(("name", i.name.clone()));
+                                facts.push(("language", i.language.clone()));
+                                facts.push((
+                                    "size",
+                                    format!(
+                                        "{} in the store · {} line{}",
+                                        crate::perf::bytes(draft.map_or(0, |d| d.0) as u64),
+                                        i.lines,
+                                        if i.lines == 1 { "" } else { "s" }
+                                    ),
+                                ));
+                                facts.push(("history", format!("{} states, at {}", i.states, i.current)));
+                                facts.push(("disk", i.disk.name().to_string()));
+                            }
+                            facts.push(("signals", signals(row)));
+                            if row.key.kind == "file" {
+                                facts.push(("line", (meta_line(&row.meta) + 1).to_string()));
+                            }
+                            if row.pinned > 0 {
+                                facts.push(("pinned", format!("#{}", row.pinned)));
+                            }
+                            for (k, (name, value)) in facts.iter().enumerate() {
+                                ui.with(tm.line(&pal, k).hover_bg(Color::TRANSPARENT), |ui| {
+                                    ui.with(col(9.0), |ui| ui.text(name, dim()));
+                                    ui.with(tm.rest(), |ui| ui.text(value, style()));
+                                });
+                            }
+                            if let Some(h) = inspect.as_ref().and_then(|i| i.hunk.as_ref()) {
+                                diff::rows(ui, diff::lines_of(h), &diff_style);
+                            }
                         }
+                        _ => {}
                     },
                 );
             },
         );
+        self.memory_pane.rows = rows;
         if focused {
             self.focus_sink(ui, sink);
         }
@@ -466,10 +1431,131 @@ fn preview(text: &str) -> String {
     }
 }
 
+enum Read {
+    Text(text_buffer::Buffer),
+    Gone,
+    TooBig,
+}
+
+/// The file's text for a compare, if it is there and not past twice
+/// the draft cap.
+fn read_disk(path: &Path) -> Read {
+    match std::fs::metadata(path) {
+        Ok(m) if m.len() as usize > 2 * MAX_TEXT => Read::TooBig,
+        Ok(_) => match kawoosh_doc::Buffer::from_file(path) {
+            Ok(b) => Read::Text(b.text_root()),
+            Err(_) => Read::Gone,
+        },
+        Err(_) => Read::Gone,
+    }
+}
+
+/// Whether the disk holds the text `base` fingerprints.
+fn disk_state(path: &Path, base: Option<Base>) -> Disk {
+    let Some(base) = base else {
+        return Disk::Unknown;
+    };
+    match read_disk(path) {
+        Read::Text(t) if fingerprint(&t) == base => Disk::Same,
+        Read::Text(_) => Disk::Moved,
+        Read::Gone => Disk::Gone,
+        Read::TooBig => Disk::TooBig,
+    }
+}
+
+/// The subject a `:memory forget` names: a scratch by its number, a
+/// path resolved against the cwd, or a kind's subject as written.
+fn key_of_arg(k: &Kawoosh, arg: &str, kind: Option<&str>) -> MomentKey {
+    let ws = k.moments.workspace().to_string();
+    match kind {
+        Some(kind) => MomentKey::new(kind, arg, &ws),
+        None if arg.starts_with("scratch:") => MomentKey::new("scratch", arg, &ws),
+        None => MomentKey::new(
+            "file",
+            &k.resolve(Path::new(arg)).display().to_string(),
+            &ws,
+        ),
+    }
+}
+
 pub(crate) fn commands() -> Vec<ShellCommand> {
-    vec![cmd(
-        Spec::new("memory")
-            .doc("the working memory: what was yanked, deleted or pasted in, to put again"),
-        |k, _| k.toggle_memory_panel(),
-    )]
+    let mut v = vec![
+        cmd(
+            Spec::new("memory")
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("the memory pane: texts, files, recent, commands, searches, pins, all"),
+            |k, ctx| match ctx.args.first().map(String::as_str) {
+                Some(name) => match View::parse(name) {
+                    Some(v) => k.toggle_memory_panel(Some(v)),
+                    None => {
+                        k.ed.message = format!(
+                            "no memory view {name} (texts, files, recent, commands, searches, pins, all)"
+                        )
+                    }
+                },
+                None => k.toggle_memory_panel(None),
+            },
+        ),
+        cmd(
+            Spec::new("memory files")
+                .alias(&["oldfiles", "ol", "bro", "browse"])
+                .doc("the files and scratches attended, with their drafts"),
+            |k, _| k.toggle_memory_panel(Some(View::Files)),
+        ),
+        cmd(
+            Spec::new("memory recent").doc("the ring: what was attended, in order, newest first"),
+            |k, _| k.toggle_memory_panel(Some(View::Recent)),
+        ),
+        cmd(
+            Spec::new("memory forget")
+                .args(Args::new(&[ArgKind::Text, ArgKind::Text]))
+                .when(&["store"])
+                .doc("forget SUBJECT (a path, scratch:N, or a KIND's subject), its draft with it"),
+            |k, ctx| match ctx.args.first() {
+                Some(arg) => {
+                    let key = key_of_arg(k, arg, ctx.args.get(1).map(String::as_str));
+                    k.ed.message = match k.forget_moment(&key) {
+                        Ok(m) | Err(m) => m,
+                    };
+                }
+                None => k.ed.message = "forget what? (:memory forget SUBJECT [KIND])".into(),
+            },
+        ),
+        cmd(
+            Spec::new("memory pin")
+                .args(Args::new(&[ArgKind::Text]))
+                .when(&["store"])
+                .doc("pin the buffer's file (again: unpin); N opens the Nth pin"),
+            |k, ctx| {
+                let n = ctx
+                    .has_count
+                    .then_some(ctx.count)
+                    .or_else(|| ctx.args.first().and_then(|a| a.parse().ok()));
+                match n {
+                    Some(n) => k.open_pin(n),
+                    None => k.pin_current(),
+                }
+            },
+        ),
+        cmd(
+            Spec::new("memory clear")
+                .bang("revert the buffers holding drafts too")
+                .when(&["store"])
+                .doc("forget every moment and every history, and vacuum the db"),
+            |k, ctx| k.clear_moments(ctx.bang()),
+        ),
+    ];
+    for view in [
+        View::Texts,
+        View::Commands,
+        View::Searches,
+        View::Pins,
+        View::All,
+    ] {
+        v.push(cmd(
+            Spec::new(&format!("memory {}", view.name())).doc("the memory pane on this view"),
+            move |k, _| k.toggle_memory_panel(Some(view)),
+        ));
+    }
+    v
 }

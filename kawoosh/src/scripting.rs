@@ -505,6 +505,50 @@ impl Kawoosh {
                     self.ed.message = format!("recall: no moment {i}");
                 }
             }
+            Msg::Remember {
+                kind,
+                subject,
+                visits,
+                edits,
+                yanks,
+                dwell_ms,
+                meta,
+            } => {
+                // The engine's `text` rows are its own (memory.md D9);
+                // a file's subject is resolved as `:e` would.
+                if kind == "text" {
+                    self.ed.message = "remember: a text is the engine's".into();
+                } else {
+                    let subject = if kind == "file" {
+                        self.resolve(std::path::Path::new(&subject))
+                            .display()
+                            .to_string()
+                    } else {
+                        subject
+                    };
+                    let ws = self.moments.workspace().to_string();
+                    self.moments.add(
+                        kawoosh_systems::store::MomentKey::new(&kind, &subject, &ws),
+                        visits,
+                        edits,
+                        yanks,
+                        dwell_ms,
+                        meta,
+                    );
+                }
+            }
+            Msg::Forget { kind, subject } => {
+                let key = self.moment_key(&kind, &subject);
+                if let Err(e) = self.forget_moment(&key) {
+                    self.ed.message = e;
+                }
+            }
+            Msg::Pin { kind, subject, on } => {
+                let key = self.moment_key(&kind, &subject);
+                if let Err(e) = self.pin_moment(&key, on) {
+                    self.ed.message = e;
+                }
+            }
             Msg::Retarget { from, to } => {
                 for b in self.ed.buffers.values_mut() {
                     let Some(p) = &b.path else { continue };

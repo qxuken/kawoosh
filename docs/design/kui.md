@@ -679,42 +679,44 @@ unsaved work is the user's — and an error toast saying the disk moved:
 buffer as one undoable change — clean on it, `u` a step back to the
 draft — so both can be looked at before choosing.
 
-**The store is visible and bounded.** `:history` is a pane of its own
-(`history_pane.rs`, `Content::History`, kept by a session), beside the
-buffer as the undo history is: every row as a table — name and path,
-size, when it was last touched, and its state: held by a buffer (on
-show, hidden, saved), its file gone, not opened, a saved file's
-history, not restored — and
-under it the cursor's row inspected: name, language, path, size,
-how many states its history holds, whether the disk still has the
-text it was taken from, and the unsaved changes themselves as a diff
-of the disk's lines against the buffer's, drawn as the undo pane draws
-a change. `⏎` or a click opens the cursor's row (the buffer that
-holds it shown, a file opened, a scratch restored), `x` drops it,
-`q` closes, `<Esc>` hands the keyboard back. The rows are read off
-the store when it changed, not once a frame. `:history list` is the
-same as text; `:history drop KEY` takes one out, reverting the buffer
-that holds it; `:history clear` takes out every row no buffer holds and
-`:history clear!` the held ones too, and either `VACUUM`s the db so it
-does not sit at its high-water mark.
+**The store is visible and bounded through the memory** (as of
+2026-09-21, [memory.md](memory.md) Decision 6; before it `:history`
+was a pane of its own, `history_pane.rs`, with `history.keep_days` and
+`history.max_mb` as its own aging and cap). A history lives exactly as
+long as its subject's *moment* — the memory's row for the file or
+scratch, with when it was last attended — and `:memory files` is the
+pane: every file and scratch the memory holds as a table, its signals,
+whether a draft or a history hangs off it and how big, and its state
+(held by a buffer on show, hidden, saved; its file gone; not opened; a
+saved file's history; not restored; remembered with no row), and under
+it the cursor's row inspected as the histories pane inspected it: name,
+language, path, size, how many states its history holds, whether the
+disk still has the text it was taken from, and the unsaved changes
+themselves as a diff of the disk's lines against the buffer's. `⏎` or
+a click opens the cursor's row (the buffer that holds it shown, a file
+opened at the line it was left, a scratch restored), `x` forgets it —
+the draft's buffer reverted — `q` closes. `:memory forget SUBJECT`
+takes one out by path or `scratch:N`; `:memory clear` takes out every
+moment and history but those with unsaved changes, `:memory clear!`
+those too, and either `VACUUM`s the db. A moment aged out
+(`memory.keep_days`, 90; the old `history.keep_days` still read while
+the new key is unset) or evicted (`memory.max_mb`, the histories'
+bytes counted) takes its history with it; a history with unsaved text
+holds its moment, and a moment on show is never aged.
 
-Every size in both panes is `devtab::Tab`'s — the tokens the devtools
+Every size in the pane is `devtab::Tab`'s — the tokens the devtools
 tabs already read off kui's metrics: the strip, the inset, the cell
 gap, the small text, the zebra and hover of a table's rows, the diff's
 style — plus the one size that is the editor's, a line of buffer text
 (`Tab::line_h`), for what a buffer holds. The undo pane's own numbers
 (an inset of 8, a gap of 6, text at 11, a strip of 24) were those
-tokens' values by hand; now they are the tokens, so the two panes and
-the tabs cannot drift, and a density the app sets reaches them all. The setting `history.keep_days`
-(90; 0 keeps everything) drops rows untouched that long at the first
-frame of a launch, with the hidden buffer holding one — a row is
-touched when it is written and when a pane shows its buffer, so a
-history looked at every session never ages, and one restored hidden
-and never looked at does. A row whose meta cannot be read (another
-build's, a corrupted one) still gives its text back, history and name
-gone, with a warning: the text is the authoritative part. A row whose
-key is not a history's is dropped. A row whose file cannot be opened is
-kept, and the listing says so.
+tokens' values by hand; now they are the tokens, so the panes and the
+tabs cannot drift, and a density the app sets reaches them all. A row
+whose meta cannot be read (another build's, a corrupted one) still
+gives its text back, history and name gone, with a warning: the text
+is the authoritative part. A row whose key is not a history's is
+dropped. A row whose file cannot be opened is kept, and the pane says
+so.
 
 **A saved file keeps its history** the way neovim's `undofile` does.
 Its row is *clean*: the tree alone, no text — the disk is the text —
@@ -737,13 +739,15 @@ has no row and a warning says so once; a tree past 200 states or
 current one, newest first, as many as fit — each state costing what it
 changed (`doc::diff_trees` against its parent). A file that opens on
 the io thread is past the cap by definition. And the store as a whole
-is capped: `history.max_mb` (64; 0 for none). Past it, after a write
-and at the launch sweep, the oldest-touched rows go one by one until
-the rest fit — a row nobody holds is dropped, one a buffer holds clean
-is its history and the buffer forgets it with the row, one a buffer
-holds *modified* is never evicted, since the store is what keeps those
-changes; the store may sit over the cap by exactly what is unsaved.
-A corner line says how many went.
+is capped: `memory.max_mb` (64; 0 for none; `history.max_mb` still
+read while it is unset), the memory's rows and the histories' bytes
+together. Past it, after a flush and at the launch sweep, the moments
+go lowest score first and their histories with them — a row nobody
+holds is dropped, one a buffer holds clean is its history and the
+buffer forgets it with the row, one a buffer holds *modified* is never
+evicted, since the store is what keeps those changes; the store may
+sit over the cap by exactly what is unsaved. A corner line says how
+many went.
 
 ### 12. A command is a spec and a body
 
@@ -765,21 +769,21 @@ reloads, `:cd?` says where — the meaning is the command's, the check is
 the engine's); the conditions under which it runs; and a line on what it
 does. The body is the `Command<H>` trait, implemented on the host it acts
 on — `Editor` for the engine's, the shell for the shell's — so that
-everything about `:history drop` is in `history.rs` and nothing about it
+everything about `:memory forget` is in `moments.rs` and nothing about it
 is in a dispatcher. Most bodies are `FnCommand`, a spec and a closure.
 The engine's registry holds every spec — its own, the shell's declared,
 Lua's — and the shell keeps its bodies by name; running a command without
 a body here is `Effect::Shell` with the context ready, as before, only
 now the form, the subcommand and the paths are resolved in it.
 
-**A subcommand is a command whose name is more than one word.** `history
-drop` is registered as one, and the engine walks a line's words as far
+**A subcommand is a command whose name is more than one word.** `memory
+forget` is registered as one, and the engine walks a line's words as far
 as they name subcommands or lead to them, carrying a `!` or `?` from any
-of them (`:history clear!` and `:history! clear` alike), then hands the
+of them (`:memory clear!` and `:memory! clear` alike), then hands the
 rest as arguments. The same walk serves a keymap's binding
 (`kawoosh.map("n", "<leader>cd", "dir cd")`) and the command line's
-completion: under `:history ` the words are `clear`, `drop`, `list`, and
-after one the subcommand's own arguments. Not a second trait — a
+completion: under `:memory ` the words are its views and `forget`,
+`pin`, `clear`, and after one the subcommand's own arguments. Not a second trait — a
 subcommand needs nothing a command does not have. The names are
 hierarchical where the grammar is: `delete char`, `delete char back`,
 `delete to end`, `delete word back` under the `delete` operator; `change

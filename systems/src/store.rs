@@ -1,18 +1,109 @@
 //! The store (mvp.md Decision 7): SQLite via rusqlite, bundled. Sessions
-//! (the layout as JSON), oldfiles, histories (a buffer's undo tree, and
-//! its unsaved text while it has one, kui.md D11), and a namespaced KV
-//! table plugins get in one line — `kawoosh.store("myplugin")`.
-//! Synchronous on the main thread: every write is a row, and a row is
-//! microseconds — a history's is its text, which the app keeps small.
-//! WAL, so a write is one transaction that is on disk whole or not at
-//! all, and a crash mid-write leaves the row as it was.
+//! (the layout as JSON), the memory (memory.md: a `moments` row per
+//! subject attended and a `recent` ring of the transitions between
+//! them), histories (a buffer's undo tree, and its unsaved text while
+//! it has one, kui.md D11), and a namespaced KV table plugins get in
+//! one line — `kawoosh.store("myplugin")`. Synchronous on the main
+//! thread: every write is a row, and a row is microseconds — a
+//! history's is its text, which the app keeps small. WAL, so a write
+//! is one transaction that is on disk whole or not at all, and a crash
+//! mid-write leaves the row as it was. Two windows on one db: a
+//! moment's counters are written as increments (`flush_moments`), so
+//! neither window loses the other's, and a writer that meets the lock
+//! waits [`BUSY_MS`] and then gets `SQLITE_BUSY` back to try again
+//! later with what it still holds.
 
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, params};
 
+/// How long a write waits for another connection's lock before it
+/// gives up with `SQLITE_BUSY` (memory.md Decision 3).
+pub const BUSY_MS: u64 = 250;
+
 pub struct Store {
     conn: Connection,
+}
+
+/// A moment's identity: its kind, its subject and the workspace it was
+/// made under (memory.md Decision 1).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct MomentKey {
+    pub kind: String,
+    pub subject: String,
+    pub workspace: String,
+}
+
+impl MomentKey {
+    pub fn new(kind: &str, subject: &str, workspace: &str) -> Self {
+        Self {
+            kind: kind.into(),
+            subject: subject.into(),
+            workspace: workspace.into(),
+        }
+    }
+}
+
+/// A moment's row as the store lists it: its header — never a text's
+/// bytes, only their count and first line (memory.md Decision 3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MomentRow {
+    pub key: MomentKey,
+    pub first_at: i64,
+    pub last_at: i64,
+    pub visits: i64,
+    pub dwell_ms: i64,
+    pub edits: i64,
+    pub yanks: i64,
+    /// 0 for not pinned; else the pin's ordinal (Decision 5).
+    pub pinned: i64,
+    /// JSON: what the kind carries besides.
+    pub meta: String,
+    /// A text moment's bytes, counted.
+    pub text_len: Option<usize>,
+    /// A text moment's first line, up to [`TEXT_HEAD`] bytes.
+    pub text_head: Option<String>,
+}
+
+/// How much of a text's first line a row carries.
+pub const TEXT_HEAD: usize = 200;
+
+/// What happened to a subject since the last flush: counters to add,
+/// and what to set (memory.md Decision 3).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MomentDelta {
+    pub visits: i64,
+    pub dwell_ms: i64,
+    pub edits: i64,
+    pub yanks: i64,
+    /// When the subject was first and last attended in this delta.
+    pub first_at: i64,
+    pub last_at: i64,
+    /// Set when given; the row keeps its own otherwise.
+    pub meta: Option<String>,
+    /// A text moment's bytes, written once.
+    pub text: Option<Vec<u8>>,
+}
+
+/// One row of the ring: a visit, in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RingRow {
+    pub at: i64,
+    pub key: MomentKey,
+}
+
+/// A query over the moments (`kawoosh.memory { … }`, the pane).
+#[derive(Clone, Debug, Default)]
+pub struct MomentQuery<'a> {
+    pub kind: Option<&'a str>,
+    /// `Some("")` for moments made outside any workspace; `None` for
+    /// every workspace.
+    pub workspace: Option<&'a str>,
+    pub subject: Option<&'a str>,
+    /// Rows attended since this time.
+    pub since: Option<i64>,
+    pub pinned: bool,
+    pub limit: usize,
 }
 
 /// `$XDG_DATA_HOME/kawoosh/state.db`, else `~/.local/share/kawoosh/state.db`.
@@ -40,6 +131,7 @@ impl Store {
     }
 
     fn init(conn: Connection) -> rusqlite::Result<Self> {
+        conn.busy_timeout(std::time::Duration::from_millis(BUSY_MS))?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              CREATE TABLE IF NOT EXISTS kv (
@@ -47,11 +139,30 @@ impl Store {
                  PRIMARY KEY (ns, key));
              CREATE TABLE IF NOT EXISTS session (
                  name TEXT PRIMARY KEY, json TEXT NOT NULL, saved_at INTEGER NOT NULL);
-             CREATE TABLE IF NOT EXISTS oldfiles (
-                 path TEXT PRIMARY KEY, opened_at INTEGER NOT NULL, line INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS histories (
                  key TEXT PRIMARY KEY, text BLOB NOT NULL, meta TEXT NOT NULL,
-                 saved_at INTEGER NOT NULL, clean INTEGER NOT NULL DEFAULT 0);",
+                 saved_at INTEGER NOT NULL, clean INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE IF NOT EXISTS moments (
+                 kind      TEXT    NOT NULL,
+                 subject   TEXT    NOT NULL,
+                 workspace TEXT    NOT NULL DEFAULT '',
+                 first_at  INTEGER NOT NULL,
+                 last_at   INTEGER NOT NULL,
+                 visits    INTEGER NOT NULL DEFAULT 0,
+                 dwell_ms  INTEGER NOT NULL DEFAULT 0,
+                 edits     INTEGER NOT NULL DEFAULT 0,
+                 yanks     INTEGER NOT NULL DEFAULT 0,
+                 pinned    INTEGER NOT NULL DEFAULT 0,
+                 meta      TEXT    NOT NULL DEFAULT '{}',
+                 text      BLOB,
+                 PRIMARY KEY (kind, subject, workspace));
+             CREATE INDEX IF NOT EXISTS moments_last ON moments (kind, last_at);
+             CREATE TABLE IF NOT EXISTS recent (
+                 at        INTEGER NOT NULL,
+                 kind      TEXT    NOT NULL,
+                 subject   TEXT    NOT NULL,
+                 workspace TEXT    NOT NULL DEFAULT '');
+             CREATE INDEX IF NOT EXISTS recent_at ON recent (at);",
         )?;
         // A db from before the table's name (`drafts`) or before its
         // `clean` column: moved and added in place; one that is current
@@ -61,6 +172,28 @@ impl Store {
             "ALTER TABLE histories ADD COLUMN clean INTEGER NOT NULL DEFAULT 0",
             [],
         );
+        // A db from before the memory (memory.md Decisions 2 and 6):
+        // its `oldfiles` become `file` moments, one visit each at the
+        // time they were opened with the line they were left at, and
+        // the table goes; a history without a moment gets one, last
+        // attended when its row was written. Both idempotent, so a db
+        // that is current is left as it is.
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO moments (kind, subject, workspace, first_at, last_at, visits, meta)
+             SELECT 'file', path, '', opened_at, opened_at, 1, json_object('line', line)
+             FROM oldfiles",
+            [],
+        );
+        let _ = conn.execute("DROP TABLE IF EXISTS oldfiles", []);
+        conn.execute(
+            "INSERT OR IGNORE INTO moments (kind, subject, workspace, first_at, last_at, visits)
+             SELECT CASE WHEN key LIKE 'file:%' THEN 'file' ELSE 'scratch' END,
+                    CASE WHEN key LIKE 'file:%' THEN substr(key, 6) ELSE key END,
+                    '', saved_at, saved_at, 0
+             FROM histories
+             WHERE key LIKE 'file:%' OR key LIKE 'scratch:%'",
+            [],
+        )?;
         Ok(Self { conn })
     }
 
@@ -126,33 +259,235 @@ impl Store {
             .ok()
     }
 
-    // ---------------------------------------------------------------- oldfiles
+    // ---------------------------------------------------------------- moments
 
-    pub fn touch_oldfile(&self, path: &Path, line: usize) -> rusqlite::Result<()> {
+    /// Every delta as one upsert whose counters are increments, the
+    /// ring's new rows after them and the ring trimmed to `ring_max`,
+    /// in one transaction: whole or nothing. A `SQLITE_BUSY` (another
+    /// window held the lock past [`BUSY_MS`]) comes back as the error,
+    /// and the caller keeps its deltas for the next tick.
+    pub fn flush_moments(
+        &self,
+        deltas: &[(MomentKey, MomentDelta)],
+        ring: &[RingRow],
+        ring_max: usize,
+    ) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut up = tx.prepare_cached(
+                "INSERT INTO moments (kind, subject, workspace, first_at, last_at,
+                                      visits, dwell_ms, edits, yanks, meta, text)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, coalesce(?10, '{}'), ?11)
+                 ON CONFLICT (kind, subject, workspace) DO UPDATE SET
+                     first_at = min(first_at, excluded.first_at),
+                     last_at  = max(last_at, excluded.last_at),
+                     visits   = visits + excluded.visits,
+                     dwell_ms = dwell_ms + excluded.dwell_ms,
+                     edits    = edits + excluded.edits,
+                     yanks    = yanks + excluded.yanks,
+                     meta     = coalesce(?10, meta),
+                     text     = coalesce(excluded.text, text)",
+            )?;
+            for (k, d) in deltas {
+                up.execute(params![
+                    k.kind,
+                    k.subject,
+                    k.workspace,
+                    d.first_at,
+                    d.last_at,
+                    d.visits,
+                    d.dwell_ms,
+                    d.edits,
+                    d.yanks,
+                    d.meta,
+                    d.text,
+                ])?;
+            }
+            let mut ins = tx.prepare_cached(
+                "INSERT INTO recent (at, kind, subject, workspace) VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            for r in ring {
+                ins.execute(params![r.at, r.key.kind, r.key.subject, r.key.workspace])?;
+            }
+        }
+        if !ring.is_empty() {
+            tx.execute(
+                "DELETE FROM recent WHERE rowid NOT IN
+                     (SELECT rowid FROM recent ORDER BY at DESC, rowid DESC LIMIT ?1)",
+                params![ring_max as i64],
+            )?;
+        }
+        tx.commit()
+    }
+
+    /// The rows a query names, last attended first.
+    pub fn moments(&self, q: &MomentQuery<'_>) -> Vec<MomentRow> {
+        let mut sql = String::from(
+            "SELECT kind, subject, workspace, first_at, last_at, visits, dwell_ms, edits, yanks,
+                    pinned, meta, length(text), substr(text, 1, ?1)
+             FROM moments WHERE 1 = 1",
+        );
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(TEXT_HEAD as i64)];
+        if let Some(k) = q.kind {
+            sql.push_str(" AND kind = ?");
+            args.push(Box::new(k.to_string()));
+            sql.push_str(&args.len().to_string());
+        }
+        if let Some(w) = q.workspace {
+            sql.push_str(" AND workspace = ?");
+            args.push(Box::new(w.to_string()));
+            sql.push_str(&args.len().to_string());
+        }
+        if let Some(s) = q.subject {
+            sql.push_str(" AND subject = ?");
+            args.push(Box::new(s.to_string()));
+            sql.push_str(&args.len().to_string());
+        }
+        if let Some(t) = q.since {
+            sql.push_str(" AND last_at >= ?");
+            args.push(Box::new(t));
+            sql.push_str(&args.len().to_string());
+        }
+        if q.pinned {
+            sql.push_str(" AND pinned > 0 ORDER BY pinned");
+        } else {
+            sql.push_str(" ORDER BY last_at DESC, rowid DESC");
+        }
+        if q.limit > 0 {
+            sql.push_str(" LIMIT ?");
+            args.push(Box::new(q.limit as i64));
+            sql.push_str(&args.len().to_string());
+        }
+        let Ok(mut stmt) = self.conn.prepare(&sql) else {
+            return Vec::new();
+        };
+        let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
+        stmt.query_map(refs.as_slice(), row_of)
+            .map(|rows| rows.filter_map(Result::ok).collect())
+            .unwrap_or_default()
+    }
+
+    /// One row.
+    pub fn moment(&self, key: &MomentKey) -> Option<MomentRow> {
+        self.conn
+            .query_row(
+                "SELECT kind, subject, workspace, first_at, last_at, visits, dwell_ms, edits, yanks,
+                        pinned, meta, length(text), substr(text, 1, ?4)
+                 FROM moments WHERE kind = ?1 AND subject = ?2 AND workspace = ?3",
+                params![key.kind, key.subject, key.workspace, TEXT_HEAD as i64],
+                row_of,
+            )
+            .ok()
+    }
+
+    /// A text moment's bytes, read when they are wanted.
+    pub fn moment_text(&self, key: &MomentKey) -> Option<Vec<u8>> {
+        self.conn
+            .query_row(
+                "SELECT text FROM moments WHERE kind = ?1 AND subject = ?2 AND workspace = ?3",
+                params![key.kind, key.subject, key.workspace],
+                |r| r.get::<_, Option<Vec<u8>>>(0),
+            )
+            .ok()
+            .flatten()
+    }
+
+    /// Sets when a row was last attended — a tool's, or a test's, way
+    /// to age it.
+    pub fn set_moment_last(&self, key: &MomentKey, at: i64) -> rusqlite::Result<()> {
         self.conn.execute(
-            "INSERT INTO oldfiles (path, opened_at, line) VALUES (?1, ?2, ?3)
-             ON CONFLICT (path) DO UPDATE SET opened_at = excluded.opened_at, line = excluded.line",
-            params![path.display().to_string(), now(), line as i64],
+            "UPDATE moments SET last_at = ?4 WHERE kind = ?1 AND subject = ?2 AND workspace = ?3",
+            params![key.kind, key.subject, key.workspace, at],
         )?;
         Ok(())
     }
 
-    /// Most recent first.
-    pub fn oldfiles(&self, limit: usize) -> Vec<(PathBuf, usize)> {
-        let Ok(mut stmt) = self
-            .conn
-            .prepare("SELECT path, line FROM oldfiles ORDER BY opened_at DESC LIMIT ?1")
-        else {
+    /// The user's word on a row: its pin ordinal, 0 for none.
+    pub fn set_pinned(&self, key: &MomentKey, ordinal: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE moments SET pinned = ?4 WHERE kind = ?1 AND subject = ?2 AND workspace = ?3",
+            params![key.kind, key.subject, key.workspace, ordinal],
+        )?;
+        Ok(())
+    }
+
+    /// The row and its ring rows gone. The history under a `file` or
+    /// `scratch` subject goes with it (memory.md Decision 6).
+    pub fn forget_moment(&self, key: &MomentKey) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM moments WHERE kind = ?1 AND subject = ?2 AND workspace = ?3",
+            params![key.kind, key.subject, key.workspace],
+        )?;
+        tx.execute(
+            "DELETE FROM recent WHERE kind = ?1 AND subject = ?2 AND workspace = ?3",
+            params![key.kind, key.subject, key.workspace],
+        )?;
+        if let Some(hk) = history_key_of(key) {
+            tx.execute("DELETE FROM histories WHERE key = ?1", params![hk])?;
+        }
+        tx.commit()
+    }
+
+    /// The ring, newest first.
+    pub fn recent(&self, limit: usize) -> Vec<RingRow> {
+        let Ok(mut stmt) = self.conn.prepare(
+            "SELECT at, kind, subject, workspace FROM recent
+             ORDER BY at DESC, rowid DESC LIMIT ?1",
+        ) else {
             return Vec::new();
         };
         stmt.query_map(params![limit as i64], |r| {
-            Ok((
-                PathBuf::from(r.get::<_, String>(0)?),
-                r.get::<_, i64>(1)? as usize,
-            ))
+            Ok(RingRow {
+                at: r.get(0)?,
+                key: MomentKey {
+                    kind: r.get(1)?,
+                    subject: r.get(2)?,
+                    workspace: r.get(3)?,
+                },
+            })
         })
         .map(|rows| rows.filter_map(Result::ok).collect())
         .unwrap_or_default()
+    }
+
+    /// How many rows the ring holds.
+    pub fn recent_len(&self) -> usize {
+        self.conn
+            .query_row("SELECT count(*) FROM recent", [], |r| r.get::<_, i64>(0))
+            .map(|n| n as usize)
+            .unwrap_or(0)
+    }
+
+    /// What the moments weigh: their texts, metas and subjects.
+    pub fn moments_bytes(&self) -> usize {
+        self.conn
+            .query_row(
+                "SELECT COALESCE(SUM(COALESCE(length(text), 0) + length(meta) + length(subject)), 0)
+                 FROM moments",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n as usize)
+            .unwrap_or(0)
+    }
+
+    /// What the text moments' bytes add up to.
+    pub fn text_bytes(&self) -> usize {
+        self.conn
+            .query_row(
+                "SELECT COALESCE(SUM(length(text)), 0) FROM moments WHERE kind = 'text'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n as usize)
+            .unwrap_or(0)
+    }
+
+    /// Every moment, ring row and history gone (`:memory clear`).
+    pub fn clear_moments(&self) -> rusqlite::Result<()> {
+        self.conn
+            .execute_batch("DELETE FROM moments; DELETE FROM recent; DELETE FROM histories;")
     }
 
     // ---------------------------------------------------------------- histories
@@ -232,18 +567,9 @@ impl Store {
             .unwrap_or(0)
     }
 
-    /// The history was claimed by a buffer: it counts as touched now, so
-    /// a scratch shown every session is never the oldest.
-    pub fn touch_history(&self, key: &str) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "UPDATE histories SET saved_at = ?2 WHERE key = ?1",
-            params![key, now()],
-        )?;
-        Ok(())
-    }
-
-    /// Sets when the row was last touched — a tool's, or a test's, way
-    /// to age a row.
+    /// Sets when the row was written — a tool's, or a test's, way to
+    /// age a row. (A history's age for keeping is its moment's
+    /// `last_at`, memory.md Decision 6; this is the row's own stamp.)
     pub fn set_history_touched(&self, key: &str, at: i64) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE histories SET saved_at = ?2 WHERE key = ?1",
@@ -256,6 +582,61 @@ impl Store {
     /// not stay at its high-water mark.
     pub fn vacuum(&self) -> rusqlite::Result<()> {
         self.conn.execute_batch("VACUUM")
+    }
+}
+
+fn row_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<MomentRow> {
+    let text_len = r.get::<_, Option<i64>>(11)?.map(|n| n as usize);
+    let head = r.get::<_, Option<Vec<u8>>>(12)?;
+    Ok(MomentRow {
+        key: MomentKey {
+            kind: r.get(0)?,
+            subject: r.get(1)?,
+            workspace: r.get(2)?,
+        },
+        first_at: r.get(3)?,
+        last_at: r.get(4)?,
+        visits: r.get(5)?,
+        dwell_ms: r.get(6)?,
+        edits: r.get(7)?,
+        yanks: r.get(8)?,
+        pinned: r.get(9)?,
+        meta: r.get(10)?,
+        text_len,
+        text_head: head.map(|h| {
+            let s = String::from_utf8_lossy(&h);
+            s.lines().next().unwrap_or("").to_string()
+        }),
+    })
+}
+
+/// A file row's `meta.line` (the caret line it was left at), 0 when
+/// it has none.
+pub fn meta_line(meta: &str) -> usize {
+    serde_json::from_str::<serde_json::Value>(meta)
+        .ok()
+        .and_then(|v| v.get("line")?.as_u64())
+        .unwrap_or(0) as usize
+}
+
+/// The history row a `file` or `scratch` moment owns (memory.md
+/// Decision 6): `file:<path>`, or the scratch's own subject.
+pub fn history_key_of(key: &MomentKey) -> Option<String> {
+    match key.kind.as_str() {
+        "file" => Some(format!("file:{}", key.subject)),
+        "scratch" => Some(key.subject.clone()),
+        _ => None,
+    }
+}
+
+/// The moment a history row belongs to.
+pub fn moment_key_of_history(key: &str) -> Option<MomentKey> {
+    if let Some(p) = key.strip_prefix("file:") {
+        Some(MomentKey::new("file", p, ""))
+    } else if key.starts_with("scratch:") {
+        Some(MomentKey::new("scratch", key, ""))
+    } else {
+        None
     }
 }
 
@@ -295,11 +676,234 @@ mod tests {
         assert_eq!(s.keys("todo"), ["k"]);
         s.save_session("default", "{\"x\":1}").unwrap();
         assert_eq!(s.load_session("default").as_deref(), Some("{\"x\":1}"));
-        s.touch_oldfile(Path::new("/a"), 3).unwrap();
-        s.touch_oldfile(Path::new("/b"), 7).unwrap();
-        let old = s.oldfiles(10);
-        assert_eq!(old.len(), 2);
-        assert!(old.iter().any(|(p, l)| p == Path::new("/b") && *l == 7));
+    }
+
+    fn visit(kind: &str, subject: &str, at: i64) -> (MomentKey, MomentDelta) {
+        (
+            MomentKey::new(kind, subject, ""),
+            MomentDelta {
+                visits: 1,
+                first_at: at,
+                last_at: at,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// A flush upserts by increments, so two connections' halves add
+    /// up; the ring keeps its cap; a query reads headers, never a
+    /// text's bytes; forgetting takes the ring rows and the history.
+    #[test]
+    fn moments_add_up_and_the_ring_is_capped() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-store-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("m.db");
+        let _ = std::fs::remove_file(&db);
+        let a = Store::open(&db).unwrap();
+        let b = Store::open(&db).unwrap();
+        let ring = |at: i64, subject: &str| RingRow {
+            at,
+            key: MomentKey::new("file", subject, ""),
+        };
+        a.flush_moments(&[visit("file", "/x", 10)], &[ring(10, "/x")], 3)
+            .unwrap();
+        b.flush_moments(
+            &[
+                visit("file", "/x", 12),
+                (
+                    MomentKey::new("file", "/y", ""),
+                    MomentDelta {
+                        edits: 2,
+                        dwell_ms: 500,
+                        first_at: 11,
+                        last_at: 11,
+                        meta: Some("{\"line\":4}".into()),
+                        ..Default::default()
+                    },
+                ),
+            ],
+            &[ring(11, "/y"), ring(12, "/x")],
+            3,
+        )
+        .unwrap();
+        let x = a.moment(&MomentKey::new("file", "/x", "")).unwrap();
+        assert_eq!((x.visits, x.first_at, x.last_at), (2, 10, 12));
+        let y = a.moment(&MomentKey::new("file", "/y", "")).unwrap();
+        assert_eq!(
+            (y.edits, y.dwell_ms, y.meta.as_str()),
+            (2, 500, "{\"line\":4}")
+        );
+        // A delta with no meta keeps the row's.
+        a.flush_moments(&[visit("file", "/y", 13)], &[ring(13, "/y")], 3)
+            .unwrap();
+        let y = a.moment(&MomentKey::new("file", "/y", "")).unwrap();
+        assert_eq!((y.visits, y.meta.as_str()), (1, "{\"line\":4}"));
+        // The ring: four rows pushed, the cap is three, the oldest went.
+        let r = a.recent(10);
+        assert_eq!(
+            r.iter().map(|r| r.at).collect::<Vec<_>>(),
+            [13, 12, 11],
+            "{r:?}"
+        );
+        // A text: its bytes in the row, its header out of a query.
+        a.flush_moments(
+            &[(
+                MomentKey::new("text", "h1", ""),
+                MomentDelta {
+                    first_at: 20,
+                    last_at: 20,
+                    text: Some(b"first line\nsecond\n".to_vec()),
+                    ..Default::default()
+                },
+            )],
+            &[],
+            3,
+        )
+        .unwrap();
+        let rows = a.moments(&MomentQuery {
+            kind: Some("text"),
+            ..Default::default()
+        });
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].text_len, Some(18));
+        assert_eq!(rows[0].text_head.as_deref(), Some("first line"));
+        assert_eq!(
+            a.moment_text(&MomentKey::new("text", "h1", "")).as_deref(),
+            Some(&b"first line\nsecond\n"[..])
+        );
+        assert_eq!(a.text_bytes(), 18);
+        // Newest first across kinds; a kind, a subject, a since.
+        let all = a.moments(&MomentQuery::default());
+        assert_eq!(
+            all.iter()
+                .map(|r| r.key.subject.as_str())
+                .collect::<Vec<_>>(),
+            ["h1", "/y", "/x"]
+        );
+        assert_eq!(
+            a.moments(&MomentQuery {
+                since: Some(13),
+                ..Default::default()
+            })
+            .len(),
+            2
+        );
+        assert_eq!(
+            a.moments(&MomentQuery {
+                subject: Some("/x"),
+                limit: 5,
+                ..Default::default()
+            })
+            .len(),
+            1
+        );
+        // Pinned: the ordinal orders the pins.
+        a.set_pinned(&MomentKey::new("file", "/x", ""), 2).unwrap();
+        a.set_pinned(&MomentKey::new("file", "/y", ""), 1).unwrap();
+        let pins = a.moments(&MomentQuery {
+            pinned: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            pins.iter()
+                .map(|r| r.key.subject.as_str())
+                .collect::<Vec<_>>(),
+            ["/y", "/x"]
+        );
+        // Forgetting a file moment takes its ring rows and its history.
+        a.save_history("file:/x", b"draft", "{}", false).unwrap();
+        a.forget_moment(&MomentKey::new("file", "/x", "")).unwrap();
+        assert!(a.moment(&MomentKey::new("file", "/x", "")).is_none());
+        assert!(a.recent(10).iter().all(|r| r.key.subject != "/x"));
+        assert!(a.load_history("file:/x").is_none());
+        assert!(a.moments_bytes() > 0);
+        a.clear_moments().unwrap();
+        assert!(a.moments(&MomentQuery::default()).is_empty());
+        assert_eq!(a.recent_len(), 0);
+        drop((a, b));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A db from before: its `oldfiles` become `file` moments with
+    /// their line and the table goes; a history without a moment gets
+    /// one at its `saved_at`; both once.
+    #[test]
+    fn an_old_db_migrates() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-store-mig-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("old.db");
+        let _ = std::fs::remove_file(&db);
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE oldfiles (path TEXT PRIMARY KEY, opened_at INTEGER NOT NULL, line INTEGER NOT NULL);
+                 INSERT INTO oldfiles VALUES ('/old/a.rs', 1000, 7);
+                 CREATE TABLE histories (key TEXT PRIMARY KEY, text BLOB NOT NULL, meta TEXT NOT NULL,
+                     saved_at INTEGER NOT NULL, clean INTEGER NOT NULL DEFAULT 0);
+                 INSERT INTO histories VALUES ('file:/old/b.rs', X'62', '{}', 2000, 0);
+                 INSERT INTO histories VALUES ('scratch:3', X'73', '{}', 3000, 0);",
+            )
+            .unwrap();
+        }
+        let s = Store::open(&db).unwrap();
+        let a = s.moment(&MomentKey::new("file", "/old/a.rs", "")).unwrap();
+        assert_eq!(
+            (a.visits, a.last_at, a.meta.as_str()),
+            (1, 1000, "{\"line\":7}")
+        );
+        let b = s.moment(&MomentKey::new("file", "/old/b.rs", "")).unwrap();
+        assert_eq!((b.visits, b.last_at), (0, 2000));
+        let c = s
+            .moment(&MomentKey::new("scratch", "scratch:3", ""))
+            .unwrap();
+        assert_eq!(c.last_at, 3000);
+        assert!(
+            s.conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name = 'oldfiles'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap()
+                == 0
+        );
+        // Opened again: nothing doubles.
+        drop(s);
+        let s = Store::open(&db).unwrap();
+        assert_eq!(s.moments(&MomentQuery::default()).len(), 3);
+        assert_eq!(
+            s.moment(&MomentKey::new("file", "/old/a.rs", ""))
+                .unwrap()
+                .visits,
+            1
+        );
+        drop(s);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A writer that meets another connection's lock gets `SQLITE_BUSY`
+    /// after [`BUSY_MS`], not a hang and not a partial write.
+    #[test]
+    fn a_locked_db_says_busy() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-store-busy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("busy.db");
+        let _ = std::fs::remove_file(&db);
+        let s = Store::open(&db).unwrap();
+        let other = Connection::open(&db).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let t = std::time::Instant::now();
+        let r = s.flush_moments(&[visit("file", "/x", 1)], &[], 10);
+        assert!(r.is_err(), "busy");
+        assert!(t.elapsed() >= std::time::Duration::from_millis(BUSY_MS - 50));
+        other.execute_batch("COMMIT").unwrap();
+        s.flush_moments(&[visit("file", "/x", 1)], &[], 10).unwrap();
+        assert_eq!(
+            s.moment(&MomentKey::new("file", "/x", "")).unwrap().visits,
+            1
+        );
+        drop((s, other));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -336,8 +940,6 @@ mod tests {
         );
         s.set_history_touched("scratch:1", 1).unwrap();
         assert_eq!(s.history_rows()[0].touched_at, 1);
-        s.touch_history("scratch:1").unwrap();
-        assert!(s.history_rows()[0].touched_at > 1, "claimed: touched now");
         s.vacuum().unwrap();
     }
 }

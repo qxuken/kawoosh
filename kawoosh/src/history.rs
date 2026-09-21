@@ -29,35 +29,26 @@
 //! be looked at. A file that opens on the io thread (`ASYNC_OPEN_BYTES`)
 //! is past the cap and never had a row.
 //!
-//! The store is visible and bounded: `:history` opens a pane of every
-//! row (`history_pane.rs`) — its size, when it was last touched,
-//! whether a buffer holds it and whether its file is still there, and
-//! the cursor's row against the disk as a diff — `:history list` the
-//! same as text, `:history drop KEY` and `:history clear[!]` take rows
-//! out (the clear vacuums the db), and a row untouched for
-//! `history.keep_days` (90; 0 for never) is dropped at the first frame
-//! of a launch. A row is touched when it is written and when a pane
-//! shows its buffer, so a history looked at every session never ages;
-//! one restored hidden and never looked at does. A row whose meta
-//! cannot be read still gives its text back, with its tree gone and a
-//! warning; one whose key is not a history's is dropped. The store as
-//! a whole is capped at `history.max_mb` (64; 0 for none): past it,
-//! after a write, the oldest-touched rows go one by one — a row held
-//! by a buffer with unsaved changes never, since the store is what
-//! keeps them.
+//! The store is visible and bounded through the memory (memory.md
+//! Decision 6): a history lives exactly as long as its subject's
+//! moment — `:memory files` lists every row with its draft, `x` there
+//! and `:memory forget` take one out, `:memory clear[!]` every one,
+//! and a moment aged out (`memory.keep_days`) or evicted
+//! (`memory.max_mb`, the histories' bytes counted) takes its history
+//! with it; a history with unsaved text holds its moment. A row whose
+//! meta cannot be read still gives its text back, with its tree gone
+//! and a warning; one whose key is not a history's is dropped.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use kawoosh_doc::{Buffer, BufferId, Version, diff_trees};
-use kawoosh_editor::{ArgKind, Args, HistoryState, Selection, Selections, Spec};
-use kawoosh_systems::store::Store;
+use kawoosh_editor::{HistoryState, Selection, Selections};
 use kawoosh_systems::{Alarm, WakeHandle};
 use serde::{Deserialize, Serialize};
 
 use crate::app::Kawoosh;
-use crate::commands::{ShellCommand, cmd};
 use crate::notify::Level;
 
 /// How long a buffer is still after an edit before its row is
@@ -72,12 +63,6 @@ pub const MAX_TEXT: usize = 8 << 20;
 pub const MAX_NODES: usize = 200;
 /// The edit text those states may add up to.
 pub const MAX_EDIT_BYTES: usize = 1 << 20;
-/// The listing's buffer.
-pub const HISTORY_BUFFER: &str = "*history*";
-/// The setting: days a row may go untouched. 0 keeps every row.
-pub const KEEP_DAYS: &str = "history.keep_days";
-/// The setting: the most the rows may add up to, in MB. 0 for no cap.
-pub const MAX_MB: &str = "history.max_mb";
 
 /// What a row's `meta` column holds beside the text. Every
 /// field has a default, so a row from a build that knew fewer still
@@ -169,10 +154,6 @@ pub struct Histories {
     base: HashMap<BufferId, (text_buffer::Buffer, Base)>,
     /// Buffers told once that they are too big for a row.
     over: HashSet<BufferId>,
-    /// Buffers whose row was touched for being on show this launch.
-    touched: HashSet<BufferId>,
-    /// The expiry sweep ran (once, at the first frame).
-    swept: bool,
     /// Bumped whenever a row is written, dropped or touched, so the
     /// history pane reads the store again only then.
     pub changed: u64,
@@ -191,8 +172,6 @@ impl Histories {
             next_scratch: 1,
             base: HashMap::new(),
             over: HashSet::new(),
-            touched: HashSet::new(),
-            swept: false,
             changed: 0,
             alarm: Alarm::spawn(wake),
             quiet: QUIET,
@@ -227,15 +206,6 @@ impl Histories {
         self.scratch.remove(&id);
         self.base.remove(&id);
         self.over.remove(&id);
-        self.touched.remove(&id);
-    }
-
-    /// The buffer holding the row under `key`, if any.
-    fn holder(&self, key: &str) -> Option<BufferId> {
-        self.rows
-            .iter()
-            .find(|(_, k)| k.as_str() == key)
-            .map(|(id, _)| *id)
     }
 
     /// Takes the next scratch numbers from what the store already
@@ -249,11 +219,6 @@ impl Histories {
             .unwrap_or(0);
         self.next_scratch = self.next_scratch.max(max + 1);
     }
-}
-
-/// `histor{y,ies}`'s tail.
-fn plural(n: usize) -> &'static str {
-    if n == 1 { "y" } else { "ies" }
 }
 
 pub fn file_key(path: &Path) -> String {
@@ -483,10 +448,6 @@ impl Kawoosh {
         if self.store.is_none() {
             return;
         }
-        if !self.histories.swept {
-            self.histories.swept = true;
-            self.expire_histories();
-        }
         let now = Instant::now();
         let ids: Vec<BufferId> = self.ed.listed_buffers();
         let mut soonest: Option<Instant> = None;
@@ -503,17 +464,6 @@ impl Kawoosh {
                 }
                 self.histories.seen.remove(&id);
                 continue;
-            }
-            // On show: the row is looked at, and does not age.
-            if self.histories.has_row(id)
-                && !self.histories.touched.contains(&id)
-                && self.buffer_shown(id)
-            {
-                self.histories.touched.insert(id);
-                self.histories.changed += 1;
-                if let Some(store) = &self.store {
-                    let _ = store.touch_history(&self.histories.rows[&id]);
-                }
             }
             let s = self.histories.seen.entry(id).or_insert(Seen {
                 version,
@@ -535,7 +485,6 @@ impl Kawoosh {
             if force || quiet || lagging {
                 if self.write_history(id) {
                     self.histories.seen.get_mut(&id).unwrap().dirty_since = None;
-                    self.enforce_cap();
                 }
             } else {
                 let due = s.at + self.histories.quiet;
@@ -630,8 +579,13 @@ impl Kawoosh {
         match store.save_history(&key, &text, &meta, clean) {
             Ok(()) => {
                 self.histories.rows.insert(id, key);
-                self.histories.touched.insert(id);
                 self.histories.changed += 1;
+                // A history lives as long as its moment (memory.md
+                // Decision 6): the subject has one from here on, even
+                // for a buffer nobody focused.
+                if let Some(k) = self.subject_of(id) {
+                    self.moments.touch(k);
+                }
                 true
             }
             Err(e) => {
@@ -878,286 +832,10 @@ impl Kawoosh {
             .count()
     }
 
-    // ------------------------------------------------------------ listing, expiry
-
-    /// Days a row may go untouched (`history.keep_days`); `None` for
-    /// never.
-    fn keep_days(&self) -> Option<u64> {
-        match self.ed.settings.int(KEEP_DAYS) {
-            Some(d) if d > 0 => Some(d as u64),
-            _ => None,
-        }
-    }
-
-    /// Rows untouched for `history.keep_days` go — with the hidden
-    /// buffer holding one, which nobody looked at; a row whose buffer
-    /// is on show stays, and is touched this frame.
-    fn expire_histories(&mut self) {
-        let Some(days) = self.keep_days() else {
-            self.enforce_cap();
-            return;
-        };
-        let Some(store) = self.store.clone() else {
-            return;
-        };
-        let cutoff = kawoosh_systems::store::now() - (days * 86_400) as i64;
-        let mut dropped = 0;
-        for row in store.history_rows() {
-            if row.touched_at >= cutoff {
-                continue;
-            }
-            if let Some(id) = self.histories.holder(&row.key) {
-                if self.buffer_shown(id) {
-                    continue;
-                }
-                self.ed.remove_buffer(id);
-                self.histories.forget(id);
-            }
-            if let Err(e) = store.drop_history(&row.key) {
-                log::warn!("history {}: {e}", row.key);
-                continue;
-            }
-            dropped += 1;
-        }
-        self.histories.changed += 1;
-        if dropped > 0 {
-            self.notify(
-                Level::Info,
-                format!(
-                    "{dropped} histor{} untouched for {days} days dropped ({KEEP_DAYS})",
-                    if dropped == 1 { "y" } else { "ies" }
-                ),
-            );
-        }
-        self.enforce_cap();
-    }
-
-    /// The most the rows may add up to (`history.max_mb`); `None` for
-    /// no cap.
-    fn max_bytes(&self) -> Option<usize> {
-        match self.ed.settings.int(MAX_MB) {
-            Some(mb) if mb > 0 => Some(mb as usize * (1 << 20)),
-            _ => None,
-        }
-    }
-
-    /// Past `history.max_mb`, the oldest-touched rows go one by one until
-    /// the rest fit: a row nobody holds is dropped; one a buffer holds
-    /// clean is its history, which the buffer forgets with it; one a
-    /// buffer holds modified is what keeps the changes, and stays —
-    /// the store can be over the cap by what is unsaved and on show.
-    fn enforce_cap(&mut self) {
-        let Some(cap) = self.max_bytes() else {
-            return;
-        };
-        let Some(store) = self.store.clone() else {
-            return;
-        };
-        let mut total = store.histories_bytes();
-        if total <= cap {
-            return;
-        }
-        let mut evicted = 0;
-        for row in store.history_rows() {
-            if total <= cap {
-                break;
-            }
-            match self.histories.holder(&row.key) {
-                Some(id) if self.ed.buffers[id].modified => continue,
-                Some(id) => {
-                    self.ed.clear_history(id);
-                    self.drop_history(id);
-                }
-                None => {
-                    if let Err(e) = store.drop_history(&row.key) {
-                        log::warn!("history {}: {e}", row.key);
-                        continue;
-                    }
-                }
-            }
-            total = total.saturating_sub(row.bytes);
-            evicted += 1;
-        }
-        if evicted > 0 {
-            self.histories.changed += 1;
-            self.notify(
-                Level::Info,
-                format!(
-                    "{evicted} histor{} evicted: the store was over {} MB ({MAX_MB})",
-                    if evicted == 1 { "y" } else { "ies" },
-                    cap >> 20
-                ),
-            );
-        }
-    }
-
-    /// `:history` — the rows in a read-only pane: key, size, when last
-    /// touched, and its state (a buffer holds it, modified or not; its
-    /// file is gone). `:history drop KEY` takes one out, reverting the
-    /// buffer that holds it; `:history clear` takes out every row no
-    /// buffer holds and `:history clear!` the held ones too, and either
-    /// vacuums the db.
-    /// `:history clear[!]`: every row goes and the db is vacuumed; a
-    /// row held by an open buffer stays unless `!`, which reverts it.
-    fn history_clear(&mut self, store: &Store, bang: bool) {
-        let (mut gone, mut kept) = (0, 0);
-        for row in store.history_rows() {
-            match self.histories.holder(&row.key) {
-                Some(_) if !bang => {
-                    kept += 1;
-                    continue;
-                }
-                Some(id) => self.discard(id),
-                None => {
-                    if let Err(e) = store.drop_history(&row.key) {
-                        log::warn!("history {}: {e}", row.key);
-                        continue;
-                    }
-                }
-            }
-            gone += 1;
-        }
-        if let Err(e) = store.vacuum() {
-            log::warn!("vacuum: {e}");
-        }
-        self.histories.changed += 1;
-        self.ed.message = match kept {
-            0 => format!("{gone} histor{} dropped, db vacuumed", plural(gone)),
-            _ => format!(
-                "{gone} histor{} dropped, {kept} held by open buffers kept \
-                 (:history clear! reverts them), db vacuumed",
-                plural(gone)
-            ),
-        };
-    }
-
-    /// Takes the row under `key` out — reverting the buffer that holds
-    /// it, which is the `true` — or says why not.
-    pub(crate) fn drop_history_key(&mut self, key: &str) -> Result<bool, String> {
-        let Some(store) = self.store.clone() else {
-            return Err("no store".into());
-        };
-        if store.load_history(key).is_none() {
-            return Err(format!("no history {key}"));
-        }
-        match self.histories.holder(key) {
-            Some(id) => {
-                self.discard(id);
-                Ok(true)
-            }
-            None => {
-                store.drop_history(key).map_err(|e| format!("{key}: {e}"))?;
-                self.histories.changed += 1;
-                Ok(false)
-            }
-        }
-    }
-
-    /// The buffer holding the row under `key`, if any: for the pane.
-    pub(crate) fn history_holder(&self, key: &str) -> Option<BufferId> {
-        self.histories.holder(key)
-    }
-
     /// The row under `key` read out, for the pane's inspector.
     pub(crate) fn read_history(&mut self, key: &str) -> Option<History> {
         self.load_history(key)
     }
-
-    fn history_listing(&self, rows: &[kawoosh_systems::store::HistoryRow]) -> String {
-        use std::fmt::Write;
-        let now = kawoosh_systems::store::now();
-        let total: usize = rows.iter().map(|r| r.bytes).sum();
-        let keep = match self.keep_days() {
-            Some(d) => format!("kept {d} days untouched ({KEEP_DAYS})"),
-            None => format!("kept until dropped ({KEEP_DAYS} = 0)"),
-        };
-        let mut out = format!(
-            "{} histor{} · {} · {keep}\n",
-            rows.len(),
-            plural(rows.len()),
-            crate::perf::bytes(total as u64)
-        );
-        let width = rows.iter().map(|r| r.key.len()).max().unwrap_or(0);
-        for r in rows {
-            let age = crate::settings::ago(Duration::from_secs((now - r.touched_at).max(0) as u64));
-            let state = match self.histories.holder(&r.key) {
-                Some(id) => {
-                    let b = &self.ed.buffers[id];
-                    match (self.buffer_shown(id), b.modified) {
-                        (true, true) => "open, on show",
-                        (true, false) => "open, saved",
-                        (false, true) => "open, hidden",
-                        (false, false) => "open, saved, hidden",
-                    }
-                    .to_string()
-                }
-                None => match r.key.strip_prefix("file:") {
-                    Some(p) if !Path::new(p).exists() => "file gone".to_string(),
-                    Some(_) if r.clean => "history".to_string(),
-                    Some(_) => "not opened".to_string(),
-                    None => "not restored".to_string(),
-                },
-            };
-            let _ = writeln!(
-                out,
-                "  {:<width$}  {:>9}  {:>9}  {state}",
-                r.key,
-                crate::perf::bytes(r.bytes as u64),
-                age,
-            );
-        }
-        out.push_str(":history drop KEY · :history clear[!]\n");
-        out
-    }
-}
-
-/// `:history` and its subcommands, each needing the store.
-pub(crate) fn commands() -> Vec<ShellCommand> {
-    vec![
-        cmd(
-            Spec::new("history")
-                .when(&["store"])
-                .doc("the histories pane: every buffer's undo tree and draft in the store"),
-            |k, _| k.toggle_history_panel(),
-        ),
-        cmd(
-            Spec::new("history list")
-                .when(&["store"])
-                .doc("the histories as text in a pane"),
-            |k, _| {
-                let Some(store) = k.store.clone() else { return };
-                let text = k.history_listing(&store.history_rows());
-                k.show_in_pane(HISTORY_BUFFER, &text);
-            },
-        ),
-        cmd(
-            Spec::new("history drop")
-                .args(Args::new(&[ArgKind::Text]))
-                .when(&["store"])
-                .doc("drop the row KEY (file:<path> or scratch:<n>), reverting its buffer"),
-            |k, ctx| match ctx.args.first() {
-                Some(key) => {
-                    let key = key.clone();
-                    k.ed.message = match k.drop_history_key(&key) {
-                        Ok(true) => format!("{key} dropped, its buffer reverted"),
-                        Ok(false) => format!("{key} dropped"),
-                        Err(e) => e,
-                    };
-                }
-                None => k.ed.message = "drop what? (:history drop KEY)".into(),
-            },
-        ),
-        cmd(
-            Spec::new("history clear")
-                .bang("revert the buffers holding rows too")
-                .when(&["store"])
-                .doc("drop every row and vacuum the db"),
-            |k, ctx| {
-                let Some(store) = k.store.clone() else { return };
-                k.history_clear(&store, ctx.bang());
-            },
-        ),
-    ]
 }
 
 #[cfg(test)]

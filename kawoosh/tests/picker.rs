@@ -667,9 +667,15 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     d.frame(&mut app);
     assert_eq!(rows(&d)[0], "cd?", "found by its alias: {:?}", rows(&d));
     d.ctrl(&mut app, "u");
-    d.keys(&mut app, "history");
+    d.keys(&mut app, "memory forget");
     d.frame(&mut app);
-    assert!(texts(&d).iter().any(|s| s.contains("history needs store")));
+    assert!(
+        texts(&d)
+            .iter()
+            .any(|s| s.contains("memory forget needs store")),
+        "{:?}",
+        texts(&d)
+    );
     d.ctrl(&mut app, "u");
     d.keys(&mut app, "buffer del");
     d.frame(&mut app);

@@ -16,11 +16,10 @@ undo tree and its pane, histories in the store with hot exit, commands
 as specs, the key clusters and which-key, settings in layers, the
 language contract with two dozen grammars, notifications, the `dir`
 file manager through its identity-and-plan design at forty thousand
-entries, and the working memory (2026-09-20). 167 commits, 23
-integration test files in `kawoosh/tests` (the polish batch's
-`normal_mode.rs` and the picker's `picker.rs`, 2026-09-21), and the
-"next steps" below through step 9 — the four design notes of
-2026-09-21, with steps 10–14 the order they are built in.
+entries, and the working memory (2026-09-20). 168 commits, 22
+integration test files in `kawoosh/tests` (the histories pane's folded
+into the memory's, 2026-09-21), and the "next steps" below through
+step 10 — the memory, with steps 11–14 the order the rest is built in.
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -190,7 +189,7 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   (`kawoosh.fs.walk`: ripgrep's `ignore` walk on the io thread, so
   `.gitignore`, hidden and `.git` are left out and the picker and
   `:grep` agree on what the project is), `buffers`, `recent`
-  (`kawoosh.oldfiles`), `smart` (the three, each path once), `grep`
+  (`kawoosh.oldfiles`, the memory's `file` rows), `smart` (the three, each path once), `grep`
   (`rg --vimgrep` through `kawoosh.spawn`, a killable process whose
   lines arrive once a frame, stopped past two thousand), `lines`,
   `commands` and `tools`. Matching is `kawoosh.matcher` — fzy's
@@ -226,11 +225,13 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   (`Node::resize`, `pane_chord` taking alt-shift as it takes
   ctrl-shift); the dock's height when it has the keys. Alt with Shift
   because Alt alone moves the selection.
-- **Pinned files (harpoon)** — open [todo, keys.md]. `<leader>e` the
-  list, `<leader>e1`…`9` and `<A-1>`…`9` to jump. Not in the picker's
-  round: memory.md decided a pin is a flag on a moment (its Decision
-  5), so it lands with the memory's third round, as a boost the
-  picker's `rank` reads and a `pins` source on its list.
+- **Pinned files (harpoon)** — done 2026-09-21 [todo, keys.md], with
+  the memory (step 10). A pin is a flag on a moment (memory.md
+  Decision 5): `<leader>ea` pins the buffer's file (again: unpins),
+  `<leader>ee` and `:memory pins` list them in pin order, `m` in the
+  pane flips one, `<leader>e1`…`9` and `<A-1>`…`9` open the Nth,
+  `kawoosh.pin` from Lua; a pin is never evicted and ranks above any
+  score in the picker, whose `pins` source is the same list.
 - **The scrolling tab** — decided 2026-09-21
   ([scrolling-tab.md](scrolling-tab.md)), not built; step 11. Decision
   2 above, worked out: `Kind::Scroll(Strip)` beside `Kind::Tree(Node)`
@@ -381,17 +382,17 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   watcher re-reading a listing the io thread's `watch.rs` sees change,
   an image preview once kui's `image` is on the road (req §9), and
   hidden-file toggling. None urgent.
-- **The working memory, round two** — decided 2026-09-21
-  ([memory.md](memory.md)), not built. The memory as the one place the
+- **The working memory, round two** — done 2026-09-21
+  ([memory.md](memory.md), step 10). The memory as the one place the
   editor remembers: a row per subject (texts, files, command lines,
-  searches, runs) with weak signals and a bounded ring of recent
-  transitions for the timeline, in the store with
-  increments that two windows cannot clobber, limits per kind with
-  eviction by score and holds; `oldfiles`, the prompt histories and
-  the histories' bookkeeping (touched, aging, the `:history` pane)
-  retire into it, the blobs stay. Pinned files are a flag on it and
-  the picker ranks by it, so the note comes before step 4. The
-  yank-pop after `p` is the round after.
+  searches) with weak signals and a bounded ring of recent
+  transitions for the timeline, in the store with increments that two
+  windows cannot clobber, limits per kind with eviction by score and
+  holds; `oldfiles`, the prompt histories and the histories'
+  bookkeeping (touched, aging, the `:history` pane) retired into it,
+  the blobs stay. Pinned files are a flag on it and the picker ranks
+  by it (`memory.lua`'s `rank`, replaceable). Not built: `tool` and
+  `location` rows (round four), co-occurrence, the yank-pop after `p`.
 
 ### Terminal
 
@@ -570,11 +571,16 @@ then breadth.
    the host; the brackets are an afternoon of Lua over three engine
    doors. The order they are built in is the list's continuation
    below.
-10. **The memory, rounds one to three** (memory.md's build order): the
+10. ~~**The memory, rounds one to three** (memory.md's build order): the
     table, the ring and files with `:oldfiles` retired; texts and the
     prompts; pins and the picker's boost — `<leader>e`, and the files
     source ranked by what was attended to. First because it was owed
-    before step 4 and the picker has been ranking blind since.
+    before step 4 and the picker has been ranking blind since.~~
+    Landed 2026-09-21 (`store.rs`'s `moments` and `recent`,
+    `moments.rs`, the `:memory` pane with its views, `memory.lua`,
+    five tests in `memory.rs` and the histories' three rewritten);
+    see the buffers track — memory.md's status says where the build
+    departed from the text.
 11. **The scrolling tab** ([scrolling-tab.md](scrolling-tab.md)): one
     round — `Kind::Scroll` beside the tree, the keys read on the
     strip's axis, `reveal` on the focus frame, `:layout` both ways,

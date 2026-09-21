@@ -112,7 +112,8 @@ pub struct Kawoosh {
     /// The undo history pane (`:undo history`): which buffer it follows,
     /// its rows and its cursor.
     pub undo: crate::undo::UndoPanel,
-    pub history_pane: crate::history_pane::HistoryPanel,
+    /// The memory's deltas, ring and flush (`moments.rs`).
+    pub moments: crate::moments::Moments,
     /// The working memory pane (`:memory`): the register's past.
     pub memory_pane: crate::memory::MemoryPanel,
     /// The keymap version and, at it, the first words of the commands
@@ -228,7 +229,7 @@ impl Kawoosh {
             line_cells: Default::default(),
             perf: Default::default(),
             undo: Default::default(),
-            history_pane: Default::default(),
+            moments: crate::moments::Moments::new(wake.clone()),
             memory_pane: Default::default(),
             bound_names: Default::default(),
             hud: false,
@@ -1080,8 +1081,6 @@ impl Kawoosh {
             self.lua_pane_key(&name, stroke);
         } else if self.layout.focused_content() == Some(Content::Undo) {
             self.undo_key(self.layout.focused(), stroke);
-        } else if self.layout.focused_content() == Some(Content::History) {
-            self.history_key_press(self.layout.focused(), stroke);
         } else if self.layout.focused_content() == Some(Content::Memory) {
             self.memory_key_press(self.layout.focused(), stroke);
         }
@@ -1203,6 +1202,7 @@ impl Kawoosh {
                 Effect::QuitAll { force } => self.request_quit_all(force),
                 Effect::SetClipboard(t) => self.clip_out = Some(t),
                 Effect::RequestPaste => self.awaiting_paste = true,
+                Effect::PromptLine { kind, line } => self.remember_prompt_line(kind, &line),
                 Effect::Open(p) => self.open(&p),
                 Effect::Wrote(_) => {}
                 Effect::CountMatches(b) => self.count_matches(b),
@@ -1494,6 +1494,8 @@ impl kui::App for Kawoosh {
         self.sync_settings();
         self.fire_settings();
         self.sync_histories(false);
+        self.moments.window_focused = ui.env().focused;
+        self.sync_moments(false);
         self.perf.cur.io = ms(t);
         let t = Instant::now();
         self.sync_syntax();
@@ -1507,6 +1509,7 @@ impl kui::App for Kawoosh {
         self.fire_changes();
         self.drain_lua();
         if let Some(rt) = self.scripting.rt.clone() {
+            rt.set_workspace(self.moments.workspace());
             rt.publish(&self.ed, self.focused_view());
         }
         self.perf.cur.lua = ms(t);
@@ -1627,6 +1630,11 @@ impl kui::App for Kawoosh {
             .get("tag")
             .and_then(|t| t.get("kind"))
             .and_then(Value::as_str);
+        // Anything but the modifier state is the hands on the keys: the
+        // memory's idle guard (`moments.rs`).
+        if p.get("kind").and_then(Value::as_str) != Some("modifiers") {
+            self.note_input();
+        }
         match p.get("kind").and_then(Value::as_str) {
             Some("key") => self.on_key(p),
             Some("text") => {
@@ -1653,7 +1661,6 @@ impl kui::App for Kawoosh {
             Some("syntax") => self.on_syntax_click(p),
             Some("settings") => self.on_settings_click(p),
             Some("undo") => self.on_undo_click(p),
-            Some("history") => self.on_history_click(p),
             Some("memory") => self.on_memory_click(p),
             Some("modifiers") => {
                 let f = |k| p.get(k).and_then(Value::as_bool).unwrap_or(false);

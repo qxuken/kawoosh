@@ -40,6 +40,7 @@ path = "src/bin/gen.rs"
 
 [dev-dependencies]
 criterion.workspace = true
+rusqlite.workspace = true
 
 [[bench]]
 name = "logger"

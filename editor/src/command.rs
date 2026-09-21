@@ -10,7 +10,7 @@
 //!
 //! A subcommand is a command whose name is two words: `history drop`
 //! is registered as one, listed by [`Editor::subcommands`], walked by
-//! [`Editor::resolve`], completed by the command line under `:history`.
+//! [`Editor::resolve`], completed by the command line under `:memory`.
 
 use std::collections::BTreeSet;
 use std::fmt;

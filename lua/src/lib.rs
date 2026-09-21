@@ -122,6 +122,28 @@ pub enum Msg {
     /// `kawoosh.recall(i)`: moment `i` of the memory (1 the newest)
     /// made the `"` register.
     Recall(usize),
+    /// `kawoosh.remember { kind, subject, signals, meta }`: signals
+    /// added to a subject's moment (memory.md Decision 9).
+    Remember {
+        kind: String,
+        subject: String,
+        visits: i64,
+        edits: i64,
+        yanks: i64,
+        dwell_ms: i64,
+        meta: Option<String>,
+    },
+    /// `kawoosh.forget(kind, subject)`.
+    Forget {
+        kind: String,
+        subject: String,
+    },
+    /// `kawoosh.pin(kind, subject, on)`.
+    Pin {
+        kind: String,
+        subject: String,
+        on: bool,
+    },
     /// `kawoosh.buf.retarget(from, to)`: every buffer open at path
     /// `from`, or under it, is at `to` from now on — a file the file
     /// manager renamed or moved, still open.
@@ -308,6 +330,8 @@ pub struct Published {
     pub mode: String,
     /// The status line's message (`kawoosh.message()`).
     pub message: String,
+    /// The workspace moments are made under (`kawoosh.memory { workspace = true }`).
+    pub workspace: String,
     pub buffers: HashMap<u64, BufSnap>,
     /// The effective settings, every layer merged.
     pub settings: Setting,
@@ -377,6 +401,7 @@ impl Default for Published {
             current: None,
             mode: String::new(),
             message: String::new(),
+            workspace: String::new(),
             buffers: HashMap::new(),
             settings: Setting::table(),
             commands: Vec::new(),
@@ -609,6 +634,14 @@ impl Runtime {
 
     pub fn set_store(&self, store: Rc<kawoosh_systems::store::Store>) {
         *self.store.borrow_mut() = Some(store);
+    }
+
+    /// The workspace moments are made under, as the shell knows it.
+    pub fn set_workspace(&self, ws: &str) {
+        let mut p = self.published.borrow_mut();
+        if p.workspace != ws {
+            p.workspace = ws.to_string();
+        }
     }
 
     /// Runs a config or plugin file; the error is a message, not a crash.
@@ -1543,10 +1576,18 @@ fn seed(
             let Some(s) = st.borrow().clone() else {
                 return Ok(out);
             };
-            for (i, (path, line)) in s.oldfiles(limit.unwrap_or(200)).into_iter().enumerate() {
+            let rows = s.moments(&kawoosh_systems::store::MomentQuery {
+                kind: Some("file"),
+                limit: limit.unwrap_or(200),
+                ..Default::default()
+            });
+            for (i, r) in rows.into_iter().enumerate() {
                 let t = lua.create_table()?;
-                t.set("path", kawoosh_systems::fs::display(&path))?;
-                t.set("line", line + 1)?;
+                t.set(
+                    "path",
+                    kawoosh_systems::fs::display(std::path::Path::new(&r.key.subject)),
+                )?;
+                t.set("line", kawoosh_systems::store::meta_line(&r.meta) + 1)?;
                 out.set(i + 1, t)?;
             }
             Ok(out)
@@ -2439,27 +2480,156 @@ fn seed(
     )?;
     k.set("buf", buf)?;
 
-    // ---- the working memory: what passed through the hands, newest
-    // first, the `"` register its head.
+    // ---- the memory (memory.md Decision 9): bare, the working
+    // memory's texts, newest first; with a query, the store's rows —
+    // as of the last flush, a second behind at most — or the ring.
     let pp = published.clone();
+    let st = store.clone();
     k.set(
         "memory",
-        lua.create_function(move |lua, ()| {
-            let p = pp.borrow();
-            let now = std::time::Instant::now();
+        lua.create_function(move |lua, q: Option<mlua::Table>| {
             let t = lua.create_table()?;
-            for (i, m) in p.memory.iter().enumerate() {
-                let e = lua.create_table()?;
-                e.set("text", m.text.as_str())?;
-                e.set("linewise", m.linewise)?;
-                e.set("took", m.took)?;
-                e.set("from", m.from.as_str())?;
-                e.set("buffer", m.buffer)?;
-                e.set("age", now.saturating_duration_since(m.at).as_secs_f64())?;
-                t.set(i + 1, e)?;
+            let Some(q) = q else {
+                let p = pp.borrow();
+                let now = std::time::Instant::now();
+                for (i, m) in p.memory.iter().enumerate() {
+                    let e = lua.create_table()?;
+                    e.set("text", m.text.as_str())?;
+                    e.set("linewise", m.linewise)?;
+                    e.set("took", m.took)?;
+                    e.set("from", m.from.as_str())?;
+                    e.set("buffer", m.buffer)?;
+                    e.set("age", now.saturating_duration_since(m.at).as_secs_f64())?;
+                    t.set(i + 1, e)?;
+                }
+                return Ok(t);
+            };
+            let Some(s) = st.borrow().clone() else {
+                return Ok(t);
+            };
+            let limit: usize = q.get::<Option<usize>>("limit")?.unwrap_or(200);
+            let now = kawoosh_systems::store::now();
+            if q.get::<Option<bool>>("recent")?.unwrap_or(false) {
+                for (i, r) in s.recent(limit).into_iter().enumerate() {
+                    let e = lua.create_table()?;
+                    e.set("at", r.at)?;
+                    e.set("age", (now - r.at).max(0))?;
+                    e.set("kind", r.key.kind)?;
+                    e.set("subject", r.key.subject)?;
+                    e.set("workspace", r.key.workspace)?;
+                    t.set(i + 1, e)?;
+                }
+                return Ok(t);
+            }
+            let kind: Option<String> = q.get("kind")?;
+            let subject: Option<String> = q.get("subject")?;
+            let workspace: Option<String> = match q.get::<Option<mlua::Value>>("workspace")? {
+                Some(mlua::Value::String(w)) => Some(w.to_str()?.to_string()),
+                Some(mlua::Value::Boolean(true)) => Some(pp.borrow().workspace.clone()),
+                _ => None,
+            };
+            let since: Option<i64> = q.get::<Option<i64>>("since")?.map(|secs| now - secs);
+            let pinned = q.get::<Option<bool>>("pinned")?.unwrap_or(false);
+            let rows = s.moments(&kawoosh_systems::store::MomentQuery {
+                kind: kind.as_deref(),
+                workspace: workspace.as_deref(),
+                subject: subject.as_deref(),
+                since,
+                pinned,
+                limit,
+            });
+            let row_of =
+                |lua: &Lua, r: kawoosh_systems::store::MomentRow| -> mlua::Result<mlua::Table> {
+                    let e = lua.create_table()?;
+                    e.set("kind", r.key.kind.as_str())?;
+                    e.set("subject", r.key.subject.as_str())?;
+                    e.set("workspace", r.key.workspace.as_str())?;
+                    e.set("first", r.first_at)?;
+                    e.set("last", r.last_at)?;
+                    e.set("age", (now - r.last_at).max(0))?;
+                    e.set("visits", r.visits)?;
+                    e.set("dwell", r.dwell_ms as f64 / 1000.0)?;
+                    e.set("edits", r.edits)?;
+                    e.set("yanks", r.yanks)?;
+                    e.set("pinned", r.pinned)?;
+                    let meta: serde_json::Value = serde_json::from_str(&r.meta).unwrap_or_default();
+                    e.set("meta", json_to_lua(lua, &meta)?)?;
+                    if r.key.kind == "text"
+                        && let Some(bytes) = s.moment_text(&r.key)
+                    {
+                        e.set("text", lua.create_string(&bytes)?)?;
+                    }
+                    Ok(e)
+                };
+            if subject.is_some() {
+                return match rows.into_iter().next() {
+                    Some(r) => Ok(row_of(lua, r)?),
+                    None => Ok(t),
+                };
+            }
+            for (i, r) in rows.into_iter().enumerate() {
+                t.set(i + 1, row_of(lua, r)?)?;
             }
             Ok(t)
         })?,
+    )?;
+    k.set(
+        "now",
+        lua.create_function(|_, ()| Ok(kawoosh_systems::store::now()))?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "remember",
+        lua.create_function(move |_, o: mlua::Table| {
+            let kind: String = o.get("kind")?;
+            let subject: String = o.get("subject")?;
+            let sig: Option<mlua::Table> = o.get("signals")?;
+            let get = |k: &str| -> mlua::Result<i64> {
+                Ok(sig
+                    .as_ref()
+                    .map(|s| s.get::<Option<i64>>(k))
+                    .transpose()?
+                    .flatten()
+                    .unwrap_or(0))
+            };
+            let meta: Option<mlua::Value> = o.get("meta")?;
+            let meta = match meta {
+                Some(mlua::Value::Nil) | None => None,
+                Some(v) => Some(lua_to_json(&v)?.to_string()),
+            };
+            qq.borrow_mut().push(Msg::Remember {
+                kind,
+                subject,
+                visits: get("visits")?,
+                edits: get("edits")?,
+                yanks: get("yanks")?,
+                dwell_ms: (get("dwell")? * 1000).max(0),
+                meta,
+            });
+            Ok(())
+        })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "forget",
+        lua.create_function(move |_, (kind, subject): (String, String)| {
+            qq.borrow_mut().push(Msg::Forget { kind, subject });
+            Ok(())
+        })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "pin",
+        lua.create_function(
+            move |_, (kind, subject, on): (String, String, Option<bool>)| {
+                qq.borrow_mut().push(Msg::Pin {
+                    kind,
+                    subject,
+                    on: on.unwrap_or(true),
+                });
+                Ok(())
+            },
+        )?,
     )?;
     let qq = q(queue);
     k.set(
@@ -2763,6 +2933,75 @@ fn spec_to_lua(lua: &Lua, s: &Spec) -> mlua::Result<Table> {
         },
     )?;
     Ok(t)
+}
+
+/// A JSON value (a moment's `meta`) as Lua data.
+pub fn json_to_lua(lua: &Lua, v: &serde_json::Value) -> mlua::Result<LV> {
+    use serde_json::Value as J;
+    Ok(match v {
+        J::Null => LV::Nil,
+        J::Bool(b) => LV::Boolean(*b),
+        J::Number(n) => match n.as_i64() {
+            Some(i) => LV::Integer(i),
+            None => LV::Number(n.as_f64().unwrap_or(0.0)),
+        },
+        J::String(s) => LV::String(lua.create_string(s)?),
+        J::Array(l) => {
+            let t = lua.create_table()?;
+            for (i, v) in l.iter().enumerate() {
+                t.set(i + 1, json_to_lua(lua, v)?)?;
+            }
+            LV::Table(t)
+        }
+        J::Object(m) => {
+            let t = lua.create_table()?;
+            for (k, v) in m {
+                t.set(k.as_str(), json_to_lua(lua, v)?)?;
+            }
+            LV::Table(t)
+        }
+    })
+}
+
+/// Lua data as JSON, for a moment's `meta`: a sequence is an array, a
+/// table with string keys an object, anything that is not data an error.
+pub fn lua_to_json(v: &LV) -> mlua::Result<serde_json::Value> {
+    use serde_json::Value as J;
+    Ok(match v {
+        LV::Nil => J::Null,
+        LV::Boolean(b) => J::Bool(*b),
+        LV::Integer(i) => J::from(*i),
+        LV::Number(n) => serde_json::Number::from_f64(*n)
+            .map(J::Number)
+            .unwrap_or(J::Null),
+        LV::String(s) => J::String(s.to_string_lossy()),
+        LV::Table(t) => {
+            let n = t.raw_len();
+            if n > 0 {
+                let mut out = Vec::with_capacity(n);
+                for i in 1..=n {
+                    out.push(lua_to_json(&t.raw_get::<LV>(i)?)?);
+                }
+                J::Array(out)
+            } else {
+                let mut out = serde_json::Map::new();
+                for pair in t.pairs::<LV, LV>() {
+                    let (k, v) = pair?;
+                    let LV::String(k) = k else {
+                        return Err(mlua::Error::runtime("meta: a key must be a string"));
+                    };
+                    out.insert(k.to_string_lossy(), lua_to_json(&v)?);
+                }
+                J::Object(out)
+            }
+        }
+        other => {
+            return Err(mlua::Error::runtime(format!(
+                "meta: {} is not data",
+                other.type_name()
+            )));
+        }
+    })
 }
 
 pub fn to_lua(lua: &Lua, s: &Setting) -> mlua::Result<LV> {

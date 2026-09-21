@@ -2,7 +2,8 @@
 //! file's — comes back after a restart with its undo tree, and a saved
 //! file's tree comes back on open; `:q` keeps it, `:q!` discards it; a
 //! file that moved on disk meanwhile says so; without a store, `:q`
-//! refuses as before; the store is listed, aged and capped.
+//! refuses as before; the store is listed, aged and capped through
+//! the memory (memory.md Decision 6).
 
 mod drive;
 
@@ -12,6 +13,8 @@ use std::time::Duration;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
+use kawoosh::memory::State;
+use kawoosh_systems::store::{MomentKey, MomentQuery};
 use kui::KeyMods;
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
@@ -40,16 +43,6 @@ fn launch(db: &Path, path: Option<&Path>) -> (Drive, Kawoosh) {
 
 fn text_of(app: &Kawoosh) -> String {
     app.ed.buffer_of(app.focused_view().unwrap()).text()
-}
-
-/// The `*history*` listing's text.
-fn listing(app: &Kawoosh) -> String {
-    app.ed
-        .buffers
-        .values()
-        .find(|b| b.name == "*history*")
-        .map(|b| b.text())
-        .unwrap_or_default()
 }
 
 fn focused_modified(app: &Kawoosh) -> bool {
@@ -546,63 +539,78 @@ fn a_bang_edit_loads_the_disk_and_undo_brings_the_draft_back() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// `:drafts` lists the rows with their state; `drop KEY` takes one out
-/// (reverting an open buffer); `clear` leaves held rows unless `!`.
+/// The memory lists every file and scratch with its draft
+/// (`:memory files`, what `:history` was): a row held on show, a
+/// file that is gone, a scratch nobody restored. `:memory forget` on
+/// a held draft reverts its buffer; `:memory clear` keeps a draft
+/// with unsaved changes and `:memory clear!` reverts it, either
+/// vacuuming the db.
 #[test]
-fn drafts_are_listed_dropped_and_cleared() {
+fn drafts_are_listed_forgotten_and_cleared() {
     let dir = tmp("listing");
     let db = dir.join("state.db");
     let a = dir.join("a.txt");
     std::fs::write(&a, "aaa\n").unwrap();
+    // Two rows nobody holds, from a run before: a file that is gone,
+    // and a scratch. The store's open gives each its moment.
+    {
+        let store = kawoosh_systems::store::Store::open(&db).unwrap();
+        store
+            .save_history("file:/nowhere/gone.txt", b"g", "{}", false)
+            .unwrap();
+        store.save_history("scratch:7", b"s", "{}", false).unwrap();
+    }
     let (mut d, mut app) = launch(&db, Some(&a));
     d.frame(&mut app);
     d.keys(&mut app, "x");
     app.sync_histories(true);
     let store = app.store.clone().unwrap();
-    // Two rows nobody holds: a file that is gone, and a scratch.
-    store
-        .save_history("file:/nowhere/gone.txt", b"g", "{}", false)
-        .unwrap();
-    store.save_history("scratch:7", b"s", "{}", false).unwrap();
-    ex(&mut d, &mut app, "history list");
-    let listing = listing(&app);
-    assert!(listing.starts_with("3 histories"), "{listing}");
-    assert_eq!(text_of(&app), "aa\n", "the keyboard stays where it was");
-    assert!(
-        listing.contains(&format!("file:{}", a.display())),
-        "{listing}"
-    );
-    assert!(listing.contains("open, on show"), "{listing}");
-    assert!(listing.contains("file gone"), "{listing}");
-    assert!(listing.contains("not restored"), "{listing}");
-    assert!(listing.contains("kept 90 days"), "{listing}");
-    // Back to a: `drop` on the row a buffer holds reverts it.
-    ex(&mut d, &mut app, "b a.txt");
-    ex(
-        &mut d,
-        &mut app,
-        &format!("history drop file:{}", a.display()),
-    );
+    ex(&mut d, &mut app, "memory files");
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+    let rows = app.memory_pane.rows();
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    let state = |s: &str| {
+        rows.iter()
+            .find(|r| r.key().is_some_and(|k| k.subject.contains(s)))
+            .and_then(|r| r.state())
+    };
+    assert_eq!(state("a.txt"), Some(State::OnShow));
+    assert_eq!(state("gone.txt"), Some(State::FileGone));
+    assert_eq!(state("scratch:7"), Some(State::NotRestored));
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    // `forget` on the row a buffer holds reverts it.
+    ex(&mut d, &mut app, &format!("memory forget {}", a.display()));
     assert!(app.ed.message.contains("reverted"), "{}", app.ed.message);
     assert_eq!(text_of(&app), "aaa\n");
     assert!(!focused_modified(&app));
     assert_eq!(store.history_keys().len(), 2);
-    ex(&mut d, &mut app, "history drop nope");
-    assert!(app.ed.message.contains("no history"), "{}", app.ed.message);
+    ex(&mut d, &mut app, "memory forget nope");
+    assert!(
+        app.ed.message.contains("no file moment"),
+        "{}",
+        app.ed.message
+    );
     // Modified again and held; `clear` keeps it, `clear!` reverts it.
     d.keys(&mut app, "x");
     app.sync_histories(true);
     assert_eq!(store.history_keys().len(), 3);
-    ex(&mut d, &mut app, "history clear");
+    // (The command lines typed here are `command` moments too, so the
+    // count forgotten is theirs and the two histories'.)
+    ex(&mut d, &mut app, "memory clear");
     assert!(
-        app.ed.message.contains("2 histories dropped, 1 held"),
+        app.ed
+            .message
+            .contains("moments forgotten, 1 with unsaved changes kept"),
         "{}",
         app.ed.message
     );
     assert_eq!(store.history_keys().len(), 1);
-    ex(&mut d, &mut app, "history clear!");
+    // `clear!`: the held one and the `memory clear` line just typed.
+    ex(&mut d, &mut app, "memory clear!");
     assert!(
-        app.ed.message.contains("1 history dropped, db vacuumed"),
+        app.ed.message.contains("moments forgotten, db vacuumed"),
         "{}",
         app.ed.message
     );
@@ -611,30 +619,46 @@ fn drafts_are_listed_dropped_and_cleared() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Rows untouched for `history.keep_days` go at the first frame — a
-/// hidden buffer holding one with it — while a row on show stays and
-/// is touched; 0 keeps everything. A row whose meta cannot be read
-/// gives its text back; a key that is not a draft's is dropped.
+/// Moments unattended for `memory.keep_days` go at the first frame,
+/// their histories with them — a file left clean and closed — while a
+/// row on show stays, and a hidden draft with unsaved text holds its
+/// row; 0 keeps everything, and the histories' old key still reads. A
+/// row whose meta cannot be read gives its text back; a key that is
+/// not a draft's is dropped.
 #[test]
-fn old_drafts_expire_and_broken_rows_degrade() {
+fn old_moments_expire_and_broken_rows_degrade() {
     let dir = tmp("expire");
     let db = dir.join("state.db");
     let a = dir.join("a.txt");
     let b = dir.join("b.txt");
+    let c = dir.join("c.txt");
     std::fs::write(&a, "aaa\n").unwrap();
     std::fs::write(&b, "bbb\n").unwrap();
+    std::fs::write(&c, "ccc\n").unwrap();
     let (mut d, mut app) = launch(&db, Some(&a));
     d.frame(&mut app);
     d.keys(&mut app, "x");
+    // c: opened, saved with an edit (a clean history), and closed.
+    ex(&mut d, &mut app, &format!("e {}", c.display()));
+    d.frame(&mut app);
+    d.keys(&mut app, "x");
+    ex(&mut d, &mut app, "w");
+    app.sync_histories(true);
+    ex(&mut d, &mut app, "bd");
+    // b: modified, then hidden.
     ex(&mut d, &mut app, &format!("e {}", b.display()));
+    d.frame(&mut app);
     d.keys(&mut app, "x");
     ex(&mut d, &mut app, "b a.txt");
     ex(&mut d, &mut app, "qa");
     d.frame(&mut app);
     let store = app.store.clone().unwrap();
     let old = kawoosh_systems::store::now() - 100 * 86_400;
-    for key in store.history_keys() {
-        store.set_history_touched(&key, old).unwrap();
+    for r in store.moments(&MomentQuery {
+        kind: Some("file"),
+        ..Default::default()
+    }) {
+        store.set_moment_last(&r.key, old).unwrap();
     }
     store
         .save_history("scratch:5", b"kept", "not json", false)
@@ -669,10 +693,11 @@ fn old_drafts_expire_and_broken_rows_degrade() {
         "not a draft key: dropped"
     );
     d.frame(&mut app);
-    // a is on show: kept and touched; b was hidden and old: gone.
+    // a is on show: kept. b is hidden with unsaved text: its draft
+    // holds it. c was clean and closed: its moment and its history go.
     assert_eq!(text_of(&app), "aa\n");
     assert!(
-        !app.ed
+        app.ed
             .buffers
             .values()
             .any(|bf| bf.path.as_deref() == Some(b.as_path()))
@@ -683,28 +708,44 @@ fn old_drafts_expire_and_broken_rows_degrade() {
         "{keys:?}"
     );
     assert!(
-        !keys.iter().any(|k| k == &format!("file:{}", b.display())),
+        keys.iter().any(|k| k == &format!("file:{}", b.display())),
         "{keys:?}"
+    );
+    assert!(
+        !keys.iter().any(|k| k == &format!("file:{}", c.display())),
+        "{keys:?}"
+    );
+    assert!(
+        store
+            .moment(&MomentKey::new("file", &c.display().to_string(), ""))
+            .is_none()
     );
     assert!(
         app.notes
             .log
             .iter()
-            .any(|e| e.text.contains("1 history untouched for 90 days"))
-    );
-    let now = kawoosh_systems::store::now();
-    assert!(
-        store.history_rows().iter().all(|r| r.touched_at > now - 60),
+            .any(|e| e.text.contains("1 moment unattended for 90 days forgotten")),
         "{:?}",
-        store.history_rows()
+        app.notes
+            .log
+            .iter()
+            .map(|e| e.text.clone())
+            .collect::<Vec<_>>()
     );
-    // With the setting off, an old row stays.
+    // The visit is a's row's now.
+    app.flush_moments();
+    let now = kawoosh_systems::store::now();
+    let a_row = store
+        .moment(&MomentKey::new("file", &a.display().to_string(), ""))
+        .unwrap();
+    assert!(a_row.last_at > now - 60 && a_row.visits >= 1, "{a_row:?}");
+    // With the setting off — under the histories' old key, which still
+    // reads while the memory's is unset — an old row stays.
     store
-        .set_history_touched(&format!("file:{}", a.display()), old)
+        .set_moment_last(&MomentKey::new("file", &a.display().to_string(), ""), old)
         .unwrap();
     drop(app);
     let (mut d, mut app) = launch(&db, None);
-    // Set before any frame: the sweep is the first frame's.
     app.ed.settings.set(
         kawoosh_editor::Layer::Session,
         "history.keep_days",
@@ -712,46 +753,65 @@ fn old_drafts_expire_and_broken_rows_degrade() {
     );
     assert!(app.restore_session());
     d.frame(&mut app);
-    assert!(store.history_keys().iter().any(|k| k.starts_with("file:")));
-    ex(&mut d, &mut app, "history list");
     assert!(
-        listing(&app).contains("kept until dropped"),
-        "{}",
-        listing(&app)
+        store.history_keys().iter().any(|k| k.starts_with("file:")),
+        "{:?}",
+        store.history_keys()
+    );
+    assert!(
+        store
+            .moment(&MomentKey::new("file", &a.display().to_string(), ""))
+            .is_some()
     );
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Past `history.max_mb` the oldest-touched rows go one by one after a
-/// write, until the rest fit; a row held by a modified buffer stays.
+/// Past `memory.max_mb` (the histories' bytes counted) the
+/// lowest-scored rows go after a flush, the longest unattended first
+/// among equals, until the rest fit; a row held by a modified buffer
+/// stays.
 #[test]
-fn the_store_is_capped_oldest_first() {
+fn the_store_is_capped_lowest_score_first() {
     let dir = tmp("cap-store");
     let db = dir.join("state.db");
     let a = dir.join("a.txt");
     std::fs::write(&a, "aaa\n").unwrap();
+    // Three rows of 600 KB nobody holds, from before, oldest first:
+    // 1.8 MB, each with the moment the store's open gives it.
+    let big = vec![b'x'; 600 << 10];
+    {
+        let store = kawoosh_systems::store::Store::open(&db).unwrap();
+        for (i, key) in ["file:/old/1.txt", "file:/old/2.txt", "file:/old/3.txt"]
+            .iter()
+            .enumerate()
+        {
+            store.save_history(key, &big, "{}", false).unwrap();
+            store.set_history_touched(key, 1_000 + i as i64).unwrap();
+        }
+    }
     let (mut d, mut app) = launch(&db, Some(&a));
     app.ed.settings.set(
         kawoosh_editor::Layer::Session,
-        "history.max_mb",
+        "memory.max_mb",
         kawoosh_editor::Setting::Int(1),
     );
-    d.frame(&mut app);
     let store = app.store.clone().unwrap();
-    // Three rows of 600 KB nobody holds, oldest first: 1.8 MB.
-    let big = vec![b'x'; 600 << 10];
+    // Attended a while ago, in order — recent enough not to age out.
+    let now = kawoosh_systems::store::now();
     for (i, key) in ["file:/old/1.txt", "file:/old/2.txt", "file:/old/3.txt"]
         .iter()
         .enumerate()
     {
-        store.save_history(key, &big, "{}", false).unwrap();
-        store.set_history_touched(key, 1_000 + i as i64).unwrap();
+        let k = kawoosh_systems::store::moment_key_of_history(key).unwrap();
+        store.set_moment_last(&k, now - 3_600 + i as i64).unwrap();
     }
     assert!(store.histories_bytes() > 1 << 20);
-    // A write of a's draft brings the store under the cap: the two
-    // oldest go, the third stays, a's stays.
+    d.frame(&mut app);
+    // A flush brings the store under the cap: the two oldest go, the
+    // third stays, a's stays.
     d.keys(&mut app, "x");
     app.sync_histories(true);
+    app.flush_moments();
     let keys = store.history_keys();
     assert_eq!(keys.len(), 2, "{keys:?}");
     assert!(keys.iter().any(|k| k == "file:/old/3.txt"), "{keys:?}");
@@ -761,7 +821,7 @@ fn the_store_is_capped_oldest_first() {
         app.notes
             .log
             .iter()
-            .any(|e| e.text.contains("2 histories evicted")),
+            .any(|e| e.text.contains("2 moments evicted")),
         "{:?}",
         app.notes
             .log
@@ -774,9 +834,23 @@ fn the_store_is_capped_oldest_first() {
     store
         .save_history("file:/old/4.txt", &huge, "{}", false)
         .unwrap();
-    store.set_history_touched("file:/old/4.txt", 5).unwrap();
+    store
+        .flush_moments(
+            &[(
+                MomentKey::new("file", "/old/4.txt", ""),
+                kawoosh_systems::store::MomentDelta {
+                    first_at: now - 7_200,
+                    last_at: now - 7_200,
+                    ..Default::default()
+                },
+            )],
+            &[],
+            10,
+        )
+        .unwrap();
     d.keys(&mut app, "x");
     app.sync_histories(true);
+    app.flush_moments();
     let keys = store.history_keys();
     assert!(!keys.iter().any(|k| k == "file:/old/4.txt"), "{keys:?}");
     assert!(

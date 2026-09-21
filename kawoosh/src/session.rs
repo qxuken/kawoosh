@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use kawoosh_editor::{ArgKind, Args, Selection, Spec, motions};
+use kawoosh_editor::{Selection, Spec, motions};
 use kawoosh_systems::store::Store;
 use serde::{Deserialize, Serialize};
 
@@ -28,11 +28,6 @@ pub struct SessionData {
     pub tab: usize,
     pub dock_open: bool,
     pub dock_ratio: f32,
-    /// The `:` prompt's history, oldest first (`Editor::cmd_history`).
-    #[serde(default)]
-    pub cmd_history: Vec<String>,
-    #[serde(default)]
-    pub search_history: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -107,6 +102,8 @@ impl Kawoosh {
             Err(e) => log::warn!("state db: {e}"),
         }
         self.attach_histories();
+        self.seed_prompt_histories();
+        self.seed_texts();
     }
 
     fn pane_data(&self, pane: PaneId) -> PaneData {
@@ -131,7 +128,6 @@ impl Kawoosh {
             // picker — is dropped as a terminal is.
             Some(Content::Lua(name)) if self.view_kept(&name) => PaneData::Lua { name },
             Some(Content::Undo) => PaneData::Undo,
-            Some(Content::History) => PaneData::History,
             Some(Content::Memory) => PaneData::Memory,
             _ => PaneData::Terminal,
         }
@@ -186,8 +182,6 @@ impl Kawoosh {
             tab: self.layout.tab,
             dock_open: self.layout.dock_open,
             dock_ratio: self.layout.dock_ratio,
-            cmd_history: self.ed.cmd_history.clone(),
-            search_history: self.ed.search_history.clone(),
         }
     }
 
@@ -207,28 +201,14 @@ impl Kawoosh {
             }
             Err(e) => log::warn!("session: {e}"),
         }
-        // Every file buffer is an oldfile at its caret.
-        for id in self.ed.listed_buffers() {
-            let b = &self.ed.buffers[id];
-            let Some(p) = &b.path else { continue };
-            let line = self
-                .ed
-                .views
-                .values()
-                .find(|v| v.buffer == id)
-                .map(|v| b.line_of(v.sels.primary().head))
-                .unwrap_or(0);
-            let _ = store.touch_oldfile(p, line);
-        }
+        // The memory with it: every open file's caret line is its
+        // row's, and what happened since the last flush is written.
+        self.flush_moments();
     }
 
     /// Rebuilds the layout from `data`. Returns false when nothing in it
     /// could be restored (only terminals, or files that are gone).
     pub fn restore_session_data(&mut self, data: &SessionData) -> bool {
-        // The histories come back whatever the layout does: a line typed
-        // last time is worth having even when its files are gone.
-        self.ed.cmd_history = data.cmd_history.clone();
-        self.ed.search_history = data.search_history.clone();
         let mut layout = Layout::new(Content::Lua(String::new()));
         layout.tabs.clear();
         layout.panes.clear();
@@ -311,7 +291,9 @@ impl Kawoosh {
                     }
                     PaneData::Lua { name } => Content::Lua(name.clone()),
                     PaneData::Undo => Content::Undo,
-                    PaneData::History => Content::History,
+                    // A session from before the histories pane folded
+                    // into the memory's.
+                    PaneData::History => Content::Memory,
                     PaneData::Memory => Content::Memory,
                     PaneData::Commands | PaneData::Terminal => return None,
                 };
@@ -365,12 +347,22 @@ impl Kawoosh {
         ok
     }
 
-    /// `:oldfiles`: the most recent files, newest first.
-    pub fn oldfiles(&self) -> Vec<(PathBuf, usize)> {
-        self.store
-            .as_ref()
-            .map(|s| s.oldfiles(20))
-            .unwrap_or_default()
+    /// The files attended before, newest first, each at the line it
+    /// was left (the memory's `file` rows).
+    pub fn oldfiles(&self, limit: usize) -> Vec<(PathBuf, usize)> {
+        self.moment_rows(&kawoosh_systems::store::MomentQuery {
+            kind: Some("file"),
+            limit,
+            ..Default::default()
+        })
+        .into_iter()
+        .map(|r| {
+            (
+                PathBuf::from(&r.key.subject),
+                crate::memory::meta_line(&r.meta),
+            )
+        })
+        .collect()
     }
 }
 
@@ -393,38 +385,6 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             |k, _| {
                 if !k.restore_session() {
                     k.ed.message = "no session to restore".into();
-                }
-            },
-        ),
-        // `:oldfiles` lists the files opened before, newest first;
-        // `:oldfiles N` or `N:oldfiles` opens the Nth.
-        cmd(
-            Spec::new("oldfiles")
-                .alias(&["ol", "bro", "browse"])
-                .args(Args::new(&[ArgKind::Text]))
-                .doc("the files opened before; N opens the Nth"),
-            |k, ctx| {
-                let list = k.oldfiles();
-                let n = ctx
-                    .has_count
-                    .then_some(ctx.count)
-                    .or_else(|| ctx.args.first().and_then(|a| a.parse().ok()));
-                match n {
-                    Some(n) => match list.get(n.saturating_sub(1)) {
-                        Some((p, line)) => {
-                            let p = p.clone();
-                            k.open_in_editor(&p, Some(line + 1), None);
-                        }
-                        None => k.ed.message = "no such oldfile".into(),
-                    },
-                    None => {
-                        k.ed.message = list
-                            .iter()
-                            .enumerate()
-                            .map(|(i, (p, _))| format!("{} {}", i + 1, p.display()))
-                            .collect::<Vec<_>>()
-                            .join("   ");
-                    }
                 }
             },
         ),

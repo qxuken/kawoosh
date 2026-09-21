@@ -63,11 +63,7 @@ impl Kawoosh {
             };
             return Some((self.ed.pending.clone(), mode));
         }
-        if self.terms.prefix
-            || self.scripting.prefix
-            || self.undo.prefix
-            || self.history_pane.prefix
-        {
+        if self.terms.prefix || self.scripting.prefix || self.undo.prefix {
             return Some((vec!["<C-w>".into()], Mode::Normal));
         }
         if let Some(mode) = self.keys_help {

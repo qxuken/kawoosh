@@ -274,6 +274,29 @@ end
 -- `i` the newest, so the next `p` — or a plugin reading the register's
 -- origin — has it.
 --
+-- kawoosh.memory { … }: the memory as data (docs/design/memory.md) —
+-- the store's rows as of the last flush, a second behind at most. A
+-- query names `kind` ("file", "scratch", "text", "command", "search",
+-- or a plugin's own "<plugin>.<kind>"), `workspace` (a path, or `true`
+-- for the current one; nothing for every workspace), `subject` (one
+-- row, or nil), `since` (seconds back), `pinned = true` (the pins in
+-- pin order) and `limit` (200); `{ recent = true, limit = }` is the
+-- ring instead — the transitions newest first, `{ at =, age =, kind =,
+-- subject =, workspace = }` each. A row: `kind`, `subject`, `workspace`,
+-- `first`, `last` (unix seconds), `age`, `visits`, `dwell` (seconds),
+-- `edits`, `yanks`, `pinned` (0, or the pin's ordinal), `meta` (a
+-- table: a file's `line`, a text's `took`), and a text's `text`.
+-- kawoosh.remember { kind =, subject =, signals = { visits =, edits =,
+-- yanks =, dwell = }, meta = }: signals added to a subject's row — a
+-- file's path resolved as `:e` would — and `meta` set; a plugin's own
+-- kind is "<plugin>.<kind>", capped at five hundred rows, and never a
+-- text (the register is the engine's). kawoosh.forget(kind, subject)
+-- takes a row out, its draft with it; kawoosh.pin(kind, subject[,
+-- on]) pins or unpins one. kawoosh.now(): unix seconds, for a `rank`.
+-- The picker's ranking is `kawoosh.memory_rank` (`memory.lua`):
+-- `rank(row, now)` is the score a row gets and yours to replace,
+-- `boosts(kind, limit)` the rows as the picker's boosts.
+--
 -- kawoosh.buf.register(): the `"` register — `text`, `linewise`, and,
 -- when one yank or delete filled it, `buffer` (the handle it came
 -- from) and `entries`, for each line of the text the tracked line of
@@ -315,8 +338,8 @@ end
 -- kawoosh.matcher(list) holds a big one — `m:query(needle, limit)`
 -- answers `{ index =, score =, positions = }` best first, positions
 -- the matched characters' bytes from 1; `m:count()`. Case is smart.
--- kawoosh.oldfiles([limit]): the files opened before, newest first,
--- `{ path =, line = }` each. kawoosh.holds(fact): whether a fact holds
+-- kawoosh.oldfiles([limit]): the files attended before (the memory's
+-- `file` rows), newest first, `{ path =, line = }` each. kawoosh.holds(fact): whether a fact holds
 -- where the keyboard is. kawoosh.buf.lines_in(from, to[, buffer]): a
 -- window of a buffer's lines.
 function kawoosh.buf.open_scratch(t)

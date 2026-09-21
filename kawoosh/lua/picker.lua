@@ -93,15 +93,19 @@ end
 
 -- ------------------------------------------------------------- ranking
 
--- The boost an item with a path or a buffer gets: an open buffer's
--- file is what the hands are in, a file opened before is one they
--- were in.
+-- The boost an item with a path or a buffer gets: the memory's rank
+-- (memory.md D8, `kawoosh.memory_rank.boosts` — a file attended more,
+-- and lately, ranks higher, a pinned one above any), and an open
+-- buffer's file — what the hands are in — one more.
 local function boosts()
   local by = {}
-  for _, f in ipairs(kawoosh.oldfiles(500)) do by[f.path] = 0.5 end
+  local mem = kawoosh.memory_rank
+  if mem then by = mem.boosts("file", 500) end
   for _, h in ipairs(kawoosh.buf.list()) do
     local ok, p = pcall(kawoosh.buf.path, h)
-    if ok and p then by[p] = 1 end
+    -- A pin ranks above any boost, in pin order: an open one keeps its
+    -- place.
+    if ok and p and (by[p] or 0) < 10 then by[p] = (by[p] or 0) + 1 end
   end
   return by
 end
@@ -129,19 +133,25 @@ local function is_binary(path)
   return ext ~= nil and picker.binary[ext:lower()] == true
 end
 
--- The items boosted, and the boosted ones first, in their order, the
--- binaries last — so an empty query lists what the hands were in
--- before the rest, and the fonts and images after it.
+-- The items boosted, and the boosted ones first — the best boost
+-- first, so a pin leads and the file worked in all week comes before
+-- one glanced at — the binaries last: an empty query lists what the
+-- hands were in before the rest, and the fonts and images after it.
 local function boosted(items)
   local by = boosts()
   local first, rest, last = {}, {}, {}
-  for _, it in ipairs(items) do
+  for i, it in ipairs(items) do
     if it.boost == nil and it.path and by[it.path] then it.boost = by[it.path] end
     if it.boost == nil and it.path and is_binary(it.path) then it.boost = -0.5 end
+    it._i = i
     if it.boost and it.boost > 0 then first[#first + 1] = it
     elseif it.boost and it.boost < 0 then last[#last + 1] = it
     else rest[#rest + 1] = it end
   end
+  table.sort(first, function(a, b)
+    if a.boost ~= b.boost then return a.boost > b.boost end
+    return a._i < b._i
+  end)
   for _, it in ipairs(rest) do first[#first + 1] = it end
   for _, it in ipairs(last) do first[#first + 1] = it end
   return first
@@ -1106,14 +1116,34 @@ picker.source("buffers", {
   empty = "no buffers",
 })
 
--- The files opened before, newest first, each at the line it was left.
+-- The files attended before (the memory's `file` rows), newest first,
+-- each at the line it was left; ranked by the memory.
 local function recent_items()
   local items = {}
+  local by = kawoosh.memory_rank and kawoosh.memory_rank.boosts("file", 500) or {}
   for _, f in ipairs(kawoosh.oldfiles(500)) do
-    items[#items + 1] = { text = short_path(f.path), path = f.path, line = f.line, boost = 0 }
+    items[#items + 1] = { text = short_path(f.path), path = f.path, line = f.line, boost = by[f.path] or 0 }
   end
   return items
 end
+
+-- The pinned files, in pin order (`<leader>ee` is the pane).
+picker.source("pins", {
+  title = "pins", placeholder = "a pinned file",
+  items = function()
+    local items = {}
+    for _, r in ipairs(kawoosh.memory { pinned = true }) do
+      if r.kind == "file" then
+        items[#items + 1] = {
+          text = "#" .. r.pinned .. "  " .. short_path(r.subject), path = r.subject,
+          line = (r.meta and r.meta.line or 0) + 1, boost = 100 - r.pinned,
+        }
+      end
+    end
+    return items
+  end,
+  empty = "nothing pinned (<leader>ea pins the buffer's file)",
+})
 
 picker.source("recent", {
   title = "recent", placeholder = "find a file opened before",
@@ -1127,17 +1157,23 @@ picker.source("smart", {
   title = "smart", placeholder = "find a buffer, a recent file, a file",
   load = function(ctx, done)
     local items, seen = {}, {}
-    for _, it in ipairs(buffer_items(ctx)) do
+    -- The buffers ranked by the memory among themselves, the current
+    -- one last (`<leader>.<CR>` is the one before it), a pin above all.
+    local by = boosts()
+    local bufs = buffer_items(ctx)
+    for i, it in ipairs(bufs) do
       if it.path then seen[it.path] = true end
       it.text = it.path and short_path(it.path) or it.text
       it.sub = it.modified and "[+]" or ""
-      it.boost = 1
+      local b = it.path and by[it.path] or 0
+      if b >= 10 then it.boost = b
+      elseif i == #bufs then it.boost = 1
+      else it.boost = 1 + b end
       items[#items + 1] = it
     end
     for _, it in ipairs(recent_items()) do
       if not seen[it.path] then
         seen[it.path] = true
-        it.boost = 0.5
         items[#items + 1] = it
       end
     end
