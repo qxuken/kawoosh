@@ -322,6 +322,12 @@ impl Settings {
         // megabytes; past it the oldest untouched rows go, one by one.
         // 0 for no cap.
         defaults.set("history.max_mb", Setting::Int(64));
+        // The picker (`picker.lua`): a preview of the cursor's row
+        // beside the list, and whether a row's text wraps to show the
+        // whole of a long path; `<A-p>` and `<A-w>` in the picker flip
+        // them for the session.
+        defaults.set("picker.preview", Setting::Bool(true));
+        defaults.set("picker.wrap", Setting::Bool(false));
         let mut s = Self {
             layers: Default::default(),
             effective: Setting::table(),
@@ -596,6 +602,8 @@ mod tests {
                 "history.keep_days",
                 "history.max_mb",
                 "leader",
+                "picker.preview",
+                "picker.wrap",
                 "scrolloff",
                 "tabstop",
                 "whichkey"

@@ -344,13 +344,16 @@ follow the theme every frame (`panes.rs`).
   answers it) picks its base16 variant each prompt. The investigation
   is which of (2) and (3) nushell's own colour config can actually
   consume; (1) needs none.
-- **Launch targets** — done 2026-09-21, but for the examples.
-  `kawoosh.tool` is the target and `:tool` bare lists names in the
-  message line; `<leader>tt` (`picker tools`) is the list as a picker
-  — each tool with its command and where it runs, `<CR>` running one
-  (`kawoosh.tools()` reads the registrations back). Still to do: a few
-  registrations in the bundled config as examples (`git` = lazygit at
-  the workspace root, `claude` in the cwd, `top`).
+- **Launch targets** — done 2026-09-21. `kawoosh.tool` is the target
+  and `:tool` bare lists names in the message line; `<leader>tt`
+  (`picker tools`) is the list as a picker — each tool with its command
+  and where it runs, `<CR>` running one (`kawoosh.tools()` reads the
+  registrations back). The bundled `tools.lua` registers `git`
+  (lazygit at the working directory), `top`, `shell`, and `compile` and
+  `run` while `compile.command` and `run.command` are set; a
+  `settings.lua`'s `tools` table adds or replaces by name, read again
+  whenever the settings change (`kawoosh.on_settings`, the hook this
+  added: a plugin told once a frame that the settings moved).
 - **Domains: ssh, wsl** — later, design first; systemic, as the todo
   says. A domain is *where a pty spawns*, and the cheap form exists
   today as a tool whose `cmd` is `ssh host` — nothing to build. The

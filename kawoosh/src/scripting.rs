@@ -55,6 +55,8 @@ pub struct Scripting {
     /// The pane the keyboard was in when a Lua view opened with the
     /// focus, so closing the view hands it back there.
     pub view_from: HashMap<String, PaneId>,
+    /// The settings version `kawoosh.on_settings` was last told of.
+    pub settings_seen: u64,
     pub servers: Vec<ServerDef>,
     /// Syntax colours a config set, by token class.
     pub colors: HashMap<Token, Color>,
@@ -667,6 +669,23 @@ impl Kawoosh {
         for (name, h) in scratch {
             rt.restore_hook(&name, h);
         }
+        self.drain_lua();
+    }
+
+    /// Tells the plugins the settings changed (`kawoosh.on_settings`)
+    /// — a file reloaded, `:set`, `kawoosh.opt` — once a frame, with
+    /// the effective tree published.
+    pub(crate) fn fire_settings(&mut self) {
+        let v = self.ed.settings.version();
+        if v == self.scripting.settings_seen {
+            return;
+        }
+        self.scripting.settings_seen = v;
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        rt.publish(&self.ed, self.focused_view());
+        rt.settings_hook();
         self.drain_lua();
     }
 

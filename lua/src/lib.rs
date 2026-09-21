@@ -935,6 +935,23 @@ impl Runtime {
         }
     }
 
+    /// Tells the plugins the settings changed (`kawoosh.on_settings`).
+    pub fn settings_hook(&self) {
+        let Ok(f) = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Function>("_settings"))
+        else {
+            return;
+        };
+        if let Err(e) = f.call::<()>(()) {
+            self.queue
+                .borrow_mut()
+                .push(Msg::Echo(format!("on_settings: {e}")));
+        }
+    }
+
     /// Tells a watched scratch buffer's `on_change` its text changed.
     pub fn change_hook(&self, name: &str) {
         let Ok(f) = self

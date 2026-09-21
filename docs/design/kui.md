@@ -31,7 +31,9 @@ gaps are records rather than surprises:
   origin, the `"` register its head; compile mode with `]q`; sessions
   and oldfiles; the picker (`picker.lua`, roadmap step 4): files,
   buffers, recent, smart, grep, lines, commands and tools as sources
-  on one pane, fzy's matching in Rust, the ranking in Lua.
+  on one pane, fzy's matching in Rust, the ranking in Lua, the wheel
+  and `<A-p>` `<A-w>` for the preview and a wrapped row; the bundled
+  tools (`tools.lua`) from the settings, through `kawoosh.on_settings`.
 - **Thinner than designed, still open**: mouse reporting covers the
   primary button, drags and the wheel (kui routes the other buttons
   nowhere, and hover motion without a button is not sent); document sync to LSP is whole-text per change, not

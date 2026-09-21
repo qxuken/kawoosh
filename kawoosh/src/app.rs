@@ -1394,6 +1394,7 @@ impl kui::App for Kawoosh {
         self.drain_io();
         self.flush_proc_lines();
         self.sync_settings();
+        self.fire_settings();
         self.sync_histories(false);
         self.perf.cur.io = ms(t);
         let t = Instant::now();
@@ -1570,6 +1571,10 @@ impl kui::App for Kawoosh {
             Some("scroll") => {
                 if let Some(pane) = pane_of(p) {
                     self.on_scroll(pane, p);
+                } else if ev.slot.is_some() {
+                    // A Lua view's own `on_scroll`: its handler ran,
+                    // what it asked for is applied now.
+                    self.drain_lua();
                 }
             }
             // A click's payload is the `on_click` value itself, with the

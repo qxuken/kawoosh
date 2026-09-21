@@ -28,7 +28,11 @@
 -- takes the row — a file at its line, a buffer, a command — `<C-v>`
 -- `<C-s>` `<C-t>` take it into a split beside, below, a new tab, and
 -- `<C-c>` closes from either mode. A click lands the cursor on a row,
--- a second one takes it. The pane is not kept by a session.
+-- a second one takes it; the wheel scrolls the list, and the preview.
+-- `<A-p>` shows or hides the preview and `<A-w>` folds a row's text to
+-- the list's width or cuts it — the `picker.preview` and `picker.wrap`
+-- settings, flipped for the session (`settings.lua` sets them for
+-- good). The pane is not kept by a session.
 
 local fs = kawoosh.fs
 local picker = { sources = {}, last = nil }
@@ -192,23 +196,33 @@ function picker.spans(text, positions, theme)
 end
 
 -- picker.rows(ctx, hits, opts): the rows of a list — each hit
--- `{ item =, positions = }` — as a column that shows the window
--- `opts.top .. top + rows - 1` with `opts.cursor` lit; a row's click
--- posts `{ kind = opts.kind or "row", i = }`. `opts.rows` says how
--- many fit; `opts.text(item)` the row's text (default `item.text`),
--- `item.sub` drawn dim after it, `item.can` a reason drawn in the
--- danger colour when it is not true.
+-- `{ item =, positions = }` — as a column showing the window from
+-- `opts.top` down as far as `opts.rows` lines allow, `opts.cursor`
+-- lit; a row's click posts `{ kind = opts.kind or "row", i = }` and
+-- the wheel over the column `{ kind = "scroll", tag = { kind =
+-- opts.scroll or "list" } }`. A row is one text: `opts.text(item)`
+-- (default `item.text`) with the match lit, `item.sub` dim after it,
+-- `item.can` in the danger colour when it is not true; with
+-- `opts.wrap` the text folds to the column's width so the whole of a
+-- long path shows, `opts.lines(i)` saying how many lines row `i`
+-- takes (one, when not given).
 function picker.rows(ctx, hits, opts)
   local t = ctx.env.theme
   local top = opts.top or 1
-  local rows = opts.rows or #hits
-  local col = column { width = "grow", height = "grow", clip = true, gap = 0 }
-  local mono = { family = "mono", size = SIZE, wrap = "none" }
+  local budget = opts.rows or #hits
+  local lines_of = opts.lines or function() return 1 end
+  local col = column { width = "grow", height = "grow", clip = true, gap = 0,
+    on_scroll = { kind = opts.scroll or "list" } }
+  local mono = { family = "mono", size = SIZE, wrap = opts.wrap and "glyph" or "none" }
   -- A row is keyed by its text (`row NAME`), the second of one text
   -- numbered, so a row keeps its state as the window slides and a
   -- test finds it by name.
   local seen = {}
-  for i = top, math.min(#hits, top + rows - 1) do
+  local used = 0
+  for i = top, #hits do
+    local n = lines_of(i)
+    if used + n > budget and used > 0 then break end
+    used = used + n
     local h = hits[i]
     local it = h.item
     local selected = i == opts.cursor
@@ -222,8 +236,8 @@ function picker.rows(ctx, hits, opts)
     end
     local r = row {
       key = key,
-      width = "grow", height = ROW_H,
-      pad = { x = 8 }, gap = 8, cross_align = "center",
+      width = "grow", min_height = ROW_H,
+      pad = { x = 8, y = opts.wrap and 2 or 0 }, gap = 8, cross_align = "center",
       bg = selected and (ctx.focused and t.selection or t.sunken) or nil,
       hover_bg = not selected and t.sunken or nil,
       on_click = { kind = opts.kind or "row", i = i },
@@ -231,31 +245,34 @@ function picker.rows(ctx, hits, opts)
     local spans = picker.spans(text_of, h.positions, t)
     local color = it.can ~= nil and it.can ~= true and t.muted or t.fg
     for _, s in ipairs(spans) do if not s.color then s.color = color end end
-    r[#r + 1] = text(spans, mono)
     if it.sub and it.sub ~= "" then
-      r[#r + 1] = text(it.sub, { family = "mono", size = SIZE, color = t.muted, wrap = "none" })
+      spans[#spans + 1] = { "  " .. it.sub, color = t.muted }
     end
     if it.can ~= nil and it.can ~= true then
-      r[#r + 1] = text(it.can, { size = SIZE - 1, color = t.danger, wrap = "none" })
+      spans[#spans + 1] = { "  " .. it.can, color = t.danger }
     end
+    r[#r + 1] = text(spans, mono)
     col[#col + 1] = r
   end
   return col
 end
 
--- picker.preview(ctx, pv, rows): a preview `{ title =, lines =, from =,
--- at =, note = }` as a column, `rows` lines of it at most.
-function picker.preview(ctx, pv, rows)
+-- picker.preview(ctx, pv, rows, from): a preview `{ title =, lines =,
+-- from =, at =, note = }` as a column, `rows` lines of it at most from
+-- line `from` (1) of them; the wheel over it posts `{ kind = "scroll",
+-- tag = { kind = "preview" } }`.
+function picker.preview(ctx, pv, rows, from)
   local t = ctx.env.theme
-  local col = column { width = "grow", height = "grow", clip = true, pad = 8, gap = 2, bg = t.sunken }
+  local col = column { width = "grow", height = "grow", clip = true, pad = 8, gap = 2, bg = t.sunken,
+    on_scroll = { kind = "preview" } }
   if not pv then return col end
-  local mono = { family = "mono", size = PREVIEW_SIZE }
+  from = from or 1
   col[#col + 1] = text(pv.title or "", { size = PREVIEW_SIZE, color = t.fg, wrap = "none" })
   if pv.note then col[#col + 1] = text(pv.note, { size = PREVIEW_SIZE, color = t.muted }) end
-  local from = pv.from or 1
-  for i = 1, math.min(#pv.lines, rows) do
+  local first = pv.from or 1
+  for i = from, math.min(#pv.lines, from + rows - 1) do
     local l = pv.lines[i]:gsub("\t", "    ")
-    local ln = from + i - 1
+    local ln = first + i - 1
     local hit = pv.at and ln == pv.at
     local r = row { height = PREVIEW_ROW, width = "grow", gap = 8, cross_align = "center",
       bg = hit and t.selection or nil }
@@ -270,15 +287,42 @@ function picker.preview(ctx, pv, rows)
   return col
 end
 
+
 -- ---------------------------------------------------------- the picker
 
+-- Whether a row's text wraps (`picker.wrap`), and the preview shows
+-- (`picker.preview`): settings, flipped for the session by `<A-w>`
+-- and `<A-p>`.
+local function wrapping() return kawoosh.opt("picker.wrap") == true end
+local function previewing() return kawoosh.opt("picker.preview") ~= false end
+
+-- How many lines row `i` takes: one, or with wrapping what its text
+-- folds to at the list's width (`P.cols` characters, an estimate from
+-- the mono size — kui lays the real lines out and clips).
+local function lines_of(i)
+  if not P or not P.wrap then return 1 end
+  local it = P.hits[i].item
+  local len = utf8.len(it.text) or #it.text
+  if it.sub and it.sub ~= "" then len = len + 2 + (utf8.len(it.sub) or #it.sub) end
+  return math.max(1, math.ceil(len / math.max(P.cols or 40, 1)))
+end
+
+-- The window slid so the cursor is in it: up to the cursor, or down
+-- until the rows from `top` to the cursor fill the budget.
 local function ensure_visible()
   if not P then return end
-  local rows = math.max(P.rows or 1, 1)
   if P.cursor < 1 then P.cursor = 1 end
   if P.cursor > #P.hits then P.cursor = math.max(#P.hits, 1) end
   if P.cursor < P.top then P.top = P.cursor end
-  if P.cursor > P.top + rows - 1 then P.top = P.cursor - rows + 1 end
+  local budget = math.max(P.rows or 1, 1)
+  local used = 0
+  local top = P.cursor
+  while top > P.top do
+    used = used + lines_of(top)
+    if used + lines_of(top - 1) > budget then break end
+    top = top - 1
+  end
+  if top > P.top then P.top = top end
   if P.top < 1 then P.top = 1 end
 end
 
@@ -287,6 +331,30 @@ local function move(by)
   P.cursor = P.cursor + by
   ensure_visible()
 end
+
+-- The wheel over the list or the preview: `dy` logical pixels (up is
+-- positive), kept in an accumulator so a trackpad's small steps add
+-- up to rows.
+local function scroll(what, dy)
+  if not P then return end
+  if what == "preview" then
+    P.pv_acc = (P.pv_acc or 0) - dy
+    local step = P.pv_acc >= 0 and math.floor(P.pv_acc / PREVIEW_ROW) or -math.floor(-P.pv_acc / PREVIEW_ROW)
+    if step ~= 0 then
+      P.pv_acc = P.pv_acc - step * PREVIEW_ROW
+      local n = P.preview and #P.preview.lines or 0
+      P.pv_top = math.max(1, math.min((P.pv_top or 1) + step, math.max(n - (P.prows or 1) + 1, 1)))
+    end
+    return
+  end
+  P.acc = (P.acc or 0) - dy
+  local step = P.acc >= 0 and math.floor(P.acc / ROW_H) or -math.floor(-P.acc / ROW_H)
+  if step ~= 0 then
+    P.acc = P.acc - step * ROW_H
+    P.top = math.max(1, math.min(P.top + step, math.max(#P.hits, 1)))
+  end
+end
+
 
 -- The hits for `q` over a static source's items: the matcher's best,
 -- ranked by `picker.rank`.
@@ -484,9 +552,16 @@ kawoosh.view(VIEW, function(ctx)
     if cursor then P.cursor = cursor ensure_visible() end
   end
   local h = (ctx.height or 0) > 0 and ctx.height or 400
+  local w = (ctx.width or 0) > 0 and ctx.width or 800
+  local preview_on = previewing()
+  P.wrap = wrapping()
+  -- The list's width in characters, for the wrap estimate: half the
+  -- pane beside a preview, the whole of it without.
+  P.cols = math.floor(((preview_on and w / 2 or w) - 16) / (SIZE * 0.6))
   local rows = math.max(math.floor((h - TITLE_H - ROW_H - 4) / ROW_H), 1)
   P.rows = rows
-  ensure_visible()
+  if P.top > math.max(#P.hits, 1) then P.top = math.max(#P.hits, 1) end
+  if P.top < 1 then P.top = 1 end
   local count
   if P.loading then
     count = P.src.search and "searching…" or "reading…"
@@ -507,30 +582,38 @@ kawoosh.view(VIEW, function(ctx)
   field.width = "grow"
   head[#head + 1] = field
   head[#head + 1] = text(count, { size = SIZE - 1, color = t.faint, wrap = "none" })
-  local list = picker.rows(ctx, P.hits, { top = P.top, cursor = P.cursor, rows = rows })
+  local list = picker.rows(ctx, P.hits, { top = P.top, cursor = P.cursor, rows = rows, wrap = P.wrap, lines = lines_of })
   if #P.hits == 0 and not P.loading then
     list[#list + 1] = row { pad = { x = 8, y = 4 }, text(P.src.empty or (P.query ~= "" and "no matches" or "nothing here"), { size = SIZE, color = t.muted }) }
   end
+  local body = row { width = "grow", height = "grow", gap = 0, list }
   local hit = P.hits[P.cursor]
-  local pv
-  if hit then
-    local key = hit.item
-    if P.preview_for ~= key then
-      P.preview_for = key
-      local fn = P.src.preview or preview_of
-      local ok, got = pcall(fn, hit.item, ctx)
-      P.preview = ok and got or { title = "preview failed", lines = { tostring(got) } }
+  if preview_on then
+    local pv
+    if hit then
+      local key = hit.item
+      if P.preview_for ~= key then
+        P.preview_for = key
+        P.pv_top, P.pv_acc = 1, 0
+        local fn = P.src.preview or preview_of
+        local ok, got = pcall(fn, hit.item, ctx)
+        P.preview = ok and got or { title = "preview failed", lines = { tostring(got) } }
+      end
+      pv = P.preview
+    else
+      P.preview_for, P.preview = nil, nil
     end
-    pv = P.preview
-  else
-    P.preview_for, P.preview = nil, nil
+    local prows = math.max(math.floor((h - TITLE_H - ROW_H - 4 - 16 - 2 * PREVIEW_ROW) / PREVIEW_ROW), 1)
+    P.prows = prows
+    body[#body + 1] = picker.preview(ctx, pv, prows, P.pv_top)
   end
-  local prows = math.max(math.floor((h - TITLE_H - ROW_H - 4 - 16 - 2 * PREVIEW_ROW) / PREVIEW_ROW), 1)
-  local body = row { width = "grow", height = "grow", gap = 0, list, picker.preview(ctx, pv, prows) }
+
   return column { width = "grow", height = "grow", clip = true, gap = 0, head, body }
 end, function(ev)
   if not P then return end
-  if ev.kind == "row" then
+  if ev.kind == "scroll" then
+    scroll(ev.tag and ev.tag.kind, ev.dy or 0)
+  elseif ev.kind == "row" then
     kawoosh.field_focus(VIEW, FIELD)
     if ev.i == P.cursor then pick() else P.cursor = ev.i ensure_visible() end
   elseif ev.kind == "key" then
@@ -561,6 +644,10 @@ on("pick vsplit", function() pick("vsplit") end, "take the cursor's row into a s
 on("pick split", function() pick("split") end, "take the cursor's row into a split below")
 on("pick tab", function() pick("tab") end, "take the cursor's row into a new tab")
 on("close", function() close() end, "close the picker")
+on("preview", function() kawoosh.opt("picker.preview", not previewing()) end,
+  "show the cursor's row beside the list, or not (the `picker.preview` setting, for the session)")
+on("wrap", function() kawoosh.opt("picker.wrap", not wrapping()) end,
+  "fold a row's text to the list's width, or cut it (the `picker.wrap` setting, for the session)")
 kawoosh.command("picker key", function(ctx)
   if not P then return end
   local key = ctx.args[1]
@@ -591,6 +678,10 @@ kawoosh.map("n", "<C-d>", "picker page down", at)
 kawoosh.map("n", "<C-u>", "picker page up", at)
 kawoosh.map("n", "gg", "picker first", at)
 kawoosh.map("n", "G", "picker last", at)
+for _, mode in ipairs { "i", "n" } do
+  kawoosh.map(mode, "<A-p>", "picker preview", at)
+  kawoosh.map(mode, "<A-w>", "picker wrap", at)
+end
 
 -- `:picker [SOURCE]`: bare, the smart one.
 kawoosh.command("picker", function(ctx)

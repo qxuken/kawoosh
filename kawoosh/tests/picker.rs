@@ -427,17 +427,17 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     assert!(r.contains(&"dir cd".to_string()), "{r:?}");
     let t = texts(&d);
     assert!(
-        t.iter().any(|s| s == "dir cd needs language:dir"),
+        t.iter().any(|s| s.contains("dir cd needs language:dir")),
         "what a command needs, from the pane the keyboard came from: {t:?}"
     );
     assert!(
-        t.iter().any(|s| s.starts_with("n <leader>cd")),
+        t.iter().any(|s| s.contains("n <leader>cd")),
         "the key bound to dir cd: {t:?}"
     );
     d.ctrl(&mut app, "u");
     d.keys(&mut app, "history");
     d.frame(&mut app);
-    assert!(texts(&d).iter().any(|s| s == "history needs store"));
+    assert!(texts(&d).iter().any(|s| s.contains("history needs store")));
     d.ctrl(&mut app, "u");
     d.keys(&mut app, "buffer del");
     d.frame(&mut app);
@@ -548,7 +548,10 @@ fn resume_sessions_and_a_plugins_own_source() {
     ex(&mut d, &mut app, "picker colours");
     d.frame(&mut app);
     assert_eq!(rows(&d), ["red", "green", "blue"]);
-    assert!(texts(&d).iter().any(|s| s == "go"), "an item's sub text");
+    assert!(
+        texts(&d).iter().any(|s| s.ends_with("green  go")),
+        "an item's sub text"
+    );
     d.keys(&mut app, "gr");
     d.ctrl(&mut app, "x");
     app.run_lua_source("t", r#"assert(starred == "green", tostring(starred))"#);
@@ -571,3 +574,141 @@ fn resume_sessions_and_a_plugins_own_source() {
     std::fs::remove_dir_all(&dir).ok();
     std::fs::remove_dir_all(dir.with_extension("db")).ok();
 }
+
+/// The wheel over the list slides the window and leaves the cursor
+/// where it was, a key on the cursor brings the window back to it;
+/// `<A-p>` hides the preview and shows it again, `<A-w>` folds a long
+/// row's text so the whole path shows — both settings, for the
+/// session; and `<leader>tt` lists the bundled tools, with `compile`
+/// among them once `compile.command` is set.
+#[test]
+fn scrolling_wrapping_the_preview_and_the_tools() {
+    let _serial = serial();
+    let dir = project("scroll");
+    std::fs::create_dir_all(dir.join("many")).unwrap();
+    for i in 0..40 {
+        std::fs::write(
+            dir.join(format!("many/f{i:02}.txt")),
+            format!("content {i}\n"),
+        )
+        .unwrap();
+    }
+    let long = format!("aaa/{}.txt", "b".repeat(180));
+    std::fs::create_dir_all(dir.join("aaa")).unwrap();
+    std::fs::write(dir.join(&long), "long\n").unwrap();
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let shown = rows(&d).len();
+    assert!(shown > 5 && shown < 44, "a window of the 44: {shown}");
+    let (x, y, w, h) = d.rect_of("row README.md").expect("the first row");
+    let state = |app: &mut Kawoosh| -> (usize, usize) {
+        app.run_lua_source(
+            "t",
+            r#"local s = kawoosh.picker.state(); kawoosh.echo(s.top .. " " .. s.cursor)"#,
+        );
+        let m = app.ed.message.clone();
+        let (t, c) = m.split_once(' ').unwrap();
+        (t.parse().unwrap(), c.parse().unwrap())
+    };
+    assert_eq!(state(&mut app), (1, 1));
+    // Three notches down: the window slides, the cursor stays.
+    d.wheel(&mut app, x + w / 2.0, y + h * 3.0, 0.0, -ROW_H * 3.0);
+    d.frame(&mut app);
+    assert_eq!(state(&mut app), (4, 1));
+    assert!(d.rect_of("row README.md").is_none(), "scrolled off the top");
+    // A key on the cursor brings the window back to it.
+    d.ctrl(&mut app, "n");
+    assert_eq!(state(&mut app), (2, 2));
+    d.wheel(&mut app, x + w / 2.0, y + h * 3.0, 0.0, ROW_H * 10.0);
+    d.frame(&mut app);
+    assert_eq!(state(&mut app), (1, 2), "up stops at the top");
+    // The preview off and on again, a setting for the session (the
+    // cursor is on the second row, the long file).
+    assert!(texts(&d).iter().any(|s| s == "long"), "the preview");
+    d.key(
+        &mut app,
+        "p",
+        KeyMods {
+            alt: true,
+            ..Default::default()
+        },
+    );
+    d.frame(&mut app);
+    assert!(!texts(&d).iter().any(|s| s == "long"), "hidden");
+    app.run_lua_source("t", r#"assert(kawoosh.opt("picker.preview") == false)"#);
+    let wide = d.rect_of("row many/f00.txt").unwrap().2;
+    assert!(wide > w * 1.5, "the list takes the room: {wide} vs {w}");
+    d.key(
+        &mut app,
+        "p",
+        KeyMods {
+            alt: true,
+            ..Default::default()
+        },
+    );
+    d.frame(&mut app);
+    assert!(texts(&d).iter().any(|s| s == "long"), "shown again");
+    // Wrap: the long row folds and the window holds fewer rows.
+    let before = rows(&d).len();
+    let tall = d.rect_of(&format!("row {long}")).expect("the long row").3;
+    assert!((tall - ROW_H).abs() < 1.0, "one line, cut: {tall}");
+    d.key(
+        &mut app,
+        "w",
+        KeyMods {
+            alt: true,
+            ..Default::default()
+        },
+    );
+    d.frame(&mut app);
+    app.run_lua_source("t", r#"assert(kawoosh.opt("picker.wrap") == true)"#);
+    let tall = d.rect_of(&format!("row {long}")).expect("the long row").3;
+    assert!(tall > ROW_H * 2.0, "folded to several lines: {tall}");
+    assert!(
+        rows(&d).len() < before,
+        "fewer rows fit: {} < {before}",
+        rows(&d).len()
+    );
+    d.key(
+        &mut app,
+        "w",
+        KeyMods {
+            alt: true,
+            ..Default::default()
+        },
+    );
+    d.ctrl(&mut app, "c");
+    // The tools: the bundled ones, and `compile` once the setting names it.
+    d.keys(&mut app, " tt");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert!(
+        r.contains(&"git".to_string())
+            && r.contains(&"top".to_string())
+            && r.contains(&"shell".to_string()),
+        "{r:?}"
+    );
+    assert!(!r.contains(&"compile".to_string()), "{r:?}");
+    d.ctrl(&mut app, "c");
+    app.run_lua_source("t", r#"kawoosh.opt("compile.command", "cargo test")"#);
+    d.frame(&mut app);
+    d.keys(&mut app, " tt");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert!(r.contains(&"compile".to_string()), "{r:?}");
+    assert!(
+        texts(&d).iter().any(|s| s.contains("cargo test")),
+        "its command in the row"
+    );
+    d.ctrl(&mut app, "c");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A row's height in the picker (`picker.lua`'s `ROW_H`).
+const ROW_H: f32 = 19.0;

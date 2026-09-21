@@ -208,7 +208,7 @@ objects, or any other character on both sides.
 | `<leader>bd` `<leader>bo` | delete the buffer, every other buffer |
 | `<leader>bn` `<leader>bp` | next, previous buffer |
 | `<leader>tn` `<leader>tq` | a new tab, close the tab |
-| `<leader>tt` | the tools (`kawoosh.tool`), as a picker |
+| `<leader>tt` | the tools (`kawoosh.tool`, and `settings.lua`'s `tools` table), as a picker: `git` (lazygit), `top`, `shell`, `compile` and `run` from `compile.command` and `run.command` |
 | `<leader>f` | the files git sees under the working directory, as a picker |
 | `<leader>g` | grep the project: `rg` run on the query as it is typed |
 | `<leader>/` | the buffer's lines |
@@ -239,8 +239,13 @@ mode over the query — `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `0` `D`
 mode. `<CR>` takes the row: a file at its line, a buffer, a command
 (the command line opened on one that takes arguments); `<C-v>` `<C-s>`
 `<C-t>` take it into a split beside, a split below, a new tab. A click
-lands the cursor on a row and a second click takes it. The pane opens
-below the keyboard's and hands the keyboard back where it came from.
+lands the cursor on a row and a second click takes it; the wheel
+scrolls the list, and the preview. `<A-p>` hides the preview and shows
+it again, `<A-w>` folds a row's text to the list's width so the whole
+of a long path shows — the `picker.preview` and `picker.wrap`
+settings, flipped for the session (a `settings.lua` sets them for
+good). The pane opens below the keyboard's and hands the keyboard back
+where it came from.
 
 ## The which-key
 

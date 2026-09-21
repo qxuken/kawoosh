@@ -15,6 +15,7 @@ kawoosh._changers = {}
 kawoosh._restorers = {}
 kawoosh._openers = {}
 kawoosh._transient = {}
+kawoosh._settings_hooks = {}
 kawoosh._tools = {}
 kawoosh._nonce = 0
 
@@ -120,6 +121,24 @@ end
 -- again.
 function kawoosh.on_open(fn)
   kawoosh._openers[#kawoosh._openers + 1] = fn
+end
+
+-- kawoosh.on_settings(fn): `fn()` whenever the settings changed — a
+-- file reloaded on save, `:set`, `kawoosh.opt` — once a frame, with
+-- `kawoosh.opt` reading the new tree; and once at registration, so a
+-- plugin reads what is set now the same way it reads what changes.
+function kawoosh.on_settings(fn)
+  kawoosh._settings_hooks[#kawoosh._settings_hooks + 1] = fn
+  local ok, err = pcall(fn)
+  if not ok then kawoosh.echo("on_settings: " .. tostring(err)) end
+end
+
+-- Called from Rust when the settings' version moved.
+function kawoosh._settings()
+  for _, fn in ipairs(kawoosh._settings_hooks) do
+    local ok, err = pcall(fn)
+    if not ok then kawoosh.echo("on_settings: " .. tostring(err)) end
+  end
 end
 
 -- kawoosh.on_restore(fn): `fn(name, buffer)` for every scratch buffer a
