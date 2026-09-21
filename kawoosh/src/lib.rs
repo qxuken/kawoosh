@@ -12,6 +12,7 @@ pub mod confirm;
 pub mod devtab;
 pub mod diff;
 pub mod graph;
+pub mod harness;
 pub mod history;
 pub mod history_pane;
 pub mod inspector;

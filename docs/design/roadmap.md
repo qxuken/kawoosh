@@ -16,7 +16,7 @@ undo tree and its pane, histories in the store with hot exit, commands
 as specs, the key clusters and which-key, settings in layers, the
 language contract with two dozen grammars, notifications, the `dir`
 file manager through its identity-and-plan design at forty thousand
-entries, and the working memory (2026-09-20). 165 commits, 22
+entries, and the working memory (2026-09-20). 166 commits, 23
 integration test files in `kawoosh/tests` (the polish batch's
 `normal_mode.rs` and the picker's `picker.rs`, 2026-09-21).
 
@@ -225,8 +225,10 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   5), so it lands with the memory's third round, as a boost the
   picker's `rank` reads and a `pins` source on its list.
 - **The scrolling tab** — later, design first [todo]. Decision 2 above.
-- **Tab strip close button, `:map` listing** — open [kui.md]. Small;
-  fold into whichever round touches the strip or the keymap.
+- **`:map` listing** — done 2026-09-21 [kui.md]. `:map list` (`:maps`;
+  `:map` itself binds) is a `*maps*` pane: each mode's bindings, keys
+  then the command line and its conditions; `:map list i` one mode,
+  `:map list <leader>c` the keys under a prefix. **Tab strip close button** — open; folds into a strip round.
 
 ### LSP and completion
 
@@ -315,23 +317,32 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 
 ### Lua and plugins
 
-- **A Lua test harness** — open [todo]. `kawoosh/tests/lua.rs` drives
-  the Lua API from Rust; a plugin author has nothing. Wanted:
-  `kawoosh test PATH` (the CLI) running a Lua file headless against the
-  same `Kawoosh` the tests use, with `kawoosh.press(keys)`,
-  `kawoosh.buf.text()` and an assertion that fails the run — the
-  bundled plugins' tests rewritten on it are the acceptance test.
-- **Eval under the caret / the selection** — open [todo]. `:lua CODE`
-  exists; `<leader>x` (free) evaluating the line, or the visual
-  selection, in the Lua state with the result echoed. An afternoon,
-  once the harness exists to test it.
-- **Plugin-built panes** — partly [todo]. `kawoosh.view` is a slot pane
-  filled from a Lua table of kui nodes, with fields; `kawoosh.map` with
-  `when = { "field:lua:NAME/FIELD" }` gives its field keys. The worked
-  example is `picker.lua` now (2026-09-21): a view with a field, rows
-  keyed by their text, a preview, keys on the field and clicks on the
-  rows. What is missing is the *documentation* that this is the
-  "direct kui access" the todo asks for — a page, not a plugin.
+- **A Lua test harness** — done 2026-09-21 [todo]. The tests' `Drive`
+  is the crate's `harness::Harness` now (`tests/drive.rs` re-exports
+  it), and `kawoosh test PATH…` runs a Lua script on it headless
+  (`harness::run_file`): the script is a coroutine, `kawoosh.press(
+  keys)` (map notation, `<leader>` resolved), `kawoosh.frame(n)`,
+  `kawoosh.sleep(ms)` and `kawoosh.wait(fn)` yield to the editor,
+  which does the thing and publishes the state again before resuming
+  — the view with the keys, a picker's query field included — so
+  `kawoosh.buf.*`, `kawoosh.mode()`, `kawoosh.message()` (new) and
+  `picker.state()` read it as it is; `kawoosh.test.eq` `ok` `has` or a
+  plain `assert` fail the run with the script's line and a traceback,
+  a kui warning fails it too, and the process's cwd is put back
+  after. The acceptance test: `kawoosh/lua/tests/*.lua` (the files
+  picker, `dir`'s `-` and `<leader>cd`) run from `cargo test`
+  (`lua_harness.rs`) and the CLI alike. The Rust corpus was not
+  rewritten: it stays the engine's, and a plugin's next test is Lua.
+- **Eval under the caret / the selection** — done 2026-09-21 [todo].
+  `<leader>x` (`lua eval`, normal and visual): the line, or the
+  selection, evaluated as an expression when it is one (`return …`)
+  else as a chunk (`Runtime::eval`), the values spelled
+  (`kawoosh._show`: tables shallowly, keys in order) on the status
+  line, or in a `*lua*` pane when the result has lines.
+- **Plugin-built panes** — done 2026-09-21 [todo]: the page is
+  [plugin-panes.md](plugin-panes.md) — the slot, `fn(ctx)` and its
+  DSL, `on_event`, fields and the `field:lua:` fact, the picker as the
+  worked example, and testing one with `kawoosh test`.
 - **Native extensions** — deferred [todo, mvp.md D8]. Decided against
   for the MVP: no stable Rust ABI, so a real dylib surface is a C-ABI
   project of its own. The rule kept — Lua talks through the same
@@ -509,8 +520,10 @@ then breadth.
    (`systems/src/lsp.rs`'s round two, `kawoosh/src/lsp.rs`,
    `Editor::apply_edits`, two tests in `lsp.rs` against the fake
    server); see the LSP track — inlay hints and symbols stay open.
-8. **Lua DX.** The test harness (`kawoosh test`), eval under the caret,
-   the `:map` listing, the plugin-pane example written up.
+8. ~~**Lua DX.** The test harness (`kawoosh test`), eval under the caret,
+   the `:map` listing, the plugin-pane example written up.~~ Landed
+   2026-09-21 (`harness.rs`, `Runtime::{start_test, resume_test,
+   eval}`, `kawoosh/lua/tests`, `plugin-panes.md`); see the Lua track.
 9. **Design notes, then decide**: the memory ([memory.md](memory.md),
    decided; build before step 4); the scrolling tab; the markdown
    buffer's kui half; ssh as a domain; auto-closing brackets as a

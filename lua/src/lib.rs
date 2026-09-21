@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 
 use kawoosh_editor::{Args, Ctx, Editor, Facts, Setting, Spec, ViewId};
 use kui_lua::LuaExtension;
-use mlua::{Lua, Table, Value as LV};
+use mlua::{Function, Lua, Table, Value as LV};
 use slotmap::{Key, KeyData};
 
 const BOOT: &str = include_str!("../lua/boot.lua");
@@ -306,6 +306,8 @@ pub struct BufSnap {
 pub struct Published {
     pub current: Option<u64>,
     pub mode: String,
+    /// The status line's message (`kawoosh.message()`).
+    pub message: String,
     pub buffers: HashMap<u64, BufSnap>,
     /// The effective settings, every layer merged.
     pub settings: Setting,
@@ -374,6 +376,7 @@ impl Default for Published {
         Self {
             current: None,
             mode: String::new(),
+            message: String::new(),
             buffers: HashMap::new(),
             settings: Setting::table(),
             commands: Vec::new(),
@@ -479,6 +482,22 @@ pub struct Runtime {
     jobs: JobsCell,
     /// The memory as last published, by the memory's version.
     memory_snap: RefCell<Option<(u64, Rc<Vec<MomentSnap>>)>>,
+    /// A test script under way (`kawoosh test`): the coroutine its
+    /// chunk runs as.
+    test: RefCell<Option<mlua::Thread>>,
+}
+
+/// What a test script yielded: the harness's next move.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TestStep {
+    /// Keys in map notation to press.
+    Press(String),
+    /// Frames to draw.
+    Frame(u32),
+    /// Milliseconds to let pass (a thread's answer), then a frame.
+    Sleep(u64),
+    /// The script returned.
+    Done,
 }
 
 impl Runtime {
@@ -506,9 +525,82 @@ impl Runtime {
                 register_map: RefCell::new(None),
                 jobs,
                 memory_snap: RefCell::new(None),
+                test: RefCell::new(None),
             },
             ext,
         ))
+    }
+
+    /// Loads a test script as a coroutine (an error in it comes back
+    /// from `resume_test` with its traceback); `resume_test` runs it.
+    pub fn start_test(&self, name: &str, src: &str) -> Result<(), String> {
+        // `@path`: a file's chunk name, spelled `path:line` in an error
+        // rather than cut to forty characters in quotes.
+        let f: Function = self
+            .lua
+            .load(src)
+            .set_name(format!("@{name}"))
+            .into_function()
+            .map_err(|e| e.to_string())?;
+        let th = self.lua.create_thread(f).map_err(|e| e.to_string())?;
+        *self.test.borrow_mut() = Some(th);
+        Ok(())
+    }
+
+    /// Runs the test script to its next yield: what the harness does
+    /// next, `Done` when it returned, `Err` with the script's failure.
+    pub fn resume_test(&self) -> Result<TestStep, String> {
+        let th = self.test.borrow().clone().ok_or("no test running")?;
+        let v: LV = th.resume(()).map_err(|e| e.to_string())?;
+        if th.status() != mlua::prelude::LuaThreadStatus::Resumable {
+            *self.test.borrow_mut() = None;
+            return Ok(TestStep::Done);
+        }
+        let LV::Table(t) = v else {
+            return Ok(TestStep::Frame(1));
+        };
+        if let Ok(Some(keys)) = t.get::<Option<String>>("press") {
+            return Ok(TestStep::Press(keys));
+        }
+        if let Ok(Some(ms)) = t.get::<Option<u64>>("sleep") {
+            return Ok(TestStep::Sleep(ms));
+        }
+        Ok(TestStep::Frame(
+            t.get::<Option<u32>>("frame").ok().flatten().unwrap_or(1),
+        ))
+    }
+
+    /// Evaluates `src` in the Lua state — as an expression when it is
+    /// one (`return src`), else as a chunk — and spells what it returned
+    /// (`kawoosh._show`, tables shallowly), the values tab-separated.
+    pub fn eval(&self, src: &str) -> Result<String, String> {
+        let expr = self
+            .lua
+            .load(format!("return {src}"))
+            .set_name("<eval>")
+            .into_function();
+        let f = match expr {
+            Ok(f) => f,
+            Err(_) => self
+                .lua
+                .load(src)
+                .set_name("<eval>")
+                .into_function()
+                .map_err(|e| e.to_string())?,
+        };
+        let out: mlua::MultiValue = f.call(()).map_err(|e| e.to_string())?;
+        let show: Function = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get("_show"))
+            .map_err(|e| e.to_string())?;
+        let mut parts = Vec::new();
+        for v in out {
+            let s: String = show.call(v).map_err(|e| e.to_string())?;
+            parts.push(s);
+        }
+        Ok(parts.join("\t"))
     }
 
     pub fn lua(&self) -> &Lua {
@@ -801,6 +893,7 @@ impl Runtime {
             }
         };
         p.current = current.map(|v| handle_of(ed.views[v].buffer));
+        p.message = ed.message.clone();
         p.mode = current
             .map(|v| ed.mode(v))
             .unwrap_or(kawoosh_editor::Mode::Normal)
@@ -1797,6 +1890,11 @@ fn seed(
     k.set(
         "mode",
         lua.create_function(move |_, ()| Ok(pp.borrow().mode.clone()))?,
+    )?;
+    let pp = published.clone();
+    k.set(
+        "message",
+        lua.create_function(move |_, ()| Ok(pp.borrow().message.clone()))?,
     )?;
 
     // ---- lsp

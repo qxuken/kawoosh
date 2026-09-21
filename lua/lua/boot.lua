@@ -546,3 +546,62 @@ function kawoosh._write(name, lines)
   end
   return res ~= false
 end
+
+-- ---------------------------------------------------------------- tests, eval
+
+-- The test harness (`kawoosh test PATH`, roadmap step 8): a script runs
+-- as a coroutine and these yield to the editor, which presses the keys,
+-- draws the frames and publishes the state again before resuming — so
+-- the line after `kawoosh.press("dd")` reads the buffer as it is then.
+-- Outside a test they raise, since there is no harness to yield to.
+function kawoosh.press(keys) coroutine.yield({ press = keys }) end
+function kawoosh.frame(n) coroutine.yield({ frame = n or 1 }) end
+function kawoosh.sleep(ms) coroutine.yield({ sleep = ms or 10 }) end
+-- kawoosh.wait(fn[, frames]): frames until `fn()` holds, ten
+-- milliseconds apart for a thread to answer; fails past `frames`.
+function kawoosh.wait(fn, frames, what)
+  frames = frames or 300
+  for _ = 1, frames do
+    if fn() then return true end
+    coroutine.yield({ sleep = 10 })
+  end
+  error("waited " .. frames .. " frames" .. (what and (" for " .. what) or ""), 2)
+end
+
+kawoosh.test = {}
+function kawoosh.test.eq(got, want, what)
+  if got ~= want then
+    error(string.format("%s: expected %s, got %s", what or "eq", kawoosh._show(want), kawoosh._show(got)), 2)
+  end
+end
+function kawoosh.test.ok(cond, what)
+  if not cond then error(what or "expected true", 2) end
+end
+function kawoosh.test.has(list, item, what)
+  for _, x in ipairs(list or {}) do if x == item then return end end
+  error(string.format("%s: %s not in %s", what or "has", kawoosh._show(item), kawoosh._show(list)), 2)
+end
+
+-- A value spelled for a message: a table shallowly, its keys in order.
+function kawoosh._show(v, depth)
+  depth = depth or 0
+  if type(v) ~= "table" then
+    if type(v) == "string" then return string.format("%q", v) end
+    return tostring(v)
+  end
+  if depth > 2 then return "{…}" end
+  local keys = {}
+  for k in pairs(v) do keys[#keys + 1] = k end
+  table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+  local parts = {}
+  local n = #v
+  for _, k in ipairs(keys) do
+    local val = kawoosh._show(v[k], depth + 1)
+    if type(k) == "number" and k >= 1 and k <= n then
+      parts[#parts + 1] = val
+    else
+      parts[#parts + 1] = tostring(k) .. " = " .. val
+    end
+  end
+  return "{ " .. table.concat(parts, ", ") .. " }"
+end

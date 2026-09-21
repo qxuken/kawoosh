@@ -112,6 +112,11 @@ fn main() -> anyhow::Result<()> {
     if shim(&args)? {
         return Ok(());
     }
+    // `kawoosh test PATH…`: Lua test scripts against a headless editor
+    // (`harness.rs`), no window, the exit code the verdict.
+    if args.first().map(String::as_str) == Some("test") {
+        std::process::exit(kawoosh::harness::run_files(&args[1..]));
+    }
     let path = args.first().cloned();
     // The logger before anything logs: its records wait in the sink
     // until the app's first frame drains them.
@@ -172,6 +177,8 @@ $EDITOR inside a terminal opens a pane here and waits.
 LSP: gd K gr, <leader>r rename, <leader>ca actions, <leader>cF format,
 <C-e> and ]d for diagnostics; completion is a ghost as you type — the
 buffer's words when no server answers — and <C-x> lists it in a pane.
+Lua: :lua CODE, <leader>x evaluates the line, :map list shows the keymap;
+`kawoosh test script.lua` runs a plugin's test headless.
 Settings: :set tabstop=2, :set path? for a value and where it is from,
 :settings for the devtools tab of every layer — ~/.config/kawoosh/
 settings.lua, a project's .kawoosh/settings.lua, :set — reloaded on save;

@@ -1920,7 +1920,7 @@ pub fn install(ed: &mut Editor) {
                 Some(m) => ed.keymap.bind(m, keys, &cmd.join(" ")),
                 None => ed.message = format!("map: unknown mode {mode}"),
             },
-            _ => ed.message = "map what? (:map MODE KEYS COMMAND)".into(),
+            _ => ed.message = "map what? (:map MODE KEYS COMMAND; :map list to see them)".into(),
         },
     );
 
@@ -3030,6 +3030,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>r", "lsp rename"),
         ("<leader>D", "lsp type definition"),
         ("<leader>u", "undo history"),
+        ("<leader>x", "lua eval"),
         ("<leader>p", "memory"),
         ("<leader>Q", "quit all"),
         ("<leader>?", "keys"),
@@ -3055,6 +3056,7 @@ pub fn default_keymap(km: &mut Keymap) {
         km.describe(keys, name);
     }
     let v = [
+        ("<leader>x", "lua eval"),
         ("o", "cursor swap"),
         ("x", "delete char"),
         ("i", "textobject inner"),

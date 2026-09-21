@@ -118,6 +118,104 @@ impl Kawoosh {
         self.drain_lua();
     }
 
+    /// `<leader>x`: the line under the caret — the selection, in visual
+    /// mode — evaluated in the Lua state, the result on the status
+    /// line, or in a `*lua*` pane when it has more lines than that.
+    pub(crate) fn lua_eval_here(&mut self) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            self.ed.message = "lua is not available".into();
+            return;
+        };
+        let Some(v) = self.focused_view() else {
+            return;
+        };
+        let buf = self.ed.buffer_of(v);
+        let sel = self.ed.views[v].sels.primary();
+        let src = if self.ed.mode(v) == Mode::Visual {
+            let (lo, hi) = (sel.anchor.min(sel.head), sel.anchor.max(sel.head));
+            // The head sits on the selection's last character.
+            let end = buf.floor_char(hi)
+                + buf
+                    .slice(hi..buf.len())
+                    .chars()
+                    .next()
+                    .map_or(0, char::len_utf8);
+            buf.slice(lo..end.min(buf.len()))
+        } else {
+            buf.line_text(buf.line_of(sel.head))
+        };
+        let src = src.trim().to_string();
+        if src.is_empty() {
+            self.ed.message = "nothing to evaluate".into();
+            return;
+        }
+        rt.publish(&self.ed, Some(v));
+        let result = rt.eval(&src);
+        self.drain_lua();
+        match result {
+            Ok(out) if out.contains('\n') => self.show_in_pane("*lua*", &out),
+            Ok(out) => self.ed.message = if out.is_empty() { "nil".into() } else { out },
+            Err(e) => self.ed.message = e.lines().next().unwrap_or("lua error").to_string(),
+        }
+    }
+
+    /// `:map list [MODE | PREFIX]` (`:maps`): the keymap as a `*maps*` pane — each
+    /// mode's bindings, keys then command and its conditions; one mode
+    /// by its letter, or the keys under a prefix in every mode.
+    pub(crate) fn show_maps(&mut self, arg: Option<&str>) {
+        let modes = [
+            Mode::Normal,
+            Mode::Visual,
+            Mode::Insert,
+            Mode::OperatorPending,
+        ];
+        let (only, prefix) = match arg.map(str::trim).filter(|a| !a.is_empty()) {
+            Some(a) => match Mode::from_short(a) {
+                Some(m) => (Some(m), None),
+                None => (None, Some(a.to_string())),
+            },
+            None => (None, None),
+        };
+        let leader = self.ed.keymap.leader().to_string();
+        let mut out = String::new();
+        for mode in modes {
+            if only.is_some_and(|m| m != mode) {
+                continue;
+            }
+            let rows: Vec<String> = self
+                .ed
+                .keymap
+                .bindings(mode)
+                .into_iter()
+                .filter(|(keys, _)| prefix.as_ref().is_none_or(|p| keys.starts_with(p.as_str())))
+                .map(|(keys, b)| {
+                    let mut line = format!("{keys:<20} {}", b.line());
+                    if !b.when.is_empty() {
+                        let when: Vec<String> = b.when.iter().map(|c| c.to_string()).collect();
+                        line.push_str(&format!("   when {}", when.join(" ")));
+                    }
+                    line
+                })
+                .collect();
+            if rows.is_empty() {
+                continue;
+            }
+            out.push_str(&format!(
+                "── {} ({} bindings) ──\n",
+                mode.word(),
+                rows.len()
+            ));
+            out.push_str(&rows.join("\n"));
+            out.push_str("\n\n");
+        }
+        if out.is_empty() {
+            self.ed.message = "no bindings".into();
+            return;
+        }
+        out.push_str(&format!("<leader> is {leader}\n"));
+        self.show_in_pane("*maps*", out.trim_end());
+    }
+
     pub fn run_lua_source(&mut self, name: &str, src: &str) {
         let Some(rt) = self.scripting.rt.clone() else {
             self.ed.message = "lua is not available".into();
@@ -1103,6 +1201,18 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     );
                 }
             },
+        ),
+        cmd(
+            Spec::new("lua eval")
+                .doc("evaluate the line — the selection in visual mode — as Lua and echo the result"),
+            |k, _| k.lua_eval_here(),
+        ),
+        cmd(
+            Spec::new("map list")
+                .alias(&["maps"])
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("the keymap in a pane: every mode's bindings, or MODE's (n v i o), or the keys under a prefix"),
+            |k, ctx| k.show_maps(ctx.args.first().map(String::as_str)),
         ),
         cmd(
             Spec::new("view")

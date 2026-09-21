@@ -242,6 +242,7 @@ objects, or any other character on both sides.
 | `<leader>cF` | format the buffer through its server |
 | `<leader>r` | rename the symbol: the prompt filled with `lsp rename WORD`, the name edited, `<CR>` |
 | `<leader>D` | the type definition |
+| `<leader>x` | evaluate the line (the selection, in visual mode) as Lua; the result on the status line, or in a pane when it has lines |
 | `<leader>cd` | the listed directory as the working one (oil's) |
 | `<leader>u` | the undo history |
 | `<leader>p` | the working memory: what was yanked, deleted or pasted in, to put again |
