@@ -111,9 +111,14 @@ and `:e` reachable when the memory pane is the only pane there is.
 | `]t` `[t` `gt` `gT` `]q` `[q` | the next-and-previous cluster is shared too (`]b` needs an editor pane and says so) |
 
 A pane's own keys are commands gated by its fact, so one key can
-mean each pane's thing: the memory pane's `y` `o` `x` `m` `p` are
+mean each pane's thing: the memory pane's `y` `o` `x` `m` `p` `/` are
 `memory recall`, `memory origin`, `memory forget`, `memory pin` (bare
-in the pane: the cursor's row), `list open`, under `memory`; the undo
+in the pane: the cursor's row), `list open`, `memory filter` (a field
+in the pane — `field:memory/q` — whose line narrows the view's rows
+as it is typed, fzy-ranked, `<C-n>` `<C-p>` `<C-d>` `<C-u>` moving
+the cursor from the line, `<CR>` taking the row, `<Esc>` twice
+handing the keys back with the filter kept, `<Esc>` in the pane
+clearing it), under `memory`; the undo
 pane's `u` `<C-r>` `g-` `g+` are `undo pane undo` / `redo` / `older` /
 `newer` under `undo`. A Lua view binds its own under the fact
 `lua:NAME`, which holds while that view's pane has the keys, field or
@@ -296,7 +301,7 @@ objects, or any other character on both sides.
 | `<leader>x` | evaluate the line (the selection, in visual mode) as Lua; the result on the status line, or in a pane when it has lines |
 | `<leader>cd` | the listed directory as the working one (oil's) |
 | `<leader>u` | the undo history |
-| `<leader>p` | the memory pane (`:memory`): texts — what was yanked, deleted or pasted in, to put again — and `<Tab>` through files (with their drafts), recent, commands, searches, pins (each the workspace's), all (every workspace's) |
+| `<leader>p` | the memory pane (`:memory`): texts — what was yanked, deleted or pasted in, to put again — and `<Tab>` through files (with their drafts), recent, commands, searches, pins (each the workspace's), all (every workspace's); `/` filters the view |
 | `<leader>ee` `<leader>ea` | the workspace's pinned files (`:memory pins`), pin or unpin the buffer's file |
 | `<leader>e1`…`9` `<A-1>`…`9` | open the workspace's Nth pin |
 | `<leader>?` | the which-key for every first key (`:keys`) |

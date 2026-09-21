@@ -49,7 +49,15 @@ most); a `tool` row per `:tool NAME` (run or focused again) and per
 dwell to its tool's row while it is a tool's; `⏎` on either in the
 pane opens the file at the line or runs the tool again; and a run's
 row goes at thirty days whatever `memory.keep_days` says
-(`keep_days_for`). Left: co-occurrence and the yank-pop.
+(`keep_days_for`). *Filters, the same day*: `/` in the pane (Decision
+10 gains it) is a field of the editor's in the pane, `memory/q`, whose
+line narrows the view's rows as it is typed — fzy's scoring over a
+row's text (a text's first line, its origin; a file's name and path;
+a command's line; a location's line and message), best first, the
+header counting `n of all` — `<CR>` taking the cursor's row, `<Esc>`
+twice handing the keys back with the filter kept, `<Esc>` in the pane
+or closing it clearing it; `:memory filter QUERY` from the prompt.
+Left: co-occurrence and the yank-pop.
 options and taken: the unit is a subject row *plus a bounded ring of
 recent transitions* (Decision 1); the histories lose their bookkeeping
 and keep their blob (Decision 6); eviction is a fixed score in Rust

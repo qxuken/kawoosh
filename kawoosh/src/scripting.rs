@@ -1122,6 +1122,12 @@ impl Kawoosh {
         let Some(name) = self.ed.field_name(view) else {
             return;
         };
+        // The memory pane's filter: the keys back to the pane, the
+        // filter kept.
+        if name == crate::memory::FILTER_FIELD {
+            self.memory_filter_done();
+            return;
+        }
         let Some(rest) = name.strip_prefix("lua:") else {
             return;
         };

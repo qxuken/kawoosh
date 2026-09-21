@@ -8,7 +8,8 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
-use kawoosh_editor::Took;
+use kawoosh::memory::Row;
+use kawoosh_editor::{Mode, Took};
 use kawoosh_systems::store::MomentKey;
 use kui::KeyMods;
 
@@ -1074,4 +1075,91 @@ fn runs_are_remembered_as_tools_and_locations() {
         "the tool's row, a day old, stays"
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `/` in the pane filters the view: a field whose line narrows the
+/// rows as it is typed, best match first, the header counting `n of
+/// all`; the list keys move the cursor from the line, `<Esc>` twice
+/// hands the keys back with the filter kept, `<Esc>` in the pane
+/// clears it, `<CR>` in the field takes the cursor's row, and closing
+/// the pane clears the filter.
+#[test]
+fn the_pane_filters_its_rows_from_a_field() {
+    let mut d = Drive::new(1000.0, 600.0);
+    let text: String = (1..=30).map(|i| format!("row {i}\n")).collect();
+    let mut app = Kawoosh::new("t", &text);
+    d.frame(&mut app);
+    for _ in 0..30 {
+        d.keys(&mut app, "yyj");
+    }
+    d.keys(&mut app, "G");
+    d.keys(&mut app, " p");
+    d.frame(&mut app);
+    assert_eq!(app.memory_pane.rows().len(), 30);
+    // `/` opens the field with the keys; the line narrows the rows.
+    d.keys(&mut app, "/");
+    d.frame(&mut app);
+    assert!(app.memory_pane.filter_focused().is_some());
+    assert_eq!(app.focused_mode(), Mode::Insert);
+    d.keys(&mut app, "row 2");
+    d.frame(&mut app);
+    let rows = app.memory_pane.rows();
+    assert!(rows.len() < 30 && rows.len() >= 11, "{}", rows.len());
+    let first = match rows[0] {
+        Row::Text(t) => app.ed.memory.moments()[t].text.clone(),
+        _ => unreachable!(),
+    };
+    assert_eq!(first, "row 2\n", "the exact match first");
+    assert!(
+        texts(&d)
+            .iter()
+            .any(|s| s.starts_with(&format!("{} of 30 texts", rows.len()))),
+        "{:?}",
+        texts(&d)
+    );
+    // The list keys from the line.
+    d.ctrl(&mut app, "n");
+    assert_eq!(app.memory_pane.cursor, 1);
+    d.key(&mut app, "up", KeyMods::default());
+    assert_eq!(app.memory_pane.cursor, 0);
+    // A narrower line: fewer rows, the cursor back on the best.
+    d.keys(&mut app, "9");
+    d.frame(&mut app);
+    assert_eq!(app.memory_pane.rows().len(), 1);
+    assert_eq!(app.memory_pane.cursor, 0);
+    // `<Esc>` twice: the keys back to the pane, the filter kept.
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(app.focused_mode(), Mode::Normal);
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(app.memory_pane.filter_focused().is_none());
+    assert!(app.memory_pane.filter.is_some());
+    assert_eq!(app.focused_mode(), Mode::Pane);
+    assert_eq!(app.memory_filter_text(), "row 29");
+    // `<Esc>` in the pane clears it.
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(app.memory_pane.filter.is_none());
+    d.frame(&mut app);
+    assert_eq!(app.memory_pane.rows().len(), 30);
+    assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+    // `:memory filter QUERY` then `<CR>`: the cursor's row put in the
+    // editor pane, the keys with it.
+    ex(&mut d, &mut app, "memory filter row 17");
+    d.frame(&mut app);
+    assert!(app.memory_pane.filter_focused().is_some());
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(app.focused_view().is_some(), "the editor pane took the row");
+    assert_eq!(app.ed.memory.head().unwrap().text, "row 17\n");
+    assert!(text_of(&app).ends_with("row 17"), "{}", text_of(&app));
+    // Closing the pane clears the filter with it.
+    d.keys(&mut app, " p");
+    d.frame(&mut app);
+    assert!(
+        app.memory_pane.filter.is_some(),
+        "kept while the pane is up"
+    );
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    assert!(app.memory_pane.filter.is_none());
+    assert_eq!(d.warnings(), Vec::<String>::new());
 }

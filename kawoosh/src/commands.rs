@@ -95,6 +95,26 @@ impl Kawoosh {
                 Cond::parse("!field:commands"),
             ],
         );
+        // The memory pane's filter field (`memory.rs`): `<CR>` takes
+        // the cursor's row, the list keys move the cursor from the
+        // line, in insert mode and normal mode over it alike.
+        let filter = [Cond::parse("field:memory/q")];
+        for mode in [Mode::Insert, Mode::Normal] {
+            for (k, c) in [
+                ("<CR>", "memory filter done"),
+                ("<Down>", "list down"),
+                ("<Up>", "list up"),
+                ("<C-n>", "list down"),
+                ("<C-p>", "list up"),
+                ("<C-j>", "list down"),
+                ("<C-k>", "list up"),
+                ("<C-d>", "list half down"),
+                ("<C-u>", "list half up"),
+                ("<C-c>", "memory filter clear"),
+            ] {
+                self.ed.keymap.bind_when(mode, k, c, &filter);
+            }
+        }
     }
 
     /// Adds one shell command after start (a test's, a plugin's).
@@ -148,6 +168,7 @@ impl Kawoosh {
             .or_else(|| self.focused_view())
             .or_else(|| match self.layout.focused_content() {
                 Some(Content::Lua(name)) => self.lua_field_focused(&name),
+                Some(Content::Memory) => self.memory_pane.filter_focused(),
                 _ => None,
             })
     }
@@ -262,7 +283,9 @@ impl Kawoosh {
             Some(Content::Terminal(t)) => {
                 self.terms.map.remove(&t);
             }
-            Some(Content::Lua(_) | Content::Undo | Content::Memory) => {}
+            // The memory pane's filter goes with the pane.
+            Some(Content::Memory) => self.memory_filter_clear(),
+            Some(Content::Lua(_) | Content::Undo) => {}
             None => self.ed.message = "cannot close the last pane".into(),
         }
     }

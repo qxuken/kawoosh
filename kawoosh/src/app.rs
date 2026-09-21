@@ -1081,6 +1081,12 @@ impl Kawoosh {
             if !self.lua_pane_key(&name, stroke.clone()) {
                 self.pane_key(stroke);
             }
+        } else if self.layout.focused_content() == Some(Content::Memory)
+            && let Some(f) = self.memory_pane.filter_focused()
+        {
+            // The filter's field: the editor's own line, until `<CR>`
+            // or `<Esc>` twice hand the keys back to the pane.
+            self.ed.key(f, stroke);
         } else if matches!(
             self.layout.focused_content(),
             Some(Content::Undo | Content::Memory)

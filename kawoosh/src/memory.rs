@@ -10,7 +10,15 @@
 //! disk as a diff (what the `:history` pane was); **recent** — the ring,
 //! one row per transition, newest at the top, so a morning reads as a
 //! list; **commands**, **searches**, **pins**, **all**. `<Tab>` cycles
-//! them; `:memory files` opens on one. Every view but **all** is the
+//! them; `:memory files` opens on one. `/` filters the view: a field
+//! of the editor's in the pane (`memory/q`, the fact `field:memory/q`
+//! while it has the keys) whose line narrows the rows as it is typed,
+//! fzy's scoring over each row's text — a text's first line and where
+//! it came from, a file's name and path, a command's line, a
+//! location's line — best first; `<CR>` there takes the cursor's row
+//! (`list open`), `<Esc>` twice hands the keys back with the filter
+//! kept, `<Esc>` in the pane clears it, and so does closing the pane
+//! (`memory filter [QUERY]`, `memory filter clear`). Every view but **all** is the
 //! workspace's (memory.md Decision 2): the rows made under the
 //! outermost `.kawoosh` root above the cwd, or outside any when there
 //! is none; **all** is every row there is, whatever root it was made
@@ -55,6 +63,9 @@ use crate::undo::PANEL_SHARE;
 const LINES_SHOWN: usize = 200;
 /// How many rows a view lists at most.
 const ROWS_MAX: usize = 2000;
+/// The filter field's name: the fact `field:memory/q` while it has
+/// the keys.
+pub const FILTER_FIELD: &str = "memory/q";
 
 /// The pane's views (Decision 10).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,13 +236,19 @@ pub struct MemoryPanel {
     pub cursor: usize,
     /// The editor pane the keyboard came from: where a put goes.
     pub back: Option<ViewId>,
+    /// The filter's field (`memory/q`), open while a filter is set.
+    pub filter: Option<ViewId>,
+    /// Whether the field has the keys.
+    pub filtering: bool,
+    /// How many rows the view has before the filter.
+    pub all: usize,
     reveal: bool,
     /// Rows on show, as the last frame drew them.
     page: usize,
     rows: Vec<Row>,
     /// What the rows were built at: the memory's version, the store's
-    /// changes, the histories' and the view.
-    built: Option<(u64, u64, u64, View)>,
+    /// changes, the histories', the view and the filter's line.
+    built: Option<(u64, u64, u64, View, Option<kawoosh_doc::Version>)>,
     /// The cursor's file row inspected: its subject, the stamp it was
     /// read at, and the reading.
     inspect: Option<(String, u64, Option<Inspect>)>,
@@ -243,6 +260,9 @@ impl Default for MemoryPanel {
             view: View::Texts,
             cursor: 0,
             back: None,
+            filter: None,
+            filtering: false,
+            all: 0,
             reveal: false,
             page: 0,
             rows: Vec::new(),
@@ -274,6 +294,11 @@ impl crate::listing::Listing for MemoryPanel {
 impl MemoryPanel {
     pub fn rows(&self) -> &[Row] {
         &self.rows
+    }
+
+    /// The field with the keys, if the filter has them.
+    pub fn filter_focused(&self) -> Option<ViewId> {
+        self.filter.filter(|_| self.filtering)
     }
 
     pub fn inspect(&self) -> Option<&Inspect> {
@@ -382,7 +407,102 @@ impl Kawoosh {
     fn close_memory_panel(&mut self, pane: PaneId) {
         if self.layout.close(pane).is_none() {
             self.ed.message = "cannot close the last pane".into();
+            return;
         }
+        self.memory_filter_clear();
+    }
+
+    /// The filter's line as typed, empty for none.
+    pub fn memory_filter_text(&self) -> String {
+        self.memory_pane
+            .filter
+            .and_then(|f| self.ed.field_text(f))
+            .unwrap_or_default()
+    }
+
+    /// `memory filter [QUERY]` (`/` in the pane): the field opened,
+    /// filled with QUERY when given, and the keys on it.
+    pub(crate) fn memory_filter(&mut self, query: Option<&str>) {
+        let f = match self.memory_pane.filter {
+            Some(f) if self.ed.views.contains_key(f) => f,
+            _ => {
+                let f = self.ed.open_field(FILTER_FIELD, "");
+                self.memory_pane.filter = Some(f);
+                f
+            }
+        };
+        if let Some(q) = query {
+            self.ed.set_field_text(f, q);
+        }
+        self.ed.set_mode(f, kawoosh_editor::Mode::Insert);
+        self.memory_pane.filtering = true;
+        self.memory_pane.cursor = 0;
+        self.memory_pane.reveal = true;
+    }
+
+    /// The keys back from the field to the pane, the filter kept.
+    pub(crate) fn memory_filter_done(&mut self) {
+        self.memory_pane.filtering = false;
+        // An empty line is no filter.
+        if self.memory_filter_text().is_empty() {
+            self.memory_filter_clear();
+        }
+    }
+
+    /// `memory filter clear` (`<Esc>` in the pane): the field closed,
+    /// the rows whole.
+    pub(crate) fn memory_filter_clear(&mut self) {
+        if let Some(f) = self.memory_pane.filter.take() {
+            self.ed.close_field(f);
+        }
+        self.memory_pane.filtering = false;
+        self.memory_pane.reveal = true;
+    }
+
+    /// What a row is matched on: the words a filter can reach.
+    fn row_search_text(&self, r: &Row) -> String {
+        match r {
+            Row::Text(t) => self
+                .ed
+                .memory
+                .moments()
+                .get(*t)
+                .map(|m| {
+                    format!(
+                        "{} {} {}",
+                        m.text.lines().next().unwrap_or(""),
+                        m.took.word(),
+                        m.from
+                    )
+                })
+                .unwrap_or_default(),
+            Row::Moment { row, label, .. } => {
+                let meta: serde_json::Value = serde_json::from_str(&row.meta).unwrap_or_default();
+                let extra = ["message", "cmd", "from"]
+                    .iter()
+                    .filter_map(|k| meta.get(k).and_then(|v| v.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("{label} {} {} {extra}", row.key.subject, row.key.kind)
+            }
+            Row::Recent(r) => format!("{} {}", r.key.subject, r.key.kind),
+        }
+    }
+
+    /// `rows` narrowed to the filter's matches, best first; every row
+    /// when there is no filter.
+    fn filter_rows(&self, rows: Vec<Row>) -> Vec<Row> {
+        let q = self.memory_filter_text();
+        if q.trim().is_empty() {
+            return rows;
+        }
+        let texts: Vec<String> = rows.iter().map(|r| self.row_search_text(r)).collect();
+        let hits =
+            kawoosh_lua::fuzzy::fuzzy(q.trim(), texts.iter().map(String::as_str), rows.len());
+        let mut rows: Vec<Option<Row>> = rows.into_iter().map(Some).collect();
+        hits.into_iter()
+            .filter_map(|h| rows[h.index].take())
+            .collect()
     }
 
     /// The editor pane a put or a jump goes to: the one the keyboard
@@ -405,20 +525,44 @@ impl Kawoosh {
     /// histories moved, or the view changed; the holders' states read
     /// every time, since a pane opening or closing changes them.
     pub(crate) fn sync_memory_rows(&mut self) {
+        // A filter's field closed from under the pane (`:memory clear`
+        // of fields is not a thing, but a view going away is) is none.
+        if let Some(f) = self.memory_pane.filter
+            && !self.ed.views.contains_key(f)
+        {
+            self.memory_pane.filter = None;
+            self.memory_pane.filtering = false;
+        }
+        let filter = self
+            .memory_pane
+            .filter
+            .map(|f| self.ed.buffers[self.ed.views[f].buffer].version());
         let stamp = (
             self.ed.memory.version,
             self.moments.changed,
             self.histories.changed,
             self.memory_pane.view,
+            filter,
         );
         if self.memory_pane.built != Some(stamp) {
+            let filter_moved = self
+                .memory_pane
+                .built
+                .is_some_and(|(_, _, _, _, f)| f != filter);
             let cursor_key = self
                 .memory_pane
                 .rows
                 .get(self.memory_pane.cursor)
                 .and_then(|r| r.key().cloned());
-            self.memory_pane.rows = self.build_rows(self.memory_pane.view);
+            let rows = self.build_rows(self.memory_pane.view);
+            self.memory_pane.all = rows.len();
+            self.memory_pane.rows = self.filter_rows(rows);
             self.memory_pane.built = Some(stamp);
+            if filter_moved {
+                // The best match first as the line is typed.
+                self.memory_pane.cursor = 0;
+                self.memory_pane.reveal = true;
+            }
             let n = self.memory_pane.rows.len();
             // The cursor stays on its row where the row stayed.
             self.memory_pane.cursor = cursor_key
@@ -1022,7 +1166,12 @@ impl Kawoosh {
             self.set_view(view);
             return;
         }
+        if p.get("filter").and_then(Value::as_bool) == Some(true) {
+            self.memory_filter(None);
+            return;
+        }
         if let Some(i) = p.get("row").and_then(Value::as_int) {
+            self.memory_pane.filtering = false;
             self.sync_memory_rows();
             let i = (i.max(0) as usize).min(self.memory_pane.rows.len().saturating_sub(1));
             self.memory_pane.cursor = i;
@@ -1078,9 +1227,26 @@ impl Kawoosh {
         let has_store = self.store.is_some();
         let pending = self.moments.pending();
         let tag = Value::map([("kind", "memory".into()), ("pane", Value::Int(pane as i64))]);
+        // With a filter: `12 of 138 texts`.
+        let filter = self.memory_pane.filter;
+        let filtering = self.memory_pane.filtering;
+        let all = self.memory_pane.all;
+        let count = |what: String| -> String {
+            if filter.is_some() && all != n {
+                format!("{n} of {all} {what}")
+            } else {
+                format!("{n} {what}")
+            }
+        };
         let head = match view {
-            View::Texts => format!("{n} text{}", if n == 1 { "" } else { "s" }),
-            View::Recent => format!("{n} transition{}", if n == 1 { "" } else { "s" }),
+            View::Texts => count(format!(
+                "text{}",
+                if n == 1 && filter.is_none() { "" } else { "s" }
+            )),
+            View::Recent => count(format!(
+                "transition{}",
+                if n == 1 && filter.is_none() { "" } else { "s" }
+            )),
             v => {
                 let drafts = rows
                     .iter()
@@ -1094,7 +1260,7 @@ impl Kawoosh {
                         )
                     })
                     .count();
-                let mut s = format!("{n} {}", v.name());
+                let mut s = count(v.name().to_string());
                 if v != View::All {
                     let ws = self.moments.workspace();
                     s.push_str(&format!(
@@ -1152,6 +1318,26 @@ impl Kawoosh {
                         );
                     }
                 });
+                // The filter's line, while one is set: `/` and the
+                // field, the caret on it while it has the keys.
+                if let Some(f) = filter {
+                    ui.with(
+                        tm.line(&pal, 0)
+                            .hover_bg(Color::TRANSPARENT)
+                            .bg(if filtering { pal.strip } else { Color::TRANSPARENT })
+                            .on_click(Value::map([
+                                ("kind", "memory".into()),
+                                ("pane", Value::Int(pane as i64)),
+                                ("filter", Value::Bool(true)),
+                            ])),
+                        |ui| {
+                            ui.with(col(2.0).main_align(kui::Align::Start), |ui| {
+                                ui.text("/", rows::mono(self.face, &pal).color(pal.command))
+                            });
+                            self.field_line(ui, f, filtering, None);
+                        },
+                    );
+                }
                 ui.with(tm.line(&pal, 0).hover_bg(Color::TRANSPARENT), |ui| match view {
                     View::Texts => {
                         ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
@@ -1633,6 +1819,34 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .when(&["memory"])
                 .doc("the pane's cursor text made the register, without putting it"),
             |k, _| k.memory_recall_cursor(),
+        ),
+        cmd(
+            Spec::new("memory filter")
+                .args(Args::rest(&[ArgKind::Text]))
+                .when(&["memory"])
+                .doc("filter the pane's rows by QUERY, typed live in a field (`/`); best match first"),
+            |k, ctx| {
+                let q = ctx.args.join(" ");
+                k.memory_filter((!q.is_empty()).then_some(q.as_str()));
+            },
+        ),
+        cmd(
+            Spec::new("memory filter done")
+                .when(&["field:memory/q"])
+                .doc("the keys back to the pane, the filter kept, and the cursor's row taken"),
+            |k, _| {
+                k.memory_filter_done();
+                k.sync_memory_rows();
+                if !k.memory_pane.rows.is_empty() {
+                    k.open_memory_row(k.memory_pane.cursor);
+                }
+            },
+        ),
+        cmd(
+            Spec::new("memory filter clear")
+                .when(&["memory"])
+                .doc("the filter cleared, every row back"),
+            |k, _| k.memory_filter_clear(),
         ),
         cmd(
             Spec::new("memory origin")

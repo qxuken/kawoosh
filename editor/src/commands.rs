@@ -3128,6 +3128,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("gt", "tab next"),
         ("gT", "tab prev"),
         // The memory pane's.
+        ("/", "memory filter"),
         ("p", "list open"),
         ("y", "memory recall"),
         ("o", "memory origin"),

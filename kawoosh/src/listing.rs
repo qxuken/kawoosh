@@ -120,6 +120,13 @@ impl Kawoosh {
     /// `pane back`: the keyboard to the editor pane it came from — the
     /// pane's own idea of it, else any editor pane on show.
     fn pane_back(&mut self) {
+        // The memory pane's `<Esc>` ladder: a filter set goes first.
+        if self.layout.focused_content() == Some(Content::Memory)
+            && self.memory_pane.filter.is_some()
+        {
+            self.memory_filter_clear();
+            return;
+        }
         let back = match self.layout.focused_content() {
             Some(Content::Memory) => self.memory_back_pane(),
             Some(Content::Undo) => self.undo_back_pane(),
