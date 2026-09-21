@@ -16,7 +16,7 @@ use kawoosh_doc::{Buffer, BufferId};
 use kawoosh_editor::{Editor, Effect, KeyStroke, Lookup, Mode, Selection, ViewId, motions};
 use kawoosh_systems::WakeHandle;
 use kawoosh_systems::io::{Incoming, Io, IoMsg, Request};
-use kawoosh_systems::ts::{Job, Ts};
+use kawoosh_systems::ts::{Job, Token, Ts};
 use kawoosh_term::TermSize;
 use kui::{FontId, NodeSpec, Sizing, Ui, UiEvent, Value, WindowCommand};
 
@@ -315,6 +315,33 @@ impl Kawoosh {
     /// Buffers whose text moved since `ts` last saw them get a snapshot;
     /// answers that came back are applied through the journal.
     pub(crate) fn sync_syntax(&mut self) {
+        // A plugin's text, highlighted: its runs named and coloured as
+        // the theme has them, handed to the callback that asked.
+        let texts: Vec<_> = self.ts.text_answers.try_iter().collect();
+        if !texts.is_empty()
+            && let Some(rt) = self.scripting.rt.clone()
+        {
+            let dark = self.dark;
+            for a in texts {
+                self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                let runs: Vec<(usize, usize, &str, Option<u32>)> = a
+                    .runs
+                    .iter()
+                    .map(|r| {
+                        let t = Token::from_style(r.style);
+                        (
+                            r.range.start,
+                            r.range.end,
+                            t.name(),
+                            self.syntax_color_for(t, dark).map(|c| c.to_hex()),
+                        )
+                    })
+                    .collect();
+                rt.publish(&self.ed, self.focused_view());
+                rt.highlighted(a.token, &runs);
+            }
+            self.drain_lua();
+        }
         for a in self.ts.drain() {
             self.perf.ts_answers += 1;
             self.perf.ts_last = Some((
@@ -568,6 +595,7 @@ impl Kawoosh {
         for _ in 0..12_000 {
             self.drain_io();
             self.flush_proc_lines();
+            self.sync_syntax();
             if self.pending_jobs == 0 {
                 return;
             }

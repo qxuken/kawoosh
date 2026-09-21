@@ -188,7 +188,8 @@ local function preview_of(item)
     local from = math.max((item.line or 1) - 10, 1)
     local ok2, got = pcall(kawoosh.buf.lines_in, from, from + PREVIEW_LINES, item.buffer)
     lines = ok2 and got or {}
-    return { title = title, lines = lines, from = from, at = item.line }
+    local pok, path = pcall(kawoosh.buf.path, item.buffer)
+    return { title = title, lines = lines, from = from, at = item.line, path = pok and path or nil }
   elseif item.path then
     title = short_path(item.path)
     lines, why = file_lines(item.path)
@@ -199,7 +200,48 @@ local function preview_of(item)
   local from = math.max((item.line or 1) - 10, 1)
   local window = {}
   for i = from, math.min(#lines, from + PREVIEW_LINES) do window[#window + 1] = lines[i] end
-  return { title = title, lines = window, from = from, at = item.line }
+  return { title = title, lines = window, from = from, at = item.line, path = item.path }
+end
+
+-- The preview's lines coloured: `kawoosh.highlight` asked once per
+-- preview with the language its path says, the runs kept on it
+-- (`pv.runs`) when they come, with where each line starts in the
+-- text they cover — the next frame paints them.
+local function highlight_preview(pv)
+  if pv.runs or pv.asked or not pv.path or #pv.lines == 0 then return end
+  pv.asked = true
+  local starts, at = {}, 1
+  for i, l in ipairs(pv.lines) do
+    starts[i] = at
+    at = at + #l + 1
+  end
+  kawoosh.highlight(table.concat(pv.lines, "\n"), { path = pv.path }, function(runs)
+    if not runs then return end
+    pv.runs = runs
+    pv.starts = starts
+  end)
+end
+
+-- Line `i` of a preview as spans: the runs that reach into it, each
+-- its colour, the rest `color`.
+local function preview_spans(pv, i, l, color)
+  local runs = pv.runs
+  if not runs or #runs == 0 then return { { l, color = color } } end
+  local from = pv.starts[i]
+  local to = from + #l - 1
+  local out, at = {}, 1
+  for _, r in ipairs(runs) do
+    if r.to >= from and r.from <= to and r.color then
+      local a = math.max(r.from, from) - from + 1
+      local b = math.min(r.to, to) - from + 1
+      if a > at then out[#out + 1] = { l:sub(at, a - 1), color = color } end
+      if b >= a then out[#out + 1] = { l:sub(a, b), color = r.color } end
+      at = math.max(at, b + 1)
+    end
+  end
+  if at <= #l then out[#out + 1] = { l:sub(at), color = color } end
+  if #out == 0 then out[1] = { l, color = color } end
+  return out
 end
 
 -- ------------------------------------------------------------ the parts
@@ -419,9 +461,11 @@ function picker.rows(ctx, hits, opts)
 end
 
 -- picker.preview(ctx, pv, rows, from): a preview `{ title =, lines =,
--- from =, at =, note = }` as a column, `rows` lines of it at most from
--- line `from` (1) of them; the wheel over it posts `{ kind = "scroll",
--- tag = { kind = "preview" } }`.
+-- from =, at =, note =, path = }` as a column, `rows` lines of it at
+-- most from line `from` (1) of them, the syntax coloured when a
+-- `path` says the language (asked of the ts thread once, painted
+-- when it answers); the wheel over it posts `{ kind = "scroll", tag =
+-- { kind = "preview" } }`.
 function picker.preview(ctx, pv, rows, from)
   local t = ctx.env.theme
   local col = column { width = "grow", height = "grow", clip = true, pad = 8, gap = 2, bg = t.sunken,
@@ -431,8 +475,9 @@ function picker.preview(ctx, pv, rows, from)
   col[#col + 1] = text(pv.title or "", { size = PREVIEW_SIZE, color = t.fg, wrap = "none" })
   if pv.note then col[#col + 1] = text(pv.note, { size = PREVIEW_SIZE, color = t.muted }) end
   local first = pv.from or 1
+  highlight_preview(pv)
   for i = from, math.min(#pv.lines, from + rows - 1) do
-    local l = pv.lines[i]:gsub("\t", "    ")
+    local l = pv.lines[i]
     local ln = first + i - 1
     local hit = pv.at and ln == pv.at
     local r = row { height = PREVIEW_ROW, width = "grow", gap = 8, cross_align = "center",
@@ -442,7 +487,13 @@ function picker.preview(ctx, pv, rows, from)
     if pv.from then
       r[#r + 1] = text(string.format("%4d", ln):gsub(" ", NBSP), { family = "mono", size = PREVIEW_SIZE, color = t.faint })
     end
-    if l ~= "" then r[#r + 1] = text(l, { family = "mono", size = PREVIEW_SIZE, color = hit and t.fg or t.muted, wrap = "none" }) end
+    if l ~= "" then
+      -- The syntax's colours over the line, the tabs widened after
+      -- the runs are cut so their bytes stay the text's.
+      local spans = preview_spans(pv, i, l, hit and t.fg or t.muted)
+      for _, sp in ipairs(spans) do sp[1] = sp[1]:gsub("\t", "    ") end
+      r[#r + 1] = text(spans, { family = "mono", size = PREVIEW_SIZE, wrap = "none" })
+    end
     col[#col + 1] = r
   end
   return col
@@ -765,13 +816,15 @@ picker._keys = {}
 
 -- picker.state(): what the open picker shows — `source`, `query`,
 -- `cursor` (a row's index from 1), `top`, `count` (the rows), `text`
--- (the cursor's row), `item` (its item), `loading` — or nil when none
--- is open; for a status line, a test, a plugin's key.
+-- (the cursor's row), `item` (its item), `loading`, `preview` (the
+-- cursor's, as drawn: `title`, `lines`, `runs` once highlighted) — or
+-- nil when none is open; for a status line, a test, a plugin's key.
 function picker.state()
   if not P then return nil end
   local hit = P.hits[P.cursor]
   return { source = P.name, query = P.query or "", cursor = P.cursor, top = P.top, count = #P.hits,
-           text = hit and hit.item.text or nil, item = hit and hit.item or nil, loading = P.loading }
+           text = hit and hit.item.text or nil, item = hit and hit.item or nil, loading = P.loading,
+           preview = P.preview }
 end
 
 -- picker.resume(): the last picker again, its query and cursor as

@@ -397,6 +397,80 @@ fn buffers_lines_recent_and_smart() {
     std::fs::remove_dir_all(dir.with_extension("db")).ok();
 }
 
+/// `kawoosh.highlight`: a text's syntax runs from the ts thread, named
+/// and coloured; the picker's preview asks for its file's and paints
+/// them.
+#[test]
+fn the_preview_is_highlighted() {
+    let _serial = serial();
+    let dir = project("hl");
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"
+        HL = nil
+        kawoosh.highlight("fn main() { let s = \"x\"; }", { language = "rust" }, function(runs) HL = runs end)
+        assert(HL == nil, "asked, not answered yet")
+        "#,
+    );
+    app.wait_for_jobs();
+    lua(
+        &mut app,
+        r#"
+        assert(type(HL) == "table" and #HL > 0, "answered")
+        assert(HL[1].from == 1 and HL[1].to == 2 and HL[1].token == "keyword", HL[1].token .. " " .. HL[1].from .. "-" .. HL[1].to)
+        assert(type(HL[1].color) == "number", "coloured")
+        local str
+        for _, r in ipairs(HL) do if r.token == "string" then str = r end end
+        assert(str and str.from == 21 and str.to == 23, "the string's bytes")
+        "#,
+    );
+    // By path: the language told from it. And a language no grammar
+    // knows answers no runs.
+    lua(
+        &mut app,
+        r#"
+        HL2, HL3 = nil, nil
+        kawoosh.highlight("fn x() {}", { path = "/tmp/a.rs" }, function(runs) HL2 = runs end)
+        kawoosh.highlight("fn x() {}", { language = "no-such" }, function(runs) HL3 = runs end)
+        "#,
+    );
+    app.wait_for_jobs();
+    lua(
+        &mut app,
+        r#"assert(HL2 and HL2[1] and HL2[1].token == "keyword"); assert(HL3 and #HL3 == 0)"#,
+    );
+    // The picker's preview: the cursor's file asked for, its runs on
+    // the preview once they come.
+    d.keys(&mut app, " f");
+    d.frame(&mut app);
+    d.keys(&mut app, "main");
+    d.frame(&mut app);
+    assert_eq!(rows(&d)[0], "src/main.rs");
+    app.wait_for_jobs();
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"
+        local s = kawoosh.picker.state()
+        assert(s.preview and s.preview.path and s.preview.path:match("main%.rs$"), "the preview of main.rs")
+        assert(s.preview.runs and #s.preview.runs > 0, "highlighted")
+        assert(s.preview.runs[1].token == "keyword", s.preview.runs[1].token)
+        "#,
+    );
+    assert!(
+        texts(&d).iter().any(|s| s == "fn main() {}"),
+        "the line drawn whole: {:?}",
+        texts(&d)
+    );
+    d.ctrl(&mut app, "c");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `<leader>g`: `rg` run on the query as it is typed, a location a row,
 /// the preview on the hit's line, `<CR>` opening the file at line and
 /// column; a query that matches nothing says so.
@@ -771,12 +845,19 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     d.frame(&mut app);
     let shown = rows(&d).len();
     assert!(shown > 5 && shown < 45, "a window of the 45: {shown}");
-    assert!(!rows(&d).contains(&"many/f00.png".to_string()), "the png is last, off the window");
+    assert!(
+        !rows(&d).contains(&"many/f00.png".to_string()),
+        "the png is last, off the window"
+    );
     d.keys(&mut app, "f00");
     d.frame(&mut app);
     let r = rows(&d);
     assert_eq!(r[0], "many/f00.txt", "{r:?}");
-    assert_eq!(r.last().map(String::as_str), Some("many/f00.png"), "the binary under the text: {r:?}");
+    assert_eq!(
+        r.last().map(String::as_str),
+        Some("many/f00.png"),
+        "the binary under the text: {r:?}"
+    );
     d.ctrl(&mut app, "u");
     d.frame(&mut app);
     let (x, y, w, h) = d.rect_of("row README.md").expect("the first row");

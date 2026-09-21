@@ -90,6 +90,16 @@ pub enum Msg {
         token: u64,
         root: PathBuf,
     },
+    /// `kawoosh.highlight(text, { language = | path = }, fn)`: the
+    /// text's syntax runs from the ts thread, the language given or
+    /// told from the path and the first line, the answer to
+    /// `Runtime::highlighted` under `token`.
+    Highlight {
+        token: u64,
+        text: String,
+        language: Option<String>,
+        path: Option<PathBuf>,
+    },
     /// `kawoosh.spawn(cmd, { cwd, on_lines, on_exit })`: a process run
     /// through the shell, its output lines handed to `Runtime::proc_lines`
     /// under `token` as they come, its exit to `Runtime::proc_exit`.
@@ -1022,6 +1032,27 @@ impl Runtime {
         let result =
             result.and_then(|entries| entries_table(&self.lua, entries).map_err(|e| e.to_string()));
         self.answer(token, result, "fs.list");
+    }
+
+    /// A text highlighted for `kawoosh.highlight`: the callback called
+    /// with the runs, each `{ from =, to =, token =, color = }` — bytes
+    /// from 1, `to` the last one, the token's name, the colour as the
+    /// theme paints it (`0xRRGGBBAA`) or nil when it paints none.
+    pub fn highlighted(&self, token: u64, runs: &[(usize, usize, &str, Option<u32>)]) {
+        let table = self.lua.create_table().and_then(|t| {
+            for (i, (from, to, name, color)) in runs.iter().enumerate() {
+                let r = self.lua.create_table()?;
+                r.set("from", from + 1)?;
+                r.set("to", *to)?;
+                r.set("token", *name)?;
+                if let Some(c) = color {
+                    r.set("color", *c)?;
+                }
+                t.set(i + 1, r)?;
+            }
+            Ok(t)
+        });
+        self.answer(token, table.map_err(|e| e.to_string()), "highlight");
     }
 
     /// A tree walked for `kawoosh.fs.walk(root, fn)`: the callback
@@ -2408,6 +2439,37 @@ fn seed(
             });
             Ok(LV::Nil)
         })?,
+    )?;
+    // `kawoosh.highlight(text, { language | path }, fn)`: the text's
+    // syntax runs from the ts thread, to `fn(runs)`.
+    let qq = q(queue);
+    let jj = jobs.clone();
+    k.set(
+        "highlight",
+        lua.create_function(
+            move |lua, (text, opts, cb): (String, Option<Table>, mlua::Function)| {
+                let token = {
+                    let mut j = jj.borrow_mut();
+                    let token = j.token();
+                    j.waiting.insert(token, lua.create_registry_value(cb)?);
+                    token
+                };
+                let language = opts
+                    .as_ref()
+                    .and_then(|t| t.get::<Option<String>>("language").ok().flatten());
+                let path = opts
+                    .as_ref()
+                    .and_then(|t| t.get::<Option<String>>("path").ok().flatten())
+                    .map(|p| expand(&p));
+                qq.borrow_mut().push(Msg::Highlight {
+                    token,
+                    text,
+                    language,
+                    path,
+                });
+                Ok(token)
+            },
+        )?,
     )?;
     // `fs.walk(root, fn)`: every file under `root` as git sees it —
     // ignored, hidden and `.git` left out — relative to it, walked on

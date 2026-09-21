@@ -74,6 +74,21 @@ pub struct Answer {
     pub elapsed: std::time::Duration,
 }
 
+/// A text that is no buffer's, highlighted once: a picker's preview,
+/// a plugin's pane. Parsed whole, nothing kept.
+pub struct TextJob {
+    pub token: u64,
+    pub language: String,
+    pub text: String,
+}
+
+/// The runs of a [`TextJob`], byte ranges over its text; empty for a
+/// language without a grammar.
+pub struct TextAnswer {
+    pub token: u64,
+    pub runs: Vec<Run>,
+}
+
 /// How many spans an answer may carry; past that the nearest are joined,
 /// since each is a query of its own.
 const SPANS_MAX: usize = 64;
@@ -81,6 +96,7 @@ const SPANS_MAX: usize = 64;
 /// What the thread is told.
 enum Cmd {
     Job(Job),
+    Text(TextJob),
     /// A language registered: the registry entry, and its grammar when
     /// the shell loaded one — `None` for a language of files alone,
     /// or a builtin, which the thread loads itself.
@@ -93,6 +109,7 @@ enum Cmd {
 pub struct Ts {
     cmds: Sender<Cmd>,
     pub answers: Receiver<Answer>,
+    pub text_answers: Receiver<TextAnswer>,
 }
 
 impl Ts {
@@ -102,6 +119,7 @@ impl Ts {
     pub fn spawn(wake: WakeHandle) -> Self {
         let (cmds, cmd_rx) = unbounded::<Cmd>();
         let (answer_tx, answers) = unbounded::<Answer>();
+        let (text_tx, text_answers) = unbounded::<TextAnswer>();
         thread::Builder::new()
             .name("ts".into())
             .spawn(move || {
@@ -115,6 +133,11 @@ impl Ts {
                             grammars.add(def, grammar, &mut parsed);
                             continue;
                         }
+                        Cmd::Text(t) => {
+                            let _ = text_tx.send(highlight_text(&mut parser, &mut grammars, &t));
+                            wake.wake();
+                            continue;
+                        }
                     };
                     // Only the newest job per buffer matters: skip ahead,
                     // the skipped job's edits carried into the next one's.
@@ -123,6 +146,11 @@ impl Ts {
                             Cmd::Job(job) => job,
                             Cmd::Language { def, grammar } => {
                                 grammars.add(def, grammar, &mut parsed);
+                                continue;
+                            }
+                            Cmd::Text(t) => {
+                                let _ =
+                                    text_tx.send(highlight_text(&mut parser, &mut grammars, &t));
                                 continue;
                             }
                         };
@@ -152,11 +180,20 @@ impl Ts {
                 }
             })
             .expect("spawning the ts thread");
-        Self { cmds, answers }
+        Self {
+            cmds,
+            answers,
+            text_answers,
+        }
     }
 
     pub fn submit(&self, job: Job) {
         let _ = self.cmds.send(Cmd::Job(job));
+    }
+
+    /// A text of its own to highlight, answered on `text_answers`.
+    pub fn submit_text(&self, job: TextJob) {
+        let _ = self.cmds.send(Cmd::Text(job));
     }
 
     /// Tells the thread a language: its registry entry, and the grammar
@@ -428,6 +465,28 @@ fn highlight(
                 runs,
             })
             .collect(),
+    }
+}
+
+/// A [`TextJob`]: the text parsed whole by its language's grammar and
+/// its runs read, nothing kept for later.
+fn highlight_text(parser: &mut Parser, grammars: &mut Grammars, job: &TextJob) -> TextAnswer {
+    let text = text_buffer::Buffer::with_text(job.text.as_bytes());
+    let runs = match grammars.get(&job.language) {
+        Some(g) if parser.set_language(&g.language).is_ok() => {
+            let mut read = |byte: usize, _: Point| text.chunk_at(byte);
+            match parser.parse_with_options(&mut read, None, None) {
+                Some(tree) => {
+                    capture_runs(parser, grammars, &g, tree.root_node(), &text, 0..text.len())
+                }
+                None => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
+    };
+    TextAnswer {
+        token: job.token,
+        runs,
     }
 }
 
@@ -1494,6 +1553,42 @@ mod tests {
             &job("brainfuck"),
         );
         assert!(a.tree.is_none());
+    }
+
+    #[test]
+    fn a_text_of_its_own_highlights_whole() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let job = TextJob {
+            token: 7,
+            language: "rust".into(),
+            text: "fn main() { let x = \"s\"; }".into(),
+        };
+        let a = highlight_text(&mut parser, &mut g, &job);
+        assert_eq!(a.token, 7);
+        let kw = a
+            .runs
+            .iter()
+            .find(|r| r.range == (0..2))
+            .expect("`fn` a run");
+        assert_eq!(Token::from_style(kw.style), Token::Keyword);
+        assert!(
+            a.runs
+                .iter()
+                .any(|r| Token::from_style(r.style) == Token::String),
+            "{:?}",
+            a.runs
+        );
+        let none = highlight_text(
+            &mut parser,
+            &mut g,
+            &TextJob {
+                token: 8,
+                language: "no-such".into(),
+                text: "x".into(),
+            },
+        );
+        assert!(none.runs.is_empty());
     }
 
     #[test]

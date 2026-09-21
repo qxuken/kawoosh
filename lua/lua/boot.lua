@@ -296,6 +296,14 @@ end
 -- what was asked before it (a pane closed, a file opened) — where
 -- `kawoosh.cmd` runs at once, inside the command that asked.
 --
+-- kawoosh.highlight(text, { language = | path = }, fn): the text's
+-- syntax, read on the ts thread by the language named, or the one a
+-- path (and the first line) says; `fn(runs)` when done, each run
+-- `{ from =, to =, token =, color = }` — the bytes it covers (from 1,
+-- `to` the last), the token's name ("keyword", "string", …) and the
+-- colour the theme paints it, `0xRRGGBBAA`, or nil for none. For a
+-- preview, a pane of a plugin's own: a few hundred lines is a moment.
+--
 -- kawoosh.fs.walk(root, fn): every file under `root` as git sees it —
 -- `.gitignore`d, hidden and `.git` left out — relative to it, read on
 -- a thread of its own; `fn(paths)` when done, or `fn(nil, why)`.

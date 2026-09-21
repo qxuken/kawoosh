@@ -442,6 +442,26 @@ impl Kawoosh {
                     self.open_lua_view_with(&name, focus, below, share);
                 }
             }
+            Msg::Highlight {
+                token,
+                text,
+                language,
+                path,
+            } => {
+                let language = language.unwrap_or_else(|| {
+                    let first = text.lines().next().unwrap_or("");
+                    match &path {
+                        Some(p) => self.languages.detect(p, first).to_string(),
+                        None => self.languages.detect(Path::new(""), first).to_string(),
+                    }
+                });
+                self.pending_jobs += 1;
+                self.ts.submit_text(kawoosh_systems::ts::TextJob {
+                    token,
+                    language,
+                    text,
+                });
+            }
             Msg::Walk { token, root } => {
                 if self.jobs_inline {
                     let result =
