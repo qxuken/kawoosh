@@ -232,6 +232,33 @@ function picker.search(it, columns)
   return table.concat(parts, "  ")
 end
 
+-- picker.widths(items, columns): a floor for each column that does
+-- not grow, from the widest cell among every item — an estimate from
+-- the mono glyph's width, since a cell's text is not measured here —
+-- so the columns are the same whichever rows the window shows and
+-- whatever the query kept. A `max` on the column caps it.
+function picker.widths(items, columns)
+  local out = {}
+  for j, c in ipairs(columns) do
+    if not c.grow then
+      -- The main and the dim piece are one cell: their widths add.
+      local main, dim = 0, 0
+      for _, it in ipairs(items) do
+        local m = tostring(it[c[1]] or "")
+        main = math.max(main, utf8.len(m) or #m)
+        if c.dim then
+          local d = tostring(it[c.dim] or "")
+          if d ~= "" then dim = math.max(dim, (utf8.len(d) or #d) + 2) end
+        end
+      end
+      local w = math.ceil((main + dim) * SIZE * 0.62)
+      if c.max then w = math.min(w, c.max) end
+      out[j] = w
+    end
+  end
+  return out
+end
+
 -- The positions inside piece `p`, as positions in its own text.
 local function lit_in(positions, p)
   local out = {}
@@ -253,9 +280,13 @@ end
 -- width =, grow = }, … }` — the rows are a grid, a cell per column
 -- holding the item's field (its `dim` field faint after it), the
 -- cells lined up: a column sits at its widest cell, at least `min`
--- wide, or at `width`, or `grow`s into the rest; the match is lit
--- where it falls (`picker.search`), and `item.can` ends the last
--- cell. With `opts.wrap` the text (the growing cell's) folds to its
+-- wide, or at `width`, or `grow`s into the rest; `opts.widths[j]` is
+-- a floor for column `j` too (`picker.widths`: the widest of every
+-- item, so the columns hold still as the window slides), a column's
+-- `share` capping it at that fraction of `opts.width`, the list's,
+-- so the growing column keeps room beside a preview; the match
+-- is lit where it falls (`picker.search`), and `item.can` ends the
+-- last cell. With `opts.wrap` the text (the growing cell's) folds to its
 -- width so the whole of a long path shows, `opts.lines(i)` saying how
 -- many lines row `i` takes (one, when not given).
 function picker.rows(ctx, hits, opts)
@@ -264,6 +295,7 @@ function picker.rows(ctx, hits, opts)
   local budget = opts.rows or #hits
   local lines_of = opts.lines or function() return 1 end
   local columns = opts.columns
+  local widths = opts.widths or {}
   local wrap = opts.wrap and "glyph" or "none"
   -- The window is a column that clips, and inside it the rows as tall
   -- as they are: `min_height = "fit"` is the floor kui compresses a
@@ -320,8 +352,10 @@ function picker.rows(ctx, hits, opts)
         if j == #columns and off then
           spans[#spans + 1] = { (#spans > 0 and "  " or "") .. it.can, color = t.danger }
         end
-        local cell = row { width = c.grow and "grow" or c.width or "fit", min_width = c.min, clip = true,
-          cross_align = "center" }
+        local floor = math.max(c.min or 0, widths[j] or 0)
+        if c.share and opts.width then floor = math.min(floor, math.floor(opts.width * c.share)) end
+        local cell = row { width = c.grow and "grow" or c.width or "fit", min_width = floor > 0 and floor or nil,
+          clip = true, cross_align = "center" }
         if #spans > 0 then
           cell[#cell + 1] = text(spans, { family = c.family, size = SIZE, wrap = c.grow and wrap or "none" })
         end
@@ -555,6 +589,7 @@ local function loaded(items, err)
   -- The name is what a match on a row lights and ranks by; the rest
   -- of the row (`search`) is looked in after it.
   P.wide = P.src.columns and kawoosh.matcher(wide) or nil
+  P.widths = P.src.columns and picker.widths(items, P.src.columns) or nil
   P.dirty = true
 end
 
@@ -703,7 +738,8 @@ kawoosh.view(VIEW, function(ctx)
   P.wrap = wrapping()
   -- The list's width in characters, for the wrap estimate: half the
   -- pane beside a preview, the whole of it without.
-  P.cols = math.floor(((preview_on and w / 2 or w) - 16) / (SIZE * 0.6))
+  P.list_w = preview_on and w / 2 or w
+  P.cols = math.floor((P.list_w - 16) / (SIZE * 0.6))
   local rows = math.max(math.floor((h - TITLE_H - ROW_H - 4) / ROW_H), 1)
   P.rows = rows
   if P.top > math.max(#P.hits, 1) then P.top = math.max(#P.hits, 1) end
@@ -729,7 +765,7 @@ kawoosh.view(VIEW, function(ctx)
   head[#head + 1] = field
   head[#head + 1] = text(count, { size = SIZE - 1, color = t.faint, wrap = "none" })
   local list = picker.rows(ctx, P.hits, { top = P.top, cursor = P.cursor, rows = rows, wrap = P.wrap, lines = lines_of,
-                                          columns = P.src.columns })
+                                          columns = P.src.columns, widths = P.widths, width = P.list_w })
   if #P.hits == 0 and not P.loading then
     list[#list + 1] = row { pad = { x = 8, y = 4 }, text((P.query ~= "" and "no matches") or P.src.empty or "nothing here", { size = SIZE, color = t.muted }) }
   end
@@ -1034,8 +1070,8 @@ picker.source("lines", {
 -- The rows' columns: the name with its first alias faint, the first
 -- key bound to it, and what it does — or why it cannot run here.
 local COMMAND_COLUMNS = {
-  { "text", dim = "alias", family = "mono", min = 200 },
-  { "key", family = "mono", muted = true, min = 120 },
+  { "text", dim = "alias", family = "mono", min = 160, max = 340, share = 0.36 },
+  { "key", family = "mono", muted = true, min = 100, max = 220, share = 0.22 },
   { "doc", grow = true },
 }
 

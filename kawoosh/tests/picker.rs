@@ -499,6 +499,29 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     let doc_x = cell_x(&d, "dir cd needs language:dir");
     assert!(doc_x > key_x + 100.0, "{doc_x} past the keys at {key_x}");
     assert_eq!(doc_x, cell_x(&d, "dir cd needs language:dir"));
+    // The columns hold still: sized from every item, not the window,
+    // so a page down and another query leave the key column where it
+    // was.
+    d.ctrl(&mut app, "u");
+    d.frame(&mut app);
+    let first = rows(&d)[0].clone();
+    d.key(&mut app, "pagedown", KeyMods::default());
+    d.key(&mut app, "pagedown", KeyMods::default());
+    d.frame(&mut app);
+    assert_ne!(rows(&d)[0], first, "the window slid");
+    let some_key = d
+        .core
+        .nodes()
+        .iter()
+        .find_map(|n| {
+            let t = n.text.as_deref()?;
+            (t.starts_with("n ") || t.starts_with("i ")).then(|| (t.to_string(), n.rect.x))
+        })
+        .expect("a key cell on the page");
+    assert_eq!(
+        some_key.1, key_x,
+        "the key column after a page: {some_key:?}"
+    );
     // A query the names do not match is looked for in the rest of the
     // row: an alias, a key, the doc.
     d.ctrl(&mut app, "u");
