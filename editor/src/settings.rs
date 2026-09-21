@@ -327,9 +327,9 @@ impl Settings {
         // whole of a long path; `<A-p>` and `<A-w>` in the picker flip
         // them for the session. `share` is the height the pane opens
         // at, as a fraction of the pane it splits, and `split` the
-        // list's share of the pane's width beside the preview; `<A-j>`
-        // `<A-k>` and `<A-h>` `<A-l>` move them for the session, and
-        // the divider between list and preview drags.
+        // list's share of the pane's width beside the preview; the
+        // pane keys `<A-J>` `<A-K>` and the picker's `<A-H>` `<A-L>`
+        // move them for the session, and both dividers drag.
         defaults.set("picker.preview", Setting::Bool(true));
         defaults.set("picker.wrap", Setting::Bool(false));
         defaults.set("picker.share", Setting::Float(0.5));

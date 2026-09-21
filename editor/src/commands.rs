@@ -2938,6 +2938,11 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<A-k>", "move line up"),
         ("<A-h>", "nudge left"),
         ("<A-l>", "nudge right"),
+        // Alt with Shift sizes the pane the way Alt moves the line.
+        ("<A-S-h>", "pane narrower"),
+        ("<A-S-l>", "pane wider"),
+        ("<A-S-j>", "pane shorter"),
+        ("<A-S-k>", "pane taller"),
         // Numbers: vim's, per selection.
         ("<C-a>", "increment"),
         ("<C-x>", "decrement"),
@@ -3084,6 +3089,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<A-k>", "move line up"),
         ("<A-h>", "nudge left"),
         ("<A-l>", "nudge right"),
+        ("<A-S-h>", "pane narrower"),
+        ("<A-S-l>", "pane wider"),
+        ("<A-S-j>", "pane shorter"),
+        ("<A-S-k>", "pane taller"),
         // The pane moves from insert mode too: the shifted spelling,
         // since `<C-h>` is a backspace here.
         ("<C-S-h>", "pane left"),

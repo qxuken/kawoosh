@@ -865,14 +865,18 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         },
     );
     // The pane's height and the list's width beside the preview:
-    // `<A-k>` makes the pane taller and `<A-l>` the list wider, each a
+    // `<A-K>` (the editor's pane key) makes the pane taller, the
+    // height kept as the setting, and `<A-L>` the list wider, a
     // setting for the session; the divider between them drags.
+    // ⌥⇧ with a letter: kui reports the letter with `shift` set, the
+    // binding's `<A-K>`.
     let alt = |name: &str, app: &mut Kawoosh, d: &mut Drive| {
         d.key(
             app,
             name,
             KeyMods {
                 alt: true,
+                shift: true,
                 ..Default::default()
             },
         );

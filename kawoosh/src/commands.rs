@@ -387,6 +387,26 @@ fn panes() -> Vec<ShellCommand> {
             Spec::new("pane down").doc("focus the pane below"),
             |k, _| k.focus_neighbour(SplitDir::V, true),
         ),
+        // `<A-H>` `<A-L>` `<A-J>` `<A-K>`: the focused pane's size, a
+        // twentieth of its split a step, COUNT steps — the nearest
+        // split of the axis moves, as its divider would under a drag;
+        // the dock's height when the dock has the keyboard.
+        cmd(
+            Spec::new("pane wider").doc("the focused pane wider, COUNT steps of a twentieth"),
+            |k, ctx| k.resize_pane(SplitDir::H, ctx.count as f32 * 0.05),
+        ),
+        cmd(
+            Spec::new("pane narrower").doc("the focused pane narrower, COUNT steps of a twentieth"),
+            |k, ctx| k.resize_pane(SplitDir::H, ctx.count as f32 * -0.05),
+        ),
+        cmd(
+            Spec::new("pane taller").doc("the focused pane taller, COUNT steps of a twentieth"),
+            |k, ctx| k.resize_pane(SplitDir::V, ctx.count as f32 * 0.05),
+        ),
+        cmd(
+            Spec::new("pane shorter").doc("the focused pane shorter, COUNT steps of a twentieth"),
+            |k, ctx| k.resize_pane(SplitDir::V, ctx.count as f32 * -0.05),
+        ),
         cmd(
             Spec::new("tab new")
                 .alias(&["tabnew", "tabe"])

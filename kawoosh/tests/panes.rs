@@ -247,6 +247,72 @@ fn a_click_in_a_pane_focuses_it() {
 
 /// A pane dragged by its title bar lands where it is let go: the middle
 /// of another pane trades places with it, an edge puts it beside; while
+/// `<A-H>` `<A-L>` `<A-J>` `<A-K>`: the focused pane's size by a
+/// twentieth of its split a step, a count multiplying, the nearest
+/// split of the axis the one that moves; from insert mode too; a
+/// lone axis says so; the dock's height when the dock has the keys.
+#[test]
+fn the_panes_resize_from_the_keyboard() {
+    let mut app = Kawoosh::new("t", "one");
+    let mut d = Drive::new(1000.0, 600.0);
+    d.frame(&mut app);
+    let alt = |d: &mut Drive, app: &mut Kawoosh, name: &str| {
+        d.key(
+            app,
+            name,
+            KeyMods {
+                alt: true,
+                shift: true,
+                ..Default::default()
+            },
+        );
+        d.frame(app);
+    };
+    alt(&mut d, &mut app, "l");
+    assert_eq!(app.ed.message, "no pane beside this one");
+    ctrl_w(&mut d, &mut app, "v");
+    d.frame(&mut app);
+    // 1 | 2, the keyboard on 2: wider takes from 1.
+    let w2 = app.layout.rects[&2].w;
+    alt(&mut d, &mut app, "l");
+    let wider = app.layout.rects[&2].w;
+    assert!((wider - w2 - 50.0).abs() < 2.0, "{wider} vs {w2}");
+    d.keys(&mut app, "3");
+    alt(&mut d, &mut app, "h");
+    let back = app.layout.rects[&2].w;
+    assert!(
+        (back - w2 + 100.0).abs() < 2.0,
+        "three steps back: {back} vs {w2}"
+    );
+    alt(&mut d, &mut app, "k");
+    assert_eq!(app.ed.message, "no pane above or below this one");
+    // 2 over 3: taller moves the nearest split, the vertical one, and
+    // the wide split stands.
+    ctrl_w(&mut d, &mut app, "s");
+    d.frame(&mut app);
+    let (h3, w3) = (app.layout.rects[&3].h, app.layout.rects[&3].w);
+    alt(&mut d, &mut app, "k");
+    assert!(app.layout.rects[&3].h > h3 + 20.0);
+    assert_eq!(app.layout.rects[&3].w, w3);
+    alt(&mut d, &mut app, "j");
+    assert!((app.layout.rects[&3].h - h3).abs() < 1.0);
+    // From insert mode.
+    d.keys(&mut app, "i");
+    alt(&mut d, &mut app, "k");
+    assert!(app.layout.rects[&3].h > h3 + 20.0);
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(app.ed.buffer_of(app.focused_view().unwrap()).text(), "one");
+    // The dock: its height, and no width to speak of.
+    ctrl_w(&mut d, &mut app, "d");
+    d.frame(&mut app);
+    assert!(app.layout.dock_focused);
+    let r = app.layout.dock_ratio;
+    alt(&mut d, &mut app, "k");
+    assert!((app.layout.dock_ratio - r - 0.05).abs() < 0.001);
+    alt(&mut d, &mut app, "l");
+    assert_eq!(app.ed.message, "the dock spans the window");
+}
+
 /// held, the drop is drawn over the pane under the pointer; let go
 /// elsewhere, nothing moves.
 #[test]

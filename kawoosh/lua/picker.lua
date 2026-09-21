@@ -34,10 +34,11 @@
 -- the list's width or cuts it — the `picker.preview` and `picker.wrap`
 -- settings, flipped for the session (`settings.lua` sets them for
 -- good). The pane opens at `picker.share` of the height and the list
--- takes `picker.split` of its width beside the preview: `<A-k>`
--- `<A-j>` make the pane taller and shorter, `<A-h>` `<A-l>` move the
--- divider between list and preview, which drags too — the session's,
--- as the two above. A source's own keys ride on the row: `<C-x>` in `buffers`
+-- takes `picker.split` of its width beside the preview: `<A-K>`
+-- `<A-J>` make the pane taller and shorter (the editor's own pane
+-- keys, the height they leave kept as the setting), `<A-H>` `<A-L>`
+-- move the divider between list and preview, which drags too — the
+-- session's, as the two above. A source's own keys ride on the row: `<C-x>` in `buffers`
 -- closes the row's buffer, asking first when it has unsaved changes.
 -- A source with `columns` draws its rows as a grid, the cells lined up
 -- (the commands: name, key, what it does). The pane is not kept by a
@@ -902,15 +903,9 @@ on("preview", function() kawoosh.opt("picker.preview", not previewing()) end,
   "show the cursor's row beside the list, or not (the `picker.preview` setting, for the session)")
 on("wrap", function() kawoosh.opt("picker.wrap", not wrapping()) end,
   "fold a row's text to the list's width, or cut it (the `picker.wrap` setting, for the session)")
--- The pane's height and the list's width, stepped: the settings for
--- the session, the pane resized at once.
-local function step_share(by)
-  local s = math.max(0.1, math.min(0.9, share() + by))
-  kawoosh.opt("picker.share", s)
-  kawoosh.view_open(VIEW, { share = s })
-end
-on("taller", function() step_share(0.05) end, "the pane taller (the `picker.share` setting, for the session)")
-on("shorter", function() step_share(-0.05) end, "the pane shorter (the `picker.share` setting, for the session)")
+-- The list's width beside the preview, stepped: the setting for the
+-- session. (The pane's height is the editor's `pane taller` and
+-- `pane shorter`, the height they leave kept as `picker.share`.)
 on("list wider", function() kawoosh.opt("picker.split", math.min(0.9, split() + 0.05)) end,
   "the list wider beside the preview (the `picker.split` setting, for the session)")
 on("list narrower", function() kawoosh.opt("picker.split", math.max(0.1, split() - 0.05)) end,
@@ -948,10 +943,8 @@ kawoosh.map("n", "G", "picker last", at)
 for _, mode in ipairs { "i", "n" } do
   kawoosh.map(mode, "<A-p>", "picker preview", at)
   kawoosh.map(mode, "<A-w>", "picker wrap", at)
-  kawoosh.map(mode, "<A-k>", "picker taller", at)
-  kawoosh.map(mode, "<A-j>", "picker shorter", at)
-  kawoosh.map(mode, "<A-l>", "picker list wider", at)
-  kawoosh.map(mode, "<A-h>", "picker list narrower", at)
+  kawoosh.map(mode, "<A-S-l>", "picker list wider", at)
+  kawoosh.map(mode, "<A-S-h>", "picker list narrower", at)
 end
 
 -- `:picker [SOURCE]`: bare, the smart one.

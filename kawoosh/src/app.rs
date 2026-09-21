@@ -757,6 +757,28 @@ impl Kawoosh {
             .send(kawoosh_systems::lsp::Cmd::Close { buffer: id });
     }
 
+    /// Resizes the focused pane by `by` along `dir`: the dock's share
+    /// when the dock has the keyboard (its height only), else the
+    /// tab's tree, the message saying when nothing in that axis holds
+    /// the pane.
+    pub(crate) fn resize_pane(&mut self, dir: SplitDir, by: f32) {
+        if self.layout.dock_focused && self.layout.dock_open && self.layout.dock.is_some() {
+            if dir == SplitDir::V {
+                self.layout.dock_ratio = (self.layout.dock_ratio + by).clamp(0.1, 0.9);
+            } else {
+                self.ed.message = "the dock spans the window".into();
+            }
+            return;
+        }
+        let focused = self.layout.focused();
+        if !self.layout.tab_mut().root.resize(focused, dir, by) {
+            self.ed.message = match dir {
+                SplitDir::H => "no pane beside this one".into(),
+                SplitDir::V => "no pane above or below this one".into(),
+            };
+        }
+    }
+
     /// Whether any pane still shows buffer `id`.
     pub(crate) fn buffer_shown(&self, id: BufferId) -> bool {
         self.layout
@@ -973,14 +995,22 @@ impl Kawoosh {
         if stroke.code == "escape" {
             self.ed.message.clear();
         }
-        // A ctrl-shift chord is the pane cluster's from every kind of
-        // pane (docs/design/keys.md): `<C-S-l>` moves right from a
-        // terminal too, whose pty could not tell it from `<C-l>`
-        // anyway. An editor pane has them in its own maps.
-        let chord = stroke.ctrl
+        // A ctrl-shift or alt-shift chord is the pane cluster's from
+        // every kind of pane (docs/design/keys.md): `<C-S-l>` moves
+        // right from a terminal too, whose pty could not tell it from
+        // `<C-l>` anyway, and `<A-S-l>` widens it. An editor pane has
+        // them in its own maps.
+        // A Lua view's field is a view of the editor's with the maps
+        // of one (the picker's `<A-S-l>` over the pane's), so the
+        // field takes the chord the way an editor pane does.
+        let in_field = self
+            .lua_name_of(self.layout.focused())
+            .is_some_and(|name| self.lua_field_focused(&name).is_some());
+        let chord = (stroke.ctrl || stroke.alt)
             && stroke.shift
             && self.focused_view().is_none()
             && self.ed.prompt_view().is_none()
+            && !in_field
             && self.pane_chord(&stroke);
         // The prompt takes the keys while it is open, from any pane —
         // the engine sends a key on any view to its field — so one

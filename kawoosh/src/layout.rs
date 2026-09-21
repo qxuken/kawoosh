@@ -127,6 +127,43 @@ impl Node {
         }
     }
 
+    /// Grows pane `target` by `by` (a fraction, negative to shrink)
+    /// along `dir`: the nearest split of that direction above it moves
+    /// its ratio the target's way, clamped as a drag is. False when
+    /// no split of the direction holds it — a lone pane, or a pane
+    /// beside nothing in that axis.
+    pub fn resize(&mut self, target: PaneId, dir: SplitDir, by: f32) -> bool {
+        match self {
+            Node::Pane(_) => false,
+            Node::Split {
+                dir: d,
+                ratio,
+                a,
+                b,
+            } => {
+                // The nearest split first: one deeper than this wins.
+                if a.contains(target) {
+                    if a.resize(target, dir, by) {
+                        return true;
+                    }
+                    if *d == dir {
+                        *ratio = (*ratio + by).clamp(0.1, 0.9);
+                        return true;
+                    }
+                } else if b.contains(target) {
+                    if b.resize(target, dir, by) {
+                        return true;
+                    }
+                    if *d == dir {
+                        *ratio = (*ratio - by).clamp(0.1, 0.9);
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+
     /// The split at `path` ("a"/"b" steps from the root).
     pub fn ratio_mut(&mut self, path: &str) -> Option<&mut f32> {
         match self {

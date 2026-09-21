@@ -50,6 +50,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>w` `<C-w>x` | next pane, swap with it |
 | `<C-w>h/j/k/l`, `<C-w>` + arrows | focus by direction |
 | `<C-S-h>` `<C-S-j>` `<C-S-k>` `<C-S-l>` | the same, straight — one spelling, from **every** pane and mode |
+| `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>` | the pane narrower, wider, shorter, taller by a twentieth of its split, COUNT steps — the nearest split of the axis moves, as its divider does under a drag; from every pane and mode; the dock's height when the dock has the keys |
 | `<C-w>t` `<leader>tn` | a new tab |
 | `<C-w>d` | the dock |
 | `<C-w>!` | a terminal below (`:!` runs a shell, so does this) |
@@ -66,11 +67,17 @@ free in a terminal pane and `<C-l>` stays the shell's clear. In insert
 mode `<C-h>` is a backspace and `<C-l>` would be text. So the shifted
 one is the only straight spelling — the plain `<C-hjkl>` is deliberately
 not a second one, since two spellings for one move by mode is what a
-hand trips on. `Kawoosh::pane_chord` runs a ctrl-shift chord's
-normal-mode binding from any pane without a view of its own — a
-terminal's, a Lua view's, the undo and history panes' — before the
-pane's own keys see it; editor panes have the chords in their normal and
-insert maps. `<C-w>` as a prefix stays the tmux-shaped way from those
+hand trips on. `Kawoosh::pane_chord` runs a ctrl-shift or alt-shift
+chord's normal-mode binding from any pane without a view of its own —
+a terminal's, a Lua view's, the undo and history panes' — before the
+pane's own keys see it, unless a Lua view's field has the keys, which
+is a view of the editor's and takes the chord through its own maps
+(the picker's `<A-S-l>` over the pane's); editor panes have the chords
+in their normal and insert maps. Sizing is Alt with Shift because Alt
+alone moves the selection (`<A-hjkl>`: the line, the indent) and Shift
+on it reads as the same motion made of the pane; a chord's letter
+under Shift is spelled upper-case, so a map writes `<A-S-l>` or
+`<A-L>`, never `<A-L>` meaning `<A-l>`. `<C-w>` as a prefix stays the tmux-shaped way from those
 panes (`<C-w>.` sends a literal `<C-w>` to the pty).
 
 ### Next and previous: `]x` / `[x`
@@ -149,8 +156,8 @@ Alt, not the composed character (⌥d arrives as `d`, not `∂`; kui's
 `keys.rs`), and the US-QWERTY letter at that position when the layout's
 is not ASCII. Under Alt kui strips every modifier from the key, Shift
 included, so the shift bit spells the letter's case: ⌥⇧j is `<A-J>`,
-which is what a map's `<A-S-j>` normalizes to — free, for a duplicate-
-lines pair if one is wanted.
+which is what a map's `<A-S-j>` normalizes to — the pane's size, in
+the panes table.
 
 ### Editing: vim's letters, and the few it lacks
 
@@ -245,8 +252,9 @@ it again, `<A-w>` folds a row's text to the list's width so the whole
 of a long path shows — the `picker.preview` and `picker.wrap`
 settings, flipped for the session (a `settings.lua` sets them for
 good). The pane opens at `picker.share` of the height and the list
-takes `picker.split` of the width beside the preview: `<A-k>` `<A-j>`
-make the pane taller and shorter, `<A-h>` `<A-l>` move the divider
+takes `picker.split` of the width beside the preview: the pane keys
+`<A-S-k>` `<A-S-j>` make the pane taller and shorter (the height they
+leave is kept as the setting), `<A-S-h>` `<A-S-l>` move the divider
 between list and preview, and both dividers drag — each change is the
 setting for the session, so the picker opens next where it was left.
 A source may put keys of its own on the row: `<C-x>` in the
