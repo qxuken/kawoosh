@@ -18,8 +18,9 @@
 -- Matching is `kawoosh.matcher` (fzy's scoring, in Rust), the
 -- ranking Lua's: `picker.rank(item, hit)` is the score plus the item's
 -- `boost`, and a config replaces it; an open buffer and a file opened
--- before are boosted, which is where the memory's rank (memory.md
--- D8) will plug in. A row with columns is matched on its name first
+-- before are boosted and a binary (`picker.binary`, by extension)
+-- held back, which is where the memory's rank (memory.md D8) will
+-- plug in. A row with columns is matched on its name first
 -- and on the rest of its text after.
 --
 -- The query is a field (kui.md D12): typing filters, `<Esc>` is normal
@@ -111,16 +112,37 @@ function picker.rank(item, hit)
   return hit.score + (item.boost or 0)
 end
 
--- The items boosted, and the boosted ones first, in their order — so
--- an empty query lists what the hands were in before the rest.
+-- A file that is not text, by its extension: fonts, images, sound,
+-- archives, what a build left — ranked under the rest, since a query
+-- for `font` wants the source that loads it before the `.ttf`.
+picker.binary = {
+  png = true, jpg = true, jpeg = true, gif = true, webp = true, ico = true, icns = true, bmp = true, tiff = true,
+  ttf = true, otf = true, woff = true, woff2 = true,
+  mp3 = true, wav = true, ogg = true, flac = true, mp4 = true, mov = true, webm = true,
+  zip = true, gz = true, tgz = true, bz2 = true, xz = true, zst = true, ["7z"] = true, tar = true, jar = true,
+  pdf = true, o = true, a = true, so = true, dylib = true, dll = true, exe = true, wasm = true, class = true,
+  pyc = true, db = true, sqlite = true, bin = true, dat = true,
+}
+local function is_binary(path)
+  local ext = path:match("%.([%w]+)$")
+  return ext ~= nil and picker.binary[ext:lower()] == true
+end
+
+-- The items boosted, and the boosted ones first, in their order, the
+-- binaries last — so an empty query lists what the hands were in
+-- before the rest, and the fonts and images after it.
 local function boosted(items)
   local by = boosts()
-  local first, rest = {}, {}
+  local first, rest, last = {}, {}, {}
   for _, it in ipairs(items) do
     if it.boost == nil and it.path and by[it.path] then it.boost = by[it.path] end
-    if it.boost and it.boost > 0 then first[#first + 1] = it else rest[#rest + 1] = it end
+    if it.boost == nil and it.path and is_binary(it.path) then it.boost = -0.5 end
+    if it.boost and it.boost > 0 then first[#first + 1] = it
+    elseif it.boost and it.boost < 0 then last[#last + 1] = it
+    else rest[#rest + 1] = it end
   end
   for _, it in ipairs(rest) do first[#first + 1] = it end
+  for _, it in ipairs(last) do first[#first + 1] = it end
   return first
 end
 

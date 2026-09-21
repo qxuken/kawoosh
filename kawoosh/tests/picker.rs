@@ -757,6 +757,8 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         )
         .unwrap();
     }
+    // A binary sits under the text files, matched or not.
+    std::fs::write(dir.join("many/f00.png"), "not text").unwrap();
     let long = format!("aaa/{}.txt", "b".repeat(180));
     std::fs::create_dir_all(dir.join("aaa")).unwrap();
     std::fs::write(dir.join(&long), "long\n").unwrap();
@@ -768,7 +770,15 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     d.frame(&mut app);
     d.frame(&mut app);
     let shown = rows(&d).len();
-    assert!(shown > 5 && shown < 44, "a window of the 44: {shown}");
+    assert!(shown > 5 && shown < 45, "a window of the 45: {shown}");
+    assert!(!rows(&d).contains(&"many/f00.png".to_string()), "the png is last, off the window");
+    d.keys(&mut app, "f00");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert_eq!(r[0], "many/f00.txt", "{r:?}");
+    assert_eq!(r.last().map(String::as_str), Some("many/f00.png"), "the binary under the text: {r:?}");
+    d.ctrl(&mut app, "u");
+    d.frame(&mut app);
     let (x, y, w, h) = d.rect_of("row README.md").expect("the first row");
     let state = |app: &mut Kawoosh| -> (usize, usize) {
         app.run_lua_source(
