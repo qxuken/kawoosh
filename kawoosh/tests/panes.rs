@@ -761,3 +761,68 @@ fn tabs_move_along_the_strip_and_switch_from_a_pane() {
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// A jump more than half a screen off puts its line in the middle, as
+/// vim does — a definition, a far search — while a step scrolls the
+/// least; `G` stops with the last line at the bottom.
+#[test]
+fn a_far_jump_lands_in_the_middle() {
+    let text: String = (1..=300).map(|i| format!("l{i}\n")).collect();
+    let mut app = Kawoosh::new("t", &text);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    let rows = app.ed.views[v].rows;
+    d.keys(&mut app, "150G");
+    d.frame(&mut app);
+    let top = app.ed.views[v].top;
+    assert!(
+        top <= 149 && 149 - top >= rows / 2 - 1,
+        "centred: top {top}, rows {rows}"
+    );
+    d.keys(&mut app, "G");
+    d.frame(&mut app);
+    let lines = app.ed.buffer_of(v).line_count();
+    let top = app.ed.views[v].top;
+    // The last line near the bottom (scrolloff's margin under it), not
+    // in the middle over half a screen of nothing.
+    assert!(top >= lines - rows && top <= lines - rows + 3, "top {top}");
+    // A step down from the top scrolls one line, not to the middle.
+    d.keys(&mut app, "gg");
+    d.frame(&mut app);
+    let step = rows - 3;
+    d.keys(&mut app, &format!("{step}j"));
+    d.frame(&mut app);
+    assert_eq!(app.ed.views[v].top, 1);
+}
+
+/// `:bd` goes back to the buffer the pane came from, where it was left
+/// — the file a definition jump left — not the first one listed at its
+/// top.
+#[test]
+fn buffer_delete_goes_back_where_it_was() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-bd-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (a, b, c) = (dir.join("a.txt"), dir.join("b.txt"), dir.join("c.txt"));
+    let text: String = (1..=100).map(|i| format!("l{i}\n")).collect();
+    for p in [&a, &b, &c] {
+        std::fs::write(p, &text).unwrap();
+    }
+    let mut app = Kawoosh::from_file(&c);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("e {}", a.display()));
+    d.keys(&mut app, "50G");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("e {}", b.display()));
+    ex(&mut d, &mut app, "bd");
+    let v = app.focused_view().unwrap();
+    assert_eq!(
+        app.ed.buffer_of(v).name,
+        "a.txt",
+        "back, not the first listed"
+    );
+    let head = app.ed.views[v].sels.primary().head;
+    assert_eq!(app.ed.buffer_of(v).line_of(head), 49, "where it was left");
+    std::fs::remove_dir_all(&dir).ok();
+}

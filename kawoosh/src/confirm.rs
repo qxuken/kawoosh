@@ -155,35 +155,60 @@ impl Kawoosh {
                         }
                     });
                 }
-                ui.with(
+                // A few short answers are a row of buttons at the right;
+                // more, or long ones — a server's code actions — a
+                // column, each with its digit, so none is squeezed to
+                // nothing. Either takes its contents' width: a grow row
+                // in a dialog sized to its contents got the title's.
+                let long = c
+                    .actions
+                    .iter()
+                    .map(|(l, _)| l.chars().count())
+                    .sum::<usize>()
+                    > 48;
+                let column = c.actions.len() > 3 || long;
+                let spec = if column {
+                    NodeSpec::column()
+                        .width(Sizing::Grow(1.0))
+                        .min_width(kui::Min::FIT)
+                        .gap(2.0)
+                } else {
                     NodeSpec::row()
                         .width(Sizing::Grow(1.0))
+                        .min_width(kui::Min::FIT)
                         .gap(6.0)
                         .main_align(Align::End)
-                        .cross_align(Align::Center),
-                    |ui| {
-                        for (i, (label, _)) in c.actions.iter().enumerate() {
-                            let on = i == c.chosen;
-                            ui.with_indexed(
-                                i as u64,
-                                NodeSpec::row()
-                                    .pad_xy(10.0, 3.0)
-                                    .radius(3.0)
-                                    .bg(if on { pal.select } else { pal.strip })
-                                    .hover_bg(pal.select)
-                                    .role(Role::Button)
-                                    .label(label.as_str())
-                                    .on_click(Value::map([
-                                        ("kind", "confirm".into()),
-                                        ("action", Value::Int(i as i64)),
-                                    ])),
-                                |ui| {
-                                    ui.text(label, TextStyle::new(small).color(pal.fg).nowrap());
-                                },
-                            );
+                        .cross_align(Align::Center)
+                };
+                ui.with(spec, |ui| {
+                    for (i, (label, _)) in c.actions.iter().enumerate() {
+                        let on = i == c.chosen;
+                        let mut button = NodeSpec::row()
+                            .pad_xy(10.0, 3.0)
+                            .gap(10.0)
+                            .radius(3.0)
+                            .bg(if on { pal.select } else { pal.strip })
+                            .hover_bg(pal.select)
+                            .role(Role::Button)
+                            .label(label.as_str())
+                            .on_click(Value::map([
+                                ("kind", "confirm".into()),
+                                ("action", Value::Int(i as i64)),
+                            ]));
+                        if column {
+                            button = button.width(Sizing::Grow(1.0)).min_width(kui::Min::FIT);
                         }
-                    },
-                );
+                        ui.with_indexed(i as u64, button, |ui| {
+                            if column && i < 9 {
+                                ui.text(
+                                    &(i + 1).to_string(),
+                                    TextStyle::new(small).color(pal.dim).nowrap(),
+                                );
+                            }
+                            ui.text(label, TextStyle::new(small).color(pal.fg).nowrap());
+                        });
+                    }
+                });
             },
         );
         ui.take_key_focus(sink);

@@ -213,3 +213,48 @@ fn the_chrome_follows_the_font_to_a_cap() {
     assert_eq!(d.rect_of("tab0").unwrap().3, 32.0);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// A confirm with many or long answers — a server's code actions —
+/// lists them as a column with their digits, each as wide as its label;
+/// a row of them was squeezed into the title's width, the labels gone.
+#[test]
+fn a_confirm_with_many_answers_lists_them() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("a", "text");
+    d.frame(&mut app);
+    let labels = [
+        "Generate a getter for the field",
+        "Generate a setter for the field",
+        "Convert to a named struct",
+        "Add #[derive] to the struct",
+        "Inline the type alias everywhere",
+    ];
+    app.confirm_with(kawoosh::confirm::Confirm {
+        title: "Code action".into(),
+        lines: Vec::new(),
+        actions: labels
+            .iter()
+            .map(|l| (l.to_string(), "echo picked".to_string()))
+            .collect(),
+        chosen: 0,
+    });
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let texts = d.confirm_texts();
+    for l in labels {
+        assert!(texts.iter().any(|t| t == l), "{l}: {texts:?}");
+    }
+    assert!(texts.iter().any(|t| t == "3"), "the digits");
+    let node = |text: &str| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| n.text.as_deref() == Some(text))
+            .map(|n| n.rect)
+            .unwrap()
+    };
+    let (a, b) = (node(labels[0]), node(labels[1]));
+    assert!(a.w > 150.0, "the label at its width: {a:?}");
+    assert!(b.y > a.y, "one under another");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

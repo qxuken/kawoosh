@@ -48,6 +48,9 @@ pub(crate) struct StripShape {
     pub columns: Vec<(u64, u32)>,
 }
 
+/// The most completion candidates the command line's strip draws.
+const CANDIDATES_SHOWN: usize = 200;
+
 impl Kawoosh {
     // ------------------------------------------------------------ view
 
@@ -296,23 +299,41 @@ impl Kawoosh {
                         .filter(|c| c.candidates.len() > 1 && (line_len > c.start || c.start > 0))
                         .map(|c| (c.candidates.clone(), c.index));
                     if let Some((cands, index)) = candidates {
-                        ui.with(
+                        // A strip that scrolls, each candidate at its own
+                        // width — squeezed to share the row, they were a
+                        // few letters each — the current one kept in view
+                        // as `<C-n>` `<C-p>` walk it.
+                        let mut current = None;
+                        ui.with_keyed(
+                            "candidates",
                             NodeSpec::row()
                                 .width(Sizing::Grow(1.0))
                                 .height(Sizing::Fixed(strip_h))
                                 .pad_xy(16.0, 0.0)
                                 .gap(12.0)
                                 .cross_align(Align::Center)
-                                .clip(),
+                                .scroll_x()
+                                .scrollbar(kui::ScrollbarMode::Hidden),
                             |ui| {
-                                for (i, c) in cands.iter().enumerate().take(40) {
-                                    let color = if i == index { pal.fg } else { pal.dim };
-                                    ui.with_indexed(i as u64, NodeSpec::row(), |ui| {
-                                        ui.text(c, TextStyle::new(small).color(color).nowrap());
-                                    });
+                                for (i, c) in cands.iter().enumerate().take(CANDIDATES_SHOWN) {
+                                    let on = i == index;
+                                    let color = if on { pal.fg } else { pal.dim };
+                                    let key = ui.with_indexed(
+                                        i as u64,
+                                        NodeSpec::row().min_width(kui::Min::FIT),
+                                        |ui| {
+                                            ui.text(c, TextStyle::new(small).color(color).nowrap());
+                                        },
+                                    );
+                                    if on {
+                                        current = Some(key);
+                                    }
                                 }
                             },
                         );
+                        if let Some(key) = current {
+                            ui.reveal(key);
+                        }
                     }
                 } else if !self.ed.message.is_empty() {
                     ui.text(&self.ed.message, TextStyle::new(small).color(pal.dim));
@@ -894,7 +915,16 @@ impl Kawoosh {
                 self.ed.buffers[buf_id].line_of(self.ed.views[view].sels.primary().head);
             let v = &mut self.ed.views[view];
             v.rows = rows_n;
-            if self.follow_caret || !focused {
+            // A jump far off the screen — more than half of it away, a
+            // definition, a search's next file — puts the line in the
+            // middle, as vim does; a step keeps the least scroll.
+            let far = head_line + rows_n / 2 < v.top || head_line >= v.top + rows_n + rows_n / 2;
+            // Not past the end: `G` shows the last line at the bottom.
+            if (self.follow_caret || !focused) && far {
+                v.top = head_line
+                    .saturating_sub(rows_n / 2)
+                    .min(line_count.saturating_sub(rows_n));
+            } else if self.follow_caret || !focused {
                 if head_line < v.top + scrolloff {
                     v.top = head_line.saturating_sub(scrolloff);
                 }

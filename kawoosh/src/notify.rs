@@ -958,11 +958,17 @@ impl Kawoosh {
         let pal = self.pal;
         let small = self.chrome.small;
         let max_w = (ui.viewport().w * 0.45).clamp(200.0, 560.0);
+        // On a panel of its own: it floats over the pane's text, and
+        // bare lines over code read as one tangle of the two.
         ui.with_keyed(
             "corner",
             NodeSpec::column()
                 .max_width(max_w)
                 .gap(6.0)
+                .pad_xy(10.0, 6.0)
+                .bg(pal.panel)
+                .border(1.0, pal.border)
+                .radius(6.0)
                 .cross_align(Align::End),
             |ui| {
                 // By source: a source's lines, then its name — with a

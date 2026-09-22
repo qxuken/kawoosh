@@ -81,6 +81,9 @@ pub struct Kawoosh {
     /// selections, `top` and `left` — so coming back lands there
     /// (`show_buffer`).
     pub(crate) last_pos: HashMap<BufferId, (kawoosh_editor::Selections, usize, f32)>,
+    /// The buffer each view showed before the one it shows — vim's
+    /// alternate, `#` — where `:bd` goes back to.
+    pub(crate) alternate: HashMap<ViewId, BufferId>,
     /// The `:` prompt's completion (`cmdline.rs`), while it is open.
     pub cmd_completion: Option<crate::cmdline::CmdCompletion>,
     /// The working directory: where terminals and `:e` relative paths
@@ -244,6 +247,7 @@ impl Kawoosh {
             histories: crate::history::Histories::new(wake.clone()),
             session_saved: false,
             last_pos: HashMap::new(),
+            alternate: HashMap::new(),
             cmd_completion: None,
             cwd: std::env::current_dir().unwrap_or_default(),
             dark: true,
@@ -812,7 +816,15 @@ impl Kawoosh {
             }
             self.discard(id);
         }
-        let next = match self.ed.listed_buffers().into_iter().find(|b| *b != id) {
+        // The buffer the view came from, where it was left, as vim's
+        // `:bd` goes back; else the first other one listed.
+        let listed = self.ed.listed_buffers();
+        let back = self
+            .focused_view()
+            .filter(|v| self.ed.views[*v].buffer == id)
+            .and_then(|v| self.alternate.get(&v).copied())
+            .filter(|b| *b != id && listed.contains(b));
+        let next = match back.or_else(|| listed.into_iter().find(|b| *b != id)) {
             Some(n) => n,
             None => self.ed.add_buffer(Buffer::new("*scratch*", "")),
         };
@@ -824,14 +836,18 @@ impl Kawoosh {
     /// `--wait` caller on it is answered, the server told, and what
     /// was remembered about it forgotten.
     pub(crate) fn delete_buffer(&mut self, id: BufferId, next: BufferId) {
-        for (_, view) in self.ed.views.iter_mut() {
-            if view.buffer == id {
-                view.buffer = next;
-                view.sels = Default::default();
-                view.top = 0;
-                view.left = 0.0;
-            }
+        // Each view on it shows `next` where it was last left there.
+        let on: Vec<ViewId> = self
+            .ed
+            .views
+            .iter()
+            .filter(|(_, v)| v.buffer == id)
+            .map(|(k, _)| k)
+            .collect();
+        for v in on {
+            self.show_buffer(v, next);
         }
+        self.alternate.retain(|_, b| *b != id);
         self.ed.remove_buffer(id);
         self.release_waiters(id);
         self.last_pos.remove(&id);
@@ -1072,6 +1088,7 @@ impl Kawoosh {
         }
         self.last_pos
             .insert(v.buffer, (v.sels.clone(), v.top, v.left));
+        self.alternate.insert(view, v.buffer);
         v.buffer = id;
         v.goal_col = None;
         match self.last_pos.get(&id) {

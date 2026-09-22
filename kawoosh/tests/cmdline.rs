@@ -341,3 +341,45 @@ fn the_prompt_is_a_field_with_modes_and_motions() {
     assert!(app.ed.prompt_view().is_none());
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// Many candidates are a strip that scrolls: each at its own width, not
+/// squeezed to share the row, and the current one in view as `<C-n>`
+/// walks past the edge.
+#[test]
+fn the_candidates_scroll_and_keep_their_width() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-cands-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 0..30 {
+        std::fs::write(dir.join(format!("a-rather-long-name-{i:02}.txt")), "").unwrap();
+    }
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "");
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.keys(&mut app, ":e ");
+    for _ in 0..24 {
+        d.ctrl(&mut app, "n");
+    }
+    for _ in 0..8 {
+        d.advance(0.05);
+        d.frame(&mut app);
+    }
+    let current = app
+        .cmd_completion
+        .as_ref()
+        .unwrap()
+        .current()
+        .unwrap()
+        .to_string();
+    let r = d
+        .core
+        .nodes()
+        .iter()
+        .find(|n| n.text.as_deref() == Some(current.as_str()))
+        .map(|n| n.rect)
+        .expect("the current candidate drawn");
+    assert!(r.w > 120.0, "at its own width: {r:?}");
+    assert!(r.x >= 0.0 && r.x + r.w <= 900.5, "in view: {r:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
