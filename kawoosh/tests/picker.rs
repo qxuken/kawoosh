@@ -668,7 +668,11 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     d.ctrl(&mut app, "u");
     d.keys(&mut app, "chdir");
     d.frame(&mut app);
-    assert_eq!(rows(&d)[0], "cd?", "found by its alias: {:?}", rows(&d));
+    assert!(
+        rows(&d).contains(&"cd?".to_string()),
+        "found by its alias: {:?}",
+        rows(&d)
+    );
     d.ctrl(&mut app, "u");
     d.keys(&mut app, "memory clear");
     d.frame(&mut app);

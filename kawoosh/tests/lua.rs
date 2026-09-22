@@ -1165,6 +1165,8 @@ fn a_split_listing_moves_on_alone() {
     let sub = format!("dir: {}", dir.join("sub").display());
     d.ctrl(&mut app, "w");
     d.keys(&mut app, "v");
+    // The new pane asks; `<CR>` is the same listing, vim's split.
+    d.key(&mut app, "enter", KeyMods::default());
     assert_eq!(names(&app), [top.clone(), top.clone()]);
     // The left pane's caret stays on `../`; the right pane's goes to
     // `sub/` and enters it.
@@ -1998,10 +2000,12 @@ fn listings_are_many_and_each_writes_its_own_directory() {
         &format!("dir {}", dir.join("a").display()),
     );
     assert_eq!(name(&app), a);
-    let n = app.ed.buffers.len();
     // The listing in two panes; the right one moves to b: a new buffer,
     // the left pane still on a.
     ex(&mut d, &mut app, "vsplit");
+    // The new pane asks; `<CR>` is the same listing, vim's split.
+    d.key(&mut app, "enter", KeyMods::default());
+    let n = app.ed.listed_buffers().len();
     assert_eq!(app.layout.visible_panes().len(), 2);
     ex(
         &mut d,
@@ -2009,7 +2013,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
         &format!("dir {}", dir.join("b").display()),
     );
     assert_eq!(name(&app), b);
-    assert_eq!(app.ed.buffers.len(), n + 1, "a buffer of its own");
+    assert_eq!(app.ed.listed_buffers().len(), n + 1, "a buffer of its own");
     d.ctrl(&mut app, "w");
     d.keys(&mut app, "h");
     assert_eq!(name(&app), a, "the other pane keeps its listing");
@@ -2135,7 +2139,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     // in place.
     ex(&mut d, &mut app, &format!("dir! {}", dir.display()));
     assert_eq!(name(&app), format!("dir: {}", dir.display()));
-    assert_eq!(app.ed.buffers.len(), n + 2);
+    assert_eq!(app.ed.listed_buffers().len(), n + 2);
     let names: Vec<String> = app.ed.buffers.values().map(|b| b.name.clone()).collect();
     assert!(names.contains(&a) && names.contains(&b), "{names:?}");
     ex(
@@ -2146,7 +2150,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     assert_eq!(name(&app), b, "reached by a substring of its name");
     d.keys(&mut app, "-");
     assert_eq!(name(&app), format!("dir: {}", dir.display()));
-    assert_eq!(app.ed.buffers.len(), n + 2, "moved on in place");
+    assert_eq!(app.ed.listed_buffers().len(), n + 2, "moved on in place");
     // The preview follows the keyboard from one listing to another.
     d.keys(&mut app, "j");
     d.ctrl(&mut app, "p");

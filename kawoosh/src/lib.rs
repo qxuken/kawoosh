@@ -18,6 +18,7 @@ pub mod harness;
 pub mod history;
 pub mod inspector;
 pub mod languages;
+pub mod launcher;
 pub mod layout;
 pub mod listing;
 pub mod logger;

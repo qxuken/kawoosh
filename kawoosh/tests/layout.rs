@@ -309,6 +309,8 @@ fn a_new_tab_follows_the_default_and_a_session_keeps_the_kind() {
     ctrl_w(&mut d, &mut app, "v");
     ex(&mut d, &mut app, &format!("e {}", a.display()));
     ctrl_w(&mut d, &mut app, "s");
+    // The split asks; `<CR>` is the same buffer.
+    d.press(&mut app, "<CR>");
     ctrl_w(&mut d, &mut app, ">");
     assert_eq!(
         columns(&app).iter().map(|c| c.1).collect::<Vec<_>>(),

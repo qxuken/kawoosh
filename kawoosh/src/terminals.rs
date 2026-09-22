@@ -317,7 +317,7 @@ impl Kawoosh {
         if self.opened_by_plugin(path) {
             return;
         }
-        if self.focused_view().is_none() {
+        if self.focused_view().is_none() && self.claim_launcher().is_none() {
             // From a terminal: prefer an editor pane already on screen.
             let editor_pane = self
                 .layout
@@ -363,7 +363,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 };
                 let cwd = k.cwd.clone();
                 if let Some(t) = k.spawn_terminal(cmd.as_deref(), Some(&cwd)) {
-                    k.layout.split(SplitDir::V, Content::Terminal(t));
+                    k.fill_or_split(SplitDir::V, Content::Terminal(t));
                 }
             },
         ),

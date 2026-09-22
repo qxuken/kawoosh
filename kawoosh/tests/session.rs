@@ -36,6 +36,8 @@ fn a_session_saves_and_restores_panes_files_and_carets() {
     ex(&mut d, &mut app, &format!("e {}", b.display()));
     d.keys(&mut app, "j");
     ex(&mut d, &mut app, "tabnew");
+    // The new tab asks what it is for; `<Esc>` is a scratch.
+    d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "term");
     // From a terminal pane the command line opens with <C-w>:.
     d.ctrl(&mut app, "w");

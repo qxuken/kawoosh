@@ -324,6 +324,12 @@ impl Settings {
         defaults.set("layout.column_width", Setting::Str("half".into()));
         defaults.set("layout.gap", Setting::Int(4));
         defaults.set("layout.scroll.center", Setting::Str("never".into()));
+        // What a pane made bare is (docs/design/launcher.md): a split
+        // (`<C-w>v`, `:vsplit`) and a tab (`:tabnew`) without a path —
+        // `launcher` (asks), `same` (the buffer split from, vim's),
+        // `scratch`, `terminal`, `dir` (the directory as a listing).
+        defaults.set("layout.new_pane", Setting::Str("launcher".into()));
+        defaults.set("layout.new_tab", Setting::Str("launcher".into()));
         // The memory (docs/design/memory.md): days a moment — a file
         // attended, with its history and draft — may go unattended
         // before it is forgotten; 0 keeps every row.
@@ -647,6 +653,8 @@ mod tests {
                 "layout.column_width",
                 "layout.default",
                 "layout.gap",
+                "layout.new_pane",
+                "layout.new_tab",
                 "layout.scroll.center",
                 "leader",
                 "memory.idle_secs",

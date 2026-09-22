@@ -347,8 +347,19 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   `:map` itself binds) is a `*maps*` pane: each mode's bindings, keys
   then the command line and its conditions; `:map list i` one mode,
   `:map list <leader>c` the keys under a prefix.
-- **The launcher pane** — open, design first [use 2026-09-22]; step
-  14. A pane made without content named for it — `<C-w>v` `<C-w>s`,
+- **The launcher pane** — done 2026-09-23 [use 2026-09-22]; step 14
+  ([launcher.md](launcher.md)). Built as the note decided, the four
+  open questions the user's: `<Esc>` a scratch, `layout.new_pane` and
+  `layout.new_tab` with five words each (`launcher`, `same`, `scratch`,
+  `terminal`, `dir`), none on an existing pane, nothing kept by a
+  session. The engine keeps the pane being made (`launcher.rs`) and
+  fills it with whatever would be shown in the focused pane — a pick,
+  `:e`, a pin, `:term`, a tool — so `launcher.lua`'s picks are the
+  ordinary calls; `:` on an empty query is the command line, since
+  `<Esc>` leaves no normal mode to type it from. On the way, an engine
+  gap: a typing key bound in insert mode under a condition ate the key
+  where the condition failed; it types now. `kawoosh/tests/launcher.rs`.
+  What the roadmap said before it was built: A pane made without content named for it — `<C-w>v` `<C-w>s`,
   `:vsplit` and `:split` bare, a new tab — opens as a launcher rather
   than on the buffer it was split from, as vim's does today
   (`open_split`, "on PATH or the same buffer"). A pane made *for*
@@ -941,14 +952,18 @@ then breadth.
     moving the status block is what frees the strip.~~ Landed
     2026-09-23 (`kawoosh/src/chrome.rs`, the dock as a `Tab`, kui's F82);
     see the panes track.
-14. **The launcher pane**: a short note first
+14. ~~**The launcher pane**: a short note first
     (`docs/design/launcher.md` — `<Esc>`, the setting for the vim
     habit, a launcher on an existing pane, sessions), then the pane:
     the picker drawn in a new pane, its sections the existing sources
     plus *here* and whatever a plugin registers, a pick replacing it
     in place; `view_open` into the pane being made. After the chrome
     because a new tab opens on one too, and the tab strip should be
-    able to name it.
+    able to name it.~~ Landed 2026-09-23 ([launcher.md](launcher.md),
+    `kawoosh/src/launcher.rs`, `kawoosh/lua/launcher.lua`); the door
+    was not `view_open` into the new pane but the engine filling the
+    pane being made with whatever would go in the focused one. See the
+    panes track.
 15. **The terminal, round two**: OSC 7 into `Terminal::cwd` (with the
     process's cwd as the fallback) and the session keeping and
     restoring a terminal's shell and cwd; OSC 133's prompt marks in

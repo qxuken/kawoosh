@@ -113,6 +113,9 @@ pub struct Kawoosh {
     /// The `lua:NAME` fact published for the focused Lua view, to be
     /// taken back when the keys leave it (`sync_facts`).
     pub(crate) lua_fact: Option<String>,
+    /// The pane being made, while a launcher asks what it is for
+    /// (`launcher.rs`).
+    pub launcher: Option<crate::launcher::Launcher>,
     /// A devtools tab to show on the next frame — `:syntax_tree` asks
     /// for the syntax tab. Once, not every frame: kui's
     /// `set_devtools_tab` is edge-triggered, so a standing request would
@@ -265,6 +268,7 @@ impl Kawoosh {
             nodes: Default::default(),
             keys_help: None,
             lua_fact: None,
+            launcher: None,
             show_tab: None,
             tab_shown: None,
             settings_default_open: false,
@@ -1074,7 +1078,7 @@ impl Kawoosh {
         let Some(id) = self.buffer_for(path) else {
             return;
         };
-        match self.focused_view() {
+        match self.focused_view().or_else(|| self.claim_launcher()) {
             Some(v) => self.show_buffer(v, id),
             None => {
                 let v = self.ed.add_view(id);

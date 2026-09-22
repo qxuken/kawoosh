@@ -437,7 +437,7 @@ impl Kawoosh {
                     self.last_pos.remove(&id);
                     return;
                 }
-                match self.focused_view() {
+                match self.focused_view().or_else(|| self.claim_launcher()) {
                     Some(v) => self.show_buffer(v, id),
                     None => {
                         let v = self.ed.add_view(id);
@@ -468,7 +468,7 @@ impl Kawoosh {
                 if !self.split_for(split.as_deref(), Some(id)) {
                     return;
                 }
-                match self.focused_view() {
+                match self.focused_view().or_else(|| self.claim_launcher()) {
                     Some(v) => self.show_buffer(v, id),
                     None => {
                         // From a pane without a view — a Lua pane's —
@@ -1059,7 +1059,7 @@ impl Kawoosh {
                 self.layout.set_dock(p);
             }
         } else {
-            self.layout.split(SplitDir::V, Content::Terminal(t));
+            self.fill_or_split(SplitDir::V, Content::Terminal(t));
         }
     }
 
@@ -1170,6 +1170,8 @@ impl Kawoosh {
                     None => Value::Null,
                 },
             ),
+            // A launcher's: the buffer the pane was split from.
+            ("origin", self.launcher_origin(pane)),
         ]);
         let tag = Value::map([
             ("kind", "luapane".into()),

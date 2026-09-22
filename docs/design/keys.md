@@ -45,7 +45,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 
 | keys | what |
 |---|---|
-| `<C-w>v` `<C-w>s` | split beside, below |
+| `<C-w>v` `<C-w>s` | split beside, below — the new pane a launcher (`layout.new_pane`; launcher.md) |
 | `<C-w>q` `<C-w>c` `<C-w>o` | close, close, only |
 | `<C-w>w` `<C-w>x` | next pane, swap with it |
 | `<C-w>h/j/k/l`, `<C-w>` + arrows | focus by direction |

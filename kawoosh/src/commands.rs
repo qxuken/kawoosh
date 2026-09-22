@@ -55,6 +55,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::cmdline::commands());
     v.extend(crate::nodes::commands());
     v.extend(crate::whichkey::commands());
+    v.extend(crate::launcher::commands());
     v
 }
 
@@ -262,19 +263,15 @@ impl Kawoosh {
             .or_else(|| self.ed.views.contains_key(ctx.view).then_some(ctx.view))
     }
 
+    /// `:vsplit` / `:split`: on PATH, else a pane made bare — what
+    /// `layout.new_pane` says (`launcher.rs`).
     fn open_split(&mut self, dir: SplitDir, path: Option<&Path>) {
-        let buffer = match path {
-            Some(p) => match self.buffer_for(p) {
-                Some(id) => id,
-                None => return,
-            },
-            None => match self.focused_view() {
-                Some(v) => self.ed.views[v].buffer,
-                None => match self.ed.listed_buffers().first().copied() {
-                    Some(id) => id,
-                    None => return,
-                },
-            },
+        let Some(p) = path else {
+            self.bare_pane(crate::launcher::Place::Split(dir));
+            return;
+        };
+        let Some(buffer) = self.buffer_for(p) else {
+            return;
         };
         let nv = self.ed.add_view(buffer);
         if let Some(v) = self.focused_view()
@@ -450,14 +447,14 @@ fn panes() -> Vec<ShellCommand> {
             Spec::new("vsplit")
                 .alias(&["vs"])
                 .args(Args::new(&[ArgKind::Path]))
-                .doc("split the pane beside, on PATH or the same buffer"),
+                .doc("split the pane beside, on PATH or as layout.new_pane says (a launcher)"),
             |k, ctx| k.open_split(SplitDir::H, path_arg(ctx).as_deref()),
         ),
         cmd(
             Spec::new("split")
                 .alias(&["sp"])
                 .args(Args::new(&[ArgKind::Path]))
-                .doc("split the pane below, on PATH or the same buffer"),
+                .doc("split the pane below, on PATH or as layout.new_pane says (a launcher)"),
             |k, ctx| k.open_split(SplitDir::V, path_arg(ctx).as_deref()),
         ),
         // `:enew` shows a fresh scratch in the focused pane; `:new`
@@ -470,7 +467,7 @@ fn panes() -> Vec<ShellCommand> {
                 .doc("a fresh scratch in the focused pane"),
             |k, _| {
                 let id = k.ed.add_buffer(Buffer::new("*scratch*", ""));
-                match k.focused_view() {
+                match k.focused_view().or_else(|| k.claim_launcher()) {
                     Some(v) => k.show_buffer(v, id),
                     None => {
                         let v = k.ed.add_view(id);
@@ -701,16 +698,15 @@ fn panes() -> Vec<ShellCommand> {
             Spec::new("tab new")
                 .alias(&["tabnew", "tabe"])
                 .args(Args::new(&[ArgKind::Path]))
-                .doc("a new tab, on PATH or a scratch"),
-            |k, ctx| {
-                let buffer = match path_arg(ctx) {
-                    Some(p) => k.buffer_for(&p),
-                    None => Some(k.ed.add_buffer(Buffer::new("*scratch*", ""))),
-                };
-                if let Some(id) = buffer {
-                    let v = k.ed.add_view(id);
-                    k.layout.new_tab(Content::Editor(v));
+                .doc("a new tab, on PATH or as layout.new_tab says (a launcher)"),
+            |k, ctx| match path_arg(ctx) {
+                Some(p) => {
+                    if let Some(id) = k.buffer_for(&p) {
+                        let v = k.ed.add_view(id);
+                        k.layout.new_tab(Content::Editor(v));
+                    }
                 }
+                None => k.bare_pane(crate::launcher::Place::Tab),
             },
         ),
         cmd(

@@ -185,7 +185,9 @@ end
 -- what `fn` returns — a kui table tree (row, column, text, edit,
 -- button, ...). `fn(ctx)` gets { pane = id, focused = bool, width =,
 -- height =, share = (the pane's fraction of the split it is in, nil
--- when it is the whole window), env = kui's env }. Events from the tree's on_click / on_key
+-- when it is the whole window), origin = (a new pane's launcher: the
+-- buffer it was split from, `{ buffer =, name =, path = }`), env =
+-- kui's env }. Events from the tree's on_click / on_key
 -- payloads reach `on_event(ev)`. `opts.session = false` keeps the view
 -- out of a session: a picker is asked for again, not brought back.
 function kawoosh.view(name, fn, on_event, opts)
@@ -484,7 +486,8 @@ function view(env, slot)
   -- one-line input drawn through the editor (kui.md Decision 12), the
   -- node to put in the tree; `ctx.field_text("q")` is its line.
   local ctx = { pane = pane, focused = params.focused, width = params.width,
-                height = params.height, share = params.share, env = env, name = name }
+                height = params.height, share = params.share, origin = params.origin, env = env,
+                name = name }
   ctx.field = function(opts) return field_node(name, env, opts) end
   ctx.field_text = function(field) return kawoosh.field_text(name, field) end
   local ok, tree = pcall(fn, ctx)

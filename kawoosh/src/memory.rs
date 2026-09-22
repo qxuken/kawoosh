@@ -1160,7 +1160,8 @@ impl Kawoosh {
                 // pane that was, however long ago (2026-09-22). From
                 // the memory pane itself there is no view to take, so
                 // `back` stands and the row opens where it came from.
-                if let Some(v) = self.focused_view() {
+                // From the launcher, the new pane is the one.
+                if let Some(v) = self.focused_view().or_else(|| self.claim_launcher()) {
                     self.memory_pane.back = Some(v);
                 }
                 self.open_subject(&key, &meta);
