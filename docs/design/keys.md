@@ -50,10 +50,12 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>w` `<C-w>x` | next pane, swap with it |
 | `<C-w>h/j/k/l`, `<C-w>` + arrows | focus by direction |
 | `<C-S-h>` `<C-S-j>` `<C-S-k>` `<C-S-l>` | the same, straight — one spelling, from **every** pane and mode |
-| `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>` | the pane narrower, wider, shorter, taller by a twentieth of its split, COUNT steps — the nearest split of the axis moves, as its divider does under a drag; from every pane and mode; the dock's height when the dock has the keys |
-| `<C-w>t` `<leader>tn` | a new tab (a tree, or a strip under `layout.default`) |
+| `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>`, and vim's `<C-w><` `<C-w>>` `<C-w>-` `<C-w>+` | the pane narrower, wider, shorter, taller by a twentieth of its split, COUNT steps — the nearest split of the axis moves, as its divider does under a drag; in a strip the width pair steps the column through the presets instead; from every pane and mode; the dock's height when the dock has the keys |
+| `<C-w>H` `<C-w>L` `<C-w>J` `<C-w>K` | carry the pane a place, COUNT places: in a strip its column along the ribbon (`H` `L`) or the pane inside its column's stack (`J` `K`), in a tree past the neighbour on that side — vim's "move to the far side", read as one step |
+| `<C-1>`…`<C-9>` | the Nth column of a strip (the Nth pane of a tree), the last when there are fewer — `:pane goto N` |
+| `zs` `ze` `zz` | the focused column against the viewport's left edge, its right edge, or in the middle (`:strip left` / `right` / `center`) — vim's horizontal scrolling, read on the ribbon |
+| `<C-w>t` `<leader>tn` | a new tab, of the kind `layout.default` names (the strip) |
 | `:layout` `<leader>tl` | the tab flipped between a tree of splits and a strip of columns ([scrolling-tab.md](scrolling-tab.md)); `:layout scroll` / `:layout tree` name the kind |
-| `<C-w>H` `<C-w>L` | in a strip, the focused column one place left / right, COUNT places; in a tree, a message that says `:layout scroll` |
 | `<C-w>d` | the dock |
 | `<C-w>!` | a terminal below (`:!` runs a shell, so does this) |
 | `<C-w>n` | the keyboard onto the toasts |
@@ -63,20 +65,23 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `]T` `[T` `:tabmove` | move the tab along the strip |
 | `<leader>tq` | close the tab |
 
-In a scrolling tab the same keys are read on the strip's axis
+A tab is a strip of columns by default (`layout.default`, the window's
+own tab included), and the same keys are read on its axis
 (scrolling-tab.md Decision 2): `<C-w>v` is a new column after the
 focused one at `layout.column_width`, `<C-w>s` a split below inside the
 column, `<C-w>h` / `<C-w>l` the column before / after by index — the
-pane in it at the focused pane's row, else its top — with the viewport
-gliding to show it, `<C-w>j` / `<C-w>k` the pane above / below inside
-the column, `<A-S-h>` / `<A-S-l>` the column's width to the next preset
+pane in it at the focused pane's row, else its top — the viewport
+following it, `<C-w>j` / `<C-w>k` the pane above / below inside the
+column, `<A-S-h>` / `<A-S-l>` the column's width to the next preset
 down / up (third, half, two-thirds, full; a dragged width snaps to the
-nearest first), and closing a column's last pane takes the column, the
+nearest first), `<C-w>H` / `<C-w>L` the column a place along the
+ribbon, and closing a column's last pane takes the column, the
 keyboard to the one before. The status line shows the columns as
 `▯▮▯`, the focused one filled.
 
 The shifted chord is the wezterm habit and the reason it works
-everywhere: a pty cannot tell `<C-S-l>` from `<C-l>` (the legacy encoding
+everywhere (the same goes for `<C-1>`…`<C-9>`, which no pty can encode
+either): a pty cannot tell `<C-S-l>` from `<C-l>` (the legacy encoding
 has no room for shift on a control letter), so the shifted spelling is
 free in a terminal pane and `<C-l>` stays the shell's clear. In insert
 mode `<C-h>` is a backspace and `<C-l>` would be text. So the shifted
@@ -88,15 +93,14 @@ sees it; every other pane without a view reaches the chords through
 pane mode (below); a Lua view's field is a view of the editor's and
 takes the chord through its own maps (the picker's `<A-S-l>` over the
 pane's); editor panes have the chords in their normal and insert
-maps. Alt with Shift *carries* because Alt
-alone carries the selection (`<A-hjkl>`: the line, the indent) and
-Shift on it reads as the same motion made of the pane — sizing, which
-had these four until 2026-09-22, is under `<C-w>` with vim's own
-`<` `>` `-` `+`, where a hand looking for it tries first. A chord's
-letter under Shift is spelled upper-case, so a map writes `<A-S-l>` or
-`<A-L>`, never `<A-L>` meaning `<A-l>`. The picker keeps all four for
-itself while it is up (`picker.lua`): a picker is a pane one sizes,
-not one carried along a ribbon. `<C-w>` as a prefix stays the tmux-shaped way from those
+maps. Sizing is Alt with Shift because Alt
+alone moves the selection (`<A-hjkl>`: the line, the indent), Shift
+on it reads as the same motion made of the pane, and it is the pair a
+hand reaches for oftenest — no prefix in the way. Vim's `<C-w><` `>`
+`-` `+` are the same commands for the hand that tries those first
+(2026-09-22), and carrying a pane is `<C-w>HJKL`, where vim puts it.
+A chord's letter under Shift is spelled upper-case, so a map writes
+`<A-S-l>` or `<A-L>`, never `<A-L>` meaning `<A-l>`. `<C-w>` as a prefix stays the tmux-shaped way from those
 panes (`<C-w>.` sends a literal `<C-w>` to the pty).
 
 ### Panes without a view: pane mode
@@ -421,7 +425,10 @@ so that nothing else takes the key meanwhile.
   nothing anywhere else, rather than under `,`, which keeps the primary
   selection.
 - **No `<C-9>`/`<C-0>` tab moves, no workspace switching.** The wezterm
-  ones; a tab moves by `]T` `[T` and `:tabmove` (2026-09-22).
+  ones; a tab moves by `]T` `[T` and `:tabmove` (2026-09-22). `<C-N>`
+  is the Nth *column* instead (2026-09-22): the ribbon is what grows
+  past what the eye holds, and the tab strip is a dozen characters
+  wide at the top of the window.
 - **No `<D-v>` in normal mode.** `paste clipboard` types the clipboard's
   answer as insert mode would; in normal mode `p` puts the register,
   which every yank also puts on the clipboard. The register is the

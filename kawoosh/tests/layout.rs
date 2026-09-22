@@ -125,13 +125,12 @@ fn a_strip_scrolls_to_the_focus_and_reads_the_trees_keys_on_its_axis() {
     assert_eq!(app.layout.focused(), 2);
     assert_eq!(app.ed.message, "column 3 of 4");
     settle(&mut d, &mut app);
-    // `<A-S-h>` is the same move without the prefix.
-    d.press(&mut app, "<A-S-h>");
+    ctrl_w(&mut d, &mut app, "H");
     assert_eq!(app.layout.visible_panes(), [1, 5, 2, 3, 4]);
     settle(&mut d, &mut app);
-    d.press(&mut app, "<A-S-h>");
+    ctrl_w(&mut d, &mut app, "H");
     settle(&mut d, &mut app);
-    d.press(&mut app, "<A-S-h>");
+    ctrl_w(&mut d, &mut app, "H");
     assert_eq!(app.ed.message, "nowhere further left");
     settle(&mut d, &mut app);
     // `<C-w>>` steps the width through the presets, and says where it
@@ -427,26 +426,27 @@ fn the_keyboard_jumps_to_a_column_moves_panes_and_aligns_the_view() {
     settle(&mut d, &mut app);
     let r = app.layout.rects[&2];
     assert!((r.x - (vw - r.w) / 2.0).abs() < 2.0, "in the middle: {r:?}");
-    // `<A-S-hjkl>` carries the pane: h and l the column along the
-    // ribbon, j and k the pane inside its column's stack.
+    // `<C-w>HJKL` carry the pane: H and L the column along the ribbon,
+    // J and K the pane inside its column's stack.
     d.press(&mut app, "<C-4>");
     settle(&mut d, &mut app);
-    d.press(&mut app, "<A-S-h>");
+    ctrl_w(&mut d, &mut app, "H");
     assert_eq!(app.layout.visible_panes(), [1, 2, 4, 3]);
     assert_eq!(app.ed.message, "column 3 of 4");
     settle(&mut d, &mut app);
-    d.press(&mut app, "2<A-S-h>");
+    d.press(&mut app, "2");
+    ctrl_w(&mut d, &mut app, "H");
     assert_eq!(app.layout.visible_panes(), [4, 1, 2, 3]);
     settle(&mut d, &mut app);
     ctrl_w(&mut d, &mut app, "s");
     assert_eq!(columns(&app)[0].0, [4, 5]);
     assert_eq!(app.layout.focused(), 5);
-    d.press(&mut app, "<A-S-k>");
+    ctrl_w(&mut d, &mut app, "K");
     assert_eq!(columns(&app)[0].0, [5, 4], "up the stack");
     assert_eq!(app.layout.focused(), 5, "the pane keeps the keyboard");
-    d.press(&mut app, "<A-S-k>");
+    ctrl_w(&mut d, &mut app, "K");
     assert_eq!(app.ed.message, "nothing above to trade with");
-    d.press(&mut app, "<A-S-j>");
+    ctrl_w(&mut d, &mut app, "J");
     assert_eq!(columns(&app)[0].0, [4, 5], "and back down");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }

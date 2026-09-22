@@ -2938,13 +2938,13 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<A-k>", "move line up"),
         ("<A-h>", "nudge left"),
         ("<A-l>", "nudge right"),
-        // Alt with Shift carries the pane the way Alt carries the line:
-        // on a strip's axis that is its column along the ribbon
-        // (2026-09-22). Sizing is vim's `<C-w>` family below.
-        ("<A-S-h>", "pane move left"),
-        ("<A-S-l>", "pane move right"),
-        ("<A-S-j>", "pane move down"),
-        ("<A-S-k>", "pane move up"),
+        // Alt with Shift sizes the pane the way Alt moves the line —
+        // the fast pair, no prefix. Carrying a pane is `<C-w>HJKL`
+        // below, where vim puts it.
+        ("<A-S-h>", "pane narrower"),
+        ("<A-S-l>", "pane wider"),
+        ("<A-S-j>", "pane shorter"),
+        ("<A-S-k>", "pane taller"),
         // Numbers: vim's, per selection.
         ("<C-a>", "increment"),
         ("<C-x>", "decrement"),
@@ -2984,8 +2984,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w>L", "pane move right"),
         ("<C-w>J", "pane move down"),
         ("<C-w>K", "pane move up"),
-        // Sizing, vim's own: `<` `>` the width, `-` `+` the height. In
-        // a strip `<` `>` step the column through the width presets.
+        // Sizing again, vim's own spelling: `<` `>` the width, `-` `+`
+        // the height, beside the `<A-S-…>` chords that need no prefix.
         ("<C-w><", "pane narrower"),
         ("<C-w>>", "pane wider"),
         ("<C-w>-", "pane shorter"),
@@ -3217,10 +3217,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<A-k>", "move line up"),
         ("<A-h>", "nudge left"),
         ("<A-l>", "nudge right"),
-        ("<A-S-h>", "pane move left"),
-        ("<A-S-l>", "pane move right"),
-        ("<A-S-j>", "pane move down"),
-        ("<A-S-k>", "pane move up"),
+        ("<A-S-h>", "pane narrower"),
+        ("<A-S-l>", "pane wider"),
+        ("<A-S-j>", "pane shorter"),
+        ("<A-S-k>", "pane taller"),
         // The pane moves from insert mode too: the shifted spelling,
         // since `<C-h>` is a backspace here.
         ("<C-S-h>", "pane left"),

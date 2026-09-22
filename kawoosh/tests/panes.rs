@@ -251,11 +251,11 @@ fn a_click_in_a_pane_focuses_it() {
 
 /// A pane dragged by its title bar lands where it is let go: the middle
 /// of another pane trades places with it, an edge puts it beside; while
-/// `<C-w><` `<C-w>>` `<C-w>-` `<C-w>+` (vim's sizing family, which
-/// `<A-S-…>` gave up to the moves on 2026-09-22): the focused pane's
-/// size by a twentieth of its split a step, a count multiplying, the
-/// nearest split of the axis the one that moves; a lone axis says so;
-/// the dock's height when the dock has the keys.
+/// `<A-H>` `<A-L>` `<A-J>` `<A-K>` (and vim's `<C-w><` `>` `-` `+`,
+/// the same commands): the focused pane's size by a twentieth of its
+/// split a step, a count multiplying, the nearest split of the axis the
+/// one that moves; from insert mode too; a lone axis says so; the
+/// dock's height when the dock has the keys.
 #[test]
 fn the_panes_resize_from_the_keyboard() {
     let mut app = Kawoosh::new("t", "one");
@@ -265,17 +265,16 @@ fn the_panes_resize_from_the_keyboard() {
     // strip since 2026-09-22): these are the tree's own dividers,
     // rects and drags.
     ex(&mut d, &mut app, "layout tree");
-    // `<C-w>` then the sizing character: `>` wider, `<` narrower, `+`
-    // taller, `-` shorter, in the direction `hjkl` used to name.
     let alt = |d: &mut Drive, app: &mut Kawoosh, name: &str| {
-        let ch = match name {
-            "l" => ">",
-            "h" => "<",
-            "k" => "+",
-            _ => "-",
-        };
-        d.ctrl(app, "w");
-        d.keys(app, ch);
+        d.key(
+            app,
+            name,
+            KeyMods {
+                alt: true,
+                shift: true,
+                ..Default::default()
+            },
+        );
         d.frame(app);
     };
     alt(&mut d, &mut app, "l");
@@ -306,22 +305,10 @@ fn the_panes_resize_from_the_keyboard() {
     assert_eq!(app.layout.rects[&3].w, w3);
     alt(&mut d, &mut app, "j");
     assert!((app.layout.rects[&3].h - h3).abs() < 1.0);
-    // Sizing is normal mode's now — `<C-w>` types a word away in
-    // insert mode — but the moves keep the shifted chord there, so
-    // `<A-S-k>` from insert mode carries the pane rather than typing.
+    // From insert mode.
     d.keys(&mut app, "i");
-    let panes = app.layout.visible_panes();
-    d.key(
-        &mut app,
-        "k",
-        KeyMods {
-            alt: true,
-            shift: true,
-            ..Default::default()
-        },
-    );
-    d.frame(&mut app);
-    assert_ne!(app.layout.visible_panes(), panes, "the pane moved");
+    alt(&mut d, &mut app, "k");
+    assert!(app.layout.rects[&3].h > h3 + 20.0);
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(app.ed.buffer_of(app.focused_view().unwrap()).text(), "one");
     // The dock: its height, and no width to speak of.

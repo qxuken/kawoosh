@@ -616,9 +616,9 @@ then breadth.
     had last frame, so a column part-way to its place drops it;
     Decision 4 overturned), a column far off the ribbon draws its
     chrome and no rows, which holds a frame at 3ms for five hundred
-    columns, and `<A-S-hjkl>` carry a pane with sizing moved to vim's
-    `<C-w><>-+`, `<C-1>`…`<C-9>` reach the Nth column and `zs` `ze`
-    `zz` put it at an edge or the middle.
+    columns, and `<C-w>HJKL` carry a pane while `<A-S-hjkl>` keep
+    sizing, `<C-1>`…`<C-9>` reach the Nth column and `zs` `ze` `zz`
+    put it at an edge or the middle.
 12. **Auto-closing brackets** ([pairs.md](pairs.md)): an afternoon —
     the three Lua doors (`buf.type`, `buf.edits`,
     `buf.set_selections`), `pairs.lua` off by default, its test a

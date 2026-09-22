@@ -73,10 +73,10 @@ the strip.
 | `<C-w>s` `:split` | a split below | a split below, inside the column (a stack) |
 | `<C-w>h` `<C-w>l` | the pane beside, by rect | the column beside, by index; the pane in it at the focused pane's row, else its top |
 | `<C-w>j` `<C-w>k` | the pane below / above, by rect | the same, inside the column |
-| `<A-S-h>` `<A-S-l>`, `<C-w>H` `<C-w>L` | carry the pane past its neighbour | move the column one place left / right |
-| `<A-S-j>` `<A-S-k>`, `<C-w>J` `<C-w>K` | the same, up / down | the pane up / down inside its column's stack |
-| `<C-w><` `<C-w>>` | the pane narrower / wider by a twentieth | the column's width to the next preset down / up (niri's `switch-preset-column-width`); a `Ratio` snaps to the nearest first |
-| `<C-w>-` `<C-w>+` | shorter / taller | the same, inside the column |
+| `<C-w>H` `<C-w>L` | carry the pane past its neighbour | move the column one place left / right |
+| `<C-w>J` `<C-w>K` | the same, up / down | the pane up / down inside its column's stack |
+| `<A-S-h>` `<A-S-l>` (`<C-w><` `<C-w>>`) | the pane narrower / wider by a twentieth | the column's width to the next preset down / up (niri's `switch-preset-column-width`); a `Ratio` snaps to the nearest first |
+| `<A-S-j>` `<A-S-k>` (`<C-w>-` `<C-w>+`) | shorter / taller | the same, inside the column |
 | `<C-1>`…`<C-9>` | the Nth pane | the Nth column, the last when there are fewer |
 | `zs` `ze` `zz` | *(free)* | the focused column against the left edge, the right edge, or centred |
 | closing the last pane of a column | — | the column goes, the focus to the column before it |
@@ -85,9 +85,9 @@ the strip.
 5), a bare `:layout` (`<leader>tl`) flips it; `layout.default`
 (`tree` \| `scroll`) is what `<leader>tn` opens, and what the window's
 own first tab is — the strip since 2026-09-22. `<C-w>HJKL` are vim's
-"move to the far side", read as one step; `<A-S-hjkl>` are the same
-four without a prefix, which cost sizing its chords (it took vim's
-`<C-w><>-+`, keys.md).
+"move to the far side", read as one step, and were free until now;
+sizing keeps `<A-S-hjkl>`, the pair with no prefix, and gains vim's
+`<C-w><>-+` beside it (keys.md).
 
 *Beat:* a key family of its own (`<leader>t…` for the strip) — a second
 vocabulary for the same intentions.
