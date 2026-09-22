@@ -326,3 +326,43 @@ fn an_emptied_scratch_closed_does_not_come_back() {
     assert_eq!(rows(&app), Vec::<String>::new(), "the stale row went");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A `:session restore` from inside drops only what it replaced that
+/// was nothing — the launch's greeting, a blank scratch — and leaves
+/// what the old panes showed otherwise: a listing (read-only, and
+/// empty while a compile has printed nothing yet), a scrollback (text
+/// of its own, no path), hidden as they were.
+#[test]
+fn a_restore_from_inside_keeps_what_the_old_panes_showed() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-inside-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "1\n2\n").unwrap();
+    let db = dir.join("state.db");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&a);
+    app.open_store(Some(&db));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "session save");
+    app.show_in_pane("*listing*", "a line");
+    app.show_in_pane("*quiet*", "");
+    let id = app
+        .ed
+        .add_buffer(kawoosh_doc::Buffer::new("*scrollback t*", "$ ls\n"));
+    ex(&mut d, &mut app, "vs");
+    ex(&mut d, &mut app, "b *scrollback t*");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[v].buffer, id);
+    ex(&mut d, &mut app, "session restore");
+    d.frame(&mut app);
+    assert_eq!(app.layout.visible_panes().len(), 1);
+    let mut names: Vec<String> = app
+        .ed
+        .listed_buffers()
+        .into_iter()
+        .map(|id| app.ed.buffers[id].name.clone())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["*listing*", "*quiet*", "*scrollback t*", "a.txt"]);
+    std::fs::remove_dir_all(&dir).ok();
+}

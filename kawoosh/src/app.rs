@@ -71,6 +71,9 @@ pub struct Kawoosh {
     /// The `log` crate's records, once `Logger::install` ran (main).
     pub log_sink: Option<crate::logger::Sink>,
     pub store: Option<std::rc::Rc<kawoosh_systems::store::Store>>,
+    /// The buffer the app began with — the greeting, on a bare launch:
+    /// a restored session replaces it (`restore_session_data`).
+    pub(crate) launch: Option<BufferId>,
     /// The shell's command bodies; their specs are in `ed` (`commands`).
     pub(crate) commands: ShellCommands,
     /// The undo histories of buffers, kept in the store, with the
@@ -246,6 +249,7 @@ impl Kawoosh {
             messages_shown: 0,
             log_sink: None,
             store: None,
+            launch: Some(b),
             commands: ShellCommands::default(),
             histories: crate::history::Histories::new(wake.clone()),
             session_saved: false,
@@ -851,6 +855,13 @@ impl Kawoosh {
         for v in on {
             self.show_buffer(v, next);
         }
+        self.drop_buffer(id);
+    }
+
+    /// Removes buffer `id`, which no view shows: a `--wait` caller on
+    /// it answered, the server told, and what was remembered about it
+    /// forgotten.
+    pub(crate) fn drop_buffer(&mut self, id: BufferId) {
         self.alternate.retain(|_, b| *b != id);
         // A scratch's row goes with it when nothing in it is unsaved:
         // one typed in and undone back to empty kept its undo as a row,

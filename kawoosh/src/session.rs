@@ -312,16 +312,23 @@ impl Kawoosh {
         for v in old_views {
             self.ed.views.remove(v);
         }
-        // What they showed goes with them when it was nothing to keep:
-        // the greeting a bare launch opens on, a blank scratch — a
-        // pathless buffer no pane shows now, unmodified, with no row.
+        // What they showed goes with them when it was nothing to keep
+        // and nothing shows it now: the greeting the app began with, a
+        // blank scratch. Only those — a `:session restore` from inside
+        // leaves the compile's output, a scrollback, a listing as they
+        // were, hidden.
         for id in old_buffers {
-            let keep = self.ed.buffers.get(id).is_none_or(|b| {
-                b.path.is_some() || b.modified || b.hook.is_some() || self.histories.has_row(id)
-            }) || self.ed.views.values().any(|v| v.buffer == id);
-            if !keep {
-                self.ed.remove_buffer(id);
-                self.histories.forget(id);
+            let Some(b) = self.ed.buffers.get(id) else {
+                continue;
+            };
+            let nothing = b.path.is_none()
+                && b.hook.is_none()
+                && !b.read_only
+                && !b.modified
+                && !self.histories.has_row(id)
+                && (b.is_empty() || self.launch == Some(id));
+            if nothing && !self.ed.views.values().any(|v| v.buffer == id) {
+                self.drop_buffer(id);
             }
         }
         true
