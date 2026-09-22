@@ -117,7 +117,7 @@ width into `Width::Ratio`.
 focused column and writing it) — which fights the swipe and rebuilds
 what kui already retains, with the `rects` lag on top.
 
-### 4. The strip moves, the tree does not — *overturned when built, see "Built"*
+### 4. The strip moves, the tree does not — *shape corrected when built, see "Built"*
 
 This is what Decision 2 wanted kui's animation for, and it is all
 declared: a new column has `enter { dx: its own width }` and slides in
@@ -235,35 +235,51 @@ departed from the text above, and what day one found:
   from panes) for its drawn key, so the column keeps its fade and its
   place whatever its panes do — a stack's top pane closing does not
   make a "new" column.
-- **Nothing about the ribbon is animated** — Decision 4 overturned,
-  2026-09-22, in three steps, each found in use. First the speeds and
-  the wobble: every column had its own tween, so a width easing
+- **The ribbon is what moves** — Decision 4, rebuilt three times over
+  2026-09-22 against what use showed, and twice against kui. The first
+  shape gave every column `slide` and a `Fixed` width: the width easing
   retargeted the neighbours' slides every frame on a fresh 200ms leg
-  (the rubber under `<A-S-l>` and the gap drag), and an arriving
-  column's `enter` offset travelled a different distance than the
-  ribbon's reveal. A column became a wrapper of `Fit` width around a
-  box of `Fixed` width — no width slot on the moving node, so widths
-  snap and only positions eased, every column by its own delta on one
-  leg of one tween. Then the scrollbar: a tween chasing the thumb is a
-  tween the thumb is always ahead of, so the glide was narrowed to the
-  frames after the strip's shape changed, leaving a pointer's scroll
-  followed one to one. Then the keystroke: kui hands a key to the
-  region its focused sink had **last frame**, and a node outside the
-  scroll container's clip has none — so `<C-w>l` to a column off the
-  viewport and a `q` inside the next 200ms went nowhere (a Lua view's
-  own key, `kawoosh/tests/lua.rs`). A tween in the way of a keystroke
-  is not worth its 200ms, so the glide went: the reveal sets the
-  offset, the columns are where the widths put them, and a key, the
-  thumb and a swipe all land whole on the frame they happen. What is
-  left is opacity, which moves nothing: a column arriving in a strip
-  already on show fades up over 150ms in its final place. The strip's
-  first frame — a conversion, a restore, a tab switched to — does not
-  even fade (`Kawoosh::strip_known`). *What would bring the motion
-  back:* a kui prop that delivers a key to the focused sink by key
-  rather than by hit region. An ask, not yet asked.
+  (the rubber under a resize and a gap drag), and an arriving column's
+  `enter` offset travelled a different distance than the ribbon's
+  reveal (the speeds). Making a column a wrapper of `Fit` width around
+  a box of `Fixed` width answered both: no width slot on the moving
+  node, so widths snap and only positions ease. Then the scrollbar: a
+  `slide` eases a node's **viewport** position, which a scroll offset
+  changes too, so the columns tweened behind the thumb and could not
+  tell the hand's scrolling from a key's. Then the keystroke: kui
+  handed a key to the region its focused sink had last frame, and a
+  node outside the scroller's clip has none, so `<C-w>l` to a column
+  off the viewport and a `q` inside the next 200ms went nowhere
+  (`kawoosh/tests/lua.rs`). Two asks to kui, both built the same day —
+  **F79**, a key goes to the sink that holds focus wherever the frame
+  drew it, and **F80**, a `transition` on a scroll container eases the
+  offset a `reveal` takes it to while the wheel, the thumb and an edge
+  drag land whole — and the shape that came out of them:
+  - **the ribbon eases** (the row's own `transition`, `RIBBON_MS` =
+    160ms) to the column a key reveals, which is the motion the eye
+    follows;
+  - **a column's width and place snap**, so a preset step and `<C-w>H`
+    are as fast as the key — and no `slide` rides on a column, which is
+    what keeps the thumb linear;
+  - **a column arriving** in a strip already on show comes in from a
+    third of its width away and fades up over the same 160ms, landing
+    as the ribbon does; the strip's first frame (a conversion, a
+    restore, a tab switched to) does neither, those columns not being
+    arrivals (`Kawoosh::strip_known`);
+  - **a closing column goes at once**: an `exit` fade replays on a tab
+    switch too, kui playing a ghost whether or not its ancestors
+    survived.
+  Tests: `the_ribbon_glides_to_a_key_and_a_width_lands_at_once`,
+  `a_scroll_the_pointer_makes_is_followed_one_to_one` and
+  `a_key_reaches_a_column_the_animation_has_not_finished_moving`, which
+  types into a column the slide has not finished moving — the case F79
+  was asked for.
 - **The reveal answers the strip's shape, not only the focus**
   (`StripShape`: the tab, the focus and its column, the columns' order
-  and widths), asked on the frame it changed and the two after, so a
+  and widths), asked on the frame it changed — once, since kui lays a
+  reveal out in the same frame and a second ask against a ribbon
+  already gliding measures from where the content has got to and stops
+  the leg short — so a
   column widened at the viewport's right edge comes wholly into view
   rather than growing past it, and a tab moved along the tab strip (a
   new key) is revealed again. Not under a gap drag: the offset moving
@@ -280,7 +296,9 @@ departed from the text above, and what day one found:
   region, so the moves, the mouse and the sessions see no difference.
   Which columns those are is read from the model (the widths and the
   retained offset), not from last frame's drawn rects, so a column
-  swiped into view has its rows on the frame it arrives. A frame with
+  swiped into view has its rows on the frame it arrives — the *drawn*
+  offset, which during a glide is not the one the ribbon is heading
+  for (`Ui::scroll_geometry`, kui F80). A frame with
   a 400-line file in a 1600×1000 window (`kawoosh/tests/perf.rs`'s
   `ribbon_frame_cost`): 1 column 110µs, 20 335µs, 60 480µs, 120 703µs,
   250 1.3ms, **500 3.0ms** — about 6µs a column past the handful on

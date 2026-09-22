@@ -22,10 +22,11 @@ fn ctrl_w(d: &mut Drive, app: &mut Kawoosh, then: &str) {
 }
 
 /// Frames until the slides have run their course and the layout
-/// events have landed. The harness's keys pass no time, and a column
-/// the reveal brings in glides for 200ms — while kui hears no key for
-/// a sink wholly outside the viewport — so a walk along the strip
-/// settles between steps, as a hand's own pace does.
+/// events have landed: the harness's keys pass no time, so a test that
+/// wants the rects a hand would see asks for the time between
+/// keystrokes. A key needs none — kui hands it to the sink that holds
+/// focus wherever the frame drew it (its F79), which
+/// `a_key_reaches_a_column_the_glide_has_not_finished_moving` pins.
 fn settle(d: &mut Drive, app: &mut Kawoosh) {
     for _ in 0..12 {
         d.advance(0.05);
@@ -46,6 +47,22 @@ fn columns(app: &Kawoosh) -> Vec<(Vec<u64>, Width)> {
             c.node.panes(&mut ps);
             (ps, c.width)
         })
+        .collect()
+}
+
+/// Where the strip's columns were *drawn* last frame, left to right —
+/// the eased position, which is what a glide moves and what kui hits
+/// against, where `Layout::rects` is where layout put them.
+fn drawn_columns(d: &Drive) -> Vec<(f32, f32)> {
+    d.core
+        .nodes()
+        .iter()
+        .filter(|n| {
+            n.label
+                .as_deref()
+                .is_some_and(|l| l.starts_with("col") && l[3..].parse::<u64>().is_ok())
+        })
+        .map(|n| (n.rect.x, n.rect.w))
         .collect()
 }
 
@@ -527,5 +544,86 @@ fn a_column_far_off_the_ribbon_draws_no_rows_until_it_is_near() {
     // and its text is drawn.
     assert!(in_view(&d, &app, 1, vw));
     assert!(rows.iter().any(|r| r.as_str() == "alpha"));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn a_key_reaches_a_column_the_animation_has_not_finished_moving() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    // A column beside, and a key in the same breath: no time has
+    // passed, so the new column is still drawn a third of its width to
+    // the right of where it will sit — partly outside the ribbon's
+    // clip, nowhere a pointer could reach all of it.
+    ctrl_w(&mut d, &mut app, "v");
+    let cols = drawn_columns(&d);
+    let (x, w) = *cols.last().unwrap();
+    assert!(x + w > vw + 40.0, "still sliding in: {cols:?}");
+    let view = app.focused_view().expect("the new column's pane");
+    d.keys(&mut app, "j");
+    let head = app.ed.views[view].sels.primary().head;
+    assert_eq!(
+        kawoosh_editor::motions::line_col(app.ed.buffer_of(view), head).0,
+        1,
+        "the key reached the pane mid-slide (kui's F79)"
+    );
+    // It lands where the reveal put it.
+    settle(&mut d, &mut app);
+    let cols = drawn_columns(&d);
+    let (x, w) = *cols.last().unwrap();
+    assert!(x >= -1.0 && x + w <= vw + 1.0, "slid into view: {cols:?}");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// The ribbon glides to the column a key reveals (kui's F80: a
+/// `transition` on the scroll container) while a width step lands at
+/// once, so a resize is as fast as the key that asked for it.
+#[test]
+fn the_ribbon_glides_to_a_key_and_a_width_lands_at_once() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    for _ in 0..2 {
+        ctrl_w(&mut d, &mut app, "v");
+        settle(&mut d, &mut app);
+    }
+    d.press(&mut app, "<C-1>");
+    settle(&mut d, &mut app);
+    // The keyboard to the far column: the ribbon has not moved on the
+    // frame the key landed, is part of the way a moment later, and
+    // arrives.
+    let before = drawn_columns(&d);
+    d.press(&mut app, "<C-3>");
+    assert_eq!(drawn_columns(&d), before, "the leg starts where it was");
+    d.advance(0.08);
+    d.frame(&mut app);
+    let midway = drawn_columns(&d)[2].0;
+    assert!(
+        midway < before[2].0 - 20.0 && midway > 450.0,
+        "part of the way: {midway} from {}",
+        before[2].0
+    );
+    settle(&mut d, &mut app);
+    let (x, w) = drawn_columns(&d)[2];
+    assert!(x + w <= vw + 1.0 && x + w > vw - 40.0, "landed: {x} + {w}");
+    // A width step lands on the frame it is asked for: the column's
+    // box and the ones after it are where the key put them.
+    d.press(&mut app, "<C-1>");
+    settle(&mut d, &mut app);
+    let before = drawn_columns(&d)[1].0;
+    d.press(&mut app, "<A-S-h>");
+    assert_eq!(columns(&app)[0].1, Width::TwoThirds);
+    let after = drawn_columns(&d)[1].0;
+    assert!(
+        (after - (before - vw / 3.0)).abs() < 2.0,
+        "a third of the viewport narrower, at once: {before} -> {after}"
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }

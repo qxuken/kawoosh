@@ -17,9 +17,16 @@ use crate::terminals::TermId;
 use kawoosh_systems::lsp::DIAG_LAYER;
 use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
 
+/// How long the ribbon takes to reach the column a key revealed, and
+/// a column its place after a width step or a move: one duration, so
+/// the two motions a key starts run together.
+const RIBBON_MS: f32 = 160.0;
+
 /// Frames on which the focused column is revealed after the strip's
-/// shape changed: the one it changed on and two more.
-const STRIP_SETTLING: u8 = 3;
+/// shape changed. One: kui lays the reveal out in the same frame, and
+/// a second ask against a ribbon already gliding would measure from
+/// where the content has got to and stop the leg short of the column.
+const STRIP_SETTLING: u8 = 1;
 
 /// Where `zs` / `ze` / `zz` (`strip left` / `right` / `center`) put
 /// the focused column in the viewport.
@@ -473,26 +480,31 @@ impl Kawoosh {
     /// retains for it — a keyed column per `Column` at its width in
     /// viewport fractions, a draggable gap between.
     ///
-    /// The ribbon moves in one step, never over time. kui delivers a
-    /// key to the *hit region* its focused sink had last frame, and a
-    /// node outside the scroll container's clip has none, so a column
-    /// drawn part-way to its place — by `slide`, or from an `enter`
-    /// offset — is a column whose pane drops the keys typed at it for
-    /// as long as the tween runs (`<C-w>l` then `q` at a Lua view,
-    /// found 2026-09-22). So nothing here eases a position: the reveal
-    /// sets the offset, the columns are where the widths put them, and
-    /// a key, the scrollbar's thumb and a trackpad swipe all land one
-    /// to one on the frame they happen. (The widths snap for a second
-    /// reason: a column is a wrapper of `Fit` width around a box of
-    /// `Fixed` width, so there is no width slot on the outer node for
-    /// a `transition` to ease, and no tween for the neighbours to
-    /// chase — the wobble a `Fixed` width easing made.) What is left
-    /// is opacity, which moves nothing: a column arriving in a strip
-    /// already on show fades up in its final place. A closed one goes
-    /// at once — an `exit` fade would replay on a tab switch too, kui
-    /// playing a ghost whether or not its ancestors survived. The
-    /// strip's first frame (a conversion, a restore) does not even
-    /// fade: those columns are not arriving.
+    /// **The ribbon is what moves.** The row declares a `transition`,
+    /// so the offset a reveal takes it to is eased over `RIBBON_MS`
+    /// (kui F80, asked for from here) while the thumb, the wheel and a
+    /// swipe — the hand's own, which must never lag a finger — land
+    /// whole and drop any leg in flight. Nothing else eases a position:
+    /// a column's width and place snap, so a preset step and `<C-w>H`
+    /// are as fast as the key, and a width easing cannot retarget the
+    /// neighbours every frame, which was the wobble. `slide` on a
+    /// column is what that costs, and it is no loss: `slide` eases a
+    /// node's *viewport* position, so a column carrying one eases the
+    /// ribbon's scrolling too — the lag under the scrollbar's thumb,
+    /// found 2026-09-22 — and cannot tell the two apart.
+    ///
+    /// What is left is a column arriving in a strip already on show: it
+    /// comes in from a third of its width away and fades up, the same
+    /// `RIBBON_MS`, so it lands as the ribbon does. The strip's first
+    /// frame (a conversion, a restore, a tab switched to) does neither,
+    /// those columns not being arrivals. A closing one goes at once: an
+    /// `exit` fade would replay on a tab switch too, kui playing a
+    /// ghost whether or not its ancestors survived.
+    ///
+    /// None of it costs a keystroke: kui hands a key to the sink that
+    /// holds focus wherever the frame drew it (its F79, also asked for
+    /// from here — before it, a key typed at a column an animation had
+    /// not finished moving fell on the floor).
     ///
     /// On a frame the strip's shape changed — the focus, the order, a
     /// width, the tab — the focused column is revealed, so a column
@@ -522,7 +534,8 @@ impl Kawoosh {
                 .any(|c| !self.strip_known.contains(&c.id));
         let tab = self.layout.tab;
         // The shape a reveal answers to, read before the columns are
-        // declared: whether they slide this frame is the same question.
+        // declared: whether they slide this frame is the same
+        // question.
         let shape = StripShape {
             tab,
             focused,
@@ -544,11 +557,20 @@ impl Kawoosh {
         // focused one wherever it is. Read from the model — the widths
         // and the retained offset — so a column swiped into view has
         // its rows on the frame it arrives, rather than one frame
-        // later as a drawn rect would give. Not on the frames a
-        // reveal is pending, where the offset is about to move.
+        // later as a drawn rect would give. Not while anything moves:
+        // a sliding column is drawn between two places, and only the
+        // one it is going to is known here.
         self.culled.clear();
-        if !settling {
-            let offset = ui.scroll_offset(ui.child_key(&format!("strip{tab}"))).x;
+        if !settling && !arriving {
+            // Where the ribbon *is*, which during a glide is not where
+            // it is going (kui F80): the geometry answers the drawn
+            // offset, and describes the frame before, which the half a
+            // viewport of slack covers.
+            let key = ui.child_key(&format!("strip{tab}"));
+            let offset = ui
+                .scroll_geometry(key)
+                .map(|g| g.offset.x)
+                .unwrap_or_else(|| ui.scroll_offset(key).x);
             let mut left = 0.0;
             for (i, col) in strip.columns.iter().enumerate() {
                 let (x0, x1) = (left - offset, left - offset + widths[i]);
@@ -567,6 +589,10 @@ impl Kawoosh {
             NodeSpec::row()
                 .fill()
                 .scroll_x()
+                // The ribbon glides to the column a key reveals (kui's
+                // F80, asked for from here); the thumb and a swipe are
+                // the hand's and land whole.
+                .transition(RIBBON_MS)
                 .cross_align(Align::Start)
                 .label("strip"),
             |ui| {
@@ -574,7 +600,9 @@ impl Kawoosh {
                     let px = widths[i];
                     let mut wrap = NodeSpec::column().height(Sizing::Grow(1.0));
                     if arriving && !self.strip_known.contains(&col.id) {
-                        wrap = wrap.transition(150.0).enter(Enter::default().opacity(0.0));
+                        wrap = wrap
+                            .transition(RIBBON_MS)
+                            .enter(Enter::from((px / 3.0).min(200.0), 0.0).opacity(0.0));
                     }
                     let key = ui.with_keyed(&format!("col{}", col.id), wrap, |ui| {
                         ui.with(

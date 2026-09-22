@@ -17,6 +17,18 @@ fn app_with_lua(d: &mut Drive, title: &str, text: &str) -> Kawoosh {
     app
 }
 
+/// Frames with time passing: a pane opening in a scrolling tab rides
+/// the ribbon's glide (scrolling-tab.md), and the harness's keys pass
+/// no time, so a test that clicks what a view drew waits for it to
+/// land the way a hand does. Keys need no wait — they reach the pane
+/// wherever it is drawn (kui's F79).
+fn settle(d: &mut Drive, app: &mut Kawoosh) {
+    for _ in 0..6 {
+        d.advance(0.05);
+        d.frame(app);
+    }
+}
+
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
     d.keys(app, line);
@@ -91,7 +103,7 @@ fn a_lua_view_is_a_pane_and_its_clicks_come_back() {
     d.frame(&mut app);
     ex(&mut d, &mut app, "view counter");
     assert!(matches!(app.layout.focused_content(), Some(Content::Lua(n)) if n == "counter"));
-    d.frame(&mut app);
+    settle(&mut d, &mut app);
     let nodes = d.core.nodes();
     assert!(
         nodes.iter().any(|n| n.text.as_deref() == Some("count = 0")),
@@ -665,6 +677,7 @@ fn a_lua_view_has_fields_with_modes() {
         "{:?}",
         texts(&d)
     );
+    settle(&mut d, &mut app);
     let key = d
         .core
         .key_of("field:lua:finder/q")

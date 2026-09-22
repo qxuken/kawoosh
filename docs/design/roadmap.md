@@ -611,14 +611,16 @@ then breadth.
     `<C-w>L`; the `layout.*` settings; the session's `kind` and
     `columns`; `kawoosh/tests/layout.rs`); scrolling-tab.md's "Built"
     says where the build departed from the note and what use found —
-    the strip is `layout.default` and the window's own tab, nothing
-    about the ribbon is animated (a key goes to the region its sink
-    had last frame, so a column part-way to its place drops it;
-    Decision 4 overturned), a column far off the ribbon draws its
-    chrome and no rows, which holds a frame at 3ms for five hundred
-    columns, and `<C-w>HJKL` carry a pane while `<A-S-hjkl>` keep
-    sizing, `<C-1>`…`<C-9>` reach the Nth column and `zs` `ze` `zz`
-    put it at an edge or the middle.
+    the strip is `layout.default` and the window's own tab, the ribbon
+    glides to the column a key reveals while widths and places land at
+    once and the thumb is followed one to one (Decision 4's shape
+    corrected, on two asks to kui built the same day — F79, a key goes
+    to the sink that holds focus wherever it is drawn, and F80, a
+    `transition` on a scroll container eases a reveal), a column far
+    off the ribbon draws its chrome and no rows, which holds a frame at
+    3ms for five hundred columns, and `<C-w>HJKL` carry a pane while
+    `<A-S-hjkl>` keep sizing, `<C-1>`…`<C-9>` reach the Nth column and
+    `zs` `ze` `zz` put it at an edge or the middle.
 12. **Auto-closing brackets** ([pairs.md](pairs.md)): an afternoon —
     the three Lua doors (`buf.type`, `buf.edits`,
     `buf.set_selections`), `pairs.lua` off by default, its test a

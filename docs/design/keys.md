@@ -77,7 +77,11 @@ down / up (third, half, two-thirds, full; a dragged width snaps to the
 nearest first), `<C-w>H` / `<C-w>L` the column a place along the
 ribbon, and closing a column's last pane takes the column, the
 keyboard to the one before. The status line shows the columns as
-`▯▮▯`, the focused one filled.
+`▯▮▯`, the focused one filled. The ribbon glides to the column a key
+reveals; a width and a place land on the frame the key asked for them,
+and the scrollbar's thumb and a swipe are followed one to one. A key
+reaches its pane wherever the frame has drawn it, mid-motion included
+(kui's F79).
 
 The shifted chord is the wezterm habit and the reason it works
 everywhere (the same goes for `<C-1>`…`<C-9>`, which no pty can encode
