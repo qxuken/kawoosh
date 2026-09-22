@@ -72,6 +72,15 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
     }
     let name = app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
     assert!(name.ends_with("beta-directory"), "{name}");
+    // And the keys are the listing's: the click on the title bar did
+    // not keep them.
+    d.keys(&mut app, "j");
+    let v = app.focused_view().unwrap();
+    let line = app
+        .ed
+        .buffer_of(v)
+        .line_of(app.ed.views[v].sels.primary().head);
+    assert_eq!(line, 1, "j moved in the listing");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -118,4 +127,51 @@ fn tabs_share_the_strip_and_scroll_past_their_floor() {
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     assert_eq!(app.layout.tabs.len(), 11);
     assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// ⌘= ⌘+ make the font a pixel bigger and ⌘- ⌘_ a pixel smaller, for
+/// the session, and ⌘0 puts the settings' size back — Ctrl where there
+/// is no ⌘ — from a terminal pane as much as an editor.
+#[test]
+fn the_font_steps_from_the_keyboard() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("a", "text");
+    d.frame(&mut app);
+    let base = app.face.size;
+    let chord = |shift: bool| {
+        if cfg!(target_os = "macos") {
+            KeyMods {
+                super_key: true,
+                shift,
+                ..KeyMods::default()
+            }
+        } else {
+            KeyMods {
+                ctrl: true,
+                shift,
+                ..KeyMods::default()
+            }
+        }
+    };
+    d.key(&mut app, "=", chord(false));
+    d.frame(&mut app);
+    assert_eq!(app.face.size, base + 1.0);
+    d.key(&mut app, "+", chord(true));
+    d.frame(&mut app);
+    assert_eq!(app.face.size, base + 2.0);
+    d.key(&mut app, "-", chord(false));
+    d.key(&mut app, "_", chord(true));
+    d.key(&mut app, "-", chord(false));
+    d.frame(&mut app);
+    assert_eq!(app.face.size, base - 1.0);
+    // From insert mode too, and back to the settings' size.
+    d.keys(&mut app, "i");
+    d.key(&mut app, "0", chord(false));
+    d.frame(&mut app);
+    assert_eq!(app.face.size, base);
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).text(),
+        "text",
+        "nothing typed"
+    );
 }

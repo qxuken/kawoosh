@@ -58,6 +58,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>t` `<leader>tn` | a new tab, of the kind `layout.default` names (the strip) |
 | `:layout` `<leader>tl` | the tab flipped between a tree of splits and a strip of columns ([scrolling-tab.md](scrolling-tab.md)); `:layout scroll` / `:layout tree` name the kind |
 | `<C-w>d` | the dock — a tree of its own: a split from a dock pane stays in the dock |
+| `<D-=>` `<D-+>` / `<D-->` `<D-_>` / `<D-0>` (Ctrl where there is no ⌘) | `font bigger` / `smaller` by a pixel for the session, `font reset` back to the settings' size; from every mode and pane |
 | `<C-w>!` | a terminal below (`:!` runs a shell, so does this) |
 | `<C-w>n` | the keyboard onto the toasts |
 | `<C-w>:` | the command line, from a pane without one |
@@ -133,6 +134,7 @@ and `:e` reachable when the memory pane is the only pane there is.
 | keys | `list …` |
 |---|---|
 | `j` `k` `<Down>` `<Up>` | the cursor a row down / up, COUNT rows |
+| `<C-n>` `<C-p>` | `list next` / `prev`: a row down / up, round from the last row to the first and back |
 | `<C-d>` `<C-u>` | half a screen down / up, COUNT times |
 | `<C-f>` `<C-b>` `<PageDown>` `<PageUp>` | a screen |
 | `gg` `G` | the first / last row |
@@ -348,7 +350,8 @@ letters for the daily few. A picker that does not exist yet has its
 spelling kept for it below rather than given to something else.
 
 **In a picker** (roadmap.md step 4, `picker.lua`), the query is a
-field: typing filters, `<C-n>` `<C-p>` `<Down>` `<Up>` `<C-j>` `<C-k>`
+field: typing filters, `<C-n>` `<C-p>` (round from the last row to
+the first and back, as a menu's), `<Down>` `<Up>` `<C-j>` `<C-k>`
 walk the rows and `<PageDown>` `<PageUp>` by a page; `<Esc>` is normal
 mode over the query — `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `J` `K`
 scroll the preview by half of it (a count multiplies), `0` `D` `ciw`

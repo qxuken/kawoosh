@@ -192,8 +192,11 @@ fn the_querys_modes_and_keys() {
     assert_eq!(cursor_text(&mut app), "src/lib.rs");
     d.ctrl(&mut app, "n");
     assert_eq!(cursor_text(&mut app), "src/main.rs");
+    // `<C-n>` `<C-p>` go round, as a menu's keys do.
     d.ctrl(&mut app, "n");
-    assert_eq!(cursor_text(&mut app), "src/main.rs", "stays on the last");
+    assert_eq!(cursor_text(&mut app), "README.md", "round to the first");
+    d.ctrl(&mut app, "p");
+    assert_eq!(cursor_text(&mut app), "src/main.rs", "and back to the last");
     d.ctrl(&mut app, "p");
     assert_eq!(cursor_text(&mut app), "src/lib.rs");
     // Normal mode over the query: `j`, `k`, then `<Esc>` closes.

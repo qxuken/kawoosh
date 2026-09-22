@@ -222,6 +222,15 @@ impl Harness {
         self.frame(app);
     }
 
+    /// Two clicks at one point, the second counted as the second, as the
+    /// OS counts a double click into the press.
+    pub fn double_click(&mut self, app: &mut impl App, x: f32, y: f32) {
+        self.click(app, x, y);
+        self.input(app, InputEvent::mouse_down(2));
+        self.input(app, InputEvent::mouse_up());
+        self.frame(app);
+    }
+
     /// A press at one point, the pointer taken to another in two steps
     /// (past kui's click slop, so the node's `on_drag` reports moves and
     /// the release is no click), a frame drawn while held, the release.

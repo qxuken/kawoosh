@@ -33,7 +33,7 @@ use crate::settings::Config;
 use crate::terminals::{TermId, Terminals};
 
 pub const TITLE_H: f32 = 22.0;
-pub const TAB_H: f32 = 26.0;
+pub const TAB_H: f32 = 22.0;
 
 pub(crate) const DIVIDER: f32 = 4.0;
 
@@ -1366,6 +1366,19 @@ impl Kawoosh {
                 if self.ed.prompt_view().is_some() {
                     self.ed.cancel_prompt();
                 }
+                // A double click is a gesture a map can take, vim's
+                // `<2-LeftMouse>`, with the caret where it landed — a
+                // listing enters the line; unbound, it selects the word.
+                if clicks == 2 {
+                    self.ed.views[view].sels =
+                        kawoosh_editor::Selections::single(Selection::point(off));
+                    if self.ed.mouse(view, "<2-LeftMouse>") {
+                        self.drag_anchor = None;
+                        self.drain_effects();
+                        self.drain_lua();
+                        return;
+                    }
+                }
                 let sel = match clicks {
                     1 => Selection::point(off),
                     2 => Selection::new(word.0, word.1),
@@ -1852,11 +1865,15 @@ impl kui::App for Kawoosh {
                 self.drain_lua();
             }
             Some("dismiss") => self.on_dismiss(p),
+            // The chrome's clicks (the tabs, the title bar's blocks):
+            // a press there takes kui's focus to the clicked node, and
+            // the keys belong back with the pane.
             Some("tab") => {
                 if let Some(i) = p.get("index").and_then(Value::as_int) {
                     self.layout.tab = (i as usize).min(self.layout.tabs.len() - 1);
                     self.layout.dock_focused = false;
                 }
+                self.reclaim_focus = true;
             }
             // A tab's close button: that tab, as `:tabclose` closes the
             // one it is in.
@@ -1866,11 +1883,21 @@ impl kui::App for Kawoosh {
                     self.layout.dock_focused = false;
                     self.run_line("tab close");
                 }
+                self.reclaim_focus = true;
+            }
+            // A title-bar block's command (the servers: `lsp info`).
+            Some("chrome") => {
+                if let Some(run) = p.get("run").and_then(Value::as_str) {
+                    let run = run.to_string();
+                    self.run_line(&run);
+                }
+                self.reclaim_focus = true;
             }
             // The title bar's cwd: listed.
             Some("cwd") => {
                 let cwd = self.cwd.display().to_string();
                 self.run_line(&format!("dir {cwd}"));
+                self.reclaim_focus = true;
             }
             Some("term") => {
                 // A click focuses; with ⌘ held it opens the path under the

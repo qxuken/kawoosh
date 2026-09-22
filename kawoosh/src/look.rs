@@ -295,3 +295,45 @@ impl Kawoosh {
         }
     }
 }
+
+/// `font bigger` / `smaller` step `font.size` by a pixel in the session
+/// layer, within what is honoured; `font reset` takes the session's
+/// value out, back to the settings files'. ⌘= ⌘+ ⌘- ⌘_ ⌘0, Ctrl where
+/// there is no ⌘ (keys.md).
+pub(crate) fn commands() -> Vec<crate::commands::ShellCommand> {
+    use crate::commands::cmd;
+    use kawoosh_editor::{Layer, Spec};
+    let step = |k: &mut Kawoosh, by: f64| {
+        let now =
+            k.ed.settings
+                .get("font.size")
+                .and_then(Setting::as_float)
+                .unwrap_or(FONT as f64);
+        let next = (now + by).clamp(SIZE_RANGE.0 as f64, SIZE_RANGE.1 as f64);
+        k.ed.settings
+            .set(Layer::Session, "font.size", Setting::Float(next));
+        k.ed.message = format!("font {next}");
+    };
+    vec![
+        cmd(
+            Spec::new("font bigger").doc("the font a pixel bigger, for the session"),
+            move |k, ctx| step(k, ctx.count.max(1) as f64),
+        ),
+        cmd(
+            Spec::new("font smaller").doc("the font a pixel smaller, for the session"),
+            move |k, ctx| step(k, -(ctx.count.max(1) as f64)),
+        ),
+        cmd(
+            Spec::new("font reset").doc("the font back to the size the settings say"),
+            |k, _| {
+                k.ed.settings.unset(Layer::Session, "font.size");
+                let size =
+                    k.ed.settings
+                        .get("font.size")
+                        .and_then(Setting::as_float)
+                        .unwrap_or(FONT as f64);
+                k.ed.message = format!("font {size}");
+            },
+        ),
+    ]
+}

@@ -3149,6 +3149,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<Down>", "list down"),
         ("k", "list up"),
         ("<Up>", "list up"),
+        ("<C-n>", "list next"),
+        ("<C-p>", "list prev"),
         ("gg", "list first"),
         ("G", "list last"),
         ("<C-d>", "list half down"),
@@ -3259,6 +3261,22 @@ pub fn default_keymap(km: &mut Keymap) {
     // cancels, `<Up>`/`<Down>` and `<C-p>`/`<C-n>` walk the history
     // (the shell binds the latter two to the completion at the command
     // line, over these).
+    // The font's size, from every mode and every pane (a ⌘ chord
+    // reaches the keymap from a terminal too, `Kawoosh::pane_chord`):
+    // ⌘= and ⌘+ bigger, ⌘- and ⌘_ smaller, ⌘0 back to the settings' —
+    // Ctrl where there is no ⌘, as every editor there spells it.
+    let m = if cfg!(target_os = "macos") { "D" } else { "C" };
+    for (k, c) in [
+        ("=", "font bigger"),
+        ("+", "font bigger"),
+        ("-", "font smaller"),
+        ("_", "font smaller"),
+        ("0", "font reset"),
+    ] {
+        for mode in [Normal, Visual, Insert, Pane] {
+            km.bind(mode, &format!("<{m}-{k}>"), c);
+        }
+    }
     let prompt = [Cond::parse("prompt")];
     km.bind_when(Insert, "<CR>", "prompt submit", &prompt);
     km.bind_when(Normal, "<CR>", "prompt submit", &prompt);

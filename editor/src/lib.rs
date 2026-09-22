@@ -1301,6 +1301,27 @@ impl Editor {
         Err(first.unwrap_or_else(|| "nothing bound".into()))
     }
 
+    /// A mouse gesture as vim spells it — `<2-LeftMouse>`, a double
+    /// click — resolved in the view's mode like a key: the binding
+    /// [`Editor::pick_binding`] chooses runs, and the answer is whether
+    /// one did. Nothing bound, or nothing whose `when` holds, is not an
+    /// error: the caller does what the gesture does unbound.
+    pub fn mouse(&mut self, view: ViewId, notation: &str) -> bool {
+        let mode = self.mode(view);
+        let Lookup::Exact(bs) = self.keymap.lookup(mode, &[notation.to_string()]) else {
+            return false;
+        };
+        let bs = bs.to_vec();
+        match self.pick_binding(view, &bs) {
+            Ok(b) => {
+                let b = b.clone();
+                self.run_step(view, &b.command, &b.args, None);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     /// Runs the binding [`Editor::pick_binding`] chooses, or says why
     /// none can run.
     pub fn run_bindings(&mut self, view: ViewId, bs: &[Binding], count: Option<usize>) {

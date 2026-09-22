@@ -261,11 +261,35 @@ pub fn parse_notation(s: &str) -> Vec<String> {
     out
 }
 
-/// `c-D` → `<C-d>`, `esc` → `<Esc>`, `cr` → `<CR>`, `s-tab` → `<S-Tab>`.
+/// `c-D` → `<C-d>`, `esc` → `<Esc>`, `cr` → `<CR>`, `s-tab` → `<S-Tab>`,
+/// `d--` → `<D-->` (the minus key under ⌘), `2-leftmouse` →
+/// `<2-LeftMouse>` (vim's double click).
 fn normalize_chord(inner: &str) -> String {
-    let parts: Vec<&str> = inner.split('-').collect();
+    // A chord on the minus key ends in the separator and the key.
+    let (inner, minus) = match inner.strip_suffix("--") {
+        Some(rest) => (rest, true),
+        None => (inner, false),
+    };
+    let mut parts: Vec<&str> = inner.split('-').collect();
+    if minus {
+        parts.push("-");
+    }
+    // A mouse gesture's click count leads, as vim writes it.
+    let clicks = parts
+        .first()
+        .filter(|p| parts.len() > 1 && p.len() == 1 && p.as_bytes()[0].is_ascii_digit())
+        .map(|p| p.to_string());
+    if clicks.is_some() {
+        parts.remove(0);
+    }
     let (mods, base) = parts.split_at(parts.len() - 1);
     let base = base[0];
+    if base.eq_ignore_ascii_case("leftmouse") {
+        return match clicks {
+            Some(n) => format!("<{n}-LeftMouse>"),
+            None => "<LeftMouse>".into(),
+        };
+    }
     let base_named = match base.to_ascii_lowercase().as_str() {
         "esc" | "escape" => Some("Esc"),
         "cr" | "enter" | "return" => Some("CR"),
@@ -682,6 +706,31 @@ mod tests {
         let mut k = KeyStroke::plain("!");
         k.ctrl = true;
         assert_eq!(k.notation(), "<C-!>");
+    }
+
+    /// The minus key under a chord and vim's mouse gestures spell the
+    /// same from a map as from a press (2026-09-23: ⌘- for the font,
+    /// a double click in a listing).
+    #[test]
+    fn the_minus_chord_and_a_double_click_are_spelled() {
+        let press = |code: &str, shift: bool| {
+            let mut k = KeyStroke::plain(code);
+            k.sup = true;
+            k.shift = shift;
+            k.notation()
+        };
+        assert_eq!(press("-", false), "<D-->");
+        assert_eq!(press("=", false), "<D-=>");
+        assert_eq!(press("+", true), "<D-+>");
+        assert_eq!(press("_", true), "<D-_>");
+        assert_eq!(parse_notation("<D-->"), ["<D-->"]);
+        assert_eq!(parse_notation("<C-->"), ["<C-->"]);
+        assert_eq!(parse_notation("<D-=>"), ["<D-=>"]);
+        assert_eq!(parse_notation("<D-+>"), ["<D-+>"]);
+        assert_eq!(parse_notation("<D-_>"), ["<D-_>"]);
+        assert_eq!(parse_notation("<2-LeftMouse>"), ["<2-LeftMouse>"]);
+        assert_eq!(parse_notation("<2-leftmouse>"), ["<2-LeftMouse>"]);
+        assert_eq!(parse_notation("<LeftMouse>"), ["<LeftMouse>"]);
     }
 
     #[test]

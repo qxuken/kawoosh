@@ -1107,6 +1107,8 @@ end)
 
 kawoosh.map("n", "<CR>", "goto location", { when = { "!language:dir" } })
 kawoosh.map("n", "<CR>", "dir enter")
+-- A double click on a line is `<CR>` on it.
+kawoosh.map("n", "<2-LeftMouse>", "dir enter", { when = { "language:dir" } })
 kawoosh.map("n", "<leader>cd", "dir cd")
 kawoosh.map("n", "<C-l>", "dir refresh", { when = { "language:dir" } })
 kawoosh.map("n", "<C-p>", "dir preview", { when = { "language:dir" } })

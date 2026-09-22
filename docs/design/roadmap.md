@@ -247,7 +247,9 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   preview highlighted through `kawoosh.highlight`, a text of no
   buffer's on the ts thread, and `J` `K` scrolling it; `tools.lua`
   bundled (git, top, shell, compile, run, a `settings.lua`'s `tools`
-  table through `kawoosh.on_settings`).
+  table through `kawoosh.on_settings`). `<C-n>` `<C-p>` go round from the last row to
+  the first and back (2026-09-23), in the picker and in every listing
+  pane (`list next` / `prev`); `j` `k` still stop at the ends.
 - **Pane resizing from the keyboard** — done 2026-09-21 [keys.md].
   `<A-S-hjkl>` the focused pane narrower, wider, shorter, taller by
   a twentieth of its split, COUNT steps, from every pane and mode
@@ -308,7 +310,13 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   on macOS and the whole row drags the window. The status block moved
   into it off the tab strip: the cwd on the left, the servers and a
   running compile on the right. The branch and the workspace's name
-  were not added; the room is there.
+  were not added; the room is there. After a day's use (2026-09-23): the
+  servers block is a button opening `*lsp*` (`:lsp info` — each
+  server's root, documents, the open buffers it holds and what it
+  said last), and a click on the chrome gives the keys back to the
+  pane (it had kept them on the clicked node, so the `dir` a cwd click
+  opened took no keys). ⌘= ⌘+ / ⌘- ⌘_ step `font.size` for the
+  session and ⌘0 puts it back (Ctrl where there is no ⌘).
 - **The cwd, somewhere it fits** — done 2026-09-23 [use 2026-09-22];
   step 13. In the title bar, shortened as fish's prompt does — every
   component but the last to its first letter, a leading dot kept
@@ -327,7 +335,9 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   A close button (`×`) on the active tab and the one under the
   pointer, beside the tab item rather than in it (a focusable node
   inside a `tab` is out of the Tab ring, kui warns), running `:tabclose`
-  on its tab; none on a lone tab. `kawoosh/tests/chrome.rs`.
+  on its tab; none on a lone tab. `kawoosh/tests/chrome.rs`. Slimmer
+  after use (2026-09-23): 22 px, one text row under the accent edge,
+  and no scrollbar on it, which at that height lay over the labels.
 - **The dock as a layout** — done 2026-09-23 [use 2026-09-22]; step
   13. Decided the cheap way the note expected: the dock is a `Tab` of
   its own, always a tree (`Layout::dock: Option<Tab>`), so a split
@@ -546,7 +556,10 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   quietly — unless the listing has edits (its plan unwritten), which
   keep it as they would a modified file. `-` from the file lists the
   directory again with the caret on it, so nothing is lost with the
-  buffer. `kawoosh/lua/tests/dir_enter.lua`.
+  buffer. `kawoosh/lua/tests/dir_enter.lua`. A double click on a line is
+  `<CR>` on it (2026-09-23): the editor's double click is a gesture a
+  map can take, vim's `<2-LeftMouse>` (`Editor::mouse`), which
+  `dir.lua` maps for listings; unbound, it still selects the word.
 - **The working memory, round two** — done 2026-09-21
   ([memory.md](memory.md), step 10). The memory as the one place the
   editor remembers: a row per subject (texts, files, command lines,

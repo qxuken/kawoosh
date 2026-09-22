@@ -895,6 +895,65 @@ impl Kawoosh {
             .join("   ")
     }
 
+    /// `:lsp info`, and a click on the title bar's servers: each server
+    /// with its root, how many documents it holds and which open
+    /// buffers they are, then what it said last (the log's lines from
+    /// it, newest last).
+    fn lsp_info_text(&self) -> String {
+        if self.lsp.status.is_empty() {
+            return "no language servers running\n".into();
+        }
+        let mut out = String::new();
+        for (root, cmd, n) in &self.lsp.status {
+            out += &format!(
+                "{cmd}\n  root  {}\n  docs  {n}\n",
+                kawoosh_systems::fs::abbreviate_home(root)
+            );
+            let languages: Vec<&str> = self
+                .scripting
+                .servers
+                .iter()
+                .filter(|d| &d.command == cmd)
+                .map(|d| d.language.as_str())
+                .collect();
+            let mut open: Vec<String> = self
+                .ed
+                .buffers
+                .values()
+                .filter(|b| languages.contains(&&*b.language))
+                .filter_map(|b| {
+                    b.path
+                        .as_ref()?
+                        .strip_prefix(root)
+                        .ok()
+                        .map(|p| p.display().to_string())
+                })
+                .collect();
+            open.sort();
+            for p in open {
+                out += &format!("        {p}\n");
+            }
+            let said: Vec<&crate::notify::Entry> = self
+                .notes
+                .log
+                .iter()
+                .filter(|e| e.source.as_deref() == Some(cmd.as_str()))
+                .collect();
+            if !said.is_empty() {
+                out += "  said\n";
+                for e in &said[said.len().saturating_sub(20)..] {
+                    for (i, line) in e.text.lines().enumerate() {
+                        out += if i == 0 { "        " } else { "          " };
+                        out += line;
+                        out += "\n";
+                    }
+                }
+            }
+            out += "\n";
+        }
+        out
+    }
+
     fn request_completion(&mut self) {
         let Some((_, buffer, offset)) = self.lsp_at_caret() else {
             return;
@@ -1187,6 +1246,15 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("lsp").doc("the servers running, and what they hold"),
             |k, _| k.ed.message = k.lsp_status_line(),
+        ),
+        cmd(
+            Spec::new("lsp info")
+                .alias(&["lspinfo"])
+                .doc("the servers in a pane: each one's root, documents and what it said last"),
+            |k, _| {
+                let text = k.lsp_info_text();
+                k.show_in_pane("*lsp*", &text);
+            },
         ),
     ]
 }

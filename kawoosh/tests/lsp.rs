@@ -676,3 +676,37 @@ fn buffer_words_complete_and_the_candidates_picker_browses_them() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The title bar's servers block is a button: a click opens `*lsp*`
+/// (`:lsp info`) with each server's root, its document count and the
+/// open buffers it holds, and the keys stay with the pane they were in.
+#[test]
+fn the_servers_block_opens_the_lsp_pane() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lspinfo-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.iter().any(|s| s.2 == 1)),
+        "the server holds the file"
+    );
+    d.frame(&mut app);
+    let (x, y, w, h) = d.rect_of("block0").expect("the servers block");
+    d.click(&mut app, x + w / 2.0, y + h / 2.0);
+    let info = app
+        .ed
+        .buffers
+        .values()
+        .find(|b| b.name == "*lsp*")
+        .expect("the lsp pane");
+    let text = info.text();
+    assert!(text.contains("docs  1"), "{text}");
+    assert!(text.contains("src/main.rs"), "{text}");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).name, "main.rs", "the keys stayed");
+    std::fs::remove_dir_all(&dir).ok();
+}

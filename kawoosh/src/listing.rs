@@ -53,6 +53,16 @@ fn step(list: &mut dyn Listing, by: isize) {
     list.set_cursor(i);
 }
 
+/// `step` by one row, round from one end to the other.
+fn cycle(list: &mut dyn Listing, by: isize) {
+    let n = list.len() as isize;
+    if n == 0 {
+        return;
+    }
+    let delta = if list.top_is_zero() { by } else { -by };
+    list.set_cursor((list.cursor() as isize + delta).rem_euclid(n) as usize);
+}
+
 /// The cursor on the screen's first or last row.
 fn end(list: &mut dyn Listing, top: bool) {
     let n = list.len();
@@ -167,6 +177,20 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .when(&["listing"])
                 .doc("the list's cursor a row up, COUNT rows"),
             move |k, ctx| k.on_listing(|l| step(l, -count(ctx))),
+        ),
+        // `<C-n>` `<C-p>`: a menu's keys, round from the last row to
+        // the first and back, where `j` `k` stop at the ends.
+        cmd(
+            Spec::new("list next")
+                .when(&["listing"])
+                .doc("the list's cursor a row down, from the last row to the first; COUNT rows"),
+            move |k, ctx| k.on_listing(|l| cycle(l, count(ctx))),
+        ),
+        cmd(
+            Spec::new("list prev")
+                .when(&["listing"])
+                .doc("the list's cursor a row up, from the first row to the last; COUNT rows"),
+            move |k, ctx| k.on_listing(|l| cycle(l, -count(ctx))),
         ),
         cmd(
             Spec::new("list first")

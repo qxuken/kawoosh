@@ -2543,3 +2543,54 @@ fn the_lua_types_are_written_for_the_language_server() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A double click on a listing's line enters it, as `<CR>` does: a
+/// directory lists, a file opens and the listing goes. The gesture is
+/// the keymap's `<2-LeftMouse>` (dir.lua maps it for listings); in a
+/// file it is unbound and selects the word.
+#[test]
+fn a_double_click_enters_a_listing_line() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-dblclick-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "alpha beta").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("e {}", dir.display()));
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "sub/", "a.txt"]);
+    let at = |d: &Drive, text: &str| {
+        let n = d
+            .core
+            .nodes()
+            .iter()
+            .find(|n| n.text.as_deref() == Some(text))
+            .unwrap_or_else(|| panic!("{text} drawn"))
+            .rect;
+        (n.x + 4.0, n.y + n.h / 2.0)
+    };
+    let (x, y) = at(&d, "a.txt");
+    d.double_click(&mut app, x, y);
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["alpha beta"]);
+    assert!(
+        app.ed
+            .buffers
+            .values()
+            .all(|b| !b.name.starts_with("dir: ")),
+        "the listing went"
+    );
+    // In the file the gesture is unbound: the word.
+    let (x, y) = at(&d, "alpha beta");
+    d.double_click(&mut app, x + 60.0, y);
+    let v = app.focused_view().unwrap();
+    let s = app.ed.views[v].sels.primary();
+    assert_eq!(
+        (s.anchor.min(s.head), s.anchor.max(s.head)),
+        (6, 10),
+        "beta"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

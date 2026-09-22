@@ -39,7 +39,8 @@ impl Kawoosh {
         let focused = ui.env().focused;
         let (head, last) = shorten_path(&kawoosh_systems::fs::abbreviate_home(&self.cwd));
         let full = kawoosh_systems::fs::abbreviate_home(&self.cwd);
-        let mut blocks: Vec<(String, kui::Color)> = Vec::new();
+        // Each block with what a click on it runs, if anything.
+        let mut blocks: Vec<(String, kui::Color, Option<&str>)> = Vec::new();
         if !self.lsp.status.is_empty() {
             let n: usize = self.lsp.status.iter().map(|s| s.2).sum();
             let servers = self.lsp.status.len();
@@ -49,10 +50,11 @@ impl Kawoosh {
                     if servers == 1 { "" } else { "s" }
                 ),
                 pal.dim,
+                Some("lsp info"),
             ));
         }
         if self.compile.running {
-            blocks.push(("compiling…".into(), pal.command));
+            blocks.push(("compiling…".into(), pal.command, None));
         }
         ui.with(
             NodeSpec::column()
@@ -88,7 +90,7 @@ impl Kawoosh {
                         },
                     );
                     ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
-                    for (i, (text, color)) in blocks.iter().enumerate() {
+                    for (i, (text, color, run)) in blocks.iter().enumerate() {
                         if i > 0 {
                             ui.with_indexed(
                                 2000 + i as u64,
@@ -99,11 +101,23 @@ impl Kawoosh {
                                 |_| {},
                             );
                         }
-                        ui.with_indexed(
-                            3000 + i as u64,
-                            NodeSpec::row().pad_xy(10.0, 0.0).cross_align(Align::Center),
-                            |ui| ui.text(text, rows::mono(font, &pal).color(*color)),
-                        );
+                        let mut spec = NodeSpec::row()
+                            .height(Sizing::Grow(1.0))
+                            .pad_xy(10.0, 0.0)
+                            .cross_align(Align::Center);
+                        if let Some(run) = run {
+                            spec = spec
+                                .hover_bg(pal.panel)
+                                .cursor(CursorShape::Pointer)
+                                .on_click(Value::map([
+                                    ("kind", "chrome".into()),
+                                    ("run", Value::str(*run)),
+                                ]))
+                                .label(*run);
+                        }
+                        ui.with_keyed(&format!("block{i}"), spec, |ui| {
+                            ui.text(text, rows::mono(font, &pal).color(*color))
+                        });
                     }
                 });
             },
@@ -166,6 +180,10 @@ impl Kawoosh {
                 .height(Sizing::Fixed(TAB_H))
                 .bg(pal.strip)
                 .scroll_x()
+                // No bar: at the strip's height it would lie over the
+                // labels and take their clicks; the wheel and the
+                // reveal move it.
+                .scrollbar(kui::ScrollbarMode::Hidden)
                 .transition(TABS_MS)
                 .role(Role::TabList),
             |ui| {

@@ -601,6 +601,15 @@ local function move(by)
   ensure_visible()
 end
 
+-- A row down or up, round from the last to the first and back:
+-- `<C-n>` `<C-p>` walk the list as a menu's keys do, where `j` `k`
+-- stop at its ends.
+local function cycle(by)
+  if not P or #P.hits == 0 then return end
+  P.cursor = (P.cursor - 1 + by) % #P.hits + 1
+  ensure_visible()
+end
+
 -- The preview scrolled by `step` lines, held to its lines.
 local function preview_by(step)
   if not P then return end
@@ -982,6 +991,8 @@ end
 on("query", function() kawoosh.field_focus(VIEW, FIELD) end, "the keys to the query field")
 on("next", function() move(1) end, "the cursor a row down")
 on("prev", function() move(-1) end, "the cursor a row up")
+on("cycle next", function() cycle(1) end, "the cursor a row down, from the last to the first")
+on("cycle prev", function() cycle(-1) end, "the cursor a row up, from the first to the last")
 on("page down", function() move(P and P.rows or 10) end, "the cursor a page down")
 on("page up", function() move(-(P and P.rows or 10)) end, "the cursor a page up")
 on("first", function() if P then P.cursor = 1 ensure_visible() end end, "the cursor on the first row")
@@ -1020,8 +1031,8 @@ for _, mode in ipairs { "i", "n" } do
   kawoosh.map(mode, "<CR>", "picker pick", at)
   kawoosh.map(mode, "<Down>", "picker next", at)
   kawoosh.map(mode, "<Up>", "picker prev", at)
-  kawoosh.map(mode, "<C-n>", "picker next", at)
-  kawoosh.map(mode, "<C-p>", "picker prev", at)
+  kawoosh.map(mode, "<C-n>", "picker cycle next", at)
+  kawoosh.map(mode, "<C-p>", "picker cycle prev", at)
   kawoosh.map(mode, "<C-j>", "picker next", at)
   kawoosh.map(mode, "<C-k>", "picker prev", at)
   kawoosh.map(mode, "<PageDown>", "picker page down", at)
@@ -1047,6 +1058,8 @@ for _, m in ipairs { { "n", at }, { "p", on_pane } } do
 end
 kawoosh.map("p", "<CR>", "picker pick", on_pane)
 kawoosh.map("p", "<Down>", "picker next", on_pane)
+kawoosh.map("p", "<C-n>", "picker cycle next", on_pane)
+kawoosh.map("p", "<C-p>", "picker cycle prev", on_pane)
 kawoosh.map("p", "<Up>", "picker prev", on_pane)
 kawoosh.map("p", "q", "picker close", on_pane)
 kawoosh.map("p", "<C-c>", "picker close", on_pane)

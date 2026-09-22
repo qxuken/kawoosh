@@ -42,6 +42,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::terminals::commands());
     v.extend(crate::trust::commands());
     v.extend(crate::disk::commands());
+    v.extend(crate::look::commands());
     v.extend(crate::notify::commands());
     v.extend(crate::lsp::commands());
     v.extend(crate::session::commands());
@@ -105,8 +106,8 @@ impl Kawoosh {
                 ("<CR>", "memory filter done"),
                 ("<Down>", "list down"),
                 ("<Up>", "list up"),
-                ("<C-n>", "list down"),
-                ("<C-p>", "list up"),
+                ("<C-n>", "list next"),
+                ("<C-p>", "list prev"),
                 ("<C-j>", "list down"),
                 ("<C-k>", "list up"),
                 ("<C-d>", "list half down"),
