@@ -96,6 +96,13 @@ struct Modes {
     report_appearance: bool,
     /// Bytes to the process, written once the parser's pass is over.
     replies: Vec<u8>,
+    /// Lines the primary screen has scrolled into history since the
+    /// start — counted through history's growth, and at its cap by a
+    /// line fed at the bottom — so a line has a number that outlives
+    /// its place on screen: grid line `l` is `scrolled + l`.
+    scrolled: u64,
+    /// The scrollback's cap, what `scrolled` counts past at the cap.
+    history_max: usize,
 }
 
 /// Mode 2031, and the report a program under it gets on a flip, in
@@ -108,10 +115,92 @@ fn appearance_report(dark: bool) -> String {
     format!("\x1b[?997;{}n", if dark { 1 } else { 2 })
 }
 
+/// One command as the shell marked it (OSC 133, FinalTerm's marks —
+/// nushell's `shell_integration.osc133`, and the `precmd` lines
+/// kawoosh's shell snippets add): where its prompt began (`A`), where
+/// the typed line began (`B`), where its output began (`C`) and where
+/// it ended with its status (`D`), each a line number as
+/// [`Terminal::line_of`] counts them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Command {
+    pub prompt: u64,
+    pub input: Option<u64>,
+    pub output: Option<u64>,
+    pub end: Option<u64>,
+    pub status: Option<i32>,
+}
+
+/// The OSC sequences the parser does not know and kawoosh wants — 7
+/// (the shell's cwd) and 133 (the prompt marks) — picked out of the
+/// byte stream in front of it, across reads.
+#[derive(Default)]
+struct OscScan {
+    state: Scan,
+    buf: Vec<u8>,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Scan {
+    #[default]
+    Ground,
+    Esc,
+    Osc,
+    OscEsc,
+}
+
+impl OscScan {
+    /// The longest payload kept: a path, a mark with its options.
+    const MAX: usize = 4096;
+
+    /// One byte on; the payload of an OSC that ended on it, when one
+    /// did.
+    fn step(&mut self, b: u8) -> Option<Vec<u8>> {
+        match (self.state, b) {
+            (Scan::Ground, 0x1b) => self.state = Scan::Esc,
+            (Scan::Ground, _) => {}
+            (Scan::Esc, b']') => {
+                self.state = Scan::Osc;
+                self.buf.clear();
+            }
+            (Scan::Esc, 0x1b) => {}
+            (Scan::Esc, _) => self.state = Scan::Ground,
+            (Scan::Osc, 0x07) => {
+                self.state = Scan::Ground;
+                return Some(std::mem::take(&mut self.buf));
+            }
+            (Scan::Osc, 0x1b) => self.state = Scan::OscEsc,
+            // CAN and SUB abandon a sequence.
+            (Scan::Osc, 0x18 | 0x1a) => self.state = Scan::Ground,
+            (Scan::Osc, _) => {
+                if self.buf.len() < Self::MAX {
+                    self.buf.push(b);
+                }
+            }
+            (Scan::OscEsc, b'\\') => {
+                self.state = Scan::Ground;
+                return Some(std::mem::take(&mut self.buf));
+            }
+            // An escape that starts something else ends the OSC unread.
+            (Scan::OscEsc, b']') => {
+                self.state = Scan::Osc;
+                self.buf.clear();
+            }
+            (Scan::OscEsc, _) => self.state = Scan::Ground,
+        }
+        None
+    }
+}
+
+/// The most commands a terminal remembers the marks of.
+const COMMANDS_MAX: usize = 2000;
+
 pub struct Terminal {
     term: Term<Proxy>,
     parser: Processor,
     modes: Modes,
+    scan: OscScan,
+    /// The commands the shell marked, oldest first.
+    commands: Vec<Command>,
     /// The colours the screen is painted with, as last set.
     palette: Palette,
     pty: Option<Box<dyn MasterPty + Send>>,
@@ -120,8 +209,10 @@ pub struct Terminal {
     events: Receiver<Event>,
     size: TermSize,
     pub title: String,
-    /// Set by an OSC 7 or the shell's cwd report, for `gf` and `:tool`.
-    pub cwd: Option<std::path::PathBuf>,
+    /// Where the terminal was started.
+    spawned_in: Option<std::path::PathBuf>,
+    /// The directory the shell last said it is in (OSC 7).
+    reported_cwd: Option<std::path::PathBuf>,
     pub bell: bool,
     exited: bool,
     /// Bytes a headless terminal would have sent to its process, for
@@ -191,12 +282,17 @@ impl Terminal {
             .context("cloning pty reader")?;
         let writer = pair.master.take_writer().context("taking pty writer")?;
         let (tx, events) = channel();
-        let term = Term::new(config(), &size, Proxy { tx });
+        let term = Term::new(config(HISTORY), &size, Proxy { tx });
         Ok((
             Self {
                 term,
                 parser: Processor::new(),
-                modes: Modes::default(),
+                modes: Modes {
+                    history_max: HISTORY,
+                    ..Modes::default()
+                },
+                scan: OscScan::default(),
+                commands: Vec::new(),
                 palette: Palette::default(),
                 pty: Some(pair.master),
                 writer: Some(writer),
@@ -204,7 +300,8 @@ impl Terminal {
                 events,
                 size,
                 title: String::new(),
-                cwd: cwd.map(Into::into),
+                spawned_in: cwd.map(Into::into),
+                reported_cwd: None,
                 bell: false,
                 exited: false,
                 sent: Vec::new(),
@@ -217,9 +314,14 @@ impl Terminal {
     pub fn headless(size: TermSize) -> Self {
         let (tx, events) = channel();
         Self {
-            term: Term::new(config(), &size, Proxy { tx }),
+            term: Term::new(config(HISTORY), &size, Proxy { tx }),
             parser: Processor::new(),
-            modes: Modes::default(),
+            modes: Modes {
+                history_max: HISTORY,
+                ..Modes::default()
+            },
+            scan: OscScan::default(),
+            commands: Vec::new(),
             palette: Palette::default(),
             pty: None,
             writer: None,
@@ -227,7 +329,8 @@ impl Terminal {
             events,
             size,
             title: String::new(),
-            cwd: None,
+            spawned_in: None,
+            reported_cwd: None,
             bell: false,
             exited: false,
             sent: Vec::new(),
@@ -261,8 +364,31 @@ impl Terminal {
     }
 
     /// Bytes from the pty: parsed, replies (a DA answer, a cursor report)
-    /// written back, and the terminal's own events read out.
+    /// written back, and the terminal's own events read out. The OSCs
+    /// the parser drops — 7 and 133 — are read here, the bytes before
+    /// each parsed first so a mark lands on the line the cursor is on
+    /// when it arrives.
     pub fn feed(&mut self, bytes: &[u8]) {
+        let mut from = 0;
+        for (i, &b) in bytes.iter().enumerate() {
+            if let Some(osc) = self.scan.step(b) {
+                self.advance(&bytes[from..=i]);
+                from = i + 1;
+                self.on_osc(&osc);
+            }
+        }
+        self.advance(&bytes[from..]);
+        let replies = std::mem::take(&mut self.modes.replies);
+        if !replies.is_empty() {
+            self.input(&replies);
+        }
+        self.drain_events();
+    }
+
+    fn advance(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
         self.parser.advance(
             &mut Hooked {
                 term: &mut self.term,
@@ -270,11 +396,205 @@ impl Terminal {
             },
             bytes,
         );
-        let replies = std::mem::take(&mut self.modes.replies);
-        if !replies.is_empty() {
-            self.input(&replies);
+    }
+
+    /// An OSC the parser does not read: `7;file://host/path`, the
+    /// shell's directory, and `133;X[;…]`, a prompt mark.
+    fn on_osc(&mut self, payload: &[u8]) {
+        let Ok(s) = std::str::from_utf8(payload) else {
+            return;
+        };
+        if let Some(url) = s.strip_prefix("7;") {
+            if let Some(p) = file_url_path(url) {
+                self.reported_cwd = Some(p);
+            }
+        } else if let Some(mark) = s.strip_prefix("133;") {
+            let line = self.cursor_line();
+            let mut parts = mark.split(';');
+            match parts.next() {
+                Some("A") => {
+                    // A prompt drawn again over the same line (a
+                    // resize, a `clear`) is the same command's.
+                    if self
+                        .commands
+                        .last()
+                        .is_some_and(|c| c.prompt == line && c.end.is_none())
+                    {
+                        return;
+                    }
+                    self.commands.push(Command {
+                        prompt: line,
+                        ..Command::default()
+                    });
+                    if self.commands.len() > COMMANDS_MAX {
+                        self.commands.remove(0);
+                    }
+                }
+                Some("B") => {
+                    if let Some(c) = self.commands.last_mut() {
+                        c.input = Some(line);
+                    }
+                }
+                Some("C") => {
+                    if let Some(c) = self.commands.last_mut() {
+                        c.output = Some(line);
+                    }
+                }
+                Some("D") => {
+                    if let Some(c) = self.commands.last_mut()
+                        && c.end.is_none()
+                    {
+                        c.end = Some(line);
+                        c.status = parts.next().and_then(|n| n.parse().ok());
+                    }
+                }
+                _ => {}
+            }
         }
-        self.drain_events();
+    }
+
+    /// The number of the line the cursor is on (grid line `l` is
+    /// `scrolled + l`), which history scrolling past does not change.
+    fn cursor_line(&self) -> u64 {
+        let l = self.term.grid().cursor.point.line.0;
+        (self.modes.scrolled as i64 + l as i64).max(0) as u64
+    }
+
+    /// The number of the line at grid line `l`.
+    pub fn line_of(&self, l: i32) -> u64 {
+        (self.modes.scrolled as i64 + l as i64).max(0) as u64
+    }
+
+    /// The oldest line number history still holds.
+    fn oldest_line(&self) -> u64 {
+        self.line_of(-(self.term.grid().history_size() as i32))
+    }
+
+    /// The commands the shell marked, oldest first, those whose prompt
+    /// has left history dropped.
+    pub fn commands(&self) -> Vec<Command> {
+        let oldest = self.oldest_line();
+        self.commands
+            .iter()
+            .filter(|c| c.prompt >= oldest)
+            .cloned()
+            .collect()
+    }
+
+    /// The last finished command's output as text — the lines from its
+    /// `C` mark to its `D` mark, trailing blank lines trimmed — or
+    /// None when no command has been marked through to its end.
+    pub fn last_output(&self) -> Option<String> {
+        let oldest = self.oldest_line();
+        let c = self
+            .commands
+            .iter()
+            .rev()
+            .find(|c| c.output.is_some() && c.end.is_some())?;
+        let (from, to) = (c.output?.max(oldest), c.end?);
+        let mut lines: Vec<String> = (from..to)
+            .map(|n| self.line_text(n as i64 - self.modes.scrolled as i64))
+            .collect();
+        while lines.last().is_some_and(|l| l.trim().is_empty()) {
+            lines.pop();
+        }
+        Some(lines.join("\n"))
+    }
+
+    /// The view scrolled so the prompt above the top row (`back`), or
+    /// the one below it, is at the top — as far as the bottom allows —
+    /// and past the last, back to the bottom; false when there is none
+    /// that way.
+    pub fn jump_prompt(&mut self, back: bool) -> bool {
+        let top = self.line_of(-(self.display_offset() as i32));
+        let oldest = self.oldest_line();
+        let prompts: Vec<u64> = self
+            .commands
+            .iter()
+            .map(|c| c.prompt)
+            .filter(|p| *p >= oldest)
+            .collect();
+        // The offset that puts line `p` at the top, as far as history
+        // and the bottom allow; the first prompt that way whose offset
+        // moves the view.
+        let now = self.display_offset() as i64;
+        let offset_of = |p: u64| -> i64 {
+            (self.modes.scrolled as i64 - p as i64).clamp(0, self.history_size() as i64)
+        };
+        let target = if back {
+            prompts
+                .iter()
+                .rev()
+                .filter(|p| **p < top)
+                .map(|p| offset_of(*p))
+                .find(|o| *o > now)
+        } else {
+            prompts
+                .iter()
+                .filter(|p| **p > top)
+                .map(|p| offset_of(*p))
+                .find(|o| *o < now)
+        };
+        let Some(offset) = target else {
+            if !back && now > 0 {
+                self.scroll_to_bottom();
+                return true;
+            }
+            return false;
+        };
+        self.scroll((offset - now) as i32);
+        true
+    }
+
+    /// The text of grid line `l` (negative in history), trailing blanks
+    /// trimmed.
+    fn line_text(&self, l: i64) -> String {
+        let grid = self.term.grid();
+        if l < -(grid.history_size() as i64) || l >= grid.screen_lines() as i64 {
+            return String::new();
+        }
+        let mut s = String::new();
+        for col in 0..grid.columns() {
+            let cell = &grid[Line(l as i32)][Column(col)];
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::HIDDEN)
+            {
+                continue;
+            }
+            s.push(cell.c);
+        }
+        s.trim_end().to_string()
+    }
+
+    /// Where the shell is: the directory it last reported (OSC 7), else
+    /// its process's own (`proc_pidinfo` on macOS, `/proc` on Linux),
+    /// else where it was started.
+    pub fn cwd(&self) -> Option<std::path::PathBuf> {
+        self.reported_cwd
+            .clone()
+            .or_else(|| self.process_cwd())
+            .or_else(|| self.spawned_in.clone())
+    }
+
+    /// The shell process's working directory, asked of the system.
+    pub fn process_cwd(&self) -> Option<std::path::PathBuf> {
+        let pid = self.child.as_ref()?.process_id()?;
+        pid_cwd(pid)
+    }
+
+    /// How many lines of history the terminal keeps; lines past a
+    /// smaller cap go at once.
+    pub fn set_scrollback(&mut self, lines: usize) {
+        if lines == self.modes.history_max {
+            return;
+        }
+        self.modes.history_max = lines;
+        self.term.set_options(config(lines));
+    }
+
+    pub fn scrollback_cap(&self) -> usize {
+        self.modes.history_max
     }
 
     /// The colours the screen is painted with, from the theme: kept for
@@ -625,11 +945,80 @@ impl Drop for Terminal {
     }
 }
 
-fn config() -> Config {
+/// The scrollback a terminal starts with (`terminal.scrollback`).
+pub const HISTORY: usize = 10_000;
+
+fn config(history: usize) -> Config {
     Config {
-        scrolling_history: 10_000,
+        scrolling_history: history,
         ..Config::default()
     }
+}
+
+/// The path of a `file://host/path` URL, percent-decoded; the host is
+/// the shell's and not checked (a shell over ssh reports its own, and a
+/// path that is not here is a directory `gf` will not find).
+fn file_url_path(url: &str) -> Option<std::path::PathBuf> {
+    let rest = url.strip_prefix("file://")?;
+    let path = &rest[rest.find('/')?..];
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(v) = u8::from_str_radix(&path[i + 1..i + 3], 16)
+        {
+            out.push(v);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    let s = String::from_utf8(out).ok()?;
+    // `file:///C:/x` on Windows.
+    let s = match s.as_bytes() {
+        [b'/', d, b':', ..] if d.is_ascii_alphabetic() && cfg!(windows) => s[1..].to_string(),
+        _ => s,
+    };
+    Some(std::path::PathBuf::from(s))
+}
+
+#[cfg(target_os = "macos")]
+fn pid_cwd(pid: u32) -> Option<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    // SAFETY: `proc_pidinfo` fills at most `size` bytes of `info`, a
+    // plain C struct zeroed first; the path is a NUL-terminated string
+    // inside it.
+    unsafe {
+        let mut info: libc::proc_vnodepathinfo = std::mem::zeroed();
+        let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as i32;
+        let n = libc::proc_pidinfo(
+            pid as i32,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        );
+        if n != size {
+            return None;
+        }
+        let raw = &info.pvi_cdir.vip_path;
+        let bytes: &[u8] = std::slice::from_raw_parts(raw.as_ptr() as *const u8, 32 * 32);
+        let end = bytes.iter().position(|b| *b == 0)?;
+        (end > 0).then(|| std::ffi::OsStr::from_bytes(&bytes[..end]).into())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn pid_cwd(pid: u32) -> Option<std::path::PathBuf> {
+    std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn pid_cwd(_pid: u32) -> Option<std::path::PathBuf> {
+    None
 }
 
 /// Key bytes for a terminal, from kui's key payload fields. `None` for a
@@ -806,6 +1195,34 @@ struct Hooked<'a> {
     modes: &'a mut Modes,
 }
 
+impl Hooked<'_> {
+    /// `f` on the term, the lines it scrolled into history counted:
+    /// history's growth, or at its cap a line fed at the bottom — the
+    /// primary screen's alone, the alternate keeping no history.
+    fn counted(&mut self, feeds_line: bool, f: impl FnOnce(&mut Term<Proxy>)) {
+        let alt = self.term.mode().contains(TermMode::ALT_SCREEN);
+        let grid = self.term.grid();
+        let before = grid.history_size();
+        let bottom = grid.screen_lines() as i32 - 1;
+        let was_bottom = grid.cursor.point.line.0 == bottom;
+        f(self.term);
+        if alt {
+            return;
+        }
+        let grid = self.term.grid();
+        let after = grid.history_size();
+        if after > before {
+            self.modes.scrolled += (after - before) as u64;
+        } else if feeds_line
+            && before >= self.modes.history_max
+            && was_bottom
+            && grid.cursor.point.line.0 == bottom
+        {
+            self.modes.scrolled += 1;
+        }
+    }
+}
+
 impl Handler for Hooked<'_> {
     fn set_private_mode(&mut self, mode: PrivateMode) {
         if mode == PrivateMode::Unknown(MODE_APPEARANCE) {
@@ -847,7 +1264,7 @@ impl Handler for Hooked<'_> {
         self.term.set_cursor_shape(shape)
     }
     fn input(&mut self, c: char) {
-        self.term.input(c)
+        self.counted(false, |t| t.input(c))
     }
     fn goto(&mut self, line: i32, col: usize) {
         self.term.goto(line, col)
@@ -880,7 +1297,7 @@ impl Handler for Hooked<'_> {
         self.term.move_backward(col)
     }
     fn move_down_and_cr(&mut self, row: usize) {
-        self.term.move_down_and_cr(row)
+        self.counted(false, |t| t.move_down_and_cr(row))
     }
     fn move_up_and_cr(&mut self, row: usize) {
         self.term.move_up_and_cr(row)
@@ -895,7 +1312,7 @@ impl Handler for Hooked<'_> {
         self.term.carriage_return()
     }
     fn linefeed(&mut self) {
-        self.term.linefeed()
+        self.counted(true, |t| t.linefeed())
     }
     fn bell(&mut self) {
         self.term.bell()
@@ -904,13 +1321,13 @@ impl Handler for Hooked<'_> {
         self.term.substitute()
     }
     fn newline(&mut self) {
-        self.term.newline()
+        self.counted(true, |t| t.newline())
     }
     fn set_horizontal_tabstop(&mut self) {
         self.term.set_horizontal_tabstop()
     }
     fn scroll_up(&mut self, a0: usize) {
-        self.term.scroll_up(a0)
+        self.counted(false, |t| t.scroll_up(a0))
     }
     fn scroll_down(&mut self, a0: usize) {
         self.term.scroll_down(a0)
@@ -943,7 +1360,7 @@ impl Handler for Hooked<'_> {
         self.term.clear_line(mode)
     }
     fn clear_screen(&mut self, mode: ClearMode) {
-        self.term.clear_screen(mode)
+        self.counted(false, |t| t.clear_screen(mode))
     }
     fn clear_tabs(&mut self, mode: TabulationClearMode) {
         self.term.clear_tabs(mode)
@@ -1127,6 +1544,61 @@ mod tests {
         // The other modes still reach the term through the hook.
         t.feed(b"\x1b[?1049h");
         assert!(t.is_alt_screen());
+    }
+
+    /// OSC 7 sets where the shell is, split across reads and with its
+    /// escapes decoded; the parser still sees the bytes around it.
+    #[test]
+    fn the_shell_reports_its_directory() {
+        let mut t = Terminal::headless(TermSize { rows: 3, cols: 20 });
+        assert_eq!(t.cwd(), None);
+        t.feed(b"a\x1b]7;file://host/tmp/my%20di");
+        t.feed(b"r\x1b\\b");
+        assert_eq!(t.cwd(), Some(std::path::PathBuf::from("/tmp/my dir")));
+        assert_eq!(rows(&t)[0], "ab");
+        t.feed(b"\x1b]7;file://h/x\x07");
+        assert_eq!(t.cwd(), Some(std::path::PathBuf::from("/x")));
+    }
+
+    /// OSC 133's marks: each command's prompt, output and end on the
+    /// lines they arrived on, those lines' numbers kept as history
+    /// scrolls; the last command's output as text; the view jumped
+    /// from prompt to prompt.
+    #[test]
+    fn prompt_marks_find_commands_and_their_output() {
+        let mut t = Terminal::headless(TermSize { rows: 4, cols: 20 });
+        let command = |t: &mut Terminal, cmd: &str, out: &[&str]| {
+            t.feed(b"\x1b]133;A\x07$ \x1b]133;B\x07");
+            t.feed(cmd.as_bytes());
+            t.feed(b"\r\n\x1b]133;C\x07");
+            for l in out {
+                t.feed(format!("{l}\r\n").as_bytes());
+            }
+            t.feed(b"\x1b]133;D;0\x07");
+        };
+        command(&mut t, "ls", &["a", "b", "c"]);
+        command(&mut t, "echo hi", &["hi"]);
+        let cs = t.commands();
+        assert_eq!(cs.len(), 2);
+        assert_eq!(
+            (cs[0].prompt, cs[0].output, cs[0].end),
+            (0, Some(1), Some(4))
+        );
+        assert_eq!(cs[1].prompt, 4);
+        assert_eq!(cs[1].status, Some(0));
+        assert_eq!(t.last_output().as_deref(), Some("hi"));
+        t.feed(b"\x1b]133;A\x07$ ");
+        assert!(t.history_size() > 0, "the first command scrolled off");
+        // From the bottom, the second prompt is on show; back is the
+        // first, above the view, and then nowhere further. Forward is
+        // the second, which only the bottom can show.
+        assert_eq!(rows(&t)[1], "$ echo hi");
+        assert!(t.jump_prompt(true));
+        assert_eq!(rows(&t)[0], "$ ls");
+        assert!(!t.jump_prompt(true));
+        assert!(t.jump_prompt(false));
+        assert_eq!(t.display_offset(), 0);
+        assert!(!t.jump_prompt(false), "at the bottom, nothing further");
     }
 
     #[test]

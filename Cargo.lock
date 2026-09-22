@@ -1792,6 +1792,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "kui-core",
+ "libc",
  "log",
  "portable-pty",
 ]

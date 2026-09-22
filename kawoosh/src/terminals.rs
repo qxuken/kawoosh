@@ -301,7 +301,7 @@ impl Kawoosh {
             self.ed.message = "no path under the pointer".into();
             return false;
         };
-        let base = t.cwd.clone().unwrap_or_else(|| self.cwd.clone());
+        let base = t.cwd().unwrap_or_else(|| self.cwd.clone());
         let full = kawoosh_systems::fs::expand(Path::new(&path), &base);
         if !full.exists() {
             self.ed.message = format!("not found: {}", full.display());
