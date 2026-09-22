@@ -53,7 +53,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>`, and vim's `<C-w><` `<C-w>>` `<C-w>-` `<C-w>+` | the pane narrower, wider, shorter, taller by a twentieth of its split, COUNT steps — the nearest split of the axis moves, as its divider does under a drag; in a strip the width pair steps the column through the presets instead; from every pane and mode; the dock's height when the dock has the keys |
 | `<C-w>H` `<C-w>L` `<C-w>J` `<C-w>K` | carry the pane a place, COUNT places: in a strip its column along the ribbon (`H` `L`) or the pane inside its column's stack (`J` `K`), in a tree past the neighbour on that side — vim's "move to the far side", read as one step |
 | `⌘1`…`⌘9`, `<C-S-1>`…`<C-S-9>` | the Nth column of a strip (the Nth pane of a tree), the last when there are fewer — `:pane goto N`. Both are spellings no pty can use, so they reach a column from a terminal pane too; a plain `<C-1>` is the shell's and is bound to nothing |
-| `<C-w>e` | the pane out of its column's stack into a column of its own, after it — what dragging its title bar onto a pane's left or right edge does |
+| `<C-w>e` `<C-w>i` | the pane out of its column's stack into a column of its own after it, and the next column's top pane into the stack under it — `e` out, `i` in, as `<A-o>` and `<A-i>` are the syntax node's. The first is what dragging a title bar onto a pane's left or right edge does |
 | `zs` `ze` `zz` | the focused column against the viewport's left edge, its right edge, or in the middle (`:strip left` / `right` / `center`) — vim's horizontal scrolling, read on the ribbon |
 | `<C-w>t` `<leader>tn` | a new tab, of the kind `layout.default` names (the strip) |
 | `:layout` `<leader>tl` | the tab flipped between a tree of splits and a strip of columns ([scrolling-tab.md](scrolling-tab.md)); `:layout scroll` / `:layout tree` name the kind |
@@ -77,8 +77,8 @@ column, `<A-S-h>` / `<A-S-l>` the column's width to the next preset
 down / up (third, half, two-thirds, full; a dragged width snaps to the
 nearest first), `<C-w>H` / `<C-w>L` the column a place along the
 ribbon, `<C-w>e` the focused pane out of its stack into a column of
-its own, and closing a column's last pane takes the column, the
-keyboard to the one before. The status line shows the columns as
+its own and `<C-w>i` the next column's top pane into it, and closing a
+column's last pane takes the column, the keyboard to the one before. The status line shows the columns as
 `▯▮▯`, the focused one filled. The ribbon glides to the column a key
 reveals; a width and a place land on the frame the key asked for them,
 and the scrollbar's thumb and a swipe are followed one to one. A key

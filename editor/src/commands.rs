@@ -2984,9 +2984,11 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w>L", "pane move right"),
         ("<C-w>J", "pane move down"),
         ("<C-w>K", "pane move up"),
-        // The pane out of its column's stack into one of its own: `e`
-        // for expel, beside the moves above.
+        // The pane out of its column's stack into one of its own, and
+        // the next column's top pane into it: `e` for expel and `i`
+        // for in, as `<A-o>` and `<A-i>` are the syntax node's.
         ("<C-w>e", "pane expel"),
+        ("<C-w>i", "pane consume"),
         // Sizing again, vim's own spelling: `<` `>` the width, `-` `+`
         // the height, beside the `<A-S-…>` chords that need no prefix.
         ("<C-w><", "pane narrower"),

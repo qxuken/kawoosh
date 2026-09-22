@@ -724,3 +724,81 @@ fn the_digits_reach_a_column_from_a_terminal_pane() {
     assert_eq!(app.layout.focused(), 1, "ctrl-shift with the digit");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+#[test]
+fn a_column_is_consumed_into_the_stack_beside_it() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    // Three columns, the keyboard back on the first.
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    d.press(&mut app, "<D-1>");
+    settle(&mut d, &mut app);
+    assert_eq!(
+        columns(&app)
+            .iter()
+            .map(|c| c.0.clone())
+            .collect::<Vec<_>>(),
+        [vec![1], vec![2], vec![3]]
+    );
+    // `<C-w>i` takes the next column's pane under the focused one; the
+    // column it emptied goes, and the keyboard stays put.
+    ctrl_w(&mut d, &mut app, "i");
+    assert_eq!(
+        columns(&app)
+            .iter()
+            .map(|c| c.0.clone())
+            .collect::<Vec<_>>(),
+        [vec![1, 2], vec![3]]
+    );
+    assert_eq!(app.layout.focused(), 1);
+    assert_eq!(app.ed.message, "column 1 of 2, 2 panes");
+    settle(&mut d, &mut app);
+    // Again: the stack grows in the order the columns showed.
+    ctrl_w(&mut d, &mut app, "i");
+    assert_eq!(
+        columns(&app)
+            .iter()
+            .map(|c| c.0.clone())
+            .collect::<Vec<_>>(),
+        [vec![1, 3, 2]]
+    );
+    assert_eq!(app.ed.message, "column 1 of 1, 3 panes");
+    // Nothing after it to take.
+    ctrl_w(&mut d, &mut app, "i");
+    assert_eq!(app.ed.message, "no column after this one to take from");
+    // And `<C-w>e` is the way back out.
+    ctrl_w(&mut d, &mut app, "e");
+    assert_eq!(
+        columns(&app)
+            .iter()
+            .map(|c| c.0.clone())
+            .collect::<Vec<_>>(),
+        [vec![3, 2], vec![1]]
+    );
+    // A column with a stack gives up its top pane only.
+    d.press(&mut app, "<D-1>");
+    settle(&mut d, &mut app);
+    assert_eq!(app.layout.focused(), 3);
+    ctrl_w(&mut d, &mut app, "e");
+    assert_eq!(
+        columns(&app)
+            .iter()
+            .map(|c| c.0.clone())
+            .collect::<Vec<_>>(),
+        [vec![2], vec![3], vec![1]]
+    );
+    // In a tree it says what would make it a strip.
+    ex(&mut d, &mut app, "layout tree");
+    ctrl_w(&mut d, &mut app, "i");
+    assert!(
+        app.ed.message.contains(":layout scroll"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

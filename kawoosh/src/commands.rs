@@ -625,6 +625,28 @@ fn panes() -> Vec<ShellCommand> {
                 }
             },
         ),
+        // `<C-w>i`: the other way — the next column's top pane into
+        // this column's stack, `i` for in as `<A-i>` is the node's.
+        cmd(
+            Spec::new("pane consume")
+                .doc("the next column's top pane into this column's stack, under the focused one"),
+            |k, _| {
+                if !k.layout.tab().is_scroll() {
+                    k.ed.message =
+                        "the tab is a tree of splits; :layout scroll makes it a strip".into();
+                    return;
+                }
+                match k.layout.consume() {
+                    Some(n) => {
+                        let s = k.layout.tab().strip().unwrap();
+                        let i = s.column_of(k.layout.focused()).unwrap_or(0);
+                        k.ed.message =
+                            format!("column {} of {}, {n} panes", i + 1, s.columns.len());
+                    }
+                    None => k.ed.message = "no column after this one to take from".into(),
+                }
+            },
+        ),
         // `<C-1>`…`<C-9>`, and ⌘ with them: the Nth column of a strip,
         // the Nth pane of a tree, the last when there are fewer.
         cmd(

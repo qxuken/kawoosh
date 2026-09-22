@@ -1037,6 +1037,36 @@ impl Layout {
         Some(i + 1)
     }
 
+    /// The top pane of the column after this one, taken into this
+    /// column's stack below the focused pane (`<C-w>i`) — `expel`
+    /// read the other way. The column it came from goes when it was
+    /// its last pane, and the keyboard stays where it is. Returns how
+    /// many panes the stack holds now; None when the tab is a tree or
+    /// there is no column after.
+    pub fn consume(&mut self) -> Option<usize> {
+        let focused = self.tab().focused;
+        let s = self.tab_mut().strip_mut()?;
+        let i = s.column_of(focused)?;
+        let next = s.columns.get(i + 1)?;
+        let mut ps = Vec::new();
+        next.node.panes(&mut ps);
+        // Its top: a column gives its panes up in the order it shows
+        // them, so consuming twice takes the two that were on top.
+        let taken = *ps.first()?;
+        match std::mem::replace(&mut s.columns[i + 1].node, Node::Pane(0)).without(taken) {
+            Some(rest) => s.columns[i + 1].node = rest,
+            None => {
+                s.columns.remove(i + 1);
+            }
+        }
+        s.columns[i]
+            .node
+            .split_beside(focused, SplitDir::V, taken, false);
+        let mut ps = Vec::new();
+        s.columns[i].node.panes(&mut ps);
+        Some(ps.len())
+    }
+
     /// The focused pane one place up or down inside its column
     /// (`<A-S-k>` / `<A-S-j>` in a strip): the two panes trade places,
     /// the stack's splits as they were. False in a tree, or at the

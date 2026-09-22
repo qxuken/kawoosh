@@ -78,7 +78,7 @@ the strip.
 | `<A-S-h>` `<A-S-l>` (`<C-w><` `<C-w>>`) | the pane narrower / wider by a twentieth | the column's width to the next preset down / up (niri's `switch-preset-column-width`); a `Ratio` snaps to the nearest first |
 | `<A-S-j>` `<A-S-k>` (`<C-w>-` `<C-w>+`) | shorter / taller | the same, inside the column |
 | `⌘1`…`⌘9`, `<C-S-1>`…`<C-S-9>` | the Nth pane | the Nth column, the last when there are fewer; both reach one from a terminal pane too |
-| `<C-w>e` | *(free)* | the pane out of its column's stack into a column of its own, after it |
+| `<C-w>e` `<C-w>i` | *(free)* | the pane out of its column's stack into a column of its own after it; the next column's top pane into the stack under it |
 | `zs` `ze` `zz` | *(free)* | the focused column against the left edge, the right edge, or centred |
 | closing the last pane of a column | — | the column goes, the focus to the column before it |
 
@@ -307,13 +307,22 @@ departed from the text above, and what day one found:
   at 60Hz, by 120 columns. So the layout is not what limits a ribbon
   any more; a strip of hundreds is a strip nobody can find anything
   in, which is the real limit.
-- **A pane leaves its stack by `<C-w>e`** (`Layout::expel`), into a
-  column of its own after the one it left, at `layout.column_width`,
-  the keyboard going with it — the keyboard's spelling of what a title
-  bar dragged onto a pane's left or right edge already did (Decision 1
-  keeps the tree's drag rules inside a column, and `move_pane` makes a
-  column of a pane dropped on a side). A pane that is a whole column
-  says so rather than making an empty one.
+- **A pane leaves its stack by `<C-w>e` and joins one by `<C-w>i`**
+  (`Layout::expel` and `Layout::consume`, niri's expel and consume).
+  `e` sends the focused pane into a column of its own after the one it
+  left, at `layout.column_width`, the keyboard going with it — the
+  keyboard's spelling of what a title bar dragged onto a pane's left
+  or right edge already did (Decision 1 keeps the tree's drag rules
+  inside a column, and `move_pane` makes a column of a pane dropped on
+  a side). `i` reads the other way: the *next* column's top pane comes
+  into this column's stack under the focused one, and the column it
+  emptied goes; pressed twice it takes the two panes that column
+  showed, in that order. The keyboard does not follow what it
+  consumed — the pane you were in is the pane you are in. A pane that
+  is a whole column has nothing to expel, and a last column nothing
+  after it to take, and each says so. `e` out and `i` in are `<A-o>`
+  and `<A-i>` read for a column, which is where the letters come
+  from.
 - **The digits are ⌘'s and ctrl-shift's, not Ctrl's** (2026-09-22): a
   terminal pane hears only the chords `Kawoosh::pane_chord` forwards,
   which were the ctrl-shift and alt-shift ones, so `<C-3>` from a
