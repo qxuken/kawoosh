@@ -376,6 +376,21 @@ pub struct Published {
     /// and which one was current when it opened.
     pub candidates: Option<Rc<Vec<CandidateSnap>>>,
     pub candidate: usize,
+    /// The code actions a server last offered, for the picker on them.
+    pub actions: Option<Rc<Vec<ActionSnap>>>,
+}
+
+/// One code action as `kawoosh.lsp.actions()` reads it (the picker's
+/// `actions` source).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActionSnap {
+    /// 1-based, what `lsp action N` takes.
+    pub index: usize,
+    pub title: String,
+    /// The server's kind (`quickfix`, `refactor.extract`, …), or empty.
+    pub kind: String,
+    /// What taking it does: its edit as a diff, a command it runs.
+    pub preview: Vec<String>,
 }
 
 /// One completion candidate as `kawoosh.lsp.candidates()` reads it
@@ -446,6 +461,7 @@ impl Default for Published {
             memory: Rc::new(Vec::new()),
             candidates: None,
             candidate: 0,
+            actions: None,
         }
     }
 }
@@ -691,6 +707,11 @@ impl Runtime {
     /// The candidates as last set.
     pub fn candidates(&self) -> Option<Rc<Vec<CandidateSnap>>> {
         self.published.borrow().candidates.clone()
+    }
+
+    /// The code actions for `kawoosh.lsp.actions()`.
+    pub fn set_actions(&self, actions: Option<Rc<Vec<ActionSnap>>>) {
+        self.published.borrow_mut().actions = actions;
     }
 
     /// What the memory has not flushed yet (memory.md Decision 3):
@@ -2029,6 +2050,32 @@ fn seed(
                 t.set(i + 1, e)?;
             }
             t.set("current", p.candidate)?;
+            Ok(LV::Table(t))
+        })?,
+    )?;
+    // ---- kawoosh.lsp.actions(): the code actions a server last
+    // offered — `{ index, title, kind, preview }` each, `preview` the
+    // lines of what taking it does — or nil before any.
+    let pp = published.clone();
+    lsp.set(
+        "actions",
+        lua.create_function(move |lua, ()| {
+            let p = pp.borrow();
+            let Some(acts) = &p.actions else {
+                return Ok(LV::Nil);
+            };
+            let t = lua.create_table()?;
+            for (i, a) in acts.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("index", a.index)?;
+                e.set("title", a.title.as_str())?;
+                e.set("kind", a.kind.as_str())?;
+                e.set(
+                    "preview",
+                    lua.create_sequence_from(a.preview.iter().map(String::as_str))?,
+                )?;
+                t.set(i + 1, e)?;
+            }
             Ok(LV::Table(t))
         })?,
     )?;

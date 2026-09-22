@@ -1129,6 +1129,31 @@ picker.source("candidates", {
   empty = "no candidate matches",
 })
 
+-- The code actions a server offered (`<leader>ca`, `lsp action`): a
+-- row per action — its title, its kind — searched by title, the preview
+-- what taking it does (its edit as a diff, a command it runs), `⏎`
+-- taking one (`lsp action N`). The rows are what `kawoosh.lsp.actions()`
+-- says; `picker resume` has the last offer back.
+picker.source("actions", {
+  title = "code actions", placeholder = "an action",
+  columns = {
+    { "text", grow = true },
+    { "kind", muted = true, min = 70, max = 180, share = 0.25 },
+  },
+  items = function()
+    local items = {}
+    for _, a in ipairs(kawoosh.lsp.actions() or {}) do
+      items[#items + 1] = { text = a.title, kind = a.kind, index = a.index, diff = a.preview }
+    end
+    return items
+  end,
+  pick = function(item) kawoosh.run("lsp action " .. item.index) end,
+  preview = function(item)
+    return { title = item.text, lines = item.diff, language = "diff" }
+  end,
+  empty = "no action matches",
+})
+
 -- `:picker [SOURCE]`: bare, the smart one.
 kawoosh.command("picker", function(ctx)
   picker.open(ctx.args[1] or "smart")

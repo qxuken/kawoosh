@@ -330,7 +330,7 @@ objects, or any other character on both sides.
 | `<leader>sl` | the memory's ring (`:memory recent`): where was I — every subject attended in this workspace, in order, newest first |
 | `<leader>ws` `<leader>wr` | save, restore the session |
 | `<leader>cc` | compile |
-| `<leader>ca` | the code actions at the caret (or over the selection), a confirm to choose from; `:lsp action N` runs the Nth |
+| `<leader>ca` | the code actions at the caret (or over the selection) in a picker: searched by title, the kind beside it, what taking one does as the preview — its edit as a diff, a command it runs; `<CR>` takes it (`:lsp action N` runs the Nth, `kawoosh.lsp.actions()`) |
 | `<leader>cF` | format the buffer through its server |
 | `<leader>r` | rename the symbol: the prompt filled with `lsp rename WORD`, the name edited, `<CR>` |
 | `<leader>D` | the type definition |

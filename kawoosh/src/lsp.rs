@@ -13,7 +13,9 @@
 //! as the preview (`picker.lua`'s `candidates` source) — `<CR>` there taking
 //! one. `<leader>r` renames (the prompt filled with `lsp rename WORD`),
 //! `gr` lists references as a locations buffer `]q` walks, `<leader>ca`
-//! offers the code actions in a confirm, `<leader>cF` formats, `<leader>D`
+//! puts the code actions in a picker — searched by title, each one's
+//! edit as a diff in the preview (`picker.lua`'s `actions` source) —
+//! `<leader>cF` formats, `<leader>D`
 //! is the type definition, `<C-e>` the diagnostic under the caret in a
 //! pane and `]d` `[d` the next and previous one. A server's edits — a
 //! rename's, an action's, its own `workspace/applyEdit` — land through
@@ -26,15 +28,13 @@ use std::time::{Duration, Instant};
 
 use kawoosh_doc::{Buffer, BufferId, Update, Version};
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Mode, Prompt, Selection, Spec, ViewId};
-use kawoosh_lua::CandidateSnap;
+use kawoosh_lua::{ActionSnap, CandidateSnap};
 use kawoosh_systems::lsp::{
     Caps, Cmd, CodeAction, CompletionItem, DIAG_LAYER, Event, Location, Lsp, ServerDef, TextEdit,
     WorkspaceEdit, completion_kind_name, offset_of_position,
 };
 use kawoosh_systems::{Alarm, WakeHandle};
 use std::rc::Rc;
-
-use crate::confirm::Confirm;
 
 use crate::notify::{Level, Note, Show};
 
@@ -49,8 +49,10 @@ pub const DIAG_QUIET: Duration = Duration::from_millis(600);
 /// offers: a minified bundle is not a dictionary.
 const WORDS_MAX_BYTES: usize = 2 << 20;
 const WORDS_MAX: usize = 500;
-/// The most code actions a confirm offers: its buttons are the digits.
-const ACTIONS_MAX: usize = 9;
+/// The lines of context a code action's diff keeps around a change,
+/// and the most lines it shows in all.
+const DIFF_CONTEXT: usize = 2;
+const DIFF_MAX_LINES: usize = 2000;
 
 pub const REFERENCES_BUFFER: &str = "*references*";
 
@@ -112,8 +114,10 @@ pub struct LspState {
     pub status: Vec<(PathBuf, String, usize)>,
     /// What each language's server said it does.
     pub caps: HashMap<String, Caps>,
-    /// The code actions last offered, in the confirm's order.
+    /// The code actions last offered, in the picker's order, and the
+    /// buffer they were asked for — where an action's command runs.
     pub actions: Vec<CodeAction>,
+    actions_buffer: Option<BufferId>,
     /// The pane the keyboard was in when the candidates pane took it.
     candidates_from: Option<crate::layout::PaneId>,
 }
@@ -133,6 +137,7 @@ impl LspState {
             status: Vec::new(),
             caps: HashMap::new(),
             actions: Vec::new(),
+            actions_buffer: None,
             candidates_from: None,
         }
     }
@@ -325,7 +330,7 @@ impl Kawoosh {
                 }
                 Event::WorkspaceEdit { title, edit } => self.apply_workspace_edit(&title, edit),
                 Event::Locations { title, items } => self.show_locations(&title, items),
-                Event::CodeActions { actions, .. } => self.offer_actions(actions),
+                Event::CodeActions { buffer, actions } => self.offer_actions(buffer, actions),
                 Event::Formatted {
                     buffer,
                     version,
@@ -655,26 +660,75 @@ impl Kawoosh {
         self.ed.message = format!("{n} {title} — <CR> opens one, ]q walks them");
     }
 
-    /// The code actions a server offered, as a confirm: each a button,
-    /// the digits and `<CR>` choosing (`lsp action N`).
-    fn offer_actions(&mut self, actions: Vec<CodeAction>) {
+    /// The code actions a server offered, as a picker (`picker.lua`'s
+    /// `actions` source): a row per action with its kind, searched by
+    /// title, what taking it does as the preview — its edit as a diff,
+    /// the command it runs — and `⏎` taking one (`lsp action N`).
+    fn offer_actions(&mut self, buffer: BufferId, actions: Vec<CodeAction>) {
         if actions.is_empty() {
             self.ed.message = "no code actions here".into();
             return;
         }
-        let actions: Vec<CodeAction> = actions.into_iter().take(ACTIONS_MAX).collect();
-        let buttons = actions
+        let Some(rt) = self.scripting.rt.clone() else {
+            self.ed.message = "the code actions picker needs lua".into();
+            return;
+        };
+        let snap: Vec<ActionSnap> = actions
             .iter()
             .enumerate()
-            .map(|(i, a)| (a.title.clone(), format!("lsp action {}", i + 1)))
+            .map(|(i, a)| ActionSnap {
+                index: i + 1,
+                title: a.title.clone(),
+                kind: a.kind.clone().unwrap_or_default(),
+                preview: self.action_preview(a),
+            })
             .collect();
+        rt.set_actions(Some(Rc::new(snap)));
         self.lsp.actions = actions;
-        self.confirm_with(Confirm {
-            title: "Code action".into(),
-            lines: Vec::new(),
-            actions: buttons,
-            chosen: 0,
-        });
+        self.lsp.actions_buffer = Some(buffer);
+        self.run_lua_source("actions", "kawoosh.picker.open(\"actions\")");
+    }
+
+    /// What taking `action` does, as lines: each file's edit as a
+    /// unified diff against the text as it stands (the buffer's, else
+    /// the file's), then the command it runs on the server.
+    fn action_preview(&self, action: &CodeAction) -> Vec<String> {
+        let mut out = Vec::new();
+        for (path, list) in action.edit.iter().flatten() {
+            let old = match self.ed.buffer_at(path) {
+                Some(id) => self.ed.buffers[id].text(),
+                None => std::fs::read_to_string(path).unwrap_or_default(),
+            };
+            let resolved = resolve_edits_in(&old, list);
+            if resolved.is_empty() {
+                continue;
+            }
+            let name = path
+                .strip_prefix(&self.cwd)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| kawoosh_systems::fs::abbreviate_home(path));
+            out.push(format!("--- {name}"));
+            out.push(format!("+++ {name}"));
+            out.extend(edit_diff(&old, &resolved));
+        }
+        if let Some((command, arguments)) = &action.command {
+            if !out.is_empty() {
+                out.push(String::new());
+            }
+            out.push(format!("runs `{command}` on the server"));
+            for a in arguments {
+                out.push(format!("  {a}"));
+            }
+        }
+        if out.is_empty() {
+            out.push("changes nothing here".into());
+        }
+        if out.len() > DIFF_MAX_LINES {
+            let more = out.len() - DIFF_MAX_LINES;
+            out.truncate(DIFF_MAX_LINES);
+            out.push(format!("… {more} more lines"));
+        }
+        out
     }
 
     /// Action `n` (from 1) of the ones last offered: its edit applied,
@@ -692,7 +746,13 @@ impl Kawoosh {
             self.apply_workspace_edit(&action.title, edit);
         }
         if let Some((command, arguments)) = action.command {
-            let Some((_, buffer, _)) = self.lsp_at_caret() else {
+            // The buffer the actions were asked for: the server runs
+            // the command in its workspace, whatever has the keys now.
+            let asked = self
+                .lsp
+                .actions_buffer
+                .filter(|b| self.ed.buffers.contains_key(*b));
+            let Some(buffer) = asked.or_else(|| self.lsp_at_caret().map(|(_, b, _)| b)) else {
                 return;
             };
             self.positional_cmd(Cmd::Execute {
@@ -1221,7 +1281,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("lsp action")
                 .args(Args::new(&[ArgKind::Text]))
-                .doc("the code actions at the caret (or over the selection), to choose from; `lsp action N` runs the Nth offered"),
+                .doc("the code actions at the caret (or over the selection) in a picker; `lsp action N` runs the Nth offered"),
             |k, ctx| {
                 if let Some(n) = ctx.args.first().and_then(|a| a.parse::<usize>().ok()) {
                     k.run_action(n);
@@ -1287,12 +1347,16 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
 /// A server's edits as byte ranges in the buffer as it is, ascending,
 /// one overlapping an earlier one dropped.
 fn resolve_edits(buf: &Buffer, edits: &[TextEdit]) -> Vec<(Range<usize>, String)> {
-    let text = buf.text();
+    resolve_edits_in(&buf.text(), edits)
+}
+
+/// [`resolve_edits`] against `text`.
+fn resolve_edits_in(text: &str, edits: &[TextEdit]) -> Vec<(Range<usize>, String)> {
     let mut out: Vec<(Range<usize>, String)> = edits
         .iter()
         .map(|e| {
-            let start = offset_of_position(&text, e.start.0, e.start.1);
-            let end = offset_of_position(&text, e.end.0, e.end.1).max(start);
+            let start = offset_of_position(text, e.start.0, e.start.1);
+            let end = offset_of_position(text, e.end.0, e.end.1).max(start);
             (start..end, e.text.clone())
         })
         .collect();
@@ -1308,6 +1372,154 @@ fn resolve_edits(buf: &Buffer, edits: &[TextEdit]) -> Vec<(Range<usize>, String)
     out
 }
 
+/// `edits` (sorted, disjoint byte ranges of `old`) as the hunks of a
+/// unified diff — `@@ -a,b +c,d @@`, then the lines — each with
+/// [`DIFF_CONTEXT`] lines around it, edits that near each other in one.
+fn edit_diff(old: &str, edits: &[(Range<usize>, String)]) -> Vec<String> {
+    // Where each line starts, and one past the end.
+    let mut starts = vec![0];
+    starts.extend(old.match_indices('\n').map(|(i, _)| i + 1));
+    if *starts.last().unwrap() < old.len() {
+        starts.push(old.len());
+    }
+    let lines = starts.len() - 1;
+    let line_of = |off: usize| starts.partition_point(|s| *s <= off).saturating_sub(1);
+    // Edits grouped by their lines with the context about them: the
+    // first line, the last, and which edits.
+    let mut groups: Vec<(usize, usize, Range<usize>)> = Vec::new();
+    for (i, e) in edits.iter().enumerate() {
+        let first = line_of(e.0.start).min(lines.saturating_sub(1));
+        let last = line_of(e.0.end.saturating_sub(1).max(e.0.start)).max(first);
+        let lo = first.saturating_sub(DIFF_CONTEXT);
+        let hi = (last + DIFF_CONTEXT).min(lines.saturating_sub(1));
+        match groups.last_mut() {
+            Some(g) if lo <= g.1 + 1 => {
+                g.1 = g.1.max(hi);
+                g.2.end = i + 1;
+            }
+            _ => groups.push((lo, hi, i..i + 1)),
+        }
+    }
+    let mut out = Vec::new();
+    let mut shift: isize = 0;
+    for (lo, hi, group) in groups {
+        let from = starts[lo];
+        let to = starts.get(hi + 1).copied().unwrap_or(old.len()).max(from);
+        let mut new = String::new();
+        let mut at = from;
+        for (r, text) in &edits[group] {
+            new.push_str(&old[at..r.start.max(at)]);
+            new.push_str(text);
+            at = r.end.max(at);
+        }
+        new.push_str(&old[at.min(to)..to]);
+        let a: Vec<&str> = old[from..to].lines().collect();
+        let b: Vec<&str> = new.lines().collect();
+        let mut ops = line_ops(&a, &b);
+        // The context the group took, trimmed to what the change
+        // leaves about it.
+        let lead = ops.iter().take_while(|(o, _)| *o == ' ').count();
+        let trail = ops.iter().rev().take_while(|(o, _)| *o == ' ').count();
+        if lead == ops.len() {
+            continue;
+        }
+        ops.truncate(ops.len() - trail.saturating_sub(DIFF_CONTEXT));
+        let skip = lead.saturating_sub(DIFF_CONTEXT);
+        ops.drain(..skip);
+        let count = |side: char| ops.iter().filter(|(o, _)| *o == ' ' || *o == side).count();
+        let old_start = lo + skip;
+        out.push(format!(
+            "@@ -{},{} +{},{} @@",
+            old_start + 1,
+            count('-'),
+            (old_start as isize + shift).max(0) + 1,
+            count('+')
+        ));
+        out.extend(ops.iter().map(|(o, l)| format!("{o}{l}")));
+        shift += b.len() as isize - a.len() as isize;
+    }
+    out
+}
+
+/// `a` into `b` line by line: `' '` kept, `'-'` gone, `'+'` added —
+/// by their longest common run, removals before additions in a change.
+/// A group past what a table should hold is replaced whole.
+fn line_ops<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<(char, &'a str)> {
+    let (n, m) = (a.len(), b.len());
+    if n.saturating_mul(m) > 1 << 20 {
+        let mut out: Vec<(char, &str)> = a.iter().map(|l| ('-', *l)).collect();
+        out.extend(b.iter().map(|l| ('+', *l)));
+        return out;
+    }
+    // `lcs[i][j]`: the longest common run of `a[i..]` and `b[j..]`.
+    let mut lcs = vec![0u32; (n + 1) * (m + 1)];
+    let at = |i: usize, j: usize| i * (m + 1) + j;
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            lcs[at(i, j)] = if a[i] == b[j] {
+                lcs[at(i + 1, j + 1)] + 1
+            } else {
+                lcs[at(i + 1, j)].max(lcs[at(i, j + 1)])
+            };
+        }
+    }
+    let (mut i, mut j, mut out) = (0, 0, Vec::with_capacity(n + m));
+    while i < n || j < m {
+        if i < n && j < m && a[i] == b[j] {
+            out.push((' ', a[i]));
+            (i, j) = (i + 1, j + 1);
+        } else if i < n && (j == m || lcs[at(i + 1, j)] >= lcs[at(i, j + 1)]) {
+            out.push(('-', a[i]));
+            i += 1;
+        } else {
+            out.push(('+', b[j]));
+            j += 1;
+        }
+    }
+    out
+}
+
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::edit_diff;
+
+    #[test]
+    fn an_edit_is_a_diff_with_context_and_far_edits_are_hunks_of_their_own() {
+        let old: String = (1..=12).map(|i| format!("l{i}\n")).collect();
+        let at = |s: &str| old.find(s).unwrap();
+        // A line added after l2, and l10 gone: two hunks, the second's
+        // new side one line further on.
+        let edits = vec![
+            (at("l3")..at("l3"), "new\n".to_string()),
+            (at("l10")..at("l11"), String::new()),
+        ];
+        assert_eq!(
+            edit_diff(&old, &edits),
+            [
+                "@@ -1,4 +1,5 @@",
+                " l1",
+                " l2",
+                "+new",
+                " l3",
+                " l4",
+                "@@ -8,5 +9,4 @@",
+                " l8",
+                " l9",
+                "-l10",
+                " l11",
+                " l12",
+            ]
+        );
+        // Near each other, one hunk; the last line without a newline.
+        let old = "a\nb\nc";
+        let edits = vec![(0..1, "A".to_string()), (4..5, "C".to_string())];
+        assert_eq!(
+            edit_diff(old, &edits),
+            ["@@ -1,3 +1,3 @@", "-a", "+A", " b", "-c", "+C"]
+        );
+    }
 }

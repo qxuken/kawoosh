@@ -373,7 +373,8 @@ fn progress_and_messages_land_in_the_corner() {
 /// Round two (roadmap step 7), against the fake server: `<leader>r`
 /// fills the prompt with the word and the rename's edits land as one
 /// undo node; `gr` lists the references as a locations buffer `]q`
-/// walks; `<leader>ca` offers the actions in a confirm — an edit
+/// walks; `<leader>ca` puts the actions in a picker, searched by
+/// title with each one's edit as a diff in the preview — an edit
 /// applied, a command run on the server and its `applyEdit` taken;
 /// `<leader>cF` formats; `<leader>D` goes to the type; `<C-e>` shows
 /// the diagnostic in a pane and `]d` walks to one; and the server's
@@ -389,6 +390,8 @@ fn rename_references_actions_format_and_diagnostics() {
     let mut app = Kawoosh::from_file(&file);
     app.add_lsp_server(fake_server());
     let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
     let v = app.focused_view().unwrap();
     let buf_id = app.ed.views[v].buffer;
     assert!(
@@ -514,19 +517,53 @@ fn rename_references_actions_format_and_diagnostics() {
     d.keys(&mut app, "]q");
     assert_eq!(app.ed.message, "no more locations");
 
-    // A code action on the call's line: the confirm lists both; the
-    // first is an edit.
+    // A code action on the call's line: the picker lists both, with
+    // their kinds; the preview of the first is its edit as a diff.
     d.keys(&mut app, "j");
     d.keys(&mut app, " ca");
-    assert!(
-        until(&mut d, &mut app, |a| a.confirm.is_some()),
-        "the actions confirm"
+    let picker_up =
+        |a: &Kawoosh| matches!(a.layout.focused_content(), Some(Content::Lua(n)) if n == "picker");
+    assert!(until(&mut d, &mut app, picker_up), "the actions picker");
+    let state = |d: &mut Drive, app: &mut Kawoosh| {
+        d.frame(app);
+        app.run_lua_source(
+            "t",
+            "local s = kawoosh.picker.state(); kawoosh.echo(s.source .. '|' .. s.count .. '|' .. s.text .. '|' .. table.concat(s.preview.lines, '/'))",
+        );
+        app.ed.message.clone()
+    };
+    // The file's name as written out of the working directory; two
+    // lines of context about the change.
+    let name = file.display();
+    assert_eq!(
+        state(&mut d, &mut app),
+        format!(
+            "actions|2|Add semicolon|--- {name}/+++ {name}/@@ -1,4 +1,4 @@/ // renamed/ fn main() {{/-    hello_again()/+    hello_again();/ }}"
+        )
     );
-    let texts = d.confirm_texts();
-    assert!(texts.iter().any(|t| t == "Add semicolon"), "{texts:?}");
-    assert!(texts.iter().any(|t| t == "Run the command"), "{texts:?}");
-    d.keys(&mut app, "1");
-    assert!(app.confirm.is_none());
+    let drawn: Vec<String> = d
+        .core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect();
+    assert!(drawn.iter().any(|t| t == "quickfix"), "the kind: {drawn:?}");
+    // The query searches the titles.
+    d.keys(&mut app, "run");
+    assert_eq!(
+        state(&mut d, &mut app),
+        "actions|1|Run the command|runs `fake.apply` on the server/  \"file://".to_string()
+            + &file.display().to_string()
+            + "\""
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(!picker_up(&app), "closed");
+    // Taken, the first's edit lands.
+    d.keys(&mut app, " ca");
+    assert!(until(&mut d, &mut app, picker_up));
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(!picker_up(&app));
     assert!(
         until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
             .text()
@@ -536,8 +573,9 @@ fn rename_references_actions_format_and_diagnostics() {
     );
     // The second is a command: run on the server, whose applyEdit lands.
     d.keys(&mut app, " ca");
-    assert!(until(&mut d, &mut app, |a| a.confirm.is_some()));
-    d.keys(&mut app, "2");
+    assert!(until(&mut d, &mut app, picker_up));
+    d.ctrl(&mut app, "n");
+    d.key(&mut app, "enter", KeyMods::default());
     assert!(
         until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
             .text()

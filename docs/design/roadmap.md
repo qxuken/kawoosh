@@ -154,6 +154,12 @@ entries they amend say how.
   does; **`:bd`** goes back to the buffer the pane came from, where
   it was left (a per-view alternate), not to the first listed at its
   top.
+- **Code actions in the picker**, not a confirm: searched by title
+  with the kind beside it, and what an action does as the preview —
+  its edit as a diff against the text as it stands (`--- +++ @@`,
+  highlighted as `diff`), a command it runs; no cap of nine. A
+  command runs for the buffer the actions were asked for
+  (`picker.lua`'s `actions` source, `kawoosh.lsp.actions()`).
 
 ## The list, by track
 
