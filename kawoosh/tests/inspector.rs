@@ -110,11 +110,12 @@ fn syntax_tree_is_a_command_that_shows_the_tab_and_toggles_it() {
     ex(&mut d, &mut app, "syntax_tree");
     assert!(!app.devtools && !d.core.devtools());
     assert_eq!(app.ed.message, "syntax tree off");
-    // The aliases and the explicit forms.
+    // The alias and the explicit forms (`:syntax` is the buffer's
+    // language since 2026-09-23).
     ex(&mut d, &mut app, "tree on");
     assert!(app.devtools);
     assert_eq!(d.core.devtools_current_tab(), "syntax");
-    ex(&mut d, &mut app, "syntax off");
+    ex(&mut d, &mut app, "tree off");
     assert!(!app.devtools);
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();

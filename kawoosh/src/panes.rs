@@ -11,9 +11,9 @@ use kawoosh_editor::search;
 use kawoosh_editor::{Mode, ViewId, motions};
 use kui::{Align, Enter, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
 
-use crate::app::{DIVIDER, Kawoosh, TITLE_H};
+use crate::app::{DIVIDER, Kawoosh};
 use crate::layout::{Content, Drop, Kind, Node, PaneId, SplitDir, Strip};
-use crate::rows::{self, Caret, Drawn, GUTTER_W, LineDraw, STRIP_H, Window};
+use crate::rows::{self, Caret, Drawn, GUTTER_W, LineDraw, Window};
 use crate::terminals::TermId;
 use kawoosh_systems::lsp::DIAG_LAYER;
 use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
@@ -56,7 +56,7 @@ impl Kawoosh {
         ui.with(
             NodeSpec::row()
                 .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(STRIP_H))
+                .height(Sizing::Fixed(self.chrome.strip_h))
                 .bg(pal.strip)
                 .pad_xy(8.0, 0.0)
                 .gap(8.0)
@@ -64,11 +64,11 @@ impl Kawoosh {
             |ui| {
                 for (t, c) in items {
                     if !t.is_empty() {
-                        ui.text(t, rows::mono(self.face, &pal).color(*c));
+                        ui.text(t, rows::mono(self.chrome.face, &pal).color(*c));
                     }
                 }
                 ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
-                ui.text(right, rows::mono(self.face, &pal).color(pal.dim));
+                ui.text(right, rows::mono(self.chrome.face, &pal).color(pal.dim));
             },
         );
     }
@@ -188,9 +188,9 @@ impl Kawoosh {
         view: ViewId,
         keyed: bool,
         ghost: Option<&str>,
+        font: crate::look::Face,
     ) {
         let pal = self.pal;
-        let font = self.face;
         let Some(v) = self.ed.views.get(view) else {
             return;
         };
@@ -268,11 +268,13 @@ impl Kawoosh {
 
     pub(crate) fn command_line(&self, ui: &mut Ui<'_>) {
         let pal = self.pal;
-        let font = self.face;
+        let font = self.chrome.face;
+        let small = self.chrome.small;
+        let strip_h = self.chrome.strip_h;
         ui.with(
             NodeSpec::row()
                 .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(STRIP_H))
+                .height(Sizing::Fixed(strip_h))
                 .bg(pal.bg)
                 .pad_xy(8.0, 0.0)
                 .cross_align(Align::Center),
@@ -284,7 +286,7 @@ impl Kawoosh {
                     // candidates as a row — the current one lit —
                     // clipped at the strip's end.
                     let ghost = self.cmdline_ghost();
-                    self.field_line(ui, field, true, ghost.as_deref());
+                    self.field_line(ui, field, true, ghost.as_deref(), font);
                     let line_len = self.ed.prompt_text().map_or(0, |t| t.len());
                     let candidates = self
                         .cmd_completion
@@ -295,7 +297,7 @@ impl Kawoosh {
                         ui.with(
                             NodeSpec::row()
                                 .width(Sizing::Grow(1.0))
-                                .height(Sizing::Fixed(STRIP_H))
+                                .height(Sizing::Fixed(strip_h))
                                 .pad_xy(16.0, 0.0)
                                 .gap(12.0)
                                 .cross_align(Align::Center)
@@ -304,14 +306,14 @@ impl Kawoosh {
                                 for (i, c) in cands.iter().enumerate().take(40) {
                                     let color = if i == index { pal.fg } else { pal.dim };
                                     ui.with_indexed(i as u64, NodeSpec::row(), |ui| {
-                                        ui.text(c, TextStyle::new(12.0).color(color).nowrap());
+                                        ui.text(c, TextStyle::new(small).color(color).nowrap());
                                     });
                                 }
                             },
                         );
                     }
                 } else if !self.ed.message.is_empty() {
-                    ui.text(&self.ed.message, TextStyle::new(12.0).color(pal.dim));
+                    ui.text(&self.ed.message, TextStyle::new(small).color(pal.dim));
                 }
             },
         );
@@ -680,7 +682,7 @@ impl Kawoosh {
                 // The title bar: a click focuses, a drag moves the pane.
                 let mut title = NodeSpec::row()
                     .width(Sizing::Grow(1.0))
-                    .height(Sizing::Fixed(TITLE_H))
+                    .height(Sizing::Fixed(self.chrome.pane_title_h))
                     .bg(if dragged {
                         pal.accent.with_alpha(0.3)
                     } else if focused {
@@ -711,10 +713,17 @@ impl Kawoosh {
                 ui.with(title, |ui| {
                     ui.text(
                         &name,
-                        TextStyle::new(12.0).color(if focused { pal.fg } else { pal.dim }),
+                        TextStyle::new(self.chrome.small).color(if focused {
+                            pal.fg
+                        } else {
+                            pal.dim
+                        }),
                     );
                     if modified {
-                        ui.text("●", TextStyle::new(10.0).color(pal.command));
+                        ui.text(
+                            "●",
+                            TextStyle::new(self.chrome.small - 2.0).color(pal.command),
+                        );
                     }
                 });
                 // Where the dragged pane would land here: the whole pane
@@ -768,8 +777,13 @@ impl Kawoosh {
             .layout
             .rects
             .get(&pane)
-            .map(|r| (r.w - 2.0 - 2.0 * pad, r.h - TITLE_H - 2.0 - 2.0 * pad))
-            .unwrap_or((800.0, self.body_h - TITLE_H));
+            .map(|r| {
+                (
+                    r.w - 2.0 - 2.0 * pad,
+                    r.h - self.chrome.pane_title_h - 2.0 - 2.0 * pad,
+                )
+            })
+            .unwrap_or((800.0, self.body_h - self.chrome.pane_title_h));
         self.fit_terminal(id, w, h);
         let Some(term) = self.terms.map.get(&id) else {
             return;
@@ -848,8 +862,8 @@ impl Kawoosh {
             .layout
             .rects
             .get(&pane)
-            .map(|r| r.h - TITLE_H - 2.0)
-            .unwrap_or(self.body_h - TITLE_H);
+            .map(|r| r.h - self.chrome.pane_title_h - 2.0)
+            .unwrap_or(self.body_h - self.chrome.pane_title_h);
         let rows_n = ((height / self.face.line_height).floor().max(1.0)) as usize;
         let scrolloff = self
             .ed

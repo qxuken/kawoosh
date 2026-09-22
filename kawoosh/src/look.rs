@@ -75,6 +75,52 @@ impl Default for Face {
     }
 }
 
+/// The chrome's metrics (2026-09-23): the rows around the panes — the
+/// tab strip, a pane's title bar, the status and command strips, the
+/// title bar's text — follow the editor's font up to [`CHROME_MAX`], so
+/// a big font for reading does not make the chrome a banner, and every
+/// height is its text's line height plus the padding it had at the
+/// default size (13 px: tabs 22, strips 24, pane titles 22).
+/// `font.chrome_size` pins the size instead.
+#[derive(Clone, Copy, Debug)]
+pub struct Chrome {
+    /// The mono face the chrome's text is set in.
+    pub face: Face,
+    /// The smaller text: a pane's title, the message line.
+    pub small: f32,
+    pub tab_h: f32,
+    pub strip_h: f32,
+    pub pane_title_h: f32,
+}
+
+/// The largest the chrome's text follows `font.size` to.
+pub const CHROME_MAX: f32 = 16.0;
+
+impl Chrome {
+    pub fn of(face: Face, size: f32) -> Chrome {
+        let line_height = (size * LINE_HEIGHT as f32).round().max(size + 2.0);
+        let small = (size - 1.0).max(8.0);
+        let small_lh = (small * LINE_HEIGHT as f32).round();
+        Chrome {
+            face: Face {
+                size,
+                line_height,
+                ..face
+            },
+            small,
+            tab_h: line_height + 2.0,
+            strip_h: line_height + 4.0,
+            pane_title_h: small_lh + 4.0,
+        }
+    }
+}
+
+impl Default for Chrome {
+    fn default() -> Self {
+        Chrome::of(Face::default(), FONT)
+    }
+}
+
 /// The smallest and largest `font.size` honoured.
 const SIZE_RANGE: (f32, f32) = (6.0, 96.0);
 /// The default `font.line_height`, the ratio that makes 13 px rows of 20.
@@ -187,6 +233,11 @@ impl Kawoosh {
             line_height: (size * ratio).round().max(size + 2.0),
             features,
         };
+        let chrome = match s.get("font.chrome_size").and_then(Setting::as_float) {
+            Some(n) if n > 0.0 => (n as f32).clamp(SIZE_RANGE.0, SIZE_RANGE.1),
+            _ => size.min(CHROME_MAX),
+        };
+        self.chrome = Chrome::of(self.face, chrome);
     }
 
     fn sync_theme(&mut self, ui: &mut Ui<'_>, sys: Appearance, notes: &mut Vec<String>) {

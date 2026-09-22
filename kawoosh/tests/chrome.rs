@@ -175,3 +175,29 @@ fn the_font_steps_from_the_keyboard() {
         "nothing typed"
     );
 }
+
+/// The chrome follows the font up to a cap: at the default size it is
+/// what it always was, a reading-size font leaves the tabs, the strips
+/// and the pane titles at the cap's, and `font.chrome_size` pins it.
+#[test]
+fn the_chrome_follows_the_font_to_a_cap() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("a", "text");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(d.rect_of("tab0").unwrap().3, 22.0, "the default strip");
+    assert_eq!(app.chrome.strip_h, 24.0);
+    assert_eq!(app.chrome.pane_title_h, 22.0);
+    ex(&mut d, &mut app, "set font.size=29");
+    // The strip eases to its new height with its scroll transition.
+    settle(&mut d, &mut app);
+    assert_eq!(app.face.size, 29.0);
+    assert_eq!(app.chrome.face.size, 16.0, "capped");
+    assert_eq!(d.rect_of("tab0").unwrap().3, 26.0);
+    assert_eq!(app.chrome.strip_h, 28.0);
+    ex(&mut d, &mut app, "set font.chrome_size=20");
+    settle(&mut d, &mut app);
+    assert_eq!(app.chrome.face.size, 20.0, "pinned");
+    assert_eq!(d.rect_of("tab0").unwrap().3, 32.0);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

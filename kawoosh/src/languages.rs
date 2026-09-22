@@ -8,8 +8,11 @@ use std::path::PathBuf;
 
 use kawoosh_languages::{FALLBACK, LanguageDef, Library, Locate, Source};
 
+use kawoosh_editor::{ArgKind, Args, Spec};
+
 use crate::Kawoosh;
 use crate::app::first_line;
+use crate::commands::{ShellCommand, cmd};
 use crate::notify::{Level, Note};
 
 impl Kawoosh {
@@ -105,4 +108,49 @@ impl Kawoosh {
             self.ts_sent.remove(&id);
         }
     }
+
+    /// `:syntax NAME`: the focused buffer read as language NAME (an
+    /// alias resolves to its language; `text` is none) — a scratch
+    /// given its grammar, a file whose extension says the wrong thing.
+    /// The old runs go and the buffer is parsed whole with the new
+    /// grammar; a history row keeps the language with the text. Bare,
+    /// it says which language the buffer is.
+    pub(crate) fn set_syntax(&mut self, name: Option<&str>) {
+        let Some(v) = self.focused_view() else {
+            self.ed.message = "syntax: no buffer here".into();
+            return;
+        };
+        let id = self.ed.views[v].buffer;
+        let Some(name) = name else {
+            self.ed.message = format!("syntax {}", self.ed.buffers[id].language);
+            return;
+        };
+        let language = if name == FALLBACK {
+            FALLBACK.to_string()
+        } else {
+            match self.languages.by_name(name) {
+                Some(d) => d.name.clone(),
+                None => {
+                    self.ed.message = format!("syntax: no language {name}");
+                    return;
+                }
+            }
+        };
+        let b = &mut self.ed.buffers[id];
+        b.language = language.as_str().into();
+        b.clear_layer(kawoosh_systems::ts::SYNTAX_LAYER);
+        self.ts_sent.remove(&id);
+        self.inspector.trees.remove(&id);
+        self.ed.message = format!("syntax {language}");
+    }
+}
+
+pub(crate) fn commands() -> Vec<ShellCommand> {
+    vec![cmd(
+        Spec::new("syntax")
+            .alias(&["setf", "setfiletype", "filetype", "ft"])
+            .args(Args::new(&[ArgKind::Language]))
+            .doc("read the buffer as language NAME (`text` for none); bare, say which it is"),
+        |k, ctx| k.set_syntax(ctx.args.first().map(String::as_str)),
+    )]
 }

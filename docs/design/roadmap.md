@@ -316,7 +316,14 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   said last), and a click on the chrome gives the keys back to the
   pane (it had kept them on the clicked node, so the `dir` a cwd click
   opened took no keys). ⌘= ⌘+ / ⌘- ⌘_ step `font.size` for the
-  session and ⌘0 puts it back (Ctrl where there is no ⌘).
+  session and ⌘0 puts it back (Ctrl where there is no ⌘). The chrome
+  follows the font to a cap (2026-09-23, `look::Chrome`): the tabs,
+  the pane titles, the status and command strips and the title bar's
+  text are set in a chrome face that follows `font.size` up to 16 px
+  (`font.chrome_size` pins it), every height its line height plus the
+  padding it had at 13 px — so the default draws as before, and a
+  reading-size font no longer clips the strips or leaves the pane
+  titles small. The title bar's height stays the platform's.
 - **The cwd, somewhere it fits** — done 2026-09-23 [use 2026-09-22];
   step 13. In the title bar, shortened as fish's prompt does — every
   component but the last to its first letter, a leading dot kept

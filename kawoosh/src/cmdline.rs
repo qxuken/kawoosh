@@ -125,6 +125,17 @@ impl Kawoosh {
                 v.sort();
                 v
             }
+            Some(ArgKind::Language) => {
+                let mut v: Vec<String> = self
+                    .languages
+                    .iter()
+                    .map(|d| d.name.clone())
+                    .filter(|n| n.starts_with(token))
+                    .collect();
+                v.sort();
+                v.dedup();
+                v
+            }
             Some(ArgKind::View) => {
                 let mut v: Vec<String> = self
                     .scripting

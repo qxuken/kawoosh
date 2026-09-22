@@ -19,7 +19,7 @@
 
 use kui::{Align, CursorShape, NodeSpec, Role, Sizing, Span, Ui, Value, widgets};
 
-use crate::app::{Kawoosh, TAB_H};
+use crate::app::Kawoosh;
 use crate::layout::Content;
 use crate::rows;
 
@@ -34,7 +34,8 @@ impl Kawoosh {
     /// and the status blocks.
     pub(crate) fn title_bar(&mut self, ui: &mut Ui<'_>) {
         let pal = self.pal;
-        let font = self.face;
+        let font = self.chrome.face;
+        let tab_h = self.chrome.tab_h;
         self.title_h = widgets::titlebar_height(ui);
         let focused = ui.env().focused;
         let (head, last) = shorten_path(&kawoosh_systems::fs::abbreviate_home(&self.cwd));
@@ -96,7 +97,7 @@ impl Kawoosh {
                                 2000 + i as u64,
                                 NodeSpec::column()
                                     .width(Sizing::Fixed(1.0))
-                                    .height(Sizing::Fixed(TAB_H - 10.0))
+                                    .height(Sizing::Fixed(tab_h - 10.0))
                                     .bg(pal.border),
                                 |_| {},
                             );
@@ -135,7 +136,7 @@ impl Kawoosh {
     /// the row scrolling past that with the active one revealed.
     pub(crate) fn tab_strip(&mut self, ui: &mut Ui<'_>) {
         let pal = self.pal;
-        let font = self.face;
+        let font = self.chrome.face;
         let theme = ui.theme();
         let n = self.layout.tabs.len();
         let active = self.layout.tab;
@@ -177,7 +178,7 @@ impl Kawoosh {
             "tabs",
             NodeSpec::row()
                 .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(TAB_H))
+                .height(Sizing::Fixed(self.chrome.tab_h))
                 .bg(pal.strip)
                 .scroll_x()
                 // No bar: at the strip's height it would lie over the

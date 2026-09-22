@@ -27,13 +27,10 @@ use crate::inspector::Inspector;
 use crate::layout::{Content, Layout, PaneId, SplitDir};
 use crate::lsp::LspState;
 use crate::notify::Notifications;
-use crate::rows::{self, Drawn, GUTTER_W, STRIP_H};
+use crate::rows::{self, Drawn, GUTTER_W};
 use crate::scripting::Scripting;
 use crate::settings::Config;
 use crate::terminals::{TermId, Terminals};
-
-pub const TITLE_H: f32 = 22.0;
-pub const TAB_H: f32 = 22.0;
 
 pub(crate) const DIVIDER: f32 = 4.0;
 
@@ -41,6 +38,8 @@ pub struct Kawoosh {
     pub pal: Pal,
     /// The face every mono run is shaped in, from `font.*` (`look.rs`).
     pub face: crate::look::Face,
+    /// The chrome's face and heights, from the face (`look.rs`).
+    pub chrome: crate::look::Chrome,
     /// The face kawoosh ships (`main.rs`), what an empty `font.family` names.
     pub bundled_font: Option<FontId>,
     /// What the look was last built from (`look.rs`).
@@ -218,6 +217,7 @@ impl Kawoosh {
         let mut app = Self {
             pal: Pal::default(),
             face: Default::default(),
+            chrome: Default::default(),
             bundled_font: None,
             look: Default::default(),
             ed,
@@ -1421,7 +1421,8 @@ impl Kawoosh {
                 Some(r) => {
                     let (cw, ch) = self.cell;
                     (
-                        ((f("y") - r.y - TITLE_H - 1.0 - 4.0) / ch).max(0.0) as usize,
+                        ((f("y") - r.y - self.chrome.pane_title_h - 1.0 - 4.0) / ch).max(0.0)
+                            as usize,
                         ((f("x") - r.x - 1.0 - 4.0) / cw).max(0.0) as usize,
                     )
                 }
@@ -1700,7 +1701,8 @@ impl kui::App for Kawoosh {
         // The title bar's height is the platform's; its hairline is one
         // more pixel.
         self.title_h = kui::widgets::titlebar_height(ui);
-        self.body_h = (vp.h - self.title_h - 1.0 - TAB_H - 2.0 * STRIP_H).max(lh);
+        let c = self.chrome;
+        self.body_h = (vp.h - self.title_h - 1.0 - c.tab_h - 2.0 * c.strip_h).max(lh);
         let body_h = self.body_h;
         ui.with(NodeSpec::column().fill().bg(pal.bg), |ui| {
             self.title_bar(ui);

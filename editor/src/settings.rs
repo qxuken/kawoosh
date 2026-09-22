@@ -364,6 +364,9 @@ impl Settings {
         defaults.set("font.size", Setting::Int(13));
         defaults.set("font.line_height", Setting::Float(1.5));
         defaults.set("font.features", Setting::Str(String::new()));
+        // The chrome's text (tabs, title bars, the strips): `0` follows
+        // `font.size` up to a cap, a number is its own size.
+        defaults.set("font.chrome_size", Setting::Int(0));
         defaults.set("theme.appearance", Setting::Str("system".into()));
         let mut s = Self {
             layers: Default::default(),
@@ -636,6 +639,7 @@ mod tests {
             s.effective().paths(),
             [
                 "expandtab",
+                "font.chrome_size",
                 "font.family",
                 "font.features",
                 "font.line_height",

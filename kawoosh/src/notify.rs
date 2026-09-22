@@ -21,7 +21,7 @@ use kawoosh_editor::{ArgKind, Args, KeyStroke, Spec};
 use kawoosh_systems::{Alarm, WakeHandle};
 use kui::{Align, FloatConfig, NodeSpec, Sizing, Span, TextStyle, Ui, Value};
 
-use crate::app::{Kawoosh, TAB_H};
+use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
 
 /// How long a toast without actions stays.
@@ -859,7 +859,7 @@ impl Kawoosh {
                     FloatConfig::viewport()
                         .at(Align::End, Align::Start)
                         .self_at(Align::End, Align::Start)
-                        .offset(-12.0, self.title_h + 1.0 + TAB_H + 8.0),
+                        .offset(-12.0, self.title_h + 1.0 + self.chrome.tab_h + 8.0),
                 )
                 .max_width(max_w)
                 .gap(6.0)

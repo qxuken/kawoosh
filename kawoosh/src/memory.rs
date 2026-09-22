@@ -1337,7 +1337,7 @@ impl Kawoosh {
                             ui.with(col(2.0).main_align(kui::Align::Start), |ui| {
                                 ui.text("/", rows::mono(self.face, &pal).color(pal.command))
                             });
-                            self.field_line(ui, f, filtering, None);
+                            self.field_line(ui, f, filtering, None, self.face);
                         },
                     );
                 }

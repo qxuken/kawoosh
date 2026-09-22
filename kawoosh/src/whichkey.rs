@@ -17,7 +17,6 @@ use kui::{Align, FloatConfig, NodeSpec, TextStyle, Ui};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
-use crate::rows::STRIP_H;
 
 /// Rows per column before the list folds into another column.
 const PER_COLUMN: usize = 8;
@@ -115,7 +114,7 @@ impl Kawoosh {
                     FloatConfig::viewport()
                         .at(Align::End, Align::End)
                         .self_at(Align::End, Align::End)
-                        .offset(-12.0, -(2.0 * STRIP_H + 8.0)),
+                        .offset(-12.0, -(2.0 * self.chrome.strip_h + 8.0)),
                 )
                 .gap(8.0)
                 .cross_align(Align::End),

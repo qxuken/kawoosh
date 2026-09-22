@@ -174,3 +174,45 @@ fn markdown_and_a_shebang_file_are_their_languages() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `:syntax NAME` reads a scratch as a language: its alias resolves,
+/// the buffer is parsed with the grammar and coloured, `:syntax` bare
+/// says which it is, `text` takes the colours off, and a name nobody
+/// knows is said and changes nothing.
+#[test]
+fn a_scratch_takes_a_syntax() {
+    let mut app = Kawoosh::new("*scratch*", "fn main() {}\n");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let ex = |d: &mut Drive, app: &mut Kawoosh, line: &str| {
+        d.keys(app, ":");
+        d.keys(app, line);
+        d.key(app, "enter", KeyMods::default());
+    };
+    let buf = |app: &Kawoosh| app.ed.buffer_of(app.focused_view().unwrap()).clone();
+    assert_eq!(&*buf(&app).language, "text");
+    ex(&mut d, &mut app, "setf rs");
+    assert_eq!(&*buf(&app).language, "rust", "the alias resolved");
+    d.frame(&mut app);
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    assert!(
+        buf(&app)
+            .runs(SYNTAX_LAYER, 0..2)
+            .iter()
+            .any(|r| r.style == Token::Keyword as u32),
+        "fn is a keyword now"
+    );
+    ex(&mut d, &mut app, "syntax");
+    assert_eq!(app.ed.message, "syntax rust");
+    ex(&mut d, &mut app, "syntax klingon");
+    assert_eq!(app.ed.message, "syntax: no language klingon");
+    assert_eq!(&*buf(&app).language, "rust");
+    ex(&mut d, &mut app, "syntax text");
+    d.frame(&mut app);
+    assert!(
+        buf(&app).runs(SYNTAX_LAYER, 0..20).is_empty(),
+        "the colours off"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

@@ -25,7 +25,6 @@ const PAST_END_W: f32 = 8.0;
 /// message); the past-end boxes are taken out of it.
 const TRAILING_GAP: f32 = 12.0;
 pub const GUTTER_W: f32 = 56.0;
-pub const STRIP_H: f32 = 24.0;
 /// How many escapes a line may have and still draw them dim; see
 /// `emit_line`.
 const DIM_ESCAPES_MAX: usize = 32;

@@ -150,6 +150,8 @@ pub enum ArgKind {
     Tool,
     /// A Lua view.
     View,
+    /// A language the registry knows (`:syntax`).
+    Language,
     /// Anything.
     Text,
 }
@@ -164,6 +166,7 @@ impl ArgKind {
             "option" => Self::Option,
             "tool" => Self::Tool,
             "view" => Self::View,
+            "language" => Self::Language,
             "text" | "string" => Self::Text,
             _ => return None,
         })
@@ -177,6 +180,7 @@ impl ArgKind {
             Self::Option => "option",
             Self::Tool => "tool",
             Self::View => "view",
+            Self::Language => "language",
             Self::Text => "text",
         }
     }

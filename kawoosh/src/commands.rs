@@ -43,6 +43,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::trust::commands());
     v.extend(crate::disk::commands());
     v.extend(crate::look::commands());
+    v.extend(crate::languages::commands());
     v.extend(crate::notify::commands());
     v.extend(crate::lsp::commands());
     v.extend(crate::session::commands());
@@ -1003,7 +1004,7 @@ fn instruments() -> Vec<ShellCommand> {
         ),
         tab(
             "syntax_tree",
-            &["syntax", "tree"],
+            &["tree"],
             crate::inspector::TAB,
             "syntax tree",
         ),
