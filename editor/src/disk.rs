@@ -143,6 +143,10 @@ impl Editor {
     /// Writes buffer `id` to its file and records the file's new stamp.
     pub fn save(&mut self, id: BufferId) -> std::io::Result<()> {
         let b = &self.buffers[id];
+        // Its text is not here yet: writing it would empty the file.
+        if b.loading.is_some() {
+            return Err(std::io::Error::other("still opening"));
+        }
         let Some(path) = b.path.clone() else {
             return Err(std::io::Error::other("no file name"));
         };

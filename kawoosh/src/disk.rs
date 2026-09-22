@@ -35,7 +35,7 @@ use crate::notify::{Level, Note};
 pub struct DiskWatch {
     watch: Watcher,
     /// The set last handed to the watch.
-    watched: Vec<PathBuf>,
+    watched: HashSet<PathBuf>,
     /// The toast asking about a modified buffer, while it is up.
     toasts: HashMap<BufferId, u64>,
     /// The file's stamp when it was last acted on or asked about, so a
@@ -49,7 +49,7 @@ impl DiskWatch {
     pub fn new(wake: WakeHandle) -> Self {
         Self {
             watch: Watcher::spawn(wake),
-            watched: Vec::new(),
+            watched: HashSet::new(),
             toasts: HashMap::new(),
             told: HashMap::new(),
             focused: true,
@@ -62,18 +62,21 @@ impl Kawoosh {
     /// saw acted on, and everything checked when the window comes back
     /// to the front.
     pub(crate) fn sync_disk(&mut self, focused: bool) {
-        let mut paths: Vec<PathBuf> = self
-            .ed
-            .buffers
-            .values()
-            .filter(|b| b.loading.is_none() && b.hook.is_none())
-            .filter_map(|b| b.path.clone())
-            .collect();
-        paths.sort();
-        paths.dedup();
-        if paths != self.disk.watched {
-            self.disk.watch.watch(paths.clone());
-            self.disk.watched = paths;
+        // The files the buffers stand on; handed to the watch only when
+        // the set moved, which a frame checks without allocating.
+        let files = || {
+            self.ed
+                .buffers
+                .values()
+                .filter(|b| b.loading.is_none() && b.hook.is_none())
+                .filter_map(|b| b.path.as_ref())
+        };
+        let moved = files().any(|p| !self.disk.watched.contains(p))
+            || files().collect::<HashSet<_>>().len() != self.disk.watched.len();
+        if moved {
+            let set: HashSet<PathBuf> = files().cloned().collect();
+            self.disk.watch.watch(set.iter().cloned().collect());
+            self.disk.watched = set;
         }
         let back = focused && !self.disk.focused;
         self.disk.focused = focused;
@@ -394,7 +397,9 @@ pub fn unified(a: &str, b: &str, context: usize) -> String {
                 }
             }
         }
-        out += &format!("@@ -{},{an} +{},{bn} @@\n", a0 + 1, b0 + 1);
+        // An empty side names the line before it, as diff(1) does.
+        let from = |at: usize, n: usize| if n == 0 { at } else { at + 1 };
+        out += &format!("@@ -{},{an} +{},{bn} @@\n", from(a0, an), from(b0, bn));
         out += &body;
         i = stop;
     }
@@ -481,6 +486,8 @@ mod tests {
             unified(a, b, 1),
             "@@ -2,3 +2,3 @@\n 2\n-3\n+three\n 4\n@@ -10,1 +10,2 @@\n 10\n+eleven\n"
         );
+        // An empty side names the line before it, as diff(1) does.
+        assert_eq!(unified("a\n", "x\na\n", 0), "@@ -0,0 +1,1 @@\n+x\n");
         // Close changes are one hunk.
         let b = "1\nb\n3\nd\n5\n6\n7\n8\n9\n10\n";
         assert_eq!(

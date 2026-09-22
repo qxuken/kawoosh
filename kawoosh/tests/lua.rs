@@ -2527,6 +2527,26 @@ fn the_lua_types_are_written_for_the_language_server() {
         def.settings["Lua"]["workspace"]["library"][0],
         dir.display().to_string()
     );
+    // A config that defines the Lua server again later — a project's
+    // init.lua on `:cd` — keeps the library.
+    let again = dir.join("again.lua");
+    std::fs::write(
+        &again,
+        "kawoosh.lsp.server('lua', { cmd = 'lua-language-server' })\n",
+    )
+    .unwrap();
+    app.run_lua_file(&again);
+    let def = app
+        .scripting
+        .servers
+        .iter()
+        .find(|s| s.language == "lua")
+        .unwrap();
+    assert_eq!(
+        def.settings["Lua"]["workspace"]["library"][0],
+        dir.display().to_string(),
+        "still on the library"
+    );
     let stamp = std::fs::metadata(dir.join("kui.lua"))
         .unwrap()
         .modified()

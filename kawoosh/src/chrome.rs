@@ -36,7 +36,6 @@ impl Kawoosh {
         let pal = self.pal;
         let font = self.chrome.face;
         let tab_h = self.chrome.tab_h;
-        self.title_h = widgets::titlebar_height(ui);
         let focused = ui.env().focused;
         let (head, last) = shorten_path(&kawoosh_systems::fs::abbreviate_home(&self.cwd));
         let full = kawoosh_systems::fs::abbreviate_home(&self.cwd);
@@ -191,8 +190,12 @@ impl Kawoosh {
                 for (i, (name, modified)) in labels.iter().enumerate() {
                     let is_active = i == active;
                     let label = format!("{}: {}{}", i + 1, name, if *modified { " ●" } else { "" });
-                    let key = ui.child_key(&format!("tab{i}"));
-                    let hovered = ui.is_hovered(key);
+                    // The block, its item and its close button are one
+                    // hover group: the pointer is on the item or the
+                    // button, never on the block itself, and the button
+                    // must stay while the pointer goes to it.
+                    let group = format!("tab-hover{i}");
+                    let hovered = ui.is_group_hovered(NodeSpec::hover_group_id(&group));
                     let (bg, fg, edge) = if is_active {
                         (theme.accent, theme.on_accent, theme.accent_hover)
                     } else {
@@ -214,7 +217,8 @@ impl Kawoosh {
                             } else {
                                 pal.panel
                             })
-                            .hoverable(),
+                            .hoverable()
+                            .hover_group(&group),
                         |ui| {
                             // i3's coloured top edge on the block.
                             ui.with(
@@ -239,6 +243,7 @@ impl Kawoosh {
                                             .pad_xy(10.0, 0.0)
                                             .cross_align(Align::Center)
                                             .clip()
+                                            .hover_group(&group)
                                             .on_click(Value::map([
                                                 ("kind", "tab".into()),
                                                 ("index", Value::Int(i as i64)),
@@ -254,16 +259,24 @@ impl Kawoosh {
                                         },
                                     );
                                     if n > 1 && (is_active || hovered) {
+                                        // Its own colour under the pointer
+                                        // alone: a group's hover lights
+                                        // every member.
+                                        let on = ui.is_hovered(ui.child_key("close"));
+                                        let mut close = NodeSpec::row()
+                                            .pad_xy(4.0, 0.0)
+                                            .radius(3.0)
+                                            .hover_group(&group);
+                                        if on {
+                                            close = close.bg(if is_active {
+                                                theme.accent_hover
+                                            } else {
+                                                pal.border
+                                            });
+                                        }
                                         ui.with_keyed(
                                             "close",
-                                            NodeSpec::row()
-                                                .pad_xy(4.0, 0.0)
-                                                .radius(3.0)
-                                                .hover_bg(if is_active {
-                                                    theme.accent_hover
-                                                } else {
-                                                    pal.border
-                                                })
+                                            close
                                                 .on_click(Value::map([
                                                     ("kind", "tab close".into()),
                                                     ("index", Value::Int(i as i64)),

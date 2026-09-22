@@ -51,23 +51,24 @@ impl Kawoosh {
                 log::warn!("lua types: {}: {e}", path.display());
             }
         }
-        let Some(mut def) = self
+        // Kept, so a later `kawoosh.lsp.server('lua', …)` — a project's
+        // init.lua on `:cd` — gets it too (`add_lsp_server`).
+        self.lua_types = Some(dir.to_path_buf());
+        if let Some(def) = self
             .scripting
             .servers
             .iter()
             .find(|d| d.language == "lua")
             .cloned()
-        else {
-            return;
-        };
-        with_library(&mut def.settings, dir);
-        self.add_lsp_server(def);
+        {
+            self.add_lsp_server(def);
+        }
     }
 }
 
 /// `settings` with `dir` on `Lua.workspace.library` and the runtime the
 /// editor embeds, what was there kept.
-fn with_library(settings: &mut Value, dir: &Path) {
+pub(crate) fn with_library(settings: &mut Value, dir: &Path) {
     if !settings.is_object() {
         *settings = json!({});
     }
@@ -80,10 +81,13 @@ fn with_library(settings: &mut Value, dir: &Path) {
         *lua = json!({});
     }
     let lua = lua.as_object_mut().unwrap();
-    lua.entry("runtime")
+    if let Some(runtime) = lua
+        .entry("runtime")
         .or_insert_with(|| json!({}))
         .as_object_mut()
-        .map(|r| r.entry("version").or_insert_with(|| json!("Lua 5.5")));
+    {
+        runtime.entry("version").or_insert_with(|| json!("Lua 5.5"));
+    }
     let ws = lua.entry("workspace").or_insert_with(|| json!({}));
     let Some(ws) = ws.as_object_mut() else { return };
     let library = ws.entry("library").or_insert_with(|| json!([]));

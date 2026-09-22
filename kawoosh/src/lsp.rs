@@ -232,7 +232,14 @@ impl Kawoosh {
     /// test's scripted one — replacing the language's earlier one, and
     /// tells the pool. The list is also what `sync_lsp` reads to know
     /// which buffers have anyone to sync to.
-    pub fn add_lsp_server(&mut self, def: ServerDef) {
+    pub fn add_lsp_server(&mut self, mut def: ServerDef) {
+        // The Lua API's types stay on the Lua server's library however
+        // often a config redefines it (`types.rs`).
+        if def.language == "lua"
+            && let Some(dir) = &self.lua_types
+        {
+            crate::types::with_library(&mut def.settings, dir);
+        }
         self.scripting
             .servers
             .retain(|d| d.language != def.language);

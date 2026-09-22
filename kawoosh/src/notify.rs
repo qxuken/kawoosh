@@ -988,7 +988,8 @@ impl Kawoosh {
                 // width: a path or a server's sentence does not push
                 // the column off the pane.
                 let dim = TextStyle::new(small).color(pal.dim).max_lines(1).ellipsis();
-                let line = || NodeSpec::row().max_width(max_w).clip();
+                // Inside the panel's padding (10 a side).
+                let line = || NodeSpec::row().max_width(max_w - 20.0).clip();
                 for (gi, source) in sources.iter().enumerate() {
                     ui.with_indexed(
                         1 << 32 | gi as u64,

@@ -37,7 +37,8 @@ fn texts(d: &Drive) -> Vec<String> {
 #[test]
 fn the_title_bar_carries_the_cwd_and_lists_it() {
     let dir = std::env::temp_dir().join(format!("kawoosh-chrome-{}", std::process::id()));
-    let deep = dir.join("alpha").join("beta-directory");
+    // A space in it: the click passes the path whole.
+    let deep = dir.join("alpha").join("beta directory");
     std::fs::create_dir_all(&deep).unwrap();
     std::fs::write(deep.join("f.txt"), "x").unwrap();
     let mut d = Drive::new(900.0, 500.0);
@@ -52,9 +53,9 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
     assert!(cy < ty, "the title bar is above the tabs");
     let shown = texts(&d)
         .into_iter()
-        .find(|t| t.ends_with("beta-directory"));
+        .find(|t| t.ends_with("beta directory"));
     let shown = shown.expect("the cwd's last component whole");
-    assert!(shown.contains("/a/beta-directory"), "{shown}");
+    assert!(shown.contains("/a/beta directory"), "{shown}");
     assert!(shown.len() < deep.display().to_string().len());
     let (x, y, w, h) = d.rect_of("cwd").unwrap();
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
@@ -71,7 +72,7 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
         d.frame(&mut app);
     }
     let name = app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
-    assert!(name.ends_with("beta-directory"), "{name}");
+    assert!(name.ends_with("beta directory"), "{name}");
     // And the keys are the listing's: the click on the title bar did
     // not keep them.
     d.keys(&mut app, "j");
@@ -126,6 +127,29 @@ fn tabs_share_the_strip_and_scroll_past_their_floor() {
     let (x, y, w, h) = d.rect_of("close").expect("the active tab's close");
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     assert_eq!(app.layout.tabs.len(), 11);
+    // One on a tab behind, under the pointer, closes that one and
+    // leaves the user where they were.
+    app.layout.tab = 2;
+    settle(&mut d, &mut app);
+    let (tx, ty, tw, th) = d.rect_of("tab0").unwrap();
+    d.input(
+        &mut app,
+        kui::InputEvent::CursorMoved(kui::Vec2::new(tx + tw / 2.0, ty + th / 2.0)),
+    );
+    // The hover is known after the frame that lays it out.
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let close = d
+        .core
+        .nodes()
+        .iter()
+        .filter(|n| n.label.as_deref() == Some("close"))
+        .map(|n| n.rect)
+        .find(|r| r.x < tx + tw)
+        .expect("the hovered tab's close");
+    d.click(&mut app, close.x + close.w / 2.0, close.y + close.h / 2.0);
+    assert_eq!(app.layout.tabs.len(), 10);
+    assert_eq!(app.layout.tab, 1, "the same tab, one place left");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

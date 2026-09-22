@@ -84,6 +84,9 @@ pub struct Kawoosh {
     /// The buffer each view showed before the one it shows — vim's
     /// alternate, `#` — where `:bd` goes back to.
     pub(crate) alternate: HashMap<ViewId, BufferId>,
+    /// Where the Lua API's types were written (`types.rs`), for the Lua
+    /// server's library.
+    pub(crate) lua_types: Option<PathBuf>,
     /// The `:` prompt's completion (`cmdline.rs`), while it is open.
     pub cmd_completion: Option<crate::cmdline::CmdCompletion>,
     /// The working directory: where terminals and `:e` relative paths
@@ -248,6 +251,7 @@ impl Kawoosh {
             session_saved: false,
             last_pos: HashMap::new(),
             alternate: HashMap::new(),
+            lua_types: None,
             cmd_completion: None,
             cwd: std::env::current_dir().unwrap_or_default(),
             dark: true,
@@ -1082,6 +1086,9 @@ impl Kawoosh {
     /// where it was last left — `:b`, `:bn`, a listing's `<CR>` on the
     /// file `-` came from — or at the top the first time.
     pub fn show_buffer(&mut self, view: ViewId, id: BufferId) {
+        // The alternates of views that have gone with their panes.
+        let views = &self.ed.views;
+        self.alternate.retain(|v, _| views.contains_key(*v));
         let v = &mut self.ed.views[view];
         if v.buffer == id {
             return;
@@ -1898,9 +1905,16 @@ impl kui::App for Kawoosh {
             // one it is in.
             Some("tab close") => {
                 if let Some(i) = p.get("index").and_then(Value::as_int) {
-                    self.layout.tab = (i as usize).min(self.layout.tabs.len() - 1);
+                    let (was, n) = (self.layout.tab, self.layout.tabs.len());
+                    let i = (i as usize).min(n - 1);
+                    self.layout.tab = i;
                     self.layout.dock_focused = false;
                     self.run_line("tab close");
+                    // A tab closed from behind: the one the user was on
+                    // stays on, one place left if the closed was before.
+                    if self.layout.tabs.len() < n && i != was {
+                        self.layout.tab = if i < was { was - 1 } else { was };
+                    }
                 }
                 self.reclaim_focus = true;
             }
@@ -1914,8 +1928,11 @@ impl kui::App for Kawoosh {
             }
             // The title bar's cwd: listed.
             Some("cwd") => {
+                // As one argument: a command line splits a path with a
+                // space in it.
                 let cwd = self.cwd.display().to_string();
-                self.run_line(&format!("dir {cwd}"));
+                self.shell_command("dir", &[cwd], None);
+                self.drain_lua();
                 self.reclaim_focus = true;
             }
             Some("term") => {
