@@ -1133,7 +1133,8 @@ picker.source("candidates", {
 -- row per action — its title, its kind — searched by title, the preview
 -- what taking it does (its edit as a diff, a command it runs), `⏎`
 -- taking one (`lsp action N`). The rows are what `kawoosh.lsp.actions()`
--- says; `picker resume` has the last offer back.
+-- says: an offer until one is taken, `picker resume` having it back
+-- till then.
 picker.source("actions", {
   title = "code actions", placeholder = "an action",
   columns = {

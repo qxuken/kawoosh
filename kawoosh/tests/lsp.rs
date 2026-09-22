@@ -49,6 +49,12 @@ fn fake_server() -> ServerDef {
 }
 
 /// Frames until `pred` holds, letting the server thread answer.
+fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
+    d.keys(app, ":");
+    d.keys(app, line);
+    d.key(app, "enter", KeyMods::default());
+}
+
 fn until(d: &mut Drive, app: &mut Kawoosh, mut pred: impl FnMut(&Kawoosh) -> bool) -> bool {
     for _ in 0..300 {
         d.frame(app);
@@ -571,6 +577,27 @@ fn rename_references_actions_format_and_diagnostics() {
         "the action's edit: {:?}",
         app.ed.buffers[buf_id].text()
     );
+    // An offer is taken once: the same again is nothing, and the
+    // picker on it again has no rows.
+    let text = app.ed.buffers[buf_id].text();
+    ex(&mut d, &mut app, "lsp action 1");
+    assert_eq!(app.ed.message, "no such action");
+    assert_eq!(app.ed.buffers[buf_id].text(), text);
+    // One taken after the text moved is refused: its edits are
+    // positions in the text it was offered for.
+    d.keys(&mut app, " ca");
+    assert!(until(&mut d, &mut app, picker_up));
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "O// moved");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "lsp action 1");
+    assert_eq!(
+        app.ed.message,
+        "the text moved since the actions were offered; ask again"
+    );
+    d.keys(&mut app, "u");
+    assert_eq!(app.ed.buffers[buf_id].text(), text);
     // The second is a command: run on the server, whose applyEdit lands.
     d.keys(&mut app, " ca");
     assert!(until(&mut d, &mut app, picker_up));

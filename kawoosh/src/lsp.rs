@@ -114,10 +114,11 @@ pub struct LspState {
     pub status: Vec<(PathBuf, String, usize)>,
     /// What each language's server said it does.
     pub caps: HashMap<String, Caps>,
-    /// The code actions last offered, in the picker's order, and the
-    /// buffer they were asked for — where an action's command runs.
+    /// The code actions on offer, in the picker's order, and the
+    /// buffer they were asked for — where an action's command runs —
+    /// at the version they were offered against. Taken once.
     pub actions: Vec<CodeAction>,
-    actions_buffer: Option<BufferId>,
+    actions_for: Option<(BufferId, Version)>,
     /// The pane the keyboard was in when the candidates pane took it.
     candidates_from: Option<crate::layout::PaneId>,
 }
@@ -137,7 +138,7 @@ impl LspState {
             status: Vec::new(),
             caps: HashMap::new(),
             actions: Vec::new(),
-            actions_buffer: None,
+            actions_for: None,
             candidates_from: None,
         }
     }
@@ -665,10 +666,14 @@ impl Kawoosh {
     /// title, what taking it does as the preview — its edit as a diff,
     /// the command it runs — and `⏎` taking one (`lsp action N`).
     fn offer_actions(&mut self, buffer: BufferId, actions: Vec<CodeAction>) {
+        self.clear_actions();
         if actions.is_empty() {
             self.ed.message = "no code actions here".into();
             return;
         }
+        let Some(version) = self.ed.buffers.get(buffer).map(Buffer::version) else {
+            return;
+        };
         let Some(rt) = self.scripting.rt.clone() else {
             self.ed.message = "the code actions picker needs lua".into();
             return;
@@ -685,7 +690,7 @@ impl Kawoosh {
             .collect();
         rt.set_actions(Some(Rc::new(snap)));
         self.lsp.actions = actions;
-        self.lsp.actions_buffer = Some(buffer);
+        self.lsp.actions_for = Some((buffer, version));
         self.run_lua_source("actions", "kawoosh.picker.open(\"actions\")");
     }
 
@@ -731,8 +736,19 @@ impl Kawoosh {
         out
     }
 
-    /// Action `n` (from 1) of the ones last offered: its edit applied,
-    /// its command run on the server.
+    /// Nothing on offer: the actions, and the picker's rows of them.
+    fn clear_actions(&mut self) {
+        self.lsp.actions.clear();
+        self.lsp.actions_for = None;
+        if let Some(rt) = &self.scripting.rt {
+            rt.set_actions(None);
+        }
+    }
+
+    /// Action `n` (from 1) of the ones on offer: its edit applied, its
+    /// command run on the server. An offer is taken once, against the
+    /// text it was made for — its edits are positions in that text — so
+    /// a second take, or one after the text moved, asks again.
     fn run_action(&mut self, n: usize) {
         let Some(action) = n
             .checked_sub(1)
@@ -742,19 +758,28 @@ impl Kawoosh {
             self.ed.message = "no such action".into();
             return;
         };
+        let asked = self.lsp.actions_for;
+        self.clear_actions();
+        let Some((buffer, version)) = asked else {
+            return;
+        };
+        match self.ed.buffers.get(buffer) {
+            Some(b) if b.version() == version => {}
+            Some(_) => {
+                self.ed.message = "the text moved since the actions were offered; ask again".into();
+                return;
+            }
+            None => {
+                self.ed.message = "the buffer the actions were for is gone".into();
+                return;
+            }
+        }
         if let Some(edit) = action.edit {
             self.apply_workspace_edit(&action.title, edit);
         }
         if let Some((command, arguments)) = action.command {
-            // The buffer the actions were asked for: the server runs
-            // the command in its workspace, whatever has the keys now.
-            let asked = self
-                .lsp
-                .actions_buffer
-                .filter(|b| self.ed.buffers.contains_key(*b));
-            let Some(buffer) = asked.or_else(|| self.lsp_at_caret().map(|(_, b, _)| b)) else {
-                return;
-            };
+            // The server runs it in the workspace of the buffer the
+            // actions were asked for, whatever has the keys now.
             self.positional_cmd(Cmd::Execute {
                 buffer,
                 command,
