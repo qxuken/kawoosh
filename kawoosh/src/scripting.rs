@@ -746,12 +746,14 @@ impl Kawoosh {
                 command,
                 args,
                 roots,
+                settings,
             } => {
                 self.add_lsp_server(ServerDef {
                     language,
                     command,
                     args,
                     roots,
+                    settings,
                 });
             }
             Msg::Language {

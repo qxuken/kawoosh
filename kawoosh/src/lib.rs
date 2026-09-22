@@ -36,6 +36,7 @@ pub mod session;
 pub mod settings;
 pub mod terminals;
 pub mod trust;
+pub mod types;
 pub mod undo;
 pub mod whichkey;
 

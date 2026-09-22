@@ -44,6 +44,7 @@ fn fake_server() -> ServerDef {
         command,
         args,
         roots: vec!["Cargo.toml".into()],
+        settings: Default::default(),
     }
 }
 

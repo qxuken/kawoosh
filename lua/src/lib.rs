@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 pub mod fuzzy;
+mod meta;
 pub use fuzzy::{Hit, Matcher};
 
 use kawoosh_doc::{Buffer, BufferId, Snapshot};
@@ -249,6 +250,9 @@ pub enum Msg {
         command: String,
         args: Vec<String>,
         roots: Vec<String>,
+        /// The server's configuration (`settings = { Lua = { … } }`),
+        /// JSON; `Null` for none.
+        settings: serde_json::Value,
     },
     /// `kawoosh.language(name, t)`: a language — its files, and where
     /// its grammar is, if anything was said (kui.md D13). The shell
@@ -2037,6 +2041,7 @@ fn seed(
                 command: t.get("cmd")?,
                 args: t.get::<Option<Vec<String>>>("args")?.unwrap_or_default(),
                 roots: t.get::<Option<Vec<String>>>("roots")?.unwrap_or_default(),
+                settings: lua_to_json(&t.get::<LV>("settings")?)?,
             });
             Ok(())
         })?,

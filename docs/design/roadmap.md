@@ -450,22 +450,33 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   else as a chunk (`Runtime::eval`), the values spelled
   (`kawoosh._show`: tables shallowly, keys in order) on the status
   line, or in a `*lua*` pane when the result has lines.
-- **What eval sees** — open, a question [use 2026-09-22]; step 12.
-  Asked in use: "lua eval doesn't have kawoosh or kui?". Checked:
-  `Runtime::eval` loads the text into the runtime's globals, the ones
-  `kawoosh` is set in (`lua/src/lib.rs:2936`), after `rt.publish` with
-  the focused view (`scripting.rs:153`), so `kawoosh.buf.line(1)`
-  answers from `<leader>x`. What is *not* there: a `kui` global — the
-  Lua side reaches kui only through `kawoosh.view_open`'s DSL — and any
-  type definitions, so lua-language-server marks `kawoosh` an
-  undefined global in every plugin and settings file (no `---@meta`
-  file ships, no `.luarc.json`). The round's first job is the failing
-  case: which of the two was seen. Then, whichever it was: a
-  `lua/meta/kawoosh.lua` of `---@meta` annotations generated from the
-  registered functions and put on LuaLS's `workspace.library` when
-  kawoosh starts one; a `kui` global only if there is something a
-  plugin should reach that `view_open` does not give it, which would
-  be a kui-FFI question and not an eval one.
+- **Types for lua-language-server** — done 2026-09-22 [use]; step
+  12. Asked in use as "lua eval doesn't have kawoosh or kui?"; the
+  answer was that eval does see `kawoosh` (the runtime's globals) and
+  that what was wanted was the two APIs' types in the language server,
+  where every `kawoosh.` and every `row` was an undefined global. Built:
+  `kawoosh.lua` from the live runtime (`lua/src/meta.rs`,
+  `Runtime::luals_meta`) — every name under `kawoosh`, a Lua
+  function's parameters off its defining line and its doc from the
+  comment above, a Rust one's from the doc comment in the lua crate
+  that spells it, the rest declared `(...)`; what a plugin or
+  `init.lua` added is in it — and `kui.lua` from kui's schema (kui's
+  F81, `kui_lua::luals_meta`: the prelude's constructors typed by
+  element, a `kui.Props` of every prop with its doc). At launch, after
+  the config, both are written to `types` beside the state db
+  (`$KAWOOSH_TYPES` moves it; rewritten only when their text moved),
+  and the Lua server's definition carries `settings` with the
+  directory on `Lua.workspace.library` and `Lua 5.5` as the runtime —
+  a `ServerDef` has `settings` now, answering `workspace/configuration`
+  by section and sent once the server is up, and
+  `kawoosh.lsp.server { settings = … }` sets them, the library added
+  to what it says. Checked with lua-language-server 3.19 over
+  `picker.lua` and `dir.lua`. What is left: parameters are untyped
+  unless the name says (`opts`, `fn`, `on_*`) and every one past the
+  first is optional, since nothing says which a call may leave off;
+  the Rust half's functions without a doc comment are `(...)`. A `kui`
+  global was not added: the DSL is what Lua reaches of kui, and it is
+  typed now.
 - **Plugin-built panes** — done 2026-09-21 [todo]: the page is
   [plugin-panes.md](plugin-panes.md) — the slot, `fn(ctx)` and its
   DSL, `on_event`, fields and the `field:lua:` fact, the picker as the
@@ -794,7 +805,7 @@ then breadth.
     3ms for five hundred columns, and `<C-w>HJKL` carry a pane while
     `<A-S-hjkl>` keep sizing, `<C-1>`…`<C-9>` reach the Nth column and
     `zs` `ze` `zz` put it at an edge or the middle.
-12. **The disk, and the small ones from use** (2026-09-22): the save
+12. ~~**The disk, and the small ones from use** (2026-09-22): the save
     that did not land reproduced as a test first; then every open
     buffer's file on the watch, a buffer recording what it read (mtime
     and hash), an outside change reloading a clean buffer undoably and
@@ -804,7 +815,13 @@ then breadth.
     the `dir` listing, and eval's question answered — the failing case
     found, and the `---@meta` file for lua-language-server if that was
     it. First because a file silently out of step with its buffer is
-    the one thing on this list that loses work.
+    the one thing on this list that loses work.~~ Landed 2026-09-22 in
+    three commits (`editor/src/disk.rs` and `kawoosh/src/disk.rs`;
+    `dir enter`; `lua/src/meta.rs` and `kawoosh/src/types.rs` with kui's
+    F81): the save did not reproduce, and `:w` asks now, so it cannot
+    happen silently; the stamp is length and mtime with the texts
+    compared when it moves, not a hash kept; eval's question was the
+    types. See the files, `dir` and Lua tracks.
 13. **The window's chrome**: the title bar kui draws
     (`custom_titlebar`) with the status block moved into it and the
     cwd shortened from the middle; the tab strip's tabs growing evenly

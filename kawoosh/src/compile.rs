@@ -50,6 +50,7 @@ impl Kawoosh {
                         "package.json".into(),
                         "Makefile".into(),
                     ],
+                    settings: Default::default(),
                 };
                 kawoosh_systems::lsp::workspace_root(&p, &def)
             })

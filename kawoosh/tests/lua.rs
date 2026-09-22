@@ -2479,3 +2479,67 @@ fn a_moment_recalled_keeps_its_entry() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The Lua API's types for lua-language-server: `kawoosh.lua` from the
+/// runtime — what a config added among the rest — and `kui.lua` from
+/// kui's schema, written into the directory, and the Lua server's
+/// settings carrying it on `workspace.library`, over what a config's
+/// `kawoosh.lsp.server` said. A second write of the same text leaves
+/// the files alone.
+#[test]
+fn the_lua_types_are_written_for_the_language_server() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "*scratch*", "");
+    let dir = std::env::temp_dir().join(format!("kawoosh-types-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let init = dir.join("init.lua");
+    std::fs::write(
+        &init,
+        "-- Mine.\nfunction kawoosh.mine(a, b) end\n\
+         kawoosh.lsp.server('lua', { cmd = 'lua-language-server', settings = { Lua = { hint = { enable = true } } } })\n",
+    )
+    .unwrap();
+    app.run_lua_file(&init);
+    app.write_lua_types(&dir);
+    let kawoosh = std::fs::read_to_string(dir.join("kawoosh.lua")).unwrap();
+    assert!(kawoosh.starts_with("---@meta kawoosh"));
+    assert!(kawoosh.contains("function kawoosh.buf.close(buffer, opts) end"));
+    assert!(
+        kawoosh.contains("---Mine.\n---@param a any\n---@param b? any\n---@return any\nfunction kawoosh.mine(a, b) end"),
+        "the config's own, read back from its file"
+    );
+    assert!(
+        kawoosh.contains("---@class kawoosh.picker"),
+        "a bundled plugin's module"
+    );
+    let kui = std::fs::read_to_string(dir.join("kui.lua")).unwrap();
+    assert!(kui.starts_with("---@meta kui"));
+    assert!(kui.contains("function row(t) end"));
+    let def = app
+        .scripting
+        .servers
+        .iter()
+        .find(|s| s.language == "lua")
+        .unwrap();
+    assert_eq!(def.settings["Lua"]["hint"]["enable"], true, "theirs kept");
+    assert_eq!(
+        def.settings["Lua"]["workspace"]["library"][0],
+        dir.display().to_string()
+    );
+    let stamp = std::fs::metadata(dir.join("kui.lua"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    app.write_lua_types(&dir);
+    assert_eq!(
+        std::fs::metadata(dir.join("kui.lua"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        stamp,
+        "the same text is not written again"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

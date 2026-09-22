@@ -29,6 +29,24 @@ pub struct ServerDef {
     pub args: Vec<String>,
     /// Files that mark a workspace root, nearest first wins.
     pub roots: Vec<String>,
+    /// What the server reads as its configuration: a request for a
+    /// `section` (`"Lua"`, `"rust-analyzer"`) is answered with the value
+    /// at that dotted path, and the whole is sent once the server is up.
+    /// `Null` for none.
+    pub settings: Value,
+}
+
+/// The value at `section`'s dotted path in `settings` — `"Lua"`,
+/// `"Lua.workspace"` — or the whole for none; `Null` where it is not.
+fn setting_at(settings: &Value, section: Option<&str>) -> Value {
+    let Some(section) = section.filter(|s| !s.is_empty()) else {
+        return settings.clone();
+    };
+    section
+        .split('.')
+        .try_fold(settings, |v, key| v.get(key))
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 impl ServerDef {
@@ -43,6 +61,7 @@ impl ServerDef {
             command: command.into(),
             args: args.iter().map(|a| a.to_string()).collect(),
             roots: roots.iter().map(|r| r.to_string()).collect(),
+            settings: Value::Null,
         };
         vec![
             def("rust", "rust-analyzer", &[], &["Cargo.toml"]),
@@ -524,6 +543,8 @@ struct Server {
     /// The command it was started as — what a message from it is
     /// attributed to.
     name: String,
+    /// Its definition's `settings`.
+    settings: Value,
 }
 
 impl Server {
@@ -596,6 +617,7 @@ impl Server {
             documents: HashMap::new(),
             language: def.language.clone(),
             name: def.command.clone(),
+            settings: def.settings.clone(),
         })
     }
 
@@ -1084,6 +1106,14 @@ impl Pool {
             match method {
                 "initialize" => {
                     server.send(json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }));
+                    // A server that does not ask reads it here.
+                    if !server.settings.is_null() {
+                        let settings = server.settings.clone();
+                        server.send(json!({
+                            "jsonrpc": "2.0", "method": "workspace/didChangeConfiguration",
+                            "params": { "settings": settings }
+                        }));
+                    }
                     server.initialized = true;
                     for q in std::mem::take(&mut server.queued) {
                         server.send(q);
@@ -1166,11 +1196,22 @@ impl Pool {
             let mut handed_up = None;
             let result = match method {
                 "workspace/configuration" => {
-                    let n = message
+                    let items = message
                         .pointer("/params/items")
                         .and_then(Value::as_array)
-                        .map_or(0, Vec::len);
-                    Value::Array(vec![Value::Null; n])
+                        .cloned()
+                        .unwrap_or_default();
+                    Value::Array(
+                        items
+                            .iter()
+                            .map(|item| {
+                                setting_at(
+                                    &server.settings,
+                                    item.get("section").and_then(Value::as_str),
+                                )
+                            })
+                            .collect(),
+                    )
                 }
                 // A server's own edit — a code action's command, a
                 // refactoring — handed up, and answered as applied.

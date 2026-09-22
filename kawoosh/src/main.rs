@@ -135,6 +135,11 @@ fn main() -> anyhow::Result<()> {
     let ext = app.attach_lua().map_err(|e| anyhow::anyhow!("lua: {e}"))?;
     app.open_store(None);
     app.load_config();
+    // After the config, so what `init.lua` and the plugins added is in
+    // the types lua-language-server reads.
+    if let Some(dir) = kawoosh::types::types_dir() {
+        app.write_lua_types(&dir);
+    }
     // The path opens after the config, so a plugin's opener sees it — a
     // directory is listed; a bare launch picks up where the last one
     // left off (mvp.md D7).
