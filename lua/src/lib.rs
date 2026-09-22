@@ -70,12 +70,15 @@ pub enum Msg {
         buffer: u64,
         split: Option<String>,
     },
-    /// `kawoosh.buf.close(buffer, { force = })`: the buffer closed as
-    /// `:bd` closes it, every pane on it moved to another; one with
-    /// unsaved changes stays unless `force`, and the message says so.
+    /// `kawoosh.buf.close(buffer, { force =, if_hidden = })`: the
+    /// buffer closed as `:bd` closes it, every pane on it moved to
+    /// another; one with unsaved changes stays unless `force`, and the
+    /// message says so. With `if_hidden`, one a pane still shows stays,
+    /// quietly — what a buffer left behind asks.
     CloseBuffer {
         buffer: u64,
         force: bool,
+        if_hidden: bool,
     },
     /// `kawoosh.fs.list(path, fn)`: the directory read on a thread of
     /// its own, the answer to `Runtime::listed` under `token` when it
@@ -2394,11 +2397,15 @@ fn seed(
     buf.set(
         "close",
         lua.create_function(move |_, (h, opts): (u64, Option<Table>)| {
+            let flag = |name: &str| {
+                opts.as_ref()
+                    .and_then(|t| t.get::<Option<bool>>(name).ok().flatten())
+                    .unwrap_or(false)
+            };
             qq.borrow_mut().push(Msg::CloseBuffer {
                 buffer: h,
-                force: opts
-                    .and_then(|t| t.get::<Option<bool>>("force").ok().flatten())
-                    .unwrap_or(false),
+                force: flag("force"),
+                if_hidden: flag("if_hidden"),
             });
             Ok(())
         })?,

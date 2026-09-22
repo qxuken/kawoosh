@@ -882,7 +882,10 @@ end, {
 -- `<CR>` in a listing opens the entry under the caret. The command is
 -- gated on the listing; `<CR>` elsewhere is the binding below it,
 -- `goto location` on a `when` of its own, which the engine falls
--- through to when this one cannot run.
+-- through to when this one cannot run. A listing left for a file goes
+-- — `-` from the file lists the directory again, the caret on it —
+-- unless its edits hold it (a plan not yet written) or another pane
+-- still shows it.
 kawoosh.command("dir enter", function()
   local d = listed()
   local line = kawoosh.buf.line(kawoosh.buf.cursor().line)
@@ -890,7 +893,12 @@ kawoosh.command("dir enter", function()
   if line == "../" then return up() end
   if d == DRIVES then return dir.open(line) end
   local target = fs.join(d, (line:gsub("/$", "")))
-  if line:sub(-1) == "/" then dir.open(target) else kawoosh.open(target) end
+  if line:sub(-1) == "/" then return dir.open(target) end
+  local h = kawoosh.buf.current()
+  kawoosh.open(target)
+  if h and not kawoosh.buf.modified(h) then
+    kawoosh.buf.close(h, { if_hidden = true })
+  end
 end, {
   when = { "language:dir" },
   doc = "open the entry under the caret",

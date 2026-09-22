@@ -318,9 +318,14 @@ impl Kawoosh {
                 }
                 self.open_in_editor(&path, line, col);
             }
-            Msg::CloseBuffer { buffer, force } => {
+            Msg::CloseBuffer {
+                buffer,
+                force,
+                if_hidden,
+            } => {
                 let id = kawoosh_lua::id_of(buffer);
                 if self.ed.buffers.contains_key(id)
+                    && !(if_hidden && self.buffer_shown(id))
                     && let Err(why) = self.close_buffer(id, force)
                 {
                     self.ed.message = why.into();

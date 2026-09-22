@@ -526,15 +526,14 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   watcher re-reading a listing the io thread's `watch.rs` sees change,
   an image preview once kui's `image` is on the road (req §9), and
   hidden-file toggling. None urgent.
-- **`<CR>` on a file closes the listing** — open [use 2026-09-22];
-  step 12. `dir enter` opens a file with `kawoosh.open(target)` in the
-  same view (`dir.lua`'s `dir enter`) and the listing's buffer stays,
-  in `buffers`, `:ls` and the tab's alternates, one per directory
-  visited. Taken: a listing left for a file is closed — its buffer
-  dropped — unless it has edits (its plan unwritten), which keep it as
-  they would a modified file. `-` from the file lists the directory
-  again with the caret on the file, which is what `-` does already, so
-  nothing is lost with the buffer.
+- **`<CR>` on a file closes the listing** — done 2026-09-22 [use];
+  step 12. `dir enter` on a file closes the listing it was opened from
+  once the file is in the pane — `kawoosh.buf.close(h, { if_hidden =
+  true })`, the option new: a buffer another pane still shows stays,
+  quietly — unless the listing has edits (its plan unwritten), which
+  keep it as they would a modified file. `-` from the file lists the
+  directory again with the caret on it, so nothing is lost with the
+  buffer. `kawoosh/lua/tests/dir_enter.lua`.
 - **The working memory, round two** — done 2026-09-21
   ([memory.md](memory.md), step 10). The memory as the one place the
   editor remembers: a row per subject (texts, files, command lines,
