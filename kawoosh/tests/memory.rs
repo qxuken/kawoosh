@@ -1234,3 +1234,27 @@ fn a_pin_opens_in_the_pane_that_has_the_keyboard() {
     assert_eq!(name(&app, second), "c.txt", "the other pane is untouched");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// `<Tab>` walks the pane's views forward and `<S-Tab>` back, round
+/// from the first to the last.
+#[test]
+fn shift_tab_walks_the_views_back() {
+    use kawoosh::memory::View;
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "one");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "memory texts");
+    d.frame(&mut app);
+    assert_eq!(app.memory_pane.view, View::Texts);
+    let shift = KeyMods {
+        shift: true,
+        ..KeyMods::default()
+    };
+    d.key(&mut app, "tab", KeyMods::default());
+    assert_eq!(app.memory_pane.view, View::Files);
+    d.key(&mut app, "tab", shift);
+    assert_eq!(app.memory_pane.view, View::Texts);
+    d.key(&mut app, "tab", shift);
+    assert_eq!(app.memory_pane.view, View::All, "round to the last");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

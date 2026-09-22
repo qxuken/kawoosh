@@ -1034,7 +1034,9 @@ end
 -- to another listing's pane moves it there.
 kawoosh.view(PREVIEW, function(ctx)
   local t = ctx.env.theme
-  local size = 12
+  -- The editor's smaller chrome text (its length token), 12 px at the
+  -- default font.
+  local size = ctx.env.tokens and ctx.env.tokens.lengths.chrome_small or 12
   local mono = { family = "mono", size = size }
   local root = column { pad = 8, gap = 2, clip = true }
   local function say(s, color)

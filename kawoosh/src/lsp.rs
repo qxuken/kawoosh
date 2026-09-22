@@ -276,7 +276,9 @@ impl Kawoosh {
                     if text.trim().is_empty() {
                         self.ed.message = "no hover information".into();
                     } else {
-                        self.show_in_pane("*hover*", &text);
+                        // Read in, as markdown: the fences are the
+                        // language's, highlighted; `q` goes back.
+                        self.show_in_pane_as("*hover*", &text, Some("markdown"), true);
                     }
                 }
                 Event::Completion {
@@ -454,6 +456,13 @@ impl Kawoosh {
     /// `text` in a read-only buffer named `name`, in a split (or the pane
     /// already showing it).
     pub fn show_in_pane(&mut self, name: &str, text: &str) {
+        self.show_in_pane_as(name, text, None, false);
+    }
+
+    /// `show_in_pane`, with the buffer read as `language` and, with
+    /// `focus`, the keyboard in the pane — the hover's, which is read
+    /// and scrolled rather than glanced at, its fences highlighted.
+    pub fn show_in_pane_as(&mut self, name: &str, text: &str, language: Option<&str>, focus: bool) {
         let existing = self
             .ed
             .buffers
@@ -472,6 +481,9 @@ impl Kawoosh {
             }
         };
         self.ed.buffers[id].mark_saved();
+        if let Some(l) = language {
+            self.ed.buffers[id].language = l.into();
+        }
         let shown = self
             .layout
             .visible_panes()
@@ -483,13 +495,19 @@ impl Kawoosh {
                     self.ed.views[v].sels = Default::default();
                     self.ed.views[v].top = 0;
                 }
+                if focus {
+                    self.layout.focus(p);
+                }
             }
             None => {
                 let v = self.ed.add_view(id);
                 let from = self.layout.focused();
                 self.layout.split(SplitDir::V, Content::Editor(v));
-                // Keep the keyboard where it was: the pane is for reading.
-                self.layout.focus(from);
+                // The keyboard stays where it was unless the pane is to
+                // be read in: a list glanced at, a hover scrolled.
+                if !focus {
+                    self.layout.focus(from);
+                }
             }
         }
     }

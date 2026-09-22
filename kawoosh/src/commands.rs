@@ -87,6 +87,11 @@ impl Kawoosh {
             "scrollback close",
             &[Cond::parse("language:scrollback")],
         );
+        // `q` in the hover pane closes it: the keyboard went there with
+        // `K`, and goes back.
+        self.ed
+            .keymap
+            .bind_when(Mode::Normal, "q", "close", &[Cond::parse("buffer:*hover*")]);
         // A view's field: `<Esc>` in normal mode hands the keys back.
         self.ed.keymap.bind_when(
             Mode::Normal,

@@ -13,7 +13,7 @@ use kui::{Align, Enter, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Valu
 
 use crate::app::{DIVIDER, Kawoosh};
 use crate::layout::{Content, Drop, Kind, Node, PaneId, SplitDir, Strip};
-use crate::rows::{self, Caret, Drawn, GUTTER_W, LineDraw, Window};
+use crate::rows::{self, Caret, Drawn, LineDraw, Window};
 use crate::terminals::TermId;
 use kawoosh_systems::lsp::DIAG_LAYER;
 use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
@@ -291,7 +291,9 @@ impl Kawoosh {
                     let candidates = self
                         .cmd_completion
                         .as_ref()
-                        .filter(|c| c.candidates.len() > 1 && line_len > c.start)
+                        // After a command's word the row shows before a
+                        // letter is typed: its subcommands, what it takes.
+                        .filter(|c| c.candidates.len() > 1 && (line_len > c.start || c.start > 0))
                         .map(|c| (c.candidates.clone(), c.index));
                     if let Some((cands, index)) = candidates {
                         ui.with(
@@ -969,6 +971,7 @@ impl Kawoosh {
             .collect();
         let tag = Value::map([("kind", "pane".into()), ("pane", Value::Int(pane as i64))]);
         let cell_w = self.cell.0;
+        let gutter = rows::gutter_w(cell_w, buf.line_count());
         // The lines column's width, for the sideways follow and the
         // window a long line is sliced to: the pane's less the gutter
         // and its border.
@@ -976,7 +979,7 @@ impl Kawoosh {
             .layout
             .rects
             .get(&pane)
-            .map(|r| (r.w - GUTTER_W - 2.0).max(0.0))
+            .map(|r| (r.w - gutter - 2.0).max(0.0))
             .unwrap_or(0.0);
         // Scroll the caret into view sideways, a few columns of margin,
         // the way `top` follows it down — before the rows, which are
@@ -1043,7 +1046,7 @@ impl Kawoosh {
             |ui| {
                 ui.with(
                     NodeSpec::column()
-                        .width(Sizing::Fixed(GUTTER_W))
+                        .width(Sizing::Fixed(gutter))
                         .height(Sizing::Grow(1.0))
                         .pad_xy(12.0, 0.0)
                         .role(Role::None),

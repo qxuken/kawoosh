@@ -139,7 +139,7 @@ and `:e` reachable when the memory pane is the only pane there is.
 | `<C-f>` `<C-b>` `<PageDown>` `<PageUp>` | a screen |
 | `gg` `G` | the first / last row |
 | `<CR>` | `list open`: put the text, open the file at its line, seek the state |
-| `<Tab>` | `list view`: the pane's next view (the memory pane's) |
+| `<Tab>` `<S-Tab>` | `list view` / `list view prev`: the pane's next / previous view (the memory pane's) |
 | `q` | `close` — the pane, not the last one |
 | `<Esc>` | `pane back`: the keyboard to the editor pane it came from |
 | `:` | the command line |

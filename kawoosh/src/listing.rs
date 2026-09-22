@@ -155,8 +155,9 @@ impl Kawoosh {
     }
 
     /// `list view`: the pane's next view, where it has views.
-    fn pane_next(&mut self) {
+    fn pane_next(&mut self, back: bool) {
         match self.layout.focused_content() {
+            Some(Content::Memory) if back => self.memory_prev_view(),
             Some(Content::Memory) => self.memory_next_view(),
             _ => self.ed.message = "this pane has one view".into(),
         }
@@ -258,7 +259,11 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             Spec::new("list view")
                 .args(Args::new(&[ArgKind::Text]))
                 .doc("the pane's next view (the memory pane's texts, files, recent, …)"),
-            |k, _| k.pane_next(),
+            |k, _| k.pane_next(false),
+        ),
+        cmd(
+            Spec::new("list view prev").doc("the pane's previous view, `<Tab>` read the other way"),
+            |k, _| k.pane_next(true),
         ),
         cmd(
             Spec::new("pane back").doc("the keyboard back to the editor pane it came from"),

@@ -112,6 +112,7 @@ impl Kawoosh {
             return;
         };
         let pal = self.pal;
+        let small = self.chrome.small;
         let vp = ui.viewport();
         let max_w = (vp.w * 0.6).clamp(280.0, 720.0);
         let tag = Value::map([("kind", "confirm".into())]);
@@ -137,7 +138,10 @@ impl Kawoosh {
                 .focusable()
                 .initial_focus(),
             |ui| {
-                ui.text(&c.title, TextStyle::new(13.0).color(pal.fg));
+                ui.text(
+                    &c.title,
+                    TextStyle::new(self.chrome.face.size).color(pal.fg),
+                );
                 if !c.lines.is_empty() {
                     ui.with(NodeSpec::column().gap(2.0), |ui| {
                         for l in c.lines.iter().take(LINES_SHOWN) {
@@ -174,7 +178,7 @@ impl Kawoosh {
                                         ("action", Value::Int(i as i64)),
                                     ])),
                                 |ui| {
-                                    ui.text(label, TextStyle::new(12.0).color(pal.fg).nowrap());
+                                    ui.text(label, TextStyle::new(small).color(pal.fg).nowrap());
                                 },
                             );
                         }

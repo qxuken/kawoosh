@@ -58,11 +58,21 @@ local FIELD_FACT = "field:lua:" .. VIEW .. "/" .. FIELD
 -- blurred, `<Esc>` twice) runs them too.
 local PANE_FACT = "lua:" .. VIEW
 -- The rows' text: the field's size, so the query and its answers line
--- up; a row is the field's height too.
+-- up; a row is the field's height too. The editor's chrome sizes, read
+-- off its length tokens each frame (`sizes`), so the picker follows the
+-- font as the tabs and the strips do; these are the 13 px defaults.
 local SIZE = 13
 local ROW_H = SIZE + 6
 local PREVIEW_SIZE = 12
 local PREVIEW_ROW = PREVIEW_SIZE + 4
+
+local function sizes(env)
+  local l = env and env.tokens and env.tokens.lengths or {}
+  SIZE = l.chrome or 13
+  ROW_H = SIZE + 6
+  PREVIEW_SIZE = l.chrome_small or 12
+  PREVIEW_ROW = PREVIEW_SIZE + 4
+end
 -- The most rows a query keeps: a screenful and a few pages after it.
 local LIMIT = 200
 -- The most lines a search reads before it is stopped.
@@ -868,6 +878,7 @@ end
 -- ------------------------------------------------------------ the view
 
 kawoosh.view(VIEW, function(ctx)
+  sizes(ctx.env)
   local t = ctx.env.theme
   if not P then
     return column { pad = 12, text("no picker open", { color = t.muted }) }

@@ -27,7 +27,7 @@ use crate::inspector::Inspector;
 use crate::layout::{Content, Layout, PaneId, SplitDir};
 use crate::lsp::LspState;
 use crate::notify::Notifications;
-use crate::rows::{self, Drawn, GUTTER_W};
+use crate::rows::{self, Drawn};
 use crate::scripting::Scripting;
 use crate::settings::Config;
 use crate::terminals::{TermId, Terminals};
@@ -1351,7 +1351,7 @@ impl Kawoosh {
             .layout
             .rects
             .get(&pane)
-            .map(|r| (r.w - GUTTER_W - 2.0).max(0.0))
+            .map(|r| (r.w - rows::gutter_w(self.cell.0, buf.line_count()) - 2.0).max(0.0))
             .unwrap_or(0.0);
         let window = rows::Window {
             left: self.ed.views[view].left,

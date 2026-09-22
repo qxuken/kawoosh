@@ -24,7 +24,18 @@ const PAST_END_W: f32 = 8.0;
 /// The gap before a row's trailing text (an annotation, a diagnostic's
 /// message); the past-end boxes are taken out of it.
 const TRAILING_GAP: f32 = 12.0;
-pub const GUTTER_W: f32 = 56.0;
+/// The gutter's padding either side of its numbers.
+const GUTTER_PAD: f32 = 12.0;
+
+/// The gutter's width for a buffer of `lines` lines at a cell of
+/// `cell_w`: its numbers' digits — four at least, so a short file's
+/// gutter does not jump as it grows — and the padding. 56 px at the
+/// 13 px default; a bigger font widens it, where a fixed 56 cut `58` to
+/// `5` (2026-09-23).
+pub fn gutter_w(cell_w: f32, lines: usize) -> f32 {
+    let digits = lines.max(1).ilog10() as usize + 1;
+    (2.0 * GUTTER_PAD + cell_w * digits.max(4) as f32).ceil()
+}
 /// How many escapes a line may have and still draw them dim; see
 /// `emit_line`.
 const DIM_ESCAPES_MAX: usize = 32;

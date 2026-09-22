@@ -845,6 +845,7 @@ impl Kawoosh {
             return;
         }
         let pal = self.pal;
+        let small = self.chrome.small;
         let max_w = (ui.viewport().w * 0.45).clamp(200.0, 560.0);
         let level_color = |l: Level| match l {
             Level::Error => pal.danger,
@@ -906,7 +907,7 @@ impl Kawoosh {
                             spans.push(Span::new(" "));
                         }
                         spans.push(Span::new(&s.text));
-                        ui.rich_text(&spans, TextStyle::new(12.0).color(pal.fg));
+                        ui.rich_text(&spans, TextStyle::new(small).color(pal.fg));
                         if !s.actions.is_empty() {
                             ui.with(NodeSpec::row().gap(6.0).cross_align(Align::Center), |ui| {
                                 for (i, a) in s.actions.iter().enumerate() {
@@ -929,7 +930,7 @@ impl Kawoosh {
                                         |ui| {
                                             ui.text(
                                                 &a.label,
-                                                TextStyle::new(12.0).color(pal.fg).nowrap(),
+                                                TextStyle::new(small).color(pal.fg).nowrap(),
                                             );
                                         },
                                     );
@@ -955,6 +956,7 @@ impl Kawoosh {
             return;
         }
         let pal = self.pal;
+        let small = self.chrome.small;
         let max_w = (ui.viewport().w * 0.45).clamp(200.0, 560.0);
         ui.with_keyed(
             "corner",
@@ -979,7 +981,7 @@ impl Kawoosh {
                 // One line each, cut with an ellipsis at the corner's
                 // width: a path or a server's sentence does not push
                 // the column off the pane.
-                let dim = TextStyle::new(12.0).color(pal.dim).max_lines(1).ellipsis();
+                let dim = TextStyle::new(small).color(pal.dim).max_lines(1).ellipsis();
                 let line = || NodeSpec::row().max_width(max_w).clip();
                 for (gi, source) in sources.iter().enumerate() {
                     ui.with_indexed(
@@ -1062,7 +1064,7 @@ impl Kawoosh {
                             }
                             if let Some(src) = source {
                                 ui.with_indexed(1 << 34, NodeSpec::row().gap(6.0), |ui| {
-                                    ui.text(src, TextStyle::new(12.0).color(pal.accent).nowrap());
+                                    ui.text(src, TextStyle::new(small).color(pal.accent).nowrap());
                                     let has_progress =
                                         self.notes.progress.iter().any(|p| p.source == *src);
                                     if has_progress {
@@ -1071,7 +1073,7 @@ impl Kawoosh {
                                         } else {
                                             ("✓", pal.insert)
                                         };
-                                        ui.text(mark, TextStyle::new(12.0).color(color).nowrap());
+                                        ui.text(mark, TextStyle::new(small).color(color).nowrap());
                                     }
                                 });
                             }

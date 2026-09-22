@@ -110,6 +110,11 @@ impl View {
         let i = View::ALL.iter().position(|v| *v == self).unwrap_or(0);
         View::ALL[(i + 1) % View::ALL.len()]
     }
+
+    fn prev(self) -> View {
+        let i = View::ALL.iter().position(|v| *v == self).unwrap_or(0);
+        View::ALL[(i + View::ALL.len() - 1) % View::ALL.len()]
+    }
 }
 
 /// Where a file or scratch row's history stands (what the histories
@@ -386,6 +391,10 @@ impl Kawoosh {
     /// `list view` (`<Tab>`): the next view.
     pub(crate) fn memory_next_view(&mut self) {
         self.set_view(self.memory_pane.view.next());
+    }
+
+    pub(crate) fn memory_prev_view(&mut self) {
+        self.set_view(self.memory_pane.view.prev());
     }
 
     /// The editor pane a `pane back` goes to.

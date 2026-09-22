@@ -3161,6 +3161,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<PageUp>", "list page up"),
         ("<CR>", "list open"),
         ("<Tab>", "list view"),
+        ("<S-Tab>", "list view prev"),
         ("q", "close"),
         ("<Esc>", "pane back"),
         // `g` is a prefix here (`gg`), so the tab keys under it are

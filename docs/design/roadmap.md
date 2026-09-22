@@ -323,7 +323,17 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   (`font.chrome_size` pins it), every height its line height plus the
   padding it had at 13 px — so the default draws as before, and a
   reading-size font no longer clips the strips or leaves the pane
-  titles small. The title bar's height stays the platform's.
+  titles small. The title bar's height stays the platform's. The
+  gutter follows the digits (`rows::gutter_w`: four at least, the cell
+  wide), where a fixed 56 px cut `58` to `5` at a big font. The toasts,
+  the which-key card and the confirm set their text at the chrome's
+  smaller size; the sizes are also length tokens — `$font`,
+  `$font_row`, `$chrome`, `$chrome_small`, `$chrome_row` — so a Lua
+  view writes `size = "$chrome"` and does its sums off
+  `env.tokens.lengths`, which the picker and `dir`'s preview now do.
+  Colours were already the theme's and the palette's throughout. A big
+  font also broke the glyphs on the caret's row: kui's atlas thrashed
+  one reset a frame without growing (kui F83).
 - **The cwd, somewhere it fits** — done 2026-09-23 [use 2026-09-22];
   step 13. In the title bar, shortened as fish's prompt does — every
   component but the last to its first letter, a leading dot kept
@@ -396,6 +406,16 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   picker source), `gI` `gD`. Not done on the way: incremental sync;
   and a buffer a rename edited without a pane is not sent to the
   server until it is shown.
+- **The hover, round two** — open [use 2026-09-23]. Since 2026-09-23
+  `K` puts the keys in the `*hover*` pane, read as markdown so its
+  fences are the language's colours, and `q` there goes back. Left:
+  the hover as a place to act from — `K` and `gd` on a type the hover
+  names (its own hover, its definition), which wants the pane to know
+  the server and the position it came from, since the hover's text is
+  no document the server holds; a link in the documentation followed;
+  the pane reused rather than split again from inside it. A kui-free
+  round: a `Hover { server, buffer, offset }` beside the buffer, and
+  the LSP keys gated on it.
 - **Incremental sync from the journal** — open [kui.md]. Whole-text per
   change today. Correct, and fine until a big file is edited with a
   server attached; measure before doing it (the perf tab exists).

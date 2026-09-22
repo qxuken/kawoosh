@@ -97,7 +97,8 @@ fn diagnostics_definition_hover_and_completion() {
         .clone();
     assert_eq!(r.start, 3, "moved past the inserted line");
 
-    // K opens the hover in a pane and keeps focus.
+    // K opens the hover in a pane and takes the keys there, read as
+    // markdown (its fences highlighted); `q` closes it and they come back.
     d.keys(&mut app, "K");
     assert!(
         until(&mut d, &mut app, |a| a
@@ -108,12 +109,17 @@ fn diagnostics_definition_hover_and_completion() {
         "hover pane"
     );
     assert_eq!(app.layout.visible_panes().len(), 2);
+    let hover = app.ed.buffer_of(app.focused_view().unwrap());
+    assert_eq!(hover.name, "*hover*", "the keys went to the hover");
+    assert_eq!(&*hover.language, "markdown");
+    assert!(d.line_rows().iter().any(|r| r == "the hover"));
+    d.keys(&mut app, "q");
+    assert_eq!(app.layout.visible_panes().len(), 1);
     assert_eq!(
         app.ed.views[app.focused_view().unwrap()].buffer,
         buf_id,
-        "focus stayed"
+        "back where K was pressed"
     );
-    assert!(d.line_rows().iter().any(|r| r == "the hover"));
 
     // gd moves to line 2 (the server says line 1, 0-based).
     d.keys(&mut app, "gd");

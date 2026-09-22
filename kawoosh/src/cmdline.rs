@@ -38,10 +38,11 @@ impl CmdCompletion {
     }
 
     /// The current candidate past `token` — the ghost — when it extends
-    /// it. Nothing typed yet is nothing to extend: the first of every
-    /// command is not a suggestion.
+    /// it. An empty line is nothing to extend — the first of every
+    /// command is not a suggestion — but after a command's word the
+    /// first of its subcommands and arguments is (`:dir ` offers `cd`).
     pub fn ghost(&self, token: &str) -> Option<&str> {
-        if token.is_empty() {
+        if token.is_empty() && self.start == 0 {
             return None;
         }
         self.current()?

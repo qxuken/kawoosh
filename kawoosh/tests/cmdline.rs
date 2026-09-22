@@ -124,13 +124,11 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     leave(&mut d, &mut app);
 
     // A path: the directory's entries, hidden ones only asked for; one
-    // candidate taken goes on into what it opens.
+    // candidate taken goes on into what it opens. After the command's
+    // word, before a letter, the first is suggested and the row is up.
     d.keys(&mut app, ":e ");
-    assert_eq!(
-        app.cmdline_ghost(),
-        None,
-        "nothing typed is nothing to extend"
-    );
+    let sep = std::path::MAIN_SEPARATOR;
+    assert_eq!(app.cmdline_ghost(), Some(format!("src{sep}")));
     let cands = app.cmd_completion.as_ref().unwrap().candidates.clone();
     assert_eq!(
         cands,
@@ -145,7 +143,6 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     );
     leave(&mut d, &mut app);
     d.keys(&mut app, ":e s");
-    let sep = std::path::MAIN_SEPARATOR;
     assert_eq!(app.cmdline_ghost(), Some(format!("rc{sep}")));
     tab(&mut d, &mut app);
     assert_eq!(
@@ -204,6 +201,17 @@ fn the_command_line_completes_commands_paths_and_buffers() {
         format!("visit {} ~/x", dir.join("src").display()),
         "the path resolved, the text as typed"
     );
+    // A command with subcommands offers them the moment its word is
+    // followed by a space, the row drawn before a letter is typed.
+    d.keys(&mut app, ":memory ");
+    let cands = app.cmd_completion.as_ref().unwrap().candidates.clone();
+    assert!(
+        cands.iter().any(|c| c == "forget") && cands.iter().any(|c| c == "pin"),
+        "{cands:?}"
+    );
+    assert!(app.cmdline_ghost().is_some(), "the first suggested");
+    assert!(texts(&d).iter().any(|t| t == "forget"), "the row is drawn");
+    leave(&mut d, &mut app);
     // `<Tab>` with nothing to complete is not a character.
     d.keys(&mut app, ":di");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("r"));

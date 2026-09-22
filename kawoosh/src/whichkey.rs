@@ -137,6 +137,7 @@ impl Kawoosh {
         rows: &[(String, Vec<Binding>)],
     ) {
         let pal = self.pal;
+        let small = self.chrome.small;
         let km = &self.ed.keymap;
         // The binding a key would run now: a `j` is `commands next`
         // in the commands pane's field and `move down` elsewhere. A
@@ -169,9 +170,9 @@ impl Kawoosh {
         } else {
             PER_COLUMN
         };
-        let key_style = TextStyle::new(12.0).color(pal.accent).nowrap();
-        let what_style = TextStyle::new(12.0).color(pal.fg).nowrap();
-        let group_style = TextStyle::new(12.0).color(pal.dim).nowrap();
+        let key_style = TextStyle::new(small).color(pal.accent).nowrap();
+        let what_style = TextStyle::new(small).color(pal.fg).nowrap();
+        let group_style = TextStyle::new(small).color(pal.dim).nowrap();
         ui.with_keyed(
             "whichkey",
             NodeSpec::column()
@@ -181,12 +182,12 @@ impl Kawoosh {
                 .pad_xy(10.0, 6.0)
                 .gap(4.0),
             |ui| {
-                ui.text(&title, TextStyle::new(12.0).color(pal.dim).nowrap());
+                ui.text(&title, TextStyle::new(small).color(pal.dim).nowrap());
                 // The root says how to see the other modes' roots.
                 if keys.is_empty() {
                     ui.text(
                         "also :keys n · i · v · o",
-                        TextStyle::new(11.0).color(pal.dim).nowrap(),
+                        TextStyle::new(small - 1.0).color(pal.dim).nowrap(),
                     );
                 }
                 ui.with_keyed("cols", NodeSpec::row().gap(18.0), |ui| {

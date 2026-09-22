@@ -194,6 +194,18 @@ fn the_chrome_follows_the_font_to_a_cap() {
     assert_eq!(app.face.size, 29.0);
     assert_eq!(app.chrome.face.size, 16.0, "capped");
     assert_eq!(d.rect_of("tab0").unwrap().3, 26.0);
+    // The sizes are length tokens too, for a Lua view's text and sums.
+    let tokens = d.core.tokens().expect("the host's tokens");
+    let length = |name: &str| {
+        tokens
+            .lengths()
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| *v)
+    };
+    assert_eq!(length("chrome"), Some(16.0));
+    assert_eq!(length("chrome_small"), Some(15.0));
+    assert_eq!(length("font"), Some(29.0));
     assert_eq!(app.chrome.strip_h, 28.0);
     ex(&mut d, &mut app, "set font.chrome_size=20");
     settle(&mut d, &mut app);

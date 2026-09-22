@@ -330,6 +330,17 @@ impl Kawoosh {
                 tokens = tokens.color_themed(t.name(), light, dark);
             }
         }
+        // The sizes as length tokens, so a Lua view's text follows the
+        // font as the editor's own chrome does — `size = "$chrome"` —
+        // and its arithmetic can read them (`env.tokens.lengths`): the
+        // editor's text and row, the chrome's text, smaller text and row.
+        let c = self.chrome;
+        tokens = tokens
+            .length("font", self.face.size)
+            .length("font_row", self.face.line_height)
+            .length("chrome", c.face.size)
+            .length("chrome_small", c.small)
+            .length("chrome_row", c.face.line_height);
         ui.set_tokens(tokens);
         self.look.syntax = syntax;
     }
