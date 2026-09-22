@@ -109,6 +109,128 @@ pub struct Grammar {
     /// (`@spell`, `@none`, a `@_name` a predicate uses).
     pub classes: Vec<Option<Token>>,
     pub injections: Option<Injections>,
+    /// A structure query: which bytes are which block — a fence, a
+    /// table, a heading of a level — painted into a layer of its own
+    /// beside the syntax's, since the syntax's runs are flattened (a
+    /// fence's content is `@none`, and a heading's `#` is punctuation
+    /// like any other). The markdown buffer draws from it.
+    pub structure: Option<Structure>,
+}
+
+/// A structure query and what each capture is.
+#[derive(Debug)]
+pub struct Structure {
+    pub query: Query,
+    /// Capture index → block kind.
+    pub kinds: Vec<Option<Block>>,
+}
+
+/// What a byte is in a document's structure (a [`Structure`] query's
+/// captures, `@block.NAME`), the outer block painted first and an inner
+/// one over it. Markdown's for now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum Block {
+    /// A fenced or indented code block, fences and all.
+    Code = 1,
+    /// A fence's backticks or tildes.
+    Fence,
+    /// A fence's info string (`rust`).
+    FenceInfo,
+    /// A pipe table's rows.
+    Table,
+    /// A table's header row.
+    TableHeader,
+    /// The `|---|:-:|` row.
+    TableDelimiter,
+    /// A blockquote's `>` and a container's continuation.
+    Quote,
+    /// A `-` `*` `+` list marker.
+    Bullet,
+    /// A `1.` `1)` list marker.
+    Ordered,
+    TaskOpen,
+    TaskDone,
+    H1,
+    H2,
+    H3,
+    H4,
+    H5,
+    H6,
+    /// A setext heading's `===` or `---` line.
+    Underline,
+    /// `---`, `***`: a thematic break.
+    Rule,
+    /// Raw HTML, front matter: drawn as it is.
+    Verbatim,
+}
+
+impl Block {
+    pub const ALL: &[Block] = &[
+        Block::Code,
+        Block::Fence,
+        Block::FenceInfo,
+        Block::Table,
+        Block::TableHeader,
+        Block::TableDelimiter,
+        Block::Quote,
+        Block::Bullet,
+        Block::Ordered,
+        Block::TaskOpen,
+        Block::TaskDone,
+        Block::H1,
+        Block::H2,
+        Block::H3,
+        Block::H4,
+        Block::H5,
+        Block::H6,
+        Block::Underline,
+        Block::Rule,
+        Block::Verbatim,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Block::Code => "code",
+            Block::Fence => "fence",
+            Block::FenceInfo => "fence.info",
+            Block::Table => "table",
+            Block::TableHeader => "table.header",
+            Block::TableDelimiter => "table.delimiter",
+            Block::Quote => "quote",
+            Block::Bullet => "bullet",
+            Block::Ordered => "ordered",
+            Block::TaskOpen => "task.open",
+            Block::TaskDone => "task.done",
+            Block::H1 => "h1",
+            Block::H2 => "h2",
+            Block::H3 => "h3",
+            Block::H4 => "h4",
+            Block::H5 => "h5",
+            Block::H6 => "h6",
+            Block::Underline => "underline",
+            Block::Rule => "rule",
+            Block::Verbatim => "verbatim",
+        }
+    }
+
+    /// The kind a run's style is, 0 being none.
+    pub fn from_style(style: u32) -> Option<Block> {
+        Block::ALL.iter().copied().find(|b| *b as u32 == style)
+    }
+
+    /// A heading's level, 1 to 6.
+    pub fn heading(self) -> Option<usize> {
+        match self {
+            Block::H1 => Some(1),
+            Block::H2 => Some(2),
+            Block::H3 => Some(3),
+            Block::H4 => Some(4),
+            Block::H5 => Some(5),
+            Block::H6 => Some(6),
+            _ => None,
+        }
+    }
 }
 
 /// An injections query: where another language's text sits in this
@@ -145,7 +267,28 @@ impl Grammar {
             query,
             classes,
             injections,
+            structure: None,
         })
+    }
+
+    /// A structure query over the same tree: its captures are
+    /// `@block.NAME` ([`Block::name`]); one no kind reads is refused, so
+    /// a misspelt capture fails at load and not silently at draw.
+    pub fn with_structure(mut self, text: &str) -> Result<Self, String> {
+        let query = Query::new(&self.language, text).map_err(|e| format!("structure: {e}"))?;
+        let mut kinds = Vec::new();
+        for n in query.capture_names() {
+            let Some(name) = n.strip_prefix("block.") else {
+                kinds.push(None);
+                continue;
+            };
+            match Block::ALL.iter().copied().find(|b| b.name() == name) {
+                Some(b) => kinds.push(Some(b)),
+                None => return Err(format!("structure: no block kind {n}")),
+            }
+        }
+        self.structure = Some(Structure { query, kinds });
+        Ok(self)
     }
 
     /// Reads capture `name` — its whole name, or its head — as `token`

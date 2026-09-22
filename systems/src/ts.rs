@@ -36,12 +36,16 @@ use std::thread;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use kawoosh_doc::{BufferId, Edit, Run, Snapshot, Update};
 pub use kawoosh_languages::Token;
-use kawoosh_languages::{Grammar, LanguageDef, Registry};
+use kawoosh_languages::{Grammar, LanguageDef, Registry, Structure};
 use tree_sitter::{InputEdit, Node, Parser, Point, QueryCursor, StreamingIterator, Tree};
 
 use crate::WakeHandle;
 
 pub const SYNTAX_LAYER: &str = "syntax";
+/// The structure layer: which bytes are which block (a grammar's
+/// structure query — markdown's fences, tables, headings by level), a
+/// run's style a [`kawoosh_languages::Block`].
+pub const STRUCT_LAYER: &str = "structure";
 
 /// How deep injections nest: markdown's inline in its blocks, and one
 /// more under that.
@@ -386,6 +390,10 @@ fn highlight(
     let text = &job.snapshot.text;
     let len = text.len();
     let mut spans: Vec<Range<usize>> = std::iter::once(0..len).collect();
+    // The structure layer's runs beside the syntax's, span for span;
+    // none for a grammar without a structure query, so what an earlier
+    // language painted goes.
+    let mut blocks: Vec<Vec<Run>> = Vec::new();
     let (runs, tree): (Vec<Vec<Run>>, Option<Tree>) = match grammars.get(&job.language) {
         Some(g) if parser.set_language(&g.language).is_ok() => {
             // The last tree, told the edits, when it is this language's
@@ -436,6 +444,12 @@ fn highlight(
                             capture_runs(parser, grammars, &g, tree.root_node(), text, span.clone())
                         })
                         .collect();
+                    if let Some(st) = &g.structure {
+                        blocks = spans
+                            .iter()
+                            .map(|span| structure_runs(st, tree.root_node(), text, span.clone()))
+                            .collect();
+                    }
                     let handle = tree.clone();
                     parsed
                         .by_buffer
@@ -450,21 +464,28 @@ fn highlight(
             (vec![Vec::new()], None)
         }
     };
+    blocks.resize_with(spans.len(), Vec::new);
+    let mut updates: Vec<Update> = Vec::with_capacity(spans.len() * 2);
+    for ((span, runs), blocks) in spans.into_iter().zip(runs).zip(blocks) {
+        updates.push(Update {
+            layer: STRUCT_LAYER,
+            version: job.snapshot.version,
+            span: span.clone(),
+            runs: blocks,
+        });
+        updates.push(Update {
+            layer: SYNTAX_LAYER,
+            version: job.snapshot.version,
+            span,
+            runs,
+        });
+    }
     Answer {
         buffer: job.buffer,
         version: job.snapshot.version,
         tree,
         elapsed: started.elapsed(),
-        updates: spans
-            .into_iter()
-            .zip(runs)
-            .map(|(span, runs)| Update {
-                layer: SYNTAX_LAYER,
-                version: job.snapshot.version,
-                span,
-                runs,
-            })
-            .collect(),
+        updates,
     }
 }
 
@@ -506,6 +527,57 @@ fn capture_runs(
     let mut paint = vec![0u8; span.len()];
     paint_captures(g, root, text, span.clone(), base, &mut paint);
     paint_injections(parser, grammars, g, root, text, span, base, &mut paint, 0);
+    let mut runs = Vec::new();
+    let mut start = 0;
+    for i in 1..=paint.len() {
+        if i == paint.len() || paint[i] != paint[start] {
+            if paint[start] != 0 {
+                runs.push(Run {
+                    range: base + start..base + i,
+                    style: paint[start] as u32,
+                    tag: 0,
+                });
+            }
+            start = i;
+        }
+    }
+    runs
+}
+
+/// The structure query's captures in `span` as runs, the outer first so
+/// an inner one paints over it, each run's style its block kind.
+fn structure_runs(
+    st: &Structure,
+    root: Node,
+    text: &text_buffer::Buffer,
+    span: Range<usize>,
+) -> Vec<Run> {
+    let base = span.start;
+    let mut paint = vec![0u8; span.len()];
+    let mut caps: Vec<(Range<usize>, u8)> = Vec::new();
+    let mut cursor = QueryCursor::new();
+    cursor.set_byte_range(span.clone());
+    let mut node_text = |n: Node| std::iter::once(text.collect_range(n.byte_range()));
+    let mut it = cursor.captures(&st.query, root, &mut node_text);
+    while let Some((m, i)) = it.next() {
+        let c = m.captures()[*i];
+        let Some(Some(kind)) = st.kinds.get(c.index as usize) else {
+            continue;
+        };
+        let r = c.node.byte_range();
+        let r = r.start.max(span.start)..r.end.min(span.end);
+        if r.start < r.end {
+            caps.push((r, *kind as u8));
+        }
+    }
+    caps.sort_by(|a, b| {
+        (a.0.start, std::cmp::Reverse(a.0.end)).cmp(&(b.0.start, std::cmp::Reverse(b.0.end)))
+    });
+    for (r, kind) in caps {
+        for p in &mut paint[r.start - base..r.end - base] {
+            *p = kind;
+        }
+    }
     let mut runs = Vec::new();
     let mut start = 0;
     for i in 1..=paint.len() {
@@ -1220,8 +1292,10 @@ mod tests {
     }
 
     impl Answer {
-        /// The one update of a whole-parse answer.
+        /// The one syntax update of a whole-parse answer (the structure
+        /// layer's beside it).
         fn update(mut self) -> Update {
+            self.updates.retain(|u| u.layer == SYNTAX_LAYER);
             assert_eq!(self.updates.len(), 1, "one span");
             self.updates.remove(0)
         }
