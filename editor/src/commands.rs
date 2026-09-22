@@ -3011,10 +3011,12 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w>n", "toast"),
         ("gt", "tab next"),
         ("gT", "tab prev"),
-        // `<C-N>`: the Nth column of a strip, the Nth pane of a tree —
-        // and ⌘ with the same digits, which is the spelling that
-        // reaches a terminal pane, a pty having no use for ⌘
-        // (`Kawoosh::pane_chord`).
+        // The Nth column of a strip, the Nth pane of a tree: ⌘ with
+        // the digit where there is a ⌘, and ctrl-shift with it
+        // everywhere else. Both are spellings no pty can use, so they
+        // reach a column from a terminal pane too
+        // (`Kawoosh::pane_chord`) — where a plain `<C-3>` is the
+        // shell's, which is why it is not bound (2026-09-22).
         ("<D-1>", "pane goto 1"),
         ("<D-2>", "pane goto 2"),
         ("<D-3>", "pane goto 3"),
@@ -3024,15 +3026,15 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<D-7>", "pane goto 7"),
         ("<D-8>", "pane goto 8"),
         ("<D-9>", "pane goto 9"),
-        ("<C-1>", "pane goto 1"),
-        ("<C-2>", "pane goto 2"),
-        ("<C-3>", "pane goto 3"),
-        ("<C-4>", "pane goto 4"),
-        ("<C-5>", "pane goto 5"),
-        ("<C-6>", "pane goto 6"),
-        ("<C-7>", "pane goto 7"),
-        ("<C-8>", "pane goto 8"),
-        ("<C-9>", "pane goto 9"),
+        ("<C-S-1>", "pane goto 1"),
+        ("<C-S-2>", "pane goto 2"),
+        ("<C-S-3>", "pane goto 3"),
+        ("<C-S-4>", "pane goto 4"),
+        ("<C-S-5>", "pane goto 5"),
+        ("<C-S-6>", "pane goto 6"),
+        ("<C-S-7>", "pane goto 7"),
+        ("<C-S-8>", "pane goto 8"),
+        ("<C-S-9>", "pane goto 9"),
         // `z`: vim's scrolling, read on the ribbon — the focused
         // column to an edge, or the middle.
         ("zs", "strip left"),
@@ -3173,10 +3175,12 @@ pub fn default_keymap(km: &mut Keymap) {
         // bound rather than shared; `]x` / `[x` fall through.
         ("gt", "tab next"),
         ("gT", "tab prev"),
-        // `<C-N>`: the Nth column of a strip, the Nth pane of a tree —
-        // and ⌘ with the same digits, which is the spelling that
-        // reaches a terminal pane, a pty having no use for ⌘
-        // (`Kawoosh::pane_chord`).
+        // The Nth column of a strip, the Nth pane of a tree: ⌘ with
+        // the digit where there is a ⌘, and ctrl-shift with it
+        // everywhere else. Both are spellings no pty can use, so they
+        // reach a column from a terminal pane too
+        // (`Kawoosh::pane_chord`) — where a plain `<C-3>` is the
+        // shell's, which is why it is not bound (2026-09-22).
         ("<D-1>", "pane goto 1"),
         ("<D-2>", "pane goto 2"),
         ("<D-3>", "pane goto 3"),
@@ -3186,15 +3190,15 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<D-7>", "pane goto 7"),
         ("<D-8>", "pane goto 8"),
         ("<D-9>", "pane goto 9"),
-        ("<C-1>", "pane goto 1"),
-        ("<C-2>", "pane goto 2"),
-        ("<C-3>", "pane goto 3"),
-        ("<C-4>", "pane goto 4"),
-        ("<C-5>", "pane goto 5"),
-        ("<C-6>", "pane goto 6"),
-        ("<C-7>", "pane goto 7"),
-        ("<C-8>", "pane goto 8"),
-        ("<C-9>", "pane goto 9"),
+        ("<C-S-1>", "pane goto 1"),
+        ("<C-S-2>", "pane goto 2"),
+        ("<C-S-3>", "pane goto 3"),
+        ("<C-S-4>", "pane goto 4"),
+        ("<C-S-5>", "pane goto 5"),
+        ("<C-S-6>", "pane goto 6"),
+        ("<C-S-7>", "pane goto 7"),
+        ("<C-S-8>", "pane goto 8"),
+        ("<C-S-9>", "pane goto 9"),
         // `z`: vim's scrolling, read on the ribbon — the focused
         // column to an edge, or the middle.
         ("zs", "strip left"),

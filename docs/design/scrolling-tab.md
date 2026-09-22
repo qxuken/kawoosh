@@ -77,7 +77,7 @@ the strip.
 | `<C-w>J` `<C-w>K` | the same, up / down | the pane up / down inside its column's stack |
 | `<A-S-h>` `<A-S-l>` (`<C-w><` `<C-w>>`) | the pane narrower / wider by a twentieth | the column's width to the next preset down / up (niri's `switch-preset-column-width`); a `Ratio` snaps to the nearest first |
 | `<A-S-j>` `<A-S-k>` (`<C-w>-` `<C-w>+`) | shorter / taller | the same, inside the column |
-| `<C-1>`…`<C-9>`, `⌘1`…`⌘9` | the Nth pane | the Nth column, the last when there are fewer; the ⌘ spelling reaches one from a terminal pane too |
+| `⌘1`…`⌘9`, `<C-S-1>`…`<C-S-9>` | the Nth pane | the Nth column, the last when there are fewer; both reach one from a terminal pane too |
 | `<C-w>e` | *(free)* | the pane out of its column's stack into a column of its own, after it |
 | `zs` `ze` `zz` | *(free)* | the focused column against the left edge, the right edge, or centred |
 | closing the last pane of a column | — | the column goes, the focus to the column before it |
@@ -314,18 +314,22 @@ departed from the text above, and what day one found:
   keeps the tree's drag rules inside a column, and `move_pane` makes a
   column of a pane dropped on a side). A pane that is a whole column
   says so rather than making an empty one.
-- **⌘ with the digits, beside `<C-N>`** (2026-09-22): a terminal pane
-  hears only the chords `Kawoosh::pane_chord` forwards, which were the
-  ctrl-shift and alt-shift ones, so `<C-3>` from a shell was the pty's
-  and the columns were out of reach there. ⌘ is forwarded now — a pty
-  has no use for it at all — and the digits are bound under both. The
-  engine had to stop reading a chorded digit as a count first: `<C-2>`
-  and `<A-2>` were excluded, ⌘ was not, so ⌘2 did nothing *and* left a
-  count for the next key (`editor/tests/modal.rs`'s
-  `a_digit_under_a_chord_is_not_a_count`). Ctrl-shift with a digit is
-  not spellable, which is why it is not offered: Shift+1 is `!` on most
-  layouts and kui reports the logical key under Ctrl, so the stroke
-  arrives as `<C-!>`.
+- **The digits are ⌘'s and ctrl-shift's, not Ctrl's** (2026-09-22): a
+  terminal pane hears only the chords `Kawoosh::pane_chord` forwards,
+  which were the ctrl-shift and alt-shift ones, so `<C-3>` from a
+  shell was the pty's and the columns were out of reach there. ⌘ is
+  forwarded now — a pty has no use for it at all — and `⌘1`…`⌘9` and
+  `<C-S-1>`…`<C-S-9>` are the bindings, the plain `<C-N>` left to the
+  shell. Two engine fixes under it: the count read any lone digit,
+  and while Ctrl and Alt were excluded ⌘ was not, so ⌘2 did nothing
+  *and* left a count for the next key; and a chord's digit lost its
+  Shift, `<C-S-1>` normalising to `<C-1>` while the press arrived as
+  `<C-!>` (the symbol the layout prints over the digit) — a digit has
+  no case to carry Shift the way a letter does, so `notation` and
+  `normalize_chord` keep the `S-` and read the symbol back to its
+  digit (`keymap.rs`'s `digit_of`). `editor/tests/modal.rs`'s
+  `a_digit_under_a_chord_is_not_a_count` and `keymap.rs`'s
+  `a_chords_digit_keeps_its_shift`.
 - **A share is a column's width** (`Layout::set_share`). The undo
   pane, the memory pane and a Lua view's `view_open { share = … }`
   asked for a fraction of the split they opened in; in a strip a pane

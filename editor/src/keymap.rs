@@ -109,10 +109,18 @@ impl KeyStroke {
         // the key with every modifier stripped (⌥o is `o`, not `ø`), so
         // the shift bit has to put the case back, or ⌥⇧j is `<A-j>`.
         let chord = self.ctrl || self.alt || self.sup;
-        let base = if chord && self.shift && named.is_none() && base.len() == 1 {
-            base.to_ascii_uppercase()
-        } else {
-            base
+        // A chord's digit keeps its Shift, spelled `<C-S-1>`: the two
+        // are different keys where a letter's case says it for them,
+        // and the shifted digit arrives as the symbol the layout
+        // prints (`!` for 1 on most of them), which is not a spelling
+        // anyone wants to bind.
+        let shifted_digit = chord && self.shift && named.is_none() && digit_of(&base).is_some();
+        let base = match (shifted_digit, digit_of(&base)) {
+            (true, Some(d)) => d.to_string(),
+            _ if chord && self.shift && named.is_none() && base.len() == 1 => {
+                base.to_ascii_uppercase()
+            }
+            _ => base,
         };
         let mut mods = String::new();
         if self.ctrl {
@@ -124,7 +132,7 @@ impl KeyStroke {
         if self.sup {
             mods.push_str("D-");
         }
-        if self.shift && named.is_some() {
+        if self.shift && (named.is_some() || shifted_digit) {
             mods.push_str("S-");
         }
         if mods.is_empty() && named.is_none() {
@@ -134,6 +142,31 @@ impl KeyStroke {
         } else {
             format!("<{mods}{base}>")
         }
+    }
+}
+
+/// The digit a key stands for when Shift is down: the digit itself,
+/// or the symbol a US layout prints above it — which is what a press
+/// of ⇧1 reports on most layouts, `!`. None for anything else.
+fn digit_of(base: &str) -> Option<char> {
+    let mut it = base.chars();
+    let (c, rest) = (it.next()?, it.next());
+    if rest.is_some() {
+        return None;
+    }
+    match c {
+        '0'..='9' => Some(c),
+        ')' => Some('0'),
+        '!' => Some('1'),
+        '@' => Some('2'),
+        '#' => Some('3'),
+        '$' => Some('4'),
+        '%' => Some('5'),
+        '^' => Some('6'),
+        '&' => Some('7'),
+        '*' => Some('8'),
+        '(' => Some('9'),
+        _ => None,
     }
 }
 
@@ -281,19 +314,20 @@ fn normalize_chord(inner: &str) -> String {
     if d {
         m.push_str("D-");
     }
-    if s && base_named.is_some() {
+    // A map's `<C-S-1>` keeps its Shift, as the press does.
+    let shifted_digit = s && base_named.is_none() && digit_of(&base_s).is_some();
+    if s && (base_named.is_some() || shifted_digit) {
         m.push_str("S-");
     }
     if m.is_empty() && base_named.is_none() && base_s.len() == 1 {
         return base_s;
     }
     // A chord's letter is written lower-case so `<C-D>` and `<C-d>` agree.
-    let base_s = if base_named.is_none() && base_s.len() == 1 && !s {
-        base_s.to_ascii_lowercase()
-    } else if base_named.is_none() && base_s.len() == 1 {
-        base_s.to_ascii_uppercase()
-    } else {
-        base_s
+    let base_s = match digit_of(&base_s) {
+        Some(d) if shifted_digit => d.to_string(),
+        _ if base_named.is_none() && base_s.len() == 1 && !s => base_s.to_ascii_lowercase(),
+        _ if base_named.is_none() && base_s.len() == 1 => base_s.to_ascii_uppercase(),
+        _ => base_s,
     };
     format!("<{m}{base_s}>")
 }
@@ -619,6 +653,36 @@ fn walk(node: &Node, prefix: String, out: &mut Vec<(String, Binding)>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A chord's digit keeps its Shift, and the symbol a layout prints
+    /// over the digit is that digit: `<C-S-1>` is bindable and is not
+    /// `<C-1>`, which is what lets a map spell the two apart
+    /// (2026-09-22, for kawoosh's column keys on Windows).
+    #[test]
+    fn a_chords_digit_keeps_its_shift() {
+        let mut k = KeyStroke::plain("!");
+        k.ctrl = true;
+        k.shift = true;
+        assert_eq!(k.notation(), "<C-S-1>", "the shifted symbol is its digit");
+        let mut k = KeyStroke::plain("1");
+        k.ctrl = true;
+        k.shift = true;
+        assert_eq!(k.notation(), "<C-S-1>", "and so is the digit itself");
+        let mut k = KeyStroke::plain("1");
+        k.ctrl = true;
+        assert_eq!(k.notation(), "<C-1>", "without Shift it is the plain one");
+        let mut k = KeyStroke::plain("1");
+        k.sup = true;
+        assert_eq!(k.notation(), "<D-1>");
+        // A map spells them the same way, so a binding matches a press.
+        assert_eq!(parse_notation("<C-S-1>"), ["<C-S-1>"]);
+        assert_eq!(parse_notation("<C-1>"), ["<C-1>"]);
+        assert_eq!(parse_notation("<D-1>"), ["<D-1>"]);
+        // A `!` nobody shifted is still a `!`.
+        let mut k = KeyStroke::plain("!");
+        k.ctrl = true;
+        assert_eq!(k.notation(), "<C-!>");
+    }
 
     #[test]
     fn notation_round_trips() {

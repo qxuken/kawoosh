@@ -1175,3 +1175,62 @@ fn the_pane_filters_its_rows_from_a_field() {
     assert!(app.memory_pane.filter.is_none());
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// A pin opens in the pane that has the keyboard. `<A-N>` read the
+/// pane the *memory pane* was last opened from instead, so from a
+/// second column it put the file in the first, however long ago that
+/// was (found in use 2026-09-22).
+#[test]
+fn a_pin_opens_in_the_pane_that_has_the_keyboard() {
+    let dir = tmp("pin-here");
+    let db = tmp("pin-here-db").join("state.db");
+    let a = dir.join("a.txt");
+    let b = dir.join("b.txt");
+    let c = dir.join("c.txt");
+    std::fs::write(&a, "aaa\n").unwrap();
+    std::fs::write(&b, "bbb\n").unwrap();
+    std::fs::write(&c, "ccc\n").unwrap();
+    // No `set_cwd` here: it moves the process's own directory, which
+    // the test beside this one is also using.
+    let (mut d, mut app) = launch(&db, &a);
+    d.frame(&mut app);
+    lua(&mut app, &format!("kawoosh.pin('file', '{}')", b.display()));
+    lua(&mut app, &format!("kawoosh.pin('file', '{}')", c.display()));
+    d.frame(&mut app);
+    // The memory pane, opened and closed from the first pane: that is
+    // what left `back` pointing at it.
+    ex(&mut d, &mut app, "memory");
+    ex(&mut d, &mut app, "memory");
+    d.frame(&mut app);
+    let first = app.layout.focused();
+    // A second column, and a pin opened from it.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "v");
+    d.frame(&mut app);
+    let second = app.layout.focused();
+    assert_ne!(second, first);
+    d.press(&mut app, "<A-1>");
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), second, "the keyboard stayed");
+    let name = |app: &Kawoosh, p: u64| match app.layout.content(p) {
+        Some(kawoosh::layout::Content::Editor(v)) => app.ed.buffer_of(v).name.clone(),
+        _ => String::new(),
+    };
+    assert_eq!(name(&app, second), "b.txt", "the pin opened here");
+    assert_eq!(name(&app, first), "a.txt", "and not in the other pane");
+    // The other pin, from the same pane, lands in the same pane.
+    d.press(&mut app, "<A-2>");
+    d.frame(&mut app);
+    assert_eq!(name(&app, second), "c.txt");
+    assert_eq!(name(&app, first), "a.txt");
+    // Back in the first pane, a pin opens there.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), first);
+    d.press(&mut app, "<A-1>");
+    d.frame(&mut app);
+    assert_eq!(name(&app, first), "b.txt");
+    assert_eq!(name(&app, second), "c.txt", "the other pane is untouched");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

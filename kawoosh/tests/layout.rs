@@ -410,23 +410,23 @@ fn the_keyboard_jumps_to_a_column_moves_panes_and_aligns_the_view() {
     }
     assert_eq!(app.layout.visible_panes(), [1, 2, 3, 4]);
     // `<C-N>`: the Nth column, the last when there are fewer.
-    d.press(&mut app, "<C-1>");
+    d.press(&mut app, "<D-1>");
     assert_eq!(app.layout.focused(), 1);
     assert_eq!(app.ed.message, "column 1 of 4");
     settle(&mut d, &mut app);
     assert!(in_view(&d, &app, 1, vw));
-    d.press(&mut app, "<C-3>");
+    d.press(&mut app, "<D-3>");
     assert_eq!(app.layout.focused(), 3);
     settle(&mut d, &mut app);
     assert!(in_view(&d, &app, 3, vw));
-    d.press(&mut app, "<C-9>");
+    d.press(&mut app, "<D-9>");
     assert_eq!(app.layout.focused(), 4, "clamped to the last column");
     settle(&mut d, &mut app);
     // `zs` `ze` `zz`: the focused column against an edge, or centred.
     // A column in the middle of the ribbon, which has room both ways —
     // the ribbon does not scroll past its ends, so the last column
     // cannot be flush left.
-    d.press(&mut app, "<C-2>");
+    d.press(&mut app, "<D-2>");
     settle(&mut d, &mut app);
     d.press(&mut app, "zs");
     settle(&mut d, &mut app);
@@ -445,7 +445,7 @@ fn the_keyboard_jumps_to_a_column_moves_panes_and_aligns_the_view() {
     assert!((r.x - (vw - r.w) / 2.0).abs() < 2.0, "in the middle: {r:?}");
     // `<C-w>HJKL` carry the pane: H and L the column along the ribbon,
     // J and K the pane inside its column's stack.
-    d.press(&mut app, "<C-4>");
+    d.press(&mut app, "<D-4>");
     settle(&mut d, &mut app);
     ctrl_w(&mut d, &mut app, "H");
     assert_eq!(app.layout.visible_panes(), [1, 2, 4, 3]);
@@ -532,7 +532,7 @@ fn a_column_far_off_the_ribbon_draws_no_rows_until_it_is_near() {
     assert_eq!(app.layout.rects.len(), 8, "every column is laid out");
     // The far end and back: the column the keyboard lands on has its
     // rows, and the ones left behind give theirs up.
-    d.press(&mut app, "<C-1>");
+    d.press(&mut app, "<D-1>");
     settle(&mut d, &mut app);
     assert_eq!(app.layout.focused(), 1);
     let rows = d.line_rows();
@@ -594,13 +594,13 @@ fn the_ribbon_glides_to_a_key_and_a_width_lands_at_once() {
         ctrl_w(&mut d, &mut app, "v");
         settle(&mut d, &mut app);
     }
-    d.press(&mut app, "<C-1>");
+    d.press(&mut app, "<D-1>");
     settle(&mut d, &mut app);
     // The keyboard to the far column: the ribbon has not moved on the
     // frame the key landed, is part of the way a moment later, and
     // arrives.
     let before = drawn_columns(&d);
-    d.press(&mut app, "<C-3>");
+    d.press(&mut app, "<D-3>");
     assert_eq!(drawn_columns(&d), before, "the leg starts where it was");
     d.advance(0.08);
     d.frame(&mut app);
@@ -615,7 +615,7 @@ fn the_ribbon_glides_to_a_key_and_a_width_lands_at_once() {
     assert!(x + w <= vw + 1.0 && x + w > vw - 40.0, "landed: {x} + {w}");
     // A width step lands on the frame it is asked for: the column's
     // box and the ones after it are where the key put them.
-    d.press(&mut app, "<C-1>");
+    d.press(&mut app, "<D-1>");
     settle(&mut d, &mut app);
     let before = drawn_columns(&d)[1].0;
     d.press(&mut app, "<A-S-h>");
@@ -663,7 +663,7 @@ fn a_pane_leaves_its_stack_for_a_column_of_its_own() {
     // The same by mouse, the other way: a title bar dragged onto a
     // pane's edge pulls it out of its stack (this is what `<C-w>e`
     // spells).
-    d.press(&mut app, "<C-1>");
+    d.press(&mut app, "<D-1>");
     settle(&mut d, &mut app);
     let r1 = app.layout.rects[&1];
     let r3 = app.layout.rects[&3];
@@ -688,5 +688,39 @@ fn a_pane_leaves_its_stack_for_a_column_of_its_own() {
         "{}",
         app.ed.message
     );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn the_digits_reach_a_column_from_a_terminal_pane() {
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ctrl_w(&mut d, &mut app, "v");
+    ex(&mut d, &mut app, "term");
+    settle(&mut d, &mut app);
+    let term = app.layout.focused();
+    assert!(matches!(
+        app.layout.focused_content(),
+        Some(Content::Terminal(_))
+    ));
+    // A plain `<C-1>` is the shell's, and is bound to nothing here.
+    d.press(&mut app, "<C-1>");
+    assert_eq!(app.layout.focused(), term, "the pty keeps <C-1>");
+    // ⌘ and ctrl-shift are spellings no pty can use, so they reach a
+    // column from a terminal pane (`Kawoosh::pane_chord`).
+    d.press(&mut app, "<D-1>");
+    assert_eq!(app.layout.focused(), 1, "⌘1 is the first column");
+    assert_eq!(app.ed.message, "column 1 of 2");
+    settle(&mut d, &mut app);
+    // Back to the terminal's column, and down to the terminal itself.
+    d.press(&mut app, "<D-2>");
+    assert_eq!(app.layout.tab().column_of(app.layout.focused()), Some(1));
+    ctrl_w(&mut d, &mut app, "j");
+    assert_eq!(app.layout.focused(), term);
+    settle(&mut d, &mut app);
+    // The same with ctrl-shift, which is the spelling without a ⌘.
+    d.press(&mut app, "<C-S-1>");
+    assert_eq!(app.layout.focused(), 1, "ctrl-shift with the digit");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }

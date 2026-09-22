@@ -1144,8 +1144,15 @@ impl Kawoosh {
         match pins.get(n.saturating_sub(1)) {
             Some(r) => {
                 let (key, meta) = (r.key.clone(), r.meta.clone());
-                if self.memory_pane.back.is_none() {
-                    self.memory_pane.back = self.focused_view();
+                // `<A-N>` from an editor pane opens the pin *in that
+                // pane*: the keyboard says where the file goes. `back`
+                // is otherwise the pane the memory pane was opened
+                // from, and reading it here sent every pin to whichever
+                // pane that was, however long ago (2026-09-22). From
+                // the memory pane itself there is no view to take, so
+                // `back` stands and the row opens where it came from.
+                if let Some(v) = self.focused_view() {
+                    self.memory_pane.back = Some(v);
                 }
                 self.open_subject(&key, &meta);
             }
