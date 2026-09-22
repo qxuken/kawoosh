@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
-use crate::layout::{Content, Layout, Node, PaneId, SplitDir, Tab};
+use crate::layout::{Column, Content, Kind, Layout, Node, PaneId, SplitDir, Strip, Tab, Width};
 
 pub const SESSION: &str = "default";
 
@@ -32,9 +32,26 @@ pub struct SessionData {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TabData {
+    /// The tree — for a strip, its columns folded into one
+    /// (`Tab::to_tree`), so a file from before the scrolling tab, and a
+    /// build without it, read the tab as a tree.
     pub root: NodeData,
     /// The focused pane's ordinal among the tab's panes.
     pub focused: usize,
+    /// `tree` or `scroll` (scrolling-tab.md Decision 5); absent in a
+    /// file from before, which is a tree.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    /// A strip's columns, left to right.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<ColumnData>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ColumnData {
+    pub node: NodeData,
+    /// A preset's name, or a fraction (`Width::parse`).
+    pub width: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -165,15 +182,40 @@ impl Kawoosh {
             .iter()
             .map(|t| {
                 let mut ps = Vec::new();
-                t.root.panes(&mut ps);
+                t.panes(&mut ps);
                 // Terminals are not restored, nor a transient view, so
                 // the ordinal counts only what will be.
                 ps.retain(|p| {
                     !matches!(self.pane_data(*p), PaneData::Terminal | PaneData::Commands)
                 });
-                TabData {
-                    root: self.node_data(&t.root),
-                    focused: ps.iter().position(|p| *p == t.focused).unwrap_or(0),
+                let focused = ps.iter().position(|p| *p == t.focused).unwrap_or(0);
+                match &t.layout {
+                    Kind::Tree(root) => TabData {
+                        root: self.node_data(root),
+                        focused,
+                        kind: String::new(),
+                        columns: Vec::new(),
+                    },
+                    Kind::Scroll(s) => {
+                        let mut folded = t.clone();
+                        folded.to_tree();
+                        let Kind::Tree(root) = &folded.layout else {
+                            unreachable!()
+                        };
+                        TabData {
+                            root: self.node_data(root),
+                            focused,
+                            kind: "scroll".into(),
+                            columns: s
+                                .columns
+                                .iter()
+                                .map(|c| ColumnData {
+                                    node: self.node_data(&c.node),
+                                    width: c.width.name(),
+                                })
+                                .collect(),
+                        }
+                    }
                 }
             })
             .collect();
@@ -213,13 +255,39 @@ impl Kawoosh {
         layout.tabs.clear();
         layout.panes.clear();
         for t in &data.tabs {
-            let Some(root) = self.restore_node(&mut layout, &t.root) else {
-                continue;
+            let kind = if t.kind == "scroll" && !t.columns.is_empty() {
+                // A column whose panes are all gone (terminals) goes;
+                // a strip with none left is a tab with nothing to show.
+                let columns: Vec<Column> = t
+                    .columns
+                    .iter()
+                    .filter_map(|c| {
+                        let node = self.restore_node(&mut layout, &c.node)?;
+                        let width = Width::parse(&c.width).unwrap_or(layout.column_width);
+                        Some((node, width))
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .map(|(node, width)| layout.new_column(node, width))
+                    .collect();
+                if columns.is_empty() {
+                    continue;
+                }
+                Kind::Scroll(Strip { columns })
+            } else {
+                let Some(root) = self.restore_node(&mut layout, &t.root) else {
+                    continue;
+                };
+                Kind::Tree(root)
+            };
+            let tab = Tab {
+                layout: kind,
+                focused: 0,
             };
             let mut ps = Vec::new();
-            root.panes(&mut ps);
+            tab.panes(&mut ps);
             let focused = ps.get(t.focused).or(ps.first()).copied().unwrap_or(0);
-            layout.tabs.push(Tab { root, focused });
+            layout.tabs.push(Tab { focused, ..tab });
         }
         if layout.tabs.is_empty() {
             return false;

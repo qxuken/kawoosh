@@ -1,15 +1,16 @@
 # The scrolling tab: a strip of columns beside the tree
 
-Status: decided 2026-09-21 (roadmap step 9), not built. Roadmap
-Decision 2 gave it its shape — a per-tab layout kind beside the
-splitmux tree, not instead of it — and named a kui ask,
-kui-requirements §9's `enter` / `exit` / keyframes. That ask was built
-in the meantime (alpha.14 onwards: props.md's `enter`, `exit`,
-`keyframes`, `slide`, and `Ui::reveal`), so no kui round comes before
-this one. Each decision keeps the alternative it beat. Companion to
-[roadmap.md](roadmap.md)'s panes track, [keys.md](keys.md)'s "Panes,
-tabs, the dock", and `kawoosh/src/layout.rs`, which is the data this
-note adds a second kind to.
+Status: decided 2026-09-21 (roadmap step 9); **built 2026-09-22**
+(roadmap step 11) as designed, with the departures listed under
+"Built" at the end. Roadmap Decision 2 gave it its shape — a per-tab
+layout kind beside the splitmux tree, not instead of it — and named a
+kui ask, kui-requirements §9's `enter` / `exit` / keyframes. That ask
+was built in the meantime (alpha.14 onwards: props.md's `enter`,
+`exit`, `keyframes`, `slide`, and `Ui::reveal`), so no kui round came
+before this one. Each decision keeps the alternative it beat.
+Companion to [roadmap.md](roadmap.md)'s panes track, [keys.md](keys.md)'s
+"Panes, tabs, the dock", and `kawoosh/src/layout.rs`, which is the
+data this note adds a second kind to.
 
 ## The thesis
 
@@ -196,3 +197,72 @@ session saved and restored as a strip.
 - **The swipe and the focus in one frame.** The focus wins (Decision
   3); a swipe that lands a click on another pane focuses it and
   reveals it, which is the expected thing.
+
+## Built (2026-09-22)
+
+`layout.rs`'s `Kind`, `Strip`, `Column`, `Width` and `Tab`'s methods
+over both kinds (`node_of`, `split_of` in a `"2/ab"` grammar for a
+strip, `ratio_mut`, `share_of`, `resize`, `to_scroll`, `to_tree`);
+`panes.rs`'s `render_strip`; `:layout`, `:layout scroll`, `:layout
+tree`, `column left` / `right` on `<C-w>H` / `<C-w>L`; the four
+settings; the session's `kind` and `columns`; `kawoosh/tests/layout.rs`
+(three tests) and seven unit tests in `layout.rs`. Where the build
+departed from the text above, and what day one found:
+
+- **A bare `:layout` flips the tab**, and `<leader>tl` is bound to it —
+  one key to try the other kind and come back. The message after says
+  what the tab is now and, for a strip, the three keys that matter.
+- **A column carries a number of its own** (`Column::id`, counted apart
+  from panes) for its drawn key, so the column keeps its slide, enter
+  and exit whatever its panes do — a stack's top pane closing does not
+  make a "new" column.
+- **The entrance is a third of the width, with a fade**, not the whole
+  width: kui hears no key for a sink outside the viewport (its hit
+  regions are the clipped ones), so a column that started wholly off it
+  would drop the keystroke typed during its 200ms slide. A third keeps
+  it partly in view from the first frame. The strip's first frame — a
+  conversion, a restore, a tab switched to — snaps: those columns are
+  not arriving (`Kawoosh::strip_known`).
+- **The reveal is asked again for sixteen frames** after the focus
+  moved (`strip_settling`), not once: a width still easing (`<A-S-l>`
+  then `<C-w>v` inside 200ms) lays the ribbon out shorter on the focus
+  frame than it ends up, and a column revealed against that frame
+  drifts out of view as it grows. A reveal of a column in view is a
+  no-op, so a swipe is fought only inside that quarter second.
+  `Ui::reveal` on a node declared the same frame works (the first risk
+  above did not materialise), and leaves a 4px margin, so the column
+  beside shows as a sliver when the ribbon has room — a hint that
+  there is more.
+- **The glide is free**: `slide` on a column eases its drawn position,
+  and a scroll offset change is a position change, so `<C-w>l` glides
+  the ribbon over 200ms with nothing written for it. A key typed inside
+  the glide at a column that is still wholly off the viewport is
+  dropped by kui (the same limitation as the entrance); a hand's own
+  pace is slower than that.
+- **A width step that would not be seen is not a step**: a `Ratio`
+  snaps to the nearest preset first, and the snap counts as the step
+  only when it moves the column by more than 4% of the viewport in the
+  asked direction (`Width::SEEN`); else the key steps on past it.
+  `<A-S-l>` / `<A-S-h>` say where they landed (`column two-thirds`,
+  `column full already`) and take a COUNT.
+- **The status line shows the columns** as `▯▮▯`, the focused one
+  filled, before the caret's line and column — a column off the
+  viewport is not out of mind.
+- **The session writes both**: `root` holds the strip folded to a tree
+  (`Tab::to_tree`), so a file written by this build reads as a tree in
+  the build before it, and `kind: "scroll"` with `columns` brings the
+  strip back here.
+- **Twenty columns measured** (the second risk): a headless release
+  frame with twenty columns of a 200-line file costs 1.6ms, the same as
+  twenty tree panes on screen, against 0.09ms for one pane — under the
+  budget, so a column off the viewport still emits its rows; the empty
+  box stays an option for a wider ribbon than that.
+- **Closing a pane inside a stack keeps the keyboard in the column**
+  (its first pane), where the tree's rule sends it to the tab's first
+  pane; closing a column's last pane goes to the column before, else
+  the one that took its place.
+- **A tab switch cross-fades**: the strip node is keyed once for every
+  tab, so the columns of the tab left declare `exit` and fade over the
+  tab arrived at for 200ms, and the same on `:layout tree`. Kept: it
+  reads as a transition, and a column whose subtree is past kui's
+  exit budget (512 nodes — a screenful of rows) snaps as before.

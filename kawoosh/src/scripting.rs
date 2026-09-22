@@ -919,8 +919,8 @@ impl Kawoosh {
                 }
                 // A share given for a pane already open resizes it.
                 if let Some(share) = share
-                    && let Some(path) = self.layout.tab().root.split_of(p)
-                    && let Some(r) = self.layout.tab_mut().root.ratio_mut(&path)
+                    && let Some(path) = self.layout.tab().split_of(p)
+                    && let Some(r) = self.layout.tab_mut().ratio_mut(&path)
                 {
                     *r = (1.0 - share).clamp(0.1, 0.9);
                 }
@@ -930,8 +930,8 @@ impl Kawoosh {
                 let dir = if below { SplitDir::V } else { SplitDir::H };
                 let pane = self.layout.split(dir, Content::Lua(name.to_string()));
                 if let Some(share) = share
-                    && let Some(path) = self.layout.tab().root.split_of(pane)
-                    && let Some(r) = self.layout.tab_mut().root.ratio_mut(&path)
+                    && let Some(path) = self.layout.tab().split_of(pane)
+                    && let Some(r) = self.layout.tab_mut().ratio_mut(&path)
                 {
                     *r = (1.0 - share).clamp(0.1, 0.9);
                 }
@@ -1164,7 +1164,7 @@ impl Kawoosh {
             // divider drag made it.
             (
                 "share",
-                match self.layout.tab().root.share_of(pane) {
+                match self.layout.tab().share_of(pane) {
                     Some(r) => Value::Float(r as f64),
                     None => Value::Null,
                 },

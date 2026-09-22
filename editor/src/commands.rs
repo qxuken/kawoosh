@@ -2975,6 +2975,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w>o", "only"),
         ("<C-w>w", "pane next"),
         ("<C-w>x", "pane swap"),
+        // The column along a scrolling tab's strip: the shifted letter,
+        // vim's "to the far side" read as one step.
+        ("<C-w>H", "column left"),
+        ("<C-w>L", "column right"),
         ("<C-w>h", "pane left"),
         ("<C-w>j", "pane down"),
         ("<C-w>k", "pane up"),
@@ -3025,6 +3029,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>bn", "buffer next"),
         ("<leader>bp", "buffer prev"),
         ("<leader>tn", "tab new"),
+        ("<leader>tl", "layout"),
         ("<leader>tq", "tab close"),
         ("<leader>sp", "commands"),
         ("<leader>so", "memory files"),

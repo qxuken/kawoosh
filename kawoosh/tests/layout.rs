@@ -1,0 +1,295 @@
+//! The scrolling tab (docs/design/scrolling-tab.md, roadmap step 11):
+//! a strip of columns beside the tree, the viewport following the
+//! focus, the tree's keys read on the strip's axis, and a session that
+//! keeps the kind.
+
+mod drive;
+
+use drive::Drive;
+use kawoosh::Kawoosh;
+use kawoosh::layout::{Content, Width};
+use kui::KeyMods;
+
+fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
+    d.keys(app, ":");
+    d.keys(app, line);
+    d.key(app, "enter", KeyMods::default());
+}
+
+fn ctrl_w(d: &mut Drive, app: &mut Kawoosh, then: &str) {
+    d.ctrl(app, "w");
+    d.press(app, then);
+}
+
+/// Frames until the slides have run their course and the layout
+/// events have landed. The harness's keys pass no time, and a column
+/// the reveal brings in glides for 200ms — while kui hears no key for
+/// a sink wholly outside the viewport — so a walk along the strip
+/// settles between steps, as a hand's own pace does.
+fn settle(d: &mut Drive, app: &mut Kawoosh) {
+    for _ in 0..12 {
+        d.advance(0.05);
+        d.frame(app);
+    }
+}
+
+/// The columns' panes, left to right, and each one's width.
+fn columns(app: &Kawoosh) -> Vec<(Vec<u64>, Width)> {
+    app.layout
+        .tab()
+        .strip()
+        .expect("a strip")
+        .columns
+        .iter()
+        .map(|c| {
+            let mut ps = Vec::new();
+            c.node.panes(&mut ps);
+            (ps, c.width)
+        })
+        .collect()
+}
+
+/// Whether the pane's rect, as drawn last frame, lies inside the
+/// window's width.
+fn in_view(d: &Drive, app: &Kawoosh, pane: u64, vw: f32) -> bool {
+    let _ = d;
+    let r = app.layout.rects.get(&pane).copied().expect("a drawn pane");
+    r.x >= -1.0 && r.x + r.w <= vw + 1.0
+}
+
+#[test]
+fn a_strip_scrolls_to_the_focus_and_reads_the_trees_keys_on_its_axis() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    assert!(app.layout.tab().is_scroll());
+    assert!(
+        app.ed.message.starts_with("a strip: 1 column"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(columns(&app), [(vec![1], Width::Full)], "a lone pane fills");
+    // Three splits beside: three new columns at the default half, the
+    // ribbon two and a half windows wide; the fourth is focused and,
+    // once the frame settles, drawn inside the window.
+    ctrl_w(&mut d, &mut app, "v");
+    ctrl_w(&mut d, &mut app, "v");
+    ctrl_w(&mut d, &mut app, "v");
+    assert_eq!(app.layout.visible_panes(), [1, 2, 3, 4]);
+    assert_eq!(app.layout.focused(), 4);
+    assert_eq!(columns(&app)[3].1, Width::Half);
+    settle(&mut d, &mut app);
+    assert!(
+        in_view(&d, &app, 4, vw),
+        "the new column is revealed: {:?}",
+        app.layout.rects[&4]
+    );
+    assert!(!in_view(&d, &app, 1, vw), "the first scrolled off");
+    let r4 = app.layout.rects[&4];
+    assert!((r4.w - vw / 2.0).abs() < 8.0, "a half: {r4:?}");
+    // `<C-w>h` walks the columns by index, each revealed as it lands.
+    ctrl_w(&mut d, &mut app, "h");
+    assert_eq!(app.layout.focused(), 3);
+    settle(&mut d, &mut app);
+    assert!(in_view(&d, &app, 3, vw), "{:?}", app.layout.rects[&3]);
+    ctrl_w(&mut d, &mut app, "h");
+    settle(&mut d, &mut app);
+    ctrl_w(&mut d, &mut app, "h");
+    assert_eq!(app.layout.focused(), 1);
+    settle(&mut d, &mut app);
+    assert!(
+        in_view(&d, &app, 1, vw),
+        "the first is back in view: {:?}",
+        app.layout.rects[&1]
+    );
+    assert!(!in_view(&d, &app, 4, vw));
+    ctrl_w(&mut d, &mut app, "h");
+    assert_eq!(app.layout.focused(), 1, "the strip's edge");
+    // A split below is a stack inside the column, and `<C-w>j` `<C-w>k`
+    // move inside it.
+    ctrl_w(&mut d, &mut app, "s");
+    assert_eq!(columns(&app)[0].0, [1, 5]);
+    settle(&mut d, &mut app);
+    ctrl_w(&mut d, &mut app, "k");
+    assert_eq!(app.layout.focused(), 1);
+    // Beside from a stack: the column after takes the pane at this
+    // pane's row, else its top.
+    ctrl_w(&mut d, &mut app, "l");
+    assert_eq!(app.layout.focused(), 2);
+    settle(&mut d, &mut app);
+    // `<C-w>L` moves the column along the strip, the keyboard on it.
+    ctrl_w(&mut d, &mut app, "L");
+    assert_eq!(app.layout.visible_panes(), [1, 5, 3, 2, 4]);
+    assert_eq!(app.layout.focused(), 2);
+    assert_eq!(app.ed.message, "column 3 of 4");
+    settle(&mut d, &mut app);
+    ctrl_w(&mut d, &mut app, "H");
+    assert_eq!(app.layout.visible_panes(), [1, 5, 2, 3, 4]);
+    settle(&mut d, &mut app);
+    ctrl_w(&mut d, &mut app, "H");
+    settle(&mut d, &mut app);
+    ctrl_w(&mut d, &mut app, "H");
+    assert_eq!(app.ed.message, "the first column already");
+    settle(&mut d, &mut app);
+    // `<A-S-l>` steps the width through the presets, and says where it
+    // landed; `<A-S-h>` steps it back.
+    d.press(&mut app, "<A-S-l>");
+    assert_eq!(columns(&app)[0].1, Width::TwoThirds);
+    assert_eq!(app.ed.message, "column two-thirds");
+    d.press(&mut app, "<A-S-l>");
+    d.press(&mut app, "<A-S-l>");
+    assert_eq!(columns(&app)[0].1, Width::Full);
+    assert_eq!(app.ed.message, "column full already");
+    d.press(&mut app, "3<A-S-h>");
+    assert_eq!(columns(&app)[0].1, Width::Third);
+    settle(&mut d, &mut app);
+    assert!((app.layout.rects[&2].w - vw / 3.0).abs() < 8.0);
+    // Closing a column's last pane takes the column, the keyboard to
+    // the column before.
+    ctrl_w(&mut d, &mut app, "q");
+    assert_eq!(app.layout.visible_panes(), [1, 5, 3, 4]);
+    assert_eq!(app.layout.focused(), 1);
+    settle(&mut d, &mut app);
+    // Back to a tree and to a strip again: the stack survives both.
+    ex(&mut d, &mut app, "layout tree");
+    assert!(!app.layout.tab().is_scroll());
+    assert_eq!(app.ed.message, "a tree: 4 panes");
+    assert_eq!(app.layout.visible_panes(), [1, 5, 3, 4]);
+    ex(&mut d, &mut app, "layout");
+    assert!(app.layout.tab().is_scroll(), "bare :layout flips");
+    assert_eq!(columns(&app)[0].0, [1, 5]);
+    ex(&mut d, &mut app, "layout");
+    assert!(!app.layout.tab().is_scroll());
+    // In a tree the column keys say what to do instead.
+    ctrl_w(&mut d, &mut app, "L");
+    assert!(
+        app.ed.message.contains(":layout scroll"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn the_gap_drags_a_columns_width_and_a_click_reveals_a_column() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    // A tree of two halves converts to two columns at a half each,
+    // side by side in the window.
+    ctrl_w(&mut d, &mut app, "v");
+    ex(&mut d, &mut app, "layout scroll");
+    ctrl_w(&mut d, &mut app, "h");
+    settle(&mut d, &mut app);
+    let r1 = app.layout.rects[&1];
+    let r2 = app.layout.rects[&2];
+    assert!(r1.x.abs() < 1.0 && (r1.w - vw / 2.0).abs() < 8.0, "{r1:?}");
+    assert!((r2.x - vw / 2.0).abs() < 8.0, "{r2:?}");
+    // The gap after the first column dragged to a third of the window
+    // leaves the column at that fraction, a ratio, the second column
+    // following it.
+    let gap_x = r1.x + r1.w + 2.0;
+    let gap_y = r1.y + r1.h / 2.0;
+    d.drag(&mut app, (gap_x, gap_y), (vw / 3.0, gap_y));
+    settle(&mut d, &mut app);
+    let w = app.layout.tab().strip().unwrap().columns[0].width;
+    assert!(
+        matches!(w, Width::Ratio(r) if (r - 1.0 / 3.0).abs() < 0.03),
+        "{w:?}"
+    );
+    assert!((app.layout.rects[&1].w - vw / 3.0).abs() < 8.0);
+    assert!((app.layout.rects[&2].x - vw / 3.0).abs() < 12.0);
+    // A preset key snaps the ratio to the nearest before it steps.
+    d.press(&mut app, "<A-S-l>");
+    assert_eq!(
+        app.layout.tab().strip().unwrap().columns[0].width,
+        Width::Half
+    );
+    // A click on the second column focuses it; a third column added
+    // there and then a click back on the first reveals the first.
+    d.click(&mut app, r2.x + 20.0, r2.y + 8.0);
+    assert_eq!(app.layout.focused(), 2);
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    assert!(in_view(&d, &app, 3, vw));
+    assert!(!in_view(&d, &app, 1, vw), "{:?}", app.layout.rects[&1]);
+    ctrl_w(&mut d, &mut app, "h");
+    ctrl_w(&mut d, &mut app, "h");
+    settle(&mut d, &mut app);
+    assert_eq!(app.layout.focused(), 1);
+    assert!(in_view(&d, &app, 1, vw));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn a_new_tab_follows_the_default_and_a_session_keeps_the_kind() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-strip-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    let b = dir.join("b.txt");
+    std::fs::write(&a, "1\n2\n3\n").unwrap();
+    std::fs::write(&b, "x\ny\n").unwrap();
+    let db = dir.join("state.db");
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&a);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    app.open_store(Some(&db));
+    d.frame(&mut app);
+    // `layout.default` makes the next tab a strip; the first stays a
+    // tree.
+    ex(&mut d, &mut app, "set layout.default=scroll");
+    ex(&mut d, &mut app, "set layout.column_width=third");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "tabnew");
+    assert!(app.layout.tab().is_scroll());
+    assert!(!app.layout.tabs[0].is_scroll());
+    ex(&mut d, &mut app, &format!("e {}", b.display()));
+    ctrl_w(&mut d, &mut app, "v");
+    ex(&mut d, &mut app, &format!("e {}", a.display()));
+    ctrl_w(&mut d, &mut app, "s");
+    d.press(&mut app, "<A-S-l>");
+    assert_eq!(
+        columns(&app).iter().map(|c| c.1).collect::<Vec<_>>(),
+        [Width::Third, Width::Half]
+    );
+    ex(&mut d, &mut app, "qa");
+    d.frame(&mut app);
+    assert!(app.quit);
+    drop(app);
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    app.open_store(Some(&db));
+    assert!(app.restore_session());
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 2);
+    assert!(!app.layout.tabs[0].is_scroll());
+    assert_eq!(app.layout.tab, 1);
+    assert!(app.layout.tab().is_scroll(), "the strip came back as one");
+    let cols = columns(&app);
+    assert_eq!(cols.len(), 2);
+    assert_eq!(cols[0].0.len(), 1);
+    assert_eq!(cols[1].0.len(), 2, "the stack");
+    assert_eq!(cols[0].1, Width::Third);
+    assert_eq!(cols[1].1, Width::Half);
+    let name = |p: u64| match app.layout.content(p) {
+        Some(Content::Editor(v)) => app.ed.buffer_of(v).name.clone(),
+        _ => String::new(),
+    };
+    assert_eq!(name(cols[0].0[0]), "b.txt");
+    assert_eq!(name(cols[1].0[0]), "a.txt");
+    // A file from before the scrolling tab has no kind: a tree.
+    let json = r#"{"tabs":[{"root":{"kind":"pane","content":"editor","path":"__A__","line":0,"col":0,"top":0},"focused":0}],"tab":0,"dock_open":false,"dock_ratio":0.3}"#
+        .replace("__A__", &a.display().to_string().replace('\\', "\\\\"));
+    let data: kawoosh::session::SessionData = serde_json::from_str(&json).unwrap();
+    assert!(app.restore_session_data(&data));
+    assert!(!app.layout.tab().is_scroll());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

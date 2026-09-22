@@ -1,19 +1,25 @@
 //! Drawing the pane tree: splits with drag dividers, a title bar per
 //! pane, the editor pane as rows (kui.md D3), the terminal pane as
-//! `cells` (D4), the tab strip, the status strip and the command line.
+//! `cells` (D4), the tab strip, the status strip and the command line;
+//! and the scrolling tab (scrolling-tab.md) as a `scroll_x` row of
+//! columns that slide.
 
 use std::ops::Range;
 
 use kawoosh_editor::search;
 use kawoosh_editor::{Mode, ViewId, motions};
-use kui::{Align, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
+use kui::{Align, Enter, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
 
 use crate::app::{DIVIDER, Kawoosh, TAB_H, TITLE_H};
-use crate::layout::{Content, Drop, Node, PaneId, SplitDir};
+use crate::layout::{Content, Drop, Kind, Node, PaneId, SplitDir, Strip};
 use crate::rows::{self, Caret, Drawn, GUTTER_W, LineDraw, STRIP_H, Window};
 use crate::terminals::TermId;
 use kawoosh_systems::lsp::DIAG_LAYER;
 use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
+
+/// Frames after a strip's focus moved on which the focused column is
+/// revealed again, so a layout still easing lands it in view.
+const STRIP_SETTLING: u8 = 16;
 
 impl Kawoosh {
     // ------------------------------------------------------------ view
@@ -72,7 +78,7 @@ impl Kawoosh {
                         None => "?".into(),
                     };
                     let mut ps = Vec::new();
-                    tab.root.panes(&mut ps);
+                    tab.panes(&mut ps);
                     let modified = ps.iter().any(
                         |p| matches!(self.view_of(*p), Some(v) if self.ed.buffer_of(v).modified),
                     );
@@ -193,9 +199,13 @@ impl Kawoosh {
                         Mode::Visual => ("VIS", pal.command),
                         _ => ("NOR", pal.accent),
                     };
-                    self.strip(ui, &[(mode, color), (what, pal.accent)], "");
+                    self.strip(
+                        ui,
+                        &[(mode, color), (what, pal.accent)],
+                        &self.strip_marks(),
+                    );
                 }
-                None => self.strip(ui, &[(what, pal.accent)], ""),
+                None => self.strip(ui, &[(what, pal.accent)], &self.strip_marks()),
             }
             return;
         };
@@ -240,6 +250,10 @@ impl Kawoosh {
             ln * 100 / (buf.line_count() - 1)
         };
         right.push_str(&format!("  {pct}%"));
+        let marks = self.strip_marks();
+        if !marks.is_empty() {
+            right = format!("{marks}  {right}");
+        }
         let pending: String = self.ed.pending.join("");
         let op = self
             .ed
@@ -401,6 +415,145 @@ impl Kawoosh {
                 }
             },
         );
+    }
+
+    /// The tab's body: the tree, or the strip.
+    pub(crate) fn render_tab(&mut self, ui: &mut Ui<'_>) {
+        match self.layout.tab().layout.clone() {
+            Kind::Tree(root) => self.render_node(ui, &root, ""),
+            Kind::Scroll(strip) => self.render_strip(ui, &strip),
+        }
+    }
+
+    /// The strip (scrolling-tab.md Decisions 3 and 4): one `scroll_x`
+    /// row kui retains the offset of, a keyed column per `Column` at
+    /// its width in viewport fractions, a draggable gap between. A
+    /// column new to a strip already on show slides in from the right
+    /// and fades up — a third of its width, not the whole: kui drops a
+    /// key to a sink outside the viewport, and a column that started
+    /// wholly off it would lose the keystroke typed into it during the
+    /// slide — a closed one fades where it stood, and a moved or
+    /// resized one glides. The strip's first frame (a conversion, a
+    /// restore) snaps: those columns are not arriving. On the frame the
+    /// focus lands in another column — a move, an insert, a click, a
+    /// tab switch — the focused column is revealed (or centred, under
+    /// `layout.scroll.center`), and the offset is otherwise kui's, so a
+    /// swipe is never fought.
+    pub(crate) fn render_strip(&mut self, ui: &mut Ui<'_>, strip: &Strip) {
+        let pal = self.pal;
+        let vw = ui.viewport().w.max(1.0);
+        let gap = self.strip_gap();
+        let center = self.ed.settings.str("layout.scroll.center") == Some("always");
+        let focused = self.layout.focused();
+        let fi = strip.column_of(focused);
+        let n = strip.columns.len();
+        let widths: Vec<f32> = strip
+            .columns
+            .iter()
+            .map(|c| (c.width.fraction() * vw).round().max(120.0))
+            .collect();
+        let on_show = strip
+            .columns
+            .iter()
+            .any(|c| self.strip_known.contains(&c.id));
+        let mut focus_key = None;
+        let row = ui.with_keyed(
+            "strip",
+            NodeSpec::row()
+                .fill()
+                .scroll_x()
+                .cross_align(Align::Start)
+                .label("strip"),
+            |ui| {
+                for (i, col) in strip.columns.iter().enumerate() {
+                    let px = widths[i];
+                    let mut spec = NodeSpec::column()
+                        .width(Sizing::Fixed(px))
+                        .height(Sizing::Grow(1.0))
+                        .transition(200.0)
+                        .slide()
+                        .exit(Enter::default().opacity(0.0));
+                    if on_show && !self.strip_known.contains(&col.id) {
+                        spec = spec.enter(Enter::from((px / 3.0).min(160.0), 0.0).opacity(0.0));
+                    }
+                    let key = ui.with_keyed(&format!("col{}", col.id), spec, |ui| {
+                        self.render_node(ui, &col.node, &format!("{i}/"))
+                    });
+                    if Some(i) == fi {
+                        focus_key = Some(key);
+                    }
+                    if i + 1 < n {
+                        let path = format!("gap{i}");
+                        let divider = ui.child_key(&format!("gap{}", col.id));
+                        let active = ui.is_hovered(divider)
+                            || ui.is_pressed(divider)
+                            || self.dragging.as_deref() == Some(path.as_str());
+                        ui.with_keyed(
+                            &format!("gap{}", col.id),
+                            NodeSpec::column()
+                                .width(Sizing::Fixed(gap))
+                                .height(Sizing::Grow(1.0))
+                                .bg(if active { pal.accent } else { pal.border })
+                                .cursor(kui::CursorShape::EwResize)
+                                .slide()
+                                .on_drag(Value::map([
+                                    ("kind", "split".into()),
+                                    ("path", Value::str(&path)),
+                                    ("dir", "h".into()),
+                                ])),
+                            |_| {},
+                        );
+                    }
+                }
+            },
+        );
+        self.strip_known.extend(strip.columns.iter().map(|c| c.id));
+        let seen = fi.map(|i| (focused, i));
+        if seen != self.strip_seen {
+            self.strip_seen = seen;
+            self.strip_settling = STRIP_SETTLING;
+        }
+        // The reveal is asked again for a few frames after the focus
+        // moved: a width still easing (`<A-S-l>` then `<C-w>v` inside
+        // 200ms) lays the ribbon out shorter on the focus frame than it
+        // ends up, and the column revealed against that frame drifts
+        // out of view as it grows. A reveal of a column in view is a
+        // no-op, so a swipe is fought only inside that quarter second.
+        if self.strip_settling > 0 {
+            self.strip_settling -= 1;
+            if let (Some(i), Some(key)) = (fi, focus_key) {
+                if center {
+                    let left: f32 = widths[..i].iter().sum::<f32>() + gap * i as f32;
+                    let x = left - (vw - widths[i]) / 2.0;
+                    ui.set_scroll(row, Vec2::new(x.max(0.0), 0.0));
+                } else {
+                    ui.reveal(key);
+                }
+            }
+        }
+    }
+
+    /// Where the keyboard is along a strip, for the status line: a
+    /// mark per column, the focused one filled — `▯▮▯` — so a column
+    /// off the viewport is not out of mind. Empty for a tree.
+    pub(crate) fn strip_marks(&self) -> String {
+        let Some(s) = self.layout.tab().strip() else {
+            return String::new();
+        };
+        let at = s.column_of(self.layout.tab().focused);
+        (0..s.columns.len())
+            .map(|i| if Some(i) == at { '▮' } else { '▯' })
+            .collect()
+    }
+
+    /// The gap between a strip's columns (`layout.gap`, px; the
+    /// divider's width by default).
+    pub(crate) fn strip_gap(&self) -> f32 {
+        self.ed
+            .settings
+            .int("layout.gap")
+            .map(|g| g.clamp(0, 64) as f32)
+            .unwrap_or(DIVIDER)
     }
 
     pub(crate) fn render_node(&mut self, ui: &mut Ui<'_>, node: &Node, path: &str) {

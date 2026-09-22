@@ -166,6 +166,14 @@ pub struct Kawoosh {
     /// under it.
     pub(crate) pane_drag: Option<(PaneId, f32, f32)>,
     pub(crate) body_h: f32,
+    /// The strip's focus as last drawn — the pane and its column — so
+    /// the frame it changes on reveals the column (`render_strip`).
+    pub(crate) strip_seen: Option<(PaneId, usize)>,
+    /// Frames left on which the focused column is revealed again.
+    pub(crate) strip_settling: u8,
+    /// Every column drawn so far, by number, so a column arriving in a
+    /// strip already on show is the one that slides in.
+    pub(crate) strip_known: std::collections::HashSet<u64>,
     /// A mono cell's advance and height, measured each frame.
     pub(crate) cell: (f32, f32),
     /// Modifier state, from `{kind="modifiers"}` events: ctrl, alt, super,
@@ -253,6 +261,9 @@ impl Kawoosh {
             dragging: None,
             pane_drag: None,
             body_h: 600.0,
+            strip_seen: None,
+            strip_settling: 0,
+            strip_known: Default::default(),
             cell: (7.8, crate::rows::LH),
             mods: (false, false, false, false),
             confirm: None,
@@ -812,7 +823,10 @@ impl Kawoosh {
     /// Resizes the focused pane by `by` along `dir`: the dock's share
     /// when the dock has the keyboard (its height only), else the
     /// tab's tree, the message saying when nothing in that axis holds
-    /// the pane.
+    /// the pane. In a strip the horizontal axis is the column's width,
+    /// stepped through the presets a step per twentieth asked — so
+    /// `<A-S-l>` is one step, `3<A-S-l>` three — and the message names
+    /// the preset it landed on (scrolling-tab.md Decision 2).
     pub(crate) fn resize_pane(&mut self, dir: SplitDir, by: f32) {
         if self.layout.dock_focused && self.layout.dock_open && self.layout.dock.is_some() {
             if dir == SplitDir::V {
@@ -823,11 +837,44 @@ impl Kawoosh {
             return;
         }
         let focused = self.layout.focused();
-        if !self.layout.tab_mut().root.resize(focused, dir, by) {
+        if dir == SplitDir::H && self.layout.tab().is_scroll() {
+            let steps = ((by.abs() / 0.05).round() as usize).max(1);
+            let mut moved = false;
+            for _ in 0..steps {
+                moved |= self.layout.step_width(by > 0.0);
+            }
+            let width = self
+                .layout
+                .tab()
+                .column_of(focused)
+                .map(|i| self.layout.tab().strip().unwrap().columns[i].width.name())
+                .unwrap_or_default();
+            self.ed.message = if moved {
+                format!("column {width}")
+            } else {
+                format!("column {width} already")
+            };
+            return;
+        }
+        if !self.layout.tab_mut().resize(focused, dir, by) {
             self.ed.message = match dir {
                 SplitDir::H => "no pane beside this one".into(),
                 SplitDir::V => "no pane above or below this one".into(),
             };
+        }
+    }
+
+    /// `layout.default` and `layout.column_width` into the layout, on
+    /// the frame the settings moved (`sync_look` calls it).
+    pub(crate) fn sync_layout_settings(&mut self) {
+        self.layout.new_tabs_scroll = self.ed.settings.str("layout.default") == Some("scroll");
+        if let Some(w) = self
+            .ed
+            .settings
+            .str("layout.column_width")
+            .and_then(crate::layout::Width::parse)
+        {
+            self.layout.column_width = w;
         }
     }
 
@@ -1429,6 +1476,9 @@ impl Kawoosh {
     }
 
     /// A divider drag: the cursor over the split's own rect is the ratio.
+    /// A strip's gap (`gap{i}`) sets the column before it to the width
+    /// the pointer makes it, as a fraction of the viewport — a `Ratio`
+    /// until a preset key snaps it (scrolling-tab.md Decision 3).
     fn on_split_drag(&mut self, p: &Value) {
         let tag = p.get("tag");
         let Some(path) = tag.and_then(|t| t.get("path")).and_then(Value::as_str) else {
@@ -1437,6 +1487,31 @@ impl Kawoosh {
         let path = path.to_string();
         match p.get("phase").and_then(Value::as_str) {
             Some("end") => self.dragging = None,
+            Some(_) if path.starts_with("gap") => {
+                let x = p.get("x").and_then(Value::as_float).unwrap_or(0.0) as f32;
+                let vw = p
+                    .get("parent")
+                    .and_then(|v| v.get("w"))
+                    .and_then(Value::as_float)
+                    .unwrap_or(1.0)
+                    .max(1.0) as f32;
+                let gap = self.strip_gap();
+                if let Ok(i) = path[3..].parse::<usize>()
+                    && let Some(s) = self.layout.tab().strip()
+                    && let Some(c) = s.columns.get(i)
+                {
+                    let mut ps = Vec::new();
+                    c.node.panes(&mut ps);
+                    // The column's left edge is its top pane's, where it
+                    // was drawn last frame.
+                    if let Some(r) = ps.first().and_then(|p| self.layout.rects.get(p)) {
+                        let w = (x - gap / 2.0 - r.x) / vw;
+                        let s = self.layout.tab_mut().strip_mut().unwrap();
+                        s.columns[i].width = crate::layout::Width::Ratio(w.clamp(0.1, 1.0));
+                    }
+                }
+                self.dragging = Some(path);
+            }
             Some(_) => {
                 let horizontal =
                     tag.and_then(|t| t.get("dir")).and_then(Value::as_str) == Some("h");
@@ -1454,7 +1529,7 @@ impl Kawoosh {
                 let ratio = (ratio as f32).clamp(0.1, 0.9);
                 if path == "dock" {
                     self.layout.dock_ratio = 1.0 - ratio;
-                } else if let Some(r) = self.layout.tab_mut().root.ratio_mut(&path) {
+                } else if let Some(r) = self.layout.tab_mut().ratio_mut(&path) {
                     *r = ratio;
                 }
                 self.dragging = Some(path);
@@ -1568,7 +1643,6 @@ impl kui::App for Kawoosh {
                     .width(Sizing::Grow(1.0))
                     .height(Sizing::Fixed(body_h)),
                 |ui| {
-                    let root = self.layout.tab().root.clone();
                     let dock = self.layout.dock.filter(|_| self.layout.dock_open);
                     let dock_h = if dock.is_some() {
                         (body_h * self.layout.dock_ratio).clamp(lh * 3.0, body_h - lh * 3.0)
@@ -1580,7 +1654,7 @@ impl kui::App for Kawoosh {
                         NodeSpec::column()
                             .width(Sizing::Grow(1.0))
                             .height(Sizing::Grow(1.0)),
-                        |ui| self.render_node(ui, &root, ""),
+                        |ui| self.render_tab(ui),
                     );
                     self.perf.cur.rows = ms(t);
                     if let Some(d) = dock {

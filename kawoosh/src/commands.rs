@@ -306,6 +306,42 @@ impl Kawoosh {
         }
     }
 
+    /// `:layout …`: the tab converted, and what it is now said.
+    fn set_layout(&mut self, scroll: bool) {
+        self.layout.set_scroll(scroll);
+        self.ed.message = if scroll {
+            let cols = self.layout.tab().strip().map_or(0, |s| s.columns.len());
+            format!(
+                "a strip: {cols} column{} — <C-w>v adds one, <C-w>hl walk them, <A-S-hl> size one",
+                if cols == 1 { "" } else { "s" }
+            )
+        } else {
+            let mut ps = Vec::new();
+            self.layout.tab().panes(&mut ps);
+            let n = ps.len();
+            format!("a tree: {n} pane{}", if n == 1 { "" } else { "s" })
+        };
+    }
+
+    /// `column left` / `column right`: a tree says what to do instead.
+    fn move_column(&mut self, by: i64) {
+        if !self.layout.tab().is_scroll() {
+            self.ed.message = "the tab is a tree of splits; :layout scroll makes it a strip".into();
+            return;
+        }
+        if self.layout.move_column(by) {
+            let s = self.layout.tab().strip().unwrap();
+            let i = s.column_of(self.layout.focused()).unwrap_or(0);
+            self.ed.message = format!("column {} of {}", i + 1, s.columns.len());
+        } else {
+            self.ed.message = if by < 0 {
+                "the first column already".into()
+            } else {
+                "the last column already".into()
+            };
+        }
+    }
+
     fn buffer_step(&mut self, ctx: &Ctx, forward: bool) {
         let Some(v) = self.view_arg(ctx) else { return };
         let ids: Vec<BufferId> = self.ed.listed_buffers();
@@ -472,6 +508,35 @@ fn panes() -> Vec<ShellCommand> {
             Spec::new("pane shorter").doc("the focused pane shorter, COUNT steps of a twentieth"),
             |k, ctx| k.resize_pane(SplitDir::V, ctx.count as f32 * -0.05),
         ),
+        // The scrolling tab (scrolling-tab.md): `:layout scroll` and
+        // `:layout tree` convert the tab both ways, a bare `:layout`
+        // (`<leader>tl`) flips it, and the message says what the tab
+        // is now. Three specs so the command line completes the words.
+        cmd(
+            Spec::new("layout").doc("flip the tab between a strip of columns and a tree of splits"),
+            |k, _| {
+                let scroll = !k.layout.tab().is_scroll();
+                k.set_layout(scroll);
+            },
+        ),
+        cmd(
+            Spec::new("layout scroll").doc("the tab as a strip of columns that scrolls sideways"),
+            |k, _| k.set_layout(true),
+        ),
+        cmd(
+            Spec::new("layout tree").doc("the tab as a tree of splits"),
+            |k, _| k.set_layout(false),
+        ),
+        // `<C-w>H` `<C-w>L`: the focused column one place along the
+        // strip, COUNT places — vim's "to the far side" read as a step.
+        cmd(
+            Spec::new("column left").doc("move the column one place left in a strip, COUNT places"),
+            |k, ctx| k.move_column(-(ctx.count.max(1) as i64)),
+        ),
+        cmd(
+            Spec::new("column right").doc("move the column one place right in a strip, COUNT places"),
+            |k, ctx| k.move_column(ctx.count.max(1) as i64),
+        ),
         cmd(
             Spec::new("tab new")
                 .alias(&["tabnew", "tabe"])
@@ -558,7 +623,7 @@ fn panes() -> Vec<ShellCommand> {
                     return;
                 }
                 let mut ps = Vec::new();
-                k.layout.tab().root.panes(&mut ps);
+                k.layout.tab().panes(&mut ps);
                 for p in ps {
                     match k.layout.close(p) {
                         Some(Content::Editor(v)) => {

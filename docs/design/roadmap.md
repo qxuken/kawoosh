@@ -236,8 +236,9 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   `kawoosh.pin` from Lua; a pin is never evicted and ranks above any
   score in the picker, whose `pins` source is the same list.
 - **The scrolling tab** — decided 2026-09-21
-  ([scrolling-tab.md](scrolling-tab.md)), not built; step 11. Decision
-  2 above, worked out: `Kind::Scroll(Strip)` beside `Kind::Tree(Node)`
+  ([scrolling-tab.md](scrolling-tab.md)), built 2026-09-22 (step 11;
+  the note's "Built" has the departures). Decision 2 above, worked
+  out: `Kind::Scroll(Strip)` beside `Kind::Tree(Node)`
   on the tab, a column a `Node` of its own so the tree's code runs
   inside it, the tree's keys read on the strip's axis (`<C-w>H`
   `<C-w>L` move a column, `<A-S-h>` `<A-S-l>` step its width through
@@ -600,10 +601,18 @@ then breadth.
     in `memory.rs` (a workspace, the round trips) and two in the
     store's. Round four (`tool` and `location` rows, a terminal's
     dwell) landed the same day: `runs_are_remembered_as_tools_and_locations`.
-11. **The scrolling tab** ([scrolling-tab.md](scrolling-tab.md)): one
+11. ~~**The scrolling tab** ([scrolling-tab.md](scrolling-tab.md)): one
     round — `Kind::Scroll` beside the tree, the keys read on the
     strip's axis, `reveal` on the focus frame, `:layout` both ways,
-    sessions. The daily driver's one layout complaint.
+    sessions. The daily driver's one layout complaint.~~ Landed
+    2026-09-22 (`layout.rs`'s `Kind`, `Strip`, `Column`, `Width`;
+    `panes.rs`'s `render_strip`; `:layout` and `<leader>tl`, `<C-w>H`
+    `<C-w>L`; the `layout.*` settings; the session's `kind` and
+    `columns`; `kawoosh/tests/layout.rs`); scrolling-tab.md's "Built"
+    says where the build departed from the note and what day one
+    found — the entrance a third of the width so a key typed into a
+    column mid-slide is not dropped, the reveal asked again while a
+    width eases, twenty columns measured at 1.6ms a frame.
 12. **Auto-closing brackets** ([pairs.md](pairs.md)): an afternoon —
     the three Lua doors (`buf.type`, `buf.edits`,
     `buf.set_selections`), `pairs.lua` off by default, its test a

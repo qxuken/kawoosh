@@ -51,7 +51,9 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>h/j/k/l`, `<C-w>` + arrows | focus by direction |
 | `<C-S-h>` `<C-S-j>` `<C-S-k>` `<C-S-l>` | the same, straight — one spelling, from **every** pane and mode |
 | `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>` | the pane narrower, wider, shorter, taller by a twentieth of its split, COUNT steps — the nearest split of the axis moves, as its divider does under a drag; from every pane and mode; the dock's height when the dock has the keys |
-| `<C-w>t` `<leader>tn` | a new tab |
+| `<C-w>t` `<leader>tn` | a new tab (a tree, or a strip under `layout.default`) |
+| `:layout` `<leader>tl` | the tab flipped between a tree of splits and a strip of columns ([scrolling-tab.md](scrolling-tab.md)); `:layout scroll` / `:layout tree` name the kind |
+| `<C-w>H` `<C-w>L` | in a strip, the focused column one place left / right, COUNT places; in a tree, a message that says `:layout scroll` |
 | `<C-w>d` | the dock |
 | `<C-w>!` | a terminal below (`:!` runs a shell, so does this) |
 | `<C-w>n` | the keyboard onto the toasts |
@@ -60,6 +62,18 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `gt` `gT` `]t` `[t` | next and previous tab |
 | `]T` `[T` `:tabmove` | move the tab along the strip |
 | `<leader>tq` | close the tab |
+
+In a scrolling tab the same keys are read on the strip's axis
+(scrolling-tab.md Decision 2): `<C-w>v` is a new column after the
+focused one at `layout.column_width`, `<C-w>s` a split below inside the
+column, `<C-w>h` / `<C-w>l` the column before / after by index — the
+pane in it at the focused pane's row, else its top — with the viewport
+gliding to show it, `<C-w>j` / `<C-w>k` the pane above / below inside
+the column, `<A-S-h>` / `<A-S-l>` the column's width to the next preset
+down / up (third, half, two-thirds, full; a dragged width snaps to the
+nearest first), and closing a column's last pane takes the column, the
+keyboard to the one before. The status line shows the columns as
+`▯▮▯`, the focused one filled.
 
 The shifted chord is the wezterm habit and the reason it works
 everywhere: a pty cannot tell `<C-S-l>` from `<C-l>` (the legacy encoding

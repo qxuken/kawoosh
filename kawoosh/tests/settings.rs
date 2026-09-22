@@ -553,7 +553,10 @@ fn the_settings_tab_shows_the_layers_and_opens_a_file() {
 /// the session, as `:set` would, and the row says so.
 #[test]
 fn a_boolean_setting_is_a_switch_in_the_tab() {
-    let mut d = Drive::new(1100.0, 700.0);
+    // Tall enough that the last row of the effective table — the
+    // `whichkey` switch, after the `layout.*` and `memory.*` rows — is
+    // on screen.
+    let mut d = Drive::new(1100.0, 900.0);
     let mut app = app_with_lua(&mut d);
     ex(&mut d, &mut app, "settings");
     assert_eq!(app.ed.settings.bool("whichkey"), Some(true));

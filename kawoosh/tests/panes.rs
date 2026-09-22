@@ -343,7 +343,7 @@ fn a_pane_is_dragged_by_its_title_bar() {
     d.drag(&mut app, from, (r3.x + 10.0, r3.y + r3.h / 2.0));
     assert_eq!(app.layout.visible_panes(), [1, 3, 2]);
     assert_eq!(app.layout.focused(), 1);
-    assert_eq!(app.layout.tab().root.split_of(2).as_deref(), Some(""));
+    assert_eq!(app.layout.tab().split_of(2).as_deref(), Some(""));
     d.frame(&mut app);
     // While held over the top of 2, the drop is drawn on its upper half;
     // let go there, 3 is stacked over 2.
@@ -367,7 +367,7 @@ fn a_pane_is_dragged_by_its_title_bar() {
     d.frame(&mut app);
     assert!(d.rect_of("drop").is_none(), "gone once let go");
     assert_eq!(app.layout.visible_panes(), [1, 3, 2]);
-    assert_eq!(app.layout.tab().root.split_of(3).as_deref(), Some("b"));
+    assert_eq!(app.layout.tab().split_of(3).as_deref(), Some("b"));
     d.frame(&mut app);
     // Let go on the status strip: nothing moves.
     let from = title(&app, 2);

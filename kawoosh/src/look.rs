@@ -142,6 +142,7 @@ impl Kawoosh {
         }
         self.look.seen = Some(v);
         self.look.appearance = sys;
+        self.sync_layout_settings();
         let mut notes = Vec::new();
         self.sync_font(ui, &mut notes);
         self.sync_theme(ui, sys, &mut notes);
