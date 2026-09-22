@@ -330,6 +330,21 @@ impl Settings {
         // `scratch`, `terminal`, `dir` (the directory as a listing).
         defaults.set("layout.new_pane", Setting::Str("launcher".into()));
         defaults.set("layout.new_tab", Setting::Str("launcher".into()));
+        // The markdown buffer (docs/design/markdown.md): drawn rendered —
+        // marks folded, headings at their sizes (h1 to h6, a ratio of
+        // the body), prose wrapped — and images past this many MB left
+        // as their text.
+        defaults.set("markdown.render", Setting::Bool(true));
+        defaults.set(
+            "markdown.heading",
+            Setting::List(vec![
+                Setting::Float(1.6),
+                Setting::Float(1.35),
+                Setting::Float(1.15),
+                Setting::Float(1.0),
+            ]),
+        );
+        defaults.set("markdown.image_max_mb", Setting::Int(16));
         // Auto-closing brackets (`pairs.lua`, docs/design/pairs.md): off
         // until set; `pairs.rules` is the plugin's, per language.
         defaults.set("pairs.enabled", Setting::Bool(false));
@@ -663,6 +678,9 @@ mod tests {
                 "layout.new_tab",
                 "layout.scroll.center",
                 "leader",
+                "markdown.heading",
+                "markdown.image_max_mb",
+                "markdown.render",
                 "memory.idle_secs",
                 "memory.keep_days",
                 "memory.max_mb",

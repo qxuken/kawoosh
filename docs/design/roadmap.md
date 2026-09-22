@@ -7,7 +7,8 @@ the open items recorded in [kui.md](kui.md)'s implementation notes,
 code and the log. This is the one list; the todo is retired into it.
 Companion to [mvp.md](mvp.md) and [kui.md](kui.md), which say *why*; this
 says *what next*. Amended 2026-09-22 with a day of use (below, "From
-use"), which put four rounds ahead of the brackets.
+use"), which put four rounds ahead of the brackets; steps 14–17 built
+2026-09-23, step 18 (ssh) the one left.
 
 ## Where it stands
 
@@ -33,6 +34,15 @@ kui rounds came out of them, each a report from here built the day
 it was filed: F79–F80 (keys off the clip, the eased reveal), F81 (the
 Lua DSL's types), F82 (a reveal per scroll container), F83 (the glyph
 atlas thrashing at a big font).
+Steps 14–17 followed the same day (2026-09-23), on one branch: the
+launcher (a new pane asks what it is for), the terminal's second round
+(shells back with a session, OSC 7 and 133, scrollback), auto-closing
+brackets, and the markdown buffer — 207 commits, 26 integration test
+files, the workspace's 380 tests and 5 Lua acceptance scripts. On the
+way, two engine fixes the plans had assumed away: a typing key whose
+insert-mode bindings were all gated off ate its character, and a
+grammar's runs could not say which line is a fence's (a structure
+layer now paints it from the same tree).
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -646,8 +656,17 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 
 ### Buffers with a shape
 
-- **Markdown, the fancy buffer** — decided 2026-09-21
-  ([markdown.md](markdown.md)), not built; step 17. The grammar is in;
+- **Markdown, the fancy buffer** — done 2026-09-23
+  ([markdown.md](markdown.md), "Built"); step 17. The buffer drawn
+  with its marks folded and the caret's line raw: headings at their
+  sizes, emphasis and strong and code spans and links drawn as what
+  they are, bullets, task boxes, quote bars, code blocks on a panel,
+  tables aligned under box rules, rules, images; prose wrapped, the
+  pane following the caret by the rows' measured heights; a click
+  through the fold table; `<leader>cr` and `gx`. The departure that
+  mattered: a structure layer painted from the same tree, since the
+  syntax's runs do not say which line is a fence's. What the roadmap
+  said before: The grammar is in;
   the rendered buffer is the source drawn with its marks folded and
   its structure weighted (the caret's line raw), not a preview. The
   kui round this item expected is not needed: a row is one
@@ -1011,11 +1030,12 @@ then breadth.
     `kawoosh test` script. Slotted here because it is small and
     independent, not because it is urgent.~~ Landed 2026-09-23; see
     the engine track and pairs.md's "Built".
-17. **The markdown buffer** ([markdown.md](markdown.md)): one round
+17. ~~**The markdown buffer** ([markdown.md](markdown.md)): one round
     whose first day is three headless checks against kui (a wrapped
     row's fit height, `caret_rect` on it, an image in a row), then
     `markdown.rs`, the fold table, wrap on rendered rows, images and
-    tables.
+    tables.~~ Landed 2026-09-23; the first check found the squeezed
+    row. See the buffers track and markdown.md's "Built".
 18. **ssh as a domain** ([domains.md](domains.md)): four rounds —
     `Loc` everywhere with no behaviour change, then ssh (the master in
     a pane, SFTP, `:e box:`, `dir`, the poll), then processes through

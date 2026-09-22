@@ -1,6 +1,7 @@
 # The markdown buffer: the source, rendered
 
-Status: decided 2026-09-21 (roadmap step 9), not built; the "markdown,
+Status: decided 2026-09-21 (roadmap step 9), built 2026-09-23 (step 17;
+"Built" at the end says where it departed); the "markdown,
 the fancy buffer" item of the roadmap's buffers track and the buffer
 [kui.md](kui.md) Decision 13 left for its own decision. Its kui half
 turned out to be there already: what D13 asked of kui — a per-run size
@@ -220,3 +221,53 @@ unchanged.
   of the paragraph strong until its pair is typed — on the caret's
   line it is raw, so the flicker is on the lines below, which is what
   every live preview does.
+
+## Built
+
+2026-09-23, one round, as decided but for these:
+
+- **A structure layer beside the syntax's (Decision 2, and Risk
+  one).** The runs alone cannot say which line is a fence's: tree-sitter-md
+  paints `code_fence_content` `@none`, so a fence's lines are either
+  unpainted or the injected language's, and a heading's `#` is
+  `Punctuation` like any other. So a grammar may carry a second query,
+  a *structure* query (`Grammar::with_structure`, captures
+  `@block.NAME`, a `Block` each: a code block, a fence and its info, a
+  table with its header and delimiter row, a quote's `>`, a bullet, an
+  ordered marker, a task's box, a heading by level, a setext underline,
+  a rule, verbatim HTML), painted by the ts thread from the same tree
+  into the `structure` layer in the same answer — one parse, no second
+  parser. The inline marks are still read off the syntax's runs, byte
+  by byte.
+- **Row heights from kui's layout, a frame behind (Decision 4).** Each
+  rendered row is keyed and declares `on_layout`; its height is read
+  back with `layout_of` the next frame (`Kawoosh::md_heights`), the
+  pane follows the caret by those heights (`md_follow`, a row not seen
+  yet at the body's), and a row that measured otherwise than the
+  scroll assumed asks for a frame more. The first headless check found
+  a real defect of the plan: an overflowing column compresses its
+  children toward their floors, so a wrapped row was squeezed back to
+  its first lines until it said `min_height = fit`.
+- **The line number is in the row.** A gutter column of fixed rows
+  cannot sit beside rows of their own heights; each rendered row
+  carries its number in a `Role::None` cell, which kui's line bytes
+  do not count.
+- **No horizontal scroll, and code wraps by glyph.** A rendered pane's
+  rows are the pane's width; prose wraps by word, a code block's lines
+  by glyph (cut, a line would be lost off the edge), and a table not at
+  all (its rows are clipped: the alignment is the point).
+- **The bar caret by `caret_rect`, as planned; no ghost.** The
+  completion's ghost is a node beside the text, and a wrapped row's
+  text is one paragraph; a rendered row draws none (`<C-x>` still lists
+  the candidates).
+- **Images on the io thread with the `image` crate**, already in the
+  tree through kui's clipboard (PNG, JPEG, GIF), capped by
+  `markdown.image_max_mb`, registered with kui on the next frame; a
+  URL, a path that does not read, or one still being read shows its
+  alt, dim.
+- **Tables and `gx` made the round**, as did `markdown.heading`.
+
+`kawoosh/src/markdown.rs`, the structure query in
+`languages/src/markdown.rs`, `Drawn::folded` and `RowForm` in
+`rows.rs`, `kawoosh/tests/markdown.rs` (the fixture
+`tests/fixtures/rendered.md`), and the renderer's unit tests.

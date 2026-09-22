@@ -188,6 +188,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `gh` `gl` | the line's ends (helix; `^` and `$` stay) |
 | `gsa` `gsd` `gsr` | surrounds: add, delete, replace (mini.surround's letters) |
 | `gd` | definition |
+| `gx` | open the link under the caret: a path here (a `.md` beside, a directory listed), a URL in the OS (`open link`) |
 | `gr` | references, as a locations list beside the code (`<CR>` opens one, `]q` walks them) |
 | `K` | hover (vim's, not `g`, but the same family) |
 | `<C-e>` | the diagnostic under the caret, whole, in a pane |
@@ -341,6 +342,7 @@ objects, or any other character on both sides.
 | `<leader>cc` | compile |
 | `<leader>ca` | the code actions at the caret (or over the selection) in a picker: searched by title, the kind beside it, what taking one does as the preview — its edit as a diff, a command it runs; `<CR>` takes it (`:lsp action N` runs the Nth, `kawoosh.lsp.actions()`) |
 | `<leader>cF` | format the buffer through its server |
+| `<leader>cr` | markdown drawn rendered or as its source (`markdown toggle`, the `markdown.render` setting for the session; [markdown.md](markdown.md)) |
 | `<leader>r` | rename the symbol: the prompt filled with `lsp rename WORD`, the name edited, `<CR>` |
 | `<leader>D` | the type definition |
 | `<leader>x` | evaluate the line (the selection, in visual mode) as Lua; the result on the status line, or in a pane when it has lines |
@@ -431,8 +433,6 @@ so that nothing else takes the key meanwhile.
 | `<leader>y*` | copy the path, the directory, the name |
 | `<leader>G*` | the debugger |
 | `<C-w>H` `<C-w>L` | move a column in a scrolling tab ([scrolling-tab.md](scrolling-tab.md)); unbound in a tree |
-| `<leader>cr` | render the markdown buffer, toggled ([markdown.md](markdown.md)) |
-| `gx` | open the link under the caret: a path here, a URL in the OS ([markdown.md](markdown.md)) |
 
 ## Not done, deliberately
 

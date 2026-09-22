@@ -532,6 +532,90 @@ impl Drawn {
         }
     }
 
+    /// `src` drawn with `folds` — source ranges drawn as something else,
+    /// ascending and disjoint: `""` hides the bytes, `"•"` stands in for
+    /// a list's `-` — the rest expanded as [`Drawn::new`] does. A folded
+    /// range's bytes all map to where its stand-in starts, and its
+    /// stand-in's bytes to the range's start, so a click on a `•` lands
+    /// on the `-` and a hidden `**` is where the text after it begins.
+    /// The markdown buffer's fold table (docs/design/markdown.md
+    /// Decision 2); with no folds it is `new`.
+    pub fn folded(src: &str, folds: &[(Range<usize>, String)], tabstop: usize) -> Self {
+        let mut text = String::with_capacity(src.len());
+        let mut to_src = Vec::with_capacity(src.len() + 1);
+        let mut to_drawn = vec![0; src.len() + 1];
+        let mut escapes = Vec::new();
+        let mut col = 0;
+        let mut folds = folds.iter().peekable();
+        let mut i = 0;
+        while i < src.len() {
+            if let Some((r, with)) = folds.peek()
+                && r.start <= i
+            {
+                let (start, end) = (r.start.max(i), r.end.min(src.len()).max(i));
+                to_drawn[start..end].fill(text.len());
+                for _ in 0..with.len() {
+                    to_src.push(start);
+                }
+                text.push_str(with);
+                col += with.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>();
+                folds.next();
+                if end > i {
+                    i = end;
+                }
+                continue;
+            }
+            let c = src[i..].chars().next().unwrap_or(' ');
+            for k in 0..c.len_utf8() {
+                to_drawn[i + k] = text.len();
+            }
+            if c == '\t' {
+                let n = tabstop - (col % tabstop);
+                for _ in 0..n {
+                    to_src.push(i);
+                    text.push(' ');
+                }
+                col += n;
+            } else if let Some(esc) = escape_of(c) {
+                let start = text.len();
+                for _ in 0..esc.len() {
+                    to_src.push(i);
+                }
+                text.push_str(&esc);
+                escapes.push(start..text.len());
+                col += esc.len();
+            } else {
+                for _ in 0..c.len_utf8() {
+                    to_src.push(i);
+                }
+                text.push(c);
+                col += c.width().unwrap_or(0);
+            }
+            i += c.len_utf8();
+        }
+        // A fold at the very end (a heading's closing `#`s).
+        for (r, with) in folds {
+            if r.start >= src.len() {
+                for _ in 0..with.len() {
+                    to_src.push(src.len());
+                }
+                text.push_str(with);
+            }
+        }
+        to_drawn[src.len()] = text.len();
+        to_src.push(src.len());
+        Self {
+            text,
+            to_src,
+            to_drawn,
+            src_offset: 0,
+            escapes,
+            cols: col,
+            before_cols: 0,
+            after_cols: 0,
+        }
+    }
+
     /// The drawn byte for a line-relative source byte: the slice's start
     /// for one before it, its end for one past.
     pub fn to_drawn(&self, src_byte: usize) -> usize {
@@ -606,6 +690,59 @@ pub struct LineDraw<'a> {
     /// the cell width).
     pub before: f32,
     pub after: f32,
+    /// A rendered row's marks (the markdown buffer): weight, slant, a
+    /// link's underline, a colour, a code span's background.
+    pub marks: &'a [(Range<usize>, Mark)],
+    /// How the row is laid out, when not the plain one-line row.
+    pub form: Option<&'a RowForm>,
+}
+
+/// What a rendered row adds to a span's look, over the syntax's.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Mark {
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strike: bool,
+    pub color: Option<Color>,
+    pub bg: Option<Color>,
+}
+
+impl Mark {
+    /// `other` over this one: its flags added, its colours where it has
+    /// them.
+    fn with(self, other: Mark) -> Mark {
+        Mark {
+            bold: self.bold || other.bold,
+            italic: self.italic || other.italic,
+            underline: self.underline || other.underline,
+            strike: self.strike || other.strike,
+            color: other.color.or(self.color),
+            bg: other.bg.or(self.bg),
+        }
+    }
+}
+
+/// A row laid out otherwise than the plain one (the markdown buffer):
+/// its text at `scale` of the face, wrapped at `wrap` px, on a
+/// background, with its line number in the row — a row of its own
+/// height cannot share a gutter column of fixed ones — and keyed, so
+/// last frame's layout of it can be read back (`key`).
+#[derive(Clone, Debug)]
+pub struct RowForm {
+    pub key: String,
+    pub scale: f32,
+    pub wrap: Option<(f32, kui::TextWrap)>,
+    pub bg: Option<Color>,
+    /// The gutter's width, and its number and whether it is the caret's
+    /// line.
+    pub gutter: Option<(f32, usize, bool)>,
+    /// A rule across the row instead of text (`---`).
+    pub rule: bool,
+    /// An image instead of text, at its size in px.
+    pub image: Option<(kui::ImageId, f32, f32)>,
+    /// An image's alt, dim, while it is being read or when it cannot be.
+    pub alt: Option<String>,
 }
 
 /// The gutter cell for line `ln` (0-based), decoration rather than text.
@@ -629,10 +766,16 @@ pub fn gutter_row(ui: &mut Ui<'_>, face: Face, pal: &Pal, ln: usize, current: bo
 /// the row, and on the blink's off phase it stays and only its colour
 /// goes.
 fn caret_bar(ui: &mut Ui<'_>, color: Color, on: bool, x: f32, lh: f32) {
+    caret_bar_at(ui, color, on, x, 0.0, lh);
+}
+
+/// [`caret_bar`] on a visual line `y` px down the row — a wrapped
+/// row's.
+fn caret_bar_at(ui: &mut Ui<'_>, color: Color, on: bool, x: f32, y: f32, lh: f32) {
     let bar = NodeSpec::column()
         .width(Sizing::Fixed(2.0))
         .height(Sizing::Fixed(lh - 4.0))
-        .float(FloatConfig::parent().offset(x - 1.0, 2.0));
+        .float(FloatConfig::parent().offset(x - 1.0, y + 2.0));
     ui.with(if on { bar.bg(color) } else { bar }, |_| {});
 }
 
@@ -642,6 +785,7 @@ struct Look {
     color: Option<Color>,
     bg: Option<Color>,
     underline: Option<Color>,
+    mark: Mark,
 }
 
 /// One document line as a `Role::Line` row: its text is one `rich_text`
@@ -676,6 +820,10 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
         cuts.push(r.end.min(len));
     }
     for (r, _) in line.styled.iter().chain(line.underlined.iter()) {
+        cuts.push(r.start.min(len));
+        cuts.push(r.end.min(len));
+    }
+    for (r, _) in line.marks {
         cuts.push(r.start.min(len));
         cuts.push(r.end.min(len));
     }
@@ -732,11 +880,18 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
             .iter()
             .find(|(r, _)| r.start <= a && b <= r.end)
             .map(|(_, c)| *c);
+        let mark = line
+            .marks
+            .iter()
+            .filter(|(r, _)| r.start <= a && b <= r.end)
+            .fold(Mark::default(), |m, (_, k)| m.with(*k));
+        let color = mark.color.or(color);
         let look = if let Some(kind) = block {
             Look {
                 color: Some(pal.bg),
                 bg: Some(caret_bg(pal, kind)),
                 underline,
+                mark,
             }
         } else {
             Look {
@@ -748,9 +903,10 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
                 } else if hit {
                     Some(pal.command.with_alpha(0.35))
                 } else {
-                    None
+                    mark.bg
                 },
                 underline,
+                mark,
             }
         };
         match segs.last_mut() {
@@ -759,14 +915,38 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
         }
     }
 
+    let form = line.form;
+    let scale = form.map_or(1.0, |f| f.scale);
+    let lh = lh * scale;
     // At least the pane's width, and as wide as its text: the floor is
     // what the lines column's horizontal scroll measures its content by.
-    let mut row = NodeSpec::row()
-        .width(Sizing::Grow(1.0))
-        .min_width(Min::FIT)
-        .height(Sizing::Fixed(lh))
-        .cross_align(Align::Center)
-        .role(Role::Line);
+    // A rendered row is the column's width and as tall as its text
+    // wraps to.
+    let mut row = match form {
+        Some(f) => {
+            let mut r = NodeSpec::row()
+                .width(Sizing::Grow(1.0))
+                .height(Sizing::Fit)
+                // Its own height, never squeezed: the lines column
+                // overflows at the bottom (the clip takes the last rows),
+                // and a column compresses its children toward their
+                // floors when it does.
+                .min_height(Min::FIT)
+                .cross_align(Align::Start)
+                .role(Role::Line)
+                .on_layout(kui::Value::map([("kind", "mdrow".into())]));
+            if let Some(bg) = f.bg {
+                r = r.bg(bg);
+            }
+            r
+        }
+        None => NodeSpec::row()
+            .width(Sizing::Grow(1.0))
+            .min_width(Min::FIT)
+            .height(Sizing::Fixed(lh))
+            .cross_align(Align::Center)
+            .role(Role::Line),
+    };
     if let Some(c) = line.access.0 {
         row = row.caret(c);
         if line.carets.iter().any(|(_, k)| *k != Caret::Bar) {
@@ -781,8 +961,71 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
             ui.with(NodeSpec::row().width(Sizing::Fixed(w)), |_| {});
         }
     };
-    ui.with(row, |ui| {
-        let base = mono(face, pal);
+    let body = |ui: &mut Ui<'_>| {
+        let mut base = mono(face, pal);
+        if let Some(f) = form {
+            base = TextStyle::new(face.size * f.scale)
+                .mono()
+                .line_height(lh)
+                .features(face.features)
+                .color(pal.fg)
+                .wrap(f.wrap.map_or(kui::TextWrap::None, |w| w.1));
+            if let Some(id) = face.id {
+                base = base.font(id);
+            }
+            // The line's number, in the row: decoration, not text.
+            if let Some((w, ln, current)) = f.gutter {
+                ui.with(
+                    NodeSpec::row()
+                        .width(Sizing::Fixed(w))
+                        .height(Sizing::Fixed(lh))
+                        .pad_xy(GUTTER_PAD, 0.0)
+                        .main_align(Align::End)
+                        .cross_align(Align::Center)
+                        .role(Role::None),
+                    |ui| {
+                        let color = if current { pal.dim } else { pal.faint };
+                        ui.text(&format!("{}", ln + 1), mono(face, pal).color(color));
+                    },
+                );
+            }
+            if let Some((id, w, h)) = f.image {
+                ui.image(
+                    id,
+                    NodeSpec::column()
+                        .width(Sizing::Fixed(w))
+                        .height(Sizing::Fixed(h)),
+                );
+                return;
+            }
+            if let Some(alt) = &f.alt {
+                ui.with(NodeSpec::row().role(Role::None), |ui| {
+                    ui.text(&format!("🖼 {alt}"), mono(face, pal).color(pal.dim));
+                });
+                return;
+            }
+            if f.rule {
+                ui.with(
+                    NodeSpec::row()
+                        .width(Sizing::Grow(1.0))
+                        .height(Sizing::Fixed(lh))
+                        .cross_align(Align::Center)
+                        .role(Role::None),
+                    |ui| {
+                        ui.with(
+                            NodeSpec::row()
+                                .width(Sizing::Grow(1.0))
+                                .height(Sizing::Fixed(1.0))
+                                .bg(pal.border),
+                            |_| {},
+                        );
+                    },
+                );
+                return;
+            }
+        }
+        let text_w = form.and_then(|f| f.wrap).map(|w| w.0);
+        let text_key: std::cell::Cell<Option<kui::Key>> = std::cell::Cell::new(None);
         spacer(ui, before);
         let flush = |ui: &mut Ui<'_>, segs: &[(Range<usize>, Look)]| {
             if segs.is_empty() {
@@ -793,6 +1036,8 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
             if let [(r, l)] = segs
                 && l.bg.is_none()
                 && l.underline.is_none()
+                && l.mark == Mark::default()
+                && text_w.is_none()
             {
                 let style = match l.color {
                     Some(c) => base.color(c),
@@ -816,13 +1061,47 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
                             .underline()
                             .underline_color(c)
                             .underline_style(kui::UnderlineStyle::Wavy);
+                    } else if l.mark.underline {
+                        s = s.underline();
+                    }
+                    if l.mark.bold {
+                        s = s.bold();
+                    }
+                    if l.mark.italic {
+                        s = s.italic();
+                    }
+                    if l.mark.strike {
+                        s = s.strikethrough();
                     }
                     s
                 })
                 .collect();
-            ui.rich_text(&spans, base);
+            match text_w {
+                // A wrapped text needs its width: the row's, less what
+                // sits before it. Its key is kept for the bar caret,
+                // which is placed where kui laid the byte out.
+                Some(w) => {
+                    ui.with_keyed(
+                        "text",
+                        NodeSpec::row()
+                            .width(Sizing::Fixed(w.max(1.0)))
+                            .height(Sizing::Fit)
+                            .min_height(Min::FIT),
+                        |ui| {
+                            text_key.set(Some(ui.child_key_index(0)));
+                            ui.rich_text(&spans, base)
+                        },
+                    );
+                }
+                None => ui.rich_text(&spans, base),
+            }
         };
-        let ghost = line.ghost.map(|(b, g)| (b.min(len), g));
+        // A rendered row draws no ghost: its text wraps as one
+        // paragraph, and a ghost is a node of its own beside the text.
+        let ghost = line
+            .ghost
+            .filter(|_| text_w.is_none())
+            .map(|(b, g)| (b.min(len), g));
         match ghost {
             Some((g, ghost_text)) => {
                 let at = segs.partition_point(|(r, _)| r.end <= g);
@@ -842,6 +1121,24 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
                 continue;
             }
             let cb = r.start.min(len);
+            // A wrapped row's: where kui laid the byte out last frame,
+            // against where it laid the first — the frame that types
+            // is a frame behind, and the next catches up.
+            if text_w.is_some() {
+                let gutter = form.and_then(|f| f.gutter).map_or(0.0, |g| g.0);
+                let placed = text_key
+                    .get()
+                    .and_then(|k| Some((ui.caret_rect(k, cb)?, ui.caret_rect(k, 0)?)));
+                let (x, y) = match placed {
+                    Some((at, origin)) => (gutter + at.x - origin.x, at.y - origin.y),
+                    None => (
+                        gutter + ui.measure_text(&text[..cb], &base, None).width,
+                        0.0,
+                    ),
+                };
+                caret_bar_at(ui, pal.accent, line.caret_on, x, y, lh);
+                continue;
+            }
             let mut x = before + ui.measure_text(&text[..cb], &base, None).width;
             if let (Some((g, _)), Some(w)) = (ghost, ghost_w)
                 && cb > g
@@ -893,7 +1190,15 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
             );
         }
         spacer(ui, after);
-    });
+    };
+    match form {
+        Some(f) => {
+            ui.with_keyed(&f.key, row, body);
+        }
+        None => {
+            ui.with(row, body);
+        }
+    }
 }
 
 /// The cell column byte `b` of `s` starts at, by `unicode-width` — what a

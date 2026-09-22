@@ -24,6 +24,7 @@ pub mod listing;
 pub mod logger;
 pub mod look;
 pub mod lsp;
+pub mod markdown;
 pub mod memory;
 pub mod moments;
 pub mod nodes;

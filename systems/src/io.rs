@@ -49,6 +49,12 @@ pub enum IoMsg {
         token: u64,
         result: Result<Vec<String>, String>,
     },
+    /// An image read and decoded for the markdown buffer: its pixels as
+    /// RGBA8 and its size, or why not.
+    Image {
+        path: PathBuf,
+        result: Result<(u32, u32, Vec<u8>), String>,
+    },
     /// A file being opened ([`Io::open_file`]): the bytes indexed so far.
     Opening {
         path: PathBuf,
@@ -420,4 +426,22 @@ pub fn send_request(path: &std::path::Path, request: &Request) -> std::io::Resul
     let mut reply = String::new();
     reader.read_line(&mut reply)?;
     Ok(reply.trim().to_string())
+}
+
+/// An image file read and decoded to RGBA8 — PNG, JPEG, GIF's first
+/// frame — refused past `max` bytes on disk.
+pub fn decode_image(path: &std::path::Path, max: u64) -> Result<(u32, u32, Vec<u8>), String> {
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if meta.len() > max {
+        return Err(format!("{} MB, past the cap", meta.len() >> 20));
+    }
+    let img = image::ImageReader::open(path)
+        .map_err(|e| e.to_string())?
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?
+        .decode()
+        .map_err(|e| e.to_string())?
+        .to_rgba8();
+    let (w, h) = img.dimensions();
+    Ok((w, h, img.into_raw()))
 }

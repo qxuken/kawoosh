@@ -116,6 +116,14 @@ pub struct Kawoosh {
     /// The pane being made, while a launcher asks what it is for
     /// (`launcher.rs`).
     pub launcher: Option<crate::launcher::Launcher>,
+    /// The markdown buffer's images, by path, and the ones read since
+    /// the last frame, for kui to register (`markdown.rs`).
+    pub(crate) md_images: crate::markdown::Images,
+    pub(crate) md_pending: Vec<(PathBuf, crate::markdown::Pixels)>,
+    /// Each rendered row's height as kui laid it out, by view and line:
+    /// what the rendered pane scrolls by, a row being as tall as its
+    /// text wraps to.
+    pub(crate) md_heights: HashMap<ViewId, HashMap<usize, f32>>,
     /// A devtools tab to show on the next frame — `:syntax_tree` asks
     /// for the syntax tab. Once, not every frame: kui's
     /// `set_devtools_tab` is edge-triggered, so a standing request would
@@ -269,6 +277,9 @@ impl Kawoosh {
             keys_help: None,
             lua_fact: None,
             launcher: None,
+            md_images: Default::default(),
+            md_pending: Vec::new(),
+            md_heights: HashMap::new(),
             show_tab: None,
             tab_shown: None,
             settings_default_open: false,
@@ -524,6 +535,10 @@ impl Kawoosh {
                         rt.listed(token, result);
                         self.drain_lua();
                     }
+                }
+                IoMsg::Image { path, result } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    self.image_decoded(path, result);
                 }
                 IoMsg::Walked { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
@@ -1404,7 +1419,18 @@ impl Kawoosh {
             width,
             cell_w: self.cell.0,
         };
-        let (drawn, _) = Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0, None);
+        // A rendered row maps back through the fold it was drawn with —
+        // the caret's lines raw, as the frame drew them.
+        let drawn = if self.markdown_rendered(self.ed.views[view].buffer) {
+            let raw = self.ed.views[view]
+                .sels
+                .iter()
+                .any(|s| buf.line_of(s.head) == ln);
+            let style = self.markdown_style(self.dark);
+            crate::markdown::line(buf, ln, raw, &style, tabstop, &mut HashMap::new()).drawn
+        } else {
+            Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0, None).0
+        };
         let off = (range.start + drawn.to_src(byte.max(0) as usize)).min(range.end);
         let word = motions::word_at(buf, off);
         match phase {
@@ -1748,6 +1774,7 @@ impl kui::App for Kawoosh {
         self.sync_term_palettes();
         self.sync_term_settings();
         self.spawn_pending();
+        self.register_images(ui);
         let pal = self.pal;
         if self.devtools_synced.is_some_and(|s| s != self.devtools) {
             ui.core().set_devtools(self.devtools);

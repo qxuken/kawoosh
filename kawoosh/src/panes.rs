@@ -5,6 +5,7 @@
 //! and the scrolling tab (scrolling-tab.md) as a `scroll_x` row of
 //! columns that slide.
 
+use std::collections::HashMap;
 use std::ops::Range;
 
 use kawoosh_editor::search;
@@ -265,6 +266,8 @@ impl Kawoosh {
                 ghost: ghost.map(|g| (clip(primary.head), g)),
                 before: 0.0,
                 after: 0.0,
+                marks: &[],
+                form: None,
             },
         );
     }
@@ -974,9 +977,16 @@ impl Kawoosh {
         let linewise = self.ed.views[view].visual_linewise;
         let blink_on = ui.caret_visible();
         let buf_id = self.ed.views[view].buffer;
+        // The markdown buffer drawn rendered (markdown.md): its rows are
+        // as tall as they wrap to, so it scrolls by what they measured.
+        let md = self.markdown_rendered(buf_id);
+        let mut md_last = None;
+        if md {
+            md_last = Some(self.md_follow(view, height, focused));
+        }
 
         // Scroll the caret into view — a few lines, in the app.
-        {
+        if !md {
             let line_count = self.ed.buffers[buf_id].line_count();
             let head_line =
                 self.ed.buffers[buf_id].line_of(self.ed.views[view].sels.primary().head);
@@ -1002,6 +1012,42 @@ impl Kawoosh {
             v.top = v.top.min(line_count.saturating_sub(1));
         }
 
+        // The rendered rows, worked out before the frame borrows the
+        // buffer — an image among them is asked for here — each with
+        // the image it shows when it is one and it has been read.
+        let mut md_rows: HashMap<usize, crate::markdown::Ahead> = HashMap::new();
+        if let Some(last) = md_last {
+            let style = self.markdown_style(ui.theme().is_dark());
+            let v = &self.ed.views[view];
+            let buf = &self.ed.buffers[buf_id];
+            let raw: std::collections::HashSet<usize> =
+                v.sels.iter().map(|s| buf.line_of(s.head)).collect();
+            let mut tables = HashMap::new();
+            for ln in v.top..last {
+                let r =
+                    crate::markdown::line(buf, ln, raw.contains(&ln), &style, tabstop, &mut tables);
+                md_rows.insert(ln, (r, None));
+            }
+            let dir = buf
+                .path
+                .as_ref()
+                .and_then(|p| p.parent())
+                .map(|p| p.to_path_buf());
+            let wanted: Vec<(usize, String)> = md_rows
+                .iter()
+                .filter_map(|(ln, (r, _))| Some((*ln, r.image.as_ref()?.0.clone())))
+                .collect();
+            for (ln, dest) in wanted {
+                if let Some(crate::markdown::Image::Ready { id, w, h }) =
+                    self.markdown_image(dir.as_deref(), &dest)
+                {
+                    let (id, w, h) = (*id, *w as f32, *h as f32);
+                    if let Some(e) = md_rows.get_mut(&ln) {
+                        e.1 = Some((id, w, h));
+                    }
+                }
+            }
+        }
         let v = &self.ed.views[view];
         let buf = &self.ed.buffers[buf_id];
         let search = self
@@ -1032,8 +1078,8 @@ impl Kawoosh {
             )
             && self.ed.prompt_from() == Some(view);
         let top = v.top;
-        let mut left = v.left;
-        let last = (top + rows_n).min(buf.line_count());
+        let mut left = if md { 0.0 } else { v.left };
+        let last = md_last.unwrap_or((top + rows_n).min(buf.line_count()));
         let sels = &v.sels;
         let primary = sels.primary();
         let cur_line = buf.line_of(primary.head);
@@ -1082,7 +1128,7 @@ impl Kawoosh {
         // the way `top` follows it down — before the rows, which are
         // sliced to the window this lands on. A long line's caret is
         // placed by column, as its slice is.
-        if self.follow_caret || !focused {
+        if (self.follow_caret || !focused) && !md {
             let range = buf.line_range(cur_line);
             let head_rel = primary.head.clamp(range.start, range.end) - range.start;
             let window = Window {
@@ -1128,6 +1174,7 @@ impl Kawoosh {
             }
         }
 
+        let mut md_seen: Vec<(usize, f32)> = Vec::new();
         let sink = ui.with_keyed(
             "editor",
             NodeSpec::row()
@@ -1141,31 +1188,39 @@ impl Kawoosh {
                 .role(Role::MultilineTextInput)
                 .label(title.as_str()),
             |ui| {
-                ui.with(
-                    NodeSpec::column()
-                        .width(Sizing::Fixed(gutter))
-                        .height(Sizing::Grow(1.0))
-                        .pad_xy(12.0, 0.0)
-                        .role(Role::None),
-                    |ui| {
-                        for ln in top..last {
-                            rows::gutter_row(ui, font, &pal, ln, ln == cur_line);
-                        }
-                    },
-                );
+                // A rendered pane's numbers are in its rows, each as tall
+                // as its row.
+                if !md {
+                    ui.with(
+                        NodeSpec::column()
+                            .width(Sizing::Fixed(gutter))
+                            .height(Sizing::Grow(1.0))
+                            .pad_xy(12.0, 0.0)
+                            .role(Role::None),
+                        |ui| {
+                            for ln in top..last {
+                                rows::gutter_row(ui, font, &pal, ln, ln == cur_line);
+                            }
+                        },
+                    );
+                }
                 // The column scrolls sideways under a line wider than the
                 // pane, at an offset the view owns (`left`, as `top`):
                 // the wheel over it reaches the app through `on_scroll`
                 // — a kui scroll container under the pointer would take
                 // the notch itself, both axes, and `top` would never
                 // hear it — and the app hands the offset back each frame.
+                let lines_spec = NodeSpec::column()
+                    .width(Sizing::Grow(1.0))
+                    .height(Sizing::Grow(1.0))
+                    .on_scroll(tag.clone());
                 let lines = ui.with_keyed(
                     "lines",
-                    NodeSpec::column()
-                        .width(Sizing::Grow(1.0))
-                        .height(Sizing::Grow(1.0))
-                        .scroll_x()
-                        .on_scroll(tag.clone()),
+                    if md {
+                        lines_spec.clip()
+                    } else {
+                        lines_spec.scroll_x()
+                    },
                     |ui| {
                         for ln in top..last {
                             let range = buf.line_range(ln);
@@ -1174,16 +1229,34 @@ impl Kawoosh {
                                 width,
                                 cell_w,
                             };
-                            let index = (range.len() >= rows::LONG_LINE_BYTES)
-                                .then(|| cells.get(buf_id, buf, &range, tabstop));
-                            let (drawn, _) = Drawn::for_line(
-                                buf,
-                                range.clone(),
-                                tabstop,
-                                Some(window),
-                                0,
-                                index,
-                            );
+                            let md_row = md_rows.remove(&ln);
+                            let (drawn, md_row) = match md_row {
+                                Some((r, img)) => {
+                                    let crate::markdown::Rendered {
+                                        drawn,
+                                        marks,
+                                        scale,
+                                        code,
+                                        rule,
+                                        image,
+                                        wrap,
+                                    } = r;
+                                    (drawn, Some((marks, scale, code, rule, image, wrap, img)))
+                                }
+                                None => {
+                                    let index = (range.len() >= rows::LONG_LINE_BYTES)
+                                        .then(|| cells.get(buf_id, buf, &range, tabstop));
+                                    let (drawn, _) = Drawn::for_line(
+                                        buf,
+                                        range.clone(),
+                                        tabstop,
+                                        Some(window),
+                                        0,
+                                        index,
+                                    );
+                                    (drawn, None)
+                                }
+                            };
                             let clip = |o: usize| {
                                 drawn.to_drawn(o.clamp(range.start, range.end) - range.start)
                             };
@@ -1293,6 +1366,43 @@ impl Kawoosh {
                                 .as_deref()
                                 .filter(|_| ln == cur_line)
                                 .map(|g| (clip(primary.head), g));
+                            // A rendered row: its form — its size, its
+                            // wrap at the column's width less its number,
+                            // the code's panel, a rule, an image.
+                            let label = format!("md{ln}");
+                            let (marks, form) = match &md_row {
+                                Some((marks, scale, code, rule, image, wrap, img)) => {
+                                    if let Some(r) = ui.layout_of(ui.child_key(&label)) {
+                                        md_seen.push((ln, r.h));
+                                    }
+                                    let form = rows::RowForm {
+                                        key: label.clone(),
+                                        scale: *scale,
+                                        wrap: Some(((width - gutter).max(40.0), *wrap)),
+                                        bg: code.then_some(pal.strip),
+                                        gutter: Some((gutter, ln, ln == cur_line)),
+                                        rule: *rule,
+                                        image: match (image, img) {
+                                            (Some(_), Some((id, w, h))) => {
+                                                let max_w = (width - gutter - 16.0).max(40.0);
+                                                let s = (max_w / w).min(1.0);
+                                                Some((*id, w * s, h * s))
+                                            }
+                                            _ => None,
+                                        },
+                                        alt: match (image, img) {
+                                            (Some((dest, alt)), None) => Some(if alt.is_empty() {
+                                                dest.clone()
+                                            } else {
+                                                alt.clone()
+                                            }),
+                                            _ => None,
+                                        },
+                                    };
+                                    (marks.as_slice(), Some(form))
+                                }
+                                None => (&[][..], None),
+                            };
                             rows::emit_line(
                                 ui,
                                 font,
@@ -1312,6 +1422,8 @@ impl Kawoosh {
                                     ghost: ghost_here,
                                     before: drawn.before_cols as f32 * cell_w,
                                     after: drawn.after_cols as f32 * cell_w,
+                                    marks,
+                                    form: form.as_ref(),
                                 },
                             );
                         }
@@ -1320,14 +1432,32 @@ impl Kawoosh {
                 // The offset lands in this frame's positions; the clamp
                 // is against last frame's content (a resize is one frame
                 // late), and what the wheel pushed past it comes back.
-                if let Some(geo) = ui.scroll_geometry(lines) {
-                    left = left.min(geo.max_offset.x);
+                if !md {
+                    if let Some(geo) = ui.scroll_geometry(lines) {
+                        left = left.min(geo.max_offset.x);
+                    }
+                    ui.set_scroll(lines, Vec2::new(left, 0.0));
                 }
-                ui.set_scroll(lines, Vec2::new(left, 0.0));
             },
         );
         self.ed.views[view].left = left;
         self.line_cells = cells;
+        // The rendered rows' heights as kui laid them out last frame: a
+        // row that measured otherwise than the pane scrolled by asks
+        // for a frame more, which scrolls by what it measured.
+        if md {
+            let known = self.md_heights.entry(view).or_default();
+            let mut moved = false;
+            for (ln, h) in md_seen {
+                if known.get(&ln).is_none_or(|k| (k - h).abs() > 0.5) {
+                    moved = true;
+                }
+                known.insert(ln, h);
+            }
+            if moved {
+                ui.request_frame();
+            }
+        }
         if focused {
             self.focus_sink(ui, sink);
         }

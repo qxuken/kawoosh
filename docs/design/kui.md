@@ -1043,7 +1043,10 @@ columns, neither of which the plain pane has. *Decided 2026-09-21 in
 [markdown.md](markdown.md), which found the kui half already there: a
 row is one `rich_text` with its own size, a span has its weight (C22),
 and what the buffer pulls in from kui is wrap on its rows and the
-`image` node; the fold is kawoosh's.*
+`image` node; the fold is kawoosh's. Built 2026-09-23 (roadmap step
+17): the runs were not enough on their own — a fence's content is
+`@none` — so the same tree paints a structure layer beside them
+(markdown.md's "Built").*
 
 ### Deliberately not in the MVP
 

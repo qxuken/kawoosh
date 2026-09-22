@@ -3072,6 +3072,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>cc", "compile"),
         ("<leader>ca", "lsp action"),
         ("<leader>cF", "lsp format"),
+        ("<leader>cr", "markdown toggle"),
+        ("gx", "open link"),
         ("<leader>r", "lsp rename"),
         ("<leader>D", "lsp type definition"),
         ("<leader>u", "undo history"),
