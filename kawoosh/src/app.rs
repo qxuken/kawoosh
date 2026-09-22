@@ -166,10 +166,9 @@ pub struct Kawoosh {
     /// under it.
     pub(crate) pane_drag: Option<(PaneId, f32, f32)>,
     pub(crate) body_h: f32,
-    /// The strip's focus as last drawn — the tab, the pane and its
-    /// column — so the frame it changes on reveals the column
-    /// (`render_strip`).
-    pub(crate) strip_seen: Option<(usize, PaneId, usize)>,
+    /// The strip's shape as last drawn, so the frame it changes on
+    /// reveals the focused column (`render_strip`).
+    pub(crate) strip_seen: Option<crate::panes::StripShape>,
     /// Frames left on which the focused column is revealed again.
     pub(crate) strip_settling: u8,
     /// Every column drawn so far, by number, so a column arriving in a

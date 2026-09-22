@@ -217,29 +217,40 @@ departed from the text above, and what day one found:
   from panes) for its drawn key, so the column keeps its slide, enter
   and exit whatever its panes do — a stack's top pane closing does not
   make a "new" column.
-- **The entrance is a third of the width, with a fade**, not the whole
-  width: kui hears no key for a sink outside the viewport (its hit
-  regions are the clipped ones), so a column that started wholly off it
-  would drop the keystroke typed during its 200ms slide. A third keeps
-  it partly in view from the first frame. The strip's first frame — a
+- **One event, one motion** (found 2026-09-22 in use: columns gliding
+  at different speeds, a wobble under `<A-S-l>`, a column widened at
+  the right edge growing past it). A column is a sliding wrapper of
+  `Fit` width around a box of `Fixed` width, so a width change snaps —
+  the wrapper has no width slot for the `transition` to ease — and
+  only positions glide: `<C-w>l`, `<C-w>L` and `<A-S-l>` each move
+  every column by its own delta in one frame, on one leg of the same
+  tween, in lockstep. (A width easing retargeted the neighbours'
+  slides every frame, each on a fresh 200ms leg: the wobble; and an
+  entrance offset travelled a different distance than the ribbon's
+  reveal: the speeds.) A column arriving does not glide: the ribbon
+  jumps to it and it fades in — which also keeps every key, since kui
+  hears none for a sink wholly outside the viewport (its hit regions
+  are the clipped ones), and a column that started off it would drop
+  the keystroke typed during a slide. Nothing slides under a gap drag,
+  where the pointer is the motion. The strip's first frame — a
   conversion, a restore, a tab switched to — snaps: those columns are
   not arriving (`Kawoosh::strip_known`).
-- **The reveal is asked again for sixteen frames** after the focus
-  moved (`strip_settling`), not once: a width still easing (`<A-S-l>`
-  then `<C-w>v` inside 200ms) lays the ribbon out shorter on the focus
-  frame than it ends up, and a column revealed against that frame
-  drifts out of view as it grows. A reveal of a column in view is a
-  no-op, so a swipe is fought only inside that quarter second.
-  `Ui::reveal` on a node declared the same frame works (the first risk
-  above did not materialise), and leaves a 4px margin, so the column
-  beside shows as a sliver when the ribbon has room — a hint that
-  there is more.
-- **The glide is free**: `slide` on a column eases its drawn position,
-  and a scroll offset change is a position change, so `<C-w>l` glides
-  the ribbon over 200ms with nothing written for it. A key typed inside
-  the glide at a column that is still wholly off the viewport is
-  dropped by kui (the same limitation as the entrance); a hand's own
-  pace is slower than that.
+- **The reveal answers the strip's shape, not only the focus**
+  (`StripShape`: the tab, the focus and its column, the columns' order
+  and widths), asked on the frame it changed and the two after, so a
+  column widened at the viewport's right edge comes wholly into view
+  rather than growing past it, and a tab moved along the tab strip (a
+  new key) is revealed again. Not under a gap drag: the offset moving
+  under the pointer would feed the width it measures. `Ui::reveal` on
+  a node declared the same frame works (the first risk above did not
+  materialise), and leaves a 4px margin, so the column beside shows as
+  a sliver when the ribbon has room — a hint that there is more.
+- **The glide is free**: `slide` on the wrapper eases its drawn
+  position, and a scroll offset change is a position change, so
+  `<C-w>l` glides the ribbon over 200ms with nothing written for it. A
+  key typed inside the glide at a column still wholly off the viewport
+  is dropped by kui (the limitation above); a hand's own pace is
+  slower than that.
 - **A width step that would not be seen is not a step**: a `Ratio`
   snaps to the nearest preset first, and the snap counts as the step
   only when it moves the column by more than 4% of the viewport in the

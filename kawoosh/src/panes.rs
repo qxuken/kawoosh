@@ -17,9 +17,19 @@ use crate::terminals::TermId;
 use kawoosh_systems::lsp::DIAG_LAYER;
 use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
 
-/// Frames after a strip's focus moved on which the focused column is
-/// revealed again, so a layout still easing lands it in view.
-const STRIP_SETTLING: u8 = 16;
+/// Frames on which the focused column is revealed after the strip's
+/// shape changed: the one it changed on and two more.
+const STRIP_SETTLING: u8 = 3;
+
+/// A strip as last drawn, as far as a reveal cares: the tab, the
+/// focus and its column, the columns' order and widths in px.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StripShape {
+    pub tab: usize,
+    pub focused: PaneId,
+    pub column: Option<usize>,
+    pub columns: Vec<(u64, u32)>,
+}
 
 impl Kawoosh {
     // ------------------------------------------------------------ view
@@ -428,20 +438,29 @@ impl Kawoosh {
     /// The strip (scrolling-tab.md Decisions 3 and 4): one `scroll_x`
     /// row per tab — keyed by the tab, so each keeps the offset kui
     /// retains for it — a keyed column per `Column` at its width in
-    /// viewport fractions, a draggable gap between. A column new to a
-    /// strip already on show slides in from the right and fades up — a
-    /// third of its width, not the whole: kui drops a key to a sink
-    /// outside the viewport, and a column that started wholly off it
-    /// would lose the keystroke typed into it during the slide — and a
-    /// moved or resized one glides. A closed one goes at once: an
-    /// `exit` fade would replay on a tab switch too (kui plays a ghost
-    /// whether or not its ancestors survived), as the columns of the
-    /// tab left fading over the tab arrived at. The strip's first frame
-    /// (a conversion, a restore) snaps: those columns are not arriving.
-    /// On the frame the focus lands in another column — a move, an
-    /// insert, a click, a tab switched to or moved — the focused column
-    /// is revealed (or centred, under `layout.scroll.center`), and the
-    /// offset is otherwise kui's, so a swipe is never fought.
+    /// viewport fractions, a draggable gap between.
+    ///
+    /// One event, one motion. A column is a sliding wrapper of `Fit`
+    /// width around a box of `Fixed` width: the wrapper's `slide` eases
+    /// its position, and a width change snaps, since the wrapper has
+    /// no width slot to ease — so `<C-w>l`, `<C-w>L` and `<A-S-l>` each
+    /// move every column by its own delta in one frame, on one leg of
+    /// the same tween, in lockstep. (A width easing would retarget the
+    /// neighbours' slides every frame, each on a fresh leg: the wobble.)
+    /// A column arriving does not glide: the ribbon jumps to it and it
+    /// fades in — an entrance offset would travel a different distance
+    /// than the ribbon, and a column wholly off the viewport hears no
+    /// key in kui. Nothing slides under a gap drag either, where the
+    /// pointer is the motion. A closed column goes at once: an `exit`
+    /// fade would replay on a tab switch too (kui plays a ghost whether
+    /// or not its ancestors survived). The strip's first frame (a
+    /// conversion, a restore) snaps: those columns are not arriving.
+    ///
+    /// On a frame the strip's shape changed — the focus, the order, a
+    /// width, the tab — the focused column is revealed (or centred,
+    /// under `layout.scroll.center`), so a column widened at the right
+    /// edge comes wholly into view; the offset is otherwise kui's, so a
+    /// swipe is never fought.
     pub(crate) fn render_strip(&mut self, ui: &mut Ui<'_>, strip: &Strip) {
         let pal = self.pal;
         let vw = ui.viewport().w.max(1.0);
@@ -459,6 +478,12 @@ impl Kawoosh {
             .columns
             .iter()
             .any(|c| self.strip_known.contains(&c.id));
+        let arriving = on_show
+            && strip
+                .columns
+                .iter()
+                .any(|c| !self.strip_known.contains(&c.id));
+        let sliding = !arriving && self.dragging.is_none();
         let mut focus_key = None;
         let tab = self.layout.tab;
         let row = ui.with_keyed(
@@ -471,16 +496,20 @@ impl Kawoosh {
             |ui| {
                 for (i, col) in strip.columns.iter().enumerate() {
                     let px = widths[i];
-                    let mut spec = NodeSpec::column()
-                        .width(Sizing::Fixed(px))
-                        .height(Sizing::Grow(1.0))
-                        .transition(200.0)
-                        .slide();
-                    if on_show && !self.strip_known.contains(&col.id) {
-                        spec = spec.enter(Enter::from((px / 3.0).min(160.0), 0.0).opacity(0.0));
+                    let mut wrap = NodeSpec::column().height(Sizing::Grow(1.0));
+                    if sliding {
+                        wrap = wrap.transition(200.0).slide();
                     }
-                    let key = ui.with_keyed(&format!("col{}", col.id), spec, |ui| {
-                        self.render_node(ui, &col.node, &format!("{i}/"))
+                    if arriving && !self.strip_known.contains(&col.id) {
+                        wrap = wrap.transition(200.0).enter(Enter::default().opacity(0.0));
+                    }
+                    let key = ui.with_keyed(&format!("col{}", col.id), wrap, |ui| {
+                        ui.with(
+                            NodeSpec::column()
+                                .width(Sizing::Fixed(px))
+                                .height(Sizing::Grow(1.0)),
+                            |ui| self.render_node(ui, &col.node, &format!("{i}/")),
+                        );
                     });
                     if Some(i) == fi {
                         focus_key = Some(key);
@@ -491,38 +520,47 @@ impl Kawoosh {
                         let active = ui.is_hovered(divider)
                             || ui.is_pressed(divider)
                             || self.dragging.as_deref() == Some(path.as_str());
-                        ui.with_keyed(
-                            &format!("gap{}", col.id),
-                            NodeSpec::column()
-                                .width(Sizing::Fixed(gap))
-                                .height(Sizing::Grow(1.0))
-                                .bg(if active { pal.accent } else { pal.border })
-                                .cursor(kui::CursorShape::EwResize)
-                                .slide()
-                                .on_drag(Value::map([
-                                    ("kind", "split".into()),
-                                    ("path", Value::str(&path)),
-                                    ("dir", "h".into()),
-                                ])),
-                            |_| {},
-                        );
+                        let mut bar = NodeSpec::column()
+                            .width(Sizing::Fixed(gap))
+                            .height(Sizing::Grow(1.0))
+                            .bg(if active { pal.accent } else { pal.border })
+                            .cursor(kui::CursorShape::EwResize)
+                            .on_drag(Value::map([
+                                ("kind", "split".into()),
+                                ("path", Value::str(&path)),
+                                ("dir", "h".into()),
+                            ]));
+                        if sliding {
+                            bar = bar.transition(200.0).slide();
+                        }
+                        ui.with_keyed(&format!("gap{}", col.id), bar, |_| {});
                     }
                 }
             },
         );
         self.strip_known.extend(strip.columns.iter().map(|c| c.id));
-        let seen = fi.map(|i| (tab, focused, i));
-        if seen != self.strip_seen {
-            self.strip_seen = seen;
+        // The strip's shape: what a reveal answers to.
+        let shape = StripShape {
+            tab,
+            focused,
+            column: fi,
+            columns: strip
+                .columns
+                .iter()
+                .zip(&widths)
+                .map(|(c, w)| (c.id, *w as u32))
+                .collect(),
+        };
+        if self.strip_seen.as_ref() != Some(&shape) {
+            self.strip_seen = Some(shape);
             self.strip_settling = STRIP_SETTLING;
         }
-        // The reveal is asked again for a few frames after the focus
-        // moved: a width still easing (`<A-S-l>` then `<C-w>v` inside
-        // 200ms) lays the ribbon out shorter on the focus frame than it
-        // ends up, and the column revealed against that frame drifts
-        // out of view as it grows. A reveal of a column in view is a
-        // no-op, so a swipe is fought only inside that quarter second.
-        if self.strip_settling > 0 {
+        // Asked on the frame the shape changed and the two after it,
+        // so the reveal reads a layout the `on_layout` events have
+        // caught up with; a reveal of a column in view is a no-op. Not
+        // under a gap drag: the offset moving under the pointer would
+        // feed the width it is measuring.
+        if self.strip_settling > 0 && self.dragging.is_none() {
             self.strip_settling -= 1;
             if let (Some(i), Some(key)) = (fi, focus_key) {
                 if center {

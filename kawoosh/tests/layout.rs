@@ -146,6 +146,29 @@ fn a_strip_scrolls_to_the_focus_and_reads_the_trees_keys_on_its_axis() {
     assert_eq!(columns(&app)[0].1, Width::Third);
     settle(&mut d, &mut app);
     assert!((app.layout.rects[&2].w - vw / 3.0).abs() < 8.0);
+    // A column widened at the right edge of the viewport comes wholly
+    // into view rather than growing past it.
+    ctrl_w(&mut d, &mut app, "l");
+    settle(&mut d, &mut app);
+    ctrl_w(&mut d, &mut app, "l");
+    settle(&mut d, &mut app);
+    assert_eq!(app.layout.focused(), 3);
+    let r = app.layout.rects[&3];
+    assert!(
+        r.x + r.w <= vw + 1.0 && r.x + r.w > vw - 40.0,
+        "at the right edge: {r:?}"
+    );
+    d.press(&mut app, "<A-S-l>");
+    assert_eq!(columns(&app)[2].1, Width::TwoThirds);
+    settle(&mut d, &mut app);
+    let r = app.layout.rects[&3];
+    assert!((r.w - vw * 2.0 / 3.0).abs() < 8.0, "{r:?}");
+    assert!(in_view(&d, &app, 3, vw), "widened into view: {r:?}");
+    ctrl_w(&mut d, &mut app, "h");
+    settle(&mut d, &mut app);
+    assert_eq!(app.layout.focused(), 1);
+    ctrl_w(&mut d, &mut app, "h");
+    settle(&mut d, &mut app);
     // Closing a column's last pane takes the column, the keyboard to
     // the column before.
     ctrl_w(&mut d, &mut app, "q");
