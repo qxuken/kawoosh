@@ -807,6 +807,20 @@ impl Kawoosh {
                 continue;
             }
             if let Some(n) = key.strip_prefix("scratch:").and_then(|n| n.parse().ok()) {
+                // An empty scratch's row is nothing unsaved — its undo
+                // alone, left by a `:bd` before the row went with the
+                // buffer — and no pane claims it: it goes.
+                let empty = self
+                    .store
+                    .as_ref()
+                    .and_then(|s| s.load_history(&key))
+                    .is_some_and(|(text, _)| text.is_empty());
+                if empty {
+                    if let Some(store) = &self.store {
+                        let _ = store.drop_history(&key);
+                    }
+                    continue;
+                }
                 self.scratch_buffer(n);
             } else if let Some(p) = key.strip_prefix("file:") {
                 let p = std::path::PathBuf::from(p);

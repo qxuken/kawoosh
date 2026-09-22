@@ -160,6 +160,18 @@ entries they amend say how.
   highlighted as `diff`), a command it runs; no cap of nine. A
   command runs for the buffer the actions were asked for
   (`picker.lua`'s `actions` source, `kawoosh.lsp.actions()`).
+- **Three scratches at every start**: a restored session kept the
+  greeting a bare launch opens on, unshown, and a pane each on a
+  new blank scratch where the panes had shared one — `:bd` of the
+  last buffer leaves every pane on the same fresh scratch. The
+  greeting and any blank scratch the restore replaced go; panes on
+  untouched scratches come back sharing one (session.rs's
+  `a_restore_brings_back_no_greeting_and_one_blank_scratch`). And a
+  scratch typed in and undone back to empty — unmodified, its undo a
+  row — kept that row through `:bd`, so it came back hidden at every
+  launch: `:bd` takes the row of a scratch with nothing unsaved, and a
+  restore drops an empty scratch's row no pane claims
+  (`an_emptied_scratch_closed_does_not_come_back`).
 
 ## The list, by track
 

@@ -12,6 +12,7 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use kawoosh_doc::BufferId;
 use kawoosh_editor::{Selection, Spec, motions};
 use kawoosh_systems::store::Store;
 use serde::{Deserialize, Serialize};
@@ -254,6 +255,10 @@ impl Kawoosh {
         let mut layout = Layout::new(Content::Lua(String::new()));
         layout.tabs.clear();
         layout.panes.clear();
+        // The one blank scratch every pane left on an untouched one
+        // comes back on: a scratch nobody typed in has no row to tell
+        // two of them apart, and a pane each was a new buffer each.
+        let mut blank = None;
         for t in &data.tabs {
             let kind = if t.kind == "scroll" && !t.columns.is_empty() {
                 // A column whose panes are all gone (terminals) goes;
@@ -262,7 +267,7 @@ impl Kawoosh {
                     .columns
                     .iter()
                     .filter_map(|c| {
-                        let node = self.restore_node(&mut layout, &c.node)?;
+                        let node = self.restore_node(&mut layout, &c.node, &mut blank)?;
                         let width = Width::parse(&c.width).unwrap_or(layout.column_width);
                         Some((node, width))
                     })
@@ -275,7 +280,7 @@ impl Kawoosh {
                 }
                 Kind::Scroll(Strip { columns })
             } else {
-                let Some(root) = self.restore_node(&mut layout, &t.root) else {
+                let Some(root) = self.restore_node(&mut layout, &t.root, &mut blank) else {
                     continue;
                 };
                 Kind::Tree(root)
@@ -302,13 +307,32 @@ impl Kawoosh {
             .filter_map(|p| self.view_of(p))
             .collect();
         self.layout = layout;
+        let old_buffers: Vec<BufferId> =
+            old_views.iter().map(|v| self.ed.views[*v].buffer).collect();
         for v in old_views {
             self.ed.views.remove(v);
+        }
+        // What they showed goes with them when it was nothing to keep:
+        // the greeting a bare launch opens on, a blank scratch — a
+        // pathless buffer no pane shows now, unmodified, with no row.
+        for id in old_buffers {
+            let keep = self.ed.buffers.get(id).is_none_or(|b| {
+                b.path.is_some() || b.modified || b.hook.is_some() || self.histories.has_row(id)
+            }) || self.ed.views.values().any(|v| v.buffer == id);
+            if !keep {
+                self.ed.remove_buffer(id);
+                self.histories.forget(id);
+            }
         }
         true
     }
 
-    fn restore_node(&mut self, layout: &mut Layout, node: &NodeData) -> Option<Node> {
+    fn restore_node(
+        &mut self,
+        layout: &mut Layout,
+        node: &NodeData,
+        blank: &mut Option<BufferId>,
+    ) -> Option<Node> {
         match node {
             NodeData::Pane(p) => {
                 let content = match p {
@@ -341,12 +365,13 @@ impl Kawoosh {
                                     }
                                 }
                             }
-                            (None, None) => scratch
-                                .and_then(|n| self.scratch_buffer(n))
-                                .unwrap_or_else(|| {
+                            (None, None) => match scratch.and_then(|n| self.scratch_buffer(n)) {
+                                Some(id) => id,
+                                None => *blank.get_or_insert_with(|| {
                                     self.ed
                                         .add_buffer(kawoosh_doc::Buffer::new("*scratch*", ""))
                                 }),
+                            },
                         };
                         let v = self.ed.add_view(id);
                         let buf = &self.ed.buffers[id];
@@ -368,8 +393,8 @@ impl Kawoosh {
                 Some(Node::Pane(layout.new_pane(content)))
             }
             NodeData::Split { dir, ratio, a, b } => {
-                let a = self.restore_node(layout, a);
-                let b = self.restore_node(layout, b);
+                let a = self.restore_node(layout, a, blank);
+                let b = self.restore_node(layout, b, blank);
                 match (a, b) {
                     (Some(a), Some(b)) => Some(Node::Split {
                         dir: if dir == "h" { SplitDir::H } else { SplitDir::V },

@@ -852,6 +852,13 @@ impl Kawoosh {
             self.show_buffer(v, next);
         }
         self.alternate.retain(|_, b| *b != id);
+        // A scratch's row goes with it when nothing in it is unsaved:
+        // one typed in and undone back to empty kept its undo as a row,
+        // and came back, hidden and empty, at every launch after.
+        let b = &self.ed.buffers[id];
+        if b.path.is_none() && !b.modified {
+            self.discard(id);
+        }
         self.ed.remove_buffer(id);
         self.release_waiters(id);
         self.last_pos.remove(&id);

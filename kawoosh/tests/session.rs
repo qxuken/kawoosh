@@ -198,3 +198,131 @@ fn a_window_closed_from_outside_saves_the_session() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The greeting a bare launch opens on is not kept once a session
+/// replaces it, and panes that were left on one blank scratch — every
+/// buffer `:bd`'d, the last leaving a fresh one — come back on one:
+/// the report was a greeting and two empty scratches at every start,
+/// however many were deleted before quitting.
+#[test]
+fn a_restore_brings_back_no_greeting_and_one_blank_scratch() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-blank-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "1\n2\n").unwrap();
+    let db = dir.join("state.db");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&a);
+    app.open_store(Some(&db));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "vs");
+    ex(&mut d, &mut app, "bd");
+    assert_eq!(
+        app.ed.listed_buffers().len(),
+        1,
+        "one blank scratch, on both panes"
+    );
+    ex(&mut d, &mut app, "qa");
+    d.frame(&mut app);
+    assert!(app.quit);
+    drop(app);
+
+    for _ in 0..2 {
+        let mut d = Drive::new(900.0, 500.0);
+        let mut app = Kawoosh::new("*scratch*", "the greeting");
+        app.open_store(Some(&db));
+        assert!(app.restore_session());
+        d.frame(&mut app);
+        assert_eq!(app.layout.visible_panes().len(), 2);
+        let names: Vec<String> = app
+            .ed
+            .listed_buffers()
+            .into_iter()
+            .map(|id| {
+                format!(
+                    "{}={:?}",
+                    app.ed.buffers[id].name,
+                    app.ed.buffers[id].text()
+                )
+            })
+            .collect();
+        assert_eq!(names, vec!["*scratch*=\"\"".to_string()]);
+        ex(&mut d, &mut app, "qa");
+        d.frame(&mut app);
+        assert!(app.quit);
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A scratch typed in and undone back to empty is unmodified — its text is
+/// the nothing it started as — but its undo history kept a row, which
+/// `:bd` left behind, and every launch after brought it back as a
+/// hidden empty buffer: the report's two scratches, with only a file
+/// on show. `:bd` takes the row with it now, and a row of an empty
+/// scratch no pane claims — one left by a build before — goes at the
+/// restore.
+#[test]
+fn an_emptied_scratch_closed_does_not_come_back() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-emptied-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "1\n2\n").unwrap();
+    let db = dir.join("state.db");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&a);
+    app.open_store(Some(&db));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "enew");
+    d.keys(&mut app, "ikawoosh");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "u");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).text(), "");
+    assert!(!app.ed.buffer_of(v).modified);
+    app.sync_histories(true);
+    let rows = |app: &Kawoosh| -> Vec<String> {
+        let mut keys: Vec<String> = app
+            .store
+            .as_ref()
+            .unwrap()
+            .history_rows()
+            .into_iter()
+            .map(|r| r.key)
+            .filter(|k| k.starts_with("scratch:"))
+            .collect();
+        keys.sort();
+        keys
+    };
+    assert_eq!(
+        rows(&app).len(),
+        1,
+        "the emptied scratch's history is a row"
+    );
+    ex(&mut d, &mut app, "bd");
+    assert_eq!(rows(&app), Vec::<String>::new(), ":bd took the row");
+    // A row an older build left: an empty scratch's history.
+    app.store
+        .as_ref()
+        .unwrap()
+        .save_history("scratch:9", b"", r#"{"name":"*scratch*"}"#, false)
+        .unwrap();
+    ex(&mut d, &mut app, "qa");
+    d.frame(&mut app);
+    assert!(app.quit);
+    drop(app);
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "the greeting");
+    app.open_store(Some(&db));
+    assert!(app.restore_session());
+    d.frame(&mut app);
+    let names: Vec<String> = app
+        .ed
+        .listed_buffers()
+        .into_iter()
+        .map(|id| app.ed.buffers[id].name.clone())
+        .collect();
+    assert_eq!(names, vec!["a.txt".to_string()]);
+    assert_eq!(rows(&app), Vec::<String>::new(), "the stale row went");
+    std::fs::remove_dir_all(&dir).ok();
+}
