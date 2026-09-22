@@ -24,6 +24,15 @@ step 10 — the memory, with steps 11–18 the order the rest is built in.
 Steps 5–10 were built on one branch and merged to `main` 2026-09-21
 after a full regression pass (fmt, clippy, the workspace's 309 tests,
 the Lua acceptance scripts through `kawoosh test`).
+Steps 11–13 and two days of fixes from use followed (2026-09-22–23):
+the scrolling tab, the disk round (step 12), the window's chrome
+(step 13), and the batches below; built on one branch and merged to
+`main` 2026-09-23 after a review — 197 commits, 24 integration test
+files, the workspace's 360 tests and 4 Lua acceptance scripts. Five
+kui rounds came out of them, each a report from here built the day
+it was filed: F79–F80 (keys off the clip, the eased reveal), F81 (the
+Lua DSL's types), F82 (a reveal per scroll container), F83 (the glyph
+atlas thrashing at a big font).
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -82,6 +91,10 @@ name too.
 
 ## From use, 2026-09-22
 
+*Status 2026-09-23:* steps 12 and 13 built — the disk, `:wa`, `dir`,
+the Lua types, the title bar, the tabs, the cwd, the dock — and 14
+(the launcher) and 15 (the terminal) left.
+
 A day in the strip turned up eleven things, each checked against the code
 and filed in its track below; the order they are built in is steps
 12–15. One is a correctness gap and goes first: a file changed on disk
@@ -104,6 +117,43 @@ daily driver's chrome and the pane that a split opens on:
   by a session — the same shell in the same cwd;
 - **`dir`**: `<CR>` on a file leaves the listing's buffer behind;
 - **eval**: whether `<leader>x` sees `kawoosh` and `kui`.
+
+## From use, 2026-09-23
+
+The chrome in daily use, and a big font. All built the same day; the
+entries they amend say how.
+
+- **The chrome at any font** — the tab strip slimmer (22 px) and
+  without a scrollbar over its labels; the chrome's own metric
+  (`look::Chrome`, `font.chrome_size`) so the strips, the pane titles
+  and the title bar follow the font up to 16 px; the sizes as kui
+  length tokens (`$font`, `$chrome`, …) for Lua views; the gutter
+  sized to its digits. At 66 px the caret's row drew other glyphs'
+  pixels: kui's atlas thrashed (kui F83).
+- **The chrome's clicks** give the keys back to the pane; the servers
+  block opens `*lsp*` (`:lsp info`); ⌘= ⌘- ⌘0 step the font (Ctrl
+  where there is no ⌘).
+- **Lists** — `<C-n>` `<C-p>` go round in the picker and every
+  listing pane; `<S-Tab>` is the memory pane's previous view; a
+  double click in a `dir` listing is `<CR>` (the keymap's
+  `<2-LeftMouse>`, `Editor::mouse`).
+- **The command line** suggests a command's subcommands and
+  arguments as soon as its word is followed by a space, in a strip
+  that scrolls with each candidate at its own width.
+- **`:syntax NAME`** (`:setf`, `:ft`) reads a buffer as a language —
+  a scratch given its grammar; the syntax-tree tab keeps `:tree`.
+- **`K`** takes the keys to the hover, read as markdown so its
+  fences are highlighted, `q` back; acting from inside it is the LSP
+  track's "hover, round two".
+- **A confirm with many or long answers** — a server's code actions
+  — lists them as a column with their digits, where a row squeezed
+  them to nothing.
+- **The notification corner** sits on a panel: over the pane's text
+  its lines read as tangled with the code.
+- **A far jump** (`gd`, `gD`, a search) centres its line, as vim
+  does; **`:bd`** goes back to the buffer the pane came from, where
+  it was left (a per-view alternate), not to the first listed at its
+  top.
 
 ## The list, by track
 
