@@ -31,6 +31,8 @@ pub struct ToolDef {
     pub cmd: String,
     pub cwd: Option<String>,
     pub dock: bool,
+    /// A session starts it again (`kawoosh.tool`'s `restore`).
+    pub restore: bool,
 }
 
 /// A process a plugin spawned (`kawoosh.spawn`): the token its
@@ -693,10 +695,17 @@ impl Kawoosh {
                 cmd,
                 cwd,
                 dock,
+                restore,
             } => {
-                self.scripting
-                    .tools
-                    .insert(name, ToolDef { cmd, cwd, dock });
+                self.scripting.tools.insert(
+                    name,
+                    ToolDef {
+                        cmd,
+                        cwd,
+                        dock,
+                        restore,
+                    },
+                );
             }
             Msg::Compile(cmd) => self.compile(&cmd),
             Msg::Notify {
@@ -1043,11 +1052,18 @@ impl Kawoosh {
                 self.focused_view()
                     .and_then(|v| self.ed.buffer_of(v).path.clone())
                     .and_then(|p| p.parent().map(Path::to_path_buf))
+            })
+            // From a terminal, where its shell is.
+            .or_else(|| {
+                self.term_of(self.layout.focused())
+                    .and_then(|t| self.terms.map.get(&t))
+                    .and_then(|t| t.cwd())
             });
         let Some(t) = self.spawn_terminal(Some(&def.cmd), cwd.as_deref()) else {
             return;
         };
         self.scripting.tool_terms.insert(name.to_string(), t);
+        self.terms.spawned.entry(t).or_default().tool = Some(name.to_string());
         if def.dock {
             // Beside what the dock holds, or the dock's first pane.
             self.layout.dock_open = true;

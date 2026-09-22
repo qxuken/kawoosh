@@ -143,7 +143,11 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     let t = app.add_headless_terminal();
-    app.terms.map.get_mut(&t).unwrap().cwd = Some(dir.clone());
+    // The shell says where it is (OSC 7), and `gf` resolves from there.
+    app.feed_terminal(
+        t,
+        format!("\x1b]7;file://host{}\x07", dir.display()).as_bytes(),
+    );
     app.feed_terminal(t, b"error[E0000]: boom\r\n  --> src/lib.rs:3:1\r\n");
     d.frame(&mut app);
     d.frame(&mut app);
@@ -405,4 +409,165 @@ fn the_pane_answers_colour_questions_and_reports_a_flip() {
         b"\x1b[?997;1n"
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A shell that marks its prompts (OSC 133): ⌘↑ puts the prompt above
+/// the view at its top, ⌘↓ back; `<C-S-o>` copies the last command's
+/// output. Shift with the page keys moves through history; scrolled
+/// away, the pane shows a scrollbar and what lies below, and a click on
+/// that goes back to the prompt.
+#[test]
+fn prompts_output_and_the_view_through_history() {
+    let mut app = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let rows = app.terms.map[&t].size().rows as usize;
+    let feed = |app: &mut Kawoosh, cmd: &str, out: usize| {
+        app.feed_terminal(t, b"\x1b]133;A\x07$ \x1b]133;B\x07");
+        app.feed_terminal(t, format!("{cmd}\r\n\x1b]133;C\x07").as_bytes());
+        for i in 0..out {
+            app.feed_terminal(t, format!("{cmd} {i}\r\n").as_bytes());
+        }
+        app.feed_terminal(t, b"\x1b]133;D;0\x07");
+    };
+    feed(&mut app, "first", rows);
+    feed(&mut app, "second", rows);
+    feed(&mut app, "last", 2);
+    app.feed_terminal(t, b"\x1b]133;A\x07$ ");
+    d.frame(&mut app);
+    let top = |app: &Kawoosh| app.terms.map[&t].row_text(0).trim_end().to_string();
+    d.press(&mut app, "<D-Up>");
+    assert_eq!(top(&app), "$ second");
+    d.press(&mut app, "<D-Up>");
+    assert_eq!(top(&app), "$ first");
+    d.press(&mut app, "<C-S-Down>");
+    assert_eq!(top(&app), "$ second");
+    d.frame(&mut app);
+    assert!(
+        d.rect_of("scrollbar").is_some(),
+        "scrolled away, a scrollbar"
+    );
+    let (x, y, w, h) = d.rect_of("lines below").expect("the badge");
+    d.click(&mut app, x + w / 2.0, y + h / 2.0);
+    d.frame(&mut app);
+    assert_eq!(app.terms.map[&t].display_offset(), 0, "back at the prompt");
+    assert!(d.rect_of("lines below").is_none());
+    assert_eq!(
+        app.terms.map[&t].last_output().as_deref(),
+        Some("last 0\nlast 1")
+    );
+    d.press(&mut app, "<C-S-o>");
+    assert_eq!(app.ed.message, "the last command's output: 2 lines copied");
+    // Shift with the page keys: a page up, and the end back down.
+    d.press(&mut app, "<S-PageUp>");
+    assert_eq!(app.terms.map[&t].display_offset(), rows - 1);
+    d.press(&mut app, "<S-End>");
+    assert_eq!(app.terms.map[&t].display_offset(), 0);
+    assert!(
+        app.terms.map.get_mut(&t).unwrap().take_sent().is_empty(),
+        "none of it reached the shell"
+    );
+    // `terminal.scrollback` caps the history.
+    app.shell_command("set", &["terminal.scrollback=5".into()], None);
+    d.frame(&mut app);
+    assert_eq!(app.terms.map[&t].history_size(), 5);
+}
+
+/// The shell's directory: OSC 7 when it says, the process's own when it
+/// does not; a session keeps a shell with where it is and a tool that
+/// says `restore`, starts them again on the first frame, and drops a
+/// `:term CMD`.
+#[test]
+fn a_session_starts_the_shells_again_where_they_were() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-shells-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    let db = dir.join("state.db");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    app.open_store(Some(&db));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    let shell = app.spawn_terminal(None, Some(&dir.join("sub"))).unwrap();
+    app.layout
+        .split(kawoosh::layout::SplitDir::V, Content::Terminal(shell));
+    // The process's directory until the shell says otherwise.
+    let mut cwd = None;
+    for _ in 0..200 {
+        cwd = app.terms.map[&shell].cwd();
+        if cwd.as_deref() == Some(dir.join("sub").as_path()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(cwd.as_deref(), Some(dir.join("sub").as_path()));
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.tool("sleeper", { cmd = "sleep 30", cwd = "root", restore = true })"#,
+    );
+    // From the terminal's pane `:` is the shell's: the commands run.
+    app.shell_command("tool", &["sleeper".into()], None);
+    app.shell_command("terminal", &["sleep".into(), "30".into()], None);
+    d.frame(&mut app);
+    let json = serde_json::to_string(&app.session_data()).unwrap();
+    assert!(json.contains(r#""tool":"sleeper""#), "{json}");
+    // Each twice: the tree, and the strip's columns beside it.
+    assert_eq!(
+        json.matches(r#""restore":true"#).count(),
+        4,
+        "the shell and the tool: {json}"
+    );
+    assert_eq!(
+        json.matches(r#""restore":false"#).count(),
+        2,
+        "`:term CMD` is not: {json}"
+    );
+    app.save_session();
+    drop(app);
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.tool("sleeper", { cmd = "sleep 30", cwd = "root", restore = true })"#,
+    );
+    app.open_store(Some(&db));
+    assert!(app.restore_session());
+    let pending: Vec<_> = app
+        .terms
+        .pending
+        .iter()
+        .map(|(_, p)| (p.cwd.clone(), p.tool.clone()))
+        .collect();
+    assert!(pending.contains(&(dir.join("sub"), None)), "{pending:?}");
+    assert!(
+        pending.iter().any(|(_, t)| t.as_deref() == Some("sleeper")),
+        "{pending:?}"
+    );
+    assert_eq!(pending.len(), 2);
+    d.frame(&mut app);
+    assert!(app.terms.pending.is_empty());
+    let terms: Vec<_> = app
+        .layout
+        .all_panes()
+        .into_iter()
+        .filter_map(|p| app.term_of(p))
+        .collect();
+    assert_eq!(terms.len(), 2);
+    assert!(
+        terms.iter().all(|t| app.terms.map.contains_key(t)),
+        "started"
+    );
+    assert!(app.scripting.tool_terms.contains_key("sleeper"));
+    std::fs::remove_dir_all(&dir).ok();
 }

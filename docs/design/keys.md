@@ -63,6 +63,9 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>n` | the keyboard onto the toasts |
 | `<C-w>:` | the command line, from a pane without one |
 | `<C-S-x>` | copy mode (wezterm's chord): the terminal's scrollback as a buffer in the terminal's own pane, full modal editing, the caret on the last line; `q` gives the pane back — two keys round trip |
+| `<S-PageUp>` `<S-PageDown>`, `<S-Home>` `<S-End>` | a terminal's view a page through its history, to the top, back to the prompt — kept from the pty unless a program has the whole screen; scrolled away, the pane shows a scrollbar (dragged, it moves the view) and what lies below, a click on which goes back |
+| `⌘↑` `⌘↓`, `<C-S-Up>` `<C-S-Down>` | the prompt above the view at its top, the next one down (a shell that marks its prompts, OSC 133 — `:terminal integration` says how) |
+| `<C-S-o>` | the last command's output to the clipboard (the same marks) |
 | `gt` `gT` `]t` `[t` | next and previous tab |
 | `]T` `[T` `:tabmove` | move the tab along the strip |
 | `<leader>tq` | close the tab |

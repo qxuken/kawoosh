@@ -5,9 +5,10 @@
 //! `App::teardown`) and restored on a bare launch. What is unsaved
 //! comes back with it: the histories (`history.rs`) are flushed before
 //! the layout is written, and every draft the layout does not claim is
-//! restored as a buffer without a pane. Terminals are not restored
-//! (their processes are gone); a tab that held only terminals is
-//! dropped.
+//! restored as a buffer without a pane. A terminal's process is gone;
+//! a shell, or a tool that says `restore`, is started again in the
+//! directory it was left in — not its scrollback — and any other
+//! terminal is dropped, a tab that held only those with it.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -86,7 +87,21 @@ pub enum PaneData {
     Lua {
         name: String,
     },
-    Terminal,
+    /// A terminal: a shell, or a tool that says `restore`, started
+    /// again in the directory it was left in; anything else (`:term
+    /// CMD`, a build) is not, and a session from before this has none
+    /// that is.
+    Terminal {
+        #[serde(default)]
+        restore: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool: Option<String>,
+    },
+    /// A pane a session does not keep: a transient view (the picker,
+    /// the launcher).
+    Gone,
     /// The undo history pane: it follows the keyboard, so it carries
     /// nothing of its own.
     Undo,
@@ -147,7 +162,45 @@ impl Kawoosh {
             Some(Content::Lua(name)) if self.view_kept(&name) => PaneData::Lua { name },
             Some(Content::Undo) => PaneData::Undo,
             Some(Content::Memory) => PaneData::Memory,
-            _ => PaneData::Terminal,
+            Some(Content::Terminal(t)) => self.terminal_data(t),
+            _ => PaneData::Gone,
+        }
+    }
+
+    /// A terminal as a session keeps it: a shell, or a tool that says
+    /// `restore`, with where it is now; else nothing to start again.
+    fn terminal_data(&self, t: crate::terminals::TermId) -> PaneData {
+        // One a session brought back and the frame has not started yet.
+        if let Some((_, p)) = self.terms.pending.iter().find(|(id, _)| *id == t) {
+            return PaneData::Terminal {
+                restore: true,
+                cwd: Some(p.cwd.clone()),
+                tool: p.tool.clone(),
+            };
+        }
+        let cwd = self.terms.map.get(&t).and_then(|t| t.cwd());
+        match self.terms.spawned.get(&t) {
+            Some(s) if s.cmd.is_none() && s.tool.is_none() => PaneData::Terminal {
+                restore: true,
+                cwd,
+                tool: None,
+            },
+            Some(s)
+                if s.tool
+                    .as_ref()
+                    .is_some_and(|n| self.scripting.tools.get(n).is_some_and(|d| d.restore)) =>
+            {
+                PaneData::Terminal {
+                    restore: true,
+                    cwd,
+                    tool: s.tool.clone(),
+                }
+            }
+            _ => PaneData::Terminal {
+                restore: false,
+                cwd: None,
+                tool: None,
+            },
         }
     }
 
@@ -184,10 +237,15 @@ impl Kawoosh {
             .map(|t| {
                 let mut ps = Vec::new();
                 t.panes(&mut ps);
-                // Terminals are not restored, nor a transient view, so
-                // the ordinal counts only what will be.
+                // A terminal not started again and a transient view are
+                // not restored, so the ordinal counts only what will be.
                 ps.retain(|p| {
-                    !matches!(self.pane_data(*p), PaneData::Terminal | PaneData::Commands)
+                    !matches!(
+                        self.pane_data(*p),
+                        PaneData::Terminal { restore: false, .. }
+                            | PaneData::Commands
+                            | PaneData::Gone
+                    )
                 });
                 let focused = ps.iter().position(|p| *p == t.focused).unwrap_or(0);
                 match &t.layout {
@@ -395,7 +453,25 @@ impl Kawoosh {
                     // into the memory's.
                     PaneData::History => Content::Memory,
                     PaneData::Memory => Content::Memory,
-                    PaneData::Commands | PaneData::Terminal => return None,
+                    // A shell or a restorable tool: its pane now, its
+                    // process on the first frame (`spawn_pending`), when
+                    // the command socket is up for its `$EDITOR`.
+                    PaneData::Terminal {
+                        restore: true,
+                        cwd,
+                        tool,
+                    } => {
+                        let id = self.terms.reserve();
+                        self.terms.pending.push((
+                            id,
+                            crate::terminals::Pending {
+                                cwd: cwd.clone().unwrap_or_else(|| self.cwd.clone()),
+                                tool: tool.clone(),
+                            },
+                        ));
+                        Content::Terminal(id)
+                    }
+                    PaneData::Commands | PaneData::Terminal { .. } | PaneData::Gone => return None,
                 };
                 Some(Node::Pane(layout.new_pane(content)))
             }

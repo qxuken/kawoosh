@@ -4,7 +4,7 @@
 //! pointer into an open file (mvp.md Decisions 3, 3b, 5c).
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use kawoosh_doc::Buffer;
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Selection, Spec, motions};
@@ -30,18 +30,55 @@ pub struct Terminals {
     /// The scrollback buffers open, each with the terminal it stands in
     /// for: `q` in one goes back to it (`scrollback close`).
     pub scrollbacks: HashMap<kawoosh_doc::BufferId, TermId>,
+    /// What each terminal was started for — a session starts a shell
+    /// again, and a tool that says `restore`, but not `:term CMD`.
+    pub spawned: HashMap<TermId, Spawned>,
+    /// Terminals a session brought back, their panes made and their
+    /// processes not yet: started on the next frame, once the command
+    /// socket is up and `$EDITOR` can reach this window.
+    pub pending: Vec<(TermId, Pending)>,
+}
+
+/// What a terminal was started for: a command (none for the shell),
+/// and the tool it is, if one.
+#[derive(Clone, Debug, Default)]
+pub struct Spawned {
+    pub cmd: Option<String>,
+    pub tool: Option<String>,
+}
+
+/// A terminal to start: in `cwd`, the tool's command or the shell.
+#[derive(Clone, Debug)]
+pub struct Pending {
+    pub cwd: PathBuf,
+    pub tool: Option<String>,
 }
 
 impl Terminals {
     pub fn add(&mut self, t: Terminal) -> TermId {
+        let id = self.reserve();
+        self.map.insert(id, t);
+        id
+    }
+
+    /// A number for a terminal to come.
+    pub fn reserve(&mut self) -> TermId {
         self.next += 1;
-        self.map.insert(self.next, t);
         self.next
     }
 }
 
 /// A `path[:line[:col]]` in `text` around byte `at` — rustc, tsc, grep
 /// and shell spellings. Extensible from Lua later (Decision 5c).
+/// Where a terminal's view goes.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum TermScroll {
+    /// Pages into history (positive) or back toward the bottom.
+    Page(i32),
+    Top,
+    Bottom,
+}
+
 pub fn location_at(text: &str, at: usize) -> Option<(String, Option<usize>, Option<usize>)> {
     // `\` for the paths Windows tools print (`src\main.rs:42`).
     let is_path_char = |c: char| c.is_alphanumeric() || "./_-~+@:%\\".contains(c);
@@ -81,6 +118,17 @@ impl Kawoosh {
     /// Spawns a shell (or `cmd`) sized for a pane, with the `$EDITOR`
     /// handoff in its environment (Decision 3b).
     pub fn spawn_terminal(&mut self, cmd: Option<&str>, cwd: Option<&Path>) -> Option<TermId> {
+        self.spawn_terminal_as(None, cmd, cwd)
+    }
+
+    /// [`Kawoosh::spawn_terminal`] under a number reserved for it — a
+    /// session's pane, made before its process.
+    fn spawn_terminal_as(
+        &mut self,
+        id: Option<TermId>,
+        cmd: Option<&str>,
+        cwd: Option<&Path>,
+    ) -> Option<TermId> {
         let mut envs = vec![
             ("TERM_PROGRAM".to_string(), "kawoosh".to_string()),
             (
@@ -112,8 +160,22 @@ impl Kawoosh {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| self.cwd.clone());
         match Terminal::spawn(cmd, Some(&cwd), size, &envs) {
-            Ok((term, reader)) => {
-                let id = self.terms.add(term);
+            Ok((mut term, reader)) => {
+                term.set_scrollback(self.scrollback_setting());
+                let id = match id {
+                    Some(id) => {
+                        self.terms.map.insert(id, term);
+                        id
+                    }
+                    None => self.terms.add(term),
+                };
+                self.terms.spawned.insert(
+                    id,
+                    Spawned {
+                        cmd: cmd.map(str::to_string),
+                        tool: None,
+                    },
+                );
                 self.io.watch_pty(id, reader);
                 Some(id)
             }
@@ -122,6 +184,83 @@ impl Kawoosh {
                 None
             }
         }
+    }
+
+    /// `terminal.scrollback`: the lines of history a terminal keeps.
+    fn scrollback_setting(&self) -> usize {
+        self.ed
+            .settings
+            .int("terminal.scrollback")
+            .map_or(kawoosh_term::HISTORY, |n| n.clamp(0, 1_000_000) as usize)
+    }
+
+    /// Once a frame: the scrollback setting into every terminal (a
+    /// smaller cap drops what is past it at once).
+    pub(crate) fn sync_term_settings(&mut self) {
+        let lines = self.scrollback_setting();
+        for t in self.terms.map.values_mut() {
+            t.set_scrollback(lines);
+        }
+    }
+
+    /// The terminals a session brought back, started: the shell, or the
+    /// tool's command, in the directory it was left in (the session's
+    /// cwd when that is gone). One that will not start takes its pane
+    /// with it.
+    pub(crate) fn spawn_pending(&mut self) {
+        for (id, p) in std::mem::take(&mut self.terms.pending) {
+            let cmd = p
+                .tool
+                .as_ref()
+                .and_then(|n| self.scripting.tools.get(n))
+                .map(|d| d.cmd.clone());
+            let cwd = if p.cwd.is_dir() {
+                p.cwd
+            } else {
+                self.cwd.clone()
+            };
+            match self.spawn_terminal_as(Some(id), cmd.as_deref(), Some(&cwd)) {
+                Some(id) => {
+                    if let Some(name) = p.tool {
+                        self.scripting.tool_terms.insert(name.clone(), id);
+                        self.terms.spawned.entry(id).or_default().tool = Some(name);
+                    }
+                }
+                None => {
+                    let pane = self
+                        .layout
+                        .all_panes()
+                        .into_iter()
+                        .find(|q| self.term_of(*q) == Some(id));
+                    if let Some(pane) = pane {
+                        self.layout.close(pane);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Terminal `id`'s view moved: a page up or down (`by` pages), to
+    /// the top or the bottom.
+    pub(crate) fn term_scroll(&mut self, id: TermId, how: TermScroll) {
+        let Some(t) = self.terms.map.get_mut(&id) else {
+            return;
+        };
+        let page = t.size().rows.saturating_sub(1).max(1) as i32;
+        match how {
+            TermScroll::Page(by) => t.scroll(by * page),
+            TermScroll::Top => t.scroll(t.history_size() as i32),
+            TermScroll::Bottom => t.scroll_to_bottom(),
+        }
+    }
+
+    /// The focused terminal, or the message saying there is none.
+    fn focused_term(&mut self) -> Option<TermId> {
+        let t = self.term_of(self.layout.focused());
+        if t.is_none() {
+            self.ed.message = "not a terminal".into();
+        }
+        t
     }
 
     /// A terminal with no process, in a new split — for tests, which feed
@@ -186,6 +325,20 @@ impl Kawoosh {
                 let bs = bs.to_vec();
                 self.run_bindings(&bs);
             }
+            return;
+        }
+        // The view's own keys, where a program on the whole screen
+        // keeps them: shift with the page keys moves through history.
+        let alt_screen = self.terms.map.get(&id).is_some_and(|t| t.is_alt_screen());
+        let scroll = match note.as_str() {
+            "<S-PageUp>" => Some(TermScroll::Page(1)),
+            "<S-PageDown>" => Some(TermScroll::Page(-1)),
+            "<S-Home>" => Some(TermScroll::Top),
+            "<S-End>" => Some(TermScroll::Bottom),
+            _ => None,
+        };
+        if let Some(how) = scroll.filter(|_| !alt_screen) {
+            self.term_scroll(id, how);
             return;
         }
         match note.as_str() {
@@ -361,7 +514,12 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 } else {
                     Some(ctx.args.join(" "))
                 };
-                let cwd = k.cwd.clone();
+                // From a terminal, where its shell is.
+                let cwd = k
+                    .term_of(k.layout.focused())
+                    .and_then(|t| k.terms.map.get(&t))
+                    .and_then(|t| t.cwd())
+                    .unwrap_or_else(|| k.cwd.clone());
                 if let Some(t) = k.spawn_terminal(cmd.as_deref(), Some(&cwd)) {
                     k.fill_or_split(SplitDir::V, Content::Terminal(t));
                 }
@@ -378,6 +536,76 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
+            Spec::new("terminal page up")
+                .when(&["terminal"])
+                .doc("the terminal's view a page into its history, COUNT pages (`<S-PageUp>`)"),
+            |k, ctx| {
+                if let Some(t) = k.focused_term() {
+                    k.term_scroll(t, TermScroll::Page(ctx.count.max(1) as i32));
+                }
+            },
+        ),
+        cmd(
+            Spec::new("terminal page down")
+                .when(&["terminal"])
+                .doc("the terminal's view a page back toward the prompt, COUNT pages (`<S-PageDown>`)"),
+            |k, ctx| {
+                if let Some(t) = k.focused_term() {
+                    k.term_scroll(t, TermScroll::Page(-(ctx.count.max(1) as i32)));
+                }
+            },
+        ),
+        cmd(
+            Spec::new("terminal bottom")
+                .when(&["terminal"])
+                .doc("the terminal's view back at the prompt (`<S-End>`)"),
+            |k, _| {
+                if let Some(t) = k.focused_term() {
+                    k.term_scroll(t, TermScroll::Bottom);
+                }
+            },
+        ),
+        cmd(
+            Spec::new("terminal prompt prev")
+                .when(&["terminal"])
+                .doc("the prompt above the view at its top (the shell's OSC 133 marks; `<D-Up>` `<C-S-Up>`)"),
+            |k, _| k.jump_prompt(true),
+        ),
+        cmd(
+            Spec::new("terminal prompt next")
+                .when(&["terminal"])
+                .doc("the prompt below at the top, past the last back at the bottom (`<D-Down>` `<C-S-Down>`)"),
+            |k, _| k.jump_prompt(false),
+        ),
+        cmd(
+            Spec::new("terminal output")
+                .when(&["terminal"])
+                .doc("the last command's output to the clipboard (the shell's OSC 133 marks; `<C-S-o>`)"),
+            |k, _| {
+                let Some(t) = k.focused_term() else { return };
+                match k.terms.map.get(&t).and_then(|t| t.last_output()) {
+                    Some(text) => {
+                        let n = if text.is_empty() { 0 } else { text.lines().count() };
+                        k.clip_out = Some(text);
+                        k.ed.message = format!(
+                            "the last command's output: {n} line{} copied",
+                            if n == 1 { "" } else { "s" }
+                        );
+                    }
+                    None => {
+                        k.ed.message =
+                            "no command marked through to its end — the shell sends no OSC 133 (see :terminal integration)"
+                                .into()
+                    }
+                }
+            },
+        ),
+        cmd(
+            Spec::new("terminal integration")
+                .doc("the lines that make zsh, bash or nushell say where it is and mark its prompts (OSC 7, OSC 133)"),
+            |k, _| k.show_in_pane("*shell integration*", INTEGRATION),
+        ),
+        cmd(
             Spec::new("scrollback close")
                 .when(&["language:scrollback"])
                 .doc("close the scrollback buffer, its terminal back in the pane (`q`)"),
@@ -385,6 +613,64 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         ),
     ]
 }
+
+impl Kawoosh {
+    fn jump_prompt(&mut self, back: bool) {
+        let Some(t) = self.focused_term() else { return };
+        let Some(term) = self.terms.map.get_mut(&t) else {
+            return;
+        };
+        if term.commands().is_empty() {
+            self.ed.message =
+                "no prompts marked — the shell sends no OSC 133 (see :terminal integration)".into();
+        } else if !term.jump_prompt(back) {
+            self.ed.message = if back {
+                "no prompt further back".into()
+            } else {
+                "at the prompt".into()
+            };
+        }
+    }
+}
+
+/// What a shell needs to say where it is (OSC 7, for `gf`, a new
+/// terminal from this one, a session) and to mark its prompts (OSC 133,
+/// for `<D-Up>` and `terminal output`). Without it the directory is
+/// still read from the shell's process; the marks need the shell.
+const INTEGRATION: &str = r#"# Shell integration for kawoosh: OSC 7 (the directory) and OSC 133 (the
+# prompts). kawoosh sets TERM_PROGRAM=kawoosh in every terminal.
+
+# ── nushell (config.nu) — both are built in:
+$env.config.shell_integration.osc7 = true
+$env.config.shell_integration.osc133 = true
+
+# ── zsh (~/.zshrc)
+if [[ "$TERM_PROGRAM" == kawoosh ]]; then
+  _kawoosh_precmd() {
+    local s=$?
+    printf '\e]133;D;%s' "$s"
+    printf '\e]7;file://%s%s' "$HOST" "${PWD// /%20}"
+    printf '\e]133;A'
+  }
+  _kawoosh_preexec() { printf '\e]133;C' }
+  precmd_functions+=(_kawoosh_precmd)
+  preexec_functions+=(_kawoosh_preexec)
+  PS1="$PS1%{$(printf '\e]133;B')%}"
+fi
+
+# ── bash (~/.bashrc)
+if [[ "$TERM_PROGRAM" == kawoosh ]]; then
+  _kawoosh_prompt() {
+    local s=$?
+    printf '\e]133;D;%s' "$s"
+    printf '\e]7;file://%s%s' "$HOSTNAME" "${PWD// /%20}"
+    printf '\e]133;A'
+  }
+  PROMPT_COMMAND="_kawoosh_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+  PS0=$'\e]133;C'
+  PS1="$PS1"$'\[\e]133;B\]'
+fi
+"#;
 
 #[cfg(test)]
 mod tests {

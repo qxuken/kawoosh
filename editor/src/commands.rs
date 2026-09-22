@@ -3104,6 +3104,20 @@ pub fn default_keymap(km: &mut Keymap) {
     for (k, c) in n {
         km.bind(Normal, k, c);
     }
+    // A terminal pane's: the shell's prompts (its OSC 133 marks), ⌘↑ ⌘↓
+    // as iTerm and Terminal.app have them and ctrl-shift where there is
+    // no ⌘, and the last command's output copied — chords, so they
+    // reach the pane past its pty (`Kawoosh::pane_chord`).
+    let on_terminal = [Cond::parse("terminal")];
+    for (k, c) in [
+        ("<D-Up>", "terminal prompt prev"),
+        ("<D-Down>", "terminal prompt next"),
+        ("<C-S-Up>", "terminal prompt prev"),
+        ("<C-S-Down>", "terminal prompt next"),
+        ("<C-S-o>", "terminal output"),
+    ] {
+        km.bind_when(Normal, k, c, &on_terminal);
+    }
     // What each prefix is for, as the which-key names it.
     for (keys, name) in [
         ("<leader>", "leader"),

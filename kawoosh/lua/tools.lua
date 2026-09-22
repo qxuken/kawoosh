@@ -1,9 +1,11 @@
 -- The bundled tools: launch targets for `:tool NAME` and the tools
 -- picker (`<leader>tt`), a few that most projects want and whatever
 -- `settings.lua` adds. A tool is `kawoosh.tool(name, { cmd =, cwd =,
--- dock = })`: `cmd` runs in a terminal pane, `cwd` is `"root"` (the
--- working directory) or a path — nothing said is the file's directory
--- — and `dock` puts it in the dock instead of a split.
+-- dock =, restore = })`: `cmd` runs in a terminal pane, `cwd` is
+-- `"root"` (the working directory) or a path — nothing said is the
+-- file's directory — `dock` puts it in the dock instead of a split, and
+-- `restore` has a session start it again where it was left (the three
+-- defaults do; a build's `compile` and `run` do not).
 --
 -- The defaults: `git` (lazygit at the working directory), `top`,
 -- `shell` (`$SHELL` at the working directory), and — while the
@@ -23,15 +25,15 @@
 -- once registered stays for the session under its last definition.
 
 local DEFAULTS = {
-  git = { cmd = "lazygit", cwd = "root" },
-  top = { cmd = "top" },
-  shell = { cmd = os.getenv("SHELL") or "sh", cwd = "root" },
+  git = { cmd = "lazygit", cwd = "root", restore = true },
+  top = { cmd = "top", restore = true },
+  shell = { cmd = os.getenv("SHELL") or "sh", cwd = "root", restore = true },
 }
 
 local function register(name, def)
   if type(def) == "string" then def = { cmd = def } end
   if type(def) ~= "table" or type(def.cmd) ~= "string" then return end
-  kawoosh.tool(name, { cmd = def.cmd, cwd = def.cwd, dock = def.dock })
+  kawoosh.tool(name, { cmd = def.cmd, cwd = def.cwd, dock = def.dock, restore = def.restore })
 end
 
 -- kawoosh.tools_sync(): the tools as the settings have them now — the

@@ -243,6 +243,8 @@ pub enum Msg {
         cmd: String,
         cwd: Option<String>,
         dock: bool,
+        /// Started again by a session, in the directory it was left in.
+        restore: bool,
     },
     Compile(String),
     LspServer {
@@ -1961,6 +1963,7 @@ fn seed(
                 cmd: t.get("cmd")?,
                 cwd: t.get("cwd")?,
                 dock: t.get::<Option<bool>>("dock")?.unwrap_or(false),
+                restore: t.get::<Option<bool>>("restore")?.unwrap_or(false),
             });
             Ok(())
         })?,

@@ -372,7 +372,7 @@ impl Kawoosh {
     }
 
     /// Pane `pane`'s terminal, if it is one.
-    pub(crate) fn term_of(&self, pane: PaneId) -> Option<TermId> {
+    pub fn term_of(&self, pane: PaneId) -> Option<TermId> {
         match self.layout.content(pane) {
             Some(Content::Terminal(t)) => Some(t),
             _ => None,
@@ -1552,6 +1552,35 @@ impl Kawoosh {
         term.mouse(0, action, col as usize, row as usize, mods);
     }
 
+    /// The scrollbar on a terminal scrolled away, dragged: the pointer's
+    /// height down the pane is where the view is in its history, the
+    /// top the oldest line, the bottom the prompt.
+    fn on_term_bar_drag(&mut self, p: &Value) {
+        let Some(pane) = p
+            .get("tag")
+            .and_then(|t| t.get("pane"))
+            .and_then(Value::as_int)
+            .map(|p| p as PaneId)
+        else {
+            return;
+        };
+        let (Some(t), Some(r), Some(y)) = (
+            self.term_of(pane),
+            self.layout.rects.get(&pane).copied(),
+            p.get("y").and_then(Value::as_float),
+        ) else {
+            return;
+        };
+        let top = r.y + self.chrome.pane_title_h + 1.0;
+        let h = (r.h - self.chrome.pane_title_h - 2.0).max(1.0);
+        let at = ((y as f32 - top) / h).clamp(0.0, 1.0);
+        if let Some(term) = self.terms.map.get_mut(&t) {
+            let history = term.history_size() as f32;
+            let want = ((1.0 - at) * history).round() as i32;
+            term.scroll(want - term.display_offset() as i32);
+        }
+    }
+
     /// A title bar drag: the pane follows the pointer, and where it is
     /// let go — over the middle of another pane, or one of its edges —
     /// is where it lands (`Layout::drop_at`). Let go elsewhere, nothing
@@ -1717,6 +1746,8 @@ impl kui::App for Kawoosh {
         self.pal = ui.theme().into();
         self.dark = ui.theme().is_dark();
         self.sync_term_palettes();
+        self.sync_term_settings();
+        self.spawn_pending();
         let pal = self.pal;
         if self.devtools_synced.is_some_and(|s| s != self.devtools) {
             ui.core().set_devtools(self.devtools);
@@ -1874,6 +1905,7 @@ impl kui::App for Kawoosh {
             Some("drag") => match tag_kind {
                 Some("split") => self.on_split_drag(p),
                 Some("termmouse") => self.on_term_drag(p),
+                Some("termbar") => self.on_term_bar_drag(p),
                 Some("panedrag") => self.on_pane_drag(p),
                 _ => {
                     if let Some(pane) = pane_of(p) {
@@ -1896,6 +1928,16 @@ impl kui::App for Kawoosh {
             }
             // A click's payload is the `on_click` value itself, with the
             // pointer's `cell` beside it on a grid.
+            // The badge on a terminal scrolled away: back to the prompt.
+            Some("termbottom") => {
+                if let Some(pane) = p.get("pane").and_then(Value::as_int)
+                    && let Some(t) = self.term_of(pane as PaneId)
+                {
+                    self.layout.focus(pane as PaneId);
+                    self.term_scroll(t, crate::terminals::TermScroll::Bottom);
+                }
+                self.reclaim_focus = true;
+            }
             Some("focus" | "luapane") => {
                 if let Some(pane) = p.get("pane").and_then(Value::as_int) {
                     self.layout.focus(pane as PaneId);

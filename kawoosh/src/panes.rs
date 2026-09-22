@@ -842,6 +842,10 @@ impl Kawoosh {
             ("kind", "termmouse".into()),
             ("pane", Value::Int(pane as i64)),
         ]);
+        // Scrolled away from the prompt: a scrollbar down the right edge,
+        // the thumb where the view is in the history, and a badge with
+        // what lies below and the way back.
+        let (offset, history, rows_n) = (term.display_offset(), term.history_size(), screen.rows);
         let sink = ui.with_keyed(
             "term",
             NodeSpec::column()
@@ -862,6 +866,69 @@ impl Kawoosh {
                     spec.selectable()
                 };
                 ui.cells_keyed("cells", &grid, spec);
+                if offset > 0 && history > 0 {
+                    let total = (history + rows_n) as f32;
+                    let thumb = (h * rows_n as f32 / total).max(16.0).min(h);
+                    let above = (h - thumb) * (1.0 - offset as f32 / history as f32);
+                    ui.with_keyed(
+                        "scrollbar",
+                        NodeSpec::column()
+                            .float(
+                                FloatConfig::parent()
+                                    .at(Align::End, Align::Start)
+                                    .self_at(Align::End, Align::Start),
+                            )
+                            .width(Sizing::Fixed(8.0))
+                            .height(Sizing::Percent(1.0))
+                            .cursor(kui::CursorShape::Default)
+                            .on_drag(Value::map([
+                                ("kind", "termbar".into()),
+                                ("pane", Value::Int(pane as i64)),
+                            ]))
+                            .label("scrollbar"),
+                        |ui| {
+                            ui.with(NodeSpec::column().height(Sizing::Fixed(above)), |_| {});
+                            ui.with(
+                                NodeSpec::column()
+                                    .width(Sizing::Fixed(6.0))
+                                    .height(Sizing::Fixed(thumb))
+                                    .radius(3.0)
+                                    .bg(pal.dim.with_alpha(0.6)),
+                                |_| {},
+                            );
+                        },
+                    );
+                    let below = offset;
+                    ui.with_keyed(
+                        "lines below",
+                        NodeSpec::row()
+                            .float(
+                                FloatConfig::parent()
+                                    .at(Align::End, Align::End)
+                                    .self_at(Align::End, Align::End)
+                                    .offset(-14.0, -6.0),
+                            )
+                            .pad_xy(8.0, 3.0)
+                            .radius(4.0)
+                            .bg(pal.strip)
+                            .border(1.0, pal.border)
+                            .cursor(kui::CursorShape::Pointer)
+                            .on_click(Value::map([
+                                ("kind", "termbottom".into()),
+                                ("pane", Value::Int(pane as i64)),
+                            ]))
+                            .label("lines below"),
+                        |ui| {
+                            ui.text(
+                                &format!(
+                                    "↓ {below} line{} below · ⇧End",
+                                    if below == 1 { "" } else { "s" }
+                                ),
+                                TextStyle::new(self.chrome.small).color(pal.dim).nowrap(),
+                            );
+                        },
+                    );
+                }
             },
         );
         if focused {

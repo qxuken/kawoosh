@@ -775,8 +775,20 @@ follow the theme every frame (`panes.rs`).
   wish list, not kawoosh's.
 - **Kitty graphics** — deferred [req §9]. A `term` APC hook before it is
   a kui matter.
-- **Terminals in sessions** — open [mvp.md notes, use 2026-09-22]; step
-  15. A terminal pane's shell and cwd restored, not its scrollback: the
+- **Terminals in sessions** — done 2026-09-23 [mvp.md notes, use
+  2026-09-22]; step 15. The directory is `Terminal::cwd()`: what the
+  shell last said (OSC 7, picked out of the byte stream in front of
+  vte, which drops it — across reads, escapes decoded), else the shell
+  process's own (`proc_pidinfo` on macOS, `/proc/PID/cwd` on Linux),
+  else where it was started; `gf`, a tool and `:term` from a terminal
+  start from it. A session keeps a shell (`PaneData::Terminal {
+  restore, cwd, tool }`) and a tool whose `kawoosh.tool` says `restore
+  = true` (the bundled `git`, `top`, `shell`), not a `:term CMD` or a
+  build; the pane is made at restore and its process started on the
+  first frame (`spawn_pending`), once the command socket is up for its
+  `$EDITOR`. The dock is still not a session's. `:terminal
+  integration` shows the zsh, bash and nushell lines for OSC 7 and
+  133. What the roadmap said before it was built: A terminal pane's shell and cwd restored, not its scrollback: the
   session keeps `PaneData::Terminal` with nothing in it and drops the
   pane (`session.rs`, "Terminals are not restored"). It wants the pane's
   cwd, which kawoosh does not know: `Terminal::cwd` is documented as
@@ -791,8 +803,22 @@ follow the theme every frame (`panes.rs`).
   shell-shaped one (`shell`, not `compile`). nushell sends OSC 7 when
   `shell_integration.osc7` is on; zsh and bash need the usual
   `precmd` line, which the `$EDITOR` shim's directory could ship.
-- **Scrollback, round two** — open, to be pinned down [use
-  2026-09-22]; step 15. "Better scrollback" was the ask; what is there:
+- **Scrollback, round two** — done 2026-09-23 [use 2026-09-22]; step
+  15. Pinned down as: `terminal.scrollback` (lines, 10 000 by default,
+  applied live); `<S-PageUp>` `<S-PageDown>` `<S-Home>` `<S-End>` kept
+  from the pty unless a program has the whole screen; scrolled away, a
+  scrollbar down the edge (dragged, it moves the view) and a `↓ N lines
+  below · ⇧End` badge that goes back on a click; the shell's OSC 133
+  marks as `Terminal::commands()` — each command's prompt, input,
+  output and end on line numbers that outlive history's scrolling
+  (counted through the hooks, since alacritty numbers lines from the
+  screen) — with `⌘↑` `⌘↓` / `<C-S-Up>` `<C-S-Down>` jumping prompt to
+  prompt and `<C-S-o>` (`terminal output`) copying the last command's
+  output. Selecting in the live pane was already there: the grid is a
+  kui `selectable` scope, which selects in cells by absolute line,
+  words on a double click, lines on a triple, and copies with ⌘C. Not
+  taken: search in place — `/` in copy mode (`<C-S-x>`) is it. What
+  the roadmap said before it was built: "Better scrollback" was the ask; what is there:
   10 000 lines, fixed (`term/src/lib.rs`'s `config`), the wheel with a
   fraction carried, and `<C-S-x>` / `:scrollback` for the whole
   history as a buffer. What use most likely wants, to confirm at the
@@ -964,12 +990,16 @@ then breadth.
     was not `view_open` into the new pane but the engine filling the
     pane being made with whatever would go in the focused one. See the
     panes track.
-15. **The terminal, round two**: OSC 7 into `Terminal::cwd` (with the
+15. ~~**The terminal, round two**: OSC 7 into `Terminal::cwd` (with the
     process's cwd as the fallback) and the session keeping and
     restoring a terminal's shell and cwd; OSC 133's prompt marks in
     the same parser change; then scrollback as the round's start
     pins it down — the size a setting, a scrollbar, keys to page and
-    get back, selection in the live pane.
+    get back, selection in the live pane.~~ Landed 2026-09-23
+    (`term/src/lib.rs`'s `OscScan` and `Command`, `terminals.rs`'s
+    `spawn_pending` and the `terminal …` commands, the session's
+    `PaneData::Terminal`); the live pane's selection turned out to be
+    kui's already. See the terminal track.
 16. **Auto-closing brackets** ([pairs.md](pairs.md)): an afternoon —
     the three Lua doors (`buf.type`, `buf.edits`,
     `buf.set_selections`), `pairs.lua` off by default, its test a

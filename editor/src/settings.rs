@@ -330,6 +330,9 @@ impl Settings {
         // `scratch`, `terminal`, `dir` (the directory as a listing).
         defaults.set("layout.new_pane", Setting::Str("launcher".into()));
         defaults.set("layout.new_tab", Setting::Str("launcher".into()));
+        // The lines of history a terminal keeps; a smaller number drops
+        // what is past it at once.
+        defaults.set("terminal.scrollback", Setting::Int(10_000));
         // The memory (docs/design/memory.md): days a moment — a file
         // attended, with its history and draft — may go unattended
         // before it is forgotten; 0 keeps every row.
@@ -668,6 +671,7 @@ mod tests {
                 "picker.wrap",
                 "scrolloff",
                 "tabstop",
+                "terminal.scrollback",
                 "theme.appearance",
                 "whichkey"
             ]

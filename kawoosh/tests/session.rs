@@ -69,9 +69,17 @@ fn a_session_saves_and_restores_panes_files_and_carets() {
         app.ed.cmd_history
     );
     assert_eq!(app.layout.tab, 1);
-    // Tab 2 held a scratch pane, a Lua view and a terminal: the terminal
-    // is gone, the Lua pane is back by name.
-    assert_eq!(app.layout.visible_panes().len(), 2);
+    // Tab 2 held a scratch pane, a Lua view and a terminal: the Lua pane
+    // is back by name, and the terminal — a shell — is started again.
+    assert_eq!(app.layout.visible_panes().len(), 3);
+    assert_eq!(
+        app.layout
+            .visible_panes()
+            .iter()
+            .filter(|p| matches!(app.layout.content(**p), Some(Content::Terminal(_))))
+            .count(),
+        1
+    );
     assert!(
         app.layout
             .visible_panes()
