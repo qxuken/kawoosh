@@ -589,6 +589,24 @@ fn change_line_paragraphs_find_repeat_and_surrounds() {
     assert_eq!(t.text(), "[foo] bar");
 }
 
+/// A digit under a chord is a binding's, never a count's: `<D-2>` is
+/// the second column of a scrolling tab (kawoosh's `pane goto`), not
+/// "two of the next thing". Ctrl and Alt were excluded from the count
+/// already; ⌘ was not, so a ⌘ digit both did nothing and left a count
+/// behind for whatever came next (2026-09-22).
+#[test]
+fn a_digit_under_a_chord_is_not_a_count() {
+    let mut t = T::new("abcdef\n");
+    t.keys("<D-2>");
+    assert_eq!(t.head(), 0, "the chord did nothing here");
+    t.keys("x");
+    assert_eq!(t.text(), "bcdef\n", "and left no count behind");
+    // The plain digit still counts.
+    let mut t = T::new("abcdef\n");
+    t.keys("2x");
+    assert_eq!(t.text(), "cdef\n");
+}
+
 #[test]
 fn counts_and_paste() {
     let mut t = T::new("abc\n");

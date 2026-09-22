@@ -52,7 +52,8 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-S-h>` `<C-S-j>` `<C-S-k>` `<C-S-l>` | the same, straight — one spelling, from **every** pane and mode |
 | `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>`, and vim's `<C-w><` `<C-w>>` `<C-w>-` `<C-w>+` | the pane narrower, wider, shorter, taller by a twentieth of its split, COUNT steps — the nearest split of the axis moves, as its divider does under a drag; in a strip the width pair steps the column through the presets instead; from every pane and mode; the dock's height when the dock has the keys |
 | `<C-w>H` `<C-w>L` `<C-w>J` `<C-w>K` | carry the pane a place, COUNT places: in a strip its column along the ribbon (`H` `L`) or the pane inside its column's stack (`J` `K`), in a tree past the neighbour on that side — vim's "move to the far side", read as one step |
-| `<C-1>`…`<C-9>` | the Nth column of a strip (the Nth pane of a tree), the last when there are fewer — `:pane goto N` |
+| `<C-1>`…`<C-9>`, `⌘1`…`⌘9` | the Nth column of a strip (the Nth pane of a tree), the last when there are fewer — `:pane goto N`. The ⌘ spelling is the one that works from a terminal pane, a pty having no use for ⌘ at all |
+| `<C-w>e` | the pane out of its column's stack into a column of its own, after it — what dragging its title bar onto a pane's left or right edge does |
 | `zs` `ze` `zz` | the focused column against the viewport's left edge, its right edge, or in the middle (`:strip left` / `right` / `center`) — vim's horizontal scrolling, read on the ribbon |
 | `<C-w>t` `<leader>tn` | a new tab, of the kind `layout.default` names (the strip) |
 | `:layout` `<leader>tl` | the tab flipped between a tree of splits and a strip of columns ([scrolling-tab.md](scrolling-tab.md)); `:layout scroll` / `:layout tree` name the kind |
@@ -75,7 +76,8 @@ following it, `<C-w>j` / `<C-w>k` the pane above / below inside the
 column, `<A-S-h>` / `<A-S-l>` the column's width to the next preset
 down / up (third, half, two-thirds, full; a dragged width snaps to the
 nearest first), `<C-w>H` / `<C-w>L` the column a place along the
-ribbon, and closing a column's last pane takes the column, the
+ribbon, `<C-w>e` the focused pane out of its stack into a column of
+its own, and closing a column's last pane takes the column, the
 keyboard to the one before. The status line shows the columns as
 `▯▮▯`, the focused one filled. The ribbon glides to the column a key
 reveals; a width and a place land on the frame the key asked for them,
@@ -84,8 +86,10 @@ reaches its pane wherever the frame has drawn it, mid-motion included
 (kui's F79).
 
 The shifted chord is the wezterm habit and the reason it works
-everywhere (the same goes for `<C-1>`…`<C-9>`, which no pty can encode
-either): a pty cannot tell `<C-S-l>` from `<C-l>` (the legacy encoding
+everywhere; `Kawoosh::pane_chord` forwards a ⌘ chord from a terminal
+pane for the same reason, a pty having no use for ⌘ at all, which is
+what makes `⌘1`…`⌘9` reach a column from one where `<C-1>`…`<C-9>`
+are the pty's: a pty cannot tell `<C-S-l>` from `<C-l>` (the legacy encoding
 has no room for shift on a control letter), so the shifted spelling is
 free in a terminal pane and `<C-l>` stays the shell's clear. In insert
 mode `<C-h>` is a backspace and `<C-l>` would be text. So the shifted

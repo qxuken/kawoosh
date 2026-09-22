@@ -1015,6 +1015,28 @@ impl Layout {
         Some(pane)
     }
 
+    /// The focused pane out of its column's stack and into a column of
+    /// its own, after it (`<C-w>e`), at `layout.column_width`; the
+    /// keyboard goes with it. None when the tab is a tree, or the pane
+    /// is already a whole column — there is nothing to leave.
+    pub fn expel(&mut self) -> Option<usize> {
+        let focused = self.tab().focused;
+        let width = self.column_width;
+        let s = self.tab_mut().strip_mut()?;
+        let i = s.column_of(focused)?;
+        let mut ps = Vec::new();
+        s.columns[i].node.panes(&mut ps);
+        if ps.len() < 2 {
+            return None;
+        }
+        let node = std::mem::replace(&mut s.columns[i].node, Node::Pane(0));
+        s.columns[i].node = node.without(focused)?;
+        let col = self.new_column(Node::Pane(focused), width);
+        let s = self.tab_mut().strip_mut()?;
+        s.columns.insert(i + 1, col);
+        Some(i + 1)
+    }
+
     /// The focused pane one place up or down inside its column
     /// (`<A-S-k>` / `<A-S-j>` in a strip): the two panes trade places,
     /// the stack's splits as they were. False in a tree, or at the

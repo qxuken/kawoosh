@@ -604,8 +604,29 @@ fn panes() -> Vec<ShellCommand> {
                 .doc("carry the pane a place down — inside its column in a strip, COUNT places"),
             |k, ctx| k.move_pane_dir(SplitDir::V, true, ctx.count),
         ),
-        // `<C-1>`…`<C-9>`: the Nth column of a strip, the Nth pane of a
-        // tree, the last when there are fewer.
+        // `<C-w>e`: the pane out of its column's stack into a column of
+        // its own — what a title-bar drag to a pane's left or right
+        // edge does, from the keyboard.
+        cmd(
+            Spec::new("pane expel")
+                .doc("the pane out of its column's stack, into a column of its own after it"),
+            |k, _| {
+                if !k.layout.tab().is_scroll() {
+                    k.ed.message =
+                        "the tab is a tree of splits; :layout scroll makes it a strip".into();
+                    return;
+                }
+                match k.layout.expel() {
+                    Some(i) => {
+                        let n = k.layout.tab().strip().map_or(0, |s| s.columns.len());
+                        k.ed.message = format!("column {} of {n}", i + 1);
+                    }
+                    None => k.ed.message = "the pane is a column of its own already".into(),
+                }
+            },
+        ),
+        // `<C-1>`…`<C-9>`, and ⌘ with them: the Nth column of a strip,
+        // the Nth pane of a tree, the last when there are fewer.
         cmd(
             Spec::new("pane goto")
                 .args(Args::new(&[ArgKind::Text]))

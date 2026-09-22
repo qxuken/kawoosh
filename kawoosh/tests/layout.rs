@@ -627,3 +627,66 @@ fn the_ribbon_glides_to_a_key_and_a_width_lands_at_once() {
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+#[test]
+fn a_pane_leaves_its_stack_for_a_column_of_its_own() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    // A column of three, the keyboard on the middle one.
+    ctrl_w(&mut d, &mut app, "s");
+    ctrl_w(&mut d, &mut app, "s");
+    settle(&mut d, &mut app);
+    assert_eq!(columns(&app)[0].0, [1, 2, 3]);
+    ctrl_w(&mut d, &mut app, "k");
+    assert_eq!(app.layout.focused(), 2);
+    // `<C-w>e` takes it out into a column of its own, after the one it
+    // left, and the keyboard goes with it.
+    ctrl_w(&mut d, &mut app, "e");
+    assert_eq!(
+        columns(&app)
+            .iter()
+            .map(|c| c.0.clone())
+            .collect::<Vec<_>>(),
+        [vec![1, 3], vec![2]]
+    );
+    assert_eq!(app.layout.focused(), 2);
+    assert_eq!(app.ed.message, "column 2 of 2");
+    assert_eq!(columns(&app)[1].1, Width::Half);
+    settle(&mut d, &mut app);
+    assert!(in_view(&d, &app, 2, vw));
+    // A pane that is a whole column has nothing to leave.
+    ctrl_w(&mut d, &mut app, "e");
+    assert_eq!(app.ed.message, "the pane is a column of its own already");
+    assert_eq!(columns(&app).len(), 2);
+    // The same by mouse, the other way: a title bar dragged onto a
+    // pane's edge pulls it out of its stack (this is what `<C-w>e`
+    // spells).
+    d.press(&mut app, "<C-1>");
+    settle(&mut d, &mut app);
+    let r1 = app.layout.rects[&1];
+    let r3 = app.layout.rects[&3];
+    d.drag(
+        &mut app,
+        (r3.x + r3.w / 2.0, r3.y + 8.0),
+        (r1.x + r1.w - 6.0, r1.y + r1.h / 2.0),
+    );
+    settle(&mut d, &mut app);
+    assert_eq!(
+        columns(&app)
+            .iter()
+            .map(|c| c.0.clone())
+            .collect::<Vec<_>>(),
+        [vec![1], vec![3], vec![2]]
+    );
+    // In a tree it says what would make it a strip.
+    ex(&mut d, &mut app, "layout tree");
+    ctrl_w(&mut d, &mut app, "e");
+    assert!(
+        app.ed.message.contains(":layout scroll"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

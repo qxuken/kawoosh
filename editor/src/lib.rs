@@ -2106,12 +2106,15 @@ impl Editor {
             Mode::Normal | Mode::Visual | Mode::OperatorPending | Mode::Pane => {}
         }
 
-        // A count: digits before a command (`0` alone is a motion).
+        // A count: digits before a command (`0` alone is a motion). A
+        // digit under any chord is a binding's, not a count's — ⌘2 is
+        // the second column (2026-09-22), as `<C-2>` was already.
         if stroke.code.len() == 1
             && stroke.code.as_bytes()[0].is_ascii_digit()
             && self.pending.is_empty()
             && !stroke.ctrl
             && !stroke.alt
+            && !stroke.sup
             && (self.count.is_some() || stroke.code != "0")
         {
             let d = (stroke.code.as_bytes()[0] - b'0') as usize;

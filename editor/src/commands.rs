@@ -2984,6 +2984,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w>L", "pane move right"),
         ("<C-w>J", "pane move down"),
         ("<C-w>K", "pane move up"),
+        // The pane out of its column's stack into one of its own: `e`
+        // for expel, beside the moves above.
+        ("<C-w>e", "pane expel"),
         // Sizing again, vim's own spelling: `<` `>` the width, `-` `+`
         // the height, beside the `<A-S-…>` chords that need no prefix.
         ("<C-w><", "pane narrower"),
@@ -3008,7 +3011,19 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w>n", "toast"),
         ("gt", "tab next"),
         ("gT", "tab prev"),
-        // `<C-N>`: the Nth column of a strip, the Nth pane of a tree.
+        // `<C-N>`: the Nth column of a strip, the Nth pane of a tree —
+        // and ⌘ with the same digits, which is the spelling that
+        // reaches a terminal pane, a pty having no use for ⌘
+        // (`Kawoosh::pane_chord`).
+        ("<D-1>", "pane goto 1"),
+        ("<D-2>", "pane goto 2"),
+        ("<D-3>", "pane goto 3"),
+        ("<D-4>", "pane goto 4"),
+        ("<D-5>", "pane goto 5"),
+        ("<D-6>", "pane goto 6"),
+        ("<D-7>", "pane goto 7"),
+        ("<D-8>", "pane goto 8"),
+        ("<D-9>", "pane goto 9"),
         ("<C-1>", "pane goto 1"),
         ("<C-2>", "pane goto 2"),
         ("<C-3>", "pane goto 3"),
@@ -3158,7 +3173,19 @@ pub fn default_keymap(km: &mut Keymap) {
         // bound rather than shared; `]x` / `[x` fall through.
         ("gt", "tab next"),
         ("gT", "tab prev"),
-        // `<C-N>`: the Nth column of a strip, the Nth pane of a tree.
+        // `<C-N>`: the Nth column of a strip, the Nth pane of a tree —
+        // and ⌘ with the same digits, which is the spelling that
+        // reaches a terminal pane, a pty having no use for ⌘
+        // (`Kawoosh::pane_chord`).
+        ("<D-1>", "pane goto 1"),
+        ("<D-2>", "pane goto 2"),
+        ("<D-3>", "pane goto 3"),
+        ("<D-4>", "pane goto 4"),
+        ("<D-5>", "pane goto 5"),
+        ("<D-6>", "pane goto 6"),
+        ("<D-7>", "pane goto 7"),
+        ("<D-8>", "pane goto 8"),
+        ("<D-9>", "pane goto 9"),
         ("<C-1>", "pane goto 1"),
         ("<C-2>", "pane goto 2"),
         ("<C-3>", "pane goto 3"),

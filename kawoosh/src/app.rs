@@ -1113,14 +1113,15 @@ impl Kawoosh {
         if stroke.code == "escape" {
             self.ed.message.clear();
         }
-        // A ctrl-shift or alt-shift chord is the pane cluster's from a
-        // terminal pane too (docs/design/keys.md): `<C-S-l>` moves
-        // right from one, whose pty could not tell it from `<C-l>`
-        // anyway, and `<A-S-l>` widens it. An editor pane has them in
-        // its own maps, and every other pane reaches them through pane
-        // mode (`listing.rs`).
-        let chord = (stroke.ctrl || stroke.alt)
-            && stroke.shift
+        // A ctrl-shift or alt-shift chord, or one on ⌘, is the pane
+        // cluster's from a terminal pane too (docs/design/keys.md):
+        // `<C-S-l>` moves right from one, whose pty could not tell it
+        // from `<C-l>` anyway, `<A-S-l>` widens it, and `<D-3>` goes to
+        // the third column — a pty has no use for ⌘ at all, which is
+        // what makes the digits reachable there. An editor pane has
+        // them in its own maps, and every other pane reaches them
+        // through pane mode (`listing.rs`).
+        let chord = ((stroke.ctrl || stroke.alt) && stroke.shift || stroke.sup)
             && self.ed.prompt_view().is_none()
             && self.term_of(self.layout.focused()).is_some()
             && self.pane_chord(&stroke);
