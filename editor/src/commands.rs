@@ -934,7 +934,10 @@ fn substitute(ed: &mut Editor, ctx: &Ctx) {
 /// never one string), a crash mid-write leaves the old file, and a
 /// buffer whose text is the file's own mapping keeps reading the old
 /// inode rather than the bytes being written over it.
-fn save_beside(buf: &kawoosh_doc::Buffer, path: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn save_beside(
+    buf: &kawoosh_doc::Buffer,
+    path: &std::path::Path,
+) -> std::io::Result<()> {
     // A link is written through, not replaced; the file's mode stays.
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mode = std::fs::metadata(&path).ok().map(|m| m.permissions());
@@ -991,11 +994,20 @@ fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
         ed.message = "still opening".into();
         return false;
     }
-    match save_beside(buf, &path) {
+    // Someone else wrote the file since it was read: asked, not written
+    // over — `:w!` does. Not for `:w PATH`, which names a file of its
+    // own choosing.
+    if ctx.args.is_empty() && !ctx.bang() && ed.disk_state(id) == crate::disk::Disk::Changed {
+        ed.message = format!(
+            "\"{}\" changed on disk since it was read; :w! writes over it, :e! loads it",
+            path.display()
+        );
+        ed.effects.push(Effect::DiskConflict(id));
+        return false;
+    }
+    match ed.save(id) {
         Ok(()) => {
-            let b = &mut ed.buffers[id];
-            b.mark_saved();
-            b.disk_len = Some(b.len());
+            let b = &ed.buffers[id];
             ed.message = format!(
                 "\"{}\" {}L, {}B written",
                 path.display(),
@@ -1017,36 +1029,9 @@ fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
 /// is said so, the buffer left as it is.
 fn reload(ed: &mut Editor, ctx: &Ctx) {
     let id = view(ed, ctx).buffer;
-    let buf = &ed.buffers[id];
-    let Some(path) = buf.path.clone() else {
-        ed.message = "no file to reload from".into();
-        return;
+    ed.message = match ed.reload_from_disk(id) {
+        Ok(m) | Err(m) => m,
     };
-    if buf.loading.is_some() {
-        ed.message = "still opening".into();
-        return;
-    }
-    let disk = match kawoosh_doc::Buffer::from_file(&path) {
-        Ok(b) => b,
-        Err(e) => {
-            ed.message = format!("cannot read {}: {e}", path.display());
-            return;
-        }
-    };
-    let len = disk.len();
-    let b = &mut ed.buffers[id];
-    b.restore(disk.text_root());
-    b.mark_saved();
-    b.disk_len = Some(len);
-    ed.message = format!(
-        "\"{}\" {}L, {}B loaded from disk (u brings the changes back)",
-        path.display(),
-        ed.buffers[id].line_count(),
-        len
-    );
-    let v = &mut ed.views[ctx.view];
-    v.sels
-        .map(|s| Selection::new(s.anchor.min(len), s.head.min(len)));
 }
 
 fn paste(ed: &mut Editor, ctx: &Ctx, after: bool) {
@@ -1782,7 +1767,7 @@ pub fn install(ed: &mut Editor) {
         Spec::new("write")
             .alias(&["w"])
             .args(Args::new(&[ArgKind::Path]))
-            .bang("nothing yet: taken for the fingers that type :w!")
+            .bang("write over a file changed on disk since it was read")
             .doc("write the buffer to its file, or to PATH"),
         |ed, ctx| {
             write(ed, ctx);
@@ -1813,7 +1798,7 @@ pub fn install(ed: &mut Editor) {
         Spec::new("write quit")
             .alias(&["wq", "x"])
             .args(Args::new(&[ArgKind::Path]))
-            .bang("nothing yet: taken for the fingers that type :wq!")
+            .bang("write over a file changed on disk since it was read")
             .doc("write, then quit"),
         |ed, ctx| {
             if write(ed, ctx) {
@@ -1822,24 +1807,27 @@ pub fn install(ed: &mut Editor) {
         },
     );
     ed.register_spec(
+        Spec::new("write all")
+            .alias(&["wa", "wall"])
+            .doc("write every modified file; one changed on disk since it was read is named, not written"),
+        |ed, _| {
+            let w = ed.write_all();
+            ed.message = w.message();
+        },
+    );
+    // Quits only when everything was written: a file changed on disk,
+    // or a write that failed, stays open with the message saying which.
+    ed.register_spec(
         Spec::new("write quit all")
             .alias(&["wqa", "xa"])
             .doc("write every file, then quit"),
         |ed, _| {
-            let ids: Vec<_> = ed
-                .buffers
-                .iter()
-                .filter(|(_, b)| b.modified && b.path.is_some())
-                .map(|(id, _)| id)
-                .collect();
-            for id in ids {
-                if let Some(p) = ed.buffers[id].path.clone()
-                    && save_beside(&ed.buffers[id], &p).is_ok()
-                {
-                    ed.buffers[id].mark_saved();
-                }
+            let w = ed.write_all();
+            if w.complete() {
+                ed.effects.push(Effect::QuitAll { force: false });
+            } else {
+                ed.message = w.message();
             }
-            ed.effects.push(Effect::QuitAll { force: false });
         },
     );
     // `:e path` opens; `:e!` alone loads the disk's text into the

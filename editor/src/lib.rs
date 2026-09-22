@@ -5,6 +5,7 @@
 
 pub mod command;
 pub mod commands;
+pub mod disk;
 pub mod keymap;
 pub mod motions;
 pub mod repeat;
@@ -318,6 +319,9 @@ pub enum Effect {
     Open(PathBuf),
     /// A file was written, so the shell can tell the systems.
     Wrote(BufferId),
+    /// `:w` found the buffer's file changed on disk since it was read
+    /// and did not write: the shell asks what to do.
+    DiskConflict(BufferId),
     /// A search moved in a buffer too big to count its matches on the
     /// frame: the shell counts them on a thread (`search::count` over a
     /// snapshot) and puts the number in the message when it has it.

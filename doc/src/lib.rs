@@ -29,6 +29,27 @@ new_key_type! {
     pub struct BufferId;
 }
 
+/// A file's stamp: its length and modification time, as a buffer last
+/// read or wrote it. Two stamps that differ say the file was touched;
+/// whether its text changed is the texts' question (a `touch`, a
+/// checkout of the same content), which the shell asks before it acts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stamp {
+    pub len: u64,
+    pub mtime: Option<std::time::SystemTime>,
+}
+
+impl Stamp {
+    /// The file at `path` as it stands; `None` when there is none.
+    pub fn of(path: &Path) -> Option<Stamp> {
+        let m = std::fs::metadata(path).ok()?;
+        m.is_file().then(|| Stamp {
+            len: m.len(),
+            mtime: m.modified().ok(),
+        })
+    }
+}
+
 /// One styled range in a layer. `style` and `tag` mean whatever the layer's
 /// producer says — a token class, a diagnostic severity plus a message id.
 /// How far to either side of an offset a grapheme boundary is looked
@@ -304,9 +325,12 @@ pub struct Buffer {
     /// bytes indexed so far and the whole, until [`Buffer::attach`]. Read
     /// only meanwhile, and its text is empty.
     pub loading: Option<(usize, usize)>,
-    /// Where the file's text came from, for `:w` to know it is unchanged
-    /// on disk; `None` for a scratch buffer.
-    pub disk_len: Option<usize>,
+    /// The file as it stood when this buffer last read or wrote it
+    /// ([`Stamp`]): a file whose stamp moved since was changed by
+    /// someone else — `:w` asks before writing over it, and the shell's
+    /// watch reloads or asks. `None` for a scratch buffer, and for a
+    /// file that was not there.
+    pub disk: Option<Stamp>,
     /// The kind of thing this is, for the systems: `"rust"`, `"lua"`,
     /// `"text"`… Set by whoever made it — the shell detects a file's
     /// (`kawoosh_languages::detect`); `doc` knows no language.
@@ -336,7 +360,7 @@ impl Buffer {
             modified: false,
             read_only: false,
             loading: None,
-            disk_len: None,
+            disk: None,
             language: Arc::from("text"),
             hook: None,
             compact_at,
@@ -368,6 +392,8 @@ impl Buffer {
         buf.path = Some(path.to_path_buf());
         buf.read_only = true;
         buf.loading = Some((0, total));
+        // Before the read, so a write while it maps is a change.
+        buf.disk = Stamp::of(path);
         buf
     }
 
@@ -384,7 +410,6 @@ impl Buffer {
         self.loading = None;
         self.read_only = false;
         self.mark_saved();
-        self.disk_len = Some(len);
         let v = self.journal.version().next();
         self.journal.reset_to(v);
         v
@@ -397,6 +422,10 @@ impl Buffer {
     }
 
     pub fn from_file(path: &Path) -> std::io::Result<Self> {
+        // The stamp before the read: a write that lands between the two
+        // reads as a change later, which a comparison of the texts
+        // answers, where the other order would miss it.
+        let disk = Stamp::of(path);
         // The bytes read are the text's one block: a valid file is not
         // copied again, an invalid one is repaired into a fresh vector.
         let bytes = match String::from_utf8(std::fs::read(path)?) {
@@ -409,12 +438,11 @@ impl Buffer {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
-        let len = bytes.len();
         let mut buf = Self::new(name, "");
         buf.text = text_buffer::Buffer::from_bytes(bytes);
         buf.saved = buf.text.clone();
         buf.path = Some(path.to_path_buf());
-        buf.disk_len = Some(len);
+        buf.disk = disk;
         Ok(buf)
     }
 

@@ -58,6 +58,8 @@ pub struct Kawoosh {
     pub scripting: Scripting,
     /// The config files, their watch, and the last reload.
     pub config: Config,
+    /// The watch on the open buffers' files (`disk.rs`).
+    pub disk: crate::disk::DiskWatch,
     /// The project `init.lua` records and the question up (`trust.rs`).
     pub trust: crate::trust::Trust,
     pub compile: Compile,
@@ -224,6 +226,7 @@ impl Kawoosh {
                 ..Default::default()
             },
             config: Config::new(wake.clone()),
+            disk: crate::disk::DiskWatch::new(wake.clone()),
             trust: Default::default(),
             compile: Compile::default(),
             locations: Default::default(),
@@ -1279,7 +1282,8 @@ impl Kawoosh {
                 Effect::RequestPaste => self.awaiting_paste = true,
                 Effect::PromptLine { kind, line } => self.remember_prompt_line(kind, &line),
                 Effect::Open(p) => self.open(&p),
-                Effect::Wrote(_) => {}
+                Effect::Wrote(id) => self.disk_settled(id),
+                Effect::DiskConflict(id) => self.confirm_disk_write(id),
                 Effect::CountMatches(b) => self.count_matches(b),
                 Effect::SearchContinue {
                     buffer,
@@ -1598,6 +1602,7 @@ impl kui::App for Kawoosh {
         self.fire_settings();
         self.sync_histories(false);
         self.moments.window_focused = ui.env().focused;
+        self.sync_disk(ui.env().focused);
         self.sync_moments(false);
         self.perf.cur.io = ms(t);
         let t = Instant::now();

@@ -478,34 +478,37 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 
 ### Files on disk
 
-- **A file changed under its buffer** — open, a correctness gap [use
-  2026-09-22]; step 12. Seen: a file edited in kawoosh, reset with
-  `git` outside it; kawoosh did not react, and a save after did not
-  put the edited text back on disk. The first half is the code:
-  nothing watches an open buffer's file (the io thread's `Watcher` is
-  on the settings files and nothing else), and `disk_len` is the only
-  record of what was read — no mtime, no hash. The second half is
-  *not* the code as it reads: `write` (`editor/src/commands.rs:969`)
-  writes through `save_beside` whatever the buffer holds, modified or
-  not, with no comparison to the disk; so either the save did not run
-  on the buffer that was thought (the keyboard in another pane, the
-  file open twice) or something else put the text back. Reproduce it
-  as a test before building. The build: every open buffer's file on
-  the watch; the buffer records the mtime and a hash of what it read
-  or wrote; a change that is not ours reloads an unmodified buffer as
-  `:e!` does (one journaled edit, so `u` brings the old text back,
-  said in the message line), and asks about a modified one — *reload*,
-  *keep mine*, *diff* (`diff.rs` exists) — once, not per event; a
-  file deleted says so and leaves the buffer modified. `:w` over a
-  file that changed since it was read asks the same question rather
-  than writing blind. vim's `checktime` is the event on focus-in as
-  well, since a watch can miss (a network mount, an editor that
-  replaces by rename on a path the watcher no longer holds).
-- **`:wa`** — open [use 2026-09-22]; step 12. `:wqa` exists and
-  writes every modified buffer with a path (`write quit all`); `:wa`
-  (`write all`, `:wall`) is the same loop without the quit, and the
-  loop becomes one function both call — reporting `N files written`,
-  and the ones that failed or that step 12's check stopped.
+- **A file changed under its buffer** — done 2026-09-22 [use]; step
+  12. Seen: a file edited in kawoosh, reset with `git` outside it;
+  kawoosh did not react, and a save after did not put the edited text
+  back on disk. The first half was the code: nothing watched an open
+  buffer's file, and `disk_len` was the only record of what was read.
+  The second half was not reproduced: `write` wrote the buffer
+  whatever the disk held, and the report's steps as a test — edit,
+  `:w`, reset outside, `<C-s>` — wrote the edited text back, read or
+  mapped. What changed makes the question moot, since `:w` no longer
+  writes blind. Built (`editor/src/disk.rs`, `kawoosh/src/disk.rs`):
+  a buffer keeps the file's `Stamp` (length and mtime, taken before
+  the read and after a write) where `disk_len` was; every open file is
+  on a second `Watcher`, and the window coming back to the front
+  checks them all; `Editor::disk_state` takes a moved stamp over the
+  same text (a `touch`, a checkout of what was there) as no change.
+  A clean buffer reloads as `:e!` does — one undo node, a corner line
+  saying so; a modified one gets one toast per change that stays,
+  *Reload* / *Keep mine* / *Diff* (`:file reload` `keep` `diff PATH`;
+  the diff a `*diff NAME*` buffer in the `diff` grammar, disk out and
+  buffer in, from a small LCS in `disk.rs` — `diff.rs` draws rows, it
+  does not compute them); a deleted file is said and the buffer keeps
+  its text. `:w` over a changed file refuses with a confirm that shows
+  the hunks — *Write over it*, *Load the disk*, *Diff* — and `:w!`
+  (the bang had been reserved) writes over. `:file` (`:checktime`)
+  checks every buffer now. Not `:disk`: it took `:di<Tab>` from
+  `:dir`. `kawoosh/tests/disk.rs`, six tests, the report's among them.
+- **`:wa`** — done 2026-09-22 [use]; step 12. `write all` (`:wa`,
+  `:wall`) and `:wqa` share `Editor::write_all`: every modified file
+  written but one changed on disk, which is named (`1 file written;
+  changed on disk, not written: a.txt`); `:wqa` quits only when
+  everything was written, where it had quit past a failed write.
 
 ### Buffers with a shape
 

@@ -11,6 +11,7 @@ pub mod compile;
 pub mod confirm;
 pub mod devtab;
 pub mod diff;
+pub mod disk;
 pub mod graph;
 pub mod harness;
 pub mod history;
