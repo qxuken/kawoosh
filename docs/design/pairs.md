@@ -1,10 +1,11 @@
 # Auto-closing brackets: a plugin, off by default
 
-Status: decided 2026-09-21 (roadmap step 9), not built; an afternoon.
-The shape the roadmap's engine track recommended, with the three engine
-doors it needs named, and the first plugin whose acceptance test is a
-`kawoosh test` script (roadmap step 8). Each decision keeps the
-alternative it beat.
+Status: decided 2026-09-21 (roadmap step 9), built 2026-09-23 (step
+16; "Built" at the end says where it departed). The shape the
+roadmap's engine track recommended, with the three engine doors it
+needs named, and the first plugin whose acceptance test is a `kawoosh
+test` script (roadmap step 8). Each decision keeps the alternative it
+beat.
 
 ## The thesis
 
@@ -145,3 +146,36 @@ roadmap's item struck.
 - **`type` from inside a binding.** It runs where `paste clipboard`'s
   insert-mode path runs the engine's `text` from a command already;
   the same path, nothing new.
+
+## Built
+
+2026-09-23, as decided but for these:
+
+- **The keys are gated on a fact, not read on each key.** While
+  `pairs.enabled` is off the plugin's bindings do not hold (`when = {
+  "pairs", "!prompt", "!field" }`, the `pairs` fact set from
+  `on_settings`), and a gated-off binding falls through: `<BS>` and
+  `<CR>` to the engine's own under them, and a typing key to typing —
+  which the engine did not do (a key whose every binding was gated off
+  was refused, its character lost), fixed in `Editor::key`'s insert
+  arm on the way. So Risk two's worry held, and the fix is the
+  engine's, not the plugin's. Decision 2's "does the default itself"
+  stays for when the plugin is on and a rule does not apply.
+- **One path for every caret.** Decision 3's two — one engine call
+  when the carets agree, `edits` when they do not — are one: each
+  caret's action is an edit, all of them one `kawoosh.buf.edits`, the
+  carets put back with `set_selections`; a step over is a caret moved
+  with no edit. `<CR>` is the exception: the block opens only when every
+  caret is between a pair, through the engine's `insert newline`,
+  `move up`, `line end insert`, `insert tab`; else a plain newline.
+- **A fourth door**, `kawoosh.buf.slice(from, to)`: the character on
+  either side of a caret without the whole text, held to characters.
+- **The rules' defaults are the plugin's**, not the engine's layer: a
+  table keyed by `'` is not a settings path. `pairs.enabled` is the
+  engine's default; `pairs.rules` is read when set.
+- **No markdown `*` `_` by default**: a `*` at a line's start is a
+  list's bullet more often than emphasis, and a pair there is in the
+  way. A `markdown` table in `pairs.rules` adds them.
+
+`kawoosh/lua/pairs.lua`, `kawoosh/lua/tests/pairs.lua`, and
+`type_edits_selections_and_slice` in `lua/src/lib.rs`.

@@ -265,6 +265,12 @@ the panes table.
 | `.` | the last change again, on the selections as they are; a count replaces the change's count and is its count from then on |
 | `q` + char … `q` | record into the register; an upper-case letter appends to its lower-case one; the status line says `REC @a` meanwhile |
 
+**Pairs** (`pairs.lua`, off until `pairs.enabled`): an opener types
+its pair with the caret between, a closer before its own steps over
+it, `<BS>` between a pair deletes both, `<CR>` between brackets opens
+the block, a quote pairs only where one can open — at every caret,
+never in the command line or a view's field. `gsa(` wraps a selection.
+
 **Completion** is in place (mvp.md D5): the candidate's rest is a
 ghost after the caret, `<C-n>` `<C-p>` cycle, `<Tab>` `<C-y>` `<CR>`
 take it, `<C-e>` in insert mode drops it. It asks as a word starts and

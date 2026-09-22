@@ -257,8 +257,13 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   the line start, `<C-w>` the word; there is no kill-whole-line. Vim
   has none either; the modal answer is `<Esc>dd`. If wanted: `<C-S-k>`
   or `<A-d>` in insert mode (Alt is free there). Low.
-- **Auto-closing brackets** — decided 2026-09-21 ([pairs.md](pairs.md)),
-  not built; step 16. Contested in modal editors
+- **Auto-closing brackets** — done 2026-09-23 ([pairs.md](pairs.md),
+  "Built"); step 16. `pairs.lua` over four doors (`buf.type`,
+  `buf.edits`, `buf.set_selections`, and `buf.slice` for what is around
+  a caret), its keys gated on a `pairs` fact so off is untouched typing
+  — which took an engine fix: a typing key whose insert-mode bindings
+  were all gated off lost its character. `kawoosh/lua/tests/pairs.lua`.
+  What the roadmap said before: Contested in modal editors
   and cheap to get wrong with multicursors, so a bundled Lua plugin
   over insert-mode `kawoosh.map`, off by default — it is exactly the
   kind of behaviour "hackable by design" says a user should be able to
@@ -1000,11 +1005,12 @@ then breadth.
     `spawn_pending` and the `terminal …` commands, the session's
     `PaneData::Terminal`); the live pane's selection turned out to be
     kui's already. See the terminal track.
-16. **Auto-closing brackets** ([pairs.md](pairs.md)): an afternoon —
+16. ~~**Auto-closing brackets** ([pairs.md](pairs.md)): an afternoon —
     the three Lua doors (`buf.type`, `buf.edits`,
     `buf.set_selections`), `pairs.lua` off by default, its test a
     `kawoosh test` script. Slotted here because it is small and
-    independent, not because it is urgent.
+    independent, not because it is urgent.~~ Landed 2026-09-23; see
+    the engine track and pairs.md's "Built".
 17. **The markdown buffer** ([markdown.md](markdown.md)): one round
     whose first day is three headless checks against kui (a wrapped
     row's fit height, `caret_rect` on it, an image in a row), then

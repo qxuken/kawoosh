@@ -330,6 +330,9 @@ impl Settings {
         // `scratch`, `terminal`, `dir` (the directory as a listing).
         defaults.set("layout.new_pane", Setting::Str("launcher".into()));
         defaults.set("layout.new_tab", Setting::Str("launcher".into()));
+        // Auto-closing brackets (`pairs.lua`, docs/design/pairs.md): off
+        // until set; `pairs.rules` is the plugin's, per language.
+        defaults.set("pairs.enabled", Setting::Bool(false));
         // The lines of history a terminal keeps; a smaller number drops
         // what is past it at once.
         defaults.set("terminal.scrollback", Setting::Int(10_000));
@@ -665,6 +668,7 @@ mod tests {
                 "memory.max_mb",
                 "memory.text.keep_days",
                 "memory.text.max_mb",
+                "pairs.enabled",
                 "picker.preview",
                 "picker.share",
                 "picker.split",
