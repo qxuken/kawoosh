@@ -110,7 +110,8 @@ what kui already retains, with the `rects` lag on top.
 This is what Decision 2 wanted kui's animation for, and it is all
 declared: a new column has `enter { dx: its own width }` and slides in
 from the right; a closing one has `exit { opacity: 0 }` and fades where
-it stood (kui replays it frozen and inert); columns carry `slide`, so
+it stood (kui replays it frozen and inert) — *dropped when built, see
+"Built"*; columns carry `slide`, so
 `<C-w>H` glides the column past its neighbour and a width change eases;
 the `transition` is the one the split ratio already uses. The tree's
 panes keep snapping — a split is a cut, not a motion.
@@ -261,8 +262,15 @@ departed from the text above, and what day one found:
   (its first pane), where the tree's rule sends it to the tab's first
   pane; closing a column's last pane goes to the column before, else
   the one that took its place.
-- **A tab switch cross-fades**: the strip node is keyed once for every
-  tab, so the columns of the tab left declare `exit` and fade over the
-  tab arrived at for 200ms, and the same on `:layout tree`. Kept: it
-  reads as a transition, and a column whose subtree is past kui's
-  exit budget (512 nodes — a screenful of rows) snaps as before.
+- **No `exit` on a column, and the strip keyed per tab.** With
+  `exit { opacity: 0 }` on the columns, a tab switch cross-faded: the
+  columns of the tab left replayed as ghosts over the tab arrived at
+  for 200ms, and the same on `:layout tree` — and a key per tab does
+  not stop it, since kui plays a ghost whether or not its ancestors
+  survived (`depart.rs`). Decided 2026-09-22: the close fade goes, a
+  closed column vanishes and its neighbours glide into the room. The
+  strip is keyed `strip{tab}` all the same, so each tab keeps the
+  offset kui retains for it across switches, and `strip_seen` carries
+  the tab index so a tab moved along the tab strip (`]T`, a new key)
+  reveals its column again. To get the fade back: a kui prop that
+  scopes `exit` to a surviving parent — an ask, not yet asked.

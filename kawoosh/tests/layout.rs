@@ -293,3 +293,46 @@ fn a_new_tab_follows_the_default_and_a_session_keeps_the_kind() {
     assert!(!app.layout.tab().is_scroll());
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+#[test]
+fn each_tab_keeps_its_own_strip_and_a_moved_tab_stays_in_view() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    // Tab 1: a strip scrolled to its third column.
+    ex(&mut d, &mut app, "layout scroll");
+    ctrl_w(&mut d, &mut app, "v");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    assert!(in_view(&d, &app, 3, vw));
+    // Tab 2: a strip too, at its first column.
+    ex(&mut d, &mut app, "set layout.default=scroll");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "tabnew");
+    ctrl_w(&mut d, &mut app, "v");
+    ctrl_w(&mut d, &mut app, "h");
+    settle(&mut d, &mut app);
+    let (t2a, t2b) = (app.layout.visible_panes()[0], app.layout.visible_panes()[1]);
+    assert!(in_view(&d, &app, t2a, vw));
+    // Back and forth: each tab's strip is where it was left.
+    d.keys(&mut app, "gt");
+    settle(&mut d, &mut app);
+    assert_eq!(app.layout.tab, 0);
+    assert!(in_view(&d, &app, 3, vw), "{:?}", app.layout.rects[&3]);
+    assert!(!in_view(&d, &app, 1, vw));
+    d.keys(&mut app, "gt");
+    settle(&mut d, &mut app);
+    assert!(in_view(&d, &app, t2a, vw));
+    assert!(!in_view(&d, &app, t2b, vw), "{:?}", app.layout.rects[&t2b]);
+    // The tab moved along the tab strip keeps its focused column in
+    // view under its new key.
+    ctrl_w(&mut d, &mut app, "l");
+    settle(&mut d, &mut app);
+    assert!(in_view(&d, &app, t2b, vw));
+    d.keys(&mut app, "[T");
+    assert_eq!(app.layout.tab, 0);
+    settle(&mut d, &mut app);
+    assert!(in_view(&d, &app, t2b, vw), "{:?}", app.layout.rects[&t2b]);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

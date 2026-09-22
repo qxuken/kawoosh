@@ -426,19 +426,22 @@ impl Kawoosh {
     }
 
     /// The strip (scrolling-tab.md Decisions 3 and 4): one `scroll_x`
-    /// row kui retains the offset of, a keyed column per `Column` at
-    /// its width in viewport fractions, a draggable gap between. A
-    /// column new to a strip already on show slides in from the right
-    /// and fades up — a third of its width, not the whole: kui drops a
-    /// key to a sink outside the viewport, and a column that started
-    /// wholly off it would lose the keystroke typed into it during the
-    /// slide — a closed one fades where it stood, and a moved or
-    /// resized one glides. The strip's first frame (a conversion, a
-    /// restore) snaps: those columns are not arriving. On the frame the
-    /// focus lands in another column — a move, an insert, a click, a
-    /// tab switch — the focused column is revealed (or centred, under
-    /// `layout.scroll.center`), and the offset is otherwise kui's, so a
-    /// swipe is never fought.
+    /// row per tab — keyed by the tab, so each keeps the offset kui
+    /// retains for it — a keyed column per `Column` at its width in
+    /// viewport fractions, a draggable gap between. A column new to a
+    /// strip already on show slides in from the right and fades up — a
+    /// third of its width, not the whole: kui drops a key to a sink
+    /// outside the viewport, and a column that started wholly off it
+    /// would lose the keystroke typed into it during the slide — and a
+    /// moved or resized one glides. A closed one goes at once: an
+    /// `exit` fade would replay on a tab switch too (kui plays a ghost
+    /// whether or not its ancestors survived), as the columns of the
+    /// tab left fading over the tab arrived at. The strip's first frame
+    /// (a conversion, a restore) snaps: those columns are not arriving.
+    /// On the frame the focus lands in another column — a move, an
+    /// insert, a click, a tab switched to or moved — the focused column
+    /// is revealed (or centred, under `layout.scroll.center`), and the
+    /// offset is otherwise kui's, so a swipe is never fought.
     pub(crate) fn render_strip(&mut self, ui: &mut Ui<'_>, strip: &Strip) {
         let pal = self.pal;
         let vw = ui.viewport().w.max(1.0);
@@ -457,8 +460,9 @@ impl Kawoosh {
             .iter()
             .any(|c| self.strip_known.contains(&c.id));
         let mut focus_key = None;
+        let tab = self.layout.tab;
         let row = ui.with_keyed(
-            "strip",
+            &format!("strip{tab}"),
             NodeSpec::row()
                 .fill()
                 .scroll_x()
@@ -471,8 +475,7 @@ impl Kawoosh {
                         .width(Sizing::Fixed(px))
                         .height(Sizing::Grow(1.0))
                         .transition(200.0)
-                        .slide()
-                        .exit(Enter::default().opacity(0.0));
+                        .slide();
                     if on_show && !self.strip_known.contains(&col.id) {
                         spec = spec.enter(Enter::from((px / 3.0).min(160.0), 0.0).opacity(0.0));
                     }
@@ -508,7 +511,7 @@ impl Kawoosh {
             },
         );
         self.strip_known.extend(strip.columns.iter().map(|c| c.id));
-        let seen = fi.map(|i| (focused, i));
+        let seen = fi.map(|i| (tab, focused, i));
         if seen != self.strip_seen {
             self.strip_seen = seen;
             self.strip_settling = STRIP_SETTLING;
