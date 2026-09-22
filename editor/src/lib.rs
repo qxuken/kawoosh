@@ -2110,10 +2110,17 @@ impl Editor {
         match self.mode(view) {
             Mode::Insert => {
                 let note = stroke.notation();
+                let plain = stroke.text.is_some() && !stroke.ctrl && !stroke.alt && !stroke.sup;
                 if let Lookup::Exact(bs) = self.keymap.lookup(Mode::Insert, &[note]) {
                     let bs = bs.to_vec();
-                    self.run_bindings(view, &bs, None);
-                    return true;
+                    // A key that types, whose every binding is gated off
+                    // here, types: `:` bound for one field is a colon
+                    // in every other, `(` for a plugin's buffers is a
+                    // paren in the prompt.
+                    if !(plain && self.pick_binding(view, &bs).is_err()) {
+                        self.run_bindings(view, &bs, None);
+                        return true;
+                    }
                 }
                 if let Some(t) = &stroke.text
                     && !stroke.ctrl

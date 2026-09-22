@@ -1167,6 +1167,25 @@ fn commands_are_specs_with_forms_conditions_and_subcommands() {
     );
 }
 
+/// A key that types, bound in insert mode under a condition, types
+/// where the condition does not hold — the binding is not a place the
+/// key goes to die — and runs its command where it does.
+#[test]
+fn a_gated_insert_binding_on_a_typing_key_types_elsewhere() {
+    use kawoosh_editor::Cond;
+    let mut t = T::new("");
+    t.ed.register("colon", |ed, _| ed.message = "colon".into());
+    t.ed.keymap
+        .bind_when(Mode::Insert, ":", "colon", &[Cond::parse("field:x")]);
+    t.keys("ia:b");
+    assert_eq!(t.text(), "a:b");
+    assert_eq!(t.ed.message, "");
+    t.ed.fact("field:x", true);
+    t.keys(":");
+    assert_eq!(t.text(), "a:b", "where it holds, the command");
+    assert_eq!(t.ed.message, "colon");
+}
+
 /// A key can carry several bindings, newest first: the first whose own
 /// `when` holds and whose command can run is the one that runs; none
 /// of them is the newest one's reason; a bare binding on a bare command
