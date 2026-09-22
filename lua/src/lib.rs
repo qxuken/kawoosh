@@ -292,6 +292,19 @@ pub enum Msg {
         buffer: u64,
         offset: usize,
     },
+    /// Text typed at every caret of the view, as insert mode types it.
+    Type(String),
+    /// Edits to a buffer as one step, ascending and disjoint in the text
+    /// as it is (`Editor::apply_edits`).
+    Edits {
+        buffer: u64,
+        edits: Vec<(std::ops::Range<usize>, String)>,
+    },
+    /// Every selection of the buffer's view at once, the first primary.
+    SetSelections {
+        buffer: u64,
+        sels: Vec<(usize, usize)>,
+    },
 }
 
 impl Msg {
@@ -302,6 +315,9 @@ impl Msg {
             Msg::Edit { .. }
                 | Msg::SetText { .. }
                 | Msg::SetCursor { .. }
+                | Msg::Type(_)
+                | Msg::Edits { .. }
+                | Msg::SetSelections { .. }
                 | Msg::Echo(_)
                 | Msg::Ex(_)
                 | Msg::Fact { .. }
@@ -1395,6 +1411,44 @@ impl Runtime {
                         }
                     }
                 }
+                Msg::Type(text) => ed.insert_text(view, &text),
+                Msg::Edits { buffer, edits } => {
+                    ed.apply_edits(id_of(buffer), &edits);
+                }
+                Msg::SetSelections { buffer, sels } => {
+                    let id = id_of(buffer);
+                    let Some(len) = ed.buffers.get(id).map(|b| b.len()) else {
+                        continue;
+                    };
+                    if sels.is_empty() {
+                        continue;
+                    }
+                    let mut out = kawoosh_editor::Selections {
+                        items: sels
+                            .iter()
+                            .map(|(a, h)| {
+                                kawoosh_editor::Selection::new((*a).min(len), (*h).min(len))
+                            })
+                            .collect(),
+                        primary: 0,
+                    };
+                    out.normalize();
+                    // The command's view when it shows the buffer, else
+                    // every view on it.
+                    let views: Vec<ViewId> = if ed.views.get(view).is_some_and(|v| v.buffer == id) {
+                        vec![view]
+                    } else {
+                        ed.views
+                            .iter()
+                            .filter(|(_, v)| v.buffer == id)
+                            .map(|(k, _)| k)
+                            .collect()
+                    };
+                    for v in views {
+                        ed.views[v].sels = out.clone();
+                        ed.views[v].goal_col = None;
+                    }
+                }
                 Msg::Echo(s) => ed.message = s,
                 Msg::Ex(line) => ed.execute(view, &line),
                 Msg::Fact { name, on } => ed.fact(&name, on),
@@ -2255,6 +2309,26 @@ fn seed(
             })?
         })?,
     )?;
+    // `kawoosh.buf.slice(from, to[, buffer])`: the text between two
+    // offsets (from 0, `to` exclusive, clamped to the text and to
+    // characters) — what is around a caret, without the whole text.
+    let pp = published.clone();
+    buf.set(
+        "slice",
+        lua.create_function(move |_, (from, to, h): (usize, usize, Option<u64>)| {
+            with_buf(&pp, h, |b| {
+                let len = b.snapshot.len();
+                let (mut a, mut z) = (from.min(len), to.min(len).max(from.min(len)));
+                while a > 0 && b.snapshot.text.byte_at(a).is_some_and(|c| c & 0xC0 == 0x80) {
+                    a -= 1;
+                }
+                while z < len && b.snapshot.text.byte_at(z).is_some_and(|c| c & 0xC0 == 0x80) {
+                    z += 1;
+                }
+                b.snapshot.slice(a..z)
+            })
+        })?,
+    )?;
     let pp = published.clone();
     buf.set(
         "cursor",
@@ -2581,6 +2655,64 @@ fn seed(
                 .or(pp.borrow().current)
                 .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
             qq.borrow_mut().push(Msg::SetCursor { buffer: h, offset });
+            Ok(())
+        })?,
+    )?;
+    // `kawoosh.buf.type(text)`: typed at every caret of the view, as a
+    // keystroke in insert mode types it — the carets after it.
+    let qq = q(queue);
+    buf.set(
+        "type",
+        lua.create_function(move |_, text: String| {
+            qq.borrow_mut().push(Msg::Type(text));
+            Ok(())
+        })?,
+    )?;
+    // `kawoosh.buf.edits({ { from, to, text }, … }[, buffer])`: several
+    // edits as one step — offsets from 0 in the text as it is, `to`
+    // exclusive, disjoint — every view's selections carried through
+    // them (`Editor::apply_edits`).
+    let qq = q(queue);
+    let pp = published.clone();
+    buf.set(
+        "edits",
+        lua.create_function(move |_, (list, h): (Vec<Table>, Option<u64>)| {
+            let h = h
+                .or(pp.borrow().current)
+                .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
+            let mut edits = Vec::with_capacity(list.len());
+            for e in list {
+                let from: usize = e.get(1)?;
+                let to: usize = e.get(2)?;
+                let text: String = e.get(3)?;
+                edits.push((from..to.max(from), text));
+            }
+            qq.borrow_mut().push(Msg::Edits { buffer: h, edits });
+            Ok(())
+        })?,
+    )?;
+    // `kawoosh.buf.set_selections({ { anchor, head }, … }[, buffer])`:
+    // the selections as given, the first the primary — after the edits
+    // asked before it, in the text they leave.
+    let qq = q(queue);
+    let pp = published.clone();
+    buf.set(
+        "set_selections",
+        lua.create_function(move |_, (list, h): (Vec<Table>, Option<u64>)| {
+            let h = h
+                .or(pp.borrow().current)
+                .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
+            let mut sels = Vec::with_capacity(list.len());
+            for s in list {
+                let a: usize = s
+                    .get::<Option<usize>>("anchor")?
+                    .map_or_else(|| s.get(1), Ok)?;
+                let hd: usize = s
+                    .get::<Option<usize>>("head")?
+                    .map_or_else(|| s.get(2), Ok)?;
+                sels.push((a, hd));
+            }
+            qq.borrow_mut().push(Msg::SetSelections { buffer: h, sels });
             Ok(())
         })?,
     )?;
@@ -3312,6 +3444,57 @@ mod tests {
         );
         Runtime::apply_editor_msgs(&mut ed, v, rt.take_msgs());
         assert_eq!(ed.buffers[b].text(), "Z3ab\ncd");
+    }
+
+    /// The doors a plugin edits several carets through: `type` at every
+    /// caret, `edits` as one step with the selections carried, and
+    /// `set_selections` after them; `slice` reads around a caret, held
+    /// to characters.
+    #[test]
+    fn type_edits_selections_and_slice() {
+        let (rt, _ext) = Runtime::new().unwrap();
+        let mut ed = Editor::new();
+        let b = ed.add_buffer(Buffer::new("t", "aé c\nxy"));
+        let v = ed.add_view(b);
+        ed.views[v].sels = kawoosh_editor::Selections {
+            items: vec![
+                kawoosh_editor::Selection::point(1),
+                kawoosh_editor::Selection::point(7),
+            ],
+            primary: 0,
+        };
+        rt.publish(&ed, Some(v));
+        rt.load_source(
+            "t",
+            r#"
+            assert(kawoosh.buf.slice(0, 2) == "aé", kawoosh.buf.slice(0, 2))
+            assert(kawoosh.buf.slice(2, 3) == "é", "a character's middle widens to it")
+            assert(kawoosh.buf.slice(6, 99) == "xy")
+            kawoosh.buf.type("()")
+            "#,
+        )
+        .unwrap();
+        Runtime::apply_editor_msgs(&mut ed, v, rt.take_msgs());
+        assert_eq!(ed.buffers[b].text(), "a()é c\nx()y");
+        let heads: Vec<usize> = ed.views[v].sels.iter().map(|s| s.head).collect();
+        assert_eq!(heads, [3, 11], "the carets after what was typed");
+        rt.publish(&ed, Some(v));
+        rt.load_source(
+            "t",
+            r#"
+            kawoosh.buf.edits({ { 2, 3, "" }, { 10, 11, "" } })
+            kawoosh.buf.set_selections({ { anchor = 2, head = 2 }, { 8, 8 } })
+            "#,
+        )
+        .unwrap();
+        Runtime::apply_editor_msgs(&mut ed, v, rt.take_msgs());
+        assert_eq!(ed.buffers[b].text(), "a(é c\nx(y");
+        let sels: Vec<(usize, usize)> = ed.views[v]
+            .sels
+            .iter()
+            .map(|s| (s.anchor, s.head))
+            .collect();
+        assert_eq!(sels, [(2, 2), (8, 8)]);
     }
 
     /// `kawoosh.opt`: a read is the effective value, typed — a number,

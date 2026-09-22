@@ -833,6 +833,9 @@ impl Kawoosh {
             Msg::Edit { .. }
             | Msg::SetText { .. }
             | Msg::SetCursor { .. }
+            | Msg::Type(_)
+            | Msg::Edits { .. }
+            | Msg::SetSelections { .. }
             | Msg::Echo(_)
             | Msg::Ex(_) => {
                 // Editor messages already applied; here only when there
