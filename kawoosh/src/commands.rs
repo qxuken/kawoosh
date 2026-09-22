@@ -800,7 +800,7 @@ fn panes() -> Vec<ShellCommand> {
                         return;
                     };
                     let p = k.layout.new_pane(Content::Terminal(t));
-                    k.layout.dock = Some(p);
+                    k.layout.set_dock(p);
                 }
                 k.layout.dock_open = !k.layout.dock_open;
                 k.layout.dock_focused = k.layout.dock_open;

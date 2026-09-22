@@ -5,6 +5,7 @@
 //! window.
 
 pub mod app;
+pub mod chrome;
 pub mod cmdline;
 pub mod commands;
 pub mod compile;

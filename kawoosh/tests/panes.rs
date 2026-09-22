@@ -88,6 +88,62 @@ fn tabs_and_the_dock() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// The dock is a tree of its own (roadmap step 13): a split from a dock
+/// pane stays in the dock, side by side under the tab; `<A-S-hjkl>`
+/// sizes the dock's split and, past it, the dock's height; closing its
+/// panes one by one closes the dock, the tab untouched throughout.
+#[test]
+fn the_dock_splits_in_itself() {
+    let mut app = Kawoosh::new("t", "one");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ctrl_w(&mut d, &mut app, "d");
+    let first = app.layout.focused();
+    assert!(app.layout.in_dock(first));
+    ctrl_w(&mut d, &mut app, "v");
+    let second = app.layout.focused();
+    assert!(app.layout.in_dock(second), "the split is the dock's");
+    assert_eq!(app.layout.visible_panes(), [1, first, second]);
+    assert_eq!(app.layout.tab().focused, 1, "the tab keeps its focus");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let (a, b) = (app.layout.rects[&first], app.layout.rects[&second]);
+    assert_eq!(a.y, b.y, "side by side");
+    assert!(a.x < b.x);
+    assert!(a.y > app.layout.rects[&1].y, "under the tab");
+    // Wider: the dock's split moves; taller: nothing above or below in
+    // the dock, so the dock itself grows.
+    let share = app.layout.dock.as_ref().unwrap().share_of(second).unwrap();
+    d.key(
+        &mut app,
+        "l",
+        KeyMods {
+            alt: true,
+            shift: true,
+            ..KeyMods::default()
+        },
+    );
+    assert!(app.layout.dock.as_ref().unwrap().share_of(second).unwrap() > share);
+    let ratio = app.layout.dock_ratio;
+    d.key(
+        &mut app,
+        "k",
+        KeyMods {
+            alt: true,
+            shift: true,
+            ..KeyMods::default()
+        },
+    );
+    assert!(app.layout.dock_ratio != ratio, "the dock's height moved");
+    ctrl_w(&mut d, &mut app, "c");
+    assert_eq!(app.layout.focused(), first);
+    assert!(app.layout.dock_open);
+    ctrl_w(&mut d, &mut app, "c");
+    assert!(app.layout.dock.is_none());
+    assert_eq!(app.layout.visible_panes(), [1]);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// `:enew` puts a fresh scratch in the focused pane, `:new` and `:vnew`
 /// one in a split; each is its own buffer, empty, named `*scratch*`.
 #[test]

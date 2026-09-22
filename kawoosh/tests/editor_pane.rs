@@ -48,8 +48,9 @@ fn keys_edit_through_the_real_dispatch() {
 fn the_view_follows_the_caret_with_scrolloff() {
     let text: String = (1..=100).map(|i| format!("l{i}\n")).collect();
     let mut app = Kawoosh::new("t", &text);
-    // tabs 26 + strips 48 + title 22 + border 2 + 10 rows × 20 = 298.
-    let mut d = Drive::new(600.0, 300.0);
+    // title bar 34 + its line 1 + tabs 26 + strips 48 + pane title 22
+    // + border 2 + 10 rows × 20 = 333.
+    let mut d = Drive::new(600.0, 335.0);
     d.frame(&mut app);
     assert_eq!(app.ed.views[app.focused_view().unwrap()].rows, 10);
     d.keys(&mut app, "8j");
@@ -135,7 +136,7 @@ fn the_caret_takes_no_room_in_the_row() {
         d.core
             .nodes()
             .iter()
-            .find(|n| n.float && n.rect.w == 2.0 && n.rect.y < 70.0)
+            .find(|n| n.float && n.rect.w == 2.0 && n.rect.y < 105.0)
             .map(|n| (n.rect.x, n.bg.a))
     };
     d.keys(&mut app, "w");
@@ -315,18 +316,18 @@ fn the_wheel_reaches_the_view_over_the_lines_column() {
         .collect::<Vec<_>>()
         .join("\n");
     let mut app = Kawoosh::new("t", &doc);
-    let mut d = Drive::new(300.0, 200.0);
+    let mut d = Drive::new(300.0, 235.0);
     d.frame(&mut app);
     let view = app.focused_view().unwrap();
     // Down: `top` moves, the way it did before the column scrolled.
-    d.wheel(&mut app, 150.0, 80.0, 0.0, -60.0);
+    d.wheel(&mut app, 150.0, 115.0, 0.0, -60.0);
     d.frame(&mut app);
     assert_eq!(app.ed.views[view].top, 3);
     // Sideways: `left` moves, and the frame clamps it to the content.
-    d.wheel(&mut app, 150.0, 80.0, -40.0, 0.0);
+    d.wheel(&mut app, 150.0, 115.0, -40.0, 0.0);
     d.frame(&mut app);
     assert_eq!(app.ed.views[view].left, 40.0);
-    d.wheel(&mut app, 150.0, 80.0, -10000.0, 0.0);
+    d.wheel(&mut app, 150.0, 115.0, -10000.0, 0.0);
     d.frame(&mut app);
     let left = app.ed.views[view].left;
     assert!(
@@ -342,7 +343,7 @@ fn a_flag_is_one_step_and_one_caret() {
     // flag in one step, the block caret covers it whole, and the row's
     // text is the line, unsplit.
     let mut app = Kawoosh::new("t", "🇺🇸x\n");
-    let mut d = Drive::new(300.0, 200.0);
+    let mut d = Drive::new(300.0, 235.0);
     d.frame(&mut app);
     let head = |app: &Kawoosh| {
         app.ed.views[app.focused_view().unwrap()]

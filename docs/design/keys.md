@@ -50,14 +50,14 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>w` `<C-w>x` | next pane, swap with it |
 | `<C-w>h/j/k/l`, `<C-w>` + arrows | focus by direction |
 | `<C-S-h>` `<C-S-j>` `<C-S-k>` `<C-S-l>` | the same, straight — one spelling, from **every** pane and mode |
-| `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>`, and vim's `<C-w><` `<C-w>>` `<C-w>-` `<C-w>+` | the pane narrower, wider, shorter, taller by a twentieth of its split, COUNT steps — the nearest split of the axis moves, as its divider does under a drag; in a strip the width pair steps the column through the presets instead; from every pane and mode; the dock's height when the dock has the keys |
+| `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>`, and vim's `<C-w><` `<C-w>>` `<C-w>-` `<C-w>+` | the pane narrower, wider, shorter, taller by a twentieth of its split, COUNT steps — the nearest split of the axis moves, as its divider does under a drag; in a strip the width pair steps the column through the presets instead; from every pane and mode; in the dock its own splits first, and the dock's height past them |
 | `<C-w>H` `<C-w>L` `<C-w>J` `<C-w>K` | carry the pane a place, COUNT places: in a strip its column along the ribbon (`H` `L`) or the pane inside its column's stack (`J` `K`), in a tree past the neighbour on that side — vim's "move to the far side", read as one step |
 | `⌘1`…`⌘9`, `<C-S-1>`…`<C-S-9>` | the Nth column of a strip (the Nth pane of a tree), the last when there are fewer — `:pane goto N`. Both are spellings no pty can use, so they reach a column from a terminal pane too; a plain `<C-1>` is the shell's and is bound to nothing |
 | `<C-w>e` `<C-w>i` | the pane out of its column's stack into a column of its own after it, and the next column's top pane into the stack under it — `e` out, `i` in, as `<A-o>` and `<A-i>` are the syntax node's. The first is what dragging a title bar onto a pane's left or right edge does |
 | `zs` `ze` `zz` | the focused column against the viewport's left edge, its right edge, or in the middle (`:strip left` / `right` / `center`) — vim's horizontal scrolling, read on the ribbon |
 | `<C-w>t` `<leader>tn` | a new tab, of the kind `layout.default` names (the strip) |
 | `:layout` `<leader>tl` | the tab flipped between a tree of splits and a strip of columns ([scrolling-tab.md](scrolling-tab.md)); `:layout scroll` / `:layout tree` name the kind |
-| `<C-w>d` | the dock |
+| `<C-w>d` | the dock — a tree of its own: a split from a dock pane stays in the dock |
 | `<C-w>!` | a terminal below (`:!` runs a shell, so does this) |
 | `<C-w>n` | the keyboard onto the toasts |
 | `<C-w>:` | the command line, from a pane without one |

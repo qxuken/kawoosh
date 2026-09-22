@@ -859,7 +859,7 @@ impl Kawoosh {
                     FloatConfig::viewport()
                         .at(Align::End, Align::Start)
                         .self_at(Align::End, Align::Start)
-                        .offset(-12.0, TAB_H + 8.0),
+                        .offset(-12.0, self.title_h + 1.0 + TAB_H + 8.0),
                 )
                 .max_width(max_w)
                 .gap(6.0)

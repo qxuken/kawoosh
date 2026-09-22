@@ -1018,7 +1018,7 @@ impl Kawoosh {
                 .into_iter()
                 .find(|p| self.term_of(*p) == Some(t));
             match pane {
-                Some(p) if self.layout.dock == Some(p) => {
+                Some(p) if self.layout.in_dock(p) => {
                     if self.layout.dock_open && self.layout.focused() == p {
                         self.layout.dock_open = false;
                         self.layout.dock_focused = false;
@@ -1049,15 +1049,15 @@ impl Kawoosh {
         };
         self.scripting.tool_terms.insert(name.to_string(), t);
         if def.dock {
-            if let Some(old) = self.layout.dock.take()
-                && let Some(Content::Terminal(ot)) = self.layout.close(old)
-            {
-                self.terms.map.remove(&ot);
-            }
-            let p = self.layout.new_pane(Content::Terminal(t));
-            self.layout.dock = Some(p);
+            // Beside what the dock holds, or the dock's first pane.
             self.layout.dock_open = true;
             self.layout.dock_focused = true;
+            if self.layout.dock.is_some() {
+                self.layout.split(SplitDir::H, Content::Terminal(t));
+            } else {
+                let p = self.layout.new_pane(Content::Terminal(t));
+                self.layout.set_dock(p);
+            }
         } else {
             self.layout.split(SplitDir::V, Content::Terminal(t));
         }

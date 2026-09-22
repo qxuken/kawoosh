@@ -174,6 +174,12 @@ pub struct Kawoosh {
     /// Frames left on which the focused column is revealed again, and
     /// on which the columns slide.
     pub(crate) strip_settling: u8,
+    /// The title bar's height this frame (`chrome.rs`): the platform's,
+    /// read off the window.
+    pub(crate) title_h: f32,
+    /// The active tab and the count as last drawn: a change reveals
+    /// the active tab.
+    pub(crate) tabs_seen: Option<(usize, usize)>,
     /// Whether `layout.default` has decided the tabs already open
     /// (`sync_layout_settings`), which it does once.
     pub(crate) layout_default_seen: bool,
@@ -275,6 +281,8 @@ impl Kawoosh {
             body_h: 600.0,
             strip_seen: None,
             strip_settling: 0,
+            title_h: 0.0,
+            tabs_seen: None,
             strip_align: None,
             culled: Default::default(),
             layout_default_seen: false,
@@ -843,11 +851,24 @@ impl Kawoosh {
     /// `<A-S-l>` is one step, `3<A-S-l>` three — and the message names
     /// the preset it landed on (scrolling-tab.md Decision 2).
     pub(crate) fn resize_pane(&mut self, dir: SplitDir, by: f32) {
-        if self.layout.dock_focused && self.layout.dock_open && self.layout.dock.is_some() {
-            if dir == SplitDir::V {
-                self.layout.dock_ratio = (self.layout.dock_ratio + by).clamp(0.1, 0.9);
-            } else {
-                self.ed.message = "the dock spans the window".into();
+        // In the dock: its own splits first; up and down past them is
+        // the dock's height.
+        if self.layout.in_the_dock()
+            && let Some(d) = self.layout.dock.as_mut()
+        {
+            let f = d.focused;
+            let alone = matches!(
+                &d.layout,
+                crate::layout::Kind::Tree(crate::layout::Node::Pane(_))
+            );
+            if !d.resize(f, dir, by) {
+                match dir {
+                    SplitDir::V => {
+                        self.layout.dock_ratio = (self.layout.dock_ratio + by).clamp(0.1, 0.9)
+                    }
+                    SplitDir::H if alone => self.ed.message = "the dock spans the window".into(),
+                    SplitDir::H => self.ed.message = "no pane beside this one".into(),
+                }
             }
             return;
         }
@@ -1553,6 +1574,10 @@ impl Kawoosh {
                 let ratio = (ratio as f32).clamp(0.1, 0.9);
                 if path == "dock" {
                     self.layout.dock_ratio = 1.0 - ratio;
+                } else if let Some(rest) = path.strip_prefix("d:") {
+                    if let Some(r) = self.layout.dock.as_mut().and_then(|d| d.ratio_mut(rest)) {
+                        *r = ratio;
+                    }
                 } else if let Some(r) = self.layout.tab_mut().ratio_mut(&path) {
                     *r = ratio;
                 }
@@ -1659,16 +1684,26 @@ impl kui::App for Kawoosh {
         ui.window_title(&format!("{} — kawoosh", self.title()));
         let vp = ui.viewport();
         let lh = self.face.line_height;
-        self.body_h = (vp.h - TAB_H - 2.0 * STRIP_H).max(lh);
+        // The title bar's height is the platform's; its hairline is one
+        // more pixel.
+        self.title_h = kui::widgets::titlebar_height(ui);
+        self.body_h = (vp.h - self.title_h - 1.0 - TAB_H - 2.0 * STRIP_H).max(lh);
         let body_h = self.body_h;
         ui.with(NodeSpec::column().fill().bg(pal.bg), |ui| {
+            self.title_bar(ui);
             self.tab_strip(ui);
             ui.with(
                 NodeSpec::column()
                     .width(Sizing::Grow(1.0))
                     .height(Sizing::Fixed(body_h)),
                 |ui| {
-                    let dock = self.layout.dock.filter(|_| self.layout.dock_open);
+                    let dock = match &self.layout.dock {
+                        Some(d) if self.layout.dock_open => match &d.layout {
+                            crate::layout::Kind::Tree(root) => Some(root.clone()),
+                            crate::layout::Kind::Scroll(_) => None,
+                        },
+                        _ => None,
+                    };
                     let dock_h = if dock.is_some() {
                         (body_h * self.layout.dock_ratio).clamp(lh * 3.0, body_h - lh * 3.0)
                     } else {
@@ -1706,7 +1741,9 @@ impl kui::App for Kawoosh {
                             NodeSpec::column()
                                 .width(Sizing::Grow(1.0))
                                 .height(Sizing::Fixed(dock_h)),
-                            |ui| self.render_pane(ui, d),
+                            // `d:` keeps the dock's divider paths apart
+                            // from the tab's (`on_split_drag`).
+                            |ui| self.render_node(ui, &d, "d:"),
                         );
                     }
                 },
@@ -1820,6 +1857,20 @@ impl kui::App for Kawoosh {
                     self.layout.tab = (i as usize).min(self.layout.tabs.len() - 1);
                     self.layout.dock_focused = false;
                 }
+            }
+            // A tab's close button: that tab, as `:tabclose` closes the
+            // one it is in.
+            Some("tab close") => {
+                if let Some(i) = p.get("index").and_then(Value::as_int) {
+                    self.layout.tab = (i as usize).min(self.layout.tabs.len() - 1);
+                    self.layout.dock_focused = false;
+                    self.run_line("tab close");
+                }
+            }
+            // The title bar's cwd: listed.
+            Some("cwd") => {
+                let cwd = self.cwd.display().to_string();
+                self.run_line(&format!("dir {cwd}"));
             }
             Some("term") => {
                 // A click focuses; with ⌘ held it opens the path under the

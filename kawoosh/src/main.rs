@@ -150,6 +150,9 @@ fn main() -> anyhow::Result<()> {
         }
     }
     kui::app("kawoosh")
+        // The title row is kawoosh's (chrome.rs): the cwd and the
+        // status blocks in it, the platform's controls kept.
+        .custom_titlebar()
         .size(1100.0, 760.0)
         .min_size(480.0, 320.0)
         .core(core)

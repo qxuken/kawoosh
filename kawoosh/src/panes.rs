@@ -1,6 +1,7 @@
 //! Drawing the pane tree: splits with drag dividers, a title bar per
 //! pane, the editor pane as rows (kui.md D3), the terminal pane as
-//! `cells` (D4), the tab strip, the status strip and the command line;
+//! `cells` (D4), the status strip and the command line (the title bar
+//! and the tab strip are `chrome.rs`'s);
 //! and the scrolling tab (scrolling-tab.md) as a `scroll_x` row of
 //! columns that slide.
 
@@ -10,7 +11,7 @@ use kawoosh_editor::search;
 use kawoosh_editor::{Mode, ViewId, motions};
 use kui::{Align, Enter, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
 
-use crate::app::{DIVIDER, Kawoosh, TAB_H, TITLE_H};
+use crate::app::{DIVIDER, Kawoosh, TITLE_H};
 use crate::layout::{Content, Drop, Kind, Node, PaneId, SplitDir, Strip};
 use crate::rows::{self, Caret, Drawn, GUTTER_W, LineDraw, STRIP_H, Window};
 use crate::terminals::TermId;
@@ -75,133 +76,6 @@ impl Kawoosh {
     /// The bar, i3-style: workspaces as numbered blocks on the left — the
     /// focused one in the accent, the others quiet — and the facts on the
     /// right (the working directory, the LSP pool).
-    pub(crate) fn tab_strip(&self, ui: &mut Ui<'_>) {
-        let pal = self.pal;
-        let font = self.face;
-        let theme = ui.theme();
-        ui.with(
-            NodeSpec::row()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(TAB_H))
-                .bg(pal.strip)
-                .cross_align(Align::Center)
-                .role(Role::TabList),
-            |ui| {
-                for (i, tab) in self.layout.tabs.iter().enumerate() {
-                    let active = i == self.layout.tab;
-                    let name = match self.layout.content(tab.focused) {
-                        Some(Content::Editor(v)) => self.ed.buffer_of(v).name.clone(),
-                        Some(Content::Terminal(t)) => self
-                            .terms
-                            .map
-                            .get(&t)
-                            .filter(|t| !t.title.is_empty())
-                            .map(|t| t.title.clone())
-                            .unwrap_or_else(|| "term".into()),
-                        Some(Content::Lua(n)) => n,
-                        Some(Content::Undo) => "undo".into(),
-                        Some(Content::Memory) => "memory".into(),
-                        None => "?".into(),
-                    };
-                    let mut ps = Vec::new();
-                    tab.panes(&mut ps);
-                    let modified = ps.iter().any(
-                        |p| matches!(self.view_of(*p), Some(v) if self.ed.buffer_of(v).modified),
-                    );
-                    let label = format!("{}: {}{}", i + 1, name, if modified { " ●" } else { "" });
-                    let (bg, fg, edge) = if active {
-                        (theme.accent, theme.on_accent, theme.accent_hover)
-                    } else {
-                        (pal.strip, pal.dim, pal.border)
-                    };
-                    ui.with_indexed(
-                        100 + i as u64,
-                        NodeSpec::column()
-                            .height(Sizing::Grow(1.0))
-                            .bg(bg)
-                            .hover_bg(if active {
-                                theme.accent_hover
-                            } else {
-                                pal.panel
-                            })
-                            .on_click(Value::map([
-                                ("kind", "tab".into()),
-                                ("index", Value::Int(i as i64)),
-                            ]))
-                            .role(Role::Tab)
-                            .selected(active)
-                            .label(label.as_str()),
-                        |ui| {
-                            // i3's coloured top edge on the block.
-                            ui.with(
-                                NodeSpec::row()
-                                    .width(Sizing::Grow(1.0))
-                                    .height(Sizing::Fixed(2.0))
-                                    .bg(edge),
-                                |_| {},
-                            );
-                            ui.with(
-                                NodeSpec::row()
-                                    .height(Sizing::Grow(1.0))
-                                    .pad_xy(10.0, 0.0)
-                                    .cross_align(Align::Center),
-                                |ui| {
-                                    ui.text(&label, rows::mono(font, &pal).color(fg));
-                                },
-                            );
-                        },
-                    );
-                    // A hairline between blocks, as i3 draws.
-                    ui.with_indexed(
-                        1000 + i as u64,
-                        NodeSpec::column()
-                            .width(Sizing::Fixed(1.0))
-                            .height(Sizing::Grow(1.0))
-                            .bg(pal.border),
-                        |_| {},
-                    );
-                }
-                ui.with_indexed(500, NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
-                // The status block: cwd, the pool.
-                let cwd = kawoosh_systems::fs::abbreviate_home(&self.cwd);
-                let mut blocks: Vec<(String, kui::Color)> = vec![(cwd, pal.fg)];
-                if !self.lsp.status.is_empty() {
-                    let n: usize = self.lsp.status.iter().map(|s| s.2).sum();
-                    blocks.push((
-                        format!(
-                            "{} server{} · {n} docs",
-                            self.lsp.status.len(),
-                            if self.lsp.status.len() == 1 { "" } else { "s" }
-                        ),
-                        pal.dim,
-                    ));
-                }
-                if self.compile.running {
-                    blocks.push(("compiling…".into(), pal.command));
-                }
-                for (i, (text, color)) in blocks.iter().enumerate() {
-                    if i > 0 {
-                        ui.with_indexed(
-                            2000 + i as u64,
-                            NodeSpec::column()
-                                .width(Sizing::Fixed(1.0))
-                                .height(Sizing::Fixed(TAB_H - 10.0))
-                                .bg(pal.border),
-                            |_| {},
-                        );
-                    }
-                    ui.with_indexed(
-                        3000 + i as u64,
-                        NodeSpec::row().pad_xy(10.0, 0.0).cross_align(Align::Center),
-                        |ui| {
-                            ui.text(text, rows::mono(font, &pal).color(*color));
-                        },
-                    );
-                }
-            },
-        );
-    }
-
     pub(crate) fn status(&self, ui: &mut Ui<'_>) {
         let pal = self.pal;
         let Some(view) = self.focused_view() else {
@@ -784,7 +658,7 @@ impl Kawoosh {
         };
         // A tab's pane goes where its title bar is dragged; the dock is
         // not in the tree and stays put.
-        let draggable = self.layout.dock != Some(pane);
+        let draggable = !self.layout.in_dock(pane);
         let dragged = self.pane_drag.is_some_and(|(p, _, _)| p == pane);
         let drop = self
             .pane_drag

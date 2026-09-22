@@ -302,42 +302,44 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   the buffer it last showed, or not at all if it showed none). The
   door it wants from the engine: `kawoosh.view_open` into the pane
   being made, not only `below` one.
-- **The title bar** — open [use 2026-09-22]; step 13. kui draws the
-  titlebar a window asks for (`kui::app(…).custom_titlebar()` and
-  `widgets::titlebar_with`, which places the traffic lights per
-  platform — kui's README); kawoosh has the system's. Taken: the
-  window's title row becomes kawoosh's, the status block moves off the
-  tab strip into it (`panes.rs`'s `tab_strip`, "the status block: cwd,
-  the pool") — the cwd, the servers and their documents, `compiling…`
-  — and there is room for more (the branch, the workspace's name, the
-  focused buffer's path). A drag on it moves the window; a double
-  click does what the platform does.
-- **The cwd, somewhere it fits** — open [use 2026-09-22]; step 13.
-  Today the right end of the tab strip, home-abbreviated
-  (`abbreviate_home`) and never shortened, so a deep cwd crowds the
-  tabs out. In the title bar it is shortened from the middle, the last
-  component kept whole (`~/p/k/.c/w/launcher-pane…`, fish's rule, or
-  an ellipsis), the full path on hover and on a click the `dir`
-  listing of it.
-- **The tab strip, full width** — open [use 2026-09-22, and the close
-  button from 2026-09-21]; step 13. A tab is sized to its label today,
-  with a grower after the last. Taken: the tabs split the strip's
-  width evenly (`Sizing::Grow(1.0)` each, a floor per tab), a label
-  too long for its share ellipsised; once the floors no longer fit,
-  the row scrolls — a `scroll_x` with the active tab revealed on the
-  frame it changes and a `transition` on the row, the strip's own
-  machinery (kui F80). A close button on the hovered and the active
-  tab, asking about a modified buffer as `:q` does.
-- **The dock as a layout** — open, a question [use 2026-09-22]. The
-  dock is one pane (`Layout::dock: Option<PaneId>`, mvp.md D5), and a
-  split from it lands in the tab (`layout.rs:711`), which surprised in
-  use. The dock could hold a `Node`, as a strip's column does, so the
-  tree's code (split, move, size, close) runs in it unchanged — a
-  terminal beside a compile, a test run under a log. Or a `Kind`, so a
-  dock can be a strip too. The tree is the cheap answer and probably
-  the right one (a dock is short, and a strip in it would scroll a
-  single row of panes); decide in step 13's round, build when a second
-  dock pane is actually wanted twice.
+- **The title bar** — done 2026-09-23 [use 2026-09-22]; step 13.
+  `kui::app(…).custom_titlebar()`, the row drawn in kui's
+  `titlebar_with` (`chrome.rs`), so the traffic lights keep their inset
+  on macOS and the whole row drags the window. The status block moved
+  into it off the tab strip: the cwd on the left, the servers and a
+  running compile on the right. The branch and the workspace's name
+  were not added; the room is there.
+- **The cwd, somewhere it fits** — done 2026-09-23 [use 2026-09-22];
+  step 13. In the title bar, shortened as fish's prompt does — every
+  component but the last to its first letter, a leading dot kept
+  (`~/p/k/.c/w/launcher-pane…`) — the last one whole and bright, the
+  rest dim; the full path on hover and as its description, a click
+  listing it (`:dir`).
+- **The tab strip, full width** — done 2026-09-23 [use 2026-09-22, and
+  the close button from 2026-09-21]; step 13. Every tab `Grow` with a
+  floor (`TAB_MIN_W`, 140 px), a label past its share cut with an
+  ellipsis; past the floor the strip is a `scroll_x` row whose active
+  tab is revealed on the frame it or the count changes, the offset
+  easing over 160 ms. That reveal found a kui defect: one pending
+  reveal per frame, the last winning, so the pane ribbon's reveal of
+  its column on the same tab switch dropped the strip's — fixed in kui
+  (F82: the last reveal per scroll container, all of them landing).
+  A close button (`×`) on the active tab and the one under the
+  pointer, beside the tab item rather than in it (a focusable node
+  inside a `tab` is out of the Tab ring, kui warns), running `:tabclose`
+  on its tab; none on a lone tab. `kawoosh/tests/chrome.rs`.
+- **The dock as a layout** — done 2026-09-23 [use 2026-09-22]; step
+  13. Decided the cheap way the note expected: the dock is a `Tab` of
+  its own, always a tree (`Layout::dock: Option<Tab>`), so a split
+  from a dock pane stays in the dock and the tree's code — split,
+  close, `<A-S-hjkl>`, a divider drag (its paths `d:`-prefixed), move
+  by direction — runs in it unchanged; closing its last pane closes
+  the dock. `<A-S-jk>` in the dock moves its own split first and the
+  dock's height past it. A `dock = true` tool opens beside what the
+  dock holds rather than replacing it. Not a strip: a dock is short,
+  and a ribbon in it would scroll a single row of panes. A pane is
+  still not dragged in or out of the dock by its title bar.
+  `the_dock_splits_in_itself` in `kawoosh/tests/panes.rs`.
 
 ### LSP and completion
 
@@ -822,13 +824,15 @@ then breadth.
     happen silently; the stamp is length and mtime with the texts
     compared when it moves, not a hash kept; eval's question was the
     types. See the files, `dir` and Lua tracks.
-13. **The window's chrome**: the title bar kui draws
+13. ~~**The window's chrome**: the title bar kui draws
     (`custom_titlebar`) with the status block moved into it and the
     cwd shortened from the middle; the tab strip's tabs growing evenly
     to its width and scrolling past their floor, the active one
     revealed, a close button; the dock's question decided (a `Node`
     in it, most likely). One round, since the three share a frame and
-    moving the status block is what frees the strip.
+    moving the status block is what frees the strip.~~ Landed
+    2026-09-23 (`kawoosh/src/chrome.rs`, the dock as a `Tab`, kui's F82);
+    see the panes track.
 14. **The launcher pane**: a short note first
     (`docs/design/launcher.md` — `<Esc>`, the setting for the vim
     habit, a launcher on an existing pane, sessions), then the pane:

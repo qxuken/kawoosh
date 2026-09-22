@@ -591,8 +591,12 @@ pub struct Layout {
     pub tabs: Vec<Tab>,
     pub tab: usize,
     pub panes: HashMap<PaneId, Content>,
-    /// The bottom dock: one pane, visible from every tab (mvp.md D5).
-    pub dock: Option<PaneId>,
+    /// The bottom dock, visible from every tab (mvp.md D5): a tree of
+    /// its own (roadmap step 13), so a split from a dock pane stays in
+    /// the dock and the tree's code — split, close, size, move by
+    /// direction — runs in it unchanged. Never a strip: a dock is short,
+    /// and a ribbon in it would scroll one row of panes.
+    pub dock: Option<Tab>,
     pub dock_open: bool,
     /// The dock's share of the height.
     pub dock_ratio: f32,
@@ -654,10 +658,25 @@ impl Layout {
 
     /// The pane the keyboard goes to.
     pub fn focused(&self) -> PaneId {
-        match (self.dock_focused, self.dock) {
-            (true, Some(d)) if self.dock_open => d,
+        match (self.dock_focused, &self.dock) {
+            (true, Some(d)) if self.dock_open => d.focused,
             _ => self.tab().focused,
         }
+    }
+
+    /// Whether `pane` is one of the dock's.
+    pub fn in_dock(&self, pane: PaneId) -> bool {
+        self.dock.as_ref().is_some_and(|d| d.contains(pane))
+    }
+
+    /// Whether the keyboard is in the dock, open and there.
+    pub fn in_the_dock(&self) -> bool {
+        self.dock_focused && self.dock_open && self.dock.is_some()
+    }
+
+    /// A dock of `pane` alone, where there was none.
+    pub fn set_dock(&mut self, pane: PaneId) {
+        self.dock = Some(Tab::tree(Node::Pane(pane), pane));
     }
 
     pub fn content(&self, pane: PaneId) -> Option<Content> {
@@ -672,8 +691,8 @@ impl Layout {
     pub fn visible_panes(&self) -> Vec<PaneId> {
         let mut out = Vec::new();
         self.tab().panes(&mut out);
-        if let (true, Some(d)) = (self.dock_open, self.dock) {
-            out.push(d);
+        if let (true, Some(d)) = (self.dock_open, &self.dock) {
+            d.panes(&mut out);
         }
         out
     }
@@ -684,14 +703,15 @@ impl Layout {
         for t in &self.tabs {
             t.panes(&mut out);
         }
-        if let Some(d) = self.dock {
-            out.push(d);
+        if let Some(d) = &self.dock {
+            d.panes(&mut out);
         }
         out
     }
 
     pub fn focus(&mut self, pane: PaneId) {
-        if self.dock == Some(pane) {
+        if let Some(d) = self.dock.as_mut().filter(|d| d.contains(pane)) {
+            d.focused = pane;
             self.dock_focused = true;
             return;
         }
@@ -707,10 +727,18 @@ impl Layout {
     /// default width; a split below is a split below inside the column.
     pub fn split(&mut self, dir: SplitDir, content: Content) -> PaneId {
         let new = self.new_pane(content);
-        if self.dock_focused && self.dock.is_some() {
-            // Splitting the dock puts the new pane in the tab instead.
-            self.dock_focused = false;
+        // In the dock, the split is the dock's.
+        if self.in_the_dock()
+            && let Some(d) = self.dock.as_mut()
+        {
+            let target = d.focused;
+            if let Some(n) = d.node_of_mut(target) {
+                n.split(target, dir, new);
+            }
+            d.focused = new;
+            return new;
         }
+        self.dock_focused = false;
         let target = self.tab().focused;
         let width = self.column_width;
         match (&self.tab().layout, dir) {
@@ -737,10 +765,27 @@ impl Layout {
     /// column whose last pane closes goes with it, the focus to the
     /// column before.
     pub fn close(&mut self, pane: PaneId) -> Option<Content> {
-        if self.dock == Some(pane) {
-            self.dock = None;
-            self.dock_open = false;
-            self.dock_focused = false;
+        if let Some(d) = self.dock.as_mut().filter(|d| d.contains(pane)) {
+            let Kind::Tree(root) = &mut d.layout else {
+                unreachable!("the dock is a tree")
+            };
+            match std::mem::replace(root, Node::Pane(0)).without(pane) {
+                // The keyboard to the dock's first pane when it was on
+                // the one that went.
+                Some(rest) => {
+                    *root = rest;
+                    if d.focused == pane {
+                        let mut ps = Vec::new();
+                        d.panes(&mut ps);
+                        d.focused = ps[0];
+                    }
+                }
+                None => {
+                    self.dock = None;
+                    self.dock_open = false;
+                    self.dock_focused = false;
+                }
+            }
             return self.panes.remove(&pane);
         }
         let ti = self.tabs.iter().position(|t| t.contains(pane))?;
@@ -929,7 +974,7 @@ impl Layout {
     pub fn neighbour(&self, dir: SplitDir, forward: bool) -> Option<PaneId> {
         let from = self.focused();
         if dir == SplitDir::H
-            && self.dock != Some(from)
+            && !self.in_dock(from)
             && let Some(s) = self.tab().strip()
         {
             let i = s.column_of(from)?;
@@ -1112,7 +1157,7 @@ impl Layout {
     /// column for `Up` / `Down`. Nothing when either is the dock, not
     /// in the tab, or the same pane. The moved pane keeps the keyboard.
     pub fn move_pane(&mut self, pane: PaneId, target: PaneId, at: Drop) -> bool {
-        if pane == target || self.dock == Some(pane) || self.dock == Some(target) {
+        if pane == target || self.in_dock(pane) || self.in_dock(target) {
             return false;
         }
         if !self.tab().contains(pane) || !self.tab().contains(target) {
@@ -1328,7 +1373,7 @@ mod tests {
         // Onto itself, or the dock: nothing.
         assert!(!l.move_pane(b, b, Drop::Swap));
         let d = l.new_pane(view());
-        l.dock = Some(d);
+        l.set_dock(d);
         assert!(!l.move_pane(b, d, Drop::Swap));
         assert!(!l.move_pane(d, b, Drop::Left));
         assert_eq!(l.visible_panes(), [b, 1, c]);
@@ -1343,11 +1388,28 @@ mod tests {
         l.next_tab(1);
         assert_eq!(l.tab, 0);
         let d = l.new_pane(view());
-        l.dock = Some(d);
+        l.set_dock(d);
         l.dock_open = true;
         assert_eq!(l.visible_panes(), [1, d]);
         l.focus(d);
         assert_eq!(l.focused(), d);
+        // A split from the dock is the dock's; closing it leaves the
+        // dock, closing the dock's last pane closes the dock.
+        let e = l.split(SplitDir::H, view());
+        assert!(l.in_dock(e));
+        assert_eq!(l.visible_panes(), [1, d, e]);
+        assert_eq!(l.focused(), e);
+        assert_eq!(l.tab().focused, 1, "the tab's focus untouched");
+        l.close(e);
+        assert_eq!(l.focused(), d);
+        assert_eq!(l.visible_panes(), [1, d]);
+        l.close(d);
+        assert!(l.dock.is_none() && !l.dock_open);
+        assert_eq!(l.focused(), 1);
+        let d = l.new_pane(view());
+        l.set_dock(d);
+        l.dock_open = true;
+        l.focus(d);
         l.next_tab(1);
         assert_eq!(l.focused(), t2);
         l.close(t2);
