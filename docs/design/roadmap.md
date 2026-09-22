@@ -6,7 +6,8 @@ the open items recorded in [kui.md](kui.md)'s implementation notes,
 [kui-requirements.md](kui-requirements.md) §9, each checked against the
 code and the log. This is the one list; the todo is retired into it.
 Companion to [mvp.md](mvp.md) and [kui.md](kui.md), which say *why*; this
-says *what next*.
+says *what next*. Amended 2026-09-22 with a day of use (below, "From
+use"), which put four rounds ahead of the brackets.
 
 ## Where it stands
 
@@ -19,7 +20,7 @@ file manager through its identity-and-plan design at forty thousand
 entries, and the working memory (2026-09-20). 169 commits, 22
 integration test files in `kawoosh/tests` (the histories pane's folded
 into the memory's, 2026-09-21), and the "next steps" below through
-step 10 — the memory, with steps 11–14 the order the rest is built in.
+step 10 — the memory, with steps 11–18 the order the rest is built in.
 Steps 5–10 were built on one branch and merged to `main` 2026-09-21
 after a full regression pass (fmt, clippy, the workspace's 309 tests,
 the Lua acceptance scripts through `kawoosh test`).
@@ -78,6 +79,31 @@ name too.
    (what `,` does) → the search highlight → nothing. keys.md reserved
    `<Esc>` for the highlight; this is the same key with the ladder
    under it.
+
+## From use, 2026-09-22
+
+A day in the strip turned up eleven things, each checked against the code
+and filed in its track below; the order they are built in is steps
+12–15. One is a correctness gap and goes first: a file changed on disk
+under an open buffer is not noticed — nothing watches an open buffer's
+file (the `Watcher` in `systems/src/watch.rs` is only on the settings
+files, `settings.rs:219`) — and `:wa` does not exist. The rest are the
+daily driver's chrome and the pane that a split opens on:
+
+- a new pane opens as a **launcher** — the same buffer, what plugins
+  offer, the open buffers, the recent files — rather than on the
+  buffer it was split from;
+- a **title bar** of kawoosh's own, with the status block (the cwd,
+  the servers, the compile) moved into it off the tab strip, where a
+  long cwd takes the tabs' room;
+- **tabs** that fill the strip's width and split it evenly, scrolling
+  once they no longer fit;
+- **the dock** as a layout: splitting from the dock puts the new pane
+  in the tab today (`layout.rs:711`);
+- **the terminal**: its scrollback made better and the pane restored
+  by a session — the same shell in the same cwd;
+- **`dir`**: `<CR>` on a file leaves the listing's buffer behind;
+- **eval**: whether `<leader>x` sees `kawoosh` and `kui`.
 
 ## The list, by track
 
@@ -164,7 +190,7 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   has none either; the modal answer is `<Esc>dd`. If wanted: `<C-S-k>`
   or `<A-d>` in insert mode (Alt is free there). Low.
 - **Auto-closing brackets** — decided 2026-09-21 ([pairs.md](pairs.md)),
-  not built; step 12. Contested in modal editors
+  not built; step 16. Contested in modal editors
   and cheap to get wrong with multicursors, so a bundled Lua plugin
   over insert-mode `kawoosh.map`, off by default — it is exactly the
   kind of behaviour "hackable by design" says a user should be able to
@@ -250,7 +276,68 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 - **`:map` listing** — done 2026-09-21 [kui.md]. `:map list` (`:maps`;
   `:map` itself binds) is a `*maps*` pane: each mode's bindings, keys
   then the command line and its conditions; `:map list i` one mode,
-  `:map list <leader>c` the keys under a prefix. **Tab strip close button** — open; folds into a strip round.
+  `:map list <leader>c` the keys under a prefix.
+- **The launcher pane** — open, design first [use 2026-09-22]; step
+  14. A pane made without content named for it — `<C-w>v` `<C-w>s`,
+  `:vsplit` and `:split` bare, a new tab — opens as a launcher rather
+  than on the buffer it was split from, as vim's does today
+  (`open_split`, "on PATH or the same buffer"). A pane made *for*
+  something skips it: `:vsplit PATH`, a picker's `<C-s>` `<C-v>`,
+  `:term`, a tool. The launcher is a list in sections, filtered by one
+  query field: *here* — the same buffer (first, on `<CR>`, so
+  `<C-w>v<CR>` is vim's split), a scratch, a terminal; *plugins* —
+  what a plugin registers (the tools, `kawoosh.tool`, among them); *open
+  buffers*; *recent* (the memory's `file` rows, pins first with their
+  digit). It is the picker drawn in the pane itself rather than below
+  it: the sources are `picker.lua`'s (`buffers`, `recent`, `tools`,
+  `pins` exist), the section a source's own, a pick replacing the
+  launcher with what was picked in the same pane. Hackable by the same
+  door: a plugin adds a section as a picker source with
+  `launcher = true`, or an entry to *here*. The note decides what
+  `<Esc>` does (closes the new pane — the split undone — or falls back
+  to the same buffer), whether a launcher on an *existing* pane
+  (`<leader>n`, say) is the same thing, a setting for the vim habit
+  (`layout.new_pane = "launcher" | "same"`), and what a session keeps
+  (nothing — as a picker's `session = false` — the pane restored on
+  the buffer it last showed, or not at all if it showed none). The
+  door it wants from the engine: `kawoosh.view_open` into the pane
+  being made, not only `below` one.
+- **The title bar** — open [use 2026-09-22]; step 13. kui draws the
+  titlebar a window asks for (`kui::app(…).custom_titlebar()` and
+  `widgets::titlebar_with`, which places the traffic lights per
+  platform — kui's README); kawoosh has the system's. Taken: the
+  window's title row becomes kawoosh's, the status block moves off the
+  tab strip into it (`panes.rs`'s `tab_strip`, "the status block: cwd,
+  the pool") — the cwd, the servers and their documents, `compiling…`
+  — and there is room for more (the branch, the workspace's name, the
+  focused buffer's path). A drag on it moves the window; a double
+  click does what the platform does.
+- **The cwd, somewhere it fits** — open [use 2026-09-22]; step 13.
+  Today the right end of the tab strip, home-abbreviated
+  (`abbreviate_home`) and never shortened, so a deep cwd crowds the
+  tabs out. In the title bar it is shortened from the middle, the last
+  component kept whole (`~/p/k/.c/w/launcher-pane…`, fish's rule, or
+  an ellipsis), the full path on hover and on a click the `dir`
+  listing of it.
+- **The tab strip, full width** — open [use 2026-09-22, and the close
+  button from 2026-09-21]; step 13. A tab is sized to its label today,
+  with a grower after the last. Taken: the tabs split the strip's
+  width evenly (`Sizing::Grow(1.0)` each, a floor per tab), a label
+  too long for its share ellipsised; once the floors no longer fit,
+  the row scrolls — a `scroll_x` with the active tab revealed on the
+  frame it changes and a `transition` on the row, the strip's own
+  machinery (kui F80). A close button on the hovered and the active
+  tab, asking about a modified buffer as `:q` does.
+- **The dock as a layout** — open, a question [use 2026-09-22]. The
+  dock is one pane (`Layout::dock: Option<PaneId>`, mvp.md D5), and a
+  split from it lands in the tab (`layout.rs:711`), which surprised in
+  use. The dock could hold a `Node`, as a strip's column does, so the
+  tree's code (split, move, size, close) runs in it unchanged — a
+  terminal beside a compile, a test run under a log. Or a `Kind`, so a
+  dock can be a strip too. The tree is the cheap answer and probably
+  the right one (a dock is short, and a strip in it would scroll a
+  single row of panes); decide in step 13's round, build when a second
+  dock pane is actually wanted twice.
 
 ### LSP and completion
 
@@ -363,6 +450,22 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   else as a chunk (`Runtime::eval`), the values spelled
   (`kawoosh._show`: tables shallowly, keys in order) on the status
   line, or in a `*lua*` pane when the result has lines.
+- **What eval sees** — open, a question [use 2026-09-22]; step 12.
+  Asked in use: "lua eval doesn't have kawoosh or kui?". Checked:
+  `Runtime::eval` loads the text into the runtime's globals, the ones
+  `kawoosh` is set in (`lua/src/lib.rs:2936`), after `rt.publish` with
+  the focused view (`scripting.rs:153`), so `kawoosh.buf.line(1)`
+  answers from `<leader>x`. What is *not* there: a `kui` global — the
+  Lua side reaches kui only through `kawoosh.view_open`'s DSL — and any
+  type definitions, so lua-language-server marks `kawoosh` an
+  undefined global in every plugin and settings file (no `---@meta`
+  file ships, no `.luarc.json`). The round's first job is the failing
+  case: which of the two was seen. Then, whichever it was: a
+  `lua/meta/kawoosh.lua` of `---@meta` annotations generated from the
+  registered functions and put on LuaLS's `workspace.library` when
+  kawoosh starts one; a `kui` global only if there is something a
+  plugin should reach that `view_open` does not give it, which would
+  be a kui-FFI question and not an eval one.
 - **Plugin-built panes** — done 2026-09-21 [todo]: the page is
   [plugin-panes.md](plugin-panes.md) — the slot, `fn(ctx)` and its
   DSL, `on_event`, fields and the `field:lua:` fact, the picker as the
@@ -373,10 +476,41 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   messages the systems do — is what makes it a packaging change later.
   Nothing to schedule.
 
+### Files on disk
+
+- **A file changed under its buffer** — open, a correctness gap [use
+  2026-09-22]; step 12. Seen: a file edited in kawoosh, reset with
+  `git` outside it; kawoosh did not react, and a save after did not
+  put the edited text back on disk. The first half is the code:
+  nothing watches an open buffer's file (the io thread's `Watcher` is
+  on the settings files and nothing else), and `disk_len` is the only
+  record of what was read — no mtime, no hash. The second half is
+  *not* the code as it reads: `write` (`editor/src/commands.rs:969`)
+  writes through `save_beside` whatever the buffer holds, modified or
+  not, with no comparison to the disk; so either the save did not run
+  on the buffer that was thought (the keyboard in another pane, the
+  file open twice) or something else put the text back. Reproduce it
+  as a test before building. The build: every open buffer's file on
+  the watch; the buffer records the mtime and a hash of what it read
+  or wrote; a change that is not ours reloads an unmodified buffer as
+  `:e!` does (one journaled edit, so `u` brings the old text back,
+  said in the message line), and asks about a modified one — *reload*,
+  *keep mine*, *diff* (`diff.rs` exists) — once, not per event; a
+  file deleted says so and leaves the buffer modified. `:w` over a
+  file that changed since it was read asks the same question rather
+  than writing blind. vim's `checktime` is the event on focus-in as
+  well, since a watch can miss (a network mount, an editor that
+  replaces by rename on a path the watcher no longer holds).
+- **`:wa`** — open [use 2026-09-22]; step 12. `:wqa` exists and
+  writes every modified buffer with a path (`write quit all`); `:wa`
+  (`write all`, `:wall`) is the same loop without the quit, and the
+  loop becomes one function both call — reporting `N files written`,
+  and the ones that failed or that step 12's check stopped.
+
 ### Buffers with a shape
 
 - **Markdown, the fancy buffer** — decided 2026-09-21
-  ([markdown.md](markdown.md)), not built; step 13. The grammar is in;
+  ([markdown.md](markdown.md)), not built; step 17. The grammar is in;
   the rendered buffer is the source drawn with its marks folded and
   its structure weighted (the caret's line raw), not a preview. The
   kui round this item expected is not needed: a row is one
@@ -389,6 +523,15 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   watcher re-reading a listing the io thread's `watch.rs` sees change,
   an image preview once kui's `image` is on the road (req §9), and
   hidden-file toggling. None urgent.
+- **`<CR>` on a file closes the listing** — open [use 2026-09-22];
+  step 12. `dir enter` opens a file with `kawoosh.open(target)` in the
+  same view (`dir.lua`'s `dir enter`) and the listing's buffer stays,
+  in `buffers`, `:ls` and the tab's alternates, one per directory
+  visited. Taken: a listing left for a file is closed — its buffer
+  dropped — unless it has edits (its plan unwritten), which keep it as
+  they would a modified file. `-` from the file lists the directory
+  again with the caret on the file, which is what `-` does already, so
+  nothing is lost with the buffer.
 - **The working memory, round two** — done 2026-09-21
   ([memory.md](memory.md), step 10). The memory as the one place the
   editor remembers: a row per subject (texts, files, command lines,
@@ -484,7 +627,7 @@ follow the theme every frame (`panes.rs`).
   corridor the detachable daemon is on (mvp.md's non-goals). WSL is
   the local case of it — the pty is `wsl.exe`, the paths translate
   (`/mnt/c` ↔ `C:\`) — and Windows-only. Decided 2026-09-21
-  ([domains.md](domains.md)), ssh alone, not built; step 14: a
+  ([domains.md](domains.md)), ssh alone, not built; step 18: a
   `domains` settings table, `box:/path` as the spelling and `Loc` as
   the type, OpenSSH's binary as the transport (a master per domain in
   a pane, so prompts are answered where they appear), an `Fs` trait
@@ -498,9 +641,37 @@ follow the theme every frame (`panes.rs`).
   wish list, not kawoosh's.
 - **Kitty graphics** — deferred [req §9]. A `term` APC hook before it is
   a kui matter.
-- **Terminals in sessions** — open [mvp.md notes]. A terminal pane's cwd
-  and command restored, not its scrollback. Small; fold into a sessions
-  touch.
+- **Terminals in sessions** — open [mvp.md notes, use 2026-09-22]; step
+  15. A terminal pane's shell and cwd restored, not its scrollback: the
+  session keeps `PaneData::Terminal` with nothing in it and drops the
+  pane (`session.rs`, "Terminals are not restored"). It wants the pane's
+  cwd, which kawoosh does not know: `Terminal::cwd` is documented as
+  "set by an OSC 7 or the shell's cwd report" and nothing sets it —
+  the parser drops OSC 7, so `gf` and a tool from a terminal resolve
+  against the editor's cwd. The round: OSC 7 (`file://host/path`)
+  parsed in `term::Hooked` into `cwd`, with the process's own cwd as
+  the fallback when a shell sends none (`proc_pidinfo` on macOS,
+  `/proc/PID/cwd` on Linux, read when the session is saved); the
+  session keeps the command (the tool's, or none for the shell) and
+  that cwd; a restore spawns it there, a tool re-run only if it is a
+  shell-shaped one (`shell`, not `compile`). nushell sends OSC 7 when
+  `shell_integration.osc7` is on; zsh and bash need the usual
+  `precmd` line, which the `$EDITOR` shim's directory could ship.
+- **Scrollback, round two** — open, to be pinned down [use
+  2026-09-22]; step 15. "Better scrollback" was the ask; what is there:
+  10 000 lines, fixed (`term/src/lib.rs`'s `config`), the wheel with a
+  fraction carried, and `<C-S-x>` / `:scrollback` for the whole
+  history as a buffer. What use most likely wants, to confirm at the
+  round's start: the size a setting (`terminal.scrollback`); a
+  scrollbar on the pane, the thumb the display offset; `<S-PageUp>`
+  `<S-PageDown>` and a scrolled-away pane marked so (a count of lines
+  below, the way back to the bottom on a key); search in place (`/`
+  from copy mode lands in the buffer already — the question is whether
+  it should without leaving the pane); selecting with the mouse in the
+  live pane, which kui's primary button already routes; and the output
+  of the last command as a unit (OSC 133 marks: jump prompt to prompt,
+  copy one command's output), which the same OSC round as step 15's
+  cwd makes cheap.
 
 ## Next steps, in order
 
@@ -621,17 +792,49 @@ then breadth.
     3ms for five hundred columns, and `<C-w>HJKL` carry a pane while
     `<A-S-hjkl>` keep sizing, `<C-1>`…`<C-9>` reach the Nth column and
     `zs` `ze` `zz` put it at an edge or the middle.
-12. **Auto-closing brackets** ([pairs.md](pairs.md)): an afternoon —
+12. **The disk, and the small ones from use** (2026-09-22): the save
+    that did not land reproduced as a test first; then every open
+    buffer's file on the watch, a buffer recording what it read (mtime
+    and hash), an outside change reloading a clean buffer undoably and
+    asking about a modified one, `:w` asking over a changed file, the
+    check again on focus-in; `:wa` beside `:wqa` on one loop. In the
+    same round, because each is under an hour: `<CR>` on a file closes
+    the `dir` listing, and eval's question answered — the failing case
+    found, and the `---@meta` file for lua-language-server if that was
+    it. First because a file silently out of step with its buffer is
+    the one thing on this list that loses work.
+13. **The window's chrome**: the title bar kui draws
+    (`custom_titlebar`) with the status block moved into it and the
+    cwd shortened from the middle; the tab strip's tabs growing evenly
+    to its width and scrolling past their floor, the active one
+    revealed, a close button; the dock's question decided (a `Node`
+    in it, most likely). One round, since the three share a frame and
+    moving the status block is what frees the strip.
+14. **The launcher pane**: a short note first
+    (`docs/design/launcher.md` — `<Esc>`, the setting for the vim
+    habit, a launcher on an existing pane, sessions), then the pane:
+    the picker drawn in a new pane, its sections the existing sources
+    plus *here* and whatever a plugin registers, a pick replacing it
+    in place; `view_open` into the pane being made. After the chrome
+    because a new tab opens on one too, and the tab strip should be
+    able to name it.
+15. **The terminal, round two**: OSC 7 into `Terminal::cwd` (with the
+    process's cwd as the fallback) and the session keeping and
+    restoring a terminal's shell and cwd; OSC 133's prompt marks in
+    the same parser change; then scrollback as the round's start
+    pins it down — the size a setting, a scrollbar, keys to page and
+    get back, selection in the live pane.
+16. **Auto-closing brackets** ([pairs.md](pairs.md)): an afternoon —
     the three Lua doors (`buf.type`, `buf.edits`,
     `buf.set_selections`), `pairs.lua` off by default, its test a
     `kawoosh test` script. Slotted here because it is small and
     independent, not because it is urgent.
-13. **The markdown buffer** ([markdown.md](markdown.md)): one round
+17. **The markdown buffer** ([markdown.md](markdown.md)): one round
     whose first day is three headless checks against kui (a wrapped
     row's fit height, `caret_rect` on it, an image in a row), then
     `markdown.rs`, the fold table, wrap on rendered rows, images and
     tables.
-14. **ssh as a domain** ([domains.md](domains.md)): four rounds —
+18. **ssh as a domain** ([domains.md](domains.md)): four rounds —
     `Loc` everywhere with no behaviour change, then ssh (the master in
     a pane, SFTP, `:e box:`, `dir`, the poll), then processes through
     the domain with the shim over a forwarded port, then the LSP
