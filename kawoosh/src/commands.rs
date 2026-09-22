@@ -323,23 +323,75 @@ impl Kawoosh {
         };
     }
 
-    /// `column left` / `column right`: a tree says what to do instead.
-    fn move_column(&mut self, by: i64) {
+    /// `pane move left` / `right` / `up` / `down` (`<A-S-hjkl>`, and
+    /// `<C-w>HLJK`): the pane carried a place in `dir`, COUNT places.
+    /// In a strip the strip's axis is the column's place on it and the
+    /// other axis is the pane's place in its column's stack; in a tree
+    /// the pane comes out of its split and goes beside the neighbour
+    /// on that side, which for two panes trades them.
+    fn move_pane_dir(&mut self, dir: SplitDir, forward: bool, count: usize) {
+        if self.layout.dock_focused && self.layout.dock_open {
+            self.ed.message = "the dock stays under the tab".into();
+            return;
+        }
+        let count = count.max(1);
+        let moved = match (self.layout.tab().is_scroll(), dir) {
+            (true, SplitDir::H) => {
+                let by = if forward {
+                    count as i64
+                } else {
+                    -(count as i64)
+                };
+                self.layout.move_column(by)
+            }
+            (true, SplitDir::V) => {
+                let mut any = false;
+                for _ in 0..count {
+                    any |= self.layout.move_in_column(forward);
+                }
+                any
+            }
+            (false, _) => {
+                let mut any = false;
+                for _ in 0..count {
+                    let Some(target) = self.layout.neighbour(dir, forward) else {
+                        break;
+                    };
+                    let at = match (dir, forward) {
+                        (SplitDir::H, false) => Drop::Left,
+                        (SplitDir::H, true) => Drop::Right,
+                        (SplitDir::V, false) => Drop::Up,
+                        (SplitDir::V, true) => Drop::Down,
+                    };
+                    let from = self.layout.focused();
+                    any |= self.layout.move_pane(from, target, at);
+                }
+                any
+            }
+        };
+        self.ed.message = match (moved, self.layout.tab().strip()) {
+            (true, Some(s)) if dir == SplitDir::H => {
+                let i = s.column_of(self.layout.focused()).unwrap_or(0);
+                format!("column {} of {}", i + 1, s.columns.len())
+            }
+            (true, _) => String::new(),
+            (false, _) => match (dir, forward) {
+                (SplitDir::H, false) => "nowhere further left".into(),
+                (SplitDir::H, true) => "nowhere further right".into(),
+                (SplitDir::V, false) => "nothing above to trade with".into(),
+                (SplitDir::V, true) => "nothing below to trade with".into(),
+            },
+        };
+    }
+
+    /// `strip left` / `right` / `center` (`zs` `ze` `zz`): where the
+    /// focused column sits in the viewport, once.
+    fn align_strip(&mut self, align: crate::panes::StripAlign) {
         if !self.layout.tab().is_scroll() {
             self.ed.message = "the tab is a tree of splits; :layout scroll makes it a strip".into();
             return;
         }
-        if self.layout.move_column(by) {
-            let s = self.layout.tab().strip().unwrap();
-            let i = s.column_of(self.layout.focused()).unwrap_or(0);
-            self.ed.message = format!("column {} of {}", i + 1, s.columns.len());
-        } else {
-            self.ed.message = if by < 0 {
-                "the first column already".into()
-            } else {
-                "the last column already".into()
-            };
-        }
+        self.strip_align = Some(align);
     }
 
     fn buffer_step(&mut self, ctx: &Ctx, forward: bool) {
@@ -529,13 +581,70 @@ fn panes() -> Vec<ShellCommand> {
         ),
         // `<C-w>H` `<C-w>L`: the focused column one place along the
         // strip, COUNT places — vim's "to the far side" read as a step.
+        // `<A-S-hjkl>`, and `<C-w>HLJK` as vim spells "to the far
+        // side": the pane carried a place, COUNT places. On a strip's
+        // axis that is its column's place on the ribbon.
         cmd(
-            Spec::new("column left").doc("move the column one place left in a strip, COUNT places"),
-            |k, ctx| k.move_column(-(ctx.count.max(1) as i64)),
+            Spec::new("pane move left")
+                .doc("carry the pane a place left — a strip's column along the ribbon, COUNT places"),
+            |k, ctx| k.move_pane_dir(SplitDir::H, false, ctx.count),
         ),
         cmd(
-            Spec::new("column right").doc("move the column one place right in a strip, COUNT places"),
-            |k, ctx| k.move_column(ctx.count.max(1) as i64),
+            Spec::new("pane move right")
+                .doc("carry the pane a place right — a strip's column along the ribbon, COUNT places"),
+            |k, ctx| k.move_pane_dir(SplitDir::H, true, ctx.count),
+        ),
+        cmd(
+            Spec::new("pane move up")
+                .doc("carry the pane a place up — inside its column in a strip, COUNT places"),
+            |k, ctx| k.move_pane_dir(SplitDir::V, false, ctx.count),
+        ),
+        cmd(
+            Spec::new("pane move down")
+                .doc("carry the pane a place down — inside its column in a strip, COUNT places"),
+            |k, ctx| k.move_pane_dir(SplitDir::V, true, ctx.count),
+        ),
+        // `<C-1>`…`<C-9>`: the Nth column of a strip, the Nth pane of a
+        // tree, the last when there are fewer.
+        cmd(
+            Spec::new("pane goto")
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("focus the Nth column of a strip (the Nth pane of a tree), the last when there are fewer"),
+            |k, ctx| {
+                let n = match ctx.args.first().map(String::as_str) {
+                    Some(a) => match a.parse::<usize>() {
+                        Ok(n) if n >= 1 => n,
+                        _ => {
+                            k.ed.message = format!("pane goto: not a place: {a}");
+                            return;
+                        }
+                    },
+                    None => ctx.count.max(1),
+                };
+                if k.layout.goto_nth(n).is_none() {
+                    return;
+                }
+                if let Some(s) = k.layout.tab().strip() {
+                    let i = s.column_of(k.layout.focused()).unwrap_or(0);
+                    k.ed.message = format!("column {} of {}", i + 1, s.columns.len());
+                }
+            },
+        ),
+        // `zs` `ze` `zz`: vim's horizontal scrolling, read on the
+        // ribbon — the focused column to an edge, or the middle.
+        cmd(
+            Spec::new("strip left").doc("the focused column against the viewport's left edge"),
+            |k, _| k.align_strip(crate::panes::StripAlign::Left),
+        ),
+        cmd(
+            Spec::new("strip right").doc("the focused column against the viewport's right edge"),
+            |k, _| k.align_strip(crate::panes::StripAlign::Right),
+        ),
+        cmd(
+            Spec::new("strip center")
+                .alias(&["strip centre"])
+                .doc("the focused column in the middle of the viewport"),
+            |k, _| k.align_strip(crate::panes::StripAlign::Center),
         ),
         cmd(
             Spec::new("tab new")

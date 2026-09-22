@@ -332,3 +332,42 @@ fn keystroke_cost() {
     d.key(&mut app, "escape", KeyMods::default());
     let _ = d.warnings();
 }
+
+/// What a frame costs as a scrolling tab's ribbon grows (roadmap step
+/// 11): `cargo test --release --test perf -- --ignored --nocapture
+/// ribbon`. A column off the viewport draws its chrome and no rows
+/// (`Kawoosh::culled`), so the curve is the chrome's — a few
+/// microseconds a column — rather than a screenful of shaped,
+/// highlighted rows each. Measured 2026-09-22, a 400-line file in a
+/// 1600×1000 window: 1 column 110µs, 20 335µs, 60 480µs, 120 703µs,
+/// 250 1.3ms, 500 3.0ms. Without the cull it was 0.09ms a column —
+/// 15ms, a whole frame at 60Hz, by 120.
+#[test]
+#[ignore]
+fn ribbon_frame_cost() {
+    let text: String = (0..400)
+        .map(|i| format!("let line_{i} = {i} + {i};\n"))
+        .collect();
+    for n in [1usize, 20, 60, 120, 250, 500] {
+        let mut app = Kawoosh::new("t", &text);
+        let mut d = Drive::new(1600.0, 1000.0);
+        d.frame(&mut app);
+        d.keys(&mut app, ":");
+        d.keys(&mut app, "layout scroll");
+        d.key(&mut app, "enter", KeyMods::default());
+        for _ in 1..n {
+            d.ctrl(&mut app, "w");
+            d.keys(&mut app, "v");
+        }
+        for _ in 0..20 {
+            d.advance(0.05);
+            d.frame(&mut app);
+        }
+        let t = Instant::now();
+        for _ in 0..20 {
+            d.advance(0.016);
+            d.frame(&mut app);
+        }
+        eprintln!("{n:4} columns: {:.3}ms a frame", ms(t) / 20.0);
+    }
+}

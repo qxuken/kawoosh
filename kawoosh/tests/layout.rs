@@ -125,24 +125,26 @@ fn a_strip_scrolls_to_the_focus_and_reads_the_trees_keys_on_its_axis() {
     assert_eq!(app.layout.focused(), 2);
     assert_eq!(app.ed.message, "column 3 of 4");
     settle(&mut d, &mut app);
-    ctrl_w(&mut d, &mut app, "H");
+    // `<A-S-h>` is the same move without the prefix.
+    d.press(&mut app, "<A-S-h>");
     assert_eq!(app.layout.visible_panes(), [1, 5, 2, 3, 4]);
     settle(&mut d, &mut app);
-    ctrl_w(&mut d, &mut app, "H");
+    d.press(&mut app, "<A-S-h>");
     settle(&mut d, &mut app);
-    ctrl_w(&mut d, &mut app, "H");
-    assert_eq!(app.ed.message, "the first column already");
+    d.press(&mut app, "<A-S-h>");
+    assert_eq!(app.ed.message, "nowhere further left");
     settle(&mut d, &mut app);
-    // `<A-S-l>` steps the width through the presets, and says where it
-    // landed; `<A-S-h>` steps it back.
-    d.press(&mut app, "<A-S-l>");
+    // `<C-w>>` steps the width through the presets, and says where it
+    // landed; `<C-w><` steps it back.
+    ctrl_w(&mut d, &mut app, ">");
     assert_eq!(columns(&app)[0].1, Width::TwoThirds);
     assert_eq!(app.ed.message, "column two-thirds");
-    d.press(&mut app, "<A-S-l>");
-    d.press(&mut app, "<A-S-l>");
+    ctrl_w(&mut d, &mut app, ">");
+    ctrl_w(&mut d, &mut app, ">");
     assert_eq!(columns(&app)[0].1, Width::Full);
     assert_eq!(app.ed.message, "column full already");
-    d.press(&mut app, "3<A-S-h>");
+    d.press(&mut app, "3");
+    ctrl_w(&mut d, &mut app, "<");
     assert_eq!(columns(&app)[0].1, Width::Third);
     settle(&mut d, &mut app);
     assert!((app.layout.rects[&2].w - vw / 3.0).abs() < 8.0);
@@ -158,7 +160,7 @@ fn a_strip_scrolls_to_the_focus_and_reads_the_trees_keys_on_its_axis() {
         r.x + r.w <= vw + 1.0 && r.x + r.w > vw - 40.0,
         "at the right edge: {r:?}"
     );
-    d.press(&mut app, "<A-S-l>");
+    ctrl_w(&mut d, &mut app, ">");
     assert_eq!(columns(&app)[2].1, Width::TwoThirds);
     settle(&mut d, &mut app);
     let r = app.layout.rects[&3];
@@ -185,8 +187,16 @@ fn a_strip_scrolls_to_the_focus_and_reads_the_trees_keys_on_its_axis() {
     assert_eq!(columns(&app)[0].0, [1, 5]);
     ex(&mut d, &mut app, "layout");
     assert!(!app.layout.tab().is_scroll());
-    // In a tree the column keys say what to do instead.
+    // In a tree the same key carries the pane past its neighbour
+    // rather than a column along a ribbon, and the pane keeps the
+    // keyboard.
+    d.frame(&mut app);
+    let before = app.layout.visible_panes();
     ctrl_w(&mut d, &mut app, "L");
+    assert_eq!(app.layout.focused(), 1);
+    assert_ne!(app.layout.visible_panes(), before, "the pane moved");
+    // `zs` in a tree says what would make it a strip.
+    d.press(&mut app, "zs");
     assert!(
         app.ed.message.contains(":layout scroll"),
         "{}",
@@ -201,11 +211,12 @@ fn the_gap_drags_a_columns_width_and_a_click_reveals_a_column() {
     let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(vw, 500.0);
     d.frame(&mut app);
-    // A tree of two halves converts to two columns at a half each,
-    // side by side in the window.
+    // The window opens as a strip (`layout.default`); a column beside
+    // and the first made a half gives two columns side by side.
     ctrl_w(&mut d, &mut app, "v");
-    ex(&mut d, &mut app, "layout scroll");
     ctrl_w(&mut d, &mut app, "h");
+    ctrl_w(&mut d, &mut app, "<");
+    ctrl_w(&mut d, &mut app, "<");
     settle(&mut d, &mut app);
     let r1 = app.layout.rects[&1];
     let r2 = app.layout.rects[&2];
@@ -226,7 +237,7 @@ fn the_gap_drags_a_columns_width_and_a_click_reveals_a_column() {
     assert!((app.layout.rects[&1].w - vw / 3.0).abs() < 8.0);
     assert!((app.layout.rects[&2].x - vw / 3.0).abs() < 12.0);
     // A preset key snaps the ratio to the nearest before it steps.
-    d.press(&mut app, "<A-S-l>");
+    ctrl_w(&mut d, &mut app, ">");
     assert_eq!(
         app.layout.tab().strip().unwrap().columns[0].width,
         Width::Half
@@ -263,19 +274,26 @@ fn a_new_tab_follows_the_default_and_a_session_keeps_the_kind() {
     d.extension("lua", ext);
     app.open_store(Some(&db));
     d.frame(&mut app);
-    // `layout.default` makes the next tab a strip; the first stays a
-    // tree.
+    // `layout.default` is the strip, and it decided the window's own
+    // first tab as well as what `:tabnew` opens; set to `tree` it
+    // makes the next tab a tree, the strip beside it untouched.
+    assert!(app.layout.tab().is_scroll(), "the window opened as a strip");
+    ex(&mut d, &mut app, "set layout.default=tree");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "tabnew");
+    assert!(!app.layout.tab().is_scroll());
+    assert!(app.layout.tabs[0].is_scroll());
+    ex(&mut d, &mut app, "tab close");
     ex(&mut d, &mut app, "set layout.default=scroll");
     ex(&mut d, &mut app, "set layout.column_width=third");
     d.frame(&mut app);
     ex(&mut d, &mut app, "tabnew");
     assert!(app.layout.tab().is_scroll());
-    assert!(!app.layout.tabs[0].is_scroll());
     ex(&mut d, &mut app, &format!("e {}", b.display()));
     ctrl_w(&mut d, &mut app, "v");
     ex(&mut d, &mut app, &format!("e {}", a.display()));
     ctrl_w(&mut d, &mut app, "s");
-    d.press(&mut app, "<A-S-l>");
+    ctrl_w(&mut d, &mut app, ">");
     assert_eq!(
         columns(&app).iter().map(|c| c.1).collect::<Vec<_>>(),
         [Width::Third, Width::Half]
@@ -293,7 +311,10 @@ fn a_new_tab_follows_the_default_and_a_session_keeps_the_kind() {
     assert!(app.restore_session());
     d.frame(&mut app);
     assert_eq!(app.layout.tabs.len(), 2);
-    assert!(!app.layout.tabs[0].is_scroll());
+    assert!(
+        app.layout.tabs[0].is_scroll(),
+        "the window's own tab, a strip"
+    );
     assert_eq!(app.layout.tab, 1);
     assert!(app.layout.tab().is_scroll(), "the strip came back as one");
     let cols = columns(&app);
@@ -357,5 +378,154 @@ fn each_tab_keeps_its_own_strip_and_a_moved_tab_stays_in_view() {
     assert_eq!(app.layout.tab, 0);
     settle(&mut d, &mut app);
     assert!(in_view(&d, &app, t2b, vw), "{:?}", app.layout.rects[&t2b]);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn the_keyboard_jumps_to_a_column_moves_panes_and_aligns_the_view() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    for _ in 0..3 {
+        ctrl_w(&mut d, &mut app, "v");
+        settle(&mut d, &mut app);
+    }
+    assert_eq!(app.layout.visible_panes(), [1, 2, 3, 4]);
+    // `<C-N>`: the Nth column, the last when there are fewer.
+    d.press(&mut app, "<C-1>");
+    assert_eq!(app.layout.focused(), 1);
+    assert_eq!(app.ed.message, "column 1 of 4");
+    settle(&mut d, &mut app);
+    assert!(in_view(&d, &app, 1, vw));
+    d.press(&mut app, "<C-3>");
+    assert_eq!(app.layout.focused(), 3);
+    settle(&mut d, &mut app);
+    assert!(in_view(&d, &app, 3, vw));
+    d.press(&mut app, "<C-9>");
+    assert_eq!(app.layout.focused(), 4, "clamped to the last column");
+    settle(&mut d, &mut app);
+    // `zs` `ze` `zz`: the focused column against an edge, or centred.
+    // A column in the middle of the ribbon, which has room both ways —
+    // the ribbon does not scroll past its ends, so the last column
+    // cannot be flush left.
+    d.press(&mut app, "<C-2>");
+    settle(&mut d, &mut app);
+    d.press(&mut app, "zs");
+    settle(&mut d, &mut app);
+    let r = app.layout.rects[&2];
+    assert!(r.x.abs() < 2.0, "against the left edge: {r:?}");
+    d.press(&mut app, "ze");
+    settle(&mut d, &mut app);
+    let r = app.layout.rects[&2];
+    assert!(
+        (r.x + r.w - vw).abs() < 2.0,
+        "against the right edge: {r:?}"
+    );
+    d.press(&mut app, "zz");
+    settle(&mut d, &mut app);
+    let r = app.layout.rects[&2];
+    assert!((r.x - (vw - r.w) / 2.0).abs() < 2.0, "in the middle: {r:?}");
+    // `<A-S-hjkl>` carries the pane: h and l the column along the
+    // ribbon, j and k the pane inside its column's stack.
+    d.press(&mut app, "<C-4>");
+    settle(&mut d, &mut app);
+    d.press(&mut app, "<A-S-h>");
+    assert_eq!(app.layout.visible_panes(), [1, 2, 4, 3]);
+    assert_eq!(app.ed.message, "column 3 of 4");
+    settle(&mut d, &mut app);
+    d.press(&mut app, "2<A-S-h>");
+    assert_eq!(app.layout.visible_panes(), [4, 1, 2, 3]);
+    settle(&mut d, &mut app);
+    ctrl_w(&mut d, &mut app, "s");
+    assert_eq!(columns(&app)[0].0, [4, 5]);
+    assert_eq!(app.layout.focused(), 5);
+    d.press(&mut app, "<A-S-k>");
+    assert_eq!(columns(&app)[0].0, [5, 4], "up the stack");
+    assert_eq!(app.layout.focused(), 5, "the pane keeps the keyboard");
+    d.press(&mut app, "<A-S-k>");
+    assert_eq!(app.ed.message, "nothing above to trade with");
+    d.press(&mut app, "<A-S-j>");
+    assert_eq!(columns(&app)[0].0, [4, 5], "and back down");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn a_scroll_the_pointer_makes_is_followed_one_to_one() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    for _ in 0..3 {
+        ctrl_w(&mut d, &mut app, "v");
+        settle(&mut d, &mut app);
+    }
+    // A wheel over the ribbon moves it by the whole delta in the very
+    // next frame: nothing tweens behind the pointer.
+    // A wheel over a pane's title bar — the rows are the editor's own
+    // horizontal scroll — moves the ribbon by the whole delta in the
+    // very next frame: nothing tweens behind the pointer.
+    let r = app.layout.rects[&3];
+    let before = r.x;
+    d.wheel(&mut app, r.x + 40.0, r.y + 8.0, 120.0, 0.0);
+    d.frame(&mut app);
+    let after = app.layout.rects[&3].x;
+    assert!(
+        (after - before - 120.0).abs() < 2.0,
+        "the whole delta at once: {before} -> {after}"
+    );
+    // And it stays there: no reveal drags the focus back.
+    settle(&mut d, &mut app);
+    assert!(
+        (app.layout.rects[&3].x - after).abs() < 2.0,
+        "the swipe is not fought"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+#[test]
+fn a_column_far_off_the_ribbon_draws_no_rows_until_it_is_near() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    for _ in 0..7 {
+        ctrl_w(&mut d, &mut app, "v");
+        settle(&mut d, &mut app);
+    }
+    assert_eq!(columns(&app).len(), 8);
+    let drawn = |d: &Drive| {
+        d.line_rows()
+            .iter()
+            .filter(|r| r.as_str() == "alpha")
+            .count()
+    };
+    // Eight columns, a handful on the ribbon's visible stretch: only
+    // those shape their rows.
+    let near = drawn(&d);
+    assert!(
+        (1..=6).contains(&near),
+        "only the columns near the viewport draw rows: {near} of 8"
+    );
+    // Every pane still reports its rect, so the moves and the mouse
+    // work off the ribbon as well as on it.
+    assert_eq!(app.layout.rects.len(), 8, "every column is laid out");
+    // The far end and back: the column the keyboard lands on has its
+    // rows, and the ones left behind give theirs up.
+    d.press(&mut app, "<C-1>");
+    settle(&mut d, &mut app);
+    assert_eq!(app.layout.focused(), 1);
+    let rows = d.line_rows();
+    assert!(
+        rows.iter().filter(|r| r.as_str() == "alpha").count() <= near + 1,
+        "the far columns gave their rows up"
+    );
+    // The first column's own rows are among them: its rect is in view
+    // and its text is drawn.
+    assert!(in_view(&d, &app, 1, vw));
+    assert!(rows.iter().any(|r| r.as_str() == "alpha"));
     assert_eq!(d.warnings(), Vec::<String>::new());
 }

@@ -73,15 +73,21 @@ the strip.
 | `<C-w>s` `:split` | a split below | a split below, inside the column (a stack) |
 | `<C-w>h` `<C-w>l` | the pane beside, by rect | the column beside, by index; the pane in it at the focused pane's row, else its top |
 | `<C-w>j` `<C-w>k` | the pane below / above, by rect | the same, inside the column |
-| `<C-w>H` `<C-w>L` | *(free)* | move the column one place left / right |
-| `<A-S-h>` `<A-S-l>` | the pane narrower / wider by a twentieth | the column's width to the next preset down / up (niri's `switch-preset-column-width`); a `Ratio` snaps to the nearest first |
-| `<A-S-j>` `<A-S-k>` | shorter / taller | the same, inside the column |
+| `<A-S-h>` `<A-S-l>`, `<C-w>H` `<C-w>L` | carry the pane past its neighbour | move the column one place left / right |
+| `<A-S-j>` `<A-S-k>`, `<C-w>J` `<C-w>K` | the same, up / down | the pane up / down inside its column's stack |
+| `<C-w><` `<C-w>>` | the pane narrower / wider by a twentieth | the column's width to the next preset down / up (niri's `switch-preset-column-width`); a `Ratio` snaps to the nearest first |
+| `<C-w>-` `<C-w>+` | shorter / taller | the same, inside the column |
+| `<C-1>`…`<C-9>` | the Nth pane | the Nth column, the last when there are fewer |
+| `zs` `ze` `zz` | *(free)* | the focused column against the left edge, the right edge, or centred |
 | closing the last pane of a column | — | the column goes, the focus to the column before it |
 
 `:layout scroll` and `:layout tree` convert the current tab (Decision
-5); `layout.default` (`tree` \| `scroll`) is what `<leader>tn` opens.
-`<C-w>H` and `<C-w>L` are vim's "move to the far side", read as one
-step; they are free today and stay unbound in a tree.
+5), a bare `:layout` (`<leader>tl`) flips it; `layout.default`
+(`tree` \| `scroll`) is what `<leader>tn` opens, and what the window's
+own first tab is — the strip since 2026-09-22. `<C-w>HJKL` are vim's
+"move to the far side", read as one step; `<A-S-hjkl>` are the same
+four without a prefix, which cost sizing its chords (it took vim's
+`<C-w><>-+`, keys.md).
 
 *Beat:* a key family of its own (`<leader>t…` for the strip) — a second
 vocabulary for the same intentions.
@@ -97,6 +103,12 @@ and a `<C-w>l` always lands the column in view. `layout.scroll.center`
 (`never` \| `always`; niri's `center-focused-column`) makes the focus
 frame set `scroll_offset` to centre the column instead of revealing it.
 
+`zs` `ze` `zz` (`strip left` / `right` / `center`) put the focused
+column against an edge or in the middle once, for the times the reveal's
+"the least that brings it in" is not where the eye wants it; the ribbon
+does not scroll past its ends, so the first column cannot be flush
+right nor the last flush left.
+
 The gap between columns is `layout.gap` px (the divider's width by
 default) and is draggable like a divider: a drag turns the column's
 width into `Width::Ratio`.
@@ -105,7 +117,7 @@ width into `Width::Ratio`.
 focused column and writing it) — which fights the swipe and rebuilds
 what kui already retains, with the `rects` lag on top.
 
-### 4. The strip moves, the tree does not
+### 4. The strip moves, the tree does not — *overturned when built, see "Built"*
 
 This is what Decision 2 wanted kui's animation for, and it is all
 declared: a new column has `enter { dx: its own width }` and slides in
@@ -188,16 +200,22 @@ session saved and restored as a strip.
   finds nothing for a row nobody declared; a column inserted and
   revealed in the same frame may need the reveal on the frame after.
   The pane's follow-up frame (one more frame requested) is the answer
-  if so; check on day one.
+  if so; check on day one. *It works; what did bite was a key aimed at
+  a column an animation had not finished moving — see "Built".*
 - **Twenty columns.** Every column is laid out every frame, and an
   editor pane emits its screenful of rows whether it is on the
   viewport or not. Measure a strip of twenty panes with the perf tab;
   if it costs, a column whose last-frame rect is off the viewport
   emits an empty box of its size instead of its rows — a change local
-  to `render_pane`.
+  to `render_pane`. *It cost (0.09ms a column), and the box was built:
+  see "Built".*
 - **The swipe and the focus in one frame.** The focus wins (Decision
   3); a swipe that lands a click on another pane focuses it and
-  reveals it, which is the expected thing.
+  reveals it, which is the expected thing. *A swipe over an editor
+  pane's rows never reaches the ribbon, as it happens: the editor owns
+  horizontal scrolling there (`on_scroll` on its `lines`). The title
+  bars, the gaps and the scrollbar are where a pointer scrolls the
+  ribbon; the keyboard has `<C-w>hl`, `<C-N>` and `zs` `ze` `zz`.*
 
 ## Built (2026-09-22)
 
@@ -214,27 +232,35 @@ departed from the text above, and what day one found:
   one key to try the other kind and come back. The message after says
   what the tab is now and, for a strip, the three keys that matter.
 - **A column carries a number of its own** (`Column::id`, counted apart
-  from panes) for its drawn key, so the column keeps its slide, enter
-  and exit whatever its panes do — a stack's top pane closing does not
+  from panes) for its drawn key, so the column keeps its fade and its
+  place whatever its panes do — a stack's top pane closing does not
   make a "new" column.
-- **One event, one motion** (found 2026-09-22 in use: columns gliding
-  at different speeds, a wobble under `<A-S-l>`, a column widened at
-  the right edge growing past it). A column is a sliding wrapper of
-  `Fit` width around a box of `Fixed` width, so a width change snaps —
-  the wrapper has no width slot for the `transition` to ease — and
-  only positions glide: `<C-w>l`, `<C-w>L` and `<A-S-l>` each move
-  every column by its own delta in one frame, on one leg of the same
-  tween, in lockstep. (A width easing retargeted the neighbours'
-  slides every frame, each on a fresh 200ms leg: the wobble; and an
-  entrance offset travelled a different distance than the ribbon's
-  reveal: the speeds.) A column arriving does not glide: the ribbon
-  jumps to it and it fades in — which also keeps every key, since kui
-  hears none for a sink wholly outside the viewport (its hit regions
-  are the clipped ones), and a column that started off it would drop
-  the keystroke typed during a slide. Nothing slides under a gap drag,
-  where the pointer is the motion. The strip's first frame — a
-  conversion, a restore, a tab switched to — snaps: those columns are
-  not arriving (`Kawoosh::strip_known`).
+- **Nothing about the ribbon is animated** — Decision 4 overturned,
+  2026-09-22, in three steps, each found in use. First the speeds and
+  the wobble: every column had its own tween, so a width easing
+  retargeted the neighbours' slides every frame on a fresh 200ms leg
+  (the rubber under `<A-S-l>` and the gap drag), and an arriving
+  column's `enter` offset travelled a different distance than the
+  ribbon's reveal. A column became a wrapper of `Fit` width around a
+  box of `Fixed` width — no width slot on the moving node, so widths
+  snap and only positions eased, every column by its own delta on one
+  leg of one tween. Then the scrollbar: a tween chasing the thumb is a
+  tween the thumb is always ahead of, so the glide was narrowed to the
+  frames after the strip's shape changed, leaving a pointer's scroll
+  followed one to one. Then the keystroke: kui hands a key to the
+  region its focused sink had **last frame**, and a node outside the
+  scroll container's clip has none — so `<C-w>l` to a column off the
+  viewport and a `q` inside the next 200ms went nowhere (a Lua view's
+  own key, `kawoosh/tests/lua.rs`). A tween in the way of a keystroke
+  is not worth its 200ms, so the glide went: the reveal sets the
+  offset, the columns are where the widths put them, and a key, the
+  thumb and a swipe all land whole on the frame they happen. What is
+  left is opacity, which moves nothing: a column arriving in a strip
+  already on show fades up over 150ms in its final place. The strip's
+  first frame — a conversion, a restore, a tab switched to — does not
+  even fade (`Kawoosh::strip_known`). *What would bring the motion
+  back:* a kui prop that delivers a key to the focused sink by key
+  rather than by hit region. An ask, not yet asked.
 - **The reveal answers the strip's shape, not only the focus**
   (`StripShape`: the tab, the focus and its column, the columns' order
   and widths), asked on the frame it changed and the two after, so a
@@ -244,13 +270,34 @@ departed from the text above, and what day one found:
   under the pointer would feed the width it measures. `Ui::reveal` on
   a node declared the same frame works (the first risk above did not
   materialise), and leaves a 4px margin, so the column beside shows as
-  a sliver when the ribbon has room — a hint that there is more.
-- **The glide is free**: `slide` on the wrapper eases its drawn
-  position, and a scroll offset change is a position change, so
-  `<C-w>l` glides the ribbon over 200ms with nothing written for it. A
-  key typed inside the glide at a column still wholly off the viewport
-  is dropped by kui (the limitation above); a hand's own pace is
-  slower than that.
+  a sliver when the ribbon has room — a hint that there is more. `zs`
+  `ze` `zz` ask for an edge or the middle instead, once.
+- **A column far off the ribbon draws its chrome and no rows**
+  (`Kawoosh::culled`, the second Risk below, measured and taken). A
+  pane costs a screenful of shaped, highlighted rows; a column outside
+  half a viewport of the viewport — the focused one never — emits an
+  empty box in their place, keeping its rect, its title and its hit
+  region, so the moves, the mouse and the sessions see no difference.
+  Which columns those are is read from the model (the widths and the
+  retained offset), not from last frame's drawn rects, so a column
+  swiped into view has its rows on the frame it arrives. A frame with
+  a 400-line file in a 1600×1000 window (`kawoosh/tests/perf.rs`'s
+  `ribbon_frame_cost`): 1 column 110µs, 20 335µs, 60 480µs, 120 703µs,
+  250 1.3ms, **500 3.0ms** — about 6µs a column past the handful on
+  screen. Without it the cost was 0.09ms a column: 15ms, a whole frame
+  at 60Hz, by 120 columns. So the layout is not what limits a ribbon
+  any more; a strip of hundreds is a strip nobody can find anything
+  in, which is the real limit.
+- **A share is a column's width** (`Layout::set_share`). The undo
+  pane, the memory pane and a Lua view's `view_open { share = … }`
+  asked for a fraction of the split they opened in; in a strip a pane
+  that is a whole column takes that fraction of the *viewport*, and
+  the column it opened beside gives up what it must for the two to be
+  on screen together — which is what asking for a share of the width
+  means. A pane opened *below* (the picker) is in its column's stack
+  and takes its share of that split, as in a tree. An ordinary
+  `<C-w>v` asks for no share and pushes the ribbon, as Decision 3
+  says.
 - **A width step that would not be seen is not a step**: a `Ratio`
   snaps to the nearest preset first, and the snap counts as the step
   only when it moves the column by more than 4% of the viewport in the
@@ -260,15 +307,17 @@ departed from the text above, and what day one found:
 - **The status line shows the columns** as `▯▮▯`, the focused one
   filled, before the caret's line and column — a column off the
   viewport is not out of mind.
+- **`layout.default` decides the window's own tab too**
+  (`Layout::apply_default_kind`, once, on the first frame after any
+  session came back): a tab that is still a lone pane in a tree becomes
+  a strip of one column, so `layout.default = scroll` — the default
+  since 2026-09-22 — is what the window opens as and not only what
+  `:tabnew` makes. A tab a session brought back with splits keeps the
+  kind the file gave it.
 - **The session writes both**: `root` holds the strip folded to a tree
   (`Tab::to_tree`), so a file written by this build reads as a tree in
   the build before it, and `kind: "scroll"` with `columns` brings the
   strip back here.
-- **Twenty columns measured** (the second risk): a headless release
-  frame with twenty columns of a 200-line file costs 1.6ms, the same as
-  twenty tree panes on screen, against 0.09ms for one pane — under the
-  budget, so a column off the viewport still emits its rows; the empty
-  box stays an option for a wider ribbon than that.
 - **Closing a pane inside a stack keeps the keyboard in the column**
   (its first pane), where the tree's rule sends it to the tab's first
   pane; closing a column's last pane goes to the column before, else

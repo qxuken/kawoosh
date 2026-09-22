@@ -88,11 +88,15 @@ sees it; every other pane without a view reaches the chords through
 pane mode (below); a Lua view's field is a view of the editor's and
 takes the chord through its own maps (the picker's `<A-S-l>` over the
 pane's); editor panes have the chords in their normal and insert
-maps. Sizing is Alt with Shift because Alt
-alone moves the selection (`<A-hjkl>`: the line, the indent) and Shift
-on it reads as the same motion made of the pane; a chord's letter
-under Shift is spelled upper-case, so a map writes `<A-S-l>` or
-`<A-L>`, never `<A-L>` meaning `<A-l>`. `<C-w>` as a prefix stays the tmux-shaped way from those
+maps. Alt with Shift *carries* because Alt
+alone carries the selection (`<A-hjkl>`: the line, the indent) and
+Shift on it reads as the same motion made of the pane — sizing, which
+had these four until 2026-09-22, is under `<C-w>` with vim's own
+`<` `>` `-` `+`, where a hand looking for it tries first. A chord's
+letter under Shift is spelled upper-case, so a map writes `<A-S-l>` or
+`<A-L>`, never `<A-L>` meaning `<A-l>`. The picker keeps all four for
+itself while it is up (`picker.lua`): a picker is a pane one sizes,
+not one carried along a ribbon. `<C-w>` as a prefix stays the tmux-shaped way from those
 panes (`<C-w>.` sends a literal `<C-w>` to the pty).
 
 ### Panes without a view: pane mode

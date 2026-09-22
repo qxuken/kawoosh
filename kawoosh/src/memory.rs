@@ -377,11 +377,7 @@ impl Kawoosh {
             }
             None => {
                 let pane = self.layout.split(SplitDir::H, Content::Memory);
-                if let Some(path) = self.layout.tab().split_of(pane)
-                    && let Some(r) = self.layout.tab_mut().ratio_mut(&path)
-                {
-                    *r = 1.0 - PANEL_SHARE;
-                }
+                self.layout.set_share(pane, PANEL_SHARE);
                 self.set_view(view.unwrap_or(self.memory_pane.view));
             }
         }

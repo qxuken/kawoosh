@@ -37,10 +37,11 @@
 -- settings, flipped for the session (`settings.lua` sets them for
 -- good). The pane opens at `picker.share` of the height and the list
 -- takes `picker.split` of its width beside the preview: `<A-K>`
--- `<A-J>` make the pane taller and shorter (the editor's own pane
--- keys, the height they leave kept as the setting), `<A-H>` `<A-L>`
--- move the divider between list and preview, which drags too — the
--- session's, as the two above. A source's own keys ride on the row: `<C-x>` in `buffers`
+-- `<A-J>` make the pane taller and shorter (the height they leave kept
+-- as the setting — the picker's own maps since 2026-09-22, when the
+-- editor gave the four `<A-S-…>` chords to carrying a pane), `<A-H>`
+-- `<A-L>` move the divider between list and preview, which drags too —
+-- the session's, as the two above. A source's own keys ride on the row: `<C-x>` in `buffers`
 -- closes the row's buffer, asking first when it has unsaved changes.
 -- A source with `columns` draws its rows as a grid, the cells lined up
 -- (the commands: name, key, what it does). The pane is not kept by a
@@ -1002,8 +1003,9 @@ on("preview", function() kawoosh.opt("picker.preview", not previewing()) end,
 on("wrap", function() kawoosh.opt("picker.wrap", not wrapping()) end,
   "fold a row's text to the list's width, or cut it (the `picker.wrap` setting, for the session)")
 -- The list's width beside the preview, stepped: the setting for the
--- session. (The pane's height is the editor's `pane taller` and
--- `pane shorter`, the height they leave kept as `picker.share`.)
+-- session. (The pane's height is `pane taller` and `pane shorter`,
+-- mapped below over the pane's own `<A-S-jk>`, the height they leave
+-- kept as `picker.share`.)
 on("list wider", function() kawoosh.opt("picker.split", math.min(0.9, split() + 0.05)) end,
   "the list wider beside the preview (the `picker.split` setting, for the session)")
 on("list narrower", function() kawoosh.opt("picker.split", math.max(0.1, split() - 0.05)) end,
@@ -1059,6 +1061,10 @@ for _, mode in ipairs { "i", "n", "p" } do
   kawoosh.map(mode, "<A-w>", "picker wrap", when)
   kawoosh.map(mode, "<A-S-l>", "picker list wider", when)
   kawoosh.map(mode, "<A-S-h>", "picker list narrower", when)
+  -- The pane's own height, over the editor's `pane move up` / `down`:
+  -- a picker is a pane one sizes, not one carried along a strip.
+  kawoosh.map(mode, "<A-S-k>", "pane taller", when)
+  kawoosh.map(mode, "<A-S-j>", "pane shorter", when)
 end
 
 -- The completion's candidates (`<C-x>` in insert mode, `lsp

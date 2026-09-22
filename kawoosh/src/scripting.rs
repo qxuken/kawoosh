@@ -918,22 +918,16 @@ impl Kawoosh {
                     self.layout.focus(p);
                 }
                 // A share given for a pane already open resizes it.
-                if let Some(share) = share
-                    && let Some(path) = self.layout.tab().split_of(p)
-                    && let Some(r) = self.layout.tab_mut().ratio_mut(&path)
-                {
-                    *r = (1.0 - share).clamp(0.1, 0.9);
+                if let Some(share) = share {
+                    self.layout.set_share(p, share);
                 }
             }
             None => {
                 let was = self.layout.focused();
                 let dir = if below { SplitDir::V } else { SplitDir::H };
                 let pane = self.layout.split(dir, Content::Lua(name.to_string()));
-                if let Some(share) = share
-                    && let Some(path) = self.layout.tab().split_of(pane)
-                    && let Some(r) = self.layout.tab_mut().ratio_mut(&path)
-                {
-                    *r = (1.0 - share).clamp(0.1, 0.9);
+                if let Some(share) = share {
+                    self.layout.set_share(pane, share);
                 }
                 if focus {
                     self.scripting.view_from.insert(name.to_string(), was);

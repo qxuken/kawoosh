@@ -169,8 +169,17 @@ pub struct Kawoosh {
     /// The strip's shape as last drawn, so the frame it changes on
     /// reveals the focused column (`render_strip`).
     pub(crate) strip_seen: Option<crate::panes::StripShape>,
-    /// Frames left on which the focused column is revealed again.
+    /// Frames left on which the focused column is revealed again, and
+    /// on which the columns slide.
     pub(crate) strip_settling: u8,
+    /// Whether `layout.default` has decided the tabs already open
+    /// (`sync_layout_settings`), which it does once.
+    pub(crate) layout_default_seen: bool,
+    /// Panes whose column is far enough off the ribbon's viewport that
+    /// this frame draws their chrome and no rows (`Kawoosh::culled`).
+    pub(crate) culled: std::collections::HashSet<PaneId>,
+    /// An alignment `zs` / `ze` / `zz` asked for, for the next frame.
+    pub(crate) strip_align: Option<crate::panes::StripAlign>,
     /// Every column drawn so far, by number, so a column arriving in a
     /// strip already on show is the one that slides in.
     pub(crate) strip_known: std::collections::HashSet<u64>,
@@ -263,6 +272,9 @@ impl Kawoosh {
             body_h: 600.0,
             strip_seen: None,
             strip_settling: 0,
+            strip_align: None,
+            culled: Default::default(),
+            layout_default_seen: false,
             strip_known: Default::default(),
             cell: (7.8, crate::rows::LH),
             mods: (false, false, false, false),
@@ -865,7 +877,11 @@ impl Kawoosh {
     }
 
     /// `layout.default` and `layout.column_width` into the layout, on
-    /// the frame the settings moved (`sync_look` calls it).
+    /// the frame the settings moved (`sync_look` calls it). The first
+    /// time — the first frame, after any session came back — the
+    /// default also decides what the tabs already open are, so a
+    /// `layout.default = scroll` window opens as a strip rather than
+    /// waiting for a `:tabnew`.
     pub(crate) fn sync_layout_settings(&mut self) {
         self.layout.new_tabs_scroll = self.ed.settings.str("layout.default") == Some("scroll");
         if let Some(w) = self
@@ -875,6 +891,9 @@ impl Kawoosh {
             .and_then(crate::layout::Width::parse)
         {
             self.layout.column_width = w;
+        }
+        if !std::mem::replace(&mut self.layout_default_seen, true) {
+            self.layout.apply_default_kind();
         }
     }
 

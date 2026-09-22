@@ -207,6 +207,10 @@ fn a_click_in_a_pane_focuses_it() {
     let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
     let mut d = Drive::new(900.0, 600.0);
     d.frame(&mut app);
+    // The tree, which `layout.default` no longer opens (it is the
+    // strip since 2026-09-22): these are the tree's own dividers,
+    // rects and drags.
+    ex(&mut d, &mut app, "layout tree");
     ctrl_w(&mut d, &mut app, "v");
     d.frame(&mut app);
     let right = app.layout.focused();
@@ -247,25 +251,31 @@ fn a_click_in_a_pane_focuses_it() {
 
 /// A pane dragged by its title bar lands where it is let go: the middle
 /// of another pane trades places with it, an edge puts it beside; while
-/// `<A-H>` `<A-L>` `<A-J>` `<A-K>`: the focused pane's size by a
-/// twentieth of its split a step, a count multiplying, the nearest
-/// split of the axis the one that moves; from insert mode too; a
-/// lone axis says so; the dock's height when the dock has the keys.
+/// `<C-w><` `<C-w>>` `<C-w>-` `<C-w>+` (vim's sizing family, which
+/// `<A-S-…>` gave up to the moves on 2026-09-22): the focused pane's
+/// size by a twentieth of its split a step, a count multiplying, the
+/// nearest split of the axis the one that moves; a lone axis says so;
+/// the dock's height when the dock has the keys.
 #[test]
 fn the_panes_resize_from_the_keyboard() {
     let mut app = Kawoosh::new("t", "one");
     let mut d = Drive::new(1000.0, 600.0);
     d.frame(&mut app);
+    // The tree, which `layout.default` no longer opens (it is the
+    // strip since 2026-09-22): these are the tree's own dividers,
+    // rects and drags.
+    ex(&mut d, &mut app, "layout tree");
+    // `<C-w>` then the sizing character: `>` wider, `<` narrower, `+`
+    // taller, `-` shorter, in the direction `hjkl` used to name.
     let alt = |d: &mut Drive, app: &mut Kawoosh, name: &str| {
-        d.key(
-            app,
-            name,
-            KeyMods {
-                alt: true,
-                shift: true,
-                ..Default::default()
-            },
-        );
+        let ch = match name {
+            "l" => ">",
+            "h" => "<",
+            "k" => "+",
+            _ => "-",
+        };
+        d.ctrl(app, "w");
+        d.keys(app, ch);
         d.frame(app);
     };
     alt(&mut d, &mut app, "l");
@@ -296,10 +306,22 @@ fn the_panes_resize_from_the_keyboard() {
     assert_eq!(app.layout.rects[&3].w, w3);
     alt(&mut d, &mut app, "j");
     assert!((app.layout.rects[&3].h - h3).abs() < 1.0);
-    // From insert mode.
+    // Sizing is normal mode's now — `<C-w>` types a word away in
+    // insert mode — but the moves keep the shifted chord there, so
+    // `<A-S-k>` from insert mode carries the pane rather than typing.
     d.keys(&mut app, "i");
-    alt(&mut d, &mut app, "k");
-    assert!(app.layout.rects[&3].h > h3 + 20.0);
+    let panes = app.layout.visible_panes();
+    d.key(
+        &mut app,
+        "k",
+        KeyMods {
+            alt: true,
+            shift: true,
+            ..Default::default()
+        },
+    );
+    d.frame(&mut app);
+    assert_ne!(app.layout.visible_panes(), panes, "the pane moved");
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(app.ed.buffer_of(app.focused_view().unwrap()).text(), "one");
     // The dock: its height, and no width to speak of.
@@ -320,6 +342,10 @@ fn a_pane_is_dragged_by_its_title_bar() {
     let mut app = Kawoosh::new("t", "one");
     let mut d = Drive::new(900.0, 600.0);
     d.frame(&mut app);
+    // The tree, which `layout.default` no longer opens (it is the
+    // strip since 2026-09-22): these are the tree's own dividers,
+    // rects and drags.
+    ex(&mut d, &mut app, "layout tree");
     ctrl_w(&mut d, &mut app, "v");
     ctrl_w(&mut d, &mut app, "s");
     d.frame(&mut app);

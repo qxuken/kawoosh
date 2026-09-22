@@ -238,7 +238,8 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 - **The scrolling tab** — decided 2026-09-21
   ([scrolling-tab.md](scrolling-tab.md)), built 2026-09-22 (step 11;
   the note's "Built" has the departures). Decision 2 above, worked
-  out: `Kind::Scroll(Strip)` beside `Kind::Tree(Node)`
+  out (and `layout.default`'s kind since, so the window opens as one):
+  `Kind::Scroll(Strip)` beside `Kind::Tree(Node)`
   on the tab, a column a `Node` of its own so the tree's code runs
   inside it, the tree's keys read on the strip's axis (`<C-w>H`
   `<C-w>L` move a column, `<A-S-h>` `<A-S-l>` step its width through
@@ -609,10 +610,15 @@ then breadth.
     `panes.rs`'s `render_strip`; `:layout` and `<leader>tl`, `<C-w>H`
     `<C-w>L`; the `layout.*` settings; the session's `kind` and
     `columns`; `kawoosh/tests/layout.rs`); scrolling-tab.md's "Built"
-    says where the build departed from the note and what day one
-    found — the entrance a third of the width so a key typed into a
-    column mid-slide is not dropped, the reveal asked again while a
-    width eases, twenty columns measured at 1.6ms a frame.
+    says where the build departed from the note and what use found —
+    the strip is `layout.default` and the window's own tab, nothing
+    about the ribbon is animated (a key goes to the region its sink
+    had last frame, so a column part-way to its place drops it;
+    Decision 4 overturned), a column far off the ribbon draws its
+    chrome and no rows, which holds a frame at 3ms for five hundred
+    columns, and `<A-S-hjkl>` carry a pane with sizing moved to vim's
+    `<C-w><>-+`, `<C-1>`…`<C-9>` reach the Nth column and `zs` `ze`
+    `zz` put it at an edge or the middle.
 12. **Auto-closing brackets** ([pairs.md](pairs.md)): an afternoon —
     the three Lua doors (`buf.type`, `buf.edits`,
     `buf.set_selections`), `pairs.lua` off by default, its test a

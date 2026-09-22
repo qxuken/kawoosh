@@ -838,6 +838,58 @@ impl Layout {
         p
     }
 
+    /// The share of the width a pane was opened with — `view_open`'s
+    /// `share`, the undo panel's, the memory pane's: the ratio of the
+    /// split it sits in for a tree, the width of its column for a
+    /// strip, where a panel is a column like any other. `share` is the
+    /// pane's own share, not what it leaves behind.
+    pub fn set_share(&mut self, pane: PaneId, share: f32) {
+        let share = share.clamp(0.1, 0.9);
+        // A pane in a split — a tree's, or a column's own stack — takes
+        // its share of that split: a picker opened below is the same
+        // pane under the same buffer in either kind.
+        if let Some(path) = self.tab().split_of(pane)
+            && let Some(r) = self.tab_mut().ratio_mut(&path)
+        {
+            *r = 1.0 - share;
+            return;
+        }
+        // A pane that is a whole column takes its share of the
+        // viewport, which is what a column's width is — and the column
+        // it opened beside gives up what it must for the two to be on
+        // screen together, since that is what asking for a share of
+        // the width means. An ordinary `<C-w>v` asks for no share and
+        // pushes the ribbon instead, as Decision 3 says.
+        if let Some(s) = self.tab_mut().strip_mut()
+            && let Some(i) = s.column_of(pane)
+        {
+            s.columns[i].width = Width::Ratio(share);
+            if let Some(before) = i.checked_sub(1)
+                && s.columns[before].width.fraction() + share > 1.0
+            {
+                s.columns[before].width = Width::Ratio(1.0 - share);
+            }
+        }
+    }
+
+    /// `layout.default` applied to the tabs the app starts with, once:
+    /// a tab that is still a lone pane in a tree becomes a strip of
+    /// one column, so `layout.default = scroll` is what the window
+    /// opens as and not only what `:tabnew` makes. A tab a session
+    /// brought back with splits keeps the kind the file gave it.
+    pub fn apply_default_kind(&mut self) {
+        if !self.new_tabs_scroll {
+            return;
+        }
+        let mut next = self.next_column;
+        for t in &mut self.tabs {
+            if matches!(&t.layout, Kind::Tree(Node::Pane(_))) {
+                t.to_scroll(&mut next);
+            }
+        }
+        self.next_column = next;
+    }
+
     /// `:layout scroll` / `:layout tree` on the current tab.
     pub fn set_scroll(&mut self, scroll: bool) {
         let mut next = self.next_column;
@@ -882,21 +934,7 @@ impl Layout {
         {
             let i = s.column_of(from)?;
             let j = if forward { i + 1 } else { i.checked_sub(1)? };
-            let col = s.columns.get(j)?;
-            let mut ps = Vec::new();
-            col.node.panes(&mut ps);
-            let cy = self.rects.get(&from).map(|r| r.y + r.h / 2.0);
-            return ps
-                .iter()
-                .find(|p| {
-                    cy.is_some_and(|cy| {
-                        self.rects
-                            .get(p)
-                            .is_some_and(|q| q.y <= cy && cy < q.y + q.h)
-                    })
-                })
-                .or(ps.first())
-                .copied();
+            return self.pane_in_column(j);
         }
         let r = *self.rects.get(&from)?;
         let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
@@ -934,6 +972,73 @@ impl Layout {
             }
         }
         best.map(|(_, p)| p)
+    }
+
+    /// The pane the keyboard takes when it lands in column `i`: the one
+    /// at the focused pane's row, else the column's top
+    /// (scrolling-tab.md Decision 2).
+    pub fn pane_in_column(&self, i: usize) -> Option<PaneId> {
+        let col = self.tab().strip()?.columns.get(i)?;
+        let mut ps = Vec::new();
+        col.node.panes(&mut ps);
+        let cy = self.rects.get(&self.tab().focused).map(|r| r.y + r.h / 2.0);
+        ps.iter()
+            .find(|p| {
+                cy.is_some_and(|cy| {
+                    self.rects
+                        .get(p)
+                        .is_some_and(|q| q.y <= cy && cy < q.y + q.h)
+                })
+            })
+            .or(ps.first())
+            .copied()
+    }
+
+    /// The Nth thing the keyboard can go to, one-based, clamped to the
+    /// last: a strip's Nth column (`<C-3>`), a tree's Nth pane in
+    /// reading order. Returns the pane focused, or None for an empty
+    /// tab.
+    pub fn goto_nth(&mut self, n: usize) -> Option<PaneId> {
+        let n = n.max(1) - 1;
+        let pane = match self.tab().strip() {
+            Some(s) => {
+                let i = n.min(s.columns.len().saturating_sub(1));
+                self.pane_in_column(i)?
+            }
+            None => {
+                let mut ps = Vec::new();
+                self.tab().panes(&mut ps);
+                *ps.get(n).or(ps.last())?
+            }
+        };
+        self.focus(pane);
+        Some(pane)
+    }
+
+    /// The focused pane one place up or down inside its column
+    /// (`<A-S-k>` / `<A-S-j>` in a strip): the two panes trade places,
+    /// the stack's splits as they were. False in a tree, or at the
+    /// stack's end.
+    pub fn move_in_column(&mut self, down: bool) -> bool {
+        let focused = self.tab().focused;
+        let Some(s) = self.tab_mut().strip_mut() else {
+            return false;
+        };
+        let Some(i) = s.column_of(focused) else {
+            return false;
+        };
+        let node = &mut s.columns[i].node;
+        let mut ps = Vec::new();
+        node.panes(&mut ps);
+        let Some(at) = ps.iter().position(|p| *p == focused) else {
+            return false;
+        };
+        let to = if down { at + 1 } else { at.wrapping_sub(1) };
+        let Some(other) = ps.get(to).copied() else {
+            return false;
+        };
+        node.swap(focused, other);
+        true
     }
 
     /// The tab's pane under a point (never the dock) and where a drop

@@ -315,11 +315,12 @@ impl Settings {
         // The which-key float while a key sequence is open.
         defaults.set("whichkey", Setting::Bool(true));
         // The scrolling tab (docs/design/scrolling-tab.md): what a new
-        // tab is (`tree` | `scroll`), a new column's width (`third`,
+        // tab is (`tree` | `scroll`; the strip since 2026-09-22), a
+        // new column's width (`third`,
         // `half`, `two-thirds`, `full`, or a fraction), the gap between
         // columns in px, and whether the focus frame centres the column
         // (`always`) or only brings it into view (`never`).
-        defaults.set("layout.default", Setting::Str("tree".into()));
+        defaults.set("layout.default", Setting::Str("scroll".into()));
         defaults.set("layout.column_width", Setting::Str("half".into()));
         defaults.set("layout.gap", Setting::Int(4));
         defaults.set("layout.scroll.center", Setting::Str("never".into()));

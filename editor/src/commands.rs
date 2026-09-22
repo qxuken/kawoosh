@@ -2938,11 +2938,13 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<A-k>", "move line up"),
         ("<A-h>", "nudge left"),
         ("<A-l>", "nudge right"),
-        // Alt with Shift sizes the pane the way Alt moves the line.
-        ("<A-S-h>", "pane narrower"),
-        ("<A-S-l>", "pane wider"),
-        ("<A-S-j>", "pane shorter"),
-        ("<A-S-k>", "pane taller"),
+        // Alt with Shift carries the pane the way Alt carries the line:
+        // on a strip's axis that is its column along the ribbon
+        // (2026-09-22). Sizing is vim's `<C-w>` family below.
+        ("<A-S-h>", "pane move left"),
+        ("<A-S-l>", "pane move right"),
+        ("<A-S-j>", "pane move down"),
+        ("<A-S-k>", "pane move up"),
         // Numbers: vim's, per selection.
         ("<C-a>", "increment"),
         ("<C-x>", "decrement"),
@@ -2975,10 +2977,19 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w>o", "only"),
         ("<C-w>w", "pane next"),
         ("<C-w>x", "pane swap"),
-        // The column along a scrolling tab's strip: the shifted letter,
-        // vim's "to the far side" read as one step.
-        ("<C-w>H", "column left"),
-        ("<C-w>L", "column right"),
+        // The pane carried a place: the shifted letter, vim's "to the
+        // far side" read as one step — a strip's column along the
+        // ribbon, a tree's pane past its neighbour.
+        ("<C-w>H", "pane move left"),
+        ("<C-w>L", "pane move right"),
+        ("<C-w>J", "pane move down"),
+        ("<C-w>K", "pane move up"),
+        // Sizing, vim's own: `<` `>` the width, `-` `+` the height. In
+        // a strip `<` `>` step the column through the width presets.
+        ("<C-w><", "pane narrower"),
+        ("<C-w>>", "pane wider"),
+        ("<C-w>-", "pane shorter"),
+        ("<C-w>+", "pane taller"),
         ("<C-w>h", "pane left"),
         ("<C-w>j", "pane down"),
         ("<C-w>k", "pane up"),
@@ -2997,6 +3008,21 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-w>n", "toast"),
         ("gt", "tab next"),
         ("gT", "tab prev"),
+        // `<C-N>`: the Nth column of a strip, the Nth pane of a tree.
+        ("<C-1>", "pane goto 1"),
+        ("<C-2>", "pane goto 2"),
+        ("<C-3>", "pane goto 3"),
+        ("<C-4>", "pane goto 4"),
+        ("<C-5>", "pane goto 5"),
+        ("<C-6>", "pane goto 6"),
+        ("<C-7>", "pane goto 7"),
+        ("<C-8>", "pane goto 8"),
+        ("<C-9>", "pane goto 9"),
+        // `z`: vim's scrolling, read on the ribbon — the focused
+        // column to an edge, or the middle.
+        ("zs", "strip left"),
+        ("ze", "strip right"),
+        ("zz", "strip center"),
         // `]x` / `[x`: the next and the previous of a thing.
         ("]b", "buffer next"),
         ("[b", "buffer prev"),
@@ -3132,6 +3158,21 @@ pub fn default_keymap(km: &mut Keymap) {
         // bound rather than shared; `]x` / `[x` fall through.
         ("gt", "tab next"),
         ("gT", "tab prev"),
+        // `<C-N>`: the Nth column of a strip, the Nth pane of a tree.
+        ("<C-1>", "pane goto 1"),
+        ("<C-2>", "pane goto 2"),
+        ("<C-3>", "pane goto 3"),
+        ("<C-4>", "pane goto 4"),
+        ("<C-5>", "pane goto 5"),
+        ("<C-6>", "pane goto 6"),
+        ("<C-7>", "pane goto 7"),
+        ("<C-8>", "pane goto 8"),
+        ("<C-9>", "pane goto 9"),
+        // `z`: vim's scrolling, read on the ribbon — the focused
+        // column to an edge, or the middle.
+        ("zs", "strip left"),
+        ("ze", "strip right"),
+        ("zz", "strip center"),
         // The memory pane's.
         ("/", "memory filter"),
         ("p", "list open"),
@@ -3176,10 +3217,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<A-k>", "move line up"),
         ("<A-h>", "nudge left"),
         ("<A-l>", "nudge right"),
-        ("<A-S-h>", "pane narrower"),
-        ("<A-S-l>", "pane wider"),
-        ("<A-S-j>", "pane shorter"),
-        ("<A-S-k>", "pane taller"),
+        ("<A-S-h>", "pane move left"),
+        ("<A-S-l>", "pane move right"),
+        ("<A-S-j>", "pane move down"),
+        ("<A-S-k>", "pane move up"),
         // The pane moves from insert mode too: the shifted spelling,
         // since `<C-h>` is a backspace here.
         ("<C-S-h>", "pane left"),
