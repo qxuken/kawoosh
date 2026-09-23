@@ -478,3 +478,50 @@ fn ga_keeps_the_visual_lines_until_its_character() {
     assert_eq!(app.ed.mode(v), Mode::Normal);
     assert_eq!(text(&app), "a   = 1\nbbb = 2\n");
 }
+
+/// The yank-pop (roadmap step 25): `[p` replaces the last put with the
+/// text before it in the memory, `]p` with the one after, a count
+/// stepping further; the text chosen is the register from then on, one
+/// `u` takes the put back whole, and an edit since ends the walk.
+#[test]
+fn bracket_p_walks_the_last_put_through_the_memory() {
+    let mut app = Kawoosh::new("t", "a\nb\nc\nd");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    // Three lines taken, `c` the newest.
+    d.keys(&mut app, "yyjyyjyy");
+    d.keys(&mut app, "Gp");
+    assert_eq!(text(&app), "a\nb\nc\nd\nc");
+    d.keys(&mut app, "[p");
+    assert_eq!(text(&app), "a\nb\nc\nd\nb");
+    assert!(
+        app.ed.message.starts_with("put 2 of 3: b"),
+        "{}",
+        app.ed.message
+    );
+    d.keys(&mut app, "[p");
+    assert_eq!(text(&app), "a\nb\nc\nd\na", "{}", app.ed.message);
+    d.keys(&mut app, "[p");
+    assert_eq!(app.ed.message, "no older text");
+    assert_eq!(text(&app), "a\nb\nc\nd\na");
+    d.keys(&mut app, "2]p");
+    assert_eq!(text(&app), "a\nb\nc\nd\nc", "two newer: back to the first");
+    d.keys(&mut app, "[p");
+    assert_eq!(text(&app), "a\nb\nc\nd\nb");
+    assert_eq!(app.ed.memory.head().unwrap().text, "b\n", "the register");
+    // One `u`: the put is gone, whichever text it ended on.
+    d.keys(&mut app, "u");
+    assert_eq!(text(&app), "a\nb\nc\nd");
+    // `p` puts what was chosen; a charwise one walks too, before the
+    // caret with `P`.
+    d.keys(&mut app, "ggP");
+    assert_eq!(text(&app), "b\na\nb\nc\nd");
+    d.keys(&mut app, "Gyiwgg0P");
+    assert_eq!(text(&app), "db\na\nb\nc\nd");
+    d.keys(&mut app, "[p");
+    assert_eq!(text(&app), "b\nb\na\nb\nc\nd", "the linewise one before it");
+    // An edit since: the walk is over.
+    d.keys(&mut app, "x");
+    d.keys(&mut app, "[p");
+    assert_eq!(app.ed.message, "the last change was not a put");
+}

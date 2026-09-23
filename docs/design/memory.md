@@ -57,7 +57,20 @@ a command's line; a location's line and message), best first, the
 header counting `n of all` — `<CR>` taking the cursor's row, `<Esc>`
 twice handing the keys back with the filter kept, `<Esc>` in the pane
 or closing it clearing it; `:memory filter QUERY` from the prompt.
-Left: co-occurrence and the yank-pop.
+*Round five built 2026-09-24* (roadmap step 25), the yank-pop: `[p`
+`]p` (`put older`, `put newer`) replace the last put with the text one
+older or newer in the memory — the `]x` / `[x` family's keys, since
+Decision 1 of the roadmap had given `<C-n>` to select next and a key
+meaning two things by what came before it was the worse trade. The
+walk's order is the memory's as it stood at the first put, held by
+each moment's id (`Memory::id`, `position`), so the text chosen is
+recalled — the register's head, `p` puts it next — without the walk
+losing its place; a secret, or a text forgotten meanwhile, is stepped
+over, and a count steps further. The put is undone and made again, so
+one `u` takes all of it back (the texts tried stay as branches of the
+undo tree); an edit since ends the walk. A recall by the engine is an
+effect (`Effect::Recalled`) the shell counts as the pane's recall is —
+attended, not a yank. Left: co-occurrence.
 options and taken: the unit is a subject row *plus a bounded ring of
 recent transitions* (Decision 1); the histories lose their bookkeeping
 and keep their blob (Decision 6); eviction is a fixed score in Rust
@@ -495,7 +508,8 @@ last thing attended, then the one before it.
   its own note, once there is a memory to attach it to.
 - **Not a yank-pop, yet.** `<C-p>`/`<C-n>` after `p` cycling the text
   put is a pane-less recall and rides on the same rows; the polish
-  round after this one.
+  round after this one. *Built 2026-09-24 on `[p` `]p` (round five,
+  above).*
 
 ## Build order
 

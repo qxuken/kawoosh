@@ -983,7 +983,18 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   rows from `:tool` and the compile (the command in `meta`), a
   terminal pane's dwell to its tool, both opened from the pane, aged
   at thirty days. Not built: co-occurrence, the yank-pop after `p` —
-  the yank-pop is step 25, co-occurrence when use asks for it.
+  the yank-pop is step 25, co-occurrence when use asks for it. *Round
+  five, 2026-09-24* (step 25): the yank-pop on `[p` `]p` (`put older`
+  `put newer`), the put undone and made again with the text one older
+  or newer in the memory as it stood at the first put — each moment
+  held by an id, so the one chosen is recalled to the register without
+  the walk losing its place; a secret or a forgotten text stepped over;
+  one `u` takes the put back; an edit since ends it (memory.md's round
+  five). The engine's recall counts as the pane's (`Effect::Recalled`).
+  On the way: an undo inside a command settles the command's
+  checkpoint, so what the command edits after it needs one opened
+  again, or it is no node at all. `bracket_p_walks_the_last_put_through_the_memory`
+  in normal_mode.rs.
 
 ### Terminal
 
@@ -1378,13 +1389,14 @@ then breadth.
     `Request::Pick`); "nothing typed since" is the terminal's own
     record of what it sent, since the marks cannot say it. See the
     panes track.
-25. **The memory, round five**: the yank-pop memory.md left — the
+25. ~~**The memory, round five**: the yank-pop memory.md left — the
     text a `p` put cycled through the register's past. memory.md named
     `<C-p>` `<C-n>` for it, and Decision 1 has since given `<C-n>` to
     select next in normal mode, so the round picks the keys first; a
     binding under "the last step was a put" can take them back only
     at the cost of `<C-n>` meaning two things. Co-occurrence waits for
-    use to ask.
+    use to ask.~~ Landed 2026-09-24 on `[p` `]p` — the `]x` family's
+    keys, so `<C-n>` keeps one meaning. See the buffers track.
 26. **Workspaces** (a note first): what the cwd is — per tab, a named
     workspace, or both — and the process cwd ended with it, every
     spawn passed its directory; the settings layer, the trust, the

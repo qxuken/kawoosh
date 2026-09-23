@@ -178,6 +178,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `]T` `[T` | *move* the tab a place right / left, COUNT places (`:tabmove +N` `-N` `N`, bare to the end) — the shifted letter, as `gT` is `gt` the other way |
 | `]q` `[q` | location in the compile output, or in the references `gr` listed |
 | `]d` `[d` | diagnostic (the message on the status line) |
+| `]p` `[p` | right after a put: the text put replaced with the next newer / older one in the memory (the yank-pop), COUNT steps; the one chosen is the register from then on, and one `u` takes the put back whole |
 | `]h` `[h` | *reserved*: hunk |
 | `]e` `[e` | *reserved*: the next, previous pin |
 

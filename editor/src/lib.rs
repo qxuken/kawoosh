@@ -368,6 +368,9 @@ pub enum Effect {
     },
     SetClipboard(String),
     RequestPaste,
+    /// A moment made the register's head by the engine (`[p` `]p`):
+    /// attended again, as the memory pane's recall is, not a yank.
+    Recalled,
     /// A line submitted at a prompt: the shell remembers it as a
     /// `command` or `search` moment (memory.md Decision 2), so `<Up>`
     /// walks it after a restart.
@@ -579,6 +582,24 @@ pub struct Flash {
     pub at: Instant,
 }
 
+/// A put, as `[p` `]p` find it: where it went and what the buffer's
+/// version was after it, the selections before it and how it was made
+/// (after or before, how many times), and the walk — the memory's
+/// moments by id, newest first, as they stood at the first put, and
+/// the place in it of the text now put. Recalling a moment reorders the
+/// memory; the walk holds still.
+#[derive(Clone, Debug)]
+pub struct LastPut {
+    pub view: ViewId,
+    pub buffer: BufferId,
+    pub version: Version,
+    pub before: Selections,
+    pub after: bool,
+    pub count: usize,
+    pub order: Vec<u64>,
+    pub at: usize,
+}
+
 /// The working memory: every moment, oldest first, at most
 /// [`MEMORY_MAX`]. The `"` register is its head — `p` puts the newest
 /// moment — and a moment recalled ([`Memory::recall`]) is the newest
@@ -590,6 +611,11 @@ pub struct Flash {
 #[derive(Default, Debug)]
 pub struct Memory {
     moments: Vec<Moment>,
+    /// Each moment's id, beside it: what a walk through the moments
+    /// (`[p` `]p`) holds on to while one is recalled and the order
+    /// moves under it.
+    ids: Vec<u64>,
+    next_id: u64,
     /// Bumped whenever the moments change: what a snapshot of them is
     /// good for.
     pub version: u64,
@@ -614,9 +640,20 @@ impl Memory {
         self.moments.is_empty()
     }
 
+    /// The id of moment `i` (an index of `moments`).
+    pub fn id(&self, i: usize) -> Option<u64> {
+        self.ids.get(i).copied()
+    }
+
+    /// Where the moment with `id` is now, if it is still held.
+    pub fn position(&self, id: u64) -> Option<usize> {
+        self.ids.iter().position(|&x| x == id)
+    }
+
     /// A moment taken: the head from now on.
     pub fn remember(&mut self, m: Moment) {
         self.version += 1;
+        self.next_id += 1;
         if let Some(head) = self.moments.last_mut()
             && head.text == m.text
             && head.linewise == m.linewise
@@ -625,8 +662,10 @@ impl Memory {
             return;
         }
         self.moments.push(m);
+        self.ids.push(self.next_id);
         if self.moments.len() > MEMORY_MAX {
             self.moments.remove(0);
+            self.ids.remove(0);
         }
     }
 
@@ -639,6 +678,8 @@ impl Memory {
         if i + 1 != self.moments.len() {
             let m = self.moments.remove(i);
             self.moments.push(m);
+            let id = self.ids.remove(i);
+            self.ids.push(id);
         }
         self.version += 1;
         true
@@ -650,6 +691,7 @@ impl Memory {
             return false;
         }
         self.moments.remove(i);
+        self.ids.remove(i);
         self.version += 1;
         true
     }
@@ -658,7 +700,15 @@ impl Memory {
     /// `secrets.forget_secs`; whether any was.
     pub fn forget_secrets(&mut self, before: Instant) -> bool {
         let n = self.moments.len();
-        self.moments.retain(|m| !m.secret || m.at >= before);
+        let keep: Vec<bool> = self
+            .moments
+            .iter()
+            .map(|m| !m.secret || m.at >= before)
+            .collect();
+        let mut k = keep.iter();
+        self.moments.retain(|_| *k.next().unwrap());
+        let mut k = keep.iter();
+        self.ids.retain(|_| *k.next().unwrap());
         let gone = self.moments.len() != n;
         if gone {
             self.version += 1;
@@ -696,6 +746,10 @@ pub struct Editor {
     /// The last `f` / `t`: the character, whether forward, whether
     /// till — what `;` repeats, across lines.
     pub last_find: Option<(char, bool, bool)>,
+    /// The last put (`p`, `P`), while nothing has edited its buffer
+    /// since: what `[p` `]p` replace with the text before or after it
+    /// in the memory.
+    pub last_put: Option<LastPut>,
     /// A surround under way: the ranges `gsa` collected and waits for
     /// a character to wrap in, the pair `gsr` is about to swap out.
     pub(crate) surround: commands::Surround,
@@ -757,6 +811,7 @@ impl Editor {
             pending_op: None,
             awaiting_char: None,
             last_find: None,
+            last_put: None,
             surround: Default::default(),
             passed: false,
             fields: HashMap::new(),

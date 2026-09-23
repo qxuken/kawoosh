@@ -1062,17 +1062,26 @@ fn reload(ed: &mut Editor, ctx: &Ctx) {
 }
 
 fn paste(ed: &mut Editor, ctx: &Ctx, after: bool) {
+    put(ed, ctx.view, ctx.count.max(1), after, None);
+}
+
+/// Puts the register `count` times at every selection, after it or
+/// before; `walk` is a `[p` `]p` walk under way (its order and place),
+/// kept on the put it makes — none starts one at the register.
+fn put(ed: &mut Editor, view: ViewId, count: usize, after: bool, walk: Option<(Vec<u64>, usize)>) {
     let Some(head) = ed.memory.head() else {
         ed.message = "nothing to paste".into();
         return;
     };
-    let mut text = head.text.repeat(ctx.count.max(1));
+    let mut text = head.text.repeat(count);
     let linewise = head.linewise;
-    let id = view(ed, ctx).buffer;
+    let id = ed.views[view].buffer;
     // A secret is put once and forgotten, and so is anything put into
     // a private buffer (docs/design/secrets.md Decision 2).
     let once = head.secret || ed.buffers[id].private;
-    let sels = ed.views[ctx.view].sels.items.clone();
+    let before = ed.views[view].sels.clone();
+    let version = ed.buffers[id].version();
+    let sels = before.items.clone();
     let buf = &ed.buffers[id];
     let edits: Vec<(usize, Range<usize>, String)> = sels
         .iter()
@@ -1108,7 +1117,7 @@ fn paste(ed: &mut Editor, ctx: &Ctx, after: bool) {
             }
         })
         .collect();
-    ed.edit_each(ctx.view, edits, move |start, len| {
+    ed.edit_each(view, edits, move |start, len| {
         if linewise {
             Selection::point(start)
         } else {
@@ -1117,7 +1126,7 @@ fn paste(ed: &mut Editor, ctx: &Ctx, after: bool) {
     });
     if linewise {
         let buf = &ed.buffers[id];
-        let v = &mut ed.views[ctx.view];
+        let v = &mut ed.views[view];
         v.sels.map(|s| {
             let ln = buf.line_of(s.head);
             let ln = if after && s.head > 0 && buf.byte_at(s.head) == Some(b'\n') {
@@ -1132,7 +1141,99 @@ fn paste(ed: &mut Editor, ctx: &Ctx, after: bool) {
         let head = ed.memory.len() - 1;
         ed.memory.forget(head);
         text_buffer::wipe_string(&mut text);
+        ed.last_put = None;
+    } else if ed.buffers[id].version() != version {
+        let (order, at) = walk.unwrap_or_else(|| {
+            let n = ed.memory.len();
+            ((0..n).rev().filter_map(|i| ed.memory.id(i)).collect(), 0)
+        });
+        ed.last_put = Some(crate::LastPut {
+            view,
+            buffer: id,
+            version: ed.buffers[id].version(),
+            before,
+            after,
+            count,
+            order,
+            at,
+        });
     }
+}
+
+/// `[p` `]p`: the last put replaced with the text one older (or newer)
+/// in the memory as it stood when the put was made — COUNT steps, a
+/// secret or a forgotten one stepped over — and that text made the
+/// register's head, so `p` puts it next. The put is undone and made
+/// again, so one `u` takes the whole of it back; the replaced puts stay
+/// in the undo tree as branches.
+fn put_step(ed: &mut Editor, ctx: &Ctx, older: bool) {
+    let Some(lp) = ed.last_put.clone() else {
+        ed.message = "the last change was not a put".into();
+        return;
+    };
+    if lp.view != ctx.view || ed.buffers.get(lp.buffer).map(|b| b.version()) != Some(lp.version) {
+        ed.last_put = None;
+        ed.message = "the last change was not a put".into();
+        return;
+    }
+    let mut found = None;
+    let mut steps = ctx.count.max(1);
+    let mut j = lp.at;
+    loop {
+        j = match older {
+            true => j + 1,
+            false => match j.checked_sub(1) {
+                Some(j) => j,
+                None => break,
+            },
+        };
+        if j >= lp.order.len() {
+            break;
+        }
+        if let Some(i) = ed.memory.position(lp.order[j])
+            && !ed.memory.moments()[i].secret
+        {
+            found = Some((j, i));
+            steps -= 1;
+            if steps == 0 {
+                break;
+            }
+        }
+    }
+    let Some((j, i)) = found else {
+        ed.message = if older {
+            "no older text"
+        } else {
+            "no newer text"
+        }
+        .into();
+        return;
+    };
+    if !ed.undo(ctx.view) {
+        return;
+    }
+    // The undo settled the command's checkpoint; the put made again is
+    // a node of its own, a child of the text before the first put.
+    ed.views[ctx.view].sels = lp.before.clone();
+    ed.open_checkpoint(ctx.view);
+    ed.memory.recall(i);
+    ed.effects.push(Effect::Recalled);
+    let n = lp.order.len();
+    put(ed, ctx.view, lp.count, lp.after, Some((lp.order, j)));
+    let shown = ed
+        .memory
+        .head()
+        .map(|m| {
+            m.shown()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(60)
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    ed.message = format!("put {} of {n}: {shown}", j + 1);
 }
 
 pub fn install(ed: &mut Editor) {
@@ -1614,6 +1715,8 @@ pub fn install(ed: &mut Editor) {
     });
     ed.register("paste after", |ed, ctx| paste(ed, ctx, true));
     ed.register("paste before", |ed, ctx| paste(ed, ctx, false));
+    ed.register("put older", |ed, ctx| put_step(ed, ctx, true));
+    ed.register("put newer", |ed, ctx| put_step(ed, ctx, false));
     ed.register("paste clipboard", |ed, _| {
         ed.effects.push(Effect::RequestPaste)
     });
@@ -2172,6 +2275,14 @@ const DOCS: &[(&str, &str)] = &[
         "put the register before the caret, or above a linewise one",
     ),
     ("paste clipboard", "put the system clipboard at the caret"),
+    (
+        "put older",
+        "the last put replaced with the text before it in the memory (`[p`), COUNT back; `p` puts it next",
+    ),
+    (
+        "put newer",
+        "the last put replaced with the text after it in the memory (`]p`), COUNT on",
+    ),
     // undo
     ("undo", "back to the state before"),
     ("redo", "forward again, along the branch last taken"),
@@ -3183,6 +3294,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("[q", "error prev"),
         ("]d", "lsp diagnostic next"),
         ("[d", "lsp diagnostic prev"),
+        // The yank-pop: the last put walked through the memory.
+        ("[p", "put older"),
+        ("]p", "put newer"),
         // `g`: going somewhere.
         ("gd", "lsp definition"),
         ("gr", "lsp references"),

@@ -1524,6 +1524,7 @@ impl Kawoosh {
                 Effect::QuitAll { force } => self.request_quit_all(force),
                 Effect::SetClipboard(t) => self.clip_out = Some(t),
                 Effect::RequestPaste => self.awaiting_paste = true,
+                Effect::Recalled => self.note_recall(),
                 Effect::PromptLine { kind, line } => self.remember_prompt_line(kind, &line),
                 Effect::Open(p) => self.open(&p),
                 Effect::Wrote(id) => self.disk_settled(id),
