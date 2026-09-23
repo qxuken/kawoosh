@@ -1005,6 +1005,8 @@ impl Kawoosh {
         let masks = self.masks_of(buf_id);
         // The server's inlay hints, while `lsp.inlay_hints` is on.
         let inlay = self.inlay_hints_of(buf_id);
+        // What plugins painted (`kawoosh.buf.paint`): over the syntax.
+        let painted = self.paints_of(buf_id);
         // The markdown buffer drawn rendered (markdown.md): its rows are
         // as tall as they wrap to, so it scrolls by what they measured.
         let md = self.markdown_rendered(buf_id);
@@ -1529,16 +1531,25 @@ impl Kawoosh {
                                 .map(|r| clip(r.start.max(range.start))..clip(r.end.min(range.end)))
                                 .filter(|r| r.start < r.end)
                                 .collect();
-                            let styled: Vec<(Range<usize>, kui::Color)> = buf
-                                .runs(SYNTAX_LAYER, src.clone())
+                            // A painted range first: the first that
+                            // covers a span is its colour.
+                            let styled: Vec<(Range<usize>, kui::Color)> = painted
                                 .iter()
-                                .filter_map(|r| {
+                                .filter(|(r, _)| r.start < range.end && r.end > range.start)
+                                .map(|(r, c)| {
+                                    (
+                                        clip(r.start.max(range.start))..clip(r.end.min(range.end)),
+                                        *c,
+                                    )
+                                })
+                                .filter(|(r, _)| r.start < r.end)
+                                .chain(buf.runs(SYNTAX_LAYER, src.clone()).iter().filter_map(|r| {
                                     let c =
                                         token_colors.get(r.style as usize).copied().flatten()?;
                                     let a = clip(r.range.start);
                                     let b = clip(r.range.end.min(range.end));
                                     (a < b).then_some((a..b, c))
-                                })
+                                }))
                                 .collect();
                             let diags = buf.runs(DIAG_LAYER, range.clone());
                             let underlined: Vec<(Range<usize>, kui::Color)> = diags

@@ -261,6 +261,13 @@ end
 -- scratch. kawoosh.buf.mask(ranges[, buffer]): `{ {a, b}, … }`, byte
 -- ranges (0-based, end exclusive) drawn as `•`, replacing the ones
 -- given before and carried through edits after; `{}` takes them off.
+-- kawoosh.buf.paint(set, spans[, buffer]): a plugin's named set of
+-- coloured ranges, `{ {from, to, colour}, … }` (bytes, 0-based, end
+-- exclusive), drawn over the syntax's colours, replacing the set's
+-- earlier ones and carried through edits after; `{}` clears the set.
+-- A colour is a role — `fg` `dim` `faint` `accent` `danger`, `added`
+-- `modified` `ignored` `conflict` — or a syntax token's name
+-- (`comment`, `keyword`, …). `dir.lua`'s version control marks paint.
 -- kawoosh.secrets.private(path): whether a rule names the file;
 -- kawoosh.secrets.mask_text(text, path[, language]): the text with
 -- what the rules for that file mask drawn as `•` — a list's line.

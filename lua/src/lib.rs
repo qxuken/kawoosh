@@ -237,6 +237,15 @@ pub enum Msg {
         name: Option<String>,
         rule: String,
     },
+    /// `kawoosh.buf.paint(name, spans[, buffer])`: a plugin's named
+    /// set of coloured ranges, `(from, to, colour)`, replacing the set's
+    /// earlier ones and carried through edits after.
+    Paint {
+        buffer: Option<u64>,
+        name: Option<String>,
+        set: String,
+        spans: Vec<(usize, usize, String)>,
+    },
     /// `kawoosh.buf.mask(ranges[, buffer])`: byte ranges (0-based,
     /// end exclusive) drawn as `•`, replacing the plugin's earlier ones
     /// and carried through edits after.
@@ -3071,6 +3080,28 @@ fn seed(
         lua.create_function(move |_, (rule, which): (String, Option<LV>)| {
             let (buffer, name) = which_buffer(&pp, which)?;
             qq.borrow_mut().push(Msg::MaskWith { buffer, name, rule });
+            Ok(())
+        })?,
+    )?;
+    let (qq, pp) = (q(queue), published.clone());
+    buf.set(
+        "paint",
+        lua.create_function(move |_, (set, spans, which): (String, Table, Option<LV>)| {
+            let (buffer, name) = which_buffer(&pp, which)?;
+            let mut out = Vec::new();
+            for s in spans.sequence_values::<Table>() {
+                let s = s?;
+                let (a, b, c): (usize, usize, String) = (s.get(1)?, s.get(2)?, s.get(3)?);
+                if a < b {
+                    out.push((a, b, c));
+                }
+            }
+            qq.borrow_mut().push(Msg::Paint {
+                buffer,
+                name,
+                set,
+                spans: out,
+            });
             Ok(())
         })?,
     )?;

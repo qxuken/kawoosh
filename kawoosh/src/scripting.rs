@@ -66,6 +66,17 @@ pub struct Scripting {
     /// watch on their union, spawned the first time one is asked for.
     pub watches: HashMap<String, Vec<std::path::PathBuf>>,
     pub watcher: Option<kawoosh_systems::watch::Watcher>,
+    /// The plugins' painted ranges per buffer, by set name, at the
+    /// version they were given (`kawoosh.buf.paint`).
+    pub paints: HashMap<kawoosh_doc::BufferId, HashMap<String, Painted>>,
+}
+
+/// One plugin's paint on a buffer: its ranges and colour names, at the
+/// version they were given.
+#[derive(Clone, Debug)]
+pub struct Painted {
+    pub version: kawoosh_doc::Version,
+    pub spans: Vec<(std::ops::Range<usize>, String)>,
 }
 
 impl Kawoosh {
@@ -740,6 +751,24 @@ impl Kawoosh {
                 Some(id) => self.mask_with(id, &rule),
                 None => self.ed.message = "mask_with: no such buffer".into(),
             },
+            Msg::Paint {
+                buffer,
+                name,
+                set,
+                spans,
+            } => match self.lua_buffer(buffer, name) {
+                Some(id) => {
+                    let version = self.ed.buffers[id].version();
+                    let sets = self.scripting.paints.entry(id).or_default();
+                    if spans.is_empty() {
+                        sets.remove(&set);
+                    } else {
+                        let spans = spans.into_iter().map(|(a, b, c)| (a..b, c)).collect();
+                        sets.insert(set, Painted { version, spans });
+                    }
+                }
+                None => self.ed.message = "paint: no such buffer".into(),
+            },
             Msg::Mask {
                 buffer,
                 name,
@@ -1065,6 +1094,67 @@ impl Kawoosh {
                 }
             }
         }
+    }
+
+    /// Buffer `id`'s painted ranges now, each with its colour, carried
+    /// through the edits since each set was given; a name no colour
+    /// answers to is left out.
+    pub(crate) fn paints_of(&mut self, id: BufferId) -> Vec<(std::ops::Range<usize>, Color)> {
+        let Some(buf) = self.ed.buffers.get(id) else {
+            return Vec::new();
+        };
+        let Some(sets) = self.scripting.paints.get_mut(&id) else {
+            return Vec::new();
+        };
+        let version = buf.version();
+        let journal = buf.journal();
+        let mut out = Vec::new();
+        let mut names = Vec::new();
+        for p in sets.values_mut() {
+            if p.version != version {
+                p.spans = p
+                    .spans
+                    .iter()
+                    .filter_map(|(r, c)| {
+                        let a = journal
+                            .transform_offset(r.start, p.version, kawoosh_doc::Bias::Right)
+                            .ok()?;
+                        let b = journal
+                            .transform_offset(r.end, p.version, kawoosh_doc::Bias::Left)
+                            .ok()?;
+                        (a < b).then(|| (a..b, c.clone()))
+                    })
+                    .collect();
+                p.version = version;
+            }
+            names.extend(p.spans.iter().cloned());
+        }
+        let dark = self.dark;
+        for (r, name) in names {
+            if let Some(c) = self.paint_color(&name, dark) {
+                out.push((r, c));
+            }
+        }
+        out
+    }
+
+    /// The colour a paint names: a role of the palette, a version
+    /// control state, or a syntax token.
+    fn paint_color(&self, name: &str, dark: bool) -> Option<Color> {
+        let p = &self.pal;
+        Some(match name {
+            "fg" => p.fg,
+            "dim" => p.dim,
+            "faint" | "ignored" => p.faint,
+            "accent" => p.accent,
+            "danger" | "conflict" | "deleted" => p.danger,
+            "added" | "untracked" | "insert" => p.insert,
+            "modified" | "command" => p.command,
+            _ => {
+                let t = Token::ALL.iter().find(|t| t.name() == name)?;
+                return self.syntax_color_for(*t, dark);
+            }
+        })
     }
 
     /// The buffer a Lua call named: by handle, else by name (a scratch

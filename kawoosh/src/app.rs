@@ -1034,6 +1034,7 @@ impl Kawoosh {
         self.ts_sent.remove(&id);
         self.secrets.forget(id);
         self.scripting.watched.remove(&id);
+        self.scripting.paints.remove(&id);
         self.histories.forget(id);
         self.lsp
             .lsp
