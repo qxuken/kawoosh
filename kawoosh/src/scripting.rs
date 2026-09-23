@@ -62,6 +62,10 @@ pub struct Scripting {
     /// Scratch buffers with an `on_change`, each at the version its
     /// hook last saw (`Kawoosh::fire_changes`).
     pub watched: HashMap<kawoosh_doc::BufferId, kawoosh_doc::Version>,
+    /// The plugins' watch sets by name (`kawoosh.fs.watch`), and the
+    /// watch on their union, spawned the first time one is asked for.
+    pub watches: HashMap<String, Vec<std::path::PathBuf>>,
+    pub watcher: Option<kawoosh_systems::watch::Watcher>,
 }
 
 impl Kawoosh {
@@ -667,6 +671,43 @@ impl Kawoosh {
             } => self.ask_symbols(token, kawoosh_lua::id_of(buffer), workspace, query),
             // A pass outside a command a key ran has no key to hand on.
             Msg::Pass => {}
+            Msg::Watch { name, paths } => {
+                if paths.is_empty() {
+                    self.scripting.watches.remove(&name);
+                } else {
+                    self.scripting.watches.insert(name, paths);
+                }
+                let mut all: Vec<std::path::PathBuf> =
+                    self.scripting.watches.values().flatten().cloned().collect();
+                all.sort();
+                all.dedup();
+                let wake = self.wake.clone();
+                self.scripting
+                    .watcher
+                    .get_or_insert_with(|| kawoosh_systems::watch::Watcher::spawn(wake))
+                    .watch(all);
+            }
+            // Read as the markdown buffer's images are, and said to Lua
+            // when it lands (`image_decoded`, `register_images`).
+            Msg::LoadImage(path) => {
+                let dest = path.display().to_string();
+                let known = match self.markdown_image(None, &dest) {
+                    Some(crate::markdown::Image::Ready { id, w, h }) => {
+                        Some(kawoosh_lua::ImageSnap::Ready {
+                            id: id.to_ffi() as i64,
+                            width: *w,
+                            height: *h,
+                        })
+                    }
+                    Some(crate::markdown::Image::Failed(e)) => {
+                        Some(kawoosh_lua::ImageSnap::Failed(e.clone()))
+                    }
+                    _ => None,
+                };
+                if let Some(snap) = known {
+                    rt.set_image(path, snap);
+                }
+            }
             Msg::Kill(token) => {
                 if let Some(p) = self.scripting.procs.values().find(|p| p.token == token) {
                     p.handle.kill();
@@ -915,6 +956,39 @@ impl Kawoosh {
         };
         rt.publish(&self.ed, self.focused_view());
         rt.settings_hook();
+        self.drain_lua();
+    }
+
+    /// Once a frame: each plugin's watch set told which of its paths
+    /// moved (`kawoosh.fs.watch`).
+    pub(crate) fn fire_watches(&mut self) {
+        let Some(w) = &self.scripting.watcher else {
+            return;
+        };
+        let changed = w.drain();
+        if changed.is_empty() {
+            return;
+        }
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        rt.publish(&self.ed, self.focused_view());
+        let sets: Vec<(String, Vec<std::path::PathBuf>)> = self
+            .scripting
+            .watches
+            .iter()
+            .filter_map(|(name, paths)| {
+                let hit: Vec<_> = changed
+                    .iter()
+                    .filter(|c| paths.contains(c))
+                    .cloned()
+                    .collect();
+                (!hit.is_empty()).then(|| (name.clone(), hit))
+            })
+            .collect();
+        for (name, hit) in sets {
+            rt.watch_hook(&name, &hit);
+        }
         self.drain_lua();
     }
 

@@ -121,6 +121,14 @@ pub enum Msg {
     /// `kawoosh.pass()`: the command running for a key hands the key
     /// to the binding under it.
     Pass,
+    /// `kawoosh.image(path)` named a path not asked for before: read it.
+    LoadImage(PathBuf),
+    /// `kawoosh.fs.watch(name, paths, fn)`: plugin set `name` watched
+    /// (none: stopped).
+    Watch {
+        name: String,
+        paths: Vec<PathBuf>,
+    },
     /// `kawoosh.lsp.symbols(opts, fn)`: symbols asked of `buffer`'s
     /// server, answered to `token` (`Runtime::symbols_answered`).
     Symbols {
@@ -376,6 +384,15 @@ pub struct FieldSnap {
     pub focused: bool,
 }
 
+/// An image as `kawoosh.image(path)` reads it: on its way, registered
+/// with kui (its handle, for `image { id = }`, and its size), or why not.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ImageSnap {
+    Loading,
+    Ready { id: i64, width: u32, height: u32 },
+    Failed(String),
+}
+
 #[derive(Clone, Debug)]
 pub struct BufSnap {
     pub name: String,
@@ -406,6 +423,9 @@ pub struct Published {
     /// The settings' version, for what is derived from them (the mask
     /// rules `kawoosh.secrets` reads).
     pub settings_version: u64,
+    /// The images asked for by path (`kawoosh.image`), as far as they
+    /// have got.
+    pub images: HashMap<PathBuf, ImageSnap>,
     /// Every command's spec, copied when the registry's version moved.
     pub commands: Vec<Spec>,
     pub commands_version: u64,
@@ -511,6 +531,7 @@ impl Default for Published {
             buffers: HashMap::new(),
             settings: Setting::table(),
             settings_version: 0,
+            images: HashMap::new(),
             commands: Vec::new(),
             commands_version: 0,
             keys: HashMap::new(),
@@ -771,6 +792,11 @@ impl Runtime {
     /// The candidates as last set.
     pub fn candidates(&self) -> Option<Rc<Vec<CandidateSnap>>> {
         self.published.borrow().candidates.clone()
+    }
+
+    /// Where an image asked for by path has got (`kawoosh.image`).
+    pub fn set_image(&self, path: PathBuf, image: ImageSnap) {
+        self.published.borrow_mut().images.insert(path, image);
     }
 
     /// The code actions for `kawoosh.lsp.actions()`.
@@ -1240,6 +1266,25 @@ impl Runtime {
             self.queue
                 .borrow_mut()
                 .push(Msg::Echo(format!("on_settings: {e}")));
+        }
+    }
+
+    /// Tells a plugin's watch set `name` which of its paths moved
+    /// (`kawoosh.fs.watch`).
+    pub fn watch_hook(&self, name: &str, paths: &[PathBuf]) {
+        let Ok(f) = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Function>("_watched"))
+        else {
+            return;
+        };
+        let list: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+        if let Err(e) = f.call::<()>((name, list)) {
+            self.queue
+                .borrow_mut()
+                .push(Msg::Echo(format!("fs.watch {name}: {e}")));
         }
     }
 
@@ -1784,6 +1829,36 @@ fn seed(
                 stdin,
             });
             Ok(token)
+        })?,
+    )?;
+    // `kawoosh.image(path)`: the image file at `path` for a view's
+    // `image { id = }` — `{ id, width, height }` once it is read and
+    // registered, `nil` while it is on its way (asked for the first
+    // time it is named; the frame it lands draws the view again), or
+    // `nil, why` when it cannot be (not an image, too big).
+    let (qq, pp) = (q(queue), published.clone());
+    k.set(
+        "image",
+        lua.create_function(move |lua, path: String| {
+            let path = expand(&path);
+            let mut p = pp.borrow_mut();
+            let (a, b) = match p.images.get(&path) {
+                Some(ImageSnap::Ready { id, width, height }) => {
+                    let t = lua.create_table()?;
+                    t.set("id", *id)?;
+                    t.set("width", *width)?;
+                    t.set("height", *height)?;
+                    (LV::Table(t), LV::Nil)
+                }
+                Some(ImageSnap::Failed(why)) => (LV::Nil, LV::String(lua.create_string(why)?)),
+                Some(ImageSnap::Loading) => (LV::Nil, LV::Nil),
+                None => {
+                    p.images.insert(path.clone(), ImageSnap::Loading);
+                    qq.borrow_mut().push(Msg::LoadImage(path));
+                    (LV::Nil, LV::Nil)
+                }
+            };
+            Ok((a, b))
         })?,
     )?;
     // `kawoosh.pass()`, from a command a key ran: the key is not this
@@ -3402,8 +3477,9 @@ fn seed(
     )?;
     fs.set(
         "write",
-        lua.create_function(|_, (p, text): (String, String)| {
-            kfs::write(&expand(&p), &text).map_err(io_err)
+        // Any Lua string: its bytes, text or not.
+        lua.create_function(|_, (p, text): (String, mlua::LuaString)| {
+            kfs::write(&expand(&p), text.as_bytes()).map_err(io_err)
         })?,
     )?;
     fs.set(
@@ -3439,7 +3515,21 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // `kawoosh._fs_watch(name, paths)`, under `kawoosh.fs.watch`.
+    let qq = q(queue);
+    fs.set(
+        "_watch",
+        lua.create_function(move |_, (name, paths): (String, Vec<String>)| {
+            qq.borrow_mut().push(Msg::Watch {
+                name,
+                paths: paths.iter().map(|p| expand(p)).collect(),
+            });
+            Ok(())
+        })?,
+    )?;
     k.set("fs", fs)?;
+    let f: mlua::Function = k.get::<Table>("fs")?.get("_watch")?;
+    k.set("_fs_watch", f)?;
 
     lua.globals().set("kawoosh", k)?;
     Ok(())

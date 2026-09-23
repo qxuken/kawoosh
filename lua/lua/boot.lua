@@ -16,6 +16,7 @@ kawoosh._restorers = {}
 kawoosh._openers = {}
 kawoosh._transient = {}
 kawoosh._settings_hooks = {}
+kawoosh._watches = {}
 kawoosh._tools = {}
 kawoosh._nonce = 0
 
@@ -127,6 +128,23 @@ end
 -- file reloaded on save, `:set`, `kawoosh.opt` — once a frame, with
 -- `kawoosh.opt` reading the new tree; and once at registration, so a
 -- plugin reads what is set now the same way it reads what changes.
+-- kawoosh.fs.watch(name, paths, fn): the paths — files or directories
+-- — polled twice a second, `fn(changed)` with those whose stamp moved
+-- (written, made, gone; a directory's when an entry is added, removed
+-- or renamed). A plugin's set by `name`, replaced by each call;
+-- `kawoosh.fs.watch(name, nil)` stops it.
+function kawoosh.fs.watch(name, paths, fn)
+  kawoosh._watches[name] = paths and fn or nil
+  kawoosh._fs_watch(name, paths or {})
+end
+
+function kawoosh._watched(name, paths)
+  local fn = kawoosh._watches[name]
+  if not fn then return end
+  local ok, err = pcall(fn, paths)
+  if not ok then kawoosh.echo("fs.watch " .. name .. ": " .. tostring(err)) end
+end
+
 function kawoosh.on_settings(fn)
   kawoosh._settings_hooks[#kawoosh._settings_hooks + 1] = fn
   local ok, err = pcall(fn)

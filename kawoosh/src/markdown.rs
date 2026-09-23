@@ -803,6 +803,9 @@ impl Kawoosh {
                 self.md_pending.push((path, img));
             }
             Err(e) => {
+                if let Some(rt) = &self.scripting.rt {
+                    rt.set_image(path.clone(), kawoosh_lua::ImageSnap::Failed(e.clone()));
+                }
                 self.md_images.by_path.insert(path, Image::Failed(e));
             }
         }
@@ -812,6 +815,17 @@ impl Kawoosh {
     pub(crate) fn register_images(&mut self, ui: &mut kui::Ui<'_>) {
         for (path, (w, h, rgba)) in std::mem::take(&mut self.md_pending) {
             let id = ui.core().resources.add_image(w, h, rgba);
+            // What a Lua view asked for by path (`kawoosh.image`) too.
+            if let Some(rt) = &self.scripting.rt {
+                rt.set_image(
+                    path.clone(),
+                    kawoosh_lua::ImageSnap::Ready {
+                        id: id.to_ffi() as i64,
+                        width: w,
+                        height: h,
+                    },
+                );
+            }
             self.md_images
                 .by_path
                 .insert(path, Image::Ready { id, w, h });

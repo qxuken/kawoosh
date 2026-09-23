@@ -345,7 +345,7 @@ pub fn read(path: &Path) -> io::Result<String> {
 }
 
 /// Writes `text`, creating the file's directory when it is missing.
-pub fn write(path: &Path, text: &str) -> io::Result<()> {
+pub fn write(path: &Path, text: impl AsRef<[u8]>) -> io::Result<()> {
     if let Some(p) = path.parent()
         && !p.as_os_str().is_empty()
     {

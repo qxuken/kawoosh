@@ -1954,6 +1954,7 @@ impl kui::App for Kawoosh {
         self.flush_proc_lines();
         self.sync_settings();
         self.fire_settings();
+        self.fire_watches();
         self.sync_histories(false);
         self.moments.window_focused = ui.env().focused;
         self.sync_disk(ui.env().focused);
