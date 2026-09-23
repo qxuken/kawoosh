@@ -764,3 +764,44 @@ fn only_answers_a_waiting_caller_whose_pane_it_closed() {
     assert_eq!(reply, "closed");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A terminal at a password prompt — echo off, the line discipline
+/// canonical — says so in its title (docs/design/secrets.md Decision
+/// 4), and stops saying so when the program turns echo back on.
+#[cfg(unix)]
+#[test]
+fn a_terminal_at_a_password_prompt_says_so() {
+    let mut app = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    d.keys(&mut app, ":term");
+    d.keys(&mut app, " /bin/sh -c 'stty -echo; sleep 1; stty echo; sleep 2'");
+    d.key(&mut app, "enter", KeyMods::default());
+    let titled = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .filter_map(|n| n.text.as_deref())
+            .any(|t| t.starts_with("password · "))
+    };
+    let mut seen = false;
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if titled(&d) {
+            seen = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(seen, "the title says a password is being asked for");
+    let mut gone = false;
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if !titled(&d) {
+            gone = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(gone, "and stops when echo is back");
+}

@@ -663,10 +663,17 @@ impl Kawoosh {
                     .map
                     .get(t)
                     .map(|t| {
-                        if t.title.is_empty() {
+                        let title = if t.title.is_empty() {
                             "terminal".to_string()
                         } else {
                             t.title.clone()
+                        };
+                        // Echo off at a prompt: a password is being typed
+                        // (docs/design/secrets.md Decision 4).
+                        if t.password_prompt() {
+                            format!("password · {title}")
+                        } else {
+                            title
                         }
                     })
                     .unwrap_or_else(|| "terminal".into()),

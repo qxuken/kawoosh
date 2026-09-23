@@ -581,6 +581,29 @@ impl Terminal {
             .or_else(|| self.spawned_in.clone())
     }
 
+    /// Whether the program on the pty is asking for a password: echo
+    /// off with the line discipline still canonical — `sudo`, `ssh`,
+    /// `gpg` at their prompt; iTerm2's rule for its key icon. A
+    /// full-screen program turns canonical mode off too, so it is not
+    /// one. Asked of the pty's termios each time (one syscall).
+    #[cfg(unix)]
+    pub fn password_prompt(&self) -> bool {
+        let Some(fd) = self.pty.as_ref().and_then(|p| p.as_raw_fd()) else {
+            return false;
+        };
+        // SAFETY: `termios` is plain data; `tcgetattr` fills it or fails.
+        let mut t: libc::termios = unsafe { std::mem::zeroed() };
+        if unsafe { libc::tcgetattr(fd, &mut t) } != 0 {
+            return false;
+        }
+        t.c_lflag & libc::ECHO == 0 && t.c_lflag & libc::ICANON != 0
+    }
+
+    #[cfg(not(unix))]
+    pub fn password_prompt(&self) -> bool {
+        false
+    }
+
     /// The shell process's working directory, asked of the system.
     pub fn process_cwd(&self) -> Option<std::path::PathBuf> {
         let pid = self.child.as_ref()?.process_id()?;
@@ -1497,6 +1520,28 @@ mod tests {
                     .to_string()
             })
             .collect()
+    }
+
+    /// A program that turns echo off at a prompt is asking for a
+    /// password; one that turns canonical mode off too (a full-screen
+    /// program) is not.
+    #[cfg(unix)]
+    #[test]
+    fn a_prompt_with_echo_off_is_a_password_prompt() {
+        let size = TermSize { rows: 5, cols: 40 };
+        let wait = |t: &Terminal, want: bool| {
+            (0..200).any(|_| {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                t.password_prompt() == want
+            })
+        };
+        let (t, _r) = Terminal::spawn(Some("/bin/sh -c 'stty -echo; sleep 3'"), None, size, &[]).unwrap();
+        assert!(wait(&t, true), "stty -echo is a password prompt");
+        let (t, _r) =
+            Terminal::spawn(Some("/bin/sh -c 'stty -echo -icanon; sleep 3'"), None, size, &[]).unwrap();
+        assert!(wait(&t, false) && !wait(&t, true), "a raw program is not");
+        let (t, _r) = Terminal::spawn(Some("/bin/sh -c 'sleep 3'"), None, size, &[]).unwrap();
+        assert!(!wait(&t, true), "a shell with echo on is not");
     }
 
     #[test]
