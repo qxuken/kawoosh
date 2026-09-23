@@ -391,6 +391,18 @@ impl Settings {
                     ]),
                 ),
                 (
+                    "key",
+                    rule(vec![
+                        ("files", s("*.key")),
+                        // Every line but a comment.
+                        ("pattern", s(r"^\s*([^#\s].*)$")),
+                    ]),
+                ),
+                (
+                    "vault_pass",
+                    rule(vec![("files", s(".vault_pass")), ("pattern", s(r"^(.+)$"))]),
+                ),
+                (
                     "pem",
                     rule(vec![
                         ("from", s(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
@@ -760,12 +772,16 @@ mod tests {
                 "secrets.forget_secs",
                 "secrets.masks.env.files",
                 "secrets.masks.env.pattern",
+                "secrets.masks.key.files",
+                "secrets.masks.key.pattern",
                 "secrets.masks.pem.from",
                 "secrets.masks.pem.to",
                 "secrets.masks.secret.language",
                 "secrets.masks.secret.pattern",
                 "secrets.masks.vault.files",
                 "secrets.masks.vault.pattern",
+                "secrets.masks.vault_pass.files",
+                "secrets.masks.vault_pass.pattern",
                 "secrets.private_temp",
                 "secrets.reveal_secs",
                 "secrets.scan_max_kb",

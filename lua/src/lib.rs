@@ -221,6 +221,8 @@ pub enum Msg {
         /// Made private (docs/design/secrets.md): no history, no
         /// memory, not in a session, a yank from it a secret.
         private: bool,
+        /// The file it stands for, which `%` names (`Buffer::about`).
+        about: Option<PathBuf>,
     },
     /// `kawoosh.buf.set_private(private[, buffer])`.
     SetPrivate {
@@ -2173,6 +2175,7 @@ fn seed(
                 show,
                 watched,
                 private,
+                about,
             ): (
                 String,
                 String,
@@ -2184,6 +2187,7 @@ fn seed(
                 Option<bool>,
                 Option<bool>,
                 Option<bool>,
+                Option<String>,
             )| {
                 qq.borrow_mut().push(Msg::OpenScratch {
                     name,
@@ -2196,6 +2200,7 @@ fn seed(
                     show: show.unwrap_or(true),
                     watched: watched.unwrap_or(false),
                     private: private.unwrap_or(false),
+                    about: about.map(|a| expand(&a)),
                 });
                 Ok(())
             },

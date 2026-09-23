@@ -356,6 +356,7 @@ impl Kawoosh {
                 show,
                 watched,
                 private,
+                about,
             } => {
                 let existing = self
                     .ed
@@ -411,6 +412,9 @@ impl Kawoosh {
                 };
                 if private {
                     self.set_private(id, true);
+                }
+                if about.is_some() {
+                    self.ed.buffers[id].about = about;
                 }
                 if hooked {
                     rt.track_lines(&self.ed, id);

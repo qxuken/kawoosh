@@ -817,3 +817,35 @@ fn a_terminal_at_a_password_prompt_says_so() {
     d.frame(&mut app);
     assert!(!d.core.secure_input(), "secure entry with it");
 }
+
+/// `:!CMD` runs the line in a terminal below, `%` the file quoted for
+/// the shell (vim's `:!`), so a command that asks — a password — is
+/// answered there.
+#[test]
+fn bang_runs_a_shell_line_with_percent_in_a_terminal() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-bang-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("it's here.txt");
+    std::fs::write(&file, "x\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    d.keys(&mut app, ":!echo BANG %:t; sleep 1");
+    d.key(&mut app, "enter", KeyMods::default());
+    let t = app.term_of_focused().expect("a terminal pane");
+    let mut seen = String::new();
+    for _ in 0..300 {
+        d.frame(&mut app);
+        let term = &app.terms.map[&t];
+        seen = (0..term.size().rows as usize)
+            .map(|r| term.row_text(r).trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if seen.contains("BANG") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(seen.contains("BANG it's here.txt"), "{seen}");
+    std::fs::remove_dir_all(&dir).ok();
+}

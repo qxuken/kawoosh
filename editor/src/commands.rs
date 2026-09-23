@@ -387,7 +387,12 @@ fn operator(ed: &mut Editor, ctx: &Ctx, op: &'static str) {
                 }
             })
             .collect();
-        ed.set_mode(ctx.view, Mode::Normal);
+        // One that waits for a character — `ga`, `gsa` — keeps the
+        // selection on show, as it was, until the character comes; the
+        // character's command ends visual mode.
+        if !matches!(op, "align" | "surround add") {
+            ed.set_mode(ctx.view, Mode::Normal);
+        }
         apply_operator(ed, ctx.view, op, ranges);
         return;
     }

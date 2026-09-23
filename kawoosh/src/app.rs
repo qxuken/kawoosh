@@ -1240,6 +1240,13 @@ impl Kawoosh {
         if self.opened_by_plugin(path) {
             return;
         }
+        self.open_file(path);
+    }
+
+    /// `open` past the openers: the caller asked them already. Asked
+    /// twice, an opener that takes a path once — the vault's, falling
+    /// back to the ciphertext — took it again.
+    pub(crate) fn open_file(&mut self, path: &Path) {
         let Some(id) = self.buffer_for(path) else {
             return;
         };

@@ -22,11 +22,11 @@ kawoosh.test.eq(kawoosh.message(), "secrets: db")
 -- What a list shows of a line, by the rules for its file.
 kawoosh.test.ok(kawoosh.secrets.private("/p/.env"), "a rule names .env")
 kawoosh.test.ok(not kawoosh.secrets.private("/p/main.rs"))
-kawoosh.test.eq(kawoosh.secrets.mask_text("TOKEN=abc", "/p/.env"), "TOKEN=•••")
+kawoosh.test.eq(kawoosh.secrets.mask_text("TOKEN=abc", "/p/.env"), "TOKEN=••••••••", "one length for every secret")
 kawoosh.test.eq(kawoosh.secrets.mask_text("TOKEN=abc", "/p/notes.txt"), "TOKEN=abc")
 kawoosh.test.eq(
   kawoosh.secrets.mask_text("a\n-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----\nb"),
-  "a\n••••••••••••\nb",
+  "a\n••••••••\nb",
   "a key block anywhere"
 )
 

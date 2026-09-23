@@ -22,3 +22,6 @@ ignore = "0.4"
 # The markdown buffer's images; already in the tree through kui's
 # clipboard (arboard), so the formats are all this adds.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

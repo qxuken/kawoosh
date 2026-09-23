@@ -325,6 +325,9 @@ pub struct Buffer {
     /// moment, not in a session, not sent to a server, and a yank from
     /// it a secret in the register, never on the system clipboard.
     pub private: bool,
+    /// The file a buffer that is not one stands for — a vault decrypted
+    /// into a scratch — which `%` names in a command line.
+    pub about: Option<PathBuf>,
     /// Still being opened on the io thread ([`Buffer::opening`]): the
     /// bytes indexed so far and the whole, until [`Buffer::attach`]. Read
     /// only meanwhile, and its text is empty.
@@ -364,6 +367,7 @@ impl Buffer {
             modified: false,
             read_only: false,
             private: false,
+            about: None,
             loading: None,
             disk: None,
             language: Arc::from("text"),

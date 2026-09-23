@@ -109,7 +109,9 @@ block's start above the screen. A file a `files` rule names is private
 (Decision 1); a rule that applies everywhere (a PEM key pasted anywhere)
 masks without making the buffer private.
 
-A masked range is drawn as `•`, one per character up to twelve, through
+A masked range is drawn as eight `•` whatever it hides (a secret's
+length is not the screen's business either — changed from one per
+character after use, 2026-09-24), through
 the fold table the markdown buffer draws with (`Drawn::folded`): the
 row's text never holds the secret, so kui never shapes it and its glyph
 cache never keeps it. The caret moves through a mask as through a
@@ -239,3 +241,28 @@ shape. Where it departed:
   frame, balanced by the runner. The secure input's effect could not be
   seen on the machine it was built on (another process held it on
   throughout); the calls link and run.
+
+### After a day of use, 2026-09-24
+
+- **Two rules more**: `key` (`*.key`, every line but a comment — a
+  `master.key`) and `vault_pass` (`.vault_pass`, whole).
+- **One stand-in length**, eight `•`, where it had been a `•` per
+  character up to twelve.
+- **The caret on a mask** covers the stand-in (`secrets::mask_at`): a
+  byte inside a mask maps to where the stand-in starts, and the block
+  caret had been drawn zero wide there — invisible but at a line's end.
+- **A vault that hung at `decrypting…`**: `ansible-vault` ran from
+  kawoosh's working directory, found no `ansible.cfg`, and asked for a
+  password on the terminal kawoosh was started from. The tool now runs
+  where the nearest `ansible.cfg` above the vault is, and every process
+  a plugin spawns is in a session of its own (`setsid`), with no
+  controlling terminal to ask on, so a prompt fails at once. What it
+  said is a toast that stays, with *Retry*; the ciphertext opens in
+  the pane. The hang had a second half in the engine: `kawoosh.open`
+  asked the openers twice, so the fallback's own open was taken by the
+  vault's opener again, for ever (`Kawoosh::open_file`).
+- **`:!CMD`** runs the line in a terminal below, `%` (`%:h`, `%:t`)
+  the file quoted for the shell — and in the decrypted scratch the
+  vault, which the scratch stands for (`Buffer::about`, `open_scratch
+  { about = }`): `:!ansible-vault view %` asks for the password where
+  it can be answered.

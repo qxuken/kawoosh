@@ -258,24 +258,27 @@ fn until(d: &mut Drive, app: &mut Kawoosh, f: impl Fn(&Kawoosh) -> bool) -> bool
     f(app)
 }
 
-/// An Ansible vault opens decrypted in a private scratch, its values
-/// masked; `:w` encrypts it back over the file through stdin. The tool
-/// here is a stand-in (`secrets.vault_command`) that strips and adds
-/// the header, so the test needs no Ansible.
-#[test]
-fn a_vault_file_opens_decrypted_and_writes_back_encrypted() {
-    let dir = tmp("vault");
+/// A stand-in `ansible-vault` for the tests: it wants an
+/// `ansible.cfg` where it runs (as the real one finds its password
+/// file), says so and fails without one, counts its runs in `runs`,
+/// strips the header to view and adds it to encrypt.
+fn fake_vault(dir: &std::path::Path) -> std::path::PathBuf {
     let tool = dir.join("fake-vault");
+    let runs = dir.join("runs");
     std::fs::write(
         &tool,
-        "#!/bin/sh\ncase \"$1\" in\n  view) tail -n +2 \"$2\" ;;\n  encrypt) { echo '$ANSIBLE_VAULT;1.1;FAKE'; cat; } > \"$3\" ;;\nesac\n",
+        format!(
+            "#!/bin/sh\necho run >> '{}'\n[ -f ansible.cfg ] || {{ echo 'ERROR! no vault secrets found' >&2; exit 1; }}\ncase \"$1\" in\n  view) tail -n +2 \"$2\" ;;\n  encrypt) {{ echo '$ANSIBLE_VAULT;1.1;FAKE'; cat; }} > \"$3\" ;;\nesac\n",
+            runs.display()
+        ),
     )
     .unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let vault = dir.join("vault.yml");
-    std::fs::write(&vault, "$ANSIBLE_VAULT;1.1;FAKE\ndb_password: s3cret\n").unwrap();
+    tool
+}
 
+fn vault_app(tool: &std::path::Path) -> (Drive, Kawoosh) {
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = Kawoosh::new("*scratch*", "");
     let ext = app.attach_lua().unwrap();
@@ -286,6 +289,23 @@ fn a_vault_file_opens_decrypted_and_writes_back_encrypted() {
         &mut app,
         &format!("set secrets.vault_command={}", tool.display()),
     );
+    (d, app)
+}
+
+/// An Ansible vault opens decrypted in a private scratch, its values
+/// masked, the tool run where the project's `ansible.cfg` is — two
+/// directories above the vault here — and `%` in the scratch the vault;
+/// `:w` encrypts it back over the file through stdin.
+#[test]
+fn a_vault_file_opens_decrypted_and_writes_back_encrypted() {
+    let dir = tmp("vault");
+    let tool = fake_vault(&dir);
+    std::fs::write(dir.join("ansible.cfg"), "[defaults]\n").unwrap();
+    std::fs::create_dir_all(dir.join("inventory/all")).unwrap();
+    let vault = dir.join("inventory/all/vault.yml");
+    std::fs::write(&vault, "$ANSIBLE_VAULT;1.1;FAKE\ndb_password: s3cret\n").unwrap();
+
+    let (mut d, mut app) = vault_app(&tool);
     ex(&mut d, &mut app, &format!("e {}", vault.display()));
     let name = format!("vault: {}", vault.display());
     assert!(
@@ -301,6 +321,11 @@ fn a_vault_file_opens_decrypted_and_writes_back_encrypted() {
     let buf = app.ed.buffer_of(v);
     assert_eq!(buf.name, name);
     assert!(buf.private);
+    assert_eq!(
+        app.ed.expand_percent(v, "ansible-vault view %").unwrap(),
+        format!("ansible-vault view '{}'", vault.display()),
+        "% is the vault"
+    );
     d.frame(&mut app);
     let shown = drawn(&d);
     assert!(
@@ -323,6 +348,49 @@ fn a_vault_file_opens_decrypted_and_writes_back_encrypted() {
         .ed
         .buffer_of(a.focused_view().unwrap())
         .modified));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A vault the tool cannot open: the ciphertext in the pane, what the
+/// tool said in a toast that stays, and the tool run once — the opener
+/// used to be asked twice per open, and the fallback's second ask
+/// decrypted again, for ever.
+#[test]
+fn a_vault_that_does_not_decrypt_says_why_once() {
+    let dir = tmp("vault-fail");
+    let tool = fake_vault(&dir);
+    let vault = dir.join("vault.yml");
+    std::fs::write(&vault, "$ANSIBLE_VAULT;1.1;FAKE\nx: y\n").unwrap();
+    let (mut d, mut app) = vault_app(&tool);
+    ex(&mut d, &mut app, &format!("e {}", vault.display()));
+    assert!(
+        until(&mut d, &mut app, |a| a.focused_view().is_some_and(|v| a
+            .ed
+            .buffer_of(v)
+            .path
+            .as_deref()
+            == Some(vault.as_path()))),
+        "the ciphertext: {}",
+        app.ed.message
+    );
+    for _ in 0..20 {
+        d.frame(&mut app);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let runs = std::fs::read_to_string(dir.join("runs")).unwrap();
+    assert_eq!(runs.lines().count(), 1, "one run");
+    assert!(
+        app.notes
+            .log
+            .iter()
+            .any(|n| n.text.contains("no vault secrets found")),
+        "the tool's word in a toast"
+    );
+    assert!(
+        app.ed.message.contains("could not decrypt"),
+        "{}",
+        app.ed.message
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -364,4 +432,42 @@ fn a_concealed_paste_is_a_secret() {
             .head()
             .is_some_and(|m| m.text == "plain" && !m.secret)
     );
+}
+
+/// A `*.key` file is masked but for its comments, a `.vault_pass` whole;
+/// every mask is the same eight `•` whatever it hides.
+#[test]
+fn key_files_and_vault_passes_are_masked() {
+    let dir = tmp("keys");
+    let key = dir.join("master.key");
+    std::fs::write(&key, "# the master key\n0123456789abcdef0123456789abcdef\n").unwrap();
+    let pass = dir.join(".vault_pass");
+    std::fs::write(&pass, "pw\n").unwrap();
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::from_file(&key);
+    d.frame(&mut app);
+    assert!(app.ed.buffer_of(app.focused_view().unwrap()).private);
+    let shown = drawn(&d);
+    assert!(shown.contains("# the master key"), "comments stay: {shown}");
+    assert!(!shown.contains("0123456789"), "{shown}");
+    assert!(
+        shown.contains("••••••••") && !shown.contains("•••••••••"),
+        "eight: {shown}"
+    );
+    // On the masked line the row's text is still the stand-in (the
+    // caret over it is `secrets::mask_at`'s, unit-tested).
+    d.keys(&mut app, "j");
+    d.frame(&mut app);
+    assert!(
+        d.line_rows().iter().any(|r| r == "••••••••"),
+        "{:?}",
+        d.line_rows()
+    );
+    ex(&mut d, &mut app, &format!("e {}", pass.display()));
+    let shown = drawn(&d);
+    assert!(
+        !shown.lines().any(|l| l == "pw") && shown.contains("••••••••"),
+        "{shown}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }

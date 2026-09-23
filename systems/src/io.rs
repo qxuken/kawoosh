@@ -281,6 +281,23 @@ impl Io {
         if let Some(d) = cwd {
             command.current_dir(d);
         }
+        // A session of its own, so no controlling terminal: a tool that
+        // would ask on `/dev/tty` — `ansible-vault` with no password
+        // file, `git` wanting credentials, `sudo` — fails at once
+        // instead of waiting on a terminal no one is looking at (or
+        // being stopped for reading it from the background).
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // SAFETY: `setsid` is async-signal-safe, the one call made
+            // between the fork and the exec.
+            unsafe {
+                command.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+        }
         let mut child = command.spawn()?;
         if let (Some(mut text), Some(mut pipe)) = (stdin, child.stdin.take()) {
             thread::spawn(move || {

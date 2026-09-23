@@ -1214,18 +1214,60 @@ impl Editor {
             .collect()
     }
 
+    /// What `%` names on `view`: its buffer's file, or the file a
+    /// scratch stands for (`Buffer::about`).
+    fn percent_path(&self, view: ViewId) -> Result<std::path::PathBuf, String> {
+        self.views
+            .get(view)
+            .and_then(|v| self.buffers.get(v.buffer))
+            .and_then(|b| b.path.clone().or_else(|| b.about.clone()))
+            .ok_or_else(|| "no file for %".to_string())
+    }
+
+    /// A shell command line with `%` — the view's file, `%:h` its
+    /// directory, `%:t` its name — put in, each quoted for the shell;
+    /// `%%` is a `%`. What `:!CMD` runs.
+    pub fn expand_percent(&self, view: ViewId, line: &str) -> Result<String, String> {
+        let mut out = String::with_capacity(line.len());
+        let mut rest = line;
+        while let Some(at) = rest.find('%') {
+            out.push_str(&rest[..at]);
+            rest = &rest[at + 1..];
+            if let Some(r) = rest.strip_prefix('%') {
+                out.push('%');
+                rest = r;
+                continue;
+            }
+            let path = self.percent_path(view)?;
+            let (path, r) = if let Some(r) = rest.strip_prefix(":h") {
+                (path.parent().map(Path::to_path_buf).unwrap_or(path), r)
+            } else if let Some(r) = rest.strip_prefix(":t") {
+                (
+                    path.file_name()
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or(path),
+                    r,
+                )
+            } else {
+                (path, rest)
+            };
+            let p = path.display().to_string();
+            out.push('\'');
+            out.push_str(&p.replace('\'', "'\\''"));
+            out.push('\'');
+            rest = r;
+        }
+        out.push_str(rest);
+        Ok(out)
+    }
+
     /// A path argument's `%` — the view's file — with a modifier and
     /// the rest of the argument; any other argument as it is.
     fn context_path(&self, view: ViewId, arg: &str) -> Result<String, String> {
         let Some(rest) = arg.strip_prefix('%') else {
             return Ok(arg.to_string());
         };
-        let path = self
-            .views
-            .get(view)
-            .and_then(|v| self.buffers.get(v.buffer))
-            .and_then(|b| b.path.clone())
-            .ok_or_else(|| "no file for %".to_string())?;
+        let path = self.percent_path(view)?;
         let (path, rest) = if let Some(r) = rest.strip_prefix(":h") {
             (
                 path.parent()
@@ -2544,6 +2586,11 @@ impl Editor {
         // with them as its arguments.
         if let Some(args) = commands::parse_substitute(line) {
             self.run(view, "substitute", &args, None);
+            return;
+        }
+        // `:!CMD`: the rest a shell line, whole, as vim's.
+        if let Some(cmd) = line.strip_prefix('!') {
+            self.run(view, "shell", &[cmd.trim().to_string()], None);
             return;
         }
         // The name ends at whitespace or at a marker: `q!`, `e!foo`

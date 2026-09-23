@@ -13,11 +13,15 @@
 -- `ansible-vault view` fills a private scratch named for the file, its
 -- values masked by the `vault` rule, and `:w` encrypts it back with
 -- `ansible-vault encrypt --output PATH -`, the text on stdin (never on
--- a command line, where `ps` would show it). The password is the
--- vault's own — `ANSIBLE_VAULT_PASSWORD_FILE`, `ansible.cfg`'s
--- `vault_password_file`, or `secrets.vault_password_file` — since a
--- spawned tool has no terminal to ask on; without one the file opens as
--- the ciphertext it is, and the message says why.
+-- a command line, where `ps` would show it). The tool runs where the
+-- nearest `ansible.cfg` above the file is, so the project's
+-- `vault_password_file` is found as `ansible-vault` would find it from
+-- there; `ANSIBLE_VAULT_PASSWORD_FILE` and `secrets.vault_password_file`
+-- work too. A spawned tool has no terminal to ask on, so without a
+-- password it fails at once: the file opens as the ciphertext it is, a
+-- toast says what the tool said, *Retry* asks again, and `:!ansible-vault
+-- view %` (`%` is the vault, in the decrypted scratch too) runs it in a
+-- terminal, where it can ask.
 --
 -- What cleaning up can promise, plainly: the engine zeroes the text it
 -- frees and a secret the register forgets; the decrypted text also
@@ -105,6 +109,20 @@ local plain = {}
 
 local function vault_name(path) return "vault: " .. path end
 
+-- Where `ansible-vault` is run for `path`: the nearest directory above
+-- it with an `ansible.cfg`, else the file's own.
+function M.config_dir(path)
+  local d = path:match("^(.*)/[^/]*$") or "."
+  local here = d
+  while d and d ~= "" do
+    if fs.exists(d .. "/ansible.cfg") then return d end
+    local up = d:match("^(.*)/[^/]*$")
+    if up == d then break end
+    d = up
+  end
+  return here
+end
+
 -- Writes the scratch back to its vault: encrypted from stdin over the
 -- file. The buffer is marked written when the tool says so.
 local function write_back(path)
@@ -112,6 +130,7 @@ local function write_back(path)
     local text = table.concat(lines, "\n") .. "\n"
     local out = {}
     kawoosh.spawn(vault_command() .. " encrypt" .. password_flag() .. " --output " .. quote(path) .. " -", {
+      cwd = M.config_dir(path),
       stdin = text,
       on_lines = function(ls) for _, l in ipairs(ls) do out[#out + 1] = l end end,
       on_exit = function(code)
@@ -119,7 +138,7 @@ local function write_back(path)
           -- Filled with what it holds: written, not modified.
           kawoosh.buf.open_scratch {
             name = vault_name(path), text = text, language = "yaml", private = true,
-            on_write = write_back(path), show = false,
+            on_write = write_back(path), show = false, about = path,
           }
           kawoosh.echo("encrypted " .. path)
         else
@@ -134,26 +153,39 @@ end
 
 function M.open_vault(path)
   local name = vault_name(path)
-  kawoosh.buf.open_scratch { name = name, text = "", language = "yaml", private = true }
+  kawoosh.buf.open_scratch { name = name, text = "", language = "yaml", private = true, about = path }
   kawoosh.buf.mask_with("vault", name)
   kawoosh.echo("decrypting " .. path .. "…")
   local lines, err = {}, {}
   kawoosh.spawn(vault_command() .. " view" .. password_flag() .. " " .. quote(path), {
+    cwd = M.config_dir(path),
     on_lines = function(ls) for _, l in ipairs(ls) do lines[#lines + 1] = l end end,
     on_exit = function(code)
       if code ~= 0 then
+        -- What the tool said, its last lines; the ciphertext opened in
+        -- the pane so it is not empty, and `%` in it the vault.
         for _, l in ipairs(lines) do if l:match("%S") then err[#err + 1] = l end end
+        lines = nil
+        local said = {}
+        for i = math.max(1, #err - 2), #err do said[#said + 1] = err[i] end
         plain[path] = true
         kawoosh.open(path)
         local h = named(name)
         if h then kawoosh.buf.close(h, { if_hidden = true }) end
-        kawoosh.echo("ansible-vault could not decrypt " .. path .. " (no password file?): "
-          .. (err[#err] or ("exit " .. tostring(code))))
+        kawoosh.notify(
+          "ansible-vault could not decrypt " .. path .. " (exit " .. tostring(code) .. "):\n"
+            .. (#said > 0 and table.concat(said, "\n") or "no word from it")
+            .. "\n:!ansible-vault view % runs it in a terminal, where it can ask.",
+          {
+            level = "error", source = "secrets", timeout = 0,
+            actions = { { label = "Retry", run = function() M.open_vault(path) end } },
+          })
+        kawoosh.echo("could not decrypt " .. path .. ": " .. (said[#said] or "exit " .. tostring(code)))
         return
       end
       kawoosh.buf.open_scratch {
         name = name, text = table.concat(lines, "\n") .. "\n", language = "yaml", private = true,
-        on_write = write_back(path), show = false,
+        on_write = write_back(path), show = false, about = path,
       }
       kawoosh.buf.mask_with("vault", name)
       kawoosh.echo(path .. ": decrypted, private; :w encrypts it back")

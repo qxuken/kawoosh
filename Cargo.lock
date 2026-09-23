@@ -1800,6 +1800,7 @@ dependencies = [
  "image",
  "kawoosh-doc",
  "kawoosh-languages",
+ "libc",
  "log",
  "memmap2",
  "rusqlite",

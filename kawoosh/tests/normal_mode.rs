@@ -461,3 +461,20 @@ fn ctrl_shift_u_deletes_the_line_in_insert_mode() {
     d.text(&mut app, "x");
     assert_eq!(text(&app), "one\nxthree\n");
 }
+
+/// `ga` from visual line mode waits for its character with the lines
+/// still selected as lines — it had dropped to normal mode, and the
+/// selection showed charwise meanwhile.
+#[test]
+fn ga_keeps_the_visual_lines_until_its_character() {
+    let mut app = Kawoosh::new("t", "a = 1\nbbb = 2\n");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    d.keys(&mut app, "Vjga");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.mode(v), Mode::Visual);
+    assert!(app.ed.views[v].visual_linewise, "still lines");
+    d.keys(&mut app, "=");
+    assert_eq!(app.ed.mode(v), Mode::Normal);
+    assert_eq!(text(&app), "a   = 1\nbbb = 2\n");
+}

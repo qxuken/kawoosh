@@ -556,7 +556,7 @@ fn a_boolean_setting_is_a_switch_in_the_tab() {
     // Tall enough that the last row of the effective table — the
     // `whichkey` switch, after the `layout.*`, `memory.*` and
     // `secrets.*` rows — is on screen.
-    let mut d = Drive::new(1100.0, 2400.0);
+    let mut d = Drive::new(1100.0, 2700.0);
     let mut app = app_with_lua(&mut d);
     ex(&mut d, &mut app, "settings");
     assert_eq!(app.ed.settings.bool("whichkey"), Some(true));

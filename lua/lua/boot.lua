@@ -235,9 +235,11 @@ function kawoosh.tools()
 end
 
 -- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, on_change=fn,
--- read_only=bool, language=, reuse=handle, line=n, private=bool }: a
--- buffer that is not a file; `private` keeps it out of the store, the
--- memory, the session and the clipboard (docs/design/secrets.md). `on_write(lines)` handles :w; it returns `false` when
+-- read_only=bool, language=, reuse=handle, line=n, private=bool,
+-- about=path }: a buffer that is not a file; `private` keeps it out of
+-- the store, the memory, the session and the clipboard
+-- (docs/design/secrets.md); `about` is the file it stands for, which
+-- `%` names in a command line (`:!ansible-vault edit %`). `on_write(lines)` handles :w; it returns `false` when
 -- the write is not done yet (a `kawoosh.confirm` is up), and the
 -- buffer stays modified until it is. `on_change(name)` is told, once
 -- a frame, that the text changed — an edit, an undo — so what a
@@ -389,7 +391,7 @@ function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
   if t.on_change then kawoosh._changers[t.name] = t.on_change end
   kawoosh._open_scratch(t.name, t.text or "", t.on_write ~= nil, t.read_only or false, t.language,
-    t.reuse, t.line, t.show ~= false, t.on_change ~= nil, t.private or false)
+    t.reuse, t.line, t.show ~= false, t.on_change ~= nil, t.private or false, t.about)
 end
 
 -- ---------------------------------------------------------------- fields

@@ -499,7 +499,7 @@ impl Kawoosh {
                 }
             }
         }
-        self.open(path);
+        self.open_file(path);
         if let (Some(v), Some(ln)) = (self.focused_view(), line) {
             let buf = self.ed.buffer_of(v);
             let ln = ln.max(1).min(buf.line_count()) - 1;
@@ -532,6 +532,29 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     .and_then(|t| t.cwd())
                     .unwrap_or_else(|| k.cwd.clone());
                 if let Some(t) = k.spawn_terminal(cmd.as_deref(), Some(&cwd)) {
+                    k.fill_or_split(SplitDir::V, Content::Terminal(t));
+                }
+            },
+        ),
+        cmd(
+            Spec::new("shell")
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("`:!CMD`: CMD in a terminal below, `%` the file (`%:h` its directory, `%:t` its name), quoted — a prompt it asks is answered there"),
+            |k, ctx| {
+                let line = ctx.args.join(" ");
+                if line.trim().is_empty() {
+                    k.ed.message = "shell: what to run".into();
+                    return;
+                }
+                let cmd = match k.ed.expand_percent(ctx.view, &line) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        k.ed.message = e;
+                        return;
+                    }
+                };
+                let cwd = k.cwd.clone();
+                if let Some(t) = k.spawn_terminal(Some(&cmd), Some(&cwd)) {
                     k.fill_or_split(SplitDir::V, Content::Terminal(t));
                 }
             },

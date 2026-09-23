@@ -15,9 +15,9 @@ use regex::Regex;
 
 use crate::Setting;
 
-/// The most `•` one masked range draws: its length is not the secret's
-/// business either.
-pub const DOTS_MAX: usize = 12;
+/// What every masked range is drawn as, whatever its length: how long a
+/// secret is is not the screen's business either.
+pub const STAND_IN: &str = "••••••••";
 
 /// What a rule masks: the first group of a line's match (the whole
 /// match without a group), or every line from a `from` match to the
@@ -213,7 +213,7 @@ fn read_rule(name: &str, s: &Setting) -> Result<Option<Rule>, String> {
 
 /// The masks of one line (`line`, a byte range of the buffer) as the
 /// fold table draws them: each range cut to the line, relative to it,
-/// standing in as `•`.
+/// standing in as [`STAND_IN`].
 pub fn line_folds(
     masks: &[Range<usize>],
     line: Range<usize>,
@@ -225,8 +225,13 @@ pub fn line_folds(
             continue;
         }
         let r = m.start.max(line.start) - line.start..m.end.min(line.end) - line.start;
-        let chars = text.get(r.clone()).map_or(r.len(), |s| s.chars().count());
-        out.push((r, "•".repeat(chars.clamp(1, DOTS_MAX))));
+        // A block's empty line inside it draws nothing.
+        let stand_in = if r.is_empty() && text.get(r.start..).is_some_and(|t| t.is_empty()) {
+            ""
+        } else {
+            STAND_IN
+        };
+        out.push((r, stand_in.to_string()));
     }
     out
 }
@@ -241,8 +246,7 @@ pub fn masked_text(text: &str, masks: &[Range<usize>]) -> String {
             continue;
         }
         out.push_str(&text[at..m.start]);
-        let chars = text[m.clone()].chars().count();
-        out.push_str(&"•".repeat(chars.clamp(1, DOTS_MAX)));
+        out.push_str(STAND_IN);
         at = m.end;
     }
     out.push_str(&text[at..]);

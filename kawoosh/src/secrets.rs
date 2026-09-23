@@ -75,6 +75,12 @@ impl Secrets {
     }
 }
 
+/// The mask a caret at `head` is on, if any: the whole of it is the
+/// caret's to draw, a byte of it having no place of its own.
+pub fn mask_at(masks: &[Range<usize>], head: usize) -> Option<&Range<usize>> {
+    masks.iter().find(|m| m.start <= head && head < m.end)
+}
+
 /// Line `range` of `buf` drawn with its masks folded to `•`, and the
 /// cells the char at `mark` (line-relative; the caret) spans — what
 /// `Drawn::for_line` answers, for a line a mask touches; `None` for
@@ -351,4 +357,20 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A caret inside a mask draws over all of it; at its end it is
+    /// past it.
+    #[test]
+    fn a_caret_on_a_mask_is_the_whole_mask() {
+        let masks = [6..14, 20..22];
+        assert_eq!(mask_at(&masks, 6), Some(&(6..14)));
+        assert_eq!(mask_at(&masks, 13), Some(&(6..14)));
+        assert_eq!(mask_at(&masks, 14), None);
+        assert_eq!(mask_at(&masks, 21), Some(&(20..22)));
+    }
 }

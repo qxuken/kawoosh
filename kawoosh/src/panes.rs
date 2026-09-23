@@ -1479,17 +1479,25 @@ impl Kawoosh {
                                 }
                                 let head_line = buf.line_of(s.head);
                                 if head_line == ln && keyed {
-                                    let end = if caret_kind == Caret::Block {
-                                        clip(buf.next_char(s.head))
-                                    } else {
-                                        clip(s.head)
+                                    // Inside a mask the caret is the whole
+                                    // stand-in: a byte of it has no place of
+                                    // its own, and a caret drawn zero wide
+                                    // was not drawn at all.
+                                    let masked = crate::secrets::mask_at(&masks, s.head);
+                                    let end = match masked {
+                                        Some(m) if caret_kind == Caret::Block => clip(m.end),
+                                        _ if caret_kind == Caret::Block => {
+                                            clip(buf.next_char(s.head))
+                                        }
+                                        _ => clip(s.head),
                                     };
                                     let kind = if caret_kind == Caret::Block && *s != primary {
                                         Caret::Extra
                                     } else {
                                         caret_kind
                                     };
-                                    carets.push((clip(s.head)..end, kind));
+                                    let start = masked.map_or(clip(s.head), |m| clip(m.start));
+                                    carets.push((start..end, kind));
                                 }
                                 if *s == primary && head_line == ln && keyed {
                                     access.0 = Some(clip(s.head) as u32);
