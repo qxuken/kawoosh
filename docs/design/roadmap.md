@@ -46,10 +46,13 @@ way, two engine fixes the plans had assumed away: a typing key whose
 insert-mode bindings were all gated off ate its character, and a
 grammar's runs could not say which line is a fence's (a structure
 layer now paints it from the same tree).
-What is left is steps 18–26 below: two fixes (focus, the scratch
-sweep), a private buffer for secrets, the LSP's third round, a batch
-of small ones with timed rows among them, `dir`'s third round,
-directory jumps, the memory's fifth, workspaces, and ssh last.
+Steps 18–22 followed the same night (2026-09-23), on one branch: the
+focus and sweep fixes, secrets (a private buffer, masks, the vault;
+kui F84 and F85), the LSP's third round, align, `<C-S-u>` and timed
+rows over a new `kawoosh.pass()`, and `dir`'s third round — 241
+commits, 27 integration test files, 415 tests and 8 Lua acceptance
+scripts. What is left is steps 23–26: directory jumps, the memory's
+fifth round, workspaces, and ssh last.
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
