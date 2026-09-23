@@ -7,7 +7,7 @@
 -- `grep` (`rg` run as the query is typed, its locations the rows),
 -- `lines` (the buffer's), `symbols` and `workspace_symbols` (a
 -- server's, `<leader>bs` `<leader>cs`), `commands` (the registry, what
--- `:commands` was) and `tools`. `<leader>f` `<leader>bb` `<leader>so` `<leader>.`
+-- `:commands` was) and `tools`; `dirs.lua` adds `dirs`. `<leader>f` `<leader>bb` `<leader>so` `<leader>.`
 -- `<leader>g` `<leader>/` `<leader>sp` `<leader>tt` open them,
 -- `<leader>sr` the last one again where it was left.
 --
@@ -817,14 +817,36 @@ local function load_items()
   end
 end
 
+-- What a pick answers a caller that asked for one (`kawoosh pick` from
+-- a shell): the source's `answer(item)`, else the item's path, its
+-- buffer's path or name, its text.
+function picker.answer_of(src, item)
+  if src.answer then return src.answer(item) end
+  if item.path then return item.path end
+  if item.buffer then
+    local ok, p = pcall(kawoosh.buf.path, item.buffer)
+    if ok and p then return p end
+    local ok2, n = pcall(kawoosh.buf.name, item.buffer)
+    if ok2 then return n end
+  end
+  return item.text
+end
+
 local function close()
   if P then
     if P.job and P.job.cancel then pcall(P.job.cancel) end
+    -- A caller waiting on this picker gets nothing: it was closed, or
+    -- another took its place.
+    if P.answer then P.answer(nil) end
     picker.last = { source = P.name, query = P.query, cursor = P.cursor }
     P = nil
   end
   kawoosh.view_close(VIEW)
 end
+
+-- picker.close(): the open picker closed, the keys back where they came
+-- from — for a source's key that acts somewhere else.
+picker.close = close
 
 -- The default pick: a buffer shown, a file opened at its line, a
 -- `run` line run, or the source's own `pick`.
@@ -833,7 +855,10 @@ local function pick(how)
   local hit = P.hits[P.cursor]
   if not hit then return kawoosh.echo("nothing to pick") end
   local item, src = hit.item, P.src
+  local answer = P.answer
+  P.answer = nil
   close()
+  if answer then return answer(item) end
   if src.pick then return src.pick(item, how) end
   if item.pick then return item.pick(item, how) end
   if item.buffer then
@@ -846,14 +871,17 @@ local function pick(how)
   end
 end
 
--- picker.open(name | def): the picker on a registered source by name,
--- or on a definition given whole — `{ title =, items = {…} | load =
--- fn(ctx, done) | search = fn(query, job), pick = fn(item, how),
--- preview = fn(item), keys = { ["<C-x>"] = fn(item) }, columns =
--- {…} (as `picker.rows` takes them), query = "" }`. An item is
--- `{ text =, sub =, path =, line =, col =, buffer =, offset =, run =,
--- boost = }`, and a column's field. A picker already open switches to
--- it.
+-- picker.open(name | def[, opts]): the picker on a registered source by
+-- name, or on a definition given whole — `{ title =, items = {…} |
+-- load = fn(ctx, done) | search = fn(query, job), pick = fn(item,
+-- how), answer = fn(item), preview = fn(item), keys = { ["<C-x>"] =
+-- fn(item) }, columns = {…} (as `picker.rows` takes them) }`. An item
+-- is `{ text =, sub =, path =, line =, col =, buffer =, offset =, run
+-- =, boost = }`, and a column's field. `opts`: `query`, `cursor`, and
+-- `answer = fn(item)`, which takes the pick instead of the source —
+-- `fn(nil)` when the picker closes untaken. A source's `ctx` is `{
+-- buffer =, cwd =, terminal = }`, `terminal` when it was opened from
+-- a terminal pane. A picker already open switches to it.
 function picker.open(what, opts)
   opts = opts or {}
   local name, src
@@ -864,13 +892,32 @@ function picker.open(what, opts)
     name, src = what.name or "custom", what
   end
   if P and P.job and P.job.cancel then pcall(P.job.cancel) end
-  local ctx = { buffer = kawoosh.buf.current(), cwd = fs.cwd() }
+  if P and P.answer then P.answer(nil) end
+  -- `terminal`: opened from a terminal pane, where a pick goes back to.
+  local ctx = { buffer = kawoosh.buf.current(), cwd = fs.cwd(), terminal = kawoosh.holds("terminal") == true }
   P = { name = name, src = src, ctx = ctx, items = {}, hits = {}, cursor = opts.cursor or 1, top = 1,
-        query = nil, loading = false, rows = 20 }
+        query = nil, loading = false, rows = 20, answer = opts.answer }
   kawoosh.view_open(VIEW, { below = true, share = share() })
   kawoosh.field_set(VIEW, FIELD, opts.query or "")
   kawoosh.field_focus(VIEW, FIELD)
   load_items()
+end
+
+-- `kawoosh pick SOURCE [QUERY]` from a shell (`Request::Pick`): the
+-- picker on the source, and the caller answered with the pick —
+-- `picker.answer_of` — or with nothing when it closes untaken.
+function kawoosh._pick_request(token, source, query)
+  local src = picker.sources[source]
+  if not src then
+    kawoosh._answer(token, nil)
+    return kawoosh.echo("no picker source named " .. source)
+  end
+  local answered = false
+  picker.open(source, { query = query ~= "" and query or nil, answer = function(item)
+    if answered then return end
+    answered = true
+    kawoosh._answer(token, item and picker.answer_of(src, item) or nil)
+  end })
 end
 
 -- picker.reload(): the open picker's items read again on the next

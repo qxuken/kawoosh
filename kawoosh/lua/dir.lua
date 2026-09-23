@@ -316,6 +316,9 @@ function dir.open(path, from, fresh, reread)
       line = line_of(lines, from),
     }
     kawoosh.buf.annotate(meta, name)
+    -- A directory attended, for the jumps (`dirs.lua`); a listing read
+    -- again is not a visit.
+    if not reread and kawoosh.dirs then kawoosh.dirs.visit(path) end
     -- Not in the snapshot until the next frame: named to the watch.
     if dir.watch_sync then dir.watch_sync(path) end
     if dir.decorate then dir.decorate(name, path) end

@@ -591,27 +591,56 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   an `edit --wait` caller whose buffer they took off the screen, which
   only `:close` did (`only_answers_a_waiting_caller_whose_pane_it_closed`
   in terminal.rs).
-- **Directory jumps, zoxide's way** — open [asked 2026-09-23]; step
-  24. A `dirs` picker source ranked by frecency, kawoosh's UI over
-  zoxide's data. The bridge: with `zoxide` on the PATH (0.10 here, 328
-  directories) its database is the list — `zoxide query --list
-  --score` through `kawoosh.spawn`, the score the picker's boost — and
-  kawoosh's own visits feed it back (`zoxide add` on `:cd`, a `dir`
-  listing opened, a pick); a terminal's OSC 7 is not added, since the
-  shell's own zoxide hook does that. Without zoxide the rows are the
-  memory's, a plugin's kind (memory.md: 500 rows, 90 days), so the
-  source works either way and a user can swap the backend. A pick in
-  an editor pane `:cd`s (or lists it in `dir` — the round decides the
-  default and puts the other on a key); in a terminal pane it is typed
-  as `cd 'PATH'⏎` when the shell is at an empty prompt, which the OSC
-  133 marks already say (a command's end and nothing typed since),
-  and refused with a message otherwise. From the shell the other way
-  round: `kawoosh pick dirs` over the socket (`Request::Pick { source,
-  query }`, answered with the pick or nothing on `<Esc>`, the shape of
-  `edit --wait`), so a nushell `def --env z` is `cd (kawoosh pick
-  dirs)` in kawoosh's picker — and any source, not only this one:
-  `kawoosh pick files` for a shell. Before the workspaces because a
-  jump moves *the* cwd, and which cwd that is is their question.
+- **Directory jumps, zoxide's way** — done 2026-09-24 [asked
+  2026-09-23]; step 24. `dirs.lua`: a `dirs` picker source over a
+  backend, `{ list, add }` — `zoxide` (`query --list --score`, the score
+  the boost; `zoxide add` a visit) or `memory` (the memory's `dirs.dir`
+  rows across every workspace, ranked by `kawoosh.memory_rank`), chosen
+  by `dirs.backend`: `auto` is zoxide while it runs *and* kawoosh keeps
+  a state db, so a run that keeps nothing — the tests — writes to no
+  one's database. Visits: the working directory moving
+  (`kawoosh.on_cwd`, new: once a frame, not for the directory started
+  in) and a `dir` listing opened (not one read again); a terminal's
+  own `cd` is its shell's hook's. `<leader>sd`, and `<C-S-z>`, which
+  reaches from a terminal pane. The round's decisions: `<CR>` in an
+  editor pane is `:cd`, zoxide's meaning of a jump; `<C-o>` lists the
+  directory in `dir` and leaves the working one; `<C-v>` `<C-s>` `<C-t>`
+  list it in a split or a tab. From a terminal pane a pick types `cd
+  'PATH'⏎` when the shell sits at an empty prompt — `Terminal::
+  at_empty_prompt`: the last command marked has no output yet, no
+  program has the screen, and nothing was sent since the prompt was
+  drawn, which the terminal knows because it sent it (the marks say
+  where a prompt starts, not where its own text ends and the typed
+  line begins; the terminal's own answers — colours, reports — go out
+  by another door and are no typing) — and says why not otherwise,
+  through `kawoosh.term.send(text, { prompt = true })`. From the shell:
+  `kawoosh pick SOURCE [QUERY]` (`Request::Pick`), answered with the
+  pick (`picker.answer_of`, a source's `answer`) or nothing and status
+  1 when the picker closes — any source, not only this one;
+  `:terminal integration` has `zk` for nushell, zsh and bash.
+  `kawoosh/tests/dirs.rs`; the terminal crate's
+  `an_empty_prompt_is_one_with_nothing_sent_since`. What the roadmap
+  said before it was built: A `dirs` picker source ranked by frecency,
+  kawoosh's UI over zoxide's data. The bridge: with `zoxide` on the
+  PATH (0.10 here, 328 directories) its database is the list — `zoxide
+  query --list --score` through `kawoosh.spawn`, the score the
+  picker's boost — and kawoosh's own visits feed it back (`zoxide add`
+  on `:cd`, a `dir` listing opened, a pick); a terminal's OSC 7 is not
+  added, since the shell's own zoxide hook does that. Without zoxide
+  the rows are the memory's, a plugin's kind (memory.md: 500 rows, 90
+  days), so the source works either way and a user can swap the
+  backend. A pick in an editor pane `:cd`s (or lists it in `dir` — the
+  round decides the default and puts the other on a key); in a
+  terminal pane it is typed as `cd 'PATH'⏎` when the shell is at an
+  empty prompt, which the OSC 133 marks already say (a command's end
+  and nothing typed since), and refused with a message otherwise. From
+  the shell the other way round: `kawoosh pick dirs` over the socket
+  (`Request::Pick { source, query }`, answered with the pick or nothing
+  on `<Esc>`, the shape of `edit --wait`), so a nushell `def --env z`
+  is `cd (kawoosh pick dirs)` in kawoosh's picker — and any source,
+  not only this one: `kawoosh pick files` for a shell. Before the
+  workspaces because a jump moves *the* cwd, and which cwd that is is
+  their question.
 
 - **Path copies** — done 2026-09-24 [use 2026-09-24]; step 23. The
   neovim config's six under keys.md's reserved `<leader>y*`: `yp` the
@@ -1339,12 +1368,16 @@ then breadth.
     asked for; keys.md reserved the prefix.~~ Landed 2026-09-24: six
     forms rather than four (the neovim config's), into the register as
     well as onto the clipboard. See the panes track.
-24. **Directory jumps**: the `dirs` source over zoxide's database or
+24. ~~**Directory jumps**: the `dirs` source over zoxide's database or
     the memory's rows, kawoosh's visits fed back with `zoxide add`, a
     pick `:cd` in an editor pane and `cd` typed at a terminal's empty
     prompt, and `Request::Pick` so `kawoosh pick SOURCE` answers a
     shell. After `dir` because both are about directories and the
-    listing is where a jump lands.
+    listing is where a jump lands.~~ Landed 2026-09-24
+    (`kawoosh/lua/dirs.lua`, `kawoosh.on_cwd`, `kawoosh.term.send`,
+    `Request::Pick`); "nothing typed since" is the terminal's own
+    record of what it sent, since the marks cannot say it. See the
+    panes track.
 25. **The memory, round five**: the yank-pop memory.md left — the
     text a `p` put cycled through the register's past. memory.md named
     `<C-p>` `<C-n>` for it, and Decision 1 has since given `<C-n>` to

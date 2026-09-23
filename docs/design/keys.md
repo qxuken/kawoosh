@@ -66,6 +66,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<S-PageUp>` `<S-PageDown>`, `<S-Home>` `<S-End>` | a terminal's view a page through its history, to the top, back to the prompt — kept from the pty unless a program has the whole screen; scrolled away, the pane shows a scrollbar (dragged, it moves the view) and what lies below, a click on which goes back |
 | `⌘↑` `⌘↓`, `<C-S-Up>` `<C-S-Down>` | the prompt above the view at its top, the next one down (a shell that marks its prompts, OSC 133 — `:terminal integration` says how) |
 | `<C-S-o>` | the last command's output to the clipboard (the same marks) |
+| `<C-S-z>` | the directory jumps (`picker dirs`, zoxide's directories): a pick types `cd 'PATH'⏎` while the shell sits at an empty prompt (the same marks, nothing typed since), and says why not otherwise; from an editor pane, `<leader>sd` |
 | `gt` `gT` `]t` `[t` | next and previous tab |
 | `]T` `[T` `:tabmove` | move the tab along the strip |
 | `<leader>tq` | close the tab |
@@ -346,6 +347,7 @@ objects, or any other character on both sides.
 | `<leader>so` | the workspace's files attended before, ranked by the memory (the picker's `recent`) |
 | `<leader>sr` | the last picker again, its query and cursor as they were |
 | `<leader>sm` | the messages |
+| `<leader>sd` `<C-S-z>` | the directory jumps (`picker dirs`): zoxide's directories by frecency (the memory's without it); `<CR>` makes one the working directory, `<C-o>` lists it in `dir` and leaves the working directory, `<C-v>` `<C-s>` `<C-t>` list it in a split or a tab; a shell asks the same picker with `kawoosh pick dirs` |
 | `<leader>sl` | the memory's ring (`:memory recent`): where was I — every subject attended in this workspace, in order, newest first |
 | `<leader>ws` `<leader>wr` | save, restore the session |
 | `<leader>cc` | compile |
