@@ -833,14 +833,20 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   soft wrap on its rows (`wrap = word`, `Ui::caret_rect`) and the
   `image` node, both there — the round's first day checks them
   headless.
-- **`dir`, round three** — partly [todo]. Left from the design: a
-  watcher re-reading a listing the io thread's `watch.rs` sees change,
-  an image preview once kui's `image` is on the road (req §9), and
-  hidden-file toggling. None urgent. *Checked 2026-09-23:* the image
-  is on the road — `image` is in kui's Lua DSL (`prelude.lua`) and the
-  markdown buffer draws with it — so the preview is `dir.lua`'s alone,
-  and the picker's preview of an image (which `file_lines` answers
-  with the word `binary` today) is the same few lines. Step 22.
+- **`dir`, round three** — done 2026-09-23 [todo]; step 22. A
+  listing's directory is on a watch (`kawoosh.fs.watch`, a plugin's
+  named set over the stamp-polling `Watcher` the settings and the disk
+  already use — a directory's mtime moves when an entry is made,
+  removed or renamed): changed by anything, it is read again where it
+  is, unless it has edits of its own, whose plan comes first. `g.`
+  (`dir hidden`, oil's key) shows or hides the dot files, the
+  `dir.hidden` setting for the session; an entry hidden never had a
+  line, so the plan cannot take it for deleted. The preview draws a
+  PNG, JPEG or GIF as a picture through `kawoosh.image(path)` — the
+  markdown buffer's image cache, read on the io thread and registered
+  with kui, the handle handed to a view's `image { id = }` — and so
+  does the picker's preview; a text preview in either goes through the
+  mask rules. `kawoosh.fs.write` takes any Lua string's bytes.
 - **A secrets buffer** — done 2026-09-23 [todo 2026-09-23]; step 19
   ([secrets.md](secrets.md), "Built"). A private buffer every path
   asks — no history row, no moment, no session, no server, a yank a
@@ -1269,10 +1275,12 @@ then breadth.
     insert- and line-shaped tests.~~ Landed 2026-09-23: `ga`,
     `<C-S-u>`, and `timed.lua` over a new `kawoosh.pass()`. See the
     engine and buffers tracks.
-22. **`dir`, round three**: a listing re-read when the watcher sees
+22. ~~**`dir`, round three**: a listing re-read when the watcher sees
     its directory change, hidden files toggled, and images previewed
     in `dir` and the picker through kui's `image`. Breadth, and all
-    Lua but the watch.
+    Lua but the watch.~~ Landed 2026-09-23 with three doors —
+    `kawoosh.fs.watch`, `kawoosh.image`, bytes for `fs.write`. See the
+    buffers track.
 23. **Directory jumps**: the `dirs` source over zoxide's database or
     the memory's rows, kawoosh's visits fed back with `zoxide add`, a
     pick `:cd` in an editor pane and `cd` typed at a terminal's empty

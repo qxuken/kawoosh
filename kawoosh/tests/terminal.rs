@@ -812,5 +812,8 @@ fn a_terminal_at_a_password_prompt_says_so() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(gone, "and stops when echo is back");
+    // The frame after: the prompt may have ended between the frame's
+    // look at it for secure entry and its title.
+    d.frame(&mut app);
     assert!(!d.core.secure_input(), "secure entry with it");
 }

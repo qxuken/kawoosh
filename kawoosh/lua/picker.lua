@@ -132,6 +132,10 @@ function picker.rank(item, hit)
   return hit.score + (item.boost or 0)
 end
 
+-- The files the preview draws as a picture, by extension: what the
+-- engine decodes (`kawoosh.image`).
+picker.images = { png = true, jpg = true, jpeg = true, gif = true }
+
 -- A file that is not text, by its extension: fonts, images, sound,
 -- archives, what a build left — ranked under the rest, since a query
 -- for `font` wants the source that loads it before the `.ttf`.
@@ -231,6 +235,11 @@ local function preview_of(item)
     return { title = title, lines = lines, from = from, at = item.line, path = pok and path or nil }
   elseif item.path then
     title = short_path(item.path)
+    -- A picture is drawn, not read as text (`kawoosh.image`).
+    local ext = item.path:match("%.([%w]+)$")
+    if ext and picker.images[ext:lower()] then
+      return { title = title, lines = {}, image = item.path }
+    end
     lines, why = file_lines(item.path)
   else
     return { title = item.text, lines = { item.sub or "" } }
@@ -513,6 +522,26 @@ function picker.preview(ctx, pv, rows, from)
   from = from or 1
   col[#col + 1] = text(pv.title or "", { size = PREVIEW_SIZE, color = t.fg, wrap = "none" })
   if pv.note then col[#col + 1] = text(pv.note, { size = PREVIEW_SIZE, color = t.muted }) end
+  -- A picture, fitted to the preview's room and never larger than it
+  -- is; `reading…` until it is.
+  if pv.image then
+    local img, why = kawoosh.image(pv.image)
+    if not img then
+      col[#col + 1] = text(why or "reading…", { size = PREVIEW_SIZE, color = t.muted })
+      return col
+    end
+    col[#col + 1] = text(img.width .. " × " .. img.height, { size = PREVIEW_SIZE, color = t.muted })
+    local share = tonumber(kawoosh.opt("picker.split")) or 0.5
+    local room_w = math.max((ctx.width or 400) * (1 - share) - 16, 16)
+    local room_h = math.max((ctx.height or 300) - 2 * (PREVIEW_SIZE + 8) - 16, 16)
+    local scale = math.min(1, room_w / img.width, room_h / img.height)
+    col[#col + 1] = image {
+      id = img.id, fit = "contain",
+      width = math.max(1, math.floor(img.width * scale)),
+      height = math.max(1, math.floor(img.height * scale)),
+    }
+    return col
+  end
   local first = pv.from or 1
   highlight_preview(pv)
   for i = from, math.min(#pv.lines, from + rows - 1) do

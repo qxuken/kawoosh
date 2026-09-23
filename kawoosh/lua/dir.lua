@@ -15,7 +15,11 @@
 -- caret, `<C-l>` reads the directory again (a listing with edits is
 -- asked first), `<C-p>` opens a preview of the entry beside the
 -- listing, and `ms` `mm` `ma` `me` (`mS` `mM` `mA` `mE` for the reverse)
--- list it again by size, mtime, name or type, yazi's keys under `m`. A
+-- list it again by size, mtime, name or type, yazi's keys under `m`;
+-- `g.` shows or hides the dot files (`dir.hidden`). A listing's
+-- directory is on a watch: made, removed or renamed by anything, it is
+-- read again where it is unless it has edits of its own. The preview
+-- draws a picture as one (`kawoosh.image`). A
 -- listing's edits are kept — leaving it and coming back finds them —
 -- until `:w` applies them or `<C-l>` drops them. `:dir PATH` lists a
 -- directory, or a file's directory with the caret on the file — `:dir
@@ -140,6 +144,14 @@ end
 -- The listing's lines and, by line, what each entry is: a file's size
 -- right-aligned past the longest name, then the mtime.
 local function shape(d, entries)
+  -- Dot files left out while `dir.hidden` is false (`g.` flips it).
+  if kawoosh.opt("dir.hidden") == false then
+    local shown = {}
+    for _, e in ipairs(entries) do
+      if e.name:sub(1, 1) ~= "." then shown[#shown + 1] = e end
+    end
+    entries = shown
+  end
   entries = sorted(entries, sort_of(d))
   local lines, meta, width = { "../" }, {}, 3
   for _, e in ipairs(entries) do
@@ -301,6 +313,8 @@ function dir.open(path, from, fresh, reread)
       line = line_of(lines, from),
     }
     kawoosh.buf.annotate(meta, name)
+    -- Not in the snapshot until the next frame: named to the watch.
+    if dir.watch_sync then dir.watch_sync(path) end
   end)
 end
 
@@ -318,6 +332,7 @@ local function relist(d, h)
       line = line_of(lines, under_caret(h)),
     }
     kawoosh.buf.annotate(meta, name)
+    if dir.watch_sync then dir.watch_sync() end
   end)
 end
 
@@ -990,6 +1005,15 @@ local cache = {}
 local PREVIEW_MAX = 512 * 1024
 local PREVIEW_LINES = 400
 
+-- The files the preview draws as a picture (`kawoosh.image`, what the
+-- engine decodes), by extension.
+dir.images = { png = true, jpg = true, jpeg = true, gif = true }
+
+function dir.is_image(path)
+  local ext = path:match("%.([%w]+)$")
+  return ext ~= nil and dir.images[ext:lower()] == true
+end
+
 local function preview_of(path, st)
   local key = tostring(st.size) .. ":" .. tostring(st.modified)
   local c = cache[path]
@@ -1010,6 +1034,8 @@ local function preview_of(path, st)
       end
       if #c.lines == 0 then c.note = "empty" end
     end)
+  elseif dir.is_image(path) then
+    c.image = true
   elseif st.size > PREVIEW_MAX then
     c.note = "too big to preview (" .. human(st.size) .. ")"
   else
@@ -1019,6 +1045,8 @@ local function preview_of(path, st)
     elseif text:find("\0", 1, true) then
       c.note = "binary"
     else
+      -- What a mask rule hides in the file stays hidden here.
+      text = kawoosh.secrets.mask_text(text, path)
       for line in (text .. "\n"):gmatch("(.-)\n") do
         c.lines[#c.lines + 1] = (line:gsub("\t", "    "))
         if #c.lines >= PREVIEW_LINES then break end
@@ -1065,6 +1093,24 @@ kawoosh.view(PREVIEW, function(ctx)
   say(facts)
   local c = preview_of(path, st)
   if c.note then say(c.note) end
+  -- A picture: fitted to the pane, never larger than it is.
+  if c.image then
+    local img, why = kawoosh.image(path)
+    if not img then
+      say(why or "reading…")
+      return root
+    end
+    say(img.width .. " × " .. img.height)
+    local room_w = math.max((ctx.width or 400) - 16, 16)
+    local room_h = math.max((ctx.height or 300) - 3 * (size + 8) - 8, 16)
+    local scale = math.min(1, room_w / img.width, room_h / img.height)
+    root[#root + 1] = image {
+      id = img.id, fit = "contain",
+      width = math.max(1, math.floor(img.width * scale)),
+      height = math.max(1, math.floor(img.height * scale)),
+    }
+    return root
+  end
   local row_h = size + 4
   local rows = (ctx.height or 0) > 0 and math.floor((ctx.height - 3 * (size + 8)) / row_h) or 40
   for i = 1, math.min(#c.lines, math.max(rows, 0)) do
@@ -1107,6 +1153,56 @@ kawoosh.on_restore(function(name, h)
   if d and d ~= DRIVES and fs.is_dir(d) then relist(d, h) end
 end)
 
+-- ------------------------------------------------ hidden files, watch
+
+-- Every listing open, by handle, and the directory it lists.
+local function open_listings()
+  local out = {}
+  for _, h in ipairs(kawoosh.buf.list()) do
+    local d = lists(h)
+    if d and d ~= DRIVES then out[#out + 1] = { h = h, dir = d } end
+  end
+  return out
+end
+
+-- The directories the open listings show, on a watch: one that changes
+-- on disk — an entry made, removed, renamed by anything — is read again
+-- where it is, unless the listing has edits of its own (its plan comes
+-- first; `<C-l>` asks).
+function dir.watch_sync(also)
+  local dirs, seen = {}, {}
+  if also then
+    seen[also] = true
+    dirs[1] = also
+  end
+  for _, l in ipairs(open_listings()) do
+    if not seen[l.dir] then
+      seen[l.dir] = true
+      dirs[#dirs + 1] = l.dir
+    end
+  end
+  if #dirs == 0 then return kawoosh.fs.watch("dir", nil) end
+  kawoosh.fs.watch("dir", dirs, function(changed)
+    local moved = {}
+    for _, d in ipairs(changed) do moved[d] = true end
+    for _, l in ipairs(open_listings()) do
+      if moved[l.dir] and not kawoosh.buf.modified(l.h) then relist(l.dir, l.h) end
+    end
+  end)
+end
+
+-- `g.` (oil's): dot files shown or not, every unedited listing read
+-- again.
+kawoosh.command("dir hidden", function()
+  local show = kawoosh.opt("dir.hidden") == false
+  kawoosh.opt("dir.hidden", show)
+  for _, l in ipairs(open_listings()) do
+    if not kawoosh.buf.modified(l.h) then relist(l.dir, l.h) end
+  end
+  kawoosh.echo(show and "hidden files shown" or "hidden files hidden")
+end, { doc = "show or hide the dot files in the listings (`dir.hidden`, `g.`)" })
+
+kawoosh.map("n", "g.", "dir hidden", { when = { "language:dir" } })
 kawoosh.map("n", "<CR>", "goto location", { when = { "!language:dir" } })
 kawoosh.map("n", "<CR>", "dir enter")
 -- A double click on a line is `<CR>` on it.
