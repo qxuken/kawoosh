@@ -115,7 +115,16 @@ pub struct Grammar {
     /// fence's content is `@none`, and a heading's `#` is punctuation
     /// like any other). The markdown buffer draws from it.
     pub structure: Option<Structure>,
+    /// What the grammar reads instead of lines it parses wrong: each
+    /// range of the text and a stand-in of the same length. The text
+    /// keeps its bytes — only the parser reads the stand-ins — and a
+    /// document with one is parsed whole, since an edit elsewhere can
+    /// change them. Markdown's table rows with an empty cell.
+    pub stand_ins: Option<StandIns>,
 }
+
+/// A grammar's stand-ins for a text (`Grammar::stand_ins`).
+pub type StandIns = fn(&str) -> Vec<(std::ops::Range<usize>, Vec<u8>)>;
 
 /// A structure query and what each capture is.
 #[derive(Debug)]
@@ -268,6 +277,7 @@ impl Grammar {
             classes,
             injections,
             structure: None,
+            stand_ins: None,
         })
     }
 
@@ -289,6 +299,12 @@ impl Grammar {
         }
         self.structure = Some(Structure { query, kinds });
         Ok(self)
+    }
+
+    /// The lines the parser reads otherwise (`Grammar::stand_ins`).
+    pub fn with_stand_ins(mut self, f: StandIns) -> Self {
+        self.stand_ins = Some(f);
+        self
     }
 
     /// Reads capture `name` — its whole name, or its head — as `token`

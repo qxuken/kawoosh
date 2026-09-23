@@ -397,12 +397,17 @@ fn highlight(
     let mut block_spans: Option<Vec<Range<usize>>> = None;
     let (runs, tree): (Vec<Vec<Run>>, Option<Tree>) = match grammars.get(&job.language) {
         Some(g) if parser.set_language(&g.language).is_ok() => {
+            // What the parser reads instead of lines the grammar gets
+            // wrong (`Grammar::stand_ins`): a text with any is parsed
+            // whole and its tree not kept, so the next parse is whole
+            // too — an edit anywhere can change which lines they are.
+            let stood_in = stand_in(&g, text);
             // The last tree, told the edits, when it is this language's
             // and the journal reached back to it.
             let old = parsed
                 .by_buffer
                 .remove(&job.buffer)
-                .filter(|(lang, _, _)| *lang == job.language)
+                .filter(|(lang, _, _)| *lang == job.language && stood_in.is_none())
                 .and_then(|(_, old_text, mut tree)| {
                     let edits = job.edits.as_ref()?;
                     let edited = if let Some(spans) = tell_each(&mut tree, edits, &old_text, text) {
@@ -425,7 +430,10 @@ fn highlight(
                     };
                     Some((tree, edited))
                 });
-            let mut read = |byte: usize, _: Point| text.chunk_at(byte);
+            let mut read = |byte: usize, _: Point| match &stood_in {
+                Some(b) => &b[byte.min(b.len())..],
+                None => text.chunk_at(byte),
+            };
             match parser.parse_with_options(&mut read, old.as_ref().map(|(t, _)| t), None) {
                 Some(tree) => {
                     if let Some((old_tree, edited)) = &old {
@@ -460,9 +468,11 @@ fn highlight(
                         block_spans = Some(lines);
                     }
                     let handle = tree.clone();
-                    parsed
-                        .by_buffer
-                        .insert(job.buffer, (job.language.clone(), text.clone(), tree));
+                    if stood_in.is_none() {
+                        parsed
+                            .by_buffer
+                            .insert(job.buffer, (job.language.clone(), text.clone(), tree));
+                    }
                     (runs, Some(handle))
                 }
                 None => (vec![Vec::new()], None),
@@ -501,13 +511,34 @@ fn highlight(
     }
 }
 
+/// The text as `g` reads it, when it has stand-ins for some of its
+/// lines (`Grammar::stand_ins`); None when it reads the text itself.
+fn stand_in(g: &Grammar, text: &text_buffer::Buffer) -> Option<Vec<u8>> {
+    let f = g.stand_ins?;
+    let mut bytes = text.collect();
+    let subs = f(std::str::from_utf8(&bytes).ok()?);
+    if subs.is_empty() {
+        return None;
+    }
+    for (r, with) in subs {
+        if r.end <= bytes.len() && r.len() == with.len() {
+            bytes[r].copy_from_slice(&with);
+        }
+    }
+    Some(bytes)
+}
+
 /// A [`TextJob`]: the text parsed whole by its language's grammar and
 /// its runs read, nothing kept for later.
 fn highlight_text(parser: &mut Parser, grammars: &mut Grammars, job: &TextJob) -> TextAnswer {
     let text = text_buffer::Buffer::with_text(job.text.as_bytes());
     let runs = match grammars.get(&job.language) {
         Some(g) if parser.set_language(&g.language).is_ok() => {
-            let mut read = |byte: usize, _: Point| text.chunk_at(byte);
+            let stood_in = stand_in(&g, &text);
+            let mut read = |byte: usize, _: Point| match &stood_in {
+                Some(b) => &b[byte.min(b.len())..],
+                None => text.chunk_at(byte),
+            };
             match parser.parse_with_options(&mut read, None, None) {
                 Some(tree) => {
                     capture_runs(parser, grammars, &g, tree.root_node(), &text, 0..text.len())
@@ -791,6 +822,7 @@ fn parse_range(
 mod tests {
     use super::*;
     use kawoosh_doc::Buffer;
+    use kawoosh_languages::Block;
 
     #[test]
     fn rust_gets_keywords_strings_and_comments() {
@@ -1274,6 +1306,70 @@ mod tests {
         assert_eq!(tok_at("em30", &buf), Some(Token::Emphasis));
         assert_eq!(tok_at("c30`", &buf), Some(Token::Raw));
         assert_eq!(tok_at("fn f30", &buf), Some(Token::Keyword));
+    }
+
+    /// A table's row with an empty cell, typed a pipe at a time, leaves
+    /// the rest of the document parsed: the heading after it a heading
+    /// and not the table's (a lone `|`) or an ERROR's (`|||`), the row
+    /// the table's; and the parse after it, back to a plain text, whole.
+    #[test]
+    fn a_row_of_empty_cells_does_not_swallow_the_document() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let mut buf = Buffer::new(
+            "t",
+            "| a | b |\n|---|---|\n| c | d |\n\n\n## Next\n\n```\ncode\n```\n",
+        );
+        buf.language = "markdown".into();
+        let mut sent: Option<kawoosh_doc::Version> = None;
+        let mut run = |buf: &mut Buffer| {
+            let edits = sent
+                .and_then(|v| buf.journal().edits_since(v).ok())
+                .map(|it| it.cloned().collect());
+            sent = Some(buf.version());
+            let job = Job {
+                buffer: BufferId::default(),
+                language: "markdown".into(),
+                snapshot: buf.snapshot(),
+                edits,
+            };
+            for u in highlight(&mut parser, &mut g, &mut parsed, &job).updates {
+                buf.apply(u).unwrap();
+            }
+        };
+        let blocks = |buf: &Buffer, o: usize| -> Vec<Block> {
+            buf.runs(STRUCT_LAYER, o..o + 1)
+                .iter()
+                .filter_map(|r| Block::from_style(r.style))
+                .collect()
+        };
+        let block_at = |buf: &Buffer, needle: &str| -> Vec<Block> {
+            let o = buf.text().find(needle).unwrap();
+            buf.runs(STRUCT_LAYER, o..o + 1)
+                .iter()
+                .filter_map(|r| Block::from_style(r.style))
+                .collect()
+        };
+        run(&mut buf);
+        let row = buf.text().find("\n\n\n").unwrap() + 1;
+        for typed in ["|", "|", "|"] {
+            let at = buf.text()[row..].find('\n').unwrap() + row;
+            buf.replace(at..at, typed);
+            run(&mut buf);
+            let line = &buf.text()[row..buf.text()[row..].find('\n').unwrap() + row];
+            assert_eq!(block_at(&buf, "## Next"), [Block::H2], "after {line:?}");
+            assert_eq!(block_at(&buf, "code"), [Block::Code], "after {line:?}");
+            assert!(
+                blocks(&buf, row).contains(&Block::Table),
+                "{line:?} is the table's row"
+            );
+        }
+        let at = buf.text()[row..].find('\n').unwrap() + row;
+        buf.replace(row..at, "");
+        run(&mut buf);
+        assert_eq!(block_at(&buf, "## Next"), [Block::H2]);
+        assert!(block_at(&buf, "| c").contains(&Block::Table));
     }
 
     /// A language told to the thread highlights with the grammar it
