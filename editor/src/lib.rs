@@ -1744,6 +1744,15 @@ impl Editor {
             })
             .collect();
         sorted.sort_by_key(|(r, _)| (r.start, r.end));
+        // Disjoint, whatever came: an edit reaching into the one before
+        // starts where it ends — applied in turn, an overlap would land
+        // in a text the earlier edit had moved, and cut a character.
+        let mut reached = 0;
+        for (r, _) in &mut sorted {
+            r.start = r.start.max(reached);
+            r.end = r.end.max(r.start);
+            reached = r.end;
+        }
         let refs: Vec<(Range<usize>, &str)> = sorted
             .iter()
             .map(|(r, t)| (r.clone(), t.as_str()))

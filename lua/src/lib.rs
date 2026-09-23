@@ -300,10 +300,12 @@ pub enum Msg {
         buffer: u64,
         edits: Vec<(std::ops::Range<usize>, String)>,
     },
-    /// Every selection of the buffer's view at once, the first primary.
+    /// Every selection of the buffer's view at once, `primary` the
+    /// index of the primary.
     SetSelections {
         buffer: u64,
         sels: Vec<(usize, usize)>,
+        primary: usize,
     },
 }
 
@@ -1415,22 +1417,27 @@ impl Runtime {
                 Msg::Edits { buffer, edits } => {
                     ed.apply_edits(id_of(buffer), &edits);
                 }
-                Msg::SetSelections { buffer, sels } => {
+                Msg::SetSelections {
+                    buffer,
+                    sels,
+                    primary,
+                } => {
                     let id = id_of(buffer);
-                    let Some(len) = ed.buffers.get(id).map(|b| b.len()) else {
+                    let Some(b) = ed.buffers.get(id) else {
                         continue;
                     };
                     if sels.is_empty() {
                         continue;
                     }
+                    // On a character's start, as every caret is: an
+                    // offset inside one is snapped back to it.
+                    let at = |o: usize| b.floor_char(o.min(b.len()));
                     let mut out = kawoosh_editor::Selections {
                         items: sels
                             .iter()
-                            .map(|(a, h)| {
-                                kawoosh_editor::Selection::new((*a).min(len), (*h).min(len))
-                            })
+                            .map(|(a, h)| kawoosh_editor::Selection::new(at(*a), at(*h)))
                             .collect(),
-                        primary: 0,
+                        primary: primary.min(sels.len() - 1),
                     };
                     out.normalize();
                     // The command's view when it shows the buffer, else
@@ -2354,12 +2361,15 @@ fn seed(
     buf.set(
         "selections",
         lua.create_function(move |lua, h: Option<u64>| {
-            let sels = with_buf(&pp, h, |b| b.sels.clone())?;
+            let (sels, primary) = with_buf(&pp, h, |b| (b.sels.clone(), b.primary))?;
             let t = lua.create_table()?;
             for (i, (a, hd)) in sels.iter().enumerate() {
                 let s = lua.create_table()?;
                 s.set("anchor", *a)?;
                 s.set("head", *hd)?;
+                if i == primary {
+                    s.set("primary", true)?;
+                }
                 t.set(i + 1, s)?;
             }
             Ok(t)
@@ -2671,7 +2681,9 @@ fn seed(
     // `kawoosh.buf.edits({ { from, to, text }, … }[, buffer])`: several
     // edits as one step — offsets from 0 in the text as it is, `to`
     // exclusive, disjoint — every view's selections carried through
-    // them (`Editor::apply_edits`).
+    // them (`Editor::apply_edits`). A range backwards, or two that
+    // overlap, is an error: applied one after another they would each
+    // land in a text the one before had moved.
     let qq = q(queue);
     let pp = published.clone();
     buf.set(
@@ -2685,15 +2697,29 @@ fn seed(
                 let from: usize = e.get(1)?;
                 let to: usize = e.get(2)?;
                 let text: String = e.get(3)?;
-                edits.push((from..to.max(from), text));
+                if to < from {
+                    return Err(mlua::Error::runtime(format!(
+                        "edits: {from}..{to} ends before it starts"
+                    )));
+                }
+                edits.push((from..to, text));
+            }
+            let mut by_start: Vec<&std::ops::Range<usize>> = edits.iter().map(|(r, _)| r).collect();
+            by_start.sort_by_key(|r| (r.start, r.end));
+            if let Some(w) = by_start.windows(2).find(|w| w[1].start < w[0].end) {
+                return Err(mlua::Error::runtime(format!(
+                    "edits: {:?} and {:?} overlap",
+                    w[0], w[1]
+                )));
             }
             qq.borrow_mut().push(Msg::Edits { buffer: h, edits });
             Ok(())
         })?,
     )?;
-    // `kawoosh.buf.set_selections({ { anchor, head }, … }[, buffer])`:
-    // the selections as given, the first the primary — after the edits
-    // asked before it, in the text they leave.
+    // `kawoosh.buf.set_selections({ { anchor, head[, primary] }, … }[,
+    // buffer])`: the selections as given — the one marked `primary`
+    // (as `selections()` marks it) the primary, else the first — after
+    // the edits asked before it, in the text they leave.
     let qq = q(queue);
     let pp = published.clone();
     buf.set(
@@ -2703,6 +2729,7 @@ fn seed(
                 .or(pp.borrow().current)
                 .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
             let mut sels = Vec::with_capacity(list.len());
+            let mut primary = 0;
             for s in list {
                 let a: usize = s
                     .get::<Option<usize>>("anchor")?
@@ -2710,9 +2737,16 @@ fn seed(
                 let hd: usize = s
                     .get::<Option<usize>>("head")?
                     .map_or_else(|| s.get(2), Ok)?;
+                if s.get::<Option<bool>>("primary")? == Some(true) {
+                    primary = sels.len();
+                }
                 sels.push((a, hd));
             }
-            qq.borrow_mut().push(Msg::SetSelections { buffer: h, sels });
+            qq.borrow_mut().push(Msg::SetSelections {
+                buffer: h,
+                sels,
+                primary,
+            });
             Ok(())
         })?,
     )?;
@@ -3495,6 +3529,29 @@ mod tests {
             .map(|s| (s.anchor, s.head))
             .collect();
         assert_eq!(sels, [(2, 2), (8, 8)]);
+        // Overlapping or backwards ranges are refused; the primary is
+        // marked and taken back; an offset inside a character is its
+        // start.
+        rt.publish(&ed, Some(v));
+        rt.load_source(
+            "t",
+            r#"
+            assert(not pcall(kawoosh.buf.edits, { { 0, 2, "" }, { 1, 3, "" } }), "overlap")
+            assert(not pcall(kawoosh.buf.edits, { { 3, 1, "" } }), "backwards")
+            assert(kawoosh.buf.selections()[1].primary == true)
+            kawoosh.buf.set_selections({ { 3, 3 }, { 8, 8, primary = true } })
+            "#,
+        )
+        .unwrap();
+        Runtime::apply_editor_msgs(&mut ed, v, rt.take_msgs());
+        assert_eq!(ed.buffers[b].text(), "a(é c\nx(y", "nothing applied");
+        let s = &ed.views[v].sels;
+        assert_eq!(s.primary().head, 8, "the second is the primary");
+        assert_eq!(
+            s.iter().next().unwrap().head,
+            2,
+            "3 is inside `é`: its start"
+        );
     }
 
     /// `kawoosh.opt`: a read is the effective value, typed — a number,
