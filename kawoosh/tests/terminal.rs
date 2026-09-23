@@ -650,3 +650,36 @@ fn the_register_follows_the_system_clipboard() {
     d.keys(&mut app, "$p");
     assert_eq!(app.ed.buffer_of(v).text(), "abcfrom elsewhere");
 }
+
+/// A look at the clipboard claims only an ask of its own: with a paste
+/// already out (a menu's Paste row asked it), kui drops a second ask, and
+/// the answer that comes is that paste's — put in the text, not taken
+/// into the register as the look's; and the text after it is typing.
+#[test]
+fn a_clipboard_look_claims_only_its_own_ask() {
+    let mut app = Kawoosh::new("t", "abc");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    app.add_headless_terminal();
+    d.frame(&mut app);
+    d.ctrl(&mut app, "w");
+    d.core.request_paste();
+    d.keys(&mut app, "k");
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    d.keys(&mut app, "A");
+    d.input(&mut app, InputEvent::Commit("pasted".into()));
+    d.frame(&mut app);
+    assert_eq!(
+        app.ed.buffer_of(v).text(),
+        "abcpasted",
+        "the paste is the text's"
+    );
+    d.input(&mut app, InputEvent::Commit("é".into()));
+    d.frame(&mut app);
+    assert_eq!(
+        app.ed.buffer_of(v).text(),
+        "abcpastedé",
+        "and a commit after it is typing"
+    );
+}

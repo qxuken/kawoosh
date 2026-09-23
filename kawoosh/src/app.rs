@@ -897,10 +897,20 @@ impl Kawoosh {
         if self.ed.settings.bool("clipboard.system") == Some(false) {
             return;
         }
+        // A look kui no longer awaits was answered — its text reached
+        // `on_event` before this frame, which took the flag — or went
+        // elsewhere; either way the next text is typing, not the
+        // clipboard.
+        if self.clip_probe && !ui.awaiting_paste() {
+            self.clip_probe = false;
+        }
         let back = (window && !was_window) || (editor && !was_editor);
-        if back && !self.awaiting_paste && !self.clip_probe {
-            self.clip_probe = true;
+        // kui holds one ask at a time and drops a second: a look asked
+        // while another paste is out would claim that paste's answer, so
+        // it is asked only when the ask is its own.
+        if back && !self.awaiting_paste && !self.clip_probe && !ui.awaiting_paste() {
             ui.request_paste();
+            self.clip_probe = ui.awaiting_paste();
         }
     }
 

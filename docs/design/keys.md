@@ -458,7 +458,11 @@ so that nothing else takes the key meanwhile.
   clipboard back (`clipboard.system`, on): what another program or a
   terminal's selection put there is read when the window, or an editor
   pane, gets the keys back, and is the register's newest, so `p` puts
-  it (helix's `<leader>p` is the memory pane here). The register is the
+  it (helix's `<leader>p` is the memory pane here). The look is a paste
+  asked of kui whose answer goes to the register: it is asked only when
+  kui holds no other ask — kui drops a second, and the look would take
+  the other paste's answer (a menu's Paste row) into the register — and
+  one kui no longer awaits is let go, so text after it is typing. The register is the
   head of the *memory*'s texts (`:memory`, `<leader>p`): every yank,
   delete, change and clipboard paste is a moment it keeps, newest
   first, with where it came from, on disk before the next key and back
