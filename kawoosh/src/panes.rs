@@ -944,9 +944,12 @@ impl Kawoosh {
         );
         if focused {
             self.focus_sink(ui, sink);
-        } else if ui.key_focus() == Some(sink) {
+        } else if ui.key_focus() == Some(sink) && self.key_focus_seen != Some(sink) {
             // A press in the grid starts a selection, not a click, and
             // takes kui's keyboard to this pane's sink: the pane follows.
+            // Only a move since last frame: kui still names this sink on
+            // the frame the pane focus leaves it (`<C-w>j`, `gf`), and a
+            // terminal drawn first would take the focus straight back.
             self.layout.focus(pane);
             ui.request_frame();
         }

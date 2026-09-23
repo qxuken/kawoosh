@@ -571,8 +571,12 @@ impl Terminal {
     /// its process's own (`proc_pidinfo` on macOS, `/proc` on Linux),
     /// else where it was started.
     pub fn cwd(&self) -> Option<std::path::PathBuf> {
+        // A reported directory that is not one here — a shell over ssh
+        // that reported its host's, and exited — gives way to the
+        // process's own.
         self.reported_cwd
             .clone()
+            .filter(|p| p.is_dir())
             .or_else(|| self.process_cwd())
             .or_else(|| self.spawned_in.clone())
     }
@@ -695,7 +699,17 @@ impl Terminal {
                 pixel_height: 0,
             });
         }
+        // Shrunk, the screen's top lines go into history; grown, lines
+        // come back out of it: a line keeps its number (`scrolled + l`)
+        // through either. (Past the cap, lines dropped off history's
+        // far end are not seen here.)
+        let alt = self.term.mode().contains(TermMode::ALT_SCREEN);
+        let before = self.term.grid().history_size() as i64;
         self.term.resize(size);
+        if !alt {
+            let after = self.term.grid().history_size() as i64;
+            self.modes.scrolled = (self.modes.scrolled as i64 + after - before).max(0) as u64;
+        }
     }
 
     /// Scrolls the viewport `lines` into history (positive = older).
@@ -955,21 +969,29 @@ fn config(history: usize) -> Config {
     }
 }
 
-/// The path of a `file://host/path` URL, percent-decoded; the host is
-/// the shell's and not checked (a shell over ssh reports its own, and a
-/// path that is not here is a directory `gf` will not find).
+/// The path of a `file://host/path` URL, percent-decoded, when the host
+/// is this machine's (none, `localhost`, or its name): a shell over ssh
+/// reports its own host's directory, which is not one here.
 fn file_url_path(url: &str) -> Option<std::path::PathBuf> {
     let rest = url.strip_prefix("file://")?;
-    let path = &rest[rest.find('/')?..];
+    let slash = rest.find('/')?;
+    let host = &rest[..slash];
+    if !(host.is_empty() || host.eq_ignore_ascii_case("localhost") || is_this_host(host)) {
+        return None;
+    }
+    let path = &rest[slash..];
     let bytes = path.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
+    // On bytes: a `%` before a character of more than one byte is not
+    // an escape, and slicing the `str` there would cut the character.
+    let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
     while i < bytes.len() {
         if bytes[i] == b'%'
             && i + 2 < bytes.len()
-            && let Ok(v) = u8::from_str_radix(&path[i + 1..i + 3], 16)
+            && let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2]))
         {
-            out.push(v);
+            out.push(hi << 4 | lo);
             i += 3;
             continue;
         }
@@ -983,6 +1005,32 @@ fn file_url_path(url: &str) -> Option<std::path::PathBuf> {
         _ => s,
     };
     Some(std::path::PathBuf::from(s))
+}
+
+/// Whether `host` names this machine: its host name, or that name's
+/// first label (`mac.local` reports `mac`, a shell may report either).
+fn is_this_host(host: &str) -> bool {
+    #[cfg(unix)]
+    {
+        let mut buf = [0u8; 256];
+        // SAFETY: `gethostname` writes at most `buf.len()` bytes into
+        // `buf`, which it owns for the call.
+        let r = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) };
+        if r != 0 {
+            return false;
+        }
+        let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+        let Ok(name) = std::str::from_utf8(&buf[..end]) else {
+            return false;
+        };
+        let short = |s: &str| s.split('.').next().unwrap_or(s).to_ascii_lowercase();
+        name.eq_ignore_ascii_case(host) || short(name) == short(host)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = host;
+        false
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1547,17 +1595,53 @@ mod tests {
     }
 
     /// OSC 7 sets where the shell is, split across reads and with its
-    /// escapes decoded; the parser still sees the bytes around it.
+    /// escapes decoded; the parser still sees the bytes around it. A
+    /// report from another host, or of a directory not here, is not
+    /// where this shell is; a `%` before a character of two bytes is not
+    /// an escape, and does not cut the character.
     #[test]
     fn the_shell_reports_its_directory() {
+        let dir = std::env::temp_dir().join(format!("kawoosh term {}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = dir.to_str().unwrap().replace(' ', "%20");
+        let (a, b) = url.split_at(url.len() - 2);
         let mut t = Terminal::headless(TermSize { rows: 3, cols: 20 });
         assert_eq!(t.cwd(), None);
-        t.feed(b"a\x1b]7;file://host/tmp/my%20di");
-        t.feed(b"r\x1b\\b");
-        assert_eq!(t.cwd(), Some(std::path::PathBuf::from("/tmp/my dir")));
+        t.feed(format!("a\x1b]7;file://{a}").as_bytes());
+        t.feed(format!("{b}\x1b\\b").as_bytes());
+        assert_eq!(t.cwd(), Some(dir.clone()));
         assert_eq!(rows(&t)[0], "ab");
-        t.feed(b"\x1b]7;file://h/x\x07");
-        assert_eq!(t.cwd(), Some(std::path::PathBuf::from("/x")));
+        t.feed(b"\x1b]7;file://elsewhere.example/tmp\x07");
+        assert_eq!(t.cwd(), Some(dir.clone()), "another host's is not taken");
+        t.feed(b"\x1b]7;file://localhost/no/such/dir\x07");
+        assert_eq!(t.cwd(), None, "nor one that is not here");
+        t.feed("\x1b]7;file:///tmp/%a\u{e9}\x07".as_bytes());
+        assert_eq!(t.cwd(), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A resize moves lines between the screen and history, and the
+    /// marks stay on their lines: the last output reads the same after
+    /// shrinking and growing, and a command after it is marked where it
+    /// ran.
+    #[test]
+    fn marks_survive_a_resize() {
+        let mut t = Terminal::headless(TermSize { rows: 10, cols: 20 });
+        for i in 0..6 {
+            t.feed(format!("l{i}\r\n").as_bytes());
+        }
+        t.feed(
+            b"\x1b]133;A\x07$ \x1b]133;B\x07ls\r\n\x1b]133;C\x07out1\r\nout2\r\n\x1b]133;D;0\x07",
+        );
+        t.feed(b"\x1b]133;A\x07$ ");
+        assert_eq!(t.last_output().as_deref(), Some("out1\nout2"));
+        t.resize(TermSize { rows: 4, cols: 20 });
+        assert_eq!(t.last_output().as_deref(), Some("out1\nout2"), "shrunk");
+        t.resize(TermSize { rows: 10, cols: 20 });
+        assert_eq!(t.last_output().as_deref(), Some("out1\nout2"), "grown back");
+        t.resize(TermSize { rows: 4, cols: 20 });
+        t.feed(b"echo x\r\n\x1b]133;C\x07x\r\n\x1b]133;D;0\x07\x1b]133;A\x07$ ");
+        assert_eq!(t.last_output().as_deref(), Some("x"));
     }
 
     /// OSC 133's marks: each command's prompt, output and end on the

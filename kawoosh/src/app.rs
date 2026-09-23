@@ -185,6 +185,11 @@ pub struct Kawoosh {
     /// that accepts one it cannot see put an invisible word in the text
     /// on `<CR>` (`Kawoosh::completion_key`).
     pub(crate) ghost_shown: bool,
+    /// Which sink held kui's keyboard at the end of the last frame: a
+    /// terminal's grid follows kui's focus only when a press moved it
+    /// there since (`render_terminal`), not when the pane focus has just
+    /// moved on and kui has not caught up.
+    pub(crate) key_focus_seen: Option<kui::Key>,
     /// The last text kawoosh put on the clipboard, which is not news.
     pub(crate) clip_last: Option<String>,
     /// The window's focus and whether an editor pane had the keys, last
@@ -322,6 +327,7 @@ impl Kawoosh {
             awaiting_paste: false,
             clip_probe: false,
             ghost_shown: false,
+            key_focus_seen: None,
             clip_last: None,
             clip_seen: (true, true),
             scroll_carry: 0.0,
@@ -1808,12 +1814,27 @@ impl Kawoosh {
 /// `kawoosh-edit`, in a directory beside the socket — invoked by that
 /// name, the binary is `kawoosh edit --wait` (`main.rs`). None where a
 /// symlink cannot be made, and the terminals get the two-word form.
+///
+/// The directory is this user's alone: made 0700, or — left by a run
+/// that crashed with this pid — taken only when it is a directory this
+/// user owns that no one else can write. Beside a socket in `/tmp` (no
+/// `XDG_RUNTIME_DIR`) the name is guessable, and a directory someone
+/// else made there could swap the link for a program of theirs that
+/// every `git commit` in a terminal would run.
 fn editor_shim(socket: &Path) -> Option<PathBuf> {
     #[cfg(unix)]
     {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt};
         let exe = std::env::current_exe().ok()?;
         let dir = socket.with_extension("bin");
-        std::fs::create_dir_all(&dir).ok()?;
+        if std::fs::DirBuilder::new().mode(0o700).create(&dir).is_err() {
+            let meta = std::fs::symlink_metadata(&dir).ok()?;
+            // SAFETY: `getuid` has no preconditions and cannot fail.
+            let me = unsafe { libc::getuid() };
+            if !meta.is_dir() || meta.uid() != me || meta.mode() & 0o022 != 0 {
+                return None;
+            }
+        }
         let link = dir.join(crate::EDITOR_SHIM);
         let _ = std::fs::remove_file(&link);
         std::os::unix::fs::symlink(exe, &link).ok()?;
@@ -2006,6 +2027,7 @@ impl kui::App for Kawoosh {
             self.confirm_float(ui);
         });
         self.line_cells.sweep();
+        self.key_focus_seen = ui.key_focus();
         self.perf.end_frame(ms(frame_started));
         if self.hud {
             kui::widgets::latency_hud(ui);
@@ -2220,4 +2242,36 @@ pub(crate) fn first_line(b: &Buffer) -> String {
         .next()
         .unwrap_or("")
         .to_owned()
+}
+
+#[cfg(all(test, unix))]
+mod shim_tests {
+    use super::editor_shim;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// The shim's directory is made 0700, and one that others can write
+    /// — made there before this run — is not used.
+    #[test]
+    fn the_shim_lives_where_only_its_user_writes() {
+        let base = std::env::temp_dir().join(format!("kawoosh-shim-{}", std::process::id()));
+        std::fs::remove_dir_all(&base).ok();
+        std::fs::create_dir_all(&base).unwrap();
+        let link = editor_shim(&base.join("mine.sock")).expect("a shim");
+        let dir = link.parent().unwrap();
+        assert_eq!(
+            std::fs::metadata(dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        // Made again by the same run (a pid reused after a crash): kept.
+        assert!(editor_shim(&base.join("mine.sock")).is_some());
+        let open = base.join("open.bin");
+        std::fs::create_dir(&open).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert_eq!(
+            editor_shim(&base.join("open.sock")),
+            None,
+            "a directory others can write"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
 }

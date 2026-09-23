@@ -151,7 +151,7 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
     // The shell says where it is (OSC 7), and `gf` resolves from there.
     app.feed_terminal(
         t,
-        format!("\x1b]7;file://host{}\x07", dir.display()).as_bytes(),
+        format!("\x1b]7;file://{}\x07", dir.display()).as_bytes(),
     );
     app.feed_terminal(t, b"error[E0000]: boom\r\n  --> src/lib.rs:3:1\r\n");
     d.frame(&mut app);
@@ -681,5 +681,42 @@ fn a_clipboard_look_claims_only_its_own_ask() {
         app.ed.buffer_of(v).text(),
         "abcpastedé",
         "and a commit after it is typing"
+    );
+}
+
+/// The pane focus leaving a terminal drawn before the pane it goes to
+/// stays gone: kui still names the terminal's sink on that frame, and
+/// the grid follows kui's focus only when a press moved it there — else
+/// `<C-w>j`, `gf` and `$EDITOR` from a terminal on top left the keys in
+/// the shell.
+#[test]
+fn focus_leaves_a_terminal_drawn_first() {
+    let mut app = Kawoosh::new("t", "a\nb");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    app.add_headless_terminal();
+    d.frame(&mut app);
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "x");
+    d.frame(&mut app);
+    let panes = app.layout.all_panes();
+    let term = panes
+        .iter()
+        .copied()
+        .find(|p| matches!(app.layout.content(*p), Some(Content::Terminal(_))))
+        .unwrap();
+    let editor = panes.iter().copied().find(|p| *p != term).unwrap();
+    assert_eq!(app.layout.focused(), term);
+    assert!(
+        app.layout.rects[&term].y < app.layout.rects[&editor].y,
+        "the terminal on top"
+    );
+    app.layout.focus(editor);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(
+        app.layout.focused(),
+        editor,
+        "the focus stays on the editor"
     );
 }

@@ -448,6 +448,11 @@ pub enum Took {
     Change,
     /// Pasted in from the system clipboard.
     Clipboard,
+    /// On the system clipboard when kawoosh looked (`adopt_clipboard`),
+    /// put by nothing yet: the register's for `p`, and never written to
+    /// disk — a password copied elsewhere is not kept for having been
+    /// there when the window came to the front.
+    Seen,
 }
 
 impl Took {
@@ -457,6 +462,7 @@ impl Took {
             Took::Delete => "delete",
             Took::Change => "change",
             Took::Clipboard => "clipboard",
+            Took::Seen => "seen",
         }
     }
 }
@@ -2248,7 +2254,7 @@ impl Editor {
         self.memory.remember(Moment {
             text: text.to_string(),
             linewise: text.ends_with('\n'),
-            took: Took::Clipboard,
+            took: Took::Seen,
             origin: None,
             from: "clipboard".into(),
             at: Instant::now(),

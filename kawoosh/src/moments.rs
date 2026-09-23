@@ -449,8 +449,11 @@ impl Kawoosh {
                         .store
                         .as_ref()
                         .is_some_and(|s| s.moment(&key).is_some());
-                    let write =
-                        self.max_bytes(TEXT_MAX_MB, None).is_some() && m.text.len() <= TEXT_MAX;
+                    // What the clipboard held when kawoosh looked is not
+                    // written until something puts it (`Took::Seen`).
+                    let write = self.max_bytes(TEXT_MAX_MB, None).is_some()
+                        && m.text.len() <= TEXT_MAX
+                        && m.took != kawoosh_editor::Took::Seen;
                     if known {
                         self.moments.visit(key);
                     } else if write {

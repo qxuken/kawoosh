@@ -223,7 +223,14 @@ impl Kawoosh {
             } else {
                 self.cwd.clone()
             };
-            match self.spawn_terminal_as(Some(id), cmd.as_deref(), Some(&cwd)) {
+            // A tool no plugin registers any more is not a shell under
+            // its name: the pane goes, as one that cannot spawn does.
+            let spawned = if p.tool.is_some() && cmd.is_none() {
+                None
+            } else {
+                self.spawn_terminal_as(Some(id), cmd.as_deref(), Some(&cwd))
+            };
+            match spawned {
                 Some(id) => {
                     if let Some(name) = p.tool {
                         self.scripting.tool_terms.insert(name.clone(), id);

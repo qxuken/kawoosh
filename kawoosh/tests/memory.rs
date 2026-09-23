@@ -1258,3 +1258,34 @@ fn shift_tab_walks_the_views_back() {
     assert_eq!(app.memory_pane.view, View::All, "round to the last");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// What the clipboard held when kawoosh looked is the register's, for
+/// `p`, and is not written to disk: a password copied elsewhere is not
+/// kept for having been there when the window came back. A clipboard
+/// paste and a yank are.
+#[test]
+fn a_clipboard_looked_at_is_not_written() {
+    let dir = tmp("seen");
+    let db = dir.join("state.db");
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "one\n").unwrap();
+    let (mut d, mut app) = launch(&db, &a);
+    d.frame(&mut app);
+    assert!(app.ed.adopt_clipboard("hunter2"));
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    app.ed.paste_text(v, "pasted");
+    d.frame(&mut app);
+    app.flush_moments();
+    let store = app.store.clone().unwrap();
+    let key = |t: &str| kawoosh::moments::text_key(t);
+    assert!(
+        store.moment(&key("hunter2")).is_none(),
+        "a look is not written"
+    );
+    assert!(store.moment(&key("pasted")).is_some(), "a paste is");
+    assert_eq!(
+        moments(&app).first().unwrap(),
+        &(Took::Seen, "hunter2".into())
+    );
+}

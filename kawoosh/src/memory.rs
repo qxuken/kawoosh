@@ -1447,7 +1447,7 @@ impl Kawoosh {
                                         let color = match took {
                                             Took::Yank => pal.insert,
                                             Took::Delete | Took::Change => pal.danger,
-                                            Took::Clipboard => pal.dim,
+                                            Took::Clipboard | Took::Seen => pal.dim,
                                         };
                                         ui.text(took.word(), small(color));
                                     });

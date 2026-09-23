@@ -830,7 +830,9 @@ follow the theme every frame (`panes.rs`).
 - **Terminals in sessions** — done 2026-09-23 [mvp.md notes, use
   2026-09-22]; step 15. The directory is `Terminal::cwd()`: what the
   shell last said (OSC 7, picked out of the byte stream in front of
-  vte, which drops it — across reads, escapes decoded), else the shell
+  vte, which drops it — across reads, escapes decoded; a report from
+  another host, or of a directory that is not one here, not taken —
+  a shell over ssh reports its own host's), else the shell
   process's own (`proc_pidinfo` on macOS, `/proc/PID/cwd` on Linux),
   else where it was started; `gf`, a tool and `:term` from a terminal
   start from it. A session keeps a shell (`PaneData::Terminal {
