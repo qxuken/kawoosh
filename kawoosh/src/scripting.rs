@@ -351,6 +351,7 @@ impl Kawoosh {
                 line,
                 show,
                 watched,
+                private,
             } => {
                 let existing = self
                     .ed
@@ -404,6 +405,9 @@ impl Kawoosh {
                         self.ed.add_buffer(b)
                     }
                 };
+                if private {
+                    self.set_private(id, true);
+                }
                 if hooked {
                     rt.track_lines(&self.ed, id);
                 }
@@ -666,6 +670,26 @@ impl Kawoosh {
                 actions,
                 chosen: default,
             }),
+            Msg::SetPrivate {
+                buffer,
+                name,
+                private,
+            } => match self.lua_buffer(buffer, name) {
+                Some(id) => self.set_private(id, private),
+                None => self.ed.message = "set_private: no such buffer".into(),
+            },
+            Msg::MaskWith { buffer, name, rule } => match self.lua_buffer(buffer, name) {
+                Some(id) => self.mask_with(id, &rule),
+                None => self.ed.message = "mask_with: no such buffer".into(),
+            },
+            Msg::Mask {
+                buffer,
+                name,
+                ranges,
+            } => match self.lua_buffer(buffer, name) {
+                Some(id) => self.mask_ranges(id, ranges.into_iter().map(|(a, b)| a..b).collect()),
+                None => self.ed.message = "mask: no such buffer".into(),
+            },
             Msg::Annotate {
                 buffer,
                 name,
@@ -950,6 +974,22 @@ impl Kawoosh {
                 }
             }
         }
+    }
+
+    /// The buffer a Lua call named: by handle, else by name (a scratch
+    /// just asked for, not yet in the snapshot).
+    fn lua_buffer(&self, handle: Option<u64>, name: Option<String>) -> Option<BufferId> {
+        let id = match (handle, name) {
+            (Some(h), _) => Some(kawoosh_lua::id_of(h)),
+            (None, Some(n)) => self
+                .ed
+                .buffers
+                .iter()
+                .find(|(_, b)| b.name == n)
+                .map(|(id, _)| id),
+            (None, None) => None,
+        };
+        id.filter(|id| self.ed.buffers.contains_key(*id))
     }
 
     /// Closes the pane showing Lua view `name`, if one does; the

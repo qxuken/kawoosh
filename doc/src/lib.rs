@@ -321,6 +321,10 @@ pub struct Buffer {
     /// pointer compare whether an undo landed back on it.
     saved: text_buffer::Buffer,
     pub read_only: bool,
+    /// Holds secrets (docs/design/secrets.md): no history row, no
+    /// moment, not in a session, not sent to a server, and a yank from
+    /// it a secret in the register, never on the system clipboard.
+    pub private: bool,
     /// Still being opened on the io thread ([`Buffer::opening`]): the
     /// bytes indexed so far and the whole, until [`Buffer::attach`]. Read
     /// only meanwhile, and its text is empty.
@@ -359,6 +363,7 @@ impl Buffer {
             path: None,
             modified: false,
             read_only: false,
+            private: false,
             loading: None,
             disk: None,
             language: Arc::from("text"),

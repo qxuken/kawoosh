@@ -1699,6 +1699,7 @@ dependencies = [
  "blake3",
  "criterion",
  "crossbeam-channel",
+ "globset",
  "kawoosh-doc",
  "kawoosh-editor",
  "kawoosh-languages",
@@ -1710,6 +1711,7 @@ dependencies = [
  "libc",
  "log",
  "mlua",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1734,6 +1736,7 @@ dependencies = [
 name = "kawoosh-editor"
 version = "0.0.1"
 dependencies = [
+ "globset",
  "kawoosh-doc",
  "memchr",
  "regex",

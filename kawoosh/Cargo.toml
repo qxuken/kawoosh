@@ -29,6 +29,8 @@ log.workspace = true
 smallvec.workspace = true
 libc = "0.2"
 blake3.workspace = true
+globset = "0.4"
+regex = "1"
 
 [target.'cfg(windows)'.dependencies]
 # The process's memory for the perf tab (`perf::read_mem`).

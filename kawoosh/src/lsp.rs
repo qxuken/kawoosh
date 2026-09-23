@@ -446,7 +446,9 @@ impl Kawoosh {
                 continue;
             };
             let Some(path) = b.path.clone() else { continue };
-            if !served(&b.language) || self.lsp.sent.get(&id) == Some(&b.version()) {
+            // A private buffer's text never leaves the process
+            // (docs/design/secrets.md Decision 1).
+            if b.private || !served(&b.language) || self.lsp.sent.get(&id) == Some(&b.version()) {
                 continue;
             }
             // A change, not the open: the open's diagnostics land at once.
@@ -463,6 +465,14 @@ impl Kawoosh {
                 version: b.version(),
                 text: b.text(),
             });
+        }
+    }
+
+    /// Tells the server holding buffer `id` it closed, and forgets it
+    /// was sent: a buffer made private.
+    pub(crate) fn lsp_close_buffer(&mut self, id: BufferId) {
+        if self.lsp.sent.remove(&id).is_some() {
+            self.lsp.lsp.send(Cmd::Close { buffer: id });
         }
     }
 

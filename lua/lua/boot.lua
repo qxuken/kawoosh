@@ -217,8 +217,9 @@ function kawoosh.tools()
 end
 
 -- kawoosh.buf.open_scratch{ name=, text=, on_write=fn, on_change=fn,
--- read_only=bool, language=, reuse=handle, line=n }: a buffer that is
--- not a file. `on_write(lines)` handles :w; it returns `false` when
+-- read_only=bool, language=, reuse=handle, line=n, private=bool }: a
+-- buffer that is not a file; `private` keeps it out of the store, the
+-- memory, the session and the clipboard (docs/design/secrets.md). `on_write(lines)` handles :w; it returns `false` when
 -- the write is not done yet (a `kawoosh.confirm` is up), and the
 -- buffer stays modified until it is. `on_change(name)` is told, once
 -- a frame, that the text changed — an edit, an undo — so what a
@@ -229,6 +230,20 @@ end
 -- caret goes (from 1); `show = false` fills the buffer where it is —
 -- another pane, the background — without putting it in the focused
 -- pane, or makes it in the background.
+--
+-- Secrets (docs/design/secrets.md), the buffer as `annotate` takes it:
+-- kawoosh.buf.set_private([private = true][, buffer]): no history row,
+-- no memory, not in a session, not sent to a server, a yank from it a
+-- secret in the register (put once, never on the clipboard);
+-- kawoosh.buf.private([buffer]) says whether it is.
+-- kawoosh.buf.mask_with(rule[, buffer]): a `secrets.masks` rule by
+-- name on the buffer whatever its path — a vault decrypted into a
+-- scratch. kawoosh.buf.mask(ranges[, buffer]): `{ {a, b}, … }`, byte
+-- ranges (0-based, end exclusive) drawn as `•`, replacing the ones
+-- given before and carried through edits after; `{}` takes them off.
+-- kawoosh.secrets.private(path): whether a rule names the file;
+-- kawoosh.secrets.mask_text(text, path[, language]): the text with
+-- what the rules for that file mask drawn as `•` — a list's line.
 --
 -- kawoosh.buf.annotate(notes[, buffer]): text after a line's end that
 -- is not the buffer's — what an entry is, beside its name — `{ [id] =
@@ -350,7 +365,7 @@ function kawoosh.buf.open_scratch(t)
   if t.on_write then kawoosh._writers[t.name] = t.on_write end
   if t.on_change then kawoosh._changers[t.name] = t.on_change end
   kawoosh._open_scratch(t.name, t.text or "", t.on_write ~= nil, t.read_only or false, t.language,
-    t.reuse, t.line, t.show ~= false, t.on_change ~= nil)
+    t.reuse, t.line, t.show ~= false, t.on_change ~= nil, t.private or false)
 end
 
 -- ---------------------------------------------------------------- fields

@@ -148,6 +148,9 @@ fn set_register(
         }
     }
     let version = ed.buffers[id].version();
+    // A private buffer's text is a secret in the register and never on
+    // the system clipboard (docs/design/secrets.md Decision 2).
+    let secret = ed.buffers[id].private;
     ed.memory.remember(crate::Moment {
         text: joined.clone(),
         linewise,
@@ -159,8 +162,13 @@ fn set_register(
         }),
         from: ed.buffers[id].name.clone(),
         at: std::time::Instant::now(),
+        secret,
     });
-    ed.effects.push(Effect::SetClipboard(joined));
+    if secret {
+        text_buffer::wipe_string(&mut joined);
+    } else {
+        ed.effects.push(Effect::SetClipboard(joined));
+    }
 }
 
 /// Runs operator `op` over `ranges` (one per selection).
@@ -1039,9 +1047,12 @@ fn paste(ed: &mut Editor, ctx: &Ctx, after: bool) {
         ed.message = "nothing to paste".into();
         return;
     };
-    let text = head.text.repeat(ctx.count.max(1));
+    let mut text = head.text.repeat(ctx.count.max(1));
     let linewise = head.linewise;
     let id = view(ed, ctx).buffer;
+    // A secret is put once and forgotten, and so is anything put into
+    // a private buffer (docs/design/secrets.md Decision 2).
+    let once = head.secret || ed.buffers[id].private;
     let sels = ed.views[ctx.view].sels.items.clone();
     let buf = &ed.buffers[id];
     let edits: Vec<(usize, Range<usize>, String)> = sels
@@ -1097,6 +1108,11 @@ fn paste(ed: &mut Editor, ctx: &Ctx, after: bool) {
             };
             Selection::point(m::first_nonblank(buf, ln.min(buf.line_count() - 1)))
         });
+    }
+    if once {
+        let head = ed.memory.len() - 1;
+        ed.memory.forget(head);
+        text_buffer::wipe_string(&mut text);
     }
 }
 
@@ -3027,6 +3043,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-S-9>", "pane goto 9"),
         // `z`: vim's scrolling, read on the ribbon — the focused
         // column to an edge, or the middle.
+        ("zv", "mask reveal"),
         ("zs", "strip left"),
         ("ze", "strip right"),
         ("zz", "strip center"),

@@ -352,6 +352,62 @@ impl Settings {
         // Auto-closing brackets (`pairs.lua`, docs/design/pairs.md): on
         // since 2026-09-23; `pairs.rules` is the plugin's, per language.
         defaults.set("pairs.enabled", Setting::Bool(true));
+        // Secrets (docs/design/secrets.md): the masks, named rules a
+        // user adds to or switches off (`secrets.masks.env = false`);
+        // a file a `files` rule names is private. A secret in the
+        // register is forgotten after `forget_secs`; `zv` shows a mask
+        // for `reveal_secs`; a `--wait` open under the temp directory
+        // is private; a buffer past `scan_max_kb` is not scanned.
+        {
+            let s = |v: &str| Setting::Str(v.into());
+            let rule = |pairs: Vec<(&str, Setting)>| {
+                Setting::Table(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+            };
+            let masks = rule(vec![
+                (
+                    "env",
+                    rule(vec![
+                        (
+                            "files",
+                            Setting::List(vec![s(".env"), s(".env.*"), s("*.env")]),
+                        ),
+                        (
+                            "pattern",
+                            s(r"^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_.]*\s*=\s*(.+)$"),
+                        ),
+                    ]),
+                ),
+                (
+                    "vault",
+                    rule(vec![
+                        (
+                            "files",
+                            Setting::List(vec![s("vault.yml"), s("vault.yaml")]),
+                        ),
+                        ("pattern", s(r"^\s*[A-Za-z_][A-Za-z0-9_]*\s*:\s*(\S.*)$")),
+                    ]),
+                ),
+                (
+                    "pem",
+                    rule(vec![
+                        ("from", s(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+                        ("to", s(r"-----END [A-Z ]*PRIVATE KEY-----")),
+                    ]),
+                ),
+                (
+                    "secret",
+                    rule(vec![
+                        ("language", s("secret")),
+                        ("pattern", s(r"^[^:#]+:\s*(\S.*)$")),
+                    ]),
+                ),
+            ]);
+            defaults.set("secrets.masks", masks);
+        }
+        defaults.set("secrets.forget_secs", Setting::Int(30));
+        defaults.set("secrets.reveal_secs", Setting::Int(10));
+        defaults.set("secrets.private_temp", Setting::Bool(true));
+        defaults.set("secrets.scan_max_kb", Setting::Int(1024));
         // The lines of history a terminal keeps; a smaller number drops
         // what is past it at once.
         defaults.set("terminal.scrollback", Setting::Int(10_000));
@@ -697,6 +753,18 @@ mod tests {
                 "picker.split",
                 "picker.wrap",
                 "scrolloff",
+                "secrets.forget_secs",
+                "secrets.masks.env.files",
+                "secrets.masks.env.pattern",
+                "secrets.masks.pem.from",
+                "secrets.masks.pem.to",
+                "secrets.masks.secret.language",
+                "secrets.masks.secret.pattern",
+                "secrets.masks.vault.files",
+                "secrets.masks.vault.pattern",
+                "secrets.private_temp",
+                "secrets.reveal_secs",
+                "secrets.scan_max_kb",
                 "tabstop",
                 "terminal.scrollback",
                 "theme.appearance",

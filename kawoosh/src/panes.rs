@@ -993,6 +993,8 @@ impl Kawoosh {
         let linewise = self.ed.views[view].visual_linewise;
         let blink_on = ui.caret_visible();
         let buf_id = self.ed.views[view].buffer;
+        // What is secret in it, drawn as `•` (docs/design/secrets.md).
+        let masks = self.masks_of(buf_id);
         // The markdown buffer drawn rendered (markdown.md): its rows are
         // as tall as they wrap to, so it scrolls by what they measured.
         let md = self.markdown_rendered(buf_id);
@@ -1289,14 +1291,18 @@ impl Kawoosh {
             };
             let index = (range.len() >= rows::LONG_LINE_BYTES)
                 .then(|| cells.get(buf_id, buf, &range, tabstop).clone());
-            let (drawn, (c0, c1)) = Drawn::for_line(
-                buf,
-                range.clone(),
-                tabstop,
-                Some(window),
-                head_rel,
-                index.as_ref(),
-            );
+            let (drawn, (c0, c1)) =
+                crate::secrets::masked_line(buf, range.clone(), tabstop, &masks, head_rel)
+                    .unwrap_or_else(|| {
+                        Drawn::for_line(
+                            buf,
+                            range.clone(),
+                            tabstop,
+                            Some(window),
+                            head_rel,
+                            index.as_ref(),
+                        )
+                    });
             let head = drawn.to_drawn(head_rel);
             let style = rows::mono(font, &pal);
             let long = range.len() >= rows::LONG_LINE_BYTES;
@@ -1408,14 +1414,23 @@ impl Kawoosh {
                                 None => {
                                     let index = (range.len() >= rows::LONG_LINE_BYTES)
                                         .then(|| cells.get(buf_id, buf, &range, tabstop));
-                                    let (drawn, _) = Drawn::for_line(
+                                    let (drawn, _) = crate::secrets::masked_line(
                                         buf,
                                         range.clone(),
                                         tabstop,
-                                        Some(window),
+                                        &masks,
                                         0,
-                                        index,
-                                    );
+                                    )
+                                    .unwrap_or_else(|| {
+                                        Drawn::for_line(
+                                            buf,
+                                            range.clone(),
+                                            tabstop,
+                                            Some(window),
+                                            0,
+                                            index,
+                                        )
+                                    });
                                     (drawn, None)
                                 }
                             };

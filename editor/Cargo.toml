@@ -10,5 +10,6 @@ repository.workspace = true
 kawoosh-doc.workspace = true
 slotmap.workspace = true
 regex = "1"
+globset = "0.4"
 memchr = "2"
 text-buffer.workspace = true

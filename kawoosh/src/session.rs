@@ -145,6 +145,20 @@ impl Kawoosh {
                 let view = &self.ed.views[v];
                 let buf = &self.ed.buffers[view.buffer];
                 let (line, col) = motions::line_col(buf, view.sels.primary().head);
+                // A private scratch does not come back — not its row,
+                // not a plugin's name to fill it by (a vault decrypted
+                // again at every launch); a private file is its path,
+                // opened again like any other (docs/design/secrets.md).
+                if buf.private && buf.path.is_none() {
+                    return PaneData::Editor {
+                        path: None,
+                        scratch: None,
+                        hook: None,
+                        line: 0,
+                        col: 0,
+                        top: 0,
+                    };
+                }
                 PaneData::Editor {
                     path: buf.path.clone(),
                     scratch: match buf.path {

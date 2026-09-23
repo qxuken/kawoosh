@@ -196,6 +196,30 @@ pub enum Msg {
         show: bool,
         /// Whether `on_change` is to be told when its text changes.
         watched: bool,
+        /// Made private (docs/design/secrets.md): no history, no
+        /// memory, not in a session, a yank from it a secret.
+        private: bool,
+    },
+    /// `kawoosh.buf.set_private(private[, buffer])`.
+    SetPrivate {
+        buffer: Option<u64>,
+        name: Option<String>,
+        private: bool,
+    },
+    /// `kawoosh.buf.mask_with(rule[, buffer])`: a `secrets.masks` rule
+    /// by name on a buffer whatever its path — a decrypted vault.
+    MaskWith {
+        buffer: Option<u64>,
+        name: Option<String>,
+        rule: String,
+    },
+    /// `kawoosh.buf.mask(ranges[, buffer])`: byte ranges (0-based,
+    /// end exclusive) drawn as `•`, replacing the plugin's earlier ones
+    /// and carried through edits after.
+    Mask {
+        buffer: Option<u64>,
+        name: Option<String>,
+        ranges: Vec<(usize, usize)>,
     },
     /// `kawoosh.view_open(name, { focus =, below =, share = })`: the
     /// view in a split — beside, or below with `below` — taking
@@ -348,6 +372,7 @@ pub struct BufSnap {
     pub primary: usize,
     pub modified: bool,
     pub read_only: bool,
+    pub private: bool,
     /// A field's one-line buffer — the prompt's, a query's — which
     /// `kawoosh.buf.list` leaves out, as `:ls` does.
     pub field: bool,
@@ -364,6 +389,9 @@ pub struct Published {
     pub buffers: HashMap<u64, BufSnap>,
     /// The effective settings, every layer merged.
     pub settings: Setting,
+    /// The settings' version, for what is derived from them (the mask
+    /// rules `kawoosh.secrets` reads).
+    pub settings_version: u64,
     /// Every command's spec, copied when the registry's version moved.
     pub commands: Vec<Spec>,
     pub commands_version: u64,
@@ -468,6 +496,7 @@ impl Default for Published {
             workspace: String::new(),
             buffers: HashMap::new(),
             settings: Setting::table(),
+            settings_version: 0,
             commands: Vec::new(),
             commands_version: 0,
             keys: HashMap::new(),
@@ -933,6 +962,7 @@ impl Runtime {
                     primary,
                     modified: b.modified,
                     read_only: b.read_only,
+                    private: b.private,
                     field: ed.is_field_buffer(id),
                 },
             );
@@ -941,7 +971,9 @@ impl Runtime {
         // from, which tracked lines of that buffer its lines were: each
         // tracked line carried to the version the text was taken at,
         // and, lying in the taken bytes, its line among them.
-        p.register = ed.memory.head().map(|head| {
+        // A secret is not handed to Lua (docs/design/secrets.md): a
+        // plugin's copy would outlive the register's, unzeroed.
+        p.register = ed.memory.head().filter(|h| !h.secret).map(|head| {
             let text = &head.text;
             let origin = head.origin.as_ref();
             let buffer = origin.map(|o| handle_of(o.buffer));
@@ -1006,7 +1038,9 @@ impl Runtime {
                             .iter()
                             .rev()
                             .map(|m| MomentSnap {
-                                text: m.text.clone(),
+                                // A secret as the pane shows it: Lua's
+                                // copy would not be zeroed.
+                                text: m.shown().to_string(),
                                 linewise: m.linewise,
                                 took: m.took.word(),
                                 from: m.from.clone(),
@@ -1053,6 +1087,7 @@ impl Runtime {
             );
         }
         p.settings = ed.settings.effective().clone();
+        p.settings_version = ed.settings.version();
         if p.commands_version != ed.commands.version() {
             p.commands = ed.commands.specs().into_iter().cloned().collect();
             p.commands_version = ed.commands.version();
@@ -1989,7 +2024,18 @@ fn seed(
         "_open_scratch",
         lua.create_function(
             move |_,
-                  (name, text, hooked, read_only, language, reuse, line, show, watched): (
+                  (
+                name,
+                text,
+                hooked,
+                read_only,
+                language,
+                reuse,
+                line,
+                show,
+                watched,
+                private,
+            ): (
                 String,
                 String,
                 bool,
@@ -1997,6 +2043,7 @@ fn seed(
                 Option<String>,
                 Option<u64>,
                 Option<usize>,
+                Option<bool>,
                 Option<bool>,
                 Option<bool>,
             )| {
@@ -2010,6 +2057,7 @@ fn seed(
                     line,
                     show: show.unwrap_or(true),
                     watched: watched.unwrap_or(false),
+                    private: private.unwrap_or(false),
                 });
                 Ok(())
             },
@@ -2791,7 +2839,125 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // ---- secrets (docs/design/secrets.md): a buffer private, a mask
+    // rule asked for by name, ranges masked; the buffer as annotate
+    // takes it — a handle, a name (a scratch just asked for), or the
+    // current one.
+    fn which_buffer(
+        pp: &Rc<RefCell<Published>>,
+        which: Option<LV>,
+    ) -> mlua::Result<(Option<u64>, Option<String>)> {
+        Ok(match which {
+            Some(LV::String(s)) => (None, Some(s.to_str()?.to_string())),
+            Some(LV::Integer(n)) => (Some(n as u64), None),
+            Some(LV::Number(n)) => (Some(n as u64), None),
+            _ => (
+                Some(
+                    pp.borrow()
+                        .current
+                        .ok_or_else(|| mlua::Error::runtime("no current buffer"))?,
+                ),
+                None,
+            ),
+        })
+    }
+    let (qq, pp) = (q(queue), published.clone());
+    buf.set(
+        "set_private",
+        lua.create_function(move |_, (private, which): (Option<bool>, Option<LV>)| {
+            let (buffer, name) = which_buffer(&pp, which)?;
+            qq.borrow_mut().push(Msg::SetPrivate {
+                buffer,
+                name,
+                private: private.unwrap_or(true),
+            });
+            Ok(())
+        })?,
+    )?;
+    let pp = published.clone();
+    buf.set(
+        "private",
+        lua.create_function(move |_, which: Option<u64>| {
+            let p = pp.borrow();
+            let id = which.or(p.current);
+            Ok(id
+                .and_then(|id| p.buffers.get(&id))
+                .is_some_and(|b| b.private))
+        })?,
+    )?;
+    let (qq, pp) = (q(queue), published.clone());
+    buf.set(
+        "mask_with",
+        lua.create_function(move |_, (rule, which): (String, Option<LV>)| {
+            let (buffer, name) = which_buffer(&pp, which)?;
+            qq.borrow_mut().push(Msg::MaskWith { buffer, name, rule });
+            Ok(())
+        })?,
+    )?;
+    let (qq, pp) = (q(queue), published.clone());
+    buf.set(
+        "mask",
+        lua.create_function(move |_, (ranges, which): (Table, Option<LV>)| {
+            let (buffer, name) = which_buffer(&pp, which)?;
+            let mut out = Vec::new();
+            for r in ranges.sequence_values::<Table>() {
+                let r = r?;
+                let (a, b): (usize, usize) = (r.get(1)?, r.get(2)?);
+                if a < b {
+                    out.push((a, b));
+                }
+            }
+            qq.borrow_mut().push(Msg::Mask {
+                buffer,
+                name,
+                ranges: out,
+            });
+            Ok(())
+        })?,
+    )?;
     k.set("buf", buf)?;
+    // `kawoosh.secrets`: what the mask rules say of a path and a text,
+    // for a list that shows lines of files (the picker's grep, its
+    // preview): `private(path)`, `mask_text(text, path[, language])`.
+    let secrets = lua.create_table()?;
+    type RulesAt = Option<(u64, Rc<kawoosh_editor::masks::Rules>)>;
+    let rules_cache: Rc<RefCell<RulesAt>> = Rc::new(RefCell::new(None));
+    let rules_of = {
+        let pp = published.clone();
+        move || {
+            let p = pp.borrow();
+            let mut c = rules_cache.borrow_mut();
+            match &*c {
+                Some((v, r)) if *v == p.settings_version => r.clone(),
+                _ => {
+                    let r = Rc::new(kawoosh_editor::masks::Rules::read(
+                        p.settings.get("secrets.masks"),
+                    ));
+                    *c = Some((p.settings_version, r.clone()));
+                    r
+                }
+            }
+        }
+    };
+    let rules_of = Rc::new(rules_of);
+    let ro = rules_of.clone();
+    secrets.set(
+        "private",
+        lua.create_function(move |_, path: String| {
+            Ok(ro().private(Some(std::path::Path::new(&path)), ""))
+        })?,
+    )?;
+    let ro = rules_of.clone();
+    secrets.set(
+        "mask_text",
+        lua.create_function(
+            move |_, (text, path, language): (String, Option<String>, Option<String>)| {
+                let path = path.map(std::path::PathBuf::from);
+                Ok(ro().mask_text(path.as_deref(), language.as_deref().unwrap_or(""), &text))
+            },
+        )?,
+    )?;
+    k.set("secrets", secrets)?;
 
     // ---- the memory (memory.md Decision 9): bare, the working
     // memory's texts, newest first; with a query, the store's rows

@@ -475,7 +475,7 @@ impl Kawoosh {
                 .map(|m| {
                     format!(
                         "{} {} {}",
-                        m.text.lines().next().unwrap_or(""),
+                        m.shown().lines().next().unwrap_or(""),
                         m.took.word(),
                         m.from
                     )
@@ -854,7 +854,7 @@ impl Kawoosh {
             .ed
             .memory
             .head()
-            .map(|m| preview(&m.text))
+            .map(|m| preview(m.shown()))
             .unwrap_or_default();
         self.ed.message = format!("recalled: {head}");
     }
@@ -1222,7 +1222,7 @@ impl Kawoosh {
                 (
                     m.took,
                     m.linewise,
-                    m.text.clone(),
+                    m.shown().to_string(),
                     m.from.clone(),
                     now_i.saturating_duration_since(m.at),
                 )

@@ -74,6 +74,36 @@ pub enum Block {
     Add(AddBuf),
 }
 
+/// A block's bytes are zeroed when the last piece reading it lets go —
+/// every block, not only a secret's (docs/design/secrets.md Decision
+/// 6): the undo states and a parser's copy share the blocks, so this is
+/// the one place the text a buffer held is freed. A memset of what is
+/// freed, where making it cost as much. A mapped block is the file's.
+impl Drop for Block {
+    fn drop(&mut self) {
+        match self {
+            Block::Owned(v) => wipe(v),
+            Block::Add(a) => a.wipe(),
+            Block::Mapped(_) => {}
+        }
+    }
+}
+
+/// Zeroes `bytes` in a way the optimiser does not drop as a store to
+/// memory about to be freed: the slice escapes through `black_box`
+/// after the fill. Best effort, as every such wipe in safe Rust is.
+pub fn wipe(bytes: &mut [u8]) {
+    bytes.fill(0);
+    std::hint::black_box(&*bytes);
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+}
+
+/// [`wipe`] over a string's bytes, which stay valid UTF-8 (all NUL).
+pub fn wipe_string(s: &mut str) {
+    // SAFETY: NUL bytes are valid UTF-8.
+    wipe(unsafe { s.as_bytes_mut() });
+}
+
 impl Block {
     fn bytes(&self) -> &[u8] {
         match self {
@@ -147,6 +177,16 @@ impl AddBuf {
 
     fn len(&self) -> usize {
         self.len.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Zeroes the bytes written, with the block exclusively held.
+    fn wipe(&mut self) {
+        let n = *self.len.get_mut();
+        for c in &mut self.cells[..n] {
+            *c.get_mut() = 0;
+        }
+        std::hint::black_box(&self.cells[..n]);
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
     }
 
     fn bytes(&self) -> &[u8] {

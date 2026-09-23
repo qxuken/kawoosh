@@ -199,6 +199,9 @@ pub struct Kawoosh {
     /// away from (`show_buffer`) or closed with its pane (`drop_view`) —
     /// the only ones `sweep_scratches` looks at.
     pub(crate) left: Vec<BufferId>,
+    /// Which buffers are private, their masks, the reveal
+    /// (docs/design/secrets.md).
+    pub(crate) secrets: crate::secrets::Secrets,
     /// The wheel's fraction of a line carried to the next notch.
     pub(crate) scroll_carry: f32,
     /// False after a wheel scroll, so the view stays where the wheel put
@@ -262,6 +265,7 @@ impl Kawoosh {
         let b = ed.add_buffer(Buffer::new(title, text));
         let view = ed.add_view(b);
         let wake = WakeHandle::new();
+        let secrets_wake = wake.clone();
         let mut app = Self {
             pal: Pal::default(),
             face: Default::default(),
@@ -335,6 +339,7 @@ impl Kawoosh {
             clip_last: None,
             clip_seen: (true, true),
             left: Vec::new(),
+            secrets: crate::secrets::Secrets::new(secrets_wake),
             scroll_carry: 0.0,
             follow_caret: true,
             reclaim_focus: false,
@@ -411,6 +416,11 @@ impl Kawoosh {
         if std::mem::take(&mut self.reclaim_focus) || ui.key_focus().is_none() {
             ui.focus(sink);
         }
+    }
+
+    /// The last text kawoosh put on the system clipboard.
+    pub fn clipboard_last(&self) -> Option<&str> {
+        self.clip_last.as_deref()
     }
 
     /// A mono cell's advance and height, as measured last frame.
@@ -746,7 +756,14 @@ impl Kawoosh {
                 } else {
                     std::env::current_dir().unwrap_or_default().join(path)
                 };
+                // A caller that waits and hands over a file under the
+                // temp directory is `ansible-vault edit`'s shape: the
+                // buffer is private (docs/design/secrets.md).
+                if wait {
+                    self.secrets.waited = Some(path.clone());
+                }
                 self.open_in_editor(&path, line, None);
+                self.secrets.waited = None;
                 match (wait, self.focused_view().map(|v| self.ed.views[v].buffer)) {
                     (true, Some(id)) => self.waiters.entry(id).or_default().push(reply),
                     _ => {
@@ -1015,6 +1032,7 @@ impl Kawoosh {
         self.release_waiters(id);
         self.last_pos.remove(&id);
         self.ts_sent.remove(&id);
+        self.secrets.forget(id);
         self.scripting.watched.remove(&id);
         self.histories.forget(id);
         self.lsp
@@ -1189,9 +1207,18 @@ impl Kawoosh {
                 return None;
             }
         };
+        let waited = self.secrets.waited.as_deref() == Some(path);
+        let private = self.private_path(path, waited);
         let id = self.ed.add_buffer(buf);
-        // Its history from last time — with the unsaved changes, if any.
-        self.attach_file_history(id, path);
+        // A private file has no history (docs/design/secrets.md): the
+        // row it had from before it was one is dropped unread.
+        if private {
+            self.ed.buffers[id].private = true;
+            self.drop_file_history(path);
+        } else {
+            // Its history from last time — with the unsaved changes, if any.
+            self.attach_file_history(id, path);
+        }
         Some(id)
     }
 
@@ -1202,6 +1229,7 @@ impl Kawoosh {
         let mut buf = Buffer::opening(path, total);
         // By the name alone; the `#!` line is read when the text lands.
         buf.language = self.languages.detect(path, "").into();
+        buf.private = self.private_path(path, false);
         self.io.open_file(path.to_path_buf());
         self.ed.add_buffer(buf)
     }
@@ -1961,6 +1989,7 @@ impl kui::App for Kawoosh {
         self.sync_term_settings();
         self.spawn_pending();
         self.sweep_scratches();
+        self.tick_secrets();
         self.register_images(ui);
         let pal = self.pal;
         if self.devtools_synced.is_some_and(|s| s != self.devtools) {

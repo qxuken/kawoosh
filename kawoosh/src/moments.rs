@@ -342,7 +342,8 @@ impl Kawoosh {
     /// `*messages*`, a scratch nobody typed in — are nobody's moment.
     pub(crate) fn subject_of(&self, id: BufferId) -> Option<MomentKey> {
         let b = self.ed.buffers.get(id)?;
-        if self.ed.is_field_buffer(id) {
+        // A private buffer is nobody's moment (docs/design/secrets.md).
+        if self.ed.is_field_buffer(id) || b.private {
             return None;
         }
         let ws = self.moments.workspace.1.clone();
@@ -436,7 +437,12 @@ impl Kawoosh {
             self.moments.memory_seen = self.ed.memory.version;
             let head = self.ed.memory.head().cloned();
             let seen = head.as_ref().map(|m| (text_key(&m.text).subject, m.at));
-            if seen != self.moments.head_seen {
+            // A secret is nobody's moment — not its hash, not a yank of
+            // the buffer it came from (docs/design/secrets.md) — and the
+            // head it covered for a moment is not attended again when
+            // it goes.
+            let secret = head.as_ref().is_some_and(|m| m.secret);
+            if !secret && seen != self.moments.head_seen {
                 self.moments.head_seen = seen;
                 if let Some(m) = &head {
                     if let Some(o) = &m.origin
@@ -937,6 +943,7 @@ impl Kawoosh {
                     .unwrap_or("")
                     .to_string(),
                 at: Instant::now().checked_sub(age).unwrap_or_else(Instant::now),
+                secret: false,
             });
         }
         self.settle_memory();

@@ -177,6 +177,17 @@ local file_cache = {}
 
 -- A file's first lines (or all of them, up to `PREVIEW_LINES` past
 -- `around`), read once per size and mtime.
+-- A private buffer's lines as a list shows them: what the mask rules
+-- for it hide drawn as `•` (docs/design/secrets.md); any other
+-- buffer's as they are.
+local function shown_lines(h, lines)
+  if not kawoosh.buf.private(h) then return lines end
+  local path, language = kawoosh.buf.path(h), kawoosh.buf.language(h)
+  local out = {}
+  for i, l in ipairs(lines) do out[i] = kawoosh.secrets.mask_text(l, path, language) end
+  return out
+end
+
 local function file_lines(path, around)
   local ok, st = pcall(fs.stat, path)
   if not ok then return nil, "not on disk" end
@@ -188,6 +199,8 @@ local function file_lines(path, around)
     local rok, text = pcall(fs.read, path)
     if not rok then return nil, "not text" end
     if text:find("\0", 1, true) then return nil, "binary" end
+    -- What a mask rule hides in the file stays hidden in the preview.
+    text = kawoosh.secrets.mask_text(text, path)
     c = { key = key, lines = {} }
     for line in (text .. "\n"):gmatch("(.-)\n") do
       c.lines[#c.lines + 1] = line
@@ -212,7 +225,7 @@ local function preview_of(item)
     title = name
     local from = math.max((item.line or 1) - 10, 1)
     local ok2, got = pcall(kawoosh.buf.lines_in, from, from + PREVIEW_LINES, item.buffer)
-    lines = ok2 and got or {}
+    lines = shown_lines(item.buffer, ok2 and got or {})
     local pok, path = pcall(kawoosh.buf.path, item.buffer)
     return { title = title, lines = lines, from = from, at = item.line, path = pok and path or nil }
   elseif item.path then
@@ -1321,10 +1334,11 @@ picker.source("grep", {
             local path, ln, col, rest = l:match("^(.-):(%d+):(%d+):(.*)$")
             if path then
               path = path:gsub("^%./", "")
+              local full = fs.join(root, path)
               items[#items + 1] = {
                 text = path .. ":" .. ln,
-                sub = rest:gsub("^%s+", ""),
-                path = fs.join(root, path), line = tonumber(ln), col = tonumber(col),
+                sub = kawoosh.secrets.mask_text((rest:gsub("^%s+", "")), full),
+                path = full, line = tonumber(ln), col = tonumber(col),
               }
             elseif l ~= "" then
               odd[#odd + 1] = l
@@ -1357,13 +1371,14 @@ picker.source("lines", {
   items = function(ctx)
     local h = ctx.buffer
     if not h then return {} end
-    local lines = kawoosh.buf.lines(h)
+    local raw = kawoosh.buf.lines(h)
+    local lines = shown_lines(h, raw)
     local items, off = {}, 0
     local width = #tostring(#lines)
     for i, l in ipairs(lines) do
       items[i] = { text = string.format("%" .. width .. "d  %s", i, l), buffer = h, line = i, offset = off,
                    lines = lines }
-      off = off + #l + 1
+      off = off + #raw[i] + 1
     end
     return items
   end,

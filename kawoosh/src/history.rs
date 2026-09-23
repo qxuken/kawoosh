@@ -245,7 +245,7 @@ pub fn fingerprint(text: &text_buffer::Buffer) -> Base {
 /// Whether a buffer is the kind a row is kept of: the user's text —
 /// not a listing, a log, or a file still on its way in.
 fn draftable(buf: &Buffer) -> bool {
-    buf.hook.is_none() && !buf.read_only && buf.loading.is_none()
+    buf.hook.is_none() && !buf.read_only && buf.loading.is_none() && !buf.private
 }
 
 fn sels_data(sels: &Selections) -> (Vec<(usize, usize)>, usize) {
@@ -730,6 +730,16 @@ impl Kawoosh {
                      :w writes them over it, :e! loads the disk (u brings them back)"
                 ),
             );
+        }
+    }
+
+    /// For a private file (docs/design/secrets.md): the row it had in
+    /// the store from before it was one, dropped without being read.
+    pub(crate) fn drop_file_history(&mut self, path: &Path) {
+        if let Some(store) = &self.store
+            && let Err(e) = store.drop_history(&file_key(path))
+        {
+            log::warn!("history of {}: {e}", path.display());
         }
     }
 

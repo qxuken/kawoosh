@@ -46,6 +46,20 @@ use crate::devtab::Tab;
 use crate::app::Kawoosh;
 use crate::notify::{Level, Note};
 
+/// The most characters a settings table shows of a value; past it the
+/// value is cut with an ellipsis (a mask rule's regex).
+const VALUE_MAX_CHARS: usize = 24;
+
+/// `s` cut to `max` characters, the last an ellipsis.
+fn cut(s: &str, max: usize) -> std::borrow::Cow<'_, str> {
+    if s.chars().count() <= max {
+        return s.into();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out.into()
+}
+
 /// The project marker directory (mvp.md 7b).
 pub const PROJECT_DIR: &str = ".kawoosh";
 /// The settings file's name, in the config dir and in a project's marker.
@@ -504,7 +518,10 @@ impl Kawoosh {
                         },
                     );
                 } else {
-                    ui.text(value, style().color(pal.accent));
+                    // A long value — a mask rule's regex — is cut short:
+                    // the table's columns line up, and one wide value
+                    // squeezed every path to wrap a letter at a time.
+                    ui.text(&cut(value, VALUE_MAX_CHARS), style().color(pal.accent));
                 }
                 if let Some(from) = from {
                     ui.text(from, dim());

@@ -7,6 +7,7 @@ pub mod command;
 pub mod commands;
 pub mod disk;
 pub mod keymap;
+pub mod masks;
 pub mod motions;
 pub mod repeat;
 pub mod search;
@@ -479,6 +480,31 @@ pub struct Moment {
     pub origin: Option<RegisterOrigin>,
     pub from: String,
     pub at: Instant,
+    /// Taken from, or put into, a private buffer (docs/design/secrets.md
+    /// Decision 2): never written, never on the system clipboard, put
+    /// once and then forgotten, or forgotten after
+    /// `secrets.forget_secs`; its text zeroed when it goes.
+    pub secret: bool,
+}
+
+impl Moment {
+    /// The text as a list shows it: a secret's is `•`, so the memory
+    /// pane and a message never draw it.
+    pub fn shown(&self) -> &str {
+        if self.secret {
+            "•••••• (a secret)"
+        } else {
+            &self.text
+        }
+    }
+}
+
+impl Drop for Moment {
+    fn drop(&mut self) {
+        if self.secret {
+            text_buffer::wipe_string(&mut self.text);
+        }
+    }
 }
 
 /// How many moments the memory keeps; past it, the oldest go.
@@ -567,6 +593,24 @@ impl Memory {
         self.moments.remove(i);
         self.version += 1;
         true
+    }
+
+    /// Every secret taken before `before` forgotten, for
+    /// `secrets.forget_secs`; whether any was.
+    pub fn forget_secrets(&mut self, before: Instant) -> bool {
+        let n = self.moments.len();
+        self.moments.retain(|m| !m.secret || m.at >= before);
+        let gone = self.moments.len() != n;
+        if gone {
+            self.version += 1;
+        }
+        gone
+    }
+
+    /// When the oldest secret was taken, if one is held: what the timer
+    /// that forgets it counts from.
+    pub fn oldest_secret(&self) -> Option<Instant> {
+        self.moments.iter().filter(|m| m.secret).map(|m| m.at).min()
     }
 }
 
@@ -2273,6 +2317,7 @@ impl Editor {
             origin: None,
             from: "clipboard".into(),
             at: Instant::now(),
+            secret: false,
         });
         true
     }
@@ -2287,6 +2332,9 @@ impl Editor {
         match self.mode(view) {
             Mode::Insert => self.text(view, text),
             _ => {
+                // Put into a private buffer, it is a secret from the
+                // start: never written, gone once put.
+                let secret = self.buffers[self.views[view].buffer].private;
                 self.memory.remember(Moment {
                     text: text.to_string(),
                     linewise: text.ends_with('\n'),
@@ -2294,6 +2342,7 @@ impl Editor {
                     origin: None,
                     from: "clipboard".into(),
                     at: Instant::now(),
+                    secret,
                 });
                 self.run_step(view, "paste after", &[], None);
             }
