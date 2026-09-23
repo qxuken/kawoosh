@@ -17,10 +17,17 @@ pub static LANGUAGE: Language = Language {
 
 #[cfg(feature = "markdown")]
 fn grammar() -> Result<crate::Grammar, String> {
+    // A table's cells are inline too: the crate injects the inline
+    // grammar into paragraphs only, and a cell's `**bold**` stayed its
+    // asterisks.
+    let injections = format!(
+        "{}\n((pipe_table_cell) @injection.content (#set! injection.language \"markdown_inline\"))\n",
+        tree_sitter_md::INJECTION_QUERY_BLOCK
+    );
     crate::Grammar::new(
         tree_sitter_md::LANGUAGE.into(),
         tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
-        Some(tree_sitter_md::INJECTION_QUERY_BLOCK),
+        Some(&injections),
     )?
     .with_structure(STRUCTURE)
     .map(|g| g.with_stand_ins(stand_ins))
