@@ -8,7 +8,10 @@ code and the log. This is the one list; the todo is retired into it.
 Companion to [mvp.md](mvp.md) and [kui.md](kui.md), which say *why*; this
 says *what next*. Amended 2026-09-22 with a day of use (below, "From
 use"), which put four rounds ahead of the brackets; steps 14–17 built
-2026-09-23, step 18 (ssh) the one left.
+2026-09-23. Amended again 2026-09-23 with the two items the todo
+gained since (below, "From the todo"), what reading it turned up
+("Asked 2026-09-23, night") and the order past step 17: steps 18–25
+the open items, ssh moved to the end as step 26.
 
 ## Where it stands
 
@@ -43,6 +46,10 @@ way, two engine fixes the plans had assumed away: a typing key whose
 insert-mode bindings were all gated off ate its character, and a
 grammar's runs could not say which line is a fence's (a structure
 layer now paints it from the same tree).
+What is left is steps 18–26 below: two fixes (focus, the scratch
+sweep), a private buffer for secrets, the LSP's third round, a batch
+of small ones with timed rows among them, `dir`'s third round,
+directory jumps, the memory's fifth, workspaces, and ssh last.
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -160,7 +167,7 @@ entries they amend say how.
   them to nothing.
 - **The notification corner** sits on a panel: over the pane's text
   its lines read as tangled with the code.
-- **A far jump** (`gd`, `gD`, a search) centres its line, as vim
+- **A far jump** (`gd`, `<leader>D`, a search) centres its line, as vim
   does; **`:bd`** goes back to the buffer the pane came from, where
   it was left (a per-view alternate), not to the first listed at its
   top.
@@ -210,6 +217,31 @@ say how.
   already; the register now follows it back: what another program put
   there is read when the window or an editor pane gets the keys back,
   and becomes the register's newest (`clipboard.system`, on).
+
+## From the todo, 2026-09-23
+
+The todo still takes the raw list, and gained two items after it was
+retired into this one; each is checked against the code and filed in
+the buffers track. A **secrets** plugin — secrets masked, a yank of
+one pasted once, never on the system clipboard, the memory and the
+buffer cleaned out of RAM — and **timed rows**, a notes buffer whose
+every new line starts with a readable time, or the time since the
+first (`T+01:41`). The first is mostly the engine's, since a plugin
+cannot keep a buffer's text off the disk today; the second is a Lua
+afternoon over doors that exist, with one question that pairs raised
+first and nobody answered.
+
+## Asked 2026-09-23, night
+
+Reading the list above turned up the secrets decisions (in their
+entry) and five more, each checked and filed: a **bug** — a click on
+the title bar's servers block opens `*lsp*` without the keys, and so
+does nearly every pane the engine opens to be read; the ask behind it,
+that **a new pane is focused unless it opts out**; **empty scratches
+swept on the event** that empties a pane of one, not every frame;
+**directory jumps the zoxide way**, bridged to zoxide itself, in
+kawoosh's picker, and usable from a terminal; and after those,
+**workspaces** revisited — the cwd per tab, or something else.
 
 ## The list, by track
 
@@ -291,10 +323,12 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   match of a character (or pattern) per line, padding before it.
   Note `ga` is free (`g` is "going somewhere" in keys.md, but `ga` has
   no binding); vim's `ga` shows the character code, which nobody misses.
+  Step 21.
 - **Delete the line in insert mode** — open [todo]. `<C-u>` kills to
   the line start, `<C-w>` the word; there is no kill-whole-line. Vim
   has none either; the modal answer is `<Esc>dd`. If wanted: `<C-S-k>`
-  or `<A-d>` in insert mode (Alt is free there). Low.
+  or `<A-d>` in insert mode (Alt is free there). Low; step 21 decides
+  it or strikes it.
 - **Auto-closing brackets** — done 2026-09-23 ([pairs.md](pairs.md),
   "Built"); step 16. `pairs.lua` over four doors (`buf.type`,
   `buf.edits`, `buf.set_selections`, and `buf.slice` for what is around
@@ -489,6 +523,55 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   and a ribbon in it would scroll a single row of panes. A pane is
   still not dragged in or out of the dock by its title bar.
   `the_dock_splits_in_itself` in `kawoosh/tests/panes.rs`.
+- **A pane made is focused** — open, a bug [asked 2026-09-23]; step
+  18. Seen: a click on the servers block opens `*lsp*` and the keys
+  stay in the pane before. The cause is general: `Layout::split`
+  focuses the new pane, and `show_in_pane` (`lsp.rs`) — the door for a
+  read-only text in a split — puts the keys back unless asked not to,
+  which only the hover asks. Every other caller is a pane opened to be
+  read: `*lsp*`, `:messages` (whose doc comment says "the keyboard on
+  it"), `:maps`, `*lua*`, references, `*diagnostic*` (`<C-e>`), a
+  disk diff, `:terminal integration`. Lua's `view_open` already has
+  the rule the user asked for — focused unless `focus = false` — so
+  the engine's door takes the same default and names its opt-outs at
+  the call: the compile's output, which is watched while typing goes
+  on. `q` there closes it with the keys back where they came from, as
+  the hover's `q` does (`close`, bound under `buffer:*hover*`), rather
+  than one binding per buffer name.
+- **Empty scratches swept on the event** — open [asked 2026-09-23];
+  step 18. `sweep_scratches` runs in every frame's prologue
+  (`app.rs`, beside `spawn_pending`), a pass over every buffer and
+  view. Cost is not the argument — one pass over a few dozen buffers,
+  nothing a profile would show — the model is: a scratch becomes one to
+  sweep at exactly the moment a pane stops showing it, which is two
+  doors. One exists (`show_buffer`, every switch of a view's buffer);
+  the other does not — a view goes in seven places (the session, a
+  Lua view's close, three in `commands.rs`, a terminal's, a field's
+  in the editor). The round makes that one door (`drop_view`), has
+  both note the buffer they left, and sweeps those alone when the
+  event that left them is done; a scratch nothing ever showed (a
+  plugin's, made in the background) is then never swept by accident.
+- **Directory jumps, zoxide's way** — open [asked 2026-09-23]; step
+  23. A `dirs` picker source ranked by frecency, kawoosh's UI over
+  zoxide's data. The bridge: with `zoxide` on the PATH (0.10 here, 328
+  directories) its database is the list — `zoxide query --list
+  --score` through `kawoosh.spawn`, the score the picker's boost — and
+  kawoosh's own visits feed it back (`zoxide add` on `:cd`, a `dir`
+  listing opened, a pick); a terminal's OSC 7 is not added, since the
+  shell's own zoxide hook does that. Without zoxide the rows are the
+  memory's, a plugin's kind (memory.md: 500 rows, 90 days), so the
+  source works either way and a user can swap the backend. A pick in
+  an editor pane `:cd`s (or lists it in `dir` — the round decides the
+  default and puts the other on a key); in a terminal pane it is typed
+  as `cd 'PATH'⏎` when the shell is at an empty prompt, which the OSC
+  133 marks already say (a command's end and nothing typed since),
+  and refused with a message otherwise. From the shell the other way
+  round: `kawoosh pick dirs` over the socket (`Request::Pick { source,
+  query }`, answered with the pick or nothing on `<Esc>`, the shape of
+  `edit --wait`), so a nushell `def --env z` is `cd (kawoosh pick
+  dirs)` in kawoosh's picker — and any source, not only this one:
+  `kawoosh pick files` for a shell. Before the workspaces because a
+  jump moves *the* cwd, and which cwd that is is their question.
 
 ### LSP and completion
 
@@ -527,7 +610,10 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   (kui's virtual text spans), `<leader>cs` / `<leader>bs` symbols (a
   picker source), `gI` `gD`. Not done on the way: incremental sync;
   and a buffer a rename edited without a pane is not sent to the
-  server until it is shown.
+  server until it is shown. *Checked 2026-09-23:* the hints are not a
+  kui ask — a row already draws text inside itself that is not the
+  buffer's, the completion ghost (`rows.rs`'s `ghost`, the span split
+  where it sits), and a hint is that, several to a row. Step 20.
 - **The hover, round two** — open [use 2026-09-23]. Since 2026-09-23
   `K` puts the keys in the `*hover*` pane, read as markdown so its
   fences are the language's colours, and `q` there goes back. Left:
@@ -537,7 +623,7 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   no document the server holds; a link in the documentation followed;
   the pane reused rather than split again from inside it. A kui-free
   round: a `Hover { server, buffer, offset }` beside the buffer, and
-  the LSP keys gated on it.
+  the LSP keys gated on it. Step 20.
 - **Incremental sync from the journal** — open [kui.md]. Whole-text per
   change today. Correct, and fine until a big file is edited with a
   server attached; measure before doing it (the perf tab exists).
@@ -682,6 +768,31 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   changed on disk, not written: a.txt`); `:wqa` quits only when
   everything was written, where it had quit past a failed write.
 
+### Workspaces
+
+- **Workspaces, revisited** — open, a note first [asked 2026-09-23];
+  step 25. "The cwd per tab, or something else." What the cwd is
+  today, checked: one thing that means five. `set_cwd` moves the
+  process's own (`set_current_dir`, so every child and every relative
+  path agree), reloads the project settings layer and the trusted
+  `.kawoosh/init.lua` from it, and it is where `:e`, the `files`
+  walk, `:grep` and a tool start from, and what the title bar shows.
+  The memory's workspace is something else again: `workspace_of`, the
+  outermost directory at or above the cwd with a `.kawoosh` in it —
+  so a `:cd` into a subdirectory keeps it, and a project with no
+  `.kawoosh` has none: every such project shares the one empty
+  workspace, its pins (`<leader>e1`) included. A terminal has had its
+  own cwd since step 15 (OSC 7, else the process's). And the session
+  is one, `"default"` (`session.rs`), whatever the cwd. What the note
+  weighs: a cwd per tab (a tab a project, wezterm- and tmux-shaped —
+  which ends the process cwd, every spawn passed its directory, and
+  asks the settings for a layer per tab); a workspace as a named thing
+  (a root, its session, its memory scope, its tabs), switched from a
+  picker the directory jumps feed; or the two together, a tab opened
+  on a workspace. Before ssh: domains.md's rule 7 — "a process spawns
+  where its cwd is", the cwd a `Loc` — is the same change as ending the
+  process cwd, and which cwd a remote tab has is this note's answer.
+
 ### Buffers with a shape
 
 - **Markdown, the fancy buffer** — done 2026-09-23
@@ -706,7 +817,112 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 - **`dir`, round three** — partly [todo]. Left from the design: a
   watcher re-reading a listing the io thread's `watch.rs` sees change,
   an image preview once kui's `image` is on the road (req §9), and
-  hidden-file toggling. None urgent.
+  hidden-file toggling. None urgent. *Checked 2026-09-23:* the image
+  is on the road — `image` is in kui's Lua DSL (`prelude.lua`) and the
+  markdown buffer draws with it — so the preview is `dir.lua`'s alone,
+  and the picker's preview of an image (which `file_lines` answers
+  with the word `binary` today) is the same few lines. Step 22.
+- **A secrets buffer** — open [todo 2026-09-23]; a note first
+  (`secrets.md`), step 19. What the todo asks: secrets masked on
+  screen, a yank of one pasted once, never on the system clipboard,
+  and the memory and the buffer cleaned out of RAM when done. What the
+  code does with a secret today, checked: what the clipboard holds
+  when the window comes back is the register's newest and is not
+  written (`Took::Seen`, `adopt_clipboard` — a password copied in a
+  password manager), and that is the one guard. Once it is put, it is
+  a `text` row in the store (`moments.rs`; `memory.text.max_mb = 0`
+  turns every text off, not this one); the buffer it lands in is a
+  draft in the store within a second (`history.rs`'s `QUIET`: every
+  buffer with no hook that is not read-only is `draftable`), its undo
+  tree carrying the text both ways; a yank from that buffer goes to
+  the system clipboard (`clipboard.system`); a session brings the
+  scratch back; and nothing draws a range as other than its bytes. So
+  the plugin is the small half, and the round is a **private** buffer
+  in the engine that each of those paths asks about: no history row,
+  no `text` row for a yank from it or a put into it (the register's
+  for the session, as `Seen` is), no clipboard write, no session, no
+  language server, no grammar; and at `:bd` its text, its tree and its
+  register entries dropped, the bytes kawoosh holds overwritten first.
+  That is all "cleaned from RAM" can honestly promise: the rope's
+  chunks and the tree's edits are kawoosh's to zero, while a copy an
+  allocator left behind on a grow, or a run kui shaped and cached, is
+  not — which is why the mask draws a fill and never shapes the secret.
+  "Pasted once" is a register entry with a use count: `p` takes it
+  out, and a timeout (a password manager's thirty seconds) takes it
+  if nothing does.
+  *Decided 2026-09-23, with the user:* **both readings, and Ansible's
+  `vault.yml` beside them** — a vault scratch (`:secret NAME`, nothing
+  ever on disk), values masked in ordinary files (`.env`, a token in a
+  config), and a vault file; **the masks configurable**; **the
+  concealed clipboard honoured**, and a terminal's password prompt
+  treated the same way. Found while deciding: `ansible-vault edit` —
+  and `sops`, `pass edit`, anything that decrypts to a temp file and
+  runs `$EDITOR` — lands in kawoosh as `kawoosh-edit --wait` on a
+  plaintext file, and the file's history row keeps its edits in the
+  store for good (a clean history is the tree without the text, but
+  the tree's edits are text). vim's answer is `pass` passing
+  `noundofile`; kawoosh's is that a `--wait` open of a file under the
+  temp directory is private unless a setting says otherwise.
+  The mask, proposed (the user was unsure; the note settles it): the
+  rules are data, not a hook — `secrets.masks`, a list of `{ files =
+  GLOB | language = NAME, pattern = REGEX }`, the pattern's first group
+  the masked part (the value after `=` in `.env*`, a `vault_*:` key's
+  value in a `vault.yml`, a `Bearer` token), and `{ from =, to = }` for
+  a block (a PEM private key); the bundled rules in the engine's
+  layer, a user's added or replaced by name as every other table is.
+  The engine matches the rows it draws, cached per line and version as
+  the syntax runs are, and draws a match as a fill of its width, never
+  shaping the text. Rules and not a Lua function per edit because a
+  file buffer has no edit hook for Lua (`on_change` is a scratch's)
+  and a row drawn must not wait on Lua; a plugin still gets
+  `kawoosh.buf.mask(ranges[, buffer])` for ranges it computes itself,
+  and adds rules with `kawoosh.secrets.rule { … }`. A file a rule
+  names is private as a whole, since its history would carry what the
+  mask hides. Shown on a key for a few seconds, the caret's match
+  alone — never the caret's line raw as the markdown buffer does,
+  since the point of a mask is a screen someone else can see.
+  A vault file is `dir.lua`'s shape: `kawoosh.on_open` takes a path
+  whose first line is `$ANSIBLE_VAULT;`, `ansible-vault view` fills a
+  private scratch, and its `on_write` encrypts back; the vault's
+  password comes from `ANSIBLE_VAULT_PASSWORD_FILE` or a masked field,
+  since `kawoosh.spawn` gives the tool no tty to ask on.
+  The concealed clipboard: macOS password managers mark what they copy
+  (`org.nspasteboard.ConcealedType`, `TransientType`), and kui's
+  `request_paste` answers with the text alone — so a kui ask, the
+  markers beside the text. With them, a concealed text is not the
+  register's newest at all (not even `Seen`); an explicit paste still
+  puts it, as a paste-once entry. A terminal's password prompt: the
+  pty's termios says when the program turned echo off with the line
+  discipline still canonical — `sudo`, `ssh`, `gpg` asking — which is
+  iTerm2's rule for its key icon, and `portable_pty`'s
+  `MasterPty::get_termios` reads it. While a pane is at one, its title
+  says so and macOS's secure event input is on while it has the keys
+  (`EnableSecureEventInput`, so no other process reads the typing — a
+  second kui ask); a paste there is already never remembered
+  (`Terminal::paste` writes the pty, not the memory), and a concealed
+  text may be pasted there, which is what the mark is for.
+- **Timed rows** — open [todo 2026-09-23]; step 21. A notes buffer
+  whose every new line begins with the time it was started — `14:02`,
+  or `T+01:41` from the buffer's first stamp — as a bundled
+  `timed.lua`, off until a buffer asks (`:timed`, a per-buffer fact
+  the way `pairs` gates on one). The stamp is the line's text, not an
+  annotation: `buf.annotate` draws past the line and never in its
+  bytes, so it would not survive a save. A relative stamp reads the
+  first stamp back out of the text, so a file reopened tomorrow counts
+  on from where it began, and a stamp edited by hand is the data. The
+  doors are pairs': an insert-mode `<CR>` gated on the fact, and
+  `buf.type` / `buf.edits`. The question is pairs' too: `<CR>` in
+  insert mode is `pairs enter` already, and a key's bindings are
+  newest first, the first whose `when` holds taking it (`keymap.rs`'s
+  `Binding`), so in a timed buffer one plugin's `<CR>` shadows the
+  other's — the block between a pair not opened, or no stamp. Either
+  the stamp is made on the edit rather than the key — a hook on a new
+  line however it came (`o`, `O`, `<CR>`, but not a paste of many),
+  which no Lua door gives a file buffer today (`on_change` is a
+  scratch's) — or a command can decline and hand the key to the
+  binding under it. The first suits timed rows better; the second is
+  the door any two insert-mode plugins will want. Decided at the
+  round's start.
 - **`<CR>` on a file closes the listing** — done 2026-09-22 [use];
   step 12. `dir enter` on a file closes the listing it was opened from
   once the file is in the pane — `kawoosh.buf.close(h, { if_hidden =
@@ -734,7 +950,8 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   jump (the listing and the line that named it in `meta`), `tool`
   rows from `:tool` and the compile (the command in `meta`), a
   terminal pane's dwell to its tool, both opened from the pane, aged
-  at thirty days. Not built: co-occurrence, the yank-pop after `p`.
+  at thirty days. Not built: co-occurrence, the yank-pop after `p` —
+  the yank-pop is step 24, co-occurrence when use asks for it.
 
 ### Terminal
 
@@ -813,7 +1030,7 @@ follow the theme every frame (`panes.rs`).
   corridor the detachable daemon is on (mvp.md's non-goals). WSL is
   the local case of it — the pty is `wsl.exe`, the paths translate
   (`/mnt/c` ↔ `C:\`) — and Windows-only. Decided 2026-09-21
-  ([domains.md](domains.md)), ssh alone, not built; step 18: a
+  ([domains.md](domains.md)), ssh alone, not built; step 26: a
   `domains` settings table, `box:/path` as the spelling and `Loc` as
   the type, OpenSSH's binary as the transport (a master per domain in
   a pane, so prompts are answered where they appear), an `Fs` trait
@@ -1066,12 +1283,75 @@ then breadth.
     `markdown.rs`, the fold table, wrap on rendered rows, images and
     tables.~~ Landed 2026-09-23; the first check found the squeezed
     row. See the buffers track and markdown.md's "Built".
-18. **ssh as a domain** ([domains.md](domains.md)): four rounds —
+18. **Two fixes from reading the list**: a pane made is focused —
+    `show_in_pane` taking `Layout::split`'s default and Lua's, the
+    compile's output its one opt-out, `q` closing any of them back to
+    where the keys came from — and empty scratches swept on the event
+    rather than every frame, behind one door for a view going. An hour
+    each; first because one is a bug met in use.
+19. **Secrets** (a note first, `secrets.md`): the private buffer in
+    the engine — the histories, the memory, the clipboard, the
+    session, the servers and `:bd` each asking it, and a `--wait` open
+    in the temp directory made one — then the mask rules drawn by the
+    engine with `buf.mask` beside them, the register's paste-once
+    entry, then `secrets.lua` over them with the vault file; the two
+    kui asks (the pasteboard's markers, secure event input) filed as
+    F-rounds when the note is done, the terminal's password prompt
+    after them. First of the features because it is the one item about
+    text going where the user did not send it: a token pasted into a
+    scratch is in the store a second later as the scratch's draft,
+    for as long as the scratch lives, and as a `text` row for a week
+    (`memory.text.keep_days`); a vault decrypted through `$EDITOR` is
+    in it for good. Step 12 went first for losing work; this is the
+    same argument turned around.
+20. **LSP, round three**: the reserved keys left — `<leader>cs`
+    `<leader>bs` symbols as picker sources, `gI` `gD`, `<leader>cI`
+    inlay hints drawn the way the ghost is — and the hover as a place
+    to act from (`Hover { server, buffer, offset }`, the LSP keys
+    gated on it, a link followed, the pane reused); a buffer a rename
+    edited without a pane sent to the server. No kui ask. Incremental
+    sync stays out until the perf tab shows it matters.
+21. **The small ones**: align (`ga=`, over lines, on a character or a
+    pattern asked for); timed rows (`timed.lua`, with the door it
+    shares with pairs decided — a new-line hook or a command that
+    declines); the kill-line in insert mode decided or struck. One
+    round because each is under a day and the first two are both
+    insert- and line-shaped tests.
+22. **`dir`, round three**: a listing re-read when the watcher sees
+    its directory change, hidden files toggled, and images previewed
+    in `dir` and the picker through kui's `image`. Breadth, and all
+    Lua but the watch.
+23. **Directory jumps**: the `dirs` source over zoxide's database or
+    the memory's rows, kawoosh's visits fed back with `zoxide add`, a
+    pick `:cd` in an editor pane and `cd` typed at a terminal's empty
+    prompt, and `Request::Pick` so `kawoosh pick SOURCE` answers a
+    shell. After `dir` because both are about directories and the
+    listing is where a jump lands.
+24. **The memory, round five**: the yank-pop memory.md left — the
+    text a `p` put cycled through the register's past. memory.md named
+    `<C-p>` `<C-n>` for it, and Decision 1 has since given `<C-n>` to
+    select next in normal mode, so the round picks the keys first; a
+    binding under "the last step was a put" can take them back only
+    at the cost of `<C-n>` meaning two things. Co-occurrence waits for
+    use to ask.
+25. **Workspaces** (a note first): what the cwd is — per tab, a named
+    workspace, or both — and the process cwd ended with it, every
+    spawn passed its directory; the settings layer, the trust, the
+    memory's workspace and the session following the answer. After
+    the jumps, which move a cwd and are what a workspace switcher
+    would be fed from; before ssh, whose rule 7 is the same change.
+26. **ssh as a domain** ([domains.md](domains.md)): four rounds —
     `Loc` everywhere with no behaviour change, then ssh (the master in
     a pane, SFTP, `:e box:`, `dir`, the poll), then processes through
     the domain with the shim over a forwarded port, then the LSP
     through it. Last because it is the widest, and until then
-    `kawoosh.tool("box", { cmd = "ssh box" })`.
+    `kawoosh.tool("box", { cmd = "ssh box" })`. Was step 18 until the
+    list was ordered past step 17 (2026-09-23); its first round is
+    smaller for step 25, which will have ended the process cwd.
+
+Scheduled nowhere, on purpose: incremental sync (measure first),
+the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),
+kitty graphics and native extensions (deferred).
 
 Not on this list on purpose: everything mvp.md and kui.md call
 "deliberately not in the MVP" (daemon, soft wrap, images, ligatures,
