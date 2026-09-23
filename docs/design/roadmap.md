@@ -831,85 +831,18 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   markdown buffer draws with it — so the preview is `dir.lua`'s alone,
   and the picker's preview of an image (which `file_lines` answers
   with the word `binary` today) is the same few lines. Step 22.
-- **A secrets buffer** — open [todo 2026-09-23]; a note first
-  (`secrets.md`), step 19. What the todo asks: secrets masked on
-  screen, a yank of one pasted once, never on the system clipboard,
-  and the memory and the buffer cleaned out of RAM when done. What the
-  code does with a secret today, checked: what the clipboard holds
-  when the window comes back is the register's newest and is not
-  written (`Took::Seen`, `adopt_clipboard` — a password copied in a
-  password manager), and that is the one guard. Once it is put, it is
-  a `text` row in the store (`moments.rs`; `memory.text.max_mb = 0`
-  turns every text off, not this one); the buffer it lands in is a
-  draft in the store within a second (`history.rs`'s `QUIET`: every
-  buffer with no hook that is not read-only is `draftable`), its undo
-  tree carrying the text both ways; a yank from that buffer goes to
-  the system clipboard (`clipboard.system`); a session brings the
-  scratch back; and nothing draws a range as other than its bytes. So
-  the plugin is the small half, and the round is a **private** buffer
-  in the engine that each of those paths asks about: no history row,
-  no `text` row for a yank from it or a put into it (the register's
-  for the session, as `Seen` is), no clipboard write, no session, no
-  language server, no grammar; and at `:bd` its text, its tree and its
-  register entries dropped, the bytes kawoosh holds overwritten first.
-  That is all "cleaned from RAM" can honestly promise: the rope's
-  chunks and the tree's edits are kawoosh's to zero, while a copy an
-  allocator left behind on a grow, or a run kui shaped and cached, is
-  not — which is why the mask draws a fill and never shapes the secret.
-  "Pasted once" is a register entry with a use count: `p` takes it
-  out, and a timeout (a password manager's thirty seconds) takes it
-  if nothing does.
-  *Decided 2026-09-23, with the user:* **both readings, and Ansible's
-  `vault.yml` beside them** — a vault scratch (`:secret NAME`, nothing
-  ever on disk), values masked in ordinary files (`.env`, a token in a
-  config), and a vault file; **the masks configurable**; **the
-  concealed clipboard honoured**, and a terminal's password prompt
-  treated the same way. Found while deciding: `ansible-vault edit` —
-  and `sops`, `pass edit`, anything that decrypts to a temp file and
-  runs `$EDITOR` — lands in kawoosh as `kawoosh-edit --wait` on a
-  plaintext file, and the file's history row keeps its edits in the
-  store for good (a clean history is the tree without the text, but
-  the tree's edits are text). vim's answer is `pass` passing
-  `noundofile`; kawoosh's is that a `--wait` open of a file under the
-  temp directory is private unless a setting says otherwise.
-  The mask, proposed (the user was unsure; the note settles it): the
-  rules are data, not a hook — `secrets.masks`, a list of `{ files =
-  GLOB | language = NAME, pattern = REGEX }`, the pattern's first group
-  the masked part (the value after `=` in `.env*`, a `vault_*:` key's
-  value in a `vault.yml`, a `Bearer` token), and `{ from =, to = }` for
-  a block (a PEM private key); the bundled rules in the engine's
-  layer, a user's added or replaced by name as every other table is.
-  The engine matches the rows it draws, cached per line and version as
-  the syntax runs are, and draws a match as a fill of its width, never
-  shaping the text. Rules and not a Lua function per edit because a
-  file buffer has no edit hook for Lua (`on_change` is a scratch's)
-  and a row drawn must not wait on Lua; a plugin still gets
-  `kawoosh.buf.mask(ranges[, buffer])` for ranges it computes itself,
-  and adds rules with `kawoosh.secrets.rule { … }`. A file a rule
-  names is private as a whole, since its history would carry what the
-  mask hides. Shown on a key for a few seconds, the caret's match
-  alone — never the caret's line raw as the markdown buffer does,
-  since the point of a mask is a screen someone else can see.
-  A vault file is `dir.lua`'s shape: `kawoosh.on_open` takes a path
-  whose first line is `$ANSIBLE_VAULT;`, `ansible-vault view` fills a
-  private scratch, and its `on_write` encrypts back; the vault's
-  password comes from `ANSIBLE_VAULT_PASSWORD_FILE` or a masked field,
-  since `kawoosh.spawn` gives the tool no tty to ask on.
-  The concealed clipboard: macOS password managers mark what they copy
-  (`org.nspasteboard.ConcealedType`, `TransientType`), and kui's
-  `request_paste` answers with the text alone — so a kui ask, the
-  markers beside the text. With them, a concealed text is not the
-  register's newest at all (not even `Seen`); an explicit paste still
-  puts it, as a paste-once entry. A terminal's password prompt: the
-  pty's termios says when the program turned echo off with the line
-  discipline still canonical — `sudo`, `ssh`, `gpg` asking — which is
-  iTerm2's rule for its key icon, and `portable_pty`'s
-  `MasterPty::get_termios` reads it. While a pane is at one, its title
-  says so and macOS's secure event input is on while it has the keys
-  (`EnableSecureEventInput`, so no other process reads the typing — a
-  second kui ask); a paste there is already never remembered
-  (`Terminal::paste` writes the pty, not the memory), and a concealed
-  text may be pasted there, which is what the mark is for.
+- **A secrets buffer** — done 2026-09-23 [todo 2026-09-23]; step 19
+  ([secrets.md](secrets.md), "Built"). A private buffer every path
+  asks — no history row, no moment, no session, no server, a yank a
+  secret put once and forgotten (`secrets.forget_secs`), never on the
+  clipboard — the freed text blocks zeroed; masks as `secrets.masks`
+  rules (`env`, `vault`, `pem`, `secret`) drawn as `•` through the fold
+  table, `zv` showing one; `:secret NAME` and Ansible vaults opened
+  decrypted in `secrets.lua`; a `--wait` open under the temp directory
+  private (`ansible-vault edit`, `sops`, `pass edit`); a password
+  manager's copy honoured (kui F84) and a terminal at a password prompt
+  titled so, with secure keyboard entry while it has the keys (kui
+  F85). What the entry said before it was built is the note's thesis.
 - **Timed rows** — open [todo 2026-09-23]; step 21. A notes buffer
   whose every new line begins with the time it was started — `14:02`,
   or `T+01:41` from the buffer's first stamp — as a bundled
@@ -1301,7 +1234,7 @@ then breadth.
     the keys' way back became the layout's (`came_from`), and the door
     for a view going found `:only` leaving an `edit --wait` caller
     unanswered. See the panes track.
-19. **Secrets** (a note first, `secrets.md`): the private buffer in
+19. ~~**Secrets** (a note first, `secrets.md`): the private buffer in
     the engine — the histories, the memory, the clipboard, the
     session, the servers and `:bd` each asking it, and a `--wait` open
     in the temp directory made one — then the mask rules drawn by the
@@ -1315,7 +1248,8 @@ then breadth.
     for as long as the scratch lives, and as a `text` row for a week
     (`memory.text.keep_days`); a vault decrypted through `$EDITOR` is
     in it for good. Step 12 went first for losing work; this is the
-    same argument turned around.
+    same argument turned around.~~ Landed 2026-09-23 with kui F84 and
+    F85 ([secrets.md](secrets.md)'s "Built"); see the buffers track.
 20. **LSP, round three**: the reserved keys left — `<leader>cs`
     `<leader>bs` symbols as picker sources, `gI` `gD`, `<leader>cI`
     inlay hints drawn the way the ghost is — and the hover as a place

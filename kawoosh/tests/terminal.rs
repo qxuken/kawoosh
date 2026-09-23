@@ -766,8 +766,9 @@ fn only_answers_a_waiting_caller_whose_pane_it_closed() {
 }
 
 /// A terminal at a password prompt — echo off, the line discipline
-/// canonical — says so in its title (docs/design/secrets.md Decision
-/// 4), and stops saying so when the program turns echo back on.
+/// canonical — says so in its title and asks for secure keyboard entry
+/// while it has the keys (docs/design/secrets.md Decision 4), and
+/// stops both when the program turns echo back on.
 #[cfg(unix)]
 #[test]
 fn a_terminal_at_a_password_prompt_says_so() {
@@ -775,7 +776,10 @@ fn a_terminal_at_a_password_prompt_says_so() {
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     d.keys(&mut app, ":term");
-    d.keys(&mut app, " /bin/sh -c 'stty -echo; sleep 1; stty echo; sleep 2'");
+    d.keys(
+        &mut app,
+        " /bin/sh -c 'stty -echo; sleep 1; stty echo; sleep 2'",
+    );
     d.key(&mut app, "enter", KeyMods::default());
     let titled = |d: &Drive| {
         d.core
@@ -794,6 +798,10 @@ fn a_terminal_at_a_password_prompt_says_so() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(seen, "the title says a password is being asked for");
+    assert!(
+        d.core.secure_input(),
+        "and asks for secure keyboard entry (kui F85)"
+    );
     let mut gone = false;
     for _ in 0..300 {
         d.frame(&mut app);
@@ -804,4 +812,5 @@ fn a_terminal_at_a_password_prompt_says_so() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(gone, "and stops when echo is back");
+    assert!(!d.core.secure_input(), "secure entry with it");
 }

@@ -2325,6 +2325,13 @@ impl Editor {
     /// The clipboard's answer to `paste clipboard`: typed in insert
     /// mode, put after the caret otherwise.
     pub fn paste_text(&mut self, view: ViewId, text: &str) {
+        self.paste_text_marked(view, text, false);
+    }
+
+    /// `paste_text` of a text the pasteboard marked a secret (a
+    /// password manager's copy): put once and forgotten, never written
+    /// (docs/design/secrets.md).
+    pub fn paste_text_marked(&mut self, view: ViewId, text: &str, secret: bool) {
         let view = match self.prompt_view() {
             Some(p) if !self.is_field(view) => p,
             _ => view,
@@ -2334,7 +2341,7 @@ impl Editor {
             _ => {
                 // Put into a private buffer, it is a secret from the
                 // start: never written, gone once put.
-                let secret = self.buffers[self.views[view].buffer].private;
+                let secret = secret || self.buffers[self.views[view].buffer].private;
                 self.memory.remember(Moment {
                     text: text.to_string(),
                     linewise: text.ends_with('\n'),

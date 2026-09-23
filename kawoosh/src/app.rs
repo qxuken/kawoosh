@@ -2014,6 +2014,15 @@ impl kui::App for Kawoosh {
             ui.set_clipboard(text, None);
         }
         self.sync_clipboard(ui);
+        // Secure keyboard entry while a terminal at a password prompt
+        // has the keys (kui F85; per frame, so it goes when this does).
+        if self
+            .term_of(self.layout.focused())
+            .and_then(|t| self.terms.map.get(&t))
+            .is_some_and(|t| t.password_prompt())
+        {
+            ui.secure_input(true);
+        }
         if self.awaiting_paste {
             ui.request_paste();
         }
@@ -2120,22 +2129,32 @@ impl kui::App for Kawoosh {
         match p.get("kind").and_then(Value::as_str) {
             Some("key") => self.on_key(p),
             Some("text") => {
-                let text = p
+                let mut text = p
                     .get("text")
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
+                // What a password manager copied is marked so on the
+                // pasteboard (kui F84): a secret (docs/design/secrets.md
+                // Decision 4).
+                let marked = |k| p.get(k).and_then(Value::as_bool).unwrap_or(false);
+                let secret = marked("concealed") || marked("transient");
                 // A look at the clipboard, not a paste: into the
-                // register, unless it is what was put there from here.
+                // register, unless it is what was put there from here —
+                // or a secret, which is not the register's at all until
+                // it is pasted.
                 if std::mem::take(&mut self.clip_probe) && !self.awaiting_paste {
-                    if self.clip_last.as_deref() != Some(text.as_str()) {
+                    if !secret && self.clip_last.as_deref() != Some(text.as_str()) {
                         self.ed.adopt_clipboard(&text);
+                    }
+                    if secret {
+                        text_buffer::wipe_string(&mut text);
                     }
                     return;
                 }
                 if let Some(v) = self.focused_view() {
                     if std::mem::take(&mut self.awaiting_paste) {
-                        self.ed.paste_text(v, &text);
+                        self.ed.paste_text_marked(v, &text, secret);
                     } else {
                         self.ed.text(v, &text);
                     }

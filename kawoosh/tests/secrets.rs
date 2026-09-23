@@ -325,3 +325,43 @@ fn a_vault_file_opens_decrypted_and_writes_back_encrypted() {
         .modified));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A paste the pasteboard marked concealed (a password manager's copy,
+/// kui F84) is put once as a secret and forgotten; an unmarked one is
+/// an ordinary clipboard moment.
+#[test]
+fn a_concealed_paste_is_a_secret() {
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "x\n");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "paste clipboard");
+    d.input(
+        &mut app,
+        kui::InputEvent::Paste {
+            text: "hunter22".into(),
+            marks: kui::ClipboardMarks::SECRET,
+        },
+    );
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    assert!(app.ed.buffer_of(v).text().contains("hunter22"), "put");
+    assert!(
+        app.ed.memory.moments().iter().all(|m| m.text != "hunter22"),
+        "and not kept"
+    );
+    ex(&mut d, &mut app, "paste clipboard");
+    d.input(
+        &mut app,
+        kui::InputEvent::Paste {
+            text: "plain".into(),
+            marks: kui::ClipboardMarks::default(),
+        },
+    );
+    d.frame(&mut app);
+    assert!(
+        app.ed
+            .memory
+            .head()
+            .is_some_and(|m| m.text == "plain" && !m.secret)
+    );
+}

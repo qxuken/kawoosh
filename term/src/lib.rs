@@ -1535,10 +1535,16 @@ mod tests {
                 t.password_prompt() == want
             })
         };
-        let (t, _r) = Terminal::spawn(Some("/bin/sh -c 'stty -echo; sleep 3'"), None, size, &[]).unwrap();
-        assert!(wait(&t, true), "stty -echo is a password prompt");
         let (t, _r) =
-            Terminal::spawn(Some("/bin/sh -c 'stty -echo -icanon; sleep 3'"), None, size, &[]).unwrap();
+            Terminal::spawn(Some("/bin/sh -c 'stty -echo; sleep 3'"), None, size, &[]).unwrap();
+        assert!(wait(&t, true), "stty -echo is a password prompt");
+        let (t, _r) = Terminal::spawn(
+            Some("/bin/sh -c 'stty -echo -icanon; sleep 3'"),
+            None,
+            size,
+            &[],
+        )
+        .unwrap();
         assert!(wait(&t, false) && !wait(&t, true), "a raw program is not");
         let (t, _r) = Terminal::spawn(Some("/bin/sh -c 'sleep 3'"), None, size, &[]).unwrap();
         assert!(!wait(&t, true), "a shell with echo on is not");

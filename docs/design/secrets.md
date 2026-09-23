@@ -1,6 +1,7 @@
 # Secrets: a private buffer, masks, and a register that forgets
 
-Status: decided 2026-09-23 (roadmap step 19), with the user: both
+Status: decided and built 2026-09-23 (roadmap step 19; "Built" at the
+end says where it departed), with the user: both
 readings — a vault scratch and masked values in ordinary files — and
 Ansible's `vault.yml` beside them; the masks configurable; the
 concealed pasteboard honoured, and a terminal's password prompt treated
@@ -206,3 +207,35 @@ a macro), the swap. The mask is why the text is never in kui.
   rule without `files` or `language` on a forty-megabyte log would be
   slow, which is why the scan skips a buffer past a size
   (`secrets.scan_max_kb`, 1024).
+
+## Built
+
+2026-09-23, in four commits and two kui rounds, in the build order's
+shape. Where it departed:
+
+- **The rules live in the editor crate** (`editor/src/masks.rs`), not
+  the shell: `kawoosh.secrets.mask_text` answers from Lua without a
+  round trip, and the shell and Lua read the same table the same way.
+- **A rule can be asked for by name** (`kawoosh.buf.mask_with`), which
+  the note did not have: a decrypted vault is a scratch with no path,
+  so no `files` glob could name it.
+- **The picker masks too**: a grep row, a file's preview and a private
+  buffer's lines go through `mask_text`, since a list of a `.env`'s
+  lines drew them raw.
+- **`mask private`** (`:mask private [on|off]`) and **`mask reveal`**
+  (`zv`) are the engine's commands; `:secret` is the plugin's.
+- **The register's secrets are withheld from Lua** — `kawoosh.register`
+  is nil for one, `kawoosh.memory()` shows it as the pane does — since
+  a Lua string is never zeroed.
+- **`kawoosh.spawn` grew `stdin`** and **`kawoosh.fs` grew `head`**: the
+  vault's plaintext goes to `ansible-vault encrypt -` on stdin, and the
+  opener, asked about every path, reads fifteen bytes.
+- **A long setting's value is cut** in the settings tab: the mask
+  patterns were the first values wider than the tab, and the table's
+  aligned columns wrapped every path a letter at a time.
+- **kui F84** answers a paste with the pasteboard's `concealed` and
+  `transient` marks (`InputEvent::Paste`), read on macOS and Windows,
+  not yet on Linux; **kui F85** is `Ui::secure_input(on)`, declared per
+  frame, balanced by the runner. The secure input's effect could not be
+  seen on the machine it was built on (another process held it on
+  throughout); the calls link and run.
