@@ -724,7 +724,9 @@ impl Mark {
 }
 
 /// A row laid out otherwise than the plain one (the markdown buffer):
-/// its text at `scale` of the face, wrapped at `wrap` px, on a
+/// its text at `scale` of the face, wrapped by `wrap` at the width kui
+/// gives the row on the frame it is drawn (a pane shown for the first
+/// time has no width from a frame before), on a
 /// background, with its line number in the row — a row of its own
 /// height cannot share a gutter column of fixed ones — and keyed, so
 /// last frame's layout of it can be read back (`key`).
@@ -732,7 +734,7 @@ impl Mark {
 pub struct RowForm {
     pub key: String,
     pub scale: f32,
-    pub wrap: Option<(f32, kui::TextWrap)>,
+    pub wrap: Option<kui::TextWrap>,
     pub bg: Option<Color>,
     /// The gutter's width, and its number and whether it is the caret's
     /// line.
@@ -746,33 +748,58 @@ pub struct RowForm {
     /// As wide as its text, which does not wrap: a table's row, in a
     /// block that scrolls sideways.
     pub fit: bool,
-    /// A table's row with images in it, instead of text.
-    pub grid: Option<Grid>,
+    /// A table's row, drawn as its cells.
+    pub table: Option<TableRow>,
 }
 
-/// A table's row of images: its cells between rules where the text rows
-/// draw `│`, each column as wide as theirs.
+/// A table's row as the cells of a kui table, which lines its columns
+/// up whatever is in them: a 1px rule, a cell, a rule, …, a rule — the
+/// rules as tall as the row, so they meet the next row's.
 #[derive(Clone, Debug)]
-pub struct Grid {
-    /// The row's height: its tallest image and a pad above and below.
+pub struct TableRow {
+    /// How many columns the table has; a row with fewer cells has empty
+    /// ones.
+    pub columns: usize,
+    pub cells: Vec<TableCell>,
+    /// The delimiter row: a rule across each cell.
+    pub delimiter: bool,
     pub height: f32,
-    /// A cell of the monospace grid: a rule's width, and a cell's pad
-    /// on each side.
-    pub cell_w: f32,
+    /// A cell's pad on each side.
+    pub pad: f32,
     pub rule: Color,
-    /// Each column's width in px, and what is in it: an image (sized to
-    /// fit it) or the alt of one not read, or a text.
-    pub cols: Vec<(f32, GridCell)>,
 }
 
 #[derive(Clone, Debug)]
-pub enum GridCell {
+pub enum TableCell {
+    /// These drawn bytes of the row.
+    Text(Range<usize>),
+    /// An image, sized; or the alt of one not read.
     Image(Result<(kui::ImageId, f32, f32), String>),
-    Text(String),
 }
 
-/// The pad above and below a table's row of images.
-pub const GRID_PAD: f32 = 4.0;
+/// The pad above and below an image in a table's cell.
+pub const TABLE_IMAGE_PAD: f32 = 4.0;
+
+/// A table's rule 1px tall across it, above its first row or below its
+/// last: a row of the table, so it is as wide as its columns.
+pub fn table_edge(ui: &mut Ui<'_>, columns: usize, rule: Color) {
+    ui.with(
+        NodeSpec::row().height(Sizing::Fixed(1.0)).role(Role::None),
+        |ui| {
+            for j in 0..columns * 2 + 1 {
+                let w = if j % 2 == 0 {
+                    Sizing::Fixed(1.0)
+                } else {
+                    Sizing::Fit
+                };
+                ui.with(
+                    NodeSpec::row().width(w).height(Sizing::Fixed(1.0)).bg(rule),
+                    |_| {},
+                );
+            }
+        },
+    );
+}
 
 /// The gutter cell for line `ln` (0-based), decoration rather than text.
 pub fn gutter_row(ui: &mut Ui<'_>, face: Face, pal: &Pal, ln: usize, current: bool) {
@@ -959,7 +986,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
                 } else {
                     Sizing::Grow(1.0)
                 })
-                .min_width(Min::FIT)
+                .min_width(if f.wrap.is_some() {
+                    Min::px(0.0)
+                } else {
+                    Min::FIT
+                })
                 .height(Sizing::Fit)
                 // Its own height, never squeezed: the lines column
                 // overflows at the bottom (the clip takes the last rows),
@@ -1003,7 +1034,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
                 .line_height(lh)
                 .features(face.features)
                 .color(pal.fg)
-                .wrap(f.wrap.map_or(kui::TextWrap::None, |w| w.1));
+                .wrap(f.wrap.unwrap_or(kui::TextWrap::None));
             if let Some(id) = face.id {
                 base = base.font(id);
             }
@@ -1023,58 +1054,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
                     },
                 );
             }
-            if let Some(g) = &f.grid {
-                let rule = |ui: &mut Ui<'_>| {
-                    ui.with(
-                        NodeSpec::row()
-                            .width(Sizing::Fixed(g.cell_w))
-                            .height(Sizing::Fixed(g.height))
-                            .main_align(Align::Center)
-                            .role(Role::None),
-                        |ui| {
-                            ui.with(
-                                NodeSpec::row()
-                                    .width(Sizing::Fixed(1.0))
-                                    .height(Sizing::Fixed(g.height))
-                                    .bg(g.rule),
-                                |_| {},
-                            );
-                        },
-                    );
-                };
-                ui.with(
-                    NodeSpec::row()
-                        .height(Sizing::Fixed(g.height))
-                        .role(Role::None),
-                    |ui| {
-                        for (w, cell) in &g.cols {
-                            rule(ui);
-                            ui.with(
-                                NodeSpec::row()
-                                    .width(Sizing::Fixed(w + 2.0 * g.cell_w))
-                                    .height(Sizing::Fixed(g.height))
-                                    .pad_xy(g.cell_w, GRID_PAD)
-                                    .role(Role::None),
-                                |ui| match cell {
-                                    GridCell::Image(Ok((id, w, h))) => ui.image(
-                                        *id,
-                                        NodeSpec::column()
-                                            .width(Sizing::Fixed(*w))
-                                            .height(Sizing::Fixed(*h)),
-                                    ),
-                                    GridCell::Image(Err(alt)) => {
-                                        ui.text(&format!("🖼 {alt}"), mono(face, pal).color(pal.dim))
-                                    }
-                                    GridCell::Text(t) => ui.text(t, mono(face, pal)),
-                                },
-                            );
-                        }
-                        rule(ui);
-                    },
-                );
-                return;
-            }
-            if !f.images.is_empty() {
+            if !f.images.is_empty() && f.table.is_none() {
                 ui.with(NodeSpec::row().gap(8.0).role(Role::None), |ui| {
                     for img in &f.images {
                         match img {
@@ -1112,7 +1092,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
                 return;
             }
         }
-        let text_w = form.and_then(|f| f.wrap).map(|w| w.0);
+        let wraps = form.is_some_and(|f| f.wrap.is_some());
         let text_key: std::cell::Cell<Option<kui::Key>> = std::cell::Cell::new(None);
         spacer(ui, before);
         let flush = |ui: &mut Ui<'_>, segs: &[(Range<usize>, Look)]| {
@@ -1125,7 +1105,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
                 && l.bg.is_none()
                 && l.underline.is_none()
                 && l.mark == Mark::default()
-                && text_w.is_none()
+                && !wraps
             {
                 let style = match l.color {
                     Some(c) => base.color(c),
@@ -1164,15 +1144,16 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
                     s
                 })
                 .collect();
-            match text_w {
-                // A wrapped text needs its width: the row's, less what
-                // sits before it. Its key is kept for the bar caret,
-                // which is placed where kui laid the byte out.
-                Some(w) => {
+            match wraps {
+                // A wrapped text grows to the row's width less what sits
+                // before it, and kui wraps it there. Its key is kept for
+                // the bar caret, which is placed where kui laid the byte
+                // out.
+                true => {
                     ui.with_keyed(
                         "text",
                         NodeSpec::row()
-                            .width(Sizing::Fixed(w.max(1.0)))
+                            .width(Sizing::Grow(1.0))
                             .height(Sizing::Fit)
                             .min_height(Min::FIT),
                         |ui| {
@@ -1181,15 +1162,82 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
                         },
                     );
                 }
-                None => ui.rich_text(&spans, base),
+                false => ui.rich_text(&spans, base),
             }
         };
         // A rendered row draws no ghost: its text wraps as one
         // paragraph, and a ghost is a node of its own beside the text.
-        let ghost = line
-            .ghost
-            .filter(|_| text_w.is_none())
-            .map(|(b, g)| (b.min(len), g));
+        // A table's row: its cells, each text the drawn bytes it holds
+        // with their looks, so the row's text is still theirs in order.
+        if let Some(t) = form.and_then(|f| f.table.as_ref()) {
+            let rule = |ui: &mut Ui<'_>| {
+                ui.with(
+                    NodeSpec::row()
+                        .width(Sizing::Fixed(1.0))
+                        .height(Sizing::Fixed(t.height))
+                        .bg(t.rule),
+                    |_| {},
+                );
+            };
+            let cell = NodeSpec::row()
+                .height(Sizing::Fixed(t.height))
+                .pad_xy(t.pad, 0.0)
+                .cross_align(Align::Center);
+            for j in 0..t.columns.max(t.cells.len()) {
+                rule(ui);
+                if t.delimiter {
+                    // Across the cell to the rules, no pad.
+                    ui.with(cell.clone().pad_xy(0.0, 0.0), |ui| {
+                        ui.with(
+                            NodeSpec::row()
+                                .width(Sizing::Grow(1.0))
+                                .height(Sizing::Fixed(1.0))
+                                .bg(t.rule),
+                            |_| {},
+                        );
+                    });
+                    continue;
+                }
+                match t.cells.get(j) {
+                    Some(TableCell::Text(r)) => {
+                        ui.with(cell.clone(), |ui| {
+                            let sub: Vec<(Range<usize>, Look)> = segs
+                                .iter()
+                                .filter_map(|(s, l)| {
+                                    let a = s.start.max(r.start);
+                                    let b = s.end.min(r.end);
+                                    (a < b).then_some((a..b, *l))
+                                })
+                                .collect();
+                            flush(ui, &sub);
+                        });
+                    }
+                    Some(TableCell::Image(Ok((id, w, h)))) => {
+                        ui.with(cell.clone().pad_xy(t.pad, TABLE_IMAGE_PAD), |ui| {
+                            ui.image(
+                                *id,
+                                NodeSpec::column()
+                                    .width(Sizing::Fixed(*w))
+                                    .height(Sizing::Fixed(*h)),
+                            );
+                        });
+                    }
+                    Some(TableCell::Image(Err(alt))) => {
+                        ui.with(cell.clone(), |ui| {
+                            ui.with(NodeSpec::row().role(Role::None), |ui| {
+                                ui.text(&format!("🖼 {alt}"), mono(face, pal).color(pal.dim));
+                            });
+                        });
+                    }
+                    None => {
+                        ui.with(cell.clone(), |_| {});
+                    }
+                }
+            }
+            rule(ui);
+            return;
+        }
+        let ghost = line.ghost.filter(|_| !wraps).map(|(b, g)| (b.min(len), g));
         match ghost {
             Some((g, ghost_text)) => {
                 let at = segs.partition_point(|(r, _)| r.end <= g);
@@ -1212,7 +1260,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
             // A wrapped row's: where kui laid the byte out last frame,
             // against where it laid the first — the frame that types
             // is a frame behind, and the next catches up.
-            if text_w.is_some() {
+            if wraps {
                 let gutter = form.and_then(|f| f.gutter).map_or(0.0, |g| g.0);
                 let placed = text_key
                     .get()

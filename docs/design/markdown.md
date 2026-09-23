@@ -286,19 +286,40 @@ After a day's use (2026-09-23), five more:
   not move. Its rows are as wide as their text (`RowForm::fit`).
 - **A line of images is a row of images**, side by side, each at most
   its share of the width. A `data:` URI's base64 is decoded in place.
-- **An image in a table is in its cell.** A table's row with an image
-  in it stays the table's row (`Cell::Image`), drawn as a grid
-  (`RowForm::grid`): 1px rules where the text rows draw `│`, each cell
-  as wide as its column, as tall as its tallest image. A column is as
-  wide as its images once they are read — each at most its share of the
-  pane — so a README's light and dark screenshots sit under their
-  headers; the table's rows are drawn again to the wider columns in the
-  same frame, and its alt (`🖼 alt`) is what counts until then. It had
-  been a row of images outside the table, its header's columns as wide
-  as the source's `![…](…)`.
-- **A table between edges**: `┌─┬─┐` above its first row and `└─┴─┘`
-  below its last, when they are in sight — drawn in its block, so they
-  scroll with it, their height counted with the first and last rows'.
+- **A table is a kui table** (kui's ADR 0033, `NodeSpec::table()`): its
+  rows are the table's rows and their cells its cells — a 1px rule, a
+  cell, a rule, …, a rule — so the layout lines the columns up whatever
+  is in them, a text or an image, and a rule is as tall as its row and
+  meets the next row's. The delimiter row is a rule across each cell;
+  the edges above the first row and below the last are rows of rules,
+  1px, as wide as the columns. A row's drawn text is its cells' texts
+  one after another — the pipes, the pads and an image's source folded
+  away, a cell's inline marks as prose's — and kui reads a line's text
+  from its text nodes in order, so a click through a cell lands on its
+  byte. The caret's row is its source, a child of the table and not a
+  row of it. An image is a cell, at most its column's share of the pane,
+  so a README's light and dark screenshots sit under their headers.
+  This replaced cells padded to monospace widths between box-drawing
+  characters: `│` is a glyph shorter than its line, so the sides never
+  met, and a column as wide as the source's `![…](…)` had nothing to do
+  with the image drawn under it.
+- **A row of empty cells does not swallow the document.** tree-sitter-md
+  loses its place on a table's row with an empty cell — a lone `|` took
+  the blank line and the heading after it into the table, `|||` made
+  the rest of the document one ERROR, every heading and fence in it
+  gone — which is every row on its way to being typed. The grammar
+  carries stand-ins (`Grammar::stand_ins`, markdown's `stand_ins`):
+  such a row is read by the parser as `|   |` of its own length (`|a`,
+  `a` for the shortest), still a row; the text keeps its bytes and the
+  cells are read off the text. A document with one is parsed whole, its
+  tree not kept, since an edit anywhere can change which rows they are.
+- **Prose wraps at the width of this frame.** A wrapped row's text was a
+  box fixed at the pane's width as last frame's layout recorded it, and
+  a pane drawn for the first time — a restored tab shown, a split made —
+  had none: it wrapped at 40px for a frame, a word or a syllable a
+  line. The text now grows to its row and kui wraps it there, in the
+  frame it is drawn; an image's share of the width, which still needs a
+  number, takes the window's when the pane has no rect yet.
 - **`gx` on an anchor goes to its heading**: `#seed-data`, or
   `file.md#top` after opening the file, by GitHub's slug (lower-cased,
   punctuation dropped, spaces as `-`, a repeat numbered); it had opened

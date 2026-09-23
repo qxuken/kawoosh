@@ -60,7 +60,7 @@ fn rect_of_text(d: &Drive, text: &str) -> Option<(f32, f32, f32, f32)> {
 /// Away from the caret every mark is folded: the heading's `#`, the
 /// emphasis, the code span's backticks, the link's destination, a
 /// bullet `•`, a task `☐` `☑`, a quote `▎`, a fence's backticks (its
-/// info stays), a table's cells padded under box rules, a setext
+/// info stays), a table's cells in columns between rules, a setext
 /// underline gone; the caret's line is its source. A heading is drawn
 /// larger than the body, a long paragraph wraps, and the image is an
 /// image.
@@ -86,11 +86,19 @@ fn rendered_rows_fold_the_marks_and_the_caret_line_is_raw() {
     ] {
         assert!(has(want), "{want:?} not among {rows:#?}");
     }
-    // A table is one block of its rows, which scrolls on its own.
-    assert!(
-        has("│ name  │ value │├───────┼───────┤│ alpha │ 1     ││ b     │ 22    │"),
-        "{rows:#?}"
-    );
+    // A table is one block of its rows, which scrolls on its own, its
+    // cells' texts in columns.
+    assert!(has("namevaluealpha1b22"), "{rows:#?}");
+    let value = rect_of_text(&d, "value").unwrap().0;
+    for cell in ["1", "22"] {
+        assert!(
+            d.core
+                .nodes()
+                .iter()
+                .any(|n| n.text.as_deref() == Some(cell) && n.rect.x == value),
+            "{cell:?} under `value`"
+        );
+    }
     let para = rows
         .iter()
         .find(|r| r.starts_with("Some "))
@@ -138,7 +146,7 @@ fn rendered_rows_fold_the_marks_and_the_caret_line_is_raw() {
 fn a_click_lands_through_the_folds() {
     let dir = fixture("click");
     let (mut d, mut app) = launch(&dir, 900.0);
-    d.press(&mut app, "G");
+    d.press(&mut app, "3j");
     settle(&mut d, &mut app);
     let body = rect_of_text(&d, "The end.").unwrap();
     let cw = body.2 / 8.0;
@@ -256,8 +264,9 @@ fn a_heading_typed_takes_its_size() {
 
 /// A table wider than the pane scrolls sideways on its own — the wheel
 /// over it moves it and nothing else; a row of images is images side by
-/// side, and in a table each is in its column, under the header's, the
-/// table between edges; `gx` on an anchor goes to its heading.
+/// side, and in a table each is in its column, under its header's text;
+/// the table's rules meet from its top edge to its bottom; `gx` on an
+/// anchor goes to its heading.
 #[test]
 fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
     let dir = fixture("wide");
@@ -269,15 +278,16 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
             .nodes()
             .iter()
             .find(|n| {
-                n.text
-                    .as_deref()
-                    .is_some_and(|t| t.starts_with("│ a very long"))
+                n.text.as_deref() == Some("another rather long column heading to make it wide")
             })
             .map(|n| n.rect)
     };
-    let before = header(&d).expect("the wide table's header");
+    let before = header(&d).expect("the wide table's third header");
     let para_x = rect_of_text(&d, "The end.").unwrap().0;
-    assert!(before.w > 700.0, "wider than the pane: {before:?}");
+    assert!(
+        before.x + before.w > 700.0,
+        "wider than the pane: {before:?}"
+    );
     d.wheel(&mut app, before.x + 50.0, before.y + 5.0, -120.0, 0.0);
     for _ in 0..4 {
         d.frame(&mut app);
@@ -306,47 +316,36 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
     );
     assert_eq!(images[1].1, images[2].1, "side by side");
     assert!(images[2].0 > images[1].0);
-    let text_of = |start: &str| {
-        d.core
-            .nodes()
-            .iter()
-            .find(|n| n.text.as_deref().is_some_and(|t| t.starts_with(start)))
-            .map(|n| (n.text.clone().unwrap(), n.rect))
-    };
-    let (head, rect) = text_of("│ Light").expect("the images' table's header");
-    let chars = head.chars().count() as f32;
-    let cell = rect.w / chars;
-    let col = head.chars().position(|c| c == 'D').unwrap() as f32;
+    let light = rect_of_text(&d, "Light").expect("the images' table's header");
+    let dark = rect_of_text(&d, "Dark, and a heading wider").unwrap();
     assert!(
-        (images[4].0 - (rect.x + col * cell)).abs() < 1.0,
-        "the second image under `Dark`: {images:?}, {head:?} at {rect:?}"
+        (images[3].0 - light.0).abs() < 1.0 && (images[4].0 - dark.0).abs() < 1.0,
+        "each image under its header: {images:?}, {light:?} {dark:?}"
     );
-    assert!(
-        (images[3].0 - (rect.x + 2.0 * cell)).abs() < 1.0,
-        "the first under `Light`"
-    );
-    assert!(
-        images[4].0 - images[3].0 >= 120.0,
-        "the column as wide as its image: {head:?}"
-    );
-    let edges = |start: char| {
-        d.core
-            .nodes()
-            .iter()
-            .filter(|n| {
-                n.text.as_deref().is_some_and(|t| {
-                    t.starts_with(start) && t.chars().count() == head.chars().count()
-                })
-            })
-            .count()
-    };
-    assert_eq!((edges('┌'), edges('└')), (1, 1), "its edges, as wide as it");
+    // The left rule of each of its rows, 1px wide: they meet, from the
+    // top edge's row to the bottom's.
+    let mut rules: Vec<kui::Rect> = d
+        .core
+        .nodes()
+        .iter()
+        .map(|n| n.rect)
+        .filter(|r| r.w == 1.0 && r.x < light.0 && r.x > light.0 - 30.0 && r.y >= light.1 - 40.0)
+        .filter(|r| r.y < images[3].1 + 80.0)
+        .collect();
+    rules.sort_by(|a, b| a.y.total_cmp(&b.y));
+    assert!(rules.len() >= 5, "the edges' and the rows': {rules:?}");
+    for w in rules.windows(2) {
+        assert!(
+            (w[0].y + w[0].h - w[1].y).abs() < 0.5,
+            "they meet: {rules:?}"
+        );
+    }
     // A click on a row in the table's block lands on its line.
     let row = d
         .core
         .nodes()
         .iter()
-        .find(|n| n.text.as_deref().is_some_and(|t| t.starts_with("│ alpha")))
+        .find(|n| n.text.as_deref() == Some("alpha"))
         .map(|n| n.rect)
         .unwrap();
     d.click(&mut app, row.x + 30.0, row.y + row.h / 2.0);
@@ -362,4 +361,36 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
     let v = app.focused_view().unwrap();
     let head = app.ed.views[v].sels.primary().head;
     assert_eq!(app.ed.buffer_of(v).line_of(head), 0, "{}", app.ed.message);
+}
+
+/// A pane drawn for the first time — a restored tab shown, a split
+/// made — has no rect from a frame before; its prose wraps at the width
+/// kui gives it on that frame, not a word a line.
+#[test]
+fn prose_wraps_at_its_width_on_the_first_frame() {
+    let dir = fixture("first");
+    let (mut d, mut app) = launch(&dir, 700.0);
+    d.press(&mut app, "G");
+    settle(&mut d, &mut app);
+    let para = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| {
+                n.text
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("Some strong"))
+            })
+            .map(|n| n.rect)
+            .unwrap()
+    };
+    let settled = para(&d);
+    app.layout.rects.clear();
+    d.frame(&mut app);
+    let first = para(&d);
+    assert_eq!(
+        (first.w, first.h),
+        (settled.w, settled.h),
+        "as wide and as tall as it settles"
+    );
 }

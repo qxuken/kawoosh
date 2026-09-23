@@ -18,7 +18,6 @@ use std::path::{Path, PathBuf};
 use kawoosh_editor::Spec;
 use kawoosh_languages::{Block, Token};
 use kui::{Color, TextWrap};
-use unicode_width::UnicodeWidthStr;
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -35,8 +34,8 @@ pub struct Rendered {
     pub code: bool,
     /// A thematic break: a rule across the row.
     pub rule: bool,
-    /// A line that is only images — one, or a table's row of them —
-    /// each's destination as written and its alt.
+    /// A line that is only images, or a table's row with images in its
+    /// cells: each's destination as written and its alt.
     pub images: Vec<(String, String)>,
     /// A table's row: drawn in its table's block, which scrolls
     /// sideways.
@@ -44,21 +43,32 @@ pub struct Rendered {
     /// The table's first line, which names its block and its offset
     /// (`line` sets it).
     pub table_first: Option<usize>,
-    /// A table's row: the width of each of the table's columns, in
-    /// cells.
-    pub widths: Vec<usize>,
-    /// A table's row with an image in it: each column's cell, drawn
-    /// between rules as tall as the images (`images` holds them).
+    /// A table's row: how many columns its table has.
+    pub columns: usize,
+    /// A table's row drawn as cells (not the caret's, which is its
+    /// source): what is in each column, the pipes and the cells' pads
+    /// folded away, so the drawn text is the cells' texts one after
+    /// another.
     pub cells: Vec<Cell>,
+    /// The table's delimiter row, drawn as cells with a rule across.
+    pub delimiter: bool,
     pub wrap: TextWrap,
 }
 
-/// A cell of a table's row of images.
+impl Rendered {
+    /// Whether the row is its table's row of cells, not its source.
+    pub fn grid(&self) -> bool {
+        self.table && (self.delimiter || !self.cells.is_empty())
+    }
+}
+
+/// A cell of a table's row.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cell {
+    /// Its text: these drawn bytes of the row.
+    Text(Range<usize>),
     /// The image at this index of the row's `images`.
     Image(usize),
-    Text(String),
 }
 
 /// The colours and sizes a render reads, from the frame.
@@ -74,14 +84,14 @@ pub struct Style {
 /// Line `src` (no newline) rendered: `syntax` and `blocks` its runs,
 /// line-relative (the blocks reaching the newline, so an empty line in a
 /// fence is the fence's); `raw` for a line with a caret, which keeps its
-/// size and its code background and folds nothing; `widths` the columns
+/// size and its code background and folds nothing; `columns` how many
 /// of the table it is a row of.
 pub fn render(
     src: &str,
     syntax: &[(Range<usize>, Token)],
     blocks: &[(Range<usize>, Block)],
     raw: bool,
-    widths: Option<&[usize]>,
+    columns: usize,
     style: &Style,
     tabstop: usize,
 ) -> Rendered {
@@ -99,11 +109,9 @@ pub fn render(
         images: Vec::new(),
         table,
         table_first: None,
-        widths: widths
-            .filter(|_| table)
-            .map(<[usize]>::to_vec)
-            .unwrap_or_default(),
+        columns: if table { columns } else { 0 },
         cells: Vec::new(),
+        delimiter: false,
         wrap: if code {
             TextWrap::Glyph
         } else if table {
@@ -115,6 +123,9 @@ pub fn render(
     let mut folds: Vec<(Range<usize>, String)> = Vec::new();
     // Marks in source bytes, mapped to drawn ones at the end.
     let mut marks: Vec<(Range<usize>, Mark)> = Vec::new();
+    // A table's row's cells, their text in source bytes until the drawn
+    // bytes are known.
+    let mut src_cells: Vec<Cell> = Vec::new();
     if raw {
         if heading.is_some() {
             marks.push((0..src.len(), bold(style.heading_color)));
@@ -142,31 +153,36 @@ pub fn render(
         }
     } else if code || has(Block::Verbatim) {
         // As it is.
-    } else if table
-        && !has(Block::TableDelimiter)
-        && let Some((cells, images)) = image_cells(src)
-    {
-        // A row with an image in it: its cells between rules, each image
-        // in its column.
-        out.cells = cells;
-        out.images = images;
+    } else if table && has(Block::TableDelimiter) {
+        out.delimiter = true;
         folds.push((0..src.len(), String::new()));
+    } else if table {
+        // Its cells: each's text kept and everything between folded away
+        // — the pipes, the pads, an image's source; the inline marks in
+        // the texts as prose's.
+        let mut kept_to = 0;
+        for c in cells(src) {
+            let cell = &src[c.clone()];
+            if let Some(img) = image_line(cell) {
+                out.images.push(img);
+                src_cells.push(Cell::Image(out.images.len() - 1));
+            } else {
+                let a = c.start + (cell.len() - cell.trim_start().len());
+                let b = (c.start + cell.trim_end().len()).max(a);
+                folds.push((kept_to..a, String::new()));
+                kept_to = b;
+                src_cells.push(Cell::Text(a..b));
+            }
+        }
+        folds.push((kept_to..src.len(), String::new()));
+        prose(src, syntax, &[], false, style, &mut folds, &mut marks);
+        if has(Block::TableHeader) {
+            marks.push((0..src.len(), bold(None)));
+        }
     } else if let Some(images) = images_line(src) {
         // Images alone on the line: side by side.
         out.images = images;
         folds.push((0..src.len(), String::new()));
-    } else if table {
-        table_folds(
-            src,
-            has(Block::TableDelimiter),
-            widths,
-            &mut folds,
-            &mut marks,
-            style,
-        );
-        if has(Block::TableHeader) {
-            marks.push((0..src.len(), bold(None)));
-        }
     } else {
         prose(
             src,
@@ -188,6 +204,16 @@ pub fn render(
     }
     out.drawn = Drawn::folded(src, &kept, tabstop);
     out.marks = to_drawn(&out.drawn, &marks);
+    out.cells = src_cells
+        .into_iter()
+        .map(|c| match c {
+            Cell::Text(r) => {
+                let a = out.drawn.to_drawn(r.start);
+                Cell::Text(a..out.drawn.to_drawn(r.end).max(a))
+            }
+            c => c,
+        })
+        .collect();
     out
 }
 
@@ -404,36 +430,6 @@ pub fn images_line(src: &str) -> Option<Vec<(String, String)>> {
     (!out.is_empty()).then_some(out)
 }
 
-/// Images as a line names them: each's destination and alt.
-type Named = Vec<(String, String)>;
-
-/// A table row with an image in a cell: its cells, and the images (each's
-/// destination and alt) they name; None when no cell is an image.
-fn image_cells(src: &str) -> Option<(Vec<Cell>, Named)> {
-    let mut images = Vec::new();
-    let cells = cells(src)
-        .into_iter()
-        .map(|c| match image_line(&src[c.clone()]) {
-            Some(img) => {
-                images.push(img);
-                Cell::Image(images.len() - 1)
-            }
-            None => Cell::Text(src[c].trim().to_string()),
-        })
-        .collect();
-    (!images.is_empty()).then_some((cells, images))
-}
-
-/// What a cell's width is counted by: its text, or an image's alt as it
-/// is drawn until the image is read (`line` widens the column to the
-/// image's width once it is).
-fn cell_text(cell: &str) -> String {
-    match image_line(cell) {
-        Some((_, alt)) => format!("🖼 {alt}"),
-        None => cell.trim().to_string(),
-    }
-}
-
 /// A line that is only `![alt](dest)`: its destination and alt.
 pub fn image_line(src: &str) -> Option<(String, String)> {
     let t = src.trim();
@@ -484,45 +480,19 @@ fn cells(src: &str) -> Vec<Range<usize>> {
     out
 }
 
-/// The width of every column of a table, from its rows' cells — their
-/// text trimmed, in cells. The delimiter row counts for nothing.
-pub fn table_widths(rows: &[String]) -> Vec<usize> {
-    let mut w: Vec<usize> = Vec::new();
-    for row in rows {
-        if is_delimiter_row(row) {
-            continue;
-        }
-        for (j, c) in cells(row).iter().enumerate() {
-            let n = cell_text(&row[c.clone()]).width();
-            if w.len() <= j {
-                w.push(n);
-            } else {
-                w[j] = w[j].max(n);
-            }
-        }
-    }
-    w
+/// How many columns a table has: its rows' most cells. The delimiter
+/// row counts for nothing.
+pub fn table_columns(rows: &[String]) -> usize {
+    rows.iter()
+        .filter(|r| !is_delimiter_row(r))
+        .map(|r| cells(r).len())
+        .max()
+        .unwrap_or(0)
 }
 
 fn is_delimiter_row(row: &str) -> bool {
     let t = row.trim();
     !t.is_empty() && t.contains('-') && t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ' | '\t'))
-}
-
-/// A table's edge above its first row (`top`) or below its last, to
-/// the columns `widths`.
-pub fn table_edge(widths: &[usize], top: bool) -> String {
-    let (l, m, r) = if top {
-        ('┌', '┬', '┐')
-    } else {
-        ('└', '┴', '┘')
-    };
-    let line = widths
-        .iter()
-        .map(|w| "─".repeat(w + 2))
-        .collect::<Vec<_>>()
-        .join(&m.to_string());
-    format!("{l}{line}{r}")
 }
 
 /// Whether line `ln` of `buf` is a table's row.
@@ -531,65 +501,6 @@ pub fn is_table_line(buf: &kawoosh_doc::Buffer, ln: usize) -> bool {
         && blocks_of(buf, ln)
             .iter()
             .any(|(_, b)| matches!(b, Block::Table | Block::TableHeader | Block::TableDelimiter))
-}
-
-/// A table row's folds: every cell padded to its column, the pipes as
-/// box rules; the delimiter row a rule across.
-fn table_folds(
-    src: &str,
-    delimiter: bool,
-    widths: Option<&[usize]>,
-    folds: &mut Vec<(Range<usize>, String)>,
-    marks: &mut Vec<(Range<usize>, Mark)>,
-    style: &Style,
-) {
-    let Some(widths) = widths else {
-        return;
-    };
-    if delimiter {
-        let line = widths
-            .iter()
-            .map(|w| "─".repeat(w + 2))
-            .collect::<Vec<_>>()
-            .join("┼");
-        folds.push((0..src.len(), format!("├{line}┤")));
-        marks.push((0..src.len(), dim(style.dim)));
-        return;
-    }
-    let cs = cells(src);
-    let lead = src.len() - src.trim_start().len();
-    // The leading pipe (or where it would be) and every pipe after a
-    // cell, drawn `│`.
-    if src[lead..].starts_with('|') {
-        folds.push((lead..lead + 1, "│".into()));
-        marks.push((lead..lead + 1, dim(style.dim)));
-    } else {
-        folds.push((lead..lead, "│".into()));
-    }
-    for (j, c) in cs.iter().enumerate() {
-        let cell = &src[c.clone()];
-        let text_start = c.start + (cell.len() - cell.trim_start().len());
-        let text_end = c.start + cell.trim_end().len();
-        let (text_start, text_end) = if text_end < text_start {
-            (c.start, c.start)
-        } else {
-            (text_start, text_end)
-        };
-        let n = src[text_start..text_end].width();
-        let pad = widths.get(j).copied().unwrap_or(n).saturating_sub(n);
-        folds.push((c.start..text_start, " ".into()));
-        folds.push((text_end..c.end, " ".repeat(pad + 1)));
-        if c.end < src.len() && src.as_bytes()[c.end] == b'|' {
-            folds.push((c.end..c.end + 1, "│".into()));
-            marks.push((c.end..c.end + 1, dim(style.dim)));
-        } else {
-            folds.push((c.end..c.end, "│".into()));
-        }
-    }
-    // Columns this row lacks, empty.
-    for w in widths.iter().skip(cs.len()) {
-        folds.push((src.len()..src.len(), format!("{}│", " ".repeat(w + 2))));
-    }
 }
 
 fn hash_of(s: &str) -> u64 {
@@ -649,7 +560,7 @@ pub struct Images {
 
 /// Line `ln` of `buf` rendered (`raw` for a caret's line): its syntax
 /// and structure runs read line-relative — the structure's reaching the
-/// newline — and, for a table's row, the table's column widths, worked
+/// newline — and, for a table's row, how many columns its table has, worked
 /// out once per table per frame into `tables` (by its first line).
 pub fn line(
     buf: &kawoosh_doc::Buffer,
@@ -657,7 +568,7 @@ pub fn line(
     raw: bool,
     style: &Style,
     tabstop: usize,
-    tables: &mut HashMap<usize, Vec<usize>>,
+    tables: &mut HashMap<usize, usize>,
 ) -> Rendered {
     let range = buf.line_range(ln);
     let src = buf.slice(range.clone());
@@ -676,7 +587,7 @@ pub fn line(
         .iter()
         .any(|(_, b)| matches!(b, Block::Table | Block::TableHeader | Block::TableDelimiter));
     let mut first_line = None;
-    let widths = table.then(|| {
+    let columns = table.then(|| {
         let is_table = |l: usize| is_table_line(buf, l);
         let mut first = ln;
         while first > 0 && ln - first < TABLE_MAX && is_table(first - 1) {
@@ -692,16 +603,16 @@ pub fn line(
                     rows.push(buf.slice(buf.line_range(l)));
                     l += 1;
                 }
-                table_widths(&rows)
+                table_columns(&rows)
             })
-            .clone()
+            .to_owned()
     });
     let mut r = render(
         &src,
         &syntax,
         &blocks,
         raw,
-        widths.as_deref(),
+        columns.unwrap_or(0),
         style,
         tabstop,
     );
@@ -711,7 +622,7 @@ pub fn line(
     r
 }
 
-/// The most rows a table is read for its widths.
+/// The most rows a table is read for its columns.
 const TABLE_MAX: usize = 500;
 
 /// Line `ln`'s structure runs, line-relative, its newline included.
@@ -1122,7 +1033,7 @@ mod tests {
             (21..22, Token::Punctuation),
         ];
         let blocks = vec![(0..src.len() + 1, Block::H2)];
-        let r = render(src, &syntax, &blocks, false, None, &style(), 4);
+        let r = render(src, &syntax, &blocks, false, 0, &style(), 4);
         assert_eq!(r.drawn.text, "Go to now");
         assert_eq!(r.scale, 1.35);
         assert_eq!(r.drawn.to_src(3), 7, "`to` is where the label is");
@@ -1134,36 +1045,51 @@ mod tests {
         assert!(r.marks.iter().any(|(rg, m)| *rg == (3..5) && m.underline));
         assert!(r.marks.iter().any(|(rg, m)| *rg == (6..9) && m.italic));
         // Raw: the source, its size kept.
-        let raw = render(src, &syntax, &blocks, true, None, &style(), 4);
+        let raw = render(src, &syntax, &blocks, true, 0, &style(), 4);
         assert_eq!(raw.drawn.text, src);
         assert_eq!(raw.scale, 1.35);
     }
 
-    /// A table's rows padded to its columns, the delimiter a rule.
+    /// A table's rows as cells: each cell's text kept, the pipes and
+    /// pads between folded away, so a click maps through; the
+    /// delimiter a row of its own; an image a cell.
     #[test]
-    fn tables_align() {
+    fn tables_are_cells() {
         let rows = [
             "| a | bb |".to_string(),
             "|---|---|".into(),
-            "| ccc | d |".into(),
+            " | ccc |  d  | ".into(),
+            "| x | ![b](y.png) |".into(),
         ];
-        let w = table_widths(&rows);
-        assert_eq!(w, [3, 2]);
-        let t = [(0..11, Block::Table)];
-        let r = render(&rows[0], &[], &t, false, Some(&w), &style(), 4);
-        assert_eq!(r.drawn.text, "│ a   │ bb │");
+        assert_eq!(table_columns(&rows), 2);
+        let t = |r: &str| vec![(0..r.len() + 1, Block::Table)];
+        let r = render(&rows[0], &[], &t(&rows[0]), false, 2, &style(), 4);
+        assert_eq!(r.drawn.text, "abb");
+        assert_eq!(r.cells, [Cell::Text(0..1), Cell::Text(1..3)]);
+        assert_eq!(r.drawn.to_src(1), 6, "`bb` where it is in the source");
+        assert!(r.grid());
         let r = render(
             &rows[1],
             &[],
-            &[(0..9, Block::TableDelimiter)],
+            &[(0..10, Block::TableDelimiter)],
             false,
-            Some(&w),
+            2,
             &style(),
             4,
         );
-        assert_eq!(r.drawn.text, "├─────┼────┤");
-        let r = render(&rows[2], &[], &t, false, Some(&w), &style(), 4);
-        assert_eq!(r.drawn.text, "│ ccc │ d  │");
+        assert!(r.delimiter && r.grid());
+        assert_eq!(r.drawn.text, "");
+        let r = render(&rows[2], &[], &t(&rows[2]), false, 2, &style(), 4);
+        assert_eq!(r.drawn.text, "cccd");
+        assert_eq!(r.cells, [Cell::Text(0..3), Cell::Text(3..4)]);
+        let r = render(&rows[3], &[], &t(&rows[3]), false, 2, &style(), 4);
+        assert_eq!(r.cells, [Cell::Text(0..1), Cell::Image(0)]);
+        assert_eq!(r.images, [("y.png".to_string(), "b".to_string())]);
+        assert_eq!(r.drawn.text, "x");
+        // The caret's row is its source.
+        let r = render(&rows[0], &[], &t(&rows[0]), true, 2, &style(), 4);
+        assert_eq!(r.drawn.text, rows[0]);
+        assert!(!r.grid());
     }
 
     #[test]
@@ -1200,23 +1126,6 @@ mod tests {
             ])
         );
         assert_eq!(images_line("| a | ![b](y.png) |"), None);
-        // In a table the images stay in their cells.
-        let row = "| a | ![b](y.png) |";
-        let r = render(
-            row,
-            &[],
-            &[(0..row.len(), Block::Table)],
-            false,
-            Some(&[1, 3]),
-            &style(),
-            4,
-        );
-        assert_eq!(r.cells, [Cell::Text("a".into()), Cell::Image(0)]);
-        assert_eq!(r.images, [("y.png".to_string(), "b".to_string())]);
-        assert_eq!(r.drawn.text, "");
-        assert_eq!(table_widths(&[row.into()]), [1, 3], "the alt as drawn: 🖼 b");
-        assert_eq!(table_edge(&[1, 3], true), "┌───┬─────┐");
-        assert_eq!(table_edge(&[1, 3], false), "└───┴─────┘");
         assert_eq!(base64("aGk="), Some(b"hi".to_vec()));
     }
 }
