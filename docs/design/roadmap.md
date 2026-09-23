@@ -11,7 +11,8 @@ use"), which put four rounds ahead of the brackets; steps 14–17 built
 2026-09-23. Amended again 2026-09-23 with the two items the todo
 gained since (below, "From the todo"), what reading it turned up
 ("Asked 2026-09-23, night") and the order past step 17: steps 18–25
-the open items, ssh moved to the end as step 26.
+the open items, ssh moved to the end as step 26 (27 since the path
+copies, 2026-09-24).
 
 ## Where it stands
 
@@ -51,8 +52,8 @@ focus and sweep fixes, secrets (a private buffer, masks, the vault;
 kui F84 and F85), the LSP's third round, align, `<C-S-u>` and timed
 rows over a new `kawoosh.pass()`, and `dir`'s third round — 241
 commits, 27 integration test files, 415 tests and 8 Lua acceptance
-scripts. What is left is steps 23–26: directory jumps, the memory's
-fifth round, workspaces, and ssh last.
+scripts. What is left is steps 23–27: the path copies, directory
+jumps, the memory's fifth round, workspaces, and ssh last.
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -245,6 +246,30 @@ swept on the event** that empties a pane of one, not every frame;
 **directory jumps the zoxide way**, bridged to zoxide itself, in
 kawoosh's picker, and usable from a terminal; and after those,
 **workspaces** revisited — the cwd per tab, or something else.
+
+## From use, 2026-09-24
+
+Steps 18–22 in use; built the same day unless it says otherwise.
+
+- **Masks**: `*.key` (every line but a comment) and `.vault_pass`
+  (whole) masked; every mask the same eight `•`; the block caret drawn
+  over a mask, where it had been zero wide — visible only at a line's
+  end ([secrets.md](secrets.md)'s "After a day of use").
+- **A vault stuck at `decrypting…`**, empty: the tool ran away from
+  the project's `ansible.cfg` and asked for a password on a terminal
+  nobody watched. It runs where the config is, every plugin's process
+  has no controlling terminal now, a failure is a toast that stays,
+  and `kawoosh.open` had asked the openers twice, which looped the
+  fallback. `:!CMD` with `%` (the vault, from its decrypted scratch
+  too) runs a command where it can ask.
+- **`ga` in visual line mode** showed the lines as characters while
+  it waited for its character: it and `gsa` keep visual mode now.
+- **`dir` and version control**: a listing's entries painted by what
+  git says — ignored faint, untracked and added green, modified,
+  conflicts — over `kawoosh.buf.paint`, a plugin's named set of
+  coloured ranges; `kawoosh.dir.vcs` takes more providers (`jj`,
+  `fossil`) in a config.
+- **Path copies**, filed: step 23.
 
 ## The list, by track
 
@@ -567,7 +592,7 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   only `:close` did (`only_answers_a_waiting_caller_whose_pane_it_closed`
   in terminal.rs).
 - **Directory jumps, zoxide's way** — open [asked 2026-09-23]; step
-  23. A `dirs` picker source ranked by frecency, kawoosh's UI over
+  24. A `dirs` picker source ranked by frecency, kawoosh's UI over
   zoxide's data. The bridge: with `zoxide` on the PATH (0.10 here, 328
   directories) its database is the list — `zoxide query --list
   --score` through `kawoosh.spawn`, the score the picker's boost — and
@@ -587,6 +612,13 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   dirs)` in kawoosh's picker — and any source, not only this one:
   `kawoosh pick files` for a shell. Before the workspaces because a
   jump moves *the* cwd, and which cwd that is is their question.
+
+- **Path copies** — open [use 2026-09-24]; step 23. keys.md's reserved
+  `<leader>y*`: the current file's path relative to the working
+  directory, absolute, its name, its directory, each onto the system
+  clipboard (a private buffer's too — a path is not the secret), and
+  in a `dir` listing the entry under the caret's. A command each
+  (`path copy relative|absolute|name|dir`) so a config binds its own.
 
 ### LSP and completion
 
@@ -793,7 +825,7 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 ### Workspaces
 
 - **Workspaces, revisited** — open, a note first [asked 2026-09-23];
-  step 25. "The cwd per tab, or something else." What the cwd is
+  step 26. "The cwd per tab, or something else." What the cwd is
   today, checked: one thing that means five. `set_cwd` moves the
   process's own (`set_current_dir`, so every child and every relative
   path agree), reloads the project settings layer and the trusted
@@ -849,7 +881,12 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   markdown buffer's image cache, read on the io thread and registered
   with kui, the handle handed to a view's `image { id = }` — and so
   does the picker's preview; a text preview in either goes through the
-  mask rules. `kawoosh.fs.write` takes any Lua string's bytes.
+  mask rules. `kawoosh.fs.write` takes any Lua string's bytes. After
+  use (2026-09-24): version control's word on each entry colours its
+  name — `dir.vcs`, a list of providers (git bundled: one `git status`
+  per listing, a directory taking the strongest state inside it),
+  painted through `kawoosh.buf.paint`; `dir.vcs_enabled = false` leaves
+  the listings plain.
 - **A secrets buffer** — done 2026-09-23 [todo 2026-09-23]; step 19
   ([secrets.md](secrets.md), "Built"). A private buffer every path
   asks — no history row, no moment, no session, no server, a yank a
@@ -905,7 +942,7 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   rows from `:tool` and the compile (the command in `meta`), a
   terminal pane's dwell to its tool, both opened from the pane, aged
   at thirty days. Not built: co-occurrence, the yank-pop after `p` —
-  the yank-pop is step 24, co-occurrence when use asks for it.
+  the yank-pop is step 25, co-occurrence when use asks for it.
 
 ### Terminal
 
@@ -984,7 +1021,7 @@ follow the theme every frame (`panes.rs`).
   corridor the detachable daemon is on (mvp.md's non-goals). WSL is
   the local case of it — the pty is `wsl.exe`, the paths translate
   (`/mnt/c` ↔ `C:\`) — and Windows-only. Decided 2026-09-21
-  ([domains.md](domains.md)), ssh alone, not built; step 26: a
+  ([domains.md](domains.md)), ssh alone, not built; step 27: a
   `domains` settings table, `box:/path` as the spelling and `Loc` as
   the type, OpenSSH's binary as the transport (a master per domain in
   a pane, so prompts are answered where they appear), an `Fs` trait
@@ -1284,33 +1321,37 @@ then breadth.
     Lua but the watch.~~ Landed 2026-09-23 with three doors —
     `kawoosh.fs.watch`, `kawoosh.image`, bytes for `fs.write`. See the
     buffers track.
-23. **Directory jumps**: the `dirs` source over zoxide's database or
+23. **The path copies**: `<leader>y*` — the file's path relative to the
+    working directory, absolute, its name, its directory — onto the
+    clipboard, and the same from a `dir` listing's entry. Small, and
+    asked for; keys.md reserved the prefix.
+24. **Directory jumps**: the `dirs` source over zoxide's database or
     the memory's rows, kawoosh's visits fed back with `zoxide add`, a
     pick `:cd` in an editor pane and `cd` typed at a terminal's empty
     prompt, and `Request::Pick` so `kawoosh pick SOURCE` answers a
     shell. After `dir` because both are about directories and the
     listing is where a jump lands.
-24. **The memory, round five**: the yank-pop memory.md left — the
+25. **The memory, round five**: the yank-pop memory.md left — the
     text a `p` put cycled through the register's past. memory.md named
     `<C-p>` `<C-n>` for it, and Decision 1 has since given `<C-n>` to
     select next in normal mode, so the round picks the keys first; a
     binding under "the last step was a put" can take them back only
     at the cost of `<C-n>` meaning two things. Co-occurrence waits for
     use to ask.
-25. **Workspaces** (a note first): what the cwd is — per tab, a named
+26. **Workspaces** (a note first): what the cwd is — per tab, a named
     workspace, or both — and the process cwd ended with it, every
     spawn passed its directory; the settings layer, the trust, the
     memory's workspace and the session following the answer. After
     the jumps, which move a cwd and are what a workspace switcher
     would be fed from; before ssh, whose rule 7 is the same change.
-26. **ssh as a domain** ([domains.md](domains.md)): four rounds —
+27. **ssh as a domain** ([domains.md](domains.md)): four rounds —
     `Loc` everywhere with no behaviour change, then ssh (the master in
     a pane, SFTP, `:e box:`, `dir`, the poll), then processes through
     the domain with the shim over a forwarded port, then the LSP
     through it. Last because it is the widest, and until then
     `kawoosh.tool("box", { cmd = "ssh box" })`. Was step 18 until the
     list was ordered past step 17 (2026-09-23); its first round is
-    smaller for step 25, which will have ended the process cwd.
+    smaller for step 26, which will have ended the process cwd.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),
