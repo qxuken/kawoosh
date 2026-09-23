@@ -149,10 +149,7 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
     d.frame(&mut app);
     let t = app.add_headless_terminal();
     // The shell says where it is (OSC 7), and `gf` resolves from there.
-    app.feed_terminal(
-        t,
-        format!("\x1b]7;file://{}\x07", dir.display()).as_bytes(),
-    );
+    app.feed_terminal(t, format!("\x1b]7;file://{}\x07", dir.display()).as_bytes());
     app.feed_terminal(t, b"error[E0000]: boom\r\n  --> src/lib.rs:3:1\r\n");
     d.frame(&mut app);
     d.frame(&mut app);

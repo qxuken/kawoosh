@@ -459,8 +459,12 @@ fn highlight(
                         // edit of one byte of it changes all of its
                         // bytes' — `## ` typed a `#` at a time left the
                         // first `#` an h1.
-                        let lines: Vec<Range<usize>> =
-                            spans.iter().map(|s| whole_lines(text, s.clone())).collect();
+                        let lines: Vec<Range<usize>> = spans
+                            .iter()
+                            .map(|s| {
+                                whole_lines(text, enclosing_block(st, tree.root_node(), s.clone()))
+                            })
+                            .collect();
                         blocks = lines
                             .iter()
                             .map(|span| structure_runs(st, tree.root_node(), text, span.clone()))
@@ -585,6 +589,28 @@ fn capture_runs(
         }
     }
     runs
+}
+
+/// `span` widened to the block it is in: up from the node it covers to
+/// the child of a container (`Structure::containers`). A span over
+/// several blocks — a container itself — is left as it is.
+fn enclosing_block(st: &Structure, root: Node, span: Range<usize>) -> Range<usize> {
+    if st.containers.is_empty() {
+        return span;
+    }
+    let Some(mut node) = root.descendant_for_byte_range(span.start, span.end) else {
+        return span;
+    };
+    if st.containers.contains(&node.kind()) {
+        return span;
+    }
+    while let Some(parent) = node.parent() {
+        if st.containers.contains(&parent.kind()) {
+            break;
+        }
+        node = parent;
+    }
+    span.start.min(node.start_byte())..span.end.max(node.end_byte())
 }
 
 /// `span` widened to the lines it touches, the last one's newline in.
@@ -1306,6 +1332,45 @@ mod tests {
         assert_eq!(tok_at("em30", &buf), Some(Token::Emphasis));
         assert_eq!(tok_at("c30`", &buf), Some(Token::Raw));
         assert_eq!(tok_at("fn f30", &buf), Some(Token::Keyword));
+    }
+
+    /// A setext underline turned from `=` to `-` changes the kind of
+    /// the line above it: the structure repaints the whole block, which
+    /// the reparse's changed ranges (the underline's byte) do not reach.
+    #[test]
+    fn a_setext_underline_changed_repaints_its_heading() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let mut buf = Buffer::new("t", "Title\n=\n\npara\n");
+        buf.language = "markdown".into();
+        let mut sent: Option<kawoosh_doc::Version> = None;
+        let mut run = |buf: &mut Buffer| {
+            let edits = sent
+                .and_then(|v| buf.journal().edits_since(v).ok())
+                .map(|it| it.cloned().collect());
+            sent = Some(buf.version());
+            let job = Job {
+                buffer: BufferId::default(),
+                language: "markdown".into(),
+                snapshot: buf.snapshot(),
+                edits,
+            };
+            for u in highlight(&mut parser, &mut g, &mut parsed, &job).updates {
+                buf.apply(u).unwrap();
+            }
+        };
+        let title = |buf: &Buffer| -> Vec<Block> {
+            buf.runs(STRUCT_LAYER, 0..1)
+                .iter()
+                .filter_map(|r| Block::from_style(r.style))
+                .collect()
+        };
+        run(&mut buf);
+        assert_eq!(title(&buf), [Block::H1]);
+        buf.replace(6..7, "-");
+        run(&mut buf);
+        assert_eq!(title(&buf), [Block::H2]);
     }
 
     /// A table's row with an empty cell, typed a pipe at a time, leaves

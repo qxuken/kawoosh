@@ -30,17 +30,23 @@ fn grammar() -> Result<crate::Grammar, String> {
         Some(&injections),
     )?
     .with_structure(STRUCTURE)
-    .map(|g| g.with_stand_ins(stand_ins))
+    .map(|g| {
+        g.with_stand_ins(stand_ins)
+            .with_block_containers(&["section", "document"])
+    })
 }
 
-/// A pipe table's rows with an empty cell — `||`, `| | |`, a lone `|`,
-/// typed on the way to a row — as rows the block grammar reads right.
-/// tree-sitter-md's scanner loses its place on them: a lone `|` took
-/// the blank line and the heading after it into the table, and `|||`
-/// made the rest of the document one ERROR, every heading and fence in
-/// it gone. Each stand-in is its row's length — `|  …  |`, or `|a` and
-/// `a` for the shortest — and still a row; the rendered buffer reads the
-/// cells off the text.
+/// A pipe table's rows the block grammar loses its place on — every
+/// cell empty (a lone `|`, `|||`), or the last two (`a|||`), which is a
+/// row on its way to being typed — as rows it reads right. tree-sitter-
+/// md's scanner took the blank line and the heading after such a row
+/// into the table, or made the rest of the document one ERROR, every
+/// heading and fence in it gone. A row with one blank cell among others
+/// (`| x |  |`, a finished table's) parses as it is, and is left alone:
+/// a document with a stand-in is parsed whole on every edit. Each
+/// stand-in is its row's length — `|  …  |`, or `|a` and `a` for the
+/// shortest — and still a row; the rendered buffer reads the cells off
+/// the text.
 pub fn stand_ins(text: &str) -> Vec<(std::ops::Range<usize>, Vec<u8>)> {
     let mut out = Vec::new();
     // An open fence: its character and length.
@@ -75,7 +81,7 @@ pub fn stand_ins(text: &str) -> Vec<(std::ops::Range<usize>, Vec<u8>)> {
             continue;
         }
         if in_table {
-            if has_empty_cell(t) {
+            if loses_the_parser(t) {
                 let n = t.len();
                 let stand_in = match n {
                     1 => b"a".to_vec(),
@@ -107,31 +113,39 @@ fn fence_of(t: &str) -> Option<(u8, usize)> {
     (n >= 3).then_some((c, n))
 }
 
+/// A delimiter row: dashes, colons and pipes — a pipe among them, so a
+/// setext underline under a line with a `|` in it is not one.
 fn is_delimiter(t: &str) -> bool {
-    t.contains('-') && t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ' | '\t'))
+    t.contains('-')
+        && t.contains('|')
+        && t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ' | '\t'))
 }
 
-/// Whether a row has a cell with nothing in it between two pipes — or
-/// is a pipe alone. A pipe escaped or in a code span is the cell's.
-fn has_empty_cell(t: &str) -> bool {
+/// Whether a row is one tree-sitter-md loses its place on: a pipe
+/// alone, every cell between its pipes empty, or its last two. A pipe
+/// escaped with `\\` is the cell's; one in backticks splits cells, as
+/// the block grammar reads it (GFM's own rule).
+fn loses_the_parser(t: &str) -> bool {
     let mut pipes = Vec::new();
-    let (mut code, mut esc) = (false, false);
+    let mut esc = false;
     for (i, b) in t.bytes().enumerate() {
         match b {
             b'\\' if !esc => {
                 esc = true;
                 continue;
             }
-            b'`' if !esc => code = !code,
-            b'|' if !esc && !code => pipes.push(i),
+            b'|' if !esc => pipes.push(i),
             _ => {}
         }
         esc = false;
     }
+    let empty: Vec<bool> = pipes
+        .windows(2)
+        .map(|w| t[w[0] + 1..w[1]].trim().is_empty())
+        .collect();
     t.trim() == "|"
-        || pipes
-            .windows(2)
-            .any(|w| t[w[0] + 1..w[1]].trim().is_empty())
+        || (!empty.is_empty() && empty.iter().all(|e| *e) && t[..pipes[0]].trim().is_empty())
+        || empty.ends_with(&[true, true])
 }
 
 /// The blocks the rendered buffer draws by (`crate::Block`): the outer
@@ -167,11 +181,13 @@ const STRUCTURE: &str = r#"
 mod tests {
     use super::*;
 
-    /// Only a table's rows with an empty cell, after its delimiter and
-    /// before a blank line, outside a fence; each its own length.
+    /// Only a table's rows the parser loses its place on — all cells
+    /// empty, or the last two — after its delimiter and before a blank
+    /// line, outside a fence, each its own length; a row with one blank
+    /// cell among others (`| x |  |`) is read as it is.
     #[test]
     fn stand_ins_for_empty_cells() {
-        let text = "||\n\n| a | b |\n|---|---|\n|||\n| x | `|` |\n  |\n| x |  |\n\n|||\n```\n| a |\n|---|\n||\n```\n";
+        let text = "||\n\n| a | b |\n|---|---|\n|||\n| x | `|` |\n  |\n| x |  |\na|||\n\n|||\n```\n| a |\n|---|\n||\n```\n";
         let got: Vec<(&str, String)> = stand_ins(text)
             .into_iter()
             .map(|(r, s)| (&text[r], String::from_utf8(s).unwrap()))
@@ -181,7 +197,7 @@ mod tests {
             [
                 ("|||", "| |".to_string()),
                 ("|", "a".into()),
-                ("| x |  |", "|      |".into()),
+                ("a|||", "|  |".into()),
             ]
         );
     }

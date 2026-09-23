@@ -132,6 +132,11 @@ pub struct Structure {
     pub query: Query,
     /// Capture index → block kind.
     pub kinds: Vec<Option<Block>>,
+    /// The node kinds a block sits in (markdown's `section`, `document`):
+    /// an edit repaints the whole block it is in — a setext underline
+    /// turned from `=` to `-` changes the kind of the line above it,
+    /// which the reparse's changed ranges do not reach.
+    pub containers: &'static [&'static str],
 }
 
 /// What a byte is in a document's structure (a [`Structure`] query's
@@ -297,8 +302,21 @@ impl Grammar {
                 None => return Err(format!("structure: no block kind {n}")),
             }
         }
-        self.structure = Some(Structure { query, kinds });
+        self.structure = Some(Structure {
+            query,
+            kinds,
+            containers: &[],
+        });
         Ok(self)
+    }
+
+    /// The node kinds the structure's blocks sit in
+    /// (`Structure::containers`); after `with_structure`.
+    pub fn with_block_containers(mut self, kinds: &'static [&'static str]) -> Self {
+        if let Some(st) = &mut self.structure {
+            st.containers = kinds;
+        }
+        self
     }
 
     /// The lines the parser reads otherwise (`Grammar::stand_ins`).
