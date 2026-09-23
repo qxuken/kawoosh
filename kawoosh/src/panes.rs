@@ -1035,6 +1035,10 @@ impl Kawoosh {
         let mut md_cells: HashMap<usize, rows::TableRow> = HashMap::new();
         // How many columns each table has, by its first line.
         let mut md_columns: HashMap<usize, usize> = HashMap::new();
+        // A table's caret row as it is drawn away from the caret, whose
+        // cells keep the columns' widths while its source is drawn
+        // (`rows::table_ghost`): the cells and their drawn text.
+        let mut md_ghosts: HashMap<usize, (rows::TableRow, String)> = HashMap::new();
         // A pane not drawn before has no rect: the window's width, which
         // the next frame corrects, rather than none.
         let width_guess = (self
@@ -1059,6 +1063,11 @@ impl Kawoosh {
                     md_tables.insert(ln, first);
                 }
                 md_rows.insert(ln, (r, Vec::new()));
+            }
+            let mut ghosts: HashMap<usize, crate::markdown::Ahead> = HashMap::new();
+            for ln in raw.iter().copied().filter(|l| md_tables.contains_key(l)) {
+                let r = crate::markdown::line(buf, ln, false, &style, tabstop, &mut tables);
+                ghosts.insert(ln, (r, Vec::new()));
             }
             // A table the caret is in slides sideways to show it.
             let head = v.sels.primary().head;
@@ -1089,12 +1098,16 @@ impl Kawoosh {
                 .as_ref()
                 .and_then(|p| p.parent())
                 .map(|p| p.to_path_buf());
-            let wanted: Vec<(usize, Vec<(String, String)>)> = md_rows
+            // Each row's images, `true` for a ghost's.
+            type Wanted = (bool, usize, Vec<(String, String)>);
+            let wanted: Vec<Wanted> = md_rows
                 .iter()
-                .filter(|(_, (r, _))| !r.images.is_empty())
-                .map(|(ln, (r, _))| (*ln, r.images.clone()))
+                .map(|(ln, e)| (false, ln, e))
+                .chain(ghosts.iter().map(|(ln, e)| (true, ln, e)))
+                .filter(|(_, _, (r, _))| !r.images.is_empty())
+                .map(|(ghost, ln, (r, _))| (ghost, *ln, r.images.clone()))
                 .collect();
-            for (ln, images) in wanted {
+            for (ghost, ln, images) in wanted {
                 let mut got = Vec::new();
                 for (dest, alt) in images {
                     let name = if alt.is_empty() {
@@ -1110,47 +1123,45 @@ impl Kawoosh {
                         _ => Err(name),
                     });
                 }
-                if let Some(e) = md_rows.get_mut(&ln) {
+                let rows = if ghost { &mut ghosts } else { &mut md_rows };
+                if let Some(e) = rows.get_mut(&ln) {
                     e.1 = got;
                 }
             }
             // A table's rows as cells, an image at most its column's
             // share of the pane.
             let cell_w = self.cell.0;
-            for (ln, (r, img)) in &md_rows {
-                if !r.grid() {
-                    continue;
-                }
-                let n = r.columns.max(1) as f32;
-                let max_w = ((width_guess - 16.0 - n * 2.0 * cell_w - (n + 1.0)) / n).max(40.0);
-                let cells: Vec<rows::TableCell> = r
-                    .cells
-                    .iter()
-                    .map(|c| match c {
-                        crate::markdown::Cell::Text(t) => rows::TableCell::Text(t.clone()),
-                        crate::markdown::Cell::Image(i) => {
-                            rows::TableCell::Image(match img.get(*i) {
-                                Some(Ok((id, w, h))) => {
-                                    let s = (max_w / w).min(1.0);
-                                    Ok((*id, w * s, h * s))
-                                }
-                                Some(Err(alt)) => Err(alt.clone()),
-                                None => Err(String::new()),
-                            })
-                        }
-                    })
-                    .collect();
-                let tallest = cells
-                    .iter()
-                    .filter_map(|c| match c {
-                        rows::TableCell::Image(Ok((_, _, h))) => {
-                            Some(h + 2.0 * rows::TABLE_IMAGE_PAD)
-                        }
-                        _ => None,
-                    })
-                    .fold(font.line_height, f32::max);
-                md_cells.insert(
-                    *ln,
+            let table_row =
+                |r: &crate::markdown::Rendered,
+                 img: &[Result<(kui::ImageId, f32, f32), String>]| {
+                    let n = r.columns.max(1) as f32;
+                    let max_w = ((width_guess - 16.0 - n * 2.0 * cell_w - (n + 1.0)) / n).max(40.0);
+                    let cells: Vec<rows::TableCell> = r
+                        .cells
+                        .iter()
+                        .map(|c| match c {
+                            crate::markdown::Cell::Text(t) => rows::TableCell::Text(t.clone()),
+                            crate::markdown::Cell::Image(i) => {
+                                rows::TableCell::Image(match img.get(*i) {
+                                    Some(Ok((id, w, h))) => {
+                                        let s = (max_w / w).min(1.0);
+                                        Ok((*id, w * s, h * s))
+                                    }
+                                    Some(Err(alt)) => Err(alt.clone()),
+                                    None => Err(String::new()),
+                                })
+                            }
+                        })
+                        .collect();
+                    let tallest = cells
+                        .iter()
+                        .filter_map(|c| match c {
+                            rows::TableCell::Image(Ok((_, _, h))) => {
+                                Some(h + 2.0 * rows::TABLE_IMAGE_PAD)
+                            }
+                            _ => None,
+                        })
+                        .fold(font.line_height, f32::max);
                     rows::TableRow {
                         columns: r.columns,
                         cells,
@@ -1158,8 +1169,17 @@ impl Kawoosh {
                         height: tallest,
                         pad: cell_w,
                         rule: pal.dim,
-                    },
-                );
+                    }
+                };
+            for (ln, (r, img)) in &md_rows {
+                if r.grid() {
+                    md_cells.insert(*ln, table_row(r, img));
+                }
+            }
+            for (ln, (r, img)) in &ghosts {
+                if r.grid() {
+                    md_ghosts.insert(*ln, (table_row(r, img), r.drawn.text.clone()));
+                }
             }
             md_columns = tables;
         }
@@ -1668,6 +1688,12 @@ impl Kawoosh {
                                                         }
                                                         if l + 1 == ln && bottom {
                                                             edges += 1.0;
+                                                        }
+                                                        if let Some((t, drawn)) = md_ghosts.get(&l)
+                                                        {
+                                                            rows::table_ghost(
+                                                                ui, font, &pal, t, drawn,
+                                                            );
                                                         }
                                                         if *cells {
                                                             emit(ui, l, true, edges);

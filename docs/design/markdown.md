@@ -297,7 +297,13 @@ After a day's use (2026-09-23), five more:
   away, a cell's inline marks as prose's — and kui reads a line's text
   from its text nodes in order, so a click through a cell lands on its
   byte. The caret's row is its source, a child of the table and not a
-  row of it. An image is a cell, at most its column's share of the pane,
+  row of it — with its cells as they are drawn away from the caret
+  beside it, 0px tall (`rows::table_ghost`), so the columns keep their
+  widths: without them `j` and `k` through a table moved every column
+  whose widest cell was on the caret's row. A cell is inline like a
+  paragraph: the grammar injects `markdown_inline` into
+  `pipe_table_cell` too, which tree-sitter-md's own query does not, and
+  a cell's `**bold**` had kept its stars. An image is a cell, at most its column's share of the pane,
   so a README's light and dark screenshots sit under their headers.
   This replaced cells padded to monospace widths between box-drawing
   characters: `│` is a glyph shorter than its line, so the sides never

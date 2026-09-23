@@ -88,7 +88,7 @@ fn rendered_rows_fold_the_marks_and_the_caret_line_is_raw() {
     }
     // A table is one block of its rows, which scrolls on its own, its
     // cells' texts in columns.
-    assert!(has("namevaluealpha1b22"), "{rows:#?}");
+    assert!(has("namevaluealpha1beta22"), "{rows:#?}");
     let value = rect_of_text(&d, "value").unwrap().0;
     for cell in ["1", "22"] {
         assert!(
@@ -392,5 +392,34 @@ fn prose_wraps_at_its_width_on_the_first_frame() {
         (first.w, first.h),
         (settled.w, settled.h),
         "as wide and as tall as it settles"
+    );
+}
+
+/// The caret's row of a table is its source, and the columns stay as
+/// wide as they are with the caret elsewhere: `j` and `k` through a
+/// table do not move them, even onto the row a column's widest cell is
+/// on. A cell's inline marks fold as prose's.
+#[test]
+fn the_caret_row_keeps_the_columns() {
+    let dir = fixture("columns");
+    let (mut d, mut app) = launch(&dir, 700.0);
+    d.press(&mut app, "gg");
+    settle(&mut d, &mut app);
+    let value = |d: &Drive| rect_of_text(d, "value").expect("the header's cell").0;
+    let away = value(&d);
+    d.keys(&mut app, "/alpha");
+    d.key(&mut app, "enter", KeyMods::default());
+    settle(&mut d, &mut app);
+    assert!(
+        d.line_rows().iter().any(|r| r.contains("| alpha | 1 |")),
+        "the caret's row is its source"
+    );
+    assert_eq!(value(&d), away, "`alpha`, the widest name, still counts");
+    assert!(
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some("beta")),
+        "`**beta**`'s stars folded"
     );
 }

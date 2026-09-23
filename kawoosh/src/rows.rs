@@ -780,6 +780,91 @@ pub enum TableCell {
 /// The pad above and below an image in a table's cell.
 pub const TABLE_IMAGE_PAD: f32 = 4.0;
 
+/// A table's row's cells: a rule, a cell, …, a rule; `text` draws a
+/// text cell's drawn bytes.
+pub fn table_cells(
+    ui: &mut Ui<'_>,
+    face: Face,
+    pal: &Pal,
+    t: &TableRow,
+    mut text: impl FnMut(&mut Ui<'_>, Range<usize>),
+) {
+    let rule = |ui: &mut Ui<'_>| {
+        ui.with(
+            NodeSpec::row()
+                .width(Sizing::Fixed(1.0))
+                .height(Sizing::Fixed(t.height))
+                .bg(t.rule),
+            |_| {},
+        );
+    };
+    let cell = NodeSpec::row()
+        .height(Sizing::Fixed(t.height))
+        .pad_xy(t.pad, 0.0)
+        .cross_align(Align::Center);
+    for j in 0..t.columns.max(t.cells.len()) {
+        rule(ui);
+        if t.delimiter {
+            // Across the cell to the rules, no pad.
+            ui.with(cell.clone().pad_xy(0.0, 0.0), |ui| {
+                ui.with(
+                    NodeSpec::row()
+                        .width(Sizing::Grow(1.0))
+                        .height(Sizing::Fixed(1.0))
+                        .bg(t.rule),
+                    |_| {},
+                );
+            });
+            continue;
+        }
+        match t.cells.get(j) {
+            Some(TableCell::Text(r)) => {
+                ui.with(cell.clone(), |ui| text(ui, r.clone()));
+            }
+            Some(TableCell::Image(Ok((id, w, h)))) => {
+                ui.with(cell.clone().pad_xy(t.pad, TABLE_IMAGE_PAD), |ui| {
+                    ui.image(
+                        *id,
+                        NodeSpec::column()
+                            .width(Sizing::Fixed(*w))
+                            .height(Sizing::Fixed(*h)),
+                    );
+                });
+            }
+            Some(TableCell::Image(Err(alt))) => {
+                ui.with(cell.clone(), |ui| {
+                    ui.with(NodeSpec::row().role(Role::None), |ui| {
+                        ui.text(&format!("🖼 {alt}"), mono(face, pal).color(pal.dim));
+                    });
+                });
+            }
+            None => {
+                ui.with(cell.clone(), |_| {});
+            }
+        }
+    }
+    rule(ui);
+}
+
+/// The caret's row of a table as it is drawn away from the caret, 0px
+/// tall: its source is drawn instead, and these cells keep the columns
+/// as wide as they are when the caret is elsewhere — without them `j`
+/// and `k` through a table moved every column its widest cell was on.
+pub fn table_ghost(ui: &mut Ui<'_>, face: Face, pal: &Pal, t: &TableRow, drawn: &str) {
+    let style = mono(face, pal);
+    ui.with(
+        NodeSpec::row()
+            .height(Sizing::Fixed(0.0))
+            .clip()
+            .role(Role::None),
+        |ui| {
+            table_cells(ui, face, pal, t, |ui, r| {
+                ui.text(&drawn[r], style);
+            })
+        },
+    );
+}
+
 /// A table's rule 1px tall across it, above its first row or below its
 /// last: a row of the table, so it is as wide as its columns.
 pub fn table_edge(ui: &mut Ui<'_>, columns: usize, rule: Color) {
@@ -1170,71 +1255,17 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
         // A table's row: its cells, each text the drawn bytes it holds
         // with their looks, so the row's text is still theirs in order.
         if let Some(t) = form.and_then(|f| f.table.as_ref()) {
-            let rule = |ui: &mut Ui<'_>| {
-                ui.with(
-                    NodeSpec::row()
-                        .width(Sizing::Fixed(1.0))
-                        .height(Sizing::Fixed(t.height))
-                        .bg(t.rule),
-                    |_| {},
-                );
-            };
-            let cell = NodeSpec::row()
-                .height(Sizing::Fixed(t.height))
-                .pad_xy(t.pad, 0.0)
-                .cross_align(Align::Center);
-            for j in 0..t.columns.max(t.cells.len()) {
-                rule(ui);
-                if t.delimiter {
-                    // Across the cell to the rules, no pad.
-                    ui.with(cell.clone().pad_xy(0.0, 0.0), |ui| {
-                        ui.with(
-                            NodeSpec::row()
-                                .width(Sizing::Grow(1.0))
-                                .height(Sizing::Fixed(1.0))
-                                .bg(t.rule),
-                            |_| {},
-                        );
-                    });
-                    continue;
-                }
-                match t.cells.get(j) {
-                    Some(TableCell::Text(r)) => {
-                        ui.with(cell.clone(), |ui| {
-                            let sub: Vec<(Range<usize>, Look)> = segs
-                                .iter()
-                                .filter_map(|(s, l)| {
-                                    let a = s.start.max(r.start);
-                                    let b = s.end.min(r.end);
-                                    (a < b).then_some((a..b, *l))
-                                })
-                                .collect();
-                            flush(ui, &sub);
-                        });
-                    }
-                    Some(TableCell::Image(Ok((id, w, h)))) => {
-                        ui.with(cell.clone().pad_xy(t.pad, TABLE_IMAGE_PAD), |ui| {
-                            ui.image(
-                                *id,
-                                NodeSpec::column()
-                                    .width(Sizing::Fixed(*w))
-                                    .height(Sizing::Fixed(*h)),
-                            );
-                        });
-                    }
-                    Some(TableCell::Image(Err(alt))) => {
-                        ui.with(cell.clone(), |ui| {
-                            ui.with(NodeSpec::row().role(Role::None), |ui| {
-                                ui.text(&format!("🖼 {alt}"), mono(face, pal).color(pal.dim));
-                            });
-                        });
-                    }
-                    None => {
-                        ui.with(cell.clone(), |_| {});
-                    }
-                }
-            }
-            rule(ui);
+            table_cells(ui, face, pal, t, |ui, r| {
+                let sub: Vec<(Range<usize>, Look)> = segs
+                    .iter()
+                    .filter_map(|(s, l)| {
+                        let a = s.start.max(r.start);
+                        let b = s.end.min(r.end);
+                        (a < b).then_some((a..b, *l))
+                    })
+                    .collect();
+                flush(ui, &sub);
+            });
             return;
         }
         let ghost = line.ghost.filter(|_| !wraps).map(|(b, g)| (b.min(len), g));
