@@ -44,7 +44,21 @@ pub struct Rendered {
     /// The table's first line, which names its block and its offset
     /// (`line` sets it).
     pub table_first: Option<usize>,
+    /// A table's row: the width of each of the table's columns, in
+    /// cells.
+    pub widths: Vec<usize>,
+    /// A table's row with an image in it: each column's cell, drawn
+    /// between rules as tall as the images (`images` holds them).
+    pub cells: Vec<Cell>,
     pub wrap: TextWrap,
+}
+
+/// A cell of a table's row of images.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Cell {
+    /// The image at this index of the row's `images`.
+    Image(usize),
+    Text(String),
 }
 
 /// The colours and sizes a render reads, from the frame.
@@ -85,6 +99,11 @@ pub fn render(
         images: Vec::new(),
         table,
         table_first: None,
+        widths: widths
+            .filter(|_| table)
+            .map(<[usize]>::to_vec)
+            .unwrap_or_default(),
+        cells: Vec::new(),
         wrap: if code {
             TextWrap::Glyph
         } else if table {
@@ -123,11 +142,18 @@ pub fn render(
         }
     } else if code || has(Block::Verbatim) {
         // As it is.
-    } else if let Some(images) = images_line(src) {
-        // Images alone on the line, a table's row of them included: a
-        // row of images, not a table's cells.
+    } else if table
+        && !has(Block::TableDelimiter)
+        && let Some((cells, images)) = image_cells(src)
+    {
+        // A row with an image in it: its cells between rules, each image
+        // in its column.
+        out.cells = cells;
         out.images = images;
-        out.table = false;
+        folds.push((0..src.len(), String::new()));
+    } else if let Some(images) = images_line(src) {
+        // Images alone on the line: side by side.
+        out.images = images;
         folds.push((0..src.len(), String::new()));
     } else if table {
         table_folds(
@@ -378,6 +404,36 @@ pub fn images_line(src: &str) -> Option<Vec<(String, String)>> {
     (!out.is_empty()).then_some(out)
 }
 
+/// Images as a line names them: each's destination and alt.
+type Named = Vec<(String, String)>;
+
+/// A table row with an image in a cell: its cells, and the images (each's
+/// destination and alt) they name; None when no cell is an image.
+fn image_cells(src: &str) -> Option<(Vec<Cell>, Named)> {
+    let mut images = Vec::new();
+    let cells = cells(src)
+        .into_iter()
+        .map(|c| match image_line(&src[c.clone()]) {
+            Some(img) => {
+                images.push(img);
+                Cell::Image(images.len() - 1)
+            }
+            None => Cell::Text(src[c].trim().to_string()),
+        })
+        .collect();
+    (!images.is_empty()).then_some((cells, images))
+}
+
+/// What a cell's width is counted by: its text, or an image's alt as it
+/// is drawn until the image is read (`line` widens the column to the
+/// image's width once it is).
+fn cell_text(cell: &str) -> String {
+    match image_line(cell) {
+        Some((_, alt)) => format!("🖼 {alt}"),
+        None => cell.trim().to_string(),
+    }
+}
+
 /// A line that is only `![alt](dest)`: its destination and alt.
 pub fn image_line(src: &str) -> Option<(String, String)> {
     let t = src.trim();
@@ -437,7 +493,7 @@ pub fn table_widths(rows: &[String]) -> Vec<usize> {
             continue;
         }
         for (j, c) in cells(row).iter().enumerate() {
-            let n = row[c.clone()].trim().width();
+            let n = cell_text(&row[c.clone()]).width();
             if w.len() <= j {
                 w.push(n);
             } else {
@@ -451,6 +507,30 @@ pub fn table_widths(rows: &[String]) -> Vec<usize> {
 fn is_delimiter_row(row: &str) -> bool {
     let t = row.trim();
     !t.is_empty() && t.contains('-') && t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ' | '\t'))
+}
+
+/// A table's edge above its first row (`top`) or below its last, to
+/// the columns `widths`.
+pub fn table_edge(widths: &[usize], top: bool) -> String {
+    let (l, m, r) = if top {
+        ('┌', '┬', '┐')
+    } else {
+        ('└', '┴', '┘')
+    };
+    let line = widths
+        .iter()
+        .map(|w| "─".repeat(w + 2))
+        .collect::<Vec<_>>()
+        .join(&m.to_string());
+    format!("{l}{line}{r}")
+}
+
+/// Whether line `ln` of `buf` is a table's row.
+pub fn is_table_line(buf: &kawoosh_doc::Buffer, ln: usize) -> bool {
+    ln < buf.line_count()
+        && blocks_of(buf, ln)
+            .iter()
+            .any(|(_, b)| matches!(b, Block::Table | Block::TableHeader | Block::TableDelimiter))
 }
 
 /// A table row's folds: every cell padded to its column, the pipes as
@@ -597,11 +677,7 @@ pub fn line(
         .any(|(_, b)| matches!(b, Block::Table | Block::TableHeader | Block::TableDelimiter));
     let mut first_line = None;
     let widths = table.then(|| {
-        let is_table = |l: usize| {
-            blocks_of(buf, l).iter().any(|(_, b)| {
-                matches!(b, Block::Table | Block::TableHeader | Block::TableDelimiter)
-            })
-        };
+        let is_table = |l: usize| is_table_line(buf, l);
         let mut first = ln;
         while first > 0 && ln - first < TABLE_MAX && is_table(first - 1) {
             first -= 1;
@@ -1124,6 +1200,23 @@ mod tests {
             ])
         );
         assert_eq!(images_line("| a | ![b](y.png) |"), None);
+        // In a table the images stay in their cells.
+        let row = "| a | ![b](y.png) |";
+        let r = render(
+            row,
+            &[],
+            &[(0..row.len(), Block::Table)],
+            false,
+            Some(&[1, 3]),
+            &style(),
+            4,
+        );
+        assert_eq!(r.cells, [Cell::Text("a".into()), Cell::Image(0)]);
+        assert_eq!(r.images, [("y.png".to_string(), "b".to_string())]);
+        assert_eq!(r.drawn.text, "");
+        assert_eq!(table_widths(&[row.into()]), [1, 3], "the alt as drawn: 🖼 b");
+        assert_eq!(table_edge(&[1, 3], true), "┌───┬─────┐");
+        assert_eq!(table_edge(&[1, 3], false), "└───┴─────┘");
         assert_eq!(base64("aGk="), Some(b"hi".to_vec()));
     }
 }

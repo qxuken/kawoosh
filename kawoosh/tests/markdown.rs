@@ -256,7 +256,8 @@ fn a_heading_typed_takes_its_size() {
 
 /// A table wider than the pane scrolls sideways on its own — the wheel
 /// over it moves it and nothing else; a row of images is images side by
-/// side; `gx` on an anchor goes to its heading.
+/// side, and in a table each is in its column, under the header's, the
+/// table between edges; `gx` on an anchor goes to its heading.
 #[test]
 fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
     let dir = fixture("wide");
@@ -298,9 +299,48 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
         .filter(|n| n.kind == kui::NodeKind::Image)
         .map(|n| (n.rect.x, n.rect.y))
         .collect();
-    assert_eq!(images.len(), 3, "the lone image and the row of two");
+    assert_eq!(
+        images.len(),
+        5,
+        "the lone image, the row of two, the table's"
+    );
     assert_eq!(images[1].1, images[2].1, "side by side");
     assert!(images[2].0 > images[1].0);
+    let text_of = |start: &str| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| n.text.as_deref().is_some_and(|t| t.starts_with(start)))
+            .map(|n| (n.text.clone().unwrap(), n.rect))
+    };
+    let (head, rect) = text_of("│ Light").expect("the images' table's header");
+    let chars = head.chars().count() as f32;
+    let cell = rect.w / chars;
+    let col = head.chars().position(|c| c == 'D').unwrap() as f32;
+    assert!(
+        (images[4].0 - (rect.x + col * cell)).abs() < 1.0,
+        "the second image under `Dark`: {images:?}, {head:?} at {rect:?}"
+    );
+    assert!(
+        (images[3].0 - (rect.x + 2.0 * cell)).abs() < 1.0,
+        "the first under `Light`"
+    );
+    assert!(
+        images[4].0 - images[3].0 >= 120.0,
+        "the column as wide as its image: {head:?}"
+    );
+    let edges = |start: char| {
+        d.core
+            .nodes()
+            .iter()
+            .filter(|n| {
+                n.text.as_deref().is_some_and(|t| {
+                    t.starts_with(start) && t.chars().count() == head.chars().count()
+                })
+            })
+            .count()
+    };
+    assert_eq!((edges('┌'), edges('└')), (1, 1), "its edges, as wide as it");
     // A click on a row in the table's block lands on its line.
     let row = d
         .core

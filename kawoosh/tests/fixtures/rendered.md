@@ -40,4 +40,8 @@ The end.
 
 | ![one](rendered.png) | ![two](rendered.png) |
 
+| Light | Dark, and a heading wider |
+|---|---|
+| ![l](rendered.png) | ![d](rendered.png) |
+
 Back to [the top](#the-markdown-buffer).

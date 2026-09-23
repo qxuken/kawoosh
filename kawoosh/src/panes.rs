@@ -1031,6 +1031,10 @@ impl Kawoosh {
         let mut md_rows: HashMap<usize, crate::markdown::Ahead> = HashMap::new();
         // Each table row's table, by its first line.
         let mut md_tables: HashMap<usize, usize> = HashMap::new();
+        // A table's rows with images in them, as their cells are drawn.
+        let mut md_grids: HashMap<usize, rows::Grid> = HashMap::new();
+        // Each table's columns, by its first line.
+        let mut md_widths: HashMap<usize, Vec<usize>> = HashMap::new();
         let width_guess = self
             .layout
             .rects
@@ -1109,7 +1113,100 @@ impl Kawoosh {
                     e.1 = got;
                 }
             }
+            // A table's column as wide as an image in it — each at most
+            // its share of the pane, less the rules, the pads and a cell
+            // for rounding up to one — and the table's rows drawn again
+            // to the wider columns.
+            let cell_w = self.cell.0;
+            let mut widened = Vec::new();
+            for (r, img) in md_rows.values() {
+                let Some(first) = r.table_first else {
+                    continue;
+                };
+                let n = r.widths.len().max(1) as f32;
+                let max_w = ((width_guess - 16.0 - (4.0 * n + 1.0) * cell_w) / n).max(40.0);
+                for (j, c) in r.cells.iter().enumerate() {
+                    if let crate::markdown::Cell::Image(i) = c
+                        && let Some(Ok((_, w, _))) = img.get(*i)
+                        && let Some(col) = tables.get_mut(&first).and_then(|ws| ws.get_mut(j))
+                    {
+                        let need = (w.min(max_w) / cell_w).ceil() as usize;
+                        if *col < need {
+                            *col = need;
+                            widened.push(first);
+                        }
+                    }
+                }
+            }
+            let buf = &self.ed.buffers[buf_id];
+            if !widened.is_empty() {
+                for (ln, e) in md_rows.iter_mut() {
+                    if e.0.table_first.is_some_and(|f| widened.contains(&f)) {
+                        e.0 = crate::markdown::line(
+                            buf,
+                            *ln,
+                            raw.contains(ln),
+                            &style,
+                            tabstop,
+                            &mut tables,
+                        );
+                    }
+                }
+            }
+            // The rows with images: each cell as wide as its column, an
+            // image scaled down to fit it.
+            for (ln, (r, img)) in &md_rows {
+                let Some(ws) = r.table_first.and_then(|f| tables.get(&f)) else {
+                    continue;
+                };
+                if r.cells.is_empty() {
+                    continue;
+                }
+                let mut cols: Vec<(f32, rows::GridCell)> = r
+                    .cells
+                    .iter()
+                    .enumerate()
+                    .map(|(j, c)| {
+                        let col = ws.get(j).copied().unwrap_or(0) as f32 * cell_w;
+                        let cell = match c {
+                            crate::markdown::Cell::Image(i) => {
+                                rows::GridCell::Image(match img.get(*i) {
+                                    Some(Ok((id, w, h))) => {
+                                        let s = (col / w).min(1.0);
+                                        Ok((*id, w * s, h * s))
+                                    }
+                                    Some(Err(alt)) => Err(alt.clone()),
+                                    None => Err(String::new()),
+                                })
+                            }
+                            crate::markdown::Cell::Text(t) => rows::GridCell::Text(t.clone()),
+                        };
+                        (col, cell)
+                    })
+                    .collect();
+                for w in ws.iter().skip(cols.len()) {
+                    cols.push((*w as f32 * cell_w, rows::GridCell::Text(String::new())));
+                }
+                let tallest = cols
+                    .iter()
+                    .map(|(_, c)| match c {
+                        rows::GridCell::Image(Ok((_, _, h))) => *h,
+                        _ => font.line_height,
+                    })
+                    .fold(font.line_height, f32::max);
+                md_grids.insert(
+                    *ln,
+                    rows::Grid {
+                        height: tallest + 2.0 * rows::GRID_PAD,
+                        cell_w,
+                        rule: pal.dim,
+                        cols,
+                    },
+                );
+            }
+            md_widths = tables;
         }
+        let md_grid_h: HashMap<usize, f32> = md_grids.iter().map(|(l, g)| (*l, g.height)).collect();
         let md_table_left: HashMap<usize, f32> = self
             .md_table_left
             .iter()
@@ -1295,7 +1392,9 @@ impl Kawoosh {
                         // runs and what follows it; `in_table` for a row in a
                         // table's scrolling block, which draws its number
                         // outside the block and does not wrap.
-                        let mut emit = |ui: &mut Ui<'_>, ln: usize, in_table: bool| {
+                        // `edges` is the height of a table's edges drawn
+                        // with the row, counted in what it measures.
+                        let mut emit = |ui: &mut Ui<'_>, ln: usize, in_table: bool, edges: f32| {
                             let range = buf.line_range(ln);
                             let window = Window {
                                 left,
@@ -1314,6 +1413,8 @@ impl Kawoosh {
                                         images: _,
                                         table: _,
                                         table_first: _,
+                                        widths: _,
+                                        cells: _,
                                         wrap,
                                     } = r;
                                     (drawn, Some((marks, scale, code, rule, wrap, img)))
@@ -1448,7 +1549,7 @@ impl Kawoosh {
                             let (marks, form) = match &md_row {
                                 Some((marks, scale, code, rule, wrap, img)) => {
                                     if let Some(r) = ui.layout_of(ui.child_key(&label)) {
-                                        md_seen.push((ln, r.h));
+                                        md_seen.push((ln, r.h + edges));
                                     }
                                     // Images side by side, each at most its
                                     // share of the row, by aspect.
@@ -1474,6 +1575,7 @@ impl Kawoosh {
                                             })
                                             .collect(),
                                         fit: in_table,
+                                        grid: md_grids.remove(&ln).filter(|_| in_table),
                                     };
                                     (marks.as_slice(), Some(form))
                                 }
@@ -1506,7 +1608,7 @@ impl Kawoosh {
                         let mut ln = top;
                         while ln < last {
                             let Some(&table) = md_tables.get(&ln) else {
-                                emit(ui, ln, false);
+                                emit(ui, ln, false, 0.0);
                                 ln += 1;
                                 continue;
                             };
@@ -1518,6 +1620,30 @@ impl Kawoosh {
                                 ln += 1;
                             }
                             let offset = md_table_left.get(&table).copied().unwrap_or(0.0);
+                            // Its edges above and below, when its first
+                            // row and its last are in sight.
+                            let lh = font.line_height;
+                            let widths = md_widths.get(&table).cloned().unwrap_or_default();
+                            let top = (first == table)
+                                .then(|| crate::markdown::table_edge(&widths, true));
+                            let bottom = (!crate::markdown::is_table_line(buf, ln))
+                                .then(|| crate::markdown::table_edge(&widths, false));
+                            let heights: Vec<f32> = (first..ln)
+                                .map(|l| md_grid_h.get(&l).copied().unwrap_or(lh))
+                                .collect();
+                            let edge = |ui: &mut Ui<'_>, text: Option<&str>| {
+                                ui.with(
+                                    NodeSpec::row()
+                                        .height(Sizing::Fixed(lh))
+                                        .cross_align(Align::Center)
+                                        .role(Role::None),
+                                    |ui| {
+                                        if let Some(t) = text {
+                                            ui.text(t, rows::mono(font, &pal).color(pal.dim));
+                                        }
+                                    },
+                                );
+                            };
                             ui.with(
                                 NodeSpec::row()
                                     .width(Sizing::Grow(1.0))
@@ -1530,14 +1656,17 @@ impl Kawoosh {
                                             .height(Sizing::Fit)
                                             .role(Role::None),
                                         |ui| {
-                                            for l in first..ln {
+                                            if top.is_some() {
+                                                edge(ui, None);
+                                            }
+                                            for (l, h) in (first..ln).zip(&heights) {
                                                 ui.with(
                                                     NodeSpec::row()
                                                         .width(Sizing::Grow(1.0))
-                                                        .height(Sizing::Fixed(font.line_height))
+                                                        .height(Sizing::Fixed(*h))
                                                         .pad_xy(12.0, 0.0)
                                                         .main_align(Align::End)
-                                                        .cross_align(Align::Center),
+                                                        .cross_align(Align::Start),
                                                     |ui| {
                                                         let color = if l == cur_line {
                                                             pal.dim
@@ -1550,6 +1679,9 @@ impl Kawoosh {
                                                         );
                                                     },
                                                 );
+                                            }
+                                            if bottom.is_some() {
+                                                edge(ui, None);
                                             }
                                         },
                                     );
@@ -1566,8 +1698,21 @@ impl Kawoosh {
                                                 ("table", Value::Int(table as i64)),
                                             ])),
                                         |ui| {
+                                            if let Some(t) = &top {
+                                                edge(ui, Some(t));
+                                            }
                                             for l in first..ln {
-                                                emit(ui, l, true);
+                                                let mut edges = 0.0;
+                                                if l == first && top.is_some() {
+                                                    edges += lh;
+                                                }
+                                                if l + 1 == ln && bottom.is_some() {
+                                                    edges += lh;
+                                                }
+                                                emit(ui, l, true, edges);
+                                            }
+                                            if let Some(t) = &bottom {
+                                                edge(ui, Some(t));
                                             }
                                         },
                                     );

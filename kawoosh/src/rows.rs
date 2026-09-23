@@ -746,7 +746,33 @@ pub struct RowForm {
     /// As wide as its text, which does not wrap: a table's row, in a
     /// block that scrolls sideways.
     pub fit: bool,
+    /// A table's row with images in it, instead of text.
+    pub grid: Option<Grid>,
 }
+
+/// A table's row of images: its cells between rules where the text rows
+/// draw `│`, each column as wide as theirs.
+#[derive(Clone, Debug)]
+pub struct Grid {
+    /// The row's height: its tallest image and a pad above and below.
+    pub height: f32,
+    /// A cell of the monospace grid: a rule's width, and a cell's pad
+    /// on each side.
+    pub cell_w: f32,
+    pub rule: Color,
+    /// Each column's width in px, and what is in it: an image (sized to
+    /// fit it) or the alt of one not read, or a text.
+    pub cols: Vec<(f32, GridCell)>,
+}
+
+#[derive(Clone, Debug)]
+pub enum GridCell {
+    Image(Result<(kui::ImageId, f32, f32), String>),
+    Text(String),
+}
+
+/// The pad above and below a table's row of images.
+pub const GRID_PAD: f32 = 4.0;
 
 /// The gutter cell for line `ln` (0-based), decoration rather than text.
 pub fn gutter_row(ui: &mut Ui<'_>, face: Face, pal: &Pal, ln: usize, current: bool) {
@@ -996,6 +1022,57 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
                         ui.text(&format!("{}", ln + 1), mono(face, pal).color(color));
                     },
                 );
+            }
+            if let Some(g) = &f.grid {
+                let rule = |ui: &mut Ui<'_>| {
+                    ui.with(
+                        NodeSpec::row()
+                            .width(Sizing::Fixed(g.cell_w))
+                            .height(Sizing::Fixed(g.height))
+                            .main_align(Align::Center)
+                            .role(Role::None),
+                        |ui| {
+                            ui.with(
+                                NodeSpec::row()
+                                    .width(Sizing::Fixed(1.0))
+                                    .height(Sizing::Fixed(g.height))
+                                    .bg(g.rule),
+                                |_| {},
+                            );
+                        },
+                    );
+                };
+                ui.with(
+                    NodeSpec::row()
+                        .height(Sizing::Fixed(g.height))
+                        .role(Role::None),
+                    |ui| {
+                        for (w, cell) in &g.cols {
+                            rule(ui);
+                            ui.with(
+                                NodeSpec::row()
+                                    .width(Sizing::Fixed(w + 2.0 * g.cell_w))
+                                    .height(Sizing::Fixed(g.height))
+                                    .pad_xy(g.cell_w, GRID_PAD)
+                                    .role(Role::None),
+                                |ui| match cell {
+                                    GridCell::Image(Ok((id, w, h))) => ui.image(
+                                        *id,
+                                        NodeSpec::column()
+                                            .width(Sizing::Fixed(*w))
+                                            .height(Sizing::Fixed(*h)),
+                                    ),
+                                    GridCell::Image(Err(alt)) => {
+                                        ui.text(&format!("🖼 {alt}"), mono(face, pal).color(pal.dim))
+                                    }
+                                    GridCell::Text(t) => ui.text(t, mono(face, pal)),
+                                },
+                            );
+                        }
+                        rule(ui);
+                    },
+                );
+                return;
             }
             if !f.images.is_empty() {
                 ui.with(NodeSpec::row().gap(8.0).role(Role::None), |ui| {
