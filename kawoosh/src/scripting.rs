@@ -632,11 +632,16 @@ impl Kawoosh {
                     });
                 }
             }
-            Msg::Spawn { token, cmd, cwd } => {
+            Msg::Spawn {
+                token,
+                cmd,
+                cwd,
+                stdin,
+            } => {
                 self.scripting.next_proc += 1;
                 let id = LUA_PROC_BASE + self.scripting.next_proc;
                 let cwd = cwd.or_else(|| Some(self.cwd.clone()));
-                match self.io.run_process(id, &cmd, cwd.as_deref()) {
+                match self.io.run_process_with(id, &cmd, cwd.as_deref(), stdin) {
                     Ok(handle) => {
                         self.pending_jobs += 1;
                         self.scripting.procs.insert(

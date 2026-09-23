@@ -112,6 +112,9 @@ pub enum Msg {
         token: u64,
         cmd: String,
         cwd: Option<PathBuf>,
+        /// Written to the process, then closed (`kawoosh.spawn`'s
+        /// `stdin`).
+        stdin: Option<String>,
     },
     /// `kawoosh.kill(token)`: the process stopped early.
     Kill(u64),
@@ -1731,7 +1734,15 @@ fn seed(
                 .as_ref()
                 .and_then(|t| t.get::<Option<String>>("cwd").ok().flatten())
                 .map(|c| expand(&c));
-            qq.borrow_mut().push(Msg::Spawn { token, cmd, cwd });
+            let stdin = opts
+                .as_ref()
+                .and_then(|t| t.get::<Option<String>>("stdin").ok().flatten());
+            qq.borrow_mut().push(Msg::Spawn {
+                token,
+                cmd,
+                cwd,
+                stdin,
+            });
             Ok(token)
         })?,
     )?;
@@ -3285,6 +3296,20 @@ fn seed(
     fs.set(
         "read",
         lua.create_function(|_, p: String| kfs::read(&expand(&p)).map_err(io_err))?,
+    )?;
+    // `kawoosh.fs.head(path, n)`: a file's first `n` bytes, as text
+    // (lossy), without reading the rest — what an opener checks a
+    // file's kind by (`secrets.lua`'s `$ANSIBLE_VAULT;`).
+    fs.set(
+        "head",
+        lua.create_function(|_, (p, n): (String, usize)| {
+            use std::io::Read;
+            let mut out = Vec::with_capacity(n.min(1 << 16));
+            std::fs::File::open(expand(&p))
+                .and_then(|f| f.take(n as u64).read_to_end(&mut out))
+                .map_err(io_err)?;
+            Ok(String::from_utf8_lossy(&out).into_owned())
+        })?,
     )?;
     fs.set(
         "write",

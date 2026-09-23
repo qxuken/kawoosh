@@ -349,9 +349,10 @@ end
 -- kawoosh.fs.walk(root, fn): every file under `root` as git sees it —
 -- `.gitignore`d, hidden and `.git` left out — relative to it, read on
 -- a thread of its own; `fn(paths)` when done, or `fn(nil, why)`.
--- kawoosh.spawn(cmd, { cwd =, on_lines = fn(lines), on_exit = fn(code)
--- }) runs `cmd` through the shell and hands its output over in lines
--- as they come, once a frame; it returns a token `kawoosh.kill(token)`
+-- kawoosh.spawn(cmd, { cwd =, stdin =, on_lines = fn(lines), on_exit =
+-- fn(code) }) runs `cmd` through the shell — `stdin` written to it
+-- and closed, for text that must not be on a command line — and hands
+-- its output over in lines as they come, once a frame; it returns a token `kawoosh.kill(token)`
 -- stops the process with (its `on_exit` then gets no code).
 -- kawoosh.fuzzy(needle, list[, limit]) scores a small list;
 -- kawoosh.matcher(list) holds a big one — `m:query(needle, limit)`

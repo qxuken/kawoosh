@@ -250,20 +250,45 @@ impl Io {
         cmd: &str,
         cwd: Option<&std::path::Path>,
     ) -> std::io::Result<ProcHandle> {
-        use std::io::{BufRead, BufReader};
+        self.run_process_with(id, cmd, cwd, None)
+    }
+
+    /// `run_process`, with `stdin` written to the process and then
+    /// closed — what `ansible-vault encrypt -` reads a plaintext from,
+    /// which on the command line would be in every `ps` — and zeroed
+    /// once written.
+    pub fn run_process_with(
+        &self,
+        id: u64,
+        cmd: &str,
+        cwd: Option<&std::path::Path>,
+        stdin: Option<String>,
+    ) -> std::io::Result<ProcHandle> {
+        use std::io::{BufRead, BufReader, Write};
         use std::process::{Command, Stdio};
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
         let mut command = Command::new(shell);
         command
             .arg("-c")
             .arg(cmd)
-            .stdin(Stdio::null())
+            .stdin(if stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(d) = cwd {
             command.current_dir(d);
         }
         let mut child = command.spawn()?;
+        if let (Some(mut text), Some(mut pipe)) = (stdin, child.stdin.take()) {
+            thread::spawn(move || {
+                let _ = pipe.write_all(text.as_bytes());
+                drop(pipe);
+                text_buffer::wipe_string(&mut text);
+            });
+        }
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let child = Arc::new(Mutex::new(Some(child)));

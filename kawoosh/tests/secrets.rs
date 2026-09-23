@@ -245,3 +245,83 @@ fn a_rule_is_a_setting() {
     assert!(drawn(&d).contains("v4lue"), "the env rule is off");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Frames until `f` holds, for a process's answer to land.
+fn until(d: &mut Drive, app: &mut Kawoosh, f: impl Fn(&Kawoosh) -> bool) -> bool {
+    for _ in 0..400 {
+        if f(app) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+        d.frame(app);
+    }
+    f(app)
+}
+
+/// An Ansible vault opens decrypted in a private scratch, its values
+/// masked; `:w` encrypts it back over the file through stdin. The tool
+/// here is a stand-in (`secrets.vault_command`) that strips and adds
+/// the header, so the test needs no Ansible.
+#[test]
+fn a_vault_file_opens_decrypted_and_writes_back_encrypted() {
+    let dir = tmp("vault");
+    let tool = dir.join("fake-vault");
+    std::fs::write(
+        &tool,
+        "#!/bin/sh\ncase \"$1\" in\n  view) tail -n +2 \"$2\" ;;\n  encrypt) { echo '$ANSIBLE_VAULT;1.1;FAKE'; cat; } > \"$3\" ;;\nesac\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let vault = dir.join("vault.yml");
+    std::fs::write(&vault, "$ANSIBLE_VAULT;1.1;FAKE\ndb_password: s3cret\n").unwrap();
+
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("set secrets.vault_command={}", tool.display()),
+    );
+    ex(&mut d, &mut app, &format!("e {}", vault.display()));
+    let name = format!("vault: {}", vault.display());
+    assert!(
+        until(&mut d, &mut app, |a| a.focused_view().is_some_and(|v| a
+            .ed
+            .buffer_of(v)
+            .text()
+            .contains("db_password"))),
+        "decrypted: {}",
+        app.ed.message
+    );
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.buffer_of(v);
+    assert_eq!(buf.name, name);
+    assert!(buf.private);
+    d.frame(&mut app);
+    let shown = drawn(&d);
+    assert!(
+        !shown.contains("s3cret") && shown.contains("db_password:"),
+        "{shown}"
+    );
+
+    // An edit, written back: encrypted over the file, the buffer clean.
+    d.keys(&mut app, "A!");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    assert!(
+        until(&mut d, &mut app, |_| std::fs::read_to_string(&vault)
+            .unwrap()
+            == "$ANSIBLE_VAULT;1.1;FAKE\ndb_password: s3cret!\n"),
+        "{:?}",
+        std::fs::read_to_string(&vault)
+    );
+    assert!(until(&mut d, &mut app, |a| !a
+        .ed
+        .buffer_of(a.focused_view().unwrap())
+        .modified));
+    std::fs::remove_dir_all(&dir).ok();
+}
