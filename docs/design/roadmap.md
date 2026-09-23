@@ -319,16 +319,19 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   keys.md's "Selections" is rewritten. The `<A-S-j>` spelling is fixed
   on the way (a chord's letter under Shift is the upper-case letter),
   but nothing is bound to it.
-- **Align (`ga=`)** — open [todo]. Align the selected lines on the first
-  match of a character (or pattern) per line, padding before it.
-  Note `ga` is free (`g` is "going somewhere" in keys.md, but `ga` has
-  no binding); vim's `ga` shows the character code, which nobody misses.
-  Step 21.
-- **Delete the line in insert mode** — open [todo]. `<C-u>` kills to
-  the line start, `<C-w>` the word; there is no kill-whole-line. Vim
-  has none either; the modal answer is `<Esc>dd`. If wanted: `<C-S-k>`
-  or `<A-d>` in insert mode (Alt is free there). Low; step 21 decides
-  it or strikes it.
+- **Align (`ga=`)** — done 2026-09-23 [todo]; step 21. `ga` is an
+  operator (`align`) that takes the character after its motion (`align
+  on`), `gsa`'s shape: every line it covers that holds the character
+  has its first one moved to one column — the text before trimmed of
+  trailing space and padded, one space kept where any line had one —
+  so aligning again changes nothing; one undo step; a line without it
+  stays; `.` repeats it. A pattern rather than a character was not
+  built. Vim's `ga` shows a character's code, which nobody missed.
+- **Delete the line in insert mode** — done 2026-09-23 [todo]; step 21.
+  `<C-S-u>` (`delete line`): the caret's whole line, into the register
+  as `dd` puts it, staying in insert mode — a stronger `<C-u>`, which
+  still kills to the line's start. `<C-S-k>` (VS Code's) was taken by
+  the pane keys in every mode, and Alt is the selection's.
 - **Auto-closing brackets** — done 2026-09-23 ([pairs.md](pairs.md),
   "Built"); step 16. `pairs.lua` over four doors (`buf.type`,
   `buf.edits`, `buf.set_selections`, and `buf.slice` for what is around
@@ -850,28 +853,21 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   manager's copy honoured (kui F84) and a terminal at a password prompt
   titled so, with secure keyboard entry while it has the keys (kui
   F85). What the entry said before it was built is the note's thesis.
-- **Timed rows** — open [todo 2026-09-23]; step 21. A notes buffer
-  whose every new line begins with the time it was started — `14:02`,
-  or `T+01:41` from the buffer's first stamp — as a bundled
-  `timed.lua`, off until a buffer asks (`:timed`, a per-buffer fact
-  the way `pairs` gates on one). The stamp is the line's text, not an
-  annotation: `buf.annotate` draws past the line and never in its
-  bytes, so it would not survive a save. A relative stamp reads the
-  first stamp back out of the text, so a file reopened tomorrow counts
-  on from where it began, and a stamp edited by hand is the data. The
-  doors are pairs': an insert-mode `<CR>` gated on the fact, and
-  `buf.type` / `buf.edits`. The question is pairs' too: `<CR>` in
-  insert mode is `pairs enter` already, and a key's bindings are
-  newest first, the first whose `when` holds taking it (`keymap.rs`'s
-  `Binding`), so in a timed buffer one plugin's `<CR>` shadows the
-  other's — the block between a pair not opened, or no stamp. Either
-  the stamp is made on the edit rather than the key — a hook on a new
-  line however it came (`o`, `O`, `<CR>`, but not a paste of many),
-  which no Lua door gives a file buffer today (`on_change` is a
-  scratch's) — or a command can decline and hand the key to the
-  binding under it. The first suits timed rows better; the second is
-  the door any two insert-mode plugins will want. Decided at the
-  round's start.
+- **Timed rows** — done 2026-09-23 [todo 2026-09-23]; step 21.
+  `timed.lua`: `:timed` (`clock`, `relative`, `off`) on a buffer stamps
+  the empty line under the caret and every line `<CR>`, `o` and `O`
+  open — `14:02 `, or `T+01:41 ` counted from the buffer's first stamp,
+  which in a relative buffer carries the date so a file reopened
+  tomorrow counts on. The stamp is the line's text. The question it
+  shared with pairs was answered with the general door:
+  **`kawoosh.pass()`** — a command a key ran says the key is not its
+  here, and the binding under it gets it (the engine's dispatch walks
+  the bindings that can run, newest first, until one does not pass;
+  a key that types, with every binding passed, types; a passed command
+  is no step for `.`). Timed rows' keys pass outside a timed buffer, so
+  pairs' `<CR>` and the engine's `o` are untouched there. The new-line
+  hook was not built: the pass is the door any two plugins on one key
+  want, and it made the hook unneeded.
 - **`<CR>` on a file closes the listing** — done 2026-09-22 [use];
   step 12. `dir enter` on a file closes the listing it was opened from
   once the file is in the pane — `kawoosh.buf.close(h, { if_hidden =
@@ -1265,12 +1261,14 @@ then breadth.
     edited without a pane sent to the server. No kui ask. Incremental
     sync stays out until the perf tab shows it matters.~~ Landed
     2026-09-23; see the LSP track.
-21. **The small ones**: align (`ga=`, over lines, on a character or a
+21. ~~**The small ones**: align (`ga=`, over lines, on a character or a
     pattern asked for); timed rows (`timed.lua`, with the door it
     shares with pairs decided — a new-line hook or a command that
     declines); the kill-line in insert mode decided or struck. One
     round because each is under a day and the first two are both
-    insert- and line-shaped tests.
+    insert- and line-shaped tests.~~ Landed 2026-09-23: `ga`,
+    `<C-S-u>`, and `timed.lua` over a new `kawoosh.pass()`. See the
+    engine and buffers tracks.
 22. **`dir`, round three**: a listing re-read when the watcher sees
     its directory change, hidden files toggled, and images previewed
     in `dir` and the picker through kui's `image`. Breadth, and all

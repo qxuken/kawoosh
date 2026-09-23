@@ -264,6 +264,9 @@ the panes table.
 | `gsa` + motion + char | wrap what the motion covers in the pair (`gsaiw)`, `viwgsa"`) |
 | `gsd` + char | take the pair off from around the caret |
 | `gsr` + char + char | swap the pair for another (`gsr)]`) |
+| `ga` + motion + char | line up the lines it covers on their first CHAR (`gaip=`, `Vjga:`): the text before it trimmed and padded, a space kept where any line had one; vim-easy-align's letters |
+| `<C-S-u>` (insert mode) | the whole line, into the register — `dd` without leaving insert mode; `<C-u>` still kills to the line's start |
+| `zv` | show the mask under the caret for a few seconds ([secrets.md](secrets.md)) — vim's "open the folds to view the cursor", a mask being drawn as one |
 | `.` | the last change again, on the selections as they are; a count replaces the change's count and is its count from then on |
 | `q` + char … `q` | record into the register; an upper-case letter appends to its lower-case one; the status line says `REC @a` meanwhile |
 
@@ -272,6 +275,11 @@ its pair with the caret between, a closer before its own steps over
 it, `<BS>` between a pair deletes both, `<CR>` between brackets opens
 the block, a quote pairs only where one can open — at every caret,
 never in the command line or a view's field. `gsa(` wraps a selection.
+
+**Timed rows** (`timed.lua`): `:timed` stamps each line a timed
+buffer's `<CR>`, `o` and `O` open with the time (`:timed relative`
+counts from the first stamp); in a buffer that is not timed the keys
+pass on (`kawoosh.pass()`) to pairs' `<CR>` and the engine's `o`.
 
 **Completion** is in place (mvp.md D5): the candidate's rest is a
 ghost after the caret, `<C-n>` `<C-p>` cycle, `<Tab>` `<C-y>` `<CR>`

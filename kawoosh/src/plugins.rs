@@ -9,4 +9,7 @@ pub const BUNDLED: &[(&str, &str)] = &[
     ("kawoosh:launcher", include_str!("../lua/launcher.lua")),
     ("kawoosh:pairs", include_str!("../lua/pairs.lua")),
     ("kawoosh:secrets", include_str!("../lua/secrets.lua")),
+    // After pairs: its keys are newer, and pass to pairs' where a buffer
+    // is not timed.
+    ("kawoosh:timed", include_str!("../lua/timed.lua")),
 ];
