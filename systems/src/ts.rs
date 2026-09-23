@@ -394,6 +394,7 @@ fn highlight(
     // none for a grammar without a structure query, so what an earlier
     // language painted goes.
     let mut blocks: Vec<Vec<Run>> = Vec::new();
+    let mut block_spans: Option<Vec<Range<usize>>> = None;
     let (runs, tree): (Vec<Vec<Run>>, Option<Tree>) = match grammars.get(&job.language) {
         Some(g) if parser.set_language(&g.language).is_ok() => {
             // The last tree, told the edits, when it is this language's
@@ -445,10 +446,18 @@ fn highlight(
                         })
                         .collect();
                     if let Some(st) = &g.structure {
-                        blocks = spans
+                        // Over whole lines: a block's kind is its line's
+                        // (a heading's level, a list's marker), and an
+                        // edit of one byte of it changes all of its
+                        // bytes' — `## ` typed a `#` at a time left the
+                        // first `#` an h1.
+                        let lines: Vec<Range<usize>> =
+                            spans.iter().map(|s| whole_lines(text, s.clone())).collect();
+                        blocks = lines
                             .iter()
                             .map(|span| structure_runs(st, tree.root_node(), text, span.clone()))
                             .collect();
+                        block_spans = Some(lines);
                     }
                     let handle = tree.clone();
                     parsed
@@ -465,12 +474,15 @@ fn highlight(
         }
     };
     blocks.resize_with(spans.len(), Vec::new);
+    let block_spans = block_spans.unwrap_or_else(|| spans.clone());
     let mut updates: Vec<Update> = Vec::with_capacity(spans.len() * 2);
-    for ((span, runs), blocks) in spans.into_iter().zip(runs).zip(blocks) {
+    for (((span, runs), blocks), block_span) in
+        spans.into_iter().zip(runs).zip(blocks).zip(block_spans)
+    {
         updates.push(Update {
             layer: STRUCT_LAYER,
             version: job.snapshot.version,
-            span: span.clone(),
+            span: block_span,
             runs: blocks,
         });
         updates.push(Update {
@@ -542,6 +554,20 @@ fn capture_runs(
         }
     }
     runs
+}
+
+/// `span` widened to the lines it touches, the last one's newline in.
+fn whole_lines(text: &text_buffer::Buffer, span: Range<usize>) -> Range<usize> {
+    let len = text.len();
+    let mut start = span.start.min(len);
+    while start > 0 && text.byte_at(start - 1) != Some(b'\n') {
+        start -= 1;
+    }
+    let mut end = span.end.min(len);
+    while end < len && text.byte_at(end) != Some(b'\n') {
+        end += 1;
+    }
+    start..(end + 1).min(len)
 }
 
 /// The structure query's captures in `span` as runs, the outer first so
