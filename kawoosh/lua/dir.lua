@@ -924,6 +924,31 @@ end, {
   doc = "open the entry under the caret",
 })
 
+-- `<leader>y*` in a listing: the path of the entry under the caret —
+-- the listed directory's on `../` — in the form the engine's `path
+-- copy` names (`kawoosh.fs.form`), onto the clipboard and into the
+-- register. The same keys as a file's, gated on the listing.
+local COPIES = {
+  { "p", "relative" }, { "P", "absolute" }, { "d", "dir" },
+  { "D", "dir absolute" }, { "n", "name" }, { "N", "stem" },
+}
+for _, c in ipairs(COPIES) do
+  local form = c[2]
+  kawoosh.command("dir copy " .. form, function()
+    local d = listed()
+    if not d or d == DRIVES then return end
+    local name = under_caret()
+    local path = name and fs.join(d, name) or d
+    local text, why = fs.form(path, form)
+    if not text then return kawoosh.echo(why) end
+    kawoosh.copy(text)
+    kawoosh.echo("copied " .. text)
+  end, {
+    when = { "language:dir" },
+    doc = "copy the entry's path (" .. form .. ")",
+  })
+end
+
 -- `:dir cd`, or <leader>cd: the working directory follows the listing,
 -- so a terminal opened next starts here. A subcommand of `:dir`, so it
 -- completes there; `when` names the listing, so anywhere else the
@@ -1299,6 +1324,9 @@ kawoosh.map("n", "<CR>", "dir enter")
 -- A double click on a line is `<CR>` on it.
 kawoosh.map("n", "<2-LeftMouse>", "dir enter", { when = { "language:dir" } })
 kawoosh.map("n", "<leader>cd", "dir cd")
+for _, c in ipairs(COPIES) do
+  kawoosh.map("n", "<leader>y" .. c[1], "dir copy " .. c[2], { when = { "language:dir" } })
+end
 kawoosh.map("n", "<C-l>", "dir refresh", { when = { "language:dir" } })
 kawoosh.map("n", "<C-p>", "dir preview", { when = { "language:dir" } })
 kawoosh.map("n", "J", "dir join", { when = { "language:dir" } })

@@ -269,7 +269,7 @@ Steps 18–22 in use; built the same day unless it says otherwise.
   conflicts — over `kawoosh.buf.paint`, a plugin's named set of
   coloured ranges; `kawoosh.dir.vcs` takes more providers (`jj`,
   `fossil`) in a config.
-- **Path copies**, filed: step 23.
+- **Path copies**, filed: step 23, and built.
 
 ## The list, by track
 
@@ -613,12 +613,24 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   `kawoosh pick files` for a shell. Before the workspaces because a
   jump moves *the* cwd, and which cwd that is is their question.
 
-- **Path copies** — open [use 2026-09-24]; step 23. keys.md's reserved
-  `<leader>y*`: the current file's path relative to the working
-  directory, absolute, its name, its directory, each onto the system
-  clipboard (a private buffer's too — a path is not the secret), and
-  in a `dir` listing the entry under the caret's. A command each
-  (`path copy relative|absolute|name|dir`) so a config binds its own.
+- **Path copies** — done 2026-09-24 [use 2026-09-24]; step 23. The
+  neovim config's six under keys.md's reserved `<leader>y*`: `yp` the
+  file's path from the working directory (whole outside it, as vim's
+  `%:.`), `yP` absolute, `yd` `yD` its directory the same two ways,
+  `yn` its name, `yN` its stem — `path copy relative|absolute|dir|dir
+  absolute|name|stem` (`Editor::path_form`), so a config binds its
+  own. Onto the clipboard *and* into the register, a yank without a
+  range (`Editor::copy_text`), since the config ran with
+  `unnamedplus`; a private buffer's too — a path is not the secret. A
+  scratch standing for a file (`Buffer::about`) copies that file's. In
+  a `dir` listing the same keys copy the entry under the caret, the
+  listed directory on `../` (`dir copy …`), over two doors:
+  `kawoosh.copy(text)` and `kawoosh.fs.form(path, form)`, the engine's
+  forms rather than a second copy of them in Lua. On the way: the
+  editor spells the working directory as it was given (`/tmp/x`) and
+  the process as the disk resolves it (`/private/tmp/x`), so a relative
+  form compares the resolved paths when the spelled ones do not meet.
+  `kawoosh/lua/tests/path_copy.lua`.
 
 ### LSP and completion
 
@@ -1321,10 +1333,12 @@ then breadth.
     Lua but the watch.~~ Landed 2026-09-23 with three doors —
     `kawoosh.fs.watch`, `kawoosh.image`, bytes for `fs.write`. See the
     buffers track.
-23. **The path copies**: `<leader>y*` — the file's path relative to the
+23. ~~**The path copies**: `<leader>y*` — the file's path relative to the
     working directory, absolute, its name, its directory — onto the
     clipboard, and the same from a `dir` listing's entry. Small, and
-    asked for; keys.md reserved the prefix.
+    asked for; keys.md reserved the prefix.~~ Landed 2026-09-24: six
+    forms rather than four (the neovim config's), into the register as
+    well as onto the clipboard. See the panes track.
 24. **Directory jumps**: the `dirs` source over zoxide's database or
     the memory's rows, kawoosh's visits fed back with `zoxide add`, a
     pick `:cd` in an editor pane and `cd` typed at a terminal's empty

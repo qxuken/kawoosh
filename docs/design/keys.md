@@ -359,6 +359,9 @@ objects, or any other character on both sides.
 | `<leader>D` | the type definition |
 | `<leader>x` | evaluate the line (the selection, in visual mode) as Lua; the result on the status line, or in a pane when it has lines |
 | `<leader>cd` | the listed directory as the working one (oil's) |
+| `<leader>yp` `<leader>yP` | copy the file's path from the working directory (whole when outside it), its absolute path — onto the clipboard and into the register (`path copy relative`, `absolute`); in a `dir` listing the entry's under the caret, the listed directory's on `../` |
+| `<leader>yd` `<leader>yD` | copy its directory, from the working directory (`.` for the working one) and absolute (`path copy dir`, `dir absolute`) |
+| `<leader>yn` `<leader>yN` | copy its name, and its name without the extension (`path copy name`, `stem`) |
 | `<leader>u` | the undo history |
 | `<leader>p` | the memory pane (`:memory`): texts — what was yanked, deleted or pasted in, to put again — and `<Tab>` through files (with their drafts), recent, commands, searches, pins (each the workspace's), all (every workspace's); `/` filters the view |
 | `<leader>ee` `<leader>ea` | the workspace's pinned files (`:memory pins`), pin or unpin the buffer's file |
@@ -368,7 +371,8 @@ objects, or any other character on both sides.
 | `-` | oil: the file's directory |
 
 The groups are the which-key ones from the neovim config: `b` buffers,
-`t` tabs, `s` search and lists, `w` the workspace, `c` code, single
+`t` tabs, `s` search and lists, `w` the workspace, `c` code, `y` the
+path copies (the neovim config's six, `unnamedplus` and all), single
 letters for the daily few. A picker that does not exist yet has its
 spelling kept for it below rather than given to something else.
 
@@ -440,7 +444,6 @@ so that nothing else takes the key meanwhile.
 | `<leader>m` | marks |
 | `<leader>R` | rename the file |
 | `<leader>h*` `<leader>bg` `<leader>bl` `<leader>wd` `<leader>wc` | hunks, git, log, diff, commit |
-| `<leader>y*` | copy the path, the directory, the name |
 | `<leader>G*` | the debugger |
 | `<C-w>H` `<C-w>L` | move a column in a scrolling tab ([scrolling-tab.md](scrolling-tab.md)); unbound in a tree |
 
