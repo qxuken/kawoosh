@@ -83,28 +83,42 @@ local function around(at)
   return before, after
 end
 
--- The carets, in insert mode points at their heads, in text order.
+-- The carets, in insert mode points at their heads, in text order,
+-- and which of them is the primary.
 local function carets()
-  local out = {}
-  for _, s in ipairs(kawoosh.buf.selections()) do out[#out + 1] = s.head end
-  table.sort(out)
-  return out
+  local all = {}
+  for _, s in ipairs(kawoosh.buf.selections()) do
+    all[#all + 1] = { at = s.head, primary = s.primary }
+  end
+  table.sort(all, function(a, b) return a.at < b.at end)
+  local heads, primary = {}, 1
+  for i, c in ipairs(all) do
+    heads[i] = c.at
+    if c.primary then primary = i end
+  end
+  heads.primary = primary
+  return heads
 end
 
 -- One action per caret, applied: `{ text =, del_before =, del_after =,
 -- caret = }` — bytes deleted either side, text put in their place,
 -- the caret that many bytes into it. Done as one step whatever they
--- are, the carets placed after.
+-- are, the carets placed after, the primary kept. A caret's deletion
+-- reaching into the one before it (`(|)|` and `<BS>`: the pair and
+-- the `)` after it) starts where that one ends: edits are disjoint.
 local function apply(heads, actions)
-  local edits, sels, shift = {}, {}, 0
+  local edits, sels, shift, reached = {}, {}, 0, 0
   for i, at in ipairs(heads) do
     local a = actions[i]
     local text = a.text or ""
     local from, to = at - (a.del_before or 0), at + (a.del_after or 0)
+    from = math.max(from, reached)
+    to = math.max(to, from)
+    reached = to
     -- A step over edits nothing: the caret moves on.
     if to > from or text ~= "" then edits[#edits + 1] = { from, to, text } end
     local caret = from + shift + (a.caret or #text)
-    sels[#sels + 1] = { caret, caret }
+    sels[#sels + 1] = { caret, caret, primary = i == heads.primary }
     shift = shift + #text - (to - from)
   end
   if #edits > 0 then kawoosh.buf.edits(edits) end

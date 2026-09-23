@@ -1,4 +1,4 @@
-# Auto-closing brackets: a plugin, off by default
+# Auto-closing brackets: a plugin, on by default
 
 Status: decided 2026-09-21 (roadmap step 9), built 2026-09-23 (step
 16; "Built" at the end says where it departed); on by default since the
@@ -14,7 +14,8 @@ beat.
 Auto-pairing is contested: helix has it on, vim has none, nvim has it
 by plugin, and with several carets it is the feature most often wrong.
 So it is not the engine's — the engine holds no opinion about what a
-`(` means — but a bundled plugin, off until `pairs.enabled` is set, in
+`(` means — but a bundled plugin, gated on `pairs.enabled` (on; it was
+decided off, and reversed after a day's use — Status), in
 a hundred lines of Lua the user can read and rewrite; exactly the
 behaviour "hackable by design" ([mvp.md](mvp.md)'s principle) says a user
 should be able to switch and reshape. `gsa` (surround) already covers
@@ -29,7 +30,8 @@ and `}` opens the block; a quote pairs only where a quote can open.
 ### 1. `pairs.lua`, bundled, gated on a setting
 
 `kawoosh/lua/pairs.lua` is loaded with the other bundled plugins and
-does nothing while `pairs.enabled` is `false` (the default). Its rules
+does nothing while `pairs.enabled` is `false` (it is `true` by default
+since the reversal in Status; it was decided `false`). Its rules
 are a settings table merged over a default, per language:
 
 ```lua
@@ -108,13 +110,14 @@ under the loop, which is the "cheap to get wrong".
 - `<CR>` with a closer right after the caret and its opener right
   before opens the block: newline, newline, up, one indent — spelt with
   the engine's `insert newline` (which keeps the indentation) and
-  `insert tab`; the test says `{\n\t|\n}`.
+  `insert tab`; the test says `{\n    |\n}` (the tab the buffer's
+  indentation, four spaces by default).
 - Nothing on `<Esc>`: a pair typed and left empty stays (helix's
   choice; deleting it surprises more than it helps).
 
 ### 5. The acceptance test is a script
 
-`kawoosh/lua/tests/pairs.lua`, on the harness: off by default (`i(`
+`kawoosh/lua/tests/pairs.lua`, on the harness: off when set so (`i(`
 gives `(`); `:set pairs.enabled true`; `i(` gives `()` with the caret
 between; `)` steps over; `<BS>` deletes both; `<CR>` opens a block;
 `"` after a word does not pair; `'a` in a rust buffer does not pair;
@@ -178,6 +181,19 @@ roadmap's item struck.
 - **No markdown `*` `_` by default**: a `*` at a line's start is a
   list's bullet more often than emphasis, and a pair there is in the
   way. A `markdown` table in `pairs.rules` adds them.
+- **Edits are disjoint, and the primary stays** (from the branch's
+  review): two carets at `(|)|` and `<BS>` made a pair's deletion and
+  the `)`'s overlap, which the engine applied one after the other in a
+  text the first had moved — a character too many gone, or one cut in
+  half. `kawoosh.buf.edits` refuses a backwards or overlapping range
+  with an error, `Editor::apply_edits` clamps one that reaches the next
+  whatever sent it, and the plugin starts a caret's deletion where the
+  one before ended. `set_selections` made the first selection the
+  primary, so every pairing moved `<C-j>`'s primary to the top: the
+  selections `kawoosh.buf.selections()` gives mark the primary
+  (`primary = true`), `set_selections` takes the mark back, and the
+  plugin keeps it. `set_selections` also snaps an offset inside a
+  character to its start.
 
 `kawoosh/lua/pairs.lua`, `kawoosh/lua/tests/pairs.lua`, and
 `type_edits_selections_and_slice` in `lua/src/lib.rs`.

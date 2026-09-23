@@ -62,6 +62,26 @@ reset("\n")
 kawoosh.press("gg<C-j>i(<Esc>")
 kawoosh.test.eq(text(), "()\n()", "two carets, two pairs")
 
+-- `<BS>` at `(|)|`: the pair and the `)` after it reach into each
+-- other, and are one deletion, not two that cut the text.
+reset("()ab")
+kawoosh.press("i")
+kawoosh.buf.set_selections({ { 1, 1 }, { 2, 2 } })
+kawoosh.frame()
+kawoosh.press("<BS><Esc>")
+kawoosh.test.eq(text(), "ab", "the pair and its closer, once")
+
+-- The primary caret stays the primary through a pairing.
+reset("\n")
+kawoosh.press("i")
+kawoosh.buf.set_selections({ { 0, 0 }, { 1, 1, primary = true } })
+kawoosh.frame()
+kawoosh.press("(")
+local sels = kawoosh.buf.selections()
+kawoosh.test.eq(text(), "()\n()", "two pairs")
+kawoosh.test.eq(sels[2].primary, true, "the second is still the primary")
+kawoosh.press("<Esc>")
+
 -- `.` repeats a pairing.
 reset("a\nb")
 kawoosh.press("A(<Esc>j.")
