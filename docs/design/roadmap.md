@@ -523,34 +523,43 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   and a ribbon in it would scroll a single row of panes. A pane is
   still not dragged in or out of the dock by its title bar.
   `the_dock_splits_in_itself` in `kawoosh/tests/panes.rs`.
-- **A pane made is focused** — open, a bug [asked 2026-09-23]; step
-  18. Seen: a click on the servers block opens `*lsp*` and the keys
-  stay in the pane before. The cause is general: `Layout::split`
-  focuses the new pane, and `show_in_pane` (`lsp.rs`) — the door for a
-  read-only text in a split — puts the keys back unless asked not to,
-  which only the hover asks. Every other caller is a pane opened to be
-  read: `*lsp*`, `:messages` (whose doc comment says "the keyboard on
-  it"), `:maps`, `*lua*`, references, `*diagnostic*` (`<C-e>`), a
-  disk diff, `:terminal integration`. Lua's `view_open` already has
-  the rule the user asked for — focused unless `focus = false` — so
-  the engine's door takes the same default and names its opt-outs at
-  the call: the compile's output, which is watched while typing goes
-  on. `q` there closes it with the keys back where they came from, as
-  the hover's `q` does (`close`, bound under `buffer:*hover*`), rather
-  than one binding per buffer name.
-- **Empty scratches swept on the event** — open [asked 2026-09-23];
-  step 18. `sweep_scratches` runs in every frame's prologue
-  (`app.rs`, beside `spawn_pending`), a pass over every buffer and
-  view. Cost is not the argument — one pass over a few dozen buffers,
-  nothing a profile would show — the model is: a scratch becomes one to
-  sweep at exactly the moment a pane stops showing it, which is two
-  doors. One exists (`show_buffer`, every switch of a view's buffer);
-  the other does not — a view goes in seven places (the session, a
-  Lua view's close, three in `commands.rs`, a terminal's, a field's
-  in the editor). The round makes that one door (`drop_view`), has
-  both note the buffer they left, and sweeps those alone when the
-  event that left them is done; a scratch nothing ever showed (a
-  plugin's, made in the background) is then never swept by accident.
+- **A pane made is focused** — done 2026-09-23, a bug [asked
+  2026-09-23]; step 18. Seen: a click on the servers block opened
+  `*lsp*` and the keys stayed in the pane before. The cause was
+  general: `Layout::split` focuses the new pane and `show_in_pane`
+  put the keys back for every caller but the hover — `*lsp*`,
+  `:messages` (whose doc comment said "the keyboard on it"), `:maps`,
+  `*lua*`, references, `*diagnostic*`, a disk diff, `:terminal
+  integration`. Now `show_in_pane` takes the keys as Lua's
+  `view_open` does, and `glance_in_pane` is the opt-out, which only
+  the compile's output uses. `q` in any read-only buffer that is not a
+  file closes its pane (a `readonly` fact beside `modified` and
+  `file`, `BufFacts` in place of the four-tuple), where only the hover
+  had a `q`. Where the keys go when a pane closes is the layout's
+  rule now, not Lua's: `Layout` remembers the pane each split was made
+  from (`came_from`), and closing the focused pane hands the keys back
+  there when it is still in the same tab or dock — a pane made from a
+  closed one inherits that pane's opener — where it went to the tab's
+  first pane; `Scripting::view_from` went with it. A location list's
+  `<CR>` and `]q` open in the pane the list came from, since the list
+  has the keys now. Tests: panes.rs's
+  `closing_a_pane_gives_the_keys_back_where_they_came_from` and
+  `a_pane_opened_to_read_has_the_keys_and_q_gives_them_back`; the
+  tests that pinned "the keys stayed" (the servers block, `<C-e>`,
+  references, a disk diff, `:map list`) now expect the keys in the
+  pane and `q` back.
+- **Empty scratches swept on the event** — done 2026-09-23 [asked
+  2026-09-23]; step 18. A buffer a view stops showing is noted
+  (`Kawoosh::left`) at the two moments it can happen: `show_buffer`,
+  and `drop_view`, the one door every closed pane's view now goes
+  through (`drop_content` for what a pane showed — `:close`, `:only`,
+  `:tabclose`, a session's restore, a scrollback's close). The sweep
+  looks at those alone and does nothing on a frame with none, so a
+  scratch nothing has shown yet is never taken. The door found a bug
+  on the way: `:only` and `:tabclose` dropped views without answering
+  an `edit --wait` caller whose buffer they took off the screen, which
+  only `:close` did (`only_answers_a_waiting_caller_whose_pane_it_closed`
+  in terminal.rs).
 - **Directory jumps, zoxide's way** — open [asked 2026-09-23]; step
   23. A `dirs` picker source ranked by frecency, kawoosh's UI over
   zoxide's data. The bridge: with `zoxide` on the PATH (0.10 here, 328
@@ -1283,12 +1292,15 @@ then breadth.
     `markdown.rs`, the fold table, wrap on rendered rows, images and
     tables.~~ Landed 2026-09-23; the first check found the squeezed
     row. See the buffers track and markdown.md's "Built".
-18. **Two fixes from reading the list**: a pane made is focused —
+18. ~~**Two fixes from reading the list**: a pane made is focused —
     `show_in_pane` taking `Layout::split`'s default and Lua's, the
     compile's output its one opt-out, `q` closing any of them back to
     where the keys came from — and empty scratches swept on the event
     rather than every frame, behind one door for a view going. An hour
-    each; first because one is a bug met in use.
+    each; first because one is a bug met in use.~~ Landed 2026-09-23;
+    the keys' way back became the layout's (`came_from`), and the door
+    for a view going found `:only` leaving an `edit --wait` caller
+    unanswered. See the panes track.
 19. **Secrets** (a note first, `secrets.md`): the private buffer in
     the engine — the histories, the memory, the clipboard, the
     session, the servers and `:bd` each asking it, and a `--wait` open

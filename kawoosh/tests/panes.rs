@@ -826,3 +826,62 @@ fn buffer_delete_goes_back_where_it_was() {
     assert_eq!(app.ed.buffer_of(v).line_of(head), 49, "where it was left");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Closing the pane that has the keys hands them to the pane it was
+/// split from, not to the tab's first — `<C-w>v` twice and `:q` is
+/// back in the middle one.
+#[test]
+fn closing_a_pane_gives_the_keys_back_where_they_came_from() {
+    let mut app = Kawoosh::new("t", "alpha");
+    let mut d = Drive::new(1200.0, 500.0);
+    d.frame(&mut app);
+    ctrl_w(&mut d, &mut app, "v");
+    let middle = app.layout.focused();
+    ctrl_w(&mut d, &mut app, "v");
+    let last = app.layout.focused();
+    assert_ne!(middle, last);
+    ctrl_w(&mut d, &mut app, "q");
+    assert_eq!(app.layout.focused(), middle);
+    // A pane whose opener is gone hands them to the opener's opener.
+    ctrl_w(&mut d, &mut app, "v");
+    let third = app.layout.focused();
+    ctrl_w(&mut d, &mut app, "h");
+    assert_eq!(app.layout.focused(), middle);
+    ctrl_w(&mut d, &mut app, "q");
+    d.frame(&mut app);
+    ctrl_w(&mut d, &mut app, "l");
+    assert_eq!(app.layout.focused(), third);
+    ctrl_w(&mut d, &mut app, "q");
+    assert_eq!(app.layout.focused(), 1);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A pane the engine opens to be read — `*lsp*` from the title bar,
+/// `:messages`, `:map list` — has the keys, and `q` closes it back to
+/// the pane they came from.
+#[test]
+fn a_pane_opened_to_read_has_the_keys_and_q_gives_them_back() {
+    let mut app = Kawoosh::new("t", "alpha");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let from = app.layout.focused();
+    for line in ["map list", "messages"] {
+        ex(&mut d, &mut app, line);
+        d.frame(&mut app);
+        let p = app.layout.focused();
+        assert_ne!(p, from, ":{line} took the keys");
+        let v = match app.layout.content(p) {
+            Some(Content::Editor(v)) => v,
+            other => panic!(":{line} opened {other:?}"),
+        };
+        assert!(app.ed.buffer_of(v).read_only, ":{line} is read-only");
+        d.keys(&mut app, "q");
+        assert_eq!(app.layout.focused(), from, "q after :{line}");
+        assert_eq!(app.layout.visible_panes().len(), 1);
+    }
+    // `q` in a file's pane still records a macro.
+    d.keys(&mut app, "qa");
+    assert!(app.ed.repeat.recording().is_some());
+    d.keys(&mut app, "q");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

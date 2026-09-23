@@ -11,6 +11,7 @@ use kawoosh_systems::io::IoMsg;
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
+use crate::layout::PaneId;
 use crate::notify::{Level, Note};
 use crate::terminals::location_at;
 
@@ -62,7 +63,7 @@ impl Kawoosh {
         self.compile.proc_id += 1;
         let id = self.compile.proc_id;
         let header = format!("$ {cmd}\n");
-        self.show_in_pane(COMPILE_BUFFER, &header);
+        self.glance_in_pane(COMPILE_BUFFER, &header);
         let buffer = self
             .ed
             .buffers
@@ -206,10 +207,15 @@ impl Kawoosh {
         };
         self.note_location(path, line, &source, &message);
         let from = from.map(|(b, _)| b);
-        let other =
-            self.layout.visible_panes().into_iter().find(
-                |p| matches!(self.view_of(*p), Some(v) if Some(self.ed.views[v].buffer) != from),
-            );
+        let editor_elsewhere = |k: &Self, p: PaneId| matches!(k.view_of(p), Some(v) if Some(k.ed.views[v].buffer) != from);
+        // The pane the list was opened from, when the list has the keys
+        // (`gr`, then `<CR>`); else the first other editor pane.
+        let visible = self.layout.visible_panes();
+        let other = self
+            .layout
+            .came_from(self.layout.focused())
+            .filter(|p| visible.contains(p) && editor_elsewhere(self, *p))
+            .or_else(|| visible.iter().copied().find(|p| editor_elsewhere(self, *p)));
         if let Some(p) = other {
             self.layout.focus(p);
             self.open_in_editor(path, line, col);

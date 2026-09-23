@@ -20,8 +20,8 @@ use std::rc::Rc;
 use std::time::Instant;
 
 pub use command::{
-    ArgKind, Args, Command, Cond, Ctx, Facts, FnCommand, Form, Invocation, Kind, MotionKind,
-    Registry, Spec,
+    ArgKind, Args, BufFacts, Command, Cond, Ctx, Facts, FnCommand, Form, Invocation, Kind,
+    MotionKind, Registry, Spec,
 };
 pub use kawoosh_doc::Hunk;
 use kawoosh_doc::{Buffer, BufferId, Version};
@@ -1257,7 +1257,13 @@ impl Editor {
         let buffer = view
             .and_then(|v| self.views.get(v))
             .map(|v| &self.buffers[v.buffer])
-            .map(|b| (b.name.as_str(), &*b.language, b.modified, b.path.is_some()));
+            .map(|b| command::BufFacts {
+                name: b.name.as_str(),
+                language: &b.language,
+                modified: b.modified,
+                file: b.path.is_some(),
+                read_only: b.read_only,
+            });
         command::Facts {
             published: Some(&self.commands.facts),
             visual: view.is_some_and(|v| self.mode(v) == Mode::Visual),

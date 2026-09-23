@@ -432,6 +432,8 @@ fn rename_references_actions_format_and_diagnostics() {
             .any(|b| b.name == "*diagnostic*" && b.text() == "error: boom"),
         "the diagnostic pane"
     );
+    // It has the keys; `q` gives them back.
+    d.keys(&mut app, "q");
     d.keys(&mut app, "G");
     d.keys(&mut app, "]d");
     assert_eq!(app.ed.message, "no diagnostic after the caret");
@@ -479,7 +481,8 @@ fn rename_references_actions_format_and_diagnostics() {
         "// renamed\nfn main() {\n    hello_again()\n}\n"
     );
 
-    // References: a locations pane beside, the keys staying; `]q` walks.
+    // References: a locations pane beside, with the keys; `]q` walks,
+    // opening each in the pane the list came from.
     d.keys(&mut app, "gr");
     assert!(
         until(&mut d, &mut app, |a| a
@@ -499,9 +502,9 @@ fn rename_references_actions_format_and_diagnostics() {
     assert!(text.contains("main.rs:1:1: // renamed"), "{text}");
     assert!(text.contains("main.rs:2:5: fn main() {"), "{text}");
     assert_eq!(
-        app.ed.views[app.focused_view().unwrap()].buffer,
-        buf_id,
-        "focus stayed"
+        app.ed.buffer_of(app.focused_view().unwrap()).name,
+        "*references*",
+        "the list has the keys"
     );
     d.keys(&mut app, "]q");
     let v = app.focused_view().unwrap();
@@ -777,7 +780,12 @@ fn the_servers_block_opens_the_lsp_pane() {
     let text = info.text();
     assert!(text.contains("docs  1"), "{text}");
     assert!(text.contains("src/main.rs"), "{text}");
+    // The pane has the keys (it had kept them in the pane before, the
+    // bug); `q` gives them back.
     let v = app.focused_view().unwrap();
-    assert_eq!(app.ed.buffer_of(v).name, "main.rs", "the keys stayed");
+    assert_eq!(app.ed.buffer_of(v).name, "*lsp*", "the keys went to it");
+    d.keys(&mut app, "q");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).name, "main.rs", "and came back");
     std::fs::remove_dir_all(&dir).ok();
 }

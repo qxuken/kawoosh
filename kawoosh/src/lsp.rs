@@ -467,14 +467,20 @@ impl Kawoosh {
     }
 
     /// `text` in a read-only buffer named `name`, in a split (or the pane
-    /// already showing it).
+    /// already showing it), with the keys: a pane made is focused, and
+    /// `q` there closes it back to where they came from.
     pub fn show_in_pane(&mut self, name: &str, text: &str) {
+        self.show_in_pane_as(name, text, None, true);
+    }
+
+    /// `show_in_pane` with the keys left where they are: a pane watched
+    /// while typing goes on — the compile's output.
+    pub fn glance_in_pane(&mut self, name: &str, text: &str) {
         self.show_in_pane_as(name, text, None, false);
     }
 
     /// `show_in_pane`, with the buffer read as `language` and, with
-    /// `focus`, the keyboard in the pane — the hover's, which is read
-    /// and scrolled rather than glanced at, its fences highlighted.
+    /// `focus`, the keyboard in the pane.
     pub fn show_in_pane_as(&mut self, name: &str, text: &str, language: Option<&str>, focus: bool) {
         let existing = self
             .ed
@@ -516,8 +522,8 @@ impl Kawoosh {
                 let v = self.ed.add_view(id);
                 let from = self.layout.focused();
                 self.layout.split(SplitDir::V, Content::Editor(v));
-                // The keyboard stays where it was unless the pane is to
-                // be read in: a list glanced at, a hover scrolled.
+                // The keyboard goes to the pane unless it is only to be
+                // glanced at.
                 if !focus {
                     self.layout.focus(from);
                 }

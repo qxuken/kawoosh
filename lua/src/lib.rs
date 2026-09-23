@@ -16,7 +16,7 @@ pub use fuzzy::{Hit, Matcher};
 use kawoosh_doc::{Buffer, BufferId, Snapshot};
 use std::collections::BTreeSet;
 
-use kawoosh_editor::{Args, Ctx, Editor, Facts, Setting, Spec, ViewId};
+use kawoosh_editor::{Args, BufFacts, Ctx, Editor, Facts, Setting, Spec, ViewId};
 use kawoosh_systems::store::{PendingMoments, RingRow};
 use kui_lua::LuaExtension;
 use mlua::{Function, Lua, Table, Value as LV};
@@ -347,6 +347,7 @@ pub struct BufSnap {
     pub sels: Vec<(usize, usize)>,
     pub primary: usize,
     pub modified: bool,
+    pub read_only: bool,
     /// A field's one-line buffer — the prompt's, a query's — which
     /// `kawoosh.buf.list` leaves out, as `:ls` does.
     pub field: bool,
@@ -931,6 +932,7 @@ impl Runtime {
                     sels,
                     primary,
                     modified: b.modified,
+                    read_only: b.read_only,
                     field: ed.is_field_buffer(id),
                 },
             );
@@ -1620,13 +1622,12 @@ fn seed(
             let facts = Facts {
                 published: Some(&p.facts),
                 visual: p.mode == "visual",
-                buffer: buf.map(|b| {
-                    (
-                        b.name.as_str(),
-                        b.language.as_str(),
-                        b.modified,
-                        b.path.is_some(),
-                    )
+                buffer: buf.map(|b| BufFacts {
+                    name: b.name.as_str(),
+                    language: b.language.as_str(),
+                    modified: b.modified,
+                    file: b.path.is_some(),
+                    read_only: b.read_only,
                 }),
                 field: p.field.as_deref(),
                 prompt: p.prompt,
@@ -1754,13 +1755,12 @@ fn seed(
             let facts = Facts {
                 published: Some(&p.facts),
                 visual: p.mode == "visual",
-                buffer: buf.map(|b| {
-                    (
-                        b.name.as_str(),
-                        b.language.as_str(),
-                        b.modified,
-                        b.path.is_some(),
-                    )
+                buffer: buf.map(|b| BufFacts {
+                    name: b.name.as_str(),
+                    language: b.language.as_str(),
+                    modified: b.modified,
+                    file: b.path.is_some(),
+                    read_only: b.read_only,
                 }),
                 field: p.field.as_deref(),
                 prompt: p.prompt,

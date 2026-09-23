@@ -368,7 +368,7 @@ impl Kawoosh {
         let old_buffers: Vec<BufferId> =
             old_views.iter().map(|v| self.ed.views[*v].buffer).collect();
         for v in old_views {
-            self.ed.views.remove(v);
+            self.drop_view(v);
         }
         // What they showed goes with them when it was nothing to keep
         // and nothing shows it now: the greeting the app began with, a

@@ -178,13 +178,16 @@ fn a_modified_buffer_is_asked_once() {
     assert_eq!(&*diff.language, "diff");
     assert!(diff.text().contains("-two\n+ne\n"), "{}", diff.text());
     assert_eq!(asking(&app).len(), 1);
+    // The diff pane has the keys; `q` gives them back.
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).name, "*diff a.txt*");
+    d.keys(&mut app, "q");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).name, "a.txt");
 
     // Keep mine: no question, and `:w` goes through.
     ex(&mut d, &mut app, &format!("file keep {}", f.display()));
     assert!(asking(&app).is_empty());
-    let v = app.focused_view().unwrap();
-    // The diff pane left the keyboard where it was.
-    assert_eq!(app.ed.buffer_of(v).name, "a.txt");
     ex(&mut d, &mut app, "w");
     assert!(app.confirm.is_none());
     assert_eq!(disk(&f), "ne\n");

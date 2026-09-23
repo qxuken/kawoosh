@@ -285,6 +285,19 @@ impl fmt::Display for Cond {
     }
 }
 
+/// What a buffer answers facts with: `buffer:NAME`, `language:NAME`,
+/// `modified`, `file`, `readonly`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BufFacts<'a> {
+    pub name: &'a str,
+    pub language: &'a str,
+    pub modified: bool,
+    pub file: bool,
+    /// Made to be read, not typed in: a pane of text the engine opened
+    /// (`*lsp*`, `:messages`), a plugin's `read_only` scratch.
+    pub read_only: bool,
+}
+
 /// What a fact is answered from: the published set, the mode, and the
 /// buffer in question — one shape for the engine ([`Editor::holds`])
 /// and for a snapshot of it (Lua's `kawoosh.can`), so the two agree.
@@ -292,8 +305,8 @@ impl fmt::Display for Cond {
 pub struct Facts<'a> {
     pub published: Option<&'a BTreeSet<String>>,
     pub visual: bool,
-    /// The buffer's name, language, whether modified, whether a file.
-    pub buffer: Option<(&'a str, &'a str, bool, bool)>,
+    /// The buffer in question, when there is one.
+    pub buffer: Option<BufFacts<'a>>,
     /// The field's name, when the view is one (`field`, `field:NAME`).
     pub field: Option<&'a str>,
     /// Whether the view is the prompt's field (`prompt`).
@@ -316,15 +329,16 @@ impl Facts<'_> {
         if let Some(("field", n)) = fact.split_once(':') {
             return self.field == Some(n);
         }
-        let Some((name, language, modified, file)) = self.buffer else {
+        let Some(b) = self.buffer else {
             return false;
         };
         match fact.split_once(':') {
-            Some(("buffer", n)) => name == n,
-            Some(("language", l)) => language == l,
+            Some(("buffer", n)) => b.name == n,
+            Some(("language", l)) => b.language == l,
             None => match fact {
-                "modified" => modified,
-                "file" => file,
+                "modified" => b.modified,
+                "file" => b.file,
+                "readonly" => b.read_only,
                 _ => false,
             },
             _ => false,

@@ -54,9 +54,6 @@ pub struct Scripting {
     /// numbered from a high mark so compile mode's never coincide.
     pub procs: HashMap<u64, Proc>,
     pub next_proc: u64,
-    /// The pane the keyboard was in when a Lua view opened with the
-    /// focus, so closing the view hands it back there.
-    pub view_from: HashMap<String, PaneId>,
     /// The settings version `kawoosh.on_settings` was last told of.
     pub settings_seen: u64,
     pub servers: Vec<ServerDef>,
@@ -948,29 +945,19 @@ impl Kawoosh {
                 if let Some(share) = share {
                     self.layout.set_share(pane, share);
                 }
-                if focus {
-                    self.scripting.view_from.insert(name.to_string(), was);
-                } else {
+                if !focus {
                     self.layout.focus(was);
                 }
             }
         }
     }
 
-    /// Closes the pane showing Lua view `name`, if one does, and hands
-    /// the keyboard back to the pane it took it from, when that pane
-    /// is still on show.
+    /// Closes the pane showing Lua view `name`, if one does; the
+    /// keyboard, if it had it, goes back to the pane the view was
+    /// opened from (`Layout::close`).
     pub fn close_lua_view(&mut self, name: &str) {
-        let from = self.scripting.view_from.remove(name);
         if let Some(p) = self.lua_view_pane(name) {
-            let had_focus = self.layout.focused() == p;
             self.layout.close(p);
-            if had_focus
-                && let Some(f) = from
-                && self.layout.visible_panes().contains(&f)
-            {
-                self.layout.focus(f);
-            }
             if let Some(rt) = &self.scripting.rt {
                 rt.set_field_focus(name, None);
             }

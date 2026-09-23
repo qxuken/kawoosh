@@ -195,6 +195,10 @@ pub struct Kawoosh {
     /// The window's focus and whether an editor pane had the keys, last
     /// frame: a change is when the clipboard is looked at.
     pub(crate) clip_seen: (bool, bool),
+    /// Buffers a view stopped showing since the last sweep — switched
+    /// away from (`show_buffer`) or closed with its pane (`drop_view`) —
+    /// the only ones `sweep_scratches` looks at.
+    pub(crate) left: Vec<BufferId>,
     /// The wheel's fraction of a line carried to the next notch.
     pub(crate) scroll_carry: f32,
     /// False after a wheel scroll, so the view stays where the wheel put
@@ -330,6 +334,7 @@ impl Kawoosh {
             key_focus_seen: None,
             clip_last: None,
             clip_seen: (true, true),
+            left: Vec::new(),
             scroll_carry: 0.0,
             follow_caret: true,
             reclaim_focus: false,
@@ -920,29 +925,59 @@ impl Kawoosh {
         }
     }
 
-    /// Once a frame: every `*scratch*` that is empty and that no pane
-    /// shows goes — the one a launcher's `<Esc>` made and a file then
-    /// replaced, the one `:enew` left behind — so `:ls` and the pickers
-    /// list what holds something.
+    /// An empty `*scratch*` no pane shows goes — the one a launcher's
+    /// `<Esc>` made and a file then replaced, the one `:enew` left
+    /// behind — so `:ls` and the pickers list what holds something.
+    /// Only a buffer a view has just left can have become one: the
+    /// sweep looks at those (`left`), so a scratch nothing has shown
+    /// yet — a plugin's, made in the background — is not taken.
     pub(crate) fn sweep_scratches(&mut self) {
+        if self.left.is_empty() {
+            return;
+        }
+        let left = std::mem::take(&mut self.left);
         let shown: std::collections::HashSet<BufferId> =
             self.ed.views.values().map(|v| v.buffer).collect();
-        let gone: Vec<BufferId> = self
-            .ed
-            .buffers
-            .iter()
-            .filter(|(id, b)| {
-                b.name == "*scratch*"
-                    && b.path.is_none()
-                    && b.hook.is_none()
-                    && b.is_empty()
-                    && !shown.contains(id)
+        let mut gone: Vec<BufferId> = left
+            .into_iter()
+            .filter(|id| {
+                self.ed.buffers.get(*id).is_some_and(|b| {
+                    b.name == "*scratch*" && b.path.is_none() && b.hook.is_none() && b.is_empty()
+                }) && !shown.contains(id)
                     && !self.ed.is_field_buffer(*id)
             })
-            .map(|(id, _)| id)
             .collect();
+        gone.sort();
+        gone.dedup();
         for id in gone {
             self.delete_buffer(id, id);
+        }
+    }
+
+    /// What a closed pane showed, let go: an editor pane's view
+    /// (`drop_view`), a terminal, the memory pane's filter. Every pane
+    /// closed goes through here — `:close`, `:only`, `:tabclose`.
+    pub(crate) fn drop_content(&mut self, c: Content) {
+        match c {
+            Content::Editor(v) => self.drop_view(v),
+            Content::Terminal(t) => {
+                self.terms.map.remove(&t);
+            }
+            Content::Memory => self.memory_filter_clear(),
+            Content::Lua(_) | Content::Undo => {}
+        }
+    }
+
+    /// Removes view `v`, whose pane is gone: the buffer it showed is
+    /// noted for the sweep, and a `--wait` caller on it answered when
+    /// no other pane shows it.
+    pub(crate) fn drop_view(&mut self, v: ViewId) {
+        let Some(view) = self.ed.views.remove(v) else {
+            return;
+        };
+        self.left.push(view.buffer);
+        if self.ed.buffers.contains_key(view.buffer) && !self.buffer_shown(view.buffer) {
+            self.release_waiters(view.buffer);
         }
     }
 
@@ -1220,6 +1255,7 @@ impl Kawoosh {
         self.last_pos
             .insert(v.buffer, (v.sels.clone(), v.top, v.left));
         self.alternate.insert(view, v.buffer);
+        self.left.push(v.buffer);
         v.buffer = id;
         v.goal_col = None;
         match self.last_pos.get(&id) {

@@ -608,6 +608,11 @@ pub struct Layout {
     pub new_tabs_scroll: bool,
     /// What a new column is given (`layout.column_width`).
     pub column_width: Width,
+    /// The pane each split was made from: closing a pane that has the
+    /// keys hands them back there, when it is still in the same tab
+    /// (or the dock) — a list opened to be read, a Lua view, a
+    /// `<C-w>v` undone.
+    came_from: HashMap<PaneId, PaneId>,
     next_pane: PaneId,
     /// Columns are numbered apart from panes: a pane's number is what
     /// Lua and the session see, a column's only its drawn key.
@@ -629,6 +634,7 @@ impl Layout {
             rects: HashMap::new(),
             new_tabs_scroll: false,
             column_width: Width::Half,
+            came_from: HashMap::new(),
             next_pane: 2,
             next_column: 1,
         }
@@ -736,10 +742,12 @@ impl Layout {
                 n.split(target, dir, new);
             }
             d.focused = new;
+            self.came_from.insert(new, target);
             return new;
         }
         self.dock_focused = false;
         let target = self.tab().focused;
+        self.came_from.insert(new, target);
         let width = self.column_width;
         match (&self.tab().layout, dir) {
             (Kind::Scroll(s), SplitDir::H) => {
@@ -760,11 +768,30 @@ impl Layout {
         new
     }
 
+    /// The pane `pane` was split from, if it is still there.
+    pub fn came_from(&self, pane: PaneId) -> Option<PaneId> {
+        self.came_from
+            .get(&pane)
+            .copied()
+            .filter(|p| self.panes.contains_key(p))
+    }
+
     /// Closes a pane. The last pane of the last tab stays. Returns the
     /// content it showed, so the caller can decide what to keep. A
     /// column whose last pane closes goes with it, the focus to the
     /// column before.
     pub fn close(&mut self, pane: PaneId) -> Option<Content> {
+        // Where the keys go back to, and the panes made from this one
+        // told they were made from where it was.
+        let back = self.came_from.remove(&pane);
+        match back {
+            Some(b) => self
+                .came_from
+                .values_mut()
+                .filter(|f| **f == pane)
+                .for_each(|f| *f = b),
+            None => self.came_from.retain(|_, f| *f != pane),
+        }
         if let Some(d) = self.dock.as_mut().filter(|d| d.contains(pane)) {
             let Kind::Tree(root) = &mut d.layout else {
                 unreachable!("the dock is a tree")
@@ -777,7 +804,7 @@ impl Layout {
                     if d.focused == pane {
                         let mut ps = Vec::new();
                         d.panes(&mut ps);
-                        d.focused = ps[0];
+                        d.focused = back.filter(|b| ps.contains(b)).unwrap_or(ps[0]);
                     }
                 }
                 None => {
@@ -832,7 +859,10 @@ impl Layout {
             if was_focused {
                 let mut ps = Vec::new();
                 self.tabs[ti].panes(&mut ps);
-                self.tabs[ti].focused = next_focus.unwrap_or(ps[0]);
+                self.tabs[ti].focused = back
+                    .filter(|b| ps.contains(b))
+                    .or(next_focus)
+                    .unwrap_or(ps[0]);
             }
         } else if self.tabs.len() > 1 {
             self.tabs.remove(ti);
@@ -1307,7 +1337,7 @@ mod tests {
         assert_eq!(l.focused(), c);
         l.close(c);
         assert_eq!(l.visible_panes(), [1, b]);
-        assert_eq!(l.focused(), 1);
+        assert_eq!(l.focused(), b, "the pane it was split from");
         l.close(1);
         assert_eq!(l.visible_panes(), [b]);
         assert!(l.close(b).is_none(), "the last pane stays");
@@ -1479,16 +1509,17 @@ mod tests {
             l.tab_mut().resize(c, SplitDir::V, 0.05),
             "inside the column, the tree's"
         );
-        // Closing a column's last pane takes the column, the focus to
-        // the one before; closing inside a stack keeps the column.
+        // Closing a pane with the keys hands them to the pane it was
+        // split from, wherever that went: `e` was made from `b`, and so
+        // was `c`. A column's last pane takes the column with it.
         l.focus(e);
         l.close(e);
         assert_eq!(l.visible_panes(), [1, b, c, d]);
-        assert_eq!(l.focused(), 1, "the first column took the place");
+        assert_eq!(l.focused(), b, "where e came from");
         l.focus(c);
         l.close(c);
         assert_eq!(l.visible_panes(), [1, b, d]);
-        assert_eq!(l.focused(), d);
+        assert_eq!(l.focused(), b, "where c came from");
         l.close(d);
         assert_eq!(l.visible_panes(), [1, b]);
         assert_eq!(l.focused(), b, "the column before");

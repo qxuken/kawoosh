@@ -442,7 +442,7 @@ impl Kawoosh {
         }
         self.terms.scrollbacks.remove(&bid);
         self.layout.panes.insert(pane, Content::Terminal(t));
-        self.ed.views.remove(v);
+        self.drop_view(v);
         if !self.buffer_shown(bid) {
             self.ed.remove_buffer(bid);
             self.release_waiters(bid);

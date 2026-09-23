@@ -717,3 +717,50 @@ fn focus_leaves_a_terminal_drawn_first() {
         "the focus stays on the editor"
     );
 }
+
+/// `:only` closing the pane a `--wait` caller's buffer was in answers
+/// the caller, as `:close` does: every closed pane lets go of what it
+/// showed through one door.
+#[test]
+fn only_answers_a_waiting_caller_whose_pane_it_closed() {
+    use kawoosh_systems::io::{Request, send_request};
+    let dir = std::env::temp_dir().join(format!("kawoosh-only-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("COMMIT_EDITMSG");
+    std::fs::write(&file, "subject\n").unwrap();
+    let sock = dir.join("k.sock");
+    let mut app = Kawoosh::new("t", "");
+    app.io.listen(&sock).unwrap();
+    app.socket = Some(sock.clone());
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let (sock2, file2) = (sock.clone(), file.clone());
+    let client = std::thread::spawn(move || {
+        send_request(
+            &sock2,
+            &Request::Open {
+                path: file2.display().to_string(),
+                wait: true,
+                line: None,
+            },
+        )
+    });
+    let mut tries = 0;
+    while app.io.rx.is_empty() && tries < 200 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        tries += 1;
+    }
+    d.frame(&mut app);
+    // A second pane on a new scratch, then `:only` from it.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "v");
+    d.keys(&mut app, ":enew");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(!client.is_finished(), "the file is still shown");
+    d.keys(&mut app, ":only");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    let reply = client.join().unwrap().unwrap();
+    assert_eq!(reply, "closed");
+    std::fs::remove_dir_all(&dir).ok();
+}

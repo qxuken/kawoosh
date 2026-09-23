@@ -89,11 +89,15 @@ impl Kawoosh {
             "scrollback close",
             &[Cond::parse("language:scrollback")],
         );
-        // `q` in the hover pane closes it: the keyboard went there with
-        // `K`, and goes back.
-        self.ed
-            .keymap
-            .bind_when(Mode::Normal, "q", "close", &[Cond::parse("buffer:*hover*")]);
+        // `q` in a pane of text to read — `*lsp*`, `:messages`, the
+        // hover, a plugin's `read_only` scratch — closes it, and the
+        // keys go back where they came from (`Layout::close`).
+        self.ed.keymap.bind_when(
+            Mode::Normal,
+            "q",
+            "close",
+            &[Cond::parse("readonly"), Cond::parse("!file")],
+        );
         // A view's field: `<Esc>` in normal mode hands the keys back.
         self.ed.keymap.bind_when(
             Mode::Normal,
@@ -286,22 +290,8 @@ impl Kawoosh {
 
     fn close_pane(&mut self) {
         let pane = self.layout.focused();
-        let buffer = self.view_of(pane).map(|v| self.ed.views[v].buffer);
         match self.layout.close(pane) {
-            Some(Content::Editor(v)) => {
-                self.ed.views.remove(v);
-                if let Some(b) = buffer
-                    && !self.buffer_shown(b)
-                {
-                    self.release_waiters(b);
-                }
-            }
-            Some(Content::Terminal(t)) => {
-                self.terms.map.remove(&t);
-            }
-            // The memory pane's filter goes with the pane.
-            Some(Content::Memory) => self.memory_filter_clear(),
-            Some(Content::Lua(_) | Content::Undo) => {}
+            Some(c) => self.drop_content(c),
             None => self.ed.message = "cannot close the last pane".into(),
         }
     }
@@ -507,15 +497,7 @@ fn panes() -> Vec<ShellCommand> {
                 .doc("close every other pane"),
             |k, _| {
                 for c in k.layout.only() {
-                    match c {
-                        Content::Editor(v) => {
-                            k.ed.views.remove(v);
-                        }
-                        Content::Terminal(t) => {
-                            k.terms.map.remove(&t);
-                        }
-                        Content::Lua(_) | Content::Undo | Content::Memory => {}
-                    }
+                    k.drop_content(c);
                 }
             },
         ),
@@ -782,14 +764,8 @@ fn panes() -> Vec<ShellCommand> {
                 let mut ps = Vec::new();
                 k.layout.tab().panes(&mut ps);
                 for p in ps {
-                    match k.layout.close(p) {
-                        Some(Content::Editor(v)) => {
-                            k.ed.views.remove(v);
-                        }
-                        Some(Content::Terminal(t)) => {
-                            k.terms.map.remove(&t);
-                        }
-                        _ => {}
+                    if let Some(c) = k.layout.close(p) {
+                        k.drop_content(c);
                     }
                 }
             },

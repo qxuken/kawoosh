@@ -33,7 +33,7 @@ kawoosh._nonce = 0
 --   bang    a line on what `!` means; without one `:name!` is refused.
 --   query   the same for `?`.
 --   when    facts that must hold, `{ "language:dir", "!terminal" }` —
---           the engine's `visual`, `modified`, `file`, `buffer:NAME`,
+--           the engine's `visual`, `modified`, `file`, `readonly`, `buffer:NAME`,
 --           `language:NAME`, `field` (a one-line input has the keys:
 --           the command line, a pane's query), `field:NAME`, `prompt`
 --           (the command line or a search); the shell's `store`,
