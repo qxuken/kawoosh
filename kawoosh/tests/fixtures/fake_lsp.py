@@ -22,11 +22,19 @@ semicolon" (an edit: `;` at the end of the line) and "Run the command"
 (a bare command `fake.apply`, whose execution sends a
 `workspace/applyEdit` putting `// applied` at the top); formatting is
 one edit replacing the text with `// formatted` above it; the type
-definition is line 0 of the same file."""
+definition is line 0 of the same file. Round three (roadmap step 20):
+implementation answers two LocationLinks (lines 0 and 1), declaration
+one Location (0:3); documentSymbol a hierarchical `main` (a function,
+0:3) holding `inner` (a variable, 1:4); workspace/symbol the symbols
+`Widget` (a struct) and `widget_fn` whose names contain the query,
+case aside, both in the file last opened, at 1:0 and 0:3; inlayHint a
+string label `: i32` at 0:7 and a parts label `x` `y` at 1:0; the
+hover's second paragraph names `Widget`."""
 import json, sys
 
 docs = {}
 ended = False
+last_uri = None
 print("fake server starting", file=sys.stderr, flush=True)
 
 def char_before(uri, pos):
@@ -66,7 +74,9 @@ while True:
             "completionProvider": {"triggerCharacters": ["."]},
             "renameProvider": True, "referencesProvider": True,
             "codeActionProvider": True, "documentFormattingProvider": True,
-            "typeDefinitionProvider": True}}})
+            "typeDefinitionProvider": True, "implementationProvider": True,
+            "declarationProvider": True, "documentSymbolProvider": True,
+            "workspaceSymbolProvider": True, "inlayHintProvider": True}}})
     elif method == "initialized":
         send({"jsonrpc": "2.0", "id": 1000, "method": "window/workDoneProgress/create",
               "params": {"token": "ws"}})
@@ -95,6 +105,7 @@ while True:
     elif method == "textDocument/didOpen":
         uri = m["params"]["textDocument"]["uri"]
         docs[uri] = m["params"]["textDocument"]["text"]
+        last_uri = uri
         send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
             "uri": uri,
             "diagnostics": [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}},
@@ -108,7 +119,35 @@ while True:
                      {"label": "help", "kind": 3}]
         send({"jsonrpc": "2.0", "id": mid, "result": {"isIncomplete": False, "items": items}})
     elif method == "textDocument/hover":
-        send({"jsonrpc": "2.0", "id": mid, "result": {"contents": {"kind": "markdown", "value": "the hover"}}})
+        send({"jsonrpc": "2.0", "id": mid, "result": {"contents": {"kind": "markdown",
+              "value": "the hover\n\nreturns Widget"}}})
+    elif method == "textDocument/implementation":
+        uri = m["params"]["textDocument"]["uri"]
+        link = lambda ln: {"targetUri": uri,
+                           "targetRange": {"start": {"line": ln, "character": 0}, "end": {"line": ln, "character": 2}},
+                           "targetSelectionRange": {"start": {"line": ln, "character": 0}, "end": {"line": ln, "character": 2}}}
+        send({"jsonrpc": "2.0", "id": mid, "result": [link(0), link(1)]})
+    elif method == "textDocument/declaration":
+        uri = m["params"]["textDocument"]["uri"]
+        send({"jsonrpc": "2.0", "id": mid, "result": {"uri": uri, "range": {
+            "start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 7}}}})
+    elif method == "textDocument/documentSymbol":
+        r = lambda ln, ch: {"start": {"line": ln, "character": ch}, "end": {"line": ln, "character": ch + 4}}
+        send({"jsonrpc": "2.0", "id": mid, "result": [
+            {"name": "main", "kind": 12, "detail": "fn()", "range": r(0, 0), "selectionRange": r(0, 3),
+             "children": [{"name": "inner", "kind": 13, "range": r(1, 4), "selectionRange": r(1, 4)}]}]})
+    elif method == "workspace/symbol":
+        q = m["params"]["query"].lower()
+        loc = lambda ln, ch: {"uri": last_uri, "range": {"start": {"line": ln, "character": ch},
+                                                          "end": {"line": ln, "character": ch + 1}}}
+        found = [{"name": "Widget", "kind": 23, "location": loc(1, 0), "containerName": "crate"},
+                 {"name": "widget_fn", "kind": 12, "location": loc(0, 3)}]
+        send({"jsonrpc": "2.0", "id": mid, "result": [s for s in found if q in s["name"].lower()]})
+    elif method == "textDocument/inlayHint":
+        send({"jsonrpc": "2.0", "id": mid, "result": [
+            {"position": {"line": 0, "character": 7}, "label": ": i32", "paddingLeft": False},
+            {"position": {"line": 1, "character": 0}, "label": [{"value": "x"}, {"value": "y"}],
+             "paddingRight": True}]})
     elif method == "textDocument/definition":
         uri = m["params"]["textDocument"]["uri"]
         send({"jsonrpc": "2.0", "id": mid, "result": [{"uri": uri, "range": {

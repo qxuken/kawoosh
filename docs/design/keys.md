@@ -187,14 +187,15 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `gg` `G` | the file's ends |
 | `gh` `gl` | the line's ends (helix; `^` and `$` stay) |
 | `gsa` `gsd` `gsr` | surrounds: add, delete, replace (mini.surround's letters) |
-| `gd` | definition |
+| `gd` | definition; in the hover, the symbol it names — looked up in the workspace, opened in the pane the hover came from |
 | `gx` | open the link under the caret: a path here (a `.md` beside, a directory listed), a URL in the OS (`open link`) |
 | `gr` | references, as a locations list beside the code (`<CR>` opens one, `]q` walks them) |
-| `K` | hover (vim's, not `g`, but the same family) |
+| `K` | hover (vim's, not `g`, but the same family); in the hover, the hover of a symbol it names, from where that is defined |
 | `<C-e>` | the diagnostic under the caret, whole, in a pane |
 | `gt` `gT` | tabs |
 | `g-` `g+` | undo by time |
-| `gI` `gD` | *reserved*: implementation, declaration |
+| `gI` | implementation: one is gone to, several are a list |
+| `gD` | declaration |
 
 ### Selections: Ctrl counts them, Alt moves one
 
@@ -342,6 +343,9 @@ objects, or any other character on both sides.
 | `<leader>cc` | compile |
 | `<leader>ca` | the code actions at the caret (or over the selection) in a picker: searched by title, the kind beside it, what taking one does as the preview — its edit as a diff, a command it runs; `<CR>` takes it (`:lsp action N` runs the Nth, `kawoosh.lsp.actions()`) |
 | `<leader>cF` | format the buffer through its server |
+| `<leader>cI` | inlay hints on or off for the session (`lsp.inlay_hints`), drawn in the line, faint |
+| `<leader>cs` | the workspace's symbols matching the query, in the picker, asked as it is typed |
+| `<leader>bs` | the buffer's symbols in the picker, each with the one it is inside |
 | `<leader>cr` | markdown drawn rendered or as its source (`markdown toggle`, the `markdown.render` setting for the session; [markdown.md](markdown.md)) |
 | `<leader>r` | rename the symbol: the prompt filled with `lsp rename WORD`, the name edited, `<CR>` |
 | `<leader>D` | the type definition |
@@ -427,8 +431,6 @@ so that nothing else takes the key meanwhile.
 | `<leader>sh` | help |
 | `<leader>m` | marks |
 | `<leader>R` | rename the file |
-| `<leader>cI` | inlay hints |
-| `<leader>cs` `<leader>bs` | workspace symbols, buffer symbols (on the picker) |
 | `<leader>h*` `<leader>bg` `<leader>bl` `<leader>wd` `<leader>wc` | hunks, git, log, diff, commit |
 | `<leader>y*` | copy the path, the directory, the name |
 | `<leader>G*` | the debugger |

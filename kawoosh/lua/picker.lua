@@ -5,8 +5,9 @@
 -- the io thread), `buffers`, `recent` (the files opened before),
 -- `smart` (the three together: buffers, then recent, then the walk),
 -- `grep` (`rg` run as the query is typed, its locations the rows),
--- `lines` (the buffer's), `commands` (the registry, what `:commands`
--- was) and `tools`. `<leader>f` `<leader>bb` `<leader>so` `<leader>.`
+-- `lines` (the buffer's), `symbols` and `workspace_symbols` (a
+-- server's, `<leader>bs` `<leader>cs`), `commands` (the registry, what
+-- `:commands` was) and `tools`. `<leader>f` `<leader>bb` `<leader>so` `<leader>.`
 -- `<leader>g` `<leader>/` `<leader>sp` `<leader>tt` open them,
 -- `<leader>sr` the last one again where it was left.
 --
@@ -1363,6 +1364,61 @@ picker.source("grep", {
     end
   end,
   empty = "no matches",
+})
+
+-- A server's symbols as rows: the name, its kind, where it sits (the
+-- symbol it is inside, or its file), `⏎` going there.
+local function symbol_rows(items, root)
+  local rows = {}
+  for i, s in ipairs(items or {}) do
+    local where = s.container or ""
+    if root and s.path then
+      local rel = s.path:sub(1, #root + 1) == root .. "/" and s.path:sub(#root + 2) or s.path
+      where = (where ~= "" and (where .. " · ") or "") .. rel .. ":" .. s.line
+    end
+    rows[i] = {
+      text = s.name, kind = s.kind, sub = where, detail = s.detail,
+      path = s.path, line = s.line, col = s.col,
+    }
+  end
+  return rows
+end
+
+-- The buffer's symbols from its server (`<leader>bs`), in the order
+-- the server listed them — a function after its module.
+picker.source("symbols", {
+  title = "symbols", placeholder = "a symbol in this buffer",
+  columns = {
+    { "text", grow = true },
+    { "kind", muted = true, min = 70, max = 160, share = 0.2 },
+    { "sub", muted = true, min = 60, max = 260, share = 0.3 },
+  },
+  load = function(ctx, done)
+    kawoosh.lsp.symbols({ buffer = ctx.buffer }, function(items, err)
+      done(items and symbol_rows(items) or nil, err)
+    end)
+  end,
+  empty = "no symbols",
+})
+
+-- The workspace's symbols matching the query (`<leader>cs`), asked of
+-- the server of the buffer the picker was opened from as it is typed.
+picker.source("workspace_symbols", {
+  title = "workspace symbols", placeholder = "a symbol anywhere",
+  columns = {
+    { "text", grow = true },
+    { "kind", muted = true, min = 70, max = 160, share = 0.2 },
+    { "sub", muted = true, min = 60, max = 320, share = 0.4 },
+  },
+  search = function(q, job)
+    local root = fs.cwd()
+    kawoosh.lsp.symbols({ workspace = true, query = q, buffer = P.ctx and P.ctx.buffer },
+      function(items, err)
+        job.emit(symbol_rows(items, root))
+        job.done(err)
+      end)
+  end,
+  empty = "no symbol matches",
 })
 
 -- The buffer's lines, the caret put on the one taken.

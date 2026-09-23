@@ -121,7 +121,36 @@ pub struct LspState {
     actions_for: Option<(BufferId, Version)>,
     /// The pane the keyboard was in when the candidates pane took it.
     candidates_from: Option<crate::layout::PaneId>,
+    /// Each buffer's inlay hints — a byte and its label, padded — at the
+    /// version they were answered for; carried through edits after.
+    hints: HashMap<BufferId, (Version, Vec<(usize, String)>)>,
+    /// The version each buffer's hints were last asked for.
+    hints_asked: HashMap<BufferId, Version>,
+    /// The buffer the last hover was asked of: whose server a symbol the
+    /// hover names is looked up with (the hover's text is no document
+    /// a server holds).
+    hover_from: Option<BufferId>,
+    /// Symbol lookups the engine made itself (`gd`, `K` in the hover),
+    /// by token, and what to do with the symbol found.
+    symbol_asks: HashMap<u64, (String, HoverThen)>,
+    next_ask: u64,
+    /// Buffers the server is to be sent though no pane shows them: a
+    /// rename's edits in files it loaded.
+    also_sync: HashSet<BufferId>,
 }
+
+/// What a symbol the hover names is looked up for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HoverThen {
+    /// Go to it (`gd` in the hover).
+    Go,
+    /// Go to it and show its own hover (`K` in the hover).
+    Hover,
+}
+
+/// The engine's own symbol lookups count down from here, so they never
+/// meet a Lua job's token.
+const ENGINE_TOKENS: u64 = u64::MAX / 2;
 
 impl LspState {
     pub fn new(wake: WakeHandle) -> Self {
@@ -140,6 +169,12 @@ impl LspState {
             actions: Vec::new(),
             actions_for: None,
             candidates_from: None,
+            hints: HashMap::new(),
+            hints_asked: HashMap::new(),
+            hover_from: None,
+            symbol_asks: HashMap::new(),
+            next_ask: ENGINE_TOKENS,
+            also_sync: HashSet::new(),
         }
     }
 }
@@ -332,6 +367,46 @@ impl Kawoosh {
                 Event::WorkspaceEdit { title, edit } => self.apply_workspace_edit(&title, edit),
                 Event::Locations { title, items } => self.show_locations(&title, items),
                 Event::CodeActions { buffer, actions } => self.offer_actions(buffer, actions),
+                Event::Symbols { token, result } => {
+                    if let Some((name, then)) = self.lsp.symbol_asks.remove(&token) {
+                        self.hover_symbol_found(&name, then, result);
+                    } else if let Some(rt) = &self.scripting.rt {
+                        rt.symbols_answered(token, result);
+                    }
+                }
+                Event::InlayHints {
+                    buffer,
+                    version,
+                    hints,
+                } => {
+                    let Some(b) = self
+                        .ed
+                        .buffers
+                        .get(buffer)
+                        .filter(|b| b.version() == version)
+                    else {
+                        continue;
+                    };
+                    let text = b.text();
+                    let placed = hints
+                        .into_iter()
+                        .map(|h| {
+                            let at = kawoosh_systems::lsp::offset_of_position(
+                                &text,
+                                h.line,
+                                h.character,
+                            );
+                            let label = format!(
+                                "{}{}{}",
+                                if h.pad_left { " " } else { "" },
+                                h.label,
+                                if h.pad_right { " " } else { "" }
+                            );
+                            (at, label)
+                        })
+                        .collect();
+                    self.lsp.hints.insert(buffer, (version, placed));
+                }
                 Event::Formatted {
                     buffer,
                     version,
@@ -414,6 +489,192 @@ impl Kawoosh {
             self.apply_diagnostics(id, update, messages);
         }
         self.push_documents();
+        self.ask_inlay_hints(mode);
+    }
+
+    /// With `lsp.inlay_hints` on: every shown buffer a server that does
+    /// hints holds, asked again for the whole text when its version
+    /// moved and it is not being typed in (the hints of the version
+    /// before are carried meanwhile).
+    fn ask_inlay_hints(&mut self, mode: Mode) {
+        if self.ed.settings.bool("lsp.inlay_hints") != Some(true) {
+            if !self.lsp.hints.is_empty() {
+                self.lsp.hints.clear();
+                self.lsp.hints_asked.clear();
+            }
+            return;
+        }
+        let shown: HashSet<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
+        for id in shown {
+            let Some(b) = self.ed.buffers.get(id) else {
+                continue;
+            };
+            let version = b.version();
+            if b.private
+                || self.lsp.sent.get(&id) != Some(&version)
+                || self.lsp.hints_asked.get(&id) == Some(&version)
+                || self.lsp.typing(id, mode)
+                || !self.caps_of(id).inlay_hint
+            {
+                continue;
+            }
+            self.lsp.hints_asked.insert(id, version);
+            let end = b.len();
+            self.lsp.lsp.send(Cmd::InlayHints {
+                buffer: id,
+                version,
+                start: 0,
+                end,
+            });
+        }
+    }
+
+    /// Buffer `id`'s inlay hints now, byte and label, sorted — the last
+    /// answer carried through the edits since; none while
+    /// `lsp.inlay_hints` is off.
+    pub(crate) fn inlay_hints_of(&self, id: BufferId) -> Vec<(usize, String)> {
+        let Some((at, hints)) = self.lsp.hints.get(&id) else {
+            return Vec::new();
+        };
+        let Some(b) = self.ed.buffers.get(id) else {
+            return Vec::new();
+        };
+        if b.version() == *at {
+            return hints.clone();
+        }
+        let journal = b.journal();
+        hints
+            .iter()
+            .filter_map(|(o, l)| {
+                let o = journal
+                    .transform_offset(*o, *at, kawoosh_doc::Bias::Right)
+                    .ok()?;
+                Some((o, l.clone()))
+            })
+            .collect()
+    }
+
+    /// `gd` / `K` in the hover pane: the word under the caret looked up
+    /// as a workspace symbol of the server the hover came from.
+    fn hover_symbol(&mut self, then: HoverThen) {
+        let Some(v) = self.focused_view() else {
+            return;
+        };
+        let buf = self.ed.buffer_of(v);
+        let head = self.ed.views[v].sels.primary().head;
+        let (a, b) = kawoosh_editor::motions::word_at(buf, head);
+        let name = buf.slice(a..b);
+        if name.trim().is_empty() {
+            self.ed.message = "no word under the caret".into();
+            return;
+        }
+        let Some(from) = self
+            .lsp
+            .hover_from
+            .filter(|b| self.ed.buffers.contains_key(*b))
+        else {
+            self.ed.message = "the hover's buffer is gone".into();
+            return;
+        };
+        self.lsp.next_ask += 1;
+        let token = self.lsp.next_ask;
+        self.lsp.symbol_asks.insert(token, (name.clone(), then));
+        self.ed.message = format!("looking up {name}…");
+        self.ask_symbols(token, from, true, name);
+    }
+
+    /// A symbol the hover named, found — or not: the exact name, a type
+    /// before anything else of the name, opened in the pane the hover
+    /// came from; with `Hover`, its own hover asked for there.
+    fn hover_symbol_found(
+        &mut self,
+        name: &str,
+        then: HoverThen,
+        result: Result<Vec<kawoosh_systems::lsp::Symbol>, String>,
+    ) {
+        let symbols = match result {
+            Ok(s) => s,
+            Err(e) => {
+                self.ed.message = format!("{name}: {e}");
+                return;
+            }
+        };
+        // Kinds a hover names most: a type, then a function, then any.
+        let rank = |k: u64| match k {
+            5 | 10 | 11 | 23 | 26 => 0,
+            6 | 9 | 12 => 1,
+            _ => 2,
+        };
+        let Some(s) = symbols
+            .iter()
+            .filter(|s| s.name == name)
+            .min_by_key(|s| rank(s.kind))
+        else {
+            self.ed.message = format!("no symbol {name} in the workspace");
+            return;
+        };
+        let (path, line, col) = (
+            s.path.clone(),
+            s.line as usize + 1,
+            s.character as usize + 1,
+        );
+        // The pane the hover was opened from, if it is still there.
+        let pane = self.layout.focused();
+        if let Some(back) = self.layout.came_from(pane)
+            && self.layout.visible_panes().contains(&back)
+        {
+            self.layout.focus(back);
+        }
+        self.note_location(&path, Some(line), "hover", "");
+        self.open_in_editor(&path, Some(line), Some(col));
+        if then == HoverThen::Hover
+            && let Some((_, buffer, offset)) = self.lsp_at_caret()
+        {
+            self.lsp.hover_from = Some(buffer);
+            self.positional_cmd(Cmd::Hover { buffer, offset });
+        }
+    }
+
+    /// `kawoosh.lsp.symbols`: the symbols of `buffer`, or the
+    /// workspace's matching `query`, answered to Lua's `token`; a buffer
+    /// no server that lists them holds is answered at once.
+    pub(crate) fn ask_symbols(
+        &mut self,
+        token: u64,
+        buffer: BufferId,
+        workspace: bool,
+        query: String,
+    ) {
+        let Some(b) = self.ed.buffers.get(buffer) else {
+            return;
+        };
+        let language = b.language.to_string();
+        let caps = self.caps_of(buffer);
+        let why = if b.private {
+            Some("a private buffer is not sent to a server".to_string())
+        } else if !self.lsp_serves(&language) {
+            Some(format!("no language server for {language}"))
+        } else if workspace && !caps.workspace_symbol || !workspace && !caps.document_symbol {
+            Some(format!("the {language} server does not list symbols"))
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            if let Some(rt) = &self.scripting.rt {
+                rt.symbols_answered(token, Err(why));
+            }
+            return;
+        }
+        let cmd = if workspace {
+            Cmd::WorkspaceSymbols {
+                buffer,
+                query,
+                token,
+            }
+        } else {
+            Cmd::DocumentSymbols { buffer, token }
+        };
+        self.positional_cmd(cmd);
     }
 
     fn apply_diagnostics(&mut self, buffer: BufferId, update: Update, messages: Vec<String>) {
@@ -440,7 +701,17 @@ impl Kawoosh {
                 .iter()
                 .any(|d| d.language == language && !self.lsp.said_unavailable.contains(&d.command))
         };
-        let shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
+        // What a pane shows, what the server was sent before (it holds
+        // it open, so it hears of every change), and what an edit from
+        // the server touched in a buffer no pane shows.
+        self.lsp
+            .also_sync
+            .retain(|id| self.ed.buffers.contains_key(*id));
+        let mut shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
+        shown.extend(self.lsp.sent.keys().copied());
+        shown.extend(self.lsp.also_sync.iter().copied());
+        shown.sort();
+        shown.dedup();
         for id in shown {
             let Some(b) = self.ed.buffers.get(id) else {
                 continue;
@@ -570,6 +841,11 @@ impl Kawoosh {
                 code_action: true,
                 format: true,
                 type_definition: true,
+                implementation: true,
+                declaration: true,
+                document_symbol: true,
+                workspace_symbol: true,
+                inlay_hint: true,
                 triggers: Vec::new(),
             })
     }
@@ -612,6 +888,8 @@ impl Kawoosh {
             if resolved.is_empty() || !self.ed.apply_edits(id, &resolved) {
                 continue;
             }
+            // The server hears of it though no pane shows it.
+            self.lsp.also_sync.insert(id);
             files += 1;
             edits += resolved.len();
             if !shown.contains(&id) {
@@ -1264,9 +1542,22 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .doc("what the server says of the symbol under the caret"),
             |k, _| {
                 if let Some((_, buffer, offset)) = k.lsp_at_caret() {
+                    k.lsp.hover_from = Some(buffer);
                     k.positional_cmd(Cmd::Hover { buffer, offset });
                 }
             },
+        ),
+        cmd(
+            Spec::new("lsp hover definition")
+                .when(&["buffer:*hover*"])
+                .doc("in the hover: go to the symbol under the caret, looked up in the workspace"),
+            |k, _| k.hover_symbol(HoverThen::Go),
+        ),
+        cmd(
+            Spec::new("lsp hover again")
+                .when(&["buffer:*hover*"])
+                .doc("in the hover: the hover of the symbol under the caret, from where it is defined"),
+            |k, _| k.hover_symbol(HoverThen::Hover),
         ),
         cmd(
             Spec::new("lsp complete")
@@ -1319,6 +1610,36 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 k.lsp_request("type definition", |c| c.type_definition, |buffer, offset| {
                     Cmd::TypeDefinition { buffer, offset }
                 })
+            },
+        ),
+        cmd(
+            Spec::new("lsp implementation")
+                .doc("go to where the symbol under the caret is implemented; several are a list"),
+            |k, _| {
+                k.lsp_request("implementation", |c| c.implementation, |buffer, offset| {
+                    Cmd::Implementation { buffer, offset }
+                })
+            },
+        ),
+        cmd(
+            Spec::new("lsp declaration").doc("go to where the symbol under the caret is declared"),
+            |k, _| {
+                k.lsp_request("declaration", |c| c.declaration, |buffer, offset| {
+                    Cmd::Declaration { buffer, offset }
+                })
+            },
+        ),
+        cmd(
+            Spec::new("lsp hints")
+                .doc("inlay hints — types, parameter names — on or off for the session (`lsp.inlay_hints`)"),
+            |k, _| {
+                let on = k.ed.settings.bool("lsp.inlay_hints") != Some(true);
+                k.ed.settings.set(
+                    kawoosh_editor::settings::Layer::Session,
+                    "lsp.inlay_hints",
+                    kawoosh_editor::Setting::Bool(on),
+                );
+                k.ed.message = format!("inlay hints {}", if on { "on" } else { "off" });
             },
         ),
         cmd(

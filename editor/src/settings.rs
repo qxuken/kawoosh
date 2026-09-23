@@ -352,6 +352,9 @@ impl Settings {
         // Auto-closing brackets (`pairs.lua`, docs/design/pairs.md): on
         // since 2026-09-23; `pairs.rules` is the plugin's, per language.
         defaults.set("pairs.enabled", Setting::Bool(true));
+        // Inlay hints from the language server — types, parameter names —
+        // drawn in the line, faint (`<leader>cI` flips it).
+        defaults.set("lsp.inlay_hints", Setting::Bool(false));
         // Secrets (docs/design/secrets.md): the masks, named rules a
         // user adds to or switches off (`secrets.masks.env = false`);
         // a file a `files` rule names is private. A secret in the
@@ -739,6 +742,7 @@ mod tests {
                 "layout.new_tab",
                 "layout.scroll.center",
                 "leader",
+                "lsp.inlay_hints",
                 "markdown.heading",
                 "markdown.image_max_mb",
                 "markdown.render",

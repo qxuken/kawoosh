@@ -264,6 +264,7 @@ impl Kawoosh {
                 underlined: &[],
                 trailing: None,
                 ghost: ghost.map(|g| (clip(primary.head), g)),
+                hints: &[],
                 before: 0.0,
                 after: 0.0,
                 marks: &[],
@@ -1002,6 +1003,8 @@ impl Kawoosh {
         let buf_id = self.ed.views[view].buffer;
         // What is secret in it, drawn as `•` (docs/design/secrets.md).
         let masks = self.masks_of(buf_id);
+        // The server's inlay hints, while `lsp.inlay_hints` is on.
+        let inlay = self.inlay_hints_of(buf_id);
         // The markdown buffer drawn rendered (markdown.md): its rows are
         // as tall as they wrap to, so it scrolls by what they measured.
         let md = self.markdown_rendered(buf_id);
@@ -1550,6 +1553,11 @@ impl Kawoosh {
                                 .as_deref()
                                 .filter(|_| ln == cur_line)
                                 .map(|g| (clip(primary.head), g));
+                            let row_hints: Vec<(usize, &str)> = inlay
+                                .iter()
+                                .filter(|(o, _)| *o >= range.start && *o <= range.end)
+                                .map(|(o, l)| (clip(*o), l.as_str()))
+                                .collect();
                             // A rendered row: its form — its size, its
                             // wrap at the column's width less its number,
                             // the code's panel, a rule, an image.
@@ -1605,6 +1613,7 @@ impl Kawoosh {
                                     underlined: &underlined,
                                     trailing,
                                     ghost: ghost_here,
+                                    hints: &row_hints,
                                     before: drawn.before_cols as f32 * cell_w,
                                     after: drawn.after_cols as f32 * cell_w,
                                     marks,

@@ -99,6 +99,16 @@ impl Kawoosh {
             "close",
             &[Cond::parse("readonly"), Cond::parse("!file")],
         );
+        // In the hover, `gd` and `K` act on a symbol it names: looked up
+        // in the workspace, since the hover's text is no document a
+        // server holds.
+        let hover = [Cond::parse("buffer:*hover*")];
+        self.ed
+            .keymap
+            .bind_when(Mode::Normal, "gd", "lsp hover definition", &hover);
+        self.ed
+            .keymap
+            .bind_when(Mode::Normal, "K", "lsp hover again", &hover);
         // A view's field: `<Esc>` in normal mode hands the keys back.
         self.ed.keymap.bind_when(
             Mode::Normal,

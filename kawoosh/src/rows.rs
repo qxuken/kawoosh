@@ -685,6 +685,10 @@ pub struct LineDraw<'a> {
     /// dim under `role = none`. It shifts the real text and never hides
     /// it (mvp.md Decision 5).
     pub ghost: Option<(usize, &'a str)>,
+    /// Inlay hints at bytes of the drawn text — a type, a parameter's
+    /// name — drawn as the ghost is: faint, under `role = none`, the
+    /// real text shifted and never hidden.
+    pub hints: &'a [(usize, &'a str)],
     /// Spacers before and after the text, logical px: a long line's
     /// cells outside its window (`Drawn::before_cols` / `after_cols` at
     /// the cell width).
@@ -955,8 +959,14 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
     // a flag's two indicators or a letter and its mark shape as one
     // cluster, and a cut inside one would draw its halves.
     let ghost_at = line.ghost.map(|(g, _)| g.min(len));
+    // Every byte text that is not the document's sits at: the ghost's
+    // and the hints'.
+    let virtual_at: Vec<usize> = ghost_at
+        .into_iter()
+        .chain(line.hints.iter().map(|(b, _)| (*b).min(len)))
+        .collect();
     let mut cuts: Vec<usize> = vec![0, len];
-    cuts.extend(ghost_at);
+    cuts.extend(virtual_at.iter().copied());
     for r in line
         .selected
         .iter()
@@ -1056,11 +1066,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 mark,
             }
         };
-        // Neighbours that agree merge — except across the ghost's byte,
-        // where the text is split for the ghost to sit between: merged,
-        // a caret inside a run put the ghost before the whole run.
+        // Neighbours that agree merge — except across a ghost's or a
+        // hint's byte, where the text is split for it to sit between:
+        // merged, a caret inside a run put the ghost before the whole run.
         match segs.last_mut() {
-            Some((r, l)) if *l == look && r.end == a && Some(a) != ghost_at => r.end = b,
+            Some((r, l)) if *l == look && r.end == a && !virtual_at.contains(&a) => r.end = b,
             _ => segs.push((a..b, look)),
         }
     }
@@ -1278,20 +1288,34 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             return;
         }
         let ghost = line.ghost.filter(|_| !wraps).map(|(b, g)| (b.min(len), g));
-        match ghost {
-            Some((g, ghost_text)) => {
-                let at = segs.partition_point(|(r, _)| r.end <= g);
-                flush(ui, &segs[..at]);
-                ui.with(NodeSpec::row().role(Role::None), |ui| {
-                    ui.text(ghost_text, base.color(pal.dim));
-                });
-                flush(ui, &segs[at..]);
-            }
-            None => flush(ui, &segs),
+        // The ghost and the hints in byte order, each a node of its own
+        // between the spans: dim for the ghost, fainter for a hint.
+        let mut virtuals: Vec<(usize, &str, Color)> = Vec::new();
+        if !wraps {
+            virtuals.extend(ghost.map(|(g, t)| (g, t, pal.dim)));
+            virtuals.extend(
+                line.hints
+                    .iter()
+                    .map(|(b, t)| ((*b).min(len), *t, pal.faint)),
+            );
         }
-        // Bar carets, measured to their byte — past the ghost when they
-        // sit after it.
-        let ghost_w = ghost.map(|(_, g)| ui.measure_text(g, &base, None).width);
+        virtuals.sort_by_key(|(b, _, _)| *b);
+        let mut from = 0;
+        for (b, t, color) in &virtuals {
+            let at = segs.partition_point(|(r, _)| r.end <= *b);
+            flush(ui, &segs[from..at.max(from)]);
+            from = at.max(from);
+            ui.with(NodeSpec::row().role(Role::None), |ui| {
+                ui.text(t, base.color(*color));
+            });
+        }
+        flush(ui, &segs[from..]);
+        // Bar carets, measured to their byte — past a ghost or a hint
+        // when they sit after it.
+        let virtual_w: Vec<(usize, f32)> = virtuals
+            .iter()
+            .map(|(b, t, _)| (*b, ui.measure_text(t, &base, None).width))
+            .collect();
         for (r, kind) in line.carets {
             if *kind != Caret::Bar {
                 continue;
@@ -1316,11 +1340,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 continue;
             }
             let mut x = before + ui.measure_text(&text[..cb], &base, None).width;
-            if let (Some((g, _)), Some(w)) = (ghost, ghost_w)
-                && cb > g
-            {
-                x += w;
-            }
+            x += virtual_w
+                .iter()
+                .filter(|(b, _)| cb > *b)
+                .map(|(_, w)| w)
+                .sum::<f32>();
             caret_bar(ui, pal.accent, line.caret_on, x, lh);
         }
         // A block caret past the end of the line, and a selection

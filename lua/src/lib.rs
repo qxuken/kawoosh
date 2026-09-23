@@ -118,6 +118,14 @@ pub enum Msg {
     },
     /// `kawoosh.kill(token)`: the process stopped early.
     Kill(u64),
+    /// `kawoosh.lsp.symbols(opts, fn)`: symbols asked of `buffer`'s
+    /// server, answered to `token` (`Runtime::symbols_answered`).
+    Symbols {
+        token: u64,
+        buffer: u64,
+        workspace: bool,
+        query: String,
+    },
     /// `kawoosh.cmdline(text)`: the command line opened with `text` on
     /// it, to finish and submit.
     Cmdline(String),
@@ -1320,6 +1328,32 @@ impl Runtime {
 
     /// A tree walked for `kawoosh.fs.walk(root, fn)`: the callback
     /// called with the paths, or with nil and why not.
+    /// A `kawoosh.lsp.symbols` answer to its asker.
+    pub fn symbols_answered(
+        &self,
+        token: u64,
+        result: Result<Vec<kawoosh_systems::lsp::Symbol>, String>,
+    ) {
+        let result = result.and_then(|symbols| {
+            let lua = &self.lua;
+            let row = |s: &kawoosh_systems::lsp::Symbol| -> mlua::Result<Table> {
+                let t = lua.create_table()?;
+                t.set("name", s.name.as_str())?;
+                t.set("kind", kawoosh_systems::lsp::symbol_kind_name(s.kind))?;
+                t.set("detail", s.detail.clone())?;
+                t.set("container", s.container.clone())?;
+                t.set("path", s.path.display().to_string())?;
+                t.set("line", s.line + 1)?;
+                t.set("col", s.character + 1)?;
+                Ok(t)
+            };
+            let rows: mlua::Result<Vec<Table>> = symbols.iter().map(row).collect();
+            rows.and_then(|r| lua.create_sequence_from(r))
+                .map_err(|e| e.to_string())
+        });
+        self.answer(token, result, "lsp.symbols");
+    }
+
     pub fn walked(&self, token: u64, result: Result<Vec<String>, String>) {
         let result = result.and_then(|paths| {
             self.lua
@@ -2214,6 +2248,43 @@ fn seed(
                 settings: lua_to_json(&t.get::<LV>("settings")?)?,
             });
             Ok(())
+        })?,
+    )?;
+    // ---- kawoosh.lsp.symbols({ workspace =, query =, buffer = }, fn):
+    // the buffer's symbols, or the workspace's matching `query`, from
+    // its server; `fn(items)` with `{ name, kind, detail, container,
+    // path, line, col }` each (line and col from 1), or `fn(nil, why)`.
+    let (qq, pp, jj) = (q(queue), published.clone(), jobs.clone());
+    lsp.set(
+        "symbols",
+        lua.create_function(move |lua, (opts, cb): (Option<Table>, mlua::Function)| {
+            let get = |k: &str| opts.as_ref().map(|t| t.get::<LV>(k)).transpose();
+            let workspace = matches!(get("workspace")?, Some(LV::Boolean(true)));
+            let query = match get("query")? {
+                Some(LV::String(s)) => s.to_str()?.to_string(),
+                _ => String::new(),
+            };
+            let buffer = match get("buffer")? {
+                Some(LV::Integer(n)) => Some(n as u64),
+                Some(LV::Number(n)) => Some(n as u64),
+                _ => pp.borrow().current,
+            };
+            let Some(buffer) = buffer else {
+                return Err(mlua::Error::runtime("lsp.symbols: no buffer"));
+            };
+            let token = {
+                let mut j = jj.borrow_mut();
+                let token = j.token();
+                j.waiting.insert(token, lua.create_registry_value(cb)?);
+                token
+            };
+            qq.borrow_mut().push(Msg::Symbols {
+                token,
+                buffer,
+                workspace,
+                query,
+            });
+            Ok(token)
         })?,
     )?;
     k.set("lsp", lsp)?;

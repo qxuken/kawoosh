@@ -190,6 +190,38 @@ pub enum Cmd {
         buffer: BufferId,
         offset: usize,
     },
+    /// Where the thing at `offset` is implemented (`gI`): one place is
+    /// gone to, several are a list.
+    Implementation {
+        buffer: BufferId,
+        offset: usize,
+    },
+    /// Where it is declared (`gD`), as a definition is.
+    Declaration {
+        buffer: BufferId,
+        offset: usize,
+    },
+    /// `buffer`'s symbols (`textDocument/documentSymbol`), answered as
+    /// `Event::Symbols` with `token`.
+    DocumentSymbols {
+        buffer: BufferId,
+        token: u64,
+    },
+    /// The symbols matching `query` in the workspace of `buffer`'s
+    /// server (`workspace/symbol`), answered as `Event::Symbols`.
+    WorkspaceSymbols {
+        buffer: BufferId,
+        query: String,
+        token: u64,
+    },
+    /// The inlay hints between `start` and `end` of `buffer`'s text at
+    /// `version`.
+    InlayHints {
+        buffer: BufferId,
+        version: Version,
+        start: usize,
+        end: usize,
+    },
     /// The actions for `start..end`, with the diagnostics there —
     /// `(start, end, severity, message)` — since a quick fix is offered
     /// for a diagnostic the client names.
@@ -243,6 +275,65 @@ pub struct Location {
     pub character: u32,
 }
 
+/// A symbol a server listed: a document's (its container the symbol it
+/// is inside) or the workspace's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Symbol {
+    pub name: String,
+    /// The protocol's `SymbolKind`, 1 file … 26 type parameter.
+    pub kind: u64,
+    pub detail: Option<String>,
+    pub container: Option<String>,
+    pub path: PathBuf,
+    pub line: u32,
+    pub character: u32,
+}
+
+/// The name of a `SymbolKind` (LSP 3.17's table).
+pub fn symbol_kind_name(kind: u64) -> &'static str {
+    match kind {
+        1 => "file",
+        2 => "module",
+        3 => "namespace",
+        4 => "package",
+        5 => "class",
+        6 => "method",
+        7 => "property",
+        8 => "field",
+        9 => "constructor",
+        10 => "enum",
+        11 => "interface",
+        12 => "function",
+        13 => "variable",
+        14 => "constant",
+        15 => "string",
+        16 => "number",
+        17 => "boolean",
+        18 => "array",
+        19 => "object",
+        20 => "key",
+        21 => "null",
+        22 => "enum member",
+        23 => "struct",
+        24 => "event",
+        25 => "operator",
+        26 => "type parameter",
+        _ => "",
+    }
+}
+
+/// An inlay hint: text the server would draw at a position that is not
+/// the document's — a type, a parameter's name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InlayHint {
+    pub line: u32,
+    pub character: u32,
+    pub label: String,
+    /// Whether it wants a space before it, and after.
+    pub pad_left: bool,
+    pub pad_right: bool,
+}
+
 /// What a server said it does, out of `initialize`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Caps {
@@ -253,6 +344,11 @@ pub struct Caps {
     pub code_action: bool,
     pub format: bool,
     pub type_definition: bool,
+    pub implementation: bool,
+    pub declaration: bool,
+    pub document_symbol: bool,
+    pub workspace_symbol: bool,
+    pub inlay_hint: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -340,6 +436,17 @@ pub enum Event {
     CodeActions {
         buffer: BufferId,
         actions: Vec<CodeAction>,
+    },
+    /// Symbols asked for with `token`: the list, or why there is none.
+    Symbols {
+        token: u64,
+        result: Result<Vec<Symbol>, String>,
+    },
+    /// Inlay hints for `buffer`'s text at `version`.
+    InlayHints {
+        buffer: BufferId,
+        version: Version,
+        hints: Vec<InlayHint>,
     },
     /// A formatting answer, for the text at `version`.
     Formatted {
@@ -774,6 +881,10 @@ impl Pool {
                         "rename": { "prepareSupport": false },
                         "references": {},
                         "typeDefinition": { "linkSupport": true },
+                        "implementation": { "linkSupport": true },
+                        "declaration": { "linkSupport": true },
+                        "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
+                        "inlayHint": {},
                         "formatting": {},
                         "codeAction": { "codeActionLiteralSupport": { "codeActionKind": { "valueSet": [
                             "", "quickfix", "refactor", "refactor.extract", "refactor.inline",
@@ -781,6 +892,7 @@ impl Pool {
                         ] } } }
                     },
                     "workspace": {
+                        "symbol": {},
                         "configuration": true, "workspaceFolders": true, "applyEdit": true,
                         "workspaceEdit": { "documentChanges": true }
                     },
@@ -915,6 +1027,77 @@ impl Pool {
                 Version::INITIAL,
                 None,
             ),
+            Cmd::Implementation { buffer, offset } => self.positional(
+                "textDocument/implementation",
+                buffer,
+                offset,
+                Version::INITIAL,
+                None,
+            ),
+            Cmd::Declaration { buffer, offset } => self.positional(
+                "textDocument/declaration",
+                buffer,
+                offset,
+                Version::INITIAL,
+                None,
+            ),
+            // A request with no position carries the asker's token
+            // where a position's offset goes.
+            Cmd::DocumentSymbols { buffer, token } => {
+                let Some((uri, _)) = self.doc_text(buffer) else {
+                    self.emit(Event::Symbols {
+                        token,
+                        result: Err("no server holds this buffer".into()),
+                    });
+                    return;
+                };
+                let params = json!({ "textDocument": { "uri": uri } });
+                self.request_for(
+                    buffer,
+                    "textDocument/documentSymbol",
+                    params,
+                    Version::INITIAL,
+                    token as usize,
+                );
+            }
+            Cmd::WorkspaceSymbols {
+                buffer,
+                query,
+                token,
+            } => {
+                if !self.homes.contains_key(&buffer) {
+                    self.emit(Event::Symbols {
+                        token,
+                        result: Err("no server holds this buffer".into()),
+                    });
+                    return;
+                }
+                let params = json!({ "query": query });
+                self.request_for(
+                    buffer,
+                    "workspace/symbol",
+                    params,
+                    Version::INITIAL,
+                    token as usize,
+                );
+            }
+            Cmd::InlayHints {
+                buffer,
+                version,
+                start,
+                end,
+            } => {
+                let Some((uri, text)) = self.doc_text(buffer) else {
+                    return;
+                };
+                let (l0, c0) = position_of_offset(&text, start);
+                let (l1, c1) = position_of_offset(&text, end);
+                let params = json!({
+                    "textDocument": { "uri": uri },
+                    "range": { "start": { "line": l0, "character": c0 }, "end": { "line": l1, "character": c1 } }
+                });
+                self.request_for(buffer, "textDocument/inlayHint", params, version, 0);
+            }
             Cmd::CodeAction {
                 buffer,
                 start,
@@ -1097,10 +1280,22 @@ impl Pool {
                     .and_then(Value::as_str)
                     .unwrap_or("error")
                     .to_string();
-                self.emit(Event::Failed {
-                    what: method,
-                    message: text,
-                });
+                match method {
+                    // The asker waits on its token.
+                    "textDocument/documentSymbol" | "workspace/symbol" => {
+                        self.emit(Event::Symbols {
+                            token: offset as u64,
+                            result: Err(text),
+                        })
+                    }
+                    // Hints are asked for as the view moves; one refused
+                    // is nothing to say.
+                    "textDocument/inlayHint" => {}
+                    _ => self.emit(Event::Failed {
+                        what: method,
+                        message: text,
+                    }),
+                }
                 return;
             }
             match method {
@@ -1149,6 +1344,60 @@ impl Pool {
                             message: "no type definition".into(),
                         });
                     }
+                }
+                "textDocument/implementation" | "textDocument/declaration" => {
+                    let what = if method == "textDocument/implementation" {
+                        "implementations"
+                    } else {
+                        "declarations"
+                    };
+                    let mut items = locations(result);
+                    match items.len() {
+                        0 => self.emit(Event::Failed {
+                            what: method,
+                            message: format!("no {what}"),
+                        }),
+                        1 => {
+                            let l = items.remove(0);
+                            self.emit(Event::Definition {
+                                path: l.path,
+                                line: l.line,
+                                character: l.character,
+                            });
+                        }
+                        _ => self.emit(Event::Locations {
+                            title: what.into(),
+                            items,
+                        }),
+                    }
+                }
+                "textDocument/documentSymbol" => {
+                    let path = server
+                        .documents
+                        .iter()
+                        .find(|(_, d)| d.buffer == buffer)
+                        .and_then(|(uri, _)| path_of_uri(uri));
+                    let symbols = match path {
+                        Some(p) => document_symbols(result, &p),
+                        None => Vec::new(),
+                    };
+                    self.emit(Event::Symbols {
+                        token: offset as u64,
+                        result: Ok(symbols),
+                    });
+                }
+                "workspace/symbol" => {
+                    self.emit(Event::Symbols {
+                        token: offset as u64,
+                        result: Ok(workspace_symbols(result)),
+                    });
+                }
+                "textDocument/inlayHint" => {
+                    self.emit(Event::InlayHints {
+                        buffer,
+                        version,
+                        hints: inlay_hints(result),
+                    });
                 }
                 "textDocument/codeAction" => {
                     let actions = code_actions(result);
@@ -1344,7 +1593,115 @@ fn capabilities(result: Option<&Value>) -> Caps {
         code_action: provides("codeActionProvider"),
         format: provides("documentFormattingProvider"),
         type_definition: provides("typeDefinitionProvider"),
+        implementation: provides("implementationProvider"),
+        declaration: provides("declarationProvider"),
+        document_symbol: provides("documentSymbolProvider"),
+        workspace_symbol: provides("workspaceSymbolProvider"),
+        inlay_hint: provides("inlayHintProvider"),
     }
+}
+
+/// A `documentSymbol` answer, flattened: hierarchical `DocumentSymbol`s
+/// each with the name of the one it is inside, or `SymbolInformation`s
+/// as they come. `path` is the document's.
+fn document_symbols(result: Option<&Value>, path: &Path) -> Vec<Symbol> {
+    fn walk(v: &Value, path: &Path, container: Option<&str>, out: &mut Vec<Symbol>) {
+        let Some(name) = v.get("name").and_then(Value::as_str) else {
+            return;
+        };
+        if let Some(loc) = v.get("location") {
+            if let Some(s) = information(v, loc) {
+                out.push(s);
+            }
+            return;
+        }
+        let Some((line, character)) = position(
+            v.pointer("/selectionRange/start")
+                .or_else(|| v.pointer("/range/start")),
+        ) else {
+            return;
+        };
+        out.push(Symbol {
+            name: name.to_string(),
+            kind: v.get("kind").and_then(Value::as_u64).unwrap_or(0),
+            detail: v.get("detail").and_then(Value::as_str).map(str::to_string),
+            container: container.map(str::to_string),
+            path: path.to_path_buf(),
+            line,
+            character,
+        });
+        for c in v
+            .get("children")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            walk(c, path, Some(name), out);
+        }
+    }
+    let mut out = Vec::new();
+    for v in result.and_then(Value::as_array).into_iter().flatten() {
+        walk(v, path, None, &mut out);
+    }
+    out
+}
+
+/// A `SymbolInformation` (or a `WorkspaceSymbol` with a full location).
+fn information(v: &Value, loc: &Value) -> Option<Symbol> {
+    let path = path_of_uri(loc.get("uri")?.as_str()?)?;
+    let (line, character) = position(loc.pointer("/range/start")).unwrap_or((0, 0));
+    Some(Symbol {
+        name: v.get("name")?.as_str()?.to_string(),
+        kind: v.get("kind").and_then(Value::as_u64).unwrap_or(0),
+        detail: None,
+        container: v
+            .get("containerName")
+            .and_then(Value::as_str)
+            .filter(|c| !c.is_empty())
+            .map(str::to_string),
+        path,
+        line,
+        character,
+    })
+}
+
+/// A `workspace/symbol` answer.
+fn workspace_symbols(result: Option<&Value>) -> Vec<Symbol> {
+    result
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|v| information(v, v.get("location")?))
+        .collect()
+}
+
+/// An `inlayHint` answer: each hint's position and its label, a string
+/// or its parts joined.
+fn inlay_hints(result: Option<&Value>) -> Vec<InlayHint> {
+    result
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|h| {
+            let (line, character) = position(h.get("position"))?;
+            let label = match h.get("label")? {
+                Value::String(s) => s.clone(),
+                Value::Array(parts) => parts
+                    .iter()
+                    .filter_map(|p| p.get("value").and_then(Value::as_str))
+                    .collect(),
+                _ => return None,
+            };
+            let flag = |k: &str| h.get(k).and_then(Value::as_bool).unwrap_or(false);
+            Some(InlayHint {
+                line,
+                character,
+                label,
+                pad_left: flag("paddingLeft"),
+                pad_right: flag("paddingRight"),
+            })
+        })
+        .collect()
 }
 
 fn position(v: Option<&Value>) -> Option<(u32, u32)> {
@@ -1423,8 +1780,17 @@ fn locations(result: Option<&Value>) -> Vec<Location> {
     };
     list.iter()
         .filter_map(|l| {
-            let path = path_of_uri(l.get("uri")?.as_str()?)?;
-            let (line, character) = position(l.pointer("/range/start"))?;
+            // A `Location`, or a `LocationLink` (its target).
+            let (uri, start) = match l.get("uri") {
+                Some(uri) => (uri, l.pointer("/range/start")),
+                None => (
+                    l.get("targetUri")?,
+                    l.pointer("/targetSelectionRange/start")
+                        .or_else(|| l.pointer("/targetRange/start")),
+                ),
+            };
+            let path = path_of_uri(uri.as_str()?)?;
+            let (line, character) = position(start)?;
             Some(Location {
                 path,
                 line,

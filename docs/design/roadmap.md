@@ -623,16 +623,23 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   kui ask — a row already draws text inside itself that is not the
   buffer's, the completion ghost (`rows.rs`'s `ghost`, the span split
   where it sits), and a hint is that, several to a row. Step 20.
-- **The hover, round two** — open [use 2026-09-23]. Since 2026-09-23
-  `K` puts the keys in the `*hover*` pane, read as markdown so its
-  fences are the language's colours, and `q` there goes back. Left:
-  the hover as a place to act from — `K` and `gd` on a type the hover
-  names (its own hover, its definition), which wants the pane to know
-  the server and the position it came from, since the hover's text is
-  no document the server holds; a link in the documentation followed;
-  the pane reused rather than split again from inside it. A kui-free
-  round: a `Hover { server, buffer, offset }` beside the buffer, and
-  the LSP keys gated on it. Step 20.
+  *Done 2026-09-23*, step 20: `gI` (one implementation gone to,
+  several a list), `gD`, `<leader>bs` and `<leader>cs` as the picker's
+  `symbols` and `workspace_symbols` over `kawoosh.lsp.symbols`,
+  `<leader>cI` flipping `lsp.inlay_hints` — the row's ghost is now a
+  list of inline texts, hints drawn faint, asked for the whole text
+  when the version moves and no one is typing, carried through edits
+  meanwhile. A buffer a rename edited without a pane is sent to the
+  server now, and so is every buffer it was sent before, hidden or
+  not. `locations` reads a `LocationLink` too.
+- **The hover, round two** — done 2026-09-23 [use 2026-09-23]; step
+  20. In the hover, `gd` and `K` act on a symbol it names: the word
+  under the caret looked up as a workspace symbol of the server the
+  hover came from (`hover_from` — the hover's text is no document a
+  server holds), the exact name, a type before a function before the
+  rest, opened in the pane the hover was opened from (`came_from`);
+  `K` asks its hover there, into the same pane. A link is `gx`, which
+  the hover had as a markdown buffer; the pane was already reused.
 - **Incremental sync from the journal** — open [kui.md]. Whole-text per
   change today. Correct, and fine until a big file is edited with a
   server attached; measure before doing it (the perf tab exists).
@@ -1250,13 +1257,14 @@ then breadth.
     in it for good. Step 12 went first for losing work; this is the
     same argument turned around.~~ Landed 2026-09-23 with kui F84 and
     F85 ([secrets.md](secrets.md)'s "Built"); see the buffers track.
-20. **LSP, round three**: the reserved keys left — `<leader>cs`
+20. ~~**LSP, round three**: the reserved keys left — `<leader>cs`
     `<leader>bs` symbols as picker sources, `gI` `gD`, `<leader>cI`
     inlay hints drawn the way the ghost is — and the hover as a place
     to act from (`Hover { server, buffer, offset }`, the LSP keys
     gated on it, a link followed, the pane reused); a buffer a rename
     edited without a pane sent to the server. No kui ask. Incremental
-    sync stays out until the perf tab shows it matters.
+    sync stays out until the perf tab shows it matters.~~ Landed
+    2026-09-23; see the LSP track.
 21. **The small ones**: align (`ga=`, over lines, on a character or a
     pattern asked for); timed rows (`timed.lua`, with the door it
     shares with pairs decided — a new-line hook or a command that

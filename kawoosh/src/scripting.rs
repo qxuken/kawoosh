@@ -659,6 +659,12 @@ impl Kawoosh {
                     }
                 }
             }
+            Msg::Symbols {
+                token,
+                buffer,
+                workspace,
+                query,
+            } => self.ask_symbols(token, kawoosh_lua::id_of(buffer), workspace, query),
             Msg::Kill(token) => {
                 if let Some(p) = self.scripting.procs.values().find(|p| p.token == token) {
                     p.handle.kill();

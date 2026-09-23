@@ -789,3 +789,168 @@ fn the_servers_block_opens_the_lsp_pane() {
     assert_eq!(app.ed.buffer_of(v).name, "main.rs", "and came back");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Runs Lua that may `assert`; the test fails when it did.
+fn lua(app: &mut Kawoosh, src: &str) {
+    app.run_lua_source("t", &format!("{src}\nkawoosh.echo('lua ok')"));
+    assert_eq!(app.ed.message, "lua ok", "the Lua failed: {src}");
+}
+
+/// Round three (roadmap step 20), against the fake server: `gD` goes to
+/// the declaration and `gI` lists two implementations; `<leader>bs` is
+/// the buffer's symbols in the picker, flattened with their container,
+/// and `<leader>cs` the workspace's as the query is typed; inlay hints,
+/// once on, are drawn in their lines, faint, the text unmoved; in the
+/// hover, `gd` on a type it names goes there in the pane the hover came
+/// from.
+#[test]
+fn symbols_implementations_hints_and_acting_from_the_hover() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-three-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n    hello()\n}\n").unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    assert!(
+        until(&mut d, &mut app, |a| a
+            .lsp
+            .caps
+            .get("rust")
+            .is_some_and(|c| c.workspace_symbol && c.inlay_hint)),
+        "capabilities"
+    );
+    let caret = |a: &Kawoosh| {
+        let v = a.focused_view().unwrap();
+        let b = a.ed.buffer_of(v);
+        let h = a.ed.views[v].sels.primary().head;
+        (b.line_of(h), h - b.line_start(b.line_of(h)))
+    };
+
+    // `gD`: the declaration, 0:3.
+    d.keys(&mut app, "j");
+    d.keys(&mut app, "gD");
+    assert!(
+        until(&mut d, &mut app, |a| caret(a) == (0, 3)),
+        "declared at 0:3"
+    );
+    // `gI`: two implementations, a list with the keys; `q` back.
+    d.keys(&mut app, "gI");
+    assert!(
+        until(&mut d, &mut app, |a| a
+            .ed
+            .buffers
+            .values()
+            .any(|b| b.name == "*implementations*")),
+        "the implementations list"
+    );
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+
+    // `<leader>bs`: the buffer's symbols, `inner` inside `main`.
+    d.keys(&mut app, " bs");
+    d.frame(&mut app);
+    for _ in 0..200 {
+        app.run_lua_source(
+            "t",
+            "local s = kawoosh.picker.state(); kawoosh.echo(s and tostring(s.count) or '-')",
+        );
+        if app.ed.message == "2" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        d.frame(&mut app);
+    }
+    lua(
+        &mut app,
+        r#"local s = kawoosh.picker.state()
+        assert(s.source == "symbols" and s.count == 2, "two symbols: " .. tostring(s.count))
+        assert(s.item.text == "main" and s.item.kind == "function", s.item.text)"#,
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+
+    // `<leader>cs`: the workspace's, by the query.
+    d.keys(&mut app, " cs");
+    d.frame(&mut app);
+    d.keys(&mut app, "widg");
+    for _ in 0..200 {
+        app.run_lua_source(
+            "t",
+            "local s = kawoosh.picker.state(); kawoosh.echo(s and tostring(s.count) or '-')",
+        );
+        if app.ed.message == "2" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        d.frame(&mut app);
+    }
+    lua(
+        &mut app,
+        r#"local s = kawoosh.picker.state()
+        assert(s.source == "workspace_symbols" and s.count == 2, tostring(s.count))"#,
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+
+    // Inlay hints: off by default; on, drawn in their lines.
+    let hinted = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some(": i32"))
+    };
+    d.frame(&mut app);
+    assert!(!hinted(&d));
+    d.keys(&mut app, " cI");
+    assert_eq!(app.ed.message, "inlay hints on");
+    let mut seen = false;
+    for _ in 0..200 {
+        d.frame(&mut app);
+        if hinted(&d) {
+            seen = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(seen, "the hint in its line");
+    assert!(
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some("xy ")),
+        "a parts label, padded after"
+    );
+    assert!(
+        d.line_rows().iter().any(|r| r.starts_with("fn main")),
+        "the text is the document's: {:?}",
+        d.line_rows()
+    );
+
+    // The hover names `Widget`; `gd` on it goes there, in the pane the
+    // hover was opened from.
+    let editor = app.layout.focused();
+    d.keys(&mut app, "K");
+    assert!(
+        until(&mut d, &mut app, |a| a.focused_view().is_some_and(|v| a
+            .ed
+            .buffer_of(v)
+            .name
+            == "*hover*")),
+        "the hover has the keys"
+    );
+    d.keys(&mut app, "G$");
+    d.keys(&mut app, "gd");
+    assert!(
+        until(&mut d, &mut app, |a| a.layout.focused() == editor
+            && caret(a) == (1, 0)),
+        "Widget, at 1:0, in the editor pane: {}",
+        app.ed.message
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
