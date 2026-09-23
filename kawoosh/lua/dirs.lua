@@ -20,8 +20,8 @@
 -- one; opened from a terminal pane, it types `cd 'PATH'⏎` there when
 -- the shell sits at an empty prompt (OSC 133) and says why not
 -- otherwise. `<C-o>` lists the directory in `dir` without moving the
--- working directory, and `<C-v>` `<C-s>` `<C-t>` list it in a split or
--- a tab. From a shell, `kawoosh pick dirs [QUERY]` answers the pick on
+-- working directory, `<C-v>` `<C-s>` list it in a split, and `<C-t>`
+-- opens a new tab on it — its working directory, listed. From a shell, `kawoosh pick dirs [QUERY]` answers the pick on
 -- stdout — nushell's `def --env zk [...q] { cd (kawoosh pick dirs
 -- ...$q) }`.
 
@@ -108,7 +108,10 @@ function dirs.visit(path)
   dirs.backend().add(path)
 end
 
-kawoosh.on_cwd(dirs.visit)
+-- A `:cd` is a place gone to; a tab switch is not.
+kawoosh.on_cwd(function(path, how)
+  if how == "cd" then dirs.visit(path) end
+end)
 
 -- ------------------------------------------------------------ the source
 
@@ -173,6 +176,12 @@ picker.source("dirs", {
   end,
   preview = preview,
   pick = function(item, how)
+    -- A new tab *on* the directory — its working directory, listed —
+    -- the tab-a-project gesture (docs/design/workspaces.md Decision 6).
+    if how == "tab" then
+      list_it(item, how)
+      return fs.chdir(item.path)
+    end
     if how then return list_it(item, how) end
     if from_terminal then
       -- The shell's own zoxide hook counts the `cd`; the memory has no

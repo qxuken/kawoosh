@@ -260,3 +260,35 @@ fn a_shell_asks_the_picker_over_the_socket() {
     assert_eq!(client.join().unwrap().unwrap(), "", "closed: nothing");
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// `<C-t>` opens a new tab on the directory: its working directory, and
+/// the directory listed there; the first tab stays where it was.
+#[test]
+fn ctrl_t_opens_a_tab_on_the_directory() {
+    let root = tmp("tab");
+    let (a, b) = (root.join("alpha"), root.join("beta"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let (mut d, mut app, _log) = zoxide_app(&root, &a, &b);
+    ex(&mut d, &mut app, &format!("cd {}", b.display()));
+    d.keys(&mut app, " sd");
+    rows(&mut d, &mut app, 2);
+    d.ctrl(&mut app, "t");
+    for _ in 0..100 {
+        d.frame(&mut app);
+        if app
+            .focused_view()
+            .is_some_and(|v| app.ed.buffer_of(v).name.starts_with("dir: "))
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(app.layout.tabs.len(), 2);
+    assert_eq!(app.layout.tab, 1);
+    assert_eq!(app.ed.cwd, a);
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).name, format!("dir: {}", a.display()));
+    assert_eq!(app.layout.tabs[0].cwd.as_deref(), Some(b.as_path()));
+    std::fs::remove_dir_all(&root).ok();
+}
