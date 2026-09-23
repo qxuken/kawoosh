@@ -1,8 +1,8 @@
 //! The Lua test harness (roadmap step 8): every script under
 //! `kawoosh/lua/tests` runs on `kawoosh::harness::run_file`, the same
 //! way `kawoosh test PATH` runs one — the bundled plugins' tests in
-//! Lua are the harness's acceptance test. One test, in sequence: the
-//! scripts move the process's working directory.
+//! Lua are the harness's acceptance test. One test, the scripts in
+//! sequence.
 
 use std::path::Path;
 

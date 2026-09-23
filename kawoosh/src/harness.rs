@@ -363,14 +363,10 @@ impl Harness {
 /// frames. `Err` is the failure — an `assert`'s message with its
 /// traceback, a wait that ran out, a kui warning the run raised.
 pub fn run_file(path: &Path) -> Result<(), String> {
-    // A script that `cd`s away and removes the directory leaves the
-    // process nowhere: back where it was, whatever happened.
-    let cwd = std::env::current_dir().ok();
-    let result = run_script(path);
-    if let Some(d) = cwd {
-        let _ = std::env::set_current_dir(d);
-    }
-    result
+    // A script's `:cd` moves its editor's tab, not the process
+    // (docs/design/workspaces.md), so scripts do not disturb each
+    // other.
+    run_script(path)
 }
 
 /// The view with the keys, for the state published to the script: the

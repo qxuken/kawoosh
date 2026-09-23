@@ -387,23 +387,59 @@ impl Kawoosh {
         kawoosh_systems::fs::expand(path, &self.cwd)
     }
 
-    /// Moves the working directory — the process's too, so child
-    /// processes and relative paths agree.
+    /// `:cd`: the focused tab's working directory moved, and with it
+    /// the editor's (docs/design/workspaces.md) — not the process's.
     pub fn set_cwd(&mut self, dir: &Path) {
         let dir = self.resolve(dir);
         if !dir.is_dir() {
             self.ed.message = format!("not a directory: {}", dir.display());
             return;
         }
-        let _ = std::env::set_current_dir(&dir);
+        // The focused tab's — from the dock too, which has none.
+        self.layout.tab_mut().cwd = Some(dir.clone());
+        self.apply_cwd(dir, "cd");
+        self.ed.message = self.cwd.display().to_string();
+    }
+
+    /// `dir` the editor's cwd (docs/design/workspaces.md): the process's
+    /// own is never moved — every spawn is handed its directory — and
+    /// the project layer and the trusted `init.lua` are read again only
+    /// when `dir` is in another project, whose files above it are not
+    /// the same list; the settings watch follows it either way. `how`
+    /// is what `kawoosh.on_cwd` is told: `cd`, or `tab` for a switch to
+    /// a tab in another directory.
+    pub(crate) fn apply_cwd(&mut self, dir: PathBuf, how: &'static str) {
+        let project = |d: &Path| {
+            (
+                crate::settings::project_settings_files(d),
+                crate::trust::project_init_files(d),
+            )
+        };
+        let moved = project(&self.cwd) != project(&dir);
         self.ed.cwd = dir.clone();
         self.cwd = dir;
-        self.ed.message = self.cwd.display().to_string();
-        // Another directory is another project: its `.kawoosh` files
-        // are the project layer now, and the ones to watch.
-        self.reload_project_settings();
-        self.reload_project_init();
+        self.scripting.cwd_how = how;
+        if moved {
+            self.reload_project_settings();
+            self.reload_project_init();
+        }
+        // Where a `.kawoosh` could appear is the directory's own, even
+        // where none is yet.
         self.rewatch_config();
+    }
+
+    /// The editor's cwd made the focused tab's, after anything that may
+    /// have switched tabs; a tab with none yet (the first, a session's
+    /// from before) takes the one there is.
+    pub(crate) fn sync_cwd(&mut self) {
+        match &self.layout.tab().cwd {
+            None => self.layout.tab_mut().cwd = Some(self.cwd.clone()),
+            Some(c) if *c != self.cwd => {
+                let c = c.clone();
+                self.apply_cwd(c, "tab");
+            }
+            Some(_) => {}
+        }
     }
 
     /// Declares `sink` the focused pane's: it takes the keyboard when the
@@ -754,7 +790,7 @@ impl Kawoosh {
                 let path = if path.is_absolute() {
                     path
                 } else {
-                    std::env::current_dir().unwrap_or_default().join(path)
+                    self.cwd.join(path)
                 };
                 // A caller that waits and hands over a file under the
                 // temp directory is `ansible-vault edit`'s shape: the
@@ -1545,6 +1581,9 @@ impl Kawoosh {
                 Effect::Shell { name, ctx } => self.shell_run(&name, &ctx),
             }
         }
+        // A command that switched or made a tab: the cwd is the new
+        // tab's before the next command resolves a path against it.
+        self.sync_cwd();
     }
 
     /// The mouse over an editor pane: `line` is the ordinal among the
@@ -1966,6 +2005,7 @@ impl kui::App for Kawoosh {
         self.flush_proc_lines();
         self.sync_settings();
         self.fire_settings();
+        self.sync_cwd();
         self.fire_cwd();
         self.fire_watches();
         self.sync_histories(false);

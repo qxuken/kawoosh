@@ -326,12 +326,21 @@ fn took_of(word: &str) -> kawoosh_editor::Took {
     }
 }
 
-/// The outermost directory at or above `dir` with a `.kawoosh` in it,
-/// or nothing (Decision 2's workspace column).
+/// The repositories whose root is a workspace when no `.kawoosh` says.
+const REPOSITORY_MARKERS: [&str; 3] = [".git", ".jj", ".hg"];
+
+/// Decision 2's workspace column: the outermost directory at or above
+/// `dir` with a `.kawoosh` in it; else the nearest that is a
+/// repository's root (docs/design/workspaces.md Decision 4), so a
+/// project without a `.kawoosh` has pins of its own; else nothing.
 pub fn workspace_of(dir: &Path) -> String {
     dir.ancestors()
         .filter(|d| d.join(crate::settings::PROJECT_DIR).is_dir())
         .last()
+        .or_else(|| {
+            dir.ancestors()
+                .find(|d| REPOSITORY_MARKERS.iter().any(|m| d.join(m).exists()))
+        })
         .map(|d| d.display().to_string())
         .unwrap_or_default()
 }

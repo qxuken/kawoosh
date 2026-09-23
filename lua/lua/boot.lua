@@ -159,17 +159,20 @@ function kawoosh._settings()
   end
 end
 
--- kawoosh.on_cwd(fn): `fn(path)` whenever the working directory moved
--- — `:cd`, a listing's `<leader>cd`, `kawoosh.fs.chdir` — once a frame,
--- after it moved; not for the directory kawoosh started in.
+-- kawoosh.on_cwd(fn): `fn(path, how)` whenever the working directory
+-- moved, once a frame, after it moved; not for the directory kawoosh
+-- started in. The working directory is the focused tab's
+-- (docs/design/workspaces.md): `how` is "cd" (`:cd`, a listing's
+-- `<leader>cd`, `kawoosh.fs.chdir`) or "tab" (the keys went to a tab
+-- in another directory).
 kawoosh._cwd_hooks = {}
 function kawoosh.on_cwd(fn)
   kawoosh._cwd_hooks[#kawoosh._cwd_hooks + 1] = fn
 end
 
-function kawoosh._cwd(path)
+function kawoosh._cwd(path, how)
   for _, fn in ipairs(kawoosh._cwd_hooks) do
-    local ok, err = pcall(fn, path)
+    local ok, err = pcall(fn, path, how)
     if not ok then kawoosh.echo("on_cwd: " .. tostring(err)) end
   end
 end

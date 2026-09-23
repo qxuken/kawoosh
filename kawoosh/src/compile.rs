@@ -55,7 +55,7 @@ impl Kawoosh {
                 };
                 kawoosh_systems::lsp::workspace_root(&p, &def)
             })
-            .or_else(|| std::env::current_dir().ok());
+            .or_else(|| Some(self.cwd.clone()));
         self.note_tool(
             "compile",
             serde_json::json!({ "cmd": cmd, "cwd": cwd.as_ref().map(|c| c.display().to_string()) }),
@@ -152,7 +152,7 @@ impl Kawoosh {
                         .as_ref()
                         .and_then(|p| p.parent().map(Path::to_path_buf))
                 }
-                .or_else(|| std::env::current_dir().ok())
+                .or_else(|| Some(self.cwd.clone()))
                 .unwrap_or_default();
                 let full = if Path::new(&path).is_absolute() {
                     PathBuf::from(&path)

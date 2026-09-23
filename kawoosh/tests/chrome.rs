@@ -46,7 +46,7 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
-    app.cwd = deep.canonicalize().unwrap();
+    app.set_cwd(&deep.canonicalize().unwrap());
     d.frame(&mut app);
     let (_, cy, _, _) = d.rect_of("cwd").expect("the cwd in the title bar");
     let (_, ty, _, _) = d.rect_of("tab0").expect("the tab");

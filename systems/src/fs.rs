@@ -332,8 +332,9 @@ fn unverbatim(p: PathBuf) -> PathBuf {
     p
 }
 
-/// The process's working directory, which the shell keeps in step with
-/// its own (`Kawoosh::set_cwd`).
+/// The process's working directory: where kawoosh was started, never
+/// moved (docs/design/workspaces.md Decision 2) — the editor's is the
+/// focused tab's.
 pub fn cwd() -> PathBuf {
     std::env::current_dir().unwrap_or_default()
 }

@@ -180,7 +180,7 @@ thing.
 CREATE TABLE moments (
     kind      TEXT    NOT NULL,
     subject   TEXT    NOT NULL,
-    workspace TEXT    NOT NULL DEFAULT '',   -- outermost .kawoosh root, or ''
+    workspace TEXT    NOT NULL DEFAULT '',   -- outermost .kawoosh root, a repository's, or ''
     first_at  INTEGER NOT NULL,
     last_at   INTEGER NOT NULL,
     visits    INTEGER NOT NULL DEFAULT 0,
@@ -209,7 +209,10 @@ did, and they survive a restart, which they do not today. The `"`
 register stays the newest `text` row, held in RAM (Decision 3).
 
 Workspace is a column, not a table: a moment made under a `.kawoosh`
-root carries it, one made outside carries none. The picker asks for
+root carries it, one made outside carries none. *Since 2026-09-24*
+([workspaces.md](workspaces.md) Decision 4): outside a `.kawoosh`, a
+repository's root (`.git`, `.jj`, `.hg`) is the workspace, and it
+follows the focused tab's directory. The picker asks for
 the workspace's rows; `:memory` shows the workspace's by default and
 `:memory all` everything. A path is one subject across workspaces
 only if it is the same path, which is the right answer for a file

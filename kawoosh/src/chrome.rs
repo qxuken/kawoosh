@@ -5,7 +5,8 @@
 //! drawn in kui's `titlebar_with` so the platform's controls keep their
 //! place — the traffic lights inset on macOS, drawn buttons elsewhere —
 //! and the whole row drags the window. It carries what the tab strip
-//! used to end with: the working directory on the left, shortened the
+//! used to end with: the focused tab's working directory on the left
+//! (docs/design/workspaces.md), shortened the
 //! way fish's prompt does (every component but the last to its first
 //! letter) so a deep one fits, the full path on hover and a click
 //! listing it; the language servers and a running compile on the right.
@@ -15,7 +16,8 @@
 //! the floor the row scrolls, and the active tab is revealed on the
 //! frame it changes, the offset easing there as the strip's ribbon does
 //! (kui F80). The active tab and the one under the pointer carry a
-//! close button, when there is another tab to go to.
+//! close button, when there is another tab to go to. When the tabs are
+//! in more than one directory each label leads with its own.
 
 use kui::{Align, CursorShape, NodeSpec, Role, Sizing, Span, Ui, Value, widgets};
 
@@ -145,6 +147,16 @@ impl Kawoosh {
         // own reveal of its column (kui F82).
         let reveal = self.tabs_seen != Some(shape);
         self.tabs_seen = Some(shape);
+        // Tabs in more than one directory lead with theirs, so the strip
+        // says which project each is (docs/design/workspaces.md
+        // Decision 6).
+        let dirs: std::collections::HashSet<_> = self
+            .layout
+            .tabs
+            .iter()
+            .map(|t| t.cwd.as_ref().unwrap_or(&self.cwd))
+            .collect();
+        let show_dir = dirs.len() > 1;
         let labels: Vec<(String, bool)> = self
             .layout
             .tabs
@@ -169,6 +181,10 @@ impl Kawoosh {
                 let modified = ps
                     .iter()
                     .any(|p| matches!(self.view_of(*p), Some(v) if self.ed.buffer_of(v).modified));
+                let name = match tab.cwd.as_ref().unwrap_or(&self.cwd).file_name() {
+                    Some(d) if show_dir => format!("{} · {name}", d.to_string_lossy()),
+                    _ => name,
+                };
                 (name, modified)
             })
             .collect();

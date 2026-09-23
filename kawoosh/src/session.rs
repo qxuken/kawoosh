@@ -47,6 +47,10 @@ pub struct TabData {
     /// A strip's columns, left to right.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<ColumnData>,
+    /// The tab's working directory (workspaces.md Decision 5); absent
+    /// in a file from before, which restores in the launch directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -262,12 +266,14 @@ impl Kawoosh {
                     )
                 });
                 let focused = ps.iter().position(|p| *p == t.focused).unwrap_or(0);
+                let cwd = t.cwd.clone().or_else(|| Some(self.cwd.clone()));
                 match &t.layout {
                     Kind::Tree(root) => TabData {
                         root: self.node_data(root),
                         focused,
                         kind: String::new(),
                         columns: Vec::new(),
+                        cwd,
                     },
                     Kind::Scroll(s) => {
                         let mut folded = t.clone();
@@ -287,6 +293,7 @@ impl Kawoosh {
                                     width: c.width.name(),
                                 })
                                 .collect(),
+                            cwd,
                         }
                     }
                 }
@@ -357,9 +364,13 @@ impl Kawoosh {
                 };
                 Kind::Tree(root)
             };
+            // Its directory, when it still is one (workspaces.md
+            // Decision 5); the launch directory's otherwise.
+            let cwd = t.cwd.clone().filter(|c| c.is_dir());
             let tab = Tab {
                 layout: kind,
                 focused: 0,
+                cwd,
             };
             let mut ps = Vec::new();
             tab.panes(&mut ps);

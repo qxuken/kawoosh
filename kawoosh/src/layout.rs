@@ -391,12 +391,17 @@ pub enum Kind {
 pub struct Tab {
     pub layout: Kind,
     pub focused: PaneId,
+    /// The tab's working directory (docs/design/workspaces.md Decision
+    /// 1): the focused tab's is the editor's. None until the shell gives
+    /// it one — the window's first tab, a session's from before.
+    pub cwd: Option<std::path::PathBuf>,
 }
 
 impl Tab {
     pub fn tree(root: Node, focused: PaneId) -> Tab {
         Tab {
             layout: Kind::Tree(root),
+            cwd: None,
             focused,
         }
     }
@@ -907,7 +912,13 @@ impl Layout {
         } else {
             Kind::Tree(Node::Pane(p))
         };
-        self.tabs.push(Tab { layout, focused: p });
+        // A new tab starts where the tab it was made from is.
+        let cwd = self.tabs.get(self.tab).and_then(|t| t.cwd.clone());
+        self.tabs.push(Tab {
+            layout,
+            focused: p,
+            cwd,
+        });
         self.tab = self.tabs.len() - 1;
         self.dock_focused = false;
         p

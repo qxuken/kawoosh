@@ -187,6 +187,9 @@ fn launch(db: &std::path::Path, path: &std::path::Path) -> (Drive, Kawoosh) {
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
+    // In the test's directory, which is no repository: the workspace
+    // is the empty one, as the keys below spell it.
+    app.set_cwd(db.parent().unwrap());
     app.open_store(Some(db));
     (d, app)
 }
@@ -620,9 +623,12 @@ fn pins_the_picker_and_the_lua_side() {
         })
         .collect();
     store.flush_moments(&burst, &[], 1000).unwrap();
-    store.set_moment_last(&file_key(&a), 1000).unwrap();
+    // The directory is a repository's root: the workspace
+    // (workspaces.md Decision 4), under which `a` was pinned.
+    let a_key = MomentKey::new("file", &a.display().to_string(), &dir.display().to_string());
+    store.set_moment_last(&a_key, 1000).unwrap();
     app.evict_moments();
-    assert!(store.moment(&file_key(&a)).is_some_and(|r| r.pinned > 0));
+    assert!(store.moment(&a_key).is_some_and(|r| r.pinned > 0));
     // A plugin remembers under its own kind, and reads rows and the
     // ring back; a replaced `rank` orders the boosts.
     lua(
@@ -667,7 +673,11 @@ kawoosh.forget("dir.rename", "{b}")
     d.frame(&mut app);
     assert!(
         store
-            .moment(&MomentKey::new("dir.rename", &b.display().to_string(), ""))
+            .moment(&MomentKey::new(
+                "dir.rename",
+                &b.display().to_string(),
+                &dir.display().to_string()
+            ))
             .is_none()
     );
     std::fs::remove_dir_all(&dir).ok();
@@ -690,13 +700,12 @@ fn a_workspace_scopes_the_memory_and_a_history_is_the_paths() {
     std::fs::write(&b, "bbb\n").unwrap();
     let ws = dir.display().to_string();
     let in_ws = |p: &std::path::Path| MomentKey::new("file", &p.display().to_string(), &ws);
-    // The app's cwd alone, not the process's (`set_cwd` would move
-    // it): the suite's other tests share the process, and a `.kawoosh`
-    // above their cwd would put their rows under this workspace.
+    // The app's cwd, which is not the process's (workspaces.md
+    // Decision 2): the suite's other tests share the process and keep
+    // theirs.
     let launch_in = |db: &std::path::Path, path: &std::path::Path| {
         let (d, mut app) = launch(db, path);
-        app.cwd = dir.clone();
-        app.ed.cwd = dir.clone();
+        app.set_cwd(&dir);
         (d, app)
     };
     let (mut d, mut app) = launch_in(&db, &a);

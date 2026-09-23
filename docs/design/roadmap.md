@@ -865,8 +865,34 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
 
 ### Workspaces
 
-- **Workspaces, revisited** — open, a note first [asked 2026-09-23];
-  step 26. "The cwd per tab, or something else." What the cwd is
+- **Workspaces, revisited** — done 2026-09-24 [asked 2026-09-23]; step
+  26 ([workspaces.md](workspaces.md)). The answer: the cwd is the
+  tab's. `Tab::cwd`; the focused tab's is the editor's — `:e`, a
+  terminal, a tool, a compile, a picker's walk, the title bar, `:pwd`
+  — `:cd` moves the focused tab's alone, a new tab starts where its
+  maker is, the dock has none of its own. A switch to a tab elsewhere
+  moves the editor's (`Kawoosh::sync_cwd`, after every command and on
+  the frame); the project layer and the trusted `init.lua` are read
+  again only across projects — when the files above the new
+  directory are not the same list — and the settings watch follows
+  either way. The process's cwd is never moved: `set_current_dir` is
+  gone and its readers moved to the tab's (compile's fallback,
+  `kawoosh.fs.*` through a thread-local the snapshot sets, a socket's
+  relative `Open`, a plugin's `cwd` root), every spawn handed its
+  directory; the harness no longer puts it back. `kawoosh.on_cwd`'s
+  `fn(path, how)`, `how` `cd` or `tab`, the jumps counting `cd`
+  alone. The memory's workspace falls back to a repository's root
+  (`.git`, `.jj`, `.hg`) where no `.kawoosh` is — the empty
+  workspace's old rows stay where they are. The session keeps each
+  tab's directory (`TabData::cwd`); tabs in more than one directory
+  lead their labels with it (`alpha · lib.rs`); a jump's `<C-t>` opens
+  a tab *on* the directory. Beaten, with reasons in the note: a named
+  workspace object, vim's three levels, a session per workspace.
+  `kawoosh/tests/workspaces.rs`, dirs.rs's
+  `ctrl_t_opens_a_tab_on_the_directory`; the memory and history tests
+  now set their own cwd, since the suite runs inside a repository,
+  which is a workspace now. What the roadmap said before: "The cwd per
+  tab, or something else." "The cwd per tab, or something else." What the cwd is
   today, checked: one thing that means five. `set_cwd` moves the
   process's own (`set_current_dir`, so every child and every relative
   path agree), reloads the project settings layer and the trusted
@@ -1397,12 +1423,14 @@ then breadth.
     at the cost of `<C-n>` meaning two things. Co-occurrence waits for
     use to ask.~~ Landed 2026-09-24 on `[p` `]p` — the `]x` family's
     keys, so `<C-n>` keeps one meaning. See the buffers track.
-26. **Workspaces** (a note first): what the cwd is — per tab, a named
+26. ~~**Workspaces** (a note first): what the cwd is — per tab, a named
     workspace, or both — and the process cwd ended with it, every
     spawn passed its directory; the settings layer, the trust, the
     memory's workspace and the session following the answer. After
     the jumps, which move a cwd and are what a workspace switcher
-    would be fed from; before ssh, whose rule 7 is the same change.
+    would be fed from; before ssh, whose rule 7 is the same change.~~
+    Landed 2026-09-24 ([workspaces.md](workspaces.md)): the cwd per
+    tab, the process's never moved. See the workspaces track.
 27. **ssh as a domain** ([domains.md](domains.md)): four rounds —
     `Loc` everywhere with no behaviour change, then ssh (the master in
     a pane, SFTP, `:e box:`, `dir`, the poll), then processes through

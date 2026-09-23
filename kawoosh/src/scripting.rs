@@ -73,6 +73,8 @@ pub struct Scripting {
     /// before the first frame, so the one kawoosh started in is not
     /// news.
     pub cwd_seen: Option<std::path::PathBuf>,
+    /// Why it last moved: `cd` or `tab` (`Kawoosh::apply_cwd`).
+    pub cwd_how: &'static str,
     /// `kawoosh pick` callers waiting on the picker, by token.
     pub picks: HashMap<u64, crossbeam_channel::Sender<String>>,
     pub next_pick: u64,
@@ -1040,7 +1042,11 @@ impl Kawoosh {
             return;
         };
         rt.publish(&self.ed, self.focused_view());
-        rt.cwd_hook(&cwd);
+        let how = match self.scripting.cwd_how {
+            "" => "cd",
+            h => h,
+        };
+        rt.cwd_hook(&cwd, how);
         self.drain_lua();
     }
 
@@ -1329,7 +1335,7 @@ impl Kawoosh {
             .cwd
             .as_deref()
             .map(|c| match c {
-                "root" | "cwd" => std::env::current_dir().unwrap_or_default(),
+                "root" | "cwd" => self.cwd.clone(),
                 other => PathBuf::from(other),
             })
             .or_else(|| {

@@ -438,6 +438,27 @@ pub struct BufSnap {
     pub field: bool,
 }
 
+thread_local! {
+    /// The editor's working directory — the focused tab's, not the
+    /// process's, which is never moved (docs/design/workspaces.md
+    /// Decision 2) — as of the last publish: what `kawoosh.fs` resolves
+    /// a relative path against and `kawoosh.fs.cwd()` answers.
+    static EDITOR_CWD: RefCell<PathBuf> = const { RefCell::new(PathBuf::new()) };
+}
+
+/// The editor's working directory, the process's before the first
+/// publish.
+fn editor_cwd() -> PathBuf {
+    EDITOR_CWD.with(|c| {
+        let c = c.borrow();
+        if c.as_os_str().is_empty() {
+            kawoosh_systems::fs::cwd()
+        } else {
+            c.clone()
+        }
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct Published {
     pub current: Option<u64>,
@@ -964,6 +985,11 @@ impl Runtime {
 
     /// The snapshot Lua reads from, refreshed before every call in.
     pub fn publish(&self, ed: &Editor, current: Option<ViewId>) {
+        EDITOR_CWD.with(|c| {
+            if *c.borrow() != ed.cwd {
+                *c.borrow_mut() = ed.cwd.clone();
+            }
+        });
         let mut p = self.published.borrow_mut();
         p.buffers.clear();
         p.tracked.clear();
@@ -1300,8 +1326,8 @@ impl Runtime {
 
     /// Tells the plugins the working directory moved
     /// (`kawoosh.on_cwd`).
-    pub fn cwd_hook(&self, path: &std::path::Path) {
-        self.hook("_cwd", path.display().to_string(), "on_cwd");
+    pub fn cwd_hook(&self, path: &std::path::Path, how: &str) {
+        self.hook("_cwd", (path.display().to_string(), how), "on_cwd");
     }
 
     /// Hands a socket's `kawoosh pick SOURCE [QUERY]` to the picker,
@@ -3415,7 +3441,7 @@ fn seed(
     let fs = lua.create_table()?;
     use kawoosh_systems::fs as kfs;
     fn expand(p: &str) -> PathBuf {
-        kfs::expand(std::path::Path::new(p), &kfs::cwd())
+        kfs::expand(std::path::Path::new(p), &editor_cwd())
     }
     fn io_err(e: std::io::Error) -> mlua::Error {
         mlua::Error::runtime(e.to_string())
@@ -3450,7 +3476,7 @@ fn seed(
         "form",
         lua.create_function(|_, (p, form): (String, String)| {
             Ok(
-                match kawoosh_editor::path_form(&kfs::cwd(), std::path::Path::new(&p), &form) {
+                match kawoosh_editor::path_form(&editor_cwd(), std::path::Path::new(&p), &form) {
                     Ok(s) => (Some(s), None),
                     Err(why) => (None, Some(why)),
                 },
@@ -3622,7 +3648,7 @@ fn seed(
     )?;
     fs.set(
         "cwd",
-        lua.create_function(|_, ()| Ok(kfs::display(&kfs::cwd())))?,
+        lua.create_function(|_, ()| Ok(kfs::display(&editor_cwd())))?,
     )?;
     let qq = q(queue);
     fs.set(

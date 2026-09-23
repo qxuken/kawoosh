@@ -37,6 +37,9 @@ fn launch(db: &Path, path: Option<&Path>) -> (Drive, Kawoosh) {
         Some(p) => Kawoosh::from_file(p),
         None => Kawoosh::new("*scratch*", ""),
     };
+    // In the test's directory, which is no repository: the workspace
+    // is the empty one, as the keys below spell it.
+    app.set_cwd(db.parent().unwrap());
     app.open_store(Some(db));
     (d, app)
 }
