@@ -776,6 +776,9 @@ impl Kawoosh {
             Request::Theme => {
                 let _ = reply.send(if self.dark { "dark" } else { "light" }.into());
             }
+            // `kawoosh pick SOURCE [QUERY]`: answered when the picker
+            // is taken or closed.
+            Request::Pick { source, query } => self.pick_request(&source, &query, reply),
             Request::Ex { line } => {
                 // Any view will do for a command that needs one.
                 let view = self.focused_view().or_else(|| self.ed.any_view());
@@ -1962,6 +1965,7 @@ impl kui::App for Kawoosh {
         self.flush_proc_lines();
         self.sync_settings();
         self.fire_settings();
+        self.fire_cwd();
         self.fire_watches();
         self.sync_histories(false);
         self.moments.window_focused = ui.env().focused;

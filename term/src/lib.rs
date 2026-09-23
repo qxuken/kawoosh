@@ -201,6 +201,11 @@ pub struct Terminal {
     scan: OscScan,
     /// The commands the shell marked, oldest first.
     commands: Vec<Command>,
+    /// Whether anything was sent to the process since the shell last
+    /// drew a prompt (an OSC 133 `A` or `B`): what makes a prompt not
+    /// empty, since the marks do not say where a prompt's own text
+    /// ends and the typed line begins.
+    typed: bool,
     /// The colours the screen is painted with, as last set.
     palette: Palette,
     pty: Option<Box<dyn MasterPty + Send>>,
@@ -293,6 +298,7 @@ impl Terminal {
                 },
                 scan: OscScan::default(),
                 commands: Vec::new(),
+                typed: false,
                 palette: Palette::default(),
                 pty: Some(pair.master),
                 writer: Some(writer),
@@ -322,6 +328,7 @@ impl Terminal {
             },
             scan: OscScan::default(),
             commands: Vec::new(),
+            typed: false,
             palette: Palette::default(),
             pty: None,
             writer: None,
@@ -380,7 +387,7 @@ impl Terminal {
         self.advance(&bytes[from..]);
         let replies = std::mem::take(&mut self.modes.replies);
         if !replies.is_empty() {
-            self.input(&replies);
+            self.send(&replies);
         }
         self.drain_events();
     }
@@ -413,6 +420,7 @@ impl Terminal {
             let mut parts = mark.split(';');
             match parts.next() {
                 Some("A") => {
+                    self.typed = false;
                     // A prompt drawn again over the same line (a
                     // resize, a `clear`) is the same command's.
                     if self
@@ -431,6 +439,7 @@ impl Terminal {
                     }
                 }
                 Some("B") => {
+                    self.typed = false;
                     if let Some(c) = self.commands.last_mut() {
                         c.input = Some(line);
                     }
@@ -631,7 +640,7 @@ impl Terminal {
         let flipped = pal.dark != self.palette.dark;
         self.palette = pal;
         if flipped && self.modes.report_appearance {
-            self.input(appearance_report(pal.dark).as_bytes());
+            self.send(appearance_report(pal.dark).as_bytes());
         }
     }
 
@@ -670,13 +679,13 @@ impl Terminal {
     fn drain_events(&mut self) {
         while let Ok(ev) = self.events.try_recv() {
             match ev {
-                Event::PtyWrite(text) => self.input(text.as_bytes()),
+                Event::PtyWrite(text) => self.send(text.as_bytes()),
                 // `OSC 10 ; ?` and its kin: answered with the pane's
                 // colours, so a neovim or a shell that asks how dark the
                 // background is gets an answer rather than a timeout.
                 Event::ColorRequest(index, format) => {
                     let reply = format(self.query_color(index));
-                    self.input(reply.as_bytes());
+                    self.send(reply.as_bytes());
                 }
                 Event::Title(t) => self.title = t,
                 Event::ResetTitle => self.title.clear(),
@@ -687,8 +696,29 @@ impl Terminal {
         }
     }
 
-    /// Bytes to the process.
+    /// Whether the shell sits at an empty prompt: the last command it
+    /// marked (OSC 133) has a prompt and no output yet, nothing was
+    /// sent to it since the prompt was drawn, and no program has the
+    /// whole screen. False for a shell that marks nothing — there is
+    /// no telling.
+    pub fn at_empty_prompt(&self) -> bool {
+        !self.typed
+            && !self.is_alt_screen()
+            && self
+                .commands
+                .last()
+                .is_some_and(|c| c.output.is_none() && c.end.is_none())
+    }
+
+    /// Bytes to the process from the user — a key, a paste, the mouse.
     pub fn input(&mut self, bytes: &[u8]) {
+        self.typed = true;
+        self.send(bytes);
+    }
+
+    /// Bytes to the process: the user's, or the terminal's own answers
+    /// (a colour, a report), which are no typing.
+    fn send(&mut self, bytes: &[u8]) {
         match &mut self.writer {
             Some(writer) => {
                 let _ = writer.write_all(bytes);
@@ -1675,6 +1705,22 @@ mod tests {
     /// marks stay on their lines: the last output reads the same after
     /// shrinking and growing, and a command after it is marked where it
     /// ran.
+    #[test]
+    fn an_empty_prompt_is_one_with_nothing_sent_since() {
+        let mut t = Terminal::headless(TermSize { rows: 10, cols: 20 });
+        assert!(!t.at_empty_prompt(), "no marks, no telling");
+        t.feed(b"\x1b]133;A\x07$ \x1b]133;B\x07");
+        assert!(t.at_empty_prompt());
+        t.input(b"l");
+        assert!(!t.at_empty_prompt(), "something typed");
+        t.feed(b"l\r\n\x1b]133;C\x07");
+        assert!(!t.at_empty_prompt(), "running");
+        t.feed(b"out\r\n\x1b]133;D;0\x07\x1b]133;A\x07$ \x1b]133;B\x07");
+        assert!(t.at_empty_prompt(), "the next prompt");
+        t.feed(b"\x1b[?1049h");
+        assert!(!t.at_empty_prompt(), "a program has the screen");
+    }
+
     #[test]
     fn marks_survive_a_resize() {
         let mut t = Terminal::headless(TermSize { rows: 10, cols: 20 });

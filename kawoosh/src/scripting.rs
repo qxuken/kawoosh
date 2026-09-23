@@ -69,6 +69,13 @@ pub struct Scripting {
     /// The plugins' painted ranges per buffer, by set name, at the
     /// version they were given (`kawoosh.buf.paint`).
     pub paints: HashMap<kawoosh_doc::BufferId, HashMap<String, Painted>>,
+    /// The working directory `kawoosh.on_cwd` was last told of — none
+    /// before the first frame, so the one kawoosh started in is not
+    /// news.
+    pub cwd_seen: Option<std::path::PathBuf>,
+    /// `kawoosh pick` callers waiting on the picker, by token.
+    pub picks: HashMap<u64, crossbeam_channel::Sender<String>>,
+    pub next_pick: u64,
 }
 
 /// One plugin's paint on a buffer: its ranges and colour names, at the
@@ -938,6 +945,30 @@ impl Kawoosh {
                 };
                 self.ed.set_field_text(v, &text);
             }
+            Msg::TermSend { text, prompt } => {
+                let Some(id) = self.term_of_focused() else {
+                    self.ed.message = "not in a terminal".into();
+                    return;
+                };
+                let Some(t) = self.terms.map.get_mut(&id) else {
+                    return;
+                };
+                if prompt && !t.at_empty_prompt() {
+                    self.ed.message = if t.commands().is_empty() {
+                        "the shell marks no prompts (`:terminal integration` has the lines)".into()
+                    } else {
+                        "the shell is not at an empty prompt".into()
+                    };
+                    return;
+                }
+                t.scroll_to_bottom();
+                t.input(text.as_bytes());
+            }
+            Msg::Answer { token, text } => {
+                if let Some(reply) = self.scripting.picks.remove(&token) {
+                    let _ = reply.send(text.unwrap_or_default());
+                }
+            }
             Msg::Edit { .. }
             | Msg::SetText { .. }
             | Msg::SetCursor { .. }
@@ -990,6 +1021,47 @@ impl Kawoosh {
         };
         rt.publish(&self.ed, self.focused_view());
         rt.settings_hook();
+        self.drain_lua();
+    }
+
+    /// Once a frame: the plugins told the working directory moved
+    /// (`kawoosh.on_cwd`), not on the first frame.
+    pub(crate) fn fire_cwd(&mut self) {
+        let cwd = self.ed.cwd.clone();
+        match &self.scripting.cwd_seen {
+            None => {
+                self.scripting.cwd_seen = Some(cwd);
+                return;
+            }
+            Some(seen) if *seen == cwd => return,
+            Some(_) => self.scripting.cwd_seen = Some(cwd.clone()),
+        }
+        let Some(rt) = self.scripting.rt.clone() else {
+            return;
+        };
+        rt.publish(&self.ed, self.focused_view());
+        rt.cwd_hook(&cwd);
+        self.drain_lua();
+    }
+
+    /// `kawoosh pick SOURCE [QUERY]` from a shell: the picker opened on
+    /// the source where the keys are, the caller answered with what is
+    /// picked — or with nothing, closed — through `kawoosh._answer`.
+    pub(crate) fn pick_request(
+        &mut self,
+        source: &str,
+        query: &str,
+        reply: crossbeam_channel::Sender<String>,
+    ) {
+        let Some(rt) = self.scripting.rt.clone() else {
+            let _ = reply.send(String::new());
+            return;
+        };
+        self.scripting.next_pick += 1;
+        let token = self.scripting.next_pick;
+        self.scripting.picks.insert(token, reply);
+        rt.publish(&self.ed, self.focused_view());
+        rt.pick_hook(token, source, query);
         self.drain_lua();
     }
 

@@ -21,18 +21,20 @@ fn load_fonts(core: &mut Core) -> Option<kui::FontId> {
     core.add_system_font(&family)
 }
 
-/// `kawoosh edit [--wait] [+LINE] PATH…`, `kawoosh ex LINE` and `kawoosh
-/// theme`: the CLI shim, talking to the running instance over
-/// `$KAWOOSH_SOCKET` (mvp.md Decision 3b). `EDITOR="kawoosh edit --wait"`
-/// is what every pty gets, and `theme` answers `dark` or `light` — what a
-/// shell's prompt hook reads to pick its palette, since a running shell
-/// cannot see `TERM_APPEARANCE` change (roadmap step 6).
+/// `kawoosh edit [--wait] [+LINE] PATH…`, `kawoosh ex LINE`, `kawoosh
+/// theme` and `kawoosh pick SOURCE [QUERY]`: the CLI shim, talking to
+/// the running instance over `$KAWOOSH_SOCKET` (mvp.md Decision 3b).
+/// `EDITOR="kawoosh edit --wait"` is what every pty gets, `theme`
+/// answers `dark` or `light` — what a shell's prompt hook reads to pick
+/// its palette, since a running shell cannot see `TERM_APPEARANCE`
+/// change (roadmap step 6) — and `pick` is kawoosh's picker for a shell
+/// (`cd (kawoosh pick dirs)`, roadmap step 24).
 fn shim(args: &[String]) -> anyhow::Result<bool> {
     use kawoosh_systems::io::{Request, send_request};
     let Some(verb) = args.first().map(String::as_str) else {
         return Ok(false);
     };
-    if verb != "edit" && verb != "ex" && verb != "theme" {
+    if !matches!(verb, "edit" | "ex" | "theme" | "pick") {
         return Ok(false);
     }
     let Some(sock) = std::env::var_os("KAWOOSH_SOCKET") else {
@@ -41,6 +43,26 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
     let sock = std::path::PathBuf::from(sock);
     if verb == "theme" {
         println!("{}", send_request(&sock, &Request::Theme)?);
+        return Ok(true);
+    }
+    // `kawoosh pick dirs`: what is picked on stdout, or nothing and
+    // status 1 when the picker is closed — so a shell's `cd (kawoosh
+    // pick dirs)` goes nowhere on `<Esc>`.
+    if verb == "pick" {
+        let Some(source) = args.get(1) else {
+            anyhow::bail!("pick: which source? (kawoosh pick dirs)");
+        };
+        let reply = send_request(
+            &sock,
+            &Request::Pick {
+                source: source.clone(),
+                query: args[2..].join(" "),
+            },
+        )?;
+        if reply.is_empty() {
+            std::process::exit(1);
+        }
+        println!("{reply}");
         return Ok(true);
     }
     if verb == "ex" {
@@ -124,6 +146,8 @@ From a terminal inside kawoosh (through $KAWOOSH_SOCKET):
                                  --wait returns when the buffer is closed
   kawoosh ex LINE                run LINE as a : command there
   kawoosh theme                  print `dark` or `light`
+  kawoosh pick SOURCE [QUERY]    the picker on SOURCE (dirs, files, …);
+                                 prints what is picked, or exits 1
 
 Options:
   -h, --help                     print this and exit

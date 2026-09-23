@@ -339,6 +339,20 @@ pub enum Msg {
         value: Option<Setting>,
     },
     Chdir(PathBuf),
+    /// `kawoosh.term.send(text[, { prompt = true }])`: bytes typed into
+    /// the terminal pane with the keys; with `prompt`, only while its
+    /// shell sits at an empty prompt (OSC 133), refused with a message
+    /// otherwise.
+    TermSend {
+        text: String,
+        prompt: bool,
+    },
+    /// `kawoosh._answer(token, text)`: a socket request that waited on
+    /// Lua (`kawoosh pick`) answered — `None` for nothing picked.
+    Answer {
+        token: u64,
+        text: Option<String>,
+    },
     Edit {
         buffer: u64,
         range: std::ops::Range<usize>,
@@ -1281,6 +1295,35 @@ impl Runtime {
             self.queue
                 .borrow_mut()
                 .push(Msg::Echo(format!("on_settings: {e}")));
+        }
+    }
+
+    /// Tells the plugins the working directory moved
+    /// (`kawoosh.on_cwd`).
+    pub fn cwd_hook(&self, path: &std::path::Path) {
+        self.hook("_cwd", path.display().to_string(), "on_cwd");
+    }
+
+    /// Hands a socket's `kawoosh pick SOURCE [QUERY]` to the picker,
+    /// which answers `token` through `kawoosh._answer`.
+    pub fn pick_hook(&self, token: u64, source: &str, query: &str) {
+        self.hook("_pick_request", (token, source, query), "pick");
+    }
+
+    /// Calls `kawoosh.<name>(args)`, an error said as `what: …`.
+    fn hook(&self, name: &str, args: impl mlua::IntoLuaMulti, what: &str) {
+        let Ok(f) = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Function>(name))
+        else {
+            return;
+        };
+        if let Err(e) = f.call::<()>(args) {
+            self.queue
+                .borrow_mut()
+                .push(Msg::Echo(format!("{what}: {e}")));
         }
     }
 
@@ -3602,6 +3645,28 @@ fn seed(
         })?,
     )?;
     k.set("fs", fs)?;
+    // ---- `kawoosh.term`: the terminal pane with the keys.
+    let term = lua.create_table()?;
+    let qq = q(queue);
+    term.set(
+        "send",
+        lua.create_function(move |_, (text, opts): (String, Option<Table>)| {
+            let prompt = opts
+                .and_then(|t| t.get::<Option<bool>>("prompt").ok().flatten())
+                .unwrap_or(false);
+            qq.borrow_mut().push(Msg::TermSend { text, prompt });
+            Ok(())
+        })?,
+    )?;
+    k.set("term", term)?;
+    let qq = q(queue);
+    k.set(
+        "_answer",
+        lua.create_function(move |_, (token, text): (u64, Option<String>)| {
+            qq.borrow_mut().push(Msg::Answer { token, text });
+            Ok(())
+        })?,
+    )?;
     let f: mlua::Function = k.get::<Table>("fs")?.get("_watch")?;
     k.set("_fs_watch", f)?;
 

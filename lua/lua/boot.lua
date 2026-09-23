@@ -159,6 +159,27 @@ function kawoosh._settings()
   end
 end
 
+-- kawoosh.on_cwd(fn): `fn(path)` whenever the working directory moved
+-- — `:cd`, a listing's `<leader>cd`, `kawoosh.fs.chdir` — once a frame,
+-- after it moved; not for the directory kawoosh started in.
+kawoosh._cwd_hooks = {}
+function kawoosh.on_cwd(fn)
+  kawoosh._cwd_hooks[#kawoosh._cwd_hooks + 1] = fn
+end
+
+function kawoosh._cwd(path)
+  for _, fn in ipairs(kawoosh._cwd_hooks) do
+    local ok, err = pcall(fn, path)
+    if not ok then kawoosh.echo("on_cwd: " .. tostring(err)) end
+  end
+end
+
+-- kawoosh.term.send(text[, { prompt = true }]): `text` typed into the
+-- terminal pane with the keys, as the keyboard would (`\r` runs a
+-- line); with `prompt`, only while its shell sits at an empty prompt —
+-- marked by OSC 133 and nothing typed since — else refused with a
+-- message saying why.
+--
 -- kawoosh.on_restore(fn): `fn(name, buffer)` for every scratch buffer a
 -- session brings back — empty, named as it was — so the plugin that
 -- made it can fill it again (`open_scratch` by that name, `show =

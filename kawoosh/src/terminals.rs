@@ -711,6 +711,14 @@ if [[ "$TERM_PROGRAM" == kawoosh ]]; then
   PS0=$'\e]133;C'
   PS1="$PS1"$'\[\e]133;B\]'
 fi
+
+# ── Directory jumps in kawoosh's picker (`kawoosh pick dirs`: zoxide's
+# directories, the pick on stdout, status 1 when closed). `<C-S-z>` in
+# the pane does the same at an empty prompt, with the marks above.
+# nushell:
+def --env zk [...q] { cd (^$env.KAWOOSH_BIN pick dirs ...$q) }
+# zsh, bash:
+zk() { local d; d=$("$KAWOOSH_BIN" pick dirs "$@") && cd "$d"; }
 "#;
 
 #[cfg(test)]

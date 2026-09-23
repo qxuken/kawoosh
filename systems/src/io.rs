@@ -369,6 +369,13 @@ pub enum Request {
     Ex { line: String },
     /// Which base the theme is on: answered `dark` or `light`.
     Theme,
+    /// The picker on `source`, `query` typed: answered with what is
+    /// picked — a directory, a file's path — or nothing, closed.
+    Pick {
+        source: String,
+        #[serde(default)]
+        query: String,
+    },
 }
 
 /// A socket request with the channel its reply goes down.
