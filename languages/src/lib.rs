@@ -44,7 +44,6 @@ mod toml;
 mod tsx;
 mod typescript;
 mod yaml;
-mod zsh;
 
 /// The language of a file nothing claims: [`text::LANGUAGE`]'s name.
 pub const FALLBACK: &str = "text";
@@ -64,7 +63,6 @@ pub static LANGUAGES: &[&Language] = &[
     &gomod::LANGUAGE,
     &lua::LANGUAGE,
     &bash::LANGUAGE,
-    &zsh::LANGUAGE,
     &nu::LANGUAGE,
     &c::LANGUAGE,
     &cpp::LANGUAGE,
@@ -969,7 +967,7 @@ mod tests {
         assert_eq!(d("go.mod", ""), "gomod");
         assert_eq!(d("go.sum", ""), "text");
         assert_eq!(d(".git/COMMIT_EDITMSG", ""), "gitcommit");
-        assert_eq!(d("/home/u/.zshrc", ""), "zsh");
+        assert_eq!(d("/home/u/.zshrc", ""), "bash");
         assert_eq!(d("tsconfig.json", ""), "jsonc");
         assert_eq!(d("package.json", ""), "json");
         assert_eq!(d("a.tsx", ""), "tsx");
@@ -978,7 +976,7 @@ mod tests {
         assert_eq!(d("run", "#!/usr/bin/env nu"), "nu");
         assert_eq!(d("run", "#!/usr/bin/env -S python3 -u"), "python");
         assert_eq!(d("run", "#!/bin/sh"), "bash");
-        assert_eq!(d("run", "#!/bin/zsh -f"), "zsh");
+        assert_eq!(d("run", "#!/bin/zsh -f"), "bash");
         assert_eq!(d("run", "# not a shebang"), "text");
         // The name wins over the extension, the extension over the line.
         assert_eq!(d("x.py", "#!/bin/bash"), "python");

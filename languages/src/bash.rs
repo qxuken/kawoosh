@@ -1,11 +1,13 @@
-//! Bash — and POSIX `sh`, which its grammar reads too.
+//! Bash — and POSIX `sh` and zsh, which its grammar reads too. Zsh
+//! had a grammar of its own, 4.7 MB of the binary for what bash's
+//! reads all but the zsh-only syntax of.
 
 use crate::Language;
 
 pub static LANGUAGE: Language = Language {
     name: "bash",
-    aliases: &["sh", "shell"],
-    extensions: &["sh", "bash"],
+    aliases: &["sh", "shell", "zsh"],
+    extensions: &["sh", "bash", "zsh"],
     filenames: &[
         ".bashrc",
         ".bash_profile",
@@ -14,8 +16,13 @@ pub static LANGUAGE: Language = Language {
         ".bash_aliases",
         ".profile",
         "PKGBUILD",
+        ".zshrc",
+        ".zshenv",
+        ".zprofile",
+        ".zlogin",
+        ".zlogout",
     ],
-    shebangs: &["bash", "sh", "dash", "ash"],
+    shebangs: &["bash", "sh", "dash", "ash", "zsh"],
     grammar: crate::grammar!("bash", grammar),
 };
 

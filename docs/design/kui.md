@@ -966,8 +966,8 @@ thread loads a grammar the first time a job names it and reads nothing
 else; `doc` sets no language — the shell detects on open, and again by
 the `#!` line when a big file's text lands.
 
-Twenty-six entries: `text` (the fallback), rust, toml, css,
-javascript, typescript, tsx, go, gomod, lua, bash (and `sh`), zsh, nu,
+Twenty-five entries: `text` (the fallback), rust, toml, css,
+javascript, typescript, tsx, go, gomod, lua, bash (and `sh` and zsh), nu,
 c, cpp, python, json, jsonc, yaml, sql, regex, jsdoc, diff, gitcommit,
 markdown, markdown_inline. Two grammars are git pins (nu and go.mod
 publish no crate on the current binding); `gomod`'s and `diff`'s

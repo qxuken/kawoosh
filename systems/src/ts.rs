@@ -857,17 +857,6 @@ mod tests {
                 ],
             ),
             (
-                "zsh",
-                "# c\nif [[ -f x ]]; then echo \"hi\"; fi\nfoo() { ls; }\n",
-                &[
-                    ("# c", Token::Comment),
-                    ("if", Token::Keyword),
-                    ("echo", Token::Function),
-                    ("\"hi\"", Token::String),
-                    ("foo()", Token::Function),
-                ],
-            ),
-            (
                 "nu",
                 "# c\ndef greet [name: string] { $\"hi ($name)\" }\nlet x = 1\n",
                 &[

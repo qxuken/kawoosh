@@ -47,7 +47,6 @@ tree-sitter-typescript = "0.23"
 tree-sitter-go = "0.25"
 tree-sitter-lua = "0.5"
 tree-sitter-bash = "0.25"
-tree-sitter-zsh = "0.63"
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "4f577aaa735154f934594b598a69ed7b1b707cf6" }
 tree-sitter-c = "0.24"
 tree-sitter-cpp = "0.23"
