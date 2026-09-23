@@ -488,3 +488,21 @@ fn a_ghost_mid_line_sits_at_the_caret() {
         "after `wa`, before `|`: {ghost} in {row:?}"
     );
 }
+
+/// A table's row with no cells — a lone `|`, on the way to a row — is
+/// a line tall, so the numbers beside the table stay on their rows.
+#[test]
+fn a_row_with_no_cells_keeps_its_line() {
+    let dir = fixture("lone");
+    std::fs::write(
+        dir.join("doc.md"),
+        "# T\n\n| a | b |\n| - | - |\n| c | d |\n|\n| e | f |\n",
+    )
+    .unwrap();
+    let (mut d, mut app) = launch(&dir, 900.0);
+    d.press(&mut app, "gg");
+    settle(&mut d, &mut app);
+    let number = rect_of_text(&d, "7").expect("line 7's number").1;
+    let e = rect_of_text(&d, "e").expect("the row after").1;
+    assert_eq!(number, e, "line 7's number beside its row");
+}

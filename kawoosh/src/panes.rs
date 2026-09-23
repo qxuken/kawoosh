@@ -1055,7 +1055,7 @@ impl Kawoosh {
             let buf = &self.ed.buffers[buf_id];
             let raw: std::collections::HashSet<usize> =
                 v.sels.iter().map(|s| buf.line_of(s.head)).collect();
-            let mut tables = HashMap::new();
+            let mut tables = crate::markdown::Tables::default();
             for ln in v.top..last {
                 let r =
                     crate::markdown::line(buf, ln, raw.contains(&ln), &style, tabstop, &mut tables);
@@ -1181,7 +1181,7 @@ impl Kawoosh {
                     md_ghosts.insert(*ln, (table_row(r, img), r.drawn.text.clone()));
                 }
             }
-            md_columns = tables;
+            md_columns = tables.columns;
         }
         let md_cell_h: HashMap<usize, f32> = md_cells.iter().map(|(l, t)| (*l, t.height)).collect();
         let md_table_left: HashMap<usize, f32> = self
@@ -1535,10 +1535,10 @@ impl Kawoosh {
                                         md_seen.push((ln, r.h + edges));
                                     }
                                     // Images side by side, each at most its
-                                    // share of the row, by aspect.
+                                    // share of the row, by aspect — `width`
+                                    // is the text's, the gutter already out.
                                     let n = img.len().max(1) as f32;
-                                    let max_w =
-                                        ((width - gutter - 16.0 - 8.0 * (n - 1.0)) / n).max(40.0);
+                                    let max_w = ((width - 16.0 - 8.0 * (n - 1.0)) / n).max(40.0);
                                     let form = rows::RowForm {
                                         key: label.clone(),
                                         scale: *scale,
@@ -1701,9 +1701,13 @@ impl Kawoosh {
                                                         if *cells {
                                                             emit(ui, l, true, edges);
                                                         } else {
+                                                            // One line: the caret's source,
+                                                            // or a row with no cells (`|`),
+                                                            // which draws nothing and is
+                                                            // still its number's height.
                                                             ui.with(
                                                                 NodeSpec::column()
-                                                                    .height(Sizing::Fit)
+                                                                    .height(Sizing::Fixed(lh))
                                                                     .min_height(kui::Min::FIT),
                                                                 |ui| emit(ui, l, true, edges),
                                                             );

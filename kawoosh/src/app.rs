@@ -1508,7 +1508,15 @@ impl Kawoosh {
                 .iter()
                 .any(|s| buf.line_of(s.head) == ln);
             let style = self.markdown_style(self.dark);
-            crate::markdown::line(buf, ln, raw, &style, tabstop, &mut HashMap::new()).drawn
+            crate::markdown::line(
+                buf,
+                ln,
+                raw,
+                &style,
+                tabstop,
+                &mut crate::markdown::Tables::default(),
+            )
+            .drawn
         } else {
             Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0, None).0
         };

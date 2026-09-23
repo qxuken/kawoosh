@@ -325,7 +325,9 @@ After a day's use (2026-09-23), five more:
   the paragraph and no newline. `emit_line` answers whether it drew the
   ghost, the pane keeps it (`Kawoosh::ghost_shown`), and the keys accept
   only then — in a paragraph `<CR>` is a newline; on a table's source
-  row and in code, where the ghost is drawn, it completes as before.
+  row, where the ghost is drawn, it completes as before. A code block's
+  rows wrap by glyph and draw none either, so a fence in the rendered
+  buffer does not complete in place (`<C-x>` lists the candidates).
 - **Prose wraps at the width of this frame.** A wrapped row's text was a
   box fixed at the pane's width as last frame's layout recorded it, and
   a pane drawn for the first time — a restored tab shown, a split made —

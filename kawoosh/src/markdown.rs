@@ -194,7 +194,10 @@ pub fn render(
             &mut marks,
         );
     }
-    folds.sort_by_key(|(r, _)| (r.start, r.end));
+    // By start, an insertion first and then the longest: of two folds
+    // from one byte the enclosing one stands — a table's image cell
+    // folded whole, not its `!` alone.
+    folds.sort_by_key(|(r, _)| (r.start, !r.is_empty(), std::cmp::Reverse(r.end)));
     // Disjoint: a later fold inside an earlier one is dropped.
     let mut kept: Vec<(Range<usize>, String)> = Vec::with_capacity(folds.len());
     for f in folds {
@@ -274,8 +277,9 @@ fn prose(
                 .rev()
                 .take_while(|b| *b == b'#')
                 .count();
+            // `## ` alone: nothing after the marker, and no closing run.
             if closing > 0
-                && closing < trimmed - (after + ws)
+                && closing < trimmed.saturating_sub(after + ws)
                 && src[..trimmed - closing].ends_with(' ')
             {
                 let start = src[..trimmed - closing].trim_end().len();
@@ -568,7 +572,7 @@ pub fn line(
     raw: bool,
     style: &Style,
     tabstop: usize,
-    tables: &mut HashMap<usize, usize>,
+    tables: &mut Tables,
 ) -> Rendered {
     let range = buf.line_range(ln);
     let src = buf.slice(range.clone());
@@ -589,12 +593,23 @@ pub fn line(
     let mut first_line = None;
     let columns = table.then(|| {
         let is_table = |l: usize| is_table_line(buf, l);
-        let mut first = ln;
-        while first > 0 && ln - first < TABLE_MAX && is_table(first - 1) {
-            first -= 1;
-        }
+        // The row above's table, when it was read this frame — the rows
+        // come top down, so a table is walked back once, from its first
+        // row in sight, and every row after shares its first line.
+        let first = match ln.checked_sub(1).and_then(|l| tables.first_of.get(&l)) {
+            Some(&f) => f,
+            None => {
+                let mut first = ln;
+                while first > 0 && ln - first < TABLE_MAX && is_table(first - 1) {
+                    first -= 1;
+                }
+                first
+            }
+        };
+        tables.first_of.insert(ln, first);
         first_line = Some(first);
         tables
+            .columns
             .entry(first)
             .or_insert_with(|| {
                 let mut rows = Vec::new();
@@ -622,7 +637,15 @@ pub fn line(
     r
 }
 
-/// The most rows a table is read for its columns.
+/// What a frame has read of its tables: each table row's first line,
+/// and each table's columns by its first line.
+#[derive(Default)]
+pub struct Tables {
+    pub first_of: HashMap<usize, usize>,
+    pub columns: HashMap<usize, usize>,
+}
+
+/// The most rows a table is walked back and read for its columns.
 const TABLE_MAX: usize = 500;
 
 /// Line `ln`'s structure runs, line-relative, its newline included.
@@ -1044,6 +1067,9 @@ mod tests {
         );
         assert!(r.marks.iter().any(|(rg, m)| *rg == (3..5) && m.underline));
         assert!(r.marks.iter().any(|(rg, m)| *rg == (6..9) && m.italic));
+        // A heading with nothing after its marker.
+        let empty = render("## ", &[], &[(0..4, Block::H2)], false, 0, &style(), 4);
+        assert_eq!(empty.drawn.text, "");
         // Raw: the source, its size kept.
         let raw = render(src, &syntax, &blocks, true, 0, &style(), 4);
         assert_eq!(raw.drawn.text, src);
@@ -1086,6 +1112,21 @@ mod tests {
         assert_eq!(r.cells, [Cell::Text(0..1), Cell::Image(0)]);
         assert_eq!(r.images, [("y.png".to_string(), "b".to_string())]);
         assert_eq!(r.drawn.text, "x");
+        // An image cell with no pipe before it: folded whole, so the
+        // drawn text is the cells' and a click maps through them.
+        let row = "![a](x.png) | b";
+        let r = render(
+            row,
+            &[(0..1, Token::Punctuation)],
+            &t(row),
+            false,
+            2,
+            &style(),
+            4,
+        );
+        assert_eq!(r.drawn.text, "b");
+        assert_eq!(r.cells, [Cell::Image(0), Cell::Text(0..1)]);
+        assert_eq!(r.drawn.to_src(0), 14);
         // The caret's row is its source.
         let r = render(&rows[0], &[], &t(&rows[0]), true, 2, &style(), 4);
         assert_eq!(r.drawn.text, rows[0]);
