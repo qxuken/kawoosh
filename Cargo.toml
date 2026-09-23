@@ -79,6 +79,13 @@ criterion = "0.8.2"
 bitflags = { version = "2.13.1", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "deref", "deref_mut"] }
 
+[profile.release]
+# Symbols, one codegen unit and fat LTO: 48 MB down to 39 MB. Half of
+# what is left is grammar parse tables, which no flag here shrinks.
+strip = true
+lto = "fat"
+codegen-units = 1
+
 [profile.dev]
 opt-level = 1
 
