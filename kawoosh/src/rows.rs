@@ -954,7 +954,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
     // Every boundary a span must break at, on grapheme boundaries only:
     // a flag's two indicators or a letter and its mark shape as one
     // cluster, and a cut inside one would draw its halves.
+    let ghost_at = line.ghost.map(|(g, _)| g.min(len));
     let mut cuts: Vec<usize> = vec![0, len];
+    cuts.extend(ghost_at);
     for r in line
         .selected
         .iter()
@@ -1054,8 +1056,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 mark,
             }
         };
+        // Neighbours that agree merge — except across the ghost's byte,
+        // where the text is split for the ghost to sit between: merged,
+        // a caret inside a run put the ghost before the whole run.
         match segs.last_mut() {
-            Some((r, l)) if *l == look && r.end == a => r.end = b,
+            Some((r, l)) if *l == look && r.end == a && Some(a) != ghost_at => r.end = b,
             _ => segs.push((a..b, look)),
         }
     }

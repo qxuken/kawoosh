@@ -449,3 +449,42 @@ fn enter_takes_no_ghost_it_cannot_see() {
     );
     assert_eq!(buf.slice(buf.line_range(ln)), "");
 }
+
+/// The completion's ghost sits at the caret in the middle of a line —
+/// on a table's source row, before its last pipe — and not at the line's
+/// start, where a text of one look used to put it.
+#[test]
+fn a_ghost_mid_line_sits_at_the_caret() {
+    let dir = fixture("ghostmid");
+    std::fs::write(
+        dir.join("doc.md"),
+        "# T\n\nway wait\n\n| a | b |\n| - | - |\n| c | w|\n",
+    )
+    .unwrap();
+    let (mut d, mut app) = launch(&dir, 900.0);
+    d.press(&mut app, "7G$");
+    d.press(&mut app, "i");
+    settle(&mut d, &mut app);
+    d.keys(&mut app, "a");
+    settle(&mut d, &mut app);
+    let row = d
+        .core
+        .nodes()
+        .iter()
+        .find(|n| n.text.as_deref().is_some_and(|t| t.starts_with("| c | wa")))
+        .map(|n| (n.rect.x, n.rect.w, n.text.clone().unwrap()))
+        .expect("the source row");
+    let ghost = d
+        .core
+        .nodes()
+        .iter()
+        .filter(|n| n.text.as_deref().is_some_and(|t| t == "y" || t == "it"))
+        .map(|n| n.rect.x)
+        .next()
+        .expect("a ghost");
+    let cell = row.1 / row.2.len() as f32;
+    assert!(
+        (ghost - (row.0 + 8.0 * cell)).abs() < 1.0,
+        "after `wa`, before `|`: {ghost} in {row:?}"
+    );
+}
