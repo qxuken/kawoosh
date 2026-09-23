@@ -293,6 +293,65 @@ fn snippet(text: &text_buffer::Buffer, range: Range<usize>) -> String {
     out
 }
 
+/// The forms `path copy` puts on the clipboard, each with its doc.
+pub const PATH_FORMS: [(&str, &str); 6] = [
+    (
+        "relative",
+        "copy the file's path from the working directory (`<leader>yp`)",
+    ),
+    ("absolute", "copy the file's absolute path (`<leader>yP`)"),
+    (
+        "dir",
+        "copy the file's directory from the working directory (`<leader>yd`)",
+    ),
+    (
+        "dir absolute",
+        "copy the file's absolute directory (`<leader>yD`)",
+    ),
+    ("name", "copy the file's name (`<leader>yn`)"),
+    (
+        "stem",
+        "copy the file's name without its extension (`<leader>yN`)",
+    ),
+];
+
+/// `path` in a [`PATH_FORMS`] form, relative ones to `cwd`: under it,
+/// the rest of the path (`.` for `cwd` itself), else the path whole, as
+/// vim's `%:.` does.
+pub fn path_form(cwd: &Path, path: &Path, form: &str) -> Result<String, String> {
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    // Under the working directory as spelled, else as the disk resolves
+    // both — the editor's `/tmp/x` is the process's `/private/tmp/x`.
+    let under = |base: &Path, p: &Path| {
+        p.strip_prefix(base)
+            .ok()
+            .map(|r| match r.as_os_str().is_empty() {
+                true => PathBuf::from("."),
+                false => r.to_path_buf(),
+            })
+    };
+    let rel = |p: &Path| {
+        under(cwd, p)
+            .or_else(|| under(&cwd.canonicalize().ok()?, &p.canonicalize().ok()?))
+            .unwrap_or_else(|| p.to_path_buf())
+    };
+    let dir = abs.parent().unwrap_or(&abs).to_path_buf();
+    let out = match form {
+        "relative" => rel(&abs),
+        "absolute" => abs.clone(),
+        "dir" => rel(&dir),
+        "dir absolute" => dir,
+        "name" => abs.file_name().map(PathBuf::from).unwrap_or_default(),
+        "stem" => abs.file_stem().map(PathBuf::from).unwrap_or_default(),
+        other => return Err(format!("no path form {other}")),
+    };
+    Ok(out.display().to_string())
+}
+
 /// What the engine asks the shell to do — things only the shell can.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
@@ -2379,6 +2438,36 @@ impl Editor {
         self.after_prompt_key(view);
     }
 
+    /// Text the user asked copied that no range of a buffer held — a
+    /// path (`path copy`, `kawoosh.copy`): the register's newest, as a
+    /// yank's, and on the system clipboard. `from` is the buffer it was
+    /// asked from, for the memory pane.
+    pub fn copy_text(&mut self, text: String, from: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.memory.remember(Moment {
+            text: text.clone(),
+            linewise: false,
+            took: Took::Yank,
+            origin: None,
+            from: from.to_string(),
+            at: Instant::now(),
+            secret: false,
+        });
+        self.effects.push(Effect::SetClipboard(text));
+    }
+
+    /// The view's file in the form `path copy` names: `relative` to the
+    /// working directory (vim's `%:.` — absolute when outside it),
+    /// `absolute`, its directory the same two ways (`dir`, `dir
+    /// absolute`; the working directory itself is `.`), its `name`, or
+    /// its `stem` (the name without its last extension).
+    pub fn path_form(&self, view: ViewId, form: &str) -> Result<String, String> {
+        let path = self.percent_path(view)?;
+        path_form(&self.cwd, &path, form)
+    }
+
     /// A text on the system clipboard that did not come from here —
     /// copied in another program, or from a terminal's selection — made
     /// the register's newest, so `p` puts it; false when it is already
@@ -2722,4 +2811,27 @@ fn commands_op_range(
     count: usize,
 ) -> (std::ops::Range<usize>, bool) {
     commands::op_range(buf, s, kind, count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::path_form;
+    use std::path::Path;
+
+    #[test]
+    fn path_forms_are_vims() {
+        let cwd = Path::new("/p/k");
+        let f = |p: &str, form: &str| path_form(cwd, Path::new(p), form).unwrap();
+        assert_eq!(f("/p/k/src/main.rs", "relative"), "src/main.rs");
+        assert_eq!(f("src/main.rs", "absolute"), "/p/k/src/main.rs");
+        assert_eq!(f("/p/k/src/main.rs", "dir"), "src");
+        assert_eq!(f("/p/k/a.rs", "dir"), ".");
+        assert_eq!(f("/p/k/src/main.rs", "dir absolute"), "/p/k/src");
+        assert_eq!(f("/p/k/src/main.rs", "name"), "main.rs");
+        assert_eq!(f("/p/k/src/lib.test.rs", "stem"), "lib.test");
+        // Outside the working directory, relative is the path whole.
+        assert_eq!(f("/etc/hosts", "relative"), "/etc/hosts");
+        assert_eq!(f("/etc/hosts", "dir"), "/etc");
+        assert!(path_form(cwd, Path::new("/a"), "nope").is_err());
+    }
 }

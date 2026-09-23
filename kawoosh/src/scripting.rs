@@ -945,6 +945,7 @@ impl Kawoosh {
             | Msg::Edits { .. }
             | Msg::SetSelections { .. }
             | Msg::Echo(_)
+            | Msg::Copy(_)
             | Msg::Ex(_) => {
                 // Editor messages already applied; here only when there
                 // was no view at all.

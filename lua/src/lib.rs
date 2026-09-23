@@ -180,6 +180,9 @@ pub enum Msg {
     },
     Ex(String),
     Echo(String),
+    /// `kawoosh.copy(text)`: the register's newest, as a yank's, and on
+    /// the system clipboard — text no buffer's range held, a path.
+    Copy(String),
     /// `kawoosh.open(path, { line =, col =, split = })`: the path
     /// opened in an editor pane — the focused one, or one split beside
     /// (`vsplit`), below (`split`) or in a new tab (`tab`) — the caret
@@ -378,6 +381,7 @@ impl Msg {
                 | Msg::Edits { .. }
                 | Msg::SetSelections { .. }
                 | Msg::Echo(_)
+                | Msg::Copy(_)
                 | Msg::Ex(_)
                 | Msg::Fact { .. }
         )
@@ -1593,6 +1597,15 @@ impl Runtime {
                     }
                 }
                 Msg::Echo(s) => ed.message = s,
+                Msg::Copy(text) => {
+                    let from = ed
+                        .views
+                        .get(view)
+                        .and_then(|v| ed.buffers.get(v.buffer))
+                        .map(|b| b.name.clone())
+                        .unwrap_or_default();
+                    ed.copy_text(text, &from);
+                }
                 Msg::Ex(line) => ed.execute(view, &line),
                 Msg::Fact { name, on } => ed.fact(&name, on),
                 other => rest.push(other),
@@ -2037,6 +2050,17 @@ fn seed(
         "cmd",
         lua.create_function(move |_, line: String| {
             qq.borrow_mut().push(Msg::Ex(line));
+            Ok(())
+        })?,
+    )?;
+    // ---- `kawoosh.copy(text)`: onto the system clipboard and into the
+    // register, as a yank puts text — what `<leader>yp` in a listing
+    // copies the entry's path with.
+    let qq = q(queue);
+    k.set(
+        "copy",
+        lua.create_function(move |_, text: String| {
+            qq.borrow_mut().push(Msg::Copy(text));
             Ok(())
         })?,
     )?;
@@ -3375,6 +3399,20 @@ fn seed(
     fs.set(
         "basename",
         lua.create_function(|_, p: String| Ok(kfs::basename(std::path::Path::new(&p))))?,
+    )?;
+    // `fs.form(path, form)`: the path as `path copy` would copy it —
+    // `relative` (to the working directory), `absolute`, `dir`, `dir
+    // absolute`, `name`, `stem`; nil and the reason for another form.
+    fs.set(
+        "form",
+        lua.create_function(|_, (p, form): (String, String)| {
+            Ok(
+                match kawoosh_editor::path_form(&kfs::cwd(), std::path::Path::new(&p), &form) {
+                    Ok(s) => (Some(s), None),
+                    Err(why) => (None, Some(why)),
+                },
+            )
+        })?,
     )?;
     fs.set(
         "home",

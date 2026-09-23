@@ -1883,6 +1883,29 @@ pub fn install(ed: &mut Editor) {
             }
         },
     );
+    // `<leader>y*`: the file's path onto the clipboard and into the
+    // register (`Editor::copy_text`), in the form the word after `path
+    // copy` names — a private buffer's too, since a path is not the
+    // secret. Bare, `path copy` is `path copy relative`. A `dir`
+    // listing binds the same keys to its entry's.
+    let copy = |ed: &mut Editor, view: ViewId, form: &str| match ed.path_form(view, form) {
+        Ok(p) => {
+            let from = ed.buffers[ed.views[view].buffer].name.clone();
+            ed.message = format!("copied {p}");
+            ed.copy_text(p, &from);
+        }
+        Err(why) => ed.message = why,
+    };
+    ed.register_spec(
+        Spec::new("path copy").doc("copy the file's path from the working directory"),
+        move |ed, ctx| copy(ed, ctx.view, "relative"),
+    );
+    for (form, doc) in crate::PATH_FORMS {
+        ed.register_spec(
+            Spec::new(&format!("path copy {form}")).doc(doc),
+            move |ed, ctx| copy(ed, ctx.view, form),
+        );
+    }
     // `:e path` opens; `:e!` alone loads the disk's text into the
     // buffer as one undoable change, so what was unsaved is a `u` away
     // — a draft restored over a file that moved on disk, looked at
@@ -3224,6 +3247,12 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<A-7>", "memory pin 7"),
         ("<A-8>", "memory pin 8"),
         ("<A-9>", "memory pin 9"),
+        ("<leader>yp", "path copy relative"),
+        ("<leader>yP", "path copy absolute"),
+        ("<leader>yd", "path copy dir"),
+        ("<leader>yD", "path copy dir absolute"),
+        ("<leader>yn", "path copy name"),
+        ("<leader>yN", "path copy stem"),
         ("<leader>Q", "quit all"),
         ("<leader>?", "keys"),
     ];
@@ -3252,6 +3281,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>s", "search, lists"),
         ("<leader>w", "workspace"),
         ("<leader>c", "code"),
+        ("<leader>y", "copy the path"),
         ("g", "goto"),
         ("gs", "surround"),
         ("<C-w>", "panes, tabs, dock"),

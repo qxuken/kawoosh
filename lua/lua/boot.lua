@@ -361,6 +361,8 @@ end
 -- one beside, below, or in a new tab — the caret on the line.
 -- `kawoosh.buf.show(buffer[, { split = }])` the same for a buffer.
 -- kawoosh.cmdline(text): the command line opened with `text` on it.
+-- kawoosh.copy(text): onto the system clipboard and into the register,
+-- as a yank puts text — for what no buffer's range holds, a path.
 -- kawoosh.pass(): from a command a key ran, the key is not this
 -- command's here — the binding under it gets it (the next whose `when`
 -- holds), and a key that types, with none left, types; do nothing
@@ -381,6 +383,9 @@ end
 -- kawoosh.fs.walk(root, fn): every file under `root` as git sees it —
 -- `.gitignore`d, hidden and `.git` left out — relative to it, read on
 -- a thread of its own; `fn(paths)` when done, or `fn(nil, why)`.
+-- kawoosh.fs.form(path, form): the path as `path copy` copies it —
+-- "relative" (to the working directory, whole when outside it),
+-- "absolute", "dir", "dir absolute", "name", "stem".
 -- kawoosh.spawn(cmd, { cwd =, stdin =, on_lines = fn(lines), on_exit =
 -- fn(code) }) runs `cmd` through the shell — `stdin` written to it
 -- and closed, for text that must not be on a command line — and hands
