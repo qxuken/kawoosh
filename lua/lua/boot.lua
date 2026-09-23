@@ -334,6 +334,11 @@ end
 -- one beside, below, or in a new tab — the caret on the line.
 -- `kawoosh.buf.show(buffer[, { split = }])` the same for a buffer.
 -- kawoosh.cmdline(text): the command line opened with `text` on it.
+-- kawoosh.pass(): from a command a key ran, the key is not this
+-- command's here — the binding under it gets it (the next whose `when`
+-- holds), and a key that types, with none left, types; do nothing
+-- before passing. Two plugins share a key this way: `timed.lua`'s
+-- `<CR>` passes to pairs' outside a timed buffer.
 -- kawoosh.run(line): a command line run where the keyboard is, after
 -- what was asked before it (a pane closed, a file opened) — where
 -- `kawoosh.cmd` runs at once, inside the command that asked.

@@ -665,6 +665,8 @@ impl Kawoosh {
                 workspace,
                 query,
             } => self.ask_symbols(token, kawoosh_lua::id_of(buffer), workspace, query),
+            // A pass outside a command a key ran has no key to hand on.
+            Msg::Pass => {}
             Msg::Kill(token) => {
                 if let Some(p) = self.scripting.procs.values().find(|p| p.token == token) {
                     p.handle.kill();

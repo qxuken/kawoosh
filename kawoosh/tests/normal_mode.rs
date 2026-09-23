@@ -396,3 +396,68 @@ fn dot_and_macros_run_through_the_shell() {
     assert_eq!(text(&app), "\nb;\nc;\n");
     assert!(d.warnings().is_empty());
 }
+
+/// `ga` (align, roadmap step 21): `gaip=` lines a paragraph up on its
+/// first `=` — the text before it trimmed and padded, one space kept
+/// where any line had one — as one undo step; aligning again changes
+/// nothing; a selection takes `ga` too, and a line without the
+/// character stays.
+#[test]
+fn ga_aligns_lines_on_a_character() {
+    let mut app = Kawoosh::new("t", "a = 1\nbbb = 2\ncc=3\nno sign\n\nx: 1\nlonger: 2\n");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    d.keys(&mut app, "gaip=");
+    assert_eq!(
+        text(&app),
+        "a   = 1\nbbb = 2\ncc  =3\nno sign\n\nx: 1\nlonger: 2\n"
+    );
+    assert_eq!(app.ed.message, "aligned on =");
+    d.keys(&mut app, "gaip=");
+    assert_eq!(app.ed.message, "aligned on =");
+    assert_eq!(
+        text(&app),
+        "a   = 1\nbbb = 2\ncc  =3\nno sign\n\nx: 1\nlonger: 2\n",
+        "again: the same"
+    );
+    d.keys(&mut app, "u");
+    assert_eq!(
+        text(&app),
+        "a = 1\nbbb = 2\ncc=3\nno sign\n\nx: 1\nlonger: 2\n",
+        "one undo step"
+    );
+    // A selection, on `:` with no space before it anywhere.
+    d.keys(&mut app, "GkVk");
+    d.keys(&mut app, "ga:");
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Normal);
+    assert!(
+        text(&app).ends_with("x     : 1\nlonger: 2\n"),
+        "{}",
+        text(&app)
+    );
+}
+
+/// `<C-S-u>` in insert mode deletes the caret's whole line — `dd`
+/// without leaving insert mode, the line in the register (roadmap step
+/// 21; `<C-u>` still kills to the line's start).
+#[test]
+fn ctrl_shift_u_deletes_the_line_in_insert_mode() {
+    let mut app = Kawoosh::new("t", "one\ntwo\nthree\n");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    d.keys(&mut app, "jA");
+    d.key(
+        &mut app,
+        "u",
+        KeyMods {
+            ctrl: true,
+            shift: true,
+            ..KeyMods::default()
+        },
+    );
+    assert_eq!(text(&app), "one\nthree\n");
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Insert);
+    assert_eq!(app.ed.memory.head().map(|m| m.text.as_str()), Some("two\n"));
+    d.text(&mut app, "x");
+    assert_eq!(text(&app), "one\nxthree\n");
+}

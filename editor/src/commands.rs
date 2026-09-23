@@ -281,6 +281,20 @@ pub(crate) fn apply_operator(
             ed.surround.ranges = Some(ranges);
             ed.await_char("surround wrap");
         }
+        // `ga` + a motion: the lines it touches wait for the character
+        // to line up on (`align on`).
+        "align" => {
+            let buf = &ed.buffers[id];
+            let mut lines: Vec<usize> = Vec::new();
+            for (r, _) in &ranges {
+                let last = buf.line_of(r.end.saturating_sub(1).max(r.start));
+                lines.extend(buf.line_of(r.start)..=last);
+            }
+            lines.sort_unstable();
+            lines.dedup();
+            ed.surround.align = Some(lines);
+            ed.await_char("align on");
+        }
         "indent" | "dedent" => {
             let ts = ed.tabstop();
             let unit = if ed.expandtab() {
@@ -1555,6 +1569,18 @@ pub fn install(ed: &mut Editor) {
             .collect();
         ed.edit_each(ctx.view, edits, |start, _| Selection::point(start));
     });
+    // The whole line under each caret, from insert mode: `dd` without
+    // leaving it, the text into the register as `dd` puts it.
+    ed.register("delete line", |ed, ctx| {
+        let id = view(ed, ctx).buffer;
+        let buf = &ed.buffers[id];
+        let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
+            .sels
+            .iter()
+            .map(|s| (line_range_of_sel(buf, s, 0), true))
+            .collect();
+        apply_operator(ed, ctx.view, "delete", ranges);
+    });
     ed.register("delete word back", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
@@ -1683,6 +1709,12 @@ pub fn install(ed: &mut Editor) {
         operator(ed, ctx, "surround add")
     });
     ed.register_with_char("surround wrap", surround_wrap);
+    // Align (`ga`, easy-align's): an operator over lines that then
+    // takes the character to line them up on.
+    ed.register_kind("align", Kind::Operator, |ed, ctx| {
+        operator(ed, ctx, "align")
+    });
+    ed.register_with_char("align on", align_on);
     ed.register_with_char("surround delete", surround_delete);
     ed.register_with_char("surround replace", surround_replace);
     ed.register_with_char("surround replace with", surround_replace_with);
@@ -2068,6 +2100,10 @@ const DOCS: &[(&str, &str)] = &[
         "delete the word before the caret (insert's <C-w>)",
     ),
     (
+        "delete line",
+        "the whole line under each caret, into the register, staying in insert mode (`<C-S-u>`)",
+    ),
+    (
         "delete to start",
         "delete to the start of the line (insert's <C-u>)",
     ),
@@ -2170,6 +2206,11 @@ const DOCS: &[(&str, &str)] = &[
         "surround wrap",
         "the pair's character `surround add` waits for",
     ),
+    (
+        "align",
+        "line up what a motion or object covers, or the selection, on the character CHAR names (`ga`)",
+    ),
+    ("align on", "the character `align` lines the lines up on"),
     (
         "surround delete",
         "take the pair CHAR names off from around the caret (`gsd`)",
@@ -2606,6 +2647,60 @@ pub struct Surround {
     pub ranges: Option<Vec<Range<usize>>>,
     /// The pair `surround replace` will swap, waiting for the new one.
     pub from: Option<char>,
+    /// The lines `align` collected, waiting for the character to line
+    /// them up on.
+    pub align: Option<Vec<usize>>,
+}
+
+/// The character after `ga` and its motion: every collected line that
+/// holds it has its first one moved to the same column — the text
+/// before it trimmed of trailing space, then padded — with one space
+/// before it when any of them had space there, so `a = 1` and `bbb =
+/// 2` line up as `a   = 1`, and aligning again changes nothing. One
+/// edit per line, one undo step; the lines without it stay.
+fn align_on(ed: &mut Editor, ctx: &Ctx) {
+    let (Some(c), Some(lines)) = (ctx.arg_char, ed.surround.align.take()) else {
+        return;
+    };
+    let id = view(ed, ctx).buffer;
+    // The caret goes to the first line's first non-blank, as after any
+    // operator over lines.
+    let first = lines.first().copied().unwrap_or(0);
+    let buf = &ed.buffers[id];
+    // Each line with `c`: where its text before `c` ends, where `c` is,
+    // and how wide the text before it is.
+    let mut found: Vec<(Range<usize>, String, usize)> = Vec::new();
+    let mut spaced = false;
+    for ln in lines {
+        let range = buf.line_range(ln);
+        let text = buf.slice(range.clone());
+        let Some(at) = text.find(c) else { continue };
+        let before = text[..at].trim_end();
+        spaced |= before.len() < at;
+        let width = before.chars().count();
+        found.push((
+            range.start + before.len()..range.start + at,
+            before.to_string(),
+            width,
+        ));
+    }
+    if found.is_empty() {
+        ed.message = format!("no {c} in the lines");
+        return;
+    }
+    let target = found.iter().map(|f| f.2).max().unwrap_or(0) + usize::from(spaced);
+    let edits: Vec<(Range<usize>, String)> = found
+        .into_iter()
+        .map(|(gap, _, width)| (gap, " ".repeat(target - width)))
+        .filter(|(gap, pad)| buf.slice(gap.clone()) != *pad)
+        .collect();
+    if edits.is_empty() || ed.apply_edits(id, &edits) {
+        ed.message = format!("aligned on {c}");
+    }
+    let buf = &ed.buffers[id];
+    ed.views[ctx.view].sels =
+        crate::Selections::single(Selection::point(m::first_nonblank(buf, first)));
+    ed.set_mode(ctx.view, Mode::Normal);
 }
 
 /// The pair a surround character stands for: a bracket either way
@@ -3069,6 +3164,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("-", "dir"),
         // Surrounds under `gs`, as mini.surround's: add, delete, replace.
         ("gsa", "surround add"),
+        // Align, as vim-easy-align's: `gaip=`, or `ga=` over a selection.
+        ("ga", "align"),
         ("gsd", "surround delete"),
         ("gsr", "surround replace"),
         // `<leader>` groups: b buffers, t tabs, s search and lists, w
@@ -3271,6 +3368,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-Space>", "lsp complete"),
         ("<C-x>", "lsp candidates"),
         ("<C-u>", "delete to start"),
+        ("<C-S-u>", "delete line"),
         ("<C-s>", "write"),
         ("<D-s>", "write"),
         // The line under the caret moves and shifts from insert mode

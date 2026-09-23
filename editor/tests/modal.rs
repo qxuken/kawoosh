@@ -1150,7 +1150,7 @@ fn commands_are_specs_with_forms_conditions_and_subcommands() {
     assert_eq!(t.text().lines().next(), Some("abc "));
     assert_eq!(
         t.ed.commands.subcommands("delete"),
-        ["char", "forward", "to", "word"]
+        ["char", "forward", "line", "to", "word"]
     );
     assert!(t.ed.command_names().contains(&"page"));
     assert!(!t.ed.command_names().contains(&"page down"));

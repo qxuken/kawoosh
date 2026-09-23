@@ -624,6 +624,8 @@ pub struct Editor {
     pub commands: Registry,
     /// What passed through the hands, the `"` register its head.
     pub memory: Memory,
+    /// Set by a command that passes its key on ([`Editor::pass`]).
+    passed: bool,
     /// Keys of a multi-key sequence so far.
     pub pending: Vec<String>,
     /// A count typed before a command, e.g. `3` of `3j`.
@@ -697,6 +699,7 @@ impl Editor {
             awaiting_char: None,
             last_find: None,
             surround: Default::default(),
+            passed: false,
             fields: HashMap::new(),
             prompt: None,
             cwd: std::env::current_dir().unwrap_or_default(),
@@ -1335,26 +1338,38 @@ impl Editor {
     /// whose own `when` holds and whose command can run. None of them
     /// is the newest one's reason.
     pub fn pick_binding<'b>(&self, view: ViewId, bs: &'b [Binding]) -> Result<&'b Binding, String> {
-        let facts = self.facts(Some(view));
         let mut first = None;
         for b in bs {
-            let own = b.when.iter().find(|c| facts.holds(&c.fact) != c.holds);
-            let result = match own {
-                Some(c) => Err(match c.holds {
-                    true => format!("{} needs {}", b.line(), c.fact),
-                    false => format!("{} is not for {}", b.line(), c.fact),
-                }),
-                None => {
-                    let name = self.commands.resolve(&b.command, &b.args).name;
-                    self.can(Some(view), &name)
-                }
-            };
-            match result {
+            match self.binding_runs(view, b) {
                 Ok(()) => return Ok(b),
                 Err(reason) => first.get_or_insert(reason),
             };
         }
         Err(first.unwrap_or_else(|| "nothing bound".into()))
+    }
+
+    /// Whether binding `b` can run on `view`: its own `when` holds and
+    /// its command can run; else why not.
+    fn binding_runs(&self, view: ViewId, b: &Binding) -> Result<(), String> {
+        let facts = self.facts(Some(view));
+        match b.when.iter().find(|c| facts.holds(&c.fact) != c.holds) {
+            Some(c) => Err(match c.holds {
+                true => format!("{} needs {}", b.line(), c.fact),
+                false => format!("{} is not for {}", b.line(), c.fact),
+            }),
+            None => {
+                let name = self.commands.resolve(&b.command, &b.args).name;
+                self.can(Some(view), &name)
+            }
+        }
+    }
+
+    /// A command running for a key says the key is not its here
+    /// (`kawoosh.pass()`): the binding under this one gets it, and a
+    /// key that types, with none left, types. What it did before it
+    /// said so stays done; a command that passes should do nothing.
+    pub fn pass(&mut self) {
+        self.passed = true;
     }
 
     /// A mouse gesture as vim spells it — `<2-LeftMouse>`, a double
@@ -1378,26 +1393,43 @@ impl Editor {
         }
     }
 
-    /// Runs the binding [`Editor::pick_binding`] chooses, or says why
-    /// none can run.
-    pub fn run_bindings(&mut self, view: ViewId, bs: &[Binding], count: Option<usize>) {
-        match self.pick_binding(view, bs) {
-            Ok(b) => {
-                let b = b.clone();
-                self.run_step(view, &b.command, &b.args, count);
+    /// Runs the bindings of `bs` that can run here, newest first, until
+    /// one takes the key — a command that passes ([`Editor::pass`])
+    /// hands it to the next — or says why none can run. True when one
+    /// took it; false when none could, or every one passed.
+    pub fn run_bindings(&mut self, view: ViewId, bs: &[Binding], count: Option<usize>) -> bool {
+        let mut first = None;
+        let mut ran = false;
+        for b in bs {
+            if let Err(reason) = self.binding_runs(view, b) {
+                first.get_or_insert(reason);
+                continue;
             }
-            Err(reason) => {
-                self.pending_op = None;
-                self.message = reason;
+            ran = true;
+            let b = b.clone();
+            self.run_step(view, &b.command, &b.args, count);
+            if !std::mem::take(&mut self.passed) {
+                return true;
             }
         }
+        if !ran {
+            self.pending_op = None;
+            self.message = first.unwrap_or_else(|| "nothing bound".into());
+        }
+        false
     }
 
     /// [`Editor::run`] as a step of the stream: what `.` and a macro
     /// keep ([`repeat`]).
     fn run_step(&mut self, view: ViewId, name: &str, args: &[String], count: Option<usize>) {
+        self.passed = false;
         self.step_begin();
         self.run(view, name, args, count);
+        // A command that passed the key on is not a step: the binding
+        // that takes it is.
+        if self.passed {
+            return;
+        }
         self.step_end(
             view,
             Step::Command {
@@ -2182,8 +2214,9 @@ impl Editor {
                     // here, types: `:` bound for one field is a colon
                     // in every other, `(` for a plugin's buffers is a
                     // paren in the prompt.
-                    if !(plain && self.pick_binding(view, &bs).is_err()) {
-                        self.run_bindings(view, &bs, None);
+                    if !(plain && self.pick_binding(view, &bs).is_err())
+                        && (self.run_bindings(view, &bs, None) || !plain)
+                    {
                         return true;
                     }
                 }
@@ -2280,7 +2313,9 @@ impl Editor {
                     self.awaiting_char = Some((b, count));
                     return true;
                 }
-                self.run_step(view, &b.command, &b.args, count);
+                // The picked one and, when it passes, the ones under it.
+                let at = bs.iter().position(|x| *x == b).unwrap_or(0);
+                self.run_bindings(view, &bs[at..], count);
                 true
             }
         }

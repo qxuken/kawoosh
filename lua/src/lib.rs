@@ -118,6 +118,9 @@ pub enum Msg {
     },
     /// `kawoosh.kill(token)`: the process stopped early.
     Kill(u64),
+    /// `kawoosh.pass()`: the command running for a key hands the key
+    /// to the binding under it.
+    Pass,
     /// `kawoosh.lsp.symbols(opts, fn)`: symbols asked of `buffer`'s
     /// server, answered to `token` (`Runtime::symbols_answered`).
     Symbols {
@@ -1436,6 +1439,9 @@ impl Runtime {
         let mut rest = Vec::new();
         for m in msgs {
             match m {
+                // The key this command ran for is not its: the binding
+                // under it gets it (`Editor::pass`).
+                Msg::Pass => ed.pass(),
                 Msg::Edit {
                     buffer,
                     range,
@@ -1778,6 +1784,18 @@ fn seed(
                 stdin,
             });
             Ok(token)
+        })?,
+    )?;
+    // `kawoosh.pass()`, from a command a key ran: the key is not this
+    // command's here — the binding under it gets it, and a key that
+    // types, with none left, types. Two plugins on one key (`<CR>` in
+    // insert mode) each take it where it is theirs.
+    let qq = q(queue);
+    k.set(
+        "pass",
+        lua.create_function(move |_, ()| {
+            qq.borrow_mut().push(Msg::Pass);
+            Ok(())
         })?,
     )?;
     let qq = q(queue);
