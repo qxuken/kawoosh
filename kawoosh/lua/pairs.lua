@@ -1,6 +1,6 @@
--- Auto-closing brackets (docs/design/pairs.md): off until
--- `pairs.enabled` is set, and then `(` types `()` with the caret
--- between, `)` before a `)` steps over it, `<BS>` between a pair
+-- Auto-closing brackets (docs/design/pairs.md): on by default
+-- (`pairs.enabled = false` turns them off): `(` types `()` with the
+-- caret between, `)` before a `)` steps over it, `<BS>` between a pair
 -- deletes both, `<CR>` between `{` and `}` opens the block, and a
 -- quote pairs only where a quote can open. Contested in modal editors
 -- and cheap to get wrong with several carets, so a bundled plugin in

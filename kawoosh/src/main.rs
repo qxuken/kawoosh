@@ -139,6 +139,15 @@ Environment:
 
 fn main() -> anyhow::Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // Run as `kawoosh-edit` (a terminal's `$EDITOR`): `edit --wait`.
+    let named = std::env::args().next().and_then(|a| {
+        Path::new(&a)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+    });
+    if named.as_deref() == Some(kawoosh::EDITOR_SHIM) {
+        args.splice(0..0, ["edit".to_string(), "--wait".to_string()]);
+    }
     let after_dashes = args.first().is_some_and(|a| a == "--");
     match args.first().map(String::as_str) {
         Some("-h" | "--help") => {

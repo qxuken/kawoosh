@@ -1,7 +1,9 @@
 # Auto-closing brackets: a plugin, off by default
 
 Status: decided 2026-09-21 (roadmap step 9), built 2026-09-23 (step
-16; "Built" at the end says where it departed). The shape the
+16; "Built" at the end says where it departed); on by default since the
+same evening, at the user's word after a day's use — Decision 1's "off
+by default" is the one reversed, `pairs.enabled = false` the way out. The shape the
 roadmap's engine track recommended, with the three engine doors it
 needs named, and the first plugin whose acceptance test is a `kawoosh
 test` script (roadmap step 8). Each decision keeps the alternative it

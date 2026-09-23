@@ -183,6 +183,34 @@ entries they amend say how.
   restore drops an empty scratch's row no pane claims
   (`an_emptied_scratch_closed_does_not_come_back`).
 
+## From use, 2026-09-23, evening
+
+Steps 14–17 in use. All built the same evening; the notes they amend
+say how.
+
+- **The launcher** — less padding under the query; buffers before
+  plugins; the first `<Esc>` leaves insert mode and the second is the
+  scratch ([launcher.md](launcher.md) Decision 4); an empty `*scratch*`
+  no pane shows goes (`sweep_scratches`), whatever made it.
+- **The terminal** — a drag selects in the live pane: the grid is a
+  kui selection scope, and its own `on_click` (for ⌘-click on a path)
+  claimed the press first; it takes clicks only while ⌘ or ctrl is
+  held now, and a press that starts a selection takes the pane's focus
+  with it. `<C-S-x>` in copy mode goes back, as `q` does. A terminal's
+  `$EDITOR` is `kawoosh-edit`, the binary under a name that makes it
+  `edit --wait` (a symlink beside the socket), since nushell runs
+  `$EDITOR` as one program and found none called `kawoosh edit --wait`.
+- **Pairs** on by default ([pairs.md](pairs.md)).
+- **The markdown buffer** — tables scroll sideways on their own, a
+  line of images (a table's row of them too) is a row of images, a
+  `data:` URI is decoded, `gx` on `#anchor` goes to the heading, and a
+  heading typed a character at a time takes its size
+  ([markdown.md](markdown.md)'s "Built").
+- **`p` and the system clipboard** — a yank was on the clipboard
+  already; the register now follows it back: what another program put
+  there is read when the window or an editor pane gets the keys back,
+  and becomes the register's newest (`clipboard.system`, on).
+
 ## The list, by track
 
 Status marks: **done** (in the code), **partly** (the door is open, the

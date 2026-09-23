@@ -12,9 +12,11 @@
 -- files with the pins first (`<A-1>`…), and every file under the
 -- working directory once a query is typed. `<CR>` takes the cursor's
 -- row — the first, with no query, is the same buffer, so `<C-w>v<CR>`
--- is vim's split — `<Esc>` is a scratch, `<C-c>` closes the pane (the
--- split undone), `<C-n>` `<C-p>` `<Down>` `<Up>` `<C-j>` `<C-k>` walk
--- the rows, and `:` on an empty query is the command line.
+-- is vim's split — `<Esc>` leaves insert mode and `<Esc>` again is a
+-- scratch, `<C-c>` closes the pane (the split undone), `<C-n>` `<C-p>`
+-- `<Down>` `<Up>` `<C-j>` `<C-k>` (`j` `k` in normal mode) walk the
+-- rows, and `:` — in normal mode, or on an empty query — is the
+-- command line.
 --
 -- Hackable: `kawoosh.launcher.sections` is the list, data a config
 -- reorders or extends — `{ title =, source = "<picker source>" | items
@@ -120,8 +122,8 @@ end
 
 launcher.sections = {
   { title = "here", items = here_items },
-  { title = "plugins", items = plugin_items },
   { title = "buffers", source = "buffers", limit = 9 },
+  { title = "plugins", items = plugin_items },
   { title = "recent", items = recent_items, limit = 9 },
   { title = "files", source = "files", query = true },
 }
@@ -352,8 +354,8 @@ kawoosh.view(VIEW, function(ctx)
   end
   local h = (ctx.height or 0) > 0 and ctx.height or 400
   local w = (ctx.width or 0) > 0 and ctx.width or 800
-  local head_h = ROW_H + 12
-  L.budget = math.max(math.floor((h - TITLE_H - head_h - 24) / ROW_H), 1)
+  local head_h = ROW_H + 2
+  L.budget = math.max(math.floor((h - TITLE_H - head_h - 8) / ROW_H), 1)
   ensure_visible()
 
   local head = row {
@@ -409,7 +411,7 @@ kawoosh.view(VIEW, function(ctx)
       text(L.query ~= "" and "no matches" or "nothing here", { size = SIZE, color = t.muted }) }
   end
 
-  local body = column { width = "grow", max_width = MAX_W, height = "grow", gap = 4, pad = { y = 12 }, head, list }
+  local body = column { width = "grow", max_width = MAX_W, height = "grow", gap = 0, pad = { y = 4 }, head, list }
   return row { width = "grow", height = "grow", main_align = "center", clip = true, bg = t.bg, body }
 end, function(ev)
   if not L then return end
@@ -442,7 +444,6 @@ local at = { when = { FIELD_FACT } }
 local on_pane = { when = { PANE_FACT } }
 for _, mode in ipairs { "i", "n" } do
   kawoosh.map(mode, "<CR>", "launcher pick", at)
-  kawoosh.map(mode, "<Esc>", "launcher scratch", at)
   kawoosh.map(mode, "<C-c>", "launcher close", at)
   kawoosh.map(mode, "<Down>", "launcher next", at)
   kawoosh.map(mode, "<Up>", "launcher prev", at)
@@ -453,6 +454,13 @@ for _, mode in ipairs { "i", "n" } do
   kawoosh.map(mode, "<PageDown>", "launcher page down", at)
   kawoosh.map(mode, "<PageUp>", "launcher page up", at)
 end
+-- The first `<Esc>` is insert mode's, over the query; the second, in
+-- normal mode, is the answer: a scratch. `j` `k` walk the rows there,
+-- and `:` is the command line, whose `:e` fills the pane.
+kawoosh.map("n", "<Esc>", "launcher scratch", at)
+kawoosh.map("n", "j", "launcher next", at)
+kawoosh.map("n", "k", "launcher prev", at)
+-- `:` on an empty query is the command line from insert mode too.
 kawoosh.map("i", ":", "launcher colon", at)
 -- The pins, as from any pane: the Nth into this one.
 for n = 1, 9 do

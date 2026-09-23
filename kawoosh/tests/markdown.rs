@@ -81,15 +81,16 @@ fn rendered_rows_fold_the_marks_and_the_caret_line_is_raw() {
         "▎ a quoted line with emphasis",
         "rust",
         "fn main() {",
-        "│ name  │ value │",
-        "├───────┼───────┤",
-        "│ alpha │ 1     │",
-        "│ b     │ 22    │",
         "Setext heading",
         "The end.",
     ] {
         assert!(has(want), "{want:?} not among {rows:#?}");
     }
+    // A table is one block of its rows, which scrolls on its own.
+    assert!(
+        has("│ name  │ value │├───────┼───────┤│ alpha │ 1     ││ b     │ 22    │"),
+        "{rows:#?}"
+    );
     let para = rows
         .iter()
         .find(|r| r.starts_with("Some "))
@@ -231,4 +232,94 @@ fn the_toggle_the_write_and_gx() {
     d.frame(&mut app);
     let v = app.focused_view().unwrap();
     assert_eq!(app.ed.buffer_of(v).name, "other.md");
+}
+
+/// A heading typed a character at a time is drawn at its level as it
+/// becomes one: the structure is repainted over the whole line, so the
+/// first `#` is not left an h1 when the line turns h2.
+#[test]
+fn a_heading_typed_takes_its_size() {
+    let dir = fixture("typed");
+    let (mut d, mut app) = launch(&dir, 700.0);
+    d.press(&mut app, "gg");
+    d.keys(&mut app, "jo");
+    for c in ["#", "#", " ", "N", "e", "w"] {
+        d.text(&mut app, c);
+        settle(&mut d, &mut app);
+    }
+    let h2 = rect_of_text(&d, "A list").expect("an h2").3;
+    let typed = rect_of_text(&d, "## New")
+        .expect("the typed heading, raw")
+        .3;
+    assert_eq!(typed, h2, "an h2's size, not an h1's");
+}
+
+/// A table wider than the pane scrolls sideways on its own — the wheel
+/// over it moves it and nothing else; a row of images is images side by
+/// side; `gx` on an anchor goes to its heading.
+#[test]
+fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
+    let dir = fixture("wide");
+    let (mut d, mut app) = launch(&dir, 700.0);
+    d.press(&mut app, "gg");
+    settle(&mut d, &mut app);
+    let header = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| {
+                n.text
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("│ a very long"))
+            })
+            .map(|n| n.rect)
+    };
+    let before = header(&d).expect("the wide table's header");
+    let para_x = rect_of_text(&d, "The end.").unwrap().0;
+    assert!(before.w > 700.0, "wider than the pane: {before:?}");
+    d.wheel(&mut app, before.x + 50.0, before.y + 5.0, -120.0, 0.0);
+    for _ in 0..4 {
+        d.frame(&mut app);
+    }
+    let after = header(&d).unwrap();
+    assert!(
+        after.x < before.x - 50.0,
+        "the table moved: {before:?} → {after:?}"
+    );
+    assert_eq!(
+        rect_of_text(&d, "The end.").unwrap().0,
+        para_x,
+        "and nothing else did"
+    );
+    let images: Vec<(f32, f32)> = d
+        .core
+        .nodes()
+        .iter()
+        .filter(|n| n.kind == kui::NodeKind::Image)
+        .map(|n| (n.rect.x, n.rect.y))
+        .collect();
+    assert_eq!(images.len(), 3, "the lone image and the row of two");
+    assert_eq!(images[1].1, images[2].1, "side by side");
+    assert!(images[2].0 > images[1].0);
+    // A click on a row in the table's block lands on its line.
+    let row = d
+        .core
+        .nodes()
+        .iter()
+        .find(|n| n.text.as_deref().is_some_and(|t| t.starts_with("│ alpha")))
+        .map(|n| n.rect)
+        .unwrap();
+    d.click(&mut app, row.x + 30.0, row.y + row.h / 2.0);
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.buffer_of(v);
+    let line = buf.line_of(app.ed.views[v].sels.primary().head);
+    assert_eq!(buf.slice(buf.line_range(line)), "| alpha | 1 |");
+    d.keys(&mut app, "/the top");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.press(&mut app, "gx");
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    let head = app.ed.views[v].sels.primary().head;
+    assert_eq!(app.ed.buffer_of(v).line_of(head), 0, "{}", app.ed.message);
 }

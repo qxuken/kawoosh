@@ -1,5 +1,5 @@
--- Auto-closing brackets (pairs.lua, docs/design/pairs.md): off by
--- default; on, `(` pairs, `)` steps over, `<BS>` deletes both, `<CR>`
+-- Auto-closing brackets (pairs.lua, docs/design/pairs.md): on by
+-- default and off when set so; `(` pairs, `)` steps over, `<BS>` deletes both, `<CR>`
 -- opens a block, a quote pairs only where one can open, rust's `'` does
 -- not, two carets pair each, `.` repeats a pairing, an undo takes it
 -- with the insert, and the command line types plain.
@@ -11,9 +11,11 @@ local function reset(s)
   kawoosh.frame()
 end
 
+kawoosh.cmd("set pairs.enabled=false")
+kawoosh.frame()
 reset()
 kawoosh.press("i(<Esc>")
-kawoosh.test.eq(text(), "(", "off by default")
+kawoosh.test.eq(text(), "(", "off when set so")
 
 kawoosh.cmd("set pairs.enabled=true")
 kawoosh.frame()

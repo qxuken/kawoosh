@@ -129,9 +129,11 @@ fn a_bare_split_asks_and_enter_is_vims_split() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
-/// `<Esc>` answers with a scratch; `<C-c>` closes the new pane.
+/// The first `<Esc>` leaves insert mode over the query, the second
+/// answers with a scratch — which goes once a file replaces it, being
+/// empty and in no pane; `<C-c>` closes the new pane.
 #[test]
-fn esc_is_a_scratch_and_ctrl_c_undoes_the_split() {
+fn esc_twice_is_a_scratch_and_ctrl_c_undoes_the_split() {
     let _g = serial();
     let dir = project("esc");
     let (mut d, mut app) = launch(&dir);
@@ -139,8 +141,28 @@ fn esc_is_a_scratch_and_ctrl_c_undoes_the_split() {
     d.frame(&mut app);
     d.press(&mut app, "<Esc>");
     d.frame(&mut app);
+    assert!(on_launcher(&app), "still asking");
+    let q = app.lua_field_focused("launcher").expect("the query");
+    assert_eq!(app.ed.mode(q), kawoosh_editor::Mode::Normal);
+    d.press(&mut app, "<Esc>");
+    d.frame(&mut app);
     assert_eq!(focused_name(&app), "*scratch*");
     assert_eq!(pane_count(&app), 2);
+    let scratches = |app: &Kawoosh| {
+        app.ed
+            .listed_buffers()
+            .into_iter()
+            .filter(|b| app.ed.buffers[*b].name == "*scratch*")
+            .count()
+    };
+    assert_eq!(scratches(&app), 1);
+    ex(&mut d, &mut app, "e notes.md");
+    d.frame(&mut app);
+    assert_eq!(
+        scratches(&app),
+        0,
+        "the empty scratch no pane shows is gone"
+    );
     d.press(&mut app, "<C-w>s");
     d.frame(&mut app);
     assert!(on_launcher(&app));
@@ -183,8 +205,8 @@ fn a_query_finds_a_file_and_opens_it_in_place() {
     );
 }
 
-/// `:` on an empty query is the command line, and its `:e` fills the
-/// pane; later in a query it is a `:`.
+/// A `:` in the query is typed; `:` in normal mode is the command line,
+/// and its `:e` fills the pane.
 #[test]
 fn ex_edit_from_its_command_line_fills_it() {
     let _g = serial();
@@ -200,7 +222,7 @@ fn ex_edit_from_its_command_line_fills_it() {
         Some("x:"),
         "a `:` inside a query is typed"
     );
-    d.press(&mut app, "<BS><BS>");
+    d.press(&mut app, "<BS><BS><Esc>");
     d.frame(&mut app);
     d.keys(&mut app, ":");
     d.keys(&mut app, "e notes.md");
@@ -306,7 +328,7 @@ fn the_settings_say_what_a_bare_pane_is() {
     // A tab is its own setting: still the launcher.
     ex(&mut d, &mut app, "tabnew");
     assert!(on_launcher(&app), "a tab asks");
-    d.press(&mut app, "<Esc>");
+    d.press(&mut app, "<Esc><Esc>");
     d.frame(&mut app);
     ex(&mut d, &mut app, "set layout.new_tab=same");
     ex(&mut d, &mut app, "tabnew");

@@ -4,6 +4,10 @@
 //! through a kui `Core` (docs/design/kui.md, Decision 8). `main.rs` is the
 //! window.
 
+/// The name the binary answers to as `kawoosh edit --wait`: what a
+/// terminal's `$EDITOR` links to (`app::editor_shim`).
+pub const EDITOR_SHIM: &str = "kawoosh-edit";
+
 pub mod app;
 pub mod chrome;
 pub mod cmdline;

@@ -35,9 +35,15 @@ pub struct Rendered {
     pub code: bool,
     /// A thematic break: a rule across the row.
     pub rule: bool,
-    /// A line that is only an image: its destination as written, and
-    /// its alt.
-    pub image: Option<(String, String)>,
+    /// A line that is only images — one, or a table's row of them —
+    /// each's destination as written and its alt.
+    pub images: Vec<(String, String)>,
+    /// A table's row: drawn in its table's block, which scrolls
+    /// sideways.
+    pub table: bool,
+    /// The table's first line, which names its block and its offset
+    /// (`line` sets it).
+    pub table_first: Option<usize>,
     pub wrap: TextWrap,
 }
 
@@ -76,7 +82,9 @@ pub fn render(
         scale,
         code,
         rule: false,
-        image: None,
+        images: Vec::new(),
+        table,
+        table_first: None,
         wrap: if code {
             TextWrap::Glyph
         } else if table {
@@ -115,6 +123,12 @@ pub fn render(
         }
     } else if code || has(Block::Verbatim) {
         // As it is.
+    } else if let Some(images) = images_line(src) {
+        // Images alone on the line, a table's row of them included: a
+        // row of images, not a table's cells.
+        out.images = images;
+        out.table = false;
+        folds.push((0..src.len(), String::new()));
     } else if table {
         table_folds(
             src,
@@ -127,9 +141,6 @@ pub fn render(
         if has(Block::TableHeader) {
             marks.push((0..src.len(), bold(None)));
         }
-    } else if let Some((dest, alt)) = image_line(src) {
-        out.image = Some((dest, alt));
-        folds.push((0..src.len(), String::new()));
     } else {
         prose(
             src,
@@ -346,6 +357,27 @@ fn prose(
     }
 }
 
+/// A line of nothing but images — `![a](x)`, several, or a table's
+/// row of them between its pipes: each's destination and alt; None
+/// when anything else is on it.
+pub fn images_line(src: &str) -> Option<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    let mut rest = src.trim();
+    while !rest.is_empty() {
+        rest = rest.trim_start_matches(|c: char| c == '|' || c.is_whitespace());
+        if rest.is_empty() {
+            break;
+        }
+        if !rest.starts_with("![") {
+            return None;
+        }
+        let close = rest.find(')')?;
+        out.push(image_line(&rest[..=close])?);
+        rest = &rest[close + 1..];
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 /// A line that is only `![alt](dest)`: its destination and alt.
 pub fn image_line(src: &str) -> Option<(String, String)> {
     let t = src.trim();
@@ -480,12 +512,46 @@ fn table_folds(
     }
 }
 
+fn hash_of(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
+
+/// Standard base64 decoded, whitespace skipped; None on a character
+/// outside the alphabet.
+fn base64(s: &str) -> Option<Vec<u8>> {
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => (c - b'A') as u32,
+            b'a'..=b'z' => (c - b'a' + 26) as u32,
+            b'0'..=b'9' => (c - b'0' + 52) as u32,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => return None,
+        })
+    };
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in s.bytes().filter(|c| !c.is_ascii_whitespace() && *c != b'=') {
+        acc = (acc << 6) | val(c)?;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
+}
+
 /// An image read: its width, height and RGBA8 pixels.
 pub type Pixels = (u32, u32, Vec<u8>);
 
-/// A rendered row worked out ahead of the frame, and the image it shows
-/// (kui's id, its size in px) when it is one and it has been read.
-pub type Ahead = (Rendered, Option<(kui::ImageId, f32, f32)>);
+/// A rendered row worked out ahead of the frame, and each image it
+/// shows: kui's id and its size in px once read, else its alt.
+pub type Ahead = (Rendered, Vec<Result<(kui::ImageId, f32, f32), String>>);
 
 /// An image a markdown buffer shows: being read, ready (kui's id and its
 /// size in px), or why not.
@@ -529,6 +595,7 @@ pub fn line(
     let table = blocks
         .iter()
         .any(|(_, b)| matches!(b, Block::Table | Block::TableHeader | Block::TableDelimiter));
+    let mut first_line = None;
     let widths = table.then(|| {
         let is_table = |l: usize| {
             blocks_of(buf, l).iter().any(|(_, b)| {
@@ -539,6 +606,7 @@ pub fn line(
         while first > 0 && ln - first < TABLE_MAX && is_table(first - 1) {
             first -= 1;
         }
+        first_line = Some(first);
         tables
             .entry(first)
             .or_insert_with(|| {
@@ -552,7 +620,7 @@ pub fn line(
             })
             .clone()
     });
-    render(
+    let mut r = render(
         &src,
         &syntax,
         &blocks,
@@ -560,7 +628,11 @@ pub fn line(
         widths.as_deref(),
         style,
         tabstop,
-    )
+    );
+    if r.table {
+        r.table_first = first_line;
+    }
+    r
 }
 
 /// The most rows a table is read for its widths.
@@ -667,6 +739,21 @@ impl Kawoosh {
     /// The image at `dest` (relative to the buffer's directory), asked
     /// for once and read on the io thread; what is known of it now.
     pub(crate) fn markdown_image(&mut self, dir: Option<&Path>, dest: &str) -> Option<&Image> {
+        // `data:image/png;base64,…`: the pixels in the text, decoded
+        // here, once — kept under a name of their own.
+        if let Some(data) = dest.strip_prefix("data:") {
+            let key = PathBuf::from(format!("data:{:016x}", hash_of(data)));
+            if !self.md_images.by_path.contains_key(&key) {
+                let r = data
+                    .split_once(";base64,")
+                    .ok_or_else(|| "not base64".to_string())
+                    .and_then(|(_, b64)| base64(b64).ok_or_else(|| "bad base64".into()))
+                    .and_then(|bytes| kawoosh_systems::io::decode_image_bytes(&bytes));
+                self.md_images.by_path.insert(key.clone(), Image::Loading);
+                self.image_decoded(key.clone(), r);
+            }
+            return self.md_images.by_path.get(&key);
+        }
         if dest.contains("://") {
             return None;
         }
@@ -752,15 +839,117 @@ impl Kawoosh {
             }
             return;
         }
-        let path = target.split('#').next().unwrap_or(&target);
-        let base = buf
-            .path
-            .as_ref()
-            .and_then(|p| p.parent().map(Path::to_path_buf))
-            .unwrap_or_else(|| self.cwd.clone());
-        let full = kawoosh_systems::fs::expand(Path::new(path), &base);
-        self.open(&full);
+        // `#anchor`: a heading of this buffer; `file.md#anchor`, that
+        // file's.
+        let (path, anchor) = match target.split_once('#') {
+            Some((p, a)) => (p, Some(a)),
+            None => (target.as_str(), None),
+        };
+        if !path.is_empty() {
+            let base = buf
+                .path
+                .as_ref()
+                .and_then(|p| p.parent().map(Path::to_path_buf))
+                .unwrap_or_else(|| self.cwd.clone());
+            let full = kawoosh_systems::fs::expand(Path::new(path), &base);
+            self.open(&full);
+        }
+        if let Some(anchor) = anchor.filter(|a| !a.is_empty()) {
+            self.goto_anchor(anchor);
+        }
     }
+
+    /// The caret to the heading whose slug is `anchor` in the focused
+    /// buffer, GitHub's way: the heading's text lower-cased, spaces as
+    /// `-`, punctuation dropped, a repeat numbered `-1`, `-2`.
+    fn goto_anchor(&mut self, anchor: &str) {
+        let Some(v) = self.focused_view() else { return };
+        let buf = self.ed.buffer_of(v);
+        let want = anchor.to_lowercase();
+        let mut seen: HashMap<String, usize> = HashMap::new();
+        let lines: Vec<String> = (0..buf.line_count())
+            .map(|l| buf.slice(buf.line_range(l)))
+            .collect();
+        let mut fence = false;
+        for (ln, line) in lines.iter().enumerate() {
+            let t = line.trim_start();
+            if t.starts_with("```") || t.starts_with("~~~") {
+                fence = !fence;
+                continue;
+            }
+            if fence {
+                continue;
+            }
+            let text = if let Some(h) = heading_text(line) {
+                h
+            } else if !t.is_empty()
+                && lines.get(ln + 1).is_some_and(|n| {
+                    let n = n.trim();
+                    !n.is_empty() && (n.chars().all(|c| c == '=') || n.chars().all(|c| c == '-'))
+                })
+                && !t.starts_with(['-', '*', '+', '>', '|'])
+            {
+                t.trim_end().to_string()
+            } else {
+                continue;
+            };
+            let base = slug(&text);
+            let n = seen.entry(base.clone()).or_insert(0);
+            let s = if *n == 0 {
+                base.clone()
+            } else {
+                format!("{base}-{n}")
+            };
+            *n += 1;
+            if s == want {
+                let at = buf.line_start(ln);
+                self.ed.views[v].sels =
+                    kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(at));
+                self.follow_caret = true;
+                self.ed.message = format!("#{anchor}");
+                return;
+            }
+        }
+        self.ed.message = format!("no heading #{anchor}");
+    }
+}
+
+/// An ATX heading's text: `## Seed Data ##` is `Seed Data`.
+fn heading_text(line: &str) -> Option<String> {
+    let t = line.trim_start_matches(' ');
+    let hashes = t.bytes().take_while(|b| *b == b'#').count();
+    if !(1..=6).contains(&hashes) || line.len() - t.len() > 3 {
+        return None;
+    }
+    let rest = &t[hashes..];
+    if !rest.is_empty() && !rest.starts_with([' ', '\t']) {
+        return None;
+    }
+    Some(rest.trim().trim_end_matches('#').trim_end().to_string())
+}
+
+/// GitHub's heading slug: a link's label kept and its destination
+/// dropped, lower-cased, letters digits `-` `_` kept, spaces as `-`.
+pub fn slug(text: &str) -> String {
+    let mut plain = String::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("](") {
+        plain.push_str(&rest[..i]);
+        rest = match rest[i..].find(')') {
+            Some(j) => &rest[i + j + 1..],
+            None => "",
+        };
+    }
+    plain.push_str(rest);
+    plain
+        .to_lowercase()
+        .chars()
+        .filter_map(|c| match c {
+            ' ' => Some('-'),
+            c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The link at byte `at` of `line`: an inline link's destination when
@@ -916,5 +1105,25 @@ mod tests {
         assert_eq!(link_at(l, 5).as_deref(), Some("b.md#top"));
         assert_eq!(link_at(l, 28).as_deref(), Some("https://x.io/a"));
         assert_eq!(link_at(l, 1), None);
+        assert_eq!(
+            slug("Self-Hosting / Deployment"),
+            "self-hosting--deployment"
+        );
+        assert_eq!(slug("Step 5: Done!"), "step-5-done");
+        assert_eq!(slug("See [the docs](x.md) `now`"), "see-the-docs-now");
+        assert_eq!(
+            heading_text("## Seed Data ##").as_deref(),
+            Some("Seed Data")
+        );
+        assert_eq!(heading_text("#hashtag"), None);
+        assert_eq!(
+            images_line("| ![a](x.png) | ![b](y.png) |"),
+            Some(vec![
+                ("x.png".into(), "a".into()),
+                ("y.png".into(), "b".into())
+            ])
+        );
+        assert_eq!(images_line("| a | ![b](y.png) |"), None);
+        assert_eq!(base64("aGk="), Some(b"hi".to_vec()));
     }
 }

@@ -862,7 +862,15 @@ impl Kawoosh {
                 .cursor(kui::CursorShape::Text)
                 .label("terminal"),
             |ui| {
-                let mut spec = NodeSpec::column().on_click(tag.clone()).on_scroll(tag);
+                // The grid is a selection scope, and a node's own click
+                // claims the press before a drag-select can start: it
+                // takes clicks only while ⌘ or ctrl is held, for the
+                // path under the pointer — a plain click reaches the
+                // column around it, which focuses the pane.
+                let mut spec = NodeSpec::column().on_scroll(tag.clone());
+                if self.mods.0 || self.mods.2 {
+                    spec = spec.on_click(tag.clone());
+                }
                 spec = if reporting {
                     spec.on_drag(drag_tag)
                 } else {
@@ -936,6 +944,11 @@ impl Kawoosh {
         );
         if focused {
             self.focus_sink(ui, sink);
+        } else if ui.key_focus() == Some(sink) {
+            // A press in the grid starts a selection, not a click, and
+            // takes kui's keyboard to this pane's sink: the pane follows.
+            self.layout.focus(pane);
+            ui.request_frame();
         }
     }
 
@@ -1016,6 +1029,17 @@ impl Kawoosh {
         // buffer — an image among them is asked for here — each with
         // the image it shows when it is one and it has been read.
         let mut md_rows: HashMap<usize, crate::markdown::Ahead> = HashMap::new();
+        // Each table row's table, by its first line.
+        let mut md_tables: HashMap<usize, usize> = HashMap::new();
+        let width_guess = self
+            .layout
+            .rects
+            .get(&pane)
+            .map(|r| {
+                (r.w - rows::gutter_w(self.cell.0, self.ed.buffers[buf_id].line_count()) - 2.0)
+                    .max(0.0)
+            })
+            .unwrap_or(0.0);
         if let Some(last) = md_last {
             let style = self.markdown_style(ui.theme().is_dark());
             let v = &self.ed.views[view];
@@ -1026,28 +1050,73 @@ impl Kawoosh {
             for ln in v.top..last {
                 let r =
                     crate::markdown::line(buf, ln, raw.contains(&ln), &style, tabstop, &mut tables);
-                md_rows.insert(ln, (r, None));
+                if let Some(first) = r.table_first {
+                    md_tables.insert(ln, first);
+                }
+                md_rows.insert(ln, (r, Vec::new()));
+            }
+            // A table the caret is in slides sideways to show it.
+            let head = v.sels.primary().head;
+            let head_line = buf.line_of(head);
+            if (self.follow_caret || !focused)
+                && let Some(first) = md_tables.get(&head_line).copied()
+            {
+                let range = buf.line_range(head_line);
+                let before = buf.slice(range.start..head.clamp(range.start, range.end));
+                let x = unicode_width::UnicodeWidthStr::width(before.as_str()) as f32 * self.cell.0;
+                let seen = self
+                    .md_table_left
+                    .get(&(view, first))
+                    .copied()
+                    .unwrap_or(0.0);
+                let room = (width_guess - 3.0 * self.cell.0).max(self.cell.0);
+                let off = if x < seen {
+                    (x - 3.0 * self.cell.0).max(0.0)
+                } else if x > seen + room {
+                    x - room
+                } else {
+                    seen
+                };
+                self.md_table_left.insert((view, first), off);
             }
             let dir = buf
                 .path
                 .as_ref()
                 .and_then(|p| p.parent())
                 .map(|p| p.to_path_buf());
-            let wanted: Vec<(usize, String)> = md_rows
+            let wanted: Vec<(usize, Vec<(String, String)>)> = md_rows
                 .iter()
-                .filter_map(|(ln, (r, _))| Some((*ln, r.image.as_ref()?.0.clone())))
+                .filter(|(_, (r, _))| !r.images.is_empty())
+                .map(|(ln, (r, _))| (*ln, r.images.clone()))
                 .collect();
-            for (ln, dest) in wanted {
-                if let Some(crate::markdown::Image::Ready { id, w, h }) =
-                    self.markdown_image(dir.as_deref(), &dest)
-                {
-                    let (id, w, h) = (*id, *w as f32, *h as f32);
-                    if let Some(e) = md_rows.get_mut(&ln) {
-                        e.1 = Some((id, w, h));
-                    }
+            for (ln, images) in wanted {
+                let mut got = Vec::new();
+                for (dest, alt) in images {
+                    let name = if alt.is_empty() {
+                        dest.clone()
+                    } else {
+                        alt.clone()
+                    };
+                    got.push(match self.markdown_image(dir.as_deref(), &dest) {
+                        Some(crate::markdown::Image::Ready { id, w, h }) => {
+                            Ok((*id, *w as f32, *h as f32))
+                        }
+                        Some(crate::markdown::Image::Failed(why)) => Err(format!("{name} ({why})")),
+                        _ => Err(name),
+                    });
+                }
+                if let Some(e) = md_rows.get_mut(&ln) {
+                    e.1 = got;
                 }
             }
         }
+        let md_table_left: HashMap<usize, f32> = self
+            .md_table_left
+            .iter()
+            .filter(|((v, _), _)| *v == view)
+            .map(|((_, first), off)| (*first, *off))
+            .collect();
+        let mut md_table_seen: Vec<(usize, f32)> = Vec::new();
         let v = &self.ed.views[view];
         let buf = &self.ed.buffers[buf_id];
         let search = self
@@ -1222,7 +1291,11 @@ impl Kawoosh {
                         lines_spec.scroll_x()
                     },
                     |ui| {
-                        for ln in top..last {
+                        // One row: its drawn text, the selections, carets, hits, the
+                        // runs and what follows it; `in_table` for a row in a
+                        // table's scrolling block, which draws its number
+                        // outside the block and does not wrap.
+                        let mut emit = |ui: &mut Ui<'_>, ln: usize, in_table: bool| {
                             let range = buf.line_range(ln);
                             let window = Window {
                                 left,
@@ -1238,10 +1311,12 @@ impl Kawoosh {
                                         scale,
                                         code,
                                         rule,
-                                        image,
+                                        images: _,
+                                        table: _,
+                                        table_first: _,
                                         wrap,
                                     } = r;
-                                    (drawn, Some((marks, scale, code, rule, image, wrap, img)))
+                                    (drawn, Some((marks, scale, code, rule, wrap, img)))
                                 }
                                 None => {
                                     let index = (range.len() >= rows::LONG_LINE_BYTES)
@@ -1371,33 +1446,34 @@ impl Kawoosh {
                             // the code's panel, a rule, an image.
                             let label = format!("md{ln}");
                             let (marks, form) = match &md_row {
-                                Some((marks, scale, code, rule, image, wrap, img)) => {
+                                Some((marks, scale, code, rule, wrap, img)) => {
                                     if let Some(r) = ui.layout_of(ui.child_key(&label)) {
                                         md_seen.push((ln, r.h));
                                     }
+                                    // Images side by side, each at most its
+                                    // share of the row, by aspect.
+                                    let n = img.len().max(1) as f32;
+                                    let max_w =
+                                        ((width - gutter - 16.0 - 8.0 * (n - 1.0)) / n).max(40.0);
                                     let form = rows::RowForm {
                                         key: label.clone(),
                                         scale: *scale,
-                                        wrap: Some(((width - gutter).max(40.0), *wrap)),
+                                        wrap: (!in_table)
+                                            .then_some(((width - gutter).max(40.0), *wrap)),
                                         bg: code.then_some(pal.strip),
-                                        gutter: Some((gutter, ln, ln == cur_line)),
+                                        gutter: (!in_table).then_some((gutter, ln, ln == cur_line)),
                                         rule: *rule,
-                                        image: match (image, img) {
-                                            (Some(_), Some((id, w, h))) => {
-                                                let max_w = (width - gutter - 16.0).max(40.0);
-                                                let s = (max_w / w).min(1.0);
-                                                Some((*id, w * s, h * s))
-                                            }
-                                            _ => None,
-                                        },
-                                        alt: match (image, img) {
-                                            (Some((dest, alt)), None) => Some(if alt.is_empty() {
-                                                dest.clone()
-                                            } else {
-                                                alt.clone()
-                                            }),
-                                            _ => None,
-                                        },
+                                        images: img
+                                            .iter()
+                                            .map(|i| match i {
+                                                Ok((id, w, h)) => {
+                                                    let s = (max_w / w).min(1.0);
+                                                    Ok((*id, w * s, h * s))
+                                                }
+                                                Err(alt) => Err(alt.clone()),
+                                            })
+                                            .collect(),
+                                        fit: in_table,
                                     };
                                     (marks.as_slice(), Some(form))
                                 }
@@ -1424,6 +1500,85 @@ impl Kawoosh {
                                     after: drawn.after_cols as f32 * cell_w,
                                     marks,
                                     form: form.as_ref(),
+                                },
+                            );
+                        };
+                        let mut ln = top;
+                        while ln < last {
+                            let Some(&table) = md_tables.get(&ln) else {
+                                emit(ui, ln, false);
+                                ln += 1;
+                                continue;
+                            };
+                            // A table: its rows in a block that scrolls
+                            // sideways on its own (the wheel's `dx`, the
+                            // caret), its numbers in a column beside it.
+                            let first = ln;
+                            while ln < last && md_tables.get(&ln) == Some(&table) {
+                                ln += 1;
+                            }
+                            let offset = md_table_left.get(&table).copied().unwrap_or(0.0);
+                            ui.with(
+                                NodeSpec::row()
+                                    .width(Sizing::Grow(1.0))
+                                    .height(Sizing::Fit)
+                                    .min_height(kui::Min::FIT),
+                                |ui| {
+                                    ui.with(
+                                        NodeSpec::column()
+                                            .width(Sizing::Fixed(gutter))
+                                            .height(Sizing::Fit)
+                                            .role(Role::None),
+                                        |ui| {
+                                            for l in first..ln {
+                                                ui.with(
+                                                    NodeSpec::row()
+                                                        .width(Sizing::Grow(1.0))
+                                                        .height(Sizing::Fixed(font.line_height))
+                                                        .pad_xy(12.0, 0.0)
+                                                        .main_align(Align::End)
+                                                        .cross_align(Align::Center),
+                                                    |ui| {
+                                                        let color = if l == cur_line {
+                                                            pal.dim
+                                                        } else {
+                                                            pal.faint
+                                                        };
+                                                        ui.text(
+                                                            &format!("{}", l + 1),
+                                                            rows::mono(font, &pal).color(color),
+                                                        );
+                                                    },
+                                                );
+                                            }
+                                        },
+                                    );
+                                    let block = ui.with_keyed(
+                                        &format!("tbl{table}"),
+                                        NodeSpec::column()
+                                            .width(Sizing::Grow(1.0))
+                                            .height(Sizing::Fit)
+                                            .min_height(kui::Min::FIT)
+                                            .scroll_x()
+                                            .on_scroll(Value::map([
+                                                ("kind", "pane".into()),
+                                                ("pane", Value::Int(pane as i64)),
+                                                ("table", Value::Int(table as i64)),
+                                            ])),
+                                        |ui| {
+                                            for l in first..ln {
+                                                emit(ui, l, true);
+                                            }
+                                        },
+                                    );
+                                    // The offset clamped to what the block
+                                    // holds last frame, kept for the next.
+                                    let max = ui
+                                        .scroll_geometry(block)
+                                        .map_or(offset, |g| g.max_offset.x);
+                                    let offset = offset.clamp(0.0, max.max(0.0));
+                                    ui.set_scroll(block, Vec2::new(offset, 0.0));
+                                    md_table_seen.push((table, offset));
                                 },
                             );
                         }
@@ -1456,6 +1611,9 @@ impl Kawoosh {
             }
             if moved {
                 ui.request_frame();
+            }
+            for (first, off) in md_table_seen {
+                self.md_table_left.insert((view, first), off);
             }
         }
         if focused {

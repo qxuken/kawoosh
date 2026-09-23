@@ -124,6 +124,9 @@ pub struct Kawoosh {
     /// what the rendered pane scrolls by, a row being as tall as its
     /// text wraps to.
     pub(crate) md_heights: HashMap<ViewId, HashMap<usize, f32>>,
+    /// Each rendered table's sideways offset, by view and its first
+    /// line: a table wider than the pane scrolls on its own.
+    pub(crate) md_table_left: HashMap<(ViewId, usize), f32>,
     /// A devtools tab to show on the next frame — `:syntax_tree` asks
     /// for the syntax tab. Once, not every frame: kui's
     /// `set_devtools_tab` is edge-triggered, so a standing request would
@@ -165,12 +168,23 @@ pub struct Kawoosh {
     pub(crate) ts_sent: HashMap<BufferId, Version>,
     /// The command socket's path once listening (`App::setup`).
     pub socket: Option<PathBuf>,
+    /// `kawoosh-edit` beside the socket: the binary under the name that
+    /// makes it `kawoosh edit --wait`, what a terminal's `$EDITOR` is.
+    pub(crate) editor_shim: Option<PathBuf>,
     /// `$EDITOR --wait` callers, answered when their buffer closes.
     pub(crate) waiters: HashMap<BufferId, Vec<Sender<String>>>,
     pub quit: bool,
     /// Text for the clipboard at the next frame — `on_event` has no `Ui`.
     pub(crate) clip_out: Option<String>,
     pub(crate) awaiting_paste: bool,
+    /// The clipboard asked for to see what is on it (`sync_clipboard`),
+    /// not to paste: its answer goes to the register.
+    pub(crate) clip_probe: bool,
+    /// The last text kawoosh put on the clipboard, which is not news.
+    pub(crate) clip_last: Option<String>,
+    /// The window's focus and whether an editor pane had the keys, last
+    /// frame: a change is when the clipboard is looked at.
+    pub(crate) clip_seen: (bool, bool),
     /// The wheel's fraction of a line carried to the next notch.
     pub(crate) scroll_carry: f32,
     /// False after a wheel scroll, so the view stays where the wheel put
@@ -280,6 +294,7 @@ impl Kawoosh {
             md_images: Default::default(),
             md_pending: Vec::new(),
             md_heights: HashMap::new(),
+            md_table_left: HashMap::new(),
             show_tab: None,
             tab_shown: None,
             settings_default_open: false,
@@ -295,10 +310,14 @@ impl Kawoosh {
             shared_wakes: Vec::new(),
             ts_sent: HashMap::new(),
             socket: None,
+            editor_shim: None,
             waiters: HashMap::new(),
             quit: false,
             clip_out: None,
             awaiting_paste: false,
+            clip_probe: false,
+            clip_last: None,
+            clip_seen: (true, true),
             scroll_carry: 0.0,
             follow_caret: true,
             reclaim_focus: false,
@@ -857,6 +876,52 @@ impl Kawoosh {
         };
         self.delete_buffer(id, next);
         Ok(())
+    }
+
+    /// `p` and the system clipboard (`clipboard.system`, on by default):
+    /// a yank is on the clipboard already, and what arrived there from
+    /// elsewhere — another program, a terminal's selection — is read
+    /// when the window comes back to the front and when the keys come
+    /// into an editor pane from another kind, and made the register's
+    /// newest (`Editor::adopt_clipboard`), so `p` puts it.
+    fn sync_clipboard(&mut self, ui: &mut Ui<'_>) {
+        let window = ui.env().focused;
+        let editor = self.focused_view().is_some();
+        let (was_window, was_editor) = std::mem::replace(&mut self.clip_seen, (window, editor));
+        if self.ed.settings.bool("clipboard.system") == Some(false) {
+            return;
+        }
+        let back = (window && !was_window) || (editor && !was_editor);
+        if back && !self.awaiting_paste && !self.clip_probe {
+            self.clip_probe = true;
+            ui.request_paste();
+        }
+    }
+
+    /// Once a frame: every `*scratch*` that is empty and that no pane
+    /// shows goes — the one a launcher's `<Esc>` made and a file then
+    /// replaced, the one `:enew` left behind — so `:ls` and the pickers
+    /// list what holds something.
+    pub(crate) fn sweep_scratches(&mut self) {
+        let shown: std::collections::HashSet<BufferId> =
+            self.ed.views.values().map(|v| v.buffer).collect();
+        let gone: Vec<BufferId> = self
+            .ed
+            .buffers
+            .iter()
+            .filter(|(id, b)| {
+                b.name == "*scratch*"
+                    && b.path.is_none()
+                    && b.hook.is_none()
+                    && b.is_empty()
+                    && !shown.contains(id)
+                    && !self.ed.is_field_buffer(*id)
+            })
+            .map(|(id, _)| id)
+            .collect();
+        for id in gone {
+            self.delete_buffer(id, id);
+        }
     }
 
     /// Removes buffer `id`: every view on it moves to `next`, a
@@ -1519,7 +1584,19 @@ impl Kawoosh {
             return;
         };
         let dx = p.get("dx").and_then(Value::as_float).unwrap_or(0.0) as f32;
-        if dx != 0.0 {
+        // Over a rendered table: sideways is the table's own.
+        let table = p
+            .get("tag")
+            .and_then(|t| t.get("table"))
+            .and_then(Value::as_int)
+            .map(|t| t as usize);
+        if let (Some(first), true) = (table, dx != 0.0) {
+            let off = self.md_table_left.entry((view, first)).or_insert(0.0);
+            *off = (*off - dx).max(0.0);
+            if pane == self.layout.focused() {
+                self.follow_caret = false;
+            }
+        } else if dx != 0.0 {
             // Sideways: px, clamped to the content when the frame draws.
             let v = &mut self.ed.views[view];
             v.left = (v.left - dx).max(0.0);
@@ -1703,6 +1780,28 @@ impl Kawoosh {
     }
 }
 
+/// The `$EDITOR` a terminal gets: a symlink to this binary named
+/// `kawoosh-edit`, in a directory beside the socket — invoked by that
+/// name, the binary is `kawoosh edit --wait` (`main.rs`). None where a
+/// symlink cannot be made, and the terminals get the two-word form.
+fn editor_shim(socket: &Path) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        let exe = std::env::current_exe().ok()?;
+        let dir = socket.with_extension("bin");
+        std::fs::create_dir_all(&dir).ok()?;
+        let link = dir.join(crate::EDITOR_SHIM);
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(exe, &link).ok()?;
+        Some(link)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = socket;
+        None
+    }
+}
+
 /// A file this big opens on the io thread (`Io::open_file`) rather than
 /// in the frame: sixty-four megabytes reads in well under a frame's
 /// worth of patience; a gigabyte does not.
@@ -1717,7 +1816,10 @@ impl kui::App for Kawoosh {
         self.wake.set(wake);
         let path = kawoosh_systems::io::socket_path();
         match self.io.listen(&path) {
-            Ok(()) => self.socket = Some(path),
+            Ok(()) => {
+                self.editor_shim = editor_shim(&path);
+                self.socket = Some(path);
+            }
             Err(e) => log::warn!("command socket: {e}"),
         }
     }
@@ -1726,6 +1828,9 @@ impl kui::App for Kawoosh {
     /// Quit — is a quit too: the session is saved as `:q` saves it, once
     /// (`:q` saved it already when it got here).
     fn teardown(&mut self) {
+        if let Some(dir) = self.editor_shim.as_ref().and_then(|p| p.parent()) {
+            let _ = std::fs::remove_dir_all(dir);
+        }
         if !self.session_saved {
             self.save_session();
             self.session_saved = true;
@@ -1774,6 +1879,7 @@ impl kui::App for Kawoosh {
         self.sync_term_palettes();
         self.sync_term_settings();
         self.spawn_pending();
+        self.sweep_scratches();
         self.register_images(ui);
         let pal = self.pal;
         if self.devtools_synced.is_some_and(|s| s != self.devtools) {
@@ -1794,8 +1900,10 @@ impl kui::App for Kawoosh {
         let m = ui.measure_text("M", &rows::mono(self.face, &pal), None);
         self.cell = (m.width.max(1.0), self.face.line_height);
         if let Some(text) = self.clip_out.take() {
+            self.clip_last = Some(text.clone());
             ui.set_clipboard(text, None);
         }
+        self.sync_clipboard(ui);
         if self.awaiting_paste {
             ui.request_paste();
         }
@@ -1906,6 +2014,14 @@ impl kui::App for Kawoosh {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
+                // A look at the clipboard, not a paste: into the
+                // register, unless it is what was put there from here.
+                if std::mem::take(&mut self.clip_probe) && !self.awaiting_paste {
+                    if self.clip_last.as_deref() != Some(text.as_str()) {
+                        self.ed.adopt_clipboard(&text);
+                    }
+                    return;
+                }
                 if let Some(v) = self.focused_view() {
                     if std::mem::take(&mut self.awaiting_paste) {
                         self.ed.paste_text(v, &text);

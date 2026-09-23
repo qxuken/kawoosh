@@ -118,6 +118,11 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
             .any(|(_, b)| b.name.starts_with("*scrollback")),
         "the buffer is gone"
     );
+    // The chord again goes back too: a toggle.
+    d.key(&mut app, "X", shifted);
+    assert!(app.focused_view().is_some(), "copy mode again");
+    d.key(&mut app, "X", shifted);
+    assert!(matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t));
     app.feed_terminal(t, b"still here\r\n");
     d.frame(&mut app);
     // From the editor pane the chord is refused with its reason.
@@ -166,6 +171,9 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
             ..Default::default()
         }),
     );
+    // The frame after the modifier, as the runner draws one: the grid
+    // takes clicks while ctrl is held.
+    d.frame(&mut app);
     d.click(&mut app, cells.rect.x + 8.5 * cw, cells.rect.y + 1.5 * ch);
     let v = app
         .focused_view()
@@ -570,4 +578,75 @@ fn a_session_starts_the_shells_again_where_they_were() {
     );
     assert!(app.scripting.tool_terms.contains_key("sleeper"));
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A drag across the live pane selects its cells (kui's selectable
+/// grid): the grid takes clicks only under ⌘ or ctrl, which would claim
+/// the press first; a plain click still focuses the pane.
+#[test]
+fn a_drag_selects_in_the_live_pane() {
+    let mut app = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    app.feed_terminal(t, b"hello world\r\nsecond line\r\n");
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
+    let term_pane = app.layout.focused();
+    let cells = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.kind == kui::NodeKind::Cells)
+        .unwrap()
+        .rect;
+    // The editor pane has the keys; a plain click on the terminal takes
+    // them back.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "k");
+    assert_ne!(app.layout.focused(), term_pane);
+    d.click(&mut app, cells.x + 40.0, cells.y + 30.0);
+    d.frame(&mut app);
+    assert_eq!(
+        app.layout.focused(),
+        term_pane,
+        "a click focuses the terminal"
+    );
+    d.drag(
+        &mut app,
+        (cells.x + 2.0, cells.y + 5.0),
+        (cells.x + 60.0, cells.y + 25.0),
+    );
+    d.frame(&mut app);
+    assert_eq!(
+        d.core.copy_selection().as_deref(),
+        Some("hello world\nsecond")
+    );
+    let _ = t;
+}
+
+/// `p` and the system clipboard: what another program — or a
+/// terminal's selection — put there is read when the keys come back to
+/// an editor pane and made the register's newest, so `p` puts it; what
+/// `y` put there is no news.
+#[test]
+fn the_register_follows_the_system_clipboard() {
+    let mut app = Kawoosh::new("t", "abc");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    app.add_headless_terminal();
+    d.frame(&mut app);
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "k");
+    d.frame(&mut app);
+    assert!(app.focused_view().is_some());
+    // The host answers the look with what the clipboard holds.
+    d.input(&mut app, InputEvent::Commit("from elsewhere".into()));
+    d.frame(&mut app);
+    assert_eq!(app.ed.memory.head().unwrap().text, "from elsewhere");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).text(), "abc", "a look is not a paste");
+    d.keys(&mut app, "$p");
+    assert_eq!(app.ed.buffer_of(v).text(), "abcfrom elsewhere");
 }

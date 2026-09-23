@@ -271,3 +271,24 @@ unchanged.
 `languages/src/markdown.rs`, `Drawn::folded` and `RowForm` in
 `rows.rs`, `kawoosh/tests/markdown.rs` (the fixture
 `tests/fixtures/rendered.md`), and the renderer's unit tests.
+
+After a day's use (2026-09-23), five more:
+
+- **The structure is repainted over whole lines.** A heading typed a
+  `#` at a time kept its first byte an h1 while the line became an h2:
+  the reparse's changed span was the typed byte, and the layer's runs
+  outside it stood. The ts thread widens every structure span to the
+  lines it touches.
+- **A table scrolls on its own.** A table's rows are one block, keyed
+  by its first line, that scrolls sideways — the wheel's `dx` over it,
+  and the caret, which slides it to show itself — its line numbers in
+  a column beside it that does not scroll; the rest of the pane does
+  not move. Its rows are as wide as their text (`RowForm::fit`).
+- **A line of images is a row of images**: one, several, or a table's
+  row of them between its pipes (a README's light and dark screenshots
+  side by side), each at most its share of the width. A `data:` URI's
+  base64 is decoded in place.
+- **`gx` on an anchor goes to its heading**: `#seed-data`, or
+  `file.md#top` after opening the file, by GitHub's slug (lower-cased,
+  punctuation dropped, spaces as `-`, a repeat numbered); it had opened
+  the directory.

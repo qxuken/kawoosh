@@ -94,7 +94,7 @@ more state for a question nobody asks twice at once; and a launcher
 that turns into a scratch the moment it loses the keys — going to the
 other pane to read a path before answering is a real use.
 
-### 4. The keys: `<Esc>` is a scratch
+### 4. The keys: `<Esc>` twice is a scratch
 
 The query is a field in insert mode from the first frame, so typing
 filters at once.
@@ -103,17 +103,21 @@ filters at once.
 |-------------------------------------|---------------------------------------------|
 | typing                              | filters every section                        |
 | `<CR>`                              | takes the cursor's row (first: the same buffer) |
-| `<Esc>`                             | a scratch in the pane (`launcher scratch`)   |
+| `<Esc>`                             | normal mode over the query                   |
+| `<Esc>` in normal mode              | a scratch in the pane (`launcher scratch`)   |
 | `<C-c>`                             | closes the pane (`launcher close`)           |
-| `:` on an empty query               | the command line — `:e PATH` fills the pane  |
-| `<C-n>` `<C-p>` `<Down>` `<Up>` `<C-j>` `<C-k>` | walk the rows, round at the ends |
+| `:` in normal mode, or on an empty query | the command line — `:e PATH` fills the pane |
+| `<C-n>` `<C-p>` `<Down>` `<Up>` `<C-j>` `<C-k>`, `j` `k` in normal mode | walk the rows, round at the ends |
 | `<A-1>` … `<A-9>`                   | the Nth pin, into the pane (the global keys) |
 
-`<Esc>` is one press: the launcher has no normal mode worth a key, and
-"nothing in particular" is what a scratch is. Since that leaves no
-normal mode to type `:` from, `:` as the query's first character is
-the command line (a file name seldom starts with one); later in the
-query it is a `:`.
+`<Esc>` is two presses, changed after a day's use (2026-09-23): the
+first leaves insert mode as it does in every field, the second is the
+answer — "nothing in particular" is what a scratch is. `:` is the
+command line from normal mode, and — kept from the first build — as
+the query's first character in insert mode (a file name seldom starts
+with one; later in the query it is a `:`). A scratch
+left empty in no pane goes (`sweep_scratches`), so a launcher answered
+`<Esc>` and then given a file leaves nothing in `:ls`.
 
 *Beat:* `<Esc>` closing the pane (the split undone) — that is `<C-c>`;
 and `<Esc>` falling back to the same buffer — that is `<CR>`.
@@ -127,8 +131,8 @@ extends:
 ```lua
 kawoosh.launcher.sections = {
   { title = "here",    items = here_items },
-  { title = "plugins", items = plugin_items },   -- the tools, and entries
   { title = "buffers", source = "buffers", limit = 9 },
+  { title = "plugins", items = plugin_items },   -- the tools, and entries
   { title = "recent",  items = recent_items, limit = 9 }, -- pins first
   { title = "files",   source = "files", query = true },  -- with a query only
 }

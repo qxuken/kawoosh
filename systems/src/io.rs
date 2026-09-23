@@ -435,8 +435,13 @@ pub fn decode_image(path: &std::path::Path, max: u64) -> Result<(u32, u32, Vec<u
     if meta.len() > max {
         return Err(format!("{} MB, past the cap", meta.len() >> 20));
     }
-    let img = image::ImageReader::open(path)
-        .map_err(|e| e.to_string())?
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    decode_image_bytes(&bytes)
+}
+
+/// [`decode_image`] of bytes in hand — a `data:` URI's.
+pub fn decode_image_bytes(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    let img = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| e.to_string())?
         .decode()

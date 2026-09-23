@@ -739,10 +739,13 @@ pub struct RowForm {
     pub gutter: Option<(f32, usize, bool)>,
     /// A rule across the row instead of text (`---`).
     pub rule: bool,
-    /// An image instead of text, at its size in px.
-    pub image: Option<(kui::ImageId, f32, f32)>,
-    /// An image's alt, dim, while it is being read or when it cannot be.
-    pub alt: Option<String>,
+    /// Images instead of text, side by side, each at its size in px;
+    /// the alt of one still being read (or that cannot be), dim, in its
+    /// place.
+    pub images: Vec<Result<(kui::ImageId, f32, f32), String>>,
+    /// As wide as its text, which does not wrap: a table's row, in a
+    /// block that scrolls sideways.
+    pub fit: bool,
 }
 
 /// The gutter cell for line `ln` (0-based), decoration rather than text.
@@ -925,7 +928,12 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
     let mut row = match form {
         Some(f) => {
             let mut r = NodeSpec::row()
-                .width(Sizing::Grow(1.0))
+                .width(if f.fit {
+                    Sizing::Fit
+                } else {
+                    Sizing::Grow(1.0)
+                })
+                .min_width(Min::FIT)
                 .height(Sizing::Fit)
                 // Its own height, never squeezed: the lines column
                 // overflows at the bottom (the clip takes the last rows),
@@ -989,18 +997,21 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
                     },
                 );
             }
-            if let Some((id, w, h)) = f.image {
-                ui.image(
-                    id,
-                    NodeSpec::column()
-                        .width(Sizing::Fixed(w))
-                        .height(Sizing::Fixed(h)),
-                );
-                return;
-            }
-            if let Some(alt) = &f.alt {
-                ui.with(NodeSpec::row().role(Role::None), |ui| {
-                    ui.text(&format!("🖼 {alt}"), mono(face, pal).color(pal.dim));
+            if !f.images.is_empty() {
+                ui.with(NodeSpec::row().gap(8.0).role(Role::None), |ui| {
+                    for img in &f.images {
+                        match img {
+                            Ok((id, w, h)) => ui.image(
+                                *id,
+                                NodeSpec::column()
+                                    .width(Sizing::Fixed(*w))
+                                    .height(Sizing::Fixed(*h)),
+                            ),
+                            Err(alt) => {
+                                ui.text(&format!("🖼 {alt}"), mono(face, pal).color(pal.dim))
+                            }
+                        }
+                    }
                 });
                 return;
             }

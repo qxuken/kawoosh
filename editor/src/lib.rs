@@ -2237,6 +2237,25 @@ impl Editor {
         self.after_prompt_key(view);
     }
 
+    /// A text on the system clipboard that did not come from here —
+    /// copied in another program, or from a terminal's selection — made
+    /// the register's newest, so `p` puts it; false when it is already
+    /// the newest (what `y` put there).
+    pub fn adopt_clipboard(&mut self, text: &str) -> bool {
+        if text.is_empty() || self.memory.head().is_some_and(|m| m.text == text) {
+            return false;
+        }
+        self.memory.remember(Moment {
+            text: text.to_string(),
+            linewise: text.ends_with('\n'),
+            took: Took::Clipboard,
+            origin: None,
+            from: "clipboard".into(),
+            at: Instant::now(),
+        });
+        true
+    }
+
     /// The clipboard's answer to `paste clipboard`: typed in insert
     /// mode, put after the caret otherwise.
     pub fn paste_text(&mut self, view: ViewId, text: &str) {

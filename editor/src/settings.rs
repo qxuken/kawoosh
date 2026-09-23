@@ -345,9 +345,13 @@ impl Settings {
             ]),
         );
         defaults.set("markdown.image_max_mb", Setting::Int(16));
-        // Auto-closing brackets (`pairs.lua`, docs/design/pairs.md): off
-        // until set; `pairs.rules` is the plugin's, per language.
-        defaults.set("pairs.enabled", Setting::Bool(false));
+        // `p` puts what was copied in another program too: the system
+        // clipboard, read when the window or an editor pane gets the
+        // keys back, is the register's newest when it is news.
+        defaults.set("clipboard.system", Setting::Bool(true));
+        // Auto-closing brackets (`pairs.lua`, docs/design/pairs.md): on
+        // since 2026-09-23; `pairs.rules` is the plugin's, per language.
+        defaults.set("pairs.enabled", Setting::Bool(true));
         // The lines of history a terminal keeps; a smaller number drops
         // what is past it at once.
         defaults.set("terminal.scrollback", Setting::Int(10_000));
@@ -665,6 +669,7 @@ mod tests {
         assert_eq!(
             s.effective().paths(),
             [
+                "clipboard.system",
                 "expandtab",
                 "font.chrome_size",
                 "font.family",

@@ -68,8 +68,6 @@ impl Terminals {
     }
 }
 
-/// A `path[:line[:col]]` in `text` around byte `at` — rustc, tsc, grep
-/// and shell spellings. Extensible from Lua later (Decision 5c).
 /// Where a terminal's view goes.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum TermScroll {
@@ -79,6 +77,8 @@ pub(crate) enum TermScroll {
     Bottom,
 }
 
+/// A `path[:line[:col]]` in `text` around byte `at` — rustc, tsc, grep
+/// and shell spellings. Extensible from Lua later (Decision 5c).
 pub fn location_at(text: &str, at: usize) -> Option<(String, Option<usize>, Option<usize>)> {
     // `\` for the paths Windows tools print (`src\main.rs:42`).
     let is_path_char = |c: char| c.is_alphanumeric() || "./_-~+@:%\\".contains(c);
@@ -146,13 +146,17 @@ impl Kawoosh {
                 // The binary itself, for a hook that asks it something
                 // (`kawoosh theme`) without it being on the PATH.
                 envs.push(("KAWOOSH_BIN".into(), exe.display().to_string()));
-                let shim = format!("{} edit --wait", exe.display());
+                // One program with no arguments where there can be one
+                // (`kawoosh-edit`, the binary under another name): a
+                // shell that runs `$EDITOR` as a path — nushell's `config
+                // env` — finds no program called `kawoosh edit --wait`.
+                let shim = match &self.editor_shim {
+                    Some(p) => p.display().to_string(),
+                    None => format!("{} edit --wait", exe.display()),
+                };
                 envs.push(("EDITOR".into(), shim.clone()));
-                envs.push(("VISUAL".into(), shim));
-                envs.push((
-                    "GIT_EDITOR".into(),
-                    format!("{} edit --wait", exe.display()),
-                ));
+                envs.push(("VISUAL".into(), shim.clone()));
+                envs.push(("GIT_EDITOR".into(), shim));
             }
         }
         let size = TermSize { rows: 24, cols: 80 };
@@ -526,12 +530,19 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             },
         ),
         cmd(
-            Spec::new("scrollback").when(&["terminal"]).doc(
-                "the terminal's scrollback as a buffer in its pane (`<C-S-x>`; `q` goes back)",
+            Spec::new("scrollback").doc(
+                "the terminal's scrollback as a buffer in its pane (`<C-S-x>`; `q` or `<C-S-x>` again goes back)",
             ),
             |k, _| {
                 if let Some(t) = k.term_of(k.layout.focused()) {
                     k.scrollback_to_buffer(t);
+                } else if k
+                    .focused_view()
+                    .is_some_and(|v| k.ed.buffer_of(v).language.as_ref() == "scrollback")
+                {
+                    k.scrollback_close();
+                } else {
+                    k.ed.message = "scrollback needs terminal".into();
                 }
             },
         ),

@@ -33,3 +33,11 @@ Setext heading
 --------------
 
 The end.
+
+| a very long column heading that is wider than the pane | b | another rather long column heading to make it wide |
+|---|---|---|
+| x | y | z |
+
+| ![one](rendered.png) | ![two](rendered.png) |
+
+Back to [the top](#the-markdown-buffer).
