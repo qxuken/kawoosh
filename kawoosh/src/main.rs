@@ -107,14 +107,66 @@ fn log_levels() -> (Level, Option<Level>) {
     (keep, stderr)
 }
 
+/// `kawoosh --help`: every way in, and the variables each one reads.
+const USAGE: &str = "\
+kawoosh — a modal editor with terminals, on kui
+
+Usage:
+  kawoosh [PATH]                 open PATH (a directory is listed); none
+                                 picks up the last session
+  kawoosh -- PATH                open a PATH that starts with a dash
+  kawoosh test SCRIPT.lua...     run Lua tests against a headless editor;
+                                 exits 0 when every one passes
+
+From a terminal inside kawoosh (through $KAWOOSH_SOCKET):
+  kawoosh edit [--wait|-w] [+LINE] PATH...
+                                 open the paths in the running instance;
+                                 --wait returns when the buffer is closed
+  kawoosh ex LINE                run LINE as a : command there
+  kawoosh theme                  print `dark` or `light`
+
+Options:
+  -h, --help                     print this and exit
+  -V, --version                  print the version and exit
+
+Environment:
+  RUST_LOG           stderr log level (trace, debug, info, warn, error, off)
+  KAWOOSH_INIT       init.lua (default: $XDG_CONFIG_HOME/kawoosh/init.lua)
+  KAWOOSH_SETTINGS   settings.lua (default: beside init.lua)
+  KAWOOSH_STATE      the state db (default: $XDG_DATA_HOME/kawoosh/state.db)
+  KAWOOSH_TYPES      where the Lua type stubs go (default: beside the db)
+";
+
 fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if shim(&args)? {
-        return Ok(());
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let after_dashes = args.first().is_some_and(|a| a == "--");
+    match args.first().map(String::as_str) {
+        Some("-h" | "--help") => {
+            print!("{USAGE}");
+            return Ok(());
+        }
+        Some("-V" | "--version") => {
+            println!("kawoosh {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        // Everything after is a path, dash or not.
+        Some("--") => {
+            args.remove(0);
+        }
+        // A mistyped flag is not a file to create.
+        Some(a) if a.starts_with('-') && a != "-" => {
+            eprintln!("kawoosh: unknown option {a} (kawoosh --help lists them)");
+            std::process::exit(2);
+        }
+        _ => {
+            if shim(&args)? {
+                return Ok(());
+            }
+        }
     }
     // `kawoosh test PATH…`: Lua test scripts against a headless editor
     // (`harness.rs`), no window, the exit code the verdict.
-    if args.first().map(String::as_str) == Some("test") {
+    if args.first().map(String::as_str) == Some("test") && !after_dashes {
         std::process::exit(kawoosh::harness::run_files(&args[1..]));
     }
     let path = args.first().cloned();
