@@ -942,7 +942,11 @@ struct Look {
 /// sized by column — a monospace grid's placement (a fallback glyph can
 /// drift it a pixel or two), the tolerance kui's own chunked long line
 /// accepts.
-pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
+///
+/// True when it drew `line.ghost`: a row that wraps, a table's cells, an
+/// image or a rule draw none, and a completion no one can see is not
+/// one a key may accept.
+pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) -> bool {
     let lh = face.line_height;
     let (before, after) = (line.before, line.after);
     let text = line.text;
@@ -1366,6 +1370,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) {
             ui.with(row, body);
         }
     }
+    line.ghost.is_some()
+        && form
+            .is_none_or(|f| f.wrap.is_none() && f.table.is_none() && f.images.is_empty() && !f.rule)
 }
 
 /// The cell column byte `b` of `s` starts at, by `unicode-width` — what a

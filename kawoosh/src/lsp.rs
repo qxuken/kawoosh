@@ -1162,7 +1162,9 @@ impl Kawoosh {
                 c.index = (c.index + c.filtered.len().max(1) - 1) % c.filtered.len().max(1);
                 true
             }
-            "<Tab>" | "<C-y>" | "<CR>" if c.ghost(&typed).is_some() => {
+            // Only a ghost the pane drew: `<CR>` in a rendered markdown
+            // paragraph, which draws none, is a newline.
+            "<Tab>" | "<C-y>" | "<CR>" if self.ghost_shown && c.ghost(&typed).is_some() => {
                 let rest = c.ghost(&typed).unwrap();
                 self.lsp.completion = None;
                 self.ed.insert_text(v, &rest);

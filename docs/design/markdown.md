@@ -319,6 +319,13 @@ After a day's use (2026-09-23), five more:
   `a` for the shortest), still a row; the text keeps its bytes and the
   cells are read off the text. A document with one is parsed whole, its
   tree not kept, since an edit anywhere can change which rows they are.
+- **A key takes only a ghost it can see.** A rendered row that wraps
+  draws no completion ghost (Decision 4's "no ghost"), but `<Tab>` and
+  `<CR>` still took the completion: `Setex` then Enter put `Setext` in
+  the paragraph and no newline. `emit_line` answers whether it drew the
+  ghost, the pane keeps it (`Kawoosh::ghost_shown`), and the keys accept
+  only then — in a paragraph `<CR>` is a newline; on a table's source
+  row and in code, where the ghost is drawn, it completes as before.
 - **Prose wraps at the width of this frame.** A wrapped row's text was a
   box fixed at the pane's width as last frame's layout recorded it, and
   a pane drawn for the first time — a restored tab shown, a split made —

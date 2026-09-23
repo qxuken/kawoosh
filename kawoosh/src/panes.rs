@@ -247,7 +247,7 @@ impl Kawoosh {
                 }
             }
         }
-        rows::emit_line(
+        let _ = rows::emit_line(
             ui,
             font,
             &pal,
@@ -1245,6 +1245,9 @@ impl Kawoosh {
             .completion_typed()
             .filter(|(v, _)| *v == view && focused)
             .and_then(|(_, typed)| self.lsp.completion.as_ref()?.ghost(&typed));
+        // Whether a row drew it: `<Tab>` and `<CR>` take only a ghost
+        // that is on the screen (`Kawoosh::ghost_shown`).
+        let mut ghost_drawn = false;
         let caret_kind = if mode == Mode::Insert {
             Caret::Bar
         } else {
@@ -1560,7 +1563,7 @@ impl Kawoosh {
                                 }
                                 None => (&[][..], None),
                             };
-                            rows::emit_line(
+                            ghost_drawn |= rows::emit_line(
                                 ui,
                                 font,
                                 &pal,
@@ -1739,6 +1742,9 @@ impl Kawoosh {
         );
         self.ed.views[view].left = left;
         self.line_cells = cells;
+        if focused {
+            self.ghost_shown = ghost_drawn;
+        }
         // The rendered rows' heights as kui laid them out last frame: a
         // row that measured otherwise than the pane scrolled by asks
         // for a frame more, which scrolls by what it measured.

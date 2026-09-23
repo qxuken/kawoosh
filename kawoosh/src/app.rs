@@ -180,6 +180,11 @@ pub struct Kawoosh {
     /// The clipboard asked for to see what is on it (`sync_clipboard`),
     /// not to paste: its answer goes to the register.
     pub(crate) clip_probe: bool,
+    /// Whether the focused pane's last frame drew the completion's
+    /// ghost: a rendered markdown row that wraps draws none, and a key
+    /// that accepts one it cannot see put an invisible word in the text
+    /// on `<CR>` (`Kawoosh::completion_key`).
+    pub(crate) ghost_shown: bool,
     /// The last text kawoosh put on the clipboard, which is not news.
     pub(crate) clip_last: Option<String>,
     /// The window's focus and whether an editor pane had the keys, last
@@ -316,6 +321,7 @@ impl Kawoosh {
             clip_out: None,
             awaiting_paste: false,
             clip_probe: false,
+            ghost_shown: false,
             clip_last: None,
             clip_seen: (true, true),
             scroll_carry: 0.0,

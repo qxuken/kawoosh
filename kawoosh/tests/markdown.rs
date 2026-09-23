@@ -423,3 +423,29 @@ fn the_caret_row_keeps_the_columns() {
         "`**beta**`'s stars folded"
     );
 }
+
+/// A rendered paragraph draws no completion ghost — its text wraps as
+/// one paragraph — so `<CR>` after a word's start is a newline, not the
+/// word finished by a completion no one saw.
+#[test]
+fn enter_takes_no_ghost_it_cannot_see() {
+    let dir = fixture("ghost");
+    let (mut d, mut app) = launch(&dir, 900.0);
+    d.keys(&mut app, "/The end");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.press(&mut app, "o");
+    settle(&mut d, &mut app);
+    d.keys(&mut app, "Setex");
+    settle(&mut d, &mut app);
+    d.key(&mut app, "enter", KeyMods::default());
+    settle(&mut d, &mut app);
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.buffer_of(v);
+    let ln = buf.line_of(app.ed.views[v].sels.primary().head);
+    assert_eq!(
+        buf.slice(buf.line_range(ln - 1)),
+        "Setex",
+        "typed, and a newline after it"
+    );
+    assert_eq!(buf.slice(buf.line_range(ln)), "");
+}
