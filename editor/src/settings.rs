@@ -333,6 +333,9 @@ impl Settings {
         // `scratch`, `terminal`, `dir` (the directory as a listing).
         defaults.set("layout.new_pane", Setting::Str("launcher".into()));
         defaults.set("layout.new_tab", Setting::Str("launcher".into()));
+        // The dock: a `tree` of splits, or a `scroll` strip of columns
+        // (roadmap step 32, the experiment).
+        defaults.set("layout.dock", Setting::Str("tree".into()));
         // How the launcher opens: `normal`, where a letter launches and
         // `i` or `/` searches, or `insert`, typing filtering at once.
         defaults.set("launcher.start", Setting::Str("normal".into()));
@@ -780,6 +783,7 @@ mod tests {
                 "launcher.start",
                 "layout.column_width",
                 "layout.default",
+                "layout.dock",
                 "layout.gap",
                 "layout.new_pane",
                 "layout.new_tab",

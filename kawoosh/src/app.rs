@@ -248,6 +248,8 @@ pub struct Kawoosh {
     /// Every column drawn so far, by number, so a column arriving in a
     /// strip already on show is the one that slides in.
     pub(crate) strip_known: std::collections::HashSet<u64>,
+    /// The dock's view of the workspaces (roadmap step 32).
+    pub(crate) dock_state: crate::dock::DockState,
     /// A mono cell's advance and height, measured each frame.
     pub(crate) cell: (f32, f32),
     /// Modifier state, from `{kind="modifiers"}` events: ctrl, alt, super,
@@ -366,6 +368,7 @@ impl Kawoosh {
             culled: Default::default(),
             layout_default_seen: false,
             strip_known: Default::default(),
+            dock_state: Default::default(),
             cell: (7.8, crate::rows::LH),
             mods: (false, false, false, false),
             confirm: None,
@@ -2104,6 +2107,7 @@ impl kui::App for Kawoosh {
         self.sync_term_palettes();
         self.sync_term_settings();
         self.ring_bells(ui);
+        self.sync_dock();
         self.spawn_pending();
         self.sweep_scratches();
         self.tick_secrets();
@@ -2161,10 +2165,7 @@ impl kui::App for Kawoosh {
                     .height(Sizing::Fixed(body_h)),
                 |ui| {
                     let dock = match &self.layout.dock {
-                        Some(d) if self.layout.dock_open => match &d.layout {
-                            crate::layout::Kind::Tree(root) => Some(root.clone()),
-                            crate::layout::Kind::Scroll(_) => None,
-                        },
+                        Some(d) if self.layout.dock_open => Some(d.layout.clone()),
                         _ => None,
                     };
                     let dock_h = if dock.is_some() {
@@ -2206,7 +2207,10 @@ impl kui::App for Kawoosh {
                                 .height(Sizing::Fixed(dock_h)),
                             // `d:` keeps the dock's divider paths apart
                             // from the tab's (`on_split_drag`).
-                            |ui| self.render_node(ui, &d, "d:"),
+                            |ui| match &d {
+                                crate::layout::Kind::Tree(root) => self.render_node(ui, root, "d:"),
+                                crate::layout::Kind::Scroll(s) => self.render_dock_strip(ui, s),
+                            },
                         );
                     }
                 },

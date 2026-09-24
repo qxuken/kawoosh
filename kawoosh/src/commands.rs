@@ -40,6 +40,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(cwd());
     v.extend(instruments());
     v.extend(crate::terminals::commands());
+    v.extend(crate::dock::commands());
     v.extend(crate::domains::commands());
     v.extend(crate::trust::commands());
     v.extend(crate::disk::commands());

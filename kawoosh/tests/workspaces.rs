@@ -287,3 +287,122 @@ fn a_tab_lists_its_own_buffers_and_a_picker_starts_here() {
     );
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// A workspace's lifecycle and the dock (roadmap step 32): the dock is
+/// the window's, each of its panes the workspace's it was made in — its
+/// title leads with the project when another is in front — and when the
+/// last tab in a workspace goes, its idle tasks end at once and a
+/// running one is asked about.
+#[test]
+fn a_workspace_closing_ends_its_dock_tasks() {
+    use kawoosh::layout::{Content, SplitDir};
+    let root = tmp("dock");
+    let (a, b) = projects(&root);
+    let (mut d, mut app) = launch();
+    ex(&mut d, &mut app, &format!("cd {}", a.display()));
+    // Two tasks in the dock: an idle one, and one running.
+    let idle = app
+        .terms
+        .add(kawoosh_term::Terminal::headless(kawoosh_term::TermSize {
+            rows: 10,
+            cols: 40,
+        }));
+    let p = app.layout.new_pane(Content::Terminal(idle));
+    app.layout.set_dock(p);
+    app.layout.dock_open = true;
+    app.layout.focus(p);
+    let busy = app
+        .spawn_terminal(Some("sleep 30"), Some(&a))
+        .expect("a process");
+    let q = app.layout.split(SplitDir::H, Content::Terminal(busy));
+    // The keys back to the tab's pane, so the lines below are typed there.
+    let tab_pane = app.layout.tab().focused;
+    app.layout.focus(tab_pane);
+    d.frame(&mut app);
+    assert_eq!(
+        app.layout.dock_owner.get(&p).map(String::as_str),
+        Some(a.to_str().unwrap())
+    );
+    assert_eq!(
+        app.layout.dock_owner.get(&q).map(String::as_str),
+        Some(a.to_str().unwrap())
+    );
+    // Another project in front: the tasks say whose they are.
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", b.display()));
+    d.frame(&mut app);
+    let texts: Vec<String> = d
+        .core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect();
+    assert!(
+        texts.iter().any(|t| t == "alpha · terminal"),
+        "the dock names alpha's tasks: {texts:?}"
+    );
+    assert!(
+        app.layout.dock.as_ref().is_some_and(|dk| dk.contains(p)),
+        "alpha is still open"
+    );
+    // alpha's last tab goes: the idle task with it, the running one asked.
+    d.keys(&mut app, "gt");
+    ex(&mut d, &mut app, "tabclose");
+    d.frame(&mut app);
+    let dock = app
+        .layout
+        .dock
+        .as_ref()
+        .expect("the running task stays till asked");
+    assert!(!dock.contains(p), "the idle task ended");
+    assert!(dock.contains(q));
+    let c = app
+        .confirm
+        .as_ref()
+        .expect("a question for the running one");
+    assert!(c.title.starts_with("alpha has no tab left"), "{}", c.title);
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(app.layout.dock.is_none(), "ended");
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// Recent workspaces (roadmap step 32): the picker's `workspaces` — a
+/// launcher section too — lists the projects the memory has files in,
+/// the one in front left out; a pick moves the tab there and opens the
+/// file last attended, at its line.
+#[test]
+fn a_recent_workspace_is_picked_back_where_it_was() {
+    let root = tmp("recentws");
+    let (a, b) = projects(&root);
+    std::fs::write(a.join("notes.txt"), "one\ntwo\nthree\n").unwrap();
+    let (mut d, mut app) = launch();
+    app.open_store(Some(&root.join("state.db")));
+    ex(&mut d, &mut app, &format!("cd {}", a.display()));
+    ex(&mut d, &mut app, "e notes.txt");
+    d.keys(&mut app, "jj");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("cd {}", b.display()));
+    ex(&mut d, &mut app, "enew");
+    app.run_lua_source(
+        "t",
+        r#"local n = {} for _, i in ipairs(kawoosh.picker.sources.workspaces.items()) do n[#n+1] = i.text .. "=" .. (i.file or "") end kawoosh.echo(table.concat(n, ","))"#,
+    );
+    let listed = app.ed.message.clone();
+    assert!(listed.contains("alpha="), "{listed}");
+    assert!(
+        !listed.contains("beta="),
+        "the one in front is left out: {listed}"
+    );
+    ex(&mut d, &mut app, "picker workspaces");
+    d.frame(&mut app);
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(app.ed.cwd, a, "the tab moved to alpha");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).name, "notes.txt");
+    let head = app.ed.views[v].sels.primary().head;
+    assert_eq!(app.ed.buffer_of(v).line_of(head), 2, "where it was left");
+    std::fs::remove_dir_all(&root).ok();
+}

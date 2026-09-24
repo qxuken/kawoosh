@@ -22,7 +22,7 @@ use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
 /// How long the ribbon takes to reach the column a key revealed, and
 /// a column its place after a width step or a move: one duration, so
 /// the two motions a key starts run together.
-const RIBBON_MS: f32 = 160.0;
+pub(crate) const RIBBON_MS: f32 = 160.0;
 
 /// Frames on which the focused column is revealed after the strip's
 /// shape changed. One: kui lays the reveal out in the same frame, and
@@ -708,6 +708,12 @@ impl Kawoosh {
             ),
             Some(Content::Memory) => ("memory".into(), false),
             None => ("?".into(), false),
+        };
+        // A dock task of another project than the one in front says
+        // whose it is (workspaces.md Decision 9).
+        let name = match self.dock_project(pane) {
+            Some(p) => format!("{p} · {name}"),
+            None => name,
         };
         // A tab's pane goes where its title bar is dragged; the dock is
         // not in the tree and stays put.
