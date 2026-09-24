@@ -454,6 +454,46 @@ impl Tab {
         self.strip().and_then(|s| s.column_of(pane))
     }
 
+    /// Takes `pane` out of the tab: whether the tab is empty after, and
+    /// where the keyboard would go in a strip — the column's next pane,
+    /// else the column before, else the one that took its place.
+    pub fn remove(&mut self, pane: PaneId) -> (bool, Option<PaneId>) {
+        match &mut self.layout {
+            Kind::Tree(root) => {
+                let r = std::mem::replace(root, Node::Pane(0));
+                match r.without(pane) {
+                    Some(r) => {
+                        *root = r;
+                        (false, None)
+                    }
+                    None => (true, None),
+                }
+            }
+            Kind::Scroll(s) => {
+                let Some(i) = s.column_of(pane) else {
+                    return (false, None);
+                };
+                let node = std::mem::replace(&mut s.columns[i].node, Node::Pane(0));
+                let mut ps = Vec::new();
+                match node.without(pane) {
+                    Some(n) => {
+                        // The keyboard stays in the column.
+                        n.panes(&mut ps);
+                        s.columns[i].node = n;
+                    }
+                    None => {
+                        s.columns.remove(i);
+                        let before = &s.columns[..i];
+                        if let Some(c) = before.last().or(s.columns.first()) {
+                            c.node.panes(&mut ps);
+                        }
+                    }
+                }
+                (s.columns.is_empty(), ps.first().copied())
+            }
+        }
+    }
+
     /// The tree that holds `pane`: the root, or its column's node.
     pub fn node_of(&self, pane: PaneId) -> Option<&Node> {
         match &self.layout {
@@ -605,12 +645,16 @@ pub struct Layout {
     pub tabs: Vec<Tab>,
     pub tab: usize,
     pub panes: HashMap<PaneId, Content>,
-    /// The bottom dock, visible from every tab (mvp.md D5): a tree of
+    /// The bottom dock, visible from every tab (mvp.md D5): a tab of
     /// its own (roadmap step 13), so a split from a dock pane stays in
-    /// the dock and the tree's code — split, close, size, move by
-    /// direction — runs in it unchanged. Never a strip: a dock is short,
-    /// and a ribbon in it would scroll one row of panes.
+    /// the dock and the tab's code — split, close, size, move by
+    /// direction — runs in it unchanged. A tree, or under `layout.dock =
+    /// "scroll"` a strip (roadmap step 32, the experiment).
     pub dock: Option<Tab>,
+    /// Which workspace each dock pane was made in (workspaces.md
+    /// Decision 9): the dock is the window's, its tasks are a
+    /// project's. Stamped by the shell.
+    pub dock_owner: HashMap<PaneId, String>,
     pub dock_open: bool,
     /// The dock's share of the height.
     pub dock_ratio: f32,
@@ -642,6 +686,7 @@ impl Layout {
             tab: 0,
             panes,
             dock: None,
+            dock_owner: HashMap::new(),
             dock_open: false,
             dock_ratio: 0.3,
             dock_focused: false,
@@ -692,6 +737,38 @@ impl Layout {
     /// Whether the keyboard is in the dock, open and there.
     pub fn in_the_dock(&self) -> bool {
         self.dock_focused && self.dock_open && self.dock.is_some()
+    }
+
+    /// The dock as a strip (`layout.dock = "scroll"`) or a tree, its
+    /// panes kept; nothing when it already is, or there is none.
+    pub fn set_dock_scroll(&mut self, scroll: bool) {
+        let mut next = self.next_column;
+        if let Some(d) = self.dock.as_mut() {
+            match (scroll, d.is_scroll()) {
+                (true, false) => d.to_scroll(&mut next),
+                (false, true) => d.to_tree(),
+                _ => {}
+            }
+        }
+        self.next_column = next;
+    }
+
+    /// A strip dock's columns with `first`'s own ahead, each group in
+    /// the order it had (workspaces.md Decision 12): the project in
+    /// front sees its tasks first, the others' after them.
+    pub fn dock_order(&mut self, first: &str) {
+        let owner = self.dock_owner.clone();
+        let Some(s) = self.dock.as_mut().and_then(|d| d.strip_mut()) else {
+            return;
+        };
+        let mine = |c: &Column| {
+            let mut ps = Vec::new();
+            c.node.panes(&mut ps);
+            ps.iter().any(|p| owner.get(p).is_some_and(|o| o == first))
+        };
+        let (a, b): (Vec<Column>, Vec<Column>) = s.columns.drain(..).partition(|c| mine(c));
+        s.columns.extend(a);
+        s.columns.extend(b);
     }
 
     /// A dock of `pane` alone, where there was none.
@@ -748,14 +825,26 @@ impl Layout {
     pub fn split(&mut self, dir: SplitDir, content: Content) -> PaneId {
         let new = self.new_pane(content);
         // In the dock, the split is the dock's.
-        if self.in_the_dock()
-            && let Some(d) = self.dock.as_mut()
-        {
-            let target = d.focused;
-            if let Some(n) = d.node_of_mut(target) {
+        if self.in_the_dock() && self.dock.is_some() {
+            let width = self.column_width;
+            let target = self.dock.as_ref().map_or(0, |d| d.focused);
+            let at = self
+                .dock
+                .as_ref()
+                .and_then(|d| d.column_of(target))
+                .map(|i| i + 1);
+            // A strip's split beside is a column after the focused one.
+            if let (Some(at), SplitDir::H) = (at, dir) {
+                let col = self.new_column(Node::Pane(new), width);
+                if let Some(s) = self.dock.as_mut().and_then(|d| d.strip_mut()) {
+                    s.columns.insert(at, col);
+                }
+            } else if let Some(n) = self.dock.as_mut().and_then(|d| d.node_of_mut(target)) {
                 n.split(target, dir, new);
             }
-            d.focused = new;
+            if let Some(d) = self.dock.as_mut() {
+                d.focused = new;
+            }
             self.came_from.insert(new, target);
             return new;
         }
@@ -806,69 +895,25 @@ impl Layout {
                 .for_each(|f| *f = b),
             None => self.came_from.retain(|_, f| *f != pane),
         }
+        self.dock_owner.remove(&pane);
         if let Some(d) = self.dock.as_mut().filter(|d| d.contains(pane)) {
-            let Kind::Tree(root) = &mut d.layout else {
-                unreachable!("the dock is a tree")
-            };
-            match std::mem::replace(root, Node::Pane(0)).without(pane) {
-                // The keyboard to the dock's first pane when it was on
-                // the one that went.
-                Some(rest) => {
-                    *root = rest;
-                    if d.focused == pane {
-                        let mut ps = Vec::new();
-                        d.panes(&mut ps);
-                        d.focused = back.filter(|b| ps.contains(b)).unwrap_or(ps[0]);
-                    }
-                }
-                None => {
-                    self.dock = None;
-                    self.dock_open = false;
-                    self.dock_focused = false;
-                }
+            // The keyboard to the pane it came from, else the column's
+            // or the dock's first, when it was on the one that went.
+            let (empty, next) = d.remove(pane);
+            if empty {
+                self.dock = None;
+                self.dock_open = false;
+                self.dock_focused = false;
+            } else if d.focused == pane {
+                let mut ps = Vec::new();
+                d.panes(&mut ps);
+                d.focused = back.filter(|b| ps.contains(b)).or(next).unwrap_or(ps[0]);
             }
             return self.panes.remove(&pane);
         }
         let ti = self.tabs.iter().position(|t| t.contains(pane))?;
         let was_focused = self.tabs[ti].focused == pane;
-        let mut next_focus = None;
-        let empty = match &mut self.tabs[ti].layout {
-            Kind::Tree(root) => {
-                let r = std::mem::replace(root, Node::Pane(0));
-                match r.without(pane) {
-                    Some(r) => {
-                        *root = r;
-                        false
-                    }
-                    None => true,
-                }
-            }
-            Kind::Scroll(s) => {
-                let i = s.column_of(pane).unwrap();
-                let node = std::mem::replace(&mut s.columns[i].node, Node::Pane(0));
-                match node.without(pane) {
-                    Some(n) => {
-                        // The keyboard stays in the column.
-                        let mut ps = Vec::new();
-                        n.panes(&mut ps);
-                        next_focus = ps.first().copied();
-                        s.columns[i].node = n;
-                    }
-                    None => {
-                        s.columns.remove(i);
-                        let before = &s.columns[..i];
-                        let mut ps = Vec::new();
-                        // The column before, else the one that took its
-                        // place.
-                        if let Some(c) = before.last().or(s.columns.first()) {
-                            c.node.panes(&mut ps);
-                        }
-                        next_focus = ps.first().copied();
-                    }
-                }
-                s.columns.is_empty()
-            }
-        };
+        let (empty, next_focus) = self.tabs[ti].remove(pane);
         if !empty {
             if was_focused {
                 let mut ps = Vec::new();
@@ -1025,13 +1070,20 @@ impl Layout {
     /// focused pane's row, else its top (scrolling-tab.md Decision 6).
     pub fn neighbour(&self, dir: SplitDir, forward: bool) -> Option<PaneId> {
         let from = self.focused();
+        // On a strip's axis — the tab's, or the dock's when it has the
+        // keys — the column before or after by index.
+        let within = if self.in_dock(from) {
+            self.dock.as_ref()
+        } else {
+            Some(self.tab())
+        };
         if dir == SplitDir::H
-            && !self.in_dock(from)
-            && let Some(s) = self.tab().strip()
+            && let Some(t) = within
+            && let Some(s) = t.strip()
         {
             let i = s.column_of(from)?;
             let j = if forward { i + 1 } else { i.checked_sub(1)? };
-            return self.pane_in_column(j);
+            return self.pane_in_column_of(t, j);
         }
         let r = *self.rects.get(&from)?;
         let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
@@ -1075,10 +1127,15 @@ impl Layout {
     /// at the focused pane's row, else the column's top
     /// (scrolling-tab.md Decision 2).
     pub fn pane_in_column(&self, i: usize) -> Option<PaneId> {
-        let col = self.tab().strip()?.columns.get(i)?;
+        self.pane_in_column_of(self.tab(), i)
+    }
+
+    /// [`Self::pane_in_column`] of tab `t` — the dock's too.
+    pub fn pane_in_column_of(&self, t: &Tab, i: usize) -> Option<PaneId> {
+        let col = t.strip()?.columns.get(i)?;
         let mut ps = Vec::new();
         col.node.panes(&mut ps);
-        let cy = self.rects.get(&self.tab().focused).map(|r| r.y + r.h / 2.0);
+        let cy = self.rects.get(&t.focused).map(|r| r.y + r.h / 2.0);
         ps.iter()
             .find(|p| {
                 cy.is_some_and(|cy| {
