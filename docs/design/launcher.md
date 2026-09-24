@@ -122,6 +122,21 @@ left empty in no pane goes (`sweep_scratches`), so a launcher answered
 *Beat:* `<Esc>` closing the pane (the split undone) — that is `<C-c>`;
 and `<Esc>` falling back to the same buffer — that is `<CR>`.
 
+*Amended 2026-09-25 (roadmap step 29): normal mode first, a letter a
+launch.* Asked in use: the launcher starts in normal mode, where the
+entries are keys. While the query is empty a letter takes its entry —
+`s` a scratch, `t` a terminal, `d` the directory, a tool the letter
+its definition names (`tools = { git = { key = "g" } }`) or else the
+first free letter of its name, a plugin's `launcher.entry` its `key` —
+drawn where the row's hint is; `1`…`9` open the pins (the engine lets
+a first digit reach a binding that can run, rather than a count). `i`
+`a` `/` start the query, `q` closes, `<Esc>` is a scratch in one press,
+and with a query in the field the letters are normal mode's again, to
+edit it. `launcher.start = "insert"` is the table above, unchanged, for
+the hand that filters first. *Beat:* a letter no entry has starting
+the query with itself — whether a letter launched or searched would
+depend on what some plugin bound.
+
 ### 5. The sections are data
 
 `kawoosh.launcher` is the module (`kawoosh/lua/launcher.lua`, bundled

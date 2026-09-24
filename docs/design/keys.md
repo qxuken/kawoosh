@@ -45,7 +45,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 
 | keys | what |
 |---|---|
-| `<C-w>v` `<C-w>s` | split beside, below — the new pane a launcher (`layout.new_pane`; launcher.md) |
+| `<C-w>v` `<C-w>s` | split beside, below — the new pane a launcher (`layout.new_pane`; launcher.md): in normal mode a letter launches — `s` scratch, `t` terminal, `d` directory, a tool's letter, `1`…`9` a pin — and `i` or `/` searches (`launcher.start`) |
 | `<C-w>q` `<C-w>c` `<C-w>o` | close, close, only |
 | `<C-w>w` `<C-w>x` | next pane, swap with it |
 | `<C-w>h/j/k/l`, `<C-w>` + arrows | focus by direction |
@@ -204,6 +204,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | keys | what |
 |---|---|
 | `<C-j>` `<C-k>`, `<C-Down>` `<C-Up>` | a caret on the line below, above |
+| `<C-j>` `<C-k>` in visual mode | a caret on each line of the selection, at its head's column (a short line's end), and normal mode — vim's visual block as carets; the last line's caret primary, the first's with `<C-k>` (`cursor lines`, `cursor lines back`) |
 | `<C-n>` `<D-d>` | `select next`: the word under a bare caret, then its next match, each press one more |
 | `<C-S-n>` `<D-L>` | `select all matches`: every match at once (spelled `<C-S-n>` / `<D-S-l>` in a map: a chord's letter under Shift is the upper-case letter) |
 | `,` | keep the primary selection |
@@ -361,7 +362,7 @@ objects, or any other character on both sides.
 | `<leader>r` | rename the symbol: the prompt filled with `lsp rename WORD`, the name edited, `<CR>` |
 | `<leader>D` | the type definition |
 | `<leader>x` | evaluate the line (the selection, in visual mode) as Lua; the result on the status line, or in a pane when it has lines |
-| `<leader>cd` | the listed directory as the working one (oil's) |
+| `<leader>cd` `~` | the listed directory as the working one (oil's; `~` in a listing only) |
 | `<leader>yp` `<leader>yP` | copy the file's path from the working directory (whole when outside it), its absolute path — onto the clipboard and into the register (`path copy relative`, `absolute`); in a `dir` listing the entry's under the caret, the listed directory's on `../` |
 | `<leader>yd` `<leader>yD` | copy its directory, from the working directory (`.` for the working one) and absolute (`path copy dir`, `dir absolute`) |
 | `<leader>yn` `<leader>yN` | copy its name, and its name without the extension (`path copy name`, `stem`) |
@@ -372,6 +373,7 @@ objects, or any other character on both sides.
 | `<leader>?` | the which-key for every first key (`:keys`) |
 | `<leader>Q` | quit all |
 | `-` | oil: the file's directory |
+| `_` | oil: the working directory's listing, from anywhere (`:dir .`) |
 
 The groups are the which-key ones from the neovim config: `b` buffers,
 `t` tabs, `s` search and lists, `w` the workspace, `c` code, `y` the

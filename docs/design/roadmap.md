@@ -462,19 +462,26 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   (a946b61); the idea of switching macOS's accent popup on in insert
   mode and off in normal is a per-mode `NSUserDefaults` flip. Cheap if
   kui exposes it; a kui backlog item, not a kawoosh one.
-- **A caret per line of a selection** — open [todo]; step 29. The
-  todo's "visual selection alt-j/k multiselect entire block", written
-  before Decision 1 gave the carets to Ctrl: from a selection over
-  several lines, one caret on each — vim-visual-multi's visual
-  `<C-Down>`, VS Code's ⌥⇧I, helix's split on lines. Nothing does it
-  today: `cursor below` / `above` add one caret past the selection.
-  The round picks the key — `<C-j>` `<C-k>` in visual mode are the
-  natural spelling, since a caret added *below* a line selection is
-  little use there — and where the carets sit: the todo's line is cut
-  off ("at the to…"); the column the head is on, as vim's visual block
-  would, is the likely reading, each line's end the other. On the way:
-  `cursor below`'s description still names `<A-j>` (`commands.rs`'s
-  table), stale since the remap.
+- **A caret per line of a selection** — done 2026-09-25 [todo]; step
+  29. `<C-j>` `<C-k>` (and `<C-Down>` `<C-Up>`) in visual mode:
+  `cursor lines` / `cursor lines back`, a caret on each line every
+  selection covers at the column its head is on — a short line's end,
+  as `<C-j>` in normal mode already does — and normal mode, the last
+  line's caret primary or the first's. `cursor below`'s description
+  says `<C-j>` now. `a_selection_over_lines_is_a_caret_on_each`. What
+  the entry said before it was built: The todo's "visual selection
+  alt-j/k multiselect entire block", written before Decision 1 gave
+  the carets to Ctrl: from a selection over several lines, one caret
+  on each — vim-visual-multi's visual `<C-Down>`, VS Code's ⌥⇧I,
+  helix's split on lines. Nothing does it today: `cursor below` /
+  `above` add one caret past the selection. The round picks the key —
+  `<C-j>` `<C-k>` in visual mode are the natural spelling, since a
+  caret added *below* a line selection is little use there — and where
+  the carets sit: the todo's line is cut off ("at the to…"); the
+  column the head is on, as vim's visual block would, is the likely
+  reading, each line's end the other. On the way: `cursor below`'s
+  description still names `<A-j>` (`commands.rs`'s table), stale since
+  the remap.
 
 ### Panes and pickers
 
@@ -586,25 +593,34 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   the buffer it last showed, or not at all if it showed none). The
   door it wants from the engine: `kawoosh.view_open` into the pane
   being made, not only `below` one.
-- **The launcher in normal mode, a letter a launch** — open [asked
-  2026-09-25]; step 29. launcher.md Decision 4 opens the query in insert
-  mode so typing filters at once; the ask turns that round: open in
-  normal mode, where a letter launches — `t` a terminal, `s` a scratch,
-  `d` the directory, `<CR>` the same buffer, `1`…`9` the pins — and the
+- **The launcher in normal mode, a letter a launch** — done 2026-09-25
+  [asked 2026-09-25]; step 29. As the entry below planned, with one
+  engine change it did not see: a first digit a runnable binding takes
+  is that binding's, not a count, so the launcher's `1`…`9` reach the
+  pins. `launcher key X` takes the entry on X or passes; the letters
+  are mapped under a `launcher:blank` fact, so a query's normal mode
+  is the query's. The engine opens the field in the mode
+  `launcher.start` names. launcher.md's Decision 4 amended;
+  launcher.rs's tests in normal mode,
+  `a_letter_launches_from_an_empty_query`. What the entry said before
+  it was built: launcher.md Decision 4 opens the query in insert mode
+  so typing filters at once; the ask turns that round: open in normal
+  mode, where a letter launches — `t` a terminal, `s` a scratch, `d`
+  the directory, `<CR>` the same buffer, `1`…`9` the pins — and the
   query is a key away. The rows are data already (`launcher.entry`,
-  each with a `hint` the pane draws, `⏎` and `esc` today), so the round
-  is a `key` on an entry, drawn where the hint is, and a map per key
-  under the launcher's fact; a tool takes the first free letter of its
-  name unless its definition says one (`tools = { git = { key = "g" }
-  }`), and a plugin's entry names its own. Reserved, so no entry can
-  take them: `j` `k` walk, `i` `a` `/` start the query, `:` the command
-  line, `<Esc>` — once now — a scratch, as `s` is. `launcher.start` =
-  `normal` | `insert` keeps Decision 4's way for whoever filters first;
-  normal is the default the ask wants. *Not* taken: an unbound letter
-  starting the query with itself — a letter would mean "launch" or
-  "search" by whether some plugin bound it, which is the ambiguity the
-  mode is there to remove. launcher.md's Decision 4 is amended when it
-  is built.
+  each with a `hint` the pane draws, `⏎` and `esc` today), so the
+  round is a `key` on an entry, drawn where the hint is, and a map per
+  key under the launcher's fact; a tool takes the first free letter of
+  its name unless its definition says one (`tools = { git = { key =
+  "g" } }`), and a plugin's entry names its own. Reserved, so no entry
+  can take them: `j` `k` walk, `i` `a` `/` start the query, `:` the
+  command line, `<Esc>` — once now — a scratch, as `s` is.
+  `launcher.start` = `normal` | `insert` keeps Decision 4's way for
+  whoever filters first; normal is the default the ask wants. *Not*
+  taken: an unbound letter starting the query with itself — a letter
+  would mean "launch" or "search" by whether some plugin bound it,
+  which is the ambiguity the mode is there to remove. launcher.md's
+  Decision 4 is amended when it is built.
 - **Recent workspaces in the launcher** — open [asked 2026-09-25];
   step 32. A section of the workspaces worked in, most recent first,
   that opens one in the pane's tab: the tab's cwd moved there and
@@ -1256,14 +1272,16 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   `<CR>` on it (2026-09-23): the editor's double click is a gesture a
   map can take, vim's `<2-LeftMouse>` (`Editor::mouse`), which
   `dir.lua` maps for listings; unbound, it still selects the word.
-- **`dir`'s `~` and `_`** — open [todo]; step 29. oil's two keys the
-  listing lacks. `~` in oil is `:tcd` to the listed directory, and
-  `dir cd` is exactly that since step 26 moved the cwd to the tab —
-  it is on `<leader>cd` only; `~` in a listing binds it too. `_` in
-  oil opens the working directory from anywhere `-` works; `:dir`
-  bare lists the file's directory, as `-` does, and the working one is
-  `:dir .` with no key — `_` binds that. One line each in `dir.lua`,
-  keys.md's row beside `-`.
+- **`dir`'s `~` and `_`** — done 2026-09-25 [todo]; step 29. `~` in a
+  listing is `dir cd`; `_` is `:dir .` from anywhere, in the engine's
+  table beside `-`. `dir_dash.lua` presses both. What the entry said
+  before it was built: oil's two keys the listing lacks. `~` in oil is
+  `:tcd` to the listed directory, and `dir cd` is exactly that since
+  step 26 moved the cwd to the tab — it is on `<leader>cd` only; `~`
+  in a listing binds it too. `_` in oil opens the working directory
+  from anywhere `-` works; `:dir` bare lists the file's directory, as
+  `-` does, and the working one is `:dir .` with no key — `_` binds
+  that. One line each in `dir.lua`, keys.md's row beside `-`.
 - **The working memory, round two** — done 2026-09-21
   ([memory.md](memory.md), step 10). The memory as the one place the
   editor remembers: a row per subject (texts, files, command lines,
@@ -1391,15 +1409,23 @@ follow the theme every frame (`panes.rs`).
   process — pty, tool, compile, language server — spawned where its
   cwd is. Four rounds. Until then `kawoosh.tool("box", { cmd = "ssh
   box" })`.
-- **The ⌘-click's hover** — open [todo]; step 29. A ⌘-click (ctrl
-  where there is no ⌘) on a path in a live terminal opens it
-  (`open_location_at` over `location_at`, the row's text), but nothing
-  says it will: the grid takes clicks only while the modifier is held
-  (`panes.rs`, so a plain drag still selects) and draws no hover.
-  Wanted, as wezterm and every editor do it: with the modifier held,
-  the path under the pointer underlined and the pointer a hand —
-  `location_at` run on the hovered cell, its span painted over the
-  cells, gone when the modifier is let go or the pointer leaves it.
+- **The ⌘-click's hover** — done 2026-09-25 [todo]; step 29. With ⌘
+  (ctrl) held, the grid reports its rect (`on_layout`), kui's pointer
+  is turned into a cell, and `location_cols` — the span of
+  `location_span`, split out of `location_at` — underlines the path
+  and makes the pointer a hand, only when what it names exists; the
+  underline is the cells' own flag on a copy of the row. The ⌘-click
+  test checks the hand over the path, none over a word that is no
+  path, none once ctrl is let go. What the entry said before it was
+  built: A ⌘-click (ctrl where there is no ⌘) on a path in a live
+  terminal opens it (`open_location_at` over `location_at`, the row's
+  text), but nothing says it will: the grid takes clicks only while
+  the modifier is held (`panes.rs`, so a plain drag still selects) and
+  draws no hover. Wanted, as wezterm and every editor do it: with the
+  modifier held, the path under the pointer underlined and the pointer
+  a hand — `location_at` run on the hovered cell, its span painted
+  over the cells, gone when the modifier is let go or the pointer
+  leaves it.
 - **Copy mode as a mode** — open [asked 2026-09-25]; step 31, with the
   colours below. Today `<C-S-x>` puts a `*scrollback*` buffer in the
   terminal's pane, `q` or `<C-S-x>` gives it back, and `<Esc>` in its
@@ -1426,16 +1452,25 @@ follow the theme every frame (`panes.rs`).
   one, filled from the grid's runs by the engine — and kept while the
   buffer lives. The terminal stays alive meanwhile, as it does today;
   the todo allows it.
-- **The bell** — open [todo]; step 29. `term` notes a BEL
+- **The bell** — done 2026-09-25 [todo]; step 29. `ring_bells` each
+  frame: `terminal.bell` = `sound` (the default: kui's `blip`, a short
+  sine synthesised as a WAV, no asset shipped) | `visual` | `off`; at
+  most one chime in `BELL_GAP` (250 ms); a terminal not on screen
+  marks its tab — the edge and label in the warning's colour, i3's
+  urgent workspace — until it is visited. `editor.bell` (off) rings
+  for a search with no match through `Editor::bell`, the door any
+  other failure can set. The visual bell is the mark alone: no flash
+  of a pane on screen. `a_bell_chimes_and_marks_a_tab_out_of_sight`.
+  What the entry said before it was built: `term` notes a BEL
   (`Terminal::bell`, set on alacritty's `Event::Bell`) and nothing
   reads it. kui plays sounds (`add_sound`, `play`; the `audio` feature
   is on by default) — kui-requirements §9's first item, so no kui ask.
   Wanted: a short sound shipped with the app, played on a BEL at most
   once in a quarter second; the tab's label washed for a pane not on
-  screen; `terminal.bell` = `sound` | `visual` | `off`. The editor's own
-  beep (a motion that fails, a search with no match) is the same
-  setting's second half, `editor.bell`, off by default — vim users turn
-  it off first.
+  screen; `terminal.bell` = `sound` | `visual` | `off`. The editor's
+  own beep (a motion that fails, a search with no match) is the same
+  setting's second half, `editor.bell`, off by default — vim users
+  turn it off first.
 - **Mouse buttons and OSC 8** — later [kui.md, req §10]. kui routes
   only the primary button; the middle button and hyperlinks are kui's
   wish list, not kawoosh's.
@@ -1803,11 +1838,15 @@ then breadth.
     (`kawoosh/src/themes.rs`): Rosé Pine, main, moon and dawn, the
     default pinned; the selection held legible whatever its source. See
     the config track.
-29. **The small ones, again**: `~` and `_` in `dir`; a caret per line
+29. ~~**The small ones, again**: `~` and `_` in `dir`; a caret per line
     of a selection, its key and column decided; the ⌘-click's hover in
     a terminal; the bell (`terminal.bell`, a shipped sound, the tab
     washed off screen); the launcher opening in normal mode with a
-    letter per entry (`t` `s` `d`, the pins' digits, `launcher.start`). One round because each is under a day, and none
+    letter per entry (`t` `s` `d`, the pins' digits, `launcher.start`).~~
+    Landed 2026-09-25, all five; the one engine change none of them
+    named — a first digit a runnable binding takes is no count — came
+    with the launcher's pins. See the engine, panes, buffers and
+    terminal tracks. One round because each is under a day, and none
     needs a door the others do not.
 30. **Scopes**: the `files` and `grep` pickers from the file's
     directory (a `root` in the picker's `ctx`), and the buffer list per

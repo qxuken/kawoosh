@@ -16,7 +16,7 @@
 --
 --   tools = {
 --     git = { cmd = "gitui" },                 -- another git
---     serve = { cmd = "npm run dev", cwd = "root", dock = true },
+--     serve = { cmd = "npm run dev", cwd = "root", dock = true, key = "v" },
 --     logs = "tail -f /var/log/system.log",  -- a string is its cmd
 --   }
 --
@@ -30,9 +30,13 @@ local DEFAULTS = {
   shell = { cmd = os.getenv("SHELL") or "sh", cwd = "root", restore = true },
 }
 
+-- A tool's letter in the launcher (`key = "g"`), by name.
+kawoosh.tool_keys = kawoosh.tool_keys or {}
+
 local function register(name, def)
   if type(def) == "string" then def = { cmd = def } end
   if type(def) ~= "table" or type(def.cmd) ~= "string" then return end
+  kawoosh.tool_keys[name] = type(def.key) == "string" and def.key or nil
   kawoosh.tool(name, { cmd = def.cmd, cwd = def.cwd, dock = def.dock, restore = def.restore })
 end
 

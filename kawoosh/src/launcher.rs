@@ -7,7 +7,7 @@
 //! beside. The list itself is `launcher.lua`'s, a Lua view.
 
 use kawoosh_doc::Buffer;
-use kawoosh_editor::{Spec, View, ViewId};
+use kawoosh_editor::{Mode, Spec, View, ViewId};
 use kui::Value;
 
 use crate::app::Kawoosh;
@@ -114,14 +114,20 @@ impl Kawoosh {
                 }
                 let pane = self.place(at, Content::Lua(VIEW.into()));
                 self.launcher = Some(Launcher { pane, from });
-                // The query empty and keyed, in insert mode, from the
-                // first frame: typing filters at once.
-                match self.ed.find_field(FIELD) {
-                    Some(f) => self.ed.set_field_text(f, ""),
-                    None => {
-                        self.ed.open_field(FIELD, "");
+                // The query empty and keyed from the first frame: in
+                // normal mode, where a letter launches (roadmap step 29),
+                // or in insert mode, where typing filters at once, as
+                // `launcher.start` says.
+                let f = match self.ed.find_field(FIELD) {
+                    Some(f) => {
+                        self.ed.set_field_text(f, "");
+                        f
                     }
-                }
+                    None => self.ed.open_field(FIELD, ""),
+                };
+                let insert = self.ed.settings.str("launcher.start") == Some("insert");
+                self.ed
+                    .set_mode(f, if insert { Mode::Insert } else { Mode::Normal });
                 if let Some(rt) = &self.scripting.rt {
                     rt.set_field_focus(VIEW, Some(FIELD.into()));
                 }

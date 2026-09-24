@@ -99,7 +99,7 @@ fn pane_count(app: &Kawoosh) -> usize {
     ps.len()
 }
 
-/// `<C-w>v` opens a launcher with the query keyed in insert mode; its
+/// `<C-w>v` opens a launcher with the query keyed in normal mode; its
 /// first section is *here*, the buffer split from first; `<CR>` is
 /// vim's split — the same buffer, the caret where it was — and the
 /// launcher is gone.
@@ -114,7 +114,7 @@ fn a_bare_split_asks_and_enter_is_vims_split() {
     assert!(on_launcher(&app), "the new pane is a launcher");
     assert_eq!(pane_count(&app), 2);
     let q = app.lua_field_focused("launcher").expect("the query keyed");
-    assert_eq!(app.ed.mode(q), kawoosh_editor::Mode::Insert);
+    assert_eq!(app.ed.mode(q), kawoosh_editor::Mode::Normal);
     let r = rows(&mut app);
     assert_eq!(
         r[..5],
@@ -135,9 +135,10 @@ fn a_bare_split_asks_and_enter_is_vims_split() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
-/// The first `<Esc>` leaves insert mode over the query, the second
-/// answers with a scratch — which goes once a file replaces it, being
-/// empty and in no pane; `<C-c>` closes the new pane.
+/// `<Esc>` answers with a scratch — in normal mode at once; opened in
+/// insert mode (`launcher.start`), the first leaves it and the second
+/// answers — which goes once a file replaces it, being empty and in no
+/// pane; `<C-c>` closes the new pane.
 #[test]
 fn esc_twice_is_a_scratch_and_ctrl_c_undoes_the_split() {
     let _g = serial();
@@ -147,11 +148,20 @@ fn esc_twice_is_a_scratch_and_ctrl_c_undoes_the_split() {
     d.frame(&mut app);
     d.press(&mut app, "<Esc>");
     d.frame(&mut app);
-    assert!(on_launcher(&app), "still asking");
+    assert_eq!(focused_name(&app), "*scratch*", "normal mode: at once");
+    ex(&mut d, &mut app, "close");
+    ex(&mut d, &mut app, "set launcher.start=insert");
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
     let q = app.lua_field_focused("launcher").expect("the query");
+    assert_eq!(app.ed.mode(q), kawoosh_editor::Mode::Insert);
+    d.press(&mut app, "<Esc>");
+    d.frame(&mut app);
+    assert!(on_launcher(&app), "still asking");
     assert_eq!(app.ed.mode(q), kawoosh_editor::Mode::Normal);
     d.press(&mut app, "<Esc>");
     d.frame(&mut app);
+    ex(&mut d, &mut app, "set launcher.start!");
     assert_eq!(focused_name(&app), "*scratch*");
     assert_eq!(pane_count(&app), 2);
     let scratches = |app: &Kawoosh| {
@@ -193,7 +203,7 @@ fn a_query_finds_a_file_and_opens_it_in_place() {
     let (mut d, mut app) = launch(&dir);
     d.press(&mut app, "<C-w>v");
     d.frame(&mut app);
-    d.keys(&mut app, "librs");
+    d.keys(&mut app, "/librs");
     d.frame(&mut app);
     let r = rows(&mut app);
     assert!(r.contains(&"# files".to_string()), "{r:?}");
@@ -221,7 +231,7 @@ fn ex_edit_from_its_command_line_fills_it() {
     let (mut d, mut app) = launch(&dir);
     d.press(&mut app, "<C-w>v");
     d.frame(&mut app);
-    d.keys(&mut app, "x:");
+    d.keys(&mut app, "ix:");
     d.frame(&mut app);
     let q = app.lua_field_focused("launcher").unwrap();
     assert_eq!(
@@ -305,6 +315,82 @@ fn a_pin_opens_into_the_launcher() {
     assert!(!on_launcher(&app));
     assert_eq!(focused_name(&app), "notes.md");
     assert_eq!(pane_count(&app), 2);
+}
+
+/// In normal mode on an empty query a letter launches (roadmap step
+/// 29): `t` a terminal, `d` the directory, `s` a scratch, a tool the
+/// letter its definition names; `1` the first pin. A letter no entry
+/// has is normal mode's, and with a query the letters edit it.
+#[test]
+fn a_letter_launches_from_an_empty_query() {
+    let _g = serial();
+    let dir = project("letters");
+    let db = dir.join("state.db");
+    let (mut d, mut app) = launch(&dir);
+    app.open_store(Some(&db));
+    lua(
+        &mut app,
+        &format!("kawoosh.pin('file', '{}')", lua_path(&dir.join("notes.md"))),
+    );
+    lua(
+        &mut app,
+        "kawoosh.opt('tools', { hello = { cmd = 'echo hi', key = 'e' } })",
+    );
+    d.frame(&mut app);
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
+    d.press(&mut app, "t");
+    d.frame(&mut app);
+    assert!(!on_launcher(&app));
+    assert!(
+        matches!(app.layout.focused_content(), Some(Content::Terminal(_))),
+        "`t`"
+    );
+    // The terminal has the keys: closed from here, not typed to it.
+    app.shell_command("close", &[], None);
+    d.frame(&mut app);
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
+    d.press(&mut app, "d");
+    d.frame(&mut app);
+    assert_eq!(
+        app.ed
+            .buffer_of(app.focused_view().unwrap())
+            .language
+            .to_string(),
+        "dir",
+        "`d`"
+    );
+    ex(&mut d, &mut app, "close");
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
+    d.press(&mut app, "1");
+    d.frame(&mut app);
+    assert_eq!(focused_name(&app), "notes.md", "`1`, the first pin");
+    ex(&mut d, &mut app, "close");
+    // A query: the letters are the query's again — `x` deletes.
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
+    d.keys(&mut app, "/tx");
+    d.press(&mut app, "<Esc>");
+    d.frame(&mut app);
+    d.press(&mut app, "x");
+    d.frame(&mut app);
+    assert!(on_launcher(&app), "a letter with a query edits it");
+    let q = app.lua_field_focused("launcher").unwrap();
+    assert_eq!(app.ed.field_text(q).as_deref(), Some("t"));
+    d.press(&mut app, "<BS>");
+    d.press(&mut app, "0D");
+    d.frame(&mut app);
+    // The tool's own letter.
+    d.press(&mut app, "e");
+    d.frame(&mut app);
+    assert!(!on_launcher(&app), "`e`, the tool's");
+    assert!(matches!(
+        app.layout.focused_content(),
+        Some(Content::Terminal(_))
+    ));
+    assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
 /// Each word of `layout.new_pane`, and `layout.new_tab` apart from it.
