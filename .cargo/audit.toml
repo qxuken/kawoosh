@@ -1,0 +1,31 @@
+# cargo-audit's config, read from this directory the way config.toml beside it
+# is. The audit job in .forgejo/workflows/audit.yml runs `cargo audit` with
+# `--deny warnings`, so an advisory of any kind — a vulnerability, or a crate
+# that has merely gone unmaintained — turns the job red. That is the point:
+# the only way past it is to upgrade out of the advisory, or to add an entry
+# below saying why we are living with it. An ignore here is a decision with a
+# name on it, not a silence.
+#
+# Every entry gets a comment: what pulls the crate in, whether it reaches the
+# shipped binary, and what would let us drop the line again.
+
+[advisories]
+ignore = [
+    # ttf-parser is unmaintained (informational, not a vulnerability). It is
+    # not a direct dependency and there is no version to move to. Both paths
+    # come through kui, and kui carries the same line in its own audit.toml:
+    #
+    #   kui-core -> cosmic-text 0.19 -> fontdb 0.23 -> ttf-parser
+    #                                                   (every platform)
+    #   kui -> winit 0.30 -> sctk-adwaita -> ab_glyph -> owned_ttf_parser
+    #                                                   (Linux/Wayland only)
+    #
+    # The first is unconditional - fontdb is not an optional dependency of
+    # cosmic-text - so it is in the binary on every platform. It is font
+    # discovery and loading, not shaping and not rasterizing. The second is
+    # Wayland's client-side decorations and is absent on macOS and Windows.
+    #
+    # Drop this line when kui drops it: when cosmic-text moves off fontdb or
+    # fontdb moves off ttf-parser.
+    "RUSTSEC-2026-0192",
+]

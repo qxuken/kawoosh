@@ -1,0 +1,115 @@
+# RustSec advisories against Cargo.lock, taken from kui's own audit workflow.
+#
+# `cargo audit` reads the lockfile and nothing else: no target dir, no build,
+# and no kui checkout either - while kui is taken by path (Cargo.toml), its
+# crates are in Cargo.lock without a source, and everything they pull in is
+# there and audited like the rest. It is the one check whose result can change
+# without anyone pushing a commit - an advisory is published against code that
+# has not moved - which is why this workflow has a schedule. A weekly run on
+# main is the part that actually earns its keep; the push and pull_request
+# triggers just catch a lockfile change at the moment it is made.
+#
+# It runs with `--deny warnings`, so an unmaintained or unsound crate fails
+# the job the same as a vulnerability does - and with `--no-yanked`, because
+# that half of the check cannot complete on this runner; see the step. The
+# escape hatch for the rest is .cargo/audit.toml: an
+# ignore entry there, with a comment saying what pulls the crate in and what
+# would let us delete the line. Without that file today's tree is red
+# (ttf-parser, RUSTSEC-2026-0192, through kui), which is the intended shape -
+# the ignore list is the record of what we have decided to live with.
+#
+# The container is the stock node image, as kui's jobs are: actions/checkout
+# and actions/cache are JavaScript actions and the runner execs `node` inside
+# the job container to run them. Rust comes from rustup.
+name: audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Cargo.lock
+      - .cargo/audit.toml
+      - .forgejo/workflows/audit.yml
+  pull_request:
+    paths:
+      - Cargo.lock
+      - .cargo/audit.toml
+      - .forgejo/workflows/audit.yml
+  schedule:
+    # Mondays, 06:00 UTC. The advisory database is the input that moves here,
+    # not the repository.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_HOME: /usr/local/cargo
+  RUSTUP_HOME: /usr/local/rustup
+  # Pinned so the cache key below means something and so a run is reproducible
+  # from the tag it ran on. The advisory database is fetched fresh every run
+  # regardless, so pinning the tool does not pin what it knows about.
+  CARGO_AUDIT_VERSION: 0.22.2
+
+jobs:
+  audit:
+    runs-on: docker
+    container:
+      image: node:24-bookworm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rust
+        run: |
+          set -eu
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal \
+            --default-toolchain stable
+          echo "${CARGO_HOME}/bin" >> "$GITHUB_PATH"
+          "${CARGO_HOME}/bin/cargo" --version
+
+      # Just the one binary, keyed on the pinned version: a hit turns the
+      # install step below into a no-op, a miss costs one `cargo install`.
+      # Restored after rustup so it cannot be clobbered by the toolchain's
+      # own shims in the same directory.
+      - name: Cache cargo-audit
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-${{ env.CARGO_AUDIT_VERSION }}
+
+      - name: Install cargo-audit
+        run: |
+          set -eu
+          if command -v cargo-audit >/dev/null; then
+            cargo audit --version
+            exit 0
+          fi
+          cargo install --locked "cargo-audit@${CARGO_AUDIT_VERSION}"
+
+      # --deny warnings: an unmaintained or unsound crate fails the same as a
+      # vulnerability, and .cargo/audit.toml is the only way to accept one.
+      #
+      # --no-yanked, as in kui, where it was added after that repository's run
+      # 141: the yanked half of the check printed 175 lines of
+      #
+      #   error: couldn't check if the package is yanked: registry: request
+      #   could not be completed in the allotted timeframe
+      #
+      # and the job went green anyway. Yanked crates are checked one HTTP
+      # request per crate against the sparse index - about 500 of them here -
+      # and the runner's egress is slow enough (the advisory database fetch,
+      # one request, takes over a minute) that most of them time out. A
+      # timed-out lookup is not a warning, so `--deny warnings` cannot see it:
+      # the check was not running, and the log said so 175 times while the job
+      # reported success. A check that quietly does not happen is worse than
+      # one that is switched off on purpose, so it is switched off on purpose.
+      # The advisory half - the part worth having - is unaffected and still
+      # runs against every crate in the lockfile.
+      #
+      # Only here. A local `cargo audit --deny warnings` still does the yanked
+      # check, on a network where it completes. If it is ever wanted back in
+      # CI, the thing to try first is caching /usr/local/cargo/registry/index
+      # the way kui's ci.yml `check` job does: tame-index reads cargo's own
+      # sparse index cache, so a warm one would turn those requests into local
+      # file reads. That is a guess, and it needs a run to confirm.
+      - name: Audit
+        run: cargo audit --deny warnings --no-yanked
