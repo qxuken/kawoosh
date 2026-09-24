@@ -131,7 +131,7 @@ fn a_which_key_lists_what_can_follow_and_a_setting_hides_it() {
     assert_eq!(app.ed.message, "keys of which mode? (n, i, v, o)");
     assert!(texts(&d).is_empty());
     // Off by the setting.
-    ex(&mut d, &mut app, "set nowhichkey");
+    ex(&mut d, &mut app, "set -whichkey");
     d.keys(&mut app, " ");
     assert!(texts(&d).is_empty(), "off");
     d.key(&mut app, "escape", KeyMods::default());

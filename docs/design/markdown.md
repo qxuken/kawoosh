@@ -42,8 +42,8 @@ unreadable in a code editor today.
 ### 1. A way of drawing the buffer, not a buffer kind
 
 `markdown.render` is a setting, `true` by default for the markdown
-language; `:set markdown.render false` and `markdown toggle`
-(`<leader>cr`, *render*, under the code group) flip it. When it holds
+language; `:set -markdown.render` turns it off and `markdown toggle`
+(`<leader>cr`, *render*, under the code group) flips it. When it holds
 and the buffer's language is markdown, `rows::emit_line` reads a
 `Rendered` for the line (a new `kawoosh/src/markdown.rs`) and draws
 from it; otherwise the row is what it is today. Nothing else in the

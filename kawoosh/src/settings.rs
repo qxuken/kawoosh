@@ -695,7 +695,7 @@ impl Kawoosh {
             }
             (Some("reload"), _) => self.reload_all_settings(),
             // A boolean's switch: flipped in the session layer, over
-            // whatever file set it, as `:set` and `:set no…` do.
+            // whatever file set it, as `:set +…` and `:set -…` do.
             (Some("toggle"), Some(path)) => {
                 let path = path.to_string_lossy().into_owned();
                 let on = !self.ed.settings.bool(&path).unwrap_or(false);

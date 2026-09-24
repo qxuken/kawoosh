@@ -2040,15 +2040,16 @@ pub fn install(ed: &mut Editor) {
             None => ed.message = "edit what?".into(),
         },
     );
-    // `:set PATH=VALUE`, `:set FLAG`, `:set noFLAG` set into the session
-    // layer, shaped like the value already there; `:set PATH?` says what
-    // it is and where it came from; `:set PATH!` takes the session's
-    // value back out.
+    // `:set PATH=VALUE`, `:set FLAG` or `:set +FLAG`, `:set -FLAG` set
+    // into the session layer, shaped like the value already there;
+    // `:set PATH?` says what it is and where it came from; `:set PATH!`
+    // takes the session's value back out. Not vim's `noFLAG`: a path
+    // may start with `no` (`notes.enabled`), none starts with a sign.
     ed.register_spec(
         Spec::new("set")
             .alias(&["se"])
             .args(Args::rest(&[ArgKind::Option]))
-            .doc("set an option for the session (PATH=VALUE, FLAG, noFLAG, PATH?, PATH!)"),
+            .doc("set an option for the session (PATH=VALUE, +FLAG, -FLAG, PATH?, PATH!)"),
         |ed, ctx| {
             // One setting per line: what follows a `=` is the value, spaces
             // and all (`:set compile.command=cargo test`).
@@ -2074,9 +2075,20 @@ pub fn install(ed: &mut Editor) {
             }
             let (path, value) = match a.split_once('=') {
                 Some((k, v)) => (k.to_string(), Setting::parse_like(v, ed.settings.get(k))),
-                None if a.starts_with("no") => (a[2..].to_string(), Setting::Bool(false)),
-                None => (a.to_string(), Setting::Bool(true)),
+                None => match a.strip_prefix('-') {
+                    Some(flag) => (flag.to_string(), Setting::Bool(false)),
+                    None => (
+                        a.strip_prefix('+').unwrap_or(a).to_string(),
+                        Setting::Bool(true),
+                    ),
+                },
             };
+            // A path has no spaces: `:set markdown.render false` is a
+            // value missing its `=`, not a setting of that name.
+            if path.is_empty() || path.contains(char::is_whitespace) {
+                ed.message = format!("set: not a path: {path:?} (:set PATH=VALUE)");
+                return;
+            }
             ed.settings.set(Layer::Session, &path, value);
         },
     );

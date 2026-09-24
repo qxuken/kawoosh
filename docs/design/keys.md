@@ -420,7 +420,7 @@ neovim config had it — shows the root, every first key of the mode in
 a few columns, until the next press; `:keys i`, `:keys v`, `:keys o`
 show another mode's (insert mode's alone, since its lookup does not
 fall through to normal mode's). `whichkey = false` in `settings.lua`
-(`:set nowhichkey`) turns it off, and so does its switch in the
+(`:set -whichkey`) turns it off, and so does its switch in the
 Settings tab (`:settings`), where every boolean of the effective table
 is a click that flips it for the session.
 

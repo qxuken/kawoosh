@@ -297,7 +297,7 @@ fn history_lists_the_states_and_seeks_among_them() {
     assert!(!t.ed.history_seek(t.v, 2));
     // A newline and a tab are one char each in a snippet; a long change
     // is clipped.
-    t.keys(":set noexpandtab<CR>o\t<Esc>");
+    t.keys(":set -expandtab<CR>o\t<Esc>");
     let rows = t.ed.history(b);
     let c = rows.last().unwrap().change.as_ref().unwrap();
     assert_eq!(c.inserted_text, "⏎⇥");

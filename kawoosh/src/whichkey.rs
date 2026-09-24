@@ -6,7 +6,7 @@
 //! remembered. It is there the moment the prefix is pressed and gone
 //! the moment the sequence resolves; `:keys` (`<leader>?`) shows the
 //! root — every first key — until the next press. `whichkey = false`
-//! in the settings (`:set nowhichkey`) turns it off.
+//! in the settings (`:set -whichkey`) turns it off.
 //!
 //! The card is in the bottom-right stack, shared with the notification
 //! corner: the corner's lines above, the which-key below, so the two

@@ -151,9 +151,9 @@ impl Kawoosh {
                 v
             }
             Some(ArgKind::Option) => {
-                // Every leaf of the effective tree, by dotted path; `no`
-                // and `=` are not part of the name.
-                let name = token.strip_prefix("no").unwrap_or(token);
+                // Every leaf of the effective tree, by dotted path; a
+                // sign before it and `=` after are not part of the name.
+                let name = token.strip_prefix(['+', '-']).unwrap_or(token);
                 let name = name.split('=').next().unwrap_or(name);
                 let prefix = &token[..token.len() - name.len()];
                 self.ed

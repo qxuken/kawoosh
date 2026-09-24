@@ -118,7 +118,7 @@ under the loop, which is the "cheap to get wrong".
 ### 5. The acceptance test is a script
 
 `kawoosh/lua/tests/pairs.lua`, on the harness: off when set so (`i(`
-gives `(`); `:set pairs.enabled true`; `i(` gives `()` with the caret
+gives `(`); `:set +pairs.enabled`; `i(` gives `()` with the caret
 between; `)` steps over; `<BS>` deletes both; `<CR>` opens a block;
 `"` after a word does not pair; `'a` in a rust buffer does not pair;
 two carets (`<C-j>` then `i(`) both paired; `.` after `a(` repeats it.

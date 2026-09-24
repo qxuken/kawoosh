@@ -143,10 +143,27 @@ fn layers_merge_in_order_and_a_cd_swaps_the_project() {
     assert_eq!(app.ed.tabstop(), 1);
     ex(&mut d, &mut app, "set tabstop?");
     assert_eq!(app.ed.message, "tabstop = 1  (session)");
-    ex(&mut d, &mut app, "set noexpandtab");
+    ex(&mut d, &mut app, "set -expandtab");
     assert!(!app.ed.expandtab());
-    ex(&mut d, &mut app, "set expandtab");
+    ex(&mut d, &mut app, "set +expandtab");
     assert!(app.ed.expandtab());
+    ex(&mut d, &mut app, "set -expandtab");
+    ex(&mut d, &mut app, "set expandtab");
+    assert!(app.ed.expandtab(), "bare is on");
+    // A path may start with `no`: bare, it is switched on, not a
+    // `tes.enabled` switched off.
+    ex(&mut d, &mut app, "set notes.enabled");
+    assert_eq!(app.ed.settings.bool("notes.enabled"), Some(true));
+    assert!(app.ed.settings.get("tes.enabled").is_none());
+    // A value missing its `=` is refused, not a setting named with a
+    // space.
+    ex(&mut d, &mut app, "set markdown.render false");
+    assert!(
+        app.ed.message.starts_with("set: not a path"),
+        "{}",
+        app.ed.message
+    );
+    assert!(app.ed.settings.get("markdown.render false").is_none());
     // A plugin's `opt` at runtime is the session's too.
     ex(&mut d, &mut app, "later");
     assert_eq!(app.ed.settings.int("scrolloff"), Some(7));
@@ -188,12 +205,19 @@ fn layers_merge_in_order_and_a_cd_swaps_the_project() {
         "compile.command ran"
     );
 
-    // The command line completes the tree's paths, `no` and `=` aside.
+    // The command line completes the tree's paths, a sign and `=`
+    // aside — and a path that starts with `no` as itself.
     d.keys(&mut app, ":set comp");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("ile.command"));
     d.key(&mut app, "escape", KeyMods::default());
-    d.keys(&mut app, ":set noexp");
+    d.keys(&mut app, ":set -exp");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("andtab"));
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, ":set +exp");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("andtab"));
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, ":set notes.en");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("abled"));
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&t.dir).ok();

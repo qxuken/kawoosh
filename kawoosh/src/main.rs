@@ -273,7 +273,8 @@ LSP: gd K gr, <leader>r rename, <leader>ca actions, <leader>cF format,
 buffer's words when no server answers — and <C-x> lists it in a pane.
 Lua: :lua CODE, <leader>x evaluates the line, :map list shows the keymap;
 `kawoosh test script.lua` runs a plugin's test headless.
-Settings: :set tabstop=2, :set path? for a value and where it is from,
+Settings: :set tabstop=2, :set +flag / -flag, :set path? for a value and
+where it is from, :set path! to take the session's value back out,
 :settings for the devtools tab of every layer — ~/.config/kawoosh/
 settings.lua, a project's .kawoosh/settings.lua, :set — reloaded on save;
 font.family / font.size / theme.appearance / tokens.colors are settings
