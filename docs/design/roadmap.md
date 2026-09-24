@@ -12,7 +12,7 @@ use"), which put four rounds ahead of the brackets; steps 14–17 built
 gained since (below, "From the todo"), what reading it turned up
 ("Asked 2026-09-23, night") and the order past step 17: steps 18–25
 the open items, ssh moved to the end as step 26 (27 since the path
-copies, 2026-09-24).
+copies, 2026-09-24). Steps 23–27 built 2026-09-24: the list is done.
 
 ## Where it stands
 
@@ -52,8 +52,18 @@ focus and sweep fixes, secrets (a private buffer, masks, the vault;
 kui F84 and F85), the LSP's third round, align, `<C-S-u>` and timed
 rows over a new `kawoosh.pass()`, and `dir`'s third round — 241
 commits, 27 integration test files, 415 tests and 8 Lua acceptance
-scripts. What is left is steps 23–27: the path copies, directory
-jumps, the memory's fifth round, workspaces, and ssh last.
+scripts.
+Steps 23–27 followed (2026-09-24), on one branch: the path copies,
+directory jumps over zoxide with `kawoosh pick` for a shell, the
+yank-pop, workspaces (the cwd per tab, the process's never moved —
+[workspaces.md](workspaces.md)), and ssh as a domain in its four
+rounds ([domains.md](domains.md)'s "Built": a path spelled `box:/…`
+through an `Fs` registry, an SFTP client of its own, processes,
+terminals and language servers on the host, `$EDITOR` back over a
+forwarded port, lazy sessions) — 255 commits, 31 integration test
+files, 443 tests and 9 Lua acceptance scripts. Nothing on the list is
+left: what remains is "Scheduled nowhere" below and each note's own
+"not built".
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -1085,7 +1095,18 @@ follow the theme every frame (`panes.rs`).
   `settings.lua`'s `tools` table adds or replaces by name, read again
   whenever the settings change (`kawoosh.on_settings`, the hook this
   added: a plugin told once a frame that the settings moved).
-- **Domains: ssh, wsl** — later, design first; systemic, as the todo
+- **Domains: ssh, wsl** — ssh done 2026-09-24, step 27, in its four
+  rounds ([domains.md](domains.md)'s "Built"): `domains.NAME.ssh`, a
+  path spelled `box:/…` carried in the `PathBuf` it would have been in
+  anyway and every disk operation asking its domain first
+  (`kawoosh_doc::fs`); the master in a pane in the dock on first use,
+  SFTP through it (`kawoosh_systems::sftp`, by hand); processes,
+  terminals and language servers on the host behind one line every
+  shell reads alike (`sh -c 'eval "$(echo B64 | base64 -d)"'`); the
+  host's `$EDITOR` back over `-R`; the poll, the walk's cap, a drop
+  reconnected on the next use, sessions restored without asking for a
+  password. WSL is still the note after. What the entry said before:
+  later, design first; systemic, as the todo
   says. A domain is *where a pty spawns*, and the cheap form exists
   today as a tool whose `cmd` is `ssh host` — nothing to build. The
   real thing is what wezterm's multiplexer domain gives and a tool
@@ -1431,18 +1452,26 @@ then breadth.
     would be fed from; before ssh, whose rule 7 is the same change.~~
     Landed 2026-09-24 ([workspaces.md](workspaces.md)): the cwd per
     tab, the process's never moved. See the workspaces track.
-27. **ssh as a domain** ([domains.md](domains.md)): four rounds —
+27. ~~**ssh as a domain** ([domains.md](domains.md)): four rounds —
     `Loc` everywhere with no behaviour change, then ssh (the master in
     a pane, SFTP, `:e box:`, `dir`, the poll), then processes through
     the domain with the shim over a forwarded port, then the LSP
     through it. Last because it is the widest, and until then
     `kawoosh.tool("box", { cmd = "ssh box" })`. Was step 18 until the
     list was ordered past step 17 (2026-09-23); its first round is
-    smaller for step 26, which will have ended the process cwd.
+    smaller for step 26, which will have ended the process cwd.~~
+    Landed 2026-09-24 in the four rounds, one commit each: `Loc` is
+    not a type but the spelling (`box:/…` in the path, read back by
+    `domain_of`); the transport is `ssh`'s binary with every remote
+    line base64 behind `sh -c`, since a host's login shell may be
+    nushell; the test fixture a stand-in `ssh` over OpenSSH's own
+    `sftp-server`. See the terminal track and domains.md's "Built".
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),
-kitty graphics and native extensions (deferred).
+kitty graphics and native extensions (deferred), WSL (domains.md's
+note after, Windows only) and an agent on a host (domains.md Decision
+3's after — when the walk's cap or the poll hurt).
 
 Not on this list on purpose: everything mvp.md and kui.md call
 "deliberately not in the MVP" (daemon, soft wrap, images, ligatures,
