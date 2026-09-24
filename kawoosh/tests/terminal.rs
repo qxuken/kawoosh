@@ -71,9 +71,58 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
 }
 
 /// Copy mode on wezterm's chord: `<C-S-x>` from a terminal pane is its
-/// scrollback as a buffer in the same pane, the caret on the last line
-/// where the prompt was, and `q` is the terminal again — two keys round
+/// scrollback as a buffer in the same pane, the caret on the top row the
+/// pane showed (roadmap step 31), and `q` is the terminal again — two keys round
 /// trip. From an editor pane the chord says what it needs.
+/// Copy mode is a mode to the eye and to `<Esc>` (roadmap step 31): the
+/// status says `COPY`; the buffer carries the colours the terminal
+/// printed in, as a paint; `<Esc>` clears the search's paint first and
+/// then gives the pane back.
+#[test]
+fn copy_mode_is_a_mode_in_colour_and_esc_leaves_it() {
+    let mut app = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    app.feed_terminal(t, b"plain \x1b[31mred\x1b[0m plain\r\n$ ");
+    d.frame(&mut app);
+    let shifted = KeyMods {
+        ctrl: true,
+        shift: true,
+        ..Default::default()
+    };
+    d.key(&mut app, "X", shifted);
+    d.frame(&mut app);
+    let v = app.focused_view().expect("copy mode");
+    assert!(
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some("COPY")),
+        "the status names the mode"
+    );
+    // `red` is painted the red it was printed in, and nothing else.
+    let bid = app.ed.views[v].buffer;
+    let red = app.terms.map[&t].palette().ansi[1];
+    let paints = app.scripting.paints[&bid]["terminal"].spans.clone();
+    assert_eq!(
+        paints,
+        vec![(6..9, format!("#{:06x}", red >> 8))],
+        "{paints:?}"
+    );
+    // `<Esc>`: the search's paint first, then out.
+    d.keys(&mut app, "/plain");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(app.ed.search_hl);
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(!app.ed.search_hl, "the ladder's rung");
+    assert!(app.focused_view().is_some(), "still in copy mode");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 #[test]
 fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     let mut app = Kawoosh::new("t", "editor text");
@@ -102,8 +151,8 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     let head = app.ed.views[v].sels.primary().head;
     assert_eq!(
         buf.line_of(head),
-        buf.line_count() - 1,
-        "the caret on the last line"
+        0,
+        "the caret on the top row shown: no history yet, the first line"
     );
     // Modal editing works there; then `q` is the terminal again.
     d.keys(&mut app, "ggyy");

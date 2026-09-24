@@ -120,10 +120,15 @@ impl Kawoosh {
         // one is open, else the pane's.
         let keyed = self.ed.prompt_view().unwrap_or(view);
         let kv = &self.ed.views[keyed];
+        // A terminal's copy mode is a mode of its own to the eye
+        // (roadmap step 31): `COPY` where normal mode would say so.
+        let copy = keyed == view && buf.language.as_ref() == "scrollback";
         let mode = if on_toast {
             "TOAST"
         } else if kv.mode == Mode::Visual && kv.visual_linewise {
             "VIS LINE"
+        } else if copy && kv.mode == Mode::Normal {
+            "COPY"
         } else {
             kv.mode.name()
         };

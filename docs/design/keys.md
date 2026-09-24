@@ -62,7 +62,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>!` | a terminal below (`:!` runs a shell, so does this) |
 | `<C-w>n` | the keyboard onto the toasts |
 | `<C-w>:` | the command line, from a pane without one |
-| `<C-S-x>` | copy mode (wezterm's chord): the terminal's scrollback as a buffer in the terminal's own pane, full modal editing, the caret on the last line; `q` or `<C-S-x>` again gives the pane back — two keys round trip |
+| `<C-S-x>` | copy mode (wezterm's chord): the terminal's scrollback as a buffer in the terminal's own pane, in the colours it was printed in, full modal editing, the status saying `COPY`, the caret on the top row the pane showed; `q`, `<C-S-x>` again, or `<Esc>` once nothing is left to clear gives the pane back |
 | `<S-PageUp>` `<S-PageDown>`, `<S-Home>` `<S-End>` | a terminal's view a page through its history, to the top, back to the prompt — kept from the pty unless a program has the whole screen; scrolled away, the pane shows a scrollbar (dragged, it moves the view) and what lies below, a click on which goes back |
 | `⌘↑` `⌘↓`, `<C-S-Up>` `<C-S-Down>` | the prompt above the view at its top, the next one down (a shell that marks its prompts, OSC 133 — `:terminal integration` says how) |
 | `<C-S-o>` | the last command's output to the clipboard (the same marks) |

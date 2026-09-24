@@ -1444,32 +1444,46 @@ follow the theme every frame (`panes.rs`).
   a hand — `location_at` run on the hovered cell, its span painted
   over the cells, gone when the modifier is let go or the pointer
   leaves it.
-- **Copy mode as a mode** — open [asked 2026-09-25]; step 31, with the
-  colours below. Today `<C-S-x>` puts a `*scrollback*` buffer in the
-  terminal's pane, `q` or `<C-S-x>` gives it back, and `<Esc>` in its
-  normal mode runs the ladder (Decision 3) and then does nothing — the
-  one key a wezterm hand tries first. Wanted, wezterm's shape on
-  kawoosh's buffer (the buffer stays: it is what gives copy mode vim's
-  motions, text objects and `/`): the status names the mode `COPY`
-  rather than `NORMAL`, the pane's title says it too, and `<Esc>` gets
-  one rung more at the bottom of the ladder — nothing left to clear, in
-  a scrollback buffer, gives the pane back. A yank from visual mode
-  stays in copy mode, as vim's does; wezterm's `y`-and-leave is a map
-  away (`kawoosh.map` on `y` under `language:scrollback`), not the
-  default. Where the caret starts — the last line today — moves to the
-  top of what the pane showed, so a copy starts where the eye was.
-- **Copy mode in colour** — open [todo, "better scrollback"]; step 31.
-  What is left of the ask after step 15: the live pane scrolls with
-  its styles, but `<C-S-x>` makes the history a `*scrollback*` buffer
-  of plain text (`scrollback_text`), so a coloured `git log` or a
-  compiler's red goes grey the moment it is to be copied. wezterm keeps
-  the styles because its copy mode is the live grid; kawoosh's is a
-  buffer, which is what gives it modal editing. Wanted: the buffer
-  painted with the cells' foreground, background and weight, taken
-  once when copy mode opens — a paint set as `kawoosh.buf.paint` keeps
-  one, filled from the grid's runs by the engine — and kept while the
-  buffer lives. The terminal stays alive meanwhile, as it does today;
-  the todo allows it.
+- **Copy mode as a mode** — done 2026-09-25 [asked 2026-09-25]; step
+  31. The status says `COPY` where normal mode would; `<Esc>` in
+  normal mode is `scrollback escape` under `language:scrollback` — the
+  extra carets and the search's paint first, as the ladder clears
+  them, then `scrollback close`; the caret starts on the top row the
+  pane showed, the view scrolled to it (`history_size -
+  display_offset`). The pane title stays the buffer's name.
+  `copy_mode_is_a_mode_in_colour_and_esc_leaves_it`. What the entry
+  said before it was built, with the colours below: Today `<C-S-x>`
+  puts a `*scrollback*` buffer in the terminal's pane, `q` or
+  `<C-S-x>` gives it back, and `<Esc>` in its normal mode runs the
+  ladder (Decision 3) and then does nothing — the one key a wezterm
+  hand tries first. Wanted, wezterm's shape on kawoosh's buffer (the
+  buffer stays: it is what gives copy mode vim's motions, text objects
+  and `/`): the status names the mode `COPY` rather than `NORMAL`, the
+  pane's title says it too, and `<Esc>` gets one rung more at the
+  bottom of the ladder — nothing left to clear, in a scrollback
+  buffer, gives the pane back. A yank from visual mode stays in copy
+  mode, as vim's does; wezterm's `y`-and-leave is a map away
+  (`kawoosh.map` on `y` under `language:scrollback`), not the default.
+  Where the caret starts — the last line today — moves to the top of
+  what the pane showed, so a copy starts where the eye was.
+- **Copy mode in colour** — done 2026-09-25 [todo]; step 31.
+  `Terminal::scrollback_styled` gives the history's text with its runs
+  of non-default foreground, resolved as the screen draws them
+  (inverse and dim included), and copy mode lays them on its buffer as
+  a paint set named `terminal` — a paint may name `#rrggbb` now, for
+  plugins too. Foreground only: a background or a weight is not
+  carried, since the paint layer draws a colour. What the entry said
+  before it was built: What is left of the ask after step 15: the live
+  pane scrolls with its styles, but `<C-S-x>` makes the history a
+  `*scrollback*` buffer of plain text (`scrollback_text`), so a
+  coloured `git log` or a compiler's red goes grey the moment it is to
+  be copied. wezterm keeps the styles because its copy mode is the
+  live grid; kawoosh's is a buffer, which is what gives it modal
+  editing. Wanted: the buffer painted with the cells' foreground,
+  background and weight, taken once when copy mode opens — a paint set
+  as `kawoosh.buf.paint` keeps one, filled from the grid's runs by the
+  engine — and kept while the buffer lives. The terminal stays alive
+  meanwhile, as it does today; the todo allows it.
 - **The bell** — done 2026-09-25 [todo]; step 29. `ring_bells` each
   frame: `terminal.bell` = `sound` (the default: kui's `blip`, a short
   sine synthesised as a WAV, no asset shipped) | `visual` | `off`; at
@@ -1874,13 +1888,16 @@ then breadth.
     Landed 2026-09-25: `:picker files here` / `grep here`, and a tab's
     buffers the ones under its directory or that it has shown. See the
     panes and workspaces tracks and workspaces.md's Decision 7.
-31. **Copy mode as a mode, in colour**: `COPY` in the status and the
+31. ~~**Copy mode as a mode, in colour**: `COPY` in the status and the
     pane's title, `<Esc>` a last rung of the ladder that gives the
     pane back, the caret starting where the eye was; the
     `*scrollback*` buffer painted with the grid's styles when it is
     made, through the paint layer plugins already have. After the
     small ones because the paint is the one item here that wants the
-    engine to fill a paint set from another system's data.
+    engine to fill a paint set from another system's data.~~ Landed
+    2026-09-25: `COPY`, `<Esc>` out, the caret where the pane was, the
+    foreground colours as a paint (`#rrggbb` names). See the terminal
+    track.
 32. **Workspaces with a lifecycle, and the dock** (a note first):
     when a workspace opens and closes (its first tab in, its last tab
     gone) and what is kept between; the dock global, per workspace, or

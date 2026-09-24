@@ -584,7 +584,10 @@ impl Kawoosh {
         let Some(t) = self.terms.map.get(&id) else {
             return;
         };
-        let text = t.scrollback_text();
+        let (text, runs) = t.scrollback_styled();
+        // The view's top row as a line of the text: what the pane showed
+        // is where the caret starts (roadmap step 31).
+        let top_line = t.history_size().saturating_sub(t.display_offset());
         let name = format!(
             "*scrollback {}*",
             if t.title.is_empty() {
@@ -597,11 +600,23 @@ impl Kawoosh {
         buf.language = "scrollback".into();
         let bid = self.ed.add_buffer(buf);
         let v = self.ed.add_view(bid);
-        // Land at the end, where the prompt was.
-        let len = self.ed.buffers[bid].len();
-        let last =
-            self.ed.buffers[bid].line_start(self.ed.buffers[bid].line_count().saturating_sub(1));
-        self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(last.min(len)));
+        // Land on the top row the pane showed, the view scrolled to it:
+        // a copy starts where the eye was.
+        let b = &self.ed.buffers[bid];
+        let line = top_line.min(b.line_count().saturating_sub(1));
+        let at = b.line_start(line).min(b.len());
+        self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(at));
+        self.ed.views[v].top = line;
+        // The colours it was printed in, as a paint of their own.
+        let version = self.ed.buffers[bid].version();
+        let spans = runs
+            .into_iter()
+            .map(|(r, c)| (r, format!("#{:06x}", c >> 8)))
+            .collect();
+        self.scripting.paints.entry(bid).or_default().insert(
+            "terminal".into(),
+            crate::scripting::Painted { version, spans },
+        );
         self.terms.scrollbacks.insert(bid, id);
         let pane = self
             .layout
@@ -878,6 +893,24 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .when(&["language:scrollback"])
                 .doc("close the scrollback buffer, its terminal back in the pane (`q`)"),
             |k, _| k.scrollback_close(),
+        ),
+        // `<Esc>` in copy mode's normal mode (roadmap step 31): the
+        // ladder's rungs first — the extra carets, the search's paint —
+        // and, with nothing left to clear, the pane back to the
+        // terminal, as wezterm's copy mode leaves on `<Esc>`.
+        cmd(
+            Spec::new("scrollback escape")
+                .when(&["language:scrollback"])
+                .doc("`<Esc>` in copy mode: clear what the ladder clears, else leave it"),
+            |k, _| {
+                let Some(v) = k.focused_view() else { return };
+                let busy = k.ed.views[v].sels.len() > 1 || (k.ed.search.is_some() && k.ed.search_hl);
+                if busy {
+                    k.ed.run(v, "normal", &[], None);
+                } else {
+                    k.scrollback_close();
+                }
+            },
         ),
     ]
 }

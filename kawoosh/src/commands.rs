@@ -91,6 +91,12 @@ impl Kawoosh {
             "scrollback close",
             &[Cond::parse("language:scrollback")],
         );
+        self.ed.keymap.bind_when(
+            Mode::Normal,
+            "<Esc>",
+            "scrollback escape",
+            &[Cond::parse("language:scrollback")],
+        );
         // `q` in a pane of text to read — `*lsp*`, `:messages`, the
         // hover, a plugin's `read_only` scratch — closes it, and the
         // keys go back where they came from (`Layout::close`).

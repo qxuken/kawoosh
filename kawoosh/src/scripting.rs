@@ -1235,8 +1235,12 @@ impl Kawoosh {
     }
 
     /// The colour a paint names: a role of the palette, a version
-    /// control state, or a syntax token.
+    /// control state, a syntax token, or itself as `#rrggbb` — what
+    /// copy mode paints a terminal's colours with.
     fn paint_color(&self, name: &str, dark: bool) -> Option<Color> {
+        if name.starts_with('#') {
+            return crate::look::parse_color(name);
+        }
         let p = &self.pal;
         Some(match name {
             "fg" => p.fg,
