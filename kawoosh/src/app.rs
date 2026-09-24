@@ -160,6 +160,8 @@ pub struct Kawoosh {
     /// toggled with `:kui_framerate_hud`.
     pub hud: bool,
     pub(crate) wake: WakeHandle,
+    /// How often this app's watches stat a host's paths (`ssh.poll_secs`).
+    pub(crate) beat: kawoosh_systems::watch::Beat,
     /// Brings the frame that ends a yank's wash (`sync_flash`).
     flash_alarm: kawoosh_systems::Alarm,
     /// Wake handles made before the app was — the logger's — set with
@@ -271,6 +273,7 @@ impl Kawoosh {
         let view = ed.add_view(b);
         let wake = WakeHandle::new();
         let secrets_wake = wake.clone();
+        let beat = kawoosh_systems::watch::Beat::default();
         let mut app = Self {
             pal: Pal::default(),
             face: Default::default(),
@@ -289,8 +292,8 @@ impl Kawoosh {
                 ..Default::default()
             },
             domains: Default::default(),
-            config: Config::new(wake.clone()),
-            disk: crate::disk::DiskWatch::new(wake.clone()),
+            config: Config::new(wake.clone(), beat.clone()),
+            disk: crate::disk::DiskWatch::new(wake.clone(), beat.clone()),
             trust: Default::default(),
             compile: Compile::default(),
             locations: Default::default(),
@@ -331,6 +334,7 @@ impl Kawoosh {
             hud: false,
             flash_alarm: kawoosh_systems::Alarm::spawn(wake.clone()),
             wake,
+            beat,
             shared_wakes: Vec::new(),
             ts_sent: HashMap::new(),
             socket: None,

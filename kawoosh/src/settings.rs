@@ -137,13 +137,13 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(wake: WakeHandle) -> Self {
+    pub fn new(wake: WakeHandle, beat: kawoosh_systems::watch::Beat) -> Self {
         Self {
             init: None,
             user: None,
             project: Vec::new(),
             project_init: Vec::new(),
-            watch: Watcher::spawn(wake),
+            watch: Watcher::spawn(wake, beat),
             reloaded: None,
             loading: None,
         }

@@ -24,7 +24,7 @@ use kawoosh_doc::{BufferId, Stamp};
 use kawoosh_editor::disk::Disk;
 use kawoosh_editor::{ArgKind, Args, Ctx, Spec};
 use kawoosh_systems::WakeHandle;
-use kawoosh_systems::watch::Watcher;
+use kawoosh_systems::watch::{Beat, Watcher};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -46,9 +46,9 @@ pub struct DiskWatch {
 }
 
 impl DiskWatch {
-    pub fn new(wake: WakeHandle) -> Self {
+    pub fn new(wake: WakeHandle, beat: Beat) -> Self {
         Self {
-            watch: Watcher::spawn(wake),
+            watch: Watcher::spawn(wake, beat),
             watched: HashSet::new(),
             toasts: HashMap::new(),
             told: HashMap::new(),
