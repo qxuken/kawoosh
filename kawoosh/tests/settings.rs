@@ -745,7 +745,7 @@ fn the_look_reaches_kui() {
     assert_eq!(lookup.color("comment"), Ok(Color::hex(0x333333ff)));
     assert_eq!(
         lookup.color("function"),
-        Ok(kawoosh::palette::syntax_color(Token::Function, false).unwrap())
+        Ok(kawoosh::themes::DAWN.syntax(Token::Function).unwrap())
     );
 
     // `:set` flips the base for the session: the dark halves, the role
@@ -779,19 +779,43 @@ fn the_look_reaches_kui() {
     );
     ex(&mut d, &mut app, "set font.family!");
 
-    // The file without any of it: the OS's theme, the bundled face at
-    // the default size.
+    // The file without any of it: the default palette, pinned — Rosé
+    // Pine on the OS's base (dark, headless), its hues and its sixteen
+    // — and the bundled face at the default size.
     ex(&mut d, &mut app, "set theme.appearance!");
     std::fs::write(&t.user, "return {}").unwrap();
     app.load_user_settings(&t.user);
     d.frame(&mut app);
-    assert_eq!(d.core.theme_source(), ThemeSource::Derived);
+    assert!(matches!(d.core.theme_source(), ThemeSource::Pinned(_)));
+    assert_eq!(d.core.theme().bg, kawoosh::themes::MAIN.theme().bg);
     assert_eq!(app.face.size, 13.0);
     assert_eq!(app.face.line_height, 20.0);
     assert_eq!(
         app.syntax_color_for(Token::Keyword, true),
+        kawoosh::themes::MAIN.syntax(Token::Keyword)
+    );
+    assert_eq!(app.ansi_for(true), kawoosh::themes::MAIN.ansi());
+    // `system` is the old way: kui's roles off the OS, `palette.rs`'s
+    // hues, Tomorrow's sixteen.
+    ex(&mut d, &mut app, "set theme.name=system");
+    assert_eq!(d.core.theme_source(), ThemeSource::Derived);
+    assert_eq!(
+        app.syntax_color_for(Token::Keyword, true),
         kawoosh::palette::syntax_color(Token::Keyword, true)
     );
+    assert_eq!(app.ansi_for(true), kawoosh::palette::ansi(true));
+    // The moon, and a name nobody ships: a toast, the default stands.
+    ex(&mut d, &mut app, "set theme.name=rose-pine-moon");
+    assert_eq!(d.core.theme().bg, kawoosh::themes::MOON.theme().bg);
+    ex(&mut d, &mut app, "set theme.name=gruvbox");
+    assert!(
+        app.notes.shown.iter().any(|s| s.toast
+            && s.text == "theme.name: no palette \"gruvbox\" (system, rose-pine, rose-pine-moon)"),
+        "{:?}",
+        app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
+    );
+    assert_eq!(d.core.theme().bg, kawoosh::themes::MAIN.theme().bg);
+    ex(&mut d, &mut app, "set theme.name!");
     // A role misspelt is a toast naming it.
     ex(&mut d, &mut app, "set theme.background=#000000");
     assert!(

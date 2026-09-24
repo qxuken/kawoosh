@@ -482,6 +482,9 @@ impl Settings {
         // `font.size` up to a cap, a number is its own size.
         defaults.set("font.chrome_size", Setting::Int(0));
         defaults.set("theme.appearance", Setting::Str("system".into()));
+        // A palette of kawoosh's own (`themes.rs`), or `system` for kui's
+        // roles off the OS.
+        defaults.set("theme.name", Setting::Str("rose-pine".into()));
         let mut s = Self {
             layers: Default::default(),
             effective: Setting::table(),
@@ -803,6 +806,7 @@ mod tests {
                 "terminal.scrollback",
                 "terminal.shell",
                 "theme.appearance",
+                "theme.name",
                 "whichkey"
             ]
         );

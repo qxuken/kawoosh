@@ -1792,14 +1792,17 @@ then breadth.
     line base64 behind `sh -c`, since a host's login shell may be
     nushell; the test fixture a stand-in `ssh` over OpenSSH's own
     `sftp-server`. See the terminal track and domains.md's "Built".
-28. **A theme that holds still**: a named palette in the engine's
+28. ~~**A theme that holds still**: a named palette in the engine's
     layer (`theme.name`) setting the kui roles, the syntax tokens and
     the ANSI sixteen together, dark and light, the default pinned
     rather than derived from the OS's accent; the palette chosen at the
     round's start (rose-pine the likely one: no green in its code); the
     selection's contrast checked whatever derives it. First because an
     unreadable selection is a bug on a platform in use, and the rest of
-    the list is drawn in whatever this picks.
+    the list is drawn in whatever this picks.~~ Landed 2026-09-25
+    (`kawoosh/src/themes.rs`): Rosé Pine, main, moon and dawn, the
+    default pinned; the selection held legible whatever its source. See
+    the config track.
 29. **The small ones, again**: `~` and `_` in `dir`; a caret per line
     of a selection, its key and column decided; the ⌘-click's hover in
     a terminal; the bell (`terminal.bell`, a shipped sound, the tab

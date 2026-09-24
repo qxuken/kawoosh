@@ -433,7 +433,7 @@ fn the_pane_answers_colour_questions_and_reports_a_flip() {
     };
     assert_eq!(sent, format!("\x1b]11;{}\x1b\\", rgb(dark_bg)));
     let term = &app.terms.map[&t];
-    assert_eq!(term.palette().ansi, kawoosh::palette::ansi(true));
+    assert_eq!(term.palette().ansi, app.ansi_for(true));
     assert!(term.palette().dark);
     // A light base from the settings (typed in the editor pane above —
     // the terminal has the keys): the report, the light sixteen, and
@@ -451,7 +451,9 @@ fn the_pane_answers_colour_questions_and_reports_a_flip() {
     assert!(!app.dark);
     let term = app.terms.map.get_mut(&t).unwrap();
     assert_eq!(term.take_sent(), b"\x1b[?997;2n");
-    assert_eq!(term.palette().ansi, kawoosh::palette::ansi(false));
+    let light = app.ansi_for(false);
+    let term = app.terms.map.get_mut(&t).unwrap();
+    assert_eq!(term.palette().ansi, light);
     assert_ne!(dark_bg, app.pal.panel.to_hex());
     app.feed_terminal(t, b"\x1b]11;?\x07");
     let sent = String::from_utf8(app.terms.map.get_mut(&t).unwrap().take_sent()).unwrap();

@@ -424,7 +424,13 @@ data — `tokens.colors` in the tree, `kawoosh.colors {}` from code over
 it, and `theme.appearance` / `theme.accent` / a role by name under
 `theme` in place of a `set_theme` call (`look.rs`: `ThemeSource::Derived`
 while nothing pins, a pinned `Theme` once a base or a role is named).
-The face is the same tree's `font.*`.*
+The face is the same tree's `font.*`.* *Amended 2026-09-25 (roadmap
+step 28): the default is no longer the OS's. `theme.name` names a
+palette of kawoosh's own (`themes.rs`, Rosé Pine) that pins the roles,
+the token table's defaults and the terminal's sixteen together; the
+derived way above is `theme.name = "system"`. A machine's accent had
+made the selection unreadable, so the selection is held legible under
+the text whatever pins it.*
 
 ### 8. Testing: kui's headless core is the harness
 

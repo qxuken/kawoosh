@@ -46,6 +46,7 @@ pub mod secrets;
 pub mod session;
 pub mod settings;
 pub mod terminals;
+pub mod themes;
 pub mod trust;
 pub mod types;
 pub mod undo;

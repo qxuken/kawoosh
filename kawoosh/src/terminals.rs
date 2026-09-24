@@ -404,7 +404,7 @@ impl Kawoosh {
         let pal = kawoosh_term::Palette {
             fg: self.pal.fg.to_hex(),
             bg: self.pal.panel.to_hex(),
-            ansi: crate::palette::ansi(self.dark),
+            ansi: self.ansi_for(self.dark),
             dark: self.dark,
         };
         for term in self.terms.map.values_mut() {
