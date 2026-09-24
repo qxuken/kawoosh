@@ -1088,11 +1088,13 @@ fn config(history: usize) -> Config {
 /// bash, zsh, fish, nu) takes `-l` and `-c`, apart, since not all of
 /// them read `-lc` as two.
 fn shell_args(shell: &str, cmd: Option<&str>) -> Vec<String> {
-    let stem = std::path::Path::new(shell)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(shell)
-        .to_ascii_lowercase();
+    // Split on both separators by hand: std's `Path` splits only on its
+    // own platform's, and a shell is named the same on every one.
+    let name = shell.rsplit(['/', '\\']).next().unwrap_or(shell);
+    let mut stem = name.to_ascii_lowercase();
+    if stem.ends_with(".exe") {
+        stem.truncate(stem.len() - 4);
+    }
     let args: &[&str] = match (stem.as_str(), cmd) {
         ("cmd", Some(_)) => &["/c"],
         ("cmd", None) => &[],
