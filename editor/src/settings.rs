@@ -333,6 +333,9 @@ impl Settings {
         // `scratch`, `terminal`, `dir` (the directory as a listing).
         defaults.set("layout.new_pane", Setting::Str("launcher".into()));
         defaults.set("layout.new_tab", Setting::Str("launcher".into()));
+        // How the launcher opens: `normal`, where a letter launches and
+        // `i` or `/` searches, or `insert`, typing filtering at once.
+        defaults.set("launcher.start", Setting::Str("normal".into()));
         // The markdown buffer (docs/design/markdown.md): drawn rendered —
         // marks folded, headings at their sizes (h1 to h6, a ratio of
         // the body), prose wrapped — and images past this many MB left
@@ -432,6 +435,11 @@ impl Settings {
         // The program a terminal runs (`nu`, `pwsh`, a path): empty for
         // `$SHELL`, else `/bin/sh`, or `%ComSpec%` on Windows.
         defaults.set("terminal.shell", Setting::Str(String::new()));
+        // What a terminal's BEL does: `sound`, `visual` (its tab marked
+        // when it is not in front, no sound) or `off`; and whether the
+        // editor rings for its own failures — a search with no match.
+        defaults.set("terminal.bell", Setting::Str("sound".into()));
+        defaults.set("editor.bell", Setting::Bool(false));
         // The shell whose PATH the window's children get when it was
         // opened outside a terminal — from Finder, the Dock (kawoosh's
         // `shell_env`): a path to it, since a bare name is looked up on
@@ -756,6 +764,7 @@ mod tests {
             s.effective().paths(),
             [
                 "clipboard.system",
+                "editor.bell",
                 "env.shell",
                 "expandtab",
                 "font.chrome_size",
@@ -763,6 +772,7 @@ mod tests {
                 "font.features",
                 "font.line_height",
                 "font.size",
+                "launcher.start",
                 "layout.column_width",
                 "layout.default",
                 "layout.gap",
@@ -803,6 +813,7 @@ mod tests {
                 "secrets.reveal_secs",
                 "secrets.scan_max_kb",
                 "tabstop",
+                "terminal.bell",
                 "terminal.scrollback",
                 "terminal.shell",
                 "theme.appearance",

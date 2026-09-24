@@ -139,6 +139,37 @@ fn the_primary_rotates_with_parens() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A selection over lines is a caret on each (roadmap step 29): `<C-j>`
+/// in visual mode, at the head's column, the last primary; `<C-k>` the
+/// same with the first primary; a short line takes its end, as `<C-j>`
+/// in normal mode does, so text typed lands after it. Normal mode
+/// after, so typing reaches every line.
+#[test]
+fn a_selection_over_lines_is_a_caret_on_each() {
+    let mut app = Kawoosh::new("t", "abcd\nefgh\nij\nklmn");
+    let mut d = Drive::new(800.0, 400.0);
+    d.frame(&mut app);
+    d.keys(&mut app, "3lvjjj");
+    d.key(&mut app, "j", ctrl());
+    assert_eq!(app.focused_mode(), Mode::Normal);
+    assert_eq!(
+        sels(&app),
+        [(3, 3), (8, 8), (12, 12), (16, 16)],
+        "`ij` is short: its end"
+    );
+    assert_eq!(primary(&app), 3, "the last line's caret");
+    d.keys(&mut app, "i>");
+    esc(&mut d, &mut app);
+    assert_eq!(text(&app), "abc>d\nefg>h\nij>\nklm>n");
+    // From the bottom up, `V`: the first is primary.
+    esc(&mut d, &mut app);
+    d.keys(&mut app, "GVkk");
+    d.key(&mut app, "k", ctrl());
+    assert_eq!(sels(&app).len(), 3);
+    assert_eq!(primary(&app), 0, "the first line's caret");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// A yank lights what it took for a moment: the ranges are the flash
 /// while they are the text's, and time or an edit takes it off.
 #[test]
