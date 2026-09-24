@@ -12,11 +12,27 @@ use kawoosh::notify::Level;
 use kawoosh_systems::WakeHandle;
 use kui::Core;
 
+/// Where the bundled faces are: `fonts/` beside the binary (a folder
+/// shipped as is, Windows), `../Resources/fonts/` from it (the macOS
+/// app, `scripts/macos-app.sh`), else the source tree's `assets/fonts/`
+/// — a `cargo run`.
+fn fonts_dir() -> std::path::PathBuf {
+    // Resolved: `kawoosh` on the PATH is a link into the app.
+    let exe = std::env::current_exe().and_then(std::fs::canonicalize);
+    let shipped = exe.ok().and_then(|exe| {
+        let dir = exe.parent()?;
+        [dir.join("fonts"), dir.join("../Resources/fonts")]
+            .into_iter()
+            .find(|d| d.is_dir())
+    });
+    shipped.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts"))
+}
+
 /// The bundled face, loaded onto a core the launcher then opens the
 /// window on (`Launcher::core`): every mono run names it by `FontId`, so a
 /// machine with no Iosevka installed draws the same glyphs.
 fn load_fonts(core: &mut Core) -> Option<kui::FontId> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts/IosevkaNavcon");
+    let dir = fonts_dir().join("IosevkaNavcon");
     let n = core.load_fonts_dir(&dir);
     // A startup fact, not news: a trace.
     log::trace!("loaded {n} font faces from {}", dir.display());

@@ -1963,7 +1963,9 @@ impl Kawoosh {
 /// every `git commit` in a terminal would run.
 fn editor_shim(socket: &Path) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let beside = exe.with_file_name(format!(
+    // Beside the binary itself, not a link to it on the PATH.
+    let real = std::fs::canonicalize(&exe).unwrap_or_else(|_| exe.clone());
+    let beside = real.with_file_name(format!(
         "{}{}",
         crate::EDITOR_SHIM,
         std::env::consts::EXE_SUFFIX
