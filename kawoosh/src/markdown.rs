@@ -857,7 +857,10 @@ impl Kawoosh {
             } else {
                 ("xdg-open", vec![target.clone()])
             };
-            match std::process::Command::new(opener.0).args(&opener.1).spawn() {
+            match kawoosh_systems::io::command(opener.0)
+                .args(&opener.1)
+                .spawn()
+            {
                 Ok(_) => self.ed.message = format!("opened {target}"),
                 Err(e) => self.ed.message = format!("{}: {e}", opener.0),
             }

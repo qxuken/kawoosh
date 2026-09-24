@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, select, unbounded};
@@ -755,7 +755,7 @@ impl Server {
                 t.remote_command(&crate::io::remote_script(dir, &[], &line, false))
             }
             None => {
-                let mut c = Command::new(&def.command);
+                let mut c = crate::io::command(&def.command);
                 c.args(&def.args).current_dir(root);
                 c
             }
