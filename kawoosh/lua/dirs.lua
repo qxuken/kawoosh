@@ -194,6 +194,7 @@ picker.source("dirs", {
   answer = function(item) return item.path end,
   keys = {
     ["<C-o>"] = function(item)
+      if not item then return end
       picker.close()
       list_it(item)
     end,

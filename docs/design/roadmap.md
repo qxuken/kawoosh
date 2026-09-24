@@ -870,17 +870,25 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   the process as the disk resolves it (`/private/tmp/x`), so a relative
   form compares the resolved paths when the spelled ones do not meet.
   `kawoosh/lua/tests/path_copy.lua`.
-- **Search from the file's directory** — open [todo]; step 30. The
-  `files` and `grep` sources are rooted at `ctx.cwd`, the tab's
-  (`picker.lua`, `fs.cwd()` when the picker opens), and nothing else;
-  in a deep tree the file's neighbours are a long query away. Wanted:
-  the same two sources rooted at the buffer's directory — a listing's
-  own in `dir`, a terminal's `cwd()` from a terminal pane — on keys
-  beside `<leader>f` and `<leader>g`, the rows spelled from that root
-  and `<CR>` joining on it. A `root` in the picker's `ctx` that a source
-  reads in place of `fs.cwd()` is the door, and a plugin's source gets
-  it for free. Upward (the file's project rather than its directory)
-  is the working directory already.
+- **Search from the file's directory** — done 2026-09-25 [todo]; step
+  30. `:picker SOURCE here` roots a picker at `picker.here()` — a
+  `dir` listing's own directory, the buffer's file's, else the working
+  one — through a `root` in the picker's `ctx` that `files` walks and
+  `grep` runs `rg` in; the title says `in DIR/` when it is not the
+  working one. `<leader>sf` and `<leader>sg`. `picker.state()` gives
+  its `rows` and `root` now. A terminal's own directory was not taken:
+  Lua cannot read it yet, and the working one stands in. What the
+  entry said before it was built: The `files` and `grep` sources are
+  rooted at `ctx.cwd`, the tab's (`picker.lua`, `fs.cwd()` when the
+  picker opens), and nothing else; in a deep tree the file's
+  neighbours are a long query away. Wanted: the same two sources
+  rooted at the buffer's directory — a listing's own in `dir`, a
+  terminal's `cwd()` from a terminal pane — on keys beside `<leader>f`
+  and `<leader>g`, the rows spelled from that root and `<CR>` joining
+  on it. A `root` in the picker's `ctx` that a source reads in place
+  of `fs.cwd()` is the door, and a plugin's source gets it for free.
+  Upward (the file's project rather than its directory) is the working
+  directory already.
 
 ### LSP and completion
 
@@ -1181,17 +1189,27 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   on a workspace. Before ssh: domains.md's rule 7 — "a process spawns
   where its cwd is", the cwd a `Loc` — is the same change as ending the
   process cwd, and which cwd a remote tab has is this note's answer.
-- **A buffer list per workspace** — open [todo]; step 30. The todo
+- **A buffer list per workspace** — done 2026-09-25 [todo]; step 30.
+  workspaces.md's Decision 7: `buffers.scope = "tab"` (default) |
+  `all`; a tab's buffers are the listed files under its directory and
+  every buffer it has shown (`Tab::seen`) — the first cut, "shown
+  now", lost a file opened from elsewhere the moment the pane showed
+  another, which two tests caught — and the dock's;
+  `Editor::tab_buffers` kept by the shell with the facts,
+  `kawoosh.buf.list { tab = true }` for Lua; `:ls` counts the other
+  tabs', `]b` stays in the tab's, `<C-a>` in the buffers picker flips.
+  `a_tab_lists_its_own_buffers_and_a_picker_starts_here` in
+  workspaces.rs. What the entry said before it was built: The todo
   asks for each workspace's own buffers by default and every buffer an
   option away. Since step 26 a tab's cwd is the workspace in all but
   name, and the lists still walk every listed buffer: the `buffers`
   and `smart` sources, `:ls`, `<leader>bn` `<leader>bp`. The reading
-  that needs no new object (workspaces.md beat a named one): a
-  buffer is the tab's when its file is under the tab's cwd — or it is
-  shown in the tab, which takes in scratches, terminals and a file
-  opened from elsewhere — and the lists show the tab's; `buffers.scope`
-  = `tab` | `all` the setting, a key in the `buffers` picker flipping
-  it for the session. `:bd`'s alternate and the memory are untouched;
+  that needs no new object (workspaces.md beat a named one): a buffer
+  is the tab's when its file is under the tab's cwd — or it is shown
+  in the tab, which takes in scratches, terminals and a file opened
+  from elsewhere — and the lists show the tab's; `buffers.scope` =
+  `tab` | `all` the setting, a key in the `buffers` picker flipping it
+  for the session. `:bd`'s alternate and the memory are untouched;
   workspaces.md gets a section when it is built.
 
 ### Buffers with a shape
@@ -1848,11 +1866,14 @@ then breadth.
     with the launcher's pins. See the engine, panes, buffers and
     terminal tracks. One round because each is under a day, and none
     needs a door the others do not.
-30. **Scopes**: the `files` and `grep` pickers from the file's
+30. ~~**Scopes**: the `files` and `grep` pickers from the file's
     directory (a `root` in the picker's `ctx`), and the buffer list per
     workspace (`buffers.scope`, the tab's by default, all a key away).
     One round because both are "which directory does this list", which
-    step 26 made answerable; workspaces.md gets the second's section.
+    step 26 made answerable; workspaces.md gets the second's section.~~
+    Landed 2026-09-25: `:picker files here` / `grep here`, and a tab's
+    buffers the ones under its directory or that it has shown. See the
+    panes and workspaces tracks and workspaces.md's Decision 7.
 31. **Copy mode as a mode, in colour**: `COPY` in the status and the
     pane's title, `<Esc>` a last rung of the ladder that gives the
     pane back, the caret starting where the eye was; the

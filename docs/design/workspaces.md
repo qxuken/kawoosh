@@ -126,6 +126,27 @@ each tab is. A directory jump's `<C-t>` opens a new tab *on* the
 directory — its cwd, and the directory listed — which is the "tab a
 project" gesture.
 
+### 7. A tab lists its own buffers
+
+*Added 2026-09-25 (roadmap step 30), asked as "workspaces should have
+a separate buffer list by default and an option to see all".* With
+the cwd the tab's, the lists are too: under `buffers.scope = "tab"`
+(the default) the buffers picker, `:ls`, `]b` `[b` `<leader>bn` and
+the launcher's *buffers* show the focused tab's — a listed file under
+its directory, or a buffer it has shown (`Tab::seen`), which takes in a
+scratch typed there and a file opened there from another project —
+and the dock's. `:ls` numbers them as `:b N` counts every buffer and
+says how many the other tabs have; `<C-a>` in the buffers picker flips
+to every tab's for the session; `buffers.scope = "all"` is the old
+list. The engine does not know tabs: the shell keeps
+`Editor::tab_buffers` in step with the facts, and Lua reads it as
+`kawoosh.buf.list { tab = true }`. What a tab has shown is not kept by
+a session.
+
+*Beat:* a buffer owned by one tab, moved out of the others' reach —
+a file open in two tabs is both tabs', and `:b NAME` still reaches
+any buffer, since hiding is a list's business, not the buffer's.
+
 ## Build order
 
 One round: the tab's `cwd` and the sync on the frame (`Kawoosh::sync_cwd`,

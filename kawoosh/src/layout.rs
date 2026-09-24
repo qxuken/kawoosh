@@ -398,6 +398,10 @@ pub struct Tab {
     /// A terminal in it rang while it was not the tab in front
     /// (`terminal.bell`): its label is marked until it is visited.
     pub bell: bool,
+    /// Every buffer a pane of the tab has shown (roadmap step 30): the
+    /// tab's own under `buffers.scope = "tab"`, wherever its file is.
+    /// Not kept by a session.
+    pub seen: std::collections::HashSet<kawoosh_doc::BufferId>,
 }
 
 impl Tab {
@@ -407,6 +411,7 @@ impl Tab {
             cwd: None,
             focused,
             bell: false,
+            seen: Default::default(),
         }
     }
 
@@ -923,6 +928,7 @@ impl Layout {
             focused: p,
             cwd,
             bell: false,
+            seen: Default::default(),
         });
         self.tab = self.tabs.len() - 1;
         self.dock_focused = false;

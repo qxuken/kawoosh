@@ -343,6 +343,7 @@ objects, or any other character on both sides.
 | `<leader>tt` | the tools (`kawoosh.tool`, and `settings.lua`'s `tools` table), as a picker: `git` (lazygit), `top`, `shell`, `compile` and `run` from `compile.command` and `run.command` |
 | `<leader>f` | the files git sees under the working directory, as a picker |
 | `<leader>g` | grep the project: `rg` run on the query as it is typed |
+| `<leader>sf` `<leader>sg` | the same two from the file's directory — a listing's own in `dir` (`:picker files here`, `:picker grep here`) |
 | `<leader>/` | the buffer's lines |
 | `<leader>.` | the smart picker: the buffers, then the files opened before, then the walk |
 | `<leader>sp` | the commands (the palette): every spec, what it needs where the keyboard came from, `<CR>` runs it |
@@ -404,7 +405,8 @@ between list and preview, and both dividers drag — each change is the
 setting for the session, so the picker opens next where it was left.
 A source may put keys of its own on the row: `<C-x>` in the
 buffers picker closes the row's buffer as `:bd` does, asking first
-when it has unsaved changes, and the list is read again. The commands
+when it has unsaved changes, and the list is read again; `<C-a>` there
+flips between the tab's buffers and every tab's (`buffers.scope`). The commands
 picker draws its rows in columns — the name with its alias, the key,
 what it does — and looks for the query in the names first, then in
 the rest of the row. The pane opens below the keyboard's and hands the

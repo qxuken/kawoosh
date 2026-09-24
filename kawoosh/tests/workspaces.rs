@@ -204,3 +204,86 @@ fn a_repository_is_a_workspace() {
     );
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// Scopes (roadmap step 30): a tab lists its own buffers — a file under
+/// its directory, or one it has shown — `:ls` counting the rest, `]b`
+/// staying in them, the buffers picker the same with `<C-a>` for every
+/// tab's; `buffers.scope = "all"` is the old way. And `:picker files
+/// here` walks the file's directory, not the working one.
+#[test]
+fn a_tab_lists_its_own_buffers_and_a_picker_starts_here() {
+    let root = tmp("scope");
+    let (a, b) = projects(&root);
+    std::fs::write(a.join("one.txt"), "one\n").unwrap();
+    std::fs::write(a.join("sub/deep.txt"), "deep\n").unwrap();
+    std::fs::write(a.join("sub/deeper.txt"), "deeper\n").unwrap();
+    std::fs::write(b.join("two.txt"), "two\n").unwrap();
+    let (mut d, mut app) = launch();
+    ex(&mut d, &mut app, &format!("cd {}", a.display()));
+    ex(&mut d, &mut app, "e one.txt");
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", b.display()));
+    ex(&mut d, &mut app, "e two.txt");
+    ex(&mut d, &mut app, "ls");
+    assert!(app.ed.message.contains("two.txt"), "{}", app.ed.message);
+    assert!(!app.ed.message.contains("one.txt"), "{}", app.ed.message);
+    assert!(
+        app.ed.message.contains("in other tabs"),
+        "{}",
+        app.ed.message
+    );
+    // `]b` stays in the tab's: two.txt and the scratch the tab showed.
+    for _ in 0..4 {
+        d.keys(&mut app, "]b");
+        let name = app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
+        assert_ne!(name, "one.txt", "]b left the tab's buffers");
+    }
+    // The picker: the tab's, then every tab's on `<C-a>`.
+    let listed = |app: &mut Kawoosh| {
+        app.run_lua_source(
+            "t",
+            r#"local n = {} for _, h in ipairs(kawoosh.buf.list { tab = true }) do n[#n+1] = kawoosh.buf.name(h) end kawoosh.echo(table.concat(n, ","))"#,
+        );
+        app.ed.message.clone()
+    };
+    let here = listed(&mut app);
+    assert!(
+        here.contains("two.txt") && !here.contains("one.txt"),
+        "{here}"
+    );
+    ex(&mut d, &mut app, "set buffers.scope=all");
+    let all = listed(&mut app);
+    assert!(all.contains("one.txt") && all.contains("two.txt"), "{all}");
+    ex(&mut d, &mut app, "set buffers.scope!");
+    // A file opened from another project is the tab's once it showed it.
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", a.join("sub/deep.txt").display()),
+    );
+    ex(&mut d, &mut app, "e two.txt");
+    assert!(
+        listed(&mut app).contains("deep.txt"),
+        "shown here: the tab's"
+    );
+    // `here`: the file's directory.
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", a.join("sub/deep.txt").display()),
+    );
+    ex(&mut d, &mut app, "picker files here");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    app.run_lua_source(
+        "t",
+        r#"local s = kawoosh.picker.state() kawoosh.echo(table.concat(s.rows or {}, ","))"#,
+    );
+    let rows = app.ed.message.clone();
+    assert!(rows.contains("deeper.txt"), "{rows}");
+    assert!(
+        !rows.contains("two.txt") && !rows.contains("one.txt"),
+        "only sub/: {rows}"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
