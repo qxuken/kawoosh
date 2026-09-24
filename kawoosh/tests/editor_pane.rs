@@ -75,6 +75,65 @@ fn the_view_follows_the_caret_with_scrolloff() {
     );
 }
 
+/// `G` lands once: the line after the final newline at the bottom of
+/// the pane, and the frames after it do not scroll scrolloff's margin
+/// further on into the nothing past the end.
+#[test]
+fn g_lands_on_the_bottom_and_stays() {
+    let text: String = (1..=100).map(|i| format!("l{i}\n")).collect();
+    let mut app = Kawoosh::new("t", &text);
+    let mut d = Drive::new(600.0, 331.0);
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    d.keys(&mut app, "G");
+    // 101 lines, the last the empty one after the final newline.
+    assert_eq!(app.ed.views[v].top, 91);
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
+    assert_eq!(app.ed.views[v].top, 91, "no second scroll");
+    assert_eq!(d.line_rows().len(), 10);
+    assert_eq!(d.line_rows().last().map(String::as_str), Some(""));
+    // Stepping up off the end keeps the view where it is.
+    d.keys(&mut app, "k");
+    d.frame(&mut app);
+    assert_eq!(app.ed.views[v].top, 91);
+}
+
+/// The line after a final newline is marked, not numbered, as helix
+/// marks it; a buffer without one numbers its last line.
+#[test]
+fn the_line_after_the_final_newline_is_not_numbered() {
+    let mut app = Kawoosh::new("t", "a\nb\n");
+    let mut d = Drive::new(600.0, 331.0);
+    d.frame(&mut app);
+    assert_eq!(d.gutter_texts(), ["1", "2", "~"]);
+    let mut app = Kawoosh::new("t", "a\nb");
+    d.frame(&mut app);
+    assert_eq!(d.gutter_texts(), ["1", "2"]);
+    // An empty buffer's one line is a line.
+    let mut app = Kawoosh::new("t", "");
+    d.frame(&mut app);
+    assert_eq!(d.gutter_texts(), ["1"]);
+}
+
+/// `relativenumber`: each line numbered by its distance from the
+/// caret's, which keeps its own number.
+#[test]
+fn relative_numbers_count_from_the_caret() {
+    let mut app = Kawoosh::new("t", "a\nb\nc\nd\ne\n");
+    let mut d = Drive::new(600.0, 331.0);
+    d.frame(&mut app);
+    assert_eq!(d.gutter_texts(), ["1", "2", "3", "4", "5", "~"]);
+    d.press(&mut app, ":set +relativenumber<CR>");
+    d.keys(&mut app, "2j");
+    assert_eq!(d.gutter_texts(), ["2", "1", "3", "1", "2", "~"]);
+    d.keys(&mut app, "G");
+    assert_eq!(d.gutter_texts(), ["5", "4", "3", "2", "1", "~"]);
+    d.press(&mut app, ":set -relativenumber<CR>");
+    assert_eq!(d.gutter_texts(), ["1", "2", "3", "4", "5", "~"]);
+}
+
 #[test]
 fn command_line_quits_and_reports() {
     let mut app = Kawoosh::new("t", DOC);

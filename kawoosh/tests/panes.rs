@@ -784,9 +784,9 @@ fn a_far_jump_lands_in_the_middle() {
     d.frame(&mut app);
     let lines = app.ed.buffer_of(v).line_count();
     let top = app.ed.views[v].top;
-    // The last line near the bottom (scrolloff's margin under it), not
-    // in the middle over half a screen of nothing.
-    assert!(top >= lines - rows && top <= lines - rows + 3, "top {top}");
+    // The last line at the bottom, not in the middle over half a
+    // screen of nothing — and not past it by scrolloff's margin.
+    assert_eq!(top, lines - rows);
     // A step down from the top scrolls one line, not to the middle.
     d.keys(&mut app, "gg");
     d.frame(&mut app);

@@ -272,6 +272,24 @@ impl Harness {
         self.rows().into_iter().map(|(_, extra)| extra).collect()
     }
 
+    /// The numbers in every plain pane's gutter in the last frame,
+    /// pane by pane, top to bottom.
+    pub fn gutter_texts(&self) -> Vec<String> {
+        let nodes = self.core.nodes();
+        let mut out = Vec::new();
+        for (at, g) in nodes.iter().enumerate() {
+            if g.label.as_deref() == Some("gutter") {
+                out.extend(
+                    nodes[at + 1..]
+                        .iter()
+                        .take_while(|n| n.depth > g.depth)
+                        .filter_map(|n| n.text.clone()),
+                );
+            }
+        }
+        out
+    }
+
     fn rows(&self) -> Vec<(String, String)> {
         let nodes = self.core.nodes();
         let mut out = Vec::new();

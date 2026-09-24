@@ -1038,17 +1038,23 @@ impl Kawoosh {
             // definition, a search's next file — puts the line in the
             // middle, as vim does; a step keeps the least scroll.
             let far = head_line + rows_n / 2 < v.top || head_line >= v.top + rows_n + rows_n / 2;
-            // Not past the end: `G` shows the last line at the bottom.
+            // Not past the end: `G` shows the last line at the bottom,
+            // and scrolloff's margin stops there too — the frame after a
+            // jump must not scroll again. The wheel and `zt` may still
+            // leave the view further down; the caret does not pull it
+            // back.
+            let end_top = line_count.saturating_sub(rows_n);
             if (self.follow_caret || !focused) && far {
-                v.top = head_line
-                    .saturating_sub(rows_n / 2)
-                    .min(line_count.saturating_sub(rows_n));
+                v.top = head_line.saturating_sub(rows_n / 2).min(end_top);
             } else if self.follow_caret || !focused {
                 if head_line < v.top + scrolloff {
                     v.top = head_line.saturating_sub(scrolloff);
                 }
                 if head_line + scrolloff >= v.top + rows_n {
-                    v.top = (head_line + scrolloff + 1).saturating_sub(rows_n);
+                    let want = (head_line + scrolloff + 1)
+                        .saturating_sub(rows_n)
+                        .min(end_top);
+                    v.top = v.top.max(want);
                 }
             }
             v.top = v.top.min(line_count.saturating_sub(1));
@@ -1255,6 +1261,7 @@ impl Kawoosh {
         let sels = &v.sels;
         let primary = sels.primary();
         let cur_line = buf.line_of(primary.head);
+        let numbers = rows::Numbers::of(buf, cur_line, &self.ed.settings);
         let title = buf.name.clone();
         let dark = ui.theme().is_dark();
         let diag_messages = self.lsp.messages.get(&buf_id);
@@ -1372,7 +1379,8 @@ impl Kawoosh {
                 // A rendered pane's numbers are in its rows, each as tall
                 // as its row.
                 if !md {
-                    ui.with(
+                    ui.with_keyed(
+                        "gutter",
                         NodeSpec::column()
                             .width(Sizing::Fixed(gutter))
                             .height(Sizing::Grow(1.0))
@@ -1380,7 +1388,7 @@ impl Kawoosh {
                             .role(Role::None),
                         |ui| {
                             for ln in top..last {
-                                rows::gutter_row(ui, font, &pal, ln, ln == cur_line);
+                                rows::gutter_row(ui, font, &pal, &numbers, ln);
                             }
                         },
                     );
@@ -1608,7 +1616,8 @@ impl Kawoosh {
                                         scale: *scale,
                                         wrap: (!in_table).then_some(*wrap),
                                         bg: code.then_some(pal.strip),
-                                        gutter: (!in_table).then_some((gutter, ln, ln == cur_line)),
+                                        gutter: (!in_table)
+                                            .then(|| (gutter, numbers.label(ln), ln == cur_line)),
                                         rule: *rule,
                                         images: img
                                             .iter()
@@ -1711,7 +1720,7 @@ impl Kawoosh {
                                                             pal.faint
                                                         };
                                                         ui.text(
-                                                            &format!("{}", l + 1),
+                                                            &numbers.label(l),
                                                             rows::mono(font, &pal).color(color),
                                                         );
                                                     },

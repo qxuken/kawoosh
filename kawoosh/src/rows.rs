@@ -740,9 +740,9 @@ pub struct RowForm {
     pub scale: f32,
     pub wrap: Option<kui::TextWrap>,
     pub bg: Option<Color>,
-    /// The gutter's width, and its number and whether it is the caret's
-    /// line.
-    pub gutter: Option<(f32, usize, bool)>,
+    /// The gutter's width, and what it shows beside the row and
+    /// whether it is the caret's line.
+    pub gutter: Option<(f32, String, bool)>,
     /// A rule across the row instead of text (`---`).
     pub rule: bool,
     /// Images instead of text, side by side, each at its size in px;
@@ -890,9 +890,55 @@ pub fn table_edge(ui: &mut Ui<'_>, columns: usize, rule: Color) {
     );
 }
 
+/// How a pane's gutter numbers its lines this frame: from 1, or by
+/// their distance from the caret's line (`relativenumber`),
+/// the caret's own line keeping its number either way. The empty line
+/// after a final newline is a place for the caret, not a line of the
+/// file: it is marked `~`, not numbered, as helix does.
+#[derive(Clone, Copy, Debug)]
+pub struct Numbers {
+    pub relative: bool,
+    /// The caret's line.
+    pub current: usize,
+    /// The line after a final newline, when the buffer ends in one.
+    pub phantom: Option<usize>,
+}
+
+impl Numbers {
+    /// The numbering of `buf` with the caret on `current`, as the
+    /// settings ask for it.
+    pub fn of(
+        buf: &kawoosh_doc::Buffer,
+        current: usize,
+        settings: &kawoosh_editor::Settings,
+    ) -> Self {
+        let last = buf.line_count().saturating_sub(1);
+        Numbers {
+            relative: settings.bool("relativenumber") == Some(true),
+            current,
+            phantom: (last > 0 && buf.line_range(last).is_empty()).then_some(last),
+        }
+    }
+
+    /// What the gutter shows beside line `ln` (0-based).
+    pub fn label(&self, ln: usize) -> String {
+        if Some(ln) == self.phantom {
+            "~".into()
+        } else if self.relative && ln != self.current {
+            ln.abs_diff(self.current).to_string()
+        } else {
+            (ln + 1).to_string()
+        }
+    }
+}
+
 /// The gutter cell for line `ln` (0-based), decoration rather than text.
-pub fn gutter_row(ui: &mut Ui<'_>, face: Face, pal: &Pal, ln: usize, current: bool) {
-    let color = if current { pal.dim } else { pal.faint };
+pub fn gutter_row(ui: &mut Ui<'_>, face: Face, pal: &Pal, numbers: &Numbers, ln: usize) {
+    let color = if ln == numbers.current {
+        pal.dim
+    } else {
+        pal.faint
+    };
     ui.with(
         NodeSpec::row()
             .width(Sizing::Grow(1.0))
@@ -900,7 +946,7 @@ pub fn gutter_row(ui: &mut Ui<'_>, face: Face, pal: &Pal, ln: usize, current: bo
             .main_align(Align::End)
             .cross_align(Align::Center),
         |ui| {
-            ui.text(&format!("{}", ln + 1), mono(face, pal).color(color));
+            ui.text(&numbers.label(ln), mono(face, pal).color(color));
         },
     );
 }
@@ -1143,18 +1189,18 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 base = base.font(id);
             }
             // The line's number, in the row: decoration, not text.
-            if let Some((w, ln, current)) = f.gutter {
+            if let Some((w, label, current)) = &f.gutter {
                 ui.with(
                     NodeSpec::row()
-                        .width(Sizing::Fixed(w))
+                        .width(Sizing::Fixed(*w))
                         .height(Sizing::Fixed(lh))
                         .pad_xy(GUTTER_PAD, 0.0)
                         .main_align(Align::End)
                         .cross_align(Align::Center)
                         .role(Role::None),
                     |ui| {
-                        let color = if current { pal.dim } else { pal.faint };
-                        ui.text(&format!("{}", ln + 1), mono(face, pal).color(color));
+                        let color = if *current { pal.dim } else { pal.faint };
+                        ui.text(label, mono(face, pal).color(color));
                     },
                 );
             }
@@ -1325,7 +1371,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             // against where it laid the first — the frame that types
             // is a frame behind, and the next catches up.
             if wraps {
-                let gutter = form.and_then(|f| f.gutter).map_or(0.0, |g| g.0);
+                let gutter = form.and_then(|f| f.gutter.as_ref()).map_or(0.0, |g| g.0);
                 let placed = text_key
                     .get()
                     .and_then(|k| Some((ui.caret_rect(k, cb)?, ui.caret_rect(k, 0)?)));

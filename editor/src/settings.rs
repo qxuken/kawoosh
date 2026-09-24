@@ -311,6 +311,9 @@ impl Settings {
         defaults.set("tabstop", Setting::Int(4));
         defaults.set("expandtab", Setting::Bool(true));
         defaults.set("scrolloff", Setting::Int(3));
+        // The gutter numbers each line by its distance from the caret's,
+        // which keeps its own number (vim's `number relativenumber`).
+        defaults.set("relativenumber", Setting::Bool(false));
         defaults.set("leader", Setting::Str(" ".into()));
         // The which-key float while a key sequence is open.
         defaults.set("whichkey", Setting::Bool(true));
@@ -768,6 +771,7 @@ mod tests {
                 "picker.share",
                 "picker.split",
                 "picker.wrap",
+                "relativenumber",
                 "scrolloff",
                 "secrets.forget_secs",
                 "secrets.masks.env.files",
