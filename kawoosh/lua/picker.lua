@@ -1410,7 +1410,7 @@ picker.source("grep", {
           for _, l in ipairs(lines) do
             local path, ln, col, rest = l:match("^(.-):(%d+):(%d+):(.*)$")
             if path then
-              path = path:gsub("^%./", "")
+              path = path:gsub("^%.[/\\]", "")
               local full = fs.join(root, path)
               items[#items + 1] = {
                 text = path .. ":" .. ln,

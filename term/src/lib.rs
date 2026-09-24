@@ -1731,7 +1731,12 @@ mod tests {
     fn the_shell_reports_its_directory() {
         let dir = std::env::temp_dir().join(format!("kawoosh term {}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let url = dir.to_str().unwrap().replace(' ', "%20");
+        // A URL's path: `/tmp/x`, or `/C:/x` on Windows.
+        let url = dir.to_str().unwrap().replace(' ', "%20").replace('\\', "/");
+        let url = match url.starts_with('/') {
+            true => url,
+            false => format!("/{url}"),
+        };
         let (a, b) = url.split_at(url.len() - 2);
         let mut t = Terminal::headless(TermSize { rows: 3, cols: 20 });
         assert_eq!(t.cwd(), None);

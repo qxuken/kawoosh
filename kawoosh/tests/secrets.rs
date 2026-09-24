@@ -247,6 +247,7 @@ fn a_rule_is_a_setting() {
 }
 
 /// Frames until `f` holds, for a process's answer to land.
+#[cfg(unix)]
 fn until(d: &mut Drive, app: &mut Kawoosh, f: impl Fn(&Kawoosh) -> bool) -> bool {
     for _ in 0..400 {
         if f(app) {
@@ -261,7 +262,9 @@ fn until(d: &mut Drive, app: &mut Kawoosh, f: impl Fn(&Kawoosh) -> bool) -> bool
 /// A stand-in `ansible-vault` for the tests: it wants an
 /// `ansible.cfg` where it runs (as the real one finds its password
 /// file), says so and fails without one, counts its runs in `runs`,
-/// strips the header to view and adds it to encrypt.
+/// strips the header to view and adds it to encrypt. A `sh` script, so
+/// the tests on it are Unix's.
+#[cfg(unix)]
 fn fake_vault(dir: &std::path::Path) -> std::path::PathBuf {
     let tool = dir.join("fake-vault");
     let runs = dir.join("runs");
@@ -278,6 +281,7 @@ fn fake_vault(dir: &std::path::Path) -> std::path::PathBuf {
     tool
 }
 
+#[cfg(unix)]
 fn vault_app(tool: &std::path::Path) -> (Drive, Kawoosh) {
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = Kawoosh::new("*scratch*", "");
@@ -297,6 +301,7 @@ fn vault_app(tool: &std::path::Path) -> (Drive, Kawoosh) {
 /// directories above the vault here — and `%` in the scratch the vault;
 /// `:w` encrypts it back over the file through stdin.
 #[test]
+#[cfg(unix)]
 fn a_vault_file_opens_decrypted_and_writes_back_encrypted() {
     let dir = tmp("vault");
     let tool = fake_vault(&dir);
@@ -356,6 +361,7 @@ fn a_vault_file_opens_decrypted_and_writes_back_encrypted() {
 /// used to be asked twice per open, and the fallback's second ask
 /// decrypted again, for ever.
 #[test]
+#[cfg(unix)]
 fn a_vault_that_does_not_decrypt_says_why_once() {
     let dir = tmp("vault-fail");
     let tool = fake_vault(&dir);

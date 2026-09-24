@@ -4,7 +4,7 @@
 local dir = os.tmpname()
 os.remove(dir)
 dir = dir .. "-enter"
-assert(os.execute("mkdir -p '" .. dir .. "'"))
+kawoosh.fs.create(dir, true)
 for _, n in ipairs { "a.txt", "b.txt" } do
   local f = assert(io.open(dir .. "/" .. n, "w")) f:write(n) f:close()
 end
@@ -34,4 +34,4 @@ kawoosh.press("G<CR>")
 kawoosh.frame()
 kawoosh.test.eq(kawoosh.buf.name(), "b.txt")
 kawoosh.test.eq(listings(), 1, "an edited listing stays")
-assert(os.execute("rm -rf '" .. dir .. "'"))
+kawoosh.fs.remove(dir)

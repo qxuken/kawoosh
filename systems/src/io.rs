@@ -893,9 +893,6 @@ mod tests {
             false,
         );
         assert!(s.starts_with("cd \"$HOME\"'/a b' || exit 1\n"), "{s}");
-        let home = std::env::temp_dir().join(format!("kawoosh-script-{}", std::process::id()));
-        std::fs::create_dir_all(home.join("a b")).unwrap();
-        let home = std::fs::canonicalize(&home).unwrap();
         let t = Transport {
             ssh: "ssh".into(),
             host: "h".into(),
@@ -903,24 +900,34 @@ mod tests {
         };
         let argv = t.remote_argv(&s, false, None);
         assert_eq!(&argv[..6], ["ssh", "-S", "/c", "-T", "h", "--"]);
-        // What the host's shell is handed, run by one.
-        let out = std::process::Command::new("/bin/sh")
-            .arg("-c")
-            .arg(&argv[6])
-            .env("HOME", &home)
-            .output()
-            .unwrap();
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout).trim(),
-            format!("it's|{}/.cache/x|{}/a b", home.display(), home.display())
-        );
-        std::fs::remove_dir_all(&home).ok();
+        // What the host's shell is handed, run by one — a POSIX shell,
+        // which a Windows machine cannot stand in for.
+        #[cfg(unix)]
+        {
+            let home = std::env::temp_dir().join(format!("kawoosh-script-{}", std::process::id()));
+            std::fs::create_dir_all(home.join("a b")).unwrap();
+            let home = std::fs::canonicalize(&home).unwrap();
+            let out = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(&argv[6])
+                .env("HOME", &home)
+                .output()
+                .unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout).trim(),
+                format!("it's|{}/.cache/x|{}/a b", home.display(), home.display())
+            );
+            std::fs::remove_dir_all(&home).ok();
+        }
     }
 
     /// The host's CLI speaks the socket's JSON over the forwarded port:
     /// an edit's path made absolute and its domain said, `--wait` held
-    /// until the answer, a pick's answer printed.
+    /// until the answer, a pick's answer printed. The shim runs on the
+    /// host, a POSIX one: Windows's `bash` may be WSL's, which cannot
+    /// read this machine's paths.
     #[test]
+    #[cfg(unix)]
     fn the_host_shim_speaks_the_socket() {
         if std::process::Command::new("bash")
             .arg("--version")

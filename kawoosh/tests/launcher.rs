@@ -48,6 +48,12 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.frame(app);
 }
 
+/// A path as the inside of a Lua string literal: a Windows path's `\`
+/// escaped.
+fn lua_path(p: &std::path::Path) -> String {
+    p.display().to_string().replace('\\', "\\\\")
+}
+
 /// Runs Lua that may `assert`, and fails the test when it did.
 fn lua(app: &mut Kawoosh, src: &str) {
     app.run_lua_source("t", &format!("{src}\nkawoosh.echo('lua ok')"));
@@ -191,7 +197,8 @@ fn a_query_finds_a_file_and_opens_it_in_place() {
     d.frame(&mut app);
     let r = rows(&mut app);
     assert!(r.contains(&"# files".to_string()), "{r:?}");
-    assert!(r.contains(&"src/lib.rs".to_string()), "{r:?}");
+    let lib = format!("src{}lib.rs", std::path::MAIN_SEPARATOR);
+    assert!(r.contains(&lib), "{r:?}");
     d.press(&mut app, "<CR>");
     d.frame(&mut app);
     assert!(!on_launcher(&app));
@@ -282,7 +289,7 @@ fn a_pin_opens_into_the_launcher() {
     app.open_store(Some(&db));
     lua(
         &mut app,
-        &format!("kawoosh.pin('file', '{}')", dir.join("notes.md").display()),
+        &format!("kawoosh.pin('file', '{}')", lua_path(&dir.join("notes.md"))),
     );
     d.frame(&mut app);
     d.press(&mut app, "<C-w>v");

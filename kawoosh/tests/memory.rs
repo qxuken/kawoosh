@@ -198,6 +198,12 @@ fn file_key(p: &std::path::Path) -> MomentKey {
     MomentKey::new("file", &p.display().to_string(), "")
 }
 
+/// A path as the inside of a Lua string literal: a Windows path's `\`
+/// escaped.
+fn lua_path(p: &std::path::Path) -> String {
+    p.display().to_string().replace('\\', "\\\\")
+}
+
 /// Runs Lua that may `assert`, and fails the test when it did.
 fn lua(app: &mut Kawoosh, src: &str) {
     app.run_lua_source("t", &format!("{src}\nkawoosh.echo('lua ok')"));
@@ -553,7 +559,10 @@ fn pins_the_picker_and_the_lua_side() {
     app.flush_moments();
     let store = app.store.clone().unwrap();
     // Pin c from Lua, then a from the keys.
-    lua(&mut app, &format!("kawoosh.pin('file', '{}')", c.display()));
+    lua(
+        &mut app,
+        &format!("kawoosh.pin('file', '{}')", lua_path(&c)),
+    );
     d.frame(&mut app);
     d.keys(&mut app, " ea");
     d.frame(&mut app);
@@ -638,7 +647,7 @@ fn pins_the_picker_and_the_lua_side() {
 kawoosh.remember {{ kind = "dir.rename", subject = "{b}", signals = {{ visits = 1 }}, meta = {{ from = "old" }} }}
 kawoosh.remember {{ kind = "file", subject = "{b}", signals = {{ edits = 5 }} }}
 "#,
-            b = b.display()
+            b = lua_path(&b)
         ),
     );
     d.frame(&mut app);
@@ -666,8 +675,8 @@ assert(by["{b}"] == 0.5, "b has the edits: " .. tostring(by["{b}"]))
 assert(by["{a}"] > 10, "pinned above any")
 kawoosh.forget("dir.rename", "{b}")
 "#,
-            a = a.display(),
-            b = b.display()
+            a = lua_path(&a),
+            b = lua_path(&b)
         ),
     );
     d.frame(&mut app);
@@ -824,8 +833,8 @@ assert(by["{a}"] > 10 and by["{b}"] and not by["/other/z.txt"], "boosts are the 
 local row = kawoosh.memory {{ kind = "file", subject = "{a}" }}
 assert(row.visits >= 3, "pending folded: " .. tostring(row.visits))
 "#,
-            a = a.display(),
-            b = b.display()
+            a = lua_path(&a),
+            b = lua_path(&b)
         ),
     );
     // A restart: one row per path still, the pending flushed with the
@@ -967,7 +976,7 @@ fn runs_are_remembered_as_tools_and_locations() {
     let db = dir.join("state.db");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("Cargo.toml"), "").unwrap();
-    let a = dir.join("src/a.rs");
+    let a = dir.join("src").join("a.rs");
     std::fs::write(&a, "one\ntwo\nthree\n").unwrap();
     let (mut d, mut app) = launch(&db, &a);
     d.frame(&mut app);
@@ -1203,8 +1212,14 @@ fn a_pin_opens_in_the_pane_that_has_the_keyboard() {
     // the test beside this one is also using.
     let (mut d, mut app) = launch(&db, &a);
     d.frame(&mut app);
-    lua(&mut app, &format!("kawoosh.pin('file', '{}')", b.display()));
-    lua(&mut app, &format!("kawoosh.pin('file', '{}')", c.display()));
+    lua(
+        &mut app,
+        &format!("kawoosh.pin('file', '{}')", lua_path(&b)),
+    );
+    lua(
+        &mut app,
+        &format!("kawoosh.pin('file', '{}')", lua_path(&c)),
+    );
     d.frame(&mut app);
     // The memory pane, opened and closed from the first pane: that is
     // what left `back` pointing at it.

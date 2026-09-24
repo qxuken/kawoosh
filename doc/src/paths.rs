@@ -60,7 +60,12 @@ pub fn expand(path: &Path, cwd: &Path) -> PathBuf {
         return on_domain(domain, &normalize_remote(rest));
     }
     if let Some((domain, dir)) = domain_of(cwd) {
-        return on_domain(domain, &normalize_remote(&dir.join(path)));
+        let p = path.to_string_lossy();
+        let joined = match p.starts_with('/') {
+            true => p.into_owned(),
+            false => format!("{}/{p}", dir.display()),
+        };
+        return on_domain(domain, &normalize_remote(Path::new(&joined)));
     }
     let p = if path.is_absolute() {
         path.to_path_buf()
@@ -80,20 +85,36 @@ pub fn expand(path: &Path, cwd: &Path) -> PathBuf {
 }
 
 /// A host's path folded as [`normalize`] folds one, its `~` kept: the
-/// host's home is the host's to say.
+/// host's home is the host's to say. A host's paths are POSIX ones
+/// whatever this platform is — `/` their only separator — so they are
+/// folded as text, not by this platform's `Path`.
 fn normalize_remote(path: &Path) -> PathBuf {
-    match path.strip_prefix("~") {
-        Ok(rest) if path.starts_with("~") => {
-            let n = normalize(&Path::new("/").join(rest));
-            let tail = n.strip_prefix("/").unwrap_or(&n);
-            if tail.as_os_str().is_empty() {
-                PathBuf::from("~")
-            } else {
-                Path::new("~").join(tail)
+    let s = path.to_string_lossy();
+    let (home, rest) = match s.strip_prefix('~') {
+        Some(r) if r.is_empty() || r.starts_with('/') => (true, r),
+        _ => (false, &*s),
+    };
+    let rooted = home || rest.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for c in rest.split('/') {
+        match c {
+            "" | "." => {}
+            ".." if parts.last().is_some_and(|p| *p != "..") => {
+                parts.pop();
             }
+            // At the root it stays there; past a relative start, kept.
+            ".." if rooted => {}
+            c => parts.push(c),
         }
-        _ => normalize(path),
     }
+    let tail = parts.join("/");
+    PathBuf::from(match (home, rooted) {
+        (true, _) if tail.is_empty() => "~".to_string(),
+        (true, _) => format!("~/{tail}"),
+        (false, true) => format!("/{tail}"),
+        (false, false) if tail.is_empty() => ".".to_string(),
+        (false, false) => tail,
+    })
 }
 
 /// Folds `.` and `..` lexically and drops empty components: `a/./b/../c`
@@ -180,6 +201,14 @@ mod tests {
             expand(Path::new("x"), Path::new("box:~/p")),
             PathBuf::from("box:~/p/x")
         );
+        // Spelled with `/` on every platform: a `Path` compares `\` and
+        // `/` alike on Windows, the text does not.
+        let s = |p: &str, cwd: &str| expand(Path::new(p), Path::new(cwd)).display().to_string();
+        assert_eq!(s("box:/a/./b/../c", "/"), "box:/a/c");
+        assert_eq!(s("x/../y", "box:/home/me"), "box:/home/me/y");
+        assert_eq!(s("box:~/p/../q", "/"), "box:~/q");
+        assert_eq!(s("box:~/..", "/"), "box:~");
+        assert_eq!(s("box:~bob/p/..", "/"), "box:~bob");
     }
 
     #[test]

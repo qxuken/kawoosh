@@ -9,7 +9,9 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kui::KeyMods;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("kawoosh-dirs-{tag}-{}", std::process::id()));
@@ -60,6 +62,7 @@ fn rows(d: &mut Drive, app: &mut Kawoosh, n: usize) -> String {
     panic!("the picker never had {n} rows: {got}");
 }
 
+#[cfg(unix)]
 fn ctrl_shift() -> KeyMods {
     KeyMods {
         ctrl: true,
@@ -86,7 +89,10 @@ fn the_memorys_directories_are_ranked_and_a_pick_moves_the_cwd() {
     app.flush_moments();
     d.keys(&mut app, " sd");
     let got = rows(&mut d, &mut app, 2);
-    assert_eq!(got, format!("2|{}", a.display()), "visited twice, first");
+    // The rows write the home as `~` (the temporary directory is under
+    // it on Windows).
+    let shown = kawoosh_systems::fs::abbreviate_home(&a);
+    assert_eq!(got, format!("2|{shown}"), "visited twice, first");
     // The second row: the working directory moves there.
     d.ctrl(&mut app, "n");
     d.key(&mut app, "enter", KeyMods::default());
@@ -97,7 +103,9 @@ fn the_memorys_directories_are_ranked_and_a_pick_moves_the_cwd() {
 }
 
 /// A stand-in for zoxide: its arguments logged, `query` answering two
-/// directories with their scores.
+/// directories with their scores. A `sh` script, so the tests on it are
+/// Unix's.
+#[cfg(unix)]
 fn fake_zoxide(root: &Path, a: &Path, b: &Path) -> (PathBuf, PathBuf) {
     let log = root.join("zoxide.log");
     let bin = root.join("zoxide");
@@ -121,6 +129,7 @@ fn fake_zoxide(root: &Path, a: &Path, b: &Path) -> (PathBuf, PathBuf) {
     (bin, log)
 }
 
+#[cfg(unix)]
 fn zoxide_app(root: &Path, a: &Path, b: &Path) -> (Drive, Kawoosh, PathBuf) {
     let (bin, log) = fake_zoxide(root, a, b);
     let (mut d, mut app) = app();
@@ -136,6 +145,7 @@ fn zoxide_app(root: &Path, a: &Path, b: &Path) -> (Drive, Kawoosh, PathBuf) {
 /// With zoxide the rows are its database's and a visit is `zoxide add`;
 /// `<C-o>` lists a directory in `dir` and leaves the working directory.
 #[test]
+#[cfg(unix)]
 fn zoxides_directories_and_visits() {
     let root = tmp("zox");
     let (a, b) = (root.join("alpha"), root.join("beta"));
@@ -179,6 +189,7 @@ fn zoxides_directories_and_visits() {
 /// From a terminal pane the picker types `cd` at an empty prompt, and
 /// refuses when something is typed there.
 #[test]
+#[cfg(unix)]
 fn a_pick_from_a_terminal_types_cd_at_an_empty_prompt() {
     let root = tmp("term");
     let (a, b) = (root.join("alpha"), root.join("be'ta"));
@@ -223,6 +234,7 @@ fn a_pick_from_a_terminal_types_cd_at_an_empty_prompt() {
 /// `kawoosh pick dirs` over the socket: the picker opens where the keys
 /// are, and the caller gets the pick — or nothing, closed.
 #[test]
+#[cfg(unix)]
 fn a_shell_asks_the_picker_over_the_socket() {
     use kawoosh_systems::io::{Request, send_request};
     let root = tmp("sock");
@@ -264,6 +276,7 @@ fn a_shell_asks_the_picker_over_the_socket() {
 /// `<C-t>` opens a new tab on the directory: its working directory, and
 /// the directory listed there; the first tab stays where it was.
 #[test]
+#[cfg(unix)]
 fn ctrl_t_opens_a_tab_on_the_directory() {
     let root = tmp("tab");
     let (a, b) = (root.join("alpha"), root.join("beta"));

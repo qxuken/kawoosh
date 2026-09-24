@@ -149,7 +149,13 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
     d.frame(&mut app);
     let t = app.add_headless_terminal();
     // The shell says where it is (OSC 7), and `gf` resolves from there.
-    app.feed_terminal(t, format!("\x1b]7;file://{}\x07", dir.display()).as_bytes());
+    // A URL's path: `/tmp/x`, or `/C:/x` on Windows.
+    let path = dir.to_str().unwrap().replace('\\', "/");
+    let path = match path.starts_with('/') {
+        true => path,
+        false => format!("/{path}"),
+    };
+    app.feed_terminal(t, format!("\x1b]7;file://{path}\x07").as_bytes());
     app.feed_terminal(t, b"error[E0000]: boom\r\n  --> src/lib.rs:3:1\r\n");
     d.frame(&mut app);
     d.frame(&mut app);

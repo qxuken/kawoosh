@@ -85,6 +85,12 @@ fn query_mode(app: &Kawoosh) -> kawoosh_editor::Mode {
     )
 }
 
+/// A path relative to the project as the rows write it: with the
+/// platform's separator.
+fn native(path: &str) -> String {
+    path.replace('/', std::path::MAIN_SEPARATOR_STR)
+}
+
 fn focused_path(app: &Kawoosh) -> Option<std::path::PathBuf> {
     app.ed.buffer_of(app.focused_view()?).path.clone()
 }
@@ -137,7 +143,7 @@ fn files_are_walked_filtered_and_opened() {
     let r = rows(&d);
     assert_eq!(r[0], "README.md", "the open buffer's file first: {r:?}");
     assert_eq!(r.len(), 3, "{r:?}");
-    assert!(r.contains(&"src/main.rs".to_string()) && r.contains(&"src/lib.rs".to_string()));
+    assert!(r.contains(&native("src/main.rs")) && r.contains(&native("src/lib.rs")));
     let t = texts(&d);
     assert!(t.iter().any(|s| s == "files"), "the source's title: {t:?}");
     assert!(t.iter().any(|s| s == "3"), "the count: {t:?}");
@@ -150,7 +156,7 @@ fn files_are_walked_filtered_and_opened() {
     d.keys(&mut app, "sl");
     d.frame(&mut app);
     let r = rows(&d);
-    assert_eq!(r[0], "src/lib.rs", "{r:?}");
+    assert_eq!(r[0], native("src/lib.rs"), "{r:?}");
     assert!(!r.contains(&"README.md".to_string()), "{r:?}");
     let t = texts(&d);
     assert!(t.iter().any(|s| s == "1 of 3" || s == "2 of 3"), "{t:?}");
@@ -189,16 +195,20 @@ fn the_querys_modes_and_keys() {
     d.frame(&mut app);
     assert_eq!(cursor_text(&mut app), "README.md");
     d.ctrl(&mut app, "n");
-    assert_eq!(cursor_text(&mut app), "src/lib.rs");
+    assert_eq!(cursor_text(&mut app), native("src/lib.rs"));
     d.ctrl(&mut app, "n");
-    assert_eq!(cursor_text(&mut app), "src/main.rs");
+    assert_eq!(cursor_text(&mut app), native("src/main.rs"));
     // `<C-n>` `<C-p>` go round, as a menu's keys do.
     d.ctrl(&mut app, "n");
     assert_eq!(cursor_text(&mut app), "README.md", "round to the first");
     d.ctrl(&mut app, "p");
-    assert_eq!(cursor_text(&mut app), "src/main.rs", "and back to the last");
+    assert_eq!(
+        cursor_text(&mut app),
+        native("src/main.rs"),
+        "and back to the last"
+    );
     d.ctrl(&mut app, "p");
-    assert_eq!(cursor_text(&mut app), "src/lib.rs");
+    assert_eq!(cursor_text(&mut app), native("src/lib.rs"));
     // Normal mode over the query: `j`, `k`, then `<Esc>` closes.
     d.keys(&mut app, "ma");
     d.key(&mut app, "escape", KeyMods::default());
@@ -209,14 +219,14 @@ fn the_querys_modes_and_keys() {
         "the query's mode in the status"
     );
     let r = rows(&d);
-    assert_eq!(r, ["src/main.rs"], "narrowed by `ma`: {r:?}");
+    assert_eq!(r, [native("src/main.rs")], "narrowed by `ma`: {r:?}");
     d.keys(&mut app, "0D");
     d.frame(&mut app);
     assert_eq!(rows(&d).len(), 3, "the line cleared as the editor would");
     d.keys(&mut app, "jj");
-    assert_eq!(cursor_text(&mut app), "src/main.rs");
+    assert_eq!(cursor_text(&mut app), native("src/main.rs"));
     d.keys(&mut app, "k");
-    assert_eq!(cursor_text(&mut app), "src/lib.rs");
+    assert_eq!(cursor_text(&mut app), native("src/lib.rs"));
     d.key(&mut app, "escape", KeyMods::default());
     d.frame(&mut app);
     assert!(!picker_open(&app), "<Esc> in normal mode closes");
@@ -250,12 +260,12 @@ fn the_querys_modes_and_keys() {
     // A click lands the cursor on a row; a second one takes it.
     d.keys(&mut app, " f");
     d.frame(&mut app);
-    let label = "row src/main.rs";
+    let label = &format!("row {}", native("src/main.rs"));
     let (x, y, _, h) = d.rect_of(label).expect("the row on show");
     d.click(&mut app, x + 10.0, y + h / 2.0);
     d.frame(&mut app);
     assert!(picker_open(&app));
-    assert_eq!(cursor_text(&mut app), "src/main.rs");
+    assert_eq!(cursor_text(&mut app), native("src/main.rs"));
     let (x, y, _, h) = d.rect_of(label).expect("still there");
     d.click(&mut app, x + 10.0, y + h / 2.0);
     d.frame(&mut app);
@@ -331,7 +341,7 @@ fn buffers_lines_recent_and_smart() {
     d.frame(&mut app);
     let r = rows(&d);
     assert!(
-        r.iter().any(|s| s == "README.md") && r.iter().any(|s| s == "src/main.rs"),
+        r.iter().any(|s| s == "README.md") && r.iter().any(|s| *s == native("src/main.rs")),
         "{r:?}"
     );
     d.ctrl(&mut app, "c");
@@ -342,10 +352,10 @@ fn buffers_lines_recent_and_smart() {
     assert_eq!(r.len(), 3, "each path once: {r:?}");
     assert_eq!(
         &r[..2],
-        ["src/main.rs", "README.md"],
+        [native("src/main.rs"), "README.md".into()],
         "the buffers first: {r:?}"
     );
-    assert_eq!(r[2], "src/lib.rs");
+    assert_eq!(r[2], native("src/lib.rs"));
     d.ctrl(&mut app, "c");
     // `<C-x>` in the buffers picker closes the row's buffer and the
     // list is read again; one with unsaved changes is asked about —
@@ -452,7 +462,7 @@ fn the_preview_is_highlighted() {
     d.frame(&mut app);
     d.keys(&mut app, "main");
     d.frame(&mut app);
-    assert_eq!(rows(&d)[0], "src/main.rs");
+    assert_eq!(rows(&d)[0], native("src/main.rs"));
     app.wait_for_jobs();
     d.frame(&mut app);
     lua(
@@ -502,7 +512,7 @@ fn grep_runs_rg_as_the_query_is_typed() {
     d.frame(&mut app);
     d.frame(&mut app);
     let r = rows(&d);
-    assert_eq!(r, ["src/main.rs:2"], "{r:?}");
+    assert_eq!(r, [native("src/main.rs:2")], "{r:?}");
     let t = texts(&d);
     assert!(
         t.iter().any(|s| s.starts_with("fn helper")),
@@ -758,7 +768,7 @@ fn resume_sessions_and_a_plugins_own_source() {
     assert_eq!(rows(&d), before, "the query as it was");
     assert_eq!(
         cursor_text(&mut app),
-        "src/main.rs",
+        native("src/main.rs"),
         "the cursor where it was"
     );
     // Saved with the picker open: restored without it.
@@ -846,7 +856,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     }
     // A binary sits under the text files, matched or not.
     std::fs::write(dir.join("many/f00.png"), "not text").unwrap();
-    let long = format!("aaa/{}.txt", "b".repeat(180));
+    let long = native(&format!("aaa/{}.txt", "b".repeat(180)));
     std::fs::create_dir_all(dir.join("aaa")).unwrap();
     std::fs::write(dir.join(&long), "long\n").unwrap();
     let mut d = Drive::new(1000.0, 700.0);
@@ -859,16 +869,16 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     let shown = rows(&d).len();
     assert!(shown > 5 && shown < 45, "a window of the 45: {shown}");
     assert!(
-        !rows(&d).contains(&"many/f00.png".to_string()),
+        !rows(&d).contains(&native("many/f00.png")),
         "the png is last, off the window"
     );
     d.keys(&mut app, "f00");
     d.frame(&mut app);
     let r = rows(&d);
-    assert_eq!(r[0], "many/f00.txt", "{r:?}");
+    assert_eq!(r[0], native("many/f00.txt"), "{r:?}");
     assert_eq!(
         r.last().map(String::as_str),
-        Some("many/f00.png"),
+        Some(native("many/f00.png").as_str()),
         "the binary under the text: {r:?}"
     );
     d.ctrl(&mut app, "u");
@@ -978,7 +988,10 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         &mut app,
         r#"assert(kawoosh.opt("picker.preview") == false)"#,
     );
-    let wide = d.rect_of("row many/f00.txt").unwrap().2;
+    let wide = d
+        .rect_of(&format!("row {}", native("many/f00.txt")))
+        .unwrap()
+        .2;
     assert!(wide > w * 1.5, "the list takes the room: {wide} vs {w}");
     d.key(
         &mut app,

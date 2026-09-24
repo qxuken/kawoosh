@@ -46,7 +46,7 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext);
-    app.set_cwd(&deep.canonicalize().unwrap());
+    app.set_cwd(&kawoosh_systems::fs::canonicalize(&deep).unwrap());
     d.frame(&mut app);
     let (_, cy, _, _) = d.rect_of("cwd").expect("the cwd in the title bar");
     let (_, ty, _, _) = d.rect_of("tab0").expect("the tab");
@@ -55,7 +55,11 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
         .into_iter()
         .find(|t| t.ends_with("beta directory"));
     let shown = shown.expect("the cwd's last component whole");
-    assert!(shown.contains("/a/beta directory"), "{shown}");
+    let sep = std::path::MAIN_SEPARATOR;
+    assert!(
+        shown.contains(&format!("{sep}a{sep}beta directory")),
+        "{shown}"
+    );
     assert!(shown.len() < deep.display().to_string().len());
     let (x, y, w, h) = d.rect_of("cwd").unwrap();
     d.click(&mut app, x + w / 2.0, y + h / 2.0);

@@ -2880,23 +2880,35 @@ fn commands_op_range(
 #[cfg(test)]
 mod tests {
     use super::path_form;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn path_forms_are_vims() {
-        let cwd = Path::new("/p/k");
-        let f = |p: &str, form: &str| path_form(cwd, Path::new(p), form).unwrap();
-        assert_eq!(f("/p/k/src/main.rs", "relative"), "src/main.rs");
-        assert_eq!(f("src/main.rs", "absolute"), "/p/k/src/main.rs");
+        // A local path as the platform spells it: `/p/k` is not absolute
+        // on Windows, `C:\p\k` is. A host's (`box:/x`) is the same on both.
+        let native = |s: &str| {
+            if !cfg!(windows) || s.contains(':') {
+                return s.to_string();
+            }
+            let s = s.replace('/', "\\");
+            match s.starts_with('\\') {
+                true => format!("C:{s}"),
+                false => s,
+            }
+        };
+        let cwd = PathBuf::from(native("/p/k"));
+        let f = |p: &str, form: &str| path_form(&cwd, Path::new(&native(p)), form).unwrap();
+        assert_eq!(f("/p/k/src/main.rs", "relative"), native("src/main.rs"));
+        assert_eq!(f("src/main.rs", "absolute"), native("/p/k/src/main.rs"));
         assert_eq!(f("/p/k/src/main.rs", "dir"), "src");
         assert_eq!(f("/p/k/a.rs", "dir"), ".");
-        assert_eq!(f("/p/k/src/main.rs", "dir absolute"), "/p/k/src");
+        assert_eq!(f("/p/k/src/main.rs", "dir absolute"), native("/p/k/src"));
         assert_eq!(f("/p/k/src/main.rs", "name"), "main.rs");
         assert_eq!(f("/p/k/src/lib.test.rs", "stem"), "lib.test");
         // Outside the working directory, relative is the path whole.
-        assert_eq!(f("/etc/hosts", "relative"), "/etc/hosts");
-        assert_eq!(f("/etc/hosts", "dir"), "/etc");
-        assert!(path_form(cwd, Path::new("/a"), "nope").is_err());
+        assert_eq!(f("/etc/hosts", "relative"), native("/etc/hosts"));
+        assert_eq!(f("/etc/hosts", "dir"), native("/etc"));
+        assert!(path_form(&cwd, Path::new("/a"), "nope").is_err());
         // On a host: its root is its own, and it is never under a local
         // working directory.
         assert_eq!(f("box:/x.rs", "dir"), "box:/");

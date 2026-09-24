@@ -390,7 +390,7 @@ fn rename_references_actions_format_and_diagnostics() {
     let dir = std::env::temp_dir().join(format!("kawoosh-lsp-two-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
-    let file = dir.join("src/main.rs");
+    let file = dir.join("src").join("main.rs");
     std::fs::write(&file, "fn main() {\n    hello()\n}\n").unwrap();
 
     let mut app = Kawoosh::from_file(&file);
@@ -541,9 +541,10 @@ fn rename_references_actions_format_and_diagnostics() {
         );
         app.ed.message.clone()
     };
-    // The file's name as written out of the working directory; two
+    // The file's name as written out of the working directory (the home
+    // as `~`); two
     // lines of context about the change.
-    let name = file.display();
+    let name = kawoosh_systems::fs::abbreviate_home(&file);
     assert_eq!(
         state(&mut d, &mut app),
         format!(
@@ -559,11 +560,14 @@ fn rename_references_actions_format_and_diagnostics() {
     assert!(drawn.iter().any(|t| t == "quickfix"), "the kind: {drawn:?}");
     // The query searches the titles.
     d.keys(&mut app, "run");
+    // The file's URI: `file:///tmp/…`, or `file:///C:/…` on Windows.
+    let path = file.display().to_string().replace('\\', "/");
+    let slash = if path.starts_with('/') { "" } else { "/" };
     assert_eq!(
         state(&mut d, &mut app),
-        "actions|1|Run the command|runs `fake.apply` on the server/  \"file://".to_string()
-            + &file.display().to_string()
-            + "\""
+        format!(
+            "actions|1|Run the command|runs `fake.apply` on the server/  \"file://{slash}{path}\""
+        )
     );
     d.key(&mut app, "escape", KeyMods::default());
     d.key(&mut app, "escape", KeyMods::default());
@@ -779,7 +783,8 @@ fn the_servers_block_opens_the_lsp_pane() {
         .expect("the lsp pane");
     let text = info.text();
     assert!(text.contains("docs  1"), "{text}");
-    assert!(text.contains("src/main.rs"), "{text}");
+    let rel = format!("src{}main.rs", std::path::MAIN_SEPARATOR);
+    assert!(text.contains(&rel), "{text}");
     // The pane has the keys (it had kept them in the pane before, the
     // bug); `q` gives them back.
     let v = app.focused_view().unwrap();

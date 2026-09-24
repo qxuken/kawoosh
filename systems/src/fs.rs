@@ -29,9 +29,17 @@ fn on_host(path: &Path) -> Option<io::Result<(Arc<dyn Fs>, PathBuf)>> {
 }
 
 /// `a/b`: `b` absolute is `b` itself, as `Path::join` has it, and a
-/// trailing separator on `a` is not doubled.
+/// trailing separator on `a` is not doubled. On a host the separator is
+/// `/` whatever this platform's is.
 pub fn join(a: &Path, b: &Path) -> PathBuf {
-    a.join(b)
+    match domain_of(a) {
+        Some((d, rest)) if !b.to_string_lossy().starts_with('/') => {
+            let rest = rest.to_string_lossy();
+            let rest = rest.trim_end_matches('/');
+            on_domain(d, Path::new(&format!("{rest}/{}", b.display())))
+        }
+        _ => a.join(b),
+    }
 }
 
 /// The directory holding `path` — `None` at a root. A trailing
@@ -169,12 +177,33 @@ pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
     {
         std::fs::create_dir_all(p).map_err(|e| named(p, e))?;
     }
-    match std::fs::rename(from, to) {
+    match waiting_out_sharing(|| std::fs::rename(from, to)) {
         Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
             copy(from, to)?;
             remove(from)
         }
         r => r.map_err(|e| named(from, e)),
+    }
+}
+
+/// `op` — a rename, a removal — waited out for up to a second on
+/// Windows while something holds its path without sharing it: a
+/// process started in a directory holds it as its working directory
+/// until it exits (a listing's `git status`), and a virus scanner or
+/// the indexer holds a file it looks at.
+fn waiting_out_sharing<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    const SHARING_VIOLATION: i32 = 32;
+    let mut tries = 0;
+    loop {
+        match op() {
+            Err(e)
+                if cfg!(windows) && e.raw_os_error() == Some(SHARING_VIOLATION) && tries < 20 =>
+            {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            r => return r,
+        }
     }
 }
 
@@ -186,11 +215,13 @@ pub fn remove(path: &Path) -> io::Result<()> {
         return fs.remove(&p).map_err(|e| named(path, e));
     }
     let meta = std::fs::symlink_metadata(path).map_err(|e| named(path, e))?;
-    if meta.is_dir() {
-        std::fs::remove_dir_all(path)
-    } else {
-        std::fs::remove_file(path)
-    }
+    waiting_out_sharing(|| {
+        if meta.is_dir() {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        }
+    })
     .map_err(|e| named(path, e))
 }
 
@@ -397,14 +428,18 @@ fn walk_host(root: &Path, max: usize) -> io::Result<Vec<String>> {
     let mut out = Vec::new();
     let mut queue = std::collections::VecDeque::from([PathBuf::new()]);
     while let Some(rel) = queue.pop_front() {
-        let Ok(entries) = list(&root.join(&rel)) else {
+        let Ok(entries) = list(&join(root, &rel)) else {
             continue;
         };
         for e in entries {
             if e.name.starts_with('.') || matches!(e.name.as_str(), "target" | "node_modules") {
                 continue;
             }
-            let p = rel.join(&e.name);
+            // The host's `/`, whatever this platform's separator is.
+            let p = match rel.as_os_str().is_empty() {
+                true => PathBuf::from(&e.name),
+                false => PathBuf::from(format!("{}/{}", rel.display(), e.name)),
+            };
             if e.is_dir {
                 queue.push_back(p);
             } else {
@@ -566,7 +601,8 @@ mod tests {
         write(&dir.join(".gitignore"), "target/\n").unwrap();
         let mut got = walk(&dir, 100).unwrap();
         got.sort();
-        assert_eq!(got, ["src/lib.rs", "src/main.rs"]);
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(got, [format!("src{sep}lib.rs"), format!("src{sep}main.rs")]);
         assert_eq!(walk(&dir, 1).unwrap().len(), 1, "capped");
         let err = walk(&dir.join("src/main.rs"), 10).unwrap_err().to_string();
         assert!(err.contains("not a directory"), "{err}");

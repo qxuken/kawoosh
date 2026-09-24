@@ -348,20 +348,23 @@ impl Kawoosh {
 /// A path shortened as fish's prompt shortens it: every component but
 /// the last cut to its first character (a leading dot kept with it),
 /// split as the part to dim and the last component. `~/projects/kawoosh`
-/// is `("~/p/", "kawoosh")`.
+/// is `("~/p/", "kawoosh")`. The separators are the platform's — on
+/// Windows `\` and a host's `/` both — each kept as written, and a
+/// drive (`C:`) is kept whole.
 pub fn shorten_path(path: &str) -> (String, String) {
-    let sep = std::path::MAIN_SEPARATOR;
-    let Some(at) = path.rfind(sep) else {
+    use std::path::is_separator;
+    let Some(at) = path.rfind(is_separator) else {
         return (String::new(), path.to_string());
     };
-    let (head, last) = (&path[..at], &path[at + 1..]);
+    let (head, last) = (&path[..=at], &path[at + 1..]);
     let mut out = String::new();
-    for (i, part) in head.split(sep).enumerate() {
-        if i > 0 {
-            out.push(sep);
-        }
+    // Each part ends in its separator.
+    for (i, part) in head.split_inclusive(is_separator).enumerate() {
         let mut chars = part.chars();
+        let sep = chars.next_back();
+        let name = chars.as_str();
         match chars.next() {
+            _ if i == 0 && name.len() > 1 && name.ends_with(':') => out.push_str(name),
             Some('.') => {
                 out.push('.');
                 out.extend(chars.next());
@@ -369,8 +372,8 @@ pub fn shorten_path(path: &str) -> (String, String) {
             Some(c) => out.push(c),
             None => {}
         }
+        out.extend(sep);
     }
-    out.push(sep);
     (out, last.to_string())
 }
 
@@ -393,5 +396,10 @@ mod tests {
         assert_eq!(s("/"), "/");
         assert_eq!(s("~"), "~");
         assert_eq!(shorten_path("~/projects/kawoosh").1, "kawoosh");
+        if cfg!(windows) {
+            assert_eq!(s(r"~\projects\kawoosh"), r"~\p\kawoosh");
+            assert_eq!(s(r"C:\Users\me\src"), r"C:\U\m\src");
+            assert_eq!(s(r"C:\"), r"C:\");
+        }
     }
 }

@@ -86,19 +86,21 @@ fn the_cwd_is_the_tabs_and_the_process_stays() {
     assert_eq!(app.ed.message, b.join("sub").display().to_string());
     assert_eq!(std::env::current_dir().unwrap(), process);
     // A plugin's process starts in the tab's directory, and `fs.cwd`
-    // and a relative path are the tab's.
+    // and a relative path are the tab's. (A file there, not `pwd`: Git's
+    // bash on Windows spells the directory its own way.)
+    std::fs::write(b.join("sub").join("here.txt"), "").unwrap();
     app.run_lua_source(
         "t",
-        "kawoosh.spawn('pwd', { on_lines = function(l) kawoosh.echo('pwd ' .. l[1]) end })",
+        "kawoosh.spawn('ls', { on_lines = function(l) kawoosh.echo('ls ' .. l[1]) end })",
     );
     for _ in 0..300 {
         d.frame(&mut app);
-        if app.ed.message.starts_with("pwd ") {
+        if app.ed.message.starts_with("ls ") {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert_eq!(app.ed.message, format!("pwd {}", b.join("sub").display()));
+    assert_eq!(app.ed.message, "ls here.txt");
     app.run_lua_source(
         "t",
         "kawoosh.echo(kawoosh.fs.cwd() .. '|' .. kawoosh.fs.expand('x.txt'))",

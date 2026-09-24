@@ -5,8 +5,12 @@
 local root = os.tmpname()
 os.remove(root)
 root = root .. "-paths"
-assert(os.execute("mkdir -p '" .. root .. "/src'"))
-local f = assert(io.open(root .. "/src/lib.test.rs", "w")) f:write("x") f:close()
+-- Not a `.rs`: an installed language server would start in the
+-- directory and hold it (Windows will not remove it then).
+kawoosh.fs.write(kawoosh.fs.join(kawoosh.fs.join(root, "src"), "lib.test.txt"), "x")
+-- A path as the platform writes it: `src/x`, with a backslash on Windows.
+local sep = kawoosh.fs.join("a", "b"):sub(2, 2)
+local function native(p) return (p:gsub("/", sep)) end
 kawoosh.cmd("cd " .. root)
 kawoosh.frame()
 -- The working directory as the editor spells it (the process's is
@@ -15,28 +19,28 @@ kawoosh.cmd("pwd")
 kawoosh.frame()
 local cwd = kawoosh.message()
 
-kawoosh.cmd("e src/lib.test.rs")
+kawoosh.cmd("e src/lib.test.txt")
 kawoosh.frame()
 local function copied(keys)
   kawoosh.press(keys)
   kawoosh.frame()
   return kawoosh.memory()[1].text
 end
-kawoosh.test.eq(copied("<leader>yp"), "src/lib.test.rs", "relative")
-kawoosh.test.eq(kawoosh.message(), "copied src/lib.test.rs")
-kawoosh.test.eq(copied("<leader>yP"), cwd .. "/src/lib.test.rs", "absolute")
+kawoosh.test.eq(copied("<leader>yp"), native("src/lib.test.txt"), "relative")
+kawoosh.test.eq(kawoosh.message(), native("copied src/lib.test.txt"))
+kawoosh.test.eq(copied("<leader>yP"), cwd .. native("/src/lib.test.txt"), "absolute")
 kawoosh.test.eq(copied("<leader>yd"), "src", "the directory")
-kawoosh.test.eq(copied("<leader>yD"), cwd .. "/src", "the directory, absolute")
-kawoosh.test.eq(copied("<leader>yn"), "lib.test.rs", "the name")
+kawoosh.test.eq(copied("<leader>yD"), cwd .. native("/src"), "the directory, absolute")
+kawoosh.test.eq(copied("<leader>yn"), "lib.test.txt", "the name")
 kawoosh.test.eq(copied("<leader>yN"), "lib.test", "the stem")
 kawoosh.test.eq(kawoosh.memory()[1].took, "yank")
 
 -- In a listing, the entry under the caret; on `../`, the directory.
 kawoosh.press("-")
 kawoosh.frame()
-kawoosh.test.eq(kawoosh.buf.line(kawoosh.buf.cursor().line), "lib.test.rs")
-kawoosh.test.eq(copied("<leader>yp"), "src/lib.test.rs", "the entry, relative")
-kawoosh.test.eq(copied("<leader>yn"), "lib.test.rs", "the entry's name")
+kawoosh.test.eq(kawoosh.buf.line(kawoosh.buf.cursor().line), "lib.test.txt")
+kawoosh.test.eq(copied("<leader>yp"), native("src/lib.test.txt"), "the entry, relative")
+kawoosh.test.eq(copied("<leader>yn"), "lib.test.txt", "the entry's name")
 kawoosh.press("gg")
 kawoosh.test.eq(copied("<leader>yp"), "src", "../ copies the listed directory")
 kawoosh.test.eq(copied("<leader>yd"), ".", "its directory is the working one")
@@ -47,4 +51,4 @@ kawoosh.frame()
 kawoosh.press("<leader>yp")
 kawoosh.frame()
 kawoosh.test.eq(kawoosh.message(), "no file for %")
-assert(os.execute("rm -rf '" .. root .. "'"))
+kawoosh.fs.remove(root)

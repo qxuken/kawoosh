@@ -4,9 +4,11 @@
 local dir = os.tmpname()
 os.remove(dir)
 dir = dir .. "-picker"
-local function sh(cmd) assert(os.execute(cmd), cmd) end
-local function write(p, s) local f = assert(io.open(p, "w")) f:write(s) f:close() end
-sh("mkdir -p '" .. dir .. "/src' '" .. dir .. "/target' '" .. dir .. "/.git'")
+local function write(p, s) kawoosh.fs.write(p, s) end
+kawoosh.fs.create(dir .. "/.git", true)
+-- A path as the platform writes it: `src/x`, with a backslash on Windows.
+local sep = kawoosh.fs.join("a", "b"):sub(2, 2)
+local function native(p) return (p:gsub("/", sep)) end
 write(dir .. "/src/main.rs", "fn main() {}\nfn helper() {}\n")
 write(dir .. "/src/lib.rs", "pub fn lib() {}\n")
 write(dir .. "/README.md", "# notes\nalpha\nbeta\n")
@@ -30,13 +32,14 @@ kawoosh.press("sl")
 kawoosh.frame()
 st = kawoosh.picker.state()
 kawoosh.test.eq(st.query, "sl")
-kawoosh.test.eq(st.text, "src/lib.rs", "narrowed to the best match")
+kawoosh.test.eq(st.text, native("src/lib.rs"), "narrowed to the best match")
 
 kawoosh.press("<CR>")
 kawoosh.frame()
 kawoosh.test.eq(kawoosh.picker.state(), nil, "gone on a pick")
 -- By its tail: a file's path is canonical, and `/tmp` is a link on macOS.
 local path = kawoosh.buf.path() or ""
-kawoosh.test.eq(path:sub(-#"-picker/src/lib.rs"), "-picker/src/lib.rs", "the pick is open: " .. path)
+local tail = native("-picker/src/lib.rs")
+kawoosh.test.eq(path:sub(-#tail), tail, "the pick is open: " .. path)
 kawoosh.test.eq(kawoosh.buf.line(1), "pub fn lib() {}")
-sh("rm -rf '" .. dir .. "'")
+kawoosh.fs.remove(dir)
