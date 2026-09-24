@@ -436,6 +436,9 @@ pub struct BufSnap {
     /// A field's one-line buffer — the prompt's, a query's — which
     /// `kawoosh.buf.list` leaves out, as `:ls` does.
     pub field: bool,
+    /// The focused tab's under `buffers.scope = "tab"` (every buffer
+    /// is, under `all`): `kawoosh.buf.list { tab = true }` keeps these.
+    pub in_tab: bool,
 }
 
 thread_local! {
@@ -1059,6 +1062,7 @@ impl Runtime {
                     read_only: b.read_only,
                     private: b.private,
                     field: ed.is_field_buffer(id),
+                    in_tab: ed.tab_buffers.as_ref().is_none_or(|s| s.contains(&id)),
                 },
             );
         }
@@ -2526,13 +2530,20 @@ fn seed(
     let pp = published.clone();
     buf.set(
         "list",
-        lua.create_function(move |lua, ()| {
+        // `kawoosh.buf.list([{ tab = true }])`: every buffer, or the
+        // focused tab's (`buffers.scope`).
+        lua.create_function(move |lua, opts: Option<Table>| {
+            let tab = opts
+                .map(|o| o.get::<Option<bool>>("tab"))
+                .transpose()?
+                .flatten()
+                .unwrap_or(false);
             let p = pp.borrow();
             let t = lua.create_table()?;
             let mut hs: Vec<u64> = p
                 .buffers
                 .iter()
-                .filter(|(_, b)| !b.field)
+                .filter(|(_, b)| !b.field && (!tab || b.in_tab))
                 .map(|(h, _)| *h)
                 .collect();
             hs.sort();

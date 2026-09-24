@@ -336,6 +336,10 @@ impl Settings {
         // How the launcher opens: `normal`, where a letter launches and
         // `i` or `/` searches, or `insert`, typing filtering at once.
         defaults.set("launcher.start", Setting::Str("normal".into()));
+        // Which buffers the lists show — the buffers picker, `:ls`,
+        // `]b` — `tab`: the focused tab's (a file under its directory,
+        // or one it shows), or `all`.
+        defaults.set("buffers.scope", Setting::Str("tab".into()));
         // The markdown buffer (docs/design/markdown.md): drawn rendered —
         // marks folded, headings at their sizes (h1 to h6, a ratio of
         // the body), prose wrapped — and images past this many MB left
@@ -763,6 +767,7 @@ mod tests {
         assert_eq!(
             s.effective().paths(),
             [
+                "buffers.scope",
                 "clipboard.system",
                 "editor.bell",
                 "env.shell",

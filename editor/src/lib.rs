@@ -783,6 +783,11 @@ pub struct Editor {
     /// nothing — and the shell may ring for it (`editor.bell`, roadmap
     /// step 29); the shell takes it each frame.
     pub bell: bool,
+    /// The buffers the focused tab counts as its own while
+    /// `buffers.scope` is `tab` (roadmap step 30) — a file under the
+    /// tab's directory, or one shown in the tab — kept by the shell;
+    /// none when every buffer is every tab's.
+    pub tab_buffers: Option<std::collections::HashSet<BufferId>>,
     /// The last yank's ranges, while the shell washes them.
     pub flash: Option<Flash>,
     pub message: String,
@@ -832,6 +837,7 @@ impl Editor {
             search: None,
             search_hl: true,
             bell: false,
+            tab_buffers: None,
             flash: None,
             message: String::new(),
             effects: Vec::new(),
