@@ -229,39 +229,31 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    /// Spawns `$SHELL` (or `cmd`) in a pty. The reader is handed back for
-    /// an io thread to pump into [`Terminal::feed`].
+    /// Spawns `shell` (or `cmd` through it) in a pty. The reader is
+    /// handed back for an io thread to pump into [`Terminal::feed`].
     pub fn spawn(
+        shell: Option<&str>,
         cmd: Option<&str>,
         cwd: Option<&std::path::Path>,
         size: TermSize,
         envs: &[(String, String)],
     ) -> Result<(Self, Box<dyn Read + Send>)> {
-        // `$SHELL` where there is one (an MSYS bash sets it on Windows
-        // too); else `/bin/sh`, or `%ComSpec%` on Windows, whose flags
-        // are its own.
-        let shell = std::env::var("SHELL").ok();
-        let cmd_exe = cfg!(windows) && shell.is_none();
-        let shell = shell.unwrap_or_else(|| {
-            if cmd_exe {
-                std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into())
-            } else {
-                "/bin/sh".into()
-            }
-        });
+        // The one asked for (`terminal.shell`); else `$SHELL` where
+        // there is one (an MSYS bash sets it on Windows too); else
+        // `/bin/sh`, or `%ComSpec%` on Windows.
+        let shell = shell
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| std::env::var("SHELL").ok())
+            .unwrap_or_else(|| {
+                if cfg!(windows) {
+                    std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into())
+                } else {
+                    "/bin/sh".into()
+                }
+            });
         let mut builder = CommandBuilder::new(&shell);
-        match (cmd, cmd_exe) {
-            (Some(c), false) => {
-                builder.args(["-lc", c]);
-            }
-            (Some(c), true) => {
-                builder.args(["/c", c]);
-            }
-            (None, false) => {
-                builder.arg("-l");
-            }
-            (None, true) => {}
-        }
+        builder.args(shell_args(&shell, cmd));
         Self::spawn_with(builder, cwd, size, envs)
     }
 
@@ -396,6 +388,32 @@ impl Terminal {
             }
             None => false,
         }
+    }
+
+    /// Something that blocks until the process exits, for a thread to
+    /// wait on where the pty's reader does not end with it: ConPTY keeps
+    /// its output pipe open until the pseudoconsole is closed, so a
+    /// shell that exits leaves the reader waiting. None elsewhere, where
+    /// the reader's end is the exit.
+    #[cfg(windows)]
+    pub fn exit_waiter(&self) -> Option<Box<dyn FnOnce() + Send>> {
+        use std::os::windows::io::{AsRawHandle as _, BorrowedHandle};
+        use windows_sys::Win32::System::Threading::{INFINITE, WaitForSingleObject};
+        let raw = self.child.as_ref()?.as_raw_handle()?;
+        // SAFETY: the child keeps its process handle open while `self`
+        // lives, and it is duplicated here, before this returns.
+        let owned = unsafe { BorrowedHandle::borrow_raw(raw) }
+            .try_clone_to_owned()
+            .ok()?;
+        Some(Box::new(move || {
+            // SAFETY: `owned` is a process handle this closure owns.
+            unsafe { WaitForSingleObject(owned.as_raw_handle(), INFINITE) };
+        }))
+    }
+
+    #[cfg(not(windows))]
+    pub fn exit_waiter(&self) -> Option<Box<dyn FnOnce() + Send>> {
+        None
     }
 
     /// Bytes from the pty: parsed, replies (a DA answer, a cursor report)
@@ -1065,6 +1083,30 @@ fn config(history: usize) -> Config {
     }
 }
 
+/// The flags that start `shell` as a login shell, or run `cmd` through
+/// it: cmd.exe and PowerShell have their own; every other shell (sh,
+/// bash, zsh, fish, nu) takes `-l` and `-c`, apart, since not all of
+/// them read `-lc` as two.
+fn shell_args(shell: &str, cmd: Option<&str>) -> Vec<String> {
+    let stem = std::path::Path::new(shell)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(shell)
+        .to_ascii_lowercase();
+    let args: &[&str] = match (stem.as_str(), cmd) {
+        ("cmd", Some(_)) => &["/c"],
+        ("cmd", None) => &[],
+        ("pwsh" | "powershell", Some(_)) => &["-NoLogo", "-Command"],
+        ("pwsh" | "powershell", None) => &["-NoLogo"],
+        (_, Some(_)) => &["-l", "-c"],
+        (_, None) => &["-l"],
+    };
+    args.iter()
+        .map(|s| s.to_string())
+        .chain(cmd.map(str::to_string))
+        .collect()
+}
+
 /// The path of a `file://host/path` URL, percent-decoded, when the host
 /// is this machine's (none, `localhost`, or its name): a shell over ssh
 /// reports its own host's directory, which is not one here.
@@ -1612,10 +1654,17 @@ mod tests {
                 t.password_prompt() == want
             })
         };
-        let (t, _r) =
-            Terminal::spawn(Some("/bin/sh -c 'stty -echo; sleep 3'"), None, size, &[]).unwrap();
+        let (t, _r) = Terminal::spawn(
+            None,
+            Some("/bin/sh -c 'stty -echo; sleep 3'"),
+            None,
+            size,
+            &[],
+        )
+        .unwrap();
         assert!(wait(&t, true), "stty -echo is a password prompt");
         let (t, _r) = Terminal::spawn(
+            None,
             Some("/bin/sh -c 'stty -echo -icanon; sleep 3'"),
             None,
             size,
@@ -1623,8 +1672,21 @@ mod tests {
         )
         .unwrap();
         assert!(wait(&t, false) && !wait(&t, true), "a raw program is not");
-        let (t, _r) = Terminal::spawn(Some("/bin/sh -c 'sleep 3'"), None, size, &[]).unwrap();
+        let (t, _r) = Terminal::spawn(None, Some("/bin/sh -c 'sleep 3'"), None, size, &[]).unwrap();
         assert!(!wait(&t, true), "a shell with echo on is not");
+    }
+
+    #[test]
+    fn each_shell_gets_its_own_flags() {
+        let args = |shell, cmd| shell_args(shell, cmd);
+        assert_eq!(args("nu", None), ["-l"]);
+        assert_eq!(args("/usr/bin/nu", Some("ls")), ["-l", "-c", "ls"]);
+        assert_eq!(
+            args(r"C:\Windows\system32\cmd.exe", Some("dir")),
+            ["/c", "dir"]
+        );
+        assert!(args("CMD.EXE", None).is_empty());
+        assert_eq!(args("pwsh.exe", Some("ls")), ["-NoLogo", "-Command", "ls"]);
     }
 
     #[test]

@@ -60,6 +60,22 @@ fn cut(s: &str, max: usize) -> std::borrow::Cow<'_, str> {
     out.into()
 }
 
+/// The most characters the effective table shows of the file a value
+/// came from; past it the path loses its front, so the file's name is
+/// what is left — the user's settings.lua under a long home.
+const FROM_MAX_CHARS: usize = 32;
+
+/// `s` cut to its last `max` characters, the first an ellipsis.
+fn cut_front(s: &str, max: usize) -> std::borrow::Cow<'_, str> {
+    let n = s.chars().count();
+    if n <= max {
+        return s.into();
+    }
+    let mut out = String::from('…');
+    out.extend(s.chars().skip(n - max.saturating_sub(1)));
+    out.into()
+}
+
 /// The project marker directory (mvp.md 7b).
 pub const PROJECT_DIR: &str = ".kawoosh";
 /// The settings file's name, in the config dir and in a project's marker.
@@ -285,7 +301,7 @@ impl Kawoosh {
 
     /// A config file's name for a line: under the working directory,
     /// relative to it; a project file above, by its directory's name
-    /// (`repo/.kawoosh/settings.lua`); else as the shell displays a path.
+    /// (`repo/.kawoosh/settings.lua`); else whole, the home as `~`.
     pub(crate) fn short_name(&self, path: &Path) -> String {
         if let Ok(rel) = path.strip_prefix(&self.cwd) {
             return kawoosh_systems::fs::display(rel);
@@ -301,7 +317,7 @@ impl Kawoosh {
                 p.push(path.file_name().unwrap_or_default());
                 kawoosh_systems::fs::display(&p)
             }
-            None => kawoosh_systems::fs::display(path),
+            None => kawoosh_systems::fs::abbreviate_home(path),
         }
     }
 
@@ -401,7 +417,8 @@ impl Kawoosh {
                     .unwrap_or_default();
                 let from = match self.ed.settings.source_of(&p) {
                     Some((layer, src)) if src != layer.name() => {
-                        format!("{}: {}", layer.name(), self.short_name(Path::new(src)))
+                        let file = self.short_name(Path::new(src));
+                        format!("{}: {}", layer.name(), cut_front(&file, FROM_MAX_CHARS))
                     }
                     Some((layer, _)) => layer.name().to_string(),
                     None => String::new(),
@@ -758,6 +775,15 @@ pub(crate) fn ago(d: std::time::Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_source_keeps_its_file_name() {
+        assert_eq!(cut_front("settings.lua", 12), "settings.lua");
+        assert_eq!(
+            cut_front(r"C:\Users\someone\.config\kawoosh\settings.lua", 24),
+            r"…ig\kawoosh\settings.lua"
+        );
+    }
 
     #[test]
     fn project_files_are_found_outermost_first() {

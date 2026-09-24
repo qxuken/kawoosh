@@ -4,6 +4,7 @@
 
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -384,8 +385,38 @@ impl Io {
     }
 
     /// Pumps `reader` into the channel until it closes, waking the loop
-    /// after every chunk.
-    pub fn watch_pty(&self, id: u64, mut reader: Box<dyn Read + Send>) {
+    /// after every chunk. `exited`, when there is one, blocks until the
+    /// process exits — where the reader does not end with it (ConPTY) —
+    /// and the terminal is closed then; one close is sent, whichever
+    /// comes first.
+    pub fn watch_pty(
+        &self,
+        id: u64,
+        mut reader: Box<dyn Read + Send>,
+        exited: Option<Box<dyn FnOnce() + Send>>,
+    ) {
+        let closed = Arc::new(AtomicBool::new(false));
+        let close = {
+            let tx = self.tx.clone();
+            let wake = self.wake.clone();
+            move |closed: &AtomicBool| {
+                if !closed.swap(true, Ordering::AcqRel) {
+                    let _ = tx.send(IoMsg::PtyClosed { id });
+                    wake.wake();
+                }
+            }
+        };
+        if let Some(exited) = exited {
+            let closed = closed.clone();
+            let close = close.clone();
+            thread::Builder::new()
+                .name(format!("pty-{id}-exit"))
+                .spawn(move || {
+                    exited();
+                    close(&closed);
+                })
+                .expect("spawning a pty exit thread");
+        }
         let tx = self.tx.clone();
         let wake = self.wake.clone();
         thread::Builder::new()
@@ -395,8 +426,7 @@ impl Io {
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => {
-                            let _ = tx.send(IoMsg::PtyClosed { id });
-                            wake.wake();
+                            close(&closed);
                             return;
                         }
                         Ok(n) => {

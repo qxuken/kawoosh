@@ -1820,6 +1820,7 @@ dependencies = [
  "libc",
  "log",
  "portable-pty",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

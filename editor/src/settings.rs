@@ -429,6 +429,9 @@ impl Settings {
         // The lines of history a terminal keeps; a smaller number drops
         // what is past it at once.
         defaults.set("terminal.scrollback", Setting::Int(10_000));
+        // The program a terminal runs (`nu`, `pwsh`, a path): empty for
+        // `$SHELL`, else `/bin/sh`, or `%ComSpec%` on Windows.
+        defaults.set("terminal.shell", Setting::Str(String::new()));
         // The memory (docs/design/memory.md): days a moment — a file
         // attended, with its history and draft — may go unattended
         // before it is forgotten; 0 keeps every row.
@@ -791,6 +794,7 @@ mod tests {
                 "secrets.scan_max_kb",
                 "tabstop",
                 "terminal.scrollback",
+                "terminal.shell",
                 "theme.appearance",
                 "whichkey"
             ]

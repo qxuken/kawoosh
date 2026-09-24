@@ -190,7 +190,10 @@ impl Kawoosh {
                     (t, r)
                 })
             }
-            None => Terminal::spawn(cmd, Some(&cwd), size, &envs),
+            None => {
+                let shell = self.ed.settings.str("terminal.shell");
+                Terminal::spawn(shell, cmd, Some(&cwd), size, &envs)
+            }
         };
         self.adopt_terminal(id, spawned, cmd)
     }
@@ -215,6 +218,7 @@ impl Kawoosh {
         match spawned {
             Ok((mut term, reader)) => {
                 term.set_scrollback(self.scrollback_setting());
+                let exited = term.exit_waiter();
                 let id = match id {
                     Some(id) => {
                         self.terms.map.insert(id, term);
@@ -229,7 +233,7 @@ impl Kawoosh {
                         tool: None,
                     },
                 );
-                self.io.watch_pty(id, reader);
+                self.io.watch_pty(id, reader, exited);
                 Some(id)
             }
             Err(e) => {
