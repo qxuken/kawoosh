@@ -133,7 +133,19 @@ impl Kawoosh {
             Mode::Visual => pal.command,
             _ => pal.accent,
         };
+        let waiting_on = buf
+            .path
+            .as_deref()
+            .and_then(kawoosh_systems::fs::domain_of)
+            .map(|(d, _)| d)
+            .filter(|d| buf.loading.is_some() && !kawoosh_doc::fs::is_registered(d));
         let name = match buf.loading {
+            // A session's file on a host not connected yet.
+            Some(_) if waiting_on.is_some() => format!(
+                "{} [{}: :domain connect]",
+                buf.name,
+                waiting_on.unwrap_or_default()
+            ),
             // Still on its way from the io thread: how far.
             Some((done, total)) => format!(
                 "{} [opening {}%]",

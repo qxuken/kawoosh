@@ -133,6 +133,26 @@ impl ServerDef {
 /// which is what keeps two panes on two crates on one server. With no
 /// marker: the repository root, else the file's directory.
 pub fn workspace_root(path: &Path, def: &ServerDef) -> PathBuf {
+    // A host's path is looked at through its domain: its markers are
+    // the host's (a stat each), its ancestors stop at its root.
+    if let Some((name, rest)) = crate::fs::domain_of(path) {
+        let exists = |p: &Path| crate::fs::exists(&crate::fs::on_domain(name, p));
+        let dir = rest.parent().unwrap_or(rest);
+        let repo = dir.ancestors().find(|d| exists(&d.join(".git")));
+        let mut found = None;
+        for d in dir.ancestors() {
+            if def.roots.iter().any(|m| exists(&d.join(m))) {
+                found = Some(d.to_path_buf());
+            }
+            if Some(d) == repo {
+                break;
+            }
+        }
+        let root = found
+            .or_else(|| repo.map(Path::to_path_buf))
+            .unwrap_or_else(|| dir.to_path_buf());
+        return crate::fs::on_domain(name, &root);
+    }
     let dir = path.parent().unwrap_or(path);
     let repo = dir.ancestors().find(|d| d.join(".git").exists());
     let mut found = None;
@@ -555,10 +575,67 @@ pub fn position_of_offset(text: &str, offset: usize) -> (u32, u32) {
     (line, col)
 }
 
+/// An event from a server on domain `d`: every path in it the host's,
+/// spelled `d:/…`.
+fn on_host(ev: Event, d: &str) -> Event {
+    let sp = |p: PathBuf| crate::fs::on_domain(d, &p);
+    let edit =
+        |e: WorkspaceEdit| -> WorkspaceEdit { e.into_iter().map(|(p, t)| (sp(p), t)).collect() };
+    match ev {
+        Event::Definition {
+            path,
+            line,
+            character,
+        } => Event::Definition {
+            path: sp(path),
+            line,
+            character,
+        },
+        Event::WorkspaceEdit { title, edit: e } => Event::WorkspaceEdit {
+            title,
+            edit: edit(e),
+        },
+        Event::Locations { title, items } => Event::Locations {
+            title,
+            items: items
+                .into_iter()
+                .map(|l| Location {
+                    path: sp(l.path),
+                    ..l
+                })
+                .collect(),
+        },
+        Event::CodeActions { buffer, actions } => Event::CodeActions {
+            buffer,
+            actions: actions
+                .into_iter()
+                .map(|a| CodeAction {
+                    edit: a.edit.map(edit),
+                    ..a
+                })
+                .collect(),
+        },
+        Event::Symbols { token, result } => Event::Symbols {
+            token,
+            result: result.map(|v| {
+                v.into_iter()
+                    .map(|s| Symbol {
+                        path: sp(s.path),
+                        ..s
+                    })
+                    .collect()
+            }),
+        },
+        other => other,
+    }
+}
+
 /// `file:///a/b%20c`, and on Windows `file:///C:/a/b` — the drive
 /// behind a `/`, upper-cased, the separators forward — as every server
 /// reads it.
 fn uri_of(path: &Path) -> String {
+    // A host's path is sent as the host's own: the server runs there.
+    let path = crate::fs::domain_of(path).map_or(path, |(_, rest)| rest);
     let s = path.display().to_string();
     let s = if cfg!(windows) {
         upper_drive(s.replace('\\', "/"))
@@ -652,6 +729,9 @@ struct Server {
     name: String,
     /// Its definition's `settings`.
     settings: Value,
+    /// The domain it runs on: the paths it speaks of are that host's,
+    /// spelled `box:/…` on the way out (`Pool::emit_from`).
+    domain: Option<String>,
 }
 
 impl Server {
@@ -661,9 +741,26 @@ impl Server {
         from_tx: Sender<(usize, FromServer)>,
         key: usize,
     ) -> Option<Self> {
-        let mut child = Command::new(&def.command)
-            .args(&def.args)
-            .current_dir(root)
+        // On a host: through its domain, started in the root there
+        // (docs/design/domains.md Decision 7).
+        let domain = crate::fs::domain_of(root).map(|(d, _)| d.to_string());
+        let mut command = match crate::fs::domain_of(root) {
+            Some((name, dir)) => {
+                let t = crate::io::transport_of(name)?;
+                let mut line = format!("exec {}", crate::io::shell_quote(&def.command));
+                for a in &def.args {
+                    line.push(' ');
+                    line.push_str(&crate::io::shell_quote(a));
+                }
+                t.remote_command(&crate::io::remote_script(dir, &[], &line, false))
+            }
+            None => {
+                let mut c = Command::new(&def.command);
+                c.args(&def.args).current_dir(root);
+                c
+            }
+        };
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -725,6 +822,7 @@ impl Server {
             language: def.language.clone(),
             name: def.command.clone(),
             settings: def.settings.clone(),
+            domain,
         })
     }
 
@@ -828,6 +926,20 @@ impl Pool {
         self.wake.wake();
     }
 
+    /// What server `key` said, its paths spelled on its domain when it
+    /// runs on a host (`box:/…`).
+    fn emit_from(&self, key: usize, ev: Event) {
+        let domain = self
+            .servers
+            .get(key)
+            .and_then(Option::as_ref)
+            .and_then(|s| s.domain.clone());
+        match domain {
+            Some(d) => self.emit(on_host(ev, &d)),
+            None => self.emit(ev),
+        }
+    }
+
     fn status(&self) {
         let mut list: Vec<(PathBuf, String, usize)> = self
             .keys
@@ -842,25 +954,24 @@ impl Pool {
     }
 
     fn server_for(&mut self, path: &Path, language: &str) -> Option<usize> {
-        // A host's file has no server here: one spawned in a directory
-        // that is not local would fail and mark its command failed for
-        // the local files too. The domain's own round runs it there
-        // (docs/design/domains.md Decision 7).
-        if crate::fs::domain_of(path).is_some() {
-            return None;
-        }
         let def = self.defs.iter().find(|d| d.language == language)?.clone();
         let root = workspace_root(path, &def);
         let k = (root.clone(), def.command.clone());
         if let Some(&key) = self.keys.get(&k) {
             return self.servers[key].as_ref().map(|_| key);
         }
-        if self.failed.contains(&def.command) {
+        // A command failed on one host has not failed on another, or
+        // here: failures are the domain's and the command's.
+        let failed_as = match crate::fs::domain_of(path) {
+            Some((d, _)) => format!("{d}:{}", def.command),
+            None => def.command.clone(),
+        };
+        if self.failed.contains(&failed_as) {
             return None;
         }
         let key = self.servers.len();
         let Some(mut server) = Server::spawn(&def, &root, self.from_tx.clone(), key) else {
-            self.failed.insert(def.command.clone());
+            self.failed.insert(failed_as);
             self.emit(Event::Unavailable {
                 language: def.language.clone(),
                 command: def.command.clone(),
@@ -1289,19 +1400,23 @@ impl Pool {
                     .to_string();
                 match method {
                     // The asker waits on its token.
-                    "textDocument/documentSymbol" | "workspace/symbol" => {
-                        self.emit(Event::Symbols {
+                    "textDocument/documentSymbol" | "workspace/symbol" => self.emit_from(
+                        key,
+                        Event::Symbols {
                             token: offset as u64,
                             result: Err(text),
-                        })
-                    }
+                        },
+                    ),
                     // Hints are asked for as the view moves; one refused
                     // is nothing to say.
                     "textDocument/inlayHint" => {}
-                    _ => self.emit(Event::Failed {
-                        what: method,
-                        message: text,
-                    }),
+                    _ => self.emit_from(
+                        key,
+                        Event::Failed {
+                            what: method,
+                            message: text,
+                        },
+                    ),
                 }
                 return;
             }
@@ -1322,34 +1437,46 @@ impl Pool {
                     }
                     let language = server.language.clone();
                     let caps = capabilities(result);
-                    self.emit(Event::Capabilities { language, caps });
+                    self.emit_from(key, Event::Capabilities { language, caps });
                 }
                 "textDocument/rename" => {
                     let edit = workspace_edit(result);
-                    self.emit(Event::WorkspaceEdit {
-                        title: "rename".into(),
-                        edit,
-                    });
+                    self.emit_from(
+                        key,
+                        Event::WorkspaceEdit {
+                            title: "rename".into(),
+                            edit,
+                        },
+                    );
                 }
                 "textDocument/references" => {
                     let items = locations(result);
-                    self.emit(Event::Locations {
-                        title: "references".into(),
-                        items,
-                    });
+                    self.emit_from(
+                        key,
+                        Event::Locations {
+                            title: "references".into(),
+                            items,
+                        },
+                    );
                 }
                 "textDocument/typeDefinition" => {
                     if let Some((path, line, character)) = first_location(result) {
-                        self.emit(Event::Definition {
-                            path,
-                            line,
-                            character,
-                        });
+                        self.emit_from(
+                            key,
+                            Event::Definition {
+                                path,
+                                line,
+                                character,
+                            },
+                        );
                     } else {
-                        self.emit(Event::Failed {
-                            what: method,
-                            message: "no type definition".into(),
-                        });
+                        self.emit_from(
+                            key,
+                            Event::Failed {
+                                what: method,
+                                message: "no type definition".into(),
+                            },
+                        );
                     }
                 }
                 "textDocument/implementation" | "textDocument/declaration" => {
@@ -1360,22 +1487,31 @@ impl Pool {
                     };
                     let mut items = locations(result);
                     match items.len() {
-                        0 => self.emit(Event::Failed {
-                            what: method,
-                            message: format!("no {what}"),
-                        }),
+                        0 => self.emit_from(
+                            key,
+                            Event::Failed {
+                                what: method,
+                                message: format!("no {what}"),
+                            },
+                        ),
                         1 => {
                             let l = items.remove(0);
-                            self.emit(Event::Definition {
-                                path: l.path,
-                                line: l.line,
-                                character: l.character,
-                            });
+                            self.emit_from(
+                                key,
+                                Event::Definition {
+                                    path: l.path,
+                                    line: l.line,
+                                    character: l.character,
+                                },
+                            );
                         }
-                        _ => self.emit(Event::Locations {
-                            title: what.into(),
-                            items,
-                        }),
+                        _ => self.emit_from(
+                            key,
+                            Event::Locations {
+                                title: what.into(),
+                                items,
+                            },
+                        ),
                     }
                 }
                 "textDocument/documentSymbol" => {
@@ -1388,57 +1524,75 @@ impl Pool {
                         Some(p) => document_symbols(result, &p),
                         None => Vec::new(),
                     };
-                    self.emit(Event::Symbols {
-                        token: offset as u64,
-                        result: Ok(symbols),
-                    });
+                    self.emit_from(
+                        key,
+                        Event::Symbols {
+                            token: offset as u64,
+                            result: Ok(symbols),
+                        },
+                    );
                 }
                 "workspace/symbol" => {
-                    self.emit(Event::Symbols {
-                        token: offset as u64,
-                        result: Ok(workspace_symbols(result)),
-                    });
+                    self.emit_from(
+                        key,
+                        Event::Symbols {
+                            token: offset as u64,
+                            result: Ok(workspace_symbols(result)),
+                        },
+                    );
                 }
                 "textDocument/inlayHint" => {
-                    self.emit(Event::InlayHints {
-                        buffer,
-                        version,
-                        hints: inlay_hints(result),
-                    });
+                    self.emit_from(
+                        key,
+                        Event::InlayHints {
+                            buffer,
+                            version,
+                            hints: inlay_hints(result),
+                        },
+                    );
                 }
                 "textDocument/codeAction" => {
                     let actions = code_actions(result);
-                    self.emit(Event::CodeActions { buffer, actions });
+                    self.emit_from(key, Event::CodeActions { buffer, actions });
                 }
                 "textDocument/formatting" => {
                     let edits = text_edits(result);
-                    self.emit(Event::Formatted {
-                        buffer,
-                        version,
-                        edits,
-                    });
+                    self.emit_from(
+                        key,
+                        Event::Formatted {
+                            buffer,
+                            version,
+                            edits,
+                        },
+                    );
                 }
                 "textDocument/definition" => {
                     if let Some((path, line, character)) = first_location(result) {
-                        self.emit(Event::Definition {
-                            path,
-                            line,
-                            character,
-                        });
+                        self.emit_from(
+                            key,
+                            Event::Definition {
+                                path,
+                                line,
+                                character,
+                            },
+                        );
                     }
                 }
                 "textDocument/hover" => {
                     let text = hover_text(result);
-                    self.emit(Event::Hover { buffer, text });
+                    self.emit_from(key, Event::Hover { buffer, text });
                 }
                 "textDocument/completion" => {
                     let items = completion_items(result);
-                    self.emit(Event::Completion {
-                        buffer,
-                        version,
-                        offset,
-                        items,
-                    });
+                    self.emit_from(
+                        key,
+                        Event::Completion {
+                            buffer,
+                            version,
+                            offset,
+                            items,
+                        },
+                    );
                 }
                 _ => {}
             }
@@ -1485,7 +1639,7 @@ impl Pool {
             };
             server.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
             if let Some(ev) = handed_up {
-                self.emit(ev);
+                self.emit_from(key, ev);
             }
             return;
         }
@@ -1500,11 +1654,14 @@ impl Pool {
                 {
                     let (update, messages) = diagnostics_update(params, doc);
                     let buffer = doc.buffer;
-                    self.emit(Event::Diagnostics {
-                        buffer,
-                        update,
-                        messages,
-                    });
+                    self.emit_from(
+                        key,
+                        Event::Diagnostics {
+                            buffer,
+                            update,
+                            messages,
+                        },
+                    );
                 }
             }
             Some(m @ ("window/showMessage" | "window/logMessage")) => {
@@ -1516,12 +1673,15 @@ impl Pool {
                     .to_string();
                 let kind = params.get("type").and_then(Value::as_u64).unwrap_or(3);
                 let server = server.name.clone();
-                self.emit(Event::Message {
-                    server,
-                    kind,
-                    text,
-                    log: m == "window/logMessage",
-                });
+                self.emit_from(
+                    key,
+                    Event::Message {
+                        server,
+                        kind,
+                        text,
+                        log: m == "window/logMessage",
+                    },
+                );
             }
             Some("$/progress") => {
                 let Some(params) = params else { return };
@@ -1535,17 +1695,20 @@ impl Pool {
                 };
                 let string = |k: &str| value.get(k).and_then(Value::as_str).map(str::to_string);
                 let server = server.name.clone();
-                self.emit(Event::Progress {
-                    server,
-                    token,
-                    title: string("title"),
-                    message: string("message"),
-                    percentage: value
-                        .get("percentage")
-                        .and_then(Value::as_f64)
-                        .map(|p| p.round().clamp(0.0, 100.0) as u32),
-                    done: value.get("kind").and_then(Value::as_str) == Some("end"),
-                });
+                self.emit_from(
+                    key,
+                    Event::Progress {
+                        server,
+                        token,
+                        title: string("title"),
+                        message: string("message"),
+                        percentage: value
+                            .get("percentage")
+                            .and_then(Value::as_f64)
+                            .map(|p| p.round().clamp(0.0, 100.0) as u32),
+                        done: value.get("kind").and_then(Value::as_str) == Some("end"),
+                    },
+                );
             }
             _ => {}
         }

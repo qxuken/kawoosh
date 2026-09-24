@@ -235,6 +235,9 @@ pub struct Sftp {
     conn: Mutex<Conn>,
     child: Mutex<Child>,
     posix_rename: bool,
+    /// Set when the pipe to the server broke: every call fails from then
+    /// on, and the domain is down (`Fs::is_alive`).
+    dead: std::sync::atomic::AtomicBool,
 }
 
 impl Drop for Sftp {
@@ -285,14 +288,36 @@ impl Sftp {
             conn: Mutex::new(conn),
             child: Mutex::new(child),
             posix_rename,
+            dead: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
     fn call(&self, typ: u8, body: &[u8]) -> io::Result<(u8, Vec<u8>)> {
-        self.conn
+        use std::sync::atomic::Ordering;
+        if self.dead.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "sftp: the connection closed",
+            ));
+        }
+        let r = self
+            .conn
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .call(typ, body)
+            .call(typ, body);
+        // A broken pipe or a closed stream is the connection gone, not
+        // one request failed.
+        if let Err(e) = &r
+            && matches!(
+                e.kind(),
+                io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::ConnectionAborted
+                    | io::ErrorKind::UnexpectedEof
+            )
+        {
+            self.dead.store(true, Ordering::Relaxed);
+        }
+        r
     }
 
     /// A request answered by a STATUS: OK, or the error it says.
@@ -576,6 +601,24 @@ impl Fs for Sftp {
         }
         let handle = self.open(path, WRITE_FLAG | CREAT | EXCL)?;
         self.close(&handle)
+    }
+
+    fn is_alive(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        if self.dead.load(Ordering::Relaxed) {
+            return false;
+        }
+        // The channel's process gone — its master dropped, the host
+        // unreachable — is the connection gone, before a call finds out.
+        let exited = self
+            .child
+            .lock()
+            .map(|mut c| c.try_wait().is_ok_and(|s| s.is_some()))
+            .unwrap_or(false);
+        if exited {
+            self.dead.store(true, Ordering::Relaxed);
+        }
+        !exited
     }
 
     fn set_mode(&self, path: &Path, mode: u32) -> io::Result<()> {

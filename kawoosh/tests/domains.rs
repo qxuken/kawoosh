@@ -375,3 +375,164 @@ fn processes_and_terminals_run_on_the_host() {
     ex(&mut d, &mut app, &format!("domain disconnect {name}"));
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// Round four: a language server for a host's file runs on the host,
+/// through the domain, in the project's root there; what it says of its
+/// own paths comes back spelled on the domain, so a definition lands in
+/// the host's buffer and not in a local file of the same name.
+#[test]
+fn a_language_server_runs_on_the_host() {
+    if !sftp_server() {
+        eprintln!("no sftp-server here: skipped");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("kawoosh-lsp-host-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    std::fs::create_dir_all(root.join("proj/src")).unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let proj = root.join("proj");
+    std::fs::write(proj.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    std::fs::write(proj.join("src/main.rs"), "fn main() {\n    hel\n}\n").unwrap();
+    let name = format!("l{}", std::process::id());
+    let (mut d, mut app) = ssh_app(&name, &root.join("home").display().to_string());
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_lsp.py");
+    app.add_lsp_server(kawoosh_systems::lsp::ServerDef {
+        language: "rust".into(),
+        command: "python3".into(),
+        args: vec![script.display().to_string()],
+        roots: vec!["Cargo.toml".into()],
+        settings: Default::default(),
+    });
+    let file = format!("{name}:{}", proj.join("src/main.rs").display());
+    ex(&mut d, &mut app, &format!("e {file}"));
+    until(&mut d, &mut app, "the host's file open", |a| {
+        a.focused_view()
+            .is_some_and(|v| a.ed.buffer_of(v).path.as_deref() == Some(Path::new(&file)))
+    });
+    let v = app.focused_view().unwrap();
+    let id = app.ed.views[v].buffer;
+    until(&mut d, &mut app, "the server's diagnostic", |a| {
+        a.lsp.messages.get(&id).is_some_and(|m| m == &["boom"])
+    });
+    // Its root is the host's project, spelled on the domain.
+    let roots: Vec<String> = app
+        .lsp
+        .status
+        .iter()
+        .map(|s| s.0.display().to_string())
+        .collect();
+    assert_eq!(roots, [format!("{name}:{}", proj.display())]);
+    // A definition: the server's own path, back as the host's.
+    d.keys(&mut app, "gd");
+    until(
+        &mut d,
+        &mut app,
+        "the definition, in the host's buffer",
+        |a| {
+            let v = a.focused_view().unwrap();
+            a.ed.views[v].buffer == id
+                && a.ed.buffer_of(v).line_of(a.ed.views[v].sels.primary().head) == 1
+        },
+    );
+    assert!(
+        app.ed.buffer_at(&proj.join("src/main.rs")).is_none(),
+        "no local twin opened"
+    );
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// Round four, the rest: a session brings a host's file, directory and
+/// shell back without asking for a password — the path at once, the
+/// text and the shell when the domain is connected; a dropped master is
+/// connected again on the next use; a host's walk is kept, and a change
+/// made from here forgets it.
+#[test]
+fn a_session_on_a_host_restores_lazily_and_a_drop_reconnects() {
+    if !sftp_server() {
+        eprintln!("no sftp-server here: skipped");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("kawoosh-lazy-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    std::fs::create_dir_all(root.join("proj")).unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let (home, proj) = (root.join("home"), root.join("proj"));
+    std::fs::write(proj.join("a.txt"), "kept\n").unwrap();
+    let db = root.join("state.db");
+    let name = format!("z{}", std::process::id());
+    let there = format!("{name}:{}", proj.display());
+    let file = format!("{there}/a.txt");
+    {
+        let (mut d, mut app) = ssh_app(&name, &home.display().to_string());
+        app.open_store(Some(&db));
+        ex(&mut d, &mut app, &format!("e {file}"));
+        until(&mut d, &mut app, "open", |a| {
+            a.ed.buffer_at(Path::new(&file))
+                .is_some_and(|id| a.ed.buffers[id].text() == "kept\n")
+        });
+        ex(&mut d, &mut app, &format!("cd {there}"));
+        app.save_session();
+        ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    }
+
+    let (mut d, mut app) = ssh_app(&name, &home.display().to_string());
+    app.open_store(Some(&db));
+    assert!(app.restore_session());
+    d.frame(&mut app);
+    // The path at once, read only and empty; nothing connected, nothing
+    // asked.
+    let id = app
+        .ed
+        .buffer_at(Path::new(&file))
+        .expect("the host's file restored");
+    assert!(app.ed.buffers[id].loading.is_some() && app.ed.buffers[id].read_only);
+    assert_eq!(app.ed.buffers[id].text(), "");
+    assert!(!app.layout.dock_open, "no master asked for at launch");
+    assert_eq!(app.ed.cwd, Path::new(&there), "the tab's directory kept");
+    // Connected: the text comes.
+    ex(&mut d, &mut app, &format!("domain connect {name}"));
+    until(&mut d, &mut app, "the restored text", |a| {
+        a.ed.buffers[id].loading.is_none() && a.ed.buffers[id].text() == "kept\n"
+    });
+    assert!(!app.ed.buffers[id].read_only);
+    // A host's walk: said once, kept, forgotten by a change from here.
+    let walk = |app: &mut Kawoosh| {
+        app.run_lua_source(
+            "t",
+            &format!(
+                "kawoosh.fs.walk('{there}', function(p) table.sort(p); kawoosh.opt('walked', table.concat(p, ',')) end)"
+            ),
+        );
+    };
+    walk(&mut app);
+    until(&mut d, &mut app, "the walk", |a| {
+        a.ed.settings.str("walked") == Some("a.txt")
+    });
+    std::fs::write(proj.join("b.txt"), "outside").unwrap();
+    walk(&mut app);
+    d.frame(&mut app);
+    assert_eq!(app.ed.settings.str("walked"), Some("a.txt"), "kept");
+    app.run_lua_source("t", &format!("kawoosh.fs.write('{there}/c.txt', 'here')"));
+    walk(&mut app);
+    until(&mut d, &mut app, "walked again", |a| {
+        a.ed.settings.str("walked") == Some("a.txt,b.txt,c.txt")
+    });
+    // The master dropped: the next use connects again and does it.
+    let ctl = std::fs::read_dir(kawoosh_systems::io::socket_path().parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .find(|p| p.to_string_lossy().ends_with(&format!("-{name}.ctl")))
+        .expect("the control file");
+    std::fs::remove_file(&ctl).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    ex(&mut d, &mut app, &format!("e {there}/b.txt"));
+    until(&mut d, &mut app, "connected again, the file open", |a| {
+        a.ed.buffer_at(Path::new(&format!("{there}/b.txt")))
+            .is_some_and(|id| a.ed.buffers[id].text() == "outside")
+    });
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    std::fs::remove_dir_all(&root).ok();
+}

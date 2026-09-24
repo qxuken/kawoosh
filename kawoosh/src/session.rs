@@ -366,7 +366,12 @@ impl Kawoosh {
             };
             // Its directory, when it still is one (workspaces.md
             // Decision 5); the launch directory's otherwise.
-            let cwd = t.cwd.clone().filter(|c| c.is_dir());
+            // A host's directory is kept as it is: it cannot be looked
+            // at before the domain is connected.
+            let cwd = t
+                .cwd
+                .clone()
+                .filter(|c| kawoosh_systems::fs::domain_of(c).is_some() || c.is_dir());
             let tab = Tab {
                 layout: kind,
                 focused: 0,
@@ -435,6 +440,14 @@ impl Kawoosh {
                         top,
                     } => {
                         let id = match (path, hook) {
+                            // On a host not connected: the path now, the
+                            // text when it is (domains.md Decision 8).
+                            (Some(p), _) if kawoosh_systems::fs::domain_of(p).is_some() => {
+                                match self.remote_placeholder(p) {
+                                    Some(id) => id,
+                                    None => self.buffer_for(p)?,
+                                }
+                            }
                             (Some(p), _) => self.buffer_for(p)?,
                             // A plugin's scratch comes back empty under
                             // its name, once, for the plugin to fill

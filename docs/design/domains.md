@@ -338,3 +338,33 @@ domains.rs's `processes_and_terminals_run_on_the_host` over the
 stand-in, which forwards `-R` itself: a plugin's process on the host in
 the tab's directory, a terminal whose `$EDITOR note.txt` opens the
 host's file here, `:wq` answering it so the command after it runs.
+
+**Round four, 2026-09-24: servers, the walk, drops, sessions.** A
+language server for a host's file runs on the host through the
+transport, started in the project's root there (`workspace_root` asks
+the host for its markers); `uri_of` sends the host's own path, each
+server knows its domain, and every event it causes is re-spelled on the
+way out (`Pool::emit_from`: definitions, locations, symbols, workspace
+edits, code actions) — so a definition lands in the host's buffer, not
+a local file of the same path. A failed spawn is the domain's and the
+command's, not the command's everywhere. A host's walk is capped at
+`HOST_WALK_MAX` (5000 files), kept for the session, forgotten by any
+change made on that host from here and by a disconnect, and explained
+once in the message line. A dropped master is noticed before a call
+finds out — the channel's process has exited (`Fs::is_alive`) — and
+the next use connects again and does what it asked. A session brings a
+host's file back as an open waiting on its connection (read only,
+empty, titled `[box: :domain connect]`), its tab's directory as it was,
+and its shell's pane kept for later; nothing asks for a password at
+launch, and `:domain connect` or any use of the domain brings the
+texts and the shells in. Tests: domains.rs's
+`a_language_server_runs_on_the_host` (the fake language server on the
+host: its diagnostic, its root spelled on the domain, `gd` in the host's
+buffer and no local twin opened) and
+`a_session_on_a_host_restores_lazily_and_a_drop_reconnects`.
+
+Not built, still: WSL (the note after); an agent on the host (Decision
+3's after — the walk's cap and the poll are where it would pay); a
+reconnect that reopens the master's pane by itself; the git
+colours of a `dir` listing on a host, which run `git` there through
+`kawoosh.spawn` and so work, at a round trip each.

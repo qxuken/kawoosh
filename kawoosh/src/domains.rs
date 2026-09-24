@@ -60,6 +60,11 @@ pub struct Domains {
     pub state: BTreeMap<String, State>,
     pub pending: Vec<(String, Pending)>,
     pub transports: BTreeMap<String, Transport>,
+    /// The domains whose walk the message line has explained.
+    pub walk_told: std::collections::HashSet<String>,
+    /// A session's terminals on a host, their panes kept, waiting for
+    /// the domain to be connected.
+    pub terminals: Vec<(String, TermId, crate::terminals::Pending)>,
 }
 
 impl Kawoosh {
@@ -115,6 +120,7 @@ impl Kawoosh {
         if kawoosh_doc::fs::is_registered(&name) {
             return false;
         }
+        self.forget_dropped(&name);
         if self.domain_host(&name).is_none() {
             self.ed.message = format!(
                 "no domain named {name} (domains.{name} = {{ ssh = \"HOST\" }} in settings.lua)"
@@ -134,6 +140,7 @@ impl Kawoosh {
             self.ed.message = format!("no domain named {name}");
             return;
         };
+        self.forget_dropped(name);
         match self.domains.state.get(name) {
             Some(State::Up { term }) | Some(State::Connecting { term, .. }) => {
                 let term = *term;
@@ -196,13 +203,32 @@ impl Kawoosh {
         if let Some(State::Connecting { cancel, .. }) = self.domains.state.get(name) {
             cancel.store(true, Ordering::Relaxed);
         }
+        self.forget_domain(name);
+        self.domains.pending.retain(|(n, _)| n != name);
+        self.ed.message = format!("{name}: disconnected");
+    }
+
+    /// Everything kept of a domain's connection let go: its files, its
+    /// processes' transport, its kept walks, its master.
+    fn forget_domain(&mut self, name: &str) {
         kawoosh_doc::fs::unregister(name);
+        kawoosh_systems::io::unregister_transport(name);
+        kawoosh_systems::fs::forget_walks(name);
         if let Some(t) = self.domains.transports.remove(name) {
             t.exit();
         }
         self.domains.state.remove(name);
-        self.domains.pending.retain(|(n, _)| n != name);
-        self.ed.message = format!("{name}: disconnected");
+    }
+
+    /// A domain that was up and whose connection is gone since — a
+    /// dropped master, the channel broken — taken as down, so what asks
+    /// next connects it again.
+    fn forget_dropped(&mut self, name: &str) {
+        if matches!(self.domains.state.get(name), Some(State::Up { .. }))
+            && !kawoosh_doc::fs::is_registered(name)
+        {
+            self.forget_domain(name);
+        }
     }
 
     /// Every master told to go: at quit, since `ControlPersist` keeps
@@ -234,6 +260,29 @@ impl Kawoosh {
             .state
             .insert(name.to_string(), State::Up { term });
         self.ed.message = format!("{name}: connected");
+        // What a session brought back on the host: its files read now,
+        // its shells started.
+        let waiting: Vec<PathBuf> = self
+            .ed
+            .buffers
+            .values()
+            .filter(|b| b.loading.is_some())
+            .filter_map(|b| b.path.clone())
+            .filter(|p| kawoosh_systems::fs::domain_of(p).is_some_and(|(d, _)| d == name))
+            .collect();
+        for p in waiting {
+            self.io.open_file(p);
+        }
+        let (shells, others): (Vec<_>, Vec<_>) = std::mem::take(&mut self.domains.terminals)
+            .into_iter()
+            .partition(|(d, _, _)| d == name);
+        self.domains.terminals = others;
+        if !shells.is_empty() {
+            self.terms
+                .pending
+                .extend(shells.into_iter().map(|(_, id, p)| (id, p)));
+            self.spawn_pending();
+        }
         let (now, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.domains.pending)
             .into_iter()
             .partition(|(n, _)| n == name);
@@ -268,6 +317,24 @@ impl Kawoosh {
                 cancel.store(true, Ordering::Relaxed);
             }
         }
+    }
+
+    /// A session's file on a host that is not connected: the path at
+    /// once, the text when the domain is (Decision 8) — an open waiting
+    /// on its connection, read only and empty meanwhile. Nothing asks
+    /// for a password at launch; `:domain connect NAME` or any use of
+    /// the domain brings the texts in.
+    pub(crate) fn remote_placeholder(&mut self, path: &Path) -> Option<kawoosh_doc::BufferId> {
+        let (name, _) = kawoosh_systems::fs::domain_of(path)?;
+        if kawoosh_doc::fs::is_registered(name) {
+            return None;
+        }
+        if let Some(id) = self.ed.buffer_at(path) {
+            return Some(id);
+        }
+        let mut b = kawoosh_doc::Buffer::opening(path, 0);
+        b.language = self.languages.detect(path, "").into();
+        Some(self.ed.add_buffer(b))
     }
 
     /// `:domain`'s listing: each domain the settings name and how it

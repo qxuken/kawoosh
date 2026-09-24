@@ -646,6 +646,16 @@ impl Kawoosh {
                 });
             }
             Msg::Walk { token, root } => {
+                // A host's walk is capped and kept: said once.
+                if let Some((d, _)) = kawoosh_systems::fs::domain_of(&root)
+                    && !kawoosh_systems::fs::walk_is_kept(&root)
+                    && self.domains.walk_told.insert(d.to_string())
+                {
+                    self.ed.message = format!(
+                        "{d}: its files walked over SFTP, {} at most, kept for the session",
+                        kawoosh_systems::fs::HOST_WALK_MAX
+                    );
+                }
                 if self.jobs_inline {
                     let result =
                         kawoosh_systems::fs::walk(&root, WALK_MAX).map_err(|e| e.to_string());

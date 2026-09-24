@@ -63,6 +63,11 @@ pub trait Fs: Send + Sync {
     fn set_mode(&self, _path: &Path, _mode: u32) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "no modes here"))
     }
+    /// False once the connection underneath is gone (a dropped master):
+    /// the domain is down, and its next use connects it again.
+    fn is_alive(&self) -> bool {
+        true
+    }
 }
 
 type Domains = RwLock<HashMap<String, Arc<dyn Fs>>>;
@@ -88,12 +93,13 @@ pub fn unregister(name: &str) {
         .remove(name);
 }
 
-/// Whether `name` is connected.
+/// Whether `name` is connected: registered, and its connection alive.
 pub fn is_registered(name: &str) -> bool {
     domains()
         .read()
         .unwrap_or_else(|e| e.into_inner())
-        .contains_key(name)
+        .get(name)
+        .is_some_and(|fs| fs.is_alive())
 }
 
 /// Where a path's operations go: `None` for a local path; for one on a

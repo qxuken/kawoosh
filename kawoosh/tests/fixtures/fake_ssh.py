@@ -10,7 +10,9 @@ one would do on a host whose files are this machine's:
                            `ask` asks for a password first (`secret`).
   -S CTL -O check HOST     0 while the master is up.
   -S CTL -O exit HOST      the master told to go.
-  -S CTL -s HOST sftp      the SFTP subsystem: the real sftp-server.
+  -S CTL -s HOST sftp      the SFTP subsystem: the real sftp-server, killed
+                           when CTL goes, as a channel dies with its
+                           master.
   -S CTL [-T|-t] [-R SPEC] HOST -- CMD
                            CMD run here, by sh. With `-R PORT:SOCKET`, TCP
                            on 127.0.0.1:PORT is forwarded to the unix
@@ -131,7 +133,19 @@ def main():
         server = next((p for p in SFTP_SERVERS if os.path.exists(p)), None)
         if not server:
             sys.exit(255)
-        os.execve(server, [server], env)
+        # A channel lives as long as its master: the server is killed
+        # when the control file goes (a dropped connection).
+        import subprocess
+        child = subprocess.Popen([server], env=env)
+
+        def watch():
+            while os.path.exists(ctl) and child.poll() is None:
+                time.sleep(0.05)
+            if child.poll() is None:
+                child.kill()
+
+        threading.Thread(target=watch, daemon=True).start()
+        sys.exit(child.wait())
     for spec in opts["R"]:
         forward(spec)
     line = " ".join(cmd) if cmd else "/bin/sh -l"

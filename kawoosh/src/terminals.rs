@@ -306,12 +306,21 @@ impl Kawoosh {
     /// with it.
     pub(crate) fn spawn_pending(&mut self) {
         for (id, p) in std::mem::take(&mut self.terms.pending) {
+            // A shell on a host waits, its pane kept, for the domain to
+            // be connected (docs/design/domains.md Decision 8).
+            if let Some((d, _)) = kawoosh_systems::fs::domain_of(&p.cwd)
+                && !kawoosh_doc::fs::is_registered(d)
+            {
+                let d = d.to_string();
+                self.domains.terminals.push((d, id, p));
+                continue;
+            }
             let cmd = p
                 .tool
                 .as_ref()
                 .and_then(|n| self.scripting.tools.get(n))
                 .map(|d| d.cmd.clone());
-            let cwd = if p.cwd.is_dir() {
+            let cwd = if kawoosh_systems::fs::domain_of(&p.cwd).is_some() || p.cwd.is_dir() {
                 p.cwd
             } else {
                 self.cwd.clone()

@@ -153,6 +153,7 @@ pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
         (None, None) => {}
         // One host to itself: its own rename.
         (Some(a), Some(b)) if domain_of(from).map(|d| d.0) == domain_of(to).map(|d| d.0) => {
+            changed_on_host(from);
             let ((fs, a), (_, b)) = (a?, b?);
             return fs.rename(&a, &b).map_err(|e| named(from, e));
         }
@@ -180,6 +181,7 @@ pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
 /// Removes a file, a link, or a directory with everything in it.
 pub fn remove(path: &Path) -> io::Result<()> {
     if let Some(h) = on_host(path) {
+        changed_on_host(path);
         let (fs, p) = h?;
         return fs.remove(&p).map_err(|e| named(path, e));
     }
@@ -197,6 +199,7 @@ pub fn remove(path: &Path) -> io::Result<()> {
 /// truncating.
 pub fn create(path: &Path, is_dir: bool) -> io::Result<()> {
     if let Some(h) = on_host(path) {
+        changed_on_host(path);
         let (fs, p) = h?;
         return fs.create(&p, is_dir).map_err(|e| named(path, e));
     }
@@ -296,7 +299,7 @@ pub fn drives() -> Vec<PathBuf> {
 /// amount rather than the disk.
 pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
     if on_host(root).is_some() {
-        return walk_host(root, max);
+        return walk_host_cached(root, max.min(HOST_WALK_MAX));
     }
     if !root.is_dir() {
         return Err(io::Error::new(
@@ -330,6 +333,55 @@ pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
         }
     }
     Ok(out)
+}
+
+/// The most files a walk on a host lists: every directory is a round
+/// trip there (docs/design/domains.md Decision 8, Risk "Latency").
+pub const HOST_WALK_MAX: usize = 5_000;
+
+type Walks = std::sync::Mutex<std::collections::HashMap<PathBuf, Vec<String>>>;
+
+fn walks() -> &'static Walks {
+    static W: std::sync::OnceLock<Walks> = std::sync::OnceLock::new();
+    W.get_or_init(Default::default)
+}
+
+/// A host's walk, kept for the session: the picker asks again on every
+/// open. A change on that host made from here — a write, a rename, a
+/// removal, a file made — and a disconnect forget its walks.
+fn walk_host_cached(root: &Path, max: usize) -> io::Result<Vec<String>> {
+    if let Some(w) = walks().lock().unwrap_or_else(|e| e.into_inner()).get(root) {
+        return Ok(w.clone());
+    }
+    let w = walk_host(root, max)?;
+    walks()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(root.to_path_buf(), w.clone());
+    Ok(w)
+}
+
+/// Whether a walk under `root` is kept already.
+pub fn walk_is_kept(root: &Path) -> bool {
+    walks()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains_key(root)
+}
+
+/// Every kept walk on `domain` forgotten.
+pub fn forget_walks(domain: &str) {
+    walks()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|root, _| domain_of(root).is_none_or(|(d, _)| d != domain));
+}
+
+/// The walks of `path`'s host forgotten, after a change there.
+fn changed_on_host(path: &Path) {
+    if let Some((d, _)) = domain_of(path) {
+        forget_walks(d);
+    }
 }
 
 /// A host's walk: its listings, breadth first, hidden entries and what
@@ -467,6 +519,7 @@ pub fn read_bytes(path: &Path) -> io::Result<Vec<u8>> {
 /// Writes `text`, creating the file's directory when it is missing.
 pub fn write(path: &Path, text: impl AsRef<[u8]>) -> io::Result<()> {
     if let Some(h) = on_host(path) {
+        changed_on_host(path);
         let (fs, p) = h?;
         if let Some(dir) = p.parent()
             && !dir.as_os_str().is_empty()
