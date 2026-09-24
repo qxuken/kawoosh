@@ -432,6 +432,12 @@ impl Settings {
         // The program a terminal runs (`nu`, `pwsh`, a path): empty for
         // `$SHELL`, else `/bin/sh`, or `%ComSpec%` on Windows.
         defaults.set("terminal.shell", Setting::Str(String::new()));
+        // The shell whose PATH the window's children get when it was
+        // opened outside a terminal — from Finder, the Dock (kawoosh's
+        // `shell_env`): a path to it, since a bare name is looked up on
+        // the PATH it is there to fix; empty for `$SHELL`. Read at
+        // startup.
+        defaults.set("env.shell", Setting::Str(String::new()));
         // The memory (docs/design/memory.md): days a moment — a file
         // attended, with its history and draft — may go unattended
         // before it is forgotten; 0 keeps every row.
@@ -747,6 +753,7 @@ mod tests {
             s.effective().paths(),
             [
                 "clipboard.system",
+                "env.shell",
                 "expandtab",
                 "font.chrome_size",
                 "font.family",
