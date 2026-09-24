@@ -170,9 +170,12 @@ pub struct Kawoosh {
     pub(crate) ts_sent: HashMap<BufferId, Version>,
     /// The command socket's path once listening (`App::setup`).
     pub socket: Option<PathBuf>,
-    /// What a terminal's `$EDITOR` is: `kawoosh-edit` beside the binary,
-    /// or the binary linked under that name beside the socket.
+    /// What a terminal's `$EDITOR` is: `kawoosh-edit` beside the binary
+    /// (`shipped_editor`), or the binary linked under that name beside
+    /// the socket (`editor_link`).
     pub(crate) editor_shim: Option<PathBuf>,
+    /// The directory `editor_link` made for this run, removed at its end.
+    pub(crate) editor_link_dir: Option<PathBuf>,
     /// `$EDITOR --wait` callers, answered when their buffer closes.
     pub(crate) waiters: HashMap<BufferId, Vec<Sender<String>>>,
     pub quit: bool,
@@ -332,6 +335,7 @@ impl Kawoosh {
             ts_sent: HashMap::new(),
             socket: None,
             editor_shim: None,
+            editor_link_dir: None,
             waiters: HashMap::new(),
             quit: false,
             clip_out: None,
@@ -1948,12 +1952,25 @@ impl Kawoosh {
     }
 }
 
-/// The `$EDITOR` a terminal gets: `kawoosh-edit` beside this binary
-/// (`src/bin/edit.rs`), where a build put it. Else — `cargo run` builds
-/// the one binary — a symlink to this one named `kawoosh-edit`, in a
-/// directory beside the socket: invoked by that name, the binary is
-/// `kawoosh edit --wait` (`main.rs`). None where neither is, and the
-/// terminals get the two-word form.
+/// The `$EDITOR` a terminal gets, where a build put it: `kawoosh-edit`
+/// (`src/bin/edit.rs`) beside `exe` — the binary itself, not a link to
+/// it on the PATH. Not where `cargo run` built the one binary; then it
+/// is [`editor_link`].
+fn shipped_editor(exe: &Path) -> Option<PathBuf> {
+    let real = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
+    let beside = real.with_file_name(format!(
+        "{}{}",
+        crate::EDITOR_SHIM,
+        std::env::consts::EXE_SUFFIX
+    ));
+    beside.is_file().then_some(beside)
+}
+
+/// The `$EDITOR` a terminal gets with no [`shipped_editor`]: a symlink
+/// to this binary named `kawoosh-edit`, in a directory beside the
+/// socket, made for this run and removed at its end — invoked by that
+/// name, the binary is `kawoosh edit --wait` (`main.rs`). None where a
+/// symlink cannot be made, and the terminals get the two-word form.
 ///
 /// The directory is this user's alone: made 0700, or — left by a run
 /// that crashed with this pid — taken only when it is a directory this
@@ -1961,21 +1978,11 @@ impl Kawoosh {
 /// `XDG_RUNTIME_DIR`) the name is guessable, and a directory someone
 /// else made there could swap the link for a program of theirs that
 /// every `git commit` in a terminal would run.
-fn editor_shim(socket: &Path) -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    // Beside the binary itself, not a link to it on the PATH.
-    let real = std::fs::canonicalize(&exe).unwrap_or_else(|_| exe.clone());
-    let beside = real.with_file_name(format!(
-        "{}{}",
-        crate::EDITOR_SHIM,
-        std::env::consts::EXE_SUFFIX
-    ));
-    if beside.is_file() {
-        return Some(beside);
-    }
+fn editor_link(socket: &Path) -> Option<PathBuf> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+        let exe = std::env::current_exe().ok()?;
         let dir = socket.with_extension("bin");
         if std::fs::DirBuilder::new().mode(0o700).create(&dir).is_err() {
             let meta = std::fs::symlink_metadata(&dir).ok()?;
@@ -2012,7 +2019,20 @@ impl kui::App for Kawoosh {
         let path = kawoosh_systems::io::socket_path();
         match self.io.listen(&path) {
             Ok(()) => {
-                self.editor_shim = editor_shim(&path);
+                let shipped = std::env::current_exe()
+                    .ok()
+                    .and_then(|exe| shipped_editor(&exe));
+                self.editor_shim = match shipped {
+                    Some(p) => Some(p),
+                    None => {
+                        let link = editor_link(&path);
+                        self.editor_link_dir = link
+                            .as_ref()
+                            .and_then(|l| l.parent())
+                            .map(Path::to_path_buf);
+                        link
+                    }
+                };
                 self.socket = Some(path);
             }
             Err(e) => log::warn!("command socket: {e}"),
@@ -2024,7 +2044,9 @@ impl kui::App for Kawoosh {
     /// (`:q` saved it already when it got here).
     fn teardown(&mut self) {
         self.domains_teardown();
-        if let Some(dir) = self.editor_shim.as_ref().and_then(|p| p.parent()) {
+        // The link's directory, made for this run: never the shipped
+        // editor's, which is the binary's own.
+        if let Some(dir) = self.editor_link_dir.take() {
             let _ = std::fs::remove_dir_all(dir);
         }
         if !self.session_saved {
@@ -2420,8 +2442,48 @@ pub(crate) fn first_line(b: &Buffer) -> String {
 
 #[cfg(all(test, unix))]
 mod shim_tests {
-    use super::editor_shim;
+    use super::{Kawoosh, editor_link, shipped_editor};
     use std::os::unix::fs::PermissionsExt;
+
+    /// `kawoosh-edit` is found beside the binary, through a link to the
+    /// binary on the PATH; and a run's end removes the link directory
+    /// it made and nothing else — the shipped editor's directory is the
+    /// binary's own (an app's `Contents/MacOS`).
+    #[test]
+    fn the_shipped_editor_is_found_beside_the_binary_and_outlives_the_run() {
+        let base = std::env::temp_dir().join(format!("kawoosh-shipped-{}", std::process::id()));
+        std::fs::remove_dir_all(&base).ok();
+        let (bin, on_path) = (base.join("MacOS"), base.join("path"));
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&on_path).unwrap();
+        let bin = std::fs::canonicalize(&bin).unwrap();
+        std::fs::write(bin.join("kawoosh"), "").unwrap();
+        std::fs::write(bin.join("kawoosh-edit"), "").unwrap();
+        std::os::unix::fs::symlink(bin.join("kawoosh"), on_path.join("kawoosh")).unwrap();
+        let edit = Some(bin.join("kawoosh-edit"));
+        assert_eq!(shipped_editor(&bin.join("kawoosh")), edit);
+        assert_eq!(
+            shipped_editor(&on_path.join("kawoosh")),
+            edit,
+            "through the link"
+        );
+        assert_eq!(shipped_editor(&base.join("kawoosh")), None, "none beside");
+        let mut app = Kawoosh::new("t", "");
+        app.editor_shim = edit;
+        kui::App::teardown(&mut app);
+        assert!(
+            bin.join("kawoosh-edit").is_file(),
+            "the binary's directory kept"
+        );
+        let link = editor_link(&base.join("k.sock")).expect("a link");
+        app.editor_link_dir = link.parent().map(|d| d.to_path_buf());
+        kui::App::teardown(&mut app);
+        assert!(
+            !link.parent().unwrap().exists(),
+            "the link's directory removed"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
 
     /// The shim's directory is made 0700, and one that others can write
     /// — made there before this run — is not used.
@@ -2430,19 +2492,19 @@ mod shim_tests {
         let base = std::env::temp_dir().join(format!("kawoosh-shim-{}", std::process::id()));
         std::fs::remove_dir_all(&base).ok();
         std::fs::create_dir_all(&base).unwrap();
-        let link = editor_shim(&base.join("mine.sock")).expect("a shim");
+        let link = editor_link(&base.join("mine.sock")).expect("a shim");
         let dir = link.parent().unwrap();
         assert_eq!(
             std::fs::metadata(dir).unwrap().permissions().mode() & 0o777,
             0o700
         );
         // Made again by the same run (a pid reused after a crash): kept.
-        assert!(editor_shim(&base.join("mine.sock")).is_some());
+        assert!(editor_link(&base.join("mine.sock")).is_some());
         let open = base.join("open.bin");
         std::fs::create_dir(&open).unwrap();
         std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
         assert_eq!(
-            editor_shim(&base.join("open.sock")),
+            editor_link(&base.join("open.sock")),
             None,
             "a directory others can write"
         );

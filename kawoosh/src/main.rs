@@ -47,7 +47,7 @@ fn load_fonts(core: &mut Core) -> Option<kui::FontId> {
 /// theme` and `kawoosh pick SOURCE [QUERY]`: the CLI shim, talking to
 /// the running instance over `$KAWOOSH_SOCKET` (mvp.md Decision 3b).
 /// `edit --wait` is what every pty's `$EDITOR` runs (as
-/// `kawoosh-edit`, `app::editor_shim`), `theme`
+/// `kawoosh-edit`, `app::shipped_editor`), `theme`
 /// answers `dark` or `light` — what a shell's prompt hook reads to pick
 /// its palette, since a running shell cannot see `TERM_APPEARANCE`
 /// change (roadmap step 6) — and `pick` is kawoosh's picker for a shell
