@@ -12,6 +12,7 @@
 //! rather than dropped, so a token keeps its colour while it is typed in
 //! and the producer's answer, which covers the edit, corrects it.
 
+pub mod fs;
 pub mod paths;
 pub mod version;
 
@@ -42,6 +43,17 @@ pub struct Stamp {
 impl Stamp {
     /// The file at `path` as it stands; `None` when there is none.
     pub fn of(path: &Path) -> Option<Stamp> {
+        // A host's file: its domain's word on it (docs/design/domains.md).
+        if let Some(host) = crate::fs::remote(path) {
+            let (fs, p) = host.ok()?;
+            let st = fs.stat(&p).ok()?;
+            return st.is_file.then(|| Stamp {
+                len: st.size,
+                mtime: st
+                    .modified
+                    .map(|s| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s)),
+            });
+        }
         let m = std::fs::metadata(path).ok()?;
         m.is_file().then(|| Stamp {
             len: m.len(),
@@ -437,7 +449,15 @@ impl Buffer {
         let disk = Stamp::of(path);
         // The bytes read are the text's one block: a valid file is not
         // copied again, an invalid one is repaired into a fresh vector.
-        let bytes = match String::from_utf8(std::fs::read(path)?) {
+        // A host's file through its domain (docs/design/domains.md).
+        let read = match crate::fs::remote(path) {
+            Some(host) => {
+                let (fs, p) = host?;
+                fs.read(&p)?
+            }
+            None => std::fs::read(path)?,
+        };
+        let bytes = match String::from_utf8(read) {
             Ok(s) => s.into_bytes(),
             Err(e) => String::from_utf8_lossy(e.as_bytes())
                 .into_owned()

@@ -1,7 +1,9 @@
 # Domains: where a process spawns and where a path lives
 
-Status: decided 2026-09-21 (roadmap step 9), not built; ssh alone, as
-the roadmap's terminal track recommended, with wsl the note after.
+Status: decided 2026-09-21 (roadmap step 9); built 2026-09-24 as
+roadmap step 27 (see "Built" at the end for where the build departed);
+ssh alone, as the roadmap's terminal track recommended, with wsl the
+note after.
 Systemic: it touches the io system, `fs`, the pty spawn, the LSP pool,
 compile, the `$EDITOR` shim, sessions and the picker, so it is four
 rounds rather than one (Build order). Each decision keeps the
@@ -237,3 +239,40 @@ Four rounds, each a commit with its tests:
 - **The master's pane.** `ControlPersist=yes` keeps the master past the
   pane; without it the user's closing the pane drops every channel.
   Say which in `:domain`.
+
+## Built
+
+**Round one, 2026-09-24: the spelling is the representation.** Risk 1
+asked the round to decide what `Loc` is. Decided: no second type. A
+path on a domain is spelled `box:/…` and carried in the `PathBuf` it
+would have been in anyway — a buffer's path, the cwd, a listing's
+directory, a session's entry — and `kawoosh_doc::paths::domain_of`
+reads the domain back off it (a name of two characters or more, then
+`:/` or `:~`). `expand` folds a host's path on the host's terms (its
+`~` left for the host; `..` never climbs out of its root) and a
+relative path against a cwd on a host is on that host; `is_absolute`,
+`parent` and `basename` know a host's root is its own. What that beat:
+a `Loc` struct replacing `PathBuf` at every buffer, listing, session
+and argument — the same guarantee by type, at the cost of every path
+in the code at once, where the invariant that matters is narrower:
+*no disk operation runs on a path without asking its domain*.
+
+That invariant lives in three places. `kawoosh_doc::fs` holds the
+`Fs` trait (read, write through a sibling, stat, list, rename,
+remove, create, canonicalize — the host's paths, no domain) and the
+process's registry of connected domains, `remote(path)` answering
+where a path's operations go or that its domain is not connected.
+`kawoosh_systems::fs` asks it first in every operation, so `dir`, the
+picker and every `kawoosh.fs.*` reach a host without knowing (a copy or
+a rename between disks goes through read and write; a host's walk is
+its listings, breadth first, hidden entries and `target` /
+`node_modules` left out — no `.gitignore` is read over SFTP). And the
+three places a buffer's own file is touched outside it — `Buffer::from_file`
+and `Stamp::of` in `doc`, the save in the editor (`save_beside`), the io
+thread's open — each ask it too. A language server is not started for
+a host's file until round four runs it there: one spawned in a
+directory that is not local would fail and mark its command failed for
+the local files too. `kawoosh/tests/domains.rs` registers an in-process
+file system mirroring a temporary directory: `:e box:/…`, `:w`, `-`
+to the host's root, `<leader>yP` keeping the domain, an unconnected
+domain refused.

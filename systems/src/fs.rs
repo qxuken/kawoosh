@@ -8,11 +8,25 @@
 //! absolute, normalized path the operations run on. Errors name the
 //! path they were about: an `io::Error` is "No such file or directory"
 //! and nothing else.
+//!
+//! A path on a domain (`box:/…`, docs/design/domains.md) goes to that
+//! domain's file system (`kawoosh_doc::fs::remote`); every operation
+//! here asks first, so a caller — `dir`, the save, the picker — never
+//! knows which disk it touched.
 
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub use kawoosh_doc::paths::{expand, home, normalize};
+pub use kawoosh_doc::fs::{Entry, Stat};
+use kawoosh_doc::fs::{Fs, remote};
+pub use kawoosh_doc::paths::{domain_of, expand, home, is_absolute, normalize, on_domain};
+use std::sync::Arc;
+
+/// A path on a domain: its file system and the host's path, or the
+/// error that it is not connected; `None` for a local path.
+fn on_host(path: &Path) -> Option<io::Result<(Arc<dyn Fs>, PathBuf)>> {
+    remote(path)
+}
 
 /// `a/b`: `b` absolute is `b` itself, as `Path::join` has it, and a
 /// trailing separator on `a` is not doubled.
@@ -23,6 +37,11 @@ pub fn join(a: &Path, b: &Path) -> PathBuf {
 /// The directory holding `path` — `None` at a root. A trailing
 /// separator is not a component: `a/b/` has the parent `a`.
 pub fn parent(path: &Path) -> Option<PathBuf> {
+    // A host's root is its own: `box:/x`'s parent is `box:/`, and
+    // `box:/` has none.
+    if let Some((d, rest)) = domain_of(path) {
+        return rest.parent().map(|p| on_domain(d, p));
+    }
     let p = path.parent()?;
     if p.as_os_str().is_empty() {
         // A bare name's parent is the current directory.
@@ -34,6 +53,7 @@ pub fn parent(path: &Path) -> Option<PathBuf> {
 /// The last component, as text: `c.txt` of `a/b/c.txt`, `b` of `a/b/`;
 /// `None` at a root.
 pub fn basename(path: &Path) -> Option<String> {
+    let path = domain_of(path).map_or(path, |(_, rest)| rest);
     path.file_name().map(|n| n.to_string_lossy().into_owned())
 }
 
@@ -56,31 +76,6 @@ pub fn abbreviate_home(path: &Path) -> String {
     display(path)
 }
 
-/// One entry of a listing. `is_dir` follows a link, so a link to a
-/// directory lists as one and descends; `is_symlink` says it was a link.
-/// `size` and `modified` (seconds since the epoch) are the target's,
-/// for a listing that shows what each entry is beside its name; an
-/// entry whose metadata cannot be read is listed with none.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Entry {
-    pub name: String,
-    pub is_dir: bool,
-    pub is_symlink: bool,
-    pub size: u64,
-    pub modified: Option<u64>,
-}
-
-/// What a path is: the same facts as an [`Entry`] for one path, the
-/// link followed for all but `is_symlink`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stat {
-    pub is_dir: bool,
-    pub is_file: bool,
-    pub is_symlink: bool,
-    pub size: u64,
-    pub modified: Option<u64>,
-}
-
 fn epoch_secs(m: &std::fs::Metadata) -> Option<u64> {
     m.modified()
         .ok()?
@@ -91,6 +86,10 @@ fn epoch_secs(m: &std::fs::Metadata) -> Option<u64> {
 
 /// The facts about `path`, the link followed; an error names the path.
 pub fn stat(path: &Path) -> io::Result<Stat> {
+    if let Some(h) = on_host(path) {
+        let (fs, p) = h?;
+        return fs.stat(&p).map_err(|e| named(path, e));
+    }
     let link = std::fs::symlink_metadata(path).map_err(|e| named(path, e))?;
     let is_symlink = link.file_type().is_symlink();
     // A dangling link is what it is: the link's own metadata.
@@ -111,6 +110,12 @@ fn named(path: &Path, e: io::Error) -> io::Error {
 /// The entries of `dir`, directories first, each group by name. A
 /// name that is not Unicode is shown lossily rather than dropped.
 pub fn list(dir: &Path) -> io::Result<Vec<Entry>> {
+    if let Some(h) = on_host(dir) {
+        let (fs, p) = h?;
+        let mut entries = fs.list(&p).map_err(|e| named(dir, e))?;
+        entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
+        return Ok(entries);
+    }
     let mut entries: Vec<Entry> = std::fs::read_dir(dir)
         .map_err(|e| named(dir, e))?
         .filter_map(|e| e.ok())
@@ -144,6 +149,19 @@ pub fn list(dir: &Path) -> io::Result<Vec<Entry>> {
 /// refusing a `to` that exists, as a rename does not write over one
 /// here either.
 pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
+    match (on_host(from), on_host(to)) {
+        (None, None) => {}
+        // One host to itself: its own rename.
+        (Some(a), Some(b)) if domain_of(from).map(|d| d.0) == domain_of(to).map(|d| d.0) => {
+            let ((fs, a), (_, b)) = (a?, b?);
+            return fs.rename(&a, &b).map_err(|e| named(from, e));
+        }
+        // Between disks: a copy, then the source removed.
+        _ => {
+            copy(from, to)?;
+            return remove(from);
+        }
+    }
     if let Some(p) = to.parent()
         && !p.as_os_str().is_empty()
         && !p.exists()
@@ -161,6 +179,10 @@ pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
 
 /// Removes a file, a link, or a directory with everything in it.
 pub fn remove(path: &Path) -> io::Result<()> {
+    if let Some(h) = on_host(path) {
+        let (fs, p) = h?;
+        return fs.remove(&p).map_err(|e| named(path, e));
+    }
     let meta = std::fs::symlink_metadata(path).map_err(|e| named(path, e))?;
     if meta.is_dir() {
         std::fs::remove_dir_all(path)
@@ -174,6 +196,10 @@ pub fn remove(path: &Path) -> io::Result<()> {
 /// parents); a file that exists is refused, since creating is not
 /// truncating.
 pub fn create(path: &Path, is_dir: bool) -> io::Result<()> {
+    if let Some(h) = on_host(path) {
+        let (fs, p) = h?;
+        return fs.create(&p, is_dir).map_err(|e| named(path, e));
+    }
     if is_dir {
         return std::fs::create_dir_all(path).map_err(|e| named(path, e));
     }
@@ -194,6 +220,9 @@ pub fn create(path: &Path, is_dir: bool) -> io::Result<()> {
 /// it — creating `to`'s directory when it is missing, and refusing a
 /// `to` that exists: a copy never writes over anything.
 pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
+    if on_host(from).is_some() || on_host(to).is_some() {
+        return copy_through(from, to);
+    }
     if to.exists() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
@@ -216,6 +245,27 @@ pub fn copy(from: &Path, to: &Path) -> io::Result<()> {
         std::fs::copy(from, to)
             .map(|_| ())
             .map_err(|e| named(from, e))
+    }
+}
+
+/// A copy with a host at either end, through this module's own
+/// operations: a file's bytes read and written, a directory made and
+/// its entries copied into it.
+fn copy_through(from: &Path, to: &Path) -> io::Result<()> {
+    if exists(to) {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{}: exists", to.display()),
+        ));
+    }
+    if stat(from)?.is_dir {
+        create(to, true)?;
+        for e in list(from)? {
+            copy_through(&from.join(&e.name), &to.join(&e.name))?;
+        }
+        Ok(())
+    } else {
+        write(to, read_bytes(from)?)
     }
 }
 
@@ -245,6 +295,9 @@ pub fn drives() -> Vec<PathBuf> {
 /// Stops at `max` paths, so a walk started in `/` costs a bounded
 /// amount rather than the disk.
 pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
+    if on_host(root).is_some() {
+        return walk_host(root, max);
+    }
     if !root.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::NotADirectory,
@@ -279,16 +332,59 @@ pub fn walk(root: &Path, max: usize) -> io::Result<Vec<String>> {
     Ok(out)
 }
 
+/// A host's walk: its listings, breadth first, hidden entries and what
+/// a build leaves (`target`, `node_modules`) left out — no `.gitignore`
+/// is read through SFTP — sorted by name, stopped at `max`.
+fn walk_host(root: &Path, max: usize) -> io::Result<Vec<String>> {
+    if !stat(root)?.is_dir {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            format!("{}: not a directory", root.display()),
+        ));
+    }
+    let mut out = Vec::new();
+    let mut queue = std::collections::VecDeque::from([PathBuf::new()]);
+    while let Some(rel) = queue.pop_front() {
+        let Ok(entries) = list(&root.join(&rel)) else {
+            continue;
+        };
+        for e in entries {
+            if e.name.starts_with('.') || matches!(e.name.as_str(), "target" | "node_modules") {
+                continue;
+            }
+            let p = rel.join(&e.name);
+            if e.is_dir {
+                queue.push_back(p);
+            } else {
+                out.push(p.to_string_lossy().into_owned());
+                if out.len() >= max {
+                    return Ok(out);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub fn exists(path: &Path) -> bool {
-    path.exists()
+    match on_host(path) {
+        Some(_) => stat(path).is_ok(),
+        None => path.exists(),
+    }
 }
 
 pub fn is_dir(path: &Path) -> bool {
-    path.is_dir()
+    match on_host(path) {
+        Some(_) => stat(path).is_ok_and(|s| s.is_dir),
+        None => path.is_dir(),
+    }
 }
 
 pub fn is_file(path: &Path) -> bool {
-    path.is_file()
+    match on_host(path) {
+        Some(_) => stat(path).is_ok_and(|s| s.is_file),
+        None => path.is_file(),
+    }
 }
 
 /// `path` with every link followed, as `std::fs::canonicalize` has it
@@ -296,6 +392,14 @@ pub fn is_file(path: &Path) -> bool {
 /// no tool prints, and a buffer should not be named by. The error names
 /// the path.
 pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
+    if let Some(h) = on_host(path) {
+        let (fs, p) = h?;
+        let (name, _) = domain_of(path).expect("on a host");
+        return Ok(on_domain(
+            name,
+            &fs.canonicalize(&p).map_err(|e| named(path, e))?,
+        ));
+    }
     let p = std::fs::canonicalize(path).map_err(|e| named(path, e))?;
     Ok(unverbatim(p))
 }
@@ -342,11 +446,36 @@ pub fn cwd() -> PathBuf {
 /// The whole of a small file, for a plugin reading a config or a
 /// listing of its own.
 pub fn read(path: &Path) -> io::Result<String> {
-    std::fs::read_to_string(path).map_err(|e| named(path, e))
+    let bytes = read_bytes(path)?;
+    String::from_utf8(bytes).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{}: not text", path.display()),
+        )
+    })
+}
+
+/// The whole of a file's bytes.
+pub fn read_bytes(path: &Path) -> io::Result<Vec<u8>> {
+    if let Some(h) = on_host(path) {
+        let (fs, p) = h?;
+        return fs.read(&p).map_err(|e| named(path, e));
+    }
+    std::fs::read(path).map_err(|e| named(path, e))
 }
 
 /// Writes `text`, creating the file's directory when it is missing.
 pub fn write(path: &Path, text: impl AsRef<[u8]>) -> io::Result<()> {
+    if let Some(h) = on_host(path) {
+        let (fs, p) = h?;
+        if let Some(dir) = p.parent()
+            && !dir.as_os_str().is_empty()
+            && fs.stat(dir).is_err()
+        {
+            fs.create(dir, true).map_err(|e| named(path, e))?;
+        }
+        return fs.write(&p, text.as_ref()).map_err(|e| named(path, e));
+    }
     if let Some(p) = path.parent()
         && !p.as_os_str().is_empty()
     {

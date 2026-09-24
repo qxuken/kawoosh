@@ -154,7 +154,7 @@ impl Kawoosh {
                 }
                 .or_else(|| Some(self.cwd.clone()))
                 .unwrap_or_default();
-                let full = if Path::new(&path).is_absolute() {
+                let full = if kawoosh_systems::fs::is_absolute(Path::new(&path)) {
                     PathBuf::from(&path)
                 } else {
                     base.join(&path)

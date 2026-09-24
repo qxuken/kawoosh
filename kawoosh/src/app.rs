@@ -391,7 +391,7 @@ impl Kawoosh {
     /// the editor's (docs/design/workspaces.md) — not the process's.
     pub fn set_cwd(&mut self, dir: &Path) {
         let dir = self.resolve(dir);
-        if !dir.is_dir() {
+        if !kawoosh_systems::fs::is_dir(&dir) {
             self.ed.message = format!("not a directory: {}", dir.display());
             return;
         }
@@ -787,7 +787,7 @@ impl Kawoosh {
         match request {
             Request::Open { path, wait, line } => {
                 let path = PathBuf::from(path);
-                let path = if path.is_absolute() {
+                let path = if kawoosh_systems::fs::is_absolute(&path) {
                     path
                 } else {
                     self.cwd.join(path)

@@ -842,6 +842,13 @@ impl Pool {
     }
 
     fn server_for(&mut self, path: &Path, language: &str) -> Option<usize> {
+        // A host's file has no server here: one spawned in a directory
+        // that is not local would fail and mark its command failed for
+        // the local files too. The domain's own round runs it there
+        // (docs/design/domains.md Decision 7).
+        if crate::fs::domain_of(path).is_some() {
+            return None;
+        }
         let def = self.defs.iter().find(|d| d.language == language)?.clone();
         let root = workspace_root(path, &def);
         let k = (root.clone(), def.command.clone());

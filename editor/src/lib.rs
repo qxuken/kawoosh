@@ -319,7 +319,8 @@ pub const PATH_FORMS: [(&str, &str); 6] = [
 /// the rest of the path (`.` for `cwd` itself), else the path whole, as
 /// vim's `%:.` does.
 pub fn path_form(cwd: &Path, path: &Path, form: &str) -> Result<String, String> {
-    let abs = if path.is_absolute() {
+    use kawoosh_doc::paths::{domain_of, on_domain};
+    let abs = if kawoosh_doc::paths::is_absolute(path) {
         path.to_path_buf()
     } else {
         cwd.join(path)
@@ -339,13 +340,21 @@ pub fn path_form(cwd: &Path, path: &Path, form: &str) -> Result<String, String> 
             .or_else(|| under(&cwd.canonicalize().ok()?, &p.canonicalize().ok()?))
             .unwrap_or_else(|| p.to_path_buf())
     };
-    let dir = abs.parent().unwrap_or(&abs).to_path_buf();
+    // A host's root is its own (`box:/x`'s directory is `box:/`).
+    let dir = match domain_of(&abs) {
+        Some((d, rest)) => on_domain(d, rest.parent().unwrap_or(rest)),
+        None => abs.parent().unwrap_or(&abs).to_path_buf(),
+    };
     let out = match form {
         "relative" => rel(&abs),
         "absolute" => abs.clone(),
         "dir" => rel(&dir),
         "dir absolute" => dir,
-        "name" => abs.file_name().map(PathBuf::from).unwrap_or_default(),
+        "name" => domain_of(&abs)
+            .map_or(abs.as_path(), |(_, rest)| rest)
+            .file_name()
+            .map(PathBuf::from)
+            .unwrap_or_default(),
         "stem" => abs.file_stem().map(PathBuf::from).unwrap_or_default(),
         other => return Err(format!("no path form {other}")),
     };
@@ -2888,5 +2897,15 @@ mod tests {
         assert_eq!(f("/etc/hosts", "relative"), "/etc/hosts");
         assert_eq!(f("/etc/hosts", "dir"), "/etc");
         assert!(path_form(cwd, Path::new("/a"), "nope").is_err());
+        // On a host: its root is its own, and it is never under a local
+        // working directory.
+        assert_eq!(f("box:/x.rs", "dir"), "box:/");
+        assert_eq!(f("box:/x.rs", "name"), "x.rs");
+        assert_eq!(f("box:/src/x.rs", "relative"), "box:/src/x.rs");
+        let remote = Path::new("box:/home/me");
+        assert_eq!(
+            path_form(remote, Path::new("box:/home/me/src/x.rs"), "relative").unwrap(),
+            "src/x.rs"
+        );
     }
 }

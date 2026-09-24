@@ -205,7 +205,7 @@ impl Kawoosh {
     fn disk_diff(&self, id: BufferId) -> Option<String> {
         let b = self.ed.buffers.get(id)?;
         let path = b.path.as_ref()?;
-        let disk = std::fs::read(path)
+        let disk = kawoosh_systems::fs::read_bytes(path)
             .map(|v| String::from_utf8_lossy(&v).into_owned())
             .unwrap_or_default();
         Some(unified(&disk, &b.text(), 3))

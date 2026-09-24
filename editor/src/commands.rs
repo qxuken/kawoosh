@@ -965,6 +965,20 @@ pub(crate) fn save_beside(
     buf: &kawoosh_doc::Buffer,
     path: &std::path::Path,
 ) -> std::io::Result<()> {
+    // A host's file: the text whole, through its domain, which writes a
+    // sibling and renames it over (docs/design/domains.md Decision 4).
+    if let Some(host) = kawoosh_doc::fs::remote(path) {
+        let (fs, p) = host?;
+        let mut bytes = Vec::with_capacity(buf.len());
+        buf.write_to(&mut bytes)?;
+        if let Some(dir) = p.parent()
+            && !dir.as_os_str().is_empty()
+            && fs.stat(dir).is_err()
+        {
+            fs.create(dir, true)?;
+        }
+        return fs.write(&p, &bytes);
+    }
     // A link is written through, not replaced; the file's mode stays.
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mode = std::fs::metadata(&path).ok().map(|m| m.permissions());

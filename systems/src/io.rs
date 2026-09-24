@@ -192,6 +192,18 @@ impl Io {
             .spawn(move || {
                 let started = std::time::Instant::now();
                 let opened = (|| -> std::io::Result<(text_buffer::Buffer, bool)> {
+                    // A host's file: read whole through its domain, and
+                    // repaired to UTF-8 where it is not.
+                    if crate::fs::domain_of(&path).is_some() {
+                        let bytes = crate::fs::read_bytes(&path)?;
+                        let text = match String::from_utf8(bytes) {
+                            Ok(s) => s.into_bytes(),
+                            Err(e) => String::from_utf8_lossy(e.as_bytes())
+                                .into_owned()
+                                .into_bytes(),
+                        };
+                        return Ok((text_buffer::Buffer::from_bytes(text), false));
+                    }
                     let file = std::fs::File::open(&path)?;
                     let total = file.metadata()?.len() as usize;
                     if total == 0 {
