@@ -248,7 +248,7 @@ fn the_editor_handoff_opens_a_pane_and_waits_for_the_buffer_to_close() {
 fn kawoosh_edit_is_edit_wait_as_one_program() {
     let dir = std::env::temp_dir().join(format!("kawoosh-edit-bin-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let dir = std::fs::canonicalize(&dir).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     let file = dir.join("COMMIT_EDITMSG");
     std::fs::write(&file, "one\ntwo\n").unwrap();
     let sock = dir.join("k.sock");
