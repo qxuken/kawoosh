@@ -27,8 +27,11 @@ def main [
 ] {
   let root = $env.FILE_PWD | path dirname
   let target = $env.CARGO_TARGET_DIR? | default ($root | path join target)
-  let app = $out_dir | default ($target | path join release) | path join Kawoosh.app
+  let app = $out_dir | default ($target | path join release) | path join Kawoosh.app | path expand
   let manifest = $root | path join Cargo.toml
+  # Cargo reads `.cargo/config.toml` — the registry kui's crates come
+  # from — in the directory it runs in, not the manifest's.
+  cd $root
 
   ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-edit
   # `path+file:///…/kawoosh#0.0.1`, or `…#kawoosh@0.0.1`.
