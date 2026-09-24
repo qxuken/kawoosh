@@ -6,6 +6,7 @@ pub mod fs;
 pub mod io;
 pub mod lsp;
 pub mod sftp;
+pub mod shell_env;
 pub mod store;
 pub mod ts;
 pub mod watch;

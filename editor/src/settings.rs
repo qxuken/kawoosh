@@ -429,6 +429,12 @@ impl Settings {
         // The lines of history a terminal keeps; a smaller number drops
         // what is past it at once.
         defaults.set("terminal.scrollback", Setting::Int(10_000));
+        // The shell whose PATH the window's children get when it was
+        // opened outside a terminal — from Finder, the Dock (kawoosh's
+        // `shell_env`): a path to it, since a bare name is looked up on
+        // the PATH it is there to fix; empty for `$SHELL`. Read at
+        // startup.
+        defaults.set("env.shell", Setting::Str(String::new()));
         // The memory (docs/design/memory.md): days a moment — a file
         // attended, with its history and draft — may go unattended
         // before it is forgotten; 0 keeps every row.
@@ -744,6 +750,7 @@ mod tests {
             s.effective().paths(),
             [
                 "clipboard.system",
+                "env.shell",
                 "expandtab",
                 "font.chrome_size",
                 "font.family",

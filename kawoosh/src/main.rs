@@ -120,71 +120,6 @@ fn attach_console() {
     }
 }
 
-/// macOS: an app opened from Finder, the Dock or Spotlight has launchd's
-/// PATH — `/usr/bin:/bin:/usr/sbin:/sbin` — not the one the user's shell
-/// makes, and a language server in `~/.cargo/bin` or `/opt/homebrew/bin`
-/// is not found. Run from a terminal (`TERM` set) it has the shell's
-/// already. Else the login shell is asked, interactive as a terminal's
-/// is — `.zshrc` is where Homebrew and fnm often are — for its
-/// environment through `/usr/bin/env`, a line every shell (nushell too)
-/// runs alike, and its PATH is taken. Three seconds, then as it was.
-/// About 150 ms for an oh-my-zsh `.zshrc`, before the window opens.
-#[cfg(target_os = "macos")]
-fn adopt_login_path() {
-    use std::io::Read;
-    use std::os::fd::AsRawFd;
-    use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
-    if std::env::var_os("TERM").is_some() {
-        return;
-    }
-    let Some(shell) = std::env::var_os("SHELL") else {
-        return;
-    };
-    let Ok(mut child) = Command::new(shell)
-        .args(["-l", "-i", "-c", "/usr/bin/env"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return;
-    };
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() < Duration::from_secs(3) => {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return;
-            }
-        }
-    }
-    let Some(mut out) = child.stdout.take() else {
-        return;
-    };
-    // What the shell wrote is in the pipe. Something it left running
-    // can hold the pipe open, so what is there is read, and no end
-    // waited for.
-    // SAFETY: `out` owns the descriptor, open until it drops.
-    unsafe { libc::fcntl(out.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
-    let mut bytes = Vec::new();
-    let _ = out.read_to_end(&mut bytes);
-    let text = String::from_utf8_lossy(&bytes);
-    let Some(path) = text.lines().rev().find_map(|l| l.strip_prefix("PATH=")) else {
-        return;
-    };
-    if !path.is_empty() {
-        // SAFETY: before the logger and the window, while this is the
-        // only thread.
-        unsafe { std::env::set_var("PATH", path) };
-    }
-}
-
 /// What `RUST_LOG` asks: the level the log keeps from (`trace` when it
 /// says so, else `debug`) and the stderr sink's threshold — the level
 /// named (`trace`, `debug`, `info`, `warn`, `error`), `off` for none,
@@ -290,8 +225,6 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(kawoosh::harness::run_files(&args[1..]));
     }
     let path = args.first().cloned();
-    #[cfg(target_os = "macos")]
-    adopt_login_path();
     // The logger before anything logs: its records wait in the sink
     // until the app's first frame drains them.
     let wake = WakeHandle::new();
@@ -309,6 +242,22 @@ fn main() -> anyhow::Result<()> {
     let ext = app.attach_lua().map_err(|e| anyhow::anyhow!("lua: {e}"))?;
     app.open_store(None);
     app.load_config();
+    // Opened outside a terminal — from Finder, the Dock — the PATH is
+    // launchd's: a shell is asked for its own on a thread, and the
+    // children get it (`shell_env`). From a terminal it is the shell's
+    // already.
+    if cfg!(target_os = "macos") && std::env::var_os("TERM").is_none() {
+        let shell = app
+            .ed
+            .settings
+            .str("env.shell")
+            .filter(|s| !s.is_empty())
+            .map(std::ffi::OsString::from)
+            .or_else(|| std::env::var_os("SHELL"));
+        if let Some(shell) = shell {
+            kawoosh_systems::shell_env::resolve(shell);
+        }
+    }
     // After the config, so what `init.lua` and the plugins added is in
     // the types lua-language-server reads.
     if let Some(dir) = kawoosh::types::types_dir() {

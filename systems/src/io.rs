@@ -109,12 +109,17 @@ pub enum IoMsg {
 }
 
 /// A child process for `program`, spawned outside a pty: a language
-/// server, ssh, a `sh -c` job, a URL's opener. On Windows it opens no
-/// console window — `kawoosh` is a GUI program there, with no console
-/// for a console child to share, and each would get one of its own.
+/// server, ssh, a `sh -c` job, a URL's opener. It is given the PATH a
+/// shell made ([`crate::shell_env::path`]) — which `program` is looked
+/// up on too — where the window was opened outside one. On Windows it
+/// opens no console window — `kawoosh` is a GUI program there, with no
+/// console for a console child to share, and each would get one of its
+/// own.
 pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
-    #[allow(unused_mut)]
     let mut c = std::process::Command::new(program);
+    if let Some(path) = crate::shell_env::path() {
+        c.env("PATH", path);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

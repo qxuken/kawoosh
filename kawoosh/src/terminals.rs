@@ -171,6 +171,12 @@ impl Kawoosh {
                 envs.push(("GIT_EDITOR".into(), shim));
             }
         }
+        // The PATH a shell made, where the window was opened outside one
+        // (`shell_env`): the terminal's shell is looked up on it, and
+        // starts from it.
+        if let Some(path) = kawoosh_systems::shell_env::path() {
+            envs.push(("PATH".into(), path.to_string_lossy().into_owned()));
+        }
         let size = TermSize { rows: 24, cols: 80 };
         let cwd = cwd
             .map(Path::to_path_buf)
