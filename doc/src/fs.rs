@@ -59,6 +59,10 @@ pub trait Fs: Send + Sync {
     fn create(&self, path: &Path, is_dir: bool) -> io::Result<()>;
     /// The path with `~`, `.`, `..` and links resolved by the host.
     fn canonicalize(&self, path: &Path) -> io::Result<PathBuf>;
+    /// The permission bits set (`0o755`), where the host has them.
+    fn set_mode(&self, _path: &Path, _mode: u32) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "no modes here"))
+    }
 }
 
 type Domains = RwLock<HashMap<String, Arc<dyn Fs>>>;

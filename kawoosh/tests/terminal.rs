@@ -207,6 +207,7 @@ fn the_editor_handoff_opens_a_pane_and_waits_for_the_buffer_to_close() {
                 path: file2.display().to_string(),
                 wait: true,
                 line: None,
+                domain: None,
             },
         )
     });
@@ -742,6 +743,7 @@ fn only_answers_a_waiting_caller_whose_pane_it_closed() {
                 path: file2.display().to_string(),
                 wait: true,
                 line: None,
+                domain: None,
             },
         )
     });

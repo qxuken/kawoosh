@@ -223,8 +223,12 @@ fn a_domain_connects_over_ssh_on_first_use() {
     std::fs::create_dir_all(&root).unwrap();
     let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
     std::fs::write(root.join("a.txt"), "on the host\n").unwrap();
+    // The host's home: where the stand-in's server starts, and where
+    // the connection writes the host's CLI.
+    let home = root.join("home");
+    std::fs::create_dir_all(&home).unwrap();
     let name = format!("s{}", std::process::id());
-    let (mut d, mut app) = ssh_app(&name, "box");
+    let (mut d, mut app) = ssh_app(&name, &home.display().to_string());
     let file = format!("{name}:{}", root.join("a.txt").display());
     ex(&mut d, &mut app, &format!("e {file}"));
     assert!(app.ed.message.contains("connecting"), "{}", app.ed.message);
@@ -234,17 +238,10 @@ fn a_domain_connects_over_ssh_on_first_use() {
             .values()
             .any(|b| b.path.as_deref() == Some(Path::new(&file)) && b.text() == "on the host\n")
     });
-    // The keys went to the dock for the master; back to the file.
-    let pane = app
-        .layout
-        .all_panes()
-        .into_iter()
-        .find(|p| {
-            matches!(app.layout.content(*p), Some(kawoosh::layout::Content::Editor(v))
-                if app.ed.views[v].buffer == app.ed.buffer_at(Path::new(&file)).unwrap())
-        })
-        .unwrap();
-    app.layout.focus(pane);
+    // The master up, the dock steps aside: the keys are on the file.
+    assert!(!app.layout.dock_open);
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).path.as_deref(), Some(Path::new(&file)));
     d.keys(&mut app, "Ahere ");
     d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "w");
@@ -267,9 +264,11 @@ fn a_domain_connects_over_ssh_on_first_use() {
     let v = app.focused_view().unwrap();
     let listing = app.ed.buffer_of(v).text();
     assert!(
-        listing.contains(&format!("{name}\tssh box\tup\t1 open")),
+        listing.contains(&format!("{name}\tssh {}\tup\t1 open", home.display())),
         "{listing}"
     );
+    // The host's CLI, written at connect.
+    assert!(home.join(".cache/kawoosh/kawoosh").is_file());
     d.keys(&mut app, "q");
     // Disconnected: the files go; the next use connects again.
     ex(&mut d, &mut app, &format!("domain disconnect {name}"));
@@ -296,4 +295,83 @@ fn a_domain_connects_over_ssh_on_first_use() {
             .buffer_at(Path::new(&format!("{bad}:/x.txt")))
             .is_none()
     );
+}
+
+/// Round three: processes run on the host. A plugin's process and a
+/// compile start in the tab's directory there; a terminal is a shell on
+/// the host whose `$EDITOR` — the CLI written at connect — comes back to
+/// this window over a forwarded port, the file opened as the host's.
+#[test]
+fn processes_and_terminals_run_on_the_host() {
+    if !sftp_server() {
+        eprintln!("no sftp-server here: skipped");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("kawoosh-proc-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    std::fs::create_dir_all(root.join("proj")).unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let (home, proj) = (root.join("home"), root.join("proj"));
+    let name = format!("p{}", std::process::id());
+    let (mut d, mut app) = ssh_app(&name, &home.display().to_string());
+    let sock = root.join("k.sock");
+    app.io.listen(&sock).unwrap();
+    app.socket = Some(sock.clone());
+    let there = format!("{name}:{}", proj.display());
+    ex(&mut d, &mut app, &format!("cd {there}"));
+    until(&mut d, &mut app, "connected, the tab there", |a| {
+        a.ed.cwd == Path::new(&there)
+    });
+    // A plugin's process: on the host, in the tab's directory, with the
+    // host's home.
+    app.run_lua_source(
+        "t",
+        "kawoosh.spawn('echo \"$PWD|$HOME\"', { on_lines = function(l) kawoosh.echo('ran ' .. l[1]) end })",
+    );
+    until(&mut d, &mut app, "the process's line", |a| {
+        a.ed.message.starts_with("ran ")
+    });
+    assert_eq!(
+        app.ed.message,
+        format!("ran {}|{}", proj.display(), home.display())
+    );
+    // A terminal whose `$EDITOR` opens a file of the host's, and waits.
+    ex(
+        &mut d,
+        &mut app,
+        "term \"$EDITOR\" note.txt && echo edited > done.txt",
+    );
+    let note = format!("{name}:{}/note.txt", proj.display());
+    until(&mut d, &mut app, "the host's $EDITOR opening here", |a| {
+        a.focused_view()
+            .is_some_and(|v| a.ed.buffer_of(v).path.as_deref() == Some(Path::new(&note)))
+    });
+    let t = app.terms.map.keys().copied().max().expect("the terminal");
+    assert_eq!(
+        app.terms.map[&t].cwd().as_deref(),
+        Some(Path::new(&there)),
+        "the terminal is where it was started, on the host"
+    );
+    d.keys(&mut app, "ihello");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "wq");
+    assert_eq!(
+        std::fs::read_to_string(proj.join("note.txt")).unwrap(),
+        "hello"
+    );
+    // The editor answered: the command after it ran.
+    for _ in 0..300 {
+        if proj.join("done.txt").exists() {
+            break;
+        }
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        proj.join("done.txt").exists(),
+        "the host's $EDITOR returned"
+    );
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    std::fs::remove_dir_all(&root).ok();
 }

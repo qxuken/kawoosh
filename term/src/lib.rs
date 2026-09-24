@@ -216,6 +216,9 @@ pub struct Terminal {
     pub title: String,
     /// Where the terminal was started.
     spawned_in: Option<std::path::PathBuf>,
+    /// The domain the shell runs on, when it is a host's
+    /// ([`Terminal::set_domain`]): its reports are that host's paths.
+    domain: Option<String>,
     /// The directory the shell last said it is in (OSC 7).
     reported_cwd: Option<std::path::PathBuf>,
     pub bell: bool,
@@ -234,15 +237,6 @@ impl Terminal {
         size: TermSize,
         envs: &[(String, String)],
     ) -> Result<(Self, Box<dyn Read + Send>)> {
-        let pty_system = native_pty_system();
-        let pair = pty_system
-            .openpty(PtySize {
-                rows: size.rows,
-                cols: size.cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .context("opening pty")?;
         // `$SHELL` where there is one (an MSYS bash sets it on Windows
         // too); else `/bin/sh`, or `%ComSpec%` on Windows, whose flags
         // are its own.
@@ -268,6 +262,38 @@ impl Terminal {
             }
             (None, true) => {}
         }
+        Self::spawn_with(builder, cwd, size, envs)
+    }
+
+    /// Spawns `argv` in a pty as it is, no shell in between: a program
+    /// whose arguments must reach it whole whatever the user's shell
+    /// quotes like — an `ssh` to a host (docs/design/domains.md).
+    pub fn spawn_argv(
+        argv: &[String],
+        cwd: Option<&std::path::Path>,
+        size: TermSize,
+        envs: &[(String, String)],
+    ) -> Result<(Self, Box<dyn Read + Send>)> {
+        let mut builder = CommandBuilder::new(argv.first().context("an empty command")?);
+        builder.args(&argv[1..]);
+        Self::spawn_with(builder, cwd, size, envs)
+    }
+
+    fn spawn_with(
+        mut builder: CommandBuilder,
+        cwd: Option<&std::path::Path>,
+        size: TermSize,
+        envs: &[(String, String)],
+    ) -> Result<(Self, Box<dyn Read + Send>)> {
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: size.rows,
+                cols: size.cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .context("opening pty")?;
         builder.env("TERM", "xterm-256color");
         builder.env("COLORTERM", "truecolor");
         for (k, v) in envs {
@@ -307,6 +333,7 @@ impl Terminal {
                 size,
                 title: String::new(),
                 spawned_in: cwd.map(Into::into),
+                domain: None,
                 reported_cwd: None,
                 bell: false,
                 exited: false,
@@ -337,6 +364,7 @@ impl Terminal {
             size,
             title: String::new(),
             spawned_in: None,
+            domain: None,
             reported_cwd: None,
             bell: false,
             exited: false,
@@ -412,7 +440,7 @@ impl Terminal {
             return;
         };
         if let Some(url) = s.strip_prefix("7;") {
-            if let Some(p) = file_url_path(url) {
+            if let Some(p) = file_url_path(url, self.domain.is_some()) {
                 self.reported_cwd = Some(p);
             }
         } else if let Some(mark) = s.strip_prefix("133;") {
@@ -579,7 +607,22 @@ impl Terminal {
     /// Where the shell is: the directory it last reported (OSC 7), else
     /// its process's own (`proc_pidinfo` on macOS, `/proc` on Linux),
     /// else where it was started.
+    /// The shell is a host's (docs/design/domains.md): `start` is where
+    /// it was started, spelled on its domain (`box:/…`), and what its
+    /// shell reports (OSC 7, whatever host it names) is a path on `name`.
+    pub fn set_domain(&mut self, name: &str, start: std::path::PathBuf) {
+        self.domain = Some(name.to_string());
+        self.spawned_in = Some(start);
+    }
+
     pub fn cwd(&self) -> Option<std::path::PathBuf> {
+        if let Some(d) = &self.domain {
+            return self
+                .reported_cwd
+                .as_ref()
+                .map(|p| format!("{d}:{}", p.display()).into())
+                .or_else(|| self.spawned_in.clone());
+        }
         // A reported directory that is not one here — a shell over ssh
         // that reported its host's, and exited — gives way to the
         // process's own.
@@ -1025,11 +1068,15 @@ fn config(history: usize) -> Config {
 /// The path of a `file://host/path` URL, percent-decoded, when the host
 /// is this machine's (none, `localhost`, or its name): a shell over ssh
 /// reports its own host's directory, which is not one here.
-fn file_url_path(url: &str) -> Option<std::path::PathBuf> {
+fn file_url_path(url: &str, any_host: bool) -> Option<std::path::PathBuf> {
     let rest = url.strip_prefix("file://")?;
     let slash = rest.find('/')?;
     let host = &rest[..slash];
-    if !(host.is_empty() || host.eq_ignore_ascii_case("localhost") || is_this_host(host)) {
+    if !(any_host
+        || host.is_empty()
+        || host.eq_ignore_ascii_case("localhost")
+        || is_this_host(host))
+    {
         return None;
     }
     let path = &rest[slash..];

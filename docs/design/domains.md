@@ -305,3 +305,36 @@ fixture is not a Python SFTP server but a stand-in `ssh`
 answered from it, `-s sftp` handed to OpenSSH's own `sftp-server`), so
 the client is tested against the real server — `sftp.rs`'s own test
 talks to `sftp-server` directly.
+
+**Round three, 2026-09-24: processes.** Decision 7's door is
+`Transport::remote_argv` beside the files' registry (a transport
+registry in `kawoosh_systems::io`, filled at connect): the host's own
+login shell is handed one line every shell reads alike — `sh -c 'eval
+"$(echo B64 | base64 -d)"'` — with a POSIX script in base64 behind it
+(`remote_script`: into the directory, its `~` the host's; the
+environment exported; then `exec`), so neither this side's quoting nor
+the host's reaches it. What that beat: `cd DIR && exec program args` as
+the note wrote it, which a host whose login shell is nushell or fish
+does not parse, and which this side's `$SHELL -lc` (nushell here)
+would have quoted wrongly — so the master and every terminal on a host
+are spawned by argv (`Terminal::spawn_argv`), no local shell in
+between. `kawoosh.spawn`, a compile and a tool with a directory on a
+host run there (`run_process_with` through the transport, the host's
+`$SHELL -c`). A terminal on a host is `ssh -t -R 127.0.0.1:PORT:SOCKET`,
+a port from the high range for each terminal, its shell started with
+`TERM_PROGRAM`, `TERM_APPEARANCE`, `KAWOOSH_DOMAIN`, `KAWOOSH_PORT`,
+`KAWOOSH_BIN` and `EDITOR` / `VISUAL` / `GIT_EDITOR` on its command
+line; its OSC 7 reports are the host's paths whatever host they name
+(`Terminal::set_domain`). At connect the host's CLI is written through
+SFTP to `~/.cache/kawoosh`: `kawoosh` (bash — `edit [--wait] [+LINE]`,
+`theme`, `pick` — speaking the socket's JSON over `/dev/tcp`) and
+`kawoosh-edit` for `$EDITOR`, made executable (`Fs::set_mode`, SFTP's
+SETSTAT); `Request::Open` carries the `domain` the shim fills from
+`KAWOOSH_DOMAIN`, so the path arrives as `box:/…`. Once the master is
+up the dock steps aside and the keys go back to the tab, where what
+asked is done. Tests: io.rs's `a_remote_script_runs_as_written` and
+`the_host_shim_speaks_the_socket` (bash against a listener), and
+domains.rs's `processes_and_terminals_run_on_the_host` over the
+stand-in, which forwards `-R` itself: a plugin's process on the host in
+the tab's directory, a terminal whose `$EDITOR note.txt` opens the
+host's file here, `:wq` answering it so the command after it runs.

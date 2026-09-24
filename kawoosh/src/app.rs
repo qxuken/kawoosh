@@ -794,8 +794,17 @@ impl Kawoosh {
     fn on_request(&mut self, Incoming { request, reply }: Incoming) {
         self.sync_facts();
         match request {
-            Request::Open { path, wait, line } => {
-                let path = PathBuf::from(path);
+            Request::Open {
+                path,
+                wait,
+                line,
+                domain,
+            } => {
+                // From a host's shim: the path is that host's.
+                let path = match domain.filter(|d| !d.is_empty()) {
+                    Some(d) => kawoosh_systems::fs::on_domain(&d, Path::new(&path)),
+                    None => PathBuf::from(path),
+                };
                 let path = if kawoosh_systems::fs::is_absolute(&path) {
                     path
                 } else {

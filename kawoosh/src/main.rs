@@ -101,6 +101,7 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
                 path: abs.display().to_string(),
                 wait,
                 line,
+                domain: None,
             },
         )?;
     }

@@ -126,16 +126,18 @@ impl Transport {
         c
     }
 
-    /// The master's line for a pane, quoted for the shell: it asks for
-    /// a password or a passphrase there, and stays up past the pane
-    /// (`ControlPersist`).
-    pub fn master_line(&self) -> String {
-        format!(
-            "{} -M -S {} -o ControlPersist=yes {}",
-            shell_quote(&self.ssh),
-            shell_quote(&self.ctl.display().to_string()),
-            shell_quote(&self.host)
-        )
+    /// The master's argv, for a pane: it asks for a password or a
+    /// passphrase there, and stays up past the pane (`ControlPersist`).
+    pub fn master_argv(&self) -> Vec<String> {
+        vec![
+            self.ssh.clone(),
+            "-M".into(),
+            "-S".into(),
+            self.ctl.display().to_string(),
+            "-o".into(),
+            "ControlPersist=yes".into(),
+            self.host.clone(),
+        ]
     }
 
     /// Whether the master answers on its control socket.
@@ -158,6 +160,187 @@ impl Transport {
             .status();
     }
 }
+
+impl Transport {
+    /// The argv of an `ssh` that runs `script` — POSIX sh — on the host.
+    /// What the host's own login shell is handed is one line every
+    /// shell reads alike, bash, zsh, fish or nushell: `sh -c 'eval
+    /// "$(echo B64 | base64 -d)"'`, the script in base64 — so neither
+    /// this side's quoting nor the host's reaches it. `pty` asks for a
+    /// terminal (`-t`), else none (`-T`); `forward` is a port on the
+    /// host's loopback carried back to a local socket (`-R`).
+    pub fn remote_argv(
+        &self,
+        script: &str,
+        pty: bool,
+        forward: Option<(u16, &std::path::Path)>,
+    ) -> Vec<String> {
+        let mut v = vec![
+            self.ssh.clone(),
+            "-S".into(),
+            self.ctl.display().to_string(),
+            if pty { "-t" } else { "-T" }.into(),
+        ];
+        if let Some((port, sock)) = forward {
+            v.push("-R".into());
+            v.push(format!("127.0.0.1:{port}:{}", sock.display()));
+        }
+        v.push(self.host.clone());
+        v.push("--".into());
+        v.push(format!(
+            "sh -c 'eval \"$(echo {} | base64 -d)\"'",
+            base64(script.as_bytes())
+        ));
+        v
+    }
+
+    /// [`Transport::remote_argv`] with no terminal, as a command to run.
+    pub fn remote_command(&self, script: &str) -> std::process::Command {
+        let argv = self.remote_argv(script, false, None);
+        let mut c = std::process::Command::new(&argv[0]);
+        c.args(&argv[1..]);
+        c
+    }
+}
+
+/// The script a process on a host runs: into `dir` (its `~` the host's
+/// home) — failing if it is not there, or into the home for a shell
+/// (`fallback_home`) — `envs` exported, then `exec` (a line of POSIX
+/// sh).
+pub fn remote_script(
+    dir: &std::path::Path,
+    envs: &[(String, String)],
+    exec: &str,
+    fallback_home: bool,
+) -> String {
+    let d = dir.to_string_lossy();
+    let cd = match d.strip_prefix('~') {
+        Some("") => "cd".to_string(),
+        Some(rest) => format!("cd \"$HOME\"{}", shell_quote(rest)),
+        None => format!("cd {}", shell_quote(&d)),
+    };
+    let mut out = if fallback_home {
+        format!("{cd} 2>/dev/null || cd\n")
+    } else {
+        format!("{cd} || exit 1\n")
+    };
+    for (k, v) in envs {
+        // `$HOME` in a value is the host's: left for its shell to say.
+        let v = match v.strip_prefix("$HOME") {
+            Some(rest) => format!("\"$HOME\"{}", shell_quote(rest)),
+            None => shell_quote(v),
+        };
+        out.push_str(&format!("export {k}={v}\n"));
+    }
+    out.push_str(exec);
+    out.push('\n');
+    out
+}
+
+/// Standard base64, with padding.
+fn base64(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
+        out.push(A[(n >> 18) as usize & 63] as char);
+        out.push(A[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 {
+            A[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if c.len() > 2 {
+            A[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+type Transports = std::sync::RwLock<std::collections::HashMap<String, Transport>>;
+
+fn transports() -> &'static Transports {
+    static T: std::sync::OnceLock<Transports> = std::sync::OnceLock::new();
+    T.get_or_init(Default::default)
+}
+
+/// How a connected domain's processes are started, beside its files in
+/// `kawoosh_doc::fs`: registered when it comes up.
+pub fn register_transport(name: &str, t: Transport) {
+    transports()
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(name.to_string(), t);
+}
+
+pub fn unregister_transport(name: &str) {
+    transports()
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(name);
+}
+
+/// A connected domain's transport.
+pub fn transport_of(name: &str) -> Option<Transport> {
+    transports()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(name)
+        .cloned()
+}
+
+/// The CLI on a host (docs/design/domains.md Decision 6): the verbs a
+/// shell there needs — `edit [--wait] [+LINE] PATH…`, `theme`, `pick
+/// SOURCE [QUERY]` — as bash speaking the command socket's one-line
+/// JSON over the port kawoosh forwarded to it (`$KAWOOSH_PORT`), with
+/// bash's `/dev/tcp` and nothing installed. Written to
+/// `~/.cache/kawoosh/kawoosh` at connect, with `kawoosh-edit` beside it
+/// for `$EDITOR`.
+pub const HOST_SHIM: &str = r#"#!/usr/bin/env bash
+# kawoosh on a host (kawoosh's docs/design/domains.md): the verbs a shell
+# here needs, over the port kawoosh forwarded to its command socket.
+port=${KAWOOSH_PORT:?kawoosh: not in a kawoosh terminal}
+json() { local s=$1; s=${s//\\/\\\\}; s=${s//\"/\\\"}; printf '"%s"' "$s"; }
+ask() {
+  exec 3<>"/dev/tcp/127.0.0.1/$port" || { echo "kawoosh: no answer on port $port" >&2; exit 1; }
+  printf '%s\n' "$1" >&3
+  IFS= read -r reply <&3
+  exec 3<&-
+}
+verb=$1; shift
+case $verb in
+  theme) ask '{"cmd":"theme"}'; printf '%s\n' "$reply" ;;
+  pick)
+    src=$1; shift
+    ask "{\"cmd\":\"pick\",\"source\":$(json "$src"),\"query\":$(json "$*")}"
+    [ -n "$reply" ] || exit 1
+    printf '%s\n' "$reply" ;;
+  edit)
+    wait=false; line=null; paths=()
+    for a in "$@"; do
+      case $a in
+        --wait|-w) wait=true ;;
+        +[0-9]*) line=${a#+} ;;
+        /*) paths+=("$a") ;;
+        *) paths+=("$PWD/$a") ;;
+      esac
+    done
+    [ ${#paths[@]} -gt 0 ] || { echo "kawoosh: edit what?" >&2; exit 2; }
+    for p in "${paths[@]}"; do
+      ask "{\"cmd\":\"open\",\"path\":$(json "$p"),\"wait\":$wait,\"line\":$line,\"domain\":$(json "$KAWOOSH_DOMAIN")}"
+    done ;;
+  *) echo "kawoosh: $verb: on a host there is edit, theme and pick" >&2; exit 2 ;;
+esac
+"#;
+
+/// `$EDITOR` on a host: one program, as nushell wants it.
+pub const HOST_EDITOR: &str = r#"#!/bin/sh
+exec "$(dirname "$0")/kawoosh" edit --wait "$@"
+"#;
 
 /// `s` in single quotes for a POSIX shell.
 pub fn shell_quote(s: &str) -> String {
@@ -350,11 +533,36 @@ impl Io {
     ) -> std::io::Result<ProcHandle> {
         use std::io::{BufRead, BufReader, Write};
         use std::process::{Command, Stdio};
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-        let mut command = Command::new(shell);
+        // On a host: through its domain, run by the host's own shell in
+        // the directory there (docs/design/domains.md Decision 7).
+        let host = cwd.and_then(|d| {
+            let (name, dir) = crate::fs::domain_of(d)?;
+            Some((name.to_string(), dir.to_path_buf()))
+        });
+        let mut command = match &host {
+            Some((name, dir)) => {
+                let t = transport_of(name).ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotConnected,
+                        format!("{name}: not connected (:domain connect {name})"),
+                    )
+                })?;
+                let script = remote_script(
+                    dir,
+                    &[],
+                    &format!("exec \"${{SHELL:-/bin/sh}}\" -c {}", shell_quote(cmd)),
+                    false,
+                );
+                t.remote_command(&script)
+            }
+            None => {
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+                let mut c = Command::new(shell);
+                c.arg("-c").arg(cmd);
+                c
+            }
+        };
         command
-            .arg("-c")
-            .arg(cmd)
             .stdin(if stdin.is_some() {
                 Stdio::piped()
             } else {
@@ -362,7 +570,9 @@ impl Io {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(d) = cwd {
+        if let Some(d) = cwd
+            && host.is_none()
+        {
             command.current_dir(d);
         }
         // A session of its own, so no controlling terminal: a tool that
@@ -448,6 +658,10 @@ pub enum Request {
         wait: bool,
         #[serde(default)]
         line: Option<usize>,
+        /// The domain the path is on, from a host's shim
+        /// (`KAWOOSH_DOMAIN`, docs/design/domains.md Decision 6).
+        #[serde(default)]
+        domain: Option<String>,
     },
     /// Run an ex command line.
     Ex { line: String },
@@ -477,6 +691,22 @@ pub fn socket_path() -> std::path::PathBuf {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
     dir.join(format!("kawoosh-{}.sock", std::process::id()))
+}
+
+/// The CLI written to the host (`~/.cache/kawoosh`), executable; a
+/// host that refuses keeps its `$EDITOR`, which is the host's then.
+fn install_host_shim(s: &crate::sftp::Sftp) {
+    use kawoosh_doc::fs::Fs;
+    let dir = std::path::Path::new("~/.cache/kawoosh");
+    if s.create(dir, true).is_err() {
+        return;
+    }
+    for (name, text) in [("kawoosh", HOST_SHIM), ("kawoosh-edit", HOST_EDITOR)] {
+        let p = dir.join(name);
+        if s.write(&p, text.as_bytes()).is_ok() {
+            let _ = s.set_mode(&p, 0o755);
+        }
+    }
 }
 
 impl Io {
@@ -512,7 +742,9 @@ impl Io {
                         c.arg("sftp");
                         break match crate::sftp::Sftp::spawn(c) {
                             Ok(s) => {
+                                install_host_shim(&s);
                                 kawoosh_doc::fs::register(&name, std::sync::Arc::new(s));
+                                register_transport(&name, transport.clone());
                                 IoMsg::DomainUp { name: name.clone() }
                             }
                             Err(e) => failed(format!("sftp: {e}")),
@@ -631,4 +863,130 @@ pub fn decode_image_bytes(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
         .to_rgba8();
     let (w, h) = img.dimensions();
     Ok((w, h, img.into_raw()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_is_the_standard_one() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    /// A host's script: into the directory (its `~` the host's), the
+    /// environment exported with `$HOME` left to the host, then the line;
+    /// and it runs as written through `sh -c 'eval …'`.
+    #[test]
+    fn a_remote_script_runs_as_written() {
+        let s = remote_script(
+            std::path::Path::new("~/a b"),
+            &[
+                ("K".into(), "it's".into()),
+                ("E".into(), "$HOME/.cache/x".into()),
+            ],
+            "echo \"$K|$E|$PWD\"",
+            false,
+        );
+        assert!(s.starts_with("cd \"$HOME\"'/a b' || exit 1\n"), "{s}");
+        let home = std::env::temp_dir().join(format!("kawoosh-script-{}", std::process::id()));
+        std::fs::create_dir_all(home.join("a b")).unwrap();
+        let home = std::fs::canonicalize(&home).unwrap();
+        let t = Transport {
+            ssh: "ssh".into(),
+            host: "h".into(),
+            ctl: "/c".into(),
+        };
+        let argv = t.remote_argv(&s, false, None);
+        assert_eq!(&argv[..6], ["ssh", "-S", "/c", "-T", "h", "--"]);
+        // What the host's shell is handed, run by one.
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(&argv[6])
+            .env("HOME", &home)
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            format!("it's|{}/.cache/x|{}/a b", home.display(), home.display())
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The host's CLI speaks the socket's JSON over the forwarded port:
+    /// an edit's path made absolute and its domain said, `--wait` held
+    /// until the answer, a pick's answer printed.
+    #[test]
+    fn the_host_shim_speaks_the_socket() {
+        if std::process::Command::new("bash")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("kawoosh-shim-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shim = dir.join("kawoosh");
+        std::fs::write(&shim, HOST_SHIM).unwrap();
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader, Write};
+            let mut got = Vec::new();
+            for reply in ["closed", "/picked dir"] {
+                let (mut s, _) = l.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(&s).read_line(&mut line).unwrap();
+                got.push(line.trim().to_string());
+                writeln!(s, "{reply}").unwrap();
+            }
+            got
+        });
+        let run = |args: &[&str]| {
+            std::process::Command::new("bash")
+                .arg(&shim)
+                .args(args)
+                .current_dir(&dir)
+                .env("KAWOOSH_PORT", port.to_string())
+                .env("KAWOOSH_DOMAIN", "box")
+                .output()
+                .unwrap()
+        };
+        let edit = run(&["edit", "--wait", "+3", "we \"ird\".txt"]);
+        assert!(
+            edit.status.success(),
+            "{}",
+            String::from_utf8_lossy(&edit.stderr)
+        );
+        let pick = run(&["pick", "dirs", "k", "w"]);
+        assert_eq!(String::from_utf8_lossy(&pick.stdout), "/picked dir\n");
+        let got = server.join().unwrap();
+        let dir = std::fs::canonicalize(&dir).unwrap();
+        let open: serde_json::Value = serde_json::from_str(&got[0]).unwrap();
+        let req: Request = serde_json::from_value(open).unwrap();
+        match req {
+            Request::Open {
+                path,
+                wait,
+                line,
+                domain,
+            } => {
+                assert_eq!(path, format!("{}/we \"ird\".txt", dir.display()));
+                assert!(wait);
+                assert_eq!(line, Some(3));
+                assert_eq!(domain.as_deref(), Some("box"));
+            }
+            other => panic!("{other:?}"),
+        }
+        let req: Request = serde_json::from_str(&got[1]).unwrap();
+        assert!(
+            matches!(req, Request::Pick { source, query } if source == "dirs" && query == "k w")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

@@ -150,7 +150,7 @@ impl Kawoosh {
         let transport = self.transport(name, host);
         // The master runs from a local directory, whatever the tab's.
         let home = kawoosh_systems::fs::home().unwrap_or_else(std::env::temp_dir);
-        let term = self.spawn_terminal(Some(&transport.master_line()), Some(&home));
+        let term = self.spawn_terminal_argv(&transport.master_argv(), &home);
         if let Some(t) = term {
             self.terms.spawned.entry(t).or_default().tool = Some(format!("ssh {name}"));
             self.layout.dock_open = true;
@@ -222,6 +222,14 @@ impl Kawoosh {
             Some(State::Up { term }) => term,
             _ => None,
         };
+        // The master answered: its pane stays in the dock, out of the
+        // way, and the keys go back to the tab, where what asked is done.
+        if let Some(t) = term
+            && self.term_of(self.layout.focused()) == Some(t)
+        {
+            self.layout.dock_open = false;
+            self.layout.dock_focused = false;
+        }
         self.domains
             .state
             .insert(name.to_string(), State::Up { term });

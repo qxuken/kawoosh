@@ -15,6 +15,11 @@ one would do on a host whose files are this machine's:
                            CMD run here, by sh. With `-R PORT:SOCKET`, TCP
                            on 127.0.0.1:PORT is forwarded to the unix
                            socket, as the real one forwards a host's port.
+
+A HOST that is an absolute path is the host's home: the SFTP server starts
+there and a command runs with it as `$HOME` — so a test's host writes
+nothing into the real home. A command's `$SHELL` is `/bin/sh`, as on a
+host whose login shell is sh.
 """
 
 import os
@@ -119,19 +124,22 @@ def main():
     if not (ctl and os.path.exists(ctl)):
         sys.stderr.write("Control socket connect(%s): No such file or directory\n" % ctl)
         sys.exit(255)
+    home = host if host.startswith("/") else os.environ.get("HOME", "/")
+    env = dict(os.environ, HOME=home, SHELL="/bin/sh")
+    os.chdir(home)
     if opts["s"]:
         server = next((p for p in SFTP_SERVERS if os.path.exists(p)), None)
         if not server:
             sys.exit(255)
-        os.execv(server, [server])
+        os.execve(server, [server], env)
     for spec in opts["R"]:
         forward(spec)
-    line = " ".join(cmd) if cmd else os.environ.get("SHELL", "/bin/sh")
+    line = " ".join(cmd) if cmd else "/bin/sh -l"
     if opts["R"]:
         # Stay while the forward is wanted: the command is a child.
         import subprocess
-        sys.exit(subprocess.call(["/bin/sh", "-c", line]))
-    os.execv("/bin/sh", ["/bin/sh", "-c", line])
+        sys.exit(subprocess.call(["/bin/sh", "-c", line], env=env))
+    os.execve("/bin/sh", ["/bin/sh", "-c", line], env)
 
 
 if __name__ == "__main__":

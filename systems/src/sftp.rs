@@ -578,6 +578,14 @@ impl Fs for Sftp {
         self.close(&handle)
     }
 
+    fn set_mode(&self, path: &Path, mode: u32) -> io::Result<()> {
+        let mut body = Vec::new();
+        put_bytes(&mut body, &wire(path));
+        put_u32(&mut body, ATTR_PERMISSIONS);
+        put_u32(&mut body, mode & 0o7777);
+        self.status(SETSTAT, &body)
+    }
+
     fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
         let (t, b) = self.path_call(REALPATH, path)?;
         if t != NAME {

@@ -16,6 +16,18 @@ use crate::layout::{Content, SplitDir};
 
 pub type TermId = u64;
 
+/// A port on a host's loopback for one terminal's way back to this
+/// window (`-R`): from the high range, different for each terminal —
+/// two sessions asking the master for one port would lose the second's.
+fn remote_port() -> u16 {
+    use std::hash::{BuildHasher, Hasher};
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u64(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    h.write_u32(std::process::id());
+    20_000 + (h.finish() % 40_000) as u16
+}
+
 #[derive(Default)]
 pub struct Terminals {
     pub map: HashMap<TermId, Terminal>,
@@ -163,7 +175,44 @@ impl Kawoosh {
         let cwd = cwd
             .map(Path::to_path_buf)
             .unwrap_or_else(|| self.cwd.clone());
-        match Terminal::spawn(cmd, Some(&cwd), size, &envs) {
+        let host =
+            kawoosh_systems::fs::domain_of(&cwd).map(|(n, d)| (n.to_string(), d.to_path_buf()));
+        let spawned = match &host {
+            Some((name, dir)) => {
+                let Some(argv) = self.remote_terminal_argv(name, dir, cmd) else {
+                    self.ed.message = format!("{name}: not connected (:domain connect {name})");
+                    return None;
+                };
+                // The local end runs from a local directory.
+                let home = kawoosh_systems::fs::home().unwrap_or_else(std::env::temp_dir);
+                Terminal::spawn_argv(&argv, Some(&home), size, &[]).map(|(mut t, r)| {
+                    t.set_domain(name, cwd.clone());
+                    (t, r)
+                })
+            }
+            None => Terminal::spawn(cmd, Some(&cwd), size, &envs),
+        };
+        self.adopt_terminal(id, spawned, cmd)
+    }
+
+    /// A program in a pty with no shell in between (`Terminal::spawn_argv`)
+    /// — the ssh master of a domain, whose arguments must reach it whole
+    /// whatever the user's shell quotes like.
+    pub(crate) fn spawn_terminal_argv(&mut self, argv: &[String], cwd: &Path) -> Option<TermId> {
+        let size = TermSize { rows: 24, cols: 80 };
+        let spawned = Terminal::spawn_argv(argv, Some(cwd), size, &[]);
+        self.adopt_terminal(None, spawned, None)
+    }
+
+    /// A terminal just spawned, taken in: its scrollback set, its number
+    /// (`id`, or a new one), its reader on the io thread.
+    fn adopt_terminal(
+        &mut self,
+        id: Option<TermId>,
+        spawned: anyhow::Result<(Terminal, Box<dyn std::io::Read + Send>)>,
+        cmd: Option<&str>,
+    ) -> Option<TermId> {
+        match spawned {
             Ok((mut term, reader)) => {
                 term.set_scrollback(self.scrollback_setting());
                 let id = match id {
@@ -188,6 +237,50 @@ impl Kawoosh {
                 None
             }
         }
+    }
+
+    /// The `ssh -t` that runs a shell (or `cmd`) on domain `name` in
+    /// `dir` (docs/design/domains.md Decisions 6 and 7): the environment
+    /// a local terminal gets put on the host's command line, `$EDITOR`
+    /// the CLI written to the host at connect (`~/.cache/kawoosh`), which
+    /// talks back to this window's socket over a port forwarded for this
+    /// terminal. None when the domain is not up.
+    fn remote_terminal_argv(
+        &self,
+        name: &str,
+        dir: &Path,
+        cmd: Option<&str>,
+    ) -> Option<Vec<String>> {
+        use kawoosh_systems::io::{remote_script, shell_quote, transport_of};
+        let t = transport_of(name)?;
+        let mut envs = vec![
+            ("TERM_PROGRAM".to_string(), "kawoosh".to_string()),
+            (
+                "TERM_PROGRAM_VERSION".to_string(),
+                env!("CARGO_PKG_VERSION").to_string(),
+            ),
+            (
+                "TERM_APPEARANCE".to_string(),
+                if self.dark { "dark" } else { "light" }.to_string(),
+            ),
+            ("KAWOOSH_DOMAIN".to_string(), name.to_string()),
+        ];
+        let port = remote_port();
+        if self.socket.is_some() {
+            let shim = "$HOME/.cache/kawoosh".to_string();
+            envs.push(("KAWOOSH_PORT".into(), port.to_string()));
+            envs.push(("KAWOOSH_BIN".into(), format!("{shim}/kawoosh")));
+            for k in ["EDITOR", "VISUAL", "GIT_EDITOR"] {
+                envs.push((k.into(), format!("{shim}/kawoosh-edit")));
+            }
+        }
+        let exec = match cmd {
+            Some(c) => format!("exec \"${{SHELL:-/bin/sh}}\" -lc {}", shell_quote(c)),
+            None => "exec \"${SHELL:-/bin/sh}\" -l".to_string(),
+        };
+        let script = remote_script(dir, &envs, &exec, cmd.is_none());
+        let forward = self.socket.as_deref().map(|s| (port, s));
+        Some(t.remote_argv(&script, true, forward))
     }
 
     /// `terminal.scrollback`: the lines of history a terminal keeps.
