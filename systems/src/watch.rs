@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -20,14 +21,27 @@ use crate::WakeHandle;
 /// How often the set is looked at.
 pub const INTERVAL: Duration = Duration::from_millis(500);
 
-/// How often a path on a host is looked at, in milliseconds: a stat
-/// there is a round trip, and SFTP has no watch to wait on instead
-/// (docs/design/domains.md Decision 5). `ssh.poll_secs` sets it.
-static REMOTE_MS: AtomicU64 = AtomicU64::new(5000);
+/// How often a path on a host is looked at: a stat there is a round
+/// trip, and SFTP has no watch to wait on instead (docs/design/domains.md
+/// Decision 5). An app's `ssh.poll_secs` sets it, for the watches it
+/// hands a clone to — its own, not every app's in the process.
+#[derive(Clone, Debug)]
+pub struct Beat(Arc<AtomicU64>);
 
-/// How often a host's paths are stat'd, for every watch.
-pub fn set_remote_interval(every: Duration) {
-    REMOTE_MS.store(every.as_millis() as u64, Ordering::Relaxed);
+impl Default for Beat {
+    fn default() -> Self {
+        Self(Arc::new(AtomicU64::new(5000)))
+    }
+}
+
+impl Beat {
+    pub fn set(&self, every: Duration) {
+        self.0.store(every.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    fn get(&self) -> Duration {
+        Duration::from_millis(self.0.load(Ordering::Relaxed))
+    }
 }
 
 /// A file's stamp: whether it exists, its modification time and its
@@ -78,7 +92,8 @@ pub struct Watcher {
 }
 
 impl Watcher {
-    pub fn spawn(wake: WakeHandle) -> Self {
+    /// A watch whose host paths are stat'd on `beat`.
+    pub fn spawn(wake: WakeHandle, beat: Beat) -> Self {
         let (paths_tx, paths_rx) = unbounded::<Vec<PathBuf>>();
         let (changed_tx, changed_rx) = unbounded::<PathBuf>();
         std::thread::Builder::new()
@@ -107,8 +122,7 @@ impl Watcher {
                         Err(Timeout) => {}
                     }
                     let mut any = false;
-                    let remote_due = remote_at.elapsed()
-                        >= Duration::from_millis(REMOTE_MS.load(Ordering::Relaxed));
+                    let remote_due = remote_at.elapsed() >= beat.get();
                     if remote_due {
                         remote_at = Instant::now();
                     }
@@ -152,7 +166,6 @@ impl Watcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     /// A write, a creation and a removal each wake once with the path;
     /// a still file wakes nothing.
@@ -169,7 +182,7 @@ mod tests {
         wake.set(Arc::new(move || {
             let _ = tx.send(());
         }));
-        let w = Watcher::spawn(wake);
+        let w = Watcher::spawn(wake, Beat::default());
         w.watch(vec![a.clone(), b.clone()]);
         assert!(
             rx.recv_timeout(INTERVAL * 3).is_err(),

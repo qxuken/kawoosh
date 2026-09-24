@@ -715,10 +715,10 @@ impl Kawoosh {
                     self.scripting.watches.values().flatten().cloned().collect();
                 all.sort();
                 all.dedup();
-                let wake = self.wake.clone();
+                let (wake, beat) = (self.wake.clone(), self.beat.clone());
                 self.scripting
                     .watcher
-                    .get_or_insert_with(|| kawoosh_systems::watch::Watcher::spawn(wake))
+                    .get_or_insert_with(|| kawoosh_systems::watch::Watcher::spawn(wake, beat))
                     .watch(all);
             }
             // Read as the markdown buffer's images are, and said to Lua
@@ -1034,7 +1034,7 @@ impl Kawoosh {
             Some(kawoosh_editor::Setting::Int(i)) => (*i).max(0) as f64,
             _ => 5.0,
         };
-        kawoosh_systems::watch::set_remote_interval(std::time::Duration::from_secs_f64(poll));
+        self.beat.set(std::time::Duration::from_secs_f64(poll));
         let Some(rt) = self.scripting.rt.clone() else {
             return;
         };
