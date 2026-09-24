@@ -4,9 +4,10 @@
 //! through a kui `Core` (docs/design/kui.md, Decision 8). `main.rs` is the
 //! window.
 
-/// A terminal's `$EDITOR` (`app::editor_shim`): the small binary of
-/// that name (`src/bin/edit.rs`), or this one under that name, which
-/// then answers as `kawoosh edit --wait`.
+/// A terminal's `$EDITOR`: the small binary of that name
+/// (`src/bin/edit.rs`, `app::shipped_editor`), or this one linked
+/// under that name (`app::editor_link`), which then answers as
+/// `kawoosh edit --wait`.
 pub const EDITOR_SHIM: &str = "kawoosh-edit";
 
 pub mod app;
