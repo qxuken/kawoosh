@@ -595,7 +595,7 @@ impl Kawoosh {
                     let moved = if p == &from {
                         to.clone()
                     } else if let Ok(rest) = p.strip_prefix(&from) {
-                        to.join(rest)
+                        kawoosh_systems::fs::join(&to, rest)
                     } else {
                         continue;
                     };
@@ -1357,8 +1357,8 @@ impl Kawoosh {
             })
             .or_else(|| {
                 self.focused_view()
-                    .and_then(|v| self.ed.buffer_of(v).path.clone())
-                    .and_then(|p| p.parent().map(Path::to_path_buf))
+                    .and_then(|v| self.ed.buffer_of(v).path.as_deref())
+                    .and_then(kawoosh_systems::fs::parent)
             })
             // From a terminal, where its shell is.
             .or_else(|| {

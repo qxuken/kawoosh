@@ -92,8 +92,6 @@ local PREFIX = "dir: "
 local PREVIEW = "dir preview"
 -- The listing above every root on Windows: the drives.
 local DRIVES = "<drives>"
--- The platform's path separator, as `fs.join` puts it.
-local SEP = fs.join("a", "b"):sub(2, 2)
 -- The space fonts keep (a run's trailing spaces are unreliable).
 local NBSP = "\u{A0}"
 local ARROW = "\u{2190} "
@@ -598,7 +596,10 @@ end
 -- `to` as a path from `from`: `../b/`, `sub/`, `../`, or the whole.
 local function relative(from, to)
   if to == from then return "./" end
-  if to:sub(1, #from + 1) == from .. SEP then return to:sub(#from + 2) .. "/" end
+  -- What an entry of `from` starts with, as `fs.join` spells it: the
+  -- platform's separator here, `/` on a host, none after a root.
+  local under = fs.join(from, "x"):sub(1, -2)
+  if to:sub(1, #under) == under then return to:sub(#under + 1) .. "/" end
   if fs.parent(from) == to then return "../" end
   if fs.parent(from) == fs.parent(to) then return "../" .. (fs.basename(to) or to) .. "/" end
   return to .. "/"

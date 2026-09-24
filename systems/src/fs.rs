@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 pub use kawoosh_doc::fs::{Entry, Stat};
 use kawoosh_doc::fs::{Fs, remote};
 pub use kawoosh_doc::paths::{domain_of, expand, home, is_absolute, normalize, on_domain};
+use kawoosh_doc::paths::{host_join, host_parent};
 use std::sync::Arc;
 
 /// A path on a domain: its file system and the host's path, or the
@@ -32,14 +33,7 @@ fn on_host(path: &Path) -> Option<io::Result<(Arc<dyn Fs>, PathBuf)>> {
 /// trailing separator on `a` is not doubled. On a host the separator is
 /// `/` whatever this platform's is.
 pub fn join(a: &Path, b: &Path) -> PathBuf {
-    match domain_of(a) {
-        Some((d, rest)) if !b.to_string_lossy().starts_with('/') => {
-            let rest = rest.to_string_lossy();
-            let rest = rest.trim_end_matches('/');
-            on_domain(d, Path::new(&format!("{rest}/{}", b.display())))
-        }
-        _ => a.join(b),
-    }
+    kawoosh_doc::paths::join(a, b)
 }
 
 /// The directory holding `path` — `None` at a root. A trailing
@@ -47,15 +41,12 @@ pub fn join(a: &Path, b: &Path) -> PathBuf {
 pub fn parent(path: &Path) -> Option<PathBuf> {
     // A host's root is its own: `box:/x`'s parent is `box:/`, and
     // `box:/` has none.
-    if let Some((d, rest)) = domain_of(path) {
-        return rest.parent().map(|p| on_domain(d, p));
-    }
-    let p = path.parent()?;
+    let p = kawoosh_doc::paths::parent(path)?;
     if p.as_os_str().is_empty() {
         // A bare name's parent is the current directory.
         return Some(PathBuf::from("."));
     }
-    Some(p.to_path_buf())
+    Some(p)
 }
 
 /// The last component, as text: `c.txt` of `a/b/c.txt`, `b` of `a/b/`;
@@ -295,7 +286,8 @@ fn copy_through(from: &Path, to: &Path) -> io::Result<()> {
     if stat(from)?.is_dir {
         create(to, true)?;
         for e in list(from)? {
-            copy_through(&from.join(&e.name), &to.join(&e.name))?;
+            let name = Path::new(&e.name);
+            copy_through(&join(from, name), &join(to, name))?;
         }
         Ok(())
     } else {
@@ -436,10 +428,7 @@ fn walk_host(root: &Path, max: usize) -> io::Result<Vec<String>> {
                 continue;
             }
             // The host's `/`, whatever this platform's separator is.
-            let p = match rel.as_os_str().is_empty() {
-                true => PathBuf::from(&e.name),
-                false => PathBuf::from(format!("{}/{}", rel.display(), e.name)),
-            };
+            let p = host_join(&rel, Path::new(&e.name));
             if e.is_dir {
                 queue.push_back(p);
             } else {
@@ -556,7 +545,7 @@ pub fn write(path: &Path, text: impl AsRef<[u8]>) -> io::Result<()> {
     if let Some(h) = on_host(path) {
         changed_on_host(path);
         let (fs, p) = h?;
-        if let Some(dir) = p.parent()
+        if let Some(dir) = host_parent(&p)
             && !dir.as_os_str().is_empty()
             && fs.stat(dir).is_err()
         {
@@ -572,9 +561,148 @@ pub fn write(path: &Path, text: impl AsRef<[u8]>) -> io::Result<()> {
     std::fs::write(path, text).map_err(|e| named(path, e))
 }
 
+/// A host held in memory for the tests, each path kept as the text it
+/// came as — so a `\` where the host's `/` belongs is a file not found,
+/// as it is over SFTP — and every path it was asked about kept.
+#[cfg(test)]
+pub(crate) mod fake_host {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    pub struct Host {
+        /// A file's bytes, or `None` for a directory.
+        files: Mutex<BTreeMap<String, Option<Vec<u8>>>>,
+        pub asked: Mutex<Vec<String>>,
+    }
+
+    impl Host {
+        /// A host with `/`, `dirs` and empty `files`, registered as `name`.
+        pub fn register(name: &str, dirs: &[&str], files: &[&str]) -> Arc<Host> {
+            let h = Arc::new(Host::default());
+            {
+                let mut m = h.files.lock().unwrap();
+                for d in std::iter::once(&"/").chain(dirs) {
+                    m.insert(d.to_string(), None);
+                }
+                for f in files {
+                    m.insert(f.to_string(), Some(Vec::new()));
+                }
+            }
+            kawoosh_doc::fs::register(name, h.clone());
+            h
+        }
+
+        pub fn has(&self, path: &str) -> bool {
+            self.files.lock().unwrap().contains_key(path)
+        }
+
+        fn key(&self, path: &Path) -> String {
+            let k = path.to_string_lossy().into_owned();
+            self.asked.lock().unwrap().push(k.clone());
+            k
+        }
+    }
+
+    fn missing(path: &str) -> io::Error {
+        io::Error::new(io::ErrorKind::NotFound, path.to_string())
+    }
+
+    impl Fs for Host {
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            let k = self.key(path);
+            let files = self.files.lock().unwrap();
+            files.get(&k).cloned().flatten().ok_or_else(|| missing(&k))
+        }
+        fn write(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+            let k = self.key(path);
+            self.files.lock().unwrap().insert(k, Some(bytes.to_vec()));
+            Ok(())
+        }
+        fn stat(&self, path: &Path) -> io::Result<Stat> {
+            let k = self.key(path);
+            let files = self.files.lock().unwrap();
+            let e = files.get(&k).ok_or_else(|| missing(&k))?;
+            Ok(Stat {
+                is_dir: e.is_none(),
+                is_file: e.is_some(),
+                is_symlink: false,
+                size: 0,
+                modified: None,
+            })
+        }
+        fn list(&self, dir: &Path) -> io::Result<Vec<Entry>> {
+            let k = self.key(dir);
+            let files = self.files.lock().unwrap();
+            if !matches!(files.get(&k), Some(None)) {
+                return Err(missing(&k));
+            }
+            let prefix = format!("{}/", k.trim_end_matches('/'));
+            Ok(files
+                .iter()
+                .filter_map(|(p, e)| {
+                    let name = p.strip_prefix(&prefix)?;
+                    (!name.is_empty() && !name.contains('/')).then(|| Entry {
+                        name: name.to_string(),
+                        is_dir: e.is_none(),
+                        is_symlink: false,
+                        size: 0,
+                        modified: None,
+                    })
+                })
+                .collect())
+        }
+        fn rename(&self, _: &Path, _: &Path) -> io::Result<()> {
+            Err(io::ErrorKind::Unsupported.into())
+        }
+        fn remove(&self, _: &Path) -> io::Result<()> {
+            Err(io::ErrorKind::Unsupported.into())
+        }
+        fn create(&self, path: &Path, is_dir: bool) -> io::Result<()> {
+            let k = self.key(path);
+            let e = (!is_dir).then(Vec::new);
+            self.files.lock().unwrap().insert(k, e);
+            Ok(())
+        }
+        fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+            Ok(path.to_path_buf())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// On a host the separator is `/` on every platform: its paths are
+    /// asserted as text, since a `PathBuf` compares `\` and `/` alike on
+    /// Windows.
+    #[test]
+    fn a_hosts_paths_are_joined_and_walked_on_slash() {
+        let name = format!("fk{}", std::process::id());
+        let host =
+            fake_host::Host::register(&name, &["/p", "/p/sub"], &["/p/a.txt", "/p/sub/b.txt"]);
+        let on = |p: &str| PathBuf::from(format!("{name}:{p}"));
+        let text = |p: PathBuf| p.display().to_string();
+        assert_eq!(
+            text(join(&on("/p"), Path::new("sub"))),
+            format!("{name}:/p/sub")
+        );
+        assert_eq!(parent(&on("/p/sub")).map(text), Some(format!("{name}:/p")));
+        assert_eq!(parent(&on("/p")).map(text), Some(format!("{name}:/")));
+        assert_eq!(parent(&on("/")), None);
+        let mut got = walk(&on("/p"), 100).unwrap();
+        got.sort();
+        assert_eq!(got, ["a.txt", "sub/b.txt"]);
+        copy(&on("/p"), &on("/q")).unwrap();
+        assert!(host.has("/q/sub/b.txt"), "copied entry by entry");
+        write(&on("/r/x.txt"), "x").unwrap();
+        assert!(host.has("/r") && host.has("/r/x.txt"), "its directory made");
+        let asked = host.asked.lock().unwrap().clone();
+        assert!(asked.iter().all(|p| !p.contains('\\')), "{asked:?}");
+        kawoosh_doc::fs::unregister(&name);
+    }
 
     #[test]
     fn parent_and_basename_ignore_a_trailing_separator() {

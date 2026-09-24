@@ -1449,7 +1449,10 @@ local function symbol_rows(items, root)
   for i, s in ipairs(items or {}) do
     local where = s.container or ""
     if root and s.path then
-      local rel = s.path:sub(1, #root + 1) == root .. "/" and s.path:sub(#root + 2) or s.path
+      -- Under the root as `fs.join` spells it: `\` here on Windows, `/`
+      -- on a host.
+      local under = fs.join(root, "x"):sub(1, -2)
+      local rel = s.path:sub(1, #under) == under and s.path:sub(#under + 1) or s.path
       where = (where ~= "" and (where .. " · ") or "") .. rel .. ":" .. s.line
     end
     rows[i] = {

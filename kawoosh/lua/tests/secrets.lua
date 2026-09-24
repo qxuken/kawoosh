@@ -38,3 +38,19 @@ kawoosh.buf.set_private()
 kawoosh.buf.mask({ { 15, 19 } })
 kawoosh.frame()
 kawoosh.test.ok(kawoosh.buf.private(), "set_private")
+
+-- Where `ansible-vault` runs: the nearest directory above the file with
+-- an `ansible.cfg`, climbed through `kawoosh.fs` — `\` on Windows, as
+-- `/` elsewhere and on a host.
+local fs = kawoosh.fs
+local root = os.tmpname()
+os.remove(root)
+root = root .. "-vault"
+local deep = fs.join(fs.join(root, "group_vars"), "all")
+fs.write(fs.join(root, "ansible.cfg"), "")
+fs.write(fs.join(deep, "vault.yml"), "")
+local plugin = kawoosh.secrets_plugin
+kawoosh.test.eq(plugin.config_dir(fs.join(deep, "vault.yml")), root, "found above")
+fs.remove(fs.join(root, "ansible.cfg"))
+kawoosh.test.eq(plugin.config_dir(fs.join(deep, "vault.yml")), deep, "else the file's own")
+fs.remove(root)

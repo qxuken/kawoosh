@@ -1128,11 +1128,7 @@ impl Kawoosh {
                 };
                 self.md_table_left.insert((view, first), off);
             }
-            let dir = buf
-                .path
-                .as_ref()
-                .and_then(|p| p.parent())
-                .map(|p| p.to_path_buf());
+            let dir = buf.path.as_deref().and_then(kawoosh_systems::fs::parent);
             // Each row's images, `true` for a ghost's.
             type Wanted = (bool, usize, Vec<(String, String)>);
             let wanted: Vec<Wanted> = md_rows

@@ -695,14 +695,15 @@ pub fn socket_path() -> std::path::PathBuf {
 
 /// The CLI written to the host (`~/.cache/kawoosh`), executable; a
 /// host that refuses keeps its `$EDITOR`, which is the host's then.
-fn install_host_shim(s: &crate::sftp::Sftp) {
-    use kawoosh_doc::fs::Fs;
-    let dir = std::path::Path::new("~/.cache/kawoosh");
+fn install_host_shim(s: &dyn kawoosh_doc::fs::Fs) {
+    use std::path::Path;
+    let dir = Path::new("~/.cache/kawoosh");
     if s.create(dir, true).is_err() {
         return;
     }
     for (name, text) in [("kawoosh", HOST_SHIM), ("kawoosh-edit", HOST_EDITOR)] {
-        let p = dir.join(name);
+        // The host's `/`, whatever this platform's separator is.
+        let p = kawoosh_doc::paths::host_join(dir, Path::new(name));
         if s.write(&p, text.as_bytes()).is_ok() {
             let _ = s.set_mode(&p, 0o755);
         }
@@ -868,6 +869,16 @@ pub fn decode_image_bytes(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shim lands in `~/.cache/kawoosh/` on the host's `/`, not in a
+    /// file named `kawoosh\kawoosh` beside it.
+    #[test]
+    fn the_host_shim_is_written_on_slash() {
+        let host = crate::fs::fake_host::Host::default();
+        install_host_shim(&host);
+        assert!(host.has("~/.cache/kawoosh/kawoosh"));
+        assert!(host.has("~/.cache/kawoosh/kawoosh-edit"));
+    }
 
     #[test]
     fn base64_is_the_standard_one() {

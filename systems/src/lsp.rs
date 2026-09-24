@@ -136,12 +136,21 @@ pub fn workspace_root(path: &Path, def: &ServerDef) -> PathBuf {
     // A host's path is looked at through its domain: its markers are
     // the host's (a stat each), its ancestors stop at its root.
     if let Some((name, rest)) = crate::fs::domain_of(path) {
-        let exists = |p: &Path| crate::fs::exists(&crate::fs::on_domain(name, p));
-        let dir = rest.parent().unwrap_or(rest);
-        let repo = dir.ancestors().find(|d| exists(&d.join(".git")));
+        use kawoosh_doc::paths::{host_join, host_parent};
+        // Joined and climbed on the host's `/`, whatever this platform's
+        // separator is.
+        let exists = |d: &Path, m: &str| {
+            crate::fs::exists(&crate::fs::on_domain(name, &host_join(d, Path::new(m))))
+        };
+        fn up(d: &Path) -> Option<&Path> {
+            host_parent(d).filter(|p| !p.as_os_str().is_empty())
+        }
+        let dir = up(rest).unwrap_or(rest);
+        let ancestors = || std::iter::successors(Some(dir), |d| up(d));
+        let repo = ancestors().find(|d| exists(d, ".git"));
         let mut found = None;
-        for d in dir.ancestors() {
-            if def.roots.iter().any(|m| exists(&d.join(m))) {
+        for d in ancestors() {
+            if def.roots.iter().any(|m| exists(d, m)) {
                 found = Some(d.to_path_buf());
             }
             if Some(d) == repo {
@@ -2230,5 +2239,23 @@ mod tests {
         std::fs::create_dir_all(dir.join(".git")).unwrap();
         assert_eq!(workspace_root(&dir.join("member/src/x.rs"), def), dir);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// On a host the markers are looked for on its `/`: `/w\Cargo.toml`
+    /// is no file there.
+    #[test]
+    fn a_hosts_workspace_root_is_found_on_slash() {
+        let name = format!("lr{}", std::process::id());
+        let host = crate::fs::fake_host::Host::register(
+            &name,
+            &["/w", "/w/.git", "/w/member", "/w/member/src"],
+            &["/w/Cargo.toml", "/w/member/Cargo.toml"],
+        );
+        let def = &ServerDef::builtin()[0];
+        let root = workspace_root(Path::new(&format!("{name}:/w/member/src/x.rs")), def);
+        assert_eq!(root.display().to_string(), format!("{name}:/w"));
+        let asked = host.asked.lock().unwrap().clone();
+        assert!(asked.iter().all(|p| !p.contains('\\')), "{asked:?}");
+        kawoosh_doc::fs::unregister(&name);
     }
 }

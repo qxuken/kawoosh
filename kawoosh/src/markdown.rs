@@ -872,8 +872,8 @@ impl Kawoosh {
         if !path.is_empty() {
             let base = buf
                 .path
-                .as_ref()
-                .and_then(|p| p.parent().map(Path::to_path_buf))
+                .as_deref()
+                .and_then(kawoosh_systems::fs::parent)
                 .unwrap_or_else(|| self.cwd.clone());
             let full = kawoosh_systems::fs::expand(Path::new(path), &base);
             self.open(&full);

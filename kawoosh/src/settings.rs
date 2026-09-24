@@ -99,7 +99,12 @@ pub fn user_settings_path() -> Option<PathBuf> {
 
 /// Every place a project settings file can be for `dir`: `.kawoosh/
 /// settings.lua` in it and in every directory above, outermost first.
+/// None on a host: the settings files stay local (docs/design/
+/// domains.md).
 pub fn project_settings_candidates(dir: &Path) -> Vec<PathBuf> {
+    if kawoosh_systems::fs::domain_of(dir).is_some() {
+        return Vec::new();
+    }
     let mut files: Vec<PathBuf> = dir
         .ancestors()
         .map(|d| d.join(PROJECT_DIR).join(SETTINGS_FILE))
@@ -420,7 +425,10 @@ impl Kawoosh {
             })
             .collect();
         let creatable_user = self.config.user.clone();
-        let creatable_project = self.cwd.join(PROJECT_DIR).join(SETTINGS_FILE);
+        // None in a cwd on a host, where it would never be read.
+        let creatable_project = kawoosh_systems::fs::domain_of(&self.cwd)
+            .is_none()
+            .then(|| self.cwd.join(PROJECT_DIR).join(SETTINGS_FILE));
 
         // A section's caption. The default layer's is also its fold: what
         // the editor ships is the longest list and the least often read,
@@ -588,7 +596,7 @@ impl Kawoosh {
                             // from a template, saved when the user says.
                             let creatable = match layer {
                                 Layer::User => creatable_user.as_ref(),
-                                Layer::Project => Some(&creatable_project),
+                                Layer::Project => creatable_project.as_ref(),
                                 _ => None,
                             };
                             let has_file = sources.iter().any(|(n, _)| n != layer.name());
@@ -780,5 +788,11 @@ mod tests {
         );
         assert_eq!(candidates.len(), inner.ancestors().count());
         std::fs::remove_dir_all(&dir).ok();
+        // A cwd on a host has none: settings, trust and the workspace
+        // are local, and its path is not joined here as a local one.
+        let host = Path::new("box:/home/me/p");
+        assert!(project_settings_candidates(host).is_empty());
+        assert!(crate::trust::project_init_candidates(host).is_empty());
+        assert_eq!(crate::moments::workspace_of(host), "");
     }
 }

@@ -319,11 +319,11 @@ pub const PATH_FORMS: [(&str, &str); 6] = [
 /// the rest of the path (`.` for `cwd` itself), else the path whole, as
 /// vim's `%:.` does.
 pub fn path_form(cwd: &Path, path: &Path, form: &str) -> Result<String, String> {
-    use kawoosh_doc::paths::{domain_of, on_domain};
+    use kawoosh_doc::paths::domain_of;
     let abs = if kawoosh_doc::paths::is_absolute(path) {
         path.to_path_buf()
     } else {
-        cwd.join(path)
+        kawoosh_doc::paths::join(cwd, path)
     };
     // Under the working directory as spelled, else as the disk resolves
     // both — the editor's `/tmp/x` is the process's `/private/tmp/x`.
@@ -341,10 +341,7 @@ pub fn path_form(cwd: &Path, path: &Path, form: &str) -> Result<String, String> 
             .unwrap_or_else(|| p.to_path_buf())
     };
     // A host's root is its own (`box:/x`'s directory is `box:/`).
-    let dir = match domain_of(&abs) {
-        Some((d, rest)) => on_domain(d, rest.parent().unwrap_or(rest)),
-        None => abs.parent().unwrap_or(&abs).to_path_buf(),
-    };
+    let dir = kawoosh_doc::paths::parent(&abs).unwrap_or_else(|| abs.clone());
     let out = match form {
         "relative" => rel(&abs),
         "absolute" => abs.clone(),
@@ -1363,7 +1360,7 @@ impl Editor {
             }
             let path = self.percent_path(view)?;
             let (path, r) = if let Some(r) = rest.strip_prefix(":h") {
-                (path.parent().map(Path::to_path_buf).unwrap_or(path), r)
+                (kawoosh_doc::paths::parent(&path).unwrap_or(path), r)
             } else if let Some(r) = rest.strip_prefix(":t") {
                 (
                     path.file_name()
@@ -1393,9 +1390,8 @@ impl Editor {
         let path = self.percent_path(view)?;
         let (path, rest) = if let Some(r) = rest.strip_prefix(":h") {
             (
-                path.parent()
+                kawoosh_doc::paths::parent(&path)
                     .filter(|p| !p.as_os_str().is_empty())
-                    .map(Path::to_path_buf)
                     .unwrap_or(path.clone()),
                 r,
             )
@@ -2919,5 +2915,10 @@ mod tests {
             path_form(remote, Path::new("box:/home/me/src/x.rs"), "relative").unwrap(),
             "src/x.rs"
         );
+        // Joined and cut on the host's `/` on every platform.
+        let g = |p: &str, form: &str| path_form(remote, Path::new(p), form).unwrap();
+        assert_eq!(g("src/x.rs", "absolute"), "box:/home/me/src/x.rs");
+        assert_eq!(g("src/x.rs", "dir absolute"), "box:/home/me/src");
+        assert_eq!(g("box:/home/me/src/x.rs", "dir"), "src");
     }
 }

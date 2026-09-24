@@ -93,8 +93,11 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
         anyhow::bail!("edit: no path given");
     }
     for p in paths {
-        let abs = kawoosh_systems::fs::canonicalize(Path::new(&p))
-            .or_else(|_| std::env::current_dir().map(|d| d.join(&p)))?;
+        // A host's path is not connected in this process: kept as it
+        // is, domain and all, for the window to open.
+        let abs = kawoosh_systems::fs::canonicalize(Path::new(&p)).or_else(|_| {
+            std::env::current_dir().map(|d| kawoosh_systems::fs::join(&d, Path::new(&p)))
+        })?;
         send_request(
             &sock,
             &Request::Open {

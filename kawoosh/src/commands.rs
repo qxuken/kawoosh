@@ -923,7 +923,7 @@ fn cwd() -> Vec<ShellCommand> {
                         .focused_view()
                         .and_then(|v| k.ed.buffer_of(v).path.clone())
                     {
-                        Some(p) => p.parent().map(Path::to_path_buf).unwrap_or(p),
+                        Some(p) => kawoosh_systems::fs::parent(&p).unwrap_or(p),
                         None => kawoosh_systems::fs::home().unwrap_or_default(),
                     },
                 };

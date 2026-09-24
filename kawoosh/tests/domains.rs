@@ -119,6 +119,7 @@ fn a_hosts_file_is_opened_written_and_listed_through_its_domain() {
     std::fs::remove_dir_all(&root).ok();
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(root.join("src/a.txt"), "hello\n").unwrap();
+    std::fs::write(root.join("doc.md"), "[a](src/a.txt)\n").unwrap();
     let name = format!("m{}", std::process::id());
     kawoosh_doc::fs::register(&name, Arc::new(Mirror(root.clone())));
 
@@ -168,6 +169,34 @@ fn a_hosts_file_is_opened_written_and_listed_through_its_domain() {
     ex(&mut d, &mut app, &format!("e {file}"));
     d.keys(&mut app, " yP");
     assert_eq!(app.ed.memory.head().unwrap().text, file);
+    // Joined and cut on the host's `/` on every platform — the text,
+    // since a `PathBuf` compares `\` and `/` alike on Windows. `:cd`
+    // with no path is the file's directory.
+    let path_text = |a: &Kawoosh| {
+        a.focused_view()
+            .and_then(|v| a.ed.buffer_of(v).path.as_ref())
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    };
+    ex(&mut d, &mut app, "cd");
+    assert_eq!(app.cwd.display().to_string(), format!("{name}:/src"));
+    // A link in a file at the host's root is against that root.
+    ex(&mut d, &mut app, &format!("e {name}:/doc.md"));
+    until(&mut d, &mut app, "the markdown open", |a| {
+        focused_name(a) == "doc.md"
+    });
+    d.press(&mut app, "gg");
+    d.press(&mut app, "gx");
+    until(&mut d, &mut app, "the link followed", |a| {
+        path_text(a) == file
+    });
+    // A buffer under a directory moved on the host follows it.
+    app.run_lua_source(
+        "t",
+        &format!("kawoosh.buf.retarget('{name}:/src', '{name}:/moved')"),
+    );
+    d.frame(&mut app);
+    assert_eq!(path_text(&app), format!("{name}:/moved/a.txt"));
     // A domain the settings do not name says so, and opens nothing.
     ex(&mut d, &mut app, "e nowhere:/x.txt");
     assert!(

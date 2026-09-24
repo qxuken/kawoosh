@@ -112,11 +112,11 @@ local function vault_name(path) return "vault: " .. path end
 -- Where `ansible-vault` is run for `path`: the nearest directory above
 -- it with an `ansible.cfg`, else the file's own.
 function M.config_dir(path)
-  local d = path:match("^(.*)/[^/]*$") or "."
-  local here = d
-  while d and d ~= "" do
-    if fs.exists(d .. "/ansible.cfg") then return d end
-    local up = d:match("^(.*)/[^/]*$")
+  local here = fs.parent(path) or "."
+  local d = here
+  while d do
+    if fs.exists(fs.join(d, "ansible.cfg")) then return d end
+    local up = fs.parent(d)
     if up == d then break end
     d = up
   end

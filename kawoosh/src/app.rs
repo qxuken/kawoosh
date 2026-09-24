@@ -808,7 +808,7 @@ impl Kawoosh {
                 let path = if kawoosh_systems::fs::is_absolute(&path) {
                     path
                 } else {
-                    self.cwd.join(path)
+                    kawoosh_systems::fs::join(&self.cwd, &path)
                 };
                 // A caller that waits and hands over a file under the
                 // temp directory is `ansible-vault edit`'s shape: the

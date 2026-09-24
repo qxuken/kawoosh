@@ -332,8 +332,12 @@ const REPOSITORY_MARKERS: [&str; 3] = [".git", ".jj", ".hg"];
 /// Decision 2's workspace column: the outermost directory at or above
 /// `dir` with a `.kawoosh` in it; else the nearest that is a
 /// repository's root (docs/design/workspaces.md Decision 4), so a
-/// project without a `.kawoosh` has pins of its own; else nothing.
+/// project without a `.kawoosh` has pins of its own; else nothing, as
+/// on a host, whose directories are not looked through for it.
 pub fn workspace_of(dir: &Path) -> String {
+    if kawoosh_systems::fs::domain_of(dir).is_some() {
+        return String::new();
+    }
     dir.ancestors()
         .filter(|d| d.join(crate::settings::PROJECT_DIR).is_dir())
         .last()

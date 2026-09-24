@@ -148,16 +148,14 @@ impl Kawoosh {
                 let base = if Some(buffer) == self.compile.buffer {
                     self.compile.cwd.clone()
                 } else {
-                    b.path
-                        .as_ref()
-                        .and_then(|p| p.parent().map(Path::to_path_buf))
+                    b.path.as_deref().and_then(kawoosh_systems::fs::parent)
                 }
                 .or_else(|| Some(self.cwd.clone()))
                 .unwrap_or_default();
                 let full = if kawoosh_systems::fs::is_absolute(Path::new(&path)) {
                     PathBuf::from(&path)
                 } else {
-                    base.join(&path)
+                    kawoosh_systems::fs::join(&base, Path::new(&path))
                 };
                 if full.is_file() {
                     return Some((full, line, col));

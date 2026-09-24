@@ -38,8 +38,12 @@ pub const INIT_FILE: &str = "init.lua";
 /// hash.
 const NS: &str = "trust";
 
-/// Every place a project `init.lua` can be for `dir`, outermost first.
+/// Every place a project `init.lua` can be for `dir`, outermost first;
+/// none on a host, since trust is local (docs/design/domains.md).
 pub fn project_init_candidates(dir: &Path) -> Vec<PathBuf> {
+    if kawoosh_systems::fs::domain_of(dir).is_some() {
+        return Vec::new();
+    }
     let mut files: Vec<PathBuf> = dir
         .ancestors()
         .map(|d| d.join(PROJECT_DIR).join(INIT_FILE))

@@ -48,6 +48,66 @@ pub fn is_absolute(path: &Path) -> bool {
     path.is_absolute() || domain_of(path).is_some()
 }
 
+/// `a/b`, a domain kept: on a host joined by [`host_join`], so with `/`
+/// whatever this platform's separator is; here as `Path::join` has it.
+/// `b` spelled with a domain is `b` itself, as an absolute `b` is.
+pub fn join(a: &Path, b: &Path) -> PathBuf {
+    if domain_of(b).is_some() {
+        return b.to_path_buf();
+    }
+    match domain_of(a) {
+        Some((d, rest)) => on_domain(d, &host_join(rest, b)),
+        None => a.join(b),
+    }
+}
+
+/// The directory holding `path`, a domain kept: a host's root is its
+/// own — `box:/x`'s is `box:/`, and `box:/` and `box:~` have none —
+/// and its path is cut by [`host_parent`]; here as `Path::parent` has it.
+pub fn parent(path: &Path) -> Option<PathBuf> {
+    match domain_of(path) {
+        Some((d, rest)) => host_parent(rest)
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| on_domain(d, p)),
+        None => path.parent().map(Path::to_path_buf),
+    }
+}
+
+/// `dir/name` on a host, where `/` is the only separator: `name` from
+/// the host's root (`/x`) is `name` itself, an empty `name` is `dir`,
+/// and a trailing `/` on `dir` is not doubled. A host's paths are POSIX
+/// ones whatever this platform is, so this is text, not `Path::join`,
+/// which puts `\` between them on Windows.
+pub fn host_join(dir: &Path, name: &Path) -> PathBuf {
+    let (d, n) = (dir.to_string_lossy(), name.to_string_lossy());
+    if n.starts_with('/') || d.is_empty() {
+        return name.to_path_buf();
+    }
+    if n.is_empty() {
+        return dir.to_path_buf();
+    }
+    PathBuf::from(format!("{}/{n}", d.trim_end_matches('/')))
+}
+
+/// The directory holding a host's `path`, split on `/` alone: `/a` of
+/// `/a/b` and of `/a/b/`, `/` of `/a`, `~` of `~/x`, empty for a bare
+/// name (as `Path::parent` has it); `None` at `/`. A `\` is a character
+/// of a name there, not a separator.
+pub fn host_parent(path: &Path) -> Option<&Path> {
+    let Some(s) = path.to_str() else {
+        return path.parent();
+    };
+    let t = s.trim_end_matches('/');
+    if t.is_empty() {
+        return None;
+    }
+    let Some(at) = t.rfind('/') else {
+        return Some(Path::new(""));
+    };
+    let head = t[..at].trim_end_matches('/');
+    Some(Path::new(if head.is_empty() { "/" } else { head }))
+}
+
 /// `path` as an absolute, normalized path: `~` and `~/x` are the home,
 /// a relative path is against `cwd`, and `.` and `..` are folded
 /// lexically ([`normalize`]) — no link is followed and nothing is
@@ -60,12 +120,7 @@ pub fn expand(path: &Path, cwd: &Path) -> PathBuf {
         return on_domain(domain, &normalize_remote(rest));
     }
     if let Some((domain, dir)) = domain_of(cwd) {
-        let p = path.to_string_lossy();
-        let joined = match p.starts_with('/') {
-            true => p.into_owned(),
-            false => format!("{}/{p}", dir.display()),
-        };
-        return on_domain(domain, &normalize_remote(Path::new(&joined)));
+        return on_domain(domain, &normalize_remote(&host_join(dir, path)));
     }
     let p = if path.is_absolute() {
         path.to_path_buf()
@@ -209,6 +264,38 @@ mod tests {
         assert_eq!(s("box:~/p/../q", "/"), "box:~/q");
         assert_eq!(s("box:~/..", "/"), "box:~");
         assert_eq!(s("box:~bob/p/..", "/"), "box:~bob");
+    }
+
+    #[test]
+    fn a_hosts_path_is_joined_and_cut_on_slash() {
+        // The text, not a `PathBuf`: Windows compares `\` and `/` alike.
+        let j = |a: &str, b: &str| join(Path::new(a), Path::new(b)).display().to_string();
+        assert_eq!(j("box:/home/me", "x.rs"), "box:/home/me/x.rs");
+        assert_eq!(j("box:/home/me/", "src/x.rs"), "box:/home/me/src/x.rs");
+        assert_eq!(j("box:/", "x"), "box:/x");
+        assert_eq!(j("box:~", "p"), "box:~/p");
+        assert_eq!(j("box:/home/me", ""), "box:/home/me");
+        assert_eq!(j("box:/home/me", "/etc/hosts"), "box:/etc/hosts");
+        assert_eq!(j("box:/home/me", "other:/x"), "other:/x");
+        assert_eq!(j("/local", "other:/x"), "other:/x");
+        assert!(domain_of(&join(Path::new("box:/"), Path::new("x"))).is_some());
+        let hj = |a: &str, b: &str| host_join(Path::new(a), Path::new(b)).display().to_string();
+        assert_eq!(hj("/home/me", "a/b"), "/home/me/a/b");
+        assert_eq!(hj("", "a"), "a");
+        let p = |s: &str| parent(Path::new(s)).map(|p| p.display().to_string());
+        assert_eq!(p("box:/home/me/x.rs").as_deref(), Some("box:/home/me"));
+        assert_eq!(p("box:/x.rs").as_deref(), Some("box:/"));
+        assert_eq!(p("box:/"), None);
+        assert_eq!(p("box:~"), None);
+        let hp = |p: &str| host_parent(Path::new(p)).map(|p| p.display().to_string());
+        assert_eq!(hp("/home/me/x.rs").as_deref(), Some("/home/me"));
+        assert_eq!(hp("/home/me/").as_deref(), Some("/home"));
+        assert_eq!(hp("/home//me").as_deref(), Some("/home"));
+        assert_eq!(hp("/x").as_deref(), Some("/"));
+        assert_eq!(hp("~/x").as_deref(), Some("~"));
+        assert_eq!(hp("x").as_deref(), Some(""));
+        assert_eq!(hp("/"), None);
+        assert_eq!(hp("/a/b\\c").as_deref(), Some("/a"), "`\\` is a name's");
     }
 
     #[test]

@@ -20,6 +20,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
 use kawoosh_doc::fs::{Entry, Fs, Stat};
+use kawoosh_doc::paths::{host_join, host_parent};
 
 const INIT: u8 = 1;
 const VERSION: u8 = 2;
@@ -162,6 +163,20 @@ fn wire(path: &Path) -> Vec<u8> {
         None => s.into_owned(),
     };
     s.into_bytes()
+}
+
+/// The sibling a write goes to first, renamed over `path` once whole:
+/// `/d/.x.kawoosh~` of `/d/x`. The host's `/` whatever this platform's
+/// separator is — `Path::with_file_name` puts `\` there on Windows.
+fn sibling(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    let name = s
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default();
+    let dir = host_parent(path).unwrap_or(Path::new(""));
+    host_join(dir, Path::new(&format!(".{name}.kawoosh~")))
 }
 
 /// A STATUS as an error, the path it was about named by the caller.
@@ -359,7 +374,7 @@ impl Sftp {
         if dir.as_os_str().is_empty() || self.attrs_of(STAT, dir).is_ok() {
             return Ok(());
         }
-        if let Some(p) = dir.parent() {
+        if let Some(p) = host_parent(dir) {
             self.mkdir_all(p)?;
         }
         let mut body = Vec::new();
@@ -492,11 +507,7 @@ impl Fs for Sftp {
     }
 
     fn write(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let tmp = path.with_file_name(format!(".{name}.kawoosh~"));
+        let tmp = sibling(path);
         let handle = self.open(&tmp, WRITE_FLAG | CREAT | TRUNC)?;
         let mut result = Ok(());
         for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
@@ -546,7 +557,8 @@ impl Fs for Sftp {
         let mut out = Vec::new();
         for (name, a) in self.entries(dir)? {
             let target = if a.kind() == S_IFLNK {
-                self.attrs_of(STAT, &dir.join(&name)).unwrap_or(a)
+                self.attrs_of(STAT, &host_join(dir, Path::new(&name)))
+                    .unwrap_or(a)
             } else {
                 a
             };
@@ -563,7 +575,7 @@ impl Fs for Sftp {
     }
 
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        if let Some(p) = to.parent() {
+        if let Some(p) = host_parent(to) {
             self.mkdir_all(p)?;
         }
         if self.attrs_of(LSTAT, to).is_ok() {
@@ -584,7 +596,7 @@ impl Fs for Sftp {
         put_bytes(&mut body, &wire(path));
         if a.kind() == S_IFDIR {
             for (name, _) in self.entries(path)? {
-                self.remove(&path.join(name))?;
+                self.remove(&host_join(path, Path::new(&name)))?;
             }
             self.status(RMDIR, &body)
         } else {
@@ -596,7 +608,7 @@ impl Fs for Sftp {
         if is_dir {
             return self.mkdir_all(path);
         }
-        if let Some(p) = path.parent() {
+        if let Some(p) = host_parent(path) {
             self.mkdir_all(p)?;
         }
         let handle = self.open(path, WRITE_FLAG | CREAT | EXCL)?;
@@ -655,6 +667,15 @@ mod tests {
         .iter()
         .find(|p| Path::new(p).exists())
         .map(Command::new)
+    }
+
+    #[test]
+    fn a_writes_sibling_is_beside_it_on_slash() {
+        let s = |p: &str| sibling(Path::new(p)).display().to_string();
+        assert_eq!(s("/home/me/a.rs"), "/home/me/.a.rs.kawoosh~");
+        assert_eq!(s("/a.rs"), "/.a.rs.kawoosh~");
+        assert_eq!(s("~/a.rs"), "~/.a.rs.kawoosh~");
+        assert_eq!(s("a.rs"), ".a.rs.kawoosh~");
     }
 
     #[test]
