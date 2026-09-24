@@ -873,6 +873,44 @@ pub fn send_request(path: &std::path::Path, request: &Request) -> std::io::Resul
     Ok(reply.trim().to_string())
 }
 
+/// `edit [--wait|-w] [+LINE] PATH…` against the instance at `sock`:
+/// each path made absolute and opened, `wait` (or a `--wait` among the
+/// args) holding until its buffer is closed. What `kawoosh edit` and
+/// `kawoosh-edit` both run.
+pub fn edit(sock: &std::path::Path, args: &[String], mut wait: bool) -> anyhow::Result<()> {
+    let mut line = None;
+    let mut paths = Vec::new();
+    for a in args {
+        if a == "--wait" || a == "-w" {
+            wait = true;
+        } else if let Some(n) = a.strip_prefix('+') {
+            line = n.parse().ok();
+        } else {
+            paths.push(a);
+        }
+    }
+    if paths.is_empty() {
+        anyhow::bail!("edit: no path given");
+    }
+    for p in paths {
+        // A host's path is not connected in this process: kept as it
+        // is, domain and all, for the window to open.
+        let abs = crate::fs::canonicalize(std::path::Path::new(p)).or_else(|_| {
+            std::env::current_dir().map(|d| crate::fs::join(&d, std::path::Path::new(p)))
+        })?;
+        send_request(
+            sock,
+            &Request::Open {
+                path: abs.display().to_string(),
+                wait,
+                line,
+                domain: None,
+            },
+        )?;
+    }
+    Ok(())
+}
+
 /// An image file read and decoded to RGBA8 — PNG, JPEG, GIF's first
 /// frame — refused past `max` bytes on disk.
 pub fn decode_image(path: &std::path::Path, max: u64) -> Result<(u32, u32, Vec<u8>), String> {

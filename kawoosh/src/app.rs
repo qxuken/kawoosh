@@ -170,8 +170,8 @@ pub struct Kawoosh {
     pub(crate) ts_sent: HashMap<BufferId, Version>,
     /// The command socket's path once listening (`App::setup`).
     pub socket: Option<PathBuf>,
-    /// `kawoosh-edit` beside the socket: the binary under the name that
-    /// makes it `kawoosh edit --wait`, what a terminal's `$EDITOR` is.
+    /// What a terminal's `$EDITOR` is: `kawoosh-edit` beside the binary,
+    /// or the binary linked under that name beside the socket.
     pub(crate) editor_shim: Option<PathBuf>,
     /// `$EDITOR --wait` callers, answered when their buffer closes.
     pub(crate) waiters: HashMap<BufferId, Vec<Sender<String>>>,
@@ -1948,10 +1948,12 @@ impl Kawoosh {
     }
 }
 
-/// The `$EDITOR` a terminal gets: a symlink to this binary named
-/// `kawoosh-edit`, in a directory beside the socket — invoked by that
-/// name, the binary is `kawoosh edit --wait` (`main.rs`). None where a
-/// symlink cannot be made, and the terminals get the two-word form.
+/// The `$EDITOR` a terminal gets: `kawoosh-edit` beside this binary
+/// (`src/bin/edit.rs`), where a build put it. Else — `cargo run` builds
+/// the one binary — a symlink to this one named `kawoosh-edit`, in a
+/// directory beside the socket: invoked by that name, the binary is
+/// `kawoosh edit --wait` (`main.rs`). None where neither is, and the
+/// terminals get the two-word form.
 ///
 /// The directory is this user's alone: made 0700, or — left by a run
 /// that crashed with this pid — taken only when it is a directory this
@@ -1960,10 +1962,18 @@ impl Kawoosh {
 /// else made there could swap the link for a program of theirs that
 /// every `git commit` in a terminal would run.
 fn editor_shim(socket: &Path) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let beside = exe.with_file_name(format!(
+        "{}{}",
+        crate::EDITOR_SHIM,
+        std::env::consts::EXE_SUFFIX
+    ));
+    if beside.is_file() {
+        return Some(beside);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, MetadataExt};
-        let exe = std::env::current_exe().ok()?;
         let dir = socket.with_extension("bin");
         if std::fs::DirBuilder::new().mode(0o700).create(&dir).is_err() {
             let meta = std::fs::symlink_metadata(&dir).ok()?;

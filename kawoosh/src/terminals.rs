@@ -159,9 +159,9 @@ impl Kawoosh {
                 // (`kawoosh theme`) without it being on the PATH.
                 envs.push(("KAWOOSH_BIN".into(), exe.display().to_string()));
                 // One program with no arguments where there can be one
-                // (`kawoosh-edit`, the binary under another name): a
-                // shell that runs `$EDITOR` as a path — nushell's `config
-                // env` — finds no program called `kawoosh edit --wait`.
+                // (`kawoosh-edit`, `app::editor_shim`): a shell that
+                // runs `$EDITOR` as a path — nushell's `config env` —
+                // finds no program called `kawoosh edit --wait`.
                 let shim = match &self.editor_shim {
                     Some(p) => p.display().to_string(),
                     None => format!("{} edit --wait", exe.display()),

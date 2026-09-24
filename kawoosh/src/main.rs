@@ -77,37 +77,7 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
         }
         return Ok(true);
     }
-    let mut wait = false;
-    let mut line = None;
-    let mut paths = Vec::new();
-    for a in &args[1..] {
-        if a == "--wait" || a == "-w" {
-            wait = true;
-        } else if let Some(n) = a.strip_prefix('+') {
-            line = n.parse().ok();
-        } else {
-            paths.push(a.clone());
-        }
-    }
-    if paths.is_empty() {
-        anyhow::bail!("edit: no path given");
-    }
-    for p in paths {
-        // A host's path is not connected in this process: kept as it
-        // is, domain and all, for the window to open.
-        let abs = kawoosh_systems::fs::canonicalize(Path::new(&p)).or_else(|_| {
-            std::env::current_dir().map(|d| kawoosh_systems::fs::join(&d, Path::new(&p)))
-        })?;
-        send_request(
-            &sock,
-            &Request::Open {
-                path: abs.display().to_string(),
-                wait,
-                line,
-                domain: None,
-            },
-        )?;
-    }
+    kawoosh_systems::io::edit(&sock, &args[1..], false)?;
     Ok(true)
 }
 

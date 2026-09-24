@@ -36,6 +36,11 @@ regex = "1"
 # The process's memory for the perf tab (`perf::read_mem`).
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
+# A terminal's `$EDITOR` (src/bin/edit.rs), shipped beside `kawoosh`.
+[[bin]]
+name = "kawoosh-edit"
+path = "src/bin/edit.rs"
+
 [[bin]]
 name = "kawoosh-gen"
 path = "src/bin/gen.rs"

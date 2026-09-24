@@ -241,6 +241,52 @@ fn the_editor_handoff_opens_a_pane_and_waits_for_the_buffer_to_close() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `kawoosh-edit`, the binary a terminal's `$EDITOR` is: a relative path
+/// and a `+LINE` opened in the running instance, and the process still
+/// there until the buffer closes — what git waits on.
+#[test]
+fn kawoosh_edit_is_edit_wait_as_one_program() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-edit-bin-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = std::fs::canonicalize(&dir).unwrap();
+    let file = dir.join("COMMIT_EDITMSG");
+    std::fs::write(&file, "one\ntwo\n").unwrap();
+    let sock = dir.join("k.sock");
+    let mut app = Kawoosh::new("t", "");
+    app.io.listen(&sock).unwrap();
+    app.socket = Some(sock.clone());
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_kawoosh-edit"))
+        .args(["+2", "COMMIT_EDITMSG"])
+        .current_dir(&dir)
+        .env("KAWOOSH_SOCKET", &sock)
+        .spawn()
+        .unwrap();
+    let mut tries = 0;
+    while app.io.rx.is_empty() && tries < 500 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        tries += 1;
+    }
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.buffer_of(v);
+    assert_eq!(buf.path.as_deref(), Some(file.as_path()));
+    assert_eq!(
+        buf.line_of(app.ed.views[v].sels.primary().head),
+        1,
+        "at line 2"
+    );
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "the caller is still waiting"
+    );
+    d.keys(&mut app, ":wq");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(child.wait().unwrap().success());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn a_program_that_asks_for_the_mouse_gets_clicks_drags_and_the_wheel() {
     let mut app = Kawoosh::new("t", "");
