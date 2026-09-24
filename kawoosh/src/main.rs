@@ -1,3 +1,9 @@
+// On Windows the window's binary is a GUI program: opened from Explorer
+// or the Start menu it brings no console with it. What its CLI half
+// prints goes to the console it was run from (`attach_console`); a
+// terminal's `$EDITOR`, which has to be waited for, is `kawoosh-edit`.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use std::path::Path;
 
 use kawoosh::Kawoosh;
@@ -24,7 +30,8 @@ fn load_fonts(core: &mut Core) -> Option<kui::FontId> {
 /// `kawoosh edit [--wait] [+LINE] PATH…`, `kawoosh ex LINE`, `kawoosh
 /// theme` and `kawoosh pick SOURCE [QUERY]`: the CLI shim, talking to
 /// the running instance over `$KAWOOSH_SOCKET` (mvp.md Decision 3b).
-/// `EDITOR="kawoosh edit --wait"` is what every pty gets, `theme`
+/// `edit --wait` is what every pty's `$EDITOR` runs (as
+/// `kawoosh-edit`, `app::editor_shim`), `theme`
 /// answers `dark` or `light` — what a shell's prompt hook reads to pick
 /// its palette, since a running shell cannot see `TERM_APPEARANCE`
 /// change (roadmap step 6) — and `pick` is kawoosh's picker for a shell
@@ -37,6 +44,7 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
     if !matches!(verb, "edit" | "ex" | "theme" | "pick") {
         return Ok(false);
     }
+    attach_console();
     let Some(sock) = std::env::var_os("KAWOOSH_SOCKET") else {
         anyhow::bail!("{verb}: no running kawoosh (KAWOOSH_SOCKET is not set)");
     };
@@ -81,6 +89,21 @@ fn shim(args: &[String]) -> anyhow::Result<bool> {
     Ok(true)
 }
 
+/// On Windows, the console `kawoosh` was run from, for what the CLI
+/// half prints: a GUI program has none of its own. A pipe it was handed
+/// (`cd (kawoosh pick dirs)`) is already its output and stays so. cmd
+/// and PowerShell do not wait for a GUI program, so their prompt may
+/// come back before the output does.
+fn attach_console() {
+    #[cfg(windows)]
+    // SAFETY: no preconditions; with no parent console it fails and
+    // changes nothing.
+    unsafe {
+        use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
 /// What `RUST_LOG` asks: the level the log keeps from (`trace` when it
 /// says so, else `debug`) and the stderr sink's threshold — the level
 /// named (`trace`, `debug`, `info`, `warn`, `error`), `off` for none,
@@ -122,6 +145,7 @@ From a terminal inside kawoosh (through $KAWOOSH_SOCKET):
   kawoosh theme                  print `dark` or `light`
   kawoosh pick SOURCE [QUERY]    the picker on SOURCE (dirs, files, …);
                                  prints what is picked, or exits 1
+  kawoosh-edit [+LINE] PATH...   edit --wait as one program: $EDITOR
 
 Options:
   -h, --help                     print this and exit
@@ -147,6 +171,14 @@ fn main() -> anyhow::Result<()> {
         args.splice(0..0, ["edit".to_string(), "--wait".to_string()]);
     }
     let after_dashes = args.first().is_some_and(|a| a == "--");
+    // A flag, or `test`: the CLI half, whose output wants a console.
+    if !after_dashes
+        && args
+            .first()
+            .is_some_and(|a| (a.starts_with('-') && a != "-") || a == "test")
+    {
+        attach_console();
+    }
     match args.first().map(String::as_str) {
         Some("-h" | "--help") => {
             print!("{USAGE}");
