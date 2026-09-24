@@ -6,18 +6,38 @@
 #   Contents/MacOS/kawoosh        the window (CFBundleExecutable)
 #   Contents/MacOS/kawoosh-edit   a terminal's $EDITOR, found beside it
 #   Contents/Resources/fonts/     the bundled faces, found from the binary
+#                                 (left out with --no-fonts)
 #   Contents/Info.plist
 #
 # The binary is the same one `cargo run` builds; the CLI half works from
 # inside the app too:
 #   ln -s /Applications/Kawoosh.app/Contents/MacOS/kawoosh ~/.local/bin/
 #
-# Usage: scripts/macos-app.sh [OUT_DIR]      (default: target/release)
+# Usage: scripts/macos-app.sh [--no-fonts] [OUT_DIR]
+#                                          (OUT_DIR: target/release)
+#
+# --no-fonts leaves the 217 MB of faces out. The app then finds them in
+# the source tree it was built from (`fonts_dir` in main.rs), else an
+# Iosevka installed on the system, else it draws in the system's mono.
 set -euo pipefail
+
+fonts=1
+args=()
+for a in "$@"; do
+  case $a in
+    --no-fonts) fonts=0 ;;
+    -h | --help)
+      sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'
+      exit 0
+      ;;
+    -*) echo "macos-app.sh: unknown option $a" >&2; exit 2 ;;
+    *) args+=("$a") ;;
+  esac
+done
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 target=${CARGO_TARGET_DIR:-$root/target}
-out=${1:-$target/release}
+out=${args[0]:-$target/release}
 app=$out/Kawoosh.app
 
 cargo build --release --manifest-path "$root/Cargo.toml" \
@@ -30,8 +50,10 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$target/release/kawoosh" "$target/release/kawoosh-edit" "$app/Contents/MacOS/"
 # Two hundred megabytes of faces: cloned where the disk is APFS, which
 # takes no space until one side changes; copied where it is not.
-cp -Rc "$root/assets/fonts" "$app/Contents/Resources/" 2>/dev/null ||
-  cp -R "$root/assets/fonts" "$app/Contents/Resources/"
+if [ "$fonts" = 1 ]; then
+  cp -Rc "$root/assets/fonts" "$app/Contents/Resources/" 2>/dev/null ||
+    cp -R "$root/assets/fonts" "$app/Contents/Resources/"
+fi
 
 cat >"$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
