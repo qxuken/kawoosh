@@ -395,6 +395,9 @@ pub struct Tab {
     /// 1): the focused tab's is the editor's. None until the shell gives
     /// it one — the window's first tab, a session's from before.
     pub cwd: Option<std::path::PathBuf>,
+    /// A terminal in it rang while it was not the tab in front
+    /// (`terminal.bell`): its label is marked until it is visited.
+    pub bell: bool,
 }
 
 impl Tab {
@@ -403,6 +406,7 @@ impl Tab {
             layout: Kind::Tree(root),
             cwd: None,
             focused,
+            bell: false,
         }
     }
 
@@ -918,6 +922,7 @@ impl Layout {
             layout,
             focused: p,
             cwd,
+            bell: false,
         });
         self.tab = self.tabs.len() - 1;
         self.dock_focused = false;

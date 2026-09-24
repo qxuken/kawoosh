@@ -376,6 +376,7 @@ impl Kawoosh {
                 layout: kind,
                 focused: 0,
                 cwd,
+                bell: false,
             };
             let mut ps = Vec::new();
             tab.panes(&mut ps);

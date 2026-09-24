@@ -6,7 +6,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
-use kui::{InputEvent, KeyMods};
+use kui::{InputEvent, KeyMods, Vec2};
 
 #[test]
 fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
@@ -138,6 +138,84 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A BEL (roadmap step 29): a chime by default, at most one in
+/// `BELL_GAP`; a terminal not on screen marks its tab until the tab is
+/// visited; `terminal.bell = "off"` does neither, `visual` marks without
+/// a sound; the editor rings for a search with no match only under
+/// `editor.bell`.
+#[test]
+fn a_bell_chimes_and_marks_a_tab_out_of_sight() {
+    let played = |d: &mut Drive| {
+        d.core
+            .take_audio_commands()
+            .iter()
+            .filter(|c| matches!(c, kui::AudioCommand::Play { .. }))
+            .count()
+    };
+    let mut app = Kawoosh::new("t", "hello");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    played(&mut d);
+    app.feed_terminal(t, b"\x07\x07\x07");
+    d.frame(&mut app);
+    assert_eq!(played(&mut d), 1, "one chime for three BELs");
+    assert!(!app.layout.tabs[0].bell, "in sight: no mark");
+    // A new tab in front; the terminal rings behind it.
+    app.shell_command("tab new", &[], None);
+    d.frame(&mut app);
+    std::thread::sleep(kawoosh::terminals::BELL_GAP);
+    app.feed_terminal(t, b"\x07");
+    d.frame(&mut app);
+    assert_eq!(played(&mut d), 1);
+    assert!(app.layout.tabs[0].bell, "the tab behind is marked");
+    assert!(!app.layout.tabs[1].bell);
+    app.shell_command("tab prev", &[], None);
+    d.frame(&mut app);
+    assert!(!app.layout.tabs[0].bell, "visited: the mark goes");
+    // `visual`: the mark, no sound; `off`: neither.
+    app.shell_command("tab next", &[], None);
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.bell",
+        kawoosh_editor::Setting::Str("visual".into()),
+    );
+    std::thread::sleep(kawoosh::terminals::BELL_GAP);
+    app.feed_terminal(t, b"\x07");
+    d.frame(&mut app);
+    assert_eq!(played(&mut d), 0);
+    assert!(app.layout.tabs[0].bell);
+    app.shell_command("tab prev", &[], None);
+    d.frame(&mut app);
+    app.shell_command("tab next", &[], None);
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.bell",
+        kawoosh_editor::Setting::Str("off".into()),
+    );
+    app.feed_terminal(t, b"\x07");
+    d.frame(&mut app);
+    assert_eq!(played(&mut d), 0);
+    assert!(!app.layout.tabs[0].bell, "off: nothing");
+    // The editor's own: a search with no match, under `editor.bell`.
+    d.keys(&mut app, "/zzz");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(played(&mut d), 0, "editor.bell is off by default");
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "editor.bell",
+        kawoosh_editor::Setting::Bool(true),
+    );
+    std::thread::sleep(kawoosh::terminals::BELL_GAP);
+    d.keys(&mut app, "/zzz");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(played(&mut d), 1, "a search with no match rings");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 #[test]
 fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
     let dir = std::env::temp_dir().join(format!("kawoosh-gf-{}", std::process::id()));
@@ -176,6 +254,39 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
     );
     // The frame after the modifier, as the runner draws one: the grid
     // takes clicks while ctrl is held.
+    d.frame(&mut app);
+    // The hover says so first (roadmap step 29): over the path the
+    // pointer is a hand — the path underlined — and over words that are
+    // no path it is not.
+    let at = |col: f32, row: f32| Vec2::new(cells.rect.x + col * cw, cells.rect.y + row * ch);
+    d.input(&mut app, InputEvent::CursorMoved(at(8.5, 1.5)));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(d.core.cursor_shape(), kui::CursorShape::Pointer, "a path");
+    d.input(&mut app, InputEvent::CursorMoved(at(2.5, 0.5)));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_ne!(
+        d.core.cursor_shape(),
+        kui::CursorShape::Pointer,
+        "`error[E0000]:` is no path"
+    );
+    d.input(&mut app, InputEvent::Modifiers(KeyMods::default()));
+    d.input(&mut app, InputEvent::CursorMoved(at(8.5, 1.5)));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_ne!(
+        d.core.cursor_shape(),
+        kui::CursorShape::Pointer,
+        "without ctrl, text"
+    );
+    d.input(
+        &mut app,
+        InputEvent::Modifiers(KeyMods {
+            ctrl: true,
+            ..Default::default()
+        }),
+    );
     d.frame(&mut app);
     d.click(&mut app, cells.rect.x + 8.5 * cw, cells.rect.y + 1.5 * ch);
     let v = app

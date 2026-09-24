@@ -2103,6 +2103,7 @@ impl kui::App for Kawoosh {
         self.dark = ui.theme().is_dark();
         self.sync_term_palettes();
         self.sync_term_settings();
+        self.ring_bells(ui);
         self.spawn_pending();
         self.sweep_scratches();
         self.tick_secrets();
