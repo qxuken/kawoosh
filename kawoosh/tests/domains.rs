@@ -112,7 +112,7 @@ fn focused_name(app: &Kawoosh) -> String {
 }
 
 /// Round one: a file on a mirrored host opened, edited, written back
-/// and listed, and a domain not connected said so.
+/// and listed, and a domain nobody named said so.
 #[test]
 fn a_hosts_file_is_opened_written_and_listed_through_its_domain() {
     let root = std::env::temp_dir().join(format!("kawoosh-domain-{}", std::process::id()));
@@ -168,11 +168,132 @@ fn a_hosts_file_is_opened_written_and_listed_through_its_domain() {
     ex(&mut d, &mut app, &format!("e {file}"));
     d.keys(&mut app, " yP");
     assert_eq!(app.ed.memory.head().unwrap().text, file);
-    // A domain that is not connected says so, and opens nothing.
+    // A domain the settings do not name says so, and opens nothing.
     ex(&mut d, &mut app, "e nowhere:/x.txt");
-    until(&mut d, &mut app, "the refusal", |a| {
-        a.ed.message.contains("nowhere: not connected")
-    });
+    assert!(
+        app.ed.message.starts_with("no domain named nowhere"),
+        "{}",
+        app.ed.message
+    );
+    assert!(app.ed.buffer_at(Path::new("nowhere:/x.txt")).is_none());
     kawoosh_doc::fs::unregister(&name);
     std::fs::remove_dir_all(&root).ok();
+}
+
+/// An app whose `ssh` is the stand-in, with domain `name` on `host`.
+fn ssh_app(name: &str, host: &str) -> (Drive, Kawoosh) {
+    let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_ssh.py");
+    let mut d = Drive::new(1000.0, 600.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("set ssh.command={}", fake.display()),
+    );
+    ex(&mut d, &mut app, &format!("set domains.{name}.ssh={host}"));
+    (d, app)
+}
+
+fn sftp_server() -> bool {
+    [
+        "/usr/libexec/sftp-server",
+        "/usr/lib/openssh/sftp-server",
+        "/usr/lib/ssh/sftp-server",
+    ]
+    .iter()
+    .any(|p| Path::new(p).exists())
+}
+
+/// Round two: the first use of a domain connects it — the master in a
+/// pane in the dock, SFTP through it — and then does what was asked;
+/// `:domain` says how it stands; a disconnected one connects again on
+/// the next use; a master that fails says so and does nothing.
+#[test]
+fn a_domain_connects_over_ssh_on_first_use() {
+    if !sftp_server() {
+        eprintln!("no sftp-server here: skipped");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("kawoosh-ssh-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(&root).unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    std::fs::write(root.join("a.txt"), "on the host\n").unwrap();
+    let name = format!("s{}", std::process::id());
+    let (mut d, mut app) = ssh_app(&name, "box");
+    let file = format!("{name}:{}", root.join("a.txt").display());
+    ex(&mut d, &mut app, &format!("e {file}"));
+    assert!(app.ed.message.contains("connecting"), "{}", app.ed.message);
+    assert!(app.layout.dock_open, "the master's pane in the dock");
+    until(&mut d, &mut app, "connected and opened", |a| {
+        a.ed.buffers
+            .values()
+            .any(|b| b.path.as_deref() == Some(Path::new(&file)) && b.text() == "on the host\n")
+    });
+    // The keys went to the dock for the master; back to the file.
+    let pane = app
+        .layout
+        .all_panes()
+        .into_iter()
+        .find(|p| {
+            matches!(app.layout.content(*p), Some(kawoosh::layout::Content::Editor(v))
+                if app.ed.views[v].buffer == app.ed.buffer_at(Path::new(&file)).unwrap())
+        })
+        .unwrap();
+    app.layout.focus(pane);
+    d.keys(&mut app, "Ahere ");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "w");
+    assert_eq!(
+        std::fs::read_to_string(root.join("a.txt")).unwrap(),
+        "on the hosthere \n",
+        "{}",
+        app.ed.message
+    );
+    // Changed on the host: the poll sees it, and the clean buffer
+    // reads it again (domains.md Decision 5).
+    ex(&mut d, &mut app, "set ssh.poll_secs=0.2");
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(root.join("a.txt"), "changed on the host\n").unwrap();
+    until(&mut d, &mut app, "the poll's reload", |a| {
+        a.ed.buffer_at(Path::new(&file))
+            .is_some_and(|id| a.ed.buffers[id].text() == "changed on the host\n")
+    });
+    ex(&mut d, &mut app, "domain");
+    let v = app.focused_view().unwrap();
+    let listing = app.ed.buffer_of(v).text();
+    assert!(
+        listing.contains(&format!("{name}\tssh box\tup\t1 open")),
+        "{listing}"
+    );
+    d.keys(&mut app, "q");
+    // Disconnected: the files go; the next use connects again.
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    assert!(!kawoosh_doc::fs::is_registered(&name));
+    ex(&mut d, &mut app, &format!("cd {name}:{}", root.display()));
+    until(
+        &mut d,
+        &mut app,
+        "connected again, the tab's directory",
+        |a| a.ed.cwd == Path::new(&format!("{name}:{}", root.display())),
+    );
+    ex(&mut d, &mut app, &format!("domain disconnect {name}"));
+    std::fs::remove_dir_all(&root).ok();
+
+    // A master refused: said, nothing opened.
+    let bad = format!("r{}", std::process::id());
+    let (mut d, mut app) = ssh_app(&bad, "refuse");
+    ex(&mut d, &mut app, &format!("e {bad}:/x.txt"));
+    until(&mut d, &mut app, "the failure", |a| {
+        a.ed.message.contains("pane closed") || a.ed.message.contains("did not come up")
+    });
+    assert!(
+        app.ed
+            .buffer_at(Path::new(&format!("{bad}:/x.txt")))
+            .is_none()
+    );
 }

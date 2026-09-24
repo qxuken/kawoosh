@@ -55,6 +55,8 @@ pub struct Kawoosh {
     pub languages: kawoosh_languages::Registry,
     pub lsp: LspState,
     pub scripting: Scripting,
+    /// The hosts reached through ssh (docs/design/domains.md).
+    pub domains: crate::domains::Domains,
     /// The config files, their watch, and the last reload.
     pub config: Config,
     /// The watch on the open buffers' files (`disk.rs`).
@@ -283,6 +285,7 @@ impl Kawoosh {
                 servers: kawoosh_systems::lsp::ServerDef::builtin(),
                 ..Default::default()
             },
+            domains: Default::default(),
             config: Config::new(wake.clone()),
             disk: crate::disk::DiskWatch::new(wake.clone()),
             trust: Default::default(),
@@ -391,6 +394,9 @@ impl Kawoosh {
     /// the editor's (docs/design/workspaces.md) — not the process's.
     pub fn set_cwd(&mut self, dir: &Path) {
         let dir = self.resolve(dir);
+        if self.domain_gate(&dir, crate::domains::Pending::Cd(dir.clone())) {
+            return;
+        }
         if !kawoosh_systems::fs::is_dir(&dir) {
             self.ed.message = format!("not a directory: {}", dir.display());
             return;
@@ -593,7 +599,10 @@ impl Kawoosh {
                         t.feed(&bytes);
                     }
                 }
+                IoMsg::DomainUp { name } => self.domain_up(&name),
+                IoMsg::DomainFailed { name, error } => self.domain_failed(&name, &error),
                 IoMsg::PtyClosed { id } => {
+                    self.domain_term_closed(id);
                     // The process is gone: close its pane, keep nothing.
                     if let Some(t) = self.terms.map.get_mut(&id) {
                         t.is_running();
@@ -1277,6 +1286,11 @@ impl Kawoosh {
     /// Opens `path` in the focused editor pane (or a new pane if the
     /// focus is elsewhere) — unless a plugin's opener takes it.
     pub fn open(&mut self, path: &Path) {
+        // A host that is down: connected first, the open done after.
+        let resolved = self.resolve(path);
+        if self.domain_gate(&resolved, crate::domains::Pending::Open(resolved.clone())) {
+            return;
+        }
         if self.opened_by_plugin(path) {
             return;
         }
@@ -1988,6 +2002,7 @@ impl kui::App for Kawoosh {
     /// Quit — is a quit too: the session is saved as `:q` saves it, once
     /// (`:q` saved it already when it got here).
     fn teardown(&mut self) {
+        self.domains_teardown();
         if let Some(dir) = self.editor_shim.as_ref().and_then(|p| p.parent()) {
             let _ = std::fs::remove_dir_all(dir);
         }

@@ -96,6 +96,78 @@ pub enum IoMsg {
         hit: Option<(std::ops::Range<usize>, bool)>,
         elapsed: std::time::Duration,
     },
+    /// A domain's master is up and its files are reachable: the domain
+    /// is in `kawoosh_doc::fs`'s registry (docs/design/domains.md).
+    DomainUp {
+        name: String,
+    },
+    /// A domain's connection gave up, and why.
+    DomainFailed {
+        name: String,
+        error: String,
+    },
+}
+
+/// How a domain is reached (docs/design/domains.md Decision 3): the
+/// `ssh` binary, the host as `~/.ssh/config` or `user@host` names it,
+/// and the master's control socket.
+#[derive(Clone, Debug)]
+pub struct Transport {
+    pub ssh: String,
+    pub host: String,
+    pub ctl: std::path::PathBuf,
+}
+
+impl Transport {
+    /// `ssh -S CTL ARGS… HOST`, as a command to run.
+    pub fn command(&self, args: &[&str]) -> std::process::Command {
+        let mut c = std::process::Command::new(&self.ssh);
+        c.arg("-S").arg(&self.ctl).args(args).arg(&self.host);
+        c
+    }
+
+    /// The master's line for a pane, quoted for the shell: it asks for
+    /// a password or a passphrase there, and stays up past the pane
+    /// (`ControlPersist`).
+    pub fn master_line(&self) -> String {
+        format!(
+            "{} -M -S {} -o ControlPersist=yes {}",
+            shell_quote(&self.ssh),
+            shell_quote(&self.ctl.display().to_string()),
+            shell_quote(&self.host)
+        )
+    }
+
+    /// Whether the master answers on its control socket.
+    pub fn is_up(&self) -> bool {
+        self.command(&["-O", "check"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    /// The master told to go, the control socket with it.
+    pub fn exit(&self) {
+        let _ = self
+            .command(&["-O", "exit"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
+/// `s` in single quotes for a POSIX shell.
+pub fn shell_quote(s: &str) -> String {
+    if !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_./:@=+,".contains(&b))
+    {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// A process [`Io::run_process`] started, to be killed early — a search
@@ -408,6 +480,55 @@ pub fn socket_path() -> std::path::PathBuf {
 }
 
 impl Io {
+    /// Waits on a thread for `transport`'s master to come up — the pane
+    /// it runs in asking whatever it asks — then opens its SFTP channel
+    /// and registers `name`'s files: [`IoMsg::DomainUp`], or
+    /// [`IoMsg::DomainFailed`] when the channel fails, the wait runs past
+    /// `patience`, or `cancel` is set (the master's pane closed).
+    pub fn connect_domain(
+        &self,
+        name: String,
+        transport: Transport,
+        patience: std::time::Duration,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let tx = self.tx.clone();
+        let wake = self.wake.clone();
+        thread::Builder::new()
+            .name(format!("domain-{name}"))
+            .spawn(move || {
+                use std::sync::atomic::Ordering;
+                let started = std::time::Instant::now();
+                let failed = |error: String| IoMsg::DomainFailed {
+                    name: name.clone(),
+                    error,
+                };
+                let msg = loop {
+                    if cancel.load(Ordering::Relaxed) {
+                        break failed("the connection's pane closed".into());
+                    }
+                    if transport.is_up() {
+                        let mut c = transport.command(&["-s"]);
+                        c.arg("sftp");
+                        break match crate::sftp::Sftp::spawn(c) {
+                            Ok(s) => {
+                                kawoosh_doc::fs::register(&name, std::sync::Arc::new(s));
+                                IoMsg::DomainUp { name: name.clone() }
+                            }
+                            Err(e) => failed(format!("sftp: {e}")),
+                        };
+                    }
+                    if started.elapsed() > patience {
+                        break failed("the master did not come up".into());
+                    }
+                    thread::sleep(std::time::Duration::from_millis(200));
+                };
+                let _ = tx.send(msg);
+                wake.wake();
+            })
+            .expect("spawning a domain's connect thread");
+    }
+
     /// Listens on `path`; each connection's request lands as
     /// [`IoMsg::Request`], and the connection stays open until the reply
     /// is sent (so `--wait` blocks the caller).

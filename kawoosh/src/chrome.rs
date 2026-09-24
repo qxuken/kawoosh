@@ -39,7 +39,15 @@ impl Kawoosh {
         let font = self.chrome.face;
         let tab_h = self.chrome.tab_h;
         let focused = ui.env().focused;
-        let (head, last) = shorten_path(&kawoosh_systems::fs::abbreviate_home(&self.cwd));
+        // A host's directory keeps its domain whole: `box:` then the
+        // host's path shortened (docs/design/domains.md Decision 8).
+        let (head, last) = match kawoosh_systems::fs::domain_of(&self.cwd) {
+            Some((d, rest)) => {
+                let (h, l) = shorten_path(&rest.display().to_string());
+                (format!("{d}:{h}"), l)
+            }
+            None => shorten_path(&kawoosh_systems::fs::abbreviate_home(&self.cwd)),
+        };
         let full = kawoosh_systems::fs::abbreviate_home(&self.cwd);
         // Each block with what a click on it runs, if anything.
         let mut blocks: Vec<(String, kui::Color, Option<&str>)> = Vec::new();
@@ -163,7 +171,15 @@ impl Kawoosh {
             .iter()
             .map(|tab| {
                 let name = match self.layout.content(tab.focused) {
-                    Some(Content::Editor(v)) => self.ed.buffer_of(v).name.clone(),
+                    // A host's file says which host (domains.md
+                    // Decision 8): `box: x.rs`.
+                    Some(Content::Editor(v)) => {
+                        let b = self.ed.buffer_of(v);
+                        match b.path.as_deref().and_then(kawoosh_systems::fs::domain_of) {
+                            Some((d, _)) => format!("{d}: {}", b.name),
+                            None => b.name.clone(),
+                        }
+                    }
                     Some(Content::Terminal(t)) => self
                         .terms
                         .map

@@ -276,3 +276,32 @@ the local files too. `kawoosh/tests/domains.rs` registers an in-process
 file system mirroring a temporary directory: `:e box:/…`, `:w`, `-`
 to the host's root, `<leader>yP` keeping the domain, an unconnected
 domain refused.
+
+**Round two, 2026-09-24: ssh.** `domains.NAME.ssh` in the settings as
+Decision 1 has it; the first use of a path on a domain that is down —
+`:e`, `:cd`, a `kawoosh.open` — connects it and does what was asked
+once it is up (`Kawoosh::domain_gate`, the pending open or `cd`). The
+master is a terminal in the dock running `ssh -M -S CTL -o
+ControlPersist=yes HOST`, so a password is typed where it is asked; a
+thread (`Io::connect_domain`) asks `ssh -S CTL -O check` every 200 ms
+until the master answers — or its pane closes, or ten minutes pass —
+then opens `ssh -S CTL -s HOST sftp` and registers the domain's files.
+`kawoosh_systems::sftp` is the client: SFTP v3 by hand, blocking, one
+request at a time under a lock, a write through a sibling renamed over
+with `posix-rename@openssh.com` and the file's mode kept, `~` sent as
+the directory the server started in. `:domain` (a `*domains*` pane:
+each domain, its host, how it stands, its open files), `:domain
+connect`, `:domain disconnect`; quitting tells every master to go,
+since `ControlPersist` would keep it past kawoosh. The watch stats a
+host's paths on a slower beat than the local ones (Decision 5), so a
+clean buffer changed on the host reads again. A host's file is `box:
+x.rs` in the tab strip and the title bar keeps the domain whole.
+Departures: the binary is `ssh.command` and the beat `ssh.poll_secs`
+(5), not `domains.ssh_command` and `domains.poll_secs`, where a domain
+could be named either; a dropped master is an error on the next use
+and `:domain connect` again, not a pane reopened by itself. The test
+fixture is not a Python SFTP server but a stand-in `ssh`
+(`kawoosh/tests/fixtures/fake_ssh.py`: the master a control file, `-O`
+answered from it, `-s sftp` handed to OpenSSH's own `sftp-server`), so
+the client is tested against the real server — `sftp.rs`'s own test
+talks to `sftp-server` directly.

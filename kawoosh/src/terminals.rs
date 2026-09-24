@@ -478,6 +478,10 @@ impl Kawoosh {
     /// Opens `path` in an editor pane — the focused one, or a split
     /// beside a terminal — and moves to `line:col` when given.
     pub fn open_in_editor(&mut self, path: &Path, line: Option<usize>, col: Option<usize>) {
+        let resolved = self.resolve(path);
+        if self.domain_gate(&resolved, crate::domains::Pending::Open(resolved.clone())) {
+            return;
+        }
         if self.opened_by_plugin(path) {
             return;
         }

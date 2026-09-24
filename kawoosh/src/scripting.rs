@@ -1018,6 +1018,13 @@ impl Kawoosh {
             return;
         }
         self.scripting.settings_seen = v;
+        // How often a host's files are looked at (domains.md Decision 5).
+        let poll = match self.ed.settings.get("ssh.poll_secs") {
+            Some(kawoosh_editor::Setting::Float(f)) => f.max(0.0),
+            Some(kawoosh_editor::Setting::Int(i)) => (*i).max(0) as f64,
+            _ => 5.0,
+        };
+        kawoosh_systems::watch::set_remote_interval(std::time::Duration::from_secs_f64(poll));
         let Some(rt) = self.scripting.rt.clone() else {
             return;
         };

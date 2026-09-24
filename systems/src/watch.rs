@@ -10,7 +10,8 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
@@ -18,6 +19,16 @@ use crate::WakeHandle;
 
 /// How often the set is looked at.
 pub const INTERVAL: Duration = Duration::from_millis(500);
+
+/// How often a path on a host is looked at, in milliseconds: a stat
+/// there is a round trip, and SFTP has no watch to wait on instead
+/// (docs/design/domains.md Decision 5). `ssh.poll_secs` sets it.
+static REMOTE_MS: AtomicU64 = AtomicU64::new(5000);
+
+/// How often a host's paths are stat'd, for every watch.
+pub fn set_remote_interval(every: Duration) {
+    REMOTE_MS.store(every.as_millis() as u64, Ordering::Relaxed);
+}
 
 /// A file's stamp: whether it exists, its modification time and its
 /// length — enough that a save, even one within the clock's tick, is
@@ -30,6 +41,23 @@ struct Stamp {
 }
 
 fn stamp(path: &PathBuf) -> Stamp {
+    // A host's path: its domain's stat, not connected read as gone.
+    if crate::fs::domain_of(path).is_some() {
+        return match crate::fs::stat(path) {
+            Ok(st) => Stamp {
+                exists: true,
+                mtime: st
+                    .modified
+                    .map(|s| std::time::UNIX_EPOCH + Duration::from_secs(s)),
+                len: st.size,
+            },
+            Err(_) => Stamp {
+                exists: false,
+                mtime: None,
+                len: 0,
+            },
+        };
+    }
     match std::fs::metadata(path) {
         Ok(m) => Stamp {
             exists: true,
@@ -58,6 +86,7 @@ impl Watcher {
             .spawn(move || {
                 use crossbeam_channel::RecvTimeoutError::{Disconnected, Timeout};
                 let mut stamps: HashMap<PathBuf, Stamp> = HashMap::new();
+                let mut remote_at = Instant::now();
                 loop {
                     // A new set replaces the old; its stamps are taken now,
                     // so what was already on disk is not a change.
@@ -78,7 +107,15 @@ impl Watcher {
                         Err(Timeout) => {}
                     }
                     let mut any = false;
+                    let remote_due = remote_at.elapsed()
+                        >= Duration::from_millis(REMOTE_MS.load(Ordering::Relaxed));
+                    if remote_due {
+                        remote_at = Instant::now();
+                    }
                     for (p, old) in stamps.iter_mut() {
+                        if !remote_due && crate::fs::domain_of(p).is_some() {
+                            continue;
+                        }
                         let now = stamp(p);
                         if now != *old {
                             *old = now;
