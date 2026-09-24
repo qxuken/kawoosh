@@ -1367,6 +1367,56 @@ local function recent_items()
   return items
 end
 
+-- The workspaces worked in before (roadmap step 32, workspaces.md
+-- Decision 11): each root the memory has files under, newest first,
+-- the one in front left out, with the file last attended there. A
+-- pick moves the tab's directory to it and opens that file at its line
+-- — the workspace as it was left — or lists the root when it has none.
+-- A section of the launcher too (`launcher = true`).
+local function workspace_items()
+  local by, order = {}, {}
+  local here = fs.cwd()
+  local sep = fs.join("a", "b"):sub(2, 2)
+  for _, r in ipairs(kawoosh.memory { kind = "file", limit = 2000 }) do
+    local ws = r.workspace
+    if ws and ws ~= "" and here ~= ws and here:sub(1, #ws + 1) ~= ws .. sep then
+      local w = by[ws]
+      if not w then
+        w = { ws = ws, last = -1 }
+        by[ws] = w
+        order[#order + 1] = w
+      end
+      if r.last > w.last then
+        w.last, w.path, w.line = r.last, r.subject, (r.meta and r.meta.line or 0) + 1
+      end
+    end
+  end
+  table.sort(order, function(a, b) return a.last > b.last end)
+  local items = {}
+  for _, w in ipairs(order) do
+    local name = w.ws:match("[^/\\]+$") or w.ws
+    local file = w.path and w.path:sub(1, #w.ws + 1) == w.ws .. sep and w.path:sub(#w.ws + 2) or w.path
+    items[#items + 1] = { text = name, sub = short_path(w.ws) .. (file and ("  " .. file) or ""),
+                          ws = w.ws, file = w.path, at = w.line }
+  end
+  return items
+end
+
+picker.source("workspaces", {
+  title = "workspaces", placeholder = "a project worked in before", launcher = true,
+  items = workspace_items,
+  pick = function(item)
+    if not item then return end
+    fs.chdir(item.ws)
+    if item.file and fs.exists(item.file) then
+      kawoosh.open(item.file, { line = item.at })
+    else
+      kawoosh.cmd("dir " .. item.ws)
+    end
+  end,
+  empty = "no other workspace in the memory",
+})
+
 -- The workspace's pinned files, in pin order (`<leader>ee` is the
 -- pane).
 picker.source("pins", {
@@ -1676,5 +1726,6 @@ kawoosh.map("n", "<leader>.", "picker smart")
 kawoosh.map("n", "<leader>bb", "picker buffers")
 kawoosh.map("n", "<leader><leader>", "picker buffers")
 kawoosh.map("n", "<leader>so", "picker recent")
+kawoosh.map("n", "<leader>sw", "picker workspaces")
 kawoosh.map("n", "<leader>sr", "picker resume")
 kawoosh.map("n", "<leader>tt", "picker tools")

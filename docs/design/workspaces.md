@@ -147,6 +147,81 @@ a session.
 a file open in two tabs is both tabs', and `:b NAME` still reaches
 any buffer, since hiding is a list's business, not the buffer's.
 
+## Round two: a lifecycle, and the dock
+
+*Decided and built 2026-09-25 (roadmap step 32), from three asks the
+same day: the dock per workspace — "but then we should know when a
+workspace is closed to kill the dock" — or global, "like running
+tasks, maybe I want to see them all the time"; and recent workspaces
+in the launcher, opening a listing or restoring something. The calls
+are the round's, each with what it beat, and the user's to overturn.*
+
+### 8. A workspace opens and closes with its tabs
+
+A workspace is the directory the memory already names (Decision 4: the
+outermost `.kawoosh`, else the repository's root), or the tab's own
+directory when it is in neither. It is open while a tab's directory is
+in it, and closes on the frame none is — its last tab closed, or
+`:cd`'d out of it (`Kawoosh::sync_dock`). What is kept between is what
+the memory keeps per workspace already: its files at their lines, its
+pins, its ring. Nothing else is saved on close.
+
+*Beat:* a session per workspace, kept on close and restored on return
+— the objection Decision 5 had is answered by an explicit pick, but a
+second session format for what the last file mostly gives is more than
+the ask; it stays the next step if the last file is not enough.
+
+### 9. The dock is the window's; its panes are a project's
+
+One dock, visible from every tab, as it was — running tasks are what
+one wants in sight whichever project is in front. Each dock pane is
+stamped with the workspace in front when it appeared
+(`Layout::dock_owner`), and a pane of another project than the one in
+front leads its title with that project's name (`alpha · terminal`).
+A domain's master (domains.md) is nobody's: it is the window's
+connection to a host, not a project's task, and no workspace closing
+ends it — which the domain tests caught when the first cut did.
+
+*Beat:* a dock per workspace, swapped with the tab — it hides the task
+one wanted to watch; and a dock with no owners — a closing project
+could not find its tasks.
+
+### 10. A workspace closing ends its tasks
+
+When a workspace closes, its dock panes go with it: a terminal whose
+process exited or whose shell sits at an empty prompt (the OSC 133
+marks) closes at once; if any is running something — or is a shell
+that marks nothing, so there is no telling — one confirm names them,
+*End them* (`:dock end DIR`) or *Keep them*. Kept tasks stay, still
+the closed project's, until closed by hand.
+
+*Beat:* ending them unasked — a build or a server killed by a `:cd`;
+keeping them hidden for a tab that may come back — the detachable
+daemon mvp.md keeps out.
+
+### 11. Recent workspaces are a picker source and a launcher section
+
+`picker workspaces` (`<leader>sw`), `launcher = true` so the launcher
+lists it too: every workspace the memory has files under, newest
+first, the one in front left out, each with the file last attended. A
+pick moves the tab's directory there and opens that file at its line,
+or lists the root when it has none — so a new tab's launcher, then a
+pick, is "open that project where I left it".
+
+### 12. The dock as a strip, the experiment
+
+`layout.dock = "scroll"` (`tree` the default): the dock's panes as
+columns on a ribbon — a split beside is a column after the focused
+one, a split below stays in the column, `<C-S-h>` `<C-S-l>` walk the
+columns by index, the focused one revealed — and the project in
+front's columns first, reordered when it changes. Flipping the setting
+converts the dock both ways with its panes.
+
+*Not decided:* narrowing the dock to the project in front
+(`layout.dock_scope`) — the ordering and the titles may be enough;
+and *levels* — strips stacked vertically, the dock one of them — which
+the experiment is there to argue for or against.
+
 ## Build order
 
 One round: the tab's `cwd` and the sync on the frame (`Kawoosh::sync_cwd`,

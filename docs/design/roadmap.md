@@ -621,24 +621,31 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   would mean "launch" or "search" by whether some plugin bound it,
   which is the ambiguity the mode is there to remove. launcher.md's
   Decision 4 is amended when it is built.
-- **Recent workspaces in the launcher** — open [asked 2026-09-25];
-  step 32. A section of the workspaces worked in, most recent first,
-  that opens one in the pane's tab: the tab's cwd moved there and
-  either its directory listed (`dir`) or *something restored*. The list
-  is cheap — a picker source with `launcher = true` (`launcher.lua`'s
-  door) over the memory's rows grouped by workspace, each root's last
-  moment its rank, the `dirs` source's zoxide rows a fallback for a
-  project never opened with a `.kawoosh` or a repository around it.
-  What "restore" means is the real question, and it is the dock
-  note's: workspaces.md beat *a session per workspace* for a launch
-  ("which session a window is becomes a question the user answers by
-  where they launched from"), but a workspace that is closed — step
-  32's lifecycle — is a moment to keep its tabs, their panes and its
-  dock's tasks, and picking it here is an explicit ask to have them
-  back, which answers the objection. Short of that, the cheap restore
-  is the workspace's last files from the memory's ring
-  (`recent_rows(_, workspace)`) and its pins. The note decides
-  between them; the section is an afternoon of Lua once it has.
+- **Recent workspaces in the launcher** — done 2026-09-25 [asked
+  2026-09-25]; step 32. workspaces.md Decision 11: `picker workspaces`
+  (`<leader>sw`), `launcher = true`, the memory's workspaces with
+  their last file; a pick is `:cd` there and that file at its line,
+  else the root listed. Restoring a closed workspace's tabs was not
+  built — its last file first.
+  `a_recent_workspace_is_picked_back_where_it_was`. What the entry
+  said before it was built: A section of the workspaces worked in,
+  most recent first, that opens one in the pane's tab: the tab's cwd
+  moved there and either its directory listed (`dir`) or *something
+  restored*. The list is cheap — a picker source with `launcher =
+  true` (`launcher.lua`'s door) over the memory's rows grouped by
+  workspace, each root's last moment its rank, the `dirs` source's
+  zoxide rows a fallback for a project never opened with a `.kawoosh`
+  or a repository around it. What "restore" means is the real
+  question, and it is the dock note's: workspaces.md beat *a session
+  per workspace* for a launch ("which session a window is becomes a
+  question the user answers by where they launched from"), but a
+  workspace that is closed — step 32's lifecycle — is a moment to keep
+  its tabs, their panes and its dock's tasks, and picking it here is
+  an explicit ask to have them back, which answers the objection.
+  Short of that, the cheap restore is the workspace's last files from
+  the memory's ring (`recent_rows(_, workspace)`) and its pins. The
+  note decides between them; the section is an afternoon of Lua once
+  it has.
 - **The title bar** — done 2026-09-23 [use 2026-09-22]; step 13.
   `kui::app(…).custom_titlebar()`, the row drawn in kui's
   `titlebar_with` (`chrome.rs`), so the traffic lights keep their inset
@@ -702,28 +709,44 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   and a ribbon in it would scroll a single row of panes. A pane is
   still not dragged in or out of the dock by its title bar.
   `the_dock_splits_in_itself` in `kawoosh/tests/panes.rs`.
-- **The dock as a strip, an experiment** — open [asked 2026-09-22,
-  again 2026-09-25]; step 32, with the dock per workspace below. The
-  ask was navigation in the dock, "maybe the same scroll", and step 13
-  read it as the tree and said no to the strip; asked twice, it gets
-  tried. What there is: `<C-w>d` shows and
+- **The dock as a strip, an experiment** — done 2026-09-25 [asked
+  2026-09-22, again 2026-09-25]; step 32. workspaces.md Decision 12:
+  `layout.dock = "scroll"` converts the dock (a `Tab`) with
+  `to_scroll`, a split beside in it is a column, `Tab::remove` closes
+  a column's pane for the dock and the tabs alike, `neighbour` walks
+  the dock's columns by index, `render_dock_strip` draws the ribbon
+  and reveals the focused column; the project in front's columns
+  first. `tree` stays the default.
+  `the_dock_is_a_strip_under_layout_dock_scroll`. What the entry said
+  before it was built: The ask was navigation in the dock, "maybe the
+  same scroll", and step 13 read it as the tree and said no to the
+  strip; asked twice, it gets tried. What there is: `<C-w>d` shows and
   hides the dock and takes the keys, `<C-S-hjkl>` cross into it and
   inside it by last frame's rects (`Layout::neighbour`), and a dock of
-  four terminals is four panes squeezed into its one short row. The experiment:
-  `layout.dock` = `tree` | `scroll`, the dock's `Tab` a `Kind::Scroll`
-  under the second — which the dock being a `Tab` since step 13 makes
-  mostly a matter of lifting "always a tree": each dock pane a column
-  at a preset width, the ribbon revealed on focus, `<C-S-h>` `<C-S-l>`
-  walking its columns by index as they do a tab's strip (the
-  `!self.in_dock(from)` in `neighbour` goes), `⌘1`…`⌘9` and `zs` `ze`
-  `zz` on it while it has the keys, `:layout` inside the dock flipping
-  the dock's kind, the session keeping it. The default stays `tree`
-  until use says. What it may lead to, not decided: *levels* — strips
-  stacked vertically, niri's workspaces, the dock one level among them
-  and `<C-S-j>` `<C-S-k>` between levels. A note first if the
-  experiment makes the case; the experiment is how to find out cheaply.
-- **A dock per workspace, or global** — open, design first [asked
-  2026-09-25, both ways]; step 32. Today there is one dock for the window
+  four terminals is four panes squeezed into its one short row. The
+  experiment: `layout.dock` = `tree` | `scroll`, the dock's `Tab` a
+  `Kind::Scroll` under the second — which the dock being a `Tab` since
+  step 13 makes mostly a matter of lifting "always a tree": each dock
+  pane a column at a preset width, the ribbon revealed on focus,
+  `<C-S-h>` `<C-S-l>` walking its columns by index as they do a tab's
+  strip (the `!self.in_dock(from)` in `neighbour` goes), `⌘1`…`⌘9` and
+  `zs` `ze` `zz` on it while it has the keys, `:layout` inside the
+  dock flipping the dock's kind, the session keeping it. The default
+  stays `tree` until use says. What it may lead to, not decided:
+  *levels* — strips stacked vertically, niri's workspaces, the dock
+  one level among them and `<C-S-j>` `<C-S-k>` between levels. A note
+  first if the experiment makes the case; the experiment is how to
+  find out cheaply.
+- **A dock per workspace, or global** — done 2026-09-25 [asked
+  2026-09-25, both ways]; step 32. The recommendation taken, less its
+  narrowing: workspaces.md Decisions 8–10 — a workspace open while a
+  tab is in it, one dock for the window with each pane stamped with
+  its project (`dock_owner`) and titled with it when another is in
+  front, and a closing workspace ending its idle tasks at once and
+  asking about running ones (`:dock end DIR`). `layout.dock_scope` was
+  not built; the ordering and titles come first.
+  `a_workspace_closing_ends_its_dock_tasks`. What the entry said
+  before it was built: Today there is one dock for the window
   (`Layout::dock: Option<Tab>`), visible from every tab, with no
   directory of its own — a command in it uses the focused tab's
   (workspaces.md Decision 1) — and a session keeps only whether it was
@@ -731,39 +754,38 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   terminals belong to none of them: the dev server of one project is
   under the other's code. Wanted: a dock per workspace — the memory's
   workspace of the tab's cwd (the outermost `.kawoosh`, else the
-  repository's root), so two tabs in one project share a dock and a tab
-  switch across projects swaps it. The question the user raised with
-  it, and the reason for a note: *when is a workspace closed*, so its
-  dock can go. Nothing names that moment today, since a workspace is
-  derived from a cwd, not opened. The candidate answer: when the last
-  tab whose cwd is in it closes, or `:cd`s out of it. Then its dock's
-  processes are ended — asking first when one of them is running
-  something, which the terminal already knows (a shell at an empty
-  prompt, `Terminal::at_empty_prompt`, is not) — rather than kept
-  hidden for a tab that may come back, which would be the detachable
-  daemon mvp.md keeps out. What the note also settles: a dock opened
-  from a tab with no workspace (a directory outside every repository);
-  `:cd` moving a tab into another workspace, which takes it to that
-  workspace's dock; the session keeping a dock per workspace, restored
-  with the tabs as terminals are (step 15); and whether the strip
-  experiment above and "levels" read differently once a dock is a
-  project's.
-  Asked the other way the same day: *should the dock be global* — it
-  holds running tasks, and running tasks are what one wants to see all
-  the time, whichever project is in front. Both are true, and the note
-  weighs a third shape that keeps both: **the tasks global, the view
-  per workspace** — one dock, each pane stamped with the workspace it
-  was started in; the dock shows the focused tab's workspace's panes
-  first and the rest after, labelled with their project and dimmed (a
-  strip, step 32's experiment, is what makes "the rest after"
-  navigable rather than squeezed); a key or `layout.dock_scope` =
-  `workspace` | `all` narrows it; and a task that ends or fails in
-  another workspace says so in the title bar's status block, where a
-  running compile already shows. A workspace closing then asks about
-  *its* tasks and leaves the others'. Recommended over either pure
-  form, since per workspace hides the task one wanted to watch and
-  global keeps every project's dev server under every project's code;
-  the user's call.
+  repository's root), so two tabs in one project share a dock and a
+  tab switch across projects swaps it. The question the user raised
+  with it, and the reason for a note: *when is a workspace closed*, so
+  its dock can go. Nothing names that moment today, since a workspace
+  is derived from a cwd, not opened. The candidate answer: when the
+  last tab whose cwd is in it closes, or `:cd`s out of it. Then its
+  dock's processes are ended — asking first when one of them is
+  running something, which the terminal already knows (a shell at an
+  empty prompt, `Terminal::at_empty_prompt`, is not) — rather than
+  kept hidden for a tab that may come back, which would be the
+  detachable daemon mvp.md keeps out. What the note also settles: a
+  dock opened from a tab with no workspace (a directory outside every
+  repository); `:cd` moving a tab into another workspace, which takes
+  it to that workspace's dock; the session keeping a dock per
+  workspace, restored with the tabs as terminals are (step 15); and
+  whether the strip experiment above and "levels" read differently
+  once a dock is a project's. Asked the other way the same day:
+  *should the dock be global* — it holds running tasks, and running
+  tasks are what one wants to see all the time, whichever project is
+  in front. Both are true, and the note weighs a third shape that
+  keeps both: **the tasks global, the view per workspace** — one dock,
+  each pane stamped with the workspace it was started in; the dock
+  shows the focused tab's workspace's panes first and the rest after,
+  labelled with their project and dimmed (a strip, step 32's
+  experiment, is what makes "the rest after" navigable rather than
+  squeezed); a key or `layout.dock_scope` = `workspace` | `all`
+  narrows it; and a task that ends or fails in another workspace says
+  so in the title bar's status block, where a running compile already
+  shows. A workspace closing then asks about *its* tasks and leaves
+  the others'. Recommended over either pure form, since per workspace
+  hides the task one wanted to watch and global keeps every project's
+  dev server under every project's code; the user's call.
 - **A pane made is focused** — done 2026-09-23, a bug [asked
   2026-09-23]; step 18. Seen: a click on the servers block opened
   `*lsp*` and the keys stayed in the pane before. The cause was
@@ -1898,7 +1920,7 @@ then breadth.
     2026-09-25: `COPY`, `<Esc>` out, the caret where the pane was, the
     foreground colours as a paint (`#rrggbb` names). See the terminal
     track.
-32. **Workspaces with a lifecycle, and the dock** (a note first):
+32. ~~**Workspaces with a lifecycle, and the dock** (a note first):
     when a workspace opens and closes (its first tab in, its last tab
     gone) and what is kept between; the dock global, per workspace, or
     global tasks with a per-workspace view (recommended), a closing
@@ -1909,7 +1931,12 @@ then breadth.
     the default until use decides. Whether it becomes levels is the
     note's last question. One note because it is one question — what
     a workspace is once it can end — and every answer after the first
-    follows from it. It amends workspaces.md rather than beside it.
+    follows from it. It amends workspaces.md rather than beside it.~~
+    Landed 2026-09-25: workspaces.md's "Round two", Decisions 8–12 —
+    open while a tab is in it, one dock with owned panes, a closing
+    project's tasks ended or asked about, `picker workspaces`, the
+    strip under `layout.dock = "scroll"`. Left open: narrowing the dock
+    to the project in front, and levels. See the panes track.
 33. **Types for the settings files**, an investigation: a declared
     schema of settings (Rust's and a plugin's), how LuaLS is told a
     file is a settings file, and whether its server attaches in a
