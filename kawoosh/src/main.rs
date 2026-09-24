@@ -14,7 +14,7 @@ use kui::Core;
 
 /// Where the bundled faces are: `fonts/` beside the binary (a folder
 /// shipped as is, Windows), `../Resources/fonts/` from it (the macOS
-/// app, `scripts/macos-app.sh`), else the source tree's `assets/fonts/`
+/// app, `scripts/macos-app.nu`), else the source tree's `assets/fonts/`
 /// — a `cargo run`.
 fn fonts_dir() -> std::path::PathBuf {
     // Resolved: `kawoosh` on the PATH is a link into the app.

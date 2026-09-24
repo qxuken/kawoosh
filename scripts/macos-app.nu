@@ -1,0 +1,79 @@
+#!/usr/bin/env nu
+# Kawoosh.app: the window's binary as a macOS app, so Finder, the Dock and
+# Spotlight open it with no Terminal window — Finder opens a bare
+# executable in Terminal.app, whatever the executable is. What goes in:
+#
+#   Contents/MacOS/kawoosh        the window (CFBundleExecutable)
+#   Contents/MacOS/kawoosh-edit   a terminal's $EDITOR, found beside it
+#   Contents/Resources/fonts/     the bundled faces, found from the binary
+#                                 (left out with --no-fonts)
+#   Contents/Info.plist
+#
+# The binary is the same one `cargo run` builds; the CLI half works from
+# inside the app too:
+#   ln -s /Applications/Kawoosh.app/Contents/MacOS/kawoosh ~/.local/bin/
+#
+# A command that fails stops the script: nushell makes an external's
+# non-zero exit an error.
+
+# Build Kawoosh.app, and print where it is.
+#
+# Without its fonts (--no-fonts) the app finds them in the source tree it
+# was built from (`fonts_dir` in main.rs), else an Iosevka installed on
+# the system, else it draws in the system's mono.
+def main [
+  out_dir?: path  # where Kawoosh.app goes (default: target/release)
+  --no-fonts      # leave the 217 MB of faces out
+] {
+  let root = $env.FILE_PWD | path dirname
+  let target = $env.CARGO_TARGET_DIR? | default ($root | path join target)
+  let app = $out_dir | default ($target | path join release) | path join Kawoosh.app
+  let manifest = $root | path join Cargo.toml
+
+  ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-edit
+  # `path+file:///…/kawoosh#0.0.1`, or `…#kawoosh@0.0.1`.
+  let version = ^cargo pkgid --manifest-path $manifest -p kawoosh | str trim | str replace -r '.*[#@]' ''
+
+  let contents = $app | path join Contents
+  rm -rf $app
+  mkdir ($contents | path join MacOS) ($contents | path join Resources)
+  for bin in [kawoosh kawoosh-edit] {
+    cp ($target | path join release $bin) ($contents | path join MacOS)
+  }
+  if not $no_fonts {
+    let fonts = $root | path join assets fonts
+    let resources = $contents | path join Resources
+    # Two hundred megabytes of faces: cloned where the disk is APFS,
+    # which takes no space until one side changes; copied where it is
+    # not. macOS's own `cp`, for `-c`.
+    try { ^/bin/cp -Rc $fonts $resources e> /dev/null } catch { ^/bin/cp -R $fonts $resources }
+  }
+
+  let plist = $contents | path join Info.plist
+  $'<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>                    <string>Kawoosh</string>
+  <key>CFBundleDisplayName</key>             <string>Kawoosh</string>
+  <key>CFBundleIdentifier</key>              <string>dev.qxuken.kawoosh</string>
+  <key>CFBundleExecutable</key>              <string>kawoosh</string>
+  <key>CFBundlePackageType</key>             <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>   <string>6.0</string>
+  <key>CFBundleShortVersionString</key>      <string>($version)</string>
+  <key>CFBundleVersion</key>                 <string>($version)</string>
+  <key>LSApplicationCategoryType</key>       <string>public.app-category.developer-tools</string>
+  <key>NSHighResolutionCapable</key>         <true/>
+  <key>NSSupportsAutomaticGraphicsSwitching</key> <true/>
+</dict>
+</plist>
+' | save -f $plist
+  ^plutil -lint -s $plist
+
+  # Ad hoc: enough for this machine, which is where the app was built.
+  # Handing it to another Mac takes a Developer ID and notarization.
+  ^codesign --force --sign - ($contents | path join MacOS kawoosh-edit)
+  ^codesign --force --sign - $app
+
+  $app
+}
