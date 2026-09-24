@@ -341,12 +341,19 @@ impl Kawoosh {
         let (buffer, language, version, len, sel) = {
             let v = &self.ed.views[view];
             let b = &self.ed.buffers[v.buffer];
+            let r = v.sels.primary().range();
+            // In visual mode the character under the caret is selected too.
+            let r = if v.mode == Mode::Visual {
+                r.start..b.next_char(r.end)
+            } else {
+                r
+            };
             (
                 v.buffer,
                 b.language.to_string(),
                 b.version(),
                 b.len(),
-                v.sels.primary().range(),
+                r,
             )
         };
         let sel = sel.start.min(len)..sel.end.min(len);
@@ -555,11 +562,23 @@ impl Kawoosh {
                     (start.max(0) as usize).min(len),
                     (end.max(0) as usize).min(len),
                 );
+                // Visual mode's selection holds its last character — the
+                // caret sits on it — so the node's half-open end is one
+                // character past where the caret goes; left there, the
+                // caret and the span took the character after the node.
+                let visual = start != end
+                    && matches!(self.ed.mode(view), Mode::Normal | Mode::Visual);
+                let head = if visual {
+                    self.ed.buffer_of(view).prev_char(end)
+                } else {
+                    end
+                };
                 let v = &mut self.ed.views[view];
-                v.sels = Selections::single(Selection::new(start, end));
+                v.sels = Selections::single(Selection::new(start, head));
                 v.goal_col = None;
-                if start != end && self.ed.mode(view) == Mode::Normal {
+                if visual {
                     self.ed.set_mode(view, Mode::Visual);
+                    self.ed.views[view].visual_linewise = false;
                 }
                 self.follow_caret = true;
             }

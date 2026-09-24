@@ -295,9 +295,15 @@ fn a_row_selects_its_node_and_a_fold_hides_its_children() {
         .expect("the jsx row");
     d.click(&mut app, r.x + r.w - 20.0, r.y + r.h / 2.0);
     d.frame(&mut app);
+    // Visual mode holds the character under the caret, so the caret is
+    // on the node's last one, `>`, and not on the one after it.
     let sel = app.ed.views[v].sels.primary();
     let buf = app.ed.buffer_of(v);
-    assert_eq!(buf.slice(sel.range()), "<div className=\"x\">{1}</div>");
+    assert_eq!(
+        buf.slice(sel.start()..buf.next_char(sel.end())),
+        "<div className=\"x\">{1}</div>"
+    );
+    assert_eq!(buf.slice(sel.head..buf.next_char(sel.head)), ">");
     assert_eq!(app.focused_mode(), Mode::Visual);
     // Its mark is on that row, and its children are still listed.
     let before = drawn_rows(&d).len();
