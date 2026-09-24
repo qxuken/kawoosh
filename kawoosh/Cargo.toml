@@ -33,8 +33,9 @@ globset = "0.4"
 regex = "1"
 
 [target.'cfg(windows)'.dependencies]
-# The process's memory for the perf tab (`perf::read_mem`).
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+# The process's memory for the perf tab (`perf::read_mem`); the parent's
+# console for the CLI half of a GUI program (`main.rs`).
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 # A terminal's `$EDITOR` (src/bin/edit.rs), shipped beside `kawoosh`.
 [[bin]]
