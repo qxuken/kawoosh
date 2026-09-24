@@ -577,16 +577,27 @@ fn the_settings_tab_shows_the_layers_and_opens_a_file() {
 /// the session, as `:set` would, and the row says so.
 #[test]
 fn a_boolean_setting_is_a_switch_in_the_tab() {
-    // Tall enough that the last row of the effective table — the
-    // `whichkey` switch, after the `layout.*`, `memory.*` and
-    // `secrets.*` rows — is on screen.
-    let mut d = Drive::new(1100.0, 2700.0);
+    // The `whichkey` switch is the effective table's last row, below
+    // the fold of any window as the defaults grow: the list is scrolled
+    // to its end before each click, as a user would, since a row past
+    // the list's edge is clipped and takes no click. Scrolled again
+    // for the second: the first adds a row to the session layer above.
+    fn click_whichkey(d: &mut Drive, app: &mut Kawoosh) {
+        let list = d.rect_of("devtools-tab:settings").expect("the tab");
+        d.wheel(app, list.0 + 20.0, list.1 + list.3 / 2.0, 0.0, -100_000.0);
+        let rect = d.rect_of("toggle whichkey").expect("the switch row");
+        assert!(
+            rect.1 + rect.3 <= list.1 + list.3,
+            "the switch row is on screen"
+        );
+        d.click(app, rect.0 + 20.0, rect.1 + rect.3 / 2.0);
+        d.frame(app);
+    }
+    let mut d = Drive::new(1100.0, 700.0);
     let mut app = app_with_lua(&mut d);
     ex(&mut d, &mut app, "settings");
     assert_eq!(app.ed.settings.bool("whichkey"), Some(true));
-    let rect = d.rect_of("toggle whichkey").expect("the switch row");
-    d.click(&mut app, rect.0 + 20.0, rect.1 + rect.3 / 2.0);
-    d.frame(&mut app);
+    click_whichkey(&mut d, &mut app);
     assert_eq!(app.ed.settings.bool("whichkey"), Some(false));
     assert_eq!(app.ed.message, "whichkey = false");
     assert_eq!(
@@ -603,9 +614,7 @@ fn a_boolean_setting_is_a_switch_in_the_tab() {
         "the which-key is off"
     );
     d.key(&mut app, "escape", KeyMods::default());
-    let rect = d.rect_of("toggle whichkey").expect("the switch row");
-    d.click(&mut app, rect.0 + 20.0, rect.1 + rect.3 / 2.0);
-    d.frame(&mut app);
+    click_whichkey(&mut d, &mut app);
     assert_eq!(app.ed.settings.bool("whichkey"), Some(true));
     // A number is not a switch.
     assert!(d.rect_of("toggle tabstop").is_none());
