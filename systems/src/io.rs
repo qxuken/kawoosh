@@ -109,6 +109,23 @@ pub enum IoMsg {
     },
 }
 
+/// A child process for `program`, spawned outside a pty: a language
+/// server, ssh, a `sh -c` job, a URL's opener. On Windows it opens no
+/// console window — `kawoosh` is a GUI program there, with no console
+/// for a console child to share, and each would get one of its own.
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut c = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        /// `CREATE_NO_WINDOW`, from `Win32_System_Threading`.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        c.creation_flags(CREATE_NO_WINDOW);
+    }
+    c
+}
+
 /// How a domain is reached (docs/design/domains.md Decision 3): the
 /// `ssh` binary, the host as `~/.ssh/config` or `user@host` names it,
 /// and the master's control socket.
@@ -122,7 +139,7 @@ pub struct Transport {
 impl Transport {
     /// `ssh -S CTL ARGS… HOST`, as a command to run.
     pub fn command(&self, args: &[&str]) -> std::process::Command {
-        let mut c = std::process::Command::new(&self.ssh);
+        let mut c = command(&self.ssh);
         c.arg("-S").arg(&self.ctl).args(args).arg(&self.host);
         c
     }
@@ -198,7 +215,7 @@ impl Transport {
     /// [`Transport::remote_argv`] with no terminal, as a command to run.
     pub fn remote_command(&self, script: &str) -> std::process::Command {
         let argv = self.remote_argv(script, false, None);
-        let mut c = std::process::Command::new(&argv[0]);
+        let mut c = command(&argv[0]);
         c.args(&argv[1..]);
         c
     }
@@ -562,7 +579,7 @@ impl Io {
         stdin: Option<String>,
     ) -> std::io::Result<ProcHandle> {
         use std::io::{BufRead, BufReader, Write};
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
         // On a host: through its domain, run by the host's own shell in
         // the directory there (docs/design/domains.md Decision 7).
         let host = cwd.and_then(|d| {
@@ -587,7 +604,7 @@ impl Io {
             }
             None => {
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-                let mut c = Command::new(shell);
+                let mut c = command(shell);
                 c.arg("-c").arg(cmd);
                 c
             }
