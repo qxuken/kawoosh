@@ -16,7 +16,7 @@ copies, 2026-09-24). Steps 23–27 built 2026-09-24: the list is done.
 Amended 2026-09-25 with the todo reconciled against it: every item it
 held that the list had built is checked there, and the ten it held
 that the list never took are filed below ("From the todo, 2026-09-25")
-and ordered as steps 28–34, with the asks of the same day.
+and ordered as steps 28–35, with the asks of the same day.
 
 ## Where it stands
 
@@ -79,7 +79,7 @@ on a thread so a Finder launch finds the language servers,
 shortcut with `--install`). In the editor, `G` landing once,
 `relativenumber`, and `:set +FLAG` / `-FLAG` for vim's `noFLAG`.
 The todo, read against the list on 2026-09-25, had ten items the list
-never took (below); with the day's asks they are steps 28–34.
+never took (below); with the day's asks they are steps 28–35.
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -1066,30 +1066,54 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   else as a chunk (`Runtime::eval`), the values spelled
   (`kawoosh._show`: tables shallowly, keys in order) on the status
   line, or in a `*lua*` pane when the result has lines.
-- **Types for the settings files** — investigate [asked 2026-09-25];
-  step 33. The types step 12 built are the APIs': `kawoosh.lua` from
-  the live runtime and `kui.lua` from kui's schema, written to `types`
-  beside the state db and put on the Lua server's `workspace.library`.
-  A `.kawoosh/settings.lua` — or the user's — gets none of it that
-  matters, since it calls nothing: it `return`s a table (a sandbox, no
-  `os`), and a misspelled `compile.comand` is read as a key nobody
-  asks for, silently. What to find out: whether there is a schema to
-  generate from at all — the engine's default layer has the keys with
-  defaults (`tabstop`, `layout.*`, `memory.*`, …) and their value
-  types, but a plugin's setting read with `kawoosh.opt` and no default
-  (`dirs.backend`, `compile.command`, `tools`) is declared nowhere; so
-  the likely first step is a declaration — a setting's path, type,
-  default and doc, from Rust and from a plugin
-  (`kawoosh.setting { … }`, say) — which the settings tab could show
-  and warn from as well. Then how LuaLS learns that a file *is* a
-  settings file: it cannot type a file by its path, so the
-  `---@type kawoosh.Settings` annotation above the `return` (the
-  `· create` row's stub, `SETTINGS_STUB`, writes it), or a `---@class`
-  per nested table so completion works key by key. And whether the Lua
-  server even attaches in a `.kawoosh` directory without a
-  `.luarc.json` (its root markers), which decides whether the library
-  reaches the file. The answer is a paragraph here and, if it holds,
-  a round.
+- **Types for the settings files** — investigated 2026-09-25 [asked
+  2026-09-25]; step 33, and the round it asks for is step 34. Answered
+  by trying it, lua-language-server 3.19.1 over a generated `---@meta`
+  with `---@class (exact) kawoosh.Settings` and nested classes on
+  `workspace.library`, a `.kawoosh/settings.lua` checked with
+  `--check`: (1) the annotation above the `return` is enough —
+  `---@type kawoosh.Settings` then `return { … }` — so a settings file
+  keeps its shape; (2) a wrong type is caught, nested too (`tabstop =
+  "four"`, a tool's `key = 1`: `assign-type-mismatch`), and completion
+  of the keys comes with the class; (3) a misspelt key is *not* caught
+  — `compile = { comand = … }` passes, `(exact)` or not, since the
+  server checks no unknown field in a table literal — so the silence
+  the ask was about is kawoosh's to break: the settings layer warning
+  on a key nobody declared; (4) the server attaches in a `.kawoosh`
+  directory with no `.luarc.json`: the Lua `ServerDef`'s root falls
+  back to the repository's or the file's directory, and the library
+  travels in the settings kawoosh sends, not in a file. (5) The schema
+  is the missing piece: the engine's default layer has about sixty
+  keys with their values' types, and a plugin's setting read with
+  `kawoosh.opt` and no default (`compile.command`, `tools`,
+  `dirs.backend`) is declared nowhere. So the round: a declaration —
+  path, type, default, doc — from Rust (the default layer's `set`
+  becoming `declare`) and from Lua (`kawoosh.setting`), the
+  `kawoosh.Settings` classes written beside `kawoosh.lua`, the stub's
+  `---@type` line, and a toast naming an undeclared key in a settings
+  file. What the entry said before: The types step 12 built are the
+  APIs': `kawoosh.lua` from the live runtime and `kui.lua` from kui's
+  schema, written to `types` beside the state db and put on the Lua
+  server's `workspace.library`. A `.kawoosh/settings.lua` — or the
+  user's — gets none of it that matters, since it calls nothing: it
+  `return`s a table (a sandbox, no `os`), and a misspelled
+  `compile.comand` is read as a key nobody asks for, silently. What to
+  find out: whether there is a schema to generate from at all — the
+  engine's default layer has the keys with defaults (`tabstop`,
+  `layout.*`, `memory.*`, …) and their value types, but a plugin's
+  setting read with `kawoosh.opt` and no default (`dirs.backend`,
+  `compile.command`, `tools`) is declared nowhere; so the likely first
+  step is a declaration — a setting's path, type, default and doc,
+  from Rust and from a plugin (`kawoosh.setting { … }`, say) — which
+  the settings tab could show and warn from as well. Then how LuaLS
+  learns that a file *is* a settings file: it cannot type a file by
+  its path, so the `---@type kawoosh.Settings` annotation above the
+  `return` (the `· create` row's stub, `SETTINGS_STUB`, writes it), or
+  a `---@class` per nested table so completion works key by key. And
+  whether the Lua server even attaches in a `.kawoosh` directory
+  without a `.luarc.json` (its root markers), which decides whether
+  the library reaches the file. The answer is a paragraph here and, if
+  it holds, a round.
 - **Types for lua-language-server** — done 2026-09-22 [use]; step
   12. Asked in use as "lua eval doesn't have kawoosh or kui?"; the
   answer was that eval does see `kawoosh` (the runtime's globals) and
@@ -1598,7 +1622,7 @@ follow the theme every frame (`panes.rs`).
   faces out), `scripts/windows-app.nu` the Kawoosh folder and, with
   `--install`, a Start menu shortcut; on Windows the binary is a GUI
   program and opens no console.
-- **An image for kawoosh** — open [todo]; step 34. Neither bundle has
+- **An image for kawoosh** — open [todo]; step 35. Neither bundle has
   an icon: the Dock, Explorer and the window's title show the
   platform's default. The todo's brief: something to do with a
   stargate, but not one — the name is the sound the gate makes when it
@@ -1611,7 +1635,7 @@ follow the theme every frame (`panes.rs`).
 
 Each is one round: one commit with its tests, a paragraph in this file
 struck through when it lands. Steps 1–27 are the list of 2026-09-20 to
-2026-09-24, all landed; 28–34 are the todo's tail and the day's
+2026-09-24, all landed; 28–35 are the todo's tail and the day's
 asks, filed 2026-09-25. The order front-loads the two cheap
 correctness gaps, then the one feature the daily driver is missing,
 then breadth.
@@ -1937,12 +1961,21 @@ then breadth.
     project's tasks ended or asked about, `picker workspaces`, the
     strip under `layout.dock = "scroll"`. Left open: narrowing the dock
     to the project in front, and levels. See the panes track.
-33. **Types for the settings files**, an investigation: a declared
+33. ~~**Types for the settings files**, an investigation: a declared
     schema of settings (Rust's and a plugin's), how LuaLS is told a
     file is a settings file, and whether its server attaches in a
     `.kawoosh` directory. A paragraph of answers, then a round if they
-    hold.
-34. **An image for kawoosh**: drawn by the user, then carried by both
+    hold.~~ Answered 2026-09-25 by trying it (the Lua track's entry):
+    the types work for completion and wrong types, not for a misspelt
+    key, which kawoosh must warn about itself — step 34.
+34. **Declared settings**: every setting declared once — path, type,
+    default, doc — from Rust (the default layer) and from Lua
+    (`kawoosh.setting`); the `kawoosh.Settings` classes written with
+    the other types; `---@type kawoosh.Settings` in the stub a new
+    settings file starts from; and a settings file's key no one
+    declared named in a toast, since the language server cannot. From
+    step 33's answer.
+35. **An image for kawoosh**: drawn by the user, then carried by both
     bundles and the window. Last because it waits on a drawing, not on
     code.
 
