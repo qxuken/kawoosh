@@ -1083,6 +1083,25 @@ impl Terminal {
         (out, runs)
     }
 
+    /// Where the cursor is in [`Self::scrollback_styled`]'s text: its
+    /// line, and its column as the characters that line has before it
+    /// — a wide character's spacer and a hidden cell not counted, as
+    /// the text leaves them out. The column can be past the line's end,
+    /// where trailing blanks were trimmed.
+    pub fn scrollback_cursor(&self) -> (usize, usize) {
+        let grid = self.term.grid();
+        let point = grid.cursor.point;
+        let row = &grid[point.line];
+        let col = (0..point.column.0.min(grid.columns()))
+            .filter(|c| {
+                !row[Column(*c)]
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::HIDDEN)
+            })
+            .count();
+        (grid.history_size() + point.line.0 as usize, col)
+    }
+
     /// The text of screen row `row` (0-based on the displayed screen).
     pub fn row_text(&self, row: usize) -> String {
         let grid = self.term.grid();
@@ -1746,6 +1765,8 @@ mod tests {
         }
         assert_eq!(t.history_size(), 4);
         assert!(t.scrollback_text().starts_with("l0\nl1\n"));
+        t.feed("日本$ ".as_bytes());
+        assert_eq!(t.scrollback_cursor(), (6, 4), "the spacers not counted");
         t.scroll(2);
         let s = t.screen();
         assert_eq!(s.origin_line, 2);

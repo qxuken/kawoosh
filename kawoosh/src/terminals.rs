@@ -581,8 +581,8 @@ impl Kawoosh {
 
     /// The scrollback and screen of terminal `id` as a buffer with full
     /// modal editing (Decision 3) — copy mode, wezterm's `<C-S-x>`. The
-    /// buffer takes the terminal's pane, the caret lands on the last
-    /// line, where the prompt was, and `q` gives the pane back
+    /// buffer takes the terminal's pane, the caret lands where the
+    /// terminal's cursor was, and `q` gives the pane back
     /// (`scrollback_close`), so the round trip is two keys. A terminal
     /// with no pane of its own gets a split.
     pub fn scrollback_to_buffer(&mut self, id: TermId) {
@@ -590,9 +590,18 @@ impl Kawoosh {
             return;
         };
         let (text, runs) = t.scrollback_styled();
-        // The view's top row as a line of the text: what the pane showed
-        // is where the caret starts (roadmap step 31).
+        // The view's top row as a line of the text: the view starts at
+        // what the pane showed (roadmap step 31).
         let top_line = t.history_size().saturating_sub(t.display_offset());
+        // The caret at the terminal's cursor when the pane shows it, as
+        // wezterm's copy mode starts; scrolled back past it, at the top
+        // row shown, where the eye was.
+        let (cursor_line, cursor_col) = t.scrollback_cursor();
+        let caret = if cursor_line < top_line + t.size().rows as usize {
+            (cursor_line, cursor_col)
+        } else {
+            (top_line, 0)
+        };
         let name = format!(
             "*scrollback {}*",
             if t.title.is_empty() {
@@ -605,13 +614,22 @@ impl Kawoosh {
         buf.language = "scrollback".into();
         let bid = self.ed.add_buffer(buf);
         let v = self.ed.add_view(bid);
-        // Land on the top row the pane showed, the view scrolled to it:
-        // a copy starts where the eye was.
+        // The view scrolled to the top row the pane showed, the caret on
+        // its character — or, past where trailing blanks (a prompt's
+        // space) were trimmed, the line's last one, as `$` lands.
         let b = &self.ed.buffers[bid];
-        let line = top_line.min(b.line_count().saturating_sub(1));
-        let at = b.line_start(line).min(b.len());
+        let last = b.line_count().saturating_sub(1);
+        let r = b.line_range(caret.0.min(last));
+        let at = b.slice(r.clone()).char_indices().nth(caret.1).map_or(
+            if r.is_empty() {
+                r.end
+            } else {
+                b.prev_char(r.end)
+            },
+            |(i, _)| r.start + i,
+        );
         self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(at));
-        self.ed.views[v].top = line;
+        self.ed.views[v].top = top_line.min(last);
         // The colours it was printed in, as a paint of their own.
         let version = self.ed.buffers[bid].version();
         let spans = runs
