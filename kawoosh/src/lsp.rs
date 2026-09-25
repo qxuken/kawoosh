@@ -600,7 +600,7 @@ impl Kawoosh {
         let token = self.lsp.next_ask;
         self.lsp.symbol_asks.insert(token, (name.clone(), then));
         self.ed.message = format!("looking up {name}…");
-        self.ask_symbols(token, from, true, name);
+        self.ask_symbols(token, from, true, name, "lsp");
     }
 
     /// A symbol the hover named, found — or not: the exact name, a type
@@ -657,13 +657,16 @@ impl Kawoosh {
 
     /// `kawoosh.lsp.symbols`: the symbols of `buffer`, or the
     /// workspace's matching `query`, answered to Lua's `token`; a buffer
-    /// no server that lists them holds is answered at once.
+    /// no server that lists them holds is answered at once — or, for a
+    /// buffer's own (`source` `auto` or `syntax`), by its grammar's
+    /// outline (docs/design/marks.md Decision 1).
     pub(crate) fn ask_symbols(
         &mut self,
         token: u64,
         buffer: BufferId,
         workspace: bool,
         query: String,
+        source: &str,
     ) {
         let Some(b) = self.ed.buffers.get(buffer) else {
             return;
@@ -679,6 +682,12 @@ impl Kawoosh {
         } else {
             None
         };
+        if !workspace && (source == "syntax" || source == "auto" && why.is_some()) {
+            self.pending_jobs += 1;
+            self.ts
+                .outline(kawoosh_systems::ts::OutlineJob { token, buffer });
+            return;
+        }
         if let Some(why) = why {
             if let Some(rt) = &self.scripting.rt {
                 rt.symbols_answered(token, Err(why));

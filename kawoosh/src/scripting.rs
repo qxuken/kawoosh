@@ -711,7 +711,8 @@ impl Kawoosh {
                 buffer,
                 workspace,
                 query,
-            } => self.ask_symbols(token, kawoosh_lua::id_of(buffer), workspace, query),
+                source,
+            } => self.ask_symbols(token, kawoosh_lua::id_of(buffer), workspace, query, &source),
             // A pass outside a command a key ran has no key to hand on.
             Msg::Pass => {}
             Msg::Watch { name, paths } => {

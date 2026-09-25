@@ -18,4 +18,12 @@ fn grammar() -> Result<crate::Grammar, String> {
         tree_sitter_css::HIGHLIGHTS_QUERY,
         None,
     )
+    .and_then(|g| g.with_outline(OUTLINE))
 }
+
+/// The outline: what `symbols` lists without a server (docs/design/marks.md).
+#[cfg(feature = "css")]
+const OUTLINE: &str = r#"(rule_set (selectors) @name) @definition.rule
+(media_statement . (_) @name) @definition.media
+(keyframes_statement (keyframes_name) @name) @definition.keyframes
+"#;

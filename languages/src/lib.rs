@@ -121,6 +121,24 @@ pub struct Grammar {
     /// document with one is parsed whole, since an edit elsewhere can
     /// change them. Markdown's table rows with an empty cell.
     pub stand_ins: Option<StandIns>,
+    /// An outline query: the definitions a file's symbols are, for the
+    /// picker's `symbols` without a server and for a mark's symbol
+    /// path (docs/design/marks.md Decision 1).
+    pub outline: Option<Outline>,
+}
+
+/// An outline query and what its captures are: tree-sitter's tags
+/// convention — `@definition.KIND` the whole definition, `@name` its
+/// name inside it — and `@detail`, a second name shown beside it (an
+/// `impl`'s trait). A definition inside another's range is its child.
+#[derive(Debug)]
+pub struct Outline {
+    pub query: Query,
+    /// Capture index → the definition's kind (`function`, `class`,
+    /// `h2`), for the `@definition.KIND` captures.
+    pub kinds: Vec<Option<String>>,
+    pub name: u32,
+    pub detail: Option<u32>,
 }
 
 /// A grammar's stand-ins for a text (`Grammar::stand_ins`).
@@ -283,7 +301,17 @@ impl Grammar {
             injections,
             structure: None,
             stand_ins: None,
+            outline: None,
         })
+    }
+
+    /// An outline query over the same tree ([`Outline`]). A capture
+    /// that is none of `@definition.KIND`, `@name` or `@detail` is not
+    /// read — a tags query's `@reference.*`, its `@doc` — so a
+    /// grammar's own `tags.scm` serves as it is.
+    pub fn with_outline(mut self, text: &str) -> Result<Self, String> {
+        self.outline = Some(Outline::new(&self.language, text)?);
+        Ok(self)
     }
 
     /// A structure query over the same tree: its captures are
@@ -335,6 +363,36 @@ impl Grammar {
             }
         }
         self
+    }
+}
+
+impl Outline {
+    pub fn new(language: &tree_sitter::Language, text: &str) -> Result<Self, String> {
+        let query = Query::new(language, text).map_err(|e| format!("outline: {e}"))?;
+        let (mut kinds, mut name, mut detail) = (Vec::new(), None, None);
+        for (i, n) in query.capture_names().iter().enumerate() {
+            kinds.push(match *n {
+                "name" => {
+                    name = Some(i as u32);
+                    None
+                }
+                "detail" => {
+                    detail = Some(i as u32);
+                    None
+                }
+                n => n
+                    .strip_prefix("definition.")
+                    .filter(|k| !k.is_empty())
+                    .map(str::to_string),
+            });
+        }
+        let name = name.ok_or("outline: no @name capture")?;
+        Ok(Self {
+            query,
+            kinds,
+            name,
+            detail,
+        })
     }
 }
 
@@ -428,6 +486,9 @@ pub struct Library {
     pub symbol: String,
     pub highlights: PathBuf,
     pub injections: Option<PathBuf>,
+    /// `outline.scm`, or the grammar's own `tags.scm`, where the
+    /// highlights are looked for — by convention only.
+    pub outline: Option<PathBuf>,
 }
 
 /// What a registration said about where a grammar is; [`Library::find`]
@@ -540,11 +601,16 @@ impl Library {
             )
         })?;
         let injections = query(&said.injections, "injections.scm")?;
+        let outline = match query(&None, "outline.scm")? {
+            Some(p) => Some(p),
+            None => query(&None, "tags.scm")?,
+        };
         Ok(Some(Library {
             path,
             symbol,
             highlights,
             injections,
+            outline,
         }))
     }
 
@@ -579,8 +645,15 @@ impl Library {
             |p: &Path| std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()));
         let highlights = read(&self.highlights)?;
         let injections = self.injections.as_deref().map(read).transpose()?;
-        Grammar::new(language, &highlights, injections.as_deref())
-            .map_err(|e| format!("{}: {e}", self.highlights.display()))
+        let outline = self.outline.as_deref().map(read).transpose()?;
+        let g = Grammar::new(language, &highlights, injections.as_deref())
+            .map_err(|e| format!("{}: {e}", self.highlights.display()))?;
+        match (outline, &self.outline) {
+            (Some(text), Some(p)) => g
+                .with_outline(&text)
+                .map_err(|e| format!("{}: {e}", p.display())),
+            _ => Ok(g),
+        }
     }
 }
 
@@ -984,6 +1057,7 @@ mod tests {
                 symbol: "tree_sitter_zig".into(),
                 highlights: hl.clone(),
                 injections: None,
+                outline: None,
             }))
         );
         let inj = touch(home.join("queries/zig/injections.scm"));
@@ -1099,6 +1173,7 @@ mod tests {
             symbol: "tree_sitter_json".into(),
             highlights: hl.clone(),
             injections: None,
+            outline: None,
         };
         let g = library.load().unwrap();
         assert_eq!(g.query.capture_names(), &["string", "number", "property"]);

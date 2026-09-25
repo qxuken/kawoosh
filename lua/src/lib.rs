@@ -142,12 +142,14 @@ pub enum Msg {
         paths: Vec<PathBuf>,
     },
     /// `kawoosh.lsp.symbols(opts, fn)`: symbols asked of `buffer`'s
-    /// server, answered to `token` (`Runtime::symbols_answered`).
+    /// server, or its grammar's outline (`source`: `auto`, `lsp`,
+    /// `syntax`), answered to `token` (`Runtime::symbols_answered`).
     Symbols {
         token: u64,
         buffer: u64,
         workspace: bool,
         query: String,
+        source: String,
     },
     /// `kawoosh.cmdline(text)`: the command line opened with `text` on
     /// it, to finish and submit.
@@ -374,9 +376,14 @@ pub enum Msg {
         buffer: u64,
         text: String,
     },
+    /// The caret put at `offset` in every view of the buffer; the view
+    /// scrolled to `top` (a line from 0), or to show the caret's line in
+    /// its middle with `center`.
     SetCursor {
         buffer: u64,
         offset: usize,
+        top: Option<usize>,
+        center: bool,
     },
     /// Text typed at every caret of the view, as insert mode types it.
     Type(String),
@@ -443,6 +450,8 @@ pub struct BufSnap {
     pub snapshot: Snapshot,
     pub sels: Vec<(usize, usize)>,
     pub primary: usize,
+    /// The first line shown by the view the selections are from, from 0.
+    pub top: usize,
     pub modified: bool,
     pub read_only: bool,
     pub private: bool,
@@ -1054,9 +1063,10 @@ impl Runtime {
                 (
                     v.sels.iter().map(|s| (s.anchor, s.head)).collect(),
                     v.sels.primary,
+                    v.top,
                 )
             };
-            let (sels, primary) = current
+            let (sels, primary, top) = current
                 .and_then(|c| ed.views.get(c))
                 .filter(|v| v.buffer == id)
                 .map(of)
@@ -1071,6 +1081,7 @@ impl Runtime {
                     snapshot: b.snapshot(),
                     sels,
                     primary,
+                    top,
                     modified: b.modified,
                     read_only: b.read_only,
                     private: b.private,
@@ -1488,12 +1499,18 @@ impl Runtime {
             let row = |s: &kawoosh_systems::lsp::Symbol| -> mlua::Result<Table> {
                 let t = lua.create_table()?;
                 t.set("name", s.name.as_str())?;
-                t.set("kind", kawoosh_systems::lsp::symbol_kind_name(s.kind))?;
+                let kind = match &s.kind_name {
+                    Some(k) => k.as_str(),
+                    None => kawoosh_systems::lsp::symbol_kind_name(s.kind),
+                };
+                t.set("kind", kind)?;
                 t.set("detail", s.detail.clone())?;
                 t.set("container", s.container.clone())?;
                 t.set("path", s.path.display().to_string())?;
                 t.set("line", s.line + 1)?;
                 t.set("col", s.character + 1)?;
+                t.set("depth", s.depth)?;
+                t.set("end_line", s.end_line.map(|l| l + 1))?;
                 Ok(t)
             };
             let rows: mlua::Result<Vec<Table>> = symbols.iter().map(row).collect();
@@ -1628,14 +1645,29 @@ impl Runtime {
                         }
                     }
                 }
-                Msg::SetCursor { buffer, offset } => {
+                Msg::SetCursor {
+                    buffer,
+                    offset,
+                    top,
+                    center,
+                } => {
                     let id = id_of(buffer);
-                    let len = ed.buffers.get(id).map(|b| b.len()).unwrap_or(0);
+                    let Some(b) = ed.buffers.get(id) else {
+                        continue;
+                    };
+                    let offset = b.floor_char(offset.min(b.len()));
+                    let line = b.line_of(offset);
+                    let last = b.line_count().saturating_sub(1);
                     for v in ed.views.values_mut() {
                         if v.buffer == id {
                             v.sels = kawoosh_editor::Selections::single(
-                                kawoosh_editor::Selection::point(offset.min(len)),
+                                kawoosh_editor::Selection::point(offset),
                             );
+                            if let Some(top) = top {
+                                v.top = top.min(last);
+                            } else if center {
+                                v.top = line.saturating_sub(v.rows / 2);
+                            }
                         }
                     }
                 }
@@ -2502,10 +2534,14 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- kawoosh.lsp.symbols({ workspace =, query =, buffer = }, fn):
-    // the buffer's symbols, or the workspace's matching `query`, from
-    // its server; `fn(items)` with `{ name, kind, detail, container,
-    // path, line, col }` each (line and col from 1), or `fn(nil, why)`.
+    // ---- kawoosh.lsp.symbols({ workspace =, query =, buffer =, source =
+    // }, fn): the buffer's symbols, or the workspace's matching `query`,
+    // from its server — or, for a buffer's, its grammar's outline:
+    // `source` `auto` (the server's when one lists them, the outline
+    // otherwise; the default), `lsp` or `syntax`. `fn(items)` with `{
+    // name, kind, detail, container, path, line, col, depth, end_line }`
+    // each (line and col from 1, depth from 0, in the file's order with
+    // a symbol before those inside it), or `fn(nil, why)`.
     let (qq, pp, jj) = (q(queue), published.clone(), jobs.clone());
     lsp.set(
         "symbols",
@@ -2516,6 +2552,15 @@ fn seed(
                 Some(LV::String(s)) => s.to_str()?.to_string(),
                 _ => String::new(),
             };
+            let source = match get("source")? {
+                Some(LV::String(s)) => s.to_str()?.to_string(),
+                _ => "auto".to_string(),
+            };
+            if !matches!(source.as_str(), "auto" | "lsp" | "syntax") {
+                return Err(mlua::Error::runtime(format!(
+                    "lsp.symbols: source is auto, lsp or syntax, not {source}"
+                )));
+            }
             let buffer = match get("buffer")? {
                 Some(LV::Integer(n)) => Some(n as u64),
                 Some(LV::Number(n)) => Some(n as u64),
@@ -2535,6 +2580,7 @@ fn seed(
                 buffer,
                 workspace,
                 query,
+                source,
             });
             Ok(token)
         })?,
@@ -2725,14 +2771,18 @@ fn seed(
             })
         })?,
     )?;
+    // `kawoosh.buf.cursor(h)`: the primary caret — `offset`, `line`,
+    // `col` (from 1, `col` in characters) — and `top`, the first line
+    // the view shows.
     let pp = published.clone();
     buf.set(
         "cursor",
         lua.create_function(move |lua, h: Option<u64>| {
-            let (offset, text) = with_buf(&pp, h, |b| {
+            let (offset, text, top) = with_buf(&pp, h, |b| {
                 (
                     b.sels.get(b.primary).map(|s| s.1).unwrap_or(0),
                     b.snapshot.text(),
+                    b.top,
                 )
             })?;
             let offset = offset.min(text.len());
@@ -2743,8 +2793,32 @@ fn seed(
             t.set("offset", offset)?;
             t.set("line", line + 1)?;
             t.set("col", col + 1)?;
+            t.set("top", top + 1)?;
             Ok(t)
         })?,
+    )?;
+    // `kawoosh.buf.offset(line, col, h)`: the byte of line `line`,
+    // character `col` (both from 1; `col` 1 by default), held to the
+    // line's end and the text's — read off the line index, so a line of
+    // a large file costs its own length.
+    let pp = published.clone();
+    buf.set(
+        "offset",
+        lua.create_function(
+            move |_, (line, col, h): (usize, Option<usize>, Option<u64>)| {
+                with_buf(&pp, h, |b| {
+                    let text = &b.snapshot.text;
+                    let Some(r) = text.get_line_range(line.saturating_sub(1)) else {
+                        return text.len();
+                    };
+                    let bytes = text.collect_range(r.clone());
+                    let s = String::from_utf8_lossy(&bytes);
+                    let s = s.trim_end_matches(['\n', '\r']);
+                    let want = col.unwrap_or(1).saturating_sub(1);
+                    r.start + s.char_indices().nth(want).map_or(s.len(), |(i, _)| i)
+                })
+            },
+        )?,
     )?;
     let pp = published.clone();
     buf.set(
@@ -3053,17 +3127,35 @@ fn seed(
             Ok(())
         })?,
     )?;
+    // `kawoosh.buf.set_cursor(offset, h, { top =, center = })`: one
+    // caret at `offset` in every view of the buffer; the view scrolled
+    // so line `top` (from 1) is its first, or the caret's line in its
+    // middle with `center`, else as little as shows the caret.
     let qq = q(queue);
     let pp = published.clone();
     buf.set(
         "set_cursor",
-        lua.create_function(move |_, (offset, h): (usize, Option<u64>)| {
-            let h = h
-                .or(pp.borrow().current)
-                .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
-            qq.borrow_mut().push(Msg::SetCursor { buffer: h, offset });
-            Ok(())
-        })?,
+        lua.create_function(
+            move |_, (offset, h, opts): (usize, Option<u64>, Option<Table>)| {
+                let h = h
+                    .or(pp.borrow().current)
+                    .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
+                let (top, center) = match &opts {
+                    Some(t) => (
+                        t.get::<Option<usize>>("top")?.map(|l| l.saturating_sub(1)),
+                        t.get::<Option<bool>>("center")?.unwrap_or(false),
+                    ),
+                    None => (None, false),
+                };
+                qq.borrow_mut().push(Msg::SetCursor {
+                    buffer: h,
+                    offset,
+                    top,
+                    center,
+                });
+                Ok(())
+            },
+        )?,
     )?;
     // `kawoosh.buf.type(text)`: typed at every caret of the view, as a
     // keystroke in insert mode types it — the carets after it.

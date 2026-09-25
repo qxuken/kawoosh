@@ -24,4 +24,10 @@ pub(crate) fn grammar() -> Result<crate::Grammar, String> {
         .concat(),
         None,
     )
+    .and_then(|g| g.with_outline(OUTLINE))
 }
+
+/// The outline: what `symbols` lists without a server (docs/design/marks.md).
+#[cfg(feature = "json")]
+const OUTLINE: &str = r#"(pair key: (string (string_content) @name)) @definition.key
+"#;

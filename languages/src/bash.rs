@@ -33,4 +33,10 @@ fn grammar() -> Result<crate::Grammar, String> {
         tree_sitter_bash::HIGHLIGHT_QUERY,
         None,
     )
+    .and_then(|g| g.with_outline(OUTLINE))
 }
+
+/// The outline: what `symbols` lists without a server (docs/design/marks.md).
+#[cfg(feature = "bash")]
+const OUTLINE: &str = r#"(function_definition name: (word) @name) @definition.function
+"#;

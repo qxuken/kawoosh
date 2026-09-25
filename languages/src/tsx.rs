@@ -24,4 +24,5 @@ fn grammar() -> Result<crate::Grammar, String> {
         .concat(),
         Some(tree_sitter_javascript::INJECTIONS_QUERY),
     )
+    .and_then(|g| g.with_outline(crate::typescript::OUTLINE))
 }

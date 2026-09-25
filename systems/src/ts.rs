@@ -93,6 +93,46 @@ pub struct TextAnswer {
     pub runs: Vec<Run>,
 }
 
+/// A buffer's outline asked for (docs/design/marks.md Decision 1):
+/// the grammar's outline query run over the tree the thread keeps for
+/// it, answered on `outline_answers`.
+pub struct OutlineJob {
+    pub token: u64,
+    pub buffer: BufferId,
+}
+
+/// One definition of an outline, in the file's order — a definition
+/// before the ones inside it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Outlined {
+    /// The name's first line, trimmed.
+    pub name: String,
+    /// The capture's `@definition.KIND`: `function`, `impl`, `h2`.
+    pub kind: String,
+    /// The `@detail` capture's text: an `impl`'s trait, a method's
+    /// receiver.
+    pub detail: Option<String>,
+    /// The whole definition, bytes of the text as parsed.
+    pub range: Range<usize>,
+    /// Where the name starts: its line and its column in characters,
+    /// both from 0; and the definition's last line.
+    pub line: u32,
+    pub character: u32,
+    pub end_line: u32,
+    /// How many definitions it lies inside.
+    pub depth: u32,
+}
+
+pub struct OutlineAnswer {
+    pub token: u64,
+    pub buffer: BufferId,
+    pub result: Result<Vec<Outlined>, String>,
+}
+
+/// The most definitions an outline answers: a JSON file's every key is
+/// one, and a list past this is no outline to read.
+pub const OUTLINE_MAX: usize = 20_000;
+
 /// How many spans an answer may carry; past that the nearest are joined,
 /// since each is a query of its own.
 const SPANS_MAX: usize = 64;
@@ -101,6 +141,7 @@ const SPANS_MAX: usize = 64;
 enum Cmd {
     Job(Job),
     Text(TextJob),
+    Outline(OutlineJob),
     /// A language registered: the registry entry, and its grammar when
     /// the shell loaded one — `None` for a language of files alone,
     /// or a builtin, which the thread loads itself.
@@ -114,6 +155,7 @@ pub struct Ts {
     cmds: Sender<Cmd>,
     pub answers: Receiver<Answer>,
     pub text_answers: Receiver<TextAnswer>,
+    pub outline_answers: Receiver<OutlineAnswer>,
 }
 
 impl Ts {
@@ -124,6 +166,7 @@ impl Ts {
         let (cmds, cmd_rx) = unbounded::<Cmd>();
         let (answer_tx, answers) = unbounded::<Answer>();
         let (text_tx, text_answers) = unbounded::<TextAnswer>();
+        let (outline_tx, outline_answers) = unbounded::<OutlineAnswer>();
         thread::Builder::new()
             .name("ts".into())
             .spawn(move || {
@@ -142,7 +185,15 @@ impl Ts {
                             wake.wake();
                             continue;
                         }
+                        Cmd::Outline(o) => {
+                            let _ = outline_tx.send(outline_of(&parsed, &mut grammars, &o));
+                            wake.wake();
+                            continue;
+                        }
                     };
+                    // An outline asked while jobs wait is answered after
+                    // them, so it reads the tree of the text as it is.
+                    let mut outlines = Vec::new();
                     // Only the newest job per buffer matters: skip ahead,
                     // the skipped job's edits carried into the next one's.
                     while let Ok(next) = cmd_rx.try_recv() {
@@ -155,6 +206,10 @@ impl Ts {
                             Cmd::Text(t) => {
                                 let _ =
                                     text_tx.send(highlight_text(&mut parser, &mut grammars, &t));
+                                continue;
+                            }
+                            Cmd::Outline(o) => {
+                                outlines.push(o);
                                 continue;
                             }
                         };
@@ -180,6 +235,9 @@ impl Ts {
                     }
                     let _ =
                         answer_tx.send(highlight(&mut parser, &mut grammars, &mut parsed, &job));
+                    for o in outlines {
+                        let _ = outline_tx.send(outline_of(&parsed, &mut grammars, &o));
+                    }
                     wake.wake();
                 }
             })
@@ -188,7 +246,14 @@ impl Ts {
             cmds,
             answers,
             text_answers,
+            outline_answers,
         }
+    }
+
+    /// A buffer's outline, answered on `outline_answers` after every
+    /// job sent before it.
+    pub fn outline(&self, job: OutlineJob) {
+        let _ = self.cmds.send(Cmd::Outline(job));
     }
 
     pub fn submit(&self, job: Job) {
@@ -558,6 +623,86 @@ fn highlight_text(parser: &mut Parser, grammars: &mut Grammars, job: &TextJob) -
     }
 }
 
+/// The outline of a buffer the thread has parsed: every match of the
+/// grammar's outline query, one per definition node (the first pattern
+/// that took it — a method's before the function's that also matches),
+/// in the file's order, each nested in the definitions whose range holds
+/// it.
+fn outline_of(parsed: &Parsed, grammars: &mut Grammars, job: &OutlineJob) -> OutlineAnswer {
+    let answer = |result| OutlineAnswer {
+        token: job.token,
+        buffer: job.buffer,
+        result,
+    };
+    let Some((language, text, tree)) = parsed.by_buffer.get(&job.buffer) else {
+        return answer(Err("the buffer is not parsed".into()));
+    };
+    let Some(g) = grammars.get(language) else {
+        return answer(Err(format!("no grammar for {language}")));
+    };
+    let Some(o) = &g.outline else {
+        return answer(Err(format!("no outline for {language}")));
+    };
+    // Node id → the pattern that took it, its kind's capture, and the
+    // definition, name and detail nodes.
+    type Def<'t> = (usize, u32, Node<'t>, Node<'t>, Option<Node<'t>>);
+    let mut found: HashMap<usize, Def> = HashMap::new();
+    let mut cursor = QueryCursor::new();
+    let mut node_text = |n: Node| std::iter::once(text.collect_range(n.byte_range()));
+    let mut it = cursor.matches(&o.query, tree.root_node(), &mut node_text);
+    while let Some(m) = it.next() {
+        let (mut def, mut name, mut detail) = (None, None, None);
+        for c in m.captures() {
+            if c.index == o.name {
+                name = Some(c.node);
+            } else if Some(c.index) == o.detail {
+                detail = Some(c.node);
+            } else if matches!(o.kinds.get(c.index as usize), Some(Some(_))) {
+                def = Some((c.index, c.node));
+            }
+        }
+        let (Some((kind, def)), Some(name)) = (def, name) else {
+            continue;
+        };
+        let this = (m.pattern_index, kind, def, name, detail);
+        let e = found.entry(def.id()).or_insert(this);
+        if m.pattern_index < e.0 {
+            *e = this;
+        }
+    }
+    let mut defs: Vec<Def> = found.into_values().collect();
+    defs.sort_by_key(|(_, _, d, _, _)| (d.start_byte(), std::cmp::Reverse(d.end_byte())));
+    defs.truncate(OUTLINE_MAX);
+    let first_line = |n: Node| {
+        let bytes = text.collect_range(n.byte_range());
+        let s = String::from_utf8_lossy(&bytes);
+        s.lines().next().unwrap_or("").trim().to_string()
+    };
+    let mut open: Vec<usize> = Vec::new();
+    let mut out = Vec::with_capacity(defs.len());
+    for (_, kind, def, name, detail) in defs {
+        while open.last().is_some_and(|&end| def.start_byte() >= end) {
+            open.pop();
+        }
+        let kind = o.kinds[kind as usize].clone().unwrap_or_default();
+        let at = name.start_position();
+        let line_start = name.start_byte() - at.column;
+        let prefix = text.collect_range(line_start..name.start_byte());
+        out.push(Outlined {
+            name: first_line(name),
+            kind,
+            detail: detail.map(first_line),
+            range: def.byte_range(),
+            line: at.row as u32,
+            character: String::from_utf8_lossy(&prefix).chars().count() as u32,
+            end_line: def.end_position().row as u32,
+            depth: open.len() as u32,
+        });
+        open.push(def.end_byte());
+    }
+    answer(Ok(out))
+}
+
 /// The runs of `span`: the host grammar's captures painted over a byte
 /// map, the languages injected into the span painted over them, then
 /// coalesced into runs. A capture reaching past the span is cut at it:
@@ -874,6 +1019,172 @@ mod tests {
         assert_eq!(tok_at(src.find("main").unwrap()), Some(Token::Function));
         assert_eq!(tok_at(src.find('"').unwrap() + 1), Some(Token::String));
         assert_eq!(tok_at(src.find("let").unwrap()), Some(Token::Keyword));
+    }
+
+    /// An outline of `src` as `language`: each definition as
+    /// `depth kind name`, in the file's order.
+    fn outline_lines(language: &str, src: &str) -> Vec<String> {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let buf = Buffer::new("t", src);
+        let job = Job {
+            buffer: BufferId::default(),
+            language: language.into(),
+            snapshot: buf.snapshot(),
+            edits: None,
+        };
+        highlight(&mut parser, &mut g, &mut parsed, &job);
+        let ask = OutlineJob {
+            token: 1,
+            buffer: BufferId::default(),
+        };
+        outline_of(&parsed, &mut g, &ask)
+            .result
+            .unwrap()
+            .iter()
+            .map(|o| {
+                let detail = o
+                    .detail
+                    .as_deref()
+                    .map(|d| format!(" ({d})"))
+                    .unwrap_or_default();
+                format!("{} {} {}{detail}", o.depth, o.kind, o.name)
+            })
+            .collect()
+    }
+
+    /// The outline nests by range: a method under its `impl`, a field
+    /// under its struct, a module's items under it; the method pattern
+    /// wins over the function one the same node matches, and a trait's
+    /// `impl` names the trait beside the type.
+    #[test]
+    fn a_rust_outline_is_a_tree() {
+        let src = "mod m {\n    pub struct S {\n        a: u8,\n    }\n    impl S {\n        fn new() -> Self { todo!() }\n    }\n    impl Default for S {\n        fn default() -> Self { todo!() }\n    }\n}\nfn main() {}\nconst N: u8 = 1;\n";
+        assert_eq!(
+            outline_lines("rust", src),
+            [
+                "0 module m",
+                "1 struct S",
+                "2 field a",
+                "1 impl S",
+                "2 method new",
+                "1 impl S (Default)",
+                "2 method default",
+                "0 function main",
+                "0 constant N",
+            ]
+        );
+        let ask = OutlineJob {
+            token: 7,
+            buffer: BufferId::default(),
+        };
+        let a = outline_of(&Parsed::default(), &mut Grammars::default(), &ask);
+        assert_eq!(a.token, 7);
+        assert!(a.result.is_err(), "nothing parsed, no outline");
+    }
+
+    /// Markdown's headings nest by their sections, whatever the level
+    /// skipped; the name is the heading's text.
+    #[test]
+    fn a_markdown_outline_nests_by_section() {
+        let src = "# Top\n\ntext\n\n## One\n\n#### Deep\n\n## Two\n\nSet\n---\n";
+        assert_eq!(
+            outline_lines("markdown", src),
+            ["0 h1 Top", "1 h2 One", "2 h4 Deep", "1 h2 Two", "2 h2 Set"]
+        );
+    }
+
+    /// Every language with an outline answers one for a small file.
+    #[test]
+    fn the_other_outlines() {
+        let cases: &[(&str, &str, &[&str])] = &[
+            (
+                "python",
+                "class A:\n    x = 1\n    def f(self): pass\ndef g(): pass\nN = 2\n",
+                &[
+                    "0 class A",
+                    "1 field x",
+                    "1 method f",
+                    "0 function g",
+                    "0 variable N",
+                ],
+            ),
+            (
+                "go",
+                "package p\ntype S struct { A int }\nfunc (s S) M() {}\nfunc F() {}\n",
+                &[
+                    "0 package p",
+                    "0 struct S",
+                    "1 field A",
+                    "0 method M ((s S))",
+                    "0 function F",
+                ],
+            ),
+            (
+                "javascript",
+                "class A { m() {} }\nfunction f() {}\nconst g = () => 1;\nconst n = 2;\n",
+                &[
+                    "0 class A",
+                    "1 method m",
+                    "0 function f",
+                    "0 function g",
+                    "0 variable n",
+                ],
+            ),
+            (
+                "typescript",
+                "interface I { a: number; m(): void }\ntype T = string;\nenum E { X }\n",
+                &[
+                    "0 interface I",
+                    "1 field a",
+                    "1 method m",
+                    "0 type T",
+                    "0 enum E",
+                ],
+            ),
+            (
+                "c",
+                "struct S { int a; };\nint main(void) { return 0; }\n#define N 1\n",
+                &["0 struct S", "1 field a", "0 function main", "0 macro N"],
+            ),
+            (
+                "cpp",
+                "namespace n { class C { void m(); }; }\n",
+                &["0 namespace n", "1 class C", "2 method m"],
+            ),
+            (
+                "lua",
+                "local M = {}\nfunction M.f() end\nlocal function g() end\nreturn M\n",
+                &["0 table M", "0 function M.f", "0 function g"],
+            ),
+            ("bash", "f() { :; }\n", &["0 function f"]),
+            (
+                "nu",
+                "def greet [] { }\nmodule m { }\n",
+                &["0 function greet", "0 module m"],
+            ),
+            (
+                "css",
+                "a { color: red }\n@media screen { b { } }\n",
+                &["0 rule a", "0 media screen", "1 rule b"],
+            ),
+            (
+                "toml",
+                "a = 1\n[pkg]\nname = \"x\"\n",
+                &["0 key a", "0 table pkg", "1 key name"],
+            ),
+            ("yaml", "a:\n  b: 1\n", &["0 key a", "1 key b"]),
+            ("json", "{\"a\": {\"b\": 1}}\n", &["0 key a", "1 key b"]),
+            (
+                "sql",
+                "CREATE TABLE t (id int);\n",
+                &["0 table t", "1 column id"],
+            ),
+        ];
+        for (language, src, want) in cases {
+            assert_eq!(outline_lines(language, src), *want, "{language}");
+        }
     }
 
     /// A variant is a constructor whatever its case: the query's own rule

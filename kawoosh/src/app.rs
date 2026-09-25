@@ -525,6 +525,48 @@ impl Kawoosh {
             }
             self.drain_lua();
         }
+        // A buffer's outline, as a server's symbols: the path its
+        // file's (or its name), the kind the grammar's.
+        let outlines: Vec<_> = self.ts.outline_answers.try_iter().collect();
+        if !outlines.is_empty()
+            && let Some(rt) = self.scripting.rt.clone()
+        {
+            for a in outlines {
+                self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                let path = self.ed.buffers.get(a.buffer).map(|b| {
+                    b.path
+                        .clone()
+                        .unwrap_or_else(|| std::path::PathBuf::from(&b.name))
+                });
+                let result = a.result.map(|items| {
+                    let path = path.unwrap_or_default();
+                    let mut names: Vec<String> = Vec::new();
+                    items
+                        .into_iter()
+                        .map(|o| {
+                            names.truncate(o.depth as usize);
+                            let container = names.last().cloned();
+                            names.push(o.name.clone());
+                            kawoosh_systems::lsp::Symbol {
+                                name: o.name,
+                                kind: 0,
+                                kind_name: Some(o.kind),
+                                detail: o.detail,
+                                container,
+                                path: path.clone(),
+                                line: o.line,
+                                character: o.character,
+                                depth: o.depth,
+                                end_line: Some(o.end_line),
+                            }
+                        })
+                        .collect()
+                });
+                rt.publish(&self.ed, self.focused_view());
+                rt.symbols_answered(a.token, result);
+            }
+            self.drain_lua();
+        }
         for a in self.ts.drain() {
             self.perf.ts_answers += 1;
             self.perf.ts_last = Some((
