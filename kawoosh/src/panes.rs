@@ -1390,6 +1390,8 @@ impl Kawoosh {
         let primary = sels.primary();
         let cur_line = buf.line_of(primary.head);
         let numbers = rows::Numbers::of(buf, cur_line, &self.ed.settings);
+        // The marks' letters beside their lines (docs/design/marks.md).
+        let letters = self.marks.letters(buf_id, top..last);
         let title = buf.name.clone();
         let dark = ui.theme().is_dark();
         let diag_messages = self.lsp.messages.get(&buf_id);
@@ -1516,7 +1518,14 @@ impl Kawoosh {
                             .role(Role::None),
                         |ui| {
                             for ln in top..last {
-                                rows::gutter_row(ui, font, &pal, &numbers, ln);
+                                rows::gutter_row(
+                                    ui,
+                                    font,
+                                    &pal,
+                                    &numbers,
+                                    ln,
+                                    letters.get(&ln).copied(),
+                                );
                             }
                         },
                     );

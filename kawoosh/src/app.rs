@@ -143,6 +143,8 @@ pub struct Kawoosh {
     pub undo: crate::undo::UndoPanel,
     /// The memory's deltas, ring and flush (`moments.rs`).
     pub moments: crate::moments::Moments,
+    /// The live marks of the open files (docs/design/marks.md).
+    pub(crate) marks: crate::marks::Marks,
     /// The working memory pane (`:memory`): the register's past.
     pub memory_pane: crate::memory::MemoryPanel,
     /// The keymap version and, at it, the first words of the commands
@@ -333,6 +335,7 @@ impl Kawoosh {
             perf: Default::default(),
             undo: Default::default(),
             moments: crate::moments::Moments::new(wake.clone()),
+            marks: Default::default(),
             memory_pane: Default::default(),
             bound_names: Default::default(),
             hud: false,
@@ -527,7 +530,14 @@ impl Kawoosh {
         }
         // A buffer's outline, as a server's symbols: the path its
         // file's (or its name), the kind the grammar's.
-        let outlines: Vec<_> = self.ts.outline_answers.try_iter().collect();
+        let (marks, outlines): (Vec<_>, Vec<_>) = self
+            .ts
+            .outline_answers
+            .try_iter()
+            .partition(|a| self.marks.asked(a.token));
+        for a in marks {
+            self.mark_outline(a);
+        }
         if !outlines.is_empty()
             && let Some(rt) = self.scripting.rt.clone()
         {
@@ -2147,6 +2157,7 @@ impl kui::App for Kawoosh {
         self.sync_histories(false);
         self.moments.window_focused = ui.env().focused;
         self.sync_disk(ui.env().focused);
+        self.sync_marks();
         self.sync_moments(false);
         self.perf.cur.io = ms(t);
         let t = Instant::now();

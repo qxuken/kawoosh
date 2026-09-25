@@ -13,9 +13,9 @@ taken here, each the user's to overturn. Companion to
 [core.md](core.md) (anchors and the journal), [memory.md](memory.md)
 (where a mark is kept) and [search.md](search.md), written the same
 evening on another branch (the multibuffer; "Beside the search" says
-where the two meet). *Round one built the same evening* (roadmap step
-36; "Built" at the end says where it departed); marks are step 37,
-folds step 38.
+where the two meet). *Rounds one and two built the same evening* (roadmap
+steps 36 and 37; "Built" at the end says where they departed); folds
+are step 38.
 
 ## The thesis
 
@@ -256,3 +256,33 @@ departures and details:
   gives a Lua view no event for the pointer entering a row, and a
   pointer resting over a list the query reshuffles would follow rows
   the eye is not on.
+
+**Round two, 2026-09-25** (roadmap step 37): marks, in
+`kawoosh/src/marks.rs` and `kawoosh/tests/marks.rs`. Departures:
+
+- **No stamp.** Decision 4's first step is "the line where it was still
+  reads the same", not "the file's stamp is the same": it is one line
+  read, it is right when a restored draft differs from the disk, and a
+  stamp would only have skipped that read.
+- **A line is gone when an edit takes all of its text and a newline
+  beside it** — `dd` removes the newline before the line or the one
+  after it, depending on where the line is — so `cc` keeps the mark on
+  its line and `J` carries it into the joined one. Carried through the
+  journal as `buf.track`'s lines are, and found again by text when the
+  journal no longer reaches back.
+- **The symbol's own line does not place the mark** (`How::Near`): a
+  jump goes there, and says "its line is gone (was `…`); at its symbol
+  `b`", but the mark stays adrift with the text it looks for, so an
+  undo that brings the line back has it found on its line again. Only
+  a close line *inside* the symbol places it. Placing it on the symbol
+  line was the first build, and it lost the line to the first `dd`.
+- **Held by its kind, not by `pinned`.** `:memory pins` lists every
+  pinned row, and a mark there would have taken a pin's number from
+  `<leader>e1`…`9`; a `mark` row is never aged out or evicted instead.
+- The picker's source is the memory's rows (`kawoosh.memory { kind =
+  "mark" }`), so the moves not flushed yet are in it; `<C-x>` is
+  `kawoosh.forget`. The gutter draws a live mark's letter in its left
+  padding, accent-coloured, a letter over a capital on one line.
+- Not done: `'a` as a motion for an operator (`d'a`), and a mark in a
+  multibuffer (search.md's, not merged) — `m` there says the buffer is
+  no file.

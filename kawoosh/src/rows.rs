@@ -932,8 +932,17 @@ impl Numbers {
     }
 }
 
-/// The gutter cell for line `ln` (0-based), decoration rather than text.
-pub fn gutter_row(ui: &mut Ui<'_>, face: Face, pal: &Pal, numbers: &Numbers, ln: usize) {
+/// The gutter cell for line `ln` (0-based), decoration rather than text:
+/// its number, and a mark's letter at the gutter's left edge, in the
+/// padding, when the line has one (docs/design/marks.md).
+pub fn gutter_row(
+    ui: &mut Ui<'_>,
+    face: Face,
+    pal: &Pal,
+    numbers: &Numbers,
+    ln: usize,
+    mark: Option<char>,
+) {
     let color = if ln == numbers.current {
         pal.dim
     } else {
@@ -946,6 +955,15 @@ pub fn gutter_row(ui: &mut Ui<'_>, face: Face, pal: &Pal, numbers: &Numbers, ln:
             .main_align(Align::End)
             .cross_align(Align::Center),
         |ui| {
+            if let Some(c) = mark {
+                ui.with(
+                    NodeSpec::row()
+                        .height(Sizing::Fixed(face.line_height))
+                        .cross_align(Align::Center)
+                        .float(FloatConfig::parent().offset(-GUTTER_PAD + 2.0, 0.0)),
+                    |ui| ui.text(&c.to_string(), mono(face, pal).color(pal.accent)),
+                );
+            }
             ui.text(&numbers.label(ln), mono(face, pal).color(color));
         },
     );

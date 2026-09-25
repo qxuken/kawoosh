@@ -32,7 +32,7 @@
 //! Limits (Decision 4): rows per kind ([`cap_for`]), the whole store
 //! under `memory.max_mb`, rows untouched for `memory.keep_days` gone at
 //! the first frame of a launch; past a cap the lowest [`score`] goes
-//! first, never a *held* row — pinned, its subject open in a buffer,
+//! first, never a *held* row — pinned, a mark, its subject open in a buffer,
 //! a history with unsaved text hanging off it. A `file` or `scratch`
 //! row's history goes with it (Decision 6).
 
@@ -247,7 +247,7 @@ impl Moments {
 
     /// `patch`'s keys over the subject's pending meta (the flush merges
     /// them over the row's the same way).
-    fn set_meta(&mut self, key: MomentKey, patch: String) {
+    pub(crate) fn set_meta(&mut self, key: MomentKey, patch: String) {
         let mut d = self.delta(key);
         d.meta = Some(match &d.meta {
             Some(m) => merge_meta(m, &patch),
@@ -801,7 +801,8 @@ impl Kawoosh {
         let Some(store) = self.store.clone() else {
             return false;
         };
-        if r.pinned > 0 {
+        // Pinned, and a mark (docs/design/marks.md Decision 5): held.
+        if r.pinned > 0 || r.key.kind == crate::marks::KIND {
             return false;
         }
         // The register's text is held.
@@ -858,6 +859,9 @@ impl Kawoosh {
         }
         if key.kind == "text" {
             self.forget_text_moment(key);
+        }
+        if key.kind == crate::marks::KIND {
+            self.marks.drop(&key.subject);
         }
         store
             .forget_moment(key)
