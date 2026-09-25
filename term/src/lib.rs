@@ -1022,11 +1022,23 @@ impl Terminal {
 
     /// The whole scrollback plus screen as text, trailing blanks trimmed.
     pub fn scrollback_text(&self) -> String {
+        self.scrollback_styled().0
+    }
+
+    /// [`Self::scrollback_text`] with the colours it was printed in
+    /// (roadmap step 31): each run of text whose foreground is not the
+    /// palette's own, as a byte range of the text and an RGBA colour —
+    /// resolved as the screen draws it, inverse and dim included — so
+    /// copy mode's buffer reads as the pane did.
+    pub fn scrollback_styled(&self) -> (String, Vec<(std::ops::Range<usize>, u32)>) {
+        let pal = &self.palette;
         let grid = self.term.grid();
         let history = grid.history_size() as i32;
         let mut out = String::new();
+        let mut runs: Vec<(std::ops::Range<usize>, u32)> = Vec::new();
         for line in -history..grid.screen_lines() as i32 {
-            let mut row = String::new();
+            let start = out.len();
+            let mut row_runs: Vec<(std::ops::Range<usize>, u32)> = Vec::new();
             for col in 0..grid.columns() {
                 let cell = &grid[Line(line)][Column(col)];
                 if cell
@@ -1035,15 +1047,40 @@ impl Terminal {
                 {
                     continue;
                 }
-                row.push(cell.c);
+                let at = out.len();
+                out.push(cell.c);
+                let mut fg = color(cell.fg, pal, pal.fg);
+                if cell.flags.contains(Flags::INVERSE) {
+                    fg = match cell.bg {
+                        Color::Named(NamedColor::Background) => pal.bg,
+                        other => color(other, pal, pal.bg),
+                    };
+                }
+                if cell.flags.contains(Flags::DIM) {
+                    fg = dim(fg);
+                }
+                if fg == pal.fg || cell.c == ' ' {
+                    continue;
+                }
+                match row_runs.last_mut() {
+                    Some((r, c)) if *c == fg && r.end == at => r.end = out.len(),
+                    _ => row_runs.push((at..out.len(), fg)),
+                }
             }
-            out.push_str(row.trim_end());
+            let kept = out[start..].trim_end().len();
+            out.truncate(start + kept);
+            runs.extend(
+                row_runs
+                    .into_iter()
+                    .filter(|(r, _)| r.start < start + kept)
+                    .map(|(r, c)| (r.start..r.end.min(start + kept), c)),
+            );
             out.push('\n');
         }
         while out.ends_with("\n\n") {
             out.pop();
         }
-        out
+        (out, runs)
     }
 
     /// The text of screen row `row` (0-based on the displayed screen).

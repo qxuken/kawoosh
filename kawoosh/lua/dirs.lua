@@ -85,6 +85,10 @@ dirs.backends.memory = {
   end,
 }
 
+kawoosh.setting("dirs.backend", { type = { "auto", "zoxide", "memory" },
+                                  doc = "where the directory jumps come from" })
+kawoosh.setting("dirs.zoxide", { type = "string", doc = "the zoxide binary" })
+
 -- The backend the setting names. `auto` is zoxide while it runs and
 -- kawoosh keeps a state db: a run that keeps nothing (no store — the
 -- tests) writes to no one else's database either, and has the memory.
@@ -194,6 +198,7 @@ picker.source("dirs", {
   answer = function(item) return item.path end,
   keys = {
     ["<C-o>"] = function(item)
+      if not item then return end
       picker.close()
       list_it(item)
     end,

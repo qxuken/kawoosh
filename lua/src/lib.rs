@@ -38,6 +38,14 @@ pub enum Msg {
         name: String,
         on: bool,
     },
+    /// `kawoosh.setting(path, { type =, doc = })`: a plugin's setting
+    /// declared (roadmap step 34), so the settings files may set it and
+    /// the language server knows it.
+    Declare {
+        path: String,
+        kind: kawoosh_editor::SettingKind,
+        doc: String,
+    },
     /// A view drew a `field` the engine has no field for yet: open it
     /// (`lua:<view>/<name>`).
     FieldOpen(String),
@@ -398,6 +406,7 @@ impl Msg {
                 | Msg::Copy(_)
                 | Msg::Ex(_)
                 | Msg::Fact { .. }
+                | Msg::Declare { .. }
         )
     }
 }
@@ -436,6 +445,9 @@ pub struct BufSnap {
     /// A field's one-line buffer — the prompt's, a query's — which
     /// `kawoosh.buf.list` leaves out, as `:ls` does.
     pub field: bool,
+    /// The focused tab's under `buffers.scope = "tab"` (every buffer
+    /// is, under `all`): `kawoosh.buf.list { tab = true }` keeps these.
+    pub in_tab: bool,
 }
 
 thread_local! {
@@ -1059,6 +1071,7 @@ impl Runtime {
                     read_only: b.read_only,
                     private: b.private,
                     field: ed.is_field_buffer(id),
+                    in_tab: ed.tab_buffers.as_ref().is_none_or(|s| s.contains(&id)),
                 },
             );
         }
@@ -1677,6 +1690,7 @@ impl Runtime {
                 }
                 Msg::Ex(line) => ed.execute(view, &line),
                 Msg::Fact { name, on } => ed.fact(&name, on),
+                Msg::Declare { path, kind, doc } => ed.settings.declare(&path, kind, &doc),
                 other => rest.push(other),
             }
         }
@@ -2077,6 +2091,40 @@ fn seed(
         "field_set",
         lua.create_function(move |_, (name, text): (String, String)| {
             qq.borrow_mut().push(Msg::FieldSet { name, text });
+            Ok(())
+        })?,
+    )?;
+    // kawoosh.setting(path, { type = "string" | "boolean" | "integer" |
+    // "number" | "list" | "table" | { "a", "b" }, doc = "…" }): declares
+    // a setting a plugin reads — `table` one whose keys are the user's.
+    let qq = q(queue);
+    k.set(
+        "setting",
+        lua.create_function(move |_, (path, spec): (String, Option<Table>)| {
+            use kawoosh_editor::SettingKind as Kind;
+            let (kind, doc) = match spec {
+                Some(t) => {
+                    let kind = match t.get::<mlua::Value>("type")? {
+                        mlua::Value::Table(words) => Kind::OneOf(
+                            words
+                                .sequence_values::<String>()
+                                .collect::<mlua::Result<Vec<_>>>()?,
+                        ),
+                        mlua::Value::String(s) => match s.to_str()?.as_ref() {
+                            "boolean" => Kind::Bool,
+                            "integer" => Kind::Int,
+                            "number" => Kind::Float,
+                            "list" => Kind::List,
+                            "table" => Kind::Open,
+                            _ => Kind::Str,
+                        },
+                        _ => Kind::Str,
+                    };
+                    (kind, t.get::<Option<String>>("doc")?.unwrap_or_default())
+                }
+                None => (Kind::Str, String::new()),
+            };
+            qq.borrow_mut().push(Msg::Declare { path, kind, doc });
             Ok(())
         })?,
     )?;
@@ -2526,13 +2574,20 @@ fn seed(
     let pp = published.clone();
     buf.set(
         "list",
-        lua.create_function(move |lua, ()| {
+        // `kawoosh.buf.list([{ tab = true }])`: every buffer, or the
+        // focused tab's (`buffers.scope`).
+        lua.create_function(move |lua, opts: Option<Table>| {
+            let tab = opts
+                .map(|o| o.get::<Option<bool>>("tab"))
+                .transpose()?
+                .flatten()
+                .unwrap_or(false);
             let p = pp.borrow();
             let t = lua.create_table()?;
             let mut hs: Vec<u64> = p
                 .buffers
                 .iter()
-                .filter(|(_, b)| !b.field)
+                .filter(|(_, b)| !b.field && (!tab || b.in_tab))
                 .map(|(h, _)| *h)
                 .collect();
             hs.sort();

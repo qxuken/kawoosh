@@ -663,6 +663,7 @@ fn search(ed: &mut Editor, ctx: &Ctx, forward: bool) {
         ed.message = if handed_over.is_some() {
             format!("/{pat}  searching…")
         } else {
+            ed.bell = true;
             format!("not found: {pat}")
         };
         return;
@@ -1811,6 +1812,10 @@ pub fn install(ed: &mut Editor) {
     });
     ed.register("cursor below", |ed, ctx| add_cursor(ed, ctx, 1));
     ed.register("cursor above", |ed, ctx| add_cursor(ed, ctx, -1));
+    ed.register("cursor lines", |ed, ctx| carets_per_line(ed, ctx, true));
+    ed.register("cursor lines back", |ed, ctx| {
+        carets_per_line(ed, ctx, false)
+    });
     ed.register("select next", select_next);
     ed.register("select all matches", select_all_matches);
     // `S`: `cc` in one key.
@@ -2341,8 +2346,16 @@ const DOCS: &[(&str, &str)] = &[
         "cursor primary",
         "keep the primary selection, drop the rest",
     ),
-    ("cursor below", "add a caret on the line below (<A-j>)"),
-    ("cursor above", "add a caret on the line above (<A-k>)"),
+    ("cursor below", "add a caret on the line below (<C-j>)"),
+    ("cursor above", "add a caret on the line above (<C-k>)"),
+    (
+        "cursor lines",
+        "a caret on each line of the selection, at its head's column; the last primary (<C-j> in visual mode)",
+    ),
+    (
+        "cursor lines back",
+        "a caret on each line of the selection, at its head's column; the first primary (<C-k> in visual mode)",
+    ),
     (
         "select next",
         "select the next match of the selection, or the word under the caret (<A-d>, <D-d>)",
@@ -2757,6 +2770,38 @@ fn add_cursor(ed: &mut Editor, ctx: &Ctx, dy: i64) {
     }
     let head = m::offset_at(buf, target as usize, col);
     v.sels.push(Selection::point(head), true);
+}
+
+/// `cursor lines` / `cursor lines back` (`<C-j>` `<C-k>` in visual
+/// mode): every selection becomes a caret on each line it covers, at
+/// the column its head is on — vim's visual block, as carets — and
+/// visual mode is left for normal with them. The primary is the last
+/// line's caret, or the first's going back, so the next `<C-j>` or
+/// `<C-k>` in normal mode grows the column the way it was made.
+fn carets_per_line(ed: &mut Editor, ctx: &Ctx, down: bool) {
+    let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
+    let v = &ed.views[ctx.view];
+    let mut heads = Vec::new();
+    for s in v.sels.iter() {
+        let (_, col) = m::line_col(buf, s.head);
+        let first = buf.line_of(s.anchor.min(s.head));
+        let last = buf.line_of(s.anchor.max(s.head));
+        for ln in first..=last {
+            heads.push(m::offset_at(buf, ln, col));
+        }
+    }
+    heads.sort_unstable();
+    heads.dedup();
+    if heads.is_empty() {
+        return;
+    }
+    let primary = if down { heads.len() - 1 } else { 0 };
+    ed.views[ctx.view].sels = crate::Selections {
+        items: heads.into_iter().map(Selection::point).collect(),
+        primary,
+    };
+    ed.set_mode(ctx.view, Mode::Normal);
 }
 
 /// The `n`th `c` from `o` on — or back — across lines: what `;` does
@@ -3330,6 +3375,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-e>", "lsp diagnostic"),
         ("<CR>", "goto location"),
         ("-", "dir"),
+        // oil's `_`: the working directory listed, wherever you are.
+        ("_", "dir ."),
         // Surrounds under `gs`, as mini.surround's: add, delete, replace.
         ("gsa", "surround add"),
         // Align, as vim-easy-align's: `gaip=`, or `ga=` over a selection.
@@ -3434,6 +3481,11 @@ pub fn default_keymap(km: &mut Keymap) {
     let v = [
         ("<leader>x", "lua eval"),
         ("o", "cursor swap"),
+        // Ctrl counts the selections: in visual mode, one caret a line.
+        ("<C-j>", "cursor lines"),
+        ("<C-k>", "cursor lines back"),
+        ("<C-Down>", "cursor lines"),
+        ("<C-Up>", "cursor lines back"),
         ("x", "delete char"),
         ("i", "textobject inner"),
         ("a", "textobject around"),

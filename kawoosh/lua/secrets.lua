@@ -37,6 +37,9 @@ local PREFIX = "*secret "
 
 local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
 
+kawoosh.setting("secrets.vault_command", { type = "string", doc = "the vault tool, `ansible-vault` by default" })
+kawoosh.setting("secrets.vault_password_file", { type = "string", doc = "the vault's password file, when it has one" })
+
 -- The tool: `ansible-vault`, or what `secrets.vault_command` names (a
 -- wrapper, a test's stand-in).
 local function vault_command()

@@ -10,20 +10,26 @@
 -- split from, a scratch, a terminal, the directory), *plugins* (the
 -- tools, and entries a plugin adds), the open buffers, the recent
 -- files with the pins first (`<A-1>`…), and every file under the
--- working directory once a query is typed. `<CR>` takes the cursor's
--- row — the first, with no query, is the same buffer, so `<C-w>v<CR>`
--- is vim's split — `<Esc>` leaves insert mode and `<Esc>` again is a
--- scratch, `<C-c>` closes the pane (the split undone), `<C-n>` `<C-p>`
--- `<Down>` `<Up>` `<C-j>` `<C-k>` (`j` `k` in normal mode) walk the
--- rows, and `:` — in normal mode, or on an empty query — is the
--- command line.
+-- working directory once a query is typed. It opens in normal mode
+-- (`launcher.start`, roadmap step 29), where a letter launches while
+-- the query is empty — `s` a scratch, `t` a terminal, `d` the
+-- directory, a tool its own or its name's first free letter, drawn
+-- where the row's hint is — and `1`…`9` open the pins; `i` `a` `/`
+-- start the query, `q` closes. `<CR>` takes the cursor's row — the
+-- first, with no query, is the same buffer, so `<C-w>v<CR>` is vim's
+-- split — `<Esc>` in normal mode is a scratch (in insert mode it
+-- leaves for normal first), `<C-c>` closes the pane (the split
+-- undone), `<C-n>` `<C-p>` `<Down>` `<Up>` `<C-j>` `<C-k>` (`j` `k` in
+-- normal mode) walk the rows, and `:` — in normal mode, or on an empty
+-- query — is the command line.
 --
 -- Hackable: `kawoosh.launcher.sections` is the list, data a config
 -- reorders or extends — `{ title =, source = "<picker source>" | items
 -- = fn(ctx) | load = fn(ctx, done), limit =, query = }`, `limit` the
 -- rows shown while the query is empty and `query = true` hiding the
 -- section until there is one; `kawoosh.launcher.entry { text =, sub =,
--- run = "cmd" | pick = fn, section = "here" | "plugins" }` adds a row;
+-- run = "cmd" | pick = fn, section = "here" | "plugins", key = "x" }`
+-- adds a row, `key` its letter;
 -- and a picker source registered with `launcher = true` is a section
 -- of its own, before the files. A session does not keep the pane.
 
@@ -36,6 +42,11 @@ local VIEW = "launcher"
 local FIELD = "q"
 local FIELD_FACT = "field:lua:" .. VIEW .. "/" .. FIELD
 local PANE_FACT = "lua:" .. VIEW
+-- Published while the query is empty: the letters launch then, and
+-- edit the query otherwise.
+local BLANK = "launcher:blank"
+-- Letters no entry takes: the list's walk, the query's way in, close.
+local RESERVED = { j = true, k = true, i = true, a = true, q = true }
 -- The rows follow the chrome's size, as the picker's do.
 local SIZE = 13
 local ROW_H = SIZE + 8
@@ -77,10 +88,11 @@ local function here_items(ctx)
     -- and the recent files leave it out.
     items[#items + 1] = { text = o.name, sub = "the same buffer", run = "launcher same", hint = "⏎" }
   end
-  items[#items + 1] = { text = "scratch", sub = "a fresh buffer", run = "launcher scratch", hint = "esc" }
-  items[#items + 1] = { text = "terminal", sub = "a shell in " .. short_path(fs.cwd()), run = "launcher terminal" }
+  items[#items + 1] = { text = "scratch", sub = "a fresh buffer", run = "launcher scratch", key = "s" }
+  items[#items + 1] = { text = "terminal", sub = "a shell in " .. short_path(fs.cwd()), run = "launcher terminal",
+                        key = "t" }
   local where = o and o.path and fs.parent(o.path) or fs.cwd()
-  items[#items + 1] = { text = "directory", sub = short_path(where) .. "/", run = "launcher dir" }
+  items[#items + 1] = { text = "directory", sub = short_path(where) .. "/", run = "launcher dir", key = "d" }
   for _, e in ipairs(launcher.entries) do
     if e.section == "here" then items[#items + 1] = e end
   end
@@ -91,7 +103,8 @@ end
 local function plugin_items()
   local items = {}
   for _, t in ipairs(kawoosh.tools()) do
-    items[#items + 1] = { text = t.name, sub = t.cmd, run = "tool " .. t.name }
+    items[#items + 1] = { text = t.name, sub = t.cmd, run = "tool " .. t.name,
+                          key = kawoosh.tool_keys and kawoosh.tool_keys[t.name] or nil }
   end
   for _, e in ipairs(launcher.entries) do
     if e.section ~= "here" then items[#items + 1] = e end
@@ -108,7 +121,7 @@ local function recent_items()
       seen[r.subject] = true
       items[#items + 1] = { text = short_path(r.subject), path = r.subject,
                             line = (r.meta and r.meta.line or 0) + 1,
-                            hint = r.pinned <= 9 and ("⌥" .. r.pinned) or nil }
+                            hint = r.pinned <= 9 and tostring(r.pinned) or nil }
     end
   end
   for _, f in ipairs(kawoosh.oldfiles(200)) do
@@ -196,6 +209,43 @@ local function load_section(sec, ctx)
   end
 end
 
+-- The letters of *here* and *plugins*: an entry's own `key` first,
+-- then each the first letter of its name no one has, the reserved ones
+-- never. `L.keys` maps a letter to its row's item and section.
+local function assign_keys()
+  L.keys = {}
+  local taken, want = {}, {}
+  for k in pairs(RESERVED) do taken[k] = true end
+  for _, sec in ipairs(L.sections) do
+    if sec.title == "here" or sec.title == "plugins" then
+      for _, it in ipairs(sec.items) do
+        it.letter = nil
+        want[#want + 1] = { item = it, sec = sec }
+      end
+    end
+  end
+  for _, w in ipairs(want) do
+    local k = w.item.key
+    if type(k) == "string" and k:match("^%l$") and not taken[k] then
+      taken[k] = true
+      w.item.letter = k
+      L.keys[k] = w
+    end
+  end
+  for _, w in ipairs(want) do
+    if not w.item.letter and not w.item.hint then
+      for c in (w.item.text or ""):lower():gmatch("%l") do
+        if not taken[c] then
+          taken[c] = true
+          w.item.letter = c
+          L.keys[c] = w
+          break
+        end
+      end
+    end
+  end
+end
+
 local function open_state(ctx)
   local origin = ctx.origin
   local sctx = { buffer = origin and origin.buffer or nil, cwd = fs.cwd(), origin = origin }
@@ -217,6 +267,7 @@ local function open_state(ctx)
       loaded(sec, kept)
     end
   end
+  assign_keys()
 end
 
 -- Whether row `i` can take the cursor (a header cannot).
@@ -241,6 +292,7 @@ end
 -- `limit` items as they are, and the query-only ones left out.
 local function refilter(q)
   L.query = q
+  kawoosh.fact(BLANK, q == "")
   L.rows = {}
   for _, sec in ipairs(L.sections) do
     local hits = {}
@@ -297,13 +349,9 @@ local function page(by)
   ensure_visible()
 end
 
--- The cursor's row taken: a command run, a buffer shown, a file opened
--- — each into this pane, since the engine fills the pane being made.
-local function pick(i)
-  if not L then return end
-  local r = L.rows[i or L.cursor]
-  if not r or not r.hit then return kawoosh.echo("nothing to take") end
-  local item, sec = r.hit.item, r.section
+-- An item taken: a command run, a buffer shown, a file opened — each
+-- into this pane, since the engine fills the pane being made.
+local function take(item, sec)
   local src = sec.def.source and picker.sources[sec.def.source]
   if item.run then return kawoosh.run(item.run) end
   if item.pick then return item.pick(item) end
@@ -314,6 +362,14 @@ local function pick(i)
   elseif item.path then
     kawoosh.open(item.path, { line = item.line, col = item.col })
   end
+end
+
+-- The cursor's row taken.
+local function pick(i)
+  if not L then return end
+  local r = L.rows[i or L.cursor]
+  if not r or not r.hit then return kawoosh.echo("nothing to take") end
+  take(r.hit.item, r.section)
 end
 
 -- launcher.state(): what the open launcher shows — `query`, `rows` (a
@@ -338,7 +394,7 @@ end
 -- ------------------------------------------------------------ the view
 
 local function hint_of(item)
-  return item.hint
+  return item.letter or item.hint
 end
 
 kawoosh.view(VIEW, function(ctx)
@@ -363,8 +419,10 @@ kawoosh.view(VIEW, function(ctx)
     text("new pane", { size = SIZE, color = t.muted }),
     text(">", { family = "mono", size = SIZE, color = t.accent }),
   }
-  local field = ctx.field { name = FIELD, placeholder = "a buffer, a file, a tool · ⏎ the same · esc a scratch",
-                            size = SIZE }
+  local typing = kawoosh.opt("launcher.start") == "insert"
+  local field = ctx.field { name = FIELD, size = SIZE,
+                            placeholder = typing and "a buffer, a file, a tool · ⏎ the same · esc a scratch"
+                              or "a letter launches · / searches · ⏎ the same · esc a scratch" }
   field.width = "grow"
   head[#head + 1] = field
 
@@ -439,6 +497,12 @@ on("prev", function() move(-1) end, "the cursor a row up, from the first to the 
 on("page down", function() page(1) end, "the cursor a page down")
 on("page up", function() page(-1) end, "the cursor a page up")
 on("query", function() kawoosh.field_focus(VIEW, FIELD) end, "the keys to the query")
+kawoosh.command("launcher key", function(ctx)
+  local w = L and L.keys and L.keys[ctx.args[1]]
+  -- No entry on the letter: the key is normal mode's.
+  if not w then return kawoosh.pass() end
+  take(w.item, w.sec)
+end, { args = { "text" }, when = { PANE_FACT }, doc = "take the entry on letter KEY (its hint)" })
 
 local at = { when = { FIELD_FACT } }
 local on_pane = { when = { PANE_FACT } }
@@ -462,10 +526,23 @@ kawoosh.map("n", "j", "launcher next", at)
 kawoosh.map("n", "k", "launcher prev", at)
 -- `:` on an empty query is the command line from insert mode too.
 kawoosh.map("i", ":", "launcher colon", at)
--- The pins, as from any pane: the Nth into this one.
+-- The pins, as from any pane: the Nth into this one — and in normal
+-- mode on an empty query the digit alone, as its hint says.
+local blank = { when = { FIELD_FACT, BLANK } }
 for n = 1, 9 do
   kawoosh.map("i", "<A-" .. n .. ">", "memory pin " .. n, at)
+  kawoosh.map("n", "<A-" .. n .. ">", "memory pin " .. n, at)
+  kawoosh.map("n", tostring(n), "memory pin " .. n, blank)
 end
+-- A letter launches on an empty query (`launcher key`, which passes
+-- the key on when no entry has it); `/` starts the query as `i` and `a`
+-- do, `q` closes.
+for b = string.byte("a"), string.byte("z") do
+  local c = string.char(b)
+  if not RESERVED[c] then kawoosh.map("n", c, "launcher key " .. c, blank) end
+end
+kawoosh.map("n", "/", "insert", at)
+kawoosh.map("n", "q", "launcher close", at)
 -- With the query blurred (a click on the pane's title): the list keys.
 for k, c in pairs {
   ["<CR>"] = "launcher pick", ["<Esc>"] = "launcher scratch", ["<C-c>"] = "launcher close",

@@ -9,7 +9,7 @@
 //! return {
 //!   font = { family = "JetBrains Mono", size = 14, line_height = 1.5,
 //!            features = "-liga +calt" },
-//!   theme = { appearance = "dark", accent = "#e0af68", bg = "#1a1b26" },
+//!   theme = { name = "rose-pine", appearance = "dark", accent = "#e0af68" },
 //!   tokens = { colors = { keyword = { light = "#7a2fb0", dark = "#c78fe8" },
 //!                         string = "#9cc87a" } },
 //! }
@@ -24,19 +24,25 @@
 //!   kui's spelling (`liga=0`, `-liga`, `tnum`). Every mono run — the
 //!   rows, the gutter, the terminals' cells, the panes' tables — is
 //!   [`rows::mono`] over the one [`Face`], so the cell size follows.
-//! - **`theme.appearance`** is `system` (the OS's), `dark` or `light`;
-//!   `theme.accent` a colour; every other key under `theme` a role of
-//!   kui's `Theme` by name (`bg`, `surface`, `fg`, `muted`, `selection`,
-//!   `focus_ring`, `danger`, …). The OS's appearance with no role set
-//!   keeps following the OS (`ThemeSource::Derived`, with the accent
-//!   when one is given); an appearance named or a role set pins a
-//!   palette (`ThemeSource::Pinned`): derived from the appearance and
-//!   the accent, the roles written over it, and derived again when the
-//!   OS flips under `system`.
+//! - **`theme.name`** is a palette of [`crate::themes`] — `rose-pine`
+//!   (the default), `rose-pine-moon` — which sets the chrome's roles,
+//!   the syntax hues and the terminal's sixteen from one set of colours,
+//!   pinned (roadmap step 28); or `system`, the way below.
+//!   **`theme.appearance`** is `system` (the OS's base), `dark` or
+//!   `light`; `theme.accent` a colour, or `system` for the OS's; every
+//!   other key under `theme` a role of kui's `Theme` by name (`bg`,
+//!   `surface`, `fg`, `muted`, `selection`, `focus_ring`, `danger`, …),
+//!   written over the palette. Under `theme.name = "system"` the OS's
+//!   appearance with no role set keeps following the OS
+//!   (`ThemeSource::Derived`, with the accent when one is given); an
+//!   appearance named or a role set pins a palette derived from the
+//!   appearance and the accent. Whatever the source, the selection is
+//!   held legible under the text (`themes::legible_selection`): an
+//!   accent that would hide it is pinned fainter.
 //! - **`tokens.colors`** names a syntax token (`keyword`, `string`,
 //!   `comment`, … — `Token::name`) and gives it one colour or a light
 //!   and a dark half (`{ light, dark }` or `{ "#l", "#d" }`); a token
-//!   not named keeps `palette.rs`'s hue. The same table, the defaults
+//!   not named keeps the palette's hue (`palette.rs`'s under `system`). The same table, the defaults
 //!   filled in, is declared as the host's kui tokens, so a Lua view
 //!   paints `color = "$keyword"` and gets the frame's half. `kawoosh.
 //!   colors { keyword = "ff0000" }` from code lands over the file's.
@@ -46,11 +52,12 @@ use std::collections::HashMap;
 use kawoosh_editor::Setting;
 use kawoosh_systems::ts::Token;
 use kui::schema::THEME_ROLES;
-use kui::{Appearance, Color, FontFeatures, FontId, Theme, ThemeSource, Tokens, Ui};
+use kui::{Appearance, Color, FontFeatures, FontId, SystemEnv, Theme, ThemeSource, Tokens, Ui};
 
 use crate::app::Kawoosh;
 use crate::notify::{Level, Note};
 use crate::rows::{FONT, LH};
+use crate::themes::{self, Named};
 
 /// The face every mono run is shaped in: the font, its size, the row's
 /// height and the shaper's features. `Copy`, since it rides into every
@@ -127,7 +134,7 @@ const SIZE_RANGE: (f32, f32) = (6.0, 96.0);
 pub const LINE_HEIGHT: f64 = 1.5;
 
 /// What the look was last built from, so a frame rebuilds it only when
-/// the tree or the OS's appearance moved.
+/// the tree, the OS's appearance or its accent moved.
 #[derive(Default)]
 pub struct Look {
     /// The settings version the look was built from; none when
@@ -135,6 +142,10 @@ pub struct Look {
     pub seen: Option<u64>,
     /// The OS appearance the theme was resolved under.
     appearance: Appearance,
+    /// The OS accent the theme was resolved under.
+    accent: Option<Color>,
+    /// The palette `theme.name` names; none under `system`.
+    pub named: Option<&'static Named>,
     /// The syntax colours the config set, a light and a dark half each.
     pub syntax: HashMap<Token, (Color, Color)>,
     /// The family a toast already said was missing.
@@ -182,17 +193,24 @@ impl Kawoosh {
     /// moved since the last frame, and pushes it into the core.
     pub(crate) fn sync_look(&mut self, ui: &mut Ui<'_>) {
         let v = self.ed.settings.version();
-        let sys = ui.env().system.appearance;
-        if self.look.seen == Some(v) && self.look.appearance == sys {
+        let system = ui.env().system;
+        let sys = system.appearance;
+        if self.look.seen == Some(v)
+            && self.look.appearance == sys
+            && self.look.accent == system.accent
+        {
             return;
         }
         self.look.seen = Some(v);
         self.look.appearance = sys;
+        self.look.accent = system.accent;
         self.sync_layout_settings();
+        self.note_undeclared();
         let mut notes = Vec::new();
         self.sync_font(ui, &mut notes);
-        self.sync_theme(ui, sys, &mut notes);
+        self.look.named = self.theme_named(&mut notes);
         self.sync_tokens(ui, &mut notes);
+        self.sync_theme(ui, &system, &mut notes);
         for n in notes {
             self.notify_with(Note::new(Level::Warn, n).source("settings"));
         }
@@ -240,7 +258,26 @@ impl Kawoosh {
         self.chrome = Chrome::of(self.face, chrome);
     }
 
-    fn sync_theme(&mut self, ui: &mut Ui<'_>, sys: Appearance, notes: &mut Vec<String>) {
+    /// `theme.name`: a palette of `themes.rs`, or `system` for none. A
+    /// name nobody ships is a toast, and the default stands.
+    fn theme_named(&self, notes: &mut Vec<String>) -> Option<&'static Named> {
+        let name = self.ed.settings.str("theme.name").unwrap_or("").trim();
+        match name {
+            "system" => None,
+            "" => Some(&themes::NAMED[0]),
+            n => themes::named(n).or_else(|| {
+                let known: Vec<&str> = themes::NAMED.iter().map(|n| n.name).collect();
+                notes.push(format!(
+                    "theme.name: no palette \"{n}\" (system, {})",
+                    known.join(", ")
+                ));
+                Some(&themes::NAMED[0])
+            }),
+        }
+    }
+
+    fn sync_theme(&mut self, ui: &mut Ui<'_>, system: &SystemEnv, notes: &mut Vec<String>) {
+        let sys = system.appearance;
         let s = &self.ed.settings;
         let named = s.str("theme.appearance").unwrap_or("system").trim();
         let appearance = match named {
@@ -255,6 +292,8 @@ impl Kawoosh {
             }
         };
         let accent = match s.str("theme.accent") {
+            // The OS's, over a palette of kawoosh's own.
+            Some(a) if a.trim() == "system" => system.accent,
             Some(a) if !a.trim().is_empty() => {
                 let c = parse_color(a);
                 if c.is_none() {
@@ -267,7 +306,7 @@ impl Kawoosh {
         let mut roles = Vec::new();
         if let Some(Setting::Table(t)) = s.get("theme") {
             for (name, v) in t {
-                if name == "appearance" || name == "accent" {
+                if name == "appearance" || name == "accent" || name == "name" {
                     continue;
                 }
                 let Some(role) = THEME_ROLES.iter().find(|r| r.name == name) else {
@@ -280,16 +319,48 @@ impl Kawoosh {
                 }
             }
         }
-        let source = match (appearance, accent) {
-            (None, None) if roles.is_empty() => ThemeSource::Derived,
-            (None, Some(c)) if roles.is_empty() => ThemeSource::DerivedWithAccent(c),
-            (a, c) => {
-                let mut t = Theme::derive(a.unwrap_or(sys), c);
+        let source = match self.look.named {
+            // A palette: its variant for the base, the accent over it
+            // (the palette's selection kept — it is the palette's, not
+            // the accent's), the roles over that. Pinned, whatever the
+            // OS says, but for the base under `system`.
+            Some(p) => {
+                let f = p.flavour(appearance.unwrap_or(sys) != Appearance::Light);
+                let mut t = f.theme();
+                if let Some(c) = accent {
+                    let selection = t.selection;
+                    t = t.with_accent(c);
+                    t.selection = selection;
+                }
                 for (role, c) in roles {
                     (role.set)(&mut t, c);
                 }
                 ThemeSource::Pinned(t)
             }
+            None => match (appearance, accent) {
+                (None, None) if roles.is_empty() => ThemeSource::Derived,
+                (None, Some(c)) if roles.is_empty() => ThemeSource::DerivedWithAccent(c),
+                (a, c) => {
+                    let mut t = Theme::derive(a.unwrap_or(sys), c);
+                    for (role, c) in roles {
+                        (role.set)(&mut t, c);
+                    }
+                    ThemeSource::Pinned(t)
+                }
+            },
+        };
+        // The selection held legible, whoever made it: a source that
+        // would hide the text under it is pinned with a fainter one.
+        let t = source.resolve(system);
+        let inks: Vec<Color> = Token::ALL
+            .iter()
+            .filter_map(|tok| self.syntax_color_for(*tok, t.is_dark()))
+            .collect();
+        let held = themes::legible_selection(t, &inks);
+        let source = if held.selection == t.selection {
+            source
+        } else {
+            ThemeSource::Pinned(held)
         };
         if ui.core().theme_source() != source {
             ui.core().set_theme_source(source);
@@ -322,8 +393,8 @@ impl Kawoosh {
         for t in Token::ALL {
             let halves = syntax.get(t).copied().or_else(|| {
                 Some((
-                    crate::palette::syntax_color(*t, false)?,
-                    crate::palette::syntax_color(*t, true)?,
+                    self.default_syntax(*t, false)?,
+                    self.default_syntax(*t, true)?,
                 ))
             });
             if let Some((light, dark)) = halves {
@@ -346,14 +417,32 @@ impl Kawoosh {
     }
 
     /// The syntax colour for a token on the theme's base: the config's
-    /// half, else `palette.rs`'s hue.
+    /// half, else the palette's hue (`theme.name`'s, or `palette.rs`'s
+    /// under `system`).
     pub fn syntax_color_for(&self, token: Token, dark: bool) -> Option<Color> {
         if let Some(c) = self.scripting.colors.get(&token) {
             return Some(*c);
         }
         match self.look.syntax.get(&token) {
             Some((l, d)) => Some(if dark { *d } else { *l }),
+            None => self.default_syntax(token, dark),
+        }
+    }
+
+    /// A token's hue when the config names none.
+    fn default_syntax(&self, token: Token, dark: bool) -> Option<Color> {
+        match self.look.named {
+            Some(p) => p.flavour(dark).syntax(token),
             None => crate::palette::syntax_color(token, dark),
+        }
+    }
+
+    /// The terminal's sixteen on a base: the palette's, or Tomorrow's
+    /// under `system` (`palette::ansi`).
+    pub fn ansi_for(&self, dark: bool) -> [u32; 16] {
+        match self.look.named {
+            Some(p) => p.flavour(dark).ansi(),
+            None => crate::palette::ansi(dark),
         }
     }
 }

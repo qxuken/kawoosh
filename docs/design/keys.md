@@ -45,7 +45,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 
 | keys | what |
 |---|---|
-| `<C-w>v` `<C-w>s` | split beside, below — the new pane a launcher (`layout.new_pane`; launcher.md) |
+| `<C-w>v` `<C-w>s` | split beside, below — the new pane a launcher (`layout.new_pane`; launcher.md): in normal mode a letter launches — `s` scratch, `t` terminal, `d` directory, a tool's letter, `1`…`9` a pin — and `i` or `/` searches (`launcher.start`) |
 | `<C-w>q` `<C-w>c` `<C-w>o` | close, close, only |
 | `<C-w>w` `<C-w>x` | next pane, swap with it |
 | `<C-w>h/j/k/l`, `<C-w>` + arrows | focus by direction |
@@ -57,12 +57,12 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `zs` `ze` `zz` | the focused column against the viewport's left edge, its right edge, or in the middle (`:strip left` / `right` / `center`) — vim's horizontal scrolling, read on the ribbon |
 | `<C-w>t` `<leader>tn` | a new tab, of the kind `layout.default` names (the strip) |
 | `:layout` `<leader>tl` | the tab flipped between a tree of splits and a strip of columns ([scrolling-tab.md](scrolling-tab.md)); `:layout scroll` / `:layout tree` name the kind |
-| `<C-w>d` | the dock — a tree of its own: a split from a dock pane stays in the dock |
+| `<C-w>d` | the dock — a tree of its own, or a strip under `layout.dock = "scroll"`: a split from a dock pane stays in the dock; its panes are the window's, each titled with its project when another is in front, and a project's idle tasks end with its last tab (workspaces.md Decisions 9–12) |
 | `<D-=>` `<D-+>` / `<D-->` `<D-_>` / `<D-0>` (Ctrl where there is no ⌘) | `font bigger` / `smaller` by a pixel for the session, `font reset` back to the settings' size; from every mode and pane |
 | `<C-w>!` | a terminal below (`:!` runs a shell, so does this) |
 | `<C-w>n` | the keyboard onto the toasts |
 | `<C-w>:` | the command line, from a pane without one |
-| `<C-S-x>` | copy mode (wezterm's chord): the terminal's scrollback as a buffer in the terminal's own pane, full modal editing, the caret on the last line; `q` or `<C-S-x>` again gives the pane back — two keys round trip |
+| `<C-S-x>` | copy mode (wezterm's chord): the terminal's scrollback as a buffer in the terminal's own pane, in the colours it was printed in, full modal editing, the status saying `COPY`, the caret on the top row the pane showed; `q`, `<C-S-x>` again, or `<Esc>` once nothing is left to clear gives the pane back |
 | `<S-PageUp>` `<S-PageDown>`, `<S-Home>` `<S-End>` | a terminal's view a page through its history, to the top, back to the prompt — kept from the pty unless a program has the whole screen; scrolled away, the pane shows a scrollbar (dragged, it moves the view) and what lies below, a click on which goes back |
 | `⌘↑` `⌘↓`, `<C-S-Up>` `<C-S-Down>` | the prompt above the view at its top, the next one down (a shell that marks its prompts, OSC 133 — `:terminal integration` says how) |
 | `<C-S-o>` | the last command's output to the clipboard (the same marks) |
@@ -204,6 +204,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | keys | what |
 |---|---|
 | `<C-j>` `<C-k>`, `<C-Down>` `<C-Up>` | a caret on the line below, above |
+| `<C-j>` `<C-k>` in visual mode | a caret on each line of the selection, at its head's column (a short line's end), and normal mode — vim's visual block as carets; the last line's caret primary, the first's with `<C-k>` (`cursor lines`, `cursor lines back`) |
 | `<C-n>` `<D-d>` | `select next`: the word under a bare caret, then its next match, each press one more |
 | `<C-S-n>` `<D-L>` | `select all matches`: every match at once (spelled `<C-S-n>` / `<D-S-l>` in a map: a chord's letter under Shift is the upper-case letter) |
 | `,` | keep the primary selection |
@@ -342,12 +343,14 @@ objects, or any other character on both sides.
 | `<leader>tt` | the tools (`kawoosh.tool`, and `settings.lua`'s `tools` table), as a picker: `git` (lazygit), `top`, `shell`, `compile` and `run` from `compile.command` and `run.command` |
 | `<leader>f` | the files git sees under the working directory, as a picker |
 | `<leader>g` | grep the project: `rg` run on the query as it is typed |
+| `<leader>sf` `<leader>sg` | the same two from the file's directory — a listing's own in `dir` (`:picker files here`, `:picker grep here`) |
 | `<leader>/` | the buffer's lines |
 | `<leader>.` | the smart picker: the buffers, then the files opened before, then the walk |
 | `<leader>sp` | the commands (the palette): every spec, what it needs where the keyboard came from, `<CR>` runs it |
 | `<leader>so` | the workspace's files attended before, ranked by the memory (the picker's `recent`) |
 | `<leader>sr` | the last picker again, its query and cursor as they were |
 | `<leader>sm` | the messages |
+| `<leader>sw` | the workspaces worked in before (`picker workspaces`, a launcher section too): a pick moves the tab there and opens the file last attended (workspaces.md Decision 11) |
 | `<leader>sd` `<C-S-z>` | the directory jumps (`picker dirs`): zoxide's directories by frecency (the memory's without it); `<CR>` makes one the working directory, `<C-o>` lists it in `dir` and leaves the working directory, `<C-v>` `<C-s>` `<C-t>` list it in a split or a tab; a shell asks the same picker with `kawoosh pick dirs` |
 | `<leader>sl` | the memory's ring (`:memory recent`): where was I — every subject attended in this workspace, in order, newest first |
 | `<leader>ws` `<leader>wr` | save, restore the session |
@@ -361,7 +364,7 @@ objects, or any other character on both sides.
 | `<leader>r` | rename the symbol: the prompt filled with `lsp rename WORD`, the name edited, `<CR>` |
 | `<leader>D` | the type definition |
 | `<leader>x` | evaluate the line (the selection, in visual mode) as Lua; the result on the status line, or in a pane when it has lines |
-| `<leader>cd` | the listed directory as the working one (oil's) |
+| `<leader>cd` `~` | the listed directory as the working one (oil's; `~` in a listing only) |
 | `<leader>yp` `<leader>yP` | copy the file's path from the working directory (whole when outside it), its absolute path — onto the clipboard and into the register (`path copy relative`, `absolute`); in a `dir` listing the entry's under the caret, the listed directory's on `../` |
 | `<leader>yd` `<leader>yD` | copy its directory, from the working directory (`.` for the working one) and absolute (`path copy dir`, `dir absolute`) |
 | `<leader>yn` `<leader>yN` | copy its name, and its name without the extension (`path copy name`, `stem`) |
@@ -372,6 +375,7 @@ objects, or any other character on both sides.
 | `<leader>?` | the which-key for every first key (`:keys`) |
 | `<leader>Q` | quit all |
 | `-` | oil: the file's directory |
+| `_` | oil: the working directory's listing, from anywhere (`:dir .`) |
 
 The groups are the which-key ones from the neovim config: `b` buffers,
 `t` tabs, `s` search and lists, `w` the workspace, `c` code, `y` the
@@ -402,7 +406,8 @@ between list and preview, and both dividers drag — each change is the
 setting for the session, so the picker opens next where it was left.
 A source may put keys of its own on the row: `<C-x>` in the
 buffers picker closes the row's buffer as `:bd` does, asking first
-when it has unsaved changes, and the list is read again. The commands
+when it has unsaved changes, and the list is read again; `<C-a>` there
+flips between the tab's buffers and every tab's (`buffers.scope`). The commands
 picker draws its rows in columns — the name with its alias, the key,
 what it does — and looks for the query in the names first, then in
 the rest of the row. The pane opens below the keyboard's and hands the

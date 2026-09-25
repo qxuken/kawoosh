@@ -1,6 +1,7 @@
 -- The file manager (dir.lua), on the harness: `-` lists the file's
 -- directory, `-` again its parent, `<leader>cd` moves the working
--- directory there.
+-- directory there; oil's other two, `~` (the same as `<leader>cd`)
+-- and `_` (the working directory's listing, from anywhere).
 local dir = os.tmpname()
 os.remove(dir)
 dir = dir .. "-dash"
@@ -23,4 +24,19 @@ kawoosh.frame()
 kawoosh.cmd("pwd")
 kawoosh.frame()
 kawoosh.test.eq(kawoosh.message(), dir, "the working directory moved")
+
+kawoosh.cmd("dir " .. inner)
+kawoosh.frame()
+kawoosh.press("~")
+kawoosh.frame()
+kawoosh.cmd("pwd")
+kawoosh.frame()
+kawoosh.test.eq(kawoosh.message(), inner, "`~` is `dir cd`")
+kawoosh.cmd("e " .. kawoosh.fs.join(inner, "f.txt"))
+kawoosh.frame()
+kawoosh.cmd("cd " .. dir)
+kawoosh.frame()
+kawoosh.press("_")
+kawoosh.frame()
+kawoosh.test.eq(kawoosh.buf.name(), "dir: " .. dir, "`_` lists the working directory")
 kawoosh.fs.remove(dir)

@@ -29,7 +29,7 @@ use kawoosh_doc::{Buffer, BufferId, Version};
 pub use keymap::{Binding, KeyStroke, Keymap, Lookup, Mode};
 pub use repeat::Step;
 pub use selection::{Selection, Selections};
-pub use settings::{Layer, Setting, Settings};
+pub use settings::{Decl, Layer, Setting, SettingKind, Settings};
 use slotmap::{SlotMap, new_key_type};
 
 new_key_type! {
@@ -779,6 +779,15 @@ pub struct Editor {
     /// on, `<Esc>` in normal mode turns it off (vim's `:noh`); the
     /// pattern stays for `n`.
     pub search_hl: bool,
+    /// Something the hand asked for failed — a search that found
+    /// nothing — and the shell may ring for it (`editor.bell`, roadmap
+    /// step 29); the shell takes it each frame.
+    pub bell: bool,
+    /// The buffers the focused tab counts as its own while
+    /// `buffers.scope` is `tab` (roadmap step 30) — a file under the
+    /// tab's directory, or one shown in the tab — kept by the shell;
+    /// none when every buffer is every tab's.
+    pub tab_buffers: Option<std::collections::HashSet<BufferId>>,
     /// The last yank's ranges, while the shell washes them.
     pub flash: Option<Flash>,
     pub message: String,
@@ -827,6 +836,8 @@ impl Editor {
             search_history: Vec::new(),
             search: None,
             search_hl: true,
+            bell: false,
+            tab_buffers: None,
             flash: None,
             message: String::new(),
             effects: Vec::new(),
@@ -2399,7 +2410,24 @@ impl Editor {
 
         // A count: digits before a command (`0` alone is a motion). A
         // digit under any chord is a binding's, not a count's — ⌘2 is
-        // the second column (2026-09-22), as `<C-2>` was already.
+        // the second column (2026-09-22), as `<C-2>` was already — and
+        // so is a first digit a binding that can run here takes, since a
+        // plugin binds one only where it means something else: the
+        // launcher's `1` is the first pin (roadmap step 29).
+        let digit_bound = || {
+            let mode = if self.pending_op.is_some() {
+                Mode::OperatorPending
+            } else {
+                self.mode(view)
+            };
+            match self
+                .keymap
+                .lookup_lenient(mode, std::slice::from_ref(&stroke.notation()))
+            {
+                Lookup::Exact(bs) => self.pick_binding(view, bs).is_ok(),
+                _ => false,
+            }
+        };
         if stroke.code.len() == 1
             && stroke.code.as_bytes()[0].is_ascii_digit()
             && self.pending.is_empty()
@@ -2407,6 +2435,7 @@ impl Editor {
             && !stroke.alt
             && !stroke.sup
             && (self.count.is_some() || stroke.code != "0")
+            && (self.count.is_some() || !digit_bound())
         {
             let d = (stroke.code.as_bytes()[0] - b'0') as usize;
             self.count = Some(
@@ -2714,7 +2743,10 @@ impl Editor {
                 });
                 self.message = commands::search_message(self, buffer, wrapped);
             }
-            None => self.message = format!("not found: {pattern}"),
+            None => {
+                self.message = format!("not found: {pattern}");
+                self.bell = true;
+            }
         }
         true
     }

@@ -31,6 +31,10 @@ fn remote_port() -> u16 {
 #[derive(Default)]
 pub struct Terminals {
     pub map: HashMap<TermId, Terminal>,
+    /// The bell's sound, registered with kui the first time one rings.
+    bell_sound: Option<kui::SoundId>,
+    /// When the bell was last heard: at most one in [`BELL_GAP`].
+    bell_at: Option<std::time::Instant>,
     next: TermId,
     /// `<C-w>` was pressed in a terminal pane: the next key is a pane
     /// command (`<C-w>.` sends a literal ^W).
@@ -92,6 +96,24 @@ pub(crate) enum TermScroll {
 /// A `path[:line[:col]]` in `text` around byte `at` — rustc, tsc, grep
 /// and shell spellings. Extensible from Lua later (Decision 5c).
 pub fn location_at(text: &str, at: usize) -> Option<(String, Option<usize>, Option<usize>)> {
+    let token = &text[location_span(text, at)?];
+    // A drive's colon (`C:\x`) is the path's, not a line's.
+    let drive = token
+        .as_bytes()
+        .get(..3)
+        .filter(|b| b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
+        .map_or(0, |_| 2);
+    let mut parts = token[drive..].split(':');
+    let path = format!("{}{}", &token[..drive], parts.next()?);
+    let line = parts.next().and_then(|s| s.parse().ok());
+    let col = parts.next().and_then(|s| s.parse().ok());
+    Some((path, line, col))
+}
+
+/// Where in `text` the location [`location_at`] reads at byte `at` is:
+/// the token around it, a sentence's trailing punctuation off — what a
+/// ⌘-click opens and a ⌘-hover underlines.
+pub fn location_span(text: &str, at: usize) -> Option<std::ops::Range<usize>> {
     // `\` for the paths Windows tools print (`src\main.rs:42`).
     let is_path_char = |c: char| c.is_alphanumeric() || "./_-~+@:%\\".contains(c);
     let at = at.min(text.len());
@@ -107,26 +129,87 @@ pub fn location_at(text: &str, at: usize) -> Option<(String, Option<usize>, Opti
         .map(|(i, _)| at + i)
         .unwrap_or(text.len());
     // Trailing punctuation is the sentence's, a leading `./` is the path's.
-    let token = text[start..end]
-        .trim_end_matches(|c: char| ":.,;".contains(c))
-        .trim_start_matches([':', ',', ';']);
+    let raw = &text[start..end];
+    let tail = raw.trim_end_matches(|c: char| ":.,;".contains(c));
+    let token = tail.trim_start_matches([':', ',', ';']);
     if token.is_empty() || !token.contains(['/', '.', '\\']) {
         return None;
     }
-    // A drive's colon (`C:\x`) is the path's, not a line's.
-    let drive = token
-        .as_bytes()
-        .get(..3)
-        .filter(|b| b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
-        .map_or(0, |_| 2);
-    let mut parts = token[drive..].split(':');
-    let path = format!("{}{}", &token[..drive], parts.next()?);
-    let line = parts.next().and_then(|s| s.parse().ok());
-    let col = parts.next().and_then(|s| s.parse().ok());
-    Some((path, line, col))
+    let from = start + (tail.len() - token.len());
+    Some(from..from + token.len())
 }
 
+/// The shortest time between two bells heard: a program that prints a
+/// stream of BELs is one chime, not a buzz.
+pub const BELL_GAP: std::time::Duration = std::time::Duration::from_millis(250);
+
 impl Kawoosh {
+    /// The bells of the frame (roadmap step 29): a BEL from any
+    /// terminal, and the editor's own when `editor.bell` is on (off by
+    /// default — a search that finds nothing). `terminal.bell` says what a
+    /// terminal's does: `sound` (the default) a short chime, `visual`
+    /// none, `off` nothing at all. Unless off, a terminal not on screen
+    /// marks its tab, i3's urgent workspace, until the tab is visited.
+    pub(crate) fn ring_bells(&mut self, ui: &mut kui::Ui<'_>) {
+        let rang: Vec<TermId> = self
+            .terms
+            .map
+            .iter_mut()
+            .filter_map(|(id, t)| std::mem::take(&mut t.bell).then_some(*id))
+            .collect();
+        let editor =
+            std::mem::take(&mut self.ed.bell) && self.ed.settings.bool("editor.bell") == Some(true);
+        let active = self.layout.tab;
+        if let Some(t) = self.layout.tabs.get_mut(active) {
+            t.bell = false;
+        }
+        if rang.is_empty() && !editor {
+            return;
+        }
+        let how = self
+            .ed
+            .settings
+            .str("terminal.bell")
+            .unwrap_or("sound")
+            .to_string();
+        let mut sound = editor;
+        if how != "off" && !rang.is_empty() {
+            sound |= how == "sound";
+            let shown = self.layout.visible_panes();
+            for id in &rang {
+                let Some(pane) = self
+                    .layout
+                    .panes
+                    .iter()
+                    .find(|(_, c)| matches!(c, Content::Terminal(t) if t == id))
+                    .map(|(p, _)| *p)
+                else {
+                    continue;
+                };
+                if shown.contains(&pane) {
+                    continue;
+                }
+                for (i, tab) in self.layout.tabs.iter_mut().enumerate() {
+                    let mut ps = Vec::new();
+                    tab.panes(&mut ps);
+                    if i != active && ps.contains(&pane) {
+                        tab.bell = true;
+                    }
+                }
+            }
+        }
+        let now = std::time::Instant::now();
+        if !sound || self.terms.bell_at.is_some_and(|t| now - t < BELL_GAP) {
+            return;
+        }
+        self.terms.bell_at = Some(now);
+        let id = *self.terms.bell_sound.get_or_insert_with(|| {
+            ui.core()
+                .add_sound(kui::audio::blip(44_100, 988.0, 120.0, 0.25))
+        });
+        ui.play(id, kui::PlayOptions::default());
+    }
+
     /// Spawns a shell (or `cmd`) sized for a pane, with the `$EDITOR`
     /// handoff in its environment (Decision 3b).
     pub fn spawn_terminal(&mut self, cmd: Option<&str>, cwd: Option<&Path>) -> Option<TermId> {
@@ -404,7 +487,7 @@ impl Kawoosh {
         let pal = kawoosh_term::Palette {
             fg: self.pal.fg.to_hex(),
             bg: self.pal.panel.to_hex(),
-            ansi: crate::palette::ansi(self.dark),
+            ansi: self.ansi_for(self.dark),
             dark: self.dark,
         };
         for term in self.terms.map.values_mut() {
@@ -501,7 +584,10 @@ impl Kawoosh {
         let Some(t) = self.terms.map.get(&id) else {
             return;
         };
-        let text = t.scrollback_text();
+        let (text, runs) = t.scrollback_styled();
+        // The view's top row as a line of the text: what the pane showed
+        // is where the caret starts (roadmap step 31).
+        let top_line = t.history_size().saturating_sub(t.display_offset());
         let name = format!(
             "*scrollback {}*",
             if t.title.is_empty() {
@@ -514,11 +600,23 @@ impl Kawoosh {
         buf.language = "scrollback".into();
         let bid = self.ed.add_buffer(buf);
         let v = self.ed.add_view(bid);
-        // Land at the end, where the prompt was.
-        let len = self.ed.buffers[bid].len();
-        let last =
-            self.ed.buffers[bid].line_start(self.ed.buffers[bid].line_count().saturating_sub(1));
-        self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(last.min(len)));
+        // Land on the top row the pane showed, the view scrolled to it:
+        // a copy starts where the eye was.
+        let b = &self.ed.buffers[bid];
+        let line = top_line.min(b.line_count().saturating_sub(1));
+        let at = b.line_start(line).min(b.len());
+        self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(at));
+        self.ed.views[v].top = line;
+        // The colours it was printed in, as a paint of their own.
+        let version = self.ed.buffers[bid].version();
+        let spans = runs
+            .into_iter()
+            .map(|(r, c)| (r, format!("#{:06x}", c >> 8)))
+            .collect();
+        self.scripting.paints.entry(bid).or_default().insert(
+            "terminal".into(),
+            crate::scripting::Painted { version, spans },
+        );
         self.terms.scrollbacks.insert(bid, id);
         let pane = self
             .layout
@@ -559,6 +657,34 @@ impl Kawoosh {
             self.ed.remove_buffer(bid);
             self.release_waiters(bid);
         }
+    }
+
+    /// The columns of terminal `id`'s screen row `row` a ⌘-click at `col`
+    /// would open: the location's span when what it names is a file or a
+    /// directory there, else none — so the hover underlines only what a
+    /// click will open. A column is a character of the row's text, as
+    /// [`Self::open_location_at`] counts them.
+    pub(crate) fn location_cols(
+        &self,
+        id: TermId,
+        row: usize,
+        col: usize,
+    ) -> Option<std::ops::Range<usize>> {
+        let t = self.terms.map.get(&id)?;
+        let text = t.row_text(row);
+        let at = text
+            .char_indices()
+            .nth(col)
+            .map(|(i, _)| i)
+            .unwrap_or(text.len());
+        let span = location_span(&text, at)?;
+        let (path, _, _) = location_at(&text, at)?;
+        let base = t.cwd().unwrap_or_else(|| self.cwd.clone());
+        if !kawoosh_systems::fs::expand(Path::new(&path), &base).exists() {
+            return None;
+        }
+        let first = text[..span.start].chars().count();
+        Some(first..first + text[span].chars().count())
     }
 
     /// Opens the file named at `(row, col)` of terminal `id`'s screen —
@@ -767,6 +893,24 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .when(&["language:scrollback"])
                 .doc("close the scrollback buffer, its terminal back in the pane (`q`)"),
             |k, _| k.scrollback_close(),
+        ),
+        // `<Esc>` in copy mode's normal mode (roadmap step 31): the
+        // ladder's rungs first — the extra carets, the search's paint —
+        // and, with nothing left to clear, the pane back to the
+        // terminal, as wezterm's copy mode leaves on `<Esc>`.
+        cmd(
+            Spec::new("scrollback escape")
+                .when(&["language:scrollback"])
+                .doc("`<Esc>` in copy mode: clear what the ladder clears, else leave it"),
+            |k, _| {
+                let Some(v) = k.focused_view() else { return };
+                let busy = k.ed.views[v].sels.len() > 1 || (k.ed.search.is_some() && k.ed.search_hl);
+                if busy {
+                    k.ed.run(v, "normal", &[], None);
+                } else {
+                    k.scrollback_close();
+                }
+            },
         ),
     ]
 }

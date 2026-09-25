@@ -40,6 +40,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(cwd());
     v.extend(instruments());
     v.extend(crate::terminals::commands());
+    v.extend(crate::dock::commands());
     v.extend(crate::domains::commands());
     v.extend(crate::trust::commands());
     v.extend(crate::disk::commands());
@@ -89,6 +90,12 @@ impl Kawoosh {
             Mode::Normal,
             "q",
             "scrollback close",
+            &[Cond::parse("language:scrollback")],
+        );
+        self.ed.keymap.bind_when(
+            Mode::Normal,
+            "<Esc>",
+            "scrollback escape",
             &[Cond::parse("language:scrollback")],
         );
         // `q` in a pane of text to read — `*lsp*`, `:messages`, the
@@ -236,6 +243,8 @@ impl Kawoosh {
 
     /// Tells the engine what the shell has, so a `when` can ask.
     pub(crate) fn sync_facts(&mut self) {
+        self.note_tab_buffers();
+        self.ed.tab_buffers = self.tab_buffers();
         let focused = self.layout.focused();
         let content = self.layout.content(focused);
         let dock = self.layout.dock_focused && self.layout.dock_open;
@@ -402,10 +411,68 @@ impl Kawoosh {
         self.strip_align = Some(align);
     }
 
+    /// The buffers the focused tab counts as its own (roadmap step 30):
+    /// under `buffers.scope = "tab"` (the default) a listed file under
+    /// the tab's directory, or a buffer the tab has shown (`Tab::seen`)
+    /// or the dock shows — a scratch typed in another tab is that tab's,
+    /// a file opened here from elsewhere is this one's; `all`, none —
+    /// every buffer is every tab's.
+    pub(crate) fn tab_buffers(&self) -> Option<std::collections::HashSet<BufferId>> {
+        if self.ed.settings.str("buffers.scope") == Some("all") {
+            return None;
+        }
+        let mut panes = Vec::new();
+        if let Some(dock) = &self.layout.dock {
+            dock.panes(&mut panes);
+        }
+        let mut set: std::collections::HashSet<BufferId> = panes
+            .into_iter()
+            .filter_map(|p| self.view_of(p))
+            .map(|v| self.ed.views[v].buffer)
+            .collect();
+        set.extend(self.layout.tab().seen.iter().copied());
+        for id in self.ed.listed_buffers() {
+            if self.ed.buffers[id]
+                .path
+                .as_deref()
+                .is_some_and(|p| p.starts_with(&self.cwd))
+            {
+                set.insert(id);
+            }
+        }
+        Some(set)
+    }
+
+    /// What the focused tab's panes show now, into its `seen`.
+    pub(crate) fn note_tab_buffers(&mut self) {
+        let mut panes = Vec::new();
+        self.layout.tab().panes(&mut panes);
+        let shown: Vec<BufferId> = panes
+            .into_iter()
+            .filter_map(|p| self.view_of(p))
+            .map(|v| self.ed.views[v].buffer)
+            .collect();
+        self.layout.tab_mut().seen.extend(shown);
+    }
+
+    /// The listed buffers the lists show: the tab's, or all.
+    fn shown_buffers(&self) -> Vec<BufferId> {
+        let all = self.ed.listed_buffers();
+        match &self.ed.tab_buffers {
+            Some(s) => all.into_iter().filter(|b| s.contains(b)).collect(),
+            None => all,
+        }
+    }
+
     fn buffer_step(&mut self, ctx: &Ctx, forward: bool) {
         let Some(v) = self.view_arg(ctx) else { return };
-        let ids: Vec<BufferId> = self.ed.listed_buffers();
+        self.note_tab_buffers();
+        self.ed.tab_buffers = self.tab_buffers();
         let cur = self.ed.views[v].buffer;
+        let mut ids = self.shown_buffers();
+        if !ids.contains(&cur) {
+            ids.push(cur);
+        }
         let i = ids.iter().position(|b| *b == cur).unwrap_or(0);
         let n = ids.len();
         let j = if forward {
@@ -416,15 +483,21 @@ impl Kawoosh {
         self.show_buffer(v, ids[j]);
     }
 
-    /// `:ls`: every buffer, numbered, the current one marked `%`, a
-    /// modified one `+`.
+    /// `:ls`: the tab's buffers (`buffers.scope`), numbered as `:b N`
+    /// counts every buffer, the current one marked `%`, a modified one
+    /// `+`, and how many the other tabs have.
     fn buffer_listing(&self) -> String {
         let cur = self.focused_view().map(|v| self.ed.views[v].buffer);
-        self.ed
-            .listed_buffers()
+        let scope = self.tab_buffers();
+        let all = self.ed.listed_buffers();
+        let elsewhere = scope
+            .as_ref()
+            .map_or(0, |s| all.iter().filter(|b| !s.contains(b)).count());
+        let listing = all
             .into_iter()
             .map(|id| (id, &self.ed.buffers[id]))
             .enumerate()
+            .filter(|(_, (id, _))| scope.as_ref().is_none_or(|s| s.contains(id)))
             .map(|(i, (id, b))| {
                 format!(
                     "{}{}{}{}",
@@ -435,7 +508,11 @@ impl Kawoosh {
                 )
             })
             .collect::<Vec<_>>()
-            .join("   ")
+            .join("   ");
+        match elsewhere {
+            0 => listing,
+            n => format!("{listing}   · {n} in other tabs (buffers.scope)"),
+        }
     }
 }
 

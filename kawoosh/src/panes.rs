@@ -22,7 +22,7 @@ use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
 /// How long the ribbon takes to reach the column a key revealed, and
 /// a column its place after a width step or a move: one duration, so
 /// the two motions a key starts run together.
-const RIBBON_MS: f32 = 160.0;
+pub(crate) const RIBBON_MS: f32 = 160.0;
 
 /// Frames on which the focused column is revealed after the strip's
 /// shape changed. One: kui lays the reveal out in the same frame, and
@@ -120,10 +120,15 @@ impl Kawoosh {
         // one is open, else the pane's.
         let keyed = self.ed.prompt_view().unwrap_or(view);
         let kv = &self.ed.views[keyed];
+        // A terminal's copy mode is a mode of its own to the eye
+        // (roadmap step 31): `COPY` where normal mode would say so.
+        let copy = keyed == view && buf.language.as_ref() == "scrollback";
         let mode = if on_toast {
             "TOAST"
         } else if kv.mode == Mode::Visual && kv.visual_linewise {
             "VIS LINE"
+        } else if copy && kv.mode == Mode::Normal {
+            "COPY"
         } else {
             kv.mode.name()
         };
@@ -704,6 +709,12 @@ impl Kawoosh {
             Some(Content::Memory) => ("memory".into(), false),
             None => ("?".into(), false),
         };
+        // A dock task of another project than the one in front says
+        // whose it is (workspaces.md Decision 9).
+        let name = match self.dock_project(pane) {
+            Some(p) => format!("{p} · {name}"),
+            None => name,
+        };
         // A tab's pane goes where its title bar is dragged; the dock is
         // not in the tree and stays put.
         let draggable = !self.layout.in_dock(pane);
@@ -887,16 +898,52 @@ impl Kawoosh {
                 // takes clicks only while ⌘ or ctrl is held, for the
                 // path under the pointer — a plain click reaches the
                 // column around it, which focuses the pane.
-                let mut spec = NodeSpec::column().on_scroll(tag.clone());
+                let mut spec = NodeSpec::column()
+                    .on_scroll(tag.clone())
+                    .on_layout(Value::map([("kind", "termgrid".into())]));
                 if self.mods.0 || self.mods.2 {
                     spec = spec.on_click(tag.clone());
                 }
+                // With ⌘ (ctrl) held, the path under the pointer is
+                // underlined and the pointer a hand — what a click there
+                // opens, and only when it names something that exists.
+                let hover = (!reporting && (self.mods.0 || self.mods.2))
+                    .then(|| {
+                        let r = ui.layout_of(ui.child_key("cells"))?;
+                        let p = ui.core().cursor()?;
+                        let (cw, ch) = self.cell;
+                        let inside = p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.y + r.h;
+                        if !inside || cw <= 0.0 || ch <= 0.0 {
+                            return None;
+                        }
+                        let row = ((p.y - r.y) / ch) as usize;
+                        let col = ((p.x - r.x) / cw) as usize;
+                        (row < screen.rows)
+                            .then(|| self.location_cols(id, row, col))
+                            .flatten()
+                            .map(|cols| (row, cols))
+                    })
+                    .flatten();
                 spec = if reporting {
                     spec.on_drag(drag_tag)
                 } else {
                     spec.selectable()
                 };
-                ui.cells_keyed("cells", &grid, spec);
+                match hover {
+                    Some((row, cols)) => {
+                        let mut cells = screen.cells.clone();
+                        let at = row * screen.cols;
+                        for c in cols.start.min(screen.cols)..cols.end.min(screen.cols) {
+                            cells[at + c].flags |= kui::cells::flags::UNDERLINE;
+                        }
+                        let lit = kui::CellGrid {
+                            cells: &cells,
+                            ..grid
+                        };
+                        ui.cells_keyed("cells", &lit, spec.cursor(kui::CursorShape::Pointer));
+                    }
+                    None => ui.cells_keyed("cells", &grid, spec),
+                }
                 if offset > 0 && history > 0 {
                     let total = (history + rows_n) as f32;
                     let thumb = (h * rows_n as f32 / total).max(16.0).min(h);

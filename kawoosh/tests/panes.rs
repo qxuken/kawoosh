@@ -885,3 +885,57 @@ fn a_pane_opened_to_read_has_the_keys_and_q_gives_them_back() {
     d.keys(&mut app, "q");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// The dock as a strip (roadmap step 32, `layout.dock = "scroll"`): a
+/// split beside in it is a column after the focused one, `<C-S-h>`
+/// `<C-S-l>` walk its columns by index, a closed column's keys go to the
+/// one before; `tree` folds it back with its panes.
+#[test]
+fn the_dock_is_a_strip_under_layout_dock_scroll() {
+    let mut app = Kawoosh::new("t", "one");
+    let mut d = Drive::new(900.0, 500.0);
+    app.shell_command("set", &["layout.dock=scroll".into()], None);
+    d.frame(&mut app);
+    ctrl_w(&mut d, &mut app, "d");
+    d.frame(&mut app);
+    let first = app.layout.focused();
+    assert!(app.layout.dock.as_ref().unwrap().is_scroll(), "a strip");
+    ctrl_w(&mut d, &mut app, "v");
+    ctrl_w(&mut d, &mut app, "v");
+    let third = app.layout.focused();
+    d.frame(&mut app);
+    let cols = |app: &Kawoosh| {
+        app.layout
+            .dock
+            .as_ref()
+            .unwrap()
+            .strip()
+            .unwrap()
+            .columns
+            .len()
+    };
+    assert_eq!(cols(&app), 3, "each split beside a column");
+    let ctrl_shift = KeyMods {
+        ctrl: true,
+        shift: true,
+        ..KeyMods::default()
+    };
+    d.key(&mut app, "h", ctrl_shift);
+    let second = app.layout.focused();
+    assert!(app.layout.in_dock(second) && second != third && second != first);
+    d.key(&mut app, "h", ctrl_shift);
+    assert_eq!(app.layout.focused(), first, "by index along the ribbon");
+    d.key(&mut app, "l", ctrl_shift);
+    assert_eq!(app.layout.focused(), second);
+    ctrl_w(&mut d, &mut app, "c");
+    assert_eq!(cols(&app), 2);
+    assert_eq!(app.layout.focused(), first, "the column before");
+    d.frame(&mut app);
+    assert!(d.rect_of("dockstrip").is_some(), "drawn as a ribbon");
+    app.shell_command("set", &["layout.dock=tree".into()], None);
+    d.frame(&mut app);
+    let dock = app.layout.dock.as_ref().unwrap();
+    assert!(!dock.is_scroll());
+    assert!(dock.contains(first) && dock.contains(third));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

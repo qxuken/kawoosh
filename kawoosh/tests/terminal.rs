@@ -6,7 +6,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
-use kui::{InputEvent, KeyMods};
+use kui::{InputEvent, KeyMods, Vec2};
 
 #[test]
 fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
@@ -71,9 +71,58 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
 }
 
 /// Copy mode on wezterm's chord: `<C-S-x>` from a terminal pane is its
-/// scrollback as a buffer in the same pane, the caret on the last line
-/// where the prompt was, and `q` is the terminal again — two keys round
+/// scrollback as a buffer in the same pane, the caret on the top row the
+/// pane showed (roadmap step 31), and `q` is the terminal again — two keys round
 /// trip. From an editor pane the chord says what it needs.
+/// Copy mode is a mode to the eye and to `<Esc>` (roadmap step 31): the
+/// status says `COPY`; the buffer carries the colours the terminal
+/// printed in, as a paint; `<Esc>` clears the search's paint first and
+/// then gives the pane back.
+#[test]
+fn copy_mode_is_a_mode_in_colour_and_esc_leaves_it() {
+    let mut app = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    app.feed_terminal(t, b"plain \x1b[31mred\x1b[0m plain\r\n$ ");
+    d.frame(&mut app);
+    let shifted = KeyMods {
+        ctrl: true,
+        shift: true,
+        ..Default::default()
+    };
+    d.key(&mut app, "X", shifted);
+    d.frame(&mut app);
+    let v = app.focused_view().expect("copy mode");
+    assert!(
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some("COPY")),
+        "the status names the mode"
+    );
+    // `red` is painted the red it was printed in, and nothing else.
+    let bid = app.ed.views[v].buffer;
+    let red = app.terms.map[&t].palette().ansi[1];
+    let paints = app.scripting.paints[&bid]["terminal"].spans.clone();
+    assert_eq!(
+        paints,
+        vec![(6..9, format!("#{:06x}", red >> 8))],
+        "{paints:?}"
+    );
+    // `<Esc>`: the search's paint first, then out.
+    d.keys(&mut app, "/plain");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert!(app.ed.search_hl);
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(!app.ed.search_hl, "the ladder's rung");
+    assert!(app.focused_view().is_some(), "still in copy mode");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t));
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 #[test]
 fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     let mut app = Kawoosh::new("t", "editor text");
@@ -102,8 +151,8 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     let head = app.ed.views[v].sels.primary().head;
     assert_eq!(
         buf.line_of(head),
-        buf.line_count() - 1,
-        "the caret on the last line"
+        0,
+        "the caret on the top row shown: no history yet, the first line"
     );
     // Modal editing works there; then `q` is the terminal again.
     d.keys(&mut app, "ggyy");
@@ -135,6 +184,84 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     d.key(&mut app, "X", shifted);
     assert_eq!(app.ed.message, "scrollback needs terminal");
     assert_eq!(app.layout.visible_panes().len(), 2);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A BEL (roadmap step 29): a chime by default, at most one in
+/// `BELL_GAP`; a terminal not on screen marks its tab until the tab is
+/// visited; `terminal.bell = "off"` does neither, `visual` marks without
+/// a sound; the editor rings for a search with no match only under
+/// `editor.bell`.
+#[test]
+fn a_bell_chimes_and_marks_a_tab_out_of_sight() {
+    let played = |d: &mut Drive| {
+        d.core
+            .take_audio_commands()
+            .iter()
+            .filter(|c| matches!(c, kui::AudioCommand::Play { .. }))
+            .count()
+    };
+    let mut app = Kawoosh::new("t", "hello");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    played(&mut d);
+    app.feed_terminal(t, b"\x07\x07\x07");
+    d.frame(&mut app);
+    assert_eq!(played(&mut d), 1, "one chime for three BELs");
+    assert!(!app.layout.tabs[0].bell, "in sight: no mark");
+    // A new tab in front; the terminal rings behind it.
+    app.shell_command("tab new", &[], None);
+    d.frame(&mut app);
+    std::thread::sleep(kawoosh::terminals::BELL_GAP);
+    app.feed_terminal(t, b"\x07");
+    d.frame(&mut app);
+    assert_eq!(played(&mut d), 1);
+    assert!(app.layout.tabs[0].bell, "the tab behind is marked");
+    assert!(!app.layout.tabs[1].bell);
+    app.shell_command("tab prev", &[], None);
+    d.frame(&mut app);
+    assert!(!app.layout.tabs[0].bell, "visited: the mark goes");
+    // `visual`: the mark, no sound; `off`: neither.
+    app.shell_command("tab next", &[], None);
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.bell",
+        kawoosh_editor::Setting::Str("visual".into()),
+    );
+    std::thread::sleep(kawoosh::terminals::BELL_GAP);
+    app.feed_terminal(t, b"\x07");
+    d.frame(&mut app);
+    assert_eq!(played(&mut d), 0);
+    assert!(app.layout.tabs[0].bell);
+    app.shell_command("tab prev", &[], None);
+    d.frame(&mut app);
+    app.shell_command("tab next", &[], None);
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.bell",
+        kawoosh_editor::Setting::Str("off".into()),
+    );
+    app.feed_terminal(t, b"\x07");
+    d.frame(&mut app);
+    assert_eq!(played(&mut d), 0);
+    assert!(!app.layout.tabs[0].bell, "off: nothing");
+    // The editor's own: a search with no match, under `editor.bell`.
+    d.keys(&mut app, "/zzz");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(played(&mut d), 0, "editor.bell is off by default");
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "editor.bell",
+        kawoosh_editor::Setting::Bool(true),
+    );
+    std::thread::sleep(kawoosh::terminals::BELL_GAP);
+    d.keys(&mut app, "/zzz");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(played(&mut d), 1, "a search with no match rings");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
@@ -176,6 +303,39 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
     );
     // The frame after the modifier, as the runner draws one: the grid
     // takes clicks while ctrl is held.
+    d.frame(&mut app);
+    // The hover says so first (roadmap step 29): over the path the
+    // pointer is a hand — the path underlined — and over words that are
+    // no path it is not.
+    let at = |col: f32, row: f32| Vec2::new(cells.rect.x + col * cw, cells.rect.y + row * ch);
+    d.input(&mut app, InputEvent::CursorMoved(at(8.5, 1.5)));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(d.core.cursor_shape(), kui::CursorShape::Pointer, "a path");
+    d.input(&mut app, InputEvent::CursorMoved(at(2.5, 0.5)));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_ne!(
+        d.core.cursor_shape(),
+        kui::CursorShape::Pointer,
+        "`error[E0000]:` is no path"
+    );
+    d.input(&mut app, InputEvent::Modifiers(KeyMods::default()));
+    d.input(&mut app, InputEvent::CursorMoved(at(8.5, 1.5)));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_ne!(
+        d.core.cursor_shape(),
+        kui::CursorShape::Pointer,
+        "without ctrl, text"
+    );
+    d.input(
+        &mut app,
+        InputEvent::Modifiers(KeyMods {
+            ctrl: true,
+            ..Default::default()
+        }),
+    );
     d.frame(&mut app);
     d.click(&mut app, cells.rect.x + 8.5 * cw, cells.rect.y + 1.5 * ch);
     let v = app
@@ -433,7 +593,7 @@ fn the_pane_answers_colour_questions_and_reports_a_flip() {
     };
     assert_eq!(sent, format!("\x1b]11;{}\x1b\\", rgb(dark_bg)));
     let term = &app.terms.map[&t];
-    assert_eq!(term.palette().ansi, kawoosh::palette::ansi(true));
+    assert_eq!(term.palette().ansi, app.ansi_for(true));
     assert!(term.palette().dark);
     // A light base from the settings (typed in the editor pane above —
     // the terminal has the keys): the report, the light sixteen, and
@@ -451,7 +611,9 @@ fn the_pane_answers_colour_questions_and_reports_a_flip() {
     assert!(!app.dark);
     let term = app.terms.map.get_mut(&t).unwrap();
     assert_eq!(term.take_sent(), b"\x1b[?997;2n");
-    assert_eq!(term.palette().ansi, kawoosh::palette::ansi(false));
+    let light = app.ansi_for(false);
+    let term = app.terms.map.get_mut(&t).unwrap();
+    assert_eq!(term.palette().ansi, light);
     assert_ne!(dark_bg, app.pal.panel.to_hex());
     app.feed_terminal(t, b"\x1b]11;?\x07");
     let sent = String::from_utf8(app.terms.map.get_mut(&t).unwrap().take_sent()).unwrap();

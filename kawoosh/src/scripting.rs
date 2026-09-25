@@ -105,6 +105,9 @@ impl Kawoosh {
             }
         }
         self.drain_lua();
+        // The plugins have declared theirs: a settings file's key no one
+        // declared can be named now without naming theirs.
+        self.note_undeclared();
         Ok(ext)
     }
 
@@ -935,6 +938,8 @@ impl Kawoosh {
             Msg::Chdir(p) => self.set_cwd(&p),
             // A fact needs no view: published even before there is one.
             Msg::Fact { name, on } => self.ed.fact(&name, on),
+            // As a fact, a declaration needs no view.
+            Msg::Declare { path, kind, doc } => self.ed.settings.declare(&path, kind, &doc),
             Msg::FieldOpen(name) => {
                 if self.ed.find_field(&name).is_none() {
                     self.ed.open_field(&name, "");
@@ -1235,8 +1240,12 @@ impl Kawoosh {
     }
 
     /// The colour a paint names: a role of the palette, a version
-    /// control state, or a syntax token.
+    /// control state, a syntax token, or itself as `#rrggbb` — what
+    /// copy mode paints a terminal's colours with.
     fn paint_color(&self, name: &str, dark: bool) -> Option<Color> {
+        if name.starts_with('#') {
+            return crate::look::parse_color(name);
+        }
         let p = &self.pal;
         Some(match name {
             "fg" => p.fg,

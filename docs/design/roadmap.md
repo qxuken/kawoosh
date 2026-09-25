@@ -16,7 +16,7 @@ copies, 2026-09-24). Steps 23–27 built 2026-09-24: the list is done.
 Amended 2026-09-25 with the todo reconciled against it: every item it
 held that the list had built is checked there, and the ten it held
 that the list never took are filed below ("From the todo, 2026-09-25")
-and ordered as steps 28–34, with the asks of the same day.
+and ordered as steps 28–35, with the asks of the same day.
 
 ## Where it stands
 
@@ -79,7 +79,16 @@ on a thread so a Finder launch finds the language servers,
 shortcut with `--install`). In the editor, `G` landing once,
 `relativenumber`, and `:set +FLAG` / `-FLAG` for vim's `noFLAG`.
 The todo, read against the list on 2026-09-25, had ten items the list
-never took (below); with the day's asks they are steps 28–34.
+never took (below); with the day's asks they are steps 28–35.
+Steps 28–34 followed the same day, on one branch: a theme that holds
+still (Rosé Pine, pinned), the small ones (a caret per line, `~` `_`
+in `dir`, the ⌘-hover, the bell, the launcher in normal mode), scopes
+(a picker from the file's directory, a tab's own buffers), copy mode as
+a mode in colour, workspaces with a lifecycle and the dock (owned
+tasks, a strip, recent workspaces), the settings types investigated,
+and declared settings — 305 commits, 31 integration test files, 468
+tests and 9 Lua acceptance scripts. What is left is step 35, a
+drawing, and each note's own "not built".
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -462,19 +471,26 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   (a946b61); the idea of switching macOS's accent popup on in insert
   mode and off in normal is a per-mode `NSUserDefaults` flip. Cheap if
   kui exposes it; a kui backlog item, not a kawoosh one.
-- **A caret per line of a selection** — open [todo]; step 29. The
-  todo's "visual selection alt-j/k multiselect entire block", written
-  before Decision 1 gave the carets to Ctrl: from a selection over
-  several lines, one caret on each — vim-visual-multi's visual
-  `<C-Down>`, VS Code's ⌥⇧I, helix's split on lines. Nothing does it
-  today: `cursor below` / `above` add one caret past the selection.
-  The round picks the key — `<C-j>` `<C-k>` in visual mode are the
-  natural spelling, since a caret added *below* a line selection is
-  little use there — and where the carets sit: the todo's line is cut
-  off ("at the to…"); the column the head is on, as vim's visual block
-  would, is the likely reading, each line's end the other. On the way:
-  `cursor below`'s description still names `<A-j>` (`commands.rs`'s
-  table), stale since the remap.
+- **A caret per line of a selection** — done 2026-09-25 [todo]; step
+  29. `<C-j>` `<C-k>` (and `<C-Down>` `<C-Up>`) in visual mode:
+  `cursor lines` / `cursor lines back`, a caret on each line every
+  selection covers at the column its head is on — a short line's end,
+  as `<C-j>` in normal mode already does — and normal mode, the last
+  line's caret primary or the first's. `cursor below`'s description
+  says `<C-j>` now. `a_selection_over_lines_is_a_caret_on_each`. What
+  the entry said before it was built: The todo's "visual selection
+  alt-j/k multiselect entire block", written before Decision 1 gave
+  the carets to Ctrl: from a selection over several lines, one caret
+  on each — vim-visual-multi's visual `<C-Down>`, VS Code's ⌥⇧I,
+  helix's split on lines. Nothing does it today: `cursor below` /
+  `above` add one caret past the selection. The round picks the key —
+  `<C-j>` `<C-k>` in visual mode are the natural spelling, since a
+  caret added *below* a line selection is little use there — and where
+  the carets sit: the todo's line is cut off ("at the to…"); the
+  column the head is on, as vim's visual block would, is the likely
+  reading, each line's end the other. On the way: `cursor below`'s
+  description still names `<A-j>` (`commands.rs`'s table), stale since
+  the remap.
 
 ### Panes and pickers
 
@@ -586,43 +602,59 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   the buffer it last showed, or not at all if it showed none). The
   door it wants from the engine: `kawoosh.view_open` into the pane
   being made, not only `below` one.
-- **The launcher in normal mode, a letter a launch** — open [asked
-  2026-09-25]; step 29. launcher.md Decision 4 opens the query in insert
-  mode so typing filters at once; the ask turns that round: open in
-  normal mode, where a letter launches — `t` a terminal, `s` a scratch,
-  `d` the directory, `<CR>` the same buffer, `1`…`9` the pins — and the
+- **The launcher in normal mode, a letter a launch** — done 2026-09-25
+  [asked 2026-09-25]; step 29. As the entry below planned, with one
+  engine change it did not see: a first digit a runnable binding takes
+  is that binding's, not a count, so the launcher's `1`…`9` reach the
+  pins. `launcher key X` takes the entry on X or passes; the letters
+  are mapped under a `launcher:blank` fact, so a query's normal mode
+  is the query's. The engine opens the field in the mode
+  `launcher.start` names. launcher.md's Decision 4 amended;
+  launcher.rs's tests in normal mode,
+  `a_letter_launches_from_an_empty_query`. What the entry said before
+  it was built: launcher.md Decision 4 opens the query in insert mode
+  so typing filters at once; the ask turns that round: open in normal
+  mode, where a letter launches — `t` a terminal, `s` a scratch, `d`
+  the directory, `<CR>` the same buffer, `1`…`9` the pins — and the
   query is a key away. The rows are data already (`launcher.entry`,
-  each with a `hint` the pane draws, `⏎` and `esc` today), so the round
-  is a `key` on an entry, drawn where the hint is, and a map per key
-  under the launcher's fact; a tool takes the first free letter of its
-  name unless its definition says one (`tools = { git = { key = "g" }
-  }`), and a plugin's entry names its own. Reserved, so no entry can
-  take them: `j` `k` walk, `i` `a` `/` start the query, `:` the command
-  line, `<Esc>` — once now — a scratch, as `s` is. `launcher.start` =
-  `normal` | `insert` keeps Decision 4's way for whoever filters first;
-  normal is the default the ask wants. *Not* taken: an unbound letter
-  starting the query with itself — a letter would mean "launch" or
-  "search" by whether some plugin bound it, which is the ambiguity the
-  mode is there to remove. launcher.md's Decision 4 is amended when it
-  is built.
-- **Recent workspaces in the launcher** — open [asked 2026-09-25];
-  step 32. A section of the workspaces worked in, most recent first,
-  that opens one in the pane's tab: the tab's cwd moved there and
-  either its directory listed (`dir`) or *something restored*. The list
-  is cheap — a picker source with `launcher = true` (`launcher.lua`'s
-  door) over the memory's rows grouped by workspace, each root's last
-  moment its rank, the `dirs` source's zoxide rows a fallback for a
-  project never opened with a `.kawoosh` or a repository around it.
-  What "restore" means is the real question, and it is the dock
-  note's: workspaces.md beat *a session per workspace* for a launch
-  ("which session a window is becomes a question the user answers by
-  where they launched from"), but a workspace that is closed — step
-  32's lifecycle — is a moment to keep its tabs, their panes and its
-  dock's tasks, and picking it here is an explicit ask to have them
-  back, which answers the objection. Short of that, the cheap restore
-  is the workspace's last files from the memory's ring
-  (`recent_rows(_, workspace)`) and its pins. The note decides
-  between them; the section is an afternoon of Lua once it has.
+  each with a `hint` the pane draws, `⏎` and `esc` today), so the
+  round is a `key` on an entry, drawn where the hint is, and a map per
+  key under the launcher's fact; a tool takes the first free letter of
+  its name unless its definition says one (`tools = { git = { key =
+  "g" } }`), and a plugin's entry names its own. Reserved, so no entry
+  can take them: `j` `k` walk, `i` `a` `/` start the query, `:` the
+  command line, `<Esc>` — once now — a scratch, as `s` is.
+  `launcher.start` = `normal` | `insert` keeps Decision 4's way for
+  whoever filters first; normal is the default the ask wants. *Not*
+  taken: an unbound letter starting the query with itself — a letter
+  would mean "launch" or "search" by whether some plugin bound it,
+  which is the ambiguity the mode is there to remove. launcher.md's
+  Decision 4 is amended when it is built.
+- **Recent workspaces in the launcher** — done 2026-09-25 [asked
+  2026-09-25]; step 32. workspaces.md Decision 11: `picker workspaces`
+  (`<leader>sw`), `launcher = true`, the memory's workspaces with
+  their last file; a pick is `:cd` there and that file at its line,
+  else the root listed. Restoring a closed workspace's tabs was not
+  built — its last file first.
+  `a_recent_workspace_is_picked_back_where_it_was`. What the entry
+  said before it was built: A section of the workspaces worked in,
+  most recent first, that opens one in the pane's tab: the tab's cwd
+  moved there and either its directory listed (`dir`) or *something
+  restored*. The list is cheap — a picker source with `launcher =
+  true` (`launcher.lua`'s door) over the memory's rows grouped by
+  workspace, each root's last moment its rank, the `dirs` source's
+  zoxide rows a fallback for a project never opened with a `.kawoosh`
+  or a repository around it. What "restore" means is the real
+  question, and it is the dock note's: workspaces.md beat *a session
+  per workspace* for a launch ("which session a window is becomes a
+  question the user answers by where they launched from"), but a
+  workspace that is closed — step 32's lifecycle — is a moment to keep
+  its tabs, their panes and its dock's tasks, and picking it here is
+  an explicit ask to have them back, which answers the objection.
+  Short of that, the cheap restore is the workspace's last files from
+  the memory's ring (`recent_rows(_, workspace)`) and its pins. The
+  note decides between them; the section is an afternoon of Lua once
+  it has.
 - **The title bar** — done 2026-09-23 [use 2026-09-22]; step 13.
   `kui::app(…).custom_titlebar()`, the row drawn in kui's
   `titlebar_with` (`chrome.rs`), so the traffic lights keep their inset
@@ -686,28 +718,44 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   and a ribbon in it would scroll a single row of panes. A pane is
   still not dragged in or out of the dock by its title bar.
   `the_dock_splits_in_itself` in `kawoosh/tests/panes.rs`.
-- **The dock as a strip, an experiment** — open [asked 2026-09-22,
-  again 2026-09-25]; step 32, with the dock per workspace below. The
-  ask was navigation in the dock, "maybe the same scroll", and step 13
-  read it as the tree and said no to the strip; asked twice, it gets
-  tried. What there is: `<C-w>d` shows and
+- **The dock as a strip, an experiment** — done 2026-09-25 [asked
+  2026-09-22, again 2026-09-25]; step 32. workspaces.md Decision 12:
+  `layout.dock = "scroll"` converts the dock (a `Tab`) with
+  `to_scroll`, a split beside in it is a column, `Tab::remove` closes
+  a column's pane for the dock and the tabs alike, `neighbour` walks
+  the dock's columns by index, `render_dock_strip` draws the ribbon
+  and reveals the focused column; the project in front's columns
+  first. `tree` stays the default.
+  `the_dock_is_a_strip_under_layout_dock_scroll`. What the entry said
+  before it was built: The ask was navigation in the dock, "maybe the
+  same scroll", and step 13 read it as the tree and said no to the
+  strip; asked twice, it gets tried. What there is: `<C-w>d` shows and
   hides the dock and takes the keys, `<C-S-hjkl>` cross into it and
   inside it by last frame's rects (`Layout::neighbour`), and a dock of
-  four terminals is four panes squeezed into its one short row. The experiment:
-  `layout.dock` = `tree` | `scroll`, the dock's `Tab` a `Kind::Scroll`
-  under the second — which the dock being a `Tab` since step 13 makes
-  mostly a matter of lifting "always a tree": each dock pane a column
-  at a preset width, the ribbon revealed on focus, `<C-S-h>` `<C-S-l>`
-  walking its columns by index as they do a tab's strip (the
-  `!self.in_dock(from)` in `neighbour` goes), `⌘1`…`⌘9` and `zs` `ze`
-  `zz` on it while it has the keys, `:layout` inside the dock flipping
-  the dock's kind, the session keeping it. The default stays `tree`
-  until use says. What it may lead to, not decided: *levels* — strips
-  stacked vertically, niri's workspaces, the dock one level among them
-  and `<C-S-j>` `<C-S-k>` between levels. A note first if the
-  experiment makes the case; the experiment is how to find out cheaply.
-- **A dock per workspace, or global** — open, design first [asked
-  2026-09-25, both ways]; step 32. Today there is one dock for the window
+  four terminals is four panes squeezed into its one short row. The
+  experiment: `layout.dock` = `tree` | `scroll`, the dock's `Tab` a
+  `Kind::Scroll` under the second — which the dock being a `Tab` since
+  step 13 makes mostly a matter of lifting "always a tree": each dock
+  pane a column at a preset width, the ribbon revealed on focus,
+  `<C-S-h>` `<C-S-l>` walking its columns by index as they do a tab's
+  strip (the `!self.in_dock(from)` in `neighbour` goes), `⌘1`…`⌘9` and
+  `zs` `ze` `zz` on it while it has the keys, `:layout` inside the
+  dock flipping the dock's kind, the session keeping it. The default
+  stays `tree` until use says. What it may lead to, not decided:
+  *levels* — strips stacked vertically, niri's workspaces, the dock
+  one level among them and `<C-S-j>` `<C-S-k>` between levels. A note
+  first if the experiment makes the case; the experiment is how to
+  find out cheaply.
+- **A dock per workspace, or global** — done 2026-09-25 [asked
+  2026-09-25, both ways]; step 32. The recommendation taken, less its
+  narrowing: workspaces.md Decisions 8–10 — a workspace open while a
+  tab is in it, one dock for the window with each pane stamped with
+  its project (`dock_owner`) and titled with it when another is in
+  front, and a closing workspace ending its idle tasks at once and
+  asking about running ones (`:dock end DIR`). `layout.dock_scope` was
+  not built; the ordering and titles come first.
+  `a_workspace_closing_ends_its_dock_tasks`. What the entry said
+  before it was built: Today there is one dock for the window
   (`Layout::dock: Option<Tab>`), visible from every tab, with no
   directory of its own — a command in it uses the focused tab's
   (workspaces.md Decision 1) — and a session keeps only whether it was
@@ -715,39 +763,38 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   terminals belong to none of them: the dev server of one project is
   under the other's code. Wanted: a dock per workspace — the memory's
   workspace of the tab's cwd (the outermost `.kawoosh`, else the
-  repository's root), so two tabs in one project share a dock and a tab
-  switch across projects swaps it. The question the user raised with
-  it, and the reason for a note: *when is a workspace closed*, so its
-  dock can go. Nothing names that moment today, since a workspace is
-  derived from a cwd, not opened. The candidate answer: when the last
-  tab whose cwd is in it closes, or `:cd`s out of it. Then its dock's
-  processes are ended — asking first when one of them is running
-  something, which the terminal already knows (a shell at an empty
-  prompt, `Terminal::at_empty_prompt`, is not) — rather than kept
-  hidden for a tab that may come back, which would be the detachable
-  daemon mvp.md keeps out. What the note also settles: a dock opened
-  from a tab with no workspace (a directory outside every repository);
-  `:cd` moving a tab into another workspace, which takes it to that
-  workspace's dock; the session keeping a dock per workspace, restored
-  with the tabs as terminals are (step 15); and whether the strip
-  experiment above and "levels" read differently once a dock is a
-  project's.
-  Asked the other way the same day: *should the dock be global* — it
-  holds running tasks, and running tasks are what one wants to see all
-  the time, whichever project is in front. Both are true, and the note
-  weighs a third shape that keeps both: **the tasks global, the view
-  per workspace** — one dock, each pane stamped with the workspace it
-  was started in; the dock shows the focused tab's workspace's panes
-  first and the rest after, labelled with their project and dimmed (a
-  strip, step 32's experiment, is what makes "the rest after"
-  navigable rather than squeezed); a key or `layout.dock_scope` =
-  `workspace` | `all` narrows it; and a task that ends or fails in
-  another workspace says so in the title bar's status block, where a
-  running compile already shows. A workspace closing then asks about
-  *its* tasks and leaves the others'. Recommended over either pure
-  form, since per workspace hides the task one wanted to watch and
-  global keeps every project's dev server under every project's code;
-  the user's call.
+  repository's root), so two tabs in one project share a dock and a
+  tab switch across projects swaps it. The question the user raised
+  with it, and the reason for a note: *when is a workspace closed*, so
+  its dock can go. Nothing names that moment today, since a workspace
+  is derived from a cwd, not opened. The candidate answer: when the
+  last tab whose cwd is in it closes, or `:cd`s out of it. Then its
+  dock's processes are ended — asking first when one of them is
+  running something, which the terminal already knows (a shell at an
+  empty prompt, `Terminal::at_empty_prompt`, is not) — rather than
+  kept hidden for a tab that may come back, which would be the
+  detachable daemon mvp.md keeps out. What the note also settles: a
+  dock opened from a tab with no workspace (a directory outside every
+  repository); `:cd` moving a tab into another workspace, which takes
+  it to that workspace's dock; the session keeping a dock per
+  workspace, restored with the tabs as terminals are (step 15); and
+  whether the strip experiment above and "levels" read differently
+  once a dock is a project's. Asked the other way the same day:
+  *should the dock be global* — it holds running tasks, and running
+  tasks are what one wants to see all the time, whichever project is
+  in front. Both are true, and the note weighs a third shape that
+  keeps both: **the tasks global, the view per workspace** — one dock,
+  each pane stamped with the workspace it was started in; the dock
+  shows the focused tab's workspace's panes first and the rest after,
+  labelled with their project and dimmed (a strip, step 32's
+  experiment, is what makes "the rest after" navigable rather than
+  squeezed); a key or `layout.dock_scope` = `workspace` | `all`
+  narrows it; and a task that ends or fails in another workspace says
+  so in the title bar's status block, where a running compile already
+  shows. A workspace closing then asks about *its* tasks and leaves
+  the others'. Recommended over either pure form, since per workspace
+  hides the task one wanted to watch and global keeps every project's
+  dev server under every project's code; the user's call.
 - **A pane made is focused** — done 2026-09-23, a bug [asked
   2026-09-23]; step 18. Seen: a click on the servers block opened
   `*lsp*` and the keys stayed in the pane before. The cause was
@@ -854,17 +901,25 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   the process as the disk resolves it (`/private/tmp/x`), so a relative
   form compares the resolved paths when the spelled ones do not meet.
   `kawoosh/lua/tests/path_copy.lua`.
-- **Search from the file's directory** — open [todo]; step 30. The
-  `files` and `grep` sources are rooted at `ctx.cwd`, the tab's
-  (`picker.lua`, `fs.cwd()` when the picker opens), and nothing else;
-  in a deep tree the file's neighbours are a long query away. Wanted:
-  the same two sources rooted at the buffer's directory — a listing's
-  own in `dir`, a terminal's `cwd()` from a terminal pane — on keys
-  beside `<leader>f` and `<leader>g`, the rows spelled from that root
-  and `<CR>` joining on it. A `root` in the picker's `ctx` that a source
-  reads in place of `fs.cwd()` is the door, and a plugin's source gets
-  it for free. Upward (the file's project rather than its directory)
-  is the working directory already.
+- **Search from the file's directory** — done 2026-09-25 [todo]; step
+  30. `:picker SOURCE here` roots a picker at `picker.here()` — a
+  `dir` listing's own directory, the buffer's file's, else the working
+  one — through a `root` in the picker's `ctx` that `files` walks and
+  `grep` runs `rg` in; the title says `in DIR/` when it is not the
+  working one. `<leader>sf` and `<leader>sg`. `picker.state()` gives
+  its `rows` and `root` now. A terminal's own directory was not taken:
+  Lua cannot read it yet, and the working one stands in. What the
+  entry said before it was built: The `files` and `grep` sources are
+  rooted at `ctx.cwd`, the tab's (`picker.lua`, `fs.cwd()` when the
+  picker opens), and nothing else; in a deep tree the file's
+  neighbours are a long query away. Wanted: the same two sources
+  rooted at the buffer's directory — a listing's own in `dir`, a
+  terminal's `cwd()` from a terminal pane — on keys beside `<leader>f`
+  and `<leader>g`, the rows spelled from that root and `<CR>` joining
+  on it. A `root` in the picker's `ctx` that a source reads in place
+  of `fs.cwd()` is the door, and a plugin's source gets it for free.
+  Upward (the file's project rather than its directory) is the working
+  directory already.
 
 ### LSP and completion
 
@@ -1020,30 +1075,54 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   else as a chunk (`Runtime::eval`), the values spelled
   (`kawoosh._show`: tables shallowly, keys in order) on the status
   line, or in a `*lua*` pane when the result has lines.
-- **Types for the settings files** — investigate [asked 2026-09-25];
-  step 33. The types step 12 built are the APIs': `kawoosh.lua` from
-  the live runtime and `kui.lua` from kui's schema, written to `types`
-  beside the state db and put on the Lua server's `workspace.library`.
-  A `.kawoosh/settings.lua` — or the user's — gets none of it that
-  matters, since it calls nothing: it `return`s a table (a sandbox, no
-  `os`), and a misspelled `compile.comand` is read as a key nobody
-  asks for, silently. What to find out: whether there is a schema to
-  generate from at all — the engine's default layer has the keys with
-  defaults (`tabstop`, `layout.*`, `memory.*`, …) and their value
-  types, but a plugin's setting read with `kawoosh.opt` and no default
-  (`dirs.backend`, `compile.command`, `tools`) is declared nowhere; so
-  the likely first step is a declaration — a setting's path, type,
-  default and doc, from Rust and from a plugin
-  (`kawoosh.setting { … }`, say) — which the settings tab could show
-  and warn from as well. Then how LuaLS learns that a file *is* a
-  settings file: it cannot type a file by its path, so the
-  `---@type kawoosh.Settings` annotation above the `return` (the
-  `· create` row's stub, `SETTINGS_STUB`, writes it), or a `---@class`
-  per nested table so completion works key by key. And whether the Lua
-  server even attaches in a `.kawoosh` directory without a
-  `.luarc.json` (its root markers), which decides whether the library
-  reaches the file. The answer is a paragraph here and, if it holds,
-  a round.
+- **Types for the settings files** — investigated 2026-09-25 [asked
+  2026-09-25]; step 33, and the round it asks for is step 34. Answered
+  by trying it, lua-language-server 3.19.1 over a generated `---@meta`
+  with `---@class (exact) kawoosh.Settings` and nested classes on
+  `workspace.library`, a `.kawoosh/settings.lua` checked with
+  `--check`: (1) the annotation above the `return` is enough —
+  `---@type kawoosh.Settings` then `return { … }` — so a settings file
+  keeps its shape; (2) a wrong type is caught, nested too (`tabstop =
+  "four"`, a tool's `key = 1`: `assign-type-mismatch`), and completion
+  of the keys comes with the class; (3) a misspelt key is *not* caught
+  — `compile = { comand = … }` passes, `(exact)` or not, since the
+  server checks no unknown field in a table literal — so the silence
+  the ask was about is kawoosh's to break: the settings layer warning
+  on a key nobody declared; (4) the server attaches in a `.kawoosh`
+  directory with no `.luarc.json`: the Lua `ServerDef`'s root falls
+  back to the repository's or the file's directory, and the library
+  travels in the settings kawoosh sends, not in a file. (5) The schema
+  is the missing piece: the engine's default layer has about sixty
+  keys with their values' types, and a plugin's setting read with
+  `kawoosh.opt` and no default (`compile.command`, `tools`,
+  `dirs.backend`) is declared nowhere. So the round: a declaration —
+  path, type, default, doc — from Rust (the default layer's `set`
+  becoming `declare`) and from Lua (`kawoosh.setting`), the
+  `kawoosh.Settings` classes written beside `kawoosh.lua`, the stub's
+  `---@type` line, and a toast naming an undeclared key in a settings
+  file. What the entry said before: The types step 12 built are the
+  APIs': `kawoosh.lua` from the live runtime and `kui.lua` from kui's
+  schema, written to `types` beside the state db and put on the Lua
+  server's `workspace.library`. A `.kawoosh/settings.lua` — or the
+  user's — gets none of it that matters, since it calls nothing: it
+  `return`s a table (a sandbox, no `os`), and a misspelled
+  `compile.comand` is read as a key nobody asks for, silently. What to
+  find out: whether there is a schema to generate from at all — the
+  engine's default layer has the keys with defaults (`tabstop`,
+  `layout.*`, `memory.*`, …) and their value types, but a plugin's
+  setting read with `kawoosh.opt` and no default (`dirs.backend`,
+  `compile.command`, `tools`) is declared nowhere; so the likely first
+  step is a declaration — a setting's path, type, default and doc,
+  from Rust and from a plugin (`kawoosh.setting { … }`, say) — which
+  the settings tab could show and warn from as well. Then how LuaLS
+  learns that a file *is* a settings file: it cannot type a file by
+  its path, so the `---@type kawoosh.Settings` annotation above the
+  `return` (the `· create` row's stub, `SETTINGS_STUB`, writes it), or
+  a `---@class` per nested table so completion works key by key. And
+  whether the Lua server even attaches in a `.kawoosh` directory
+  without a `.luarc.json` (its root markers), which decides whether
+  the library reaches the file. The answer is a paragraph here and, if
+  it holds, a round.
 - **Types for lua-language-server** — done 2026-09-22 [use]; step
   12. Asked in use as "lua eval doesn't have kawoosh or kui?"; the
   answer was that eval does see `kawoosh` (the runtime's globals) and
@@ -1165,17 +1244,27 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   on a workspace. Before ssh: domains.md's rule 7 — "a process spawns
   where its cwd is", the cwd a `Loc` — is the same change as ending the
   process cwd, and which cwd a remote tab has is this note's answer.
-- **A buffer list per workspace** — open [todo]; step 30. The todo
+- **A buffer list per workspace** — done 2026-09-25 [todo]; step 30.
+  workspaces.md's Decision 7: `buffers.scope = "tab"` (default) |
+  `all`; a tab's buffers are the listed files under its directory and
+  every buffer it has shown (`Tab::seen`) — the first cut, "shown
+  now", lost a file opened from elsewhere the moment the pane showed
+  another, which two tests caught — and the dock's;
+  `Editor::tab_buffers` kept by the shell with the facts,
+  `kawoosh.buf.list { tab = true }` for Lua; `:ls` counts the other
+  tabs', `]b` stays in the tab's, `<C-a>` in the buffers picker flips.
+  `a_tab_lists_its_own_buffers_and_a_picker_starts_here` in
+  workspaces.rs. What the entry said before it was built: The todo
   asks for each workspace's own buffers by default and every buffer an
   option away. Since step 26 a tab's cwd is the workspace in all but
   name, and the lists still walk every listed buffer: the `buffers`
   and `smart` sources, `:ls`, `<leader>bn` `<leader>bp`. The reading
-  that needs no new object (workspaces.md beat a named one): a
-  buffer is the tab's when its file is under the tab's cwd — or it is
-  shown in the tab, which takes in scratches, terminals and a file
-  opened from elsewhere — and the lists show the tab's; `buffers.scope`
-  = `tab` | `all` the setting, a key in the `buffers` picker flipping
-  it for the session. `:bd`'s alternate and the memory are untouched;
+  that needs no new object (workspaces.md beat a named one): a buffer
+  is the tab's when its file is under the tab's cwd — or it is shown
+  in the tab, which takes in scratches, terminals and a file opened
+  from elsewhere — and the lists show the tab's; `buffers.scope` =
+  `tab` | `all` the setting, a key in the `buffers` picker flipping it
+  for the session. `:bd`'s alternate and the memory are untouched;
   workspaces.md gets a section when it is built.
 
 ### Buffers with a shape
@@ -1256,14 +1345,16 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   `<CR>` on it (2026-09-23): the editor's double click is a gesture a
   map can take, vim's `<2-LeftMouse>` (`Editor::mouse`), which
   `dir.lua` maps for listings; unbound, it still selects the word.
-- **`dir`'s `~` and `_`** — open [todo]; step 29. oil's two keys the
-  listing lacks. `~` in oil is `:tcd` to the listed directory, and
-  `dir cd` is exactly that since step 26 moved the cwd to the tab —
-  it is on `<leader>cd` only; `~` in a listing binds it too. `_` in
-  oil opens the working directory from anywhere `-` works; `:dir`
-  bare lists the file's directory, as `-` does, and the working one is
-  `:dir .` with no key — `_` binds that. One line each in `dir.lua`,
-  keys.md's row beside `-`.
+- **`dir`'s `~` and `_`** — done 2026-09-25 [todo]; step 29. `~` in a
+  listing is `dir cd`; `_` is `:dir .` from anywhere, in the engine's
+  table beside `-`. `dir_dash.lua` presses both. What the entry said
+  before it was built: oil's two keys the listing lacks. `~` in oil is
+  `:tcd` to the listed directory, and `dir cd` is exactly that since
+  step 26 moved the cwd to the tab — it is on `<leader>cd` only; `~`
+  in a listing binds it too. `_` in oil opens the working directory
+  from anywhere `-` works; `:dir` bare lists the file's directory, as
+  `-` does, and the working one is `:dir .` with no key — `_` binds
+  that. One line each in `dir.lua`, keys.md's row beside `-`.
 - **The working memory, round two** — done 2026-09-21
   ([memory.md](memory.md), step 10). The memory as the one place the
   editor remembers: a row per subject (texts, files, command lines,
@@ -1391,51 +1482,82 @@ follow the theme every frame (`panes.rs`).
   process — pty, tool, compile, language server — spawned where its
   cwd is. Four rounds. Until then `kawoosh.tool("box", { cmd = "ssh
   box" })`.
-- **The ⌘-click's hover** — open [todo]; step 29. A ⌘-click (ctrl
-  where there is no ⌘) on a path in a live terminal opens it
-  (`open_location_at` over `location_at`, the row's text), but nothing
-  says it will: the grid takes clicks only while the modifier is held
-  (`panes.rs`, so a plain drag still selects) and draws no hover.
-  Wanted, as wezterm and every editor do it: with the modifier held,
-  the path under the pointer underlined and the pointer a hand —
-  `location_at` run on the hovered cell, its span painted over the
-  cells, gone when the modifier is let go or the pointer leaves it.
-- **Copy mode as a mode** — open [asked 2026-09-25]; step 31, with the
-  colours below. Today `<C-S-x>` puts a `*scrollback*` buffer in the
-  terminal's pane, `q` or `<C-S-x>` gives it back, and `<Esc>` in its
-  normal mode runs the ladder (Decision 3) and then does nothing — the
-  one key a wezterm hand tries first. Wanted, wezterm's shape on
-  kawoosh's buffer (the buffer stays: it is what gives copy mode vim's
-  motions, text objects and `/`): the status names the mode `COPY`
-  rather than `NORMAL`, the pane's title says it too, and `<Esc>` gets
-  one rung more at the bottom of the ladder — nothing left to clear, in
-  a scrollback buffer, gives the pane back. A yank from visual mode
-  stays in copy mode, as vim's does; wezterm's `y`-and-leave is a map
-  away (`kawoosh.map` on `y` under `language:scrollback`), not the
-  default. Where the caret starts — the last line today — moves to the
-  top of what the pane showed, so a copy starts where the eye was.
-- **Copy mode in colour** — open [todo, "better scrollback"]; step 31.
-  What is left of the ask after step 15: the live pane scrolls with
-  its styles, but `<C-S-x>` makes the history a `*scrollback*` buffer
-  of plain text (`scrollback_text`), so a coloured `git log` or a
-  compiler's red goes grey the moment it is to be copied. wezterm keeps
-  the styles because its copy mode is the live grid; kawoosh's is a
-  buffer, which is what gives it modal editing. Wanted: the buffer
-  painted with the cells' foreground, background and weight, taken
-  once when copy mode opens — a paint set as `kawoosh.buf.paint` keeps
-  one, filled from the grid's runs by the engine — and kept while the
-  buffer lives. The terminal stays alive meanwhile, as it does today;
-  the todo allows it.
-- **The bell** — open [todo]; step 29. `term` notes a BEL
+- **The ⌘-click's hover** — done 2026-09-25 [todo]; step 29. With ⌘
+  (ctrl) held, the grid reports its rect (`on_layout`), kui's pointer
+  is turned into a cell, and `location_cols` — the span of
+  `location_span`, split out of `location_at` — underlines the path
+  and makes the pointer a hand, only when what it names exists; the
+  underline is the cells' own flag on a copy of the row. The ⌘-click
+  test checks the hand over the path, none over a word that is no
+  path, none once ctrl is let go. What the entry said before it was
+  built: A ⌘-click (ctrl where there is no ⌘) on a path in a live
+  terminal opens it (`open_location_at` over `location_at`, the row's
+  text), but nothing says it will: the grid takes clicks only while
+  the modifier is held (`panes.rs`, so a plain drag still selects) and
+  draws no hover. Wanted, as wezterm and every editor do it: with the
+  modifier held, the path under the pointer underlined and the pointer
+  a hand — `location_at` run on the hovered cell, its span painted
+  over the cells, gone when the modifier is let go or the pointer
+  leaves it.
+- **Copy mode as a mode** — done 2026-09-25 [asked 2026-09-25]; step
+  31. The status says `COPY` where normal mode would; `<Esc>` in
+  normal mode is `scrollback escape` under `language:scrollback` — the
+  extra carets and the search's paint first, as the ladder clears
+  them, then `scrollback close`; the caret starts on the top row the
+  pane showed, the view scrolled to it (`history_size -
+  display_offset`). The pane title stays the buffer's name.
+  `copy_mode_is_a_mode_in_colour_and_esc_leaves_it`. What the entry
+  said before it was built, with the colours below: Today `<C-S-x>`
+  puts a `*scrollback*` buffer in the terminal's pane, `q` or
+  `<C-S-x>` gives it back, and `<Esc>` in its normal mode runs the
+  ladder (Decision 3) and then does nothing — the one key a wezterm
+  hand tries first. Wanted, wezterm's shape on kawoosh's buffer (the
+  buffer stays: it is what gives copy mode vim's motions, text objects
+  and `/`): the status names the mode `COPY` rather than `NORMAL`, the
+  pane's title says it too, and `<Esc>` gets one rung more at the
+  bottom of the ladder — nothing left to clear, in a scrollback
+  buffer, gives the pane back. A yank from visual mode stays in copy
+  mode, as vim's does; wezterm's `y`-and-leave is a map away
+  (`kawoosh.map` on `y` under `language:scrollback`), not the default.
+  Where the caret starts — the last line today — moves to the top of
+  what the pane showed, so a copy starts where the eye was.
+- **Copy mode in colour** — done 2026-09-25 [todo]; step 31.
+  `Terminal::scrollback_styled` gives the history's text with its runs
+  of non-default foreground, resolved as the screen draws them
+  (inverse and dim included), and copy mode lays them on its buffer as
+  a paint set named `terminal` — a paint may name `#rrggbb` now, for
+  plugins too. Foreground only: a background or a weight is not
+  carried, since the paint layer draws a colour. What the entry said
+  before it was built: What is left of the ask after step 15: the live
+  pane scrolls with its styles, but `<C-S-x>` makes the history a
+  `*scrollback*` buffer of plain text (`scrollback_text`), so a
+  coloured `git log` or a compiler's red goes grey the moment it is to
+  be copied. wezterm keeps the styles because its copy mode is the
+  live grid; kawoosh's is a buffer, which is what gives it modal
+  editing. Wanted: the buffer painted with the cells' foreground,
+  background and weight, taken once when copy mode opens — a paint set
+  as `kawoosh.buf.paint` keeps one, filled from the grid's runs by the
+  engine — and kept while the buffer lives. The terminal stays alive
+  meanwhile, as it does today; the todo allows it.
+- **The bell** — done 2026-09-25 [todo]; step 29. `ring_bells` each
+  frame: `terminal.bell` = `sound` (the default: kui's `blip`, a short
+  sine synthesised as a WAV, no asset shipped) | `visual` | `off`; at
+  most one chime in `BELL_GAP` (250 ms); a terminal not on screen
+  marks its tab — the edge and label in the warning's colour, i3's
+  urgent workspace — until it is visited. `editor.bell` (off) rings
+  for a search with no match through `Editor::bell`, the door any
+  other failure can set. The visual bell is the mark alone: no flash
+  of a pane on screen. `a_bell_chimes_and_marks_a_tab_out_of_sight`.
+  What the entry said before it was built: `term` notes a BEL
   (`Terminal::bell`, set on alacritty's `Event::Bell`) and nothing
   reads it. kui plays sounds (`add_sound`, `play`; the `audio` feature
   is on by default) — kui-requirements §9's first item, so no kui ask.
   Wanted: a short sound shipped with the app, played on a BEL at most
   once in a quarter second; the tab's label washed for a pane not on
-  screen; `terminal.bell` = `sound` | `visual` | `off`. The editor's own
-  beep (a motion that fails, a search with no match) is the same
-  setting's second half, `editor.bell`, off by default — vim users turn
-  it off first.
+  screen; `terminal.bell` = `sound` | `visual` | `off`. The editor's
+  own beep (a motion that fails, a search with no match) is the same
+  setting's second half, `editor.bell`, off by default — vim users
+  turn it off first.
 - **Mouse buttons and OSC 8** — later [kui.md, req §10]. kui routes
   only the primary button; the middle button and hyperlinks are kui's
   wish list, not kawoosh's.
@@ -1509,7 +1631,7 @@ follow the theme every frame (`panes.rs`).
   faces out), `scripts/windows-app.nu` the Kawoosh folder and, with
   `--install`, a Start menu shortcut; on Windows the binary is a GUI
   program and opens no console.
-- **An image for kawoosh** — open [todo]; step 34. Neither bundle has
+- **An image for kawoosh** — open [todo]; step 35. Neither bundle has
   an icon: the Dock, Explorer and the window's title show the
   platform's default. The todo's brief: something to do with a
   stargate, but not one — the name is the sound the gate makes when it
@@ -1522,7 +1644,7 @@ follow the theme every frame (`panes.rs`).
 
 Each is one round: one commit with its tests, a paragraph in this file
 struck through when it lands. Steps 1–27 are the list of 2026-09-20 to
-2026-09-24, all landed; 28–34 are the todo's tail and the day's
+2026-09-24, all landed; 28–35 are the todo's tail and the day's
 asks, filed 2026-09-25. The order front-loads the two cheap
 correctness gaps, then the one feature the daily driver is missing,
 then breadth.
@@ -1792,33 +1914,46 @@ then breadth.
     line base64 behind `sh -c`, since a host's login shell may be
     nushell; the test fixture a stand-in `ssh` over OpenSSH's own
     `sftp-server`. See the terminal track and domains.md's "Built".
-28. **A theme that holds still**: a named palette in the engine's
+28. ~~**A theme that holds still**: a named palette in the engine's
     layer (`theme.name`) setting the kui roles, the syntax tokens and
     the ANSI sixteen together, dark and light, the default pinned
     rather than derived from the OS's accent; the palette chosen at the
     round's start (rose-pine the likely one: no green in its code); the
     selection's contrast checked whatever derives it. First because an
     unreadable selection is a bug on a platform in use, and the rest of
-    the list is drawn in whatever this picks.
-29. **The small ones, again**: `~` and `_` in `dir`; a caret per line
+    the list is drawn in whatever this picks.~~ Landed 2026-09-25
+    (`kawoosh/src/themes.rs`): Rosé Pine, main, moon and dawn, the
+    default pinned; the selection held legible whatever its source. See
+    the config track.
+29. ~~**The small ones, again**: `~` and `_` in `dir`; a caret per line
     of a selection, its key and column decided; the ⌘-click's hover in
     a terminal; the bell (`terminal.bell`, a shipped sound, the tab
     washed off screen); the launcher opening in normal mode with a
-    letter per entry (`t` `s` `d`, the pins' digits, `launcher.start`). One round because each is under a day, and none
+    letter per entry (`t` `s` `d`, the pins' digits, `launcher.start`).~~
+    Landed 2026-09-25, all five; the one engine change none of them
+    named — a first digit a runnable binding takes is no count — came
+    with the launcher's pins. See the engine, panes, buffers and
+    terminal tracks. One round because each is under a day, and none
     needs a door the others do not.
-30. **Scopes**: the `files` and `grep` pickers from the file's
+30. ~~**Scopes**: the `files` and `grep` pickers from the file's
     directory (a `root` in the picker's `ctx`), and the buffer list per
     workspace (`buffers.scope`, the tab's by default, all a key away).
     One round because both are "which directory does this list", which
-    step 26 made answerable; workspaces.md gets the second's section.
-31. **Copy mode as a mode, in colour**: `COPY` in the status and the
+    step 26 made answerable; workspaces.md gets the second's section.~~
+    Landed 2026-09-25: `:picker files here` / `grep here`, and a tab's
+    buffers the ones under its directory or that it has shown. See the
+    panes and workspaces tracks and workspaces.md's Decision 7.
+31. ~~**Copy mode as a mode, in colour**: `COPY` in the status and the
     pane's title, `<Esc>` a last rung of the ladder that gives the
     pane back, the caret starting where the eye was; the
     `*scrollback*` buffer painted with the grid's styles when it is
     made, through the paint layer plugins already have. After the
     small ones because the paint is the one item here that wants the
-    engine to fill a paint set from another system's data.
-32. **Workspaces with a lifecycle, and the dock** (a note first):
+    engine to fill a paint set from another system's data.~~ Landed
+    2026-09-25: `COPY`, `<Esc>` out, the caret where the pane was, the
+    foreground colours as a paint (`#rrggbb` names). See the terminal
+    track.
+32. ~~**Workspaces with a lifecycle, and the dock** (a note first):
     when a workspace opens and closes (its first tab in, its last tab
     gone) and what is kept between; the dock global, per workspace, or
     global tasks with a per-workspace view (recommended), a closing
@@ -1829,13 +1964,40 @@ then breadth.
     the default until use decides. Whether it becomes levels is the
     note's last question. One note because it is one question — what
     a workspace is once it can end — and every answer after the first
-    follows from it. It amends workspaces.md rather than beside it.
-33. **Types for the settings files**, an investigation: a declared
+    follows from it. It amends workspaces.md rather than beside it.~~
+    Landed 2026-09-25: workspaces.md's "Round two", Decisions 8–12 —
+    open while a tab is in it, one dock with owned panes, a closing
+    project's tasks ended or asked about, `picker workspaces`, the
+    strip under `layout.dock = "scroll"`. Left open: narrowing the dock
+    to the project in front, and levels. See the panes track.
+33. ~~**Types for the settings files**, an investigation: a declared
     schema of settings (Rust's and a plugin's), how LuaLS is told a
     file is a settings file, and whether its server attaches in a
     `.kawoosh` directory. A paragraph of answers, then a round if they
-    hold.
-34. **An image for kawoosh**: drawn by the user, then carried by both
+    hold.~~ Answered 2026-09-25 by trying it (the Lua track's entry):
+    the types work for completion and wrong types, not for a misspelt
+    key, which kawoosh must warn about itself — step 34.
+34. ~~**Declared settings**: every setting declared once — path, type,
+    default, doc — from Rust (the default layer) and from Lua
+    (`kawoosh.setting`); the `kawoosh.Settings` classes written with
+    the other types; `---@type kawoosh.Settings` in the stub a new
+    settings file starts from; and a settings file's key no one
+    declared named in a toast, since the language server cannot. From
+    step 33's answer.~~ Landed 2026-09-25: `Settings::declare` /
+    `is_declared` / `undeclared` / `schema` in the engine, a
+    `SettingKind` of `Bool` `Int` `Float` `Str` `OneOf` `List` `Open`;
+    the shell's own declarations (`compile.command`, `theme`,
+    `tokens.colors`, `lsp`, `domains`, `ssh.*`, `secrets.masks`) and the
+    plugins' through `kawoosh.setting` (`tools`, `run.command`,
+    `dir.*`, `dirs.*`, `pairs.rules`, `timed.clock`,
+    `secrets.vault_*`); a toast naming a file's undeclared key once,
+    after the plugins have declared theirs; `settings.lua` written with
+    the other types, and the stub's `---@type`. Checked end to end
+    with lua-language-server over this repository's own
+    `.kawoosh/settings.lua`: clean as it is, `compile.command = 42`
+    flagged. A default given through `kawoosh.setting` was not taken:
+    a plugin keeps its fallback where it reads.
+35. **An image for kawoosh**: drawn by the user, then carried by both
     bundles and the window. Last because it waits on a drawing, not on
     code.
 

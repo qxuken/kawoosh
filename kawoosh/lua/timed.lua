@@ -22,6 +22,8 @@ kawoosh.timed = M
 -- The buffers that are timed, and how: `"clock"` or `"relative"`.
 M.on = {}
 
+kawoosh.setting("timed.clock", { type = "string", doc = "the stamp's `os.date` format, `%H:%M` by default" })
+
 local function clock_format()
   local f = kawoosh.opt("timed.clock")
   return (type(f) == "string" and f ~= "") and f or "%H:%M"

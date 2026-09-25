@@ -74,6 +74,9 @@
 -- corner line for the count, an error toast when some failed, every
 -- failure in `:messages`.
 
+kawoosh.setting("dir.hidden", { type = "boolean", doc = "whether listings show dot files (`g.`)" })
+kawoosh.setting("dir.vcs_enabled", { type = "boolean", doc = "whether listings are painted by version control" })
+
 local fs = kawoosh.fs
 -- `state[name]` is what the listing buffer `name` holds: its directory,
 -- the width of its longest name, and `ids` — for each tracked line of
@@ -1328,6 +1331,10 @@ kawoosh.map("n", "<CR>", "dir enter")
 -- A double click on a line is `<CR>` on it.
 kawoosh.map("n", "<2-LeftMouse>", "dir enter", { when = { "language:dir" } })
 kawoosh.map("n", "<leader>cd", "dir cd")
+-- oil's `~`: the listed directory as the working one, the same as
+-- `<leader>cd` (`_`, the working directory's listing, is the engine's
+-- beside `-`).
+kawoosh.map("n", "~", "dir cd", { when = { "language:dir" } })
 for _, c in ipairs(COPIES) do
   kawoosh.map("n", "<leader>y" .. c[1], "dir copy " .. c[2], { when = { "language:dir" } })
 end

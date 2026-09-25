@@ -165,7 +165,7 @@ impl Kawoosh {
             .map(|t| t.cwd.as_ref().unwrap_or(&self.cwd))
             .collect();
         let show_dir = dirs.len() > 1;
-        let labels: Vec<(String, bool)> = self
+        let labels: Vec<(String, bool, bool)> = self
             .layout
             .tabs
             .iter()
@@ -201,7 +201,7 @@ impl Kawoosh {
                     Some(d) if show_dir => format!("{} · {name}", d.to_string_lossy()),
                     _ => name,
                 };
-                (name, modified)
+                (name, modified, tab.bell)
             })
             .collect();
         let mut active_key = None;
@@ -219,7 +219,7 @@ impl Kawoosh {
                 .transition(TABS_MS)
                 .role(Role::TabList),
             |ui| {
-                for (i, (name, modified)) in labels.iter().enumerate() {
+                for (i, (name, modified, bell)) in labels.iter().enumerate() {
                     let is_active = i == active;
                     let label = format!("{}: {}{}", i + 1, name, if *modified { " ●" } else { "" });
                     // The block, its item and its close button are one
@@ -228,8 +228,13 @@ impl Kawoosh {
                     // must stay while the pointer goes to it.
                     let group = format!("tab-hover{i}");
                     let hovered = ui.is_group_hovered(NodeSpec::hover_group_id(&group));
+                    // A terminal in it rang unseen (`terminal.bell`): i3's
+                    // urgent workspace, the edge and the label in the
+                    // warning's colour until the tab is visited.
                     let (bg, fg, edge) = if is_active {
                         (theme.accent, theme.on_accent, theme.accent_hover)
+                    } else if *bell {
+                        (pal.strip, theme.warning, theme.warning)
                     } else {
                         (pal.strip, pal.dim, pal.border)
                     };

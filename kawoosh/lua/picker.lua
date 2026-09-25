@@ -877,11 +877,13 @@ end
 -- how), answer = fn(item), preview = fn(item), keys = { ["<C-x>"] =
 -- fn(item) }, columns = {…} (as `picker.rows` takes them) }`. An item
 -- is `{ text =, sub =, path =, line =, col =, buffer =, offset =, run
--- =, boost = }`, and a column's field. `opts`: `query`, `cursor`, and
--- `answer = fn(item)`, which takes the pick instead of the source —
--- `fn(nil)` when the picker closes untaken. A source's `ctx` is `{
--- buffer =, cwd =, terminal = }`, `terminal` when it was opened from
--- a terminal pane. A picker already open switches to it.
+-- =, boost = }`, and a column's field. `opts`: `query`, `cursor`,
+-- `root` (the directory a source that walks or searches starts from,
+-- the working one by default) and `answer = fn(item)`, which takes the
+-- pick instead of the source — `fn(nil)` when the picker closes
+-- untaken. A source's `ctx` is `{ buffer =, cwd =, root =, terminal =
+-- }`, `terminal` when it was opened from a terminal pane. A picker
+-- already open switches to it.
 function picker.open(what, opts)
   opts = opts or {}
   local name, src
@@ -894,7 +896,8 @@ function picker.open(what, opts)
   if P and P.job and P.job.cancel then pcall(P.job.cancel) end
   if P and P.answer then P.answer(nil) end
   -- `terminal`: opened from a terminal pane, where a pick goes back to.
-  local ctx = { buffer = kawoosh.buf.current(), cwd = fs.cwd(), terminal = kawoosh.holds("terminal") == true }
+  local ctx = { buffer = kawoosh.buf.current(), cwd = fs.cwd(), root = opts.root or fs.cwd(),
+                terminal = kawoosh.holds("terminal") == true }
   P = { name = name, src = src, ctx = ctx, items = {}, hits = {}, cursor = opts.cursor or 1, top = 1,
         query = nil, loading = false, rows = 20, answer = opts.answer }
   kawoosh.view_open(VIEW, { below = true, share = share() })
@@ -931,8 +934,14 @@ end
 -- picker.source(name, def): a source to open by name.
 function picker.source(name, def)
   picker.sources[name] = def
-  kawoosh.command("picker " .. name, function() picker.open(name) end, {
-    doc = "the picker on " .. (def.title or name),
+  kawoosh.command("picker " .. name, function(ctx)
+    local where = ctx.args[1]
+    if where == "here" then return picker.open(name, { root = picker.here() }) end
+    if where then return kawoosh.echo("picker " .. name .. ": `here` or nothing, not " .. where) end
+    picker.open(name)
+  end, {
+    args = { "text" },
+    doc = "the picker on " .. (def.title or name) .. "; `here`, from the file's directory",
   })
   for key in pairs(def.keys or {}) do
     if not picker._keys[key] then
@@ -947,14 +956,18 @@ picker._keys = {}
 -- picker.state(): what the open picker shows — `source`, `query`,
 -- `cursor` (a row's index from 1), `top`, `count` (the rows), `text`
 -- (the cursor's row), `item` (its item), `loading`, `preview` (the
--- cursor's, as drawn: `title`, `lines`, `runs` once highlighted) — or
--- nil when none is open; for a status line, a test, a plugin's key.
+-- cursor's, as drawn: `title`, `lines`, `runs` once highlighted),
+-- `rows` (every hit's text, in order) and `root` (where a walk starts)
+-- — or nil when none is open; for a status line, a test, a plugin's
+-- key.
 function picker.state()
   if not P then return nil end
   local hit = P.hits[P.cursor]
+  local rows = {}
+  for i, h in ipairs(P.hits) do rows[i] = h.item.text end
   return { source = P.name, query = P.query or "", cursor = P.cursor, top = P.top, count = #P.hits,
            text = hit and hit.item.text or nil, item = hit and hit.item or nil, loading = P.loading,
-           preview = P.preview }
+           preview = P.preview, rows = rows, root = P.ctx.root }
 end
 
 -- picker.resume(): the last picker again, its query and cursor as
@@ -1017,7 +1030,8 @@ kawoosh.view(VIEW, function(ctx)
   local head = row {
     width = "grow", height = ROW_H + 4, pad = { x = 8 }, gap = 8, cross_align = "center",
     bg = t.surface,
-    text(P.src.title or P.name, { size = SIZE, color = t.muted }),
+    text((P.src.title or P.name) .. (P.ctx.root ~= P.ctx.cwd and (" in " .. short_path(P.ctx.root) .. "/") or ""),
+         { size = SIZE, color = t.muted }),
     text(">", { family = "mono", size = SIZE, color = t.accent }),
   }
   local field = ctx.field { name = FIELD, placeholder = P.src.placeholder or "type to filter", size = SIZE }
@@ -1125,7 +1139,9 @@ kawoosh.command("picker key", function(ctx)
   local key = ctx.args[1]
   local fn = P.src.keys and P.src.keys[key]
   local hit = P.hits[P.cursor]
-  if fn and hit then fn(hit.item, P) end
+  -- A key about the list rather than a row (`<C-a>` in buffers) runs
+  -- on an empty one too, the item nil.
+  if fn then fn(hit and hit.item, P) end
 end, { when = { PANE_FACT }, args = { "text" }, doc = "a source's own key on the cursor's row" })
 
 for _, mode in ipairs { "i", "n" } do
@@ -1253,9 +1269,23 @@ kawoosh.command("picker resume", function() picker.resume() end, { doc = "the la
 
 -- -------------------------------------------------------- the sources
 
--- Every file git sees under the working directory, relative to it.
+-- picker.here(): the directory "here" is — a `dir` listing's own, the
+-- buffer's file's, else the working one — what `:picker files here`
+-- (`<leader>sf`) and `:picker grep here` (`<leader>sg`) start from.
+function picker.here()
+  local h = kawoosh.buf.current()
+  local ok, name = pcall(kawoosh.buf.name, h)
+  local listed = ok and name and name:match("^dir: (.+)$")
+  if listed then return listed end
+  local pok, path = pcall(kawoosh.buf.path, h)
+  if pok and path then return fs.parent(path) or fs.cwd() end
+  return fs.cwd()
+end
+
+-- Every file git sees under the root (the working directory, or where
+-- `here` said), relative to it.
 local function walk_items(ctx, done)
-  local root = ctx.cwd
+  local root = ctx.root or ctx.cwd
   fs.walk(root, function(paths, err)
     if not paths then return done(nil, err) end
     local items = {}
@@ -1271,10 +1301,12 @@ picker.source("files", {
 })
 
 -- The listed buffers, the current one last: `<leader>bb<CR>` is the
--- one before it.
+-- one before it. The focused tab's (`buffers.scope = "tab"`, roadmap
+-- step 30) or every one; `<C-a>` in the picker flips it.
 local function buffer_items(ctx)
   local items, current = {}, nil
-  for _, h in ipairs(kawoosh.buf.list()) do
+  local tab = kawoosh.opt("buffers.scope") ~= "all"
+  for _, h in ipairs(kawoosh.buf.list { tab = tab }) do
     local ok, name = pcall(kawoosh.buf.name, h)
     if ok and not name:match("^%*lua:") then
       local pok, path = pcall(kawoosh.buf.path, h)
@@ -1292,6 +1324,7 @@ end
 -- `<C-x>` on a row: its buffer closed as `:bd` closes it, the list
 -- read again; one with unsaved changes is asked about first.
 local function close_row(item)
+  if not item then return end
   local function shut()
     kawoosh.buf.close(item.buffer, { force = true })
     picker.reload()
@@ -1307,11 +1340,19 @@ local function close_row(item)
   end
 end
 
+-- `<C-a>`: the tab's buffers or all of them, for the session.
+local function flip_scope()
+  local all = kawoosh.opt("buffers.scope") == "all"
+  kawoosh.opt("buffers.scope", all and "tab" or "all")
+  kawoosh.echo(all and "buffers: this tab's" or "buffers: every tab's")
+  picker.reload()
+end
+
 picker.source("buffers", {
-  title = "buffers", placeholder = "find a buffer · <C-x> closes one",
+  title = "buffers", placeholder = "find a buffer · <C-x> closes one · <C-a> this tab's or all",
   items = buffer_items,
-  keys = { ["<C-x>"] = close_row },
-  empty = "no buffers",
+  keys = { ["<C-x>"] = close_row, ["<C-a>"] = flip_scope },
+  empty = "no buffers in this tab · <C-a> for every tab's",
 })
 
 -- The files attended before (the memory's `file` rows, the
@@ -1325,6 +1366,56 @@ local function recent_items()
   end
   return items
 end
+
+-- The workspaces worked in before (roadmap step 32, workspaces.md
+-- Decision 11): each root the memory has files under, newest first,
+-- the one in front left out, with the file last attended there. A
+-- pick moves the tab's directory to it and opens that file at its line
+-- — the workspace as it was left — or lists the root when it has none.
+-- A section of the launcher too (`launcher = true`).
+local function workspace_items()
+  local by, order = {}, {}
+  local here = fs.cwd()
+  local sep = fs.join("a", "b"):sub(2, 2)
+  for _, r in ipairs(kawoosh.memory { kind = "file", limit = 2000 }) do
+    local ws = r.workspace
+    if ws and ws ~= "" and here ~= ws and here:sub(1, #ws + 1) ~= ws .. sep then
+      local w = by[ws]
+      if not w then
+        w = { ws = ws, last = -1 }
+        by[ws] = w
+        order[#order + 1] = w
+      end
+      if r.last > w.last then
+        w.last, w.path, w.line = r.last, r.subject, (r.meta and r.meta.line or 0) + 1
+      end
+    end
+  end
+  table.sort(order, function(a, b) return a.last > b.last end)
+  local items = {}
+  for _, w in ipairs(order) do
+    local name = w.ws:match("[^/\\]+$") or w.ws
+    local file = w.path and w.path:sub(1, #w.ws + 1) == w.ws .. sep and w.path:sub(#w.ws + 2) or w.path
+    items[#items + 1] = { text = name, sub = short_path(w.ws) .. (file and ("  " .. file) or ""),
+                          ws = w.ws, file = w.path, at = w.line }
+  end
+  return items
+end
+
+picker.source("workspaces", {
+  title = "workspaces", placeholder = "a project worked in before", launcher = true,
+  items = workspace_items,
+  pick = function(item)
+    if not item then return end
+    fs.chdir(item.ws)
+    if item.file and fs.exists(item.file) then
+      kawoosh.open(item.file, { line = item.at })
+    else
+      kawoosh.cmd("dir " .. item.ws)
+    end
+  end,
+  empty = "no other workspace in the memory",
+})
 
 -- The workspace's pinned files, in pin order (`<leader>ee` is the
 -- pane).
@@ -1398,7 +1489,7 @@ end
 picker.source("grep", {
   title = "grep", placeholder = "a pattern for rg",
   search = function(q, job)
-    local root = fs.cwd()
+    local root = P and P.ctx.root or fs.cwd()
     local n, odd = 0, {}
     local token
     token = kawoosh.spawn(
@@ -1627,10 +1718,14 @@ picker.source("tools", {
 -- The keys keys.md kept for these.
 kawoosh.map("n", "<leader>f", "picker files")
 kawoosh.map("n", "<leader>g", "picker grep")
+-- The same two from the file's directory (a listing's own in `dir`).
+kawoosh.map("n", "<leader>sf", "picker files here")
+kawoosh.map("n", "<leader>sg", "picker grep here")
 kawoosh.map("n", "<leader>/", "picker lines")
 kawoosh.map("n", "<leader>.", "picker smart")
 kawoosh.map("n", "<leader>bb", "picker buffers")
 kawoosh.map("n", "<leader><leader>", "picker buffers")
 kawoosh.map("n", "<leader>so", "picker recent")
+kawoosh.map("n", "<leader>sw", "picker workspaces")
 kawoosh.map("n", "<leader>sr", "picker resume")
 kawoosh.map("n", "<leader>tt", "picker tools")
