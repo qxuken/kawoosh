@@ -1526,14 +1526,21 @@ pub fn install(ed: &mut Editor) {
         }
         apply_operator(ed, ctx.view, "delete", ranges);
     });
+    // `X` stops at the line start; insert's Backspace goes on past it,
+    // the line joined to the one above, as vim's `backspace=eol`.
     ed.register("delete char back", |ed, ctx| {
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
+        let joins = ed.mode(ctx.view) == Mode::Insert;
         let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
             .sels
             .iter()
             .map(|s| {
-                let ls = buf.line_start(buf.line_of(s.head));
+                let ls = if joins {
+                    0
+                } else {
+                    buf.line_start(buf.line_of(s.head))
+                };
                 let mut a = s.head;
                 for _ in 0..ctx.count.max(1) {
                     if a > ls {
@@ -2250,7 +2257,7 @@ const DOCS: &[(&str, &str)] = &[
     ("delete char", "delete the character under the caret (`x`)"),
     (
         "delete char back",
-        "delete the character before the caret (`X`, insert's Backspace)",
+        "delete the character before the caret (`X`; insert's Backspace, which joins the line above at a line's start)",
     ),
     ("delete to end", "delete to the end of the line (`D`)"),
     (

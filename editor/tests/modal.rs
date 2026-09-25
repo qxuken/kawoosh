@@ -980,6 +980,24 @@ fn insert_mode_keys() {
     assert_eq!(t.text(), "foo ");
 }
 
+/// Insert's `<BS>` at a line's start joins it to the line above, the
+/// caret where they meet; `X` stops there, and the first line's start
+/// has nothing before it.
+#[test]
+fn insert_backspace_at_a_line_start_joins_the_line_above() {
+    let mut t = T::new("ab\ncd");
+    t.keys("jI<BS>x<Esc>");
+    assert_eq!(t.text(), "abxcd");
+    let mut t = T::new("ab\r\ncd");
+    t.keys("jI<BS><Esc>");
+    assert_eq!(t.text(), "abcd");
+    let mut t = T::new("ab\ncd");
+    t.keys("j0X");
+    assert_eq!(t.text(), "ab\ncd");
+    t.keys("ggI<BS><Esc>");
+    assert_eq!(t.text(), "ab\ncd");
+}
+
 /// A command's `Path` argument reaches it absolute — `~`, `..` and a
 /// relative path resolved against the engine's working directory — for
 /// the engine's own commands, for one the shell declared, and for one
