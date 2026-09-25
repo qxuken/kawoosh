@@ -3448,8 +3448,9 @@ pub fn default_keymap(km: &mut Keymap) {
     }
     // A terminal pane's: the shell's prompts (its OSC 133 marks), ⌘↑ ⌘↓
     // as iTerm and Terminal.app have them and ctrl-shift where there is
-    // no ⌘, and the last command's output copied — chords, so they
-    // reach the pane past its pty (`Kawoosh::pane_chord`).
+    // no ⌘, the last command's output copied, and the clipboard pasted
+    // on insert mode's two spellings — chords, so they reach the pane
+    // past its pty (`Kawoosh::pane_chord`).
     let on_terminal = [Cond::parse("terminal")];
     for (k, c) in [
         ("<D-Up>", "terminal prompt prev"),
@@ -3457,6 +3458,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-S-Up>", "terminal prompt prev"),
         ("<C-S-Down>", "terminal prompt next"),
         ("<C-S-o>", "terminal output"),
+        ("<D-v>", "paste clipboard"),
+        ("<C-S-v>", "paste clipboard"),
     ] {
         km.bind_when(Normal, k, c, &on_terminal);
     }

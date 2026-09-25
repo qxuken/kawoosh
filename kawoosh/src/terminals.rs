@@ -558,6 +558,11 @@ impl Kawoosh {
             }
             _ => {}
         }
+        // A ⌘ chord bound to nothing is nothing to the shell, not its
+        // letter: a pty has no use for ⌘ (`Kawoosh::pane_chord`).
+        if stroke.sup {
+            return;
+        }
         let Some(t) = self.terms.map.get_mut(&id) else {
             return;
         };
