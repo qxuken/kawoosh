@@ -645,4 +645,6 @@ kawoosh.map("n", "<D-S-f>", "search project")
 -- In the results: the file at the caret.
 local results = { when = { "language:multibuffer" } }
 kawoosh.map("n", "<CR>", "multi open", results)
+-- Zed's: the file under each caret — the primary's shown, the rest opened.
+kawoosh.map("n", "g<Space>", "multi open", results)
 kawoosh.map("n", "<C-v>", "multi open beside", results)

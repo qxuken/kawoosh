@@ -228,6 +228,30 @@ shape), which keeps everything one buffer but makes the fields lines
 the multibuffer must fence off and the engine must tell apart from
 excerpts. A view's field is already a line with the editor's modes.
 
+### 10. Edits from elsewhere: a rename through the files a multibuffer holds
+
+A multibuffer holds its files open, so a change the workspace makes to
+them — a server's rename, a code action, a format, a plugin's edit —
+lands in those buffers, not on disk, and the sync puts it in the
+excerpts the same frame: it is seen, not announced. Three things make
+that sound:
+
+- **The server has every unsaved text.** A buffer is sent to its
+  server when a pane shows it, when its excerpts are drawn, and — the
+  multibuffer's case — whenever it is modified: a `:%s` through the
+  results reaches files never on screen, and a rename worked out
+  against their disk text would land in the wrong place.
+- **An edited file is no longer borrowed.** A rename that touches a
+  file the results hold makes it an unsaved buffer like any other: in
+  `:ls`, asked about on quit, never closed with the multibuffer.
+- **The message says where it is.** A rename's count names the files
+  no pane shows and, of those, the ones a multibuffer holds, whose `:w`
+  writes them.
+
+The matches themselves are not searched again: after a rename the
+excerpts show the new name and the paint no longer finds it. `⏎` in the
+bar searches again; results that follow their query are a later round.
+
 ## Built
 
 2026-09-25, in four commits: the engine (`editor/src/multi.rs`,

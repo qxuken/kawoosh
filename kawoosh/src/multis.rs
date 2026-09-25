@@ -212,6 +212,14 @@ impl Kawoosh {
         };
         let id = self.ed.views[v].buffer;
         let head = self.ed.views[v].sels.primary().head;
+        // The other carets' files, Zed's `g<Space>` over several: each
+        // opened — listed, in `:ls` and the buffers picker — the
+        // primary's shown.
+        let others: Vec<BufferId> = self.ed.views[v]
+            .sels
+            .iter()
+            .filter_map(|s| self.ed.multi_at(id, s.head).map(|(b, _)| b))
+            .collect();
         let Some((src, at)) = self.ed.multi_at(id, head) else {
             self.ed.message = if self.ed.is_multi(id) {
                 "not on a file's line".into()
@@ -239,6 +247,22 @@ impl Kawoosh {
         };
         self.ed.views[target].sels = kawoosh_editor::Selections::single(Selection::point(at));
         self.follow_caret = true;
+        let mut rest: Vec<BufferId> = Vec::new();
+        for b in others {
+            if b != src && !rest.contains(&b) {
+                rest.push(b);
+            }
+        }
+        if !rest.is_empty() {
+            let names: Vec<String> = rest
+                .iter()
+                .map(|b| {
+                    self.ed.borrowed.remove(b);
+                    self.ed.buffers[*b].name.clone()
+                })
+                .collect();
+            self.ed.message = format!("also opened: {} (:ls)", names.join(", "));
+        }
     }
 }
 

@@ -30,7 +30,8 @@ one Location (0:3); documentSymbol a hierarchical `main` (a function,
 case aside, both in the file last opened, at 1:0 and 0:3; inlayHint a
 string label `: i32` at 0:7 and a parts label `x` `y` at 1:0; the
 hover's second paragraph names `Widget`."""
-import json, sys
+import json
+import re, sys
 
 docs = {}
 ended = False
@@ -164,11 +165,26 @@ while True:
         b = ch
         while b < len(line) and (line[b].isalnum() or line[b] == "_"):
             b += 1
-        send({"jsonrpc": "2.0", "id": mid, "result": {"changes": {uri: [
+        word = line[a:b]
+        changes = {uri: [
             {"range": {"start": {"line": ln, "character": a}, "end": {"line": ln, "character": b}},
              "newText": p["newName"]},
             {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
-             "newText": "// renamed\n"}]}}})
+             "newText": "// renamed\n"}]}
+        # The word in every other document it was sent, as a server that
+        # knows the workspace renames it there too — by the text it was
+        # sent, so a document it was not told of an edit to is renamed
+        # in the wrong place.
+        for other, text in docs.items():
+            if other == uri or not word:
+                continue
+            for i, l in enumerate(text.split("\n")):
+                for mt in re.finditer(r"\b" + re.escape(word) + r"\b", l):
+                    changes.setdefault(other, []).append(
+                        {"range": {"start": {"line": i, "character": mt.start()},
+                                   "end": {"line": i, "character": mt.end()}},
+                         "newText": p["newName"]})
+        send({"jsonrpc": "2.0", "id": mid, "result": {"changes": changes}})
     elif method == "textDocument/references":
         uri = m["params"]["textDocument"]["uri"]
         send({"jsonrpc": "2.0", "id": mid, "result": [
