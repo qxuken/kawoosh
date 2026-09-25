@@ -3,10 +3,12 @@
 # Spotlight open it with no Terminal window — Finder opens a bare
 # executable in Terminal.app, whatever the executable is. What goes in:
 #
-#   Contents/MacOS/kawoosh        the window (CFBundleExecutable)
-#   Contents/MacOS/kawoosh-edit   a terminal's $EDITOR, found beside it
-#   Contents/Resources/fonts/     the bundled faces, found from the binary
-#                                 (left out with --no-fonts)
+#   Contents/MacOS/kawoosh            the window (CFBundleExecutable)
+#   Contents/MacOS/kawoosh-edit       a terminal's $EDITOR, found beside it
+#   Contents/Resources/kawoosh.icns   the icon (CFBundleIconFile), from
+#                                     assets/icons
+#   Contents/Resources/fonts/         the bundled faces, found from the
+#                                     binary (left out with --no-fonts)
 #   Contents/Info.plist
 #
 # The binary is the same one `cargo run` builds; the CLI half works from
@@ -43,6 +45,7 @@ def main [
   for bin in [kawoosh kawoosh-edit] {
     cp ($target | path join release $bin) ($contents | path join MacOS)
   }
+  cp ($root | path join assets icons kawoosh.icns) ($contents | path join Resources)
   if not $no_fonts {
     let fonts = $root | path join assets fonts
     let resources = $contents | path join Resources
@@ -61,6 +64,7 @@ def main [
   <key>CFBundleDisplayName</key>             <string>Kawoosh</string>
   <key>CFBundleIdentifier</key>              <string>dev.qxuken.kawoosh</string>
   <key>CFBundleExecutable</key>              <string>kawoosh</string>
+  <key>CFBundleIconFile</key>                <string>kawoosh</string>
   <key>CFBundlePackageType</key>             <string>APPL</string>
   <key>CFBundleInfoDictionaryVersion</key>   <string>6.0</string>
   <key>CFBundleShortVersionString</key>      <string>($version)</string>

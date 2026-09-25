@@ -272,16 +272,66 @@ fn main() -> anyhow::Result<()> {
             app.restore_session();
         }
     }
-    kui::app("kawoosh")
+    let launcher = kui::app("kawoosh")
         // The title row is kawoosh's (chrome.rs): the cwd and the
         // status blocks in it, the platform's controls kept.
         .custom_titlebar()
         .size(1100.0, 760.0)
         .min_size(480.0, 320.0)
+        .icon_resource(ICON_RESOURCE);
+    window_icon(launcher)
         .core(core)
         .extension_as("lua", ext)
         .run(app)
         .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// The icon `kawoosh.rc` links into kawoosh.exe (`1 ICON`), which the
+/// windows are given on Windows: the title bar, Alt-Tab and the taskbar
+/// each take the `.ico`'s frame for their size. Nothing elsewhere.
+const ICON_RESOURCE: u16 = 1;
+
+/// The window's icon as pixels, for X11's window manager: the PNG
+/// rendered from `kawoosh-icon.svg` (assets/icons/README.md). Windows has
+/// the resource above; macOS draws Kawoosh.app's `.icns` in the Dock, and
+/// Wayland the `.desktop` file's, with no window icon on either.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn window_icon(launcher: kui::Launcher) -> kui::Launcher {
+    match icon_rgba() {
+        Ok((rgba, w, h)) => launcher.icon(rgba, w, h),
+        Err(e) => {
+            log::warn!("the window icon did not decode: {e}");
+            launcher
+        }
+    }
+}
+
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn window_icon(launcher: kui::Launcher) -> kui::Launcher {
+    launcher
+}
+
+/// `kawoosh-128.png` as straight RGBA and its size.
+#[cfg(any(test, all(unix, not(target_os = "macos"))))]
+fn icon_rgba() -> anyhow::Result<(Vec<u8>, u32, u32)> {
+    const PNG: &[u8] = include_bytes!("../../assets/icons/kawoosh-128.png");
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(PNG));
+    // A palette or 16-bit samples as 8-bit RGBA; an export without alpha
+    // is refused below rather than guessed at.
+    decoder.set_transformations(
+        png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
+    );
+    let mut reader = decoder.read_info()?;
+    let mut buf = vec![0; reader.output_buffer_size().unwrap_or(0)];
+    let info = reader.next_frame(&mut buf)?;
+    anyhow::ensure!(
+        info.color_type == png::ColorType::Rgba && info.bit_depth == png::BitDepth::Eight,
+        "{:?} at {:?} bits, not RGBA8",
+        info.color_type,
+        info.bit_depth
+    );
+    buf.truncate(info.buffer_size());
+    Ok((buf, info.width, info.height))
 }
 
 const SCRATCH: &str = "\
@@ -322,3 +372,18 @@ a frame and the systems cost and what the process holds.
 
 Every visible line is a row holding one rich text of spans; the row is the layout.
 ";
+
+#[cfg(test)]
+mod tests {
+    /// The PNG the X11 window is given decodes to the RGBA kui takes, at
+    /// the size assets/icons/README.md says it was rendered.
+    #[test]
+    fn the_window_icon_decodes_to_rgba() {
+        let (rgba, w, h) = super::icon_rgba().unwrap();
+        assert_eq!((w, h), (128, 128));
+        assert_eq!(rgba.len(), 128 * 128 * 4);
+        // The rounded square's corner is clear, its middle is not.
+        assert_eq!(rgba[3], 0);
+        assert_eq!(rgba[(64 * 128 + 64) * 4 + 3], 255);
+    }
+}

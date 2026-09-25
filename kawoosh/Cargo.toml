@@ -37,6 +37,12 @@ regex = "1"
 # console for the CLI half of a GUI program (`main.rs`).
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
+# The window's icon on X11 (`main.rs`, `window_icon`): the PNG rendered
+# from `assets/icons/kawoosh-icon.svg`, decoded to the RGBA kui takes.
+# Windows passes the linked resource and macOS has no window icon.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+png = "0.18"
+
 # A terminal's `$EDITOR` (src/bin/edit.rs), shipped beside `kawoosh`.
 [[bin]]
 name = "kawoosh-edit"
@@ -47,9 +53,15 @@ name = "kawoosh-gen"
 path = "src/bin/gen.rs"
 
 [dev-dependencies]
+png = "0.18"
 criterion.workspace = true
 rusqlite.workspace = true
 
 [[bench]]
 name = "logger"
 harness = false
+
+# kawoosh.exe's icon (build.rs): rc.exe on Windows, llvm-rc for a build
+# from another host.
+[build-dependencies]
+embed-resource = "3"
