@@ -906,8 +906,20 @@ fn substitute(ed: &mut Editor, ctx: &Ctx) {
             edits.push((range, s));
         }
     }
+    // In a multibuffer, a match outside the excerpts — a file's name in
+    // its header — is not a file's text, and is left.
+    let mut kept_out = 0;
+    if ed.is_multi(id) {
+        let before = edits.len();
+        edits.retain(|(r, t)| ed.multi_refuses(id, &[(r.clone(), t.as_str())]).is_none());
+        kept_out = before - edits.len();
+    }
     if edits.is_empty() {
-        ed.message = format!("no match: {pat}");
+        ed.message = if kept_out > 0 {
+            format!("no match in the excerpts: {pat}")
+        } else {
+            format!("no match: {pat}")
+        };
         return;
     }
     let count = edits.len();
@@ -948,13 +960,19 @@ fn substitute(ed: &mut Editor, ctx: &Ctx) {
     }
     let took = started.elapsed();
     ed.message = format!(
-        "{count} substitution(s) on {lines} line(s){}",
+        "{count} substitution(s) on {lines} line(s){}{}",
         if took.as_millis() >= 100 {
             format!(" in {:.1}s", took.as_secs_f64())
         } else {
             String::new()
+        },
+        if kept_out > 0 {
+            format!(", {kept_out} outside the excerpts left")
+        } else {
+            String::new()
         }
     );
+    ed.sync_multis();
 }
 
 /// Writes `buf` to `path` through a file beside it, renamed over the
@@ -1019,6 +1037,9 @@ fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| p.clone());
+    }
+    if ed.is_multi(id) {
+        return ed.write_multi(id, ctx.bang());
     }
     let buf = &ed.buffers[id];
     // A hooked buffer is written by its hook, on the shell's side, which

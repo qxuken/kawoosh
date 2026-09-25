@@ -1613,9 +1613,15 @@ impl Runtime {
                     text,
                 } => {
                     let id = id_of(buffer);
-                    if let Some(b) = ed.buffers.get_mut(id) {
+                    if let Some(b) = ed.buffers.get(id) {
                         let len = b.len();
                         let r = range.start.min(len)..range.end.min(len);
+                        // A multibuffer's gaps are not text to edit.
+                        if let Some(why) = ed.multi_refuses(id, &[(r.clone(), text.as_str())]) {
+                            ed.message = why;
+                            continue;
+                        }
+                        let b = &mut ed.buffers[id];
                         b.replace(r.clone(), &text);
                         let delta = text.len() as i64 - r.len() as i64;
                         for v in ed.views.values_mut() {
@@ -1638,6 +1644,10 @@ impl Runtime {
                 }
                 Msg::SetText { buffer, text } => {
                     let id = id_of(buffer);
+                    if ed.is_multi(id) {
+                        ed.message = "a multibuffer's text is its files'".into();
+                        continue;
+                    }
                     if let Some(b) = ed.buffers.get_mut(id) {
                         b.replace(0..b.len(), &text);
                         for v in ed.views.values_mut() {
@@ -1732,6 +1742,8 @@ impl Runtime {
                 other => rest.push(other),
             }
         }
+        // A plugin's edit of a file a multibuffer shows is in it at once.
+        ed.sync_multis();
         rest
     }
 }
