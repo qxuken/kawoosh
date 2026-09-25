@@ -88,7 +88,9 @@ a mode in colour, workspaces with a lifecycle and the dock (owned
 tasks, a strip, recent workspaces), the settings types investigated,
 and declared settings — 305 commits, 31 integration test files, 468
 tests and 9 Lua acceptance scripts. What is left is step 35, a
-drawing, and each note's own "not built".
+drawing, and each note's own "not built". The drawing came the same
+day and both bundles carry it; the window's icon at runtime waits on
+kui.
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -1631,8 +1633,9 @@ follow the theme every frame (`panes.rs`).
   faces out), `scripts/windows-app.nu` the Kawoosh folder and, with
   `--install`, a Start menu shortcut; on Windows the binary is a GUI
   program and opens no console.
-- **An image for kawoosh** — open [todo]; step 35. Neither bundle has
-  an icon: the Dock, Explorer and the window's title show the
+- **An image for kawoosh** — the bundles' done 2026-09-25, the
+  window's at runtime open [todo]; step 35. Neither bundle had
+  an icon: the Dock, Explorer and the window's title showed the
   platform's default. The todo's brief: something to do with a
   stargate, but not one — the name is the sound the gate makes when it
   opens. The drawing is the user's (or a designer's), not a round; the
@@ -1997,9 +2000,16 @@ then breadth.
     `.kawoosh/settings.lua`: clean as it is, `compile.command = 42`
     flagged. A default given through `kawoosh.setting` was not taken:
     a plugin keeps its fallback where it reads.
-35. **An image for kawoosh**: drawn by the user, then carried by both
+35. ~~**An image for kawoosh**: drawn by the user, then carried by both
     bundles and the window. Last because it waits on a drawing, not on
-    code.
+    code.~~ Landed 2026-09-25 in the bundles: the drawing and its
+    exports in `assets/icons` (with a glyph for a tray, later), the
+    `.icns` in Kawoosh.app (`CFBundleIconFile`), the `.ico` linked into
+    `kawoosh.exe` by `kawoosh/build.rs` — rc.exe on Windows, llvm-rc
+    from another host — and the Start menu's shortcut pointing at it.
+    Left: the window's own icon at runtime, which winit takes per
+    window and kui does not pass yet — Windows' title bar and Alt-Tab,
+    X11. macOS has none to give: the Dock shows the bundle's.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),

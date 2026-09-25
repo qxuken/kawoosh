@@ -3,7 +3,7 @@
 # Explorer and the Start menu open it with no console window — the
 # binary is a GUI program (`windows_subsystem`). What goes in:
 #
-#   Kawoosh\kawoosh.exe        the window
+#   Kawoosh\kawoosh.exe        the window, its icon linked in (build.rs)
 #   Kawoosh\kawoosh-edit.exe   a terminal's $EDITOR, found beside it
 #   Kawoosh\fonts\             the bundled faces, found from the binary
 #                              (left out with --no-fonts)
@@ -91,6 +91,7 @@ def main [
       ^powershell -NoProfile -NonInteractive -Command '
         $s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:KAWOOSH_LNK)
         $s.TargetPath = $env:KAWOOSH_EXE
+        $s.IconLocation = "$env:KAWOOSH_EXE,0"
         $s.WorkingDirectory = $env:KAWOOSH_HOME
         $s.Description = $env:KAWOOSH_DESC
         $s.Save()

@@ -53,3 +53,8 @@ rusqlite.workspace = true
 [[bench]]
 name = "logger"
 harness = false
+
+# kawoosh.exe's icon (build.rs): rc.exe on Windows, llvm-rc for a build
+# from another host.
+[build-dependencies]
+embed-resource = "3"

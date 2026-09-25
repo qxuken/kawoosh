@@ -1,0 +1,4 @@
+// kawoosh.exe's resources (build.rs): the icon Explorer, the taskbar and
+// the Start menu's shortcut show. The first icon is the file's; the path
+// is from this file, which is where both rc.exe and llvm-rc resolve it.
+1 ICON "../assets/icons/kawoosh.ico"
