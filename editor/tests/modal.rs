@@ -822,6 +822,34 @@ fn the_search_prompt_previews_the_first_match_as_it_is_typed() {
     assert_eq!(t.head(), 0);
 }
 
+/// `/` and `?` match either case — as typed, previewed and walked by `n`
+/// — unless the pattern says `(?-i)`; `*` and `:s` keep to the case they
+/// are given, and the same pattern searched both ways is two searches.
+#[test]
+fn the_search_prompt_ignores_case() {
+    let mut t = T::new("one One ONE one");
+    t.keys("/ONE");
+    assert_eq!(t.head(), 4, "the preview finds `One`");
+    t.keys("<CR>");
+    assert_eq!(t.head(), 4);
+    assert_eq!(t.ed.message, "/ONE  4 match(es)");
+    t.keys("n");
+    assert_eq!(t.head(), 8);
+    t.keys("?one<CR>");
+    assert_eq!(t.head(), 4);
+    t.keys("gg/(?-i)ONE<CR>");
+    assert_eq!(t.head(), 8, "`(?-i)` asks for the case");
+    assert_eq!(t.ed.message, "/(?-i)ONE  1 match(es)");
+    t.keys("gg*");
+    assert_eq!(t.head(), 12, "`*` finds the word as it is");
+    assert_eq!(t.ed.message, r"/\bone\b  2 match(es)");
+    t.keys("gg/\\bone\\b<CR>");
+    assert_eq!(t.head(), 4, "the same pattern from `/` is another search");
+    assert_eq!(t.ed.message, r"/\bone\b  4 match(es)");
+    t.keys(":s/one/x/g<CR>");
+    assert_eq!(t.text(), "x One ONE x");
+}
+
 /// `:s`: the current line's first match, `g` every one, `%` every
 /// line, `N,M` a range, `&` and `$1` in the replacement, an escaped
 /// delimiter, another delimiter, `i`; the cursor lands at the last

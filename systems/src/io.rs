@@ -75,23 +75,26 @@ pub enum IoMsg {
         error: String,
     },
     /// A search's match count over a big buffer ([`Io::run`] from the
-    /// shell): the buffer and the text version it counted, the pattern,
-    /// the number, and what it took.
+    /// shell): the buffer and the text version it counted, the pattern
+    /// and whether it ignored case, the number, and what it took.
     Counted {
         buffer: kawoosh_doc::BufferId,
         version: kawoosh_doc::Version,
         pattern: String,
+        ignore_case: bool,
         count: usize,
         elapsed: std::time::Duration,
     },
     /// A search walked on from where the frame's budget ran out
     /// ([`Io::run`] from the shell): the buffer and text version walked,
-    /// the pattern, the view whose primary selection was at `head`, and
-    /// the match with whether the walk came round the end — or none.
+    /// the pattern and whether it ignored case, the view whose primary
+    /// selection was at `head`, and the match with whether the walk came
+    /// round the end — or none.
     Found {
         buffer: kawoosh_doc::BufferId,
         version: kawoosh_doc::Version,
         pattern: String,
+        ignore_case: bool,
         view: u64,
         head: usize,
         hit: Option<(std::ops::Range<usize>, bool)>,

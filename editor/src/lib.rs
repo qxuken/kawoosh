@@ -1113,7 +1113,7 @@ impl Editor {
                     return;
                 }
                 if !line.is_empty()
-                    && let Err(e) = self.set_search(&line)
+                    && let Err(e) = self.set_search(&line, true)
                 {
                     self.message = e;
                     return;
@@ -2655,10 +2655,10 @@ impl Editor {
         let line = self.field_text(field).unwrap_or_default();
         let compiled = if line.is_empty() {
             None
-        } else if origin.search.as_ref().is_some_and(|s| s.pattern == line) {
+        } else if origin.search.as_ref().is_some_and(|s| s.is(&line, true)) {
             origin.search.clone()
         } else {
-            search::Search::new(&line).ok()
+            search::Search::new(&line, true).ok()
         };
         let Some(compiled) = compiled else {
             self.search = origin.search;
@@ -2695,15 +2695,21 @@ impl Editor {
         }
     }
 
-    /// Makes `pattern` the search `n` and `N` walk and the view paints;
-    /// a bad one is refused with the message to show and the old stands.
-    /// The same pattern again keeps its count.
-    pub fn set_search(&mut self, pattern: &str) -> Result<(), String> {
-        if self.search.as_ref().is_some_and(|s| s.pattern == pattern) {
+    /// Makes `pattern` the search `n` and `N` walk and the view paints,
+    /// either case matching when `ignore_case` — the prompt's; `*` and
+    /// `:s` match the case they are given. A bad one is refused with the
+    /// message to show and the old stands. The same search again keeps
+    /// its count.
+    pub fn set_search(&mut self, pattern: &str, ignore_case: bool) -> Result<(), String> {
+        if self
+            .search
+            .as_ref()
+            .is_some_and(|s| s.is(pattern, ignore_case))
+        {
             self.search_hl = true;
             return Ok(());
         }
-        self.search = Some(search::Search::new(pattern)?);
+        self.search = Some(search::Search::new(pattern, ignore_case)?);
         self.search_hl = true;
         Ok(())
     }
@@ -2714,16 +2720,21 @@ impl Editor {
     /// (the pattern, the text at `version`) and the selection still
     /// where the walk left (`head`); otherwise nothing, since something
     /// newer has happened. Says whether it landed.
+    #[allow(clippy::too_many_arguments)]
     pub fn search_landed(
         &mut self,
         buffer: BufferId,
         version: Version,
         pattern: &str,
+        ignore_case: bool,
         view: ViewId,
         head: usize,
         hit: Option<(std::ops::Range<usize>, bool)>,
     ) -> bool {
-        let current = self.search.as_ref().is_some_and(|s| s.pattern == pattern)
+        let current = self
+            .search
+            .as_ref()
+            .is_some_and(|s| s.is(pattern, ignore_case))
             && self
                 .buffers
                 .get(buffer)

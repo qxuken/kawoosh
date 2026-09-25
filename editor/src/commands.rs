@@ -871,7 +871,7 @@ fn substitute(ed: &mut Editor, ctx: &Ctx) {
     } else {
         pat.to_string()
     };
-    if let Err(e) = ed.set_search(&pattern) {
+    if let Err(e) = ed.set_search(&pattern, false) {
         ed.message = e;
         return;
     }
@@ -1460,7 +1460,7 @@ pub fn install(ed: &mut Editor) {
             return;
         }
         let word = buf.slice(a..b);
-        if let Err(e) = ed.set_search(&format!(r"\b{}\b", regex::escape(&word))) {
+        if let Err(e) = ed.set_search(&format!(r"\b{}\b", regex::escape(&word)), false) {
             ed.message = e;
             return;
         }
@@ -3037,11 +3037,11 @@ fn select_pattern(ed: &mut Editor, ctx: &Ctx) -> Option<Option<Range<usize>>> {
         let text = regex::escape(&buf.slice(r));
         let word = format!(r"\b{text}\b");
         match &ed.search {
-            Some(s) if s.pattern == word => (word, None),
+            Some(s) if s.is(&word, false) => (word, None),
             _ => (text, None),
         }
     };
-    if let Err(e) = ed.set_search(&pattern) {
+    if let Err(e) = ed.set_search(&pattern, false) {
         ed.message = e;
         return None;
     }

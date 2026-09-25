@@ -720,6 +720,7 @@ impl Kawoosh {
                     buffer,
                     version,
                     pattern,
+                    ignore_case,
                     count,
                     elapsed,
                 } => {
@@ -731,7 +732,7 @@ impl Kawoosh {
                         .ed
                         .search
                         .as_ref()
-                        .is_some_and(|s| s.pattern == pattern)
+                        .is_some_and(|s| s.is(&pattern, ignore_case))
                         && self
                             .ed
                             .buffers
@@ -758,16 +759,22 @@ impl Kawoosh {
                     buffer,
                     version,
                     pattern,
+                    ignore_case,
                     view,
                     head,
                     hit,
                     elapsed,
                 } => {
                     let view = ViewId::from_ffi(view);
-                    if self
-                        .ed
-                        .search_landed(buffer, version, &pattern, view, head, hit)
-                    {
+                    if self.ed.search_landed(
+                        buffer,
+                        version,
+                        &pattern,
+                        ignore_case,
+                        view,
+                        head,
+                        hit,
+                    ) {
                         self.follow_caret = true;
                         log::debug!("search landed after {:.1}s", elapsed.as_secs_f64());
                     }
@@ -1548,6 +1555,7 @@ impl Kawoosh {
                 buffer: id,
                 version: snap.version,
                 pattern: search.pattern,
+                ignore_case: search.ignore_case,
                 count,
                 elapsed: started.elapsed(),
             }
@@ -1591,6 +1599,7 @@ impl Kawoosh {
                 buffer: id,
                 version: snap.version,
                 pattern: search.pattern,
+                ignore_case: search.ignore_case,
                 view: view_key,
                 head,
                 hit,
