@@ -346,7 +346,7 @@ objects, or any other character on both sides.
 | `<leader>f` | the files git sees under the working directory, as a picker |
 | `<leader>g` | grep the project: `rg` run on the query as it is typed |
 | `<leader>sf` `<leader>sg` | the same two from the file's directory — a listing's own in `dir` (`:picker files here`, `:picker grep here`) |
-| `<leader>/` | the buffer's lines |
+| `<leader>/` | the buffer's lines, the pane following the cursor as `<leader>bs` does |
 | `<leader>.` | the smart picker: the buffers, then the files opened before, then the walk |
 | `<leader>sp` | the commands (the palette): every spec, what it needs where the keyboard came from, `<CR>` runs it |
 | `<leader>so` | the workspace's files attended before, ranked by the memory (the picker's `recent`) |
@@ -361,7 +361,7 @@ objects, or any other character on both sides.
 | `<leader>cF` | format the buffer through its server |
 | `<leader>cI` | inlay hints on or off for the session (`lsp.inlay_hints`), drawn in the line, faint |
 | `<leader>cs` | the workspace's symbols matching the query, in the picker, asked as it is typed |
-| `<leader>bs` | the buffer's symbols in the picker, each with the one it is inside |
+| `<leader>bs` | the buffer's symbols in the picker: its server's, or its grammar's outline without one (`symbols.source`), a tree in the file's order while nothing is typed and the matches with the symbols they are inside after; the cursor starts on the one the caret is in, and the pane follows the cursor — closed untaken, the caret goes back ([marks.md](marks.md)) |
 | `<leader>cr` | markdown drawn rendered or as its source (`markdown toggle`, the `markdown.render` setting for the session; [markdown.md](markdown.md)) |
 | `<leader>r` | rename the symbol: the prompt filled with `lsp rename WORD`, the name edited, `<CR>` |
 | `<leader>D` | the type definition |
@@ -452,7 +452,7 @@ so that nothing else takes the key meanwhile.
 | `gsf` `gsh` | find, highlight a surrounding pair |
 | `<leader>E` | an explorer |
 | `<leader>sh` | help |
-| `<leader>m` | marks |
+| `<leader>m` | marks ([marks.md](marks.md) Decision 3, with `m` `'` `` ` `` `]'` `['`) |
 | `<leader>R` | rename the file |
 | `<leader>h*` `<leader>bg` `<leader>bl` `<leader>wd` `<leader>wc` | hunks, git, log, diff, commit |
 | `<leader>G*` | the debugger |
