@@ -668,8 +668,8 @@ pub struct Layout {
     pub column_width: Width,
     /// The pane each split was made from: closing a pane that has the
     /// keys hands them back there, when it is still in the same tab
-    /// (or the dock) — a list opened to be read, a Lua view, a
-    /// `<C-w>v` undone.
+    /// (or the dock) and neither was moved apart since (`placed_anew`)
+    /// — a list opened to be read, a Lua view, a `<C-w>v` undone.
     came_from: HashMap<PaneId, PaneId>,
     next_pane: PaneId,
     /// Columns are numbered apart from panes: a pane's number is what
@@ -877,6 +877,17 @@ impl Layout {
             .get(&pane)
             .copied()
             .filter(|p| self.panes.contains_key(p))
+    }
+
+    /// Panes the user moved are placed anew: a tie across the move —
+    /// to the pane one of them was made from, or from a pane made from
+    /// one of them — no longer says where the keys go back, so closing
+    /// either end falls to the tab's own rule rather than scrolling to
+    /// wherever the other went. Ties among `moved`, which went
+    /// together, stay.
+    fn placed_anew(&mut self, moved: &[PaneId]) {
+        self.came_from
+            .retain(|p, f| moved.contains(p) == moved.contains(f));
     }
 
     /// Closes a pane. The last pane of the last tab stays. Returns the
@@ -1188,6 +1199,7 @@ impl Layout {
         let col = self.new_column(Node::Pane(focused), width);
         let s = self.tab_mut().strip_mut()?;
         s.columns.insert(i + 1, col);
+        self.placed_anew(&[focused]);
         Some(i + 1)
     }
 
@@ -1218,6 +1230,7 @@ impl Layout {
             .split_beside(focused, SplitDir::V, taken, false);
         let mut ps = Vec::new();
         s.columns[i].node.panes(&mut ps);
+        self.placed_anew(&[taken]);
         Some(ps.len())
     }
 
@@ -1244,6 +1257,7 @@ impl Layout {
             return false;
         };
         node.swap(focused, other);
+        self.placed_anew(&[focused, other]);
         true
     }
 
@@ -1324,6 +1338,12 @@ impl Layout {
                 }
             }
         }
+        let moved: &[PaneId] = if at == Drop::Swap {
+            &[pane, target]
+        } else {
+            &[pane]
+        };
+        self.placed_anew(moved);
         self.tabs[self.tab].focused = pane;
         self.dock_focused = false;
         true
@@ -1344,7 +1364,10 @@ impl Layout {
             return false;
         }
         let c = s.columns.remove(i);
+        let mut moved = Vec::new();
+        c.node.panes(&mut moved);
         s.columns.insert(to, c);
+        self.placed_anew(&moved);
         true
     }
 
@@ -1589,12 +1612,14 @@ mod tests {
             "inside the column, the tree's"
         );
         // Closing a pane with the keys hands them to the pane it was
-        // split from, wherever that went: `e` was made from `b`, and so
-        // was `c`. A column's last pane takes the column with it.
+        // split from, `c` made from `b` — but not once it was moved:
+        // `e` was made from `b` too, and carried to the strip's start
+        // it goes to the column that takes its place. A column's last
+        // pane takes the column with it.
         l.focus(e);
         l.close(e);
         assert_eq!(l.visible_panes(), [1, b, c, d]);
-        assert_eq!(l.focused(), b, "where e came from");
+        assert_eq!(l.focused(), 1, "e was moved away from b");
         l.focus(c);
         l.close(c);
         assert_eq!(l.visible_panes(), [1, b, d]);
@@ -1605,6 +1630,39 @@ mod tests {
         l.close(b);
         assert!(l.close(1).is_none(), "the last pane stays, as a column");
         assert_eq!(cols(&l).len(), 1);
+    }
+
+    /// text | term1 | term2, term1 made from text and term2 from term1;
+    /// term1 carried to the start: closing term2 gives the keys to the
+    /// column before it, text, not back across it to term1.
+    #[test]
+    fn a_moved_opener_no_longer_takes_the_keys_back() {
+        let mut l = Layout::new(view());
+        l.set_scroll(true);
+        let term1 = l.split(SplitDir::H, view());
+        let term2 = l.split(SplitDir::H, view());
+        l.focus(term1);
+        assert!(l.move_column(-1));
+        assert_eq!(l.visible_panes(), [term1, 1, term2]);
+        l.focus(term2);
+        l.close(term2);
+        assert_eq!(l.focused(), 1, "the column before");
+        // A tie inside a column that moved whole stays: b below a.
+        let a = l.split(SplitDir::H, view());
+        let b = l.split(SplitDir::V, view());
+        assert!(l.move_column(-1));
+        assert_eq!(l.visible_panes(), [term1, a, b, 1]);
+        l.close(b);
+        assert_eq!(l.focused(), a, "where b came from, moved with it");
+        // Traded places in a tree, `d` forgets it was made from `c`.
+        let mut l = Layout::new(view());
+        let b = l.split(SplitDir::H, view());
+        let c = l.split(SplitDir::H, view());
+        let d = l.split(SplitDir::H, view());
+        assert!(l.move_pane(d, 1, Drop::Swap));
+        assert_eq!(l.visible_panes(), [d, b, c, 1]);
+        l.close(d);
+        assert_eq!(l.focused(), b, "the tree's first, not c");
     }
 
     #[test]
