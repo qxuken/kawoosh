@@ -89,6 +89,10 @@ pub enum Msg {
         force: bool,
         if_hidden: bool,
     },
+    /// `kawoosh.buf.back()`: the focused pane back to the buffer it
+    /// showed before, where `:bd` would take it — else another listed
+    /// one, else a new scratch. The buffer it leaves stays.
+    BackBuffer,
     /// `kawoosh.fs.list(path, fn)`: the directory read on a thread of
     /// its own, the answer to `Runtime::listed` under `token` when it
     /// comes (`IoMsg::Listed`).
@@ -2931,6 +2935,14 @@ fn seed(
                 force: flag("force"),
                 if_hidden: flag("if_hidden"),
             });
+            Ok(())
+        })?,
+    )?;
+    let qq = q(queue);
+    buf.set(
+        "back",
+        lua.create_function(move |_, ()| {
+            qq.borrow_mut().push(Msg::BackBuffer);
             Ok(())
         })?,
     )?;
