@@ -111,6 +111,10 @@ pub struct LspState {
     /// the word started.
     requested: Option<(BufferId, usize)>,
     said_unavailable: HashSet<String>,
+    /// The commands a `:lsp restart` is waiting on the shell's PATH for,
+    /// by how many restarts: no document is sent them meanwhile, which
+    /// would start one on the PATH before.
+    restarting: HashMap<String, usize>,
     pub status: Vec<(PathBuf, String, usize)>,
     /// What each language's server said it does.
     pub caps: HashMap<String, Caps>,
@@ -164,6 +168,7 @@ impl LspState {
             completion: None,
             requested: None,
             said_unavailable: HashSet::new(),
+            restarting: HashMap::new(),
             status: Vec::new(),
             caps: HashMap::new(),
             actions: Vec::new(),
@@ -434,9 +439,24 @@ impl Kawoosh {
                 Event::Unavailable { language, command } => {
                     if self.lsp.said_unavailable.insert(command.clone()) {
                         self.notify_with(
-                            Note::new(Level::Warn, format!("`{command}` not found; lsp off"))
-                                .source(language),
+                            Note::new(
+                                Level::Warn,
+                                format!(
+                                    "`{command}` not found; lsp off. Installed since? :lsp restart"
+                                ),
+                            )
+                            .source(language),
                         );
+                    }
+                }
+                Event::Restarted { commands } => {
+                    for c in commands {
+                        if let Some(n) = self.lsp.restarting.get_mut(&c) {
+                            *n -= 1;
+                            if *n == 0 {
+                                self.lsp.restarting.remove(&c);
+                            }
+                        }
                     }
                 }
                 Event::Status(s) => self.lsp.status = s,
@@ -694,13 +714,8 @@ impl Kawoosh {
         // text, a copy of the buffer per keystroke — ten milliseconds on
         // a ten-megabyte file — and a language nobody serves (or whose
         // server is not installed) paid it for nothing. Not marked sent,
-        // so a server registered later gets the buffer at once.
-        let served = |language: &str| {
-            self.scripting
-                .servers
-                .iter()
-                .any(|d| d.language == language && !self.lsp.said_unavailable.contains(&d.command))
-        };
+        // so a server registered later gets the buffer at once — and one
+        // being restarted, once it is (`lsp_restart`).
         // What a pane shows, what the server was sent before (it holds
         // it open, so it hears of every change), and what an edit from
         // the server touched in a buffer no pane shows.
@@ -719,7 +734,10 @@ impl Kawoosh {
             let Some(path) = b.path.clone() else { continue };
             // A private buffer's text never leaves the process
             // (docs/design/secrets.md Decision 1).
-            if b.private || !served(&b.language) || self.lsp.sent.get(&id) == Some(&b.version()) {
+            if b.private
+                || !self.lsp_serves(&b.language)
+                || self.lsp.sent.get(&id) == Some(&b.version())
+            {
                 continue;
             }
             // A change, not the open: the open's diagnostics land at once.
@@ -737,6 +755,71 @@ impl Kawoosh {
                 text: b.text(),
             });
         }
+    }
+
+    /// `:lsp restart [LANGUAGE]`: the language's server — bare, every
+    /// one — stopped, and a command that was not found forgotten; once
+    /// the shell gave its PATH again (`Event::Restarted`) the documents
+    /// start them again: a server installed from a terminal pane after
+    /// the "not found" is found. Each buffer they held is sent whole
+    /// again then, its diagnostics cleared until the new server's land.
+    fn lsp_restart(&mut self, language: Option<&str>) {
+        let mut commands: Vec<String> = self
+            .scripting
+            .servers
+            .iter()
+            .filter(|d| language.is_none_or(|l| d.language == l))
+            .map(|d| d.command.clone())
+            .collect();
+        commands.sort();
+        commands.dedup();
+        if commands.is_empty() {
+            self.ed.message = match language {
+                Some(l) => format!("no language server for {l}"),
+                None => "lsp: no servers".into(),
+            };
+            return;
+        }
+        // Every language on those commands: two share a server.
+        let languages: HashSet<String> = self
+            .scripting
+            .servers
+            .iter()
+            .filter(|d| commands.contains(&d.command))
+            .map(|d| d.language.clone())
+            .collect();
+        let held: Vec<BufferId> = self
+            .ed
+            .buffers
+            .iter()
+            .filter(|(_, b)| languages.contains(&*b.language))
+            .map(|(id, _)| id)
+            .collect();
+        for id in held {
+            self.lsp.sent.remove(&id);
+            self.lsp.moved.remove(&id);
+            self.lsp.held.remove(&id);
+            self.lsp.messages.remove(&id);
+            self.lsp.hints.remove(&id);
+            self.lsp.hints_asked.remove(&id);
+            let b = &self.ed.buffers[id];
+            let clear = Update {
+                layer: DIAG_LAYER,
+                version: b.version(),
+                span: 0..b.len(),
+                runs: Vec::new(),
+            };
+            self.apply_diagnostics(id, clear, Vec::new());
+        }
+        self.lsp.caps.retain(|l, _| !languages.contains(l));
+        self.lsp.said_unavailable.retain(|c| !commands.contains(c));
+        for c in &commands {
+            *self.lsp.restarting.entry(c.clone()).or_default() += 1;
+        }
+        self.lsp.completion = None;
+        self.lsp.requested = None;
+        self.ed.message = format!("lsp: restarting {}", commands.join(", "));
+        self.lsp.lsp.send(Cmd::Restart { commands });
     }
 
     /// Tells the server holding buffer `id` it closed, and forgets it
@@ -818,13 +901,14 @@ impl Kawoosh {
         Some((v, view.buffer, view.sels.primary().head))
     }
 
-    /// Whether anyone serves `language`: a definition, and its command
-    /// not found missing.
+    /// Whether anyone serves `language`: a definition, its command not
+    /// found missing and not being restarted.
     fn lsp_serves(&self, language: &str) -> bool {
-        self.scripting
-            .servers
-            .iter()
-            .any(|d| d.language == language && !self.lsp.said_unavailable.contains(&d.command))
+        self.scripting.servers.iter().any(|d| {
+            d.language == language
+                && !self.lsp.said_unavailable.contains(&d.command)
+                && !self.lsp.restarting.contains_key(&d.command)
+        })
     }
 
     /// What a language's server says it does; a server that has not
@@ -863,7 +947,15 @@ impl Kawoosh {
         };
         let language = self.ed.buffers[buffer].language.to_string();
         if !self.lsp_serves(&language) {
-            self.ed.message = format!("no language server for {language}");
+            let restarting =
+                self.scripting.servers.iter().any(|d| {
+                    d.language == language && self.lsp.restarting.contains_key(&d.command)
+                });
+            self.ed.message = if restarting {
+                format!("the {language} server is restarting")
+            } else {
+                format!("no language server for {language}")
+            };
             return;
         }
         if !does(&self.caps_of(buffer)) {
@@ -1695,6 +1787,15 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("lsp").doc("the servers running, and what they hold"),
             |k, _| k.ed.message = k.lsp_status_line(),
+        ),
+        cmd(
+            Spec::new("lsp restart")
+                .args(Args::new(&[ArgKind::Language]))
+                .doc("stop the language's server — bare, every one — and start it again; one not found is looked for again, on the shell's PATH as it is now"),
+            |k, ctx| {
+                let language = ctx.args.first().cloned();
+                k.lsp_restart(language.as_deref());
+            },
         ),
         cmd(
             Spec::new("lsp info")

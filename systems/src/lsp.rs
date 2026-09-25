@@ -273,6 +273,16 @@ pub enum Cmd {
         command: String,
         arguments: Vec<Value>,
     },
+    /// The servers run as these commands stopped at once; the shell
+    /// asked for its PATH again on a thread of its own, and once it
+    /// answered a start that failed is forgotten and
+    /// [`Event::Restarted`] says so — a document sent after starts the
+    /// server again, looked up on that PATH: one installed since, from
+    /// a terminal pane, is found. Until then the app sends none for
+    /// them, which would start one on the PATH before.
+    Restart {
+        commands: Vec<String>,
+    },
 }
 
 /// One replacement in a document, in the protocol's positions (line,
@@ -493,6 +503,11 @@ pub enum Event {
     Unavailable {
         language: String,
         command: String,
+    },
+    /// A [`Cmd::Restart`] done: the PATH asked for again, the commands'
+    /// failures forgotten.
+    Restarted {
+        commands: Vec<String>,
     },
     /// The pool's shape, for the status line: `(root, server, open docs)`.
     Status(Vec<(PathBuf, String, usize)>),
@@ -890,7 +905,11 @@ struct Pool {
     from_tx: Sender<(usize, FromServer)>,
     event_tx: Sender<Event>,
     wake: WakeHandle,
-    failed: std::collections::HashSet<String>,
+    /// The commands that did not start, by the domain they were tried
+    /// on (None: here) — not tried again until a restart.
+    failed: std::collections::HashSet<(Option<String>, String)>,
+    /// A restart's commands, sent back once the shell gave its PATH.
+    refreshed_tx: Sender<Vec<String>>,
 }
 
 /// What a server's threads hand the pool: a JSON-RPC message from its
@@ -902,6 +921,7 @@ enum FromServer {
 
 fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
     let (from_tx, from_rx) = unbounded::<(usize, FromServer)>();
+    let (refreshed_tx, refreshed_rx) = unbounded::<Vec<String>>();
     let mut pool = Pool {
         defs: ServerDef::builtin(),
         keys: HashMap::new(),
@@ -911,6 +931,7 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
         event_tx,
         wake,
         failed: Default::default(),
+        refreshed_tx,
     };
     loop {
         select! {
@@ -924,6 +945,11 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
                     FromServer::Message(m) => pool.handle_message(key, m),
                     FromServer::Stderr(line) => pool.handle_stderr(key, line),
                 }
+            }
+            recv(refreshed_rx) -> commands => {
+                let Ok(commands) = commands else { continue };
+                pool.failed.retain(|(_, c)| !commands.contains(c));
+                pool.emit(Event::Restarted { commands });
             }
         }
     }
@@ -971,10 +997,10 @@ impl Pool {
         }
         // A command failed on one host has not failed on another, or
         // here: failures are the domain's and the command's.
-        let failed_as = match crate::fs::domain_of(path) {
-            Some((d, _)) => format!("{d}:{}", def.command),
-            None => def.command.clone(),
-        };
+        let failed_as = (
+            crate::fs::domain_of(path).map(|(d, _)| d.to_string()),
+            def.command.clone(),
+        );
         if self.failed.contains(&failed_as) {
             return None;
         }
@@ -1036,6 +1062,39 @@ impl Pool {
     fn handle_cmd(&mut self, cmd: Cmd) {
         match cmd {
             Cmd::Servers(defs) => self.defs = defs,
+            Cmd::Restart { commands } => {
+                // Dropped, each server is killed; what it still says on
+                // its threads finds no server at its key, and a document
+                // synced again starts a new one at a new key.
+                let stopped: Vec<usize> = self
+                    .keys
+                    .iter()
+                    .filter(|((_, c), _)| commands.contains(c))
+                    .map(|(_, &key)| key)
+                    .collect();
+                self.keys.retain(|(_, c), _| !commands.contains(c));
+                self.homes.retain(|_, key| !stopped.contains(key));
+                for key in stopped {
+                    self.servers[key] = None;
+                }
+                self.status();
+                // A login shell takes a while; the servers of other
+                // commands are answered meanwhile.
+                let tx = self.refreshed_tx.clone();
+                let asked = commands.clone();
+                let spawned = thread::Builder::new()
+                    .name("lsp-path".into())
+                    .spawn(move || {
+                        crate::shell_env::refresh();
+                        let _ = tx.send(asked);
+                    });
+                // No thread: the PATH as it was, and the restart done.
+                if let Err(e) = spawned {
+                    log::warn!("lsp restart: no thread to ask the shell on: {e}");
+                    self.failed.retain(|(_, c)| !commands.contains(c));
+                    self.emit(Event::Restarted { commands });
+                }
+            }
             Cmd::Sync {
                 buffer,
                 path,
