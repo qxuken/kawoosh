@@ -5,6 +5,7 @@
 
 pub mod command;
 pub mod commands;
+pub mod diagnostics;
 pub mod disk;
 pub mod keymap;
 pub mod masks;
@@ -811,6 +812,9 @@ pub struct Editor {
     /// Whether a command made an undo node since the step began
     /// (`settle_checkpoint`): what makes the steps so far a change.
     edited: bool,
+    /// What is said to be wrong where ([`diagnostics`]): each buffer's
+    /// list its layer's runs index, and the files no buffer holds.
+    pub diagnostics: diagnostics::Diagnostics,
     /// The multibuffers, by their buffer ([`multi`]).
     pub multis: HashMap<BufferId, Multi>,
     /// Buffers opened only for a multibuffer: not listed while nothing
@@ -860,6 +864,7 @@ impl Editor {
             settings_applied: 0,
             repeat: Default::default(),
             edited: false,
+            diagnostics: Default::default(),
             multis: HashMap::new(),
             borrowed: Default::default(),
             released: Vec::new(),
@@ -878,6 +883,7 @@ impl Editor {
     }
 
     pub fn remove_buffer(&mut self, id: BufferId) {
+        self.release_diagnostics(id);
         self.buffers.remove(id);
         self.history.remove(&id);
         self.forget_multi(id);

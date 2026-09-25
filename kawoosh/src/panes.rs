@@ -1423,7 +1423,6 @@ impl Kawoosh {
         let letters = self.marks.letters(buf_id, top..last);
         let title = buf.name.clone();
         let dark = ui.theme().is_dark();
-        let diag_messages = self.lsp.messages.get(&buf_id);
         let diag_colors = [pal.dim, pal.danger, pal.command, pal.dim, pal.faint];
         // The notes on the rows drawn (`kawoosh.buf.annotate`): each
         // on the tracked line it was put on, wherever the line is now
@@ -1797,12 +1796,9 @@ impl Kawoosh {
                             let trailing = diags
                                 .first()
                                 .and_then(|r| {
-                                    let m = if runs_id == buf_id {
-                                        diag_messages?.get(r.tag as usize)?
-                                    } else {
-                                        self.lsp.messages.get(&runs_id)?.get(r.tag as usize)?
-                                    };
-                                    Some((m.as_str(), diag_colors[(r.style as usize).min(4)]))
+                                    // The first line: the rest is `<C-e>`'s.
+                                    let m = self.ed.diagnostics.get(runs_id, r.tag)?.first_line();
+                                    Some((m, diag_colors[(r.style as usize).min(4)]))
                                 })
                                 .or_else(|| annotated.get(&ln).map(|t| (t.as_str(), pal.dim)));
                             let ghost_here = ghost

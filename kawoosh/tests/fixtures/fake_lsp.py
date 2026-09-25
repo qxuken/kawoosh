@@ -29,7 +29,11 @@ one Location (0:3); documentSymbol a hierarchical `main` (a function,
 `Widget` (a struct) and `widget_fn` whose names contain the query,
 case aside, both in the file last opened, at 1:0 and 0:3; inlayHint a
 string label `: i32` at 0:7 and a parts label `x` `y` at 1:0; the
-hover's second paragraph names `Widget`."""
+hover's second paragraph names `Widget`. Lists (docs/design/lists.md): a
+document opened with `@long` in it gets a second, TypeScript-shaped
+error on that line — two lines of message, source `ts`, code 2322 — and
+one with `@workspace` in it a warning published for `other.rs` beside
+it, a file never sent (1:4–1:7, `rustc` `E0425`)."""
 import json
 import re, sys
 
@@ -107,10 +111,26 @@ while True:
         uri = m["params"]["textDocument"]["uri"]
         docs[uri] = m["params"]["textDocument"]["text"]
         last_uri = uri
+        diags = [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}},
+                  "severity": 1, "message": "boom"}]
+        text = docs[uri]
+        if "@long" in text:
+            # A TypeScript-shaped error: its reasons on the lines after.
+            ln = text.split("\n").index(next(l for l in text.split("\n") if "@long" in l))
+            diags.append({"range": {"start": {"line": ln, "character": 0}, "end": {"line": ln, "character": 2}},
+                          "severity": 1, "source": "ts", "code": 2322,
+                          "message": "Type 'A' is not assignable to type 'B'.\n  Property 'b' is missing in type 'A'."})
         send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
-            "uri": uri,
-            "diagnostics": [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}},
-                             "severity": 1, "message": "boom"}]}})
+            "uri": uri, "diagnostics": diags}})
+        if "@workspace" in text:
+            # A file beside it the client never sent: rust-analyzer's
+            # check speaks of every file it looked at.
+            other = uri.rsplit("/", 1)[0] + "/other.rs"
+            send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {
+                "uri": other,
+                "diagnostics": [{"range": {"start": {"line": 1, "character": 4}, "end": {"line": 1, "character": 7}},
+                                 "severity": 2, "source": "rustc", "code": "E0425",
+                                 "message": "cannot find value `nope`"}]}})
     elif method == "textDocument/completion":
         p = m["params"]
         if char_before(p["textDocument"]["uri"], p["position"]) == ".":
