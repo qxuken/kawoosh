@@ -89,8 +89,7 @@ tasks, a strip, recent workspaces), the settings types investigated,
 and declared settings — 305 commits, 31 integration test files, 468
 tests and 9 Lua acceptance scripts. What is left is step 35, a
 drawing, and each note's own "not built". The drawing came the same
-day and both bundles carry it; the window's icon at runtime waits on
-kui.
+day and both bundles carry it, and the windows too, through kui.
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -1633,8 +1632,8 @@ follow the theme every frame (`panes.rs`).
   faces out), `scripts/windows-app.nu` the Kawoosh folder and, with
   `--install`, a Start menu shortcut; on Windows the binary is a GUI
   program and opens no console.
-- **An image for kawoosh** — the bundles' done 2026-09-25, the
-  window's at runtime open [todo]; step 35. Neither bundle had
+- **An image for kawoosh** — done 2026-09-25, the bundles' and the
+  window's at runtime (kui F86) [todo]; step 35. Neither bundle had
   an icon: the Dock, Explorer and the window's title showed the
   platform's default. The todo's brief: something to do with a
   stargate, but not one — the name is the sound the gate makes when it
@@ -2007,9 +2006,16 @@ then breadth.
     `.icns` in Kawoosh.app (`CFBundleIconFile`), the `.ico` linked into
     `kawoosh.exe` by `kawoosh/build.rs` — rc.exe on Windows, llvm-rc
     from another host — and the Start menu's shortcut pointing at it.
-    Left: the window's own icon at runtime, which winit takes per
-    window and kui does not pass yet — Windows' title bar and Alt-Tab,
-    X11. macOS has none to give: the Dock shows the bundle's.
+    The window's own icon landed the same day, once kui could pass it
+    (kui F86, `Launcher::icon` / `icon_resource`, given to every window
+    it creates): on Windows the `1 ICON` resource, so the title bar,
+    Alt-Tab and the taskbar each take the `.ico`'s frame for their size;
+    on X11 `assets/icons/kawoosh-128.png`, rendered from
+    `kawoosh-icon.svg` and decoded to RGBA at startup (`window_icon` in
+    `main.rs`). Checked by the Windows cross-build and a test that the
+    PNG decodes, not on a Windows or X11 desktop. macOS has none to
+    give — the Dock shows the bundle's — nor has Wayland, which reads
+    the `.desktop` file's.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),

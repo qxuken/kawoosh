@@ -1726,6 +1726,7 @@ dependencies = [
  "libc",
  "log",
  "mlua",
+ "png",
  "regex",
  "rusqlite",
  "serde",
