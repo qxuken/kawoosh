@@ -106,9 +106,10 @@ frame set `scroll_offset` to centre the column instead of revealing it.
 
 `zs` `ze` `zz` (`strip left` / `right` / `center`) put the focused
 column against an edge or in the middle once, for the times the reveal's
-"the least that brings it in" is not where the eye wants it; the ribbon
-does not scroll past its ends, so the first column cannot be flush
-right nor the last flush left.
+"the least that brings it in" is not where the eye wants it. *The
+ribbon did not scroll past its ends, so the first column could not be
+flush right nor the last flush left, nor a lone column centred — it
+has room past them now, see "Built".*
 
 The gap between columns is `layout.gap` px (the divider's width by
 default) and is draggable like a divider: a drag turns the column's
@@ -355,6 +356,22 @@ departed from the text above, and what day one found:
   asked direction (`Width::SEEN`); else the key steps on past it.
   `<A-S-l>` / `<A-S-h>` say where they landed (`column two-thirds`,
   `column full already`) and take a COUNT.
+- **An alignment has room past the ribbon's ends** (2026-09-25,
+  asked: a lone column centred, a half column centred with a third
+  beside it). `zs` `ze` `zz` put the focused column where asked even
+  where the columns alone are too short to scroll there: the ribbon
+  grows empty room before its first column and after its last
+  (`StripRoom`, fractions of the viewport, so a lone column centred
+  stays centred as the window resizes). The room holds while the tab's columns
+  are the ones it was made for, in their order — the walk and a width
+  step keep it, a column added, closed or moved lets it go, the
+  columns snapping to the ribbon's start as a width does — and only
+  grows meanwhile, so a second alignment never pulls the ribbon out
+  from under the first. Unasked, the ribbon starts at the left edge as
+  before. `layout.scroll.center = always` makes the room every
+  column's centring needs, from the shape alone, so it stays put as
+  the focus walks and a lone column sits in the middle. Test:
+  `an_alignment_has_room_past_the_ribbons_ends`.
 - **The status line shows the columns** as `▯▮▯`, the focused one
   filled, before the caret's line and column — a column off the
   viewport is not out of mind.

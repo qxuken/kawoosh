@@ -245,6 +245,8 @@ pub struct Kawoosh {
     pub(crate) culled: std::collections::HashSet<PaneId>,
     /// An alignment `zs` / `ze` / `zz` asked for, for the next frame.
     pub(crate) strip_align: Option<crate::panes::StripAlign>,
+    /// The room past the strip's ends an alignment made (`StripRoom`).
+    pub(crate) strip_room: Option<crate::panes::StripRoom>,
     /// Every column drawn so far, by number, so a column arriving in a
     /// strip already on show is the one that slides in.
     pub(crate) strip_known: std::collections::HashSet<u64>,
@@ -365,6 +367,7 @@ impl Kawoosh {
             title_h: 0.0,
             tabs_seen: None,
             strip_align: None,
+            strip_room: None,
             culled: Default::default(),
             layout_default_seen: false,
             strip_known: Default::default(),

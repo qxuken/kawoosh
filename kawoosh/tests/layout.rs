@@ -399,6 +399,69 @@ fn each_tab_keeps_its_own_strip_and_a_moved_tab_stays_in_view() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// `zs` `ze` `zz` reach past the ribbon's ends: a lone column goes in
+/// the middle or against the right edge, a half column centres with a
+/// third beside it, and `layout.scroll.center = always` centres a lone
+/// column too. Unasked, the ribbon starts at the viewport's left edge.
+#[test]
+fn an_alignment_has_room_past_the_ribbons_ends() {
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    app.layout.tab_mut().strip_mut().unwrap().columns[0].width = Width::Half;
+    settle(&mut d, &mut app);
+    let r = app.layout.rects[&1];
+    assert!(r.x.abs() < 2.0, "flush left, unasked: {r:?}");
+    d.press(&mut app, "zz");
+    settle(&mut d, &mut app);
+    let r = app.layout.rects[&1];
+    assert!(
+        (r.x - (vw - r.w) / 2.0).abs() < 2.0,
+        "a lone column centred: {r:?}"
+    );
+    d.press(&mut app, "ze");
+    settle(&mut d, &mut app);
+    let r = app.layout.rects[&1];
+    assert!(
+        (r.x + r.w - vw).abs() < 2.0,
+        "against the right edge: {r:?}"
+    );
+    d.press(&mut app, "zs");
+    settle(&mut d, &mut app);
+    let r = app.layout.rects[&1];
+    assert!(r.x.abs() < 2.0, "and back to the left: {r:?}");
+    // A third after it: the room was the lone column's, and goes.
+    ex(&mut d, &mut app, "set layout.column_width=third");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    let (a, b) = (app.layout.rects[&1], app.layout.rects[&2]);
+    assert!(a.x.abs() < 2.0, "the room went with the lone column: {a:?}");
+    assert!((b.w - vw / 3.0).abs() < 4.0, "{b:?}");
+    // The half centred, the third on its right.
+    ctrl_w(&mut d, &mut app, "h");
+    d.press(&mut app, "zz");
+    settle(&mut d, &mut app);
+    let (a, b) = (app.layout.rects[&1], app.layout.rects[&2]);
+    assert!(
+        (a.x - (vw - a.w) / 2.0).abs() < 2.0,
+        "the half centred: {a:?}"
+    );
+    assert!(b.x > a.x + a.w, "the third on its right: {b:?}");
+    // The walk keeps the room: the third comes into view beside it.
+    ctrl_w(&mut d, &mut app, "l");
+    settle(&mut d, &mut app);
+    assert!(in_view(&d, &app, 2, vw), "{:?}", app.layout.rects[&2]);
+    // Centred always, a lone column too.
+    ex(&mut d, &mut app, "set layout.scroll.center=always");
+    ctrl_w(&mut d, &mut app, "q");
+    settle(&mut d, &mut app);
+    let r = app.layout.rects[&1];
+    assert!((r.x - (vw - r.w) / 2.0).abs() < 2.0, "always: {r:?}");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 #[test]
 fn the_keyboard_jumps_to_a_column_moves_panes_and_aligns_the_view() {
     let vw = 900.0;
@@ -425,9 +488,8 @@ fn the_keyboard_jumps_to_a_column_moves_panes_and_aligns_the_view() {
     assert_eq!(app.layout.focused(), 4, "clamped to the last column");
     settle(&mut d, &mut app);
     // `zs` `ze` `zz`: the focused column against an edge, or centred.
-    // A column in the middle of the ribbon, which has room both ways —
-    // the ribbon does not scroll past its ends, so the last column
-    // cannot be flush left.
+    // A column in the middle of the ribbon; the ends have a test of
+    // their own (`an_alignment_has_room_past_the_ribbons_ends`).
     d.press(&mut app, "<D-2>");
     settle(&mut d, &mut app);
     d.press(&mut app, "zs");
