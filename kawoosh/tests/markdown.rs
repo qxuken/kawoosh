@@ -506,3 +506,46 @@ fn a_row_with_no_cells_keeps_its_line() {
     let e = rect_of_text(&d, "e").expect("the row after").1;
     assert_eq!(number, e, "line 7's number beside its row");
 }
+
+/// A block caret past a wrapped row's end — `$` on a long line, `j`
+/// onto a short heading — sits after the heading's last char, not at
+/// the row's far edge, where the text's growing box pushed it.
+#[test]
+fn a_caret_past_a_headings_end_sits_after_it() {
+    let dir = fixture("pastend");
+    std::fs::write(
+        dir.join("doc.md"),
+        "a rather long line of prose above the heading, longer than it\n## Head\n",
+    )
+    .unwrap();
+    let (mut d, mut app) = launch(&dir, 900.0);
+    d.press(&mut app, "gg$j");
+    settle(&mut d, &mut app);
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.buffer_of(v);
+    assert_eq!(app.ed.views[v].sels.primary().head, buf.line_range(1).end);
+    let text = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.text.as_deref() == Some("## Head"))
+        .expect("the heading, raw");
+    let caret = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| {
+            n.width == kui::Sizing::Fixed(8.0)
+                && n.rect.y >= text.rect.y
+                && n.rect.y < text.rect.y + text.rect.h
+        })
+        .expect("the past-end caret");
+    let cell = 13.0 * 1.35 * 0.5;
+    let end = text.rect.x + 7.0 * cell;
+    assert!(
+        caret.rect.x < end + 2.0 * cell,
+        "after `## Head`: caret at {}, text at {:?}",
+        caret.rect.x,
+        text.rect
+    );
+}

@@ -1356,6 +1356,19 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             });
         }
         flush(ui, &segs[from..]);
+        // Where byte `b` of a wrapped row is: where kui laid it out last
+        // frame, against where it laid the first — the frame that types
+        // is a frame behind, and the next catches up.
+        let wrapped_at = |ui: &mut Ui<'_>, b: usize| -> (f32, f32) {
+            let gutter = form.and_then(|f| f.gutter.as_ref()).map_or(0.0, |g| g.0);
+            let placed = text_key
+                .get()
+                .and_then(|k| Some((ui.caret_rect(k, b)?, ui.caret_rect(k, 0)?)));
+            match placed {
+                Some((at, origin)) => (gutter + at.x - origin.x, at.y - origin.y),
+                None => (gutter + ui.measure_text(&text[..b], &base, None).width, 0.0),
+            }
+        };
         // Bar carets, measured to their byte — past a ghost or a hint
         // when they sit after it.
         let virtual_w: Vec<(usize, f32)> = virtuals
@@ -1367,21 +1380,8 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 continue;
             }
             let cb = r.start.min(len);
-            // A wrapped row's: where kui laid the byte out last frame,
-            // against where it laid the first — the frame that types
-            // is a frame behind, and the next catches up.
             if wraps {
-                let gutter = form.and_then(|f| f.gutter.as_ref()).map_or(0.0, |g| g.0);
-                let placed = text_key
-                    .get()
-                    .and_then(|k| Some((ui.caret_rect(k, cb)?, ui.caret_rect(k, 0)?)));
-                let (x, y) = match placed {
-                    Some((at, origin)) => (gutter + at.x - origin.x, at.y - origin.y),
-                    None => (
-                        gutter + ui.measure_text(&text[..cb], &base, None).width,
-                        0.0,
-                    ),
-                };
+                let (x, y) = wrapped_at(ui, cb);
                 caret_bar_at(ui, pal.accent, line.caret_on, x, y, lh);
                 continue;
             }
@@ -1395,31 +1395,38 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
         }
         // A block caret past the end of the line, and a selection
         // running past the newline: boxes in the row's flow, so the
-        // trailing text's gap gives way to them and keeps its place.
+        // trailing text's gap gives way to them and keeps its place. A
+        // wrapped row's text grows to the row's width, where in its flow
+        // they sat at the far edge (a heading's, 2026-09-25): there they
+        // hang where its last visual line ends, the caret over the
+        // selection.
+        let end = wraps.then(|| wrapped_at(ui, len));
         let mut boxes = 0.0;
-        if let Some((_, kind)) = line
+        let mut past_end = |ui: &mut Ui<'_>, h: f32, dy: f32, bg: Color| {
+            let mut b = NodeSpec::column()
+                .width(Sizing::Fixed(PAST_END_W))
+                .height(Sizing::Fixed(h))
+                .bg(bg);
+            match end {
+                Some((x, y)) => b = b.float(FloatConfig::parent().offset(x, y + dy)),
+                None => boxes += PAST_END_W,
+            }
+            ui.with(b, |_| {});
+        };
+        let caret = line
             .carets
             .iter()
             .find(|(r, k)| r.start >= len && *k != Caret::Bar)
-        {
-            ui.with(
-                NodeSpec::column()
-                    .width(Sizing::Fixed(PAST_END_W))
-                    .height(Sizing::Fixed(lh - 4.0))
-                    .bg(caret_bg(pal, *kind)),
-                |_| {},
-            );
-            boxes += PAST_END_W;
+            .map(|(_, k)| caret_bg(pal, *k));
+        let selected = line.selected.iter().any(|r| r.end > len);
+        if let Some(bg) = caret.filter(|_| !wraps) {
+            past_end(ui, lh - 4.0, 2.0, bg);
         }
-        if line.selected.iter().any(|r| r.end > len) {
-            ui.with(
-                NodeSpec::column()
-                    .width(Sizing::Fixed(PAST_END_W))
-                    .height(Sizing::Fixed(lh))
-                    .bg(pal.select),
-                |_| {},
-            );
-            boxes += PAST_END_W;
+        if selected {
+            past_end(ui, lh, 0.0, pal.select);
+        }
+        if let Some(bg) = caret.filter(|_| wraps) {
+            past_end(ui, lh - 4.0, 2.0, bg);
         }
         if let Some((t, color)) = line.trailing {
             ui.with(
