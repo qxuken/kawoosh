@@ -51,6 +51,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::lsp::commands());
     v.extend(crate::session::commands());
     v.extend(crate::compile::commands());
+    v.extend(crate::multis::commands());
     v.extend(crate::scripting::commands());
     v.extend(crate::undo::commands());
     v.extend(crate::memory::commands());

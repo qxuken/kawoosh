@@ -732,6 +732,7 @@ impl Kawoosh {
             .also_sync
             .retain(|id| self.ed.buffers.contains_key(*id));
         let mut shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
+        shown.extend(self.multis.visible.iter().copied());
         shown.extend(self.lsp.sent.keys().copied());
         shown.extend(self.lsp.also_sync.iter().copied());
         shown.sort();

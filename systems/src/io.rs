@@ -50,6 +50,14 @@ pub enum IoMsg {
         token: u64,
         result: Result<Vec<String>, String>,
     },
+    /// A project search for a plugin (`kawoosh.search(query, fn)`,
+    /// docs/design/search.md): the job's token, the root its paths are
+    /// relative to, and what it found.
+    Searched {
+        token: u64,
+        root: PathBuf,
+        result: Result<crate::search::Found, String>,
+    },
     /// An image read and decoded for the markdown buffer: its pixels as
     /// RGBA8 and its size, or why not.
     Image {

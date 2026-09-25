@@ -36,6 +36,7 @@ pub mod markdown;
 pub mod marks;
 pub mod memory;
 pub mod moments;
+pub mod multis;
 pub mod nodes;
 pub mod notify;
 pub mod palette;

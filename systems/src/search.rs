@@ -35,7 +35,7 @@ pub enum Case {
 }
 
 /// What to look for, and where.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Query {
     pub pattern: String,
     /// The pattern is a regex; otherwise its text, literally.
@@ -304,6 +304,26 @@ impl Compiled {
         }
         out
     }
+}
+
+/// Which of `paths` (relative to the root) an include and exclude list
+/// want, as a search would: a stage that passes files on without
+/// searching them narrows them this way.
+pub fn wanted(
+    include: &[String],
+    exclude: &[String],
+    paths: &[PathBuf],
+) -> Result<Vec<bool>, String> {
+    let include = glob_set(include).map_err(|e| format!("include: {e}"))?;
+    let exclude = glob_set(exclude).map_err(|e| format!("exclude: {e}"))?;
+    Ok(paths
+        .iter()
+        .map(|p| {
+            let rel = slashed(p);
+            include.as_ref().is_none_or(|g| g.is_match(&rel))
+                && !exclude.as_ref().is_some_and(|g| g.is_match(&rel))
+        })
+        .collect())
 }
 
 /// A path with `/` between its parts on every platform, as globs are.

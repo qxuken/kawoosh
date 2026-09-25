@@ -28,6 +28,22 @@ const WINDOW: usize = 1 << 20;
 /// The stride a count is split into for the threads.
 const STRIDE: usize = 64 << 20;
 
+/// A project search's pattern as the editor's search takes it: the text
+/// escaped unless it is a regex, and fenced by `\b` for a whole word —
+/// so the results' matches are `/`'s (docs/design/search.md Decision 9).
+pub fn pattern_of(text: &str, regex: bool, word: bool) -> String {
+    let body = if regex {
+        text.to_string()
+    } else {
+        regex::escape(text)
+    };
+    if word {
+        format!(r"\b(?:{body})\b")
+    } else {
+        body
+    }
+}
+
 /// A compiled pattern: what the editor holds between `n`s and what the
 /// view asks for the visible highlights.
 #[derive(Clone, Debug)]

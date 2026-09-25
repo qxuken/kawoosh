@@ -28,6 +28,11 @@ use kawoosh_doc::{Buffer, BufferId, Edit, Version};
 
 use crate::{Editor, Selection};
 
+/// A multibuffer's language: what its facts answer (`language:multibuffer`,
+/// the keys an excerpt takes) and what keeps it out of the drafts, the
+/// memory and a session — its text is its files'.
+pub const LANGUAGE: &str = "multibuffer";
+
 /// What a multibuffer is made of, in order: the caller's text, and a
 /// source's lines (from 0, end exclusive).
 #[derive(Clone, Debug)]
@@ -202,7 +207,7 @@ impl Editor {
     /// them and nothing has edited them (search.md Decision 5).
     pub fn open_multi(&mut self, name: &str, parts: Vec<Part>) -> BufferId {
         let mut buf = Buffer::new(name, "");
-        buf.language = "multibuffer".into();
+        buf.language = LANGUAGE.into();
         let id = self.add_buffer(buf);
         self.fill_multi(id, parts);
         id

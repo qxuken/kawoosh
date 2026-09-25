@@ -901,13 +901,17 @@ pub fn table_edge(ui: &mut Ui<'_>, columns: usize, rule: Color) {
 /// the caret's own line keeping its number either way. The empty line
 /// after a final newline is a place for the caret, not a line of the
 /// file: it is marked `~`, not numbered, as helix does.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Numbers {
     pub relative: bool,
     /// The caret's line.
     pub current: usize,
     /// The line after a final newline, when the buffer ends in one.
     pub phantom: Option<usize>,
+    /// A multibuffer's lines from the first drawn: each excerpt line's
+    /// number in its file (from 0), none on a header's
+    /// (docs/design/search.md Decision 9).
+    pub files: Option<(usize, Vec<Option<usize>>)>,
 }
 
 impl Numbers {
@@ -923,11 +927,17 @@ impl Numbers {
             relative: settings.bool("relativenumber") == Some(true),
             current,
             phantom: (last > 0 && buf.line_range(last).is_empty()).then_some(last),
+            files: None,
         }
     }
 
     /// What the gutter shows beside line `ln` (0-based).
     pub fn label(&self, ln: usize) -> String {
+        if let Some((top, lines)) = &self.files
+            && let Some(file) = ln.checked_sub(*top).and_then(|i| lines.get(i))
+        {
+            return file.map(|n| (n + 1).to_string()).unwrap_or_default();
+        }
         if Some(ln) == self.phantom {
             "~".into()
         } else if self.relative && ln != self.current {

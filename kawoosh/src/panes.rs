@@ -1391,7 +1391,21 @@ impl Kawoosh {
         let sels = &v.sels;
         let primary = sels.primary();
         let cur_line = buf.line_of(primary.head);
-        let numbers = rows::Numbers::of(buf, cur_line, &self.ed.settings);
+        let mut numbers = rows::Numbers::of(buf, cur_line, &self.ed.settings);
+        // A multibuffer's lines are its files': each drawn line's source
+        // and line there — the gutter's number, and where its colours
+        // and squiggles are read from (docs/design/search.md Decision 9).
+        let from_files: Vec<Option<(kawoosh_doc::BufferId, usize)>> = if self.ed.is_multi(buf_id) {
+            self.ed.multi_lines(buf_id, top..last)
+        } else {
+            Vec::new()
+        };
+        if !from_files.is_empty() {
+            numbers.files = Some((top, from_files.iter().map(|f| f.map(|(_, n)| n)).collect()));
+            self.multis
+                .visible
+                .extend(from_files.iter().flatten().map(|(s, _)| *s));
+        }
         // The marks' letters beside their lines (docs/design/marks.md).
         let letters = self.marks.letters(buf_id, top..last);
         let title = buf.name.clone();
@@ -1612,6 +1626,25 @@ impl Kawoosh {
                             // line's window, not its ten thousand runs.
                             let src = drawn.src_range();
                             let src = range.start + src.start..range.start + src.end;
+                            // Where the colours and squiggles are read:
+                            // the buffer, or for a multibuffer's excerpt
+                            // line the file's, `shift` bytes on.
+                            let (runs_buf, runs_id, shift) = match from_files.get(ln - top) {
+                                Some(Some((sid, sline))) => match self.ed.buffers.get(*sid) {
+                                    Some(sb) => (
+                                        sb,
+                                        *sid,
+                                        sb.line_start(*sline) as isize - range.start as isize,
+                                    ),
+                                    None => (buf, buf_id, 0),
+                                },
+                                _ => (buf, buf_id, 0),
+                            };
+                            let there = |r: &Range<usize>| {
+                                (r.start as isize + shift).max(0) as usize
+                                    ..(r.end as isize + shift).max(0) as usize
+                            };
+                            let here = |o: usize| (o as isize - shift).max(0) as usize;
                             let mut selected: Vec<Range<usize>> = Vec::new();
                             let mut carets: Vec<(Range<usize>, Caret)> = Vec::new();
                             let mut access = (None, None);
@@ -1702,13 +1735,24 @@ impl Kawoosh {
                                     )
                                 })
                                 .filter(|(r, _)| r.start < r.end)
-                                .chain(buf.runs(SYNTAX_LAYER, src.clone()).iter().filter_map(|r| {
-                                    let c =
-                                        token_colors.get(r.style as usize).copied().flatten()?;
-                                    let a = clip(r.range.start);
-                                    let b = clip(r.range.end.min(range.end));
-                                    (a < b).then_some((a..b, c))
-                                }))
+                                // A multibuffer's gap — a file's header, a
+                                // `⋯` — in the accent, a plugin's paint
+                                // over it.
+                                .chain(
+                                    matches!(from_files.get(ln - top), Some(None))
+                                        .then(|| (0..drawn.text.len(), pal.accent)),
+                                )
+                                .chain(runs_buf.runs(SYNTAX_LAYER, there(&src)).iter().filter_map(
+                                    |r| {
+                                        let c = token_colors
+                                            .get(r.style as usize)
+                                            .copied()
+                                            .flatten()?;
+                                        let a = clip(here(r.range.start));
+                                        let b = clip(here(r.range.end).min(range.end));
+                                        (a < b).then_some((a..b, c))
+                                    },
+                                ))
                                 .collect();
                             let washed: Vec<(Range<usize>, kui::Color)> = washes
                                 .iter()
@@ -1721,12 +1765,12 @@ impl Kawoosh {
                                 })
                                 .filter(|(r, _)| r.start < r.end)
                                 .collect();
-                            let diags = buf.runs(DIAG_LAYER, range.clone());
+                            let diags = runs_buf.runs(DIAG_LAYER, there(&range));
                             let underlined: Vec<(Range<usize>, kui::Color)> = diags
                                 .iter()
                                 .filter_map(|r| {
-                                    let a = clip(r.range.start);
-                                    let b = clip(r.range.end.min(range.end));
+                                    let a = clip(here(r.range.start));
+                                    let b = clip(here(r.range.end).min(range.end));
                                     let c = diag_colors[(r.style as usize).min(4)];
                                     (a < b).then_some((a..b, c))
                                 })
@@ -1734,7 +1778,11 @@ impl Kawoosh {
                             let trailing = diags
                                 .first()
                                 .and_then(|r| {
-                                    let m = diag_messages?.get(r.tag as usize)?;
+                                    let m = if runs_id == buf_id {
+                                        diag_messages?.get(r.tag as usize)?
+                                    } else {
+                                        self.lsp.messages.get(&runs_id)?.get(r.tag as usize)?
+                                    };
                                     Some((m.as_str(), diag_colors[(r.style as usize).min(4)]))
                                 })
                                 .or_else(|| annotated.get(&ln).map(|t| (t.as_str(), pal.dim)));

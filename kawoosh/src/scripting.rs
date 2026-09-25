@@ -657,6 +657,15 @@ impl Kawoosh {
                     text,
                 });
             }
+            Msg::Search { token, root, query } => self.search_from_lua(token, root, query),
+            Msg::SearchCancel(token) => self.search_cancel(token),
+            Msg::Multi {
+                name,
+                parts,
+                show,
+                focus,
+                line,
+            } => self.multi_from_lua(&name, parts, show, focus, line),
             Msg::Walk { token, root } => {
                 // A host's walk is capped and kept: said once.
                 if let Some((d, _)) = kawoosh_systems::fs::domain_of(&root)
@@ -997,6 +1006,7 @@ impl Kawoosh {
                 }
             }
             Msg::Edit { .. }
+            | Msg::SearchPaint { .. }
             | Msg::SetText { .. }
             | Msg::SetCursor { .. }
             | Msg::Type(_)
