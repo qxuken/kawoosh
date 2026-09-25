@@ -1367,6 +1367,30 @@ impl Runtime {
         }
     }
 
+    /// A moment of a plugin's own kind opened from the memory pane
+    /// (`kawoosh.on_memory_open`): true when its kind has an opener.
+    pub fn memory_open_hook(&self, kind: &str, subject: &str, meta: &str) -> bool {
+        let Ok(f) = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Function>("_memory_open"))
+        else {
+            return false;
+        };
+        let meta: serde_json::Value = serde_json::from_str(meta).unwrap_or_default();
+        let meta = json_to_lua(&self.lua, &meta).unwrap_or(LV::Nil);
+        match f.call::<bool>((kind, subject, meta)) {
+            Ok(taken) => taken,
+            Err(e) => {
+                self.queue
+                    .borrow_mut()
+                    .push(Msg::Echo(format!("memory {kind}: {e}")));
+                false
+            }
+        }
+    }
+
     /// Tells the plugins a scratch buffer came back with a session,
     /// empty, by name and handle (`kawoosh.on_restore`).
     pub fn restore_hook(&self, name: &str, handle: u64) {

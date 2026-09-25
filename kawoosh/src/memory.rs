@@ -653,13 +653,22 @@ impl Kawoosh {
                 });
                 self.moment_rows_of(rows)
             }
+            // `/`'s searches and the project's (search.md), newest first.
             View::Searches => {
-                let rows = self.moment_rows(&MomentQuery {
+                let ws = self.moments.workspace();
+                let mut rows = self.moment_rows(&MomentQuery {
                     kind: Some("search"),
-                    workspace: Some(self.moments.workspace()),
+                    workspace: Some(ws),
                     limit: ROWS_MAX,
                     ..Default::default()
                 });
+                rows.extend(self.moment_rows(&MomentQuery {
+                    kind: Some("search.project"),
+                    workspace: Some(ws),
+                    limit: ROWS_MAX,
+                    ..Default::default()
+                }));
+                rows.sort_by_key(|r| std::cmp::Reverse(r.last_at));
                 self.moment_rows_of(rows)
             }
             View::Pins => {
@@ -1026,8 +1035,22 @@ impl Kawoosh {
                     self.tool(&name);
                 }
             }
+            // A plugin's own kind: its opener, from the pane the memory
+            // pane came from (`kawoosh.on_memory_open`).
             _ => {
-                self.ed.message = format!("{}: a {} moment, nothing to open", key.subject, key.kind)
+                if let Some((p, _)) = self.memory_target() {
+                    self.layout.focus(p);
+                }
+                let taken = self.scripting.rt.clone().is_some_and(|rt| {
+                    rt.publish(&self.ed, self.focused_view());
+                    rt.memory_open_hook(&key.kind, &key.subject, meta)
+                });
+                if taken {
+                    self.drain_lua();
+                } else {
+                    self.ed.message =
+                        format!("{}: a {} moment, nothing to open", key.subject, key.kind)
+                }
             }
         }
     }

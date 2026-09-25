@@ -957,6 +957,10 @@ impl Numbers {
 /// The gutter cell for line `ln` (0-based), decoration rather than text:
 /// its number, and a mark's letter at the cell's left, in the column
 /// [`gutter_w`] adds for a buffer with marks (docs/design/marks.md).
+/// The gutter's rows' own padding either side: a row's, not the
+/// column's, so a multibuffer header's band fills the gutter.
+const GUTTER_ROW_PAD: f32 = 12.0;
+
 pub fn gutter_row(
     ui: &mut Ui<'_>,
     face: Face,
@@ -983,6 +987,7 @@ pub fn gutter_row(
     ui.with(
         spec.width(Sizing::Grow(1.0))
             .height(Sizing::Fixed(face.line_height))
+            .pad_xy(GUTTER_ROW_PAD, 0.0)
             .main_align(Align::End)
             .cross_align(Align::Center),
         |ui| {
@@ -991,7 +996,7 @@ pub fn gutter_row(
                     NodeSpec::row()
                         .height(Sizing::Fixed(face.line_height))
                         .cross_align(Align::Center)
-                        .float(FloatConfig::parent().offset(0.0, 0.0)),
+                        .float(FloatConfig::parent().offset(GUTTER_ROW_PAD, 0.0)),
                     |ui| ui.text(&c.to_string(), mono(face, pal).color(pal.accent)),
                 );
             }

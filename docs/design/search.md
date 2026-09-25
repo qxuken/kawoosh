@@ -217,8 +217,11 @@ back with its stages.
 Every run is remembered (memory.md Decision 9): a `search.project`
 moment in the workspace, its subject the stages spelled
 (`useState › in useEffect [src] › drop test`), its meta the stages
-themselves — what `<Up>` walks, and what the memory pane lists. Opening
-one from the pane is not wired yet: the pane knows the engine's kinds.
+themselves — what `<Up>` walks, and what the memory pane's `searches`
+view lists beside `/`'s. `⏎` on one there puts it back in the bar and
+runs it: a plugin's own kind is opened by that plugin
+(`kawoosh.on_memory_open(kind, fn)`, a door any plugin's moments can
+use; the pane knew only the engine's kinds before).
 
 Beaten: the fields at the head of the results buffer (grug-far's
 shape), which keeps everything one buffer but makes the fields lines

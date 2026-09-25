@@ -313,6 +313,21 @@ function search.remember()
                             meta = { stages = stages } })
 end
 
+-- The stages a moment's meta kept, as the bar's: a kind no plugin
+-- adds any more is `in`, the first is always the project's search.
+local function stages_of(list)
+  local stages = {}
+  for j, k in ipairs(list) do
+    local st = new_stage(j == 1 and "search" or (search.kinds[k.kind] and k.kind or "in"))
+    for _, f in ipairs(KEPT) do
+      if f ~= "kind" and k[f] ~= nil then st[f] = k[f] end
+    end
+    stages[j] = st
+  end
+  if #stages == 0 then stages[1] = new_stage("search") end
+  return stages
+end
+
 -- search.earlier(by): the searches made in this workspace, newest
 -- first, `by` steps back (`-1` forward); stepped back to the start, the
 -- stages as they were before the walk. Put in the bar, not run.
@@ -329,18 +344,19 @@ function search.earlier(by)
   if i == b.i then return kawoosh.echo(by > 0 and "no earlier search here" or "back at the search as it was") end
   b.i = i
   local from = i == 0 and b.now or ((b.rows[i].meta or {}).stages or {})
-  local stages = {}
-  for j, k in ipairs(from) do
-    local st = new_stage(j == 1 and "search" or (search.kinds[k.kind] and k.kind or "in"))
-    for _, f in ipairs(KEPT) do
-      if f ~= "kind" and k[f] ~= nil then st[f] = k[f] end
-    end
-    stages[j] = st
-  end
-  if #stages == 0 then stages[1] = new_stage("search") end
-  search.stages, search.cur = stages, 1
+  search.stages, search.cur = stages_of(from), 1
   load_fields()
 end
+
+-- search.restore(stages): a search kept in the memory back in the bar
+-- — opened for it, from the workspace's root — and run.
+function search.restore(stages)
+  search.stages, search.cur = stages_of(stages or {}), 1
+  search.open()
+  search.run(1)
+end
+
+kawoosh.on_memory_open(KIND, function(row) search.restore((row.meta or {}).stages) end)
 
 -- ------------------------------------------------------------ opening
 

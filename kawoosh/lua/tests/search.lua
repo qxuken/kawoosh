@@ -114,6 +114,20 @@ if #rows > 0 then
   kawoosh.frame(2)
 end
 
+-- A search kept in the memory, opened from the memory pane: its
+-- stages back in the bar, run.
+kawoosh.test.eq(kawoosh._memory_open("search.project", "needle › drop more",
+  { stages = { { kind = "search", find = "needle", include = "src/*.[ts,tsx], tests/*.ts",
+                 exclude = "*__test__*" }, { kind = "drop", find = "more", include = "", exclude = "" } } }),
+  true, "the search plugin opens its own moments")
+settled("the search restored")
+st = state()
+kawoosh.test.eq(#st.stages, 2)
+kawoosh.test.eq(st.stages[2].kind, "drop")
+kawoosh.test.eq(st.stages[2].files, 2, "run as it was")
+kawoosh.search_ui.remove(2)
+settled("back to one stage")
+
 -- The results are live: into them, the match's line edited.
 kawoosh.cmd("search results")
 kawoosh.frame()

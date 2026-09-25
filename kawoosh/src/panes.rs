@@ -1540,10 +1540,11 @@ impl Kawoosh {
                 if !md {
                     ui.with_keyed(
                         "gutter",
+                        // The padding is each row's, so a header's band
+                        // runs across the gutter into the text's.
                         NodeSpec::column()
                             .width(Sizing::Fixed(gutter))
                             .height(Sizing::Grow(1.0))
-                            .pad_xy(12.0, 0.0)
                             .role(Role::None),
                         |ui| {
                             for ln in top..last {
