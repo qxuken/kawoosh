@@ -18,9 +18,9 @@
 -- `:search project [PATTERN]` (`:grep`, `<leader>ss`, ⌘⇧F) opens the
 -- bar, `:search here` from the file's directory (`<leader>sS`). In the
 -- bar: `<CR>` runs, `<Tab>` `<S-Tab>` go between the fields, `<A-r>`
--- `<A-c>` `<A-w>` `<A-i>` flip regex, case, whole word and ignored
--- files, `<A-n>` adds a stage after the cursor's, `<A-k>` cycles its
--- kind, `<A-x>` takes it out, `<A-h>` `<A-l>` move between stages,
+-- `<A-c>` `<A-w>` `<A-g>` flip regex, case, whole word and ignored
+-- files, `<A-a>` adds a stage after the cursor's (not ⌥N nor ⌥I:
+-- macOS's dead keys eat the key after them), `<A-k>` cycles its kind, `<A-x>` takes it out, `<A-h>` `<A-l>` move between stages,
 -- `<C-j>` puts the keyboard in the results and `<C-c>` closes the bar.
 -- In the results `<CR>` opens the file at the caret (`<C-v>` beside),
 -- `n` walks the matches (the editor's search is set to the pattern).
@@ -282,7 +282,7 @@ function search.open(pattern, root)
   end
   load_fields()
   kawoosh.field_focus(VIEW, "find")
-  search.sized = false
+  search.sized, search.asked = 0, nil
   if pattern and pattern ~= "" then search.run(1) end
 end
 
@@ -357,13 +357,23 @@ kawoosh.view(VIEW, function(ctx)
   local t = ctx.env.theme
   local st = search.stages[search.cur]
   search.live = true
-  -- Opened: the pane made as tall as the bar, once.
-  if not search.sized and ctx.height and ctx.height > 0 and ctx.share then
-    search.sized = true
-    local want = 3 * ROW_H + 18
-    local share = math.max(0.05, math.min(0.6, ctx.share * want / ctx.height))
-    search.share = share
-    if math.abs(ctx.height - want) > 4 then kawoosh.view_open(VIEW, { below = true, share = share, focus = false }) end
+  -- Opened: the pane made as tall as the bar. A share is of the split,
+  -- title and all, so it is stepped over a few frames until the rows
+  -- fit rather than worked out once.
+  -- Three rows, their gaps and padding, and the pane's title, which
+  -- `ctx.height` counts.
+  local want = 3 * (ROW_H + 2) + 12 + 38
+  -- A share asked for lands a frame later: measured again only then.
+  local landed = not search.asked or math.abs((ctx.share or 0) - search.asked) < 0.002
+  if (search.sized or 0) < 4 and ctx.height and ctx.height > 0 and ctx.share and landed then
+    search.sized = (search.sized or 0) + 1
+    if math.abs(ctx.height - want) > 3 then
+      local share = math.max(0.05, math.min(0.6, ctx.share + (want - ctx.height) * ctx.share / ctx.height))
+      search.share, search.asked = share, share
+      kawoosh.view_open(VIEW, { below = true, share = share, focus = false })
+    else
+      search.sized = 4
+    end
   end
   local kind = search.kinds[st.kind]
   local find = ctx.field { name = "find", placeholder = "search", size = SIZE }
@@ -505,8 +515,8 @@ for _, m in ipairs { "i", "n", "p" } do
     kawoosh.map(m, "<A-r>", "search regex", w)
     kawoosh.map(m, "<A-c>", "search case", w)
     kawoosh.map(m, "<A-w>", "search word", w)
-    kawoosh.map(m, "<A-i>", "search ignored", w)
-    kawoosh.map(m, "<A-n>", "search stage add", w)
+    kawoosh.map(m, "<A-g>", "search ignored", w)
+    kawoosh.map(m, "<A-a>", "search stage add", w)
     kawoosh.map(m, "<A-x>", "search stage remove", w)
     kawoosh.map(m, "<A-k>", "search stage kind", w)
     kawoosh.map(m, "<A-h>", "search stage prev", w)

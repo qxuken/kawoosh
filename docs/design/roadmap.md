@@ -950,6 +950,17 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   the process as the disk resolves it (`/private/tmp/x`), so a relative
   form compares the resolved paths when the spelled ones do not meet.
   `kawoosh/lua/tests/path_copy.lua`.
+- **The project search over multibuffers** — done 2026-09-25 [asked];
+  [search.md](search.md). Zed's, asked for by name: include and exclude
+  as comma lists (`src/*.[ts,tsx],tests/*.ts`, a bracket with a comma a
+  list), search in search as a pipeline of stages (`in`, `keep`,
+  `drop`, a plugin's own), and the results as a **live** multibuffer —
+  a buffer of other buffers' lines kept equal to them both ways by a
+  sync over the two journals, the gaps refusing edits, undo the files'.
+  The search is the engine's (`systems::search`, ripgrep's walk and
+  globs, open buffers as they are), not `rg`'s; the `grep` picker stays
+  the as-you-type one. Not built: a replace field, growing an excerpt,
+  multibuffers for references and diagnostics.
 - **Search from the file's directory** — done 2026-09-25 [todo]; step
   30. `:picker SOURCE here` roots a picker at `picker.here()` — a
   `dir` listing's own directory, the buffer's file's, else the working

@@ -178,35 +178,51 @@ The multibuffer shows the last stage's answer. The bar draws the stages
 as a trail — `useState › in useEffect › drop test` — and the cursor's
 stage is the one the fields edit.
 
-Stage kinds are data: `kawoosh.search_ui.kind(name, { run = fn(prev,
-stage, done) })` adds one — "only files git calls modified", "only
+Stage kinds are data: `kawoosh.search_ui.kind(name, { title =, run =
+fn(prev, stage, done, ctx) })` adds one — "only files git calls modified", "only
 files with a diagnostic" — and the bundled three are written that way.
 
 ### 9. The bar and the results
 
-`:search [PATTERN]` (`<leader>ss`, and ⌘⇧F as Zed's) opens the results
-multibuffer in the focused pane and **the bar** below it: a Lua view
-with the fields `find`, `include` and `exclude`, the flags drawn as
-toggles, the stages' trail and the count. `<CR>` in a field runs the
-search — not as it is typed: each run opens its files, and the picker's
-`grep` is the as-you-type search. `<Tab>` `<S-Tab>` go between the
-fields; `<A-r>` `<A-c>` `<A-w>` `<A-i>` flip regex, case, whole word and
-ignored files; `<A-n>` adds a stage after the cursor's (`in` first,
-`<A-k>` cycles its kind), `<A-x>` takes the cursor's out, `<A-h>`
-`<A-l>` move between stages; `<C-c>` closes the bar, the results
-staying; `<C-j>` puts the keyboard in the results.
+`:search project [PATTERN]` (`:grep`, `<leader>ss`, and ⌘⇧F as Zed's;
+`:search` alone is `/`'s) opens **the bar** below the pane the keys are
+on: a Lua view with the fields `find`, `include` and `exclude`, the
+flags drawn as toggles, the count, and the stages' trail. `:search here`
+(`<leader>sS`) roots it at the file's directory. `<CR>` in a field runs
+the search into `*search*`, the results multibuffer, in the editor pane
+above — not as it is typed: each run opens its files, and the picker's
+`grep` is the as-you-type search; the keyboard stays in the bar.
+`<Tab>` `<S-Tab>` go between the fields; `<A-r>` `<A-c>` `<A-w>`
+`<A-g>` flip regex, case, whole word and ignored files; `<A-a>` adds a
+stage after the cursor's (`in` first, `<A-k>` cycles its kind), `<A-x>`
+takes the cursor's out, `<A-h>` `<A-l>` move between stages; `<C-c>`
+(or `<Esc>` in normal mode) closes the bar, the results staying;
+`<C-j>` puts the keyboard in the results. ⌥N and ⌥I, the obvious
+spellings, are macOS's dead keys: they swallow the key after them, so
+the bar does not use them.
 
 In the results, the matches are the editor's search (`n` walks them,
-`gn` takes one, the paint is `/`'s), the header over each file says its
-path and count, the gutter numbers each excerpt's lines as the file's,
-and `<CR>` in normal mode opens the file at the caret's line and
-column. `:search` again, from anywhere, brings the bar back with its
-stages.
+the paint is `/`'s), the header over each file says its path and
+count, the gutter numbers each excerpt's lines as the file's, and
+`<CR>` in normal mode opens the file at the caret's line and column
+(`<C-v>` beside). `:search project` again, from anywhere, brings the bar
+back with its stages.
 
 Beaten: the fields at the head of the results buffer (grug-far's
 shape), which keeps everything one buffer but makes the fields lines
 the multibuffer must fence off and the engine must tell apart from
 excerpts. A view's field is already a line with the editor's modes.
+
+## Built
+
+2026-09-25, in four commits: the engine (`editor/src/multi.rs`,
+`editor/tests/multi.rs`), the search (`systems/src/search.rs`), the
+shell's half (`kawoosh/src/multis.rs`: `kawoosh.multibuffer`,
+`kawoosh.search`, the frame's sync, the gutter and the colours from the
+sources) and the bar (`kawoosh/lua/search.lua`,
+`kawoosh/lua/tests/search.lua`). Looked at in the window: the excerpts
+carry their files' numbers and colours, the bar sizes itself to its
+three rows.
 
 ## Not built
 

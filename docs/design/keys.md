@@ -350,6 +350,7 @@ objects, or any other character on both sides.
 | `<leader>f` | the files git sees under the working directory, as a picker |
 | `<leader>g` | grep the project: `rg` run on the query as it is typed |
 | `<leader>sf` `<leader>sg` | the same two from the file's directory — a listing's own in `dir` (`:picker files here`, `:picker grep here`) |
+| `<leader>ss` `<D-S-f>` `<leader>sS` | the project search ([search.md](search.md)): a bar below the pane — find, include and exclude as comma lists (`src/*.[ts,tsx], tests/`), `<A-r>` `<A-c>` `<A-w>` `<A-g>` regex, case, whole word, ignored files — whose `<CR>` fills `*search*`, a live multibuffer of the matches; `<A-a>` adds a stage searching what the one before found (`<A-k>`: `in`, `keep`, `drop`), `<A-x>` takes one out, `<A-h>` `<A-l>` move between them, `<C-j>` to the results, where `<CR>` opens the file at the caret; `<leader>sS` from the file's directory (`:search project`, `:grep`, `:search here`) |
 | `<leader>/` | the buffer's lines, the pane following the cursor as `<leader>bs` does |
 | `<leader>.` | the smart picker: the buffers, then the files opened before, then the walk |
 | `<leader>sp` | the commands (the palette): every spec, what it needs where the keyboard came from, `<CR>` runs it |
