@@ -678,14 +678,14 @@ impl Kawoosh {
     /// after it on screen by the rows' heights as last laid out (a row
     /// not seen yet at the body's), a far jump centred; `v.rows` what
     /// fits, for the half-page moves. The line past the last drawn.
+    /// `follow` is `render_editor`'s: whether the caret pulls the view.
     pub(crate) fn md_follow(
         &mut self,
         view: kawoosh_editor::ViewId,
         avail: f32,
-        focused: bool,
+        follow: bool,
     ) -> usize {
         let lh = self.face.line_height;
-        let follow = self.follow_caret || !focused;
         let rows_est = ((avail / lh).floor() as usize).max(1);
         let so = self
             .ed

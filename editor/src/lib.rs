@@ -62,6 +62,10 @@ pub struct View {
     pub left: f32,
     /// Visible rows, written by the shell each frame, read by paging.
     pub rows: usize,
+    /// The caret as the shell last drew the view, written each frame:
+    /// the view follows its caret when it moved since, and not when the
+    /// pane changed size under it.
+    pub drawn_caret: Option<(BufferId, usize)>,
     /// The column `j`/`k` aim for, in chars, across short lines.
     pub goal_col: Option<usize>,
     /// The mode is the view's, not the editor's (Zed's model): a
@@ -79,6 +83,7 @@ impl View {
             top: 0,
             left: 0.0,
             rows: 24,
+            drawn_caret: None,
             goal_col: None,
             mode: Mode::Normal,
             visual_linewise: false,
