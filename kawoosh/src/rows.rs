@@ -705,6 +705,8 @@ pub struct LineDraw<'a> {
     pub marks: &'a [(Range<usize>, Mark)],
     /// How the row is laid out, when not the plain one-line row.
     pub form: Option<&'a RowForm>,
+    /// A background across the whole row: a multibuffer's file header.
+    pub band: Option<Color>,
 }
 
 /// What a rendered row adds to a span's look, over the syntax's.
@@ -912,6 +914,9 @@ pub struct Numbers {
     /// number in its file (from 0), none on a header's
     /// (docs/design/search.md Decision 9).
     pub files: Option<(usize, Vec<Option<usize>>)>,
+    /// Of those lines, the ones that head a file: banded, the gutter
+    /// with them.
+    pub headers: Vec<bool>,
 }
 
 impl Numbers {
@@ -928,6 +933,7 @@ impl Numbers {
             current,
             phantom: (last > 0 && buf.line_range(last).is_empty()).then_some(last),
             files: None,
+            headers: Vec::new(),
         }
     }
 
@@ -964,9 +970,18 @@ pub fn gutter_row(
     } else {
         pal.faint
     };
+    let header = numbers.files.as_ref().is_some_and(|(top, _)| {
+        ln.checked_sub(*top)
+            .and_then(|i| numbers.headers.get(i))
+            .copied()
+            .unwrap_or(false)
+    });
+    let mut spec = NodeSpec::row();
+    if header {
+        spec = spec.bg(pal.strip);
+    }
     ui.with(
-        NodeSpec::row()
-            .width(Sizing::Grow(1.0))
+        spec.width(Sizing::Grow(1.0))
             .height(Sizing::Fixed(face.line_height))
             .main_align(Align::End)
             .cross_align(Align::Center),
@@ -1207,6 +1222,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             .cross_align(Align::Center)
             .role(Role::Line),
     };
+    if let Some(bg) = line.band {
+        row = row.bg(bg);
+    }
     if let Some(c) = line.access.0 {
         row = row.caret(c);
         if line.carets.iter().any(|(_, k)| *k != Caret::Bar) {

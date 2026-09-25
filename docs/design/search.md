@@ -186,9 +186,13 @@ files with a diagnostic" — and the bundled three are written that way.
 
 `:search project [PATTERN]` (`:grep`, `<leader>ss`, and ⌘⇧F as Zed's;
 `:search` alone is `/`'s) opens **the bar** below the pane the keys are
-on: a Lua view with the fields `find`, `include` and `exclude`, the
-flags drawn as toggles, the count, and the stages' trail. `:search here`
-(`<leader>sS`) roots it at the file's directory. `<CR>` in a field runs
+on — opened as tall as its rows from the first frame (`view_open`'s
+`height`), not resized after — a Lua view with the fields `find`,
+`include` and `exclude`, the flags drawn as toggles, the count, the
+stages' trail (each with a `×` that takes it out) and, small and dim,
+the keys. `:search project` starts at the workspace's root every time;
+`:search here` (`<leader>sS`) at the file's directory, for that search
+only. `<CR>` in a field runs
 the search into `*search*`, the results multibuffer, in the editor pane
 above — not as it is typed: each run opens its files, and the picker's
 `grep` is the as-you-type search; the keyboard stays in the bar.
@@ -197,16 +201,24 @@ above — not as it is typed: each run opens its files, and the picker's
 stage after the cursor's (`in` first, `<A-k>` cycles its kind), `<A-x>`
 takes the cursor's out, `<A-h>` `<A-l>` move between stages; `<C-c>`
 (or `<Esc>` in normal mode) closes the bar, the results staying;
-`<C-j>` puts the keyboard in the results. ⌥N and ⌥I, the obvious
+`<C-j>` puts the keyboard in the results; `<Up>` `<Down>` in a field
+walk the searches made in this workspace before. ⌥N and ⌥I, the obvious
 spellings, are macOS's dead keys: they swallow the key after them, so
 the bar does not use them.
 
 In the results, the matches are the editor's search (`n` walks them,
 the paint is `/`'s), the header over each file says its path and
-count, the gutter numbers each excerpt's lines as the file's, and
+count on a band across the pane — the engine says which gap lines open
+a file (`MultiLine::Header`), the renderer bands them, a `⋯` is faint — the gutter numbers each excerpt's lines as the file's, and
 `<CR>` in normal mode opens the file at the caret's line and column
 (`<C-v>` beside). `:search project` again, from anywhere, brings the bar
 back with its stages.
+
+Every run is remembered (memory.md Decision 9): a `search.project`
+moment in the workspace, its subject the stages spelled
+(`useState › in useEffect [src] › drop test`), its meta the stages
+themselves — what `<Up>` walks, and what the memory pane lists. Opening
+one from the pane is not wired yet: the pane knows the engine's kinds.
 
 Beaten: the fields at the head of the results buffer (grug-far's
 shape), which keeps everything one buffer but makes the fields lines

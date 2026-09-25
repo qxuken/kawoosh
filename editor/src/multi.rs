@@ -33,6 +33,17 @@ use crate::{Editor, Selection};
 /// memory and a session — its text is its files'.
 pub const LANGUAGE: &str = "multibuffer";
 
+/// A multibuffer's line, as [`Editor::multi_lines`] tells them apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MultiLine {
+    /// A file's line: its buffer, and the line there (from 0).
+    File(BufferId, usize),
+    /// A gap's line opening a file's excerpts: its header.
+    Header(BufferId),
+    /// Any other line of a gap: a separator, a blank.
+    Gap,
+}
+
 /// What a multibuffer is made of, in order: the caller's text, and a
 /// source's lines (from 0, end exclusive).
 #[derive(Clone, Debug)]
@@ -327,10 +338,12 @@ impl Editor {
         Some((e.source, e.src.start + within))
     }
 
-    /// For each line of multibuffer `id` from `lines.start`, its source
-    /// and the source's line (from 0) — none for a gap's line: what the
-    /// gutter numbers, and where an excerpt's colours come from.
-    pub fn multi_lines(&self, id: BufferId, lines: Range<usize>) -> Vec<Option<(BufferId, usize)>> {
+    /// What each line of multibuffer `id` from `lines.start` is: a
+    /// file's line (its source and the line there, from 0), a file's
+    /// header — a gap's line that opens a file, the file it opens — or
+    /// the rest of a gap: what the gutter numbers, where an excerpt's
+    /// colours come from, and which rows are drawn as a header's band.
+    pub fn multi_lines(&self, id: BufferId, lines: Range<usize>) -> Vec<MultiLine> {
         let (Some(m), Some(bodies), Some(buf)) = (
             self.multis.get(&id),
             self.bodies_now(id),
@@ -344,19 +357,32 @@ impl Editor {
                 break;
             }
             let at = buf.line_start(ln);
-            let hit = bodies
-                .iter()
-                .position(|b| b.start <= at && at < b.end)
-                .and_then(|i| {
+            let inside = bodies.iter().position(|b| b.start <= at && at < b.end);
+            let line = match inside {
+                Some(i) => {
                     let e = &m.excerpts[i];
-                    let src = self.buffers.get(e.source)?;
-                    if e.dead || e.pending || e.src_ver != src.version() {
-                        return None;
+                    match self.buffers.get(e.source) {
+                        Some(src) if !e.dead && !e.pending && e.src_ver == src.version() => {
+                            let first = buf.line_of(bodies[i].start);
+                            MultiLine::File(e.source, src.line_of(e.src.start) + (ln - first))
+                        }
+                        _ => MultiLine::Gap,
                     }
-                    let first = buf.line_of(bodies[i].start);
-                    Some((e.source, src.line_of(e.src.start) + (ln - first)))
-                });
-            out.push(hit);
+                }
+                None => {
+                    // The excerpt after the gap opens a file when the one
+                    // before it was another's.
+                    let next = bodies.partition_point(|b| b.start <= at);
+                    let opens = next < m.excerpts.len()
+                        && (next == 0 || m.excerpts[next - 1].source != m.excerpts[next].source);
+                    if opens && !buf.line_range(ln).is_empty() {
+                        MultiLine::Header(m.excerpts[next].source)
+                    } else {
+                        MultiLine::Gap
+                    }
+                }
+            };
+            out.push(line);
         }
         out
     }

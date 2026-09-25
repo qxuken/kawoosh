@@ -35,6 +35,10 @@ local FIELDS = { "find", "include", "exclude" }
 local PANE_FACT = "lua:" .. VIEW
 local SIZE = 13
 local ROW_H = SIZE + 6
+local HINT_SIZE = SIZE - 3
+-- The bar's rows — the pattern's, the globs', the stages', the hints' —
+-- their gaps and padding: the pane it opens in, below its title.
+local BAR_H = 2 * (ROW_H + 2) + ROW_H + (HINT_SIZE + 5) + 3 * 2 + 8 + 6
 
 local search = { stages = {}, cur = 1, kinds = {}, order = {}, gen = 0, root = nil, token = nil }
 -- The module, for a config or a plugin (`kawoosh.search_ui.kind`).
@@ -229,6 +233,7 @@ end
 -- answer before the first that failed.
 function search.run(from)
   save_fields()
+  search.back = nil
   from = from or search.cur
   if search.token then kawoosh.search_cancel(search.token) end
   search.gen = search.gen + 1
@@ -241,6 +246,7 @@ function search.run(from)
     if gen ~= search.gen then return end
     if i > #search.stages then
       search.running, search.token = nil, nil
+      search.remember()
       return show(search.stages[#search.stages].answer, #search.stages)
     end
     local st = search.stages[i]
@@ -267,22 +273,92 @@ function search.run(from)
   step(from)
 end
 
+-- ------------------------------------------------------------ the memory
+
+-- A search run is the workspace's memory (memory.md Decision 9): a
+-- `search.project` moment whose subject spells its stages and whose
+-- meta keeps them, so `<Up>` in the bar walks back through the
+-- searches made here, and the memory pane lists them.
+local KIND = "search.project"
+local KEPT = { "kind", "find", "include", "exclude", "regex", "case", "word", "ignored" }
+
+local function kept(stages)
+  local out = {}
+  for i, st in ipairs(stages) do
+    local k = {}
+    for _, f in ipairs(KEPT) do k[f] = st[f] end
+    out[i] = k
+  end
+  return out
+end
+
+local function spelled(stages)
+  local parts = {}
+  for i, st in ipairs(stages) do
+    local p = (i > 1 and st.kind .. " " or "") .. st.find
+    if st.include ~= "" then p = p .. " [" .. st.include .. "]" end
+    if st.exclude ~= "" then p = p .. " [!" .. st.exclude .. "]" end
+    local flags = (st.regex and ".*" or "") .. (st.case == "sensitive" and "Aa" or "") ..
+                  (st.word and "W" or "") .. (st.ignored and "ign" or "")
+    if flags ~= "" then p = p .. " " .. flags end
+    parts[i] = p
+  end
+  return table.concat(parts, " › ")
+end
+
+function search.remember()
+  if search.stages[1].find == "" then return end
+  local stages = kept(search.stages)
+  pcall(kawoosh.remember, { kind = KIND, subject = spelled(stages), signals = { visits = 1 },
+                            meta = { stages = stages } })
+end
+
+-- search.earlier(by): the searches made in this workspace, newest
+-- first, `by` steps back (`-1` forward); stepped back to the start, the
+-- stages as they were before the walk. Put in the bar, not run.
+function search.earlier(by)
+  save_fields()
+  if not search.back then
+    local ok, rows = pcall(kawoosh.memory, { kind = KIND, workspace = true, limit = 50 })
+    rows = ok and rows or {}
+    table.sort(rows, function(a, b) return (a.last or 0) > (b.last or 0) end)
+    search.back = { rows = rows, i = 0, now = kept(search.stages) }
+  end
+  local b = search.back
+  local i = math.max(0, math.min(#b.rows, b.i + by))
+  if i == b.i then return kawoosh.echo(by > 0 and "no earlier search here" or "back at the search as it was") end
+  b.i = i
+  local from = i == 0 and b.now or ((b.rows[i].meta or {}).stages or {})
+  local stages = {}
+  for j, k in ipairs(from) do
+    local st = new_stage(j == 1 and "search" or (search.kinds[k.kind] and k.kind or "in"))
+    for _, f in ipairs(KEPT) do
+      if f ~= "kind" and k[f] ~= nil then st[f] = k[f] end
+    end
+    stages[j] = st
+  end
+  if #stages == 0 then stages[1] = new_stage("search") end
+  search.stages, search.cur = stages, 1
+  load_fields()
+end
+
 -- ------------------------------------------------------------ opening
 
 -- search.open([pattern[, root]]): the bar below the pane the keys are
 -- on, the find field with them; a pattern given is the first stage's
 -- and runs at once.
 function search.open(pattern, root)
-  if root then search.root = root end
-  if not search.root then search.root = fs.cwd() end
-  kawoosh.view_open(VIEW, { below = true, share = search.share or 0.18 })
+  -- Where it starts is asked each time: the workspace's root, or what
+  -- `here` said — never what the last search was left at.
+  search.root = root or fs.cwd()
+  search.back = nil
+  kawoosh.view_open(VIEW, { below = true, height = BAR_H })
   if pattern and pattern ~= "" then
     search.cur = 1
     search.stages[1].find = pattern
   end
   load_fields()
   kawoosh.field_focus(VIEW, "find")
-  search.sized, search.asked = 0, nil
   if pattern and pattern ~= "" then search.run(1) end
 end
 
@@ -342,45 +418,50 @@ local function trail(t)
                   (find ~= "" and find or "…")
     local n = st.answer and ("  " .. #st.answer.files) or ""
     local cur = i == search.cur
-    r[#r + 1] = row { pad = { x = 6 }, height = ROW_H - 2, radius = 4, cross_align = "center",
+    local chip = row { pad = { x = 6 }, height = ROW_H - 2, radius = 4, gap = 6, cross_align = "center",
       bg = cur and t.selection or nil, hover_bg = not cur and t.sunken or nil,
       on_click = { kind = "stage", i = i },
       text({ { label, color = st.err and t.danger or (cur and t.fg or t.muted) }, { n, color = t.faint } },
            { family = "mono", size = SIZE - 1, wrap = "none" }) }
+    -- Its own way out, when there is more than one.
+    if #search.stages > 1 then
+      chip[#chip + 1] = row { pad = { x = 3 }, radius = 3, hover_bg = t.surface,
+        on_click = { kind = "unstage", i = i },
+        text("×", { size = SIZE - 1, color = t.faint, wrap = "none" }) }
+    end
+    r[#r + 1] = chip
   end
   local root = search.root and search.root ~= fs.cwd() and ("in " .. fs.form(search.root, "relative") .. "/") or nil
   if root then r[#r + 1] = text(root, { size = SIZE - 1, color = t.faint, wrap = "none" }) end
   return r
 end
 
+-- The keys, small and dim, under the rest.
+local HINTS = {
+  { "⏎", "search" }, { "⇥", "field" }, { "↑↓", "earlier" }, { "⌥R ⌥C ⌥W ⌥G", "regex case word ignored" },
+  { "⌥A", "add stage" }, { "⌥K", "its kind" }, { "⌥X", "remove stage" }, { "⌥H ⌥L", "stages" },
+  { "⌃J", "results" }, { "⌃C", "close" },
+}
+local function hints(t)
+  local spans = {}
+  for i, h in ipairs(HINTS) do
+    spans[#spans + 1] = { (i > 1 and "   " or "") .. h[1] .. " ", color = t.muted }
+    spans[#spans + 1] = { h[2], color = t.faint }
+  end
+  return row { width = "grow", height = HINT_SIZE + 5, clip = true, cross_align = "center",
+    text(spans, { size = HINT_SIZE, wrap = "none" }) }
+end
+
 kawoosh.view(VIEW, function(ctx)
   local t = ctx.env.theme
   local st = search.stages[search.cur]
   search.live = true
-  -- Opened: the pane made as tall as the bar. A share is of the split,
-  -- title and all, so it is stepped over a few frames until the rows
-  -- fit rather than worked out once.
-  -- Three rows, their gaps and padding, and the pane's title, which
-  -- `ctx.height` counts.
-  local want = 3 * (ROW_H + 2) + 12 + 38
-  -- A share asked for lands a frame later: measured again only then.
-  local landed = not search.asked or math.abs((ctx.share or 0) - search.asked) < 0.002
-  if (search.sized or 0) < 4 and ctx.height and ctx.height > 0 and ctx.share and landed then
-    search.sized = (search.sized or 0) + 1
-    if math.abs(ctx.height - want) > 3 then
-      local share = math.max(0.05, math.min(0.6, ctx.share + (want - ctx.height) * ctx.share / ctx.height))
-      search.share, search.asked = share, share
-      kawoosh.view_open(VIEW, { below = true, share = share, focus = false })
-    else
-      search.sized = 4
-    end
-  end
   local kind = search.kinds[st.kind]
   local find = ctx.field { name = "find", placeholder = "search", size = SIZE }
   find.width = "grow"
-  local include = ctx.field { name = "include", placeholder = "include: src/*.[ts,tsx], tests/", size = SIZE }
+  local include = ctx.field { name = "include", placeholder = "e.g. src/*.[ts,tsx], tests/", size = SIZE }
   include.width = "grow"
-  local exclude = ctx.field { name = "exclude", placeholder = "exclude: *__test__*, vendor", size = SIZE }
+  local exclude = ctx.field { name = "exclude", placeholder = "e.g. *__test__*, vendor", size = SIZE }
   exclude.width = "grow"
   local head = row { width = "grow", height = ROW_H + 2, gap = 6, cross_align = "center",
     text(search.cur > 1 and (kind.title or st.kind) or "find", { size = SIZE - 1, color = t.accent, wrap = "none" }),
@@ -392,11 +473,14 @@ kawoosh.view(VIEW, function(ctx)
     status(t),
   }
   local globs = row { width = "grow", height = ROW_H + 2, gap = 6, cross_align = "center",
-    include, text("│", { size = SIZE, color = t.faint }), exclude }
+    text("include", { size = SIZE - 1, color = t.muted, wrap = "none" }), include,
+    text("exclude", { size = SIZE - 1, color = t.muted, wrap = "none" }), exclude }
   return column { width = "grow", height = "grow", pad = { x = 8, y = 4 }, gap = 2, clip = true, bg = t.surface,
-    head, globs, trail(t) }
+    head, globs, trail(t), hints(t) }
 end, function(ev)
-  if ev.kind == "stage" and ev.i then
+  if ev.kind == "unstage" and ev.i then
+    search.remove(ev.i)
+  elseif ev.kind == "stage" and ev.i then
     search.go(ev.i)
   elseif ev.kind == "regex" or ev.kind == "case" or ev.kind == "word" or ev.kind == "ignored" then
     search.flip(ev.kind)
@@ -430,17 +514,22 @@ function search.add()
   kawoosh.field_focus(VIEW, "find")
 end
 
-function search.remove()
+-- search.remove([i]): stage `i` (the cursor's) taken out and the stages
+-- after it run again on the one before it; the only stage is emptied.
+function search.remove(i)
+  save_fields()
+  i = i or search.cur
   if #search.stages == 1 then
     search.stages[1] = new_stage("search")
     load_fields()
     return
   end
-  table.remove(search.stages, search.cur)
+  table.remove(search.stages, i)
   search.stages[1].kind = "search"
-  search.cur = math.min(search.cur, #search.stages)
+  if search.cur > i or search.cur > #search.stages then search.cur = search.cur - 1 end
+  search.cur = math.max(search.cur, 1)
   load_fields()
-  search.run(search.cur)
+  search.run(math.min(i, #search.stages))
 end
 
 -- The cursor's stage's kind, round the kinds a later stage can be.
@@ -485,6 +574,8 @@ on("stage kind", function() search.cycle() end, "the cursor's stage's kind: in, 
 on("stage next", function() search.go(search.cur + 1) end, "the next stage to the fields")
 on("stage prev", function() search.go(search.cur - 1) end, "the previous stage to the fields")
 on("close", function() search.close() end, "close the search's bar, the results staying")
+on("earlier", function() search.earlier(1) end, "the search made before this one here, in the bar")
+on("later", function() search.earlier(-1) end, "the search made after this one here, in the bar")
 on("results", function()
   save_fields()
   kawoosh.multibuffer(RESULTS, nil, { focus = true })
@@ -506,6 +597,8 @@ for _, w in ipairs(at) do
     kawoosh.map(mode, "<S-Tab>", "search field prev", w)
     kawoosh.map(mode, "<C-c>", "search close", w)
     kawoosh.map(mode, "<C-j>", "search results", w)
+    kawoosh.map(mode, "<Up>", "search earlier", w)
+    kawoosh.map(mode, "<Down>", "search later", w)
   end
   kawoosh.map("n", "<Esc>", "search close", w)
 end

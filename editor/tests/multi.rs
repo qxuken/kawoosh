@@ -3,7 +3,7 @@
 //! undo stepping the sources.
 
 use kawoosh_doc::{Buffer, BufferId};
-use kawoosh_editor::{Editor, KeyStroke, Part, ViewId};
+use kawoosh_editor::{Editor, KeyStroke, MultiLine, Part, ViewId};
 
 struct T {
     ed: Editor,
@@ -93,15 +93,17 @@ fn a_multibuffer_shows_the_lines_asked_for() {
     assert!(!t.ed.buffers[t.m].modified);
     // The gutter's numbers: the file's lines, none on a header.
     let lines = t.ed.multi_lines(t.m, 0..6);
+    // Each header, the file it opens.
+    use MultiLine::{File, Header};
     assert_eq!(
         lines,
         vec![
-            None,
-            Some((t.a, 1)),
-            Some((t.a, 2)),
-            None,
-            Some((t.b, 1)),
-            Some((t.b, 2))
+            Header(t.a),
+            File(t.a, 1),
+            File(t.a, 2),
+            Header(t.b),
+            File(t.b, 1),
+            File(t.b, 2)
         ]
     );
     assert_eq!(t.ed.multi_at(t.m, 2), Some((t.a, 3)));
@@ -193,7 +195,7 @@ fn an_edit_elsewhere_is_in_the_excerpt() {
     t.keys_on(va, "ggOtop<Esc>");
     assert_eq!(t.text(t.a), "top\na0\na1+\na2\na3\n");
     assert_eq!(t.multi(), "A\na1+\na2\nB\nb1\nb2\n");
-    assert_eq!(t.ed.multi_lines(t.m, 1..2), vec![Some((t.a, 2))]);
+    assert_eq!(t.ed.multi_lines(t.m, 1..2), vec![MultiLine::File(t.a, 2)]);
     // Joined to the line after its last: the excerpt takes that line in.
     t.keys_on(va, "ggjjjJ");
     assert_eq!(t.text(t.a), "top\na0\na1+\na2 a3\n");
@@ -288,7 +290,13 @@ fn two_excerpts_of_one_file_move_together() {
     assert_eq!(ed.buffers[m].text(), "a\nl0\nx\ny\n⋯\nl3\nl4\n");
     keys(&mut ed, "gg6jA!<Esc>");
     assert_eq!(ed.buffers[a].text(), "l0\nx\ny\nl1\nl2\nl3\nl4!\n");
-    assert_eq!(ed.multi_lines(m, 5..7), vec![Some((a, 5)), Some((a, 6))]);
+    assert_eq!(
+        ed.multi_lines(m, 5..7),
+        vec![MultiLine::File(a, 5), MultiLine::File(a, 6)]
+    );
+    // A `⋯` between two of one file's excerpts is no header.
+    assert_eq!(ed.multi_lines(m, 0..1), vec![MultiLine::Header(a)]);
+    assert_eq!(ed.multi_lines(m, 4..5), vec![MultiLine::Gap]);
 }
 
 #[test]

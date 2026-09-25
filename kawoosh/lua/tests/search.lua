@@ -97,6 +97,23 @@ kawoosh.cmd("search run")
 settled("the in stage")
 kawoosh.test.eq(state().stages[2].files, 1, "only a.ts says const")
 
+-- A stage taken out by its index (its chip's ×): the ones after it
+-- run again on the one before.
+kawoosh.search_ui.remove(2)
+settled("a stage removed")
+kawoosh.test.eq(#state().stages, 1, "one stage left")
+kawoosh.test.eq(state().stages[1].files, 3)
+
+-- Each run is the workspace's memory: `<Up>` in the bar walks back.
+local rows = kawoosh.memory { kind = "search.project", workspace = true } or {}
+if #rows > 0 then
+  kawoosh.cmd("search earlier")
+  kawoosh.frame(2)
+  kawoosh.test.ok(#state().stages >= 1, "an earlier search in the bar")
+  kawoosh.cmd("search later")
+  kawoosh.frame(2)
+end
+
 -- The results are live: into them, the match's line edited.
 kawoosh.cmd("search results")
 kawoosh.frame()
@@ -126,4 +143,15 @@ kawoosh.press("<CR>")
 kawoosh.frame()
 local path = kawoosh.buf.path() or ""
 kawoosh.test.eq(path:sub(-#"src/a.ts"), "src/a.ts", "the file opened: " .. path)
+-- `:search here` starts at the file's directory; `:search project`
+-- at the workspace's root again, not where the last one was left.
+kawoosh.cmd("search here")
+kawoosh.frame(2)
+local root = state().root or ""
+kawoosh.test.eq(kawoosh.fs.basename(root), "src", "from the file's directory: " .. root)
+kawoosh.cmd("search close")
+kawoosh.frame()
+kawoosh.cmd("search project")
+kawoosh.frame(2)
+kawoosh.test.eq(state().root, kawoosh.fs.cwd(), "from the workspace's root")
 kawoosh.fs.remove(dir)

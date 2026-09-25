@@ -322,6 +322,9 @@ pub enum Msg {
         focus: bool,
         below: bool,
         share: Option<f32>,
+        /// The new pane's height, logical px of content below its title
+        /// — worked out against the pane it splits, in place of `share`.
+        height: Option<f32>,
     },
     /// `kawoosh.view_close(name)`: the pane showing the view goes.
     CloseView(String),
@@ -2408,12 +2411,16 @@ fn seed(
     k.set(
         "view_open",
         lua.create_function(move |_, (name, opts): (String, Option<Table>)| {
+            let height = opts
+                .as_ref()
+                .and_then(|t| t.get::<Option<f32>>("height").ok().flatten());
             let (focus, below, share) = view_opts(opts);
             qq.borrow_mut().push(Msg::OpenView {
                 name,
                 focus,
                 below,
                 share,
+                height,
             });
             Ok(())
         })?,

@@ -376,7 +376,9 @@ end
 -- kawoosh.view_open(name[, { focus = false, below = true, share = 0.5 }])
 -- puts a Lua view in a split — beside, or below with `below`, taking
 -- `share` of the room — or focuses its pane, resized to `share` when
--- one is given; `focus = false` leaves the keyboard where it is. kawoosh.view_close(name) closes that pane
+-- one is given; `focus = false` leaves the keyboard where it is;
+-- `height = px`, in place of `share`, makes a new pane that tall below
+-- its title — a bar as tall as its rows from the first frame. kawoosh.view_close(name) closes that pane
 -- and hands the keyboard back to the pane it came from;
 -- kawoosh.view_toggle(name[, opts]) does one or the other.
 --

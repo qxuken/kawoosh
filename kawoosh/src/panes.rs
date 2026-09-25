@@ -302,6 +302,7 @@ impl Kawoosh {
                 after: 0.0,
                 marks: &[],
                 form: None,
+                band: None,
             },
         );
     }
@@ -1395,16 +1396,28 @@ impl Kawoosh {
         // A multibuffer's lines are its files': each drawn line's source
         // and line there — the gutter's number, and where its colours
         // and squiggles are read from (docs/design/search.md Decision 9).
-        let from_files: Vec<Option<(kawoosh_doc::BufferId, usize)>> = if self.ed.is_multi(buf_id) {
+        use kawoosh_editor::MultiLine;
+        let from_files: Vec<MultiLine> = if self.ed.is_multi(buf_id) {
             self.ed.multi_lines(buf_id, top..last)
         } else {
             Vec::new()
         };
         if !from_files.is_empty() {
-            numbers.files = Some((top, from_files.iter().map(|f| f.map(|(_, n)| n)).collect()));
+            let file_line = |l: &MultiLine| match l {
+                MultiLine::File(_, n) => Some(*n),
+                _ => None,
+            };
+            numbers.files = Some((top, from_files.iter().map(file_line).collect()));
+            numbers.headers = from_files
+                .iter()
+                .map(|l| matches!(l, MultiLine::Header(_)))
+                .collect();
             self.multis
                 .visible
-                .extend(from_files.iter().flatten().map(|(s, _)| *s));
+                .extend(from_files.iter().filter_map(|l| match l {
+                    MultiLine::File(s, _) => Some(*s),
+                    _ => None,
+                }));
         }
         // The marks' letters beside their lines (docs/design/marks.md).
         let letters = self.marks.letters(buf_id, top..last);
@@ -1630,14 +1643,16 @@ impl Kawoosh {
                             // the buffer, or for a multibuffer's excerpt
                             // line the file's, `shift` bytes on.
                             let (runs_buf, runs_id, shift) = match from_files.get(ln - top) {
-                                Some(Some((sid, sline))) => match self.ed.buffers.get(*sid) {
-                                    Some(sb) => (
-                                        sb,
-                                        *sid,
-                                        sb.line_start(*sline) as isize - range.start as isize,
-                                    ),
-                                    None => (buf, buf_id, 0),
-                                },
+                                Some(MultiLine::File(sid, sline)) => {
+                                    match self.ed.buffers.get(*sid) {
+                                        Some(sb) => (
+                                            sb,
+                                            *sid,
+                                            sb.line_start(*sline) as isize - range.start as isize,
+                                        ),
+                                        None => (buf, buf_id, 0),
+                                    }
+                                }
                                 _ => (buf, buf_id, 0),
                             };
                             let there = |r: &Range<usize>| {
@@ -1735,13 +1750,16 @@ impl Kawoosh {
                                     )
                                 })
                                 .filter(|(r, _)| r.start < r.end)
-                                // A multibuffer's gap — a file's header, a
-                                // `⋯` — in the accent, a plugin's paint
-                                // over it.
-                                .chain(
-                                    matches!(from_files.get(ln - top), Some(None))
-                                        .then(|| (0..drawn.text.len(), pal.accent)),
-                                )
+                                // A multibuffer's gap: a file's header in
+                                // the accent (on its band), a `⋯` faint —
+                                // a plugin's paint over either.
+                                .chain(match from_files.get(ln - top) {
+                                    Some(MultiLine::Header(_)) => {
+                                        Some((0..drawn.text.len(), pal.accent))
+                                    }
+                                    Some(MultiLine::Gap) => Some((0..drawn.text.len(), pal.faint)),
+                                    _ => None,
+                                })
                                 .chain(runs_buf.runs(SYNTAX_LAYER, there(&src)).iter().filter_map(
                                     |r| {
                                         let c = token_colors
@@ -1857,6 +1875,12 @@ impl Kawoosh {
                                     after: drawn.after_cols as f32 * cell_w,
                                     marks,
                                     form: form.as_ref(),
+                                    // A file's header across the column.
+                                    band: matches!(
+                                        from_files.get(ln - top),
+                                        Some(MultiLine::Header(_))
+                                    )
+                                    .then_some(pal.strip),
                                 },
                             );
                         };
