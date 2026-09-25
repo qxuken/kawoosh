@@ -157,6 +157,19 @@ kawoosh.press("<CR>")
 kawoosh.frame()
 local path = kawoosh.buf.path() or ""
 kawoosh.test.eq(path:sub(-#"src/a.ts"), "src/a.ts", "the file opened: " .. path)
+-- From visual mode the selection seeds the pattern, not run yet, and
+-- visual mode is left.
+kawoosh.press("gg0ve")
+kawoosh.frame()
+kawoosh.test.eq(kawoosh.mode(), "visual")
+kawoosh.press("<leader>ss")
+kawoosh.frame(2)
+kawoosh.test.eq(kawoosh.field_text("search", "find"), "const", "the selection seeded")
+kawoosh.test.eq(state().stages[1].find, "const")
+kawoosh.test.ok(not state().running, "not run: <CR> runs it")
+kawoosh.cmd("search close")
+kawoosh.frame()
+
 -- `:search here` starts at the file's directory; `:search project`
 -- at the workspace's root again, not where the last one was left.
 kawoosh.cmd("search here")

@@ -1029,9 +1029,9 @@ fn a_server_installed_later_is_found_on_restart() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// A rename across the workspace and a multibuffer (search.md): a file
-/// edited only through a multibuffer that no pane shows is the server's
-/// as its text stands, so the rename lands where the word is now; and
+/// A rename across the workspace and a multibuffer (search.md): every
+/// file a multibuffer holds is its server's, shown or not, as its text
+/// stands — one edited only through the multibuffer too — so the rename lands where the word is now; and
 /// the rename is in the multibuffer at once, the message saying where
 /// the unsaved file is.
 #[test]
@@ -1077,6 +1077,13 @@ fn a_rename_reaches_the_files_a_multibuffer_holds() {
         .map(|(id, _)| id)
         .expect("lib.rs is a buffer");
     assert_eq!(app.ed.buffers[m].text(), "lib\npub fn hello() {}\n");
+    // Held, unedited and on no pane, it is the server's all the same:
+    // its diagnostics came back.
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.messages.get(&lib_id)
+            == Some(&vec!["boom".into()])),
+        "lib.rs sent to its server"
+    );
     // A line put above the excerpt's, through the multibuffer: in
     // lib.rs, which no pane shows, unsaved.
     assert!(app.ed.apply_edits(m, &[(4..4, "// top\n".into())]));

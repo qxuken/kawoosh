@@ -190,7 +190,8 @@ on — opened as tall as its rows from the first frame (`view_open`'s
 `height`), not resized after — a Lua view with the fields `find`,
 `include` and `exclude`, the flags drawn as toggles, the count, the
 stages' trail (each with a `×` that takes it out) and, small and dim,
-the keys. `:search project` starts at the workspace's root every time;
+the keys. `:search project` starts at the workspace's root every time; from
+visual mode the selection's first line is put in `find`, not run yet;
 `:search here` (`<leader>sS`) at the file's directory, for that search
 only. `<CR>` in a field runs
 the search into `*search*`, the results multibuffer, in the editor pane
@@ -236,11 +237,13 @@ lands in those buffers, not on disk, and the sync puts it in the
 excerpts the same frame: it is seen, not announced. Three things make
 that sound:
 
-- **The server has every unsaved text.** A buffer is sent to its
-  server when a pane shows it, when its excerpts are drawn, and — the
-  multibuffer's case — whenever it is modified: a `:%s` through the
-  results reaches files never on screen, and a rename worked out
-  against their disk text would land in the wrong place.
+- **The server has every file a multibuffer holds.** A buffer is sent
+  to its server when a pane shows it, when a multibuffer holds it —
+  on screen or not, so every excerpt has its diagnostics — and whenever
+  it is modified: a `:%s` through the results reaches files never on
+  screen, and a rename worked out against their disk text would land in
+  the wrong place. A file still opening is sent once it lands. The cost
+  is a `didOpen` per file the search found, capped with the search.
 - **An edited file is no longer borrowed.** A rename that touches a
   file the results hold makes it an unsaved buffer like any other: in
   `:ls`, asked about on quit, never closed with the multibuffer.

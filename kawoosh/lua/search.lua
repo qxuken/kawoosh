@@ -597,13 +597,42 @@ on("results", function()
   kawoosh.multibuffer(RESULTS, nil, { focus = true })
 end, "the keyboard to the search's results")
 
+-- The visual selection's first line — a match is on one line — and
+-- visual mode left; nil outside it.
+local function selected()
+  if kawoosh.mode() ~= "visual" then return nil end
+  local sel = (kawoosh.buf.selections() or {})[1]
+  for _, s in ipairs(kawoosh.buf.selections() or {}) do
+    if s.primary then sel = s end
+  end
+  if not sel then return nil end
+  local a, z = math.min(sel.anchor, sel.head), math.max(sel.anchor, sel.head)
+  -- Visual mode takes the character under the head too.
+  local text = kawoosh.buf.slice(a, z + 1)
+  kawoosh.cmd("normal")
+  text = text:match("^[^\n]*") or ""
+  return text ~= "" and text or nil
+end
+
+-- From visual mode the selection is the pattern, put in the field and
+-- not run yet; a PATTERN given runs at once.
+local function open_from(ctx, root)
+  local seed = selected()
+  if seed then
+    search.cur = 1
+    search.stages[1].find = seed
+    return search.open(nil, root)
+  end
+  search.open(table.concat(ctx.args or {}, " "), root)
+end
+
 kawoosh.command("search project", function(ctx)
-  search.open(table.concat(ctx.args or {}, " "))
+  open_from(ctx)
 end, { args = { "text..." }, aliases = { "grep" },
        doc = "search the project: the bar, PATTERN searched at once when given" })
 kawoosh.command("search here", function(ctx)
   local root = kawoosh.picker and kawoosh.picker.here and kawoosh.picker.here() or fs.cwd()
-  search.open(table.concat(ctx.args or {}, " "), root)
+  open_from(ctx, root)
 end, { args = { "text..." }, doc = "search from the file's directory: the bar, PATTERN searched at once when given" })
 
 for _, w in ipairs(at) do
@@ -639,9 +668,11 @@ kawoosh.map("p", "q", "search close", on_pane)
 kawoosh.map("p", "<C-c>", "search close", on_pane)
 kawoosh.map("p", "<C-j>", "search results", on_pane)
 
-kawoosh.map("n", "<leader>ss", "search project")
-kawoosh.map("n", "<leader>sS", "search here")
-kawoosh.map("n", "<D-S-f>", "search project")
+for _, mode in ipairs { "n", "v" } do
+  kawoosh.map(mode, "<leader>ss", "search project")
+  kawoosh.map(mode, "<leader>sS", "search here")
+  kawoosh.map(mode, "<D-S-f>", "search project")
+end
 -- In the results: the file at the caret.
 local results = { when = { "language:multibuffer" } }
 kawoosh.map("n", "<CR>", "multi open", results)

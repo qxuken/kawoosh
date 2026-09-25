@@ -732,7 +732,9 @@ impl Kawoosh {
             .also_sync
             .retain(|id| self.ed.buffers.contains_key(*id));
         let mut shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
-        shown.extend(self.multis.visible.iter().copied());
+        // Every file a multibuffer holds, on screen or not: its excerpts
+        // have their diagnostics, and a rename sees what they are.
+        shown.extend(self.ed.multis.values().flat_map(|m| m.sources()));
         // An unsaved text no pane shows — a `:%s` through a multibuffer
         // reaches files never on screen — is the server's too: its next
         // rename is worked out against the text, not the disk.
@@ -754,7 +756,10 @@ impl Kawoosh {
             let Some(path) = b.path.clone() else { continue };
             // A private buffer's text never leaves the process
             // (docs/design/secrets.md Decision 1).
+            // A file still opening has no text to tell yet: it is sent
+            // once it lands.
             if b.private
+                || b.loading.is_some()
                 || !self.lsp_serves(&b.language)
                 || self.lsp.sent.get(&id) == Some(&b.version())
             {
