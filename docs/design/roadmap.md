@@ -364,8 +364,9 @@ And two after them:
 
 And one more:
 
-- **A pane moved into the dock and out of it** — `<C-w>D`, and a title
-  bar dragged across (panes track). Done the same day; no step.
+- **A pane moved into the dock and out of it** — `<C-w>J` and `<C-w>K`
+  over the dock's edge, `<C-w>D`, and a title bar dragged across
+  (panes track). Done the same day; no step.
 
 ## The list, by track
 
@@ -733,16 +734,21 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   the last pane of the last tab stays. The pane keeps the keyboard,
   the dock opening for one going in; one coming out is no project's
   task any more (`dock_owner`), one going in is stamped by
-  `sync_dock` with the project in front. From the keyboard, `<C-w>D`
-  (`pane dock`): the focused pane into the dock beside the pane the
-  dock has the keys on — a dock of it alone where there was none —
-  or out beside the tab's, as a split beside places a new pane. By
-  mouse, a dock pane's title bar drags as a tab's does, and
-  `drop_at` finds the dock's panes too, so the drop is drawn over
-  them. `<C-w>HJKL` and `<C-w>x` still stop at the dock's edge:
-  crossing is `<C-w>D`'s, and a carry that fell into the dock by
-  geometry would surprise. `a_pane_moves_in_and_out_of_the_dock` in
-  `kawoosh/tests/panes.rs` and `layout.rs`.
+  `sync_dock` with the project in front. From the keyboard, the
+  carries: `<C-w>HJKL` work in the dock as in the tab (the column
+  moves on whichever has the keys), and past the last place `J`
+  takes the pane from the tab's bottom into the dock, beside the dock
+  pane under it on the side its middle is, and `K` from the dock's
+  top out, under the tab pane above it (`Layout::carry_across`, by
+  last frame's rects). Built first as `<C-w>D` landing the pane
+  beside the focused one, as `<C-w>v` would; use said that steals a
+  split from the pane one was on, so `<C-w>D` (`pane dock`) now lands
+  as the carries do, from wherever the pane stands. By mouse, a dock
+  pane's title bar drags as a tab's does, and `drop_at` finds the
+  dock's panes too, so the drop is drawn over them. `<C-w>x` still
+  trades only within one side. `a_pane_moves_in_and_out_of_the_dock`
+  and `j_and_k_carry_a_pane_over_the_dock_edge` in
+  `kawoosh/tests/panes.rs`, and `layout.rs`'s own.
 - **The dock as a strip, an experiment** — done 2026-09-25 [asked
   2026-09-22, again 2026-09-25]; step 32. workspaces.md Decision 12:
   `layout.dock = "scroll"` converts the dock (a `Tab`) with

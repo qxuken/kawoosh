@@ -1235,12 +1235,16 @@ impl Layout {
     }
 
     /// The focused pane one place up or down inside its column
-    /// (`<A-S-k>` / `<A-S-j>` in a strip): the two panes trade places,
+    /// (`<C-w>K` / `<C-w>J` in a strip — the tab's, or the dock's
+    /// when it has the keys): the two panes trade places,
     /// the stack's splits as they were. False in a tree, or at the
     /// stack's end.
     pub fn move_in_column(&mut self, down: bool) -> bool {
-        let focused = self.tab().focused;
-        let Some(s) = self.tab_mut().strip_mut() else {
+        let focused = self.focused();
+        let Some(s) = self
+            .home_of(focused)
+            .and_then(|h| self.home_mut(h).strip_mut())
+        else {
             return false;
         };
         let Some(i) = s.column_of(focused) else {
@@ -1393,51 +1397,114 @@ impl Layout {
         true
     }
 
-    /// `pane dock` (`<C-w>D`): `pane` from the tab into the dock, beside
-    /// the dock's focused pane (the dock's first where there is none),
-    /// or from the dock into the tab, beside the tab's focused pane —
-    /// as a split beside puts a new one. The dock opens for a pane
-    /// going in. Whether the pane is in the dock after; None when it
-    /// could not move — the last pane of the last tab stays.
-    pub fn toggle_dock(&mut self, pane: PaneId) -> Option<bool> {
-        match (self.home_of(pane)?, &self.dock) {
-            (Home::Dock, _) => {
-                let target = self.tab().focused;
-                self.move_pane(pane, target, Drop::Right).then_some(false)
-            }
-            (Home::Tab, Some(d)) => {
-                let target = d.focused;
-                self.move_pane(pane, target, Drop::Right).then_some(true)
-            }
-            (Home::Tab, None) => {
-                let mut ps = Vec::new();
-                self.tab().panes(&mut ps);
-                if ps.len() == 1 && self.tabs.len() == 1 {
-                    return None;
-                }
-                let t = self.tab_mut();
-                let (empty, next) = t.remove(pane);
-                if empty {
-                    self.tabs.remove(self.tab);
-                    self.tab = self.tab.min(self.tabs.len() - 1);
-                } else if t.focused == pane {
-                    ps.retain(|p| *p != pane);
-                    t.focused = next.unwrap_or(ps[0]);
-                }
-                self.set_dock(pane);
-                self.placed_anew(&[pane]);
-                self.dock_open = true;
-                self.dock_focused = true;
-                Some(true)
-            }
+    /// The tab or the dock the keyboard is in.
+    pub fn focused_home(&self) -> &Tab {
+        match (&self.dock, self.in_the_dock()) {
+            (Some(d), true) => d,
+            _ => self.tab(),
         }
     }
 
+    /// `pane dock` (`<C-w>D`): `pane` from the tab into the dock, or
+    /// from the dock into the tab, landing as `<C-w>J` / `<C-w>K` carry
+    /// it across (`carry_across`) wherever it stands. Whether the pane
+    /// is in the dock after; None when it could not move — the last
+    /// pane of the last tab stays.
+    pub fn toggle_dock(&mut self, pane: PaneId) -> Option<bool> {
+        let down = self.home_of(pane)? == Home::Tab;
+        self.carry_across(pane, down).then_some(down)
+    }
+
+    /// `pane` carried over the dock's edge, `<C-w>J` / `<C-w>K` past the
+    /// last place on their side: down from the tab into the dock,
+    /// beside the dock pane under it on the side its middle is (a dock
+    /// of it alone where there was none), or up from the dock into the
+    /// tab, below the lowest tab pane over it — by last frame's rects,
+    /// else the pane the other side has the keys on. False the other
+    /// way round, or when it could not move: the last pane of the last
+    /// tab stays.
+    pub fn carry_across(&mut self, pane: PaneId, down: bool) -> bool {
+        match (self.home_of(pane), down) {
+            (Some(Home::Dock), false) => {
+                let mut ps = Vec::new();
+                self.tab().panes(&mut ps);
+                let target = self
+                    .straight(pane, &ps, false)
+                    .unwrap_or(self.tab().focused);
+                self.move_pane(pane, target, Drop::Down)
+            }
+            (Some(Home::Tab), true) => {
+                let Some(d) = &self.dock else {
+                    return self.dock_alone(pane);
+                };
+                let mut ps = Vec::new();
+                d.panes(&mut ps);
+                let found = self.straight(pane, &ps, true).filter(|_| self.dock_open);
+                let target = found.unwrap_or(d.focused);
+                let mid = |p| self.rects.get(&p).map(|r| r.x + r.w / 2.0);
+                let side = match (found.and(mid(pane)), mid(target)) {
+                    (Some(a), Some(b)) if a < b => Drop::Left,
+                    _ => Drop::Right,
+                };
+                self.move_pane(pane, target, side)
+            }
+            _ => false,
+        }
+    }
+
+    /// Of `among`, the pane straight below `pane` (the topmost whose
+    /// span covers its middle) or above it (the lowest), by last
+    /// frame's rects; the nearest by its middle when none covers it.
+    fn straight(&self, pane: PaneId, among: &[PaneId], below: bool) -> Option<PaneId> {
+        let r = self.rects.get(&pane)?;
+        let cx = r.x + r.w / 2.0;
+        let key = |q: &Rect| {
+            let off = if cx < q.x {
+                q.x - cx
+            } else {
+                (cx - q.x - q.w).max(0.0)
+            };
+            (off, if below { q.y } else { -(q.y + q.h) })
+        };
+        among
+            .iter()
+            .filter_map(|p| Some((*p, key(self.rects.get(p)?))))
+            .min_by(|a, b| a.1.0.total_cmp(&b.1.0).then(a.1.1.total_cmp(&b.1.1)))
+            .map(|(p, _)| p)
+    }
+
+    /// A dock of `pane` alone, out of the tab, where there was none.
+    fn dock_alone(&mut self, pane: PaneId) -> bool {
+        let mut ps = Vec::new();
+        self.tab().panes(&mut ps);
+        if ps.len() == 1 && self.tabs.len() == 1 {
+            return false;
+        }
+        let t = self.tab_mut();
+        let (empty, next) = t.remove(pane);
+        if empty {
+            self.tabs.remove(self.tab);
+            self.tab = self.tab.min(self.tabs.len() - 1);
+        } else if t.focused == pane {
+            ps.retain(|p| *p != pane);
+            t.focused = next.unwrap_or(ps[0]);
+        }
+        self.set_dock(pane);
+        self.placed_anew(&[pane]);
+        self.dock_open = true;
+        self.dock_focused = true;
+        true
+    }
+
     /// The focused pane's column one place left or right (`<C-w>H`,
-    /// `<C-w>L`), COUNT places; false in a tree, or at the strip's end.
+    /// `<C-w>L`), COUNT places, in the tab's strip or the dock's; false
+    /// in a tree, or at the strip's end.
     pub fn move_column(&mut self, by: i64) -> bool {
-        let focused = self.tab().focused;
-        let Some(s) = self.tab_mut().strip_mut() else {
+        let focused = self.focused();
+        let Some(s) = self
+            .home_of(focused)
+            .and_then(|h| self.home_mut(h).strip_mut())
+        else {
             return false;
         };
         let Some(i) = s.column_of(focused) else {

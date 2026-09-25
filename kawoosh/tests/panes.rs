@@ -146,8 +146,8 @@ fn the_dock_splits_in_itself() {
 
 /// A pane goes into the dock and back out: `<C-w>D` from the tab puts
 /// it in the dock (a dock of it alone where there was none, opened,
-/// with the keyboard), from the dock back beside the tab's focused
-/// pane; the last pane of the last tab stays. By mouse, a title bar
+/// with the keyboard), from the dock back under the tab pane above it;
+/// the last pane of the last tab stays. By mouse, a title bar
 /// dragged onto a dock pane lands beside it, and a dock pane's title
 /// bar dragged onto a tab pane takes it out.
 #[test]
@@ -170,7 +170,7 @@ fn a_pane_moves_in_and_out_of_the_dock() {
         app.layout.rects[&two].y > app.layout.rects[&1].y,
         "under the tab"
     );
-    // Back out, beside the tab's pane.
+    // Back out, under the tab's pane.
     ctrl_w(&mut d, &mut app, "D");
     assert!(!app.layout.in_dock(two));
     assert!(
@@ -206,6 +206,73 @@ fn a_pane_moves_in_and_out_of_the_dock() {
     assert!(!app.layout.in_dock(term));
     assert_eq!(app.layout.visible_panes(), [term, 1, two]);
     assert_eq!(app.layout.focused(), term);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// `<C-w>J` past the tab's bottom carries the pane into the dock,
+/// beside the dock pane under it on the side its middle is; `<C-w>H`
+/// `<C-w>L` carry it along the dock; `<C-w>K` past the dock's top
+/// carries it back, under the tab pane above it — no split taken from
+/// the pane the keyboard was on. In a strip, past the column's bottom.
+#[test]
+fn j_and_k_carry_a_pane_over_the_dock_edge() {
+    let mut app = Kawoosh::new("t", "one");
+    let mut d = Drive::new(900.0, 600.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout tree");
+    ctrl_w(&mut d, &mut app, "d");
+    let term = app.layout.focused();
+    ctrl_w(&mut d, &mut app, "k");
+    ctrl_w(&mut d, &mut app, "v");
+    let two = app.layout.focused();
+    d.frame(&mut app);
+    d.frame(&mut app);
+    // 1 | two over the dock's terminal: two's middle is right of the
+    // terminal's, so it lands on its right.
+    ctrl_w(&mut d, &mut app, "J");
+    assert_eq!(app.ed.message, "into the dock");
+    assert!(app.layout.in_dock(two) && app.layout.in_the_dock());
+    assert_eq!(app.layout.focused(), two);
+    assert_eq!(app.layout.visible_panes(), [1, term, two]);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(app.layout.rects[&two].y > app.layout.rects[&1].y);
+    // Nothing below in the dock.
+    ctrl_w(&mut d, &mut app, "J");
+    assert_eq!(app.ed.message, "nothing below to trade with");
+    // Along the dock.
+    ctrl_w(&mut d, &mut app, "H");
+    assert_eq!(app.layout.visible_panes(), [1, two, term]);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    // Up and out, under 1, which the tab is all of now.
+    ctrl_w(&mut d, &mut app, "K");
+    assert_eq!(app.ed.message, "out of the dock");
+    assert!(!app.layout.in_dock(two) && !app.layout.in_the_dock());
+    assert_eq!(app.layout.visible_panes(), [1, two, term]);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let (r1, r2) = (app.layout.rects[&1], app.layout.rects[&two]);
+    assert!(r2.y > r1.y && (r2.x - r1.x).abs() < 1.0, "stacked under 1");
+    // A count carries it on: up past 1, then no further.
+    d.keys(&mut app, "2");
+    ctrl_w(&mut d, &mut app, "K");
+    assert_eq!(app.layout.visible_panes(), [two, 1, term]);
+    assert_eq!(app.ed.message, "");
+    // A strip: past the bottom of its column.
+    ex(&mut d, &mut app, "layout scroll");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    app.layout.focus(1);
+    ctrl_w(&mut d, &mut app, "J");
+    assert!(app.layout.in_dock(1));
+    assert_eq!(app.layout.focused(), 1);
+    ctrl_w(&mut d, &mut app, "K");
+    assert!(!app.layout.in_dock(1));
+    assert_eq!(
+        app.layout.tab().column_of(1),
+        app.layout.tab().column_of(two)
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
