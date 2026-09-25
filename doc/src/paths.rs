@@ -14,8 +14,21 @@
 
 use std::path::{Component, Path, PathBuf};
 
-/// The user's home: `$HOME`, else `$USERPROFILE` (Windows).
+/// The process's working directory: where it was started, or the local
+/// disk's ([`crate::fs::set_local_disk`]) for a process given one.
+pub fn cwd() -> PathBuf {
+    if let Some(disk) = crate::fs::local() {
+        return disk.cwd.clone();
+    }
+    std::env::current_dir().unwrap_or_default()
+}
+
+/// The user's home: `$HOME`, else `$USERPROFILE` (Windows); the local
+/// disk's for a process given one ([`crate::fs::set_local_disk`]).
 pub fn home() -> Option<PathBuf> {
+    if let Some(disk) = crate::fs::local() {
+        return Some(disk.home.clone());
+    }
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .filter(|h| !h.is_empty())

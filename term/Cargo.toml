@@ -11,9 +11,12 @@ repository.workspace = true
 # runner (docs/design/kui-requirements.md R1.4).
 kui-core.workspace = true
 alacritty_terminal.workspace = true
-portable-pty.workspace = true
 anyhow.workspace = true
 log.workspace = true
+
+# Not in a browser, which has no processes (web/README.md).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+portable-pty.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

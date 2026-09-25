@@ -24,7 +24,8 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use kawoosh_doc::{Buffer, BufferId, Update, Version};
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Mode, Prompt, Selection, Spec, ViewId};

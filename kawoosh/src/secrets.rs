@@ -16,7 +16,8 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use kawoosh_doc::{Bias, Buffer, BufferId, Version};
 use kawoosh_editor::masks::{Rule, Rules, line_folds};
@@ -317,7 +318,10 @@ impl Kawoosh {
 /// the canonical forms macOS resolves them to).
 fn under_temp(path: &Path) -> bool {
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let mut temps = vec![std::env::temp_dir(), "/tmp".into(), "/var/tmp".into()];
+    let mut temps: Vec<std::path::PathBuf> = vec!["/tmp".into(), "/var/tmp".into()];
+    // A browser has no temp directory to ask for: std panics there.
+    #[cfg(not(target_arch = "wasm32"))]
+    temps.insert(0, std::env::temp_dir());
     for t in temps.clone() {
         if let Ok(c) = t.canonicalize() {
             temps.push(c);

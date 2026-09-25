@@ -17,6 +17,7 @@
 use std::path::{Path, PathBuf};
 
 use tree_sitter::Query;
+#[cfg(not(target_arch = "wasm32"))]
 use tree_sitter_language::LanguageFn;
 
 mod bash;
@@ -552,6 +553,15 @@ impl Library {
     /// ABI is one this tree-sitter reads, and compiles the query files.
     /// The library stays open for the life of the process: the language
     /// points into it.
+    #[cfg(target_arch = "wasm32")]
+    pub fn load(&self) -> Result<Grammar, String> {
+        Err(format!(
+            "{}: a browser cannot open a grammar library; the built-in grammars are what it has",
+            self.path.display()
+        ))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load(&self) -> Result<Grammar, String> {
         let shown = self.path.display();
         // SAFETY: a grammar library's initialisers are tree-sitter's

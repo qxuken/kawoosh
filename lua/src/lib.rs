@@ -563,7 +563,7 @@ pub struct MomentSnap {
     pub from: String,
     /// The buffer it came from, while it is open.
     pub buffer: Option<u64>,
-    pub at: std::time::Instant,
+    pub at: web_time::Instant,
 }
 
 /// What a buffer's tracked lines have become, by id (an index from 1
@@ -3331,7 +3331,7 @@ fn seed(
             let t = lua.create_table()?;
             let Some(q) = q else {
                 let p = pp.borrow();
-                let now = std::time::Instant::now();
+                let now = web_time::Instant::now();
                 for (i, m) in p.memory.iter().enumerate() {
                     let e = lua.create_table()?;
                     e.set("text", m.text.as_str())?;

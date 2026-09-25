@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use web_time::Instant;
 
 use crossbeam_channel::Sender;
 use kawoosh_doc::Version;
@@ -311,7 +311,7 @@ impl Kawoosh {
             alternate: HashMap::new(),
             lua_types: None,
             cmd_completion: None,
-            cwd: std::env::current_dir().unwrap_or_default(),
+            cwd: kawoosh_doc::paths::cwd(),
             dark: true,
             devtools: false,
             devtools_synced: None,
@@ -2024,6 +2024,12 @@ impl kui::App for Kawoosh {
             w.set(wake.clone());
         }
         self.wake.set(wake);
+        // The command socket is for the processes the terminals start —
+        // `$EDITOR`, the CLI shim — and a browser starts none
+        // (web/README.md).
+        if cfg!(target_arch = "wasm32") {
+            return;
+        }
         let path = kawoosh_systems::io::socket_path();
         match self.io.listen(&path) {
             Ok(()) => {

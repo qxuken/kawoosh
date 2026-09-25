@@ -6,7 +6,8 @@
 //! own HUD times the whole frame; this is the app's half of it.
 
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use kui::{Align, Min, NodeSpec, Sizing, Ui};
 

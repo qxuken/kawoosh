@@ -34,7 +34,7 @@ pub struct Terminals {
     /// The bell's sound, registered with kui the first time one rings.
     bell_sound: Option<kui::SoundId>,
     /// When the bell was last heard: at most one in [`BELL_GAP`].
-    bell_at: Option<std::time::Instant>,
+    bell_at: Option<web_time::Instant>,
     next: TermId,
     /// `<C-w>` was pressed in a terminal pane: the next key is a pane
     /// command (`<C-w>.` sends a literal ^W).
@@ -198,7 +198,7 @@ impl Kawoosh {
                 }
             }
         }
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         if !sound || self.terms.bell_at.is_some_and(|t| now - t < BELL_GAP) {
             return;
         }

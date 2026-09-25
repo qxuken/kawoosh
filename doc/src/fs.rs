@@ -102,11 +102,41 @@ pub fn is_registered(name: &str) -> bool {
         .is_some_and(|fs| fs.is_alive())
 }
 
+/// The disk of a process that has none of its own — a browser page
+/// (web/README.md): a file system of the embedder's that every local path
+/// goes to, and the directory the process starts in and the home, which
+/// such a process has no environment to say. Set once, before anything
+/// reads a path; nothing sets it on the desktop, where a local path is
+/// the disk's.
+pub struct LocalDisk {
+    pub fs: Arc<dyn Fs>,
+    pub cwd: PathBuf,
+    pub home: PathBuf,
+}
+
+fn local_disk() -> &'static OnceLock<LocalDisk> {
+    static L: OnceLock<LocalDisk> = OnceLock::new();
+    &L
+}
+
+/// Puts every local path on `disk` from now on; a second call is refused.
+pub fn set_local_disk(disk: LocalDisk) -> Result<(), LocalDisk> {
+    local_disk().set(disk)
+}
+
+/// The disk [`set_local_disk`] set, if one was.
+pub fn local() -> Option<&'static LocalDisk> {
+    local_disk().get()
+}
+
 /// Where a path's operations go: `None` for a local path; for one on a
 /// domain, its file system and the host's path — or an error saying the
-/// domain is not connected.
+/// domain is not connected. A local path on a process given a disk
+/// ([`set_local_disk`]) goes to that disk.
 pub fn remote(path: &Path) -> Option<io::Result<(Arc<dyn Fs>, PathBuf)>> {
-    let (name, rest) = crate::paths::domain_of(path)?;
+    let Some((name, rest)) = crate::paths::domain_of(path) else {
+        return local().map(|disk| Ok((disk.fs.clone(), path.to_path_buf())));
+    };
     let fs = domains()
         .read()
         .unwrap_or_else(|e| e.into_inner())

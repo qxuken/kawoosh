@@ -12,7 +12,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::Duration;
+use std::time::SystemTime;
+use web_time::Instant;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
@@ -55,8 +57,10 @@ struct Stamp {
 }
 
 fn stamp(path: &PathBuf) -> Stamp {
-    // A host's path: its domain's stat, not connected read as gone.
-    if crate::fs::domain_of(path).is_some() {
+    // A host's path — or any, on a process whose disk is not the
+    // machine's (a browser page) —: its file system's stat, not connected
+    // read as gone.
+    if kawoosh_doc::fs::remote(path).is_some() {
         return match crate::fs::stat(path) {
             Ok(st) => Stamp {
                 exists: true,
@@ -86,13 +90,65 @@ fn stamp(path: &PathBuf) -> Stamp {
     }
 }
 
+/// What the watch holds: each path's stamp as last seen, and when the
+/// host paths were last looked at.
+struct Watch {
+    stamps: HashMap<PathBuf, Stamp>,
+    remote_at: Instant,
+    beat: Beat,
+}
+
+impl Watch {
+    /// A new set replaces the old; its stamps are taken now, so what was
+    /// already on disk is not a change.
+    fn take(&mut self, set: Vec<PathBuf>) {
+        let mut next = HashMap::with_capacity(set.len());
+        for p in set {
+            let s = self.stamps.get(&p).copied().unwrap_or_else(|| stamp(&p));
+            next.insert(p, s);
+        }
+        self.stamps = next;
+    }
+
+    /// Stats the set — a host's paths on the beat — and sends the paths
+    /// whose stamp changed, waking the loop if any did. False once the
+    /// watcher is gone.
+    fn look(&mut self, changed: &Sender<PathBuf>, wake: &WakeHandle) -> bool {
+        let mut any = false;
+        let remote_due = self.remote_at.elapsed() >= self.beat.get();
+        if remote_due {
+            self.remote_at = Instant::now();
+        }
+        for (p, old) in self.stamps.iter_mut() {
+            if !remote_due && crate::fs::domain_of(p).is_some() {
+                continue;
+            }
+            let now = stamp(p);
+            if now != *old {
+                *old = now;
+                any = true;
+                if changed.send(p.clone()).is_err() {
+                    return false;
+                }
+            }
+        }
+        if any {
+            wake.wake();
+        }
+        true
+    }
+}
+
 pub struct Watcher {
     paths: Sender<Vec<PathBuf>>,
     changed: Receiver<PathBuf>,
+    #[cfg(target_arch = "wasm32")]
+    service: crate::Service,
 }
 
 impl Watcher {
     /// A watch whose host paths are stat'd on `beat`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn(wake: WakeHandle, beat: Beat) -> Self {
         let (paths_tx, paths_rx) = unbounded::<Vec<PathBuf>>();
         let (changed_tx, changed_rx) = unbounded::<PathBuf>();
@@ -100,47 +156,25 @@ impl Watcher {
             .name("watch".into())
             .spawn(move || {
                 use crossbeam_channel::RecvTimeoutError::{Disconnected, Timeout};
-                let mut stamps: HashMap<PathBuf, Stamp> = HashMap::new();
-                let mut remote_at = Instant::now();
+                let mut watch = Watch {
+                    stamps: HashMap::new(),
+                    remote_at: Instant::now(),
+                    beat,
+                };
                 loop {
-                    // A new set replaces the old; its stamps are taken now,
-                    // so what was already on disk is not a change.
                     match paths_rx.recv_timeout(INTERVAL) {
                         Ok(mut set) => {
                             while let Ok(next) = paths_rx.try_recv() {
                                 set = next;
                             }
-                            let mut next = HashMap::with_capacity(set.len());
-                            for p in set {
-                                let s = stamps.get(&p).copied().unwrap_or_else(|| stamp(&p));
-                                next.insert(p, s);
-                            }
-                            stamps = next;
+                            watch.take(set);
                             continue;
                         }
                         Err(Disconnected) => return,
                         Err(Timeout) => {}
                     }
-                    let mut any = false;
-                    let remote_due = remote_at.elapsed() >= beat.get();
-                    if remote_due {
-                        remote_at = Instant::now();
-                    }
-                    for (p, old) in stamps.iter_mut() {
-                        if !remote_due && crate::fs::domain_of(p).is_some() {
-                            continue;
-                        }
-                        let now = stamp(p);
-                        if now != *old {
-                            *old = now;
-                            any = true;
-                            if changed_tx.send(p.clone()).is_err() {
-                                return;
-                            }
-                        }
-                    }
-                    if any {
-                        wake.wake();
+                    if !watch.look(&changed_tx, &wake) {
+                        return;
                     }
                 }
             })
@@ -151,10 +185,45 @@ impl Watcher {
         }
     }
 
+    /// In a browser (web/README.md): a set is taken in a task queued by
+    /// [`Watcher::watch`], and the set is looked at on the page's timer,
+    /// every [`INTERVAL`], until the watcher is gone.
+    #[cfg(target_arch = "wasm32")]
+    pub fn spawn(wake: WakeHandle, beat: Beat) -> Self {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let (paths_tx, paths_rx) = unbounded::<Vec<PathBuf>>();
+        let (changed_tx, changed_rx) = unbounded::<PathBuf>();
+        let watch = Rc::new(RefCell::new(Watch {
+            stamps: HashMap::new(),
+            remote_at: Instant::now(),
+            beat,
+        }));
+        let service = crate::Service::spawn("watch", paths_rx, {
+            let watch = watch.clone();
+            move |mut set, rx| {
+                while let Ok(next) = rx.try_recv() {
+                    set = next;
+                }
+                watch.borrow_mut().take(set);
+            }
+        });
+        crate::every(INTERVAL, move || {
+            watch.borrow_mut().look(&changed_tx, &wake)
+        });
+        Self {
+            paths: paths_tx,
+            changed: changed_rx,
+            service,
+        }
+    }
+
     /// Makes `paths` the set watched. A path already watched keeps its
     /// stamp; a new one is stamped as it is now.
     pub fn watch(&self, paths: Vec<PathBuf>) {
         let _ = self.paths.send(paths);
+        #[cfg(target_arch = "wasm32")]
+        self.service.kick();
     }
 
     /// The paths that changed since the last drain.

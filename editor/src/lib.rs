@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::Instant;
+use web_time::Instant;
 
 pub use command::{
     ArgKind, Args, BufFacts, Command, Cond, Ctx, Facts, FnCommand, Form, Invocation, Kind,
@@ -831,7 +831,7 @@ impl Editor {
             passed: false,
             fields: HashMap::new(),
             prompt: None,
-            cwd: std::env::current_dir().unwrap_or_default(),
+            cwd: kawoosh_doc::paths::cwd(),
             cmd_history: Vec::new(),
             search_history: Vec::new(),
             search: None,

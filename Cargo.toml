@@ -68,6 +68,9 @@ unicode-segmentation = "1"
 unicode-width = "0.2"
 
 anyhow = { version = "1.0.104", features = ["backtrace"] }
+# `Instant` and `SystemTime`: std's own on the desktop, the page's clock
+# in a browser, where std's panics (web/README.md).
+web-time = "1"
 mimalloc = "0.1.52"
 smallvec = { version = "1.15.2", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }

@@ -47,7 +47,6 @@ log.workspace = true
 tree-sitter.workspace = true
 # A grammar from a shared library: `LanguageFn` over its symbol.
 tree-sitter-language = "0.1"
-libloading = "0.9"
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-toml-ng = { workspace = true, optional = true }
 tree-sitter-css = { workspace = true, optional = true }
@@ -69,3 +68,8 @@ tree-sitter-gitcommit = { workspace = true, optional = true }
 tree-sitter-gomod = { workspace = true, optional = true }
 tree-sitter-jsdoc = { workspace = true, optional = true }
 tree-sitter-md = { workspace = true, optional = true }
+
+# A grammar library opened at run time (`Library::load`): not in a
+# browser, which cannot open one (web/README.md).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libloading = "0.9"

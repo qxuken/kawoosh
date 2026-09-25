@@ -753,8 +753,8 @@ pub struct HistoryRow {
 }
 
 pub fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
@@ -1058,7 +1058,7 @@ mod tests {
         let s = Store::open(&db).unwrap();
         let other = Connection::open(&db).unwrap();
         other.execute_batch("BEGIN IMMEDIATE").unwrap();
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         let r = s.flush_moments(&[visit("file", "/x", 1)], &[], 10);
         assert!(r.is_err(), "busy");
         assert!(t.elapsed() >= std::time::Duration::from_millis(BUSY_MS - 50));

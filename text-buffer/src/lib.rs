@@ -1847,6 +1847,21 @@ fn index_threads(len: usize) -> usize {
     cores.min(len.div_ceil(INDEX_STRIDE)).max(1)
 }
 
+/// Runs `work` on `threads` threads, each taking strides until none are
+/// left — or on this thread when there is one: a text of a stride or
+/// less, a machine of one core, a platform with no threads to spawn (a
+/// browser, where `available_parallelism` answers none).
+fn on_threads(threads: usize, work: impl Fn() + Sync) {
+    if threads <= 1 {
+        return work();
+    }
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(&work);
+        }
+    });
+}
+
 /// Newline counts per [`INITIAL_PIECE_BYTES`] piece of `bytes`, in
 /// parallel: what [`Buffer::from_mapped`] takes, so the tree is built
 /// without reading the text again. `progress` hears the bytes done so
@@ -1867,29 +1882,24 @@ pub fn count_newlines_with(bytes: &[u8], progress: &(dyn Fn(usize) + Sync)) -> V
         .chunks_mut(per_stride)
         .map(std::sync::Mutex::new)
         .collect();
-    std::thread::scope(|s| {
-        for _ in 0..threads {
-            s.spawn(|| {
-                loop {
-                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if i >= strides {
-                        return;
-                    }
-                    let mut out = slots[i].lock().unwrap();
-                    let base = i * per_stride;
-                    for (k, c) in out.iter_mut().enumerate() {
-                        let start = (base + k) * INITIAL_PIECE_BYTES;
-                        let end = (start + INITIAL_PIECE_BYTES).min(bytes.len());
-                        *c = memchr::memchr_iter(b'\n', &bytes[start..end]).count() as u32;
-                    }
-                    let end = ((base + out.len()) * INITIAL_PIECE_BYTES).min(bytes.len());
-                    let start = base * INITIAL_PIECE_BYTES;
-                    let so_far = done.fetch_add(end - start, std::sync::atomic::Ordering::Relaxed)
-                        + end
-                        - start;
-                    progress(so_far);
-                }
-            });
+    on_threads(threads, || {
+        loop {
+            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if i >= strides {
+                return;
+            }
+            let mut out = slots[i].lock().unwrap();
+            let base = i * per_stride;
+            for (k, c) in out.iter_mut().enumerate() {
+                let start = (base + k) * INITIAL_PIECE_BYTES;
+                let end = (start + INITIAL_PIECE_BYTES).min(bytes.len());
+                *c = memchr::memchr_iter(b'\n', &bytes[start..end]).count() as u32;
+            }
+            let end = ((base + out.len()) * INITIAL_PIECE_BYTES).min(bytes.len());
+            let start = base * INITIAL_PIECE_BYTES;
+            let so_far =
+                done.fetch_add(end - start, std::sync::atomic::Ordering::Relaxed) + end - start;
+            progress(so_far);
         }
     });
     drop(slots);
@@ -1930,33 +1940,28 @@ pub fn index_with(bytes: &[u8], progress: &(dyn Fn(usize) + Sync)) -> Option<Vec
     let next = std::sync::atomic::AtomicUsize::new(0);
     let done = std::sync::atomic::AtomicUsize::new(0);
     let ok = std::sync::atomic::AtomicBool::new(true);
-    std::thread::scope(|s| {
-        for _ in 0..threads {
-            s.spawn(|| {
-                loop {
-                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if i >= strides || !ok.load(std::sync::atomic::Ordering::Relaxed) {
-                        return;
-                    }
-                    let start = i * INDEX_STRIDE;
-                    let end = ((i + 1) * INDEX_STRIDE).min(bytes.len());
-                    if std::str::from_utf8(&bytes[boundary(start)..boundary(end)]).is_err() {
-                        ok.store(false, std::sync::atomic::Ordering::Relaxed);
-                        return;
-                    }
-                    let mut out = slots[i].lock().unwrap();
-                    let base = i * per_stride;
-                    for (k, c) in out.iter_mut().enumerate() {
-                        let ps = (base + k) * INITIAL_PIECE_BYTES;
-                        let pe = (ps + INITIAL_PIECE_BYTES).min(bytes.len());
-                        *c = memchr::memchr_iter(b'\n', &bytes[ps..pe]).count() as u32;
-                    }
-                    let so_far = done.fetch_add(end - start, std::sync::atomic::Ordering::Relaxed)
-                        + end
-                        - start;
-                    progress(so_far);
-                }
-            });
+    on_threads(threads, || {
+        loop {
+            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if i >= strides || !ok.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+            let start = i * INDEX_STRIDE;
+            let end = ((i + 1) * INDEX_STRIDE).min(bytes.len());
+            if std::str::from_utf8(&bytes[boundary(start)..boundary(end)]).is_err() {
+                ok.store(false, std::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+            let mut out = slots[i].lock().unwrap();
+            let base = i * per_stride;
+            for (k, c) in out.iter_mut().enumerate() {
+                let ps = (base + k) * INITIAL_PIECE_BYTES;
+                let pe = (ps + INITIAL_PIECE_BYTES).min(bytes.len());
+                *c = memchr::memchr_iter(b'\n', &bytes[ps..pe]).count() as u32;
+            }
+            let so_far =
+                done.fetch_add(end - start, std::sync::atomic::Ordering::Relaxed) + end - start;
+            progress(so_far);
         }
     });
     drop(slots);
@@ -1985,19 +1990,15 @@ pub fn is_utf8(bytes: &[u8]) -> bool {
     cuts.push(bytes.len());
     let ok = std::sync::atomic::AtomicBool::new(true);
     let next = std::sync::atomic::AtomicUsize::new(0);
-    std::thread::scope(|s| {
-        for _ in 0..threads {
-            s.spawn(|| {
-                loop {
-                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if i + 1 >= cuts.len() || !ok.load(std::sync::atomic::Ordering::Relaxed) {
-                        return;
-                    }
-                    if std::str::from_utf8(&bytes[cuts[i]..cuts[i + 1]]).is_err() {
-                        ok.store(false, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
-            });
+    on_threads(threads, || {
+        loop {
+            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if i + 1 >= cuts.len() || !ok.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+            if std::str::from_utf8(&bytes[cuts[i]..cuts[i + 1]]).is_err() {
+                ok.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     });
     ok.into_inner()

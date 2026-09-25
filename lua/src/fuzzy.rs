@@ -323,7 +323,7 @@ mod tests {
             .map(|i| format!("src/module{}/file_{}.rs", i % 97, i))
             .collect();
         let m = Matcher::new(&items);
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         let hits = m.query("mod12fi", 200);
         assert_eq!(hits.len(), 200);
         assert!(hits[0].positions.len() == 7);

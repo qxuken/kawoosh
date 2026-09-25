@@ -66,32 +66,33 @@ struct Worker {
     jobs: Sender<(Key, Tree, HashSet<usize>, bool)>,
     /// The rows, and what the walk took.
     answers: Receiver<(Key, Vec<Row>, std::time::Duration)>,
+    /// Where the walk runs: a thread; a task in a browser.
+    service: kawoosh_systems::Service,
 }
 
 impl Worker {
     fn spawn(wake: WakeHandle) -> Self {
         let (jobs, job_rx) = unbounded::<(Key, Tree, HashSet<usize>, bool)>();
         let (answer_tx, answers) = unbounded();
-        std::thread::Builder::new()
-            .name("syntax-rows".into())
-            .spawn(move || {
-                while let Ok(mut job) = job_rx.recv() {
-                    // Only the newest matters: a fold and a reparse in the
-                    // same instant are one walk.
-                    while let Ok(next) = job_rx.try_recv() {
-                        job = next;
-                    }
-                    let (key, tree, folded, anonymous) = job;
-                    let started = std::time::Instant::now();
-                    let rows = flatten(&tree, &folded, anonymous);
-                    if answer_tx.send((key, rows, started.elapsed())).is_err() {
-                        return;
-                    }
+        let service =
+            kawoosh_systems::Service::spawn("syntax-rows", job_rx, move |mut job, job_rx| {
+                // Only the newest matters: a fold and a reparse in the same
+                // instant are one walk.
+                while let Ok(next) = job_rx.try_recv() {
+                    job = next;
+                }
+                let (key, tree, folded, anonymous) = job;
+                let started = web_time::Instant::now();
+                let rows = flatten(&tree, &folded, anonymous);
+                if answer_tx.send((key, rows, started.elapsed())).is_ok() {
                     wake.wake();
                 }
-            })
-            .expect("spawning the syntax rows thread");
-        Self { jobs, answers }
+            });
+        Self {
+            jobs,
+            answers,
+            service,
+        }
     }
 }
 
@@ -199,7 +200,7 @@ impl Inspector {
             return;
         }
         if tree.root_node().descendant_count() <= SYNC_MAX_NODES {
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             self.rows = flatten(tree, &self.folded, self.anonymous);
             self.last_build = Some((started.elapsed(), self.rows.len()));
             self.built = Some(key);
@@ -213,6 +214,7 @@ impl Inspector {
         let _ = worker
             .jobs
             .send((key, tree.clone(), self.folded.clone(), self.anonymous));
+        worker.service.kick();
         self.in_flight = Some(key);
     }
 

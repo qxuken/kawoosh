@@ -245,27 +245,34 @@ pub fn count_on(text: &Buffer, re: &Regex, threads: usize) -> usize {
     let next = std::sync::atomic::AtomicUsize::new(0);
     let total = std::sync::atomic::AtomicUsize::new(0);
     let threads = threads.clamp(1, strides.len().max(1));
-    std::thread::scope(|scope| {
-        for _ in 0..threads {
-            scope.spawn(|| {
-                loop {
-                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let Some(&(sstart, send, s, e)) = strides.get(i) else {
-                        break;
-                    };
-                    let (_, span) = text.span_at(sstart).expect("a span the walk listed");
-                    let hi = (e + EDGE).min(send);
-                    let bytes = &span[s - sstart..hi - sstart];
-                    let limit = e - s;
-                    let n = re
-                        .find_iter(bytes)
-                        .take_while(|m| m.start() < limit)
-                        .count();
-                    total.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
-                }
-            });
+    let work = || {
+        loop {
+            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some(&(sstart, send, s, e)) = strides.get(i) else {
+                break;
+            };
+            let (_, span) = text.span_at(sstart).expect("a span the walk listed");
+            let hi = (e + EDGE).min(send);
+            let bytes = &span[s - sstart..hi - sstart];
+            let limit = e - s;
+            let n = re
+                .find_iter(bytes)
+                .take_while(|m| m.start() < limit)
+                .count();
+            total.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
         }
-    });
+    };
+    // One stride, or one core — or no threads at all, in a browser: on
+    // this thread.
+    if threads == 1 {
+        work();
+    } else {
+        std::thread::scope(|scope| {
+            for _ in 0..threads {
+                scope.spawn(work);
+            }
+        });
+    }
     let mut n = total.load(std::sync::atomic::Ordering::Relaxed);
     let mut previous = 0;
     for edge in edges {

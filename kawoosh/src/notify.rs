@@ -15,7 +15,9 @@
 //! engine's, the shell's, a Lua function `kawoosh.notify` turned into
 //! one — so a toast's buttons are data, as a keymap's bindings are.
 
-use std::time::{Duration, Instant, SystemTime};
+use std::time::Duration;
+use web_time::Instant;
+use web_time::SystemTime;
 
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Spec};
 use kawoosh_systems::{Alarm, WakeHandle};

@@ -40,7 +40,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use kawoosh_doc::BufferId;
 use kawoosh_editor::Layer;

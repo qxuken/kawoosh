@@ -7,6 +7,10 @@
 //! actions and formatting are request/response; a server's own
 //! `workspace/applyEdit` is answered and handed up as an edit.
 
+// In a browser nothing runs a server (`Lsp::spawn`), and the machinery
+// that would goes unused there.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -527,6 +531,12 @@ impl Lsp {
     pub fn spawn(wake: WakeHandle) -> Self {
         let (cmds, cmd_rx) = unbounded::<Cmd>();
         let (event_tx, events) = unbounded::<Event>();
+        // A browser starts no processes, so no server either
+        // (web/README.md): nothing serves the commands there, and a
+        // send goes nowhere.
+        #[cfg(target_arch = "wasm32")]
+        let _ = (cmd_rx, event_tx, wake);
+        #[cfg(not(target_arch = "wasm32"))]
         thread::Builder::new()
             .name("lsp".into())
             .spawn(move || run(cmd_rx, event_tx, wake))

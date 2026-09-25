@@ -516,7 +516,7 @@ fn unverbatim(p: PathBuf) -> PathBuf {
 /// moved (docs/design/workspaces.md Decision 2) — the editor's is the
 /// focused tab's.
 pub fn cwd() -> PathBuf {
-    std::env::current_dir().unwrap_or_default()
+    kawoosh_doc::paths::cwd()
 }
 
 /// The whole of a small file, for a plugin reading a config or a

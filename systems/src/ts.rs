@@ -31,7 +31,6 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
-use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use kawoosh_doc::{BufferId, Edit, Run, Snapshot, Update};
@@ -39,7 +38,7 @@ pub use kawoosh_languages::Token;
 use kawoosh_languages::{Grammar, LanguageDef, Registry, Structure};
 use tree_sitter::{InputEdit, Node, Parser, Point, QueryCursor, StreamingIterator, Tree};
 
-use crate::WakeHandle;
+use crate::{Service, WakeHandle};
 
 pub const SYNTAX_LAYER: &str = "syntax";
 /// The structure layer: which bytes are which block (a grammar's
@@ -112,80 +111,71 @@ enum Cmd {
 
 pub struct Ts {
     cmds: Sender<Cmd>,
+    service: Service,
     pub answers: Receiver<Answer>,
     pub text_answers: Receiver<TextAnswer>,
 }
 
 impl Ts {
-    /// Starts the parser thread. Languages it does not know answer with
+    /// Starts the parser's loop (a thread; a task in a browser). Languages it does not know answer with
     /// an empty layer, so a file that lost its grammar loses its colours
     /// rather than keeping stale ones.
     pub fn spawn(wake: WakeHandle) -> Self {
         let (cmds, cmd_rx) = unbounded::<Cmd>();
         let (answer_tx, answers) = unbounded::<Answer>();
         let (text_tx, text_answers) = unbounded::<TextAnswer>();
-        thread::Builder::new()
-            .name("ts".into())
-            .spawn(move || {
-                let mut parser = Parser::new();
-                let mut grammars = Grammars::default();
-                let mut parsed = Parsed::default();
-                while let Ok(cmd) = cmd_rx.recv() {
-                    let mut job = match cmd {
-                        Cmd::Job(job) => job,
-                        Cmd::Language { def, grammar } => {
-                            grammars.add(def, grammar, &mut parsed);
-                            continue;
-                        }
-                        Cmd::Text(t) => {
-                            let _ = text_tx.send(highlight_text(&mut parser, &mut grammars, &t));
-                            wake.wake();
-                            continue;
-                        }
-                    };
-                    // Only the newest job per buffer matters: skip ahead,
-                    // the skipped job's edits carried into the next one's.
-                    while let Ok(next) = cmd_rx.try_recv() {
-                        let mut next = match next {
-                            Cmd::Job(job) => job,
-                            Cmd::Language { def, grammar } => {
-                                grammars.add(def, grammar, &mut parsed);
-                                continue;
-                            }
-                            Cmd::Text(t) => {
-                                let _ =
-                                    text_tx.send(highlight_text(&mut parser, &mut grammars, &t));
-                                continue;
-                            }
-                        };
-                        if next.buffer == job.buffer {
-                            next.edits = match (job.edits.take(), next.edits.take()) {
-                                (Some(mut a), Some(b)) => {
-                                    a.extend(b);
-                                    Some(a)
-                                }
-                                _ => None,
-                            };
-                            job = next;
-                        } else {
-                            // A different buffer: handle it after this one.
-                            let _ = answer_tx.send(highlight(
-                                &mut parser,
-                                &mut grammars,
-                                &mut parsed,
-                                &job,
-                            ));
-                            job = next;
-                        }
+        let mut parser = Parser::new();
+        let mut grammars = Grammars::default();
+        let mut parsed = Parsed::default();
+        let service = Service::spawn("ts", cmd_rx, move |cmd, cmd_rx| {
+            let mut job = match cmd {
+                Cmd::Job(job) => job,
+                Cmd::Language { def, grammar } => {
+                    grammars.add(def, grammar, &mut parsed);
+                    return;
+                }
+                Cmd::Text(t) => {
+                    let _ = text_tx.send(highlight_text(&mut parser, &mut grammars, &t));
+                    wake.wake();
+                    return;
+                }
+            };
+            // Only the newest job per buffer matters: skip ahead, the
+            // skipped job's edits carried into the next one's.
+            while let Ok(next) = cmd_rx.try_recv() {
+                let mut next = match next {
+                    Cmd::Job(job) => job,
+                    Cmd::Language { def, grammar } => {
+                        grammars.add(def, grammar, &mut parsed);
+                        continue;
                     }
+                    Cmd::Text(t) => {
+                        let _ = text_tx.send(highlight_text(&mut parser, &mut grammars, &t));
+                        continue;
+                    }
+                };
+                if next.buffer == job.buffer {
+                    next.edits = match (job.edits.take(), next.edits.take()) {
+                        (Some(mut a), Some(b)) => {
+                            a.extend(b);
+                            Some(a)
+                        }
+                        _ => None,
+                    };
+                    job = next;
+                } else {
+                    // A different buffer: handle it after this one.
                     let _ =
                         answer_tx.send(highlight(&mut parser, &mut grammars, &mut parsed, &job));
-                    wake.wake();
+                    job = next;
                 }
-            })
-            .expect("spawning the ts thread");
+            }
+            let _ = answer_tx.send(highlight(&mut parser, &mut grammars, &mut parsed, &job));
+            wake.wake();
+        });
         Self {
             cmds,
+            service,
             answers,
             text_answers,
         }
@@ -193,11 +183,13 @@ impl Ts {
 
     pub fn submit(&self, job: Job) {
         let _ = self.cmds.send(Cmd::Job(job));
+        self.service.kick();
     }
 
     /// A text of its own to highlight, answered on `text_answers`.
     pub fn submit_text(&self, job: TextJob) {
         let _ = self.cmds.send(Cmd::Text(job));
+        self.service.kick();
     }
 
     /// Tells the thread a language: its registry entry, and the grammar
@@ -207,6 +199,7 @@ impl Ts {
     pub fn add_language(&self, def: LanguageDef, grammar: Option<Grammar>) {
         let grammar = grammar.map(Arc::new);
         let _ = self.cmds.send(Cmd::Language { def, grammar });
+        self.service.kick();
     }
 
     pub fn drain(&self) -> Vec<Answer> {
@@ -386,7 +379,7 @@ fn highlight(
     parsed: &mut Parsed,
     job: &Job,
 ) -> Answer {
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     let text = &job.snapshot.text;
     let len = text.len();
     let mut spans: Vec<Range<usize>> = std::iter::once(0..len).collect();

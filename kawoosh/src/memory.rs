@@ -43,7 +43,8 @@
 //! Every size is `devtab::Tab`'s, as the undo pane's are.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use kawoosh_doc::{BufferId, Hunk};
 use kawoosh_editor::{ArgKind, Args, Selection, Selections, Spec, Took, ViewId};

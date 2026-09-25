@@ -475,14 +475,11 @@ impl Io {
     pub fn run(&self, name: &str, job: impl FnOnce() -> IoMsg + Send + 'static) {
         let tx = self.tx.clone();
         let wake = self.wake.clone();
-        thread::Builder::new()
-            .name(name.into())
-            .spawn(move || {
-                if tx.send(job()).is_ok() {
-                    wake.wake();
-                }
-            })
-            .expect("spawning a job thread");
+        crate::run_task(name, move || {
+            if tx.send(job()).is_ok() {
+                wake.wake();
+            }
+        });
     }
 
     /// Opens `path` on a thread of its own: the file is mapped, checked
@@ -494,70 +491,69 @@ impl Io {
     pub fn open_file(&self, path: PathBuf) {
         let tx = self.tx.clone();
         let wake = self.wake.clone();
-        thread::Builder::new()
-            .name("open".into())
-            .spawn(move || {
-                let started = std::time::Instant::now();
-                let opened = (|| -> std::io::Result<(text_buffer::Buffer, bool)> {
-                    // A host's file: read whole through its domain, and
-                    // repaired to UTF-8 where it is not.
-                    if crate::fs::domain_of(&path).is_some() {
-                        let bytes = crate::fs::read_bytes(&path)?;
-                        let text = match String::from_utf8(bytes) {
-                            Ok(s) => s.into_bytes(),
-                            Err(e) => String::from_utf8_lossy(e.as_bytes())
-                                .into_owned()
-                                .into_bytes(),
-                        };
-                        return Ok((text_buffer::Buffer::from_bytes(text), false));
-                    }
-                    let file = std::fs::File::open(&path)?;
-                    let total = file.metadata()?.len() as usize;
-                    if total == 0 {
-                        return Ok((text_buffer::Buffer::new(), false));
-                    }
-                    // SAFETY: the mapping is read-only, and the editor never
-                    // writes the file in place (a save goes beside it and is
-                    // renamed over); another program's write is the risk
-                    // `text_buffer::Block` names.
-                    let map = unsafe { memmap2::Mmap::map(&file) }?;
-                    // madvise is a unix call; Windows reads ahead on its own.
-                    #[cfg(unix)]
-                    let _ = map.advise(memmap2::Advice::Sequential);
-                    // Validated and indexed in one read, the progress
-                    // posted stride by stride.
-                    let counts = text_buffer::index_with(&map, &|done| {
-                        let _ = tx.send(IoMsg::Opening {
-                            path: path.clone(),
-                            done,
-                            total,
-                        });
-                        wake.wake();
-                    });
-                    #[cfg(unix)]
-                    let _ = map.advise(memmap2::Advice::Normal);
-                    let Some(counts) = counts else {
-                        let repaired = String::from_utf8_lossy(&map).into_owned().into_bytes();
-                        return Ok((text_buffer::Buffer::from_bytes(repaired), false));
+        crate::run_task("open", move || {
+            let started = web_time::Instant::now();
+            let opened = (|| -> std::io::Result<(text_buffer::Buffer, bool)> {
+                // A host's file — or any, on a process whose disk is
+                // not the machine's (a browser page) —: read whole
+                // through its file system, and repaired to UTF-8
+                // where it is not.
+                if kawoosh_doc::fs::remote(&path).is_some() {
+                    let bytes = crate::fs::read_bytes(&path)?;
+                    let text = match String::from_utf8(bytes) {
+                        Ok(s) => s.into_bytes(),
+                        Err(e) => String::from_utf8_lossy(e.as_bytes())
+                            .into_owned()
+                            .into_bytes(),
                     };
-                    Ok((text_buffer::Buffer::from_mapped(map, &counts), true))
-                })();
-                let msg = match opened {
-                    Ok((text, mapped)) => IoMsg::Opened {
-                        path,
-                        text,
-                        mapped,
-                        elapsed: started.elapsed(),
-                    },
-                    Err(e) => IoMsg::OpenFailed {
-                        path,
-                        error: e.to_string(),
-                    },
+                    return Ok((text_buffer::Buffer::from_bytes(text), false));
+                }
+                let file = std::fs::File::open(&path)?;
+                let total = file.metadata()?.len() as usize;
+                if total == 0 {
+                    return Ok((text_buffer::Buffer::new(), false));
+                }
+                // SAFETY: the mapping is read-only, and the editor never
+                // writes the file in place (a save goes beside it and is
+                // renamed over); another program's write is the risk
+                // `text_buffer::Block` names.
+                let map = unsafe { memmap2::Mmap::map(&file) }?;
+                // madvise is a unix call; Windows reads ahead on its own.
+                #[cfg(unix)]
+                let _ = map.advise(memmap2::Advice::Sequential);
+                // Validated and indexed in one read, the progress
+                // posted stride by stride.
+                let counts = text_buffer::index_with(&map, &|done| {
+                    let _ = tx.send(IoMsg::Opening {
+                        path: path.clone(),
+                        done,
+                        total,
+                    });
+                    wake.wake();
+                });
+                #[cfg(unix)]
+                let _ = map.advise(memmap2::Advice::Normal);
+                let Some(counts) = counts else {
+                    let repaired = String::from_utf8_lossy(&map).into_owned().into_bytes();
+                    return Ok((text_buffer::Buffer::from_bytes(repaired), false));
                 };
-                let _ = tx.send(msg);
-                wake.wake();
-            })
-            .expect("spawning the open thread");
+                Ok((text_buffer::Buffer::from_mapped(map, &counts), true))
+            })();
+            let msg = match opened {
+                Ok((text, mapped)) => IoMsg::Opened {
+                    path,
+                    text,
+                    mapped,
+                    elapsed: started.elapsed(),
+                },
+                Err(e) => IoMsg::OpenFailed {
+                    path,
+                    error: e.to_string(),
+                },
+            };
+            let _ = tx.send(msg);
+            wake.wake();
+        });
     }
 
     /// Runs `cmd` through the shell in `cwd`, streaming its output line by
@@ -781,7 +777,7 @@ impl Io {
             .name(format!("domain-{name}"))
             .spawn(move || {
                 use std::sync::atomic::Ordering;
-                let started = std::time::Instant::now();
+                let started = web_time::Instant::now();
                 let failed = |error: String| IoMsg::DomainFailed {
                     name: name.clone(),
                     error,

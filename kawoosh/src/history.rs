@@ -41,7 +41,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use kawoosh_doc::{Buffer, BufferId, Version, diff_trees};
 use kawoosh_editor::{HistoryState, Selection, Selections};

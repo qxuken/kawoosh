@@ -14,7 +14,47 @@ use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::*;
 use anyhow::{Context as _, Result};
 use kui_core::cells::{Cell, CursorShape as CellCursor, flags};
+#[cfg(target_arch = "wasm32")]
+use no_pty::{Child, CommandBuilder, MasterPty, PtySize};
+#[cfg(not(target_arch = "wasm32"))]
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+
+/// A browser has no processes (web/README.md): there a terminal is only
+/// ever `headless`, and `spawn` says so. These are the parts of
+/// portable-pty's shape the rest of this file names, so it reads the same
+/// on every target; none of them is ever made.
+#[cfg(target_arch = "wasm32")]
+mod no_pty {
+    use std::ffi::OsStr;
+
+    pub struct CommandBuilder;
+
+    impl CommandBuilder {
+        pub fn new(_program: impl AsRef<OsStr>) -> Self {
+            Self
+        }
+
+        pub fn args<I: IntoIterator<Item = S>, S: AsRef<OsStr>>(&mut self, _args: I) {}
+    }
+
+    #[allow(dead_code)]
+    pub struct PtySize {
+        pub rows: u16,
+        pub cols: u16,
+        pub pixel_width: u16,
+        pub pixel_height: u16,
+    }
+
+    pub trait MasterPty {
+        fn resize(&self, size: PtySize) -> anyhow::Result<()>;
+    }
+
+    pub trait Child {
+        fn try_wait(&mut self) -> std::io::Result<Option<()>>;
+        fn process_id(&self) -> Option<u32>;
+        fn kill(&mut self) -> std::io::Result<()>;
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TermSize {
@@ -271,6 +311,17 @@ impl Terminal {
         Self::spawn_with(builder, cwd, size, envs)
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn spawn_with(
+        _builder: CommandBuilder,
+        _cwd: Option<&std::path::Path>,
+        _size: TermSize,
+        _envs: &[(String, String)],
+    ) -> Result<(Self, Box<dyn Read + Send>)> {
+        anyhow::bail!("a browser has no processes to start")
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn spawn_with(
         mut builder: CommandBuilder,
         cwd: Option<&std::path::Path>,

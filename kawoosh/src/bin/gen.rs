@@ -108,7 +108,7 @@ fn gen_csv(size: u64, path: &PathBuf) -> std::io::Result<()> {
     let mut written = 0u64;
     let mut id = 1u64;
     let mut block = String::with_capacity(1 << 20);
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     while written < size {
         block.clear();
         while block.len() < (1 << 20) - 256 {

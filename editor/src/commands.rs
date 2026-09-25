@@ -161,7 +161,7 @@ fn set_register(
             range,
         }),
         from: ed.buffers[id].name.clone(),
-        at: std::time::Instant::now(),
+        at: web_time::Instant::now(),
         secret,
     });
     if secret {
@@ -195,7 +195,7 @@ pub(crate) fn apply_operator(
                     .iter()
                     .map(|(r, _)| r.start.min(len)..r.end.min(len))
                     .collect(),
-                at: std::time::Instant::now(),
+                at: web_time::Instant::now(),
             });
             // The caret goes to the start of what was yanked; on a
             // linewise yank it stays (`yy` on the last line: the range
@@ -893,7 +893,7 @@ fn substitute(ed: &mut Editor, ctx: &Ctx) {
         }
     };
     let template = substitute_template(rep);
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     let mut lines = 0;
     for r in ranges {

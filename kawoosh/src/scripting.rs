@@ -695,7 +695,13 @@ impl Kawoosh {
                         );
                     }
                     Err(e) => {
-                        self.ed.message = format!("spawn: {e}");
+                        // A platform that starts no processes at all (a
+                        // browser, web/README.md) is not news at every
+                        // probe: the plugin hears the exit, and says what
+                        // it makes of it.
+                        if e.kind() != std::io::ErrorKind::Unsupported {
+                            self.ed.message = format!("spawn: {e}");
+                        }
                         rt.proc_exit(token, None);
                     }
                 }

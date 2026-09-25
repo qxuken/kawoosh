@@ -63,7 +63,7 @@ pub fn ask(shell: &OsStr, patience: Duration) -> Option<OsString> {
     use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStringExt;
     use std::process::{Command, Stdio};
-    use std::time::Instant;
+    use web_time::Instant;
     let mut child = Command::new(shell)
         .args(["-l", "-i", "-c", "/usr/bin/env"])
         .stdin(Stdio::null())
@@ -133,7 +133,7 @@ mod tests {
         let long = Duration::from_secs(5);
         assert_eq!(ask(chatty.as_os_str(), long), Some("/a/bin:/b/bin".into()));
         let leaves = script("leaves", "sleep 30 & echo 'PATH=/x'");
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         assert_eq!(ask(leaves.as_os_str(), long), Some("/x".into()));
         assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
         let hangs = script("hangs", "echo 'PATH=/y'; sleep 30");

@@ -1736,6 +1736,7 @@ dependencies = [
  "tree-sitter",
  "unicode-segmentation",
  "unicode-width",
+ "web-time",
  "windows-sys 0.59.0",
 ]
 
@@ -1746,6 +1747,7 @@ dependencies = [
  "slotmap",
  "text-buffer",
  "unicode-segmentation",
+ "web-time",
 ]
 
 [[package]]
@@ -1758,6 +1760,7 @@ dependencies = [
  "regex",
  "slotmap",
  "text-buffer",
+ "web-time",
 ]
 
 [[package]]
@@ -1804,6 +1807,7 @@ dependencies = [
  "mlua",
  "serde_json",
  "slotmap",
+ "web-time",
 ]
 
 [[package]]
@@ -1814,6 +1818,7 @@ dependencies = [
  "crossbeam-channel",
  "ignore",
  "image",
+ "js-sys",
  "kawoosh-doc",
  "kawoosh-languages",
  "libc",
@@ -1824,6 +1829,10 @@ dependencies = [
  "serde_json",
  "text-buffer",
  "tree-sitter",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
 ]
 
 [[package]]
@@ -1887,6 +1896,10 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "pollster",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
  "windows-sys 0.52.0",
  "winit",
 ]
@@ -1927,6 +1940,7 @@ dependencies = [
  "bytemuck",
  "kui-core",
  "pollster",
+ "web-time",
  "wgpu",
  "windows",
 ]
@@ -3725,7 +3739,10 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
 dependencies = [
+ "js-sys",
  "libc",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

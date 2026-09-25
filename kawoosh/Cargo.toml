@@ -8,6 +8,7 @@ repository.workspace = true
 default-run = "kawoosh"
 
 [dependencies]
+web-time.workspace = true
 text-buffer.workspace = true
 kawoosh-doc.workspace = true
 kawoosh-editor.workspace = true

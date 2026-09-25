@@ -17,7 +17,7 @@
 //! pane that had it last, so opening it beside a split and moving
 //! between the two buffers moves it too.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{HistoryRow, Hunk, Mode, Spec, ViewId};
