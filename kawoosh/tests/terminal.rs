@@ -1078,7 +1078,7 @@ fn cmd_v_pastes_the_clipboard_into_a_terminal() {
     let t = app.add_headless_terminal();
     d.frame(&mut app);
     d.frame(&mut app);
-    let mut sent = |app: &mut Kawoosh| app.terms.map.get_mut(&t).unwrap().take_sent();
+    let sent = |app: &mut Kawoosh| app.terms.map.get_mut(&t).unwrap().take_sent();
     sent(&mut app);
     for chord in ["<D-v>", "<C-S-v>"] {
         d.press(&mut app, chord);
@@ -1089,7 +1089,10 @@ fn cmd_v_pastes_the_clipboard_into_a_terminal() {
         assert_eq!(sent(&mut app), b"echo hi", "{chord} pastes");
     }
     d.press(&mut app, "<D-k>");
-    assert!(sent(&mut app).is_empty(), "an unbound ⌘ chord is not a letter");
+    assert!(
+        sent(&mut app).is_empty(),
+        "an unbound ⌘ chord is not a letter"
+    );
     d.keys(&mut app, "v");
     assert_eq!(sent(&mut app), b"v", "a plain key is the shell's");
 }
