@@ -29,4 +29,6 @@ const OUTLINE: &str = r#"(class_definition name: (identifier) @name) @definition
 (function_definition name: (identifier) @name) @definition.function
 (class_definition body: (block (expression_statement (assignment left: (identifier) @name) @definition.field)))
 (module (expression_statement (assignment left: (identifier) @name) @definition.variable))
+; Variables, after every pattern that names a definition better.
+(assignment left: (identifier) @name) @definition.variable
 "#;

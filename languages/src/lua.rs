@@ -30,4 +30,7 @@ const OUTLINE: &str = r#"(function_declaration name: (_) @name) @definition.func
 (field name: (identifier) @name value: (function_definition)) @definition.function
 (field name: (identifier) @name value: (table_constructor)) @definition.table
 (chunk (variable_declaration (assignment_statement (variable_list . name: (identifier) @name) (expression_list . value: (table_constructor))) @definition.table))
+; Variables, after every pattern that names a definition better.
+(variable_declaration (assignment_statement (variable_list . name: (identifier) @name)) @definition.variable)
+(variable_declaration (variable_list . name: (identifier) @name)) @definition.variable
 "#;

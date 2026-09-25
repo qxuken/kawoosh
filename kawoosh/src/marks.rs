@@ -363,6 +363,12 @@ impl Marks {
         out
     }
 
+    /// Whether `buffer` has a live mark: its gutter makes room for the
+    /// letters.
+    pub fn any(&self, buffer: BufferId) -> bool {
+        self.live.values().any(|m| m.buffer == Some(buffer))
+    }
+
     /// A subject forgotten (`:delmarks`, the memory's `x`).
     pub fn drop(&mut self, subject: &str) {
         self.live.remove(subject);
@@ -743,12 +749,31 @@ impl Kawoosh {
             return;
         }
         // Not live: a global mark in a file not open, read and opened.
-        let key = self.mark_key(&subject);
+        if !self.open_mark(&subject) {
+            self.ed.message = format!("mark {name}: not set");
+        }
+    }
+
+    /// The mark of `subject` gone to at its column, its file opened
+    /// when it is not live — found again once it is. False when there is
+    /// no such mark.
+    pub(crate) fn open_mark(&mut self, subject: &str) -> bool {
+        if let Some(id) = self.marks.live.get(subject).and_then(|m| m.buffer) {
+            if let Some(v) = self.focused_view()
+                && self.ed.views[v].buffer != id
+            {
+                self.show_buffer(v, id);
+            }
+            self.marks.jump = Some((subject.to_string(), true));
+            self.pending_mark_jump();
+            return true;
+        }
+        let key = self.mark_key(subject);
         let rec = self
             .moment_rows(&MomentQuery {
                 kind: Some(KIND),
                 workspace: Some(&key.workspace),
-                subject: Some(&subject),
+                subject: Some(subject),
                 limit: 1,
                 ..Default::default()
             })
@@ -756,12 +781,12 @@ impl Kawoosh {
             .next()
             .and_then(|r| Record::from_meta(&r.meta));
         let Some(rec) = rec else {
-            self.ed.message = format!("mark {name}: not set");
-            return;
+            return false;
         };
-        self.marks.jump = Some((subject, exact));
+        self.marks.jump = Some((subject.to_string(), true));
         self.open_in_editor(Path::new(&rec.path), Some(rec.line + 1), None);
         self.sync_marks();
+        true
     }
 
     /// The waiting jump taken once its mark is live in a loaded buffer

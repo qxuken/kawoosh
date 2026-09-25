@@ -1720,6 +1720,7 @@ impl Kawoosh {
         let clicks = p.get("clicks").and_then(Value::as_int).unwrap_or(1);
         let tabstop = self.ed.tabstop();
         let top = self.ed.views[view].top;
+        let marked = self.marks.any(self.ed.views[view].buffer);
         let buf = self.ed.buffer_of(view);
         let ln = (top + line.max(0) as usize).min(buf.line_count() - 1);
         let range = buf.line_range(ln);
@@ -1729,7 +1730,7 @@ impl Kawoosh {
             .layout
             .rects
             .get(&pane)
-            .map(|r| (r.w - rows::gutter_w(self.cell.0, buf.line_count()) - 2.0).max(0.0))
+            .map(|r| (r.w - rows::gutter_w(self.cell.0, buf.line_count(), marked) - 2.0).max(0.0))
             .unwrap_or(0.0);
         let window = rows::Window {
             left: self.ed.views[view].left,

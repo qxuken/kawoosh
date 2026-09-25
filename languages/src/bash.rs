@@ -39,4 +39,6 @@ fn grammar() -> Result<crate::Grammar, String> {
 /// The outline: what `symbols` lists without a server (docs/design/marks.md).
 #[cfg(feature = "bash")]
 const OUTLINE: &str = r#"(function_definition name: (word) @name) @definition.function
+; Variables, after every pattern that names a definition better.
+(variable_assignment name: (variable_name) @name) @definition.variable
 "#;

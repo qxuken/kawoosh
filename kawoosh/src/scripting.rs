@@ -80,6 +80,9 @@ pub struct Scripting {
     pub next_pick: u64,
 }
 
+/// Ranges each with a colour: what [`Kawoosh::paints_of`] answers.
+pub type Paints = Vec<(std::ops::Range<usize>, Color)>;
+
 /// One plugin's paint on a buffer: its ranges and colour names, at the
 /// version they were given.
 #[derive(Clone, Debug)]
@@ -1205,14 +1208,15 @@ impl Kawoosh {
     }
 
     /// Buffer `id`'s painted ranges now, each with its colour, carried
-    /// through the edits since each set was given; a name no colour
-    /// answers to is left out.
-    pub(crate) fn paints_of(&mut self, id: BufferId) -> Vec<(std::ops::Range<usize>, Color)> {
+    /// through the edits since each set was given, and apart from them
+    /// the washes behind the text (a `bg:ALPHA:NAME` paint, the colour
+    /// at that strength); a name no colour answers to is left out.
+    pub(crate) fn paints_of(&mut self, id: BufferId) -> (Paints, Paints) {
         let Some(buf) = self.ed.buffers.get(id) else {
-            return Vec::new();
+            return Default::default();
         };
         let Some(sets) = self.scripting.paints.get_mut(&id) else {
-            return Vec::new();
+            return Default::default();
         };
         let version = buf.version();
         let journal = buf.journal();
@@ -1238,12 +1242,19 @@ impl Kawoosh {
             names.extend(p.spans.iter().cloned());
         }
         let dark = self.dark;
+        let mut washes = Vec::new();
         for (r, name) in names {
-            if let Some(c) = self.paint_color(&name, dark) {
+            if let Some(wash) = name.strip_prefix("bg:") {
+                let (alpha, name) = wash.split_once(':').unwrap_or(("0.25", wash));
+                let alpha = alpha.parse::<f32>().unwrap_or(0.25);
+                if let Some(c) = self.paint_color(name, dark) {
+                    washes.push((r, c.with_alpha(alpha)));
+                }
+            } else if let Some(c) = self.paint_color(&name, dark) {
                 out.push((r, c));
             }
         }
-        out
+        (out, washes)
     }
 
     /// The colour a paint names: a role of the palette, a version

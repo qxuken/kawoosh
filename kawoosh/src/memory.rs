@@ -76,17 +76,19 @@ pub enum View {
     Commands,
     Searches,
     Pins,
+    Marks,
     All,
 }
 
 impl View {
-    pub const ALL: [View; 7] = [
+    pub const ALL: [View; 8] = [
         View::Texts,
         View::Files,
         View::Recent,
         View::Commands,
         View::Searches,
         View::Pins,
+        View::Marks,
         View::All,
     ];
 
@@ -98,6 +100,7 @@ impl View {
             View::Commands => "commands",
             View::Searches => "searches",
             View::Pins => "pins",
+            View::Marks => "marks",
             View::All => "all",
         }
     }
@@ -663,6 +666,17 @@ impl Kawoosh {
                 let rows = self.pins();
                 self.moment_rows_of(rows)
             }
+            // The workspace's marks (docs/design/marks.md), by letter.
+            View::Marks => {
+                let mut rows = self.moment_rows(&MomentQuery {
+                    kind: Some(crate::marks::KIND),
+                    workspace: Some(self.moments.workspace()),
+                    limit: ROWS_MAX,
+                    ..Default::default()
+                });
+                rows.sort_by(|a, b| a.key.subject.cmp(&b.key.subject));
+                self.moment_rows_of(rows)
+            }
             View::All => {
                 let rows = self.moment_rows(&MomentQuery {
                     limit: ROWS_MAX,
@@ -693,6 +707,17 @@ impl Kawoosh {
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_else(|| row.key.subject.clone()),
                     "text" => row.text_head.clone().unwrap_or_default(),
+                    // A mark: its letter, `name:line` and the line's text.
+                    "mark" => crate::marks::Record::from_meta(&row.meta)
+                        .map(|r| {
+                            let name = Path::new(&r.path)
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            let letter = row.key.subject.chars().next().unwrap_or('?');
+                            format!("{letter}  {name}:{}  {}", r.line + 1, r.text.trim())
+                        })
+                        .unwrap_or_else(|| row.key.subject.clone()),
                     // `path:line` as `name:line`, the path under it.
                     "location" => {
                         let (p, l) = row
@@ -975,6 +1000,14 @@ impl Kawoosh {
                     self.layout.focus(p);
                 }
                 self.open_in_editor(&path, line, None);
+                self.follow_caret = true;
+            }
+            // A mark: gone to as `` ` `` goes, found again first.
+            "mark" => {
+                if let Some((p, _)) = self.memory_target() {
+                    self.layout.focus(p);
+                }
+                self.open_mark(&key.subject);
                 self.follow_caret = true;
             }
             // A tool: run or focused again, as `:tool NAME`; the

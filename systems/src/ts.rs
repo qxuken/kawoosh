@@ -1060,7 +1060,7 @@ mod tests {
     /// `impl` names the trait beside the type.
     #[test]
     fn a_rust_outline_is_a_tree() {
-        let src = "mod m {\n    pub struct S {\n        a: u8,\n    }\n    impl S {\n        fn new() -> Self { todo!() }\n    }\n    impl Default for S {\n        fn default() -> Self { todo!() }\n    }\n}\nfn main() {}\nconst N: u8 = 1;\n";
+        let src = "mod m {\n    pub struct S {\n        a: u8,\n    }\n    impl S {\n        fn new() -> Self { todo!() }\n    }\n    impl Default for S {\n        fn default() -> Self { todo!() }\n    }\n}\nfn main() {\n    let x = 1;\n}\nconst N: u8 = 1;\n";
         assert_eq!(
             outline_lines("rust", src),
             [
@@ -1072,6 +1072,7 @@ mod tests {
                 "1 impl S (Default)",
                 "2 method default",
                 "0 function main",
+                "1 variable x",
                 "0 constant N",
             ]
         );

@@ -50,4 +50,6 @@ const OUTLINE: &str = r#"(mod_item name: (identifier) @name) @definition.module
 (enum_variant name: (identifier) @name) @definition.variant
 (field_declaration name: (field_identifier) @name) @definition.field
 (associated_type name: (type_identifier) @name) @definition.type
+; Variables, after every pattern that names a definition better.
+(let_declaration pattern: (identifier) @name) @definition.variable
 "#;

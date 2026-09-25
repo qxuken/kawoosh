@@ -53,4 +53,7 @@ const OUTLINE: &str = r#"(function_definition declarator: (function_declarator d
 (field_declaration declarator: (function_declarator declarator: (_) @name)) @definition.method
 (class_specifier name: (_) @name body: (_)) @definition.class
 (namespace_definition name: (_) @name) @definition.namespace
+; Variables, after every pattern that names a definition better.
+(declaration declarator: (init_declarator declarator: (identifier) @name)) @definition.variable
+(declaration declarator: (identifier) @name) @definition.variable
 "#;

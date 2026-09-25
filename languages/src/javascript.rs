@@ -42,4 +42,6 @@ const OUTLINE: &str = r#"(class_declaration name: (_) @name) @definition.class
 (program (variable_declaration (variable_declarator name: (identifier) @name) @definition.variable))
 (program (export_statement declaration: (lexical_declaration (variable_declarator name: (identifier) @name) @definition.variable)))
 (field_definition property: (_) @name) @definition.field
+; Variables, after every pattern that names a definition better.
+(variable_declarator name: (identifier) @name) @definition.variable
 "#;

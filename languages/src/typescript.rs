@@ -53,4 +53,6 @@ pub(crate) const OUTLINE: &str = r#"(class_declaration name: (_) @name) @definit
 (abstract_method_signature name: (_) @name) @definition.method
 (property_signature name: (_) @name) @definition.field
 (function_signature name: (_) @name) @definition.function
+; Variables, after every pattern that names a definition better.
+(variable_declarator name: (identifier) @name) @definition.variable
 "#;

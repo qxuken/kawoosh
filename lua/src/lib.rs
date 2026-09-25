@@ -256,7 +256,9 @@ pub enum Msg {
     },
     /// `kawoosh.buf.paint(name, spans[, buffer])`: a plugin's named
     /// set of coloured ranges, `(from, to, colour)`, replacing the set's
-    /// earlier ones and carried through edits after.
+    /// earlier ones and carried through edits after; a span with `bg =
+    /// ALPHA` washes the colour behind the text instead (the colour
+    /// `bg:ALPHA:NAME` here).
     Paint {
         buffer: Option<u64>,
         name: Option<String>,
@@ -3344,6 +3346,12 @@ fn seed(
             for s in spans.sequence_values::<Table>() {
                 let s = s?;
                 let (a, b, c): (usize, usize, String) = (s.get(1)?, s.get(2)?, s.get(3)?);
+                // `bg = ALPHA`: the colour washed behind the text at that
+                // strength, not the text's own.
+                let c = match s.get::<Option<f64>>("bg")? {
+                    Some(alpha) => format!("bg:{}:{c}", alpha.clamp(0.0, 1.0)),
+                    None => c,
+                };
                 if a < b {
                     out.push((a, b, c));
                 }

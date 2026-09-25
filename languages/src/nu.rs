@@ -33,4 +33,7 @@ const OUTLINE: &str = r#"(decl_def unquoted_name: (_) @name) @definition.functio
 (decl_alias unquoted_name: (_) @name) @definition.alias
 (decl_alias quoted_name: (_) @name) @definition.alias
 (stmt_const name: (_) @name) @definition.constant
+; Variables, after every pattern that names a definition better.
+(stmt_let name: (_) @name) @definition.variable
+(stmt_mut name: (_) @name) @definition.variable
 "#;

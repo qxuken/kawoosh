@@ -288,6 +288,7 @@ impl Kawoosh {
                 selected: &selected,
                 hits: &[],
                 flashed: &[],
+                washed: &[],
                 styled: &[],
                 carets: &carets,
                 escapes: &drawn.escapes,
@@ -1143,7 +1144,7 @@ impl Kawoosh {
         // The server's inlay hints, while `lsp.inlay_hints` is on.
         let inlay = self.inlay_hints_of(buf_id);
         // What plugins painted (`kawoosh.buf.paint`): over the syntax.
-        let painted = self.paints_of(buf_id);
+        let (painted, washes) = self.paints_of(buf_id);
         // The markdown buffer drawn rendered (markdown.md): its rows are
         // as tall as they wrap to, so it scrolls by what they measured.
         let md = self.markdown_rendered(buf_id);
@@ -1215,7 +1216,11 @@ impl Kawoosh {
             .rects
             .get(&pane)
             .map_or(ui.viewport().w, |r| r.w)
-            - rows::gutter_w(self.cell.0, self.ed.buffers[buf_id].line_count())
+            - rows::gutter_w(
+                self.cell.0,
+                self.ed.buffers[buf_id].line_count(),
+                self.marks.any(buf_id),
+            )
             - 2.0)
             .max(0.0);
         if let Some(last) = md_last {
@@ -1426,7 +1431,7 @@ impl Kawoosh {
             .collect();
         let tag = Value::map([("kind", "pane".into()), ("pane", Value::Int(pane as i64))]);
         let cell_w = self.cell.0;
-        let gutter = rows::gutter_w(cell_w, buf.line_count());
+        let gutter = rows::gutter_w(cell_w, buf.line_count(), self.marks.any(buf_id));
         // The lines column's width, for the sideways follow and the
         // window a long line is sliced to: the pane's less the gutter
         // and its border (the window's, for a pane not drawn before).
@@ -1708,6 +1713,17 @@ impl Kawoosh {
                                     (a < b).then_some((a..b, c))
                                 }))
                                 .collect();
+                            let washed: Vec<(Range<usize>, kui::Color)> = washes
+                                .iter()
+                                .filter(|(r, _)| r.start < range.end && r.end > range.start)
+                                .map(|(r, c)| {
+                                    (
+                                        clip(r.start.max(range.start))..clip(r.end.min(range.end)),
+                                        *c,
+                                    )
+                                })
+                                .filter(|(r, _)| r.start < r.end)
+                                .collect();
                             let diags = buf.runs(DIAG_LAYER, range.clone());
                             let underlined: Vec<(Range<usize>, kui::Color)> = diags
                                 .iter()
@@ -1782,6 +1798,7 @@ impl Kawoosh {
                                     selected: &selected,
                                     hits: &hits,
                                     flashed: &flashed,
+                                    washed: &washed,
                                     styled: &styled,
                                     carets: &carets,
                                     escapes: &drawn.escapes,

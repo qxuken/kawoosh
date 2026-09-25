@@ -34,4 +34,8 @@ const OUTLINE: &str = r#"(package_clause (package_identifier) @name) @definition
 (source_file (const_declaration (const_spec name: (identifier) @name) @definition.constant))
 (source_file (var_declaration (var_spec name: (identifier) @name) @definition.variable))
 (source_file (var_declaration (var_spec_list (var_spec name: (identifier) @name) @definition.variable)))
+; Variables, after every pattern that names a definition better.
+(short_var_declaration left: (expression_list . (identifier) @name)) @definition.variable
+(var_spec name: (identifier) @name) @definition.variable
+(const_spec name: (identifier) @name) @definition.constant
 "#;
