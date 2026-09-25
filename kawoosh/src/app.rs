@@ -965,20 +965,25 @@ impl Kawoosh {
             }
             self.discard(id);
         }
-        // The buffer the view came from, where it was left, as vim's
-        // `:bd` goes back; else the first other one listed.
+        let next = self.back_from(id);
+        self.delete_buffer(id, next);
+        Ok(())
+    }
+
+    /// Where the focused pane goes from buffer `id`: the buffer it came
+    /// from, where it was left, as vim's `:bd` goes back; else the
+    /// first other one listed; else a new scratch.
+    pub(crate) fn back_from(&mut self, id: BufferId) -> BufferId {
         let listed = self.ed.listed_buffers();
         let back = self
             .focused_view()
             .filter(|v| self.ed.views[*v].buffer == id)
             .and_then(|v| self.alternate.get(&v).copied())
             .filter(|b| *b != id && listed.contains(b));
-        let next = match back.or_else(|| listed.into_iter().find(|b| *b != id)) {
+        match back.or_else(|| listed.into_iter().find(|b| *b != id)) {
             Some(n) => n,
             None => self.ed.add_buffer(Buffer::new("*scratch*", "")),
-        };
-        self.delete_buffer(id, next);
-        Ok(())
+        }
     }
 
     /// `p` and the system clipboard (`clipboard.system`, on by default):

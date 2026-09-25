@@ -12,7 +12,8 @@
 -- (`kawoosh.on_open`); in a
 -- listing, `-` goes up with the caret on the directory it left (above
 -- a root on Windows, to the drives), `<CR>` opens the entry under the
--- caret, `<C-l>` reads the directory again (a listing with edits is
+-- caret, `<C-c>` goes back to the buffer the listing was opened from,
+-- `<C-l>` reads the directory again (a listing with edits is
 -- asked first), `<C-p>` opens a preview of the entry beside the
 -- listing, and `ms` `mm` `ma` `me` (`mS` `mM` `mA` `mE` for the reverse)
 -- list it again by size, mtime, name or type, yazi's keys under `m`;
@@ -931,6 +932,21 @@ end, {
   doc = "open the entry under the caret",
 })
 
+-- `:dir close`, or <C-c> (oil's): the pane back to the buffer it showed
+-- before the listing — the file `-` came from — and the listing goes,
+-- as `<CR>` on a file leaves it: unless its edits hold it or another
+-- pane still shows it.
+kawoosh.command("dir close", function()
+  local h = kawoosh.buf.current()
+  kawoosh.buf.back()
+  if h and not kawoosh.buf.modified(h) then
+    kawoosh.buf.close(h, { if_hidden = true })
+  end
+end, {
+  when = { "language:dir" },
+  doc = "go back to the buffer the listing was opened from",
+})
+
 -- `<leader>y*` in a listing: the path of the entry under the caret —
 -- the listed directory's on `../` — in the form the engine's `path
 -- copy` names (`kawoosh.fs.form`), onto the clipboard and into the
@@ -1339,6 +1355,7 @@ for _, c in ipairs(COPIES) do
   kawoosh.map("n", "<leader>y" .. c[1], "dir copy " .. c[2], { when = { "language:dir" } })
 end
 kawoosh.map("n", "<C-l>", "dir refresh", { when = { "language:dir" } })
+kawoosh.map("n", "<C-c>", "dir close", { when = { "language:dir" } })
 kawoosh.map("n", "<C-p>", "dir preview", { when = { "language:dir" } })
 kawoosh.map("n", "J", "dir join", { when = { "language:dir" } })
 kawoosh.map("v", "J", "dir join", { when = { "language:dir" } })

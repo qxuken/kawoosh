@@ -377,6 +377,7 @@ objects, or any other character on both sides.
 | `<leader>Q` | quit all |
 | `-` | oil: the file's directory |
 | `_` | oil: the working directory's listing, from anywhere (`:dir .`) |
+| `<C-c>` | oil: in a listing, back to the buffer it was opened from, the listing gone unless its edits hold it (`dir close`) |
 
 The groups are the which-key ones from the neovim config: `b` buffers,
 `t` tabs, `s` search and lists, `w` the workspace, `c` code, `y` the

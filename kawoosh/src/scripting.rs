@@ -357,6 +357,12 @@ impl Kawoosh {
                     self.ed.message = why.into();
                 }
             }
+            Msg::BackBuffer => {
+                if let Some(v) = self.focused_view() {
+                    let back = self.back_from(self.ed.views[v].buffer);
+                    self.show_buffer(v, back);
+                }
+            }
             Msg::Run(line) => {
                 if let Some(v) = self.focused_view().or_else(|| self.ed.any_view()) {
                     self.ed.execute(v, &line);
