@@ -39,6 +39,21 @@ pub enum StripAlign {
     Center,
 }
 
+/// Room a strip keeps past its ends, so `zs` `ze` `zz` can put a
+/// column where the ribbon alone could not: a lone column in the
+/// middle, the first against the right edge, the last against the
+/// left. Fractions of the viewport before the first column and after
+/// the last, kept while the tab's columns stay the ones they were
+/// made for, in that order; it only grows meanwhile, so a second
+/// alignment never pulls the ribbon out from under the first.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct StripRoom {
+    pub tab: usize,
+    pub columns: Vec<u64>,
+    pub lead: f32,
+    pub trail: f32,
+}
+
 /// A strip as last drawn, as far as a reveal cares: the tab, the
 /// focus and its column, the columns' order and widths in px.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -472,6 +487,68 @@ impl Kawoosh {
             self.strip_settling = STRIP_SETTLING;
         }
         let settling = self.strip_settling > 0 && self.dragging.is_none();
+        // Where each column starts along the ribbon, and how long the
+        // columns are, before any room past the ends.
+        let lefts: Vec<f32> = widths
+            .iter()
+            .scan(0.0, |x, w| {
+                let at = *x;
+                *x += w + gap;
+                Some(at)
+            })
+            .collect();
+        let span = widths.iter().sum::<f32>() + gap * n.saturating_sub(1) as f32;
+        let always = self.ed.settings.str("layout.scroll.center") == Some("always");
+        let align = self
+            .strip_align
+            .take()
+            .or(always.then_some(StripAlign::Center));
+        // Where an alignment puts column `i`'s left edge in the
+        // viewport.
+        let edge = |a: StripAlign, i: usize| match a {
+            StripAlign::Left => 0.0,
+            StripAlign::Right => vw - widths[i],
+            StripAlign::Center => (vw - widths[i]) / 2.0,
+        };
+        // The room past each end that puts column `i` there, which the
+        // ribbon's own length may not: the offset it takes is `lead +
+        // lefts[i] - edge`, never below zero, and the ribbon must run a
+        // viewport past that.
+        let needs = |a: StripAlign, i: usize| {
+            let at = edge(a, i);
+            (at - lefts[i], lefts[i] - at + vw - span)
+        };
+        let (lead, trail) = if always {
+            // Every column centred in its turn: room for all of them,
+            // so it does not change as the focus walks.
+            (0..n).fold((0.0f32, 0.0f32), |(l, t), i| {
+                let (nl, nt) = needs(StripAlign::Center, i);
+                (l.max(nl), t.max(nt))
+            })
+        } else {
+            let ids: Vec<u64> = strip.columns.iter().map(|c| c.id).collect();
+            let mut room = self
+                .strip_room
+                .take()
+                .filter(|r| r.tab == tab && r.columns == ids)
+                .unwrap_or(StripRoom {
+                    tab,
+                    columns: ids,
+                    lead: 0.0,
+                    trail: 0.0,
+                });
+            if let (Some(a), Some(i)) = (align, fi) {
+                let (nl, nt) = needs(a, i);
+                room.lead = room.lead.max(nl / vw);
+                room.trail = room.trail.max(nt / vw);
+            }
+            let px = (room.lead * vw, room.trail * vw);
+            if room.lead > 0.0 || room.trail > 0.0 {
+                self.strip_room = Some(room);
+            }
+            px
+        };
+        let (lead, trail) = (lead.max(0.0).round(), trail.max(0.0).round());
         // Which columns are worth their rows this frame: the ones the
         // ribbon's offset puts within half a viewport of it, and the
         // focused one wherever it is. Read from the model — the widths
@@ -491,10 +568,9 @@ impl Kawoosh {
                 .scroll_geometry(key)
                 .map(|g| g.offset.x)
                 .unwrap_or_else(|| ui.scroll_offset(key).x);
-            let mut left = 0.0;
             for (i, col) in strip.columns.iter().enumerate() {
-                let (x0, x1) = (left - offset, left - offset + widths[i]);
-                left += widths[i] + gap;
+                let x0 = lead + lefts[i] - offset;
+                let x1 = x0 + widths[i];
                 if Some(i) == fi || (x1 > -vw * 0.5 && x0 < vw * 1.5) {
                     continue;
                 }
@@ -516,6 +592,14 @@ impl Kawoosh {
                 .cross_align(Align::Start)
                 .label("strip"),
             |ui| {
+                let room = |px: f32| {
+                    NodeSpec::column()
+                        .width(Sizing::Fixed(px))
+                        .height(Sizing::Grow(1.0))
+                };
+                if lead > 0.0 {
+                    ui.with_keyed("lead", room(lead), |_| {});
+                }
                 for (i, col) in strip.columns.iter().enumerate() {
                     let px = widths[i];
                     let mut wrap = NodeSpec::column().height(Sizing::Grow(1.0));
@@ -554,6 +638,9 @@ impl Kawoosh {
                         ui.with_keyed(&format!("gap{}", col.id), bar, |_| {});
                     }
                 }
+                if trail > 0.0 {
+                    ui.with_keyed("trail", room(trail), |_| {});
+                }
             },
         );
         self.strip_known.extend(strip.columns.iter().map(|c| c.id));
@@ -562,21 +649,12 @@ impl Kawoosh {
         // caught up with; a reveal of a column in view is a no-op. Not
         // under a gap drag: the offset moving under the pointer would
         // feed the width it is measuring.
-        let align = self.strip_align.take().or_else(|| {
-            (self.ed.settings.str("layout.scroll.center") == Some("always"))
-                .then_some(StripAlign::Center)
-        });
         if settling || align.is_some() {
             self.strip_settling = self.strip_settling.saturating_sub(1);
             if let (Some(i), Some(key)) = (fi, focus_key) {
                 match align {
                     Some(a) => {
-                        let left: f32 = widths[..i].iter().sum::<f32>() + gap * i as f32;
-                        let x = match a {
-                            StripAlign::Left => left,
-                            StripAlign::Right => left + widths[i] - vw,
-                            StripAlign::Center => left - (vw - widths[i]) / 2.0,
-                        };
+                        let x = lead + lefts[i] - edge(a, i);
                         ui.set_scroll(row, Vec2::new(x.max(0.0), 0.0));
                     }
                     None => ui.reveal(key),
