@@ -1065,3 +1065,31 @@ fn bang_runs_a_shell_line_with_percent_in_a_terminal() {
     assert!(seen.contains("BANG it's here.txt"), "{seen}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `⌘v` in a terminal pane pastes the clipboard, as it does in insert
+/// mode, and so does wezterm's `<C-S-v>`: both are chords the pane
+/// takes past its pty, where `⌘v` typed a bare `v`. A ⌘ chord bound to
+/// nothing reaches the shell as nothing — a pty has no use for ⌘.
+#[test]
+fn cmd_v_pastes_the_clipboard_into_a_terminal() {
+    let mut app = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let mut sent = |app: &mut Kawoosh| app.terms.map.get_mut(&t).unwrap().take_sent();
+    sent(&mut app);
+    for chord in ["<D-v>", "<C-S-v>"] {
+        d.press(&mut app, chord);
+        assert!(sent(&mut app).is_empty(), "{chord}: nothing typed");
+        d.frame(&mut app);
+        d.input(&mut app, InputEvent::Commit("echo hi".into()));
+        d.frame(&mut app);
+        assert_eq!(sent(&mut app), b"echo hi", "{chord} pastes");
+    }
+    d.press(&mut app, "<D-k>");
+    assert!(sent(&mut app).is_empty(), "an unbound ⌘ chord is not a letter");
+    d.keys(&mut app, "v");
+    assert_eq!(sent(&mut app), b"v", "a plain key is the shell's");
+}

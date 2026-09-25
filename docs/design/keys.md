@@ -64,6 +64,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>:` | the command line, from a pane without one |
 | `<C-S-x>` | copy mode (wezterm's chord): the terminal's scrollback as a buffer in the terminal's own pane, in the colours it was printed in, full modal editing, the status saying `COPY`, the caret on the top row the pane showed; `q`, `<C-S-x>` again, or `<Esc>` once nothing is left to clear gives the pane back |
 | `<S-PageUp>` `<S-PageDown>`, `<S-Home>` `<S-End>` | a terminal's view a page through its history, to the top, back to the prompt — kept from the pty unless a program has the whole screen; scrolled away, the pane shows a scrollbar (dragged, it moves the view) and what lies below, a click on which goes back |
+| `⌘v`, `<C-S-v>` | the clipboard pasted into a terminal (`paste clipboard`), bracketed when the program asked for it — insert mode's two spellings; a ⌘ chord bound to nothing reaches the shell as nothing, never as its letter |
 | `⌘↑` `⌘↓`, `<C-S-Up>` `<C-S-Down>` | the prompt above the view at its top, the next one down (a shell that marks its prompts, OSC 133 — `:terminal integration` says how) |
 | `<C-S-o>` | the last command's output to the clipboard (the same marks) |
 | `<C-S-z>` | the directory jumps (`picker dirs`, zoxide's directories): a pick types `cd 'PATH'⏎` while the shell sits at an empty prompt (the same marks, nothing typed since), and says why not otherwise; from an editor pane, `<leader>sd` |
@@ -473,7 +474,8 @@ so that nothing else takes the key meanwhile.
   is the Nth *column* instead (2026-09-22): the ribbon is what grows
   past what the eye holds, and the tab strip is a dozen characters
   wide at the top of the window.
-- **No `<D-v>` in normal mode.** `paste clipboard` types the clipboard's
+- **No `<D-v>` in normal mode**, but for a terminal pane's, which is
+  the shell's input line more than a mode. `paste clipboard` types the clipboard's
   answer as insert mode would; in normal mode `p` puts the register,
   which every yank also puts on the clipboard — and which follows the
   clipboard back (`clipboard.system`, on): what another program or a
