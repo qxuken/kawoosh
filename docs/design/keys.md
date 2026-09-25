@@ -269,6 +269,7 @@ the panes table.
 | `gsd` + char | take the pair off from around the caret |
 | `gsr` + char + char | swap the pair for another (`gsr)]`) |
 | `ga` + motion + char | line up the lines it covers on their first CHAR (`gaip=`, `Vjga:`): the text before it trimmed and padded, a space kept where any line had one; vim-easy-align's letters |
+| `<BS>` (insert mode) | the character before the caret; at a line's start the line joins the one above (vim's `backspace=eol`) — `X` stops there |
 | `<C-S-u>` (insert mode) | the whole line, into the register — `dd` without leaving insert mode; `<C-u>` still kills to the line's start |
 | `zv` | show the mask under the caret for a few seconds ([secrets.md](secrets.md)) — vim's "open the folds to view the cursor", a mask being drawn as one |
 | `.` | the last change again, on the selections as they are; a count replaces the change's count and is its count from then on |
