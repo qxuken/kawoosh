@@ -3325,6 +3325,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-S-l>", "pane right"),
         ("<C-w>t", "tab new"),
         ("<C-w>d", "dock"),
+        // The pane into the dock and back out, the shifted letter as
+        // `HJKL` carry the pane.
+        ("<C-w>D", "pane dock"),
         ("<C-w>!", "terminal"),
         ("<C-w>n", "toast"),
         ("gt", "tab next"),

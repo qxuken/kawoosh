@@ -363,6 +363,12 @@ And two after them:
 - **Types for the settings files**, for lua-language-server, as a point
   to investigate (Lua track, step 33).
 
+And one more:
+
+- **A pane moved into the dock and out of it** — `<C-w>J` and `<C-w>K`
+  over the dock's edge, `<C-w>D`, and a title bar dragged across
+  (panes track). Done the same day; no step.
+
 ## Asked 2026-09-25, evening
 
 Two lines of the todo, and an ask on top of them, decided in
@@ -734,9 +740,33 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   the dock. `<A-S-jk>` in the dock moves its own split first and the
   dock's height past it. A `dock = true` tool opens beside what the
   dock holds rather than replacing it. Not a strip: a dock is short,
-  and a ribbon in it would scroll a single row of panes. A pane is
-  still not dragged in or out of the dock by its title bar.
-  `the_dock_splits_in_itself` in `kawoosh/tests/panes.rs`.
+  and a ribbon in it would scroll a single row of panes. A pane was
+  not yet dragged in or out of the dock by its title bar — the entry
+  below. `the_dock_splits_in_itself` in `kawoosh/tests/panes.rs`.
+- **A pane into the dock and back out** — done 2026-09-25 [asked
+  2026-09-25]. `Layout::move_pane` is one move for the tab, the dock
+  and across them: a swap trades two leaves wherever they are, a side
+  takes the pane out of its home (`Tab::remove`, a column going with
+  its last pane, its width travelling) and puts it beside the target
+  in the other. A dock left empty closes; a tab left empty goes, but
+  the last pane of the last tab stays. The pane keeps the keyboard,
+  the dock opening for one going in; one coming out is no project's
+  task any more (`dock_owner`), one going in is stamped by
+  `sync_dock` with the project in front. From the keyboard, the
+  carries: `<C-w>HJKL` work in the dock as in the tab (the column
+  moves on whichever has the keys), and past the last place `J`
+  takes the pane from the tab's bottom into the dock, beside the dock
+  pane under it on the side its middle is, and `K` from the dock's
+  top out, under the tab pane above it (`Layout::carry_across`, by
+  last frame's rects). Built first as `<C-w>D` landing the pane
+  beside the focused one, as `<C-w>v` would; use said that steals a
+  split from the pane one was on, so `<C-w>D` (`pane dock`) now lands
+  as the carries do, from wherever the pane stands. By mouse, a dock
+  pane's title bar drags as a tab's does, and `drop_at` finds the
+  dock's panes too, so the drop is drawn over them. `<C-w>x` still
+  trades only within one side. `a_pane_moves_in_and_out_of_the_dock`
+  and `j_and_k_carry_a_pane_over_the_dock_edge` in
+  `kawoosh/tests/panes.rs`, and `layout.rs`'s own.
 - **The dock as a strip, an experiment** — done 2026-09-25 [asked
   2026-09-22, again 2026-09-25]; step 32. workspaces.md Decision 12:
   `layout.dock = "scroll"` converts the dock (a `Tab`) with

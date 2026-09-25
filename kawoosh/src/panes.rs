@@ -794,9 +794,8 @@ impl Kawoosh {
             Some(p) => format!("{p} · {name}"),
             None => name,
         };
-        // A tab's pane goes where its title bar is dragged; the dock is
-        // not in the tree and stays put.
-        let draggable = !self.layout.in_dock(pane);
+        // A pane goes where its title bar is dragged: in the tab, in
+        // the dock, or from one into the other (`Layout::move_pane`).
         let dragged = self.pane_drag.is_some_and(|(p, _, _)| p == pane);
         let drop = self
             .pane_drag
@@ -834,18 +833,16 @@ impl Kawoosh {
                         ("pane", Value::Int(pane as i64)),
                     ]))
                     .label(name.as_str());
-                if draggable {
-                    title = title
-                        .on_drag(Value::map([
-                            ("kind", "panedrag".into()),
-                            ("pane", Value::Int(pane as i64)),
-                        ]))
-                        .cursor(if dragged {
-                            kui::CursorShape::Grabbing
-                        } else {
-                            kui::CursorShape::Grab
-                        });
-                }
+                title = title
+                    .on_drag(Value::map([
+                        ("kind", "panedrag".into()),
+                        ("pane", Value::Int(pane as i64)),
+                    ]))
+                    .cursor(if dragged {
+                        kui::CursorShape::Grabbing
+                    } else {
+                        kui::CursorShape::Grab
+                    });
                 ui.with(title, |ui| {
                     ui.text(
                         &name,
