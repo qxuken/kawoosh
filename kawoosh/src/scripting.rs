@@ -623,7 +623,18 @@ impl Kawoosh {
                 focus,
                 below,
                 share,
-            } => self.open_lua_view_with(&name, focus, below, share),
+                height,
+            } => {
+                // A height: the share of the pane it splits that leaves
+                // that much below the new pane's title.
+                let share = height
+                    .and_then(|h| {
+                        let r = self.layout.rects.get(&self.layout.focused())?;
+                        (r.h > 0.0).then(|| ((h + self.chrome.pane_title_h) / r.h).clamp(0.05, 0.9))
+                    })
+                    .or(share);
+                self.open_lua_view_with(&name, focus, below, share)
+            }
             Msg::CloseView(name) => self.close_lua_view(&name),
             Msg::ToggleView {
                 name,
@@ -657,6 +668,15 @@ impl Kawoosh {
                     text,
                 });
             }
+            Msg::Search { token, root, query } => self.search_from_lua(token, root, query),
+            Msg::SearchCancel(token) => self.search_cancel(token),
+            Msg::Multi {
+                name,
+                parts,
+                show,
+                focus,
+                line,
+            } => self.multi_from_lua(&name, parts, show, focus, line),
             Msg::Walk { token, root } => {
                 // A host's walk is capped and kept: said once.
                 if let Some((d, _)) = kawoosh_systems::fs::domain_of(&root)
@@ -997,6 +1017,7 @@ impl Kawoosh {
                 }
             }
             Msg::Edit { .. }
+            | Msg::SearchPaint { .. }
             | Msg::SetText { .. }
             | Msg::SetCursor { .. }
             | Msg::Type(_)

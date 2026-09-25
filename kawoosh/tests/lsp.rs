@@ -1028,3 +1028,94 @@ fn a_server_installed_later_is_found_on_restart() {
     assert_eq!(app.ed.message, "no language server for cobol");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A rename across the workspace and a multibuffer (search.md): every
+/// file a multibuffer holds is its server's, shown or not, as its text
+/// stands — one edited only through the multibuffer too — so the rename lands where the word is now; and
+/// the rename is in the multibuffer at once, the message saying where
+/// the unsaved file is.
+#[test]
+fn a_rename_reaches_the_files_a_multibuffer_holds() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-multi-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let main = dir.join("src").join("main.rs");
+    let lib = dir.join("src").join("lib.rs");
+    std::fs::write(&main, "fn main() {\n    hello()\n}\n").unwrap();
+    std::fs::write(&lib, "pub fn hello() {}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&main);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.caps.contains_key("rust")),
+        "capabilities"
+    );
+    // A multibuffer of lib.rs's line, on no pane.
+    lua(
+        &mut app,
+        &format!(
+            "kawoosh.multibuffer('*m*', {{ 'lib\\n', {{ path = {:?}, from = 1, to = 1 }} }}, {{ show = false }})",
+            lib.display().to_string()
+        ),
+    );
+    d.frame(&mut app);
+    let m = app
+        .ed
+        .buffers
+        .iter()
+        .find(|(_, b)| b.name == "*m*")
+        .map(|(id, _)| id)
+        .expect("the multibuffer");
+    let lib_id = app
+        .ed
+        .buffers
+        .iter()
+        .find(|(_, b)| b.path.as_deref().is_some_and(|p| p.ends_with("lib.rs")))
+        .map(|(id, _)| id)
+        .expect("lib.rs is a buffer");
+    assert_eq!(app.ed.buffers[m].text(), "lib\npub fn hello() {}\n");
+    // Held, unedited and on no pane, it is the server's all the same:
+    // its diagnostics came back.
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.messages.get(&lib_id)
+            == Some(&vec!["boom".into()])),
+        "lib.rs sent to its server"
+    );
+    // A line put above the excerpt's, through the multibuffer: in
+    // lib.rs, which no pane shows, unsaved.
+    assert!(app.ed.apply_edits(m, &[(4..4, "// top\n".into())]));
+    assert_eq!(app.ed.buffers[lib_id].text(), "// top\npub fn hello() {}\n");
+    for _ in 0..5 {
+        d.frame(&mut app);
+    }
+
+    // The rename, from main.rs's `hello`.
+    d.keys(&mut app, "jw");
+    ex(&mut d, &mut app, "lsp rename hello_again");
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.buffers[lib_id]
+            .text()
+            .contains("hello_again")),
+        "renamed in lib.rs: {:?} ({})",
+        app.ed.buffers[lib_id].text(),
+        app.ed.message
+    );
+    assert_eq!(
+        app.ed.buffers[lib_id].text(),
+        "// top\npub fn hello_again() {}\n",
+        "where the word is now, not where it was on disk"
+    );
+    assert_eq!(
+        app.ed.buffers[m].text(),
+        "lib\n// top\npub fn hello_again() {}\n"
+    );
+    assert!(
+        app.ed.message.contains("in a multibuffer"),
+        "{}",
+        app.ed.message
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

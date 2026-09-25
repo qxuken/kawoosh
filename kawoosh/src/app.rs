@@ -64,6 +64,8 @@ pub struct Kawoosh {
     /// The project `init.lua` records and the question up (`trust.rs`).
     pub trust: crate::trust::Trust,
     pub compile: Compile,
+    /// The searches running and the excerpts on screen (`multis.rs`).
+    pub multis: crate::multis::Multis,
     /// The buffer `]q` walks (`compile.rs`).
     pub locations: crate::compile::Locations,
     /// Toasts, the corner log and the full log (`notify.rs`).
@@ -302,6 +304,7 @@ impl Kawoosh {
             disk: crate::disk::DiskWatch::new(wake.clone(), beat.clone()),
             trust: Default::default(),
             compile: Compile::default(),
+            multis: Default::default(),
             locations: Default::default(),
             notes: Notifications::new(wake.clone()),
             messages_shown: 0,
@@ -602,7 +605,12 @@ impl Kawoosh {
         self.inspector
             .trees
             .retain(|id, _| self.ed.buffers.contains_key(*id));
-        let shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
+        // What a pane shows, and the files whose excerpts a multibuffer
+        // drew last frame.
+        let mut shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
+        shown.extend(self.multis.visible.iter().copied());
+        shown.sort();
+        shown.dedup();
         for id in shown {
             let Some(b) = self.ed.buffers.get(id) else {
                 continue;
@@ -697,6 +705,14 @@ impl Kawoosh {
                 IoMsg::Image { path, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     self.image_decoded(path, result);
+                }
+                IoMsg::Searched {
+                    token,
+                    root,
+                    result,
+                } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    self.searched(token, root, result);
                 }
                 IoMsg::Walked { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
@@ -1425,6 +1441,8 @@ impl Kawoosh {
         // The alternates of views that have gone with their panes.
         let views = &self.ed.views;
         self.alternate.retain(|v, _| views.contains_key(*v));
+        // Shown in a pane, a multibuffer's source is a buffer like any other.
+        self.ed.borrowed.remove(&id);
         let v = &mut self.ed.views[view];
         if v.buffer == id {
             return;
@@ -2160,6 +2178,9 @@ impl kui::App for Kawoosh {
         self.sync_disk(ui.env().focused);
         self.sync_marks();
         self.sync_moments(false);
+        // A file's edit from the io thread (it landed, a reload, a
+        // server's) in the multibuffers showing it.
+        self.sync_multis();
         self.perf.cur.io = ms(t);
         let t = Instant::now();
         self.sync_syntax();
@@ -2167,11 +2188,14 @@ impl kui::App for Kawoosh {
         let t = Instant::now();
         self.sync_lsp();
         self.perf.cur.lsp = ms(t);
+        // Filled again by the panes this frame draws.
+        self.multis.visible.clear();
         self.sync_flash();
         self.sync_notifications();
         let t = Instant::now();
         self.fire_changes();
         self.drain_lua();
+        self.sync_multis();
         if let Some(rt) = self.scripting.rt.clone() {
             rt.set_workspace(self.moments.workspace());
             rt.publish(&self.ed, self.focused_view());

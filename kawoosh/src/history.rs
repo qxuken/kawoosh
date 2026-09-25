@@ -245,7 +245,11 @@ pub fn fingerprint(text: &text_buffer::Buffer) -> Base {
 /// Whether a buffer is the kind a row is kept of: the user's text —
 /// not a listing, a log, or a file still on its way in.
 fn draftable(buf: &Buffer) -> bool {
-    buf.hook.is_none() && !buf.read_only && buf.loading.is_none() && !buf.private
+    buf.hook.is_none()
+        && !buf.read_only
+        && buf.loading.is_none()
+        && !buf.private
+        && &*buf.language != kawoosh_editor::multi::LANGUAGE
 }
 
 fn sels_data(sels: &Selections) -> (Vec<(usize, usize)>, usize) {

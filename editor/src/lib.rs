@@ -9,6 +9,7 @@ pub mod disk;
 pub mod keymap;
 pub mod masks;
 pub mod motions;
+pub mod multi;
 pub mod repeat;
 pub mod search;
 pub mod selection;
@@ -27,6 +28,7 @@ pub use command::{
 pub use kawoosh_doc::Hunk;
 use kawoosh_doc::{Buffer, BufferId, Version};
 pub use keymap::{Binding, KeyStroke, Keymap, Lookup, Mode};
+pub use multi::{Excerpt, Multi, MultiLine, Part};
 pub use repeat::Step;
 pub use selection::{Selection, Selections};
 pub use settings::{Decl, Layer, Setting, SettingKind, Settings};
@@ -809,6 +811,14 @@ pub struct Editor {
     /// Whether a command made an undo node since the step began
     /// (`settle_checkpoint`): what makes the steps so far a change.
     edited: bool,
+    /// The multibuffers, by their buffer ([`multi`]).
+    pub multis: HashMap<BufferId, Multi>,
+    /// Buffers opened only for a multibuffer: not listed while nothing
+    /// but multibuffers shows them (search.md Decision 5).
+    pub borrowed: std::collections::HashSet<BufferId>,
+    /// Borrowed buffers no multibuffer holds any more, for the shell to
+    /// close ([`Editor::take_released`]).
+    released: Vec<BufferId>,
 }
 
 impl Default for Editor {
@@ -850,6 +860,9 @@ impl Editor {
             settings_applied: 0,
             repeat: Default::default(),
             edited: false,
+            multis: HashMap::new(),
+            borrowed: Default::default(),
+            released: Vec::new(),
         };
         commands::install(&mut ed);
         commands::default_keymap(&mut ed.keymap);
@@ -867,6 +880,7 @@ impl Editor {
     pub fn remove_buffer(&mut self, id: BufferId) {
         self.buffers.remove(id);
         self.history.remove(&id);
+        self.forget_multi(id);
     }
 
     pub fn add_view(&mut self, buffer: BufferId) -> ViewId {
@@ -939,7 +953,7 @@ impl Editor {
     pub fn listed_buffers(&self) -> Vec<BufferId> {
         self.buffers
             .keys()
-            .filter(|id| !self.is_field_buffer(*id))
+            .filter(|id| !self.is_field_buffer(*id) && !self.borrowed.contains(id))
             .collect()
     }
 
@@ -1937,6 +1951,14 @@ impl Editor {
     /// was taken — a child of the text's node, whatever was made from
     /// there before staying as a branch — and is dropped if not.
     fn settle_checkpoint(&mut self, id: BufferId) {
+        self.settle_own(id);
+        // A multibuffer's change settles with the sources it reached.
+        if self.multis.contains_key(&id) {
+            self.settle_multi(id);
+        }
+    }
+
+    fn settle_own(&mut self, id: BufferId) {
         let Some(buf) = self.buffers.get(id) else {
             return;
         };
@@ -1981,6 +2003,12 @@ impl Editor {
             return false;
         };
         if buf.read_only || edits.is_empty() {
+            return false;
+        }
+        let refs: Vec<(Range<usize>, &str)> =
+            edits.iter().map(|(r, t)| (r.clone(), t.as_str())).collect();
+        if let Some(why) = self.multi_refuses(id, &refs) {
+            self.message = why;
             return false;
         }
         let view = self
@@ -2033,12 +2061,16 @@ impl Editor {
             self.settle_checkpoint(id);
         }
         self.edited = true;
+        self.sync_multis();
         true
     }
 
     /// Back to the parent state; false at the root.
     pub fn undo(&mut self, view: ViewId) -> bool {
         let id = self.views[view].buffer;
+        if self.is_multi(id) {
+            return self.multi_undo(view, true);
+        }
         self.settle_checkpoint(id);
         let h = self.history.entry(id).or_default();
         let Some(target) = h.nodes.get(h.current).and_then(|n| n.parent) else {
@@ -2050,6 +2082,9 @@ impl Editor {
     /// Forward to the child last stepped to or made; false at a leaf.
     pub fn redo(&mut self, view: ViewId) -> bool {
         let id = self.views[view].buffer;
+        if self.is_multi(id) {
+            return self.multi_undo(view, false);
+        }
         self.settle_checkpoint(id);
         let h = self.history.entry(id).or_default();
         let Some(target) = h.nodes.get(h.current).and_then(|n| n.child) else {
@@ -2063,6 +2098,9 @@ impl Editor {
     /// reach a branch `u` cannot. False at the ends.
     pub fn undo_by_time(&mut self, view: ViewId, older: bool) -> bool {
         let id = self.views[view].buffer;
+        if self.is_multi(id) {
+            return self.multi_undo(view, older);
+        }
         self.settle_checkpoint(id);
         let h = self.history.entry(id).or_default();
         let Some(seq) = h.nodes.get(h.current).map(|n| n.seq) else {
@@ -2082,6 +2120,20 @@ impl Editor {
     /// the buffer is clean again.
     fn go_to(&mut self, view: ViewId, target: usize) -> bool {
         let id = self.views[view].buffer;
+        let done = self.go_to_in(id, Some(view), target);
+        self.sync_multis();
+        done
+    }
+
+    /// [`Editor::go_to`] on buffer `id`, the selections of `view` — or of
+    /// the first view on it, or none — saved and put back.
+    fn go_to_in(&mut self, id: BufferId, view: Option<ViewId>, target: usize) -> bool {
+        let view = view.or_else(|| {
+            self.views
+                .iter()
+                .find(|(_, v)| v.buffer == id)
+                .map(|(k, _)| k)
+        });
         let h = self.history.entry(id).or_default();
         if target == h.current || target >= h.nodes.len() {
             return false;
@@ -2100,7 +2152,9 @@ impl Editor {
         let down = ancestors(h, target);
         let meet = up.iter().find(|n| down.contains(n)).copied();
         let from = h.current;
-        h.nodes[from].sels = self.views[view].sels.clone();
+        if let Some(view) = view {
+            h.nodes[from].sels = self.views[view].sels.clone();
+        }
         for w in up
             .iter()
             .take_while(|n| Some(**n) != meet)
@@ -2121,10 +2175,14 @@ impl Editor {
         let buf = &mut self.buffers[id];
         buf.restore(root);
         let len = buf.len();
-        let v = &mut self.views[view];
-        v.sels = sels;
-        v.sels
-            .map(|s| Selection::new(s.anchor.min(len), s.head.min(len)));
+        if let Some(view) = view {
+            let v = &mut self.views[view];
+            v.sels = sels;
+        }
+        for v in self.views.values_mut().filter(|v| v.buffer == id) {
+            v.sels
+                .map(|s| Selection::new(s.anchor.min(len), s.head.min(len)));
+        }
         true
     }
 
@@ -2205,6 +2263,10 @@ impl Editor {
     /// own state.
     pub fn history_seek(&mut self, view: ViewId, index: usize) -> bool {
         let id = self.views[view].buffer;
+        if self.is_multi(id) {
+            self.message = "a multibuffer's history is its files'".into();
+            return false;
+        }
         self.settle_checkpoint(id);
         let moved = self.go_to(view, index);
         if self.mode(view) == Mode::Insert {
@@ -2822,6 +2884,17 @@ impl Editor {
             return;
         }
         edits.sort_by(|a, b| b.1.start.cmp(&a.1.start).then(b.1.end.cmp(&a.1.end)));
+        if self.is_multi(id) {
+            let ascending: Vec<(std::ops::Range<usize>, &str)> = edits
+                .iter()
+                .rev()
+                .map(|(_, r, t)| (r.clone(), t.as_str()))
+                .collect();
+            if let Some(why) = self.multi_refuses(id, &ascending) {
+                self.message = why;
+                return;
+            }
+        }
         // The text and its layers take every edit at once (descending,
         // so each keeps its coordinates); the selections follow below,
         // edit by edit, as the descriptors say.
@@ -2885,6 +2958,7 @@ impl Editor {
                     .map(|s| Selection::new(s.anchor.min(len), s.head.min(len)));
             }
         }
+        self.sync_multis();
     }
 
     pub fn insert_text(&mut self, view: ViewId, text: &str) {

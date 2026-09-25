@@ -732,6 +732,19 @@ impl Kawoosh {
             .also_sync
             .retain(|id| self.ed.buffers.contains_key(*id));
         let mut shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
+        // Every file a multibuffer holds, on screen or not: its excerpts
+        // have their diagnostics, and a rename sees what they are.
+        shown.extend(self.ed.multis.values().flat_map(|m| m.sources()));
+        // An unsaved text no pane shows — a `:%s` through a multibuffer
+        // reaches files never on screen — is the server's too: its next
+        // rename is worked out against the text, not the disk.
+        shown.extend(
+            self.ed
+                .buffers
+                .iter()
+                .filter(|(_, b)| b.modified && b.path.is_some())
+                .map(|(id, _)| id),
+        );
         shown.extend(self.lsp.sent.keys().copied());
         shown.extend(self.lsp.also_sync.iter().copied());
         shown.sort();
@@ -743,7 +756,10 @@ impl Kawoosh {
             let Some(path) = b.path.clone() else { continue };
             // A private buffer's text never leaves the process
             // (docs/design/secrets.md Decision 1).
+            // A file still opening has no text to tell yet: it is sent
+            // once it lands.
             if b.private
+                || b.loading.is_some()
                 || !self.lsp_serves(&b.language)
                 || self.lsp.sent.get(&id) == Some(&b.version())
             {
@@ -980,7 +996,10 @@ impl Kawoosh {
     /// to reach.
     pub(crate) fn apply_workspace_edit(&mut self, title: &str, edit: WorkspaceEdit) {
         let shown: HashSet<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
-        let (mut files, mut edits, mut hidden) = (0, 0, 0);
+        // What a multibuffer holds: seen there when on screen, and its
+        // `:w` writes them.
+        let held: HashSet<BufferId> = self.ed.multis.values().flat_map(|m| m.sources()).collect();
+        let (mut files, mut edits, mut hidden, mut in_multi) = (0, 0, 0, 0);
         for (path, list) in edit {
             let Some(id) = self.buffer_for(&path) else {
                 continue;
@@ -995,6 +1014,9 @@ impl Kawoosh {
             edits += resolved.len();
             if !shown.contains(&id) {
                 hidden += 1;
+                if held.contains(&id) {
+                    in_multi += 1;
+                }
             }
         }
         self.ed.message = if files == 0 {
@@ -1005,7 +1027,12 @@ impl Kawoosh {
                 plural(edits),
                 plural(files)
             );
-            if hidden > 0 {
+            if hidden > 0 && in_multi > 0 {
+                m.push_str(&format!(
+                    " ({hidden} not shown, unsaved; {in_multi} in a multibuffer, whose :w writes {})",
+                    if in_multi == 1 { "it" } else { "them" }
+                ));
+            } else if hidden > 0 {
                 m.push_str(&format!(" ({hidden} not shown, unsaved)"));
             }
             m

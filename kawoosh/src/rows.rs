@@ -705,6 +705,8 @@ pub struct LineDraw<'a> {
     pub marks: &'a [(Range<usize>, Mark)],
     /// How the row is laid out, when not the plain one-line row.
     pub form: Option<&'a RowForm>,
+    /// A background across the whole row: a multibuffer's file header.
+    pub band: Option<Color>,
 }
 
 /// What a rendered row adds to a span's look, over the syntax's.
@@ -901,13 +903,20 @@ pub fn table_edge(ui: &mut Ui<'_>, columns: usize, rule: Color) {
 /// the caret's own line keeping its number either way. The empty line
 /// after a final newline is a place for the caret, not a line of the
 /// file: it is marked `~`, not numbered, as helix does.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Numbers {
     pub relative: bool,
     /// The caret's line.
     pub current: usize,
     /// The line after a final newline, when the buffer ends in one.
     pub phantom: Option<usize>,
+    /// A multibuffer's lines from the first drawn: each excerpt line's
+    /// number in its file (from 0), none on a header's
+    /// (docs/design/search.md Decision 9).
+    pub files: Option<(usize, Vec<Option<usize>>)>,
+    /// Of those lines, the ones that head a file: banded, the gutter
+    /// with them.
+    pub headers: Vec<bool>,
 }
 
 impl Numbers {
@@ -923,11 +932,18 @@ impl Numbers {
             relative: settings.bool("relativenumber") == Some(true),
             current,
             phantom: (last > 0 && buf.line_range(last).is_empty()).then_some(last),
+            files: None,
+            headers: Vec::new(),
         }
     }
 
     /// What the gutter shows beside line `ln` (0-based).
     pub fn label(&self, ln: usize) -> String {
+        if let Some((top, lines)) = &self.files
+            && let Some(file) = ln.checked_sub(*top).and_then(|i| lines.get(i))
+        {
+            return file.map(|n| (n + 1).to_string()).unwrap_or_default();
+        }
         if Some(ln) == self.phantom {
             "~".into()
         } else if self.relative && ln != self.current {
@@ -941,6 +957,10 @@ impl Numbers {
 /// The gutter cell for line `ln` (0-based), decoration rather than text:
 /// its number, and a mark's letter at the cell's left, in the column
 /// [`gutter_w`] adds for a buffer with marks (docs/design/marks.md).
+/// The gutter's rows' own padding either side: a row's, not the
+/// column's, so a multibuffer header's band fills the gutter.
+const GUTTER_ROW_PAD: f32 = 12.0;
+
 pub fn gutter_row(
     ui: &mut Ui<'_>,
     face: Face,
@@ -954,10 +974,20 @@ pub fn gutter_row(
     } else {
         pal.faint
     };
+    let header = numbers.files.as_ref().is_some_and(|(top, _)| {
+        ln.checked_sub(*top)
+            .and_then(|i| numbers.headers.get(i))
+            .copied()
+            .unwrap_or(false)
+    });
+    let mut spec = NodeSpec::row();
+    if header {
+        spec = spec.bg(pal.strip);
+    }
     ui.with(
-        NodeSpec::row()
-            .width(Sizing::Grow(1.0))
+        spec.width(Sizing::Grow(1.0))
             .height(Sizing::Fixed(face.line_height))
+            .pad_xy(GUTTER_ROW_PAD, 0.0)
             .main_align(Align::End)
             .cross_align(Align::Center),
         |ui| {
@@ -966,7 +996,7 @@ pub fn gutter_row(
                     NodeSpec::row()
                         .height(Sizing::Fixed(face.line_height))
                         .cross_align(Align::Center)
-                        .float(FloatConfig::parent().offset(0.0, 0.0)),
+                        .float(FloatConfig::parent().offset(GUTTER_ROW_PAD, 0.0)),
                     |ui| ui.text(&c.to_string(), mono(face, pal).color(pal.accent)),
                 );
             }
@@ -1197,6 +1227,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             .cross_align(Align::Center)
             .role(Role::Line),
     };
+    if let Some(bg) = line.band {
+        row = row.bg(bg);
+    }
     if let Some(c) = line.access.0 {
         row = row.caret(c);
         if line.carets.iter().any(|(_, k)| *k != Caret::Bar) {

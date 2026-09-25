@@ -124,6 +124,16 @@ function kawoosh.on_open(fn)
   kawoosh._openers[#kawoosh._openers + 1] = fn
 end
 
+-- kawoosh.on_memory_open(kind, fn): how a moment of a plugin's own
+-- kind (`<plugin>.<kind>`, memory.md Decision 9) is opened from the
+-- memory pane — `fn(row)`, `row` its `kind`, `subject` and `meta` (a
+-- table), the keyboard on the editor pane the memory pane came from.
+-- A kind with no opener says it has nothing to open.
+kawoosh._memory_openers = {}
+function kawoosh.on_memory_open(kind, fn)
+  kawoosh._memory_openers[kind] = fn
+end
+
 -- kawoosh.on_settings(fn): `fn()` whenever the settings changed — a
 -- file reloaded on save, `:set`, `kawoosh.opt` — once a frame, with
 -- `kawoosh.opt` reading the new tree; and once at registration, so a
@@ -376,7 +386,9 @@ end
 -- kawoosh.view_open(name[, { focus = false, below = true, share = 0.5 }])
 -- puts a Lua view in a split — beside, or below with `below`, taking
 -- `share` of the room — or focuses its pane, resized to `share` when
--- one is given; `focus = false` leaves the keyboard where it is. kawoosh.view_close(name) closes that pane
+-- one is given; `focus = false` leaves the keyboard where it is;
+-- `height = px`, in place of `share`, makes a new pane that tall below
+-- its title — a bar as tall as its rows from the first frame. kawoosh.view_close(name) closes that pane
 -- and hands the keyboard back to the pane it came from;
 -- kawoosh.view_toggle(name[, opts]) does one or the other.
 --
@@ -627,6 +639,16 @@ function kawoosh._open(path)
     if ok and taken then return true end
   end
   return false
+end
+
+-- Called from Rust for a plugin's moment opened from the memory pane:
+-- true when its kind has an opener.
+function kawoosh._memory_open(kind, subject, meta)
+  local fn = kawoosh._memory_openers[kind]
+  if not fn then return false end
+  local ok, err = pcall(fn, { kind = kind, subject = subject, meta = meta or {} })
+  if not ok then kawoosh.echo("memory `" .. kind .. "`: " .. tostring(err)) end
+  return true
 end
 
 -- Called from Rust for each scratch buffer a session restored.

@@ -24,6 +24,15 @@ use slotmap::{Key, KeyData};
 
 const BOOT: &str = include_str!("../lua/boot.lua");
 
+/// A part of a multibuffer as Lua gives it: the caller's text, or a
+/// file's lines (from 0, end exclusive), the file opened as `:e` would
+/// when no buffer has it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MultiPart {
+    Gap(String),
+    Lines(PathBuf, std::ops::Range<usize>),
+}
+
 /// What Lua asked for. Editor-level messages are applied inside the
 /// command that ran the script; the rest reach the shell.
 #[derive(Clone, Debug, PartialEq)]
@@ -106,6 +115,37 @@ pub enum Msg {
     Walk {
         token: u64,
         root: PathBuf,
+    },
+    /// `kawoosh.search(query, fn)`: the project searched on a thread of
+    /// its own (docs/design/search.md Decision 6), the answer to
+    /// `Runtime::searched` under `token` (`IoMsg::Searched`).
+    Search {
+        token: u64,
+        root: PathBuf,
+        query: kawoosh_systems::search::Query,
+    },
+    /// `kawoosh.search_cancel(token)`: that search stopped where it is.
+    SearchCancel(u64),
+    /// `kawoosh.multibuffer(name, parts[, opts])`: the multibuffer named
+    /// `name` made of `parts` — made, or refilled when it is open — and
+    /// shown in the focused pane unless `show = false`, the caret on
+    /// `line` (from 1).
+    Multi {
+        name: String,
+        /// `None`: shown as it is, not refilled.
+        parts: Option<Vec<MultiPart>>,
+        show: bool,
+        focus: bool,
+        line: Option<usize>,
+    },
+    /// `kawoosh.search_paint{ pattern =, regex =, word =, case = }`: the
+    /// editor's search set to what a project search looked for — what
+    /// `/` would have left: its matches painted, `n` walking them.
+    SearchPaint {
+        pattern: String,
+        regex: bool,
+        word: bool,
+        ignore_case: bool,
     },
     /// `kawoosh.highlight(text, { language = | path = }, fn)`: the
     /// text's syntax runs from the ts thread, the language given or
@@ -282,6 +322,9 @@ pub enum Msg {
         focus: bool,
         below: bool,
         share: Option<f32>,
+        /// The new pane's height, logical px of content below its title
+        /// — worked out against the pane it splits, in place of `share`.
+        height: Option<f32>,
     },
     /// `kawoosh.view_close(name)`: the pane showing the view goes.
     CloseView(String),
@@ -411,6 +454,7 @@ impl Msg {
             self,
             Msg::Edit { .. }
                 | Msg::SetText { .. }
+                | Msg::SearchPaint { .. }
                 | Msg::SetCursor { .. }
                 | Msg::Type(_)
                 | Msg::Edits { .. }
@@ -460,6 +504,9 @@ pub struct BufSnap {
     /// A field's one-line buffer — the prompt's, a query's — which
     /// `kawoosh.buf.list` leaves out, as `:ls` does.
     pub field: bool,
+    /// Opened only for a multibuffer, and not listed (search.md
+    /// Decision 5).
+    pub borrowed: bool,
     /// The focused tab's under `buffers.scope = "tab"` (every buffer
     /// is, under `all`): `kawoosh.buf.list { tab = true }` keeps these.
     pub in_tab: bool,
@@ -1088,6 +1135,7 @@ impl Runtime {
                     read_only: b.read_only,
                     private: b.private,
                     field: ed.is_field_buffer(id),
+                    borrowed: ed.borrowed.contains(&id),
                     in_tab: ed.tab_buffers.as_ref().is_none_or(|s| s.contains(&id)),
                 },
             );
@@ -1319,6 +1367,30 @@ impl Runtime {
         }
     }
 
+    /// A moment of a plugin's own kind opened from the memory pane
+    /// (`kawoosh.on_memory_open`): true when its kind has an opener.
+    pub fn memory_open_hook(&self, kind: &str, subject: &str, meta: &str) -> bool {
+        let Ok(f) = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Function>("_memory_open"))
+        else {
+            return false;
+        };
+        let meta: serde_json::Value = serde_json::from_str(meta).unwrap_or_default();
+        let meta = json_to_lua(&self.lua, &meta).unwrap_or(LV::Nil);
+        match f.call::<bool>((kind, subject, meta)) {
+            Ok(taken) => taken,
+            Err(e) => {
+                self.queue
+                    .borrow_mut()
+                    .push(Msg::Echo(format!("memory {kind}: {e}")));
+                false
+            }
+        }
+    }
+
     /// Tells the plugins a scratch buffer came back with a session,
     /// empty, by name and handle (`kawoosh.on_restore`).
     pub fn restore_hook(&self, name: &str, handle: u64) {
@@ -1522,6 +1594,54 @@ impl Runtime {
         self.answer(token, result, "lsp.symbols");
     }
 
+    /// A search for `kawoosh.search(query, fn)`: the callback called
+    /// with what it found — `files`, each `{ path =, rel =, lines = {
+    /// { line =, text =, cols = { {from, to}, … } }, … } }` (lines from
+    /// 1, columns bytes from 1, `to` the last) — and `matches`,
+    /// `searched`, `limited`, `cancelled`, `took` (ms); or nil and why.
+    pub fn searched(
+        &self,
+        token: u64,
+        root: &std::path::Path,
+        result: Result<kawoosh_systems::search::Found, String>,
+    ) {
+        let lua = &self.lua;
+        let result = result.and_then(|found| {
+            let table = || -> mlua::Result<Table> {
+                let files = lua.create_table()?;
+                for (i, f) in found.files.iter().enumerate() {
+                    let ft = lua.create_table()?;
+                    ft.set("path", root.join(&f.path).to_string_lossy().into_owned())?;
+                    ft.set("rel", f.path.to_string_lossy().into_owned())?;
+                    let lines = lua.create_table()?;
+                    for (j, l) in f.lines.iter().enumerate() {
+                        let lt = lua.create_table()?;
+                        lt.set("line", l.line + 1)?;
+                        lt.set("text", l.text.as_str())?;
+                        let cols = lua.create_table()?;
+                        for (k, r) in l.ranges.iter().enumerate() {
+                            cols.set(k + 1, lua.create_sequence_from([r.start + 1, r.end])?)?;
+                        }
+                        lt.set("cols", cols)?;
+                        lines.set(j + 1, lt)?;
+                    }
+                    ft.set("lines", lines)?;
+                    files.set(i + 1, ft)?;
+                }
+                let t = lua.create_table()?;
+                t.set("files", files)?;
+                t.set("matches", found.matches)?;
+                t.set("searched", found.searched)?;
+                t.set("limited", found.limited)?;
+                t.set("cancelled", found.cancelled)?;
+                t.set("took", found.took.as_secs_f64() * 1000.0)?;
+                Ok(t)
+            };
+            table().map_err(|e| e.to_string())
+        });
+        self.answer(token, result, "search");
+    }
+
     pub fn walked(&self, token: u64, result: Result<Vec<String>, String>) {
         let result = result.and_then(|paths| {
             self.lua
@@ -1613,9 +1733,15 @@ impl Runtime {
                     text,
                 } => {
                     let id = id_of(buffer);
-                    if let Some(b) = ed.buffers.get_mut(id) {
+                    if let Some(b) = ed.buffers.get(id) {
                         let len = b.len();
                         let r = range.start.min(len)..range.end.min(len);
+                        // A multibuffer's gaps are not text to edit.
+                        if let Some(why) = ed.multi_refuses(id, &[(r.clone(), text.as_str())]) {
+                            ed.message = why;
+                            continue;
+                        }
+                        let b = &mut ed.buffers[id];
                         b.replace(r.clone(), &text);
                         let delta = text.len() as i64 - r.len() as i64;
                         for v in ed.views.values_mut() {
@@ -1638,6 +1764,10 @@ impl Runtime {
                 }
                 Msg::SetText { buffer, text } => {
                     let id = id_of(buffer);
+                    if ed.is_multi(id) {
+                        ed.message = "a multibuffer's text is its files'".into();
+                        continue;
+                    }
                     if let Some(b) = ed.buffers.get_mut(id) {
                         b.replace(0..b.len(), &text);
                         for v in ed.views.values_mut() {
@@ -1674,6 +1804,17 @@ impl Runtime {
                     }
                 }
                 Msg::Type(text) => ed.insert_text(view, &text),
+                Msg::SearchPaint {
+                    pattern,
+                    regex,
+                    word,
+                    ignore_case,
+                } => {
+                    let p = kawoosh_editor::search::pattern_of(&pattern, regex, word);
+                    if !pattern.is_empty() && ed.set_search(&p, ignore_case).is_ok() {
+                        ed.search_hl = true;
+                    }
+                }
                 Msg::Edits { buffer, edits } => {
                     ed.apply_edits(id_of(buffer), &edits);
                 }
@@ -1732,6 +1873,8 @@ impl Runtime {
                 other => rest.push(other),
             }
         }
+        // A plugin's edit of a file a multibuffer shows is in it at once.
+        ed.sync_multis();
         rest
     }
 }
@@ -2292,12 +2435,16 @@ fn seed(
     k.set(
         "view_open",
         lua.create_function(move |_, (name, opts): (String, Option<Table>)| {
+            let height = opts
+                .as_ref()
+                .and_then(|t| t.get::<Option<f32>>("height").ok().flatten());
             let (focus, below, share) = view_opts(opts);
             qq.borrow_mut().push(Msg::OpenView {
                 name,
                 focus,
                 below,
                 share,
+                height,
             });
             Ok(())
         })?,
@@ -2639,7 +2786,7 @@ fn seed(
             let mut hs: Vec<u64> = p
                 .buffers
                 .iter()
-                .filter(|(_, b)| !b.field && (!tab || b.in_tab))
+                .filter(|(_, b)| !b.field && !b.borrowed && (!tab || b.in_tab))
                 .map(|(h, _)| *h)
                 .collect();
             hs.sort();
@@ -3731,6 +3878,183 @@ fn seed(
             });
             Ok(token)
         })?,
+    )?;
+    // `kawoosh.search(query, fn)` (docs/design/search.md Decision 6):
+    // `query` is `{ pattern =, regex =, case = "smart" | "sensitive" |
+    // "insensitive", word =, include =, exclude = (a field's comma list,
+    // or a list of globs), ignored =, files = { paths }, root =,
+    // max_files =, max_matches = }`; the token to cancel it by, or nil
+    // and why the pattern or a glob does not parse — nothing runs then.
+    let qq = q(queue);
+    let jj = jobs.clone();
+    k.set(
+        "search",
+        lua.create_function(move |lua, (t, cb): (Table, mlua::Function)| {
+            use kawoosh_systems::search as ks;
+            let list = |key: &str| -> mlua::Result<(Vec<String>, Vec<String>)> {
+                Ok(match t.get::<LV>(key)? {
+                    LV::String(s) if key == "include" => ks::split_include(&s.to_str()?),
+                    LV::String(s) => (ks::globs(&s.to_str()?), Vec::new()),
+                    LV::Table(list) => (
+                        list.sequence_values::<String>()
+                            .collect::<mlua::Result<_>>()?,
+                        Vec::new(),
+                    ),
+                    _ => (Vec::new(), Vec::new()),
+                })
+            };
+            let (include, mut exclude) = list("include")?;
+            exclude.extend(list("exclude")?.0);
+            let case = match t.get::<Option<String>>("case")?.as_deref() {
+                Some("sensitive") => ks::Case::Sensitive,
+                Some("insensitive") => ks::Case::Insensitive,
+                _ => ks::Case::Smart,
+            };
+            let defaults = ks::Query::default();
+            let query = ks::Query {
+                pattern: t.get::<Option<String>>("pattern")?.unwrap_or_default(),
+                regex: t.get::<Option<bool>>("regex")?.unwrap_or(false),
+                case,
+                word: t.get::<Option<bool>>("word")?.unwrap_or(false),
+                include,
+                exclude,
+                ignored: t.get::<Option<bool>>("ignored")?.unwrap_or(false),
+                files: t
+                    .get::<Option<Vec<String>>>("files")?
+                    .map(|v| v.iter().map(|p| expand(p)).collect()),
+                max_files: t
+                    .get::<Option<usize>>("max_files")?
+                    .unwrap_or(defaults.max_files),
+                max_matches: t
+                    .get::<Option<usize>>("max_matches")?
+                    .unwrap_or(defaults.max_matches),
+            };
+            if let Err(why) = ks::Compiled::new(query.clone()) {
+                return Ok((LV::Nil, LV::String(lua.create_string(why)?)));
+            }
+            let root = match t.get::<Option<String>>("root")? {
+                Some(r) => expand(&r),
+                None => kawoosh_systems::fs::cwd(),
+            };
+            let token = {
+                let mut j = jj.borrow_mut();
+                let token = j.token();
+                j.waiting.insert(token, lua.create_registry_value(cb)?);
+                token
+            };
+            qq.borrow_mut().push(Msg::Search { token, root, query });
+            Ok((LV::Integer(token as i64), LV::Nil))
+        })?,
+    )?;
+    // `kawoosh.search_paint{ pattern =, regex =, word =, case = }`.
+    let qq = q(queue);
+    k.set(
+        "search_paint",
+        lua.create_function(move |_, t: Table| {
+            let pattern: String = t.get::<Option<String>>("pattern")?.unwrap_or_default();
+            let ignore_case = match t.get::<Option<String>>("case")?.as_deref() {
+                Some("sensitive") => false,
+                Some("insensitive") => true,
+                _ => !pattern.chars().any(char::is_uppercase),
+            };
+            qq.borrow_mut().push(Msg::SearchPaint {
+                regex: t.get::<Option<bool>>("regex")?.unwrap_or(false),
+                word: t.get::<Option<bool>>("word")?.unwrap_or(false),
+                pattern,
+                ignore_case,
+            });
+            Ok(())
+        })?,
+    )?;
+    // `kawoosh.search_wants({ include =, exclude = }, rels)`: for each
+    // path (relative to the root), whether the globs want it — as a
+    // search would read them; or nil and why a glob does not parse.
+    k.set(
+        "search_wants",
+        lua.create_function(|lua, (t, rels): (Table, Vec<String>)| {
+            use kawoosh_systems::search as ks;
+            let list = |key: &str| -> mlua::Result<(Vec<String>, Vec<String>)> {
+                Ok(match t.get::<LV>(key)? {
+                    LV::String(s) if key == "include" => ks::split_include(&s.to_str()?),
+                    LV::String(s) => (ks::globs(&s.to_str()?), Vec::new()),
+                    LV::Table(list) => (
+                        list.sequence_values::<String>()
+                            .collect::<mlua::Result<_>>()?,
+                        Vec::new(),
+                    ),
+                    _ => (Vec::new(), Vec::new()),
+                })
+            };
+            let (include, mut exclude) = list("include")?;
+            exclude.extend(list("exclude")?.0);
+            let paths: Vec<PathBuf> = rels.iter().map(PathBuf::from).collect();
+            match ks::wanted(&include, &exclude, &paths) {
+                Ok(v) => Ok((LV::Table(lua.create_sequence_from(v)?), LV::Nil)),
+                Err(why) => Ok((LV::Nil, LV::String(lua.create_string(why)?))),
+            }
+        })?,
+    )?;
+    let qq = q(queue);
+    let jj = jobs.clone();
+    k.set(
+        "search_cancel",
+        lua.create_function(move |lua, token: u64| {
+            // Its callback is not called: a newer search took its place.
+            if let Some(key) = jj.borrow_mut().waiting.remove(&token) {
+                let _ = lua.remove_registry_value(key);
+            }
+            qq.borrow_mut().push(Msg::SearchCancel(token));
+            Ok(())
+        })?,
+    )?;
+    // `kawoosh.multibuffer(name, parts[, { show =, line = }])`
+    // (docs/design/search.md Decisions 1–5): `parts` in order, each the
+    // caller's text (a string: a header, a separator — ending in a
+    // newline) or a file's lines, `{ path =, from =, to = }` from 1,
+    // `to` the last. The multibuffer named `name` is refilled when
+    // open, else made; shown unless `show = false` — where it is on
+    // show, else in the focused editor pane, else the first on screen —
+    // the keyboard going to it unless `focus = false`. `parts` nil shows
+    // the one open as it is.
+    let qq = q(queue);
+    k.set(
+        "multibuffer",
+        lua.create_function(
+            move |_, (name, parts, opts): (String, Option<Table>, Option<Table>)| {
+                let mut out = Vec::new();
+                let keep = parts.is_none();
+                for p in parts
+                    .into_iter()
+                    .flat_map(|t| t.sequence_values::<LV>().collect::<Vec<_>>())
+                {
+                    match p? {
+                        LV::String(s) => out.push(MultiPart::Gap(s.to_str()?.to_string())),
+                        LV::Table(t) => {
+                            let path: String = t.get("path")?;
+                            let from: usize = t.get::<Option<usize>>("from")?.unwrap_or(1).max(1);
+                            let to: usize = t.get::<Option<usize>>("to")?.unwrap_or(from).max(from);
+                            out.push(MultiPart::Lines(expand(&path), from - 1..to));
+                        }
+                        _ => {
+                            return Err(mlua::Error::runtime(
+                                "multibuffer: a part is a string or { path =, from =, to = }",
+                            ));
+                        }
+                    }
+                }
+                let get = |k: &str| opts.as_ref().and_then(|t| t.get::<LV>(k).ok());
+                qq.borrow_mut().push(Msg::Multi {
+                    name,
+                    parts: (!keep).then_some(out),
+                    show: !matches!(get("show"), Some(LV::Boolean(false))),
+                    focus: !matches!(get("focus"), Some(LV::Boolean(false))),
+                    line: opts
+                        .as_ref()
+                        .and_then(|t| t.get::<Option<usize>>("line").ok().flatten()),
+                });
+                Ok(())
+            },
+        )?,
     )?;
     fs.set(
         "stat",
