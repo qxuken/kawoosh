@@ -2,6 +2,7 @@
 -- `]q` walks what failed; `run` and the tools are in `<leader>tt`.
 -- The sweep a round ends on is `scripts/verify.nu`: `:tool verify` in
 -- a terminal, or `:compile nu scripts/verify.nu` for its locations.
+---@type kawoosh.Settings
 return {
   compile = { command = "cargo build --workspace --all-targets" },
   run = { command = "cargo run -p kawoosh" },

@@ -376,6 +376,7 @@ impl Kawoosh {
             jobs_inline: false,
         };
         app.install_commands();
+        crate::settings::declare_shell_settings(&mut app.ed.settings);
         app
     }
 

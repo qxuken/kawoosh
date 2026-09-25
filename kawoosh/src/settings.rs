@@ -28,6 +28,18 @@
 //! What the tree says about the look — `font.*`, `theme.*`,
 //! `tokens.colors` — reaches kui at the next frame (`look.rs`).
 //!
+//! **Declared settings** (roadmap step 34). Every key a settings file
+//! may set is declared: by the engine's defaults, by
+//! [`declare_shell_settings`] for what the shell reads with no default
+//! and the tables whose keys are the user's, and by a plugin with
+//! `kawoosh.setting(path, { type =, doc = })` — an `init.lua` that
+//! reads a key of its own declares it the same way. A file's key no one
+//! declared is a warning toast, once (`note_undeclared`), since a
+//! misspelling is otherwise silence and the language server cannot
+//! see it; the declarations are also the `kawoosh.Settings` classes
+//! written beside `kawoosh.lua` (`types::settings_meta`), which a file's
+//! `---@type kawoosh.Settings` above its `return` completes against.
+//!
 //! **The Settings tab** of the devtools (`:settings`): the layers from
 //! the one that wins down, each source's leaves as `path = value`, a
 //! file's name a click from opening, and the effective tree with where
@@ -84,7 +96,8 @@ pub const SETTINGS_FILE: &str = "settings.lua";
 pub const TAB: &str = "settings";
 /// What a settings file opened from the tab starts as — a buffer at the
 /// path, unsaved: `:w` is the user's.
-pub const SETTINGS_STUB: &str = "-- kawoosh settings: a table, read on save.\nreturn {\n}\n";
+pub const SETTINGS_STUB: &str =
+    "-- kawoosh settings: a table, read on save.\n---@type kawoosh.Settings\nreturn {\n}\n";
 
 /// The user's config directory: `$XDG_CONFIG_HOME/kawoosh`, else
 /// `~/.config/kawoosh`.
@@ -155,6 +168,9 @@ pub struct Config {
     /// config dir's, the project's for a `.kawoosh/init.lua`; none
     /// between, when what a command sets is the session's.
     pub loading: Option<Layer>,
+    /// The undeclared keys already named, by file (roadmap step 34), so
+    /// a toast is said once and not every reload.
+    pub undeclared_said: std::collections::HashSet<(String, String)>,
 }
 
 impl Config {
@@ -167,7 +183,57 @@ impl Config {
             watch: Watcher::spawn(wake, beat),
             reloaded: None,
             loading: None,
+            undeclared_said: Default::default(),
         }
+    }
+}
+
+/// The settings the shell reads that have no default of their own, and
+/// the tables whose keys are the user's (roadmap step 34): declared so
+/// a settings file may set them, and so the language server's types
+/// know them. A plugin declares its own with `kawoosh.setting`.
+pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
+    use kawoosh_editor::SettingKind as K;
+    for (path, kind, doc) in [
+        ("compile.command", K::Str, "what a bare `:compile` runs"),
+        (
+            "theme",
+            K::Open,
+            "a palette and kui's theme roles by name (look.rs)",
+        ),
+        (
+            "theme.accent",
+            K::Str,
+            "the accent: a colour, or `system` for the OS's",
+        ),
+        (
+            "tokens.colors",
+            K::Open,
+            "a syntax token's colour, one or `{ light, dark }`",
+        ),
+        (
+            "lsp",
+            K::Open,
+            "a language's server: `cmd`, `args`, `roots`, `settings`",
+        ),
+        (
+            "domains",
+            K::Open,
+            "hosts by name: `{ ssh = \"box\" }` (domains.md)",
+        ),
+        ("ssh.command", K::Str, "the ssh binary a domain runs"),
+        (
+            "ssh.poll_secs",
+            K::Int,
+            "how often a host's watched files are polled",
+        ),
+        (
+            "secrets.masks",
+            K::Open,
+            "mask rules by name: `files`, `pattern`, `from`, `to`",
+        ),
+    ] {
+        s.declare(path, kind, doc);
     }
 }
 
@@ -252,6 +318,33 @@ impl Kawoosh {
         paths.extend(self.config.user.clone());
         paths.extend(self.config.init.clone());
         self.config.watch.watch(paths);
+    }
+
+    /// Names, once each, a settings file's key no one declared (roadmap
+    /// step 34) — a misspelling reads as silence otherwise, and the
+    /// language server cannot see it. Only once the plugins have
+    /// declared theirs.
+    pub(crate) fn note_undeclared(&mut self) {
+        if self.scripting.rt.is_none() {
+            return;
+        }
+        for (source, path) in self.ed.settings.undeclared() {
+            // A file's keys, not what `init.lua` set with `kawoosh.opt`.
+            if !source.ends_with(".lua") {
+                continue;
+            }
+            if !self
+                .config
+                .undeclared_said
+                .insert((source.clone(), path.clone()))
+            {
+                continue;
+            }
+            let file = self.short_name(Path::new(&source));
+            self.notify_with(
+                Note::new(Level::Warn, format!("no setting `{path}` ({file})")).source("settings"),
+            );
+        }
     }
 
     /// Reloads what the watch saw saved since the last frame.
@@ -709,8 +802,9 @@ impl Kawoosh {
                     // An edit, not a reload: the buffer is modified, so
                     // `:q` asks and `:w` writes.
                     self.ed.buffer_of_mut(v).replace(0..0, SETTINGS_STUB);
-                    // The caret inside the table, where the first key goes.
-                    let off = self.ed.buffer_of(v).line_start(2);
+                    // The caret inside the table, where the first key goes:
+                    // the `}` line, under `return {`.
+                    let off = self.ed.buffer_of(v).line_start(3);
                     self.ed.views[v].sels =
                         kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(off));
                     self.ed.message =

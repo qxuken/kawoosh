@@ -950,3 +950,66 @@ fn a_project_init_lua_runs_once_trusted() {
     assert_eq!(d2.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&t.dir).ok();
 }
+
+/// Declared settings (roadmap step 34): a settings file's key nobody
+/// declared is named once in a toast — a misspelling is silence
+/// otherwise — and a key the engine's defaults, the shell, a plugin
+/// (`kawoosh.setting`) or an open table declares is not; the types the
+/// language server reads carry every declared setting, with its type
+/// and doc.
+#[test]
+fn an_undeclared_key_is_named_once_and_the_types_know_the_rest() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-settings-decl-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join(PROJECT_DIR)).unwrap();
+    std::fs::write(
+        dir.join(PROJECT_DIR).join(SETTINGS_FILE),
+        r##"---@type kawoosh.Settings
+return {
+  tabstop = 2,
+  compile = { comand = "make" },
+  run = { command = "cargo run" },
+  dirs = { backend = "memory" },
+  tools = { anything = "goes" },
+  theme = { name = "rose-pine", surface = "#101010" },
+}"##,
+    )
+    .unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d);
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    let named = |app: &Kawoosh| -> Vec<String> {
+        app.notes
+            .shown
+            .iter()
+            .filter(|n| n.text.starts_with("no setting"))
+            .map(|n| n.text.clone())
+            .collect()
+    };
+    let rel = |p: &str| p.replace('/', std::path::MAIN_SEPARATOR_STR);
+    assert_eq!(
+        named(&app),
+        vec![format!(
+            "no setting `compile.comand` ({})",
+            rel(".kawoosh/settings.lua")
+        )]
+    );
+    // Again, a reload later: not said twice.
+    app.reload_project_settings();
+    d.frame(&mut app);
+    assert_eq!(named(&app).len(), 1);
+    // The types: the defaults' by value, the declarations' with docs.
+    let meta = kawoosh::types::settings_meta(&app.ed.settings.schema());
+    for line in [
+        "---@class kawoosh.Settings",
+        "---@field tabstop? integer",
+        "---@class kawoosh.Settings.compile",
+        "---@field command? string what a bare `:compile` runs",
+        "---@field backend? \"auto\"|\"zoxide\"|\"memory\" where the directory jumps come from",
+        "---@class kawoosh.Settings.theme\n---@field [string] any",
+    ] {
+        assert!(meta.contains(line), "{line:?} not in:\n{meta}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -1968,13 +1968,26 @@ then breadth.
     hold.~~ Answered 2026-09-25 by trying it (the Lua track's entry):
     the types work for completion and wrong types, not for a misspelt
     key, which kawoosh must warn about itself — step 34.
-34. **Declared settings**: every setting declared once — path, type,
+34. ~~**Declared settings**: every setting declared once — path, type,
     default, doc — from Rust (the default layer) and from Lua
     (`kawoosh.setting`); the `kawoosh.Settings` classes written with
     the other types; `---@type kawoosh.Settings` in the stub a new
     settings file starts from; and a settings file's key no one
     declared named in a toast, since the language server cannot. From
-    step 33's answer.
+    step 33's answer.~~ Landed 2026-09-25: `Settings::declare` /
+    `is_declared` / `undeclared` / `schema` in the engine, a
+    `SettingKind` of `Bool` `Int` `Float` `Str` `OneOf` `List` `Open`;
+    the shell's own declarations (`compile.command`, `theme`,
+    `tokens.colors`, `lsp`, `domains`, `ssh.*`, `secrets.masks`) and the
+    plugins' through `kawoosh.setting` (`tools`, `run.command`,
+    `dir.*`, `dirs.*`, `pairs.rules`, `timed.clock`,
+    `secrets.vault_*`); a toast naming a file's undeclared key once,
+    after the plugins have declared theirs; `settings.lua` written with
+    the other types, and the stub's `---@type`. Checked end to end
+    with lua-language-server over this repository's own
+    `.kawoosh/settings.lua`: clean as it is, `compile.command = 42`
+    flagged. A default given through `kawoosh.setting` was not taken:
+    a plugin keeps its fallback where it reads.
 35. **An image for kawoosh**: drawn by the user, then carried by both
     bundles and the window. Last because it waits on a drawing, not on
     code.

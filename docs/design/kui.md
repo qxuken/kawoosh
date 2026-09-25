@@ -424,7 +424,12 @@ data — `tokens.colors` in the tree, `kawoosh.colors {}` from code over
 it, and `theme.appearance` / `theme.accent` / a role by name under
 `theme` in place of a `set_theme` call (`look.rs`: `ThemeSource::Derived`
 while nothing pins, a pinned `Theme` once a base or a role is named).
-The face is the same tree's `font.*`.* *Amended 2026-09-25 (roadmap
+The face is the same tree's `font.*`.* *Amended 2026-09-25 (roadmap step 34): a setting is declared — by the
+engine's defaults, the shell, or a plugin's `kawoosh.setting(path, {
+type, doc })` — so a file's key no one declared is named in a toast,
+and the declarations are the `kawoosh.Settings` classes the Lua server
+checks a file's `---@type kawoosh.Settings` against (types and
+completion; not an unknown key, which is why the toast).* *Amended 2026-09-25 (roadmap
 step 28): the default is no longer the OS's. `theme.name` names a
 palette of kawoosh's own (`themes.rs`, Rosé Pine) that pins the roles,
 the token table's defaults and the terminal's sixteen together; the

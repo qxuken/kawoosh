@@ -74,6 +74,9 @@
 -- corner line for the count, an error toast when some failed, every
 -- failure in `:messages`.
 
+kawoosh.setting("dir.hidden", { type = "boolean", doc = "whether listings show dot files (`g.`)" })
+kawoosh.setting("dir.vcs_enabled", { type = "boolean", doc = "whether listings are painted by version control" })
+
 local fs = kawoosh.fs
 -- `state[name]` is what the listing buffer `name` holds: its directory,
 -- the width of its longest name, and `ids` — for each tracked line of

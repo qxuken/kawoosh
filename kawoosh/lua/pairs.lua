@@ -39,11 +39,13 @@ M.languages = { rust = { ["'"] = false } }
 
 local WHEN = { "pairs", "!prompt", "!field" }
 
+kawoosh.setting("pairs.rules", { type = "table", doc = "pairs by language, `default` for all: `{ [\"<\"] = \">\" }`, `false` to drop one" })
+
 -- The pairs for `language`: the defaults, the settings' `default`, then
 -- the language's — built-in, then the settings'.
 function M.rules(language)
   local set, order = {}, {}
-  local function apply(t)
+local function apply(t)
     if type(t) ~= "table" then return end
     for _, p in ipairs(t) do
       if type(p) == "table" and type(p[1]) == "string" and type(p[2]) == "string" then

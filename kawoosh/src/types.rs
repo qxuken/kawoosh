@@ -37,6 +37,7 @@ impl Kawoosh {
         let files = [
             ("kawoosh.lua", rt.luals_meta(crate::plugins::BUNDLED)),
             ("kui.lua", kui_lua::luals_meta()),
+            ("settings.lua", settings_meta(&self.ed.settings.schema())),
         ];
         if let Err(e) = std::fs::create_dir_all(dir) {
             log::warn!("lua types: {}: {e}", dir.display());
@@ -64,6 +65,86 @@ impl Kawoosh {
             self.add_lsp_server(def);
         }
     }
+}
+
+/// The settings as `---@class kawoosh.Settings` (roadmap step 34): a
+/// class per table, a field per setting with its type and doc — what a
+/// settings file's `---@type kawoosh.Settings` above its `return` is
+/// completed and checked against. An open table (`tools`, `theme`)
+/// takes any key besides the ones declared. The server catches a wrong
+/// type, not an unknown key; kawoosh names those itself.
+pub fn settings_meta(schema: &std::collections::BTreeMap<String, kawoosh_editor::Decl>) -> String {
+    use kawoosh_editor::SettingKind as K;
+    use std::collections::BTreeMap;
+    use std::fmt::Write;
+    #[derive(Default)]
+    struct Node {
+        decl: Option<kawoosh_editor::Decl>,
+        kids: BTreeMap<String, Node>,
+    }
+    let mut root = Node::default();
+    for (path, d) in schema {
+        let mut n = &mut root;
+        for seg in path.split('.') {
+            n = n.kids.entry(seg.to_string()).or_default();
+        }
+        n.decl = Some(d.clone());
+    }
+    fn ty(k: &K) -> String {
+        match k {
+            K::Bool => "boolean".into(),
+            K::Int => "integer".into(),
+            K::Float => "number".into(),
+            K::Str => "string".into(),
+            K::OneOf(words) => words
+                .iter()
+                .map(|w| format!("\"{w}\""))
+                .collect::<Vec<_>>()
+                .join("|"),
+            K::List => "any[]".into(),
+            K::Open => "table<string, any>".into(),
+        }
+    }
+    fn field_name(seg: &str) -> String {
+        let ident = seg
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if ident {
+            seg.to_string()
+        } else {
+            format!("[\"{seg}\"]")
+        }
+    }
+    fn class(out: &mut String, name: &str, n: &Node) {
+        let _ = writeln!(out, "---@class {name}");
+        if n.decl.as_ref().is_some_and(|d| d.kind == K::Open) {
+            let _ = writeln!(out, "---@field [string] any");
+        }
+        let mut later = Vec::new();
+        for (seg, kid) in &n.kids {
+            let doc = kid.decl.as_ref().map(|d| d.doc.as_str()).unwrap_or("");
+            let t = if kid.kids.is_empty() {
+                kid.decl.as_ref().map_or("any".into(), |d| ty(&d.kind))
+            } else {
+                let sub = format!("{name}.{seg}");
+                later.push((sub.clone(), kid));
+                sub
+            };
+            let sep = if doc.is_empty() { "" } else { " " };
+            let _ = writeln!(out, "---@field {}? {t}{sep}{doc}", field_name(seg));
+        }
+        out.push('\n');
+        for (sub, kid) in later {
+            class(out, &sub, kid);
+        }
+    }
+    let mut out = String::from(
+        "---@meta\n-- kawoosh's settings, written at launch (roadmap step 34):\n-- `---@type kawoosh.Settings` above a settings file's `return`.\n\n",
+    );
+    class(&mut out, "kawoosh.Settings", &root);
+    out
 }
 
 /// `settings` with `dir` on `Lua.workspace.library` and the runtime the

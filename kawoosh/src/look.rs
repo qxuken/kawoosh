@@ -205,6 +205,7 @@ impl Kawoosh {
         self.look.appearance = sys;
         self.look.accent = system.accent;
         self.sync_layout_settings();
+        self.note_undeclared();
         let mut notes = Vec::new();
         self.sync_font(ui, &mut notes);
         self.look.named = self.theme_named(&mut notes);

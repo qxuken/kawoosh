@@ -30,6 +30,9 @@ local DEFAULTS = {
   shell = { cmd = os.getenv("SHELL") or "sh", cwd = "root", restore = true },
 }
 
+kawoosh.setting("tools", { type = "table", doc = "launch targets by name: a command, or `{ cmd, cwd, dock, restore, key }`" })
+kawoosh.setting("run.command", { type = "string", doc = "what the `run` tool runs" })
+
 -- A tool's letter in the launcher (`key = "g"`), by name.
 kawoosh.tool_keys = kawoosh.tool_keys or {}
 
