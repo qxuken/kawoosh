@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["text-buffer", "doc", "editor", "term", "systems", "lua", "kawoosh", "languages"]
+members = ["text-buffer", "doc", "editor", "term", "systems", "lua", "kawoosh", "languages", "web"]
+# Patched in below, not a member: lua-src as published, plus the browser.
+exclude = ["web/lua-src", "web/alacritty_terminal"]
 
 [workspace.package]
 publish = false
@@ -80,6 +82,13 @@ criterion = "0.8.2"
 
 bitflags = { version = "2.13.1", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "deref", "deref_mut"] }
+
+# The browser build (web/README.md): lua-src with a wasm32-unknown-unknown
+# arm, which the published one does not have, and alacritty_terminal
+# with its pty left out there, which pulls in `polling`.
+[patch.crates-io]
+lua-src = { path = "./web/lua-src" }
+alacritty_terminal = { path = "./web/alacritty_terminal" }
 
 [profile.release]
 # Symbols, one codegen unit and fat LTO: 48 MB down to 39 MB. Half of

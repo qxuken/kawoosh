@@ -1,0 +1,24 @@
+# lua-src 551.0.2 (github.com/mlua-rs/lua-src-rs), Lua 5.5 alone, with one
+# arm added to `try_build`: wasm32-unknown-unknown, the browser build
+# (web/README.md). Patched in for every target by the workspace manifest;
+# the arm is the only difference, so a native build is lua-src's own.
+# Goes back to the registry's once lua-src builds for that target itself.
+[package]
+edition = "2024"
+name = "lua-src"
+version = "551.0.2"
+authors = ["Aleksandr Orlenko <zxteam@protonmail.com>"]
+description = "Sources of Lua 5.5 and logic to build them."
+license = "MIT"
+repository = "https://github.com/mlua-rs/lua-src-rs"
+publish = false
+
+[features]
+ucid = []
+
+[lib]
+name = "lua_src"
+path = "src/lib.rs"
+
+[dependencies]
+cc = "1.2"

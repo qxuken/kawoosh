@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kawoosh</title>
+<script type="importmap">
+{ "imports": { "wasi_snapshot_preview1": "./wasi.js" } }
+</script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #16161d; }
+  /* kui appends its window's canvas to the body; the page sizes it. */
+  canvas { display: block; width: 100vw !important; height: 100vh !important; outline: none; }
+  #status { position: fixed; inset: 0; display: grid; place-items: center;
+    font: 14px ui-monospace, monospace; color: #8a8aa0; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="status">loading kawoosh…</div>
+<script type="module">
+// Deep enough to see past the panic machinery to the frame that panicked.
+Error.stackTraceLimit = 64;
+import init, { start } from "./pkg/kawoosh_web.js";
+import { bind } from "wasi_snapshot_preview1";
+
+const status = document.getElementById("status");
+try {
+  const wasm = await init();
+  bind(wasm.memory);
+  await start();
+  status.remove();
+  document.querySelector("canvas")?.focus();
+} catch (e) {
+  status.textContent = `kawoosh did not start: ${e}`;
+  throw e;
+}
+</script>
+</body>
+</html>

@@ -157,8 +157,6 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.26.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bda177466b9524d59f1b12f0dd30b68696788e9992a7e959021c4a0ed96fcf59"
 dependencies = [
  "base64",
  "bitflags 2.13.1",
@@ -786,6 +784,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
+]
+
+[[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1849,6 +1857,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kawoosh-web"
+version = "0.0.1"
+dependencies = [
+ "console_error_panic_hook",
+ "js-sys",
+ "kawoosh",
+ "kawoosh-doc",
+ "kawoosh-systems",
+ "kui",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2051,8 +2075,6 @@ dependencies = [
 [[package]]
 name = "lua-src"
 version = "551.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d400ffef0e3d4d29287092bdc5a276d0bf468b2c69709d5bab0d469312d9f947"
 dependencies = [
  "cc",
 ]

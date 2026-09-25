@@ -1,0 +1,27 @@
+[package]
+name = "kawoosh-web"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+# kawoosh in a browser (web/README.md): a module for wasm32-unknown-unknown,
+# built by web/build.nu. `rlib` too, so `cargo check --workspace` checks it
+# on the desktop.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kawoosh = { path = "../kawoosh" }
+kawoosh-doc.workspace = true
+kawoosh-systems.workspace = true
+kui.workspace = true
+web-time.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Response"] }
+console_error_panic_hook = "0.1"
