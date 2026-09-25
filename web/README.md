@@ -33,7 +33,9 @@ A page starts no processes, opens no sockets and has no disk of its own:
 
     nu web/build.nu --serve
 
-then open <http://localhost:8788>. `--release` for an optimized module.
+then open <http://localhost:8788>. `--release` for an optimized module:
+33 MB, 6.7 MB gzipped — most of it the grammars' parse tables, as on
+the desktop — beside four faces of Iosevka at 7 MB each.
 It needs rustup's `wasm32-unknown-unknown` target, the `wasm-bindgen` CLI
 at the version `Cargo.lock` pins, an LLVM with the WebAssembly backend,
 and wasi-libc's sysroot — `brew install llvm wasi-libc` on macOS. The

@@ -18,7 +18,7 @@
 
 # Build the module and the page into target/web.
 def main [
-  --release   # optimized (slow to build; the debug module is ~40 MB)
+  --release   # optimized: 33 MB, 6.7 MB gzipped (the debug module: 37 MB)
   --serve     # then serve target/web on http://localhost:8788
 ] {
   let root = $env.FILE_PWD | path dirname
@@ -29,7 +29,8 @@ def main [
       error make { msg: $"missing ($need) — see the head of web/build.nu" }
     }
   }
-  let profile = if $release { "release" } else { "debug" }
+  # web-release: the release profile less its `strip` (Cargo.toml says why).
+  let profile = if $release { "web-release" } else { "debug" }
   let out = $root | path join target web
 
   # Every C file of the module — Lua, tree-sitter, the grammars — is
@@ -51,7 +52,7 @@ def main [
     build -p kawoosh-web --target wasm32-unknown-unknown
     --config $'($ts).wasm-headers="($root)/web/wasm-include"'
     --config $'($ts).wasm-src="($root)/web/wasm-src"'
-  ] | append (if $release { [--release] } else { [] })
+  ] | append (if $release { [--profile web-release] } else { [] })
   with-env $env_c { ^cargo ...$args }
 
   mkdir ($out | path join fonts)

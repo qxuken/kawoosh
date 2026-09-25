@@ -97,6 +97,16 @@ strip = true
 lto = "fat"
 codegen-units = 1
 
+# The browser build's optimized profile (`web/build.nu --release`):
+# release's, but the module keeps its `target_features` section, which
+# `strip = true` takes and wasm-bindgen reads — without it the module's
+# reference types go unseen, and the exception handling Lua's errors
+# compile to cannot be bound ("externref table required for catch
+# wrappers"). wasm-bindgen drops the debug info itself.
+[profile.web-release]
+inherits = "release"
+strip = "debuginfo"
+
 [profile.dev]
 opt-level = 1
 
