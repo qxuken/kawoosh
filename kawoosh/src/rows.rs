@@ -31,10 +31,12 @@ const GUTTER_PAD: f32 = 12.0;
 /// `cell_w`: its numbers' digits — four at least, so a short file's
 /// gutter does not jump as it grows — and the padding. 56 px at the
 /// 13 px default; a bigger font widens it, where a fixed 56 cut `58` to
-/// `5` (2026-09-23).
-pub fn gutter_w(cell_w: f32, lines: usize) -> f32 {
+/// `5` (2026-09-23). A buffer with marks gets a cell more, the column
+/// their letters are drawn in (docs/design/marks.md).
+pub fn gutter_w(cell_w: f32, lines: usize, marked: bool) -> f32 {
     let digits = lines.max(1).ilog10() as usize + 1;
-    (2.0 * GUTTER_PAD + cell_w * digits.max(4) as f32).ceil()
+    let cells = digits.max(4) + usize::from(marked);
+    (2.0 * GUTTER_PAD + cell_w * cells as f32).ceil()
 }
 /// How many escapes a line may have and still draw them dim; see
 /// `emit_line`.
@@ -660,6 +662,10 @@ pub struct LineDraw<'a> {
     pub hits: &'a [Range<usize>],
     /// What the last yank took, washed for a moment after (`Flash`).
     pub flashed: &'a [Range<usize>],
+    /// Backgrounds a plugin washed (`kawoosh.buf.paint` with `bg`), the
+    /// last over a span its colour: under a selection, a search hit and
+    /// the flash.
+    pub washed: &'a [(Range<usize>, Color)],
     /// Syntax runs: `(range, color)`.
     pub styled: &'a [(Range<usize>, Color)],
     /// Carets: the drawn bytes under each and its shape — a bar's range
@@ -932,8 +938,17 @@ impl Numbers {
     }
 }
 
-/// The gutter cell for line `ln` (0-based), decoration rather than text.
-pub fn gutter_row(ui: &mut Ui<'_>, face: Face, pal: &Pal, numbers: &Numbers, ln: usize) {
+/// The gutter cell for line `ln` (0-based), decoration rather than text:
+/// its number, and a mark's letter at the cell's left, in the column
+/// [`gutter_w`] adds for a buffer with marks (docs/design/marks.md).
+pub fn gutter_row(
+    ui: &mut Ui<'_>,
+    face: Face,
+    pal: &Pal,
+    numbers: &Numbers,
+    ln: usize,
+    mark: Option<char>,
+) {
     let color = if ln == numbers.current {
         pal.dim
     } else {
@@ -946,6 +961,15 @@ pub fn gutter_row(ui: &mut Ui<'_>, face: Face, pal: &Pal, numbers: &Numbers, ln:
             .main_align(Align::End)
             .cross_align(Align::Center),
         |ui| {
+            if let Some(c) = mark {
+                ui.with(
+                    NodeSpec::row()
+                        .height(Sizing::Fixed(face.line_height))
+                        .cross_align(Align::Center)
+                        .float(FloatConfig::parent().offset(0.0, 0.0)),
+                    |ui| ui.text(&c.to_string(), mono(face, pal).color(pal.accent)),
+                );
+            }
             ui.text(&numbers.label(ln), mono(face, pal).color(color));
         },
     );
@@ -1022,7 +1046,12 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
         cuts.push(r.start.min(len));
         cuts.push(r.end.min(len));
     }
-    for (r, _) in line.styled.iter().chain(line.underlined.iter()) {
+    for (r, _) in line
+        .styled
+        .iter()
+        .chain(line.underlined.iter())
+        .chain(line.washed.iter())
+    {
         cuts.push(r.start.min(len));
         cuts.push(r.end.min(len));
     }
@@ -1070,6 +1099,12 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
         let selected = line.selected.iter().any(|r| r.start <= a && b <= r.end);
         let hit = line.hits.iter().any(|r| r.start <= a && b <= r.end);
         let flashed = line.flashed.iter().any(|r| r.start <= a && b <= r.end);
+        let washed = line
+            .washed
+            .iter()
+            .rev()
+            .find(|(r, _)| r.start <= a && b <= r.end)
+            .map(|(_, c)| *c);
         let color = if escape {
             Some(pal.dim)
         } else {
@@ -1106,7 +1141,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 } else if hit {
                     Some(pal.command.with_alpha(0.35))
                 } else {
-                    mark.bg
+                    washed.or(mark.bg)
                 },
                 underline,
                 mark,

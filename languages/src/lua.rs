@@ -20,4 +20,17 @@ fn grammar() -> Result<crate::Grammar, String> {
         tree_sitter_lua::HIGHLIGHTS_QUERY,
         Some(tree_sitter_lua::INJECTIONS_QUERY),
     )
+    .and_then(|g| g.with_outline(OUTLINE))
 }
+
+/// The outline: what `symbols` lists without a server (docs/design/marks.md).
+#[cfg(feature = "lua")]
+const OUTLINE: &str = r#"(function_declaration name: (_) @name) @definition.function
+(assignment_statement (variable_list . name: (_) @name) (expression_list . value: (function_definition))) @definition.function
+(field name: (identifier) @name value: (function_definition)) @definition.function
+(field name: (identifier) @name value: (table_constructor)) @definition.table
+(chunk (variable_declaration (assignment_statement (variable_list . name: (identifier) @name) (expression_list . value: (table_constructor))) @definition.table))
+; Variables, after every pattern that names a definition better.
+(variable_declaration (assignment_statement (variable_list . name: (identifier) @name)) @definition.variable)
+(variable_declaration (variable_list . name: (identifier) @name)) @definition.variable
+"#;

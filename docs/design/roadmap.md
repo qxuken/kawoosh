@@ -16,7 +16,8 @@ copies, 2026-09-24). Steps 23–27 built 2026-09-24: the list is done.
 Amended 2026-09-25 with the todo reconciled against it: every item it
 held that the list had built is checked there, and the ten it held
 that the list never took are filed below ("From the todo, 2026-09-25")
-and ordered as steps 28–35, with the asks of the same day.
+and ordered as steps 28–35, with the asks of the same day; steps 36–38
+the evening's (marks.md).
 
 ## Where it stands
 
@@ -367,6 +368,23 @@ And one more:
 - **A pane moved into the dock and out of it** — `<C-w>J` and `<C-w>K`
   over the dock's edge, `<C-w>D`, and a title bar dragged across
   (panes track). Done the same day; no step.
+
+## Asked 2026-09-25, evening
+
+Two lines of the todo, and an ask on top of them, decided in
+[marks.md](marks.md):
+
+- **Code folds**, "a 10 GB csv if required", remembered, and not
+  neovim's (the todo's own mark was `[-]`: navigation covers it for
+  now). Decided and left for use to ask: made by the user only, never
+  trapping the caret, remembered and found again as a mark is. The
+  CSV's other half, the rows that match, is search.md's pipeline.
+- **Global and local marks**, recorded as more than a line — the line's
+  text, the word, the symbol — so they are found again after the file
+  changed on disk. Step 37.
+- **The symbol search interactive, and a tree with more symbols**: the
+  pane follows the picker's cursor, and a buffer without a server gets
+  its grammar's outline. Step 36, built the same evening.
 
 ## The list, by track
 
@@ -2049,6 +2067,37 @@ then breadth.
     PNG decodes, not on a Windows or X11 desktop. macOS has none to
     give — the Dock shows the bundle's — nor has Wayland, which reads
     the `.desktop` file's.
+
+36. ~~**The outline and a following symbols picker** ([marks.md](marks.md)
+    Decisions 1–2).~~ Landed 2026-09-25: `Ts::outline` runs a grammar's
+    outline query — tree-sitter's tags convention, `@definition.KIND`
+    and `@name` — over the tree the ts thread keeps, nested by range;
+    each builtin grammar but the text-like ones has one of kawoosh's
+    (rust's `impl`s with their methods and fields, markdown's headings
+    by section, toml's tables and keys, json's and yaml's keys…), and a
+    grammar of the user's reads its `outline.scm` or its own `tags.scm`.
+    `kawoosh.lsp.symbols` takes `source` (`symbols.source`: `auto` the
+    server's when one lists them, the outline otherwise), and the
+    server's symbols keep their depth. `<leader>bs` is a tree in the
+    file's order, the cursor on the caret's symbol; a `follow` source
+    (`symbols`, `lines`, `workspace_symbols` in the same file) moves the
+    pane's caret to its cursor, mid-pane, and `<Esc>` puts it back.
+    `kawoosh.buf.offset(line, col)`, `cursor().top`, `set_cursor`'s
+    `top` and `center` on the way. `kawoosh/lua/tests/symbols.lua`.
+    *From use, 2026-09-26*: the followed place washed (`paint`'s `bg`),
+    the pointer over a row takes the cursor, `auto` merges the server's
+    symbols with the grammar's (locals now in every outline), a
+    `marks` view in the memory pane, the gutter's letter in a column of
+    its own.
+37. ~~**Marks** ([marks.md](marks.md) Decisions 3–5): `m` `'` `` ` ``
+    `]'` `['` `<leader>m`, kept as `mark` moments, carried while the file
+    is open, found again by text, symbol and a close line after it
+    changed, never landing somewhere else silently.~~ Landed 2026-09-25:
+    `kawoosh/src/marks.rs`, the letters in the gutter, `:marks`
+    `:delmarks`; an adrift mark whose symbol is known goes to the
+    symbol's line and stays adrift, so an undo finds it again.
+    `kawoosh/tests/marks.rs`.
+38. **Folds** ([marks.md](marks.md) Decision 6), when use asks for them.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),

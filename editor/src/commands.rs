@@ -3375,6 +3375,12 @@ pub fn default_keymap(km: &mut Keymap) {
         ("[q", "error prev"),
         ("]d", "lsp diagnostic next"),
         ("[d", "lsp diagnostic prev"),
+        // Marks (docs/design/marks.md): vim's letters; `]'` `['` the
+        // marked lines of the file.
+        ("'", "mark line"),
+        ("`", "mark go"),
+        ("]'", "mark next"),
+        ("['", "mark prev"),
         // The yank-pop: the last put walked through the memory.
         ("[p", "put older"),
         ("]p", "put newer"),
@@ -3420,6 +3426,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>cI", "lsp hints"),
         ("<leader>cs", "picker workspace_symbols"),
         ("<leader>bs", "picker symbols"),
+        ("<leader>m", "picker marks"),
         ("<leader>u", "undo history"),
         ("<leader>x", "lua eval"),
         ("<leader>p", "memory"),
@@ -3654,6 +3661,9 @@ pub fn default_keymap(km: &mut Keymap) {
             km.bind(mode, &format!("<{m}-{k}>"), c);
         }
     }
+    // `m` marks, but not in a listing, where `ma` `ms` `mm` `me` sort
+    // (dir.lua) and a bare `m` would shadow them.
+    km.bind_when(Normal, "m", "mark", &[Cond::parse("!language:dir")]);
     let prompt = [Cond::parse("prompt")];
     km.bind_when(Insert, "<CR>", "prompt submit", &prompt);
     km.bind_when(Normal, "<CR>", "prompt submit", &prompt);

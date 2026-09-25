@@ -5,8 +5,9 @@
 -- the io thread), `buffers`, `recent` (the files opened before),
 -- `smart` (the three together: buffers, then recent, then the walk),
 -- `grep` (`rg` run as the query is typed, its locations the rows),
--- `lines` (the buffer's), `symbols` and `workspace_symbols` (a
--- server's, `<leader>bs` `<leader>cs`), `commands` (the registry, what
+-- `lines` (the buffer's), `symbols` (the buffer's, a server's or its
+-- grammar's outline, as a tree) and `workspace_symbols` (a server's),
+-- `<leader>bs` `<leader>cs`, `commands` (the registry, what
 -- `:commands` was) and `tools`; `dirs.lua` adds `dirs`. `<leader>f` `<leader>bb` `<leader>so` `<leader>.`
 -- `<leader>g` `<leader>/` `<leader>sp` `<leader>tt` open them,
 -- `<leader>sr` the last one again where it was left.
@@ -44,8 +45,15 @@
 -- session's, as the two above. A source's own keys ride on the row: `<C-x>` in `buffers`
 -- closes the row's buffer, asking first when it has unsaved changes.
 -- A source with `columns` draws its rows as a grid, the cells lined up
--- (the commands: name, key, what it does). The pane is not kept by a
--- session.
+-- (the commands: name, key, what it does). A `tree` source's rows are
+-- indented by their `depth` while the query is empty, a column marked
+-- `path` left blank then (the indent says it); a `cursor(items, ctx)`
+-- says which row the cursor starts on. A `follow` source moves the
+-- caret of the pane it was opened from to the cursor's row as the
+-- cursor moves — an item in that buffer, its view scrolled to show it
+-- mid-pane, no preview drawn since the pane is one — and closing
+-- untaken puts the caret and the view back (docs/design/marks.md
+-- Decision 2). The pane is not kept by a session.
 
 local fs = kawoosh.fs
 local picker = { sources = {}, last = nil }
@@ -418,7 +426,10 @@ end
 -- last cell. With `opts.wrap` a text folds to its width — every
 -- cell's, so the whole of a long path or name shows — and
 -- `opts.lines(i)` says how many lines row `i` takes (one, when not
--- given).
+-- given). With `opts.indent(item)` a number, the first cell (or the
+-- text) is indented by that many steps, and a column marked `path` is
+-- left blank — a tree's rows. With `opts.keys` a table, each drawn
+-- row's key is put in it by its index — what `env.is_hovered` asks by.
 function picker.rows(ctx, hits, opts)
   local t = ctx.env.theme
   local top = opts.top or 1
@@ -458,6 +469,7 @@ function picker.rows(ctx, hits, opts)
     else
       seen[key] = 1
     end
+    if opts.keys then opts.keys[i] = key end
     local r = row {
       key = key,
       width = "grow", min_height = ROW_H,
@@ -468,13 +480,16 @@ function picker.rows(ctx, hits, opts)
     }
     local off = it.can ~= nil and it.can ~= true
     local color = off and t.muted or t.fg
+    local indent = opts.indent and opts.indent(it) or nil
+    local lead = indent and indent > 0 and string.rep("  ", indent) or nil
     if columns then
       local ps = pieces_of(it, columns)
       for j, c in ipairs(columns) do
         local spans = {}
+        if j == 1 and lead then spans[1] = { lead } end
         for _, p in ipairs(ps) do
-          if p.col == j and p.text ~= "" then
-            if #spans > 0 then spans[#spans + 1] = { "  " } end
+          if p.col == j and p.text ~= "" and not (indent and c.path) then
+            if #spans > (lead and j == 1 and 1 or 0) then spans[#spans + 1] = { "  " } end
             for _, sp in ipairs(picker.spans(p.text, lit_in(h.positions, p), t)) do
               if not sp.color then sp.color = p.dim and t.faint or (c.muted and t.muted or color) end
               spans[#spans + 1] = sp
@@ -495,6 +510,7 @@ function picker.rows(ctx, hits, opts)
     else
       local spans = picker.spans(text_of, h.positions, t)
       for _, sp in ipairs(spans) do if not sp.color then sp.color = color end end
+      if lead then table.insert(spans, 1, { lead }) end
       if it.sub and it.sub ~= "" then
         spans[#spans + 1] = { "  " .. it.sub, color = t.muted }
       end
@@ -794,6 +810,13 @@ local function loaded(items, err)
   -- of the row (`search`) is looked in after it.
   P.wide = P.src.columns and kawoosh.matcher(wide) or nil
   P.widths = P.src.columns and picker.widths(items, P.src.columns) or nil
+  -- Where the cursor starts, while nothing is typed: the source's say,
+  -- through the refilter the load sets off (`P.keep`).
+  if (P.query or "") == "" and P.src.cursor and not P.started then
+    P.started = true
+    local ok, i = pcall(P.src.cursor, items, P.ctx)
+    if ok and i then P.cursor, P.keep = i, i end
+  end
   P.dirty = true
 end
 
@@ -832,8 +855,80 @@ function picker.answer_of(src, item)
   return item.text
 end
 
+-- Whether `item` is in the buffer the picker was opened from, and at
+-- which byte: its `offset`, or its line and column there.
+local function in_origin(item)
+  local h = P and P.ctx.buffer
+  if not h or not item then return nil end
+  if item.buffer and item.buffer ~= h then return nil end
+  if not item.buffer then
+    if not item.path then return nil end
+    local ok, path = pcall(kawoosh.buf.path, h)
+    if not ok or path ~= item.path then return nil end
+  end
+  if item.offset then return item.offset end
+  if not item.line then return nil end
+  local ok, at = pcall(kawoosh.buf.offset, item.line, item.col or 1, h)
+  return ok and at or nil
+end
+
+-- The wash over what a following picker shows: the item's line, and
+-- faintly the rest of its range (a symbol's body).
+local FOLLOW_PAINT = "picker follow"
+local FOLLOW_LINE, FOLLOW_RANGE = 0.28, 0.08
+local LINE_END = 1 << 30
+
+local function unwash()
+  if P and P.washed then
+    pcall(kawoosh.buf.paint, FOLLOW_PAINT, {}, P.ctx.buffer)
+    P.washed = nil
+  end
+end
+
+-- A `follow` source's cursor row shown in the pane it came from: the
+-- caret there, the line mid-pane, washed — and a symbol's whole range
+-- faintly; where the caret and the view were before the first one is
+-- kept for `unfollow`. An item elsewhere takes the wash away.
+local function follow(item)
+  local at = in_origin(item)
+  if not at then return unwash() end
+  local h = P.ctx.buffer
+  if not P.back then
+    local ok, c = pcall(kawoosh.buf.cursor, h)
+    if not ok then return end
+    P.back = { offset = c.offset, top = c.top }
+  end
+  kawoosh.buf.set_cursor(at, h, { center = true })
+  local line = item.line
+  if not line then
+    local ok, c = pcall(kawoosh.buf.cursor, h)
+    line = ok and c.line or nil
+  end
+  if line then
+    local from = kawoosh.buf.offset(line, 1, h)
+    local spans = {}
+    if item.end_line and item.end_line > line then
+      spans[1] = { from, kawoosh.buf.offset(item.end_line, LINE_END, h), "accent", bg = FOLLOW_RANGE }
+    end
+    spans[#spans + 1] = { from, kawoosh.buf.offset(line, LINE_END, h), "accent", bg = FOLLOW_LINE }
+    kawoosh.buf.paint(FOLLOW_PAINT, spans, h)
+    P.washed = true
+  end
+end
+
+-- The caret and the view put back as they were before the picker
+-- followed its rows, and the wash gone.
+local function unfollow()
+  unwash()
+  if P and P.back then
+    pcall(kawoosh.buf.set_cursor, P.back.offset, P.ctx.buffer, { top = P.back.top })
+    P.back = nil
+  end
+end
+
 local function close()
   if P then
+    unfollow()
     if P.job and P.job.cancel then pcall(P.job.cancel) end
     -- A caller waiting on this picker gets nothing: it was closed, or
     -- another took its place.
@@ -857,6 +952,7 @@ local function pick(how)
   local item, src = hit.item, P.src
   local answer = P.answer
   P.answer = nil
+  P.back = nil
   close()
   if answer then return answer(item) end
   if src.pick then return src.pick(item, how) end
@@ -881,9 +977,10 @@ end
 -- `root` (the directory a source that walks or searches starts from,
 -- the working one by default) and `answer = fn(item)`, which takes the
 -- pick instead of the source — `fn(nil)` when the picker closes
--- untaken. A source's `ctx` is `{ buffer =, cwd =, root =, terminal =
--- }`, `terminal` when it was opened from a terminal pane. A picker
--- already open switches to it.
+-- untaken. A source's `ctx` is `{ buffer =, cwd =, root =, terminal =,
+-- caret = }`, `terminal` when it was opened from a terminal pane,
+-- `caret` (`kawoosh.buf.cursor`'s) when from a buffer. A picker already
+-- open switches to it.
 function picker.open(what, opts)
   opts = opts or {}
   local name, src
@@ -895,9 +992,14 @@ function picker.open(what, opts)
   end
   if P and P.job and P.job.cancel then pcall(P.job.cancel) end
   if P and P.answer then P.answer(nil) end
+  unfollow()
   -- `terminal`: opened from a terminal pane, where a pick goes back to.
   local ctx = { buffer = kawoosh.buf.current(), cwd = fs.cwd(), root = opts.root or fs.cwd(),
                 terminal = kawoosh.holds("terminal") == true }
+  if ctx.buffer and not ctx.terminal then
+    local ok, c = pcall(kawoosh.buf.cursor, ctx.buffer)
+    if ok then ctx.caret = c end
+  end
   P = { name = name, src = src, ctx = ctx, items = {}, hits = {}, cursor = opts.cursor or 1, top = 1,
         query = nil, loading = false, rows = 20, answer = opts.answer }
   kawoosh.view_open(VIEW, { below = true, share = share() })
@@ -1006,7 +1108,7 @@ kawoosh.view(VIEW, function(ctx)
   end
   local h = (ctx.height or 0) > 0 and ctx.height or 400
   local w = (ctx.width or 0) > 0 and ctx.width or 800
-  local preview_on = previewing()
+  local preview_on = previewing() and not P.src.follow
   P.wrap = wrapping()
   P.split = split()
   -- The list's width: its share of the pane beside a preview, the
@@ -1038,14 +1140,35 @@ kawoosh.view(VIEW, function(ctx)
   field.width = "grow"
   head[#head + 1] = field
   head[#head + 1] = text(count, { size = SIZE - 1, color = t.faint, wrap = "none" })
+  local indent = P.src.tree and (P.query or "") == "" and function(it) return it.depth or 0 end or nil
+  -- The pointer moving from one row onto another takes the cursor
+  -- there — the pane follows it too. Asked of the rows the frame before
+  -- drew, and only while the window and the rows hold still since: rows
+  -- scrolled or refiltered under a pointer at rest are not the pointer
+  -- moving, and neither is the pointer come to the list to wheel it
+  -- (kui says which node is under the pointer, not that it moved).
+  local over
+  if P.row_keys and P.hover_top == P.top and P.hover_hits == P.hits and ctx.env.is_hovered then
+    for i, key in pairs(P.row_keys) do
+      if ctx.env.is_hovered(key) then over = i end
+    end
+    if over and P.hover_row and over ~= P.hover_row then P.cursor = over end
+  end
+  local keys = {}
   local list = picker.rows(ctx, P.hits, { top = P.top, cursor = P.cursor, rows = rows, wrap = P.wrap, lines = lines_of,
-                                          columns = P.src.columns, widths = P.widths, width = P.list_w })
+                                          columns = P.src.columns, widths = P.widths, width = P.list_w,
+                                          indent = indent, keys = keys })
+  P.row_keys, P.hover_row, P.hover_top, P.hover_hits = keys, over, P.top, P.hits
   if #P.hits == 0 and not P.loading then
     list[#list + 1] = row { pad = { x = 8, y = 4 }, text((P.query ~= "" and "no matches") or P.src.empty or "nothing here", { size = SIZE, color = t.muted }) }
   end
   local body = row { width = "grow", height = "grow", gap = 0, list }
   if preview_on then list.width = P.list_w end
   local hit = P.hits[P.cursor]
+  if P.src.follow and hit and P.followed ~= hit.item then
+    P.followed = hit.item
+    follow(hit.item)
+  end
   if preview_on then
     local pv
     if hit then
@@ -1533,12 +1656,23 @@ picker.source("grep", {
   empty = "no matches",
 })
 
--- A server's symbols as rows: the name, its kind, where it sits (the
--- symbol it is inside, or its file), `⏎` going there.
+kawoosh.setting("symbols.source", {
+  type = { "auto", "lsp", "syntax" },
+  doc = "where a buffer's symbols come from: its server's with what the grammar's outline adds — locals, headings — (`auto`), or only one",
+})
+
+-- Symbols as rows: the name, its kind (and a short detail — an
+-- `impl`'s trait, a method's receiver), where it sits — the symbols it is
+-- inside, `a › b`, or its file — `⏎` going there. A buffer's are in
+-- the file's order, each with its `depth`, the tree the picker draws.
 local function symbol_rows(items, root)
   local rows = {}
+  local path = {}
   for i, s in ipairs(items or {}) do
-    local where = s.container or ""
+    local depth = s.depth or 0
+    for d = #path, depth + 1, -1 do path[d] = nil end
+    local where = #path > 0 and table.concat(path, " › ") or (s.container or "")
+    path[depth + 1] = s.name
     if root and s.path then
       -- Under the root as `fs.join` spells it: `\` here on Windows, `/`
       -- on a host.
@@ -1546,35 +1680,155 @@ local function symbol_rows(items, root)
       local rel = s.path:sub(1, #under) == under and s.path:sub(#under + 1) or s.path
       where = (where ~= "" and (where .. " · ") or "") .. rel .. ":" .. s.line
     end
+    -- A short detail rides faint beside the kind: a server's signature,
+    -- an `impl`'s trait.
+    local short = s.detail and s.detail ~= "" and not s.detail:find("\n") and #s.detail <= 40 and s.detail or nil
     rows[i] = {
-      text = s.name, kind = s.kind, sub = where, detail = s.detail,
-      path = s.path, line = s.line, col = s.col,
+      text = s.name, kind = s.kind, short = short, sub = where, detail = s.detail,
+      path = s.path, line = s.line, col = s.col, depth = depth, end_line = s.end_line,
     }
   end
   return rows
 end
 
--- The buffer's symbols from its server (`<leader>bs`), in the order
--- the server listed them — a function after its module.
+-- picker.symbol_at(items, line): the innermost row whose symbol holds
+-- `line` — the last one starting at or before it whose range reaches
+-- it — else the last starting before it.
+function picker.symbol_at(items, line)
+  local inside, before
+  for i, it in ipairs(items) do
+    if (it.line or 0) > line then break end
+    before = i
+    if (it.end_line or it.line) >= line then inside = i end
+  end
+  return inside or before
+end
+
+-- picker.merge_symbols(server, outline): a server's symbols with the
+-- grammar's the server did not list — a local variable, a heading —
+-- one list in the file's order, nested again by the lines each holds:
+-- a grammar's symbol is the server's when it starts on the same line
+-- and the server's name holds its name (`impl Marks` holds `Marks`).
+function picker.merge_symbols(server, outline)
+  local by_line = {}
+  local out = {}
+  for _, s in ipairs(server or {}) do
+    out[#out + 1] = s
+    local l = by_line[s.line] or {}
+    l[#l + 1] = s.name
+    by_line[s.line] = l
+  end
+  for _, s in ipairs(outline or {}) do
+    local dup = false
+    for _, name in ipairs(by_line[s.line] or {}) do
+      if name:find(s.name, 1, true) then dup = true break end
+    end
+    if not dup then out[#out + 1] = s end
+  end
+  for i, s in ipairs(out) do s.order = i end
+  table.sort(out, function(x, y)
+    if x.line ~= y.line then return x.line < y.line end
+    local xe, ye = x.end_line or x.line, y.end_line or y.line
+    if xe ~= ye then return xe > ye end
+    return x.order < y.order
+  end)
+  local open = {}
+  for _, s in ipairs(out) do
+    while #open > 0 and open[#open] < s.line do open[#open] = nil end
+    s.depth = #open
+    open[#open + 1] = s.end_line or s.line
+  end
+  return out
+end
+
+-- A buffer's symbols as `symbols.source` says: `auto` the server's and
+-- the grammar's merged (the grammar's alone without a server), or one.
+local function buffer_symbols(buffer, done)
+  local source = kawoosh.opt("symbols.source") or "auto"
+  if source ~= "auto" then
+    return kawoosh.lsp.symbols({ buffer = buffer, source = source }, done)
+  end
+  local got, answers = 0, {}
+  local function back(which)
+    return function(items, err)
+      answers[which] = { items = items, err = err }
+      got = got + 1
+      if got < 2 then return end
+      local s, o = answers.lsp, answers.syntax
+      if not s.items and not o.items then return done(nil, s.err or o.err) end
+      done(picker.merge_symbols(s.items, o.items))
+    end
+  end
+  kawoosh.lsp.symbols({ buffer = buffer, source = "lsp" }, back("lsp"))
+  kawoosh.lsp.symbols({ buffer = buffer, source = "syntax" }, back("syntax"))
+end
+
+-- The buffer's symbols (`<leader>bs`): a tree in the file's order, the
+-- cursor on the one the caret is in, the pane following the cursor.
 picker.source("symbols", {
   title = "symbols", placeholder = "a symbol in this buffer",
+  tree = true, follow = true,
   columns = {
     { "text", grow = true },
-    { "kind", muted = true, min = 70, max = 160, share = 0.2 },
-    { "sub", muted = true, min = 60, max = 260, share = 0.3 },
+    { "kind", dim = "short", muted = true, min = 70, max = 200, share = 0.25 },
+    { "sub", muted = true, min = 60, max = 260, share = 0.3, path = true },
   },
   load = function(ctx, done)
-    kawoosh.lsp.symbols({ buffer = ctx.buffer }, function(items, err)
+    buffer_symbols(ctx.buffer, function(items, err)
       done(items and symbol_rows(items) or nil, err)
     end)
   end,
+  cursor = function(items, ctx)
+    return ctx.caret and picker.symbol_at(items, ctx.caret.line)
+  end,
   empty = "no symbols",
 })
+
+-- The marks (`<leader>m`, `:marks`; docs/design/marks.md): the
+-- memory's `mark` rows of the workspace — this file's first, then the
+-- capitals, then every other file's — each its letter, its line's
+-- text, where it is; an adrift one says so. The pane follows the
+-- cursor over this file's; `<C-x>` deletes the row's mark.
+local function mark_rows(ctx)
+  local here = ctx.buffer and select(2, pcall(kawoosh.buf.path, ctx.buffer)) or nil
+  local rows = {}
+  for _, r in ipairs(kawoosh.memory { kind = "mark", workspace = true, limit = 10000 }) do
+    local m = r.meta or {}
+    local name = r.subject:sub(1, 1)
+    local local_ = name:match("%l") ~= nil
+    local rank = (local_ and m.path == here) and 0 or (local_ and 2 or 1)
+    local text = (m.text or ""):gsub("^%s+", "")
+    rows[#rows + 1] = {
+      text = name .. "  " .. text, name = name, subject = r.subject, rank = rank,
+      sub = (m.adrift and "adrift · " or "") .. short_path(m.path or "") .. ":" .. tostring(m.line or 1),
+      path = m.path, line = m.line, col = m.col,
+    }
+  end
+  table.sort(rows, function(a, b)
+    if a.rank ~= b.rank then return a.rank < b.rank end
+    if a.path ~= b.path then return (a.path or "") < (b.path or "") end
+    return a.name < b.name
+  end)
+  return rows
+end
+
+picker.source("marks", {
+  title = "marks", placeholder = "a mark", follow = true,
+  items = mark_rows,
+  keys = { ["<C-x>"] = function(item)
+    if not item then return end
+    kawoosh.forget("mark", item.subject)
+    picker.reload()
+  end },
+  empty = "no marks — `m` and a letter sets one",
+})
+kawoosh.command("marks", function() picker.open("marks") end, { doc = "the marks, in the picker" })
 
 -- The workspace's symbols matching the query (`<leader>cs`), asked of
 -- the server of the buffer the picker was opened from as it is typed.
 picker.source("workspace_symbols", {
   title = "workspace symbols", placeholder = "a symbol anywhere",
+  follow = true,
   columns = {
     { "text", grow = true },
     { "kind", muted = true, min = 70, max = 160, share = 0.2 },
@@ -1591,9 +1845,10 @@ picker.source("workspace_symbols", {
   empty = "no symbol matches",
 })
 
--- The buffer's lines, the caret put on the one taken.
+-- The buffer's lines, the caret put on the one taken and on the
+-- cursor's as it moves.
 picker.source("lines", {
-  title = "lines", placeholder = "find a line",
+  title = "lines", placeholder = "find a line", follow = true,
   items = function(ctx)
     local h = ctx.buffer
     if not h then return {} end

@@ -215,6 +215,12 @@ impl Harness {
         self.frame(app);
     }
 
+    /// The pointer moved to `x`, `y`, and a frame.
+    pub fn hover(&mut self, app: &mut impl App, x: f32, y: f32) {
+        self.input(app, InputEvent::CursorMoved(Vec2::new(x, y)));
+        self.frame(app);
+    }
+
     pub fn click(&mut self, app: &mut impl App, x: f32, y: f32) {
         self.input(app, InputEvent::CursorMoved(Vec2::new(x, y)));
         self.input(app, InputEvent::mouse_down(1));

@@ -26,4 +26,30 @@ fn grammar() -> Result<crate::Grammar, String> {
         .concat(),
         None,
     )
+    .and_then(|g| g.with_outline(OUTLINE))
 }
+
+/// The outline: what `symbols` lists without a server (docs/design/marks.md).
+#[cfg(feature = "rust")]
+const OUTLINE: &str = r#"(mod_item name: (identifier) @name) @definition.module
+(struct_item name: (type_identifier) @name) @definition.struct
+(enum_item name: (type_identifier) @name) @definition.enum
+(union_item name: (type_identifier) @name) @definition.union
+(type_item name: (type_identifier) @name) @definition.type
+(trait_item name: (type_identifier) @name) @definition.trait
+(impl_item trait: (_) @detail type: (_) @name) @definition.impl
+(impl_item !trait type: (_) @name) @definition.impl
+(impl_item body: (declaration_list (function_item name: (identifier) @name) @definition.method))
+(trait_item body: (declaration_list (function_item name: (identifier) @name) @definition.method))
+(trait_item body: (declaration_list (function_signature_item name: (identifier) @name) @definition.method))
+(function_item name: (identifier) @name) @definition.function
+(function_signature_item name: (identifier) @name) @definition.function
+(const_item name: (identifier) @name) @definition.constant
+(static_item name: (identifier) @name) @definition.static
+(macro_definition name: (identifier) @name) @definition.macro
+(enum_variant name: (identifier) @name) @definition.variant
+(field_declaration name: (field_identifier) @name) @definition.field
+(associated_type name: (type_identifier) @name) @definition.type
+; Variables, after every pattern that names a definition better.
+(let_declaration pattern: (identifier) @name) @definition.variable
+"#;

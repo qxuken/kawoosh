@@ -34,7 +34,22 @@ fn grammar() -> Result<crate::Grammar, String> {
         g.with_stand_ins(stand_ins)
             .with_block_containers(&["section", "document"])
     })
+    .and_then(|g| g.with_outline(OUTLINE))
 }
+
+/// The outline: what `symbols` lists without a server (docs/design/marks.md).
+/// An ATX heading's section holds what is under it; a setext heading
+/// has no section of its own, and nests by where it stands.
+#[cfg(feature = "markdown")]
+const OUTLINE: &str = r#"(section (atx_heading (atx_h1_marker) heading_content: (_) @name)) @definition.h1
+(section (atx_heading (atx_h2_marker) heading_content: (_) @name)) @definition.h2
+(section (atx_heading (atx_h3_marker) heading_content: (_) @name)) @definition.h3
+(section (atx_heading (atx_h4_marker) heading_content: (_) @name)) @definition.h4
+(section (atx_heading (atx_h5_marker) heading_content: (_) @name)) @definition.h5
+(section (atx_heading (atx_h6_marker) heading_content: (_) @name)) @definition.h6
+(setext_heading heading_content: (_) @name (setext_h1_underline)) @definition.h1
+(setext_heading heading_content: (_) @name (setext_h2_underline)) @definition.h2
+"#;
 
 /// A pipe table's rows the block grammar loses its place on — every
 /// cell empty (a lone `|`, `|||`), or the last two (`a|||`), which is a

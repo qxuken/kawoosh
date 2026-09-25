@@ -143,6 +143,8 @@ pub struct Kawoosh {
     pub undo: crate::undo::UndoPanel,
     /// The memory's deltas, ring and flush (`moments.rs`).
     pub moments: crate::moments::Moments,
+    /// The live marks of the open files (docs/design/marks.md).
+    pub(crate) marks: crate::marks::Marks,
     /// The working memory pane (`:memory`): the register's past.
     pub memory_pane: crate::memory::MemoryPanel,
     /// The keymap version and, at it, the first words of the commands
@@ -333,6 +335,7 @@ impl Kawoosh {
             perf: Default::default(),
             undo: Default::default(),
             moments: crate::moments::Moments::new(wake.clone()),
+            marks: Default::default(),
             memory_pane: Default::default(),
             bound_names: Default::default(),
             hud: false,
@@ -522,6 +525,55 @@ impl Kawoosh {
                     .collect();
                 rt.publish(&self.ed, self.focused_view());
                 rt.highlighted(a.token, &runs);
+            }
+            self.drain_lua();
+        }
+        // A buffer's outline, as a server's symbols: the path its
+        // file's (or its name), the kind the grammar's.
+        let (marks, outlines): (Vec<_>, Vec<_>) = self
+            .ts
+            .outline_answers
+            .try_iter()
+            .partition(|a| self.marks.asked(a.token));
+        for a in marks {
+            self.mark_outline(a);
+        }
+        if !outlines.is_empty()
+            && let Some(rt) = self.scripting.rt.clone()
+        {
+            for a in outlines {
+                self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                let path = self.ed.buffers.get(a.buffer).map(|b| {
+                    b.path
+                        .clone()
+                        .unwrap_or_else(|| std::path::PathBuf::from(&b.name))
+                });
+                let result = a.result.map(|items| {
+                    let path = path.unwrap_or_default();
+                    let mut names: Vec<String> = Vec::new();
+                    items
+                        .into_iter()
+                        .map(|o| {
+                            names.truncate(o.depth as usize);
+                            let container = names.last().cloned();
+                            names.push(o.name.clone());
+                            kawoosh_systems::lsp::Symbol {
+                                name: o.name,
+                                kind: 0,
+                                kind_name: Some(o.kind),
+                                detail: o.detail,
+                                container,
+                                path: path.clone(),
+                                line: o.line,
+                                character: o.character,
+                                depth: o.depth,
+                                end_line: Some(o.end_line),
+                            }
+                        })
+                        .collect()
+                });
+                rt.publish(&self.ed, self.focused_view());
+                rt.symbols_answered(a.token, result);
             }
             self.drain_lua();
         }
@@ -1668,6 +1720,7 @@ impl Kawoosh {
         let clicks = p.get("clicks").and_then(Value::as_int).unwrap_or(1);
         let tabstop = self.ed.tabstop();
         let top = self.ed.views[view].top;
+        let marked = self.marks.any(self.ed.views[view].buffer);
         let buf = self.ed.buffer_of(view);
         let ln = (top + line.max(0) as usize).min(buf.line_count() - 1);
         let range = buf.line_range(ln);
@@ -1677,7 +1730,7 @@ impl Kawoosh {
             .layout
             .rects
             .get(&pane)
-            .map(|r| (r.w - rows::gutter_w(self.cell.0, buf.line_count()) - 2.0).max(0.0))
+            .map(|r| (r.w - rows::gutter_w(self.cell.0, buf.line_count(), marked) - 2.0).max(0.0))
             .unwrap_or(0.0);
         let window = rows::Window {
             left: self.ed.views[view].left,
@@ -2105,6 +2158,7 @@ impl kui::App for Kawoosh {
         self.sync_histories(false);
         self.moments.window_focused = ui.env().focused;
         self.sync_disk(ui.env().focused);
+        self.sync_marks();
         self.sync_moments(false);
         self.perf.cur.io = ms(t);
         let t = Instant::now();

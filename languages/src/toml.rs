@@ -21,4 +21,12 @@ fn grammar() -> Result<crate::Grammar, String> {
         None,
     )
     .map(|g| g.recapture("type", crate::Token::Property))
+    .and_then(|g| g.with_outline(OUTLINE))
 }
+
+/// The outline: what `symbols` lists without a server (docs/design/marks.md).
+#[cfg(feature = "toml")]
+const OUTLINE: &str = r#"(table [(bare_key) (dotted_key) (quoted_key)] @name) @definition.table
+(table_array_element [(bare_key) (dotted_key) (quoted_key)] @name) @definition.array
+(pair . [(bare_key) (dotted_key) (quoted_key)] @name) @definition.key
+"#;

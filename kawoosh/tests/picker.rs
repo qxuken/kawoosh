@@ -1230,3 +1230,57 @@ fn opening_the_picker_does_not_scroll_the_pane_above() {
         "the caret on screen: {top} {line} {rows}"
     );
 }
+
+/// The pointer moving from a row onto another takes the cursor there,
+/// and a following source's pane follows it (marks.md Decision 2); the
+/// pointer come to the list is not a move, and one at rest does not
+/// fight the keys — `<C-n>` moves on from the row under it.
+#[test]
+fn the_pointer_over_a_row_takes_the_cursor() {
+    let _cwd = serial();
+    let dir = std::env::temp_dir().join(format!("kawoosh-hover-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("h.txt");
+    std::fs::write(&file, "one\ntwo\nthree\nfour\n").unwrap();
+    let mut d = Drive::new(900.0, 600.0);
+    let mut app = app_with_lua(&mut d, &file);
+    d.frame(&mut app);
+    app.wait_for_open();
+    d.frame(&mut app);
+    lua(&mut app, "kawoosh.picker.open('lines')");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(cursor_text(&mut app), "1  one");
+    let (x, y, w, h) = d.rect_of("row 2  two").expect("the row");
+    d.hover(&mut app, x + w / 2.0, y + h / 2.0);
+    d.frame(&mut app);
+    assert_eq!(cursor_text(&mut app), "1  one", "come to the list: no move");
+    d.hover(&mut app, x + w / 2.0, y + h * 1.5);
+    d.frame(&mut app);
+    assert_eq!(
+        cursor_text(&mut app),
+        "3  three",
+        "the pointer took the cursor"
+    );
+    let caret = |app: &Kawoosh| {
+        let v = app
+            .ed
+            .views
+            .iter()
+            .find(|(_, v)| app.ed.buffers[v.buffer].name == "h.txt")
+            .map(|(id, _)| id)
+            .unwrap();
+        let b = &app.ed.buffers[app.ed.views[v].buffer];
+        b.line_of(app.ed.views[v].sels.primary().head)
+    };
+    assert_eq!(caret(&app), 2, "the pane followed");
+    d.ctrl(&mut app, "n");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(
+        cursor_text(&mut app),
+        "4  four",
+        "the keys move on from under the pointer"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -1662,14 +1662,11 @@ fn a_listing_sorts_with_yazis_keys() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_with_lua(&mut d, "t", "x y");
     d.frame(&mut app);
-    // Off a listing the sort keys lead nowhere, and say so.
+    // Off a listing `m` marks (docs/design/marks.md): a scratch is no
+    // file to mark, and says so.
     d.keys(&mut app, "ms");
     assert!(app.ed.pending.is_empty());
-    assert!(
-        app.ed.message.ends_with("needs language:dir"),
-        "{}",
-        app.ed.message
-    );
+    assert_eq!(app.ed.message, "mark: this buffer is no file");
     assert_eq!(app.ed.buffer_of(app.focused_view().unwrap()).text(), "x y");
     ex(&mut d, &mut app, &format!("dir {}", dir.display()));
     assert_eq!(d.line_rows(), ["../", "d/", "a.txt", "b.md", "c.rs"]);

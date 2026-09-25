@@ -25,4 +25,15 @@ fn grammar() -> Result<crate::Grammar, String> {
         .concat(),
         None,
     )
+    .and_then(|g| g.with_outline(OUTLINE))
 }
+
+/// The outline: what `symbols` lists without a server (docs/design/marks.md).
+#[cfg(feature = "sql")]
+const OUTLINE: &str = r#"(create_table (object_reference) @name) @definition.table
+(create_view (object_reference) @name) @definition.view
+(create_materialized_view (object_reference) @name) @definition.view
+(create_function (object_reference) @name) @definition.function
+(create_type (object_reference) @name) @definition.type
+(column_definition name: (_) @name) @definition.column
+"#;

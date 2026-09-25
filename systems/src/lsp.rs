@@ -315,17 +315,25 @@ pub struct Location {
 }
 
 /// A symbol a server listed: a document's (its container the symbol it
-/// is inside) or the workspace's.
+/// is inside, `depth` how many it is inside) or the workspace's — or a
+/// grammar's outline, in the same shape (docs/design/marks.md).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Symbol {
     pub name: String,
     /// The protocol's `SymbolKind`, 1 file … 26 type parameter.
     pub kind: u64,
+    /// The kind's name when it is none of the protocol's: an outline's
+    /// `@definition.KIND` (`impl`, `h2`).
+    pub kind_name: Option<String>,
     pub detail: Option<String>,
     pub container: Option<String>,
     pub path: PathBuf,
     pub line: u32,
     pub character: u32,
+    /// How many symbols it lies inside; 0 for a workspace's.
+    pub depth: u32,
+    /// The last line of its range, when the answer said.
+    pub end_line: Option<u32>,
 }
 
 /// The name of a `SymbolKind` (LSP 3.17's table).
@@ -1843,7 +1851,7 @@ fn capabilities(result: Option<&Value>) -> Caps {
 /// each with the name of the one it is inside, or `SymbolInformation`s
 /// as they come. `path` is the document's.
 fn document_symbols(result: Option<&Value>, path: &Path) -> Vec<Symbol> {
-    fn walk(v: &Value, path: &Path, container: Option<&str>, out: &mut Vec<Symbol>) {
+    fn walk(v: &Value, path: &Path, container: Option<&str>, depth: u32, out: &mut Vec<Symbol>) {
         let Some(name) = v.get("name").and_then(Value::as_str) else {
             return;
         };
@@ -1862,11 +1870,14 @@ fn document_symbols(result: Option<&Value>, path: &Path) -> Vec<Symbol> {
         out.push(Symbol {
             name: name.to_string(),
             kind: v.get("kind").and_then(Value::as_u64).unwrap_or(0),
+            kind_name: None,
             detail: v.get("detail").and_then(Value::as_str).map(str::to_string),
             container: container.map(str::to_string),
             path: path.to_path_buf(),
             line,
             character,
+            depth,
+            end_line: position(v.pointer("/range/end")).map(|(l, _)| l),
         });
         for c in v
             .get("children")
@@ -1874,12 +1885,12 @@ fn document_symbols(result: Option<&Value>, path: &Path) -> Vec<Symbol> {
             .into_iter()
             .flatten()
         {
-            walk(c, path, Some(name), out);
+            walk(c, path, Some(name), depth + 1, out);
         }
     }
     let mut out = Vec::new();
     for v in result.and_then(Value::as_array).into_iter().flatten() {
-        walk(v, path, None, &mut out);
+        walk(v, path, None, 0, &mut out);
     }
     out
 }
@@ -1891,6 +1902,7 @@ fn information(v: &Value, loc: &Value) -> Option<Symbol> {
     Some(Symbol {
         name: v.get("name")?.as_str()?.to_string(),
         kind: v.get("kind").and_then(Value::as_u64).unwrap_or(0),
+        kind_name: None,
         detail: None,
         container: v
             .get("containerName")
@@ -1900,6 +1912,8 @@ fn information(v: &Value, loc: &Value) -> Option<Symbol> {
         path,
         line,
         character,
+        depth: 0,
+        end_line: None,
     })
 }
 

@@ -18,4 +18,10 @@ fn grammar() -> Result<crate::Grammar, String> {
         tree_sitter_yaml::HIGHLIGHTS_QUERY,
         None,
     )
+    .and_then(|g| g.with_outline(OUTLINE))
 }
+
+/// The outline: what `symbols` lists without a server (docs/design/marks.md).
+#[cfg(feature = "yaml")]
+const OUTLINE: &str = r#"(block_mapping_pair key: (_) @name) @definition.key
+"#;
