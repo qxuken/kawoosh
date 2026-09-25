@@ -1679,6 +1679,46 @@ picker.source("symbols", {
   empty = "no symbols",
 })
 
+-- The marks (`<leader>m`, `:marks`; docs/design/marks.md): the
+-- memory's `mark` rows of the workspace — this file's first, then the
+-- capitals, then every other file's — each its letter, its line's
+-- text, where it is; an adrift one says so. The pane follows the
+-- cursor over this file's; `<C-x>` deletes the row's mark.
+local function mark_rows(ctx)
+  local here = ctx.buffer and select(2, pcall(kawoosh.buf.path, ctx.buffer)) or nil
+  local rows = {}
+  for _, r in ipairs(kawoosh.memory { kind = "mark", workspace = true, limit = 10000 }) do
+    local m = r.meta or {}
+    local name = r.subject:sub(1, 1)
+    local local_ = name:match("%l") ~= nil
+    local rank = (local_ and m.path == here) and 0 or (local_ and 2 or 1)
+    local text = (m.text or ""):gsub("^%s+", "")
+    rows[#rows + 1] = {
+      text = name .. "  " .. text, name = name, subject = r.subject, rank = rank,
+      sub = (m.adrift and "adrift · " or "") .. short_path(m.path or "") .. ":" .. tostring(m.line or 1),
+      path = m.path, line = m.line, col = m.col,
+    }
+  end
+  table.sort(rows, function(a, b)
+    if a.rank ~= b.rank then return a.rank < b.rank end
+    if a.path ~= b.path then return (a.path or "") < (b.path or "") end
+    return a.name < b.name
+  end)
+  return rows
+end
+
+picker.source("marks", {
+  title = "marks", placeholder = "a mark", follow = true,
+  items = mark_rows,
+  keys = { ["<C-x>"] = function(item)
+    if not item then return end
+    kawoosh.forget("mark", item.subject)
+    picker.reload()
+  end },
+  empty = "no marks — `m` and a letter sets one",
+})
+kawoosh.command("marks", function() picker.open("marks") end, { doc = "the marks, in the picker" })
+
 -- The workspace's symbols matching the query (`<leader>cs`), asked of
 -- the server of the buffer the picker was opened from as it is typed.
 picker.source("workspace_symbols", {
