@@ -19,6 +19,11 @@ kawoosh-languages.workspace = true
 tree-sitter.workspace = true
 rusqlite.workspace = true
 ignore = "0.4"
+# The project search (docs/design/search.md Decision 6): the walk above,
+# its globs and the pattern — all in the tree already.
+globset = "0.4"
+regex = "1"
+memchr = "2"
 # The markdown buffer's images; already in the tree through kui's
 # clipboard (arboard), so the formats are all this adds.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }

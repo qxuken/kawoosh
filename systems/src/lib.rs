@@ -5,6 +5,7 @@
 pub mod fs;
 pub mod io;
 pub mod lsp;
+pub mod search;
 pub mod sftp;
 pub mod shell_env;
 pub mod store;
