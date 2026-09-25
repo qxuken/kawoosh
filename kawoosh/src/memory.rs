@@ -707,15 +707,15 @@ impl Kawoosh {
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_else(|| row.key.subject.clone()),
                     "text" => row.text_head.clone().unwrap_or_default(),
-                    // A mark: its letter, `name:line` and the line's text.
+                    // A mark: `name:line` (its letter is in the kind's
+                    // column, its line's text after).
                     "mark" => crate::marks::Record::from_meta(&row.meta)
                         .map(|r| {
                             let name = Path::new(&r.path)
                                 .file_name()
                                 .map(|n| n.to_string_lossy().into_owned())
                                 .unwrap_or_default();
-                            let letter = row.key.subject.chars().next().unwrap_or('?');
-                            format!("{letter}  {name}:{}  {}", r.line + 1, r.text.trim())
+                            format!("{name}:{}", r.line + 1)
                         })
                         .unwrap_or_else(|| row.key.subject.clone()),
                     // `path:line` as `name:line`, the path under it.
@@ -1524,6 +1524,10 @@ impl Kawoosh {
                                                 };
                                                 ui.text(s.name(), small(color));
                                             }
+                                            _ if row.key.kind == crate::marks::KIND => {
+                                                let letter = row.key.subject.chars().next().unwrap_or('?');
+                                                ui.text(&format!("mark {letter}"), small(pal.accent));
+                                            }
                                             _ => ui.text(&row.key.kind, small(pal.dim)),
                                         }
                                     });
@@ -1554,6 +1558,14 @@ impl Kawoosh {
                                         }
                                     });
                                     ui.with(col(22.0).main_align(kui::Align::Start), |ui| {
+                                        // A mark has no signals: its line
+                                        // as it reads now in their place.
+                                        if row.key.kind == crate::marks::KIND {
+                                            if let Some(r) = crate::marks::Record::from_meta(&row.meta) {
+                                                ui.text(r.text.trim(), small(pal.faint));
+                                            }
+                                            return;
+                                        }
                                         let mut s = signals(row);
                                         if let Some((bytes, is_draft)) = draft {
                                             if !s.is_empty() {

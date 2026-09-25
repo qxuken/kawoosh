@@ -312,8 +312,10 @@ don't see marks in memory".
   the rows held still since, so rows scrolled or refiltered under a
   pointer at rest do not fight the keys.
 - **Marks in the memory pane**: a `marks` view between `pins` and
-  `all`, each its letter, `name:line` and the line; `⏎` goes to it as
-  `` ` `` does (found again first).
+  `all` — `mark B` in the kind's column, `name:line` the subject, the
+  line as it reads now where the signals go (a mark has none, and the
+  subject's column is too narrow for both); `⏎` goes to it as `` ` ``
+  does (found again first).
 - **The gutter's letter had been cut** by the pane's edge (drawn in
   the padding). A buffer with marks has a gutter a cell wider, and the
   letter is in that cell; the click's column reads the same width.
