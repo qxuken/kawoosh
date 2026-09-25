@@ -1,13 +1,14 @@
 # RustSec advisories against Cargo.lock, taken from kui's own audit workflow.
 #
 # `cargo audit` reads the lockfile and nothing else: no target dir, no build,
-# and no kui checkout either - while kui is taken by path (Cargo.toml), its
-# crates are in Cargo.lock without a source, and everything they pull in is
-# there and audited like the rest. It is the one check whose result can change
-# without anyone pushing a commit - an advisory is published against code that
-# has not moved - which is why this workflow has a schedule. A weekly run on
-# main is the part that actually earns its keep; the push and pull_request
-# triggers just catch a lockfile change at the moment it is made.
+# and no kui checkout either - kui's crates are in Cargo.lock (from the
+# forgejo registry, or without a source while they are taken by path), and
+# everything they pull in is there and audited like the rest. It is the one
+# check whose result can change without anyone pushing a commit - an advisory
+# is published against code that has not moved - which is why this workflow
+# has a schedule. A weekly run on main is the part that actually earns its
+# keep; the push and pull_request triggers just catch a lockfile change at the
+# moment it is made.
 #
 # It runs with `--deny warnings`, so an unmaintained or unsound crate fails
 # the job the same as a vulnerability does - and with `--no-yanked`, because
