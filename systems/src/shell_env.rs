@@ -5,16 +5,19 @@
 //! `~/.cargo/bin` or `/opt/homebrew/bin` is not found. [`resolve`] asks
 //! a shell for its PATH on a thread of its own, while the window comes
 //! up; [`path`] is it, for each child to be given (`io::command`, the
-//! terminals). The process's own environment is never changed: another
-//! thread may be reading it.
+//! terminals). [`refresh`] asks again: an install from a terminal pane
+//! may have put a directory on it since. The process's own environment
+//! is never changed: another thread may be reading it.
 
 use std::ffi::{OsStr, OsString};
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 
-static STARTED: AtomicBool = AtomicBool::new(false);
-static PATH: OnceLock<Option<OsString>> = OnceLock::new();
+/// The shell asked, once [`resolve`] was called.
+static SHELL: OnceLock<OsString> = OnceLock::new();
+/// Set once the shell first answered, or gave up: what [`path`] waits on.
+static ANSWERED: OnceLock<()> = OnceLock::new();
+static PATH: RwLock<Option<OsString>> = RwLock::new(None);
 
 /// How long a shell has to answer, after which it is killed and the
 /// PATH is the process's.
@@ -23,7 +26,7 @@ const PATIENCE: Duration = Duration::from_secs(3);
 /// Asks `shell` for its PATH on a thread of its own; [`path`] waits for
 /// the answer from now on. Once: a second call does nothing.
 pub fn resolve(shell: OsString) {
-    if STARTED.swap(true, Ordering::SeqCst) {
+    if SHELL.set(shell.clone()).is_err() {
         return;
     }
     let spawned = std::thread::Builder::new()
@@ -34,21 +37,34 @@ pub fn resolve(shell: OsString) {
                 Some(p) => log::debug!("PATH from {}: {}", shell.display(), p.display()),
                 None => log::warn!("{}: no PATH from it; launchd's kept", shell.display()),
             }
-            let _ = PATH.set(found);
+            *PATH.write().unwrap_or_else(|e| e.into_inner()) = found;
+            let _ = ANSWERED.set(());
         });
     if spawned.is_err() {
-        let _ = PATH.set(None);
+        let _ = ANSWERED.set(());
     }
 }
 
 /// The PATH the shell made, once it has answered — waited for when
 /// [`resolve`] was called and the shell has not yet. None when it was
 /// not called, or the shell gave none: a child keeps this process's.
-pub fn path() -> Option<&'static OsStr> {
-    if !STARTED.load(Ordering::SeqCst) {
-        return None;
+pub fn path() -> Option<OsString> {
+    SHELL.get()?;
+    ANSWERED.wait();
+    PATH.read().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Asks the shell [`resolve`] was given again, on this thread, and
+/// keeps its answer; a shell that gives none leaves the PATH it gave
+/// before. Nothing when [`resolve`] was not called: the PATH is the
+/// process's, the terminal's the window was opened from.
+pub fn refresh() {
+    let Some(shell) = SHELL.get() else { return };
+    ANSWERED.wait();
+    if let Some(p) = ask(shell, PATIENCE) {
+        log::debug!("PATH from {} again: {}", shell.display(), p.display());
+        *PATH.write().unwrap_or_else(|e| e.into_inner()) = Some(p);
     }
-    PATH.wait().as_deref()
 }
 
 /// `SHELL -l -i -c /usr/bin/env`, and the last `PATH=` line it printed.

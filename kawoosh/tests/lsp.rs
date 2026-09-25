@@ -959,3 +959,72 @@ fn symbols_implementations_hints_and_acting_from_the_hover() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A server not installed when its file opened is said to be missing,
+/// once, with what to do; installed after — from a terminal pane —
+/// `:lsp restart` finds it and sends it the file it missed. Restarting
+/// a server that runs clears the file's diagnostics and a new one sends
+/// them again.
+#[cfg(unix)]
+#[test]
+fn a_server_installed_later_is_found_on_restart() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsprestart-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {}\n").unwrap();
+    let bin = dir.join("bin/fake-ls");
+    let real = fake_server();
+    let mut def = real.clone();
+    def.command = bin.display().to_string();
+    def.args = Vec::new();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(def);
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    let missing = |a: &Kawoosh| {
+        a.notes
+            .log
+            .iter()
+            .filter(|e| e.text.contains("not found") && e.text.contains(":lsp restart"))
+            .count()
+    };
+    assert!(until(&mut d, &mut app, |a| missing(a) == 1), "said missing");
+
+    // Installed.
+    std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+    let mut line = format!("exec '{}'", real.command);
+    for a in &real.args {
+        line += &format!(" '{a}'");
+    }
+    std::fs::write(&bin, format!("#!/bin/sh\n{line} \"$@\"\n")).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    ex(&mut d, &mut app, "lsp restart");
+    assert!(
+        until(&mut d, &mut app, |a| !a.ed.buffers[buf_id]
+            .runs(DIAG_LAYER, 0..3)
+            .is_empty()),
+        "the server found, the file sent to it"
+    );
+    assert_eq!(missing(&app), 1, "said once");
+
+    // A restart of the running one: cleared, then the new one's.
+    ex(&mut d, &mut app, "lsp restart rust");
+    assert!(app.ed.buffers[buf_id].runs(DIAG_LAYER, 0..3).is_empty());
+    assert!(app.ed.message.contains("restarting"), "{}", app.ed.message);
+    assert!(
+        until(&mut d, &mut app, |a| !a.ed.buffers[buf_id]
+            .runs(DIAG_LAYER, 0..3)
+            .is_empty()),
+        "the new server's diagnostics"
+    );
+    assert_eq!(app.lsp.status.len(), 1, "one server, the old one gone");
+    assert_eq!(app.lsp.status[0].2, 1, "holding the file");
+
+    ex(&mut d, &mut app, "lsp restart cobol");
+    assert_eq!(app.ed.message, "no language server for cobol");
+    std::fs::remove_dir_all(&dir).ok();
+}
