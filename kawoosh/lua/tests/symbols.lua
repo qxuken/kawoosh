@@ -83,4 +83,14 @@ local items = {
 eq(kawoosh.picker.symbol_at(items, 3), 2)
 eq(kawoosh.picker.symbol_at(items, 5), 1)
 eq(kawoosh.picker.symbol_at(items, 12), 3)
+
+-- `picker.merge_symbols`: the server's, and the grammar's it did not
+-- list, nested by the lines they hold; `impl S` is the grammar's `S`.
+local merged = kawoosh.picker.merge_symbols(
+  { { name = "impl S", line = 5, end_line = 13 }, { name = "get", line = 10, end_line = 12 } },
+  { { name = "S", line = 5, end_line = 13 }, { name = "get", line = 10, end_line = 12 },
+    { name = "v", line = 11, end_line = 11 }, { name = "main", line = 15, end_line = 15 } })
+local shape = {}
+for _, m in ipairs(merged) do shape[#shape + 1] = m.depth .. " " .. m.name end
+eq(table.concat(shape, ", "), "0 impl S, 1 get, 2 v, 0 main")
 kawoosh.fs.remove(dir)

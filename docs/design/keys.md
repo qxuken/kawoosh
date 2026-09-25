@@ -365,7 +365,7 @@ objects, or any other character on both sides.
 | `<leader>cI` | inlay hints on or off for the session (`lsp.inlay_hints`), drawn in the line, faint |
 | `<leader>cs` | the workspace's symbols matching the query, in the picker, asked as it is typed |
 | `<leader>m` | the marks in the picker (`:marks`): this file's, the capitals, every other file's; the pane follows the cursor over this file's, `<C-x>` deletes the row's |
-| `<leader>bs` | the buffer's symbols in the picker: its server's, or its grammar's outline without one (`symbols.source`), a tree in the file's order while nothing is typed and the matches with the symbols they are inside after; the cursor starts on the one the caret is in, and the pane follows the cursor — closed untaken, the caret goes back ([marks.md](marks.md)) |
+| `<leader>bs` | the buffer's symbols in the picker: its server's with what its grammar's outline adds — locals, headings — (`symbols.source`), a tree in the file's order while nothing is typed and the matches with the symbols they are inside after; the cursor starts on the one the caret is in, and the pane follows the cursor, or the pointer over a row, the place washed — closed untaken, the caret goes back ([marks.md](marks.md)) |
 | `<leader>cr` | markdown drawn rendered or as its source (`markdown toggle`, the `markdown.render` setting for the session; [markdown.md](markdown.md)) |
 | `<leader>r` | rename the symbol: the prompt filled with `lsp rename WORD`, the name edited, `<CR>` |
 | `<leader>D` | the type definition |

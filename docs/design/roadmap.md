@@ -2054,6 +2054,11 @@ then breadth.
     pane's caret to its cursor, mid-pane, and `<Esc>` puts it back.
     `kawoosh.buf.offset(line, col)`, `cursor().top`, `set_cursor`'s
     `top` and `center` on the way. `kawoosh/lua/tests/symbols.lua`.
+    *From use, 2026-09-26*: the followed place washed (`paint`'s `bg`),
+    the pointer over a row takes the cursor, `auto` merges the server's
+    symbols with the grammar's (locals now in every outline), a
+    `marks` view in the memory pane, the gutter's letter in a column of
+    its own.
 37. ~~**Marks** ([marks.md](marks.md) Decisions 3–5): `m` `'` `` ` ``
     `]'` `['` `<leader>m`, kept as `mark` moments, carried while the file
     is open, found again by text, symbol and a close line after it

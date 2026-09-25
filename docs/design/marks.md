@@ -14,8 +14,8 @@ taken here, each the user's to overturn. Companion to
 (where a mark is kept) and [search.md](search.md), written the same
 evening on another branch (the multibuffer; "Beside the search" says
 where the two meet). *Rounds one and two built the same evening* (roadmap
-steps 36 and 37; "Built" at the end says where they departed); folds
-are step 38.
+steps 36 and 37; "Built" at the end says where they departed), round
+three the next morning from the first use; folds are step 38.
 
 ## The thesis
 
@@ -53,7 +53,12 @@ declares `documentSymbol` answers, and the grammar's otherwise
 (`symbols.source`: `auto`, `lsp`, `syntax`). Not a merge: two lists of
 one file's names that disagree on ranges and kinds would need a rule
 for every disagreement, and the server's is the better one where it
-exists. The server's answer keeps its hierarchy now (`depth` and the
+exists. *Reversed 2026-09-26 at the user's word* ("I want to see more
+symbols, like variables"): `auto` is the server's list with the
+grammar's symbols it does not have — a local, a heading — one rule for
+the disagreement (a grammar's symbol on a server's line whose name
+holds it is that one), nested again by the lines each holds (round
+three, "Built"). The server's answer keeps its hierarchy now (`depth` and the
 range's end beside the start), which the flattening threw away.
 
 Beaten: **the grammar's always**. Faster (no round trip) and one shape,
@@ -252,10 +257,9 @@ departures and details:
   picker reads one list whoever made it; `kawoosh.lsp.symbols` routes
   `auto` and `syntax` to the ts thread, which answers after every job
   sent before the ask.
-- "Jumps on hover" is the picker's cursor row, keyboard or click: kui
-  gives a Lua view no event for the pointer entering a row, and a
-  pointer resting over a list the query reshuffles would follow rows
-  the eye is not on.
+- "Jumps on hover" is the picker's cursor row, keyboard or click.
+  *Corrected in round three*: the pointer too, with no kui ask —
+  `env.is_hovered` answers for a row's key.
 
 **Round two, 2026-09-25** (roadmap step 37): marks, in
 `kawoosh/src/marks.rs` and `kawoosh/tests/marks.rs`. Departures:
@@ -286,3 +290,30 @@ departures and details:
 - Not done: `'a` as a motion for an operator (`d'a`), and a mark in a
   multibuffer (search.md's, not merged) — `m` there says the buffer is
   no file.
+
+**Round three, 2026-09-26**, from the first use (a screenshot of each):
+"we should highlight line or symbol", "I want to see more symbols,
+like variables and stuff", whether hover needs a kui feature, and "I
+don't see marks in memory".
+
+- **The followed place is washed.** `kawoosh.buf.paint` spans take
+  `bg = ALPHA`, a colour washed behind the text (under a selection, a
+  hit and the flash) and carried through edits as paints are. The
+  picker washes the item's line in the accent, and a symbol's whole
+  range faintly behind it; closing takes the wash away.
+- **More symbols.** Each outline query ends with its language's
+  variables — `let`, `:=`, `local`, a declarator, an assignment — after
+  every pattern that names a definition better (a node two patterns
+  match is the earlier's). `auto` merges them into the server's list
+  (Decision 1, reversed).
+- **Hover with no kui ask.** `env.is_hovered(key)` answers for a row's
+  key, which the rows report as they are drawn; the frame after, the
+  row under the pointer takes the cursor — only while the window and
+  the rows held still since, so rows scrolled or refiltered under a
+  pointer at rest do not fight the keys.
+- **Marks in the memory pane**: a `marks` view between `pins` and
+  `all`, each its letter, `name:line` and the line; `⏎` goes to it as
+  `` ` `` does (found again first).
+- **The gutter's letter had been cut** by the pane's edge (drawn in
+  the padding). A buffer with marks has a gutter a cell wider, and the
+  letter is in that cell; the click's column reads the same width.
