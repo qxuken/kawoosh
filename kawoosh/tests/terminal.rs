@@ -70,10 +70,6 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
-/// Copy mode on wezterm's chord: `<C-S-x>` from a terminal pane is its
-/// scrollback as a buffer in the same pane, the caret on the top row the
-/// pane showed (roadmap step 31), and `q` is the terminal again — two keys round
-/// trip. From an editor pane the chord says what it needs.
 /// Copy mode is a mode to the eye and to `<Esc>` (roadmap step 31): the
 /// status says `COPY`; the buffer carries the colours the terminal
 /// printed in, as a paint; `<Esc>` clears the search's paint first and
@@ -123,6 +119,11 @@ fn copy_mode_is_a_mode_in_colour_and_esc_leaves_it() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// Copy mode on wezterm's chord: `<C-S-x>` from a terminal pane is its
+/// scrollback as a buffer in the same pane, the caret where the
+/// terminal's cursor was — or, scrolled back past it, on the top row the
+/// pane showed — and `q` is the terminal again: two keys round trip.
+/// From an editor pane the chord says what it needs.
 #[test]
 fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     let mut app = Kawoosh::new("t", "editor text");
@@ -150,9 +151,9 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     assert!(text.starts_with("$ ls\nCargo.toml\n$"), "{text:?}");
     let head = app.ed.views[v].sels.primary().head;
     assert_eq!(
-        buf.line_of(head),
-        0,
-        "the caret on the top row shown: no history yet, the first line"
+        (buf.line_of(head), head - buf.line_start(2)),
+        (2, 0),
+        "the caret at the terminal's cursor: past the prompt's trimmed space, on its `$`"
     );
     // Modal editing works there; then `q` is the terminal again.
     d.keys(&mut app, "ggyy");
@@ -174,6 +175,21 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     assert!(matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t));
     app.feed_terminal(t, b"still here\r\n");
     d.frame(&mut app);
+    // Scrolled back past the cursor, the caret is on the top row shown.
+    let rows = app.terms.map[&t].size().rows as usize;
+    for i in 0..rows * 2 {
+        app.feed_terminal(t, format!("line {i}\r\n").as_bytes());
+    }
+    let term = app.terms.map.get_mut(&t).unwrap();
+    term.scroll(rows as i32);
+    let top = term.history_size() - term.display_offset();
+    d.frame(&mut app);
+    d.key(&mut app, "X", shifted);
+    let v = app.focused_view().expect("copy mode again");
+    let buf = app.ed.buffer_of(v);
+    let head = app.ed.views[v].sels.primary().head;
+    assert_eq!(head, buf.line_start(top), "{:?}", buf.line_text(top));
+    d.key(&mut app, "X", shifted);
     // From the editor pane the chord is refused with its reason.
     d.ctrl(&mut app, "w");
     d.keys(&mut app, "k");
@@ -1078,7 +1094,7 @@ fn cmd_v_pastes_the_clipboard_into_a_terminal() {
     let t = app.add_headless_terminal();
     d.frame(&mut app);
     d.frame(&mut app);
-    let mut sent = |app: &mut Kawoosh| app.terms.map.get_mut(&t).unwrap().take_sent();
+    let sent = |app: &mut Kawoosh| app.terms.map.get_mut(&t).unwrap().take_sent();
     sent(&mut app);
     for chord in ["<D-v>", "<C-S-v>"] {
         d.press(&mut app, chord);
@@ -1089,7 +1105,10 @@ fn cmd_v_pastes_the_clipboard_into_a_terminal() {
         assert_eq!(sent(&mut app), b"echo hi", "{chord} pastes");
     }
     d.press(&mut app, "<D-k>");
-    assert!(sent(&mut app).is_empty(), "an unbound ⌘ chord is not a letter");
+    assert!(
+        sent(&mut app).is_empty(),
+        "an unbound ⌘ chord is not a letter"
+    );
     d.keys(&mut app, "v");
     assert_eq!(sent(&mut app), b"v", "a plain key is the shell's");
 }

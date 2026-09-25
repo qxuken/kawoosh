@@ -1504,9 +1504,12 @@ follow the theme every frame (`panes.rs`).
   31. The status says `COPY` where normal mode would; `<Esc>` in
   normal mode is `scrollback escape` under `language:scrollback` — the
   extra carets and the search's paint first, as the ladder clears
-  them, then `scrollback close`; the caret starts on the top row the
-  pane showed, the view scrolled to it (`history_size -
-  display_offset`). The pane title stays the buffer's name.
+  them, then `scrollback close`; the view starts on the top row the
+  pane showed (`history_size - display_offset`), the caret where the
+  terminal's cursor was, as wezterm's does (`Terminal::scrollback_cursor`;
+  past a trimmed prompt's space, on its last character) — or, scrolled
+  back past the cursor, on that top row (2026-09-25, asked: the caret
+  was not at the cursor). The pane title stays the buffer's name.
   `copy_mode_is_a_mode_in_colour_and_esc_leaves_it`. What the entry
   said before it was built, with the colours below: Today `<C-S-x>`
   puts a `*scrollback*` buffer in the terminal's pane, `q` or
