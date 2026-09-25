@@ -348,7 +348,7 @@ impl Kawoosh {
     /// on that side, which for two panes trades them.
     fn move_pane_dir(&mut self, dir: SplitDir, forward: bool, count: usize) {
         if self.layout.dock_focused && self.layout.dock_open {
-            self.ed.message = "the dock stays under the tab".into();
+            self.ed.message = "the dock stays under the tab; <C-w>D takes the pane out".into();
             return;
         }
         let count = count.max(1);
@@ -371,7 +371,12 @@ impl Kawoosh {
             (false, _) => {
                 let mut any = false;
                 for _ in 0..count {
-                    let Some(target) = self.layout.neighbour(dir, forward) else {
+                    // In and out of the dock is `<C-w>D`'s.
+                    let Some(target) = self
+                        .layout
+                        .neighbour(dir, forward)
+                        .filter(|t| !self.layout.in_dock(*t))
+                    else {
                         break;
                     };
                     let at = match (dir, forward) {
@@ -599,7 +604,10 @@ fn panes() -> Vec<ShellCommand> {
             Spec::new("pane swap").doc("trade places with the next pane"),
             |k, _| {
                 let (from, to) = (k.layout.focused(), k.layout.next_pane());
-                k.layout.move_pane(from, to, Drop::Swap);
+                // Within the tab, or within the dock: across is `<C-w>D`'s.
+                if k.layout.in_dock(from) == k.layout.in_dock(to) {
+                    k.layout.move_pane(from, to, Drop::Swap);
+                }
             },
         ),
         cmd(
@@ -873,6 +881,20 @@ fn panes() -> Vec<ShellCommand> {
                 }
                 k.layout.dock_open = !k.layout.dock_open;
                 k.layout.dock_focused = k.layout.dock_open;
+            },
+        ),
+        // `<C-w>D`: the focused pane into the dock, or out of it into
+        // the tab — what dragging its title bar across does.
+        cmd(
+            Spec::new("pane dock")
+                .doc("the pane into the dock, or out of the dock into the tab"),
+            |k, _| {
+                let p = k.layout.focused();
+                k.ed.message = match k.layout.toggle_dock(p) {
+                    Some(true) => "into the dock — <C-w>D takes it back out".into(),
+                    Some(false) => "out of the dock, into the tab".into(),
+                    None => "the tab's last pane stays".into(),
+                };
             },
         ),
     ]

@@ -58,6 +58,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-w>t` `<leader>tn` | a new tab, of the kind `layout.default` names (the strip) |
 | `:layout` `<leader>tl` | the tab flipped between a tree of splits and a strip of columns ([scrolling-tab.md](scrolling-tab.md)); `:layout scroll` / `:layout tree` name the kind |
 | `<C-w>d` | the dock — a tree of its own, or a strip under `layout.dock = "scroll"`: a split from a dock pane stays in the dock; its panes are the window's, each titled with its project when another is in front, and a project's idle tasks end with its last tab (workspaces.md Decisions 9–12) |
+| `<C-w>D` | the pane into the dock, beside the pane the dock has the keys on (a dock of it alone where there was none), or out of it beside the tab's — `pane dock`, the keyboard going with it; the tab's last pane stays. A title bar dragged onto a pane across does the same, on the side it is let go |
 | `<D-=>` `<D-+>` / `<D-->` `<D-_>` / `<D-0>` (Ctrl where there is no ⌘) | `font bigger` / `smaller` by a pixel for the session, `font reset` back to the settings' size; from every mode and pane |
 | `<C-w>!` | a terminal below (`:!` runs a shell, so does this) |
 | `<C-w>n` | the keyboard onto the toasts |

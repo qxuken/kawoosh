@@ -144,6 +144,71 @@ fn the_dock_splits_in_itself() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A pane goes into the dock and back out: `<C-w>D` from the tab puts
+/// it in the dock (a dock of it alone where there was none, opened,
+/// with the keyboard), from the dock back beside the tab's focused
+/// pane; the last pane of the last tab stays. By mouse, a title bar
+/// dragged onto a dock pane lands beside it, and a dock pane's title
+/// bar dragged onto a tab pane takes it out.
+#[test]
+fn a_pane_moves_in_and_out_of_the_dock() {
+    let mut app = Kawoosh::new("t", "one");
+    let mut d = Drive::new(900.0, 600.0);
+    d.frame(&mut app);
+    ctrl_w(&mut d, &mut app, "D");
+    assert_eq!(app.ed.message, "the tab's last pane stays");
+    assert!(app.layout.dock.is_none());
+    ctrl_w(&mut d, &mut app, "v");
+    let two = app.layout.focused();
+    ctrl_w(&mut d, &mut app, "D");
+    assert!(app.layout.in_dock(two) && app.layout.dock_open);
+    assert_eq!(app.layout.focused(), two, "the keyboard went with it");
+    assert_eq!(app.layout.visible_panes(), [1, two]);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(
+        app.layout.rects[&two].y > app.layout.rects[&1].y,
+        "under the tab"
+    );
+    // Back out, beside the tab's pane.
+    ctrl_w(&mut d, &mut app, "D");
+    assert!(!app.layout.in_dock(two));
+    assert!(
+        app.layout.dock.is_none(),
+        "the dock's last pane took it along"
+    );
+    assert_eq!(app.layout.focused(), two);
+    // By mouse, on a tree so both tab panes are in sight: a dock of a
+    // terminal, and the tab's second pane dragged by its title bar onto
+    // the dock pane's right edge.
+    ex(&mut d, &mut app, "layout tree");
+    ctrl_w(&mut d, &mut app, "d");
+    let term = app.layout.focused();
+    assert!(app.layout.in_dock(term));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let title = |app: &Kawoosh, p: u64| {
+        let r = app.layout.rects[&p];
+        (r.x + r.w / 2.0, r.y + 8.0)
+    };
+    let r = app.layout.rects[&term];
+    let from = title(&app, two);
+    d.drag(&mut app, from, (r.x + r.w - 10.0, r.y + r.h / 2.0));
+    assert!(app.layout.in_dock(two));
+    assert_eq!(app.layout.visible_panes(), [1, term, two]);
+    assert_eq!(app.layout.focused(), two);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    // And the terminal out by its title bar, onto the tab pane's left.
+    let r1 = app.layout.rects[&1];
+    let from = title(&app, term);
+    d.drag(&mut app, from, (r1.x + 10.0, r1.y + r1.h / 2.0));
+    assert!(!app.layout.in_dock(term));
+    assert_eq!(app.layout.visible_panes(), [term, 1, two]);
+    assert_eq!(app.layout.focused(), term);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// `:enew` puts a fresh scratch in the focused pane, `:new` and `:vnew`
 /// one in a split; each is its own buffer, empty, named `*scratch*`.
 #[test]
