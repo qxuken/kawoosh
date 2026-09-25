@@ -340,53 +340,33 @@ impl Kawoosh {
         };
     }
 
-    /// `pane move left` / `right` / `up` / `down` (`<A-S-hjkl>`, and
-    /// `<C-w>HLJK`): the pane carried a place in `dir`, COUNT places.
-    /// In a strip the strip's axis is the column's place on it and the
-    /// other axis is the pane's place in its column's stack; in a tree
-    /// the pane comes out of its split and goes beside the neighbour
-    /// on that side, which for two panes trades them.
+    /// `pane move left` / `right` / `up` / `down` (`<C-w>HLJK`): the
+    /// pane carried a place in `dir`, COUNT places, in the tab or the
+    /// dock, whichever has the keys. In a strip the strip's axis is the
+    /// column's place on it and the other axis is the pane's place in
+    /// its column's stack; in a tree the pane comes out of its split
+    /// and goes beside the neighbour on that side, which for two panes
+    /// trades them. Past the last place down in the tab it goes into
+    /// the dock, past the first up in the dock back into the tab
+    /// (`Layout::carry_across`).
     fn move_pane_dir(&mut self, dir: SplitDir, forward: bool, count: usize) {
-        if self.layout.dock_focused && self.layout.dock_open {
-            self.ed.message = "the dock stays under the tab".into();
-            return;
+        let was_in = self.layout.in_the_dock();
+        let mut moved = false;
+        for _ in 0..count.max(1) {
+            if !self.carry_pane(dir, forward) {
+                break;
+            }
+            moved = true;
         }
-        let count = count.max(1);
-        let moved = match (self.layout.tab().is_scroll(), dir) {
-            (true, SplitDir::H) => {
-                let by = if forward {
-                    count as i64
+        let now_in = self.layout.in_the_dock();
+        self.ed.message = match (moved, self.layout.focused_home().strip()) {
+            (true, _) if now_in != was_in => {
+                if now_in {
+                    "into the dock".into()
                 } else {
-                    -(count as i64)
-                };
-                self.layout.move_column(by)
-            }
-            (true, SplitDir::V) => {
-                let mut any = false;
-                for _ in 0..count {
-                    any |= self.layout.move_in_column(forward);
+                    "out of the dock".into()
                 }
-                any
             }
-            (false, _) => {
-                let mut any = false;
-                for _ in 0..count {
-                    let Some(target) = self.layout.neighbour(dir, forward) else {
-                        break;
-                    };
-                    let at = match (dir, forward) {
-                        (SplitDir::H, false) => Drop::Left,
-                        (SplitDir::H, true) => Drop::Right,
-                        (SplitDir::V, false) => Drop::Up,
-                        (SplitDir::V, true) => Drop::Down,
-                    };
-                    let from = self.layout.focused();
-                    any |= self.layout.move_pane(from, target, at);
-                }
-                any
-            }
-        };
-        self.ed.message = match (moved, self.layout.tab().strip()) {
             (true, Some(s)) if dir == SplitDir::H => {
                 let i = s.column_of(self.layout.focused()).unwrap_or(0);
                 format!("column {} of {}", i + 1, s.columns.len())
@@ -396,9 +376,34 @@ impl Kawoosh {
                 (SplitDir::H, false) => "nowhere further left".into(),
                 (SplitDir::H, true) => "nowhere further right".into(),
                 (SplitDir::V, false) => "nothing above to trade with".into(),
+                (SplitDir::V, true) if !was_in => "the tab's last pane stays".into(),
                 (SplitDir::V, true) => "nothing below to trade with".into(),
             },
         };
+    }
+
+    /// One place of `move_pane_dir`: inside the tab or the dock, else
+    /// over the dock's edge on the vertical axis.
+    fn carry_pane(&mut self, dir: SplitDir, forward: bool) -> bool {
+        let from = self.layout.focused();
+        let within = match (self.layout.focused_home().is_scroll(), dir) {
+            (true, SplitDir::H) => self.layout.move_column(if forward { 1 } else { -1 }),
+            (true, SplitDir::V) => self.layout.move_in_column(forward),
+            (false, _) => {
+                let home = self.layout.in_dock(from);
+                let at = match (dir, forward) {
+                    (SplitDir::H, false) => Drop::Left,
+                    (SplitDir::H, true) => Drop::Right,
+                    (SplitDir::V, false) => Drop::Up,
+                    (SplitDir::V, true) => Drop::Down,
+                };
+                self.layout
+                    .neighbour(dir, forward)
+                    .filter(|t| self.layout.in_dock(*t) == home)
+                    .is_some_and(|t| self.layout.move_pane(from, t, at))
+            }
+        };
+        within || (dir == SplitDir::V && self.layout.carry_across(from, forward))
     }
 
     /// `strip left` / `right` / `center` (`zs` `ze` `zz`): where the
@@ -599,7 +604,10 @@ fn panes() -> Vec<ShellCommand> {
             Spec::new("pane swap").doc("trade places with the next pane"),
             |k, _| {
                 let (from, to) = (k.layout.focused(), k.layout.next_pane());
-                k.layout.move_pane(from, to, Drop::Swap);
+                // Within the tab, or within the dock: across is `<C-w>D`'s.
+                if k.layout.in_dock(from) == k.layout.in_dock(to) {
+                    k.layout.move_pane(from, to, Drop::Swap);
+                }
             },
         ),
         cmd(
@@ -873,6 +881,20 @@ fn panes() -> Vec<ShellCommand> {
                 }
                 k.layout.dock_open = !k.layout.dock_open;
                 k.layout.dock_focused = k.layout.dock_open;
+            },
+        ),
+        // `<C-w>D`: the focused pane into the dock, or out of it into
+        // the tab — what dragging its title bar across does.
+        cmd(
+            Spec::new("pane dock")
+                .doc("the pane into the dock, or out of the dock into the tab"),
+            |k, _| {
+                let p = k.layout.focused();
+                k.ed.message = match k.layout.toggle_dock(p) {
+                    Some(true) => "into the dock — <C-w>D takes it back out".into(),
+                    Some(false) => "out of the dock, into the tab".into(),
+                    None => "the tab's last pane stays".into(),
+                };
             },
         ),
     ]
