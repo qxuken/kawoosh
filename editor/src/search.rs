@@ -33,6 +33,10 @@ const STRIDE: usize = 64 << 20;
 #[derive(Clone, Debug)]
 pub struct Search {
     pub pattern: String,
+    /// Letters match either case unless the pattern says otherwise
+    /// (`(?-i)`): what `/` and `?` search with. Part of what makes two
+    /// searches the same one ([`Search::is`]).
+    pub ignore_case: bool,
     pub re: Regex,
     /// The match count once known, with the buffer and text version it
     /// was taken over: an `n` in the same text says the number again
@@ -41,16 +45,24 @@ pub struct Search {
 }
 
 impl Search {
-    /// Compiles `pattern`; a bad one is the message to show.
-    pub fn new(pattern: &str) -> Result<Self, String> {
+    /// Compiles `pattern`, either case matching when `ignore_case`; a
+    /// bad one is the message to show.
+    pub fn new(pattern: &str, ignore_case: bool) -> Result<Self, String> {
         let re = regex::bytes::RegexBuilder::new(pattern)
+            .case_insensitive(ignore_case)
             .build()
             .map_err(|e| format!("bad pattern: {e}"))?;
         Ok(Self {
             pattern: pattern.to_string(),
+            ignore_case,
             re,
             count: None,
         })
+    }
+
+    /// Whether this is the search `pattern` compiled with `ignore_case`.
+    pub fn is(&self, pattern: &str, ignore_case: bool) -> bool {
+        self.pattern == pattern && self.ignore_case == ignore_case
     }
 }
 
