@@ -29,7 +29,7 @@ use kawoosh_doc::{Buffer, BufferId, Version};
 pub use keymap::{Binding, KeyStroke, Keymap, Lookup, Mode};
 pub use repeat::Step;
 pub use selection::{Selection, Selections};
-pub use settings::{Layer, Setting, Settings};
+pub use settings::{Decl, Layer, Setting, SettingKind, Settings};
 use slotmap::{SlotMap, new_key_type};
 
 new_key_type! {

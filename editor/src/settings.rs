@@ -286,12 +286,50 @@ impl Layer {
     }
 }
 
+/// What a setting holds, as a declaration says it (roadmap step 34):
+/// the scalar kinds, a word of a few, a list, or a table whose keys are
+/// the user's own (`tools`, `tokens.colors`, a theme's roles).
+#[derive(Clone, Debug, PartialEq)]
+pub enum SettingKind {
+    Bool,
+    Int,
+    Float,
+    Str,
+    OneOf(Vec<String>),
+    List,
+    Open,
+}
+
+impl SettingKind {
+    /// The kind a default's value is.
+    pub fn of(v: &Setting) -> SettingKind {
+        match v {
+            Setting::Bool(_) => SettingKind::Bool,
+            Setting::Int(_) => SettingKind::Int,
+            Setting::Float(_) => SettingKind::Float,
+            Setting::Str(_) => SettingKind::Str,
+            Setting::List(_) => SettingKind::List,
+            Setting::Table(_) => SettingKind::Open,
+        }
+    }
+}
+
+/// A setting declared: its kind and a line saying what it does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Decl {
+    pub kind: SettingKind,
+    pub doc: String,
+}
+
 /// The layers and their merge. A layer holds its sources in order — a
 /// project's files from the root down — each a tree; the effective
 /// tree is rebuilt on every change and read for free.
 #[derive(Clone, Debug)]
 pub struct Settings {
     layers: [Vec<(String, Setting)>; 4],
+    /// What each setting is, where more is known than its default
+    /// (`declare`): a plugin's with no default, an open table, a doc.
+    decls: BTreeMap<String, Decl>,
     effective: Setting,
     /// Bumped on every change, so a reader that derives something from
     /// the tree (the keymap's leader) knows when to look again.
@@ -502,6 +540,7 @@ impl Settings {
         defaults.set("theme.name", Setting::Str("rose-pine".into()));
         let mut s = Self {
             layers: Default::default(),
+            decls: BTreeMap::new(),
             effective: Setting::table(),
             version: 0,
         };
@@ -573,6 +612,95 @@ impl Settings {
             name != layer.name() || !matches!(s, Setting::Table(t) if t.is_empty())
         });
         self.rebuild();
+    }
+
+    /// Declares `path` (roadmap step 34): what it holds and what it
+    /// does. A setting with a default in the engine's layer is declared
+    /// by it; this is for one read without a default, an open table,
+    /// and a doc. Declared again, the last word stands.
+    pub fn declare(&mut self, path: &str, kind: SettingKind, doc: &str) {
+        self.decls.insert(
+            path.to_string(),
+            Decl {
+                kind,
+                doc: doc.to_string(),
+            },
+        );
+    }
+
+    /// Whether `path` is a setting anyone declared: itself, under an
+    /// open table declared, or in the engine's defaults.
+    pub fn is_declared(&self, path: &str) -> bool {
+        let mut p = path;
+        loop {
+            if let Some(d) = self.decls.get(p) {
+                return p == path || d.kind == SettingKind::Open;
+            }
+            match p.rsplit_once('.') {
+                Some((up, _)) => p = up,
+                None => break,
+            }
+        }
+        self.layers[Layer::Default as usize]
+            .iter()
+            .any(|(_, s)| s.get(path).is_some())
+    }
+
+    /// The keys the settings files set that no one declared, each with
+    /// the file it is in — what a misspelling looks like, since a key
+    /// nobody reads is otherwise silence (roadmap step 34). An open
+    /// table's keys are the user's; one under a scalar is not a key.
+    pub fn undeclared(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for layer in [Layer::User, Layer::Project] {
+            for (name, tree) in &self.layers[layer as usize] {
+                for path in tree.paths() {
+                    if !self.is_declared(&path) {
+                        out.push((name.clone(), path));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Every setting known, its kind and doc: the defaults' by their
+    /// values, the declarations over them — what the language server's
+    /// types are written from.
+    pub fn schema(&self) -> BTreeMap<String, Decl> {
+        let mut out = BTreeMap::new();
+        for (_, tree) in &self.layers[Layer::Default as usize] {
+            for path in tree.paths() {
+                if let Some(v) = tree.get(&path) {
+                    out.insert(
+                        path,
+                        Decl {
+                            kind: SettingKind::of(v),
+                            doc: String::new(),
+                        },
+                    );
+                }
+            }
+        }
+        for (path, d) in &self.decls {
+            let doc = if d.doc.is_empty() {
+                out.get(path)
+                    .map(|o: &Decl| o.doc.clone())
+                    .unwrap_or_default()
+            } else {
+                d.doc.clone()
+            };
+            // A default's own kind is more exact than a declared `Str`
+            // with choices lost; the declaration's wins otherwise.
+            out.insert(
+                path.clone(),
+                Decl {
+                    kind: d.kind.clone(),
+                    doc,
+                },
+            );
+        }
+        out
     }
 
     /// The sources of `layer`, in order.
