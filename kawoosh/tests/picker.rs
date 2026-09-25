@@ -1167,3 +1167,66 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
 
 /// A row's height in the picker (`picker.lua`'s `ROW_H`).
 const ROW_H: f32 = 19.0;
+
+/// The picker opened below the keyboard's pane shortens it, and the
+/// pane's view stays where it was: its caret, low in it, is no reason
+/// to scroll a pane the keys are not in. Taken or closed, the pane is
+/// back as it was.
+#[test]
+fn opening_the_picker_does_not_scroll_the_pane_above() {
+    let _serial = serial();
+    let dir = project("still");
+    let long: String = (1..=200).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(dir.join("long.txt"), long).unwrap();
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("long.txt"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    let rows_before = app.ed.views[v].rows;
+    // The caret a few rows from the bottom, the view scrolled a little.
+    d.keys(&mut app, "40G");
+    d.keys(&mut app, &format!("{}j", rows_before / 2));
+    d.frame(&mut app);
+    let top = app.ed.views[v].top;
+    assert!(top > 0, "scrolled: {top}");
+    for close in ["enter", "ctrl-c"] {
+        d.keys(&mut app, "  ");
+        d.frame(&mut app);
+        d.frame(&mut app);
+        assert!(picker_open(&app));
+        assert!(app.ed.views[v].rows < rows_before, "the pane shortened");
+        assert_eq!(app.ed.views[v].top, top, "no scroll with the picker open");
+        if close == "enter" {
+            d.key(&mut app, "enter", KeyMods::default());
+        } else {
+            d.ctrl(&mut app, "c");
+        }
+        d.frame(&mut app);
+        d.frame(&mut app);
+        assert!(!picker_open(&app));
+        assert_eq!(app.focused_view(), Some(v));
+        assert_eq!(app.ed.views[v].rows, rows_before);
+        assert_eq!(app.ed.views[v].top, top, "no scroll after {close}");
+    }
+    // Back to the pane with the picker still open: still no scroll
+    // until the caret moves in the shorter pane, which it then follows.
+    d.keys(&mut app, "  ");
+    d.frame(&mut app);
+    d.key(&mut app, "escape", KeyMods::default());
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "k");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(picker_open(&app));
+    assert_eq!(app.focused_view(), Some(v));
+    assert_eq!(app.ed.views[v].top, top, "no scroll on the way back");
+    d.keys(&mut app, "j");
+    d.frame(&mut app);
+    let (top, rows) = (app.ed.views[v].top, app.ed.views[v].rows);
+    let line = line_of_caret(&app);
+    assert!(
+        top <= line && line < top + rows,
+        "the caret on screen: {top} {line} {rows}"
+    );
+}

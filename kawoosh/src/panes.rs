@@ -1069,9 +1069,18 @@ impl Kawoosh {
         // The markdown buffer drawn rendered (markdown.md): its rows are
         // as tall as they wrap to, so it scrolls by what they measured.
         let md = self.markdown_rendered(buf_id);
+        // Whether the view scrolls to its caret this frame: when its
+        // caret moved since it was last drawn — a jump sent to it — and
+        // in the pane the keys are in, after a key typed there unless
+        // the wheel moved it since. Not when the pane changed size
+        // under it: the picker opened below shortens it and leaves its
+        // text still.
+        let caret = (buf_id, self.ed.views[view].sels.primary().head);
+        let follow = self.ed.views[view].drawn_caret != Some(caret) || focused && self.follow_caret;
+        self.ed.views[view].drawn_caret = Some(caret);
         let mut md_last = None;
         if md {
-            md_last = Some(self.md_follow(view, height, focused));
+            md_last = Some(self.md_follow(view, height, follow));
         }
 
         // Scroll the caret into view — a few lines, in the app.
@@ -1091,9 +1100,9 @@ impl Kawoosh {
             // leave the view further down; the caret does not pull it
             // back.
             let end_top = line_count.saturating_sub(rows_n);
-            if (self.follow_caret || !focused) && far {
+            if follow && far {
                 v.top = head_line.saturating_sub(rows_n / 2).min(end_top);
-            } else if self.follow_caret || !focused {
+            } else if follow {
                 if head_line < v.top + scrolloff {
                     v.top = head_line.saturating_sub(scrolloff);
                 }
@@ -1154,9 +1163,7 @@ impl Kawoosh {
             // A table the caret is in slides sideways to show it.
             let head = v.sels.primary().head;
             let head_line = buf.line_of(head);
-            if (self.follow_caret || !focused)
-                && let Some(first) = md_tables.get(&head_line).copied()
-            {
+            if follow && let Some(first) = md_tables.get(&head_line).copied() {
                 let range = buf.line_range(head_line);
                 let before = buf.slice(range.start..head.clamp(range.start, range.end));
                 let x = unicode_width::UnicodeWidthStr::width(before.as_str()) as f32 * self.cell.0;
@@ -1355,7 +1362,7 @@ impl Kawoosh {
         // the way `top` follows it down — before the rows, which are
         // sliced to the window this lands on. A long line's caret is
         // placed by column, as its slice is.
-        if (self.follow_caret || !focused) && !md {
+        if follow && !md {
             let range = buf.line_range(cur_line);
             let head_rel = primary.head.clamp(range.start, range.end) - range.start;
             let window = Window {

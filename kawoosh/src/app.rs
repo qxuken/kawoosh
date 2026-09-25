@@ -1427,6 +1427,8 @@ impl Kawoosh {
         if self.toast_key(&stroke) {
             return;
         }
+        // The pane the key is typed in, which its view follows.
+        let typed_in = self.layout.focused();
         // <Esc> clears the command line's message, whatever else it does.
         if stroke.code == "escape" {
             self.ed.message.clear();
@@ -1481,6 +1483,15 @@ impl Kawoosh {
         self.follow_caret = true;
         self.drain_effects();
         self.drain_lua();
+        // A key that took the keyboard to another pane — a pick, which
+        // closes the picker, `<C-w>k` — was not typed there: that pane's
+        // view stays as it was left until its caret moves or a key is
+        // typed in it. (The frame after, it is still drawn at the height
+        // the picker left it — the rects are a frame late — and
+        // following there scrolled it.)
+        if self.layout.focused() != typed_in {
+            self.follow_caret = false;
+        }
     }
 
     /// Runs the normal-mode binding of a chord from a terminal pane,
