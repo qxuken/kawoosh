@@ -80,6 +80,15 @@ shortcut with `--install`). In the editor, `G` landing once,
 `relativenumber`, and `:set +FLAG` / `-FLAG` for vim's `noFLAG`.
 The todo, read against the list on 2026-09-25, had ten items the list
 never took (below); with the day's asks they are steps 28–35.
+Steps 28–34 followed the same day, on one branch: a theme that holds
+still (Rosé Pine, pinned), the small ones (a caret per line, `~` `_`
+in `dir`, the ⌘-hover, the bell, the launcher in normal mode), scopes
+(a picker from the file's directory, a tab's own buffers), copy mode as
+a mode in colour, workspaces with a lifecycle and the dock (owned
+tasks, a strip, recent workspaces), the settings types investigated,
+and declared settings — 305 commits, 31 integration test files, 468
+tests and 9 Lua acceptance scripts. What is left is step 35, a
+drawing, and each note's own "not built".
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
