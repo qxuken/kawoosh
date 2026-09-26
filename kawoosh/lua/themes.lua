@@ -1,0 +1,329 @@
+-- The themes' pane (docs/design/themes.md Decision 4): `:themes`
+-- (`<leader>oo`) opens a pane below with the appearance as three chips
+-- — system, dark, light — and every variant as a card, the dark ones
+-- and the light ones apart, each card drawn in its own colours rather
+-- than the window's: its page, a few lines of code in its hues with a
+-- gutter and a line selected, a status strip with its accent's mode
+-- chip, and its sixteen as swatches. The card each half holds says so
+-- ("in use"), the one on show is outlined, the cursor's ringed in the
+-- window's accent.
+--
+-- A click, or `<CR>` on the cursor's card, puts the variant in its
+-- half (`:theme dark NAME`, `:theme light NAME`) — the session's, as
+-- `:set` is; `t` flips the base (`:theme toggle`), `s` follows the OS
+-- (`:theme system`), `h` `j` `k` `l` and the arrows walk the cards, `y`
+-- copies the line that keeps the pick in `settings.lua` (shown under
+-- the cards, with its button), `q` and `<Esc>` close.
+--
+-- Hackable: the pane is a reader of `kawoosh.themes` — `variants` (each
+-- one's `name`, `title`, `dark`, `roles`, `syntax`, `ansi`),
+-- `families`, `current()` — which a statusline or a preview of your own
+-- reads the same; `kawoosh.themes.sample` is the code a card shows, a
+-- list of lines of `{ text, token }` pieces, for a config to replace.
+-- `kawoosh.themes.state()` is what the pane shows, for a test. A
+-- session does not keep the pane.
+
+local themes = kawoosh.themes
+
+local VIEW = "themes"
+local PANE_FACT = "lua:" .. VIEW
+-- The pane's title bar, which `ctx.height` counts (`app::TITLE_H`).
+local TITLE_H = 22
+-- The chrome's text size, read off the length tokens each frame as the
+-- picker's is; a card's width follows it.
+local SIZE = 13
+local function sizes(env)
+  local l = env and env.tokens and env.tokens.lengths or {}
+  SIZE = l.chrome or 13
+end
+local function card_w() return SIZE * 22 end
+local GAP = 12
+local PAD = 14
+
+-- The code each card shows: lines of `{ text, token }` pieces, a piece
+-- with no token in the page's text colour. The fourth line is drawn
+-- selected.
+themes.sample = {
+  { { "// the look, in one place", "comment" } },
+  { { "fn", "keyword" }, { " " }, { "greet", "function" }, { "(", "punctuation" }, { "name" },
+    { ":", "punctuation" }, { " " }, { "&", "operator" }, { "str", "type" }, { ")", "punctuation" },
+    { " " }, { "->", "operator" }, { " " }, { "String", "type" }, { " {", "punctuation" } },
+  { { "    " }, { "let", "keyword" }, { " count " }, { "=", "operator" }, { " " },
+    { "42", "number" }, { ";", "punctuation" } },
+  { { "    " }, { "format!", "macro" }, { "(", "punctuation" }, { "\"hi {name}\"", "string" },
+    { ")", "punctuation" } },
+  { { "}", "punctuation" } },
+}
+local SELECTED = 4
+
+-- The pane's state: the cursor's variant by name, and the grid the last
+-- frame laid the cards out in (rows of names), which the walk reads.
+local S = nil
+
+local function by_name(name)
+  for _, v in ipairs(themes.variants) do
+    if v.name == name then return v end
+  end
+end
+
+-- The variants of one base, in the door's order.
+local function of_base(dark)
+  local out = {}
+  for _, v in ipairs(themes.variants) do
+    if v.dark == dark then out[#out + 1] = v end
+  end
+  return out
+end
+
+-- The variant on show now: the half of the base the window is on.
+local function on_show(cur)
+  return cur.base == "dark" and cur.dark or cur.light
+end
+
+-- The line that keeps what is shown in `settings.lua`.
+local function keep_line(cur)
+  local parts = {}
+  for _, k in ipairs { "dark", "light" } do
+    parts[#parts + 1] = string.format("%s = %q", k, cur[k])
+  end
+  if cur.appearance ~= "system" then
+    parts[#parts + 1] = string.format("appearance = %q", cur.appearance)
+  end
+  return "theme = { " .. table.concat(parts, ", ") .. " }"
+end
+
+-- ------------------------------------------------------------ the card
+
+-- A card: the variant drawn in its own colours.
+local function card(v, cur, ctx, is_cursor)
+  local r, t = v.roles, ctx.env.theme
+  local half = v.dark and "dark" or "light"
+  local held = cur[half] == v.name
+  local shown = held and cur.base == half
+  local mono = { family = "mono", size = SIZE - 1, wrap = "none" }
+  local function styled(extra)
+    local s = {}
+    for k, x in pairs(mono) do s[k] = x end
+    for k, x in pairs(extra) do s[k] = x end
+    return s
+  end
+
+  local head = row {
+    width = "grow", pad = { x = 10, y = 6 }, gap = 8, cross_align = "center", bg = r.surface,
+    main_align = "spaceBetween",
+    text({ { v.title, bold = true } }, { size = SIZE, color = r.fg, wrap = "none" }),
+    text(shown and "on show" or held and "in use" or "", { size = SIZE - 2, color = r.muted, wrap = "none" }),
+  }
+
+  local code = column { width = "grow", pad = { y = 6 }, gap = 0 }
+  for i, line in ipairs(themes.sample) do
+    local spans = {}
+    for _, p in ipairs(line) do
+      spans[#spans + 1] = { p[1], color = (p[2] and v.syntax[p[2]]) or r.fg }
+    end
+    code[#code + 1] = row {
+      width = "grow", pad = { x = 8 }, gap = 10, bg = i == SELECTED and r.selection or nil,
+      text(tostring(i), styled { color = i == SELECTED and r.muted or r.faint }),
+      text(spans, mono),
+    }
+  end
+
+  local status = row {
+    width = "grow", pad = { x = 8, y = 3 }, gap = 8, cross_align = "center", bg = r.sunken,
+    row { pad = { x = 5 }, radius = 3, bg = r.accent,
+      text({ { "NORMAL", bold = true } }, { size = SIZE - 3, color = r.on_accent, wrap = "none" }) },
+    row { width = "grow", clip = true, text("greet.rs", styled { color = r.muted }) },
+    text("4:12", styled { color = r.faint }),
+  }
+
+  local swatches = row { width = "grow", pad = { x = 8, y = 7 }, gap = 3 }
+  for i, a in ipairs(v.ansi) do
+    swatches[#swatches + 1] = row { width = 11, height = 11, radius = 2, bg = a,
+      border = i == 1 and { w = 1, color = r.border } or nil }
+  end
+
+  local ring
+  if is_cursor then
+    ring = { w = 2, color = t.accent }
+  elseif shown then
+    ring = { w = 2, color = r.border_strong }
+  else
+    ring = { w = 1, color = r.border }
+  end
+  return column {
+    key = "card " .. v.name, width = card_w(), bg = r.bg, radius = 6, clip = true, gap = 0,
+    border = ring, on_click = { kind = "take", name = v.name },
+    head, code, status, swatches,
+  }
+end
+
+-- ------------------------------------------------------------ the view
+
+local function chip(label, on, ev, t)
+  return row {
+    key = "chip " .. label, pad = { x = 8 }, height = SIZE + 8, radius = 4, cross_align = "center",
+    bg = on and t.accent or t.sunken, hover_bg = not on and t.surface or nil,
+    on_click = ev,
+    text(label, { size = SIZE - 1, color = on and t.on_accent or t.muted, wrap = "none" }),
+  }
+end
+
+local function section(title, note, vs, cur, ctx, cols)
+  local t = ctx.env.theme
+  local col = column { width = "grow", gap = 8 }
+  col[#col + 1] = row { gap = 8, cross_align = "end",
+    text({ { title, bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }),
+    text(note, { size = SIZE - 1, color = t.muted, wrap = "none" }) }
+  local line
+  for i, v in ipairs(vs) do
+    if (i - 1) % cols == 0 then
+      line = row { gap = GAP }
+      col[#col + 1] = line
+      S.grid[#S.grid + 1] = {}
+    end
+    local g = S.grid[#S.grid]
+    g[#g + 1] = v.name
+    line[#line + 1] = card(v, cur, ctx, v.name == S.cursor)
+  end
+  return col
+end
+
+kawoosh.view(VIEW, function(ctx)
+  sizes(ctx.env)
+  local t = ctx.env.theme
+  local cur = themes.current()
+  if not S then S = { cursor = on_show(cur) } end
+  if not by_name(S.cursor) then S.cursor = themes.variants[1].name end
+  local w = (ctx.width or 0) > 0 and ctx.width or 900
+  local cols = math.max(1, math.floor((w - 2 * PAD + GAP) / (card_w() + GAP)))
+  S.grid = {}
+
+  local head = row { width = "grow", gap = 8, cross_align = "center",
+    text({ { "base", bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }) }
+  for _, word in ipairs { "system", "dark", "light" } do
+    head[#head + 1] = chip(word, cur.appearance == word, { kind = "appearance", word = word }, t)
+  end
+  local shown = by_name(on_show(cur))
+  head[#head + 1] = row { width = "grow", clip = true,
+    text("on show: " .. (shown and shown.title or "the system's") .. " (" .. cur.base .. ")",
+      { size = SIZE - 1, color = t.muted, wrap = "none" }) }
+  head[#head + 1] = text("hjkl walk · ⏎ takes · t toggles · s system · y copies · q closes",
+    { size = SIZE - 2, color = t.faint, wrap = "none" })
+
+  local family = cur.family ~= "system" and ("family " .. cur.family .. " · ") or ""
+  local dark = section("dark", family .. "theme.dark = " .. cur.dark, of_base(true), cur, ctx, cols)
+  local light = section("light", family .. "theme.light = " .. cur.light, of_base(false), cur, ctx, cols)
+
+  local keep = keep_line(cur)
+  local foot = column { width = "grow", gap = 6,
+    text("a pick is the session's; to keep it, in settings.lua:",
+      { size = SIZE - 1, color = t.muted, wrap = "none" }),
+    row { gap = 8, cross_align = "center",
+      row { pad = { x = 8, y = 4 }, radius = 4, bg = t.sunken,
+        text(keep, { family = "mono", size = SIZE - 1, color = t.fg, wrap = "none" }) },
+      row { key = "copy", pad = { x = 8, y = 4 }, radius = 4, bg = t.raised, hover_bg = t.surface,
+        border = { w = 1, color = t.border }, on_click = { kind = "copy" },
+        text("copy", { size = SIZE - 1, color = t.fg, wrap = "none" }) } },
+  }
+
+  return column { width = "grow", height = "grow", bg = t.bg, pad = PAD, gap = 16, scroll_y = true,
+    head, dark, light, foot }
+end, function(ev)
+  if not S then return end
+  if ev.kind == "take" then
+    S.cursor = ev.name
+    themes.take(ev.name)
+  elseif ev.kind == "appearance" then
+    kawoosh.run("theme " .. ev.word)
+  elseif ev.kind == "copy" then
+    themes.copy()
+  end
+end, { session = false })
+
+-- ------------------------------------------------------- the commands
+
+-- themes.take(name): the variant into its half, for the session.
+function themes.take(name)
+  local v = by_name(name)
+  if not v then return kawoosh.echo("no theme " .. tostring(name)) end
+  kawoosh.run("theme " .. (v.dark and "dark " or "light ") .. v.name)
+end
+
+-- themes.copy(): the line that keeps what is shown, on the clipboard.
+function themes.copy()
+  local line = keep_line(themes.current())
+  kawoosh.copy(line)
+  kawoosh.echo("copied " .. line)
+end
+
+-- themes.state(): what the pane shows — `cursor` (a variant's name),
+-- `grid` (the cards' names, in the rows the last frame laid them out
+-- in) and `keep` (the line for `settings.lua`) — or nil when it is not
+-- open.
+function themes.state()
+  if not S then return nil end
+  return { cursor = S.cursor, grid = S.grid, keep = keep_line(themes.current()) }
+end
+
+-- The cursor's place in the grid: its row and column.
+local function where()
+  for r, names in ipairs(S.grid or {}) do
+    for c, n in ipairs(names) do
+      if n == S.cursor then return r, c end
+    end
+  end
+  return 1, 1
+end
+
+-- The cursor `dx` cards along its row, or `dy` rows down (the column
+-- held where the row is as long), stopping at the edges.
+local function walk(dx, dy)
+  if not S or not S.grid or #S.grid == 0 then return end
+  local r, c = where()
+  if dy ~= 0 then
+    r = math.max(1, math.min(#S.grid, r + dy))
+    c = math.min(c, #S.grid[r])
+  else
+    local flat, at = {}, 1
+    for _, names in ipairs(S.grid) do
+      for _, n in ipairs(names) do
+        flat[#flat + 1] = n
+        if n == S.cursor then at = #flat end
+      end
+    end
+    S.cursor = flat[math.max(1, math.min(#flat, at + dx))]
+    return
+  end
+  S.cursor = S.grid[r][c]
+end
+
+local function close()
+  S = nil
+  kawoosh.view_close(VIEW)
+end
+
+kawoosh.command("themes", function()
+  S = nil
+  kawoosh.view_open(VIEW, { below = true, share = 0.55 })
+end, { doc = "the themes, each drawn in its own colours: pick a dark and a light, flip the base" })
+
+local function on(name, fn, doc)
+  kawoosh.command("themes " .. name, fn, { when = { PANE_FACT }, doc = doc })
+end
+on("take", function() if S then themes.take(S.cursor) end end, "the cursor's theme into its half")
+on("left", function() walk(-1, 0) end, "the cursor a card back")
+on("right", function() walk(1, 0) end, "the cursor a card on")
+on("up", function() walk(0, -1) end, "the cursor a row up")
+on("down", function() walk(0, 1) end, "the cursor a row down")
+on("toggle", function() kawoosh.run("theme toggle") end, "the other base")
+on("system", function() kawoosh.run("theme system") end, "the base the OS's again")
+on("copy", function() themes.copy() end, "the line that keeps the pick, on the clipboard")
+on("close", close, "close the pane")
+
+for k, c in pairs {
+  ["<CR>"] = "take", h = "left", l = "right", k = "up", j = "down",
+  ["<Left>"] = "left", ["<Right>"] = "right", ["<Up>"] = "up", ["<Down>"] = "down",
+  t = "toggle", s = "system", y = "copy", q = "close", ["<Esc>"] = "close",
+} do
+  kawoosh.map("p", k, "themes " .. c, { when = { PANE_FACT } })
+end
