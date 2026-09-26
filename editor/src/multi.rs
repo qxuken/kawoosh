@@ -44,11 +44,14 @@ pub enum MultiLine {
     Gap,
 }
 
-/// What a multibuffer is made of, in order: the caller's text, and a
-/// source's lines (from 0, end exclusive).
+/// What a multibuffer is made of, in order: the caller's text — plain,
+/// or in a colour a paint names (a diagnostic's message in its
+/// severity's, docs/design/lists.md Decision 3) — and a source's lines
+/// (from 0, end exclusive).
 #[derive(Clone, Debug)]
 pub enum Part {
     Gap(String),
+    Painted(String, String),
     Lines(BufferId, Range<usize>),
 }
 
@@ -58,6 +61,8 @@ pub struct Excerpt {
     pub source: BufferId,
     /// The caller's text before it: a header, a separator.
     pub gap: String,
+    /// The coloured runs of `gap`, within it, with their colour's name.
+    pub gap_paint: Vec<(Range<usize>, String)>,
     /// Its text in the multibuffer, at [`Multi::ver`].
     pub body: Range<usize>,
     /// The lines it stands for in the source, at `src_ver`: whole
@@ -84,8 +89,9 @@ struct Txn(Vec<(BufferId, u64)>);
 #[derive(Clone, Debug, Default)]
 pub struct Multi {
     pub excerpts: Vec<Excerpt>,
-    /// The caller's text after the last excerpt.
+    /// The caller's text after the last excerpt, and its coloured runs.
     pub tail: String,
+    pub tail_paint: Vec<(Range<usize>, String)>,
     /// The multibuffer's version the excerpts' `body` ranges are at.
     ver: Version,
     undo: Vec<Txn>,
@@ -224,21 +230,39 @@ impl Editor {
         id
     }
 
-    /// Multibuffer `id` made of `parts` again — a search run again into
-    /// the same results — the carets back at the top. The sources no
-    /// multibuffer shows any more are released.
+    /// Multibuffer `id` made of `parts` again — a search run again, a
+    /// list of diagnostics that moved. Each view's caret stays on its
+    /// file's place when an excerpt still shows it, else goes to the top;
+    /// the changes made through it stay undoable, since they are its
+    /// sources' (search.md Decision 4). The sources no multibuffer shows
+    /// any more are released.
     pub fn fill_multi(&mut self, id: BufferId, parts: Vec<Part>) {
-        let before = self
-            .multis
-            .remove(&id)
-            .map(|m| m.sources())
-            .unwrap_or_default();
+        let carets: Vec<(crate::ViewId, Option<(BufferId, usize)>)> = self
+            .views
+            .iter()
+            .filter(|(_, v)| v.buffer == id)
+            .map(|(vid, v)| (vid, self.multi_at(id, v.sels.primary().head)))
+            .collect();
+        let old = self.multis.remove(&id);
+        let before = old.as_ref().map(|m| m.sources()).unwrap_or_default();
         let mut m = Multi::default();
+        if let Some(o) = old {
+            m.undo = o.undo;
+            m.redo = o.redo;
+        }
         let mut gap = String::new();
+        let mut paint: Vec<(Range<usize>, String)> = Vec::new();
         let mut text = Vec::new();
         for p in parts {
             match p {
                 Part::Gap(g) => gap.push_str(&g),
+                Part::Painted(g, color) => {
+                    let at = gap.len();
+                    gap.push_str(&g);
+                    if !g.is_empty() {
+                        paint.push((at..gap.len(), color));
+                    }
+                }
                 Part::Lines(src, lines) => {
                     let Some(sb) = self.buffers.get(src) else {
                         continue;
@@ -253,6 +277,7 @@ impl Editor {
                     let mut e = Excerpt {
                         source: src,
                         gap: std::mem::take(&mut gap),
+                        gap_paint: std::mem::take(&mut paint),
                         body: 0..0,
                         bare: !pending && bare(sb, &range),
                         src: range,
@@ -275,17 +300,22 @@ impl Editor {
         }
         text.extend_from_slice(gap.as_bytes());
         m.tail = gap;
+        m.tail_paint = paint;
         let text = String::from_utf8_lossy(&text).into_owned();
         let b = &mut self.buffers[id];
         b.replace(0..b.len(), &text);
         m.ver = b.version();
-        for v in self.views.values_mut().filter(|v| v.buffer == id) {
-            v.sels = Default::default();
-            v.top = 0;
-            v.left = 0.0;
-        }
         self.history.insert(id, Default::default());
         self.multis.insert(id, m);
+        for (vid, at) in carets {
+            let to = at.and_then(|(src, off)| self.multi_offset(id, src, off));
+            let v = &mut self.views[vid];
+            v.sels = crate::Selections::single(Selection::point(to.unwrap_or(0)));
+            if to.is_none() {
+                v.top = 0;
+                v.left = 0.0;
+            }
+        }
         self.set_multi_modified(id);
         self.release(before);
     }
@@ -336,6 +366,84 @@ impl Editor {
         }
         let within = (offset - bodies[i].start).min(e.src.len());
         Some((e.source, e.src.start + within))
+    }
+
+    /// Where offset `offset` of source `src` is in multibuffer `id`: in
+    /// the first excerpt that shows it — `multi_at`'s way back.
+    pub fn multi_offset(&self, id: BufferId, src: BufferId, offset: usize) -> Option<usize> {
+        let m = self.multis.get(&id)?;
+        let bodies = self.bodies_now(id)?;
+        let sb = self.buffers.get(src)?;
+        m.excerpts.iter().zip(&bodies).find_map(|(e, b)| {
+            let held = e.source == src
+                && !e.dead
+                && !e.pending
+                && e.src_ver == sb.version()
+                && e.src.start <= offset
+                && (offset < e.src.end || offset == e.src.end && added(e, sb));
+            held.then(|| (b.start + offset - e.src.start).min(b.end))
+        })
+    }
+
+    /// Every place multibuffer `id` shows of its sources' layer `layer`:
+    /// each run's range in the multibuffer and the source's run, in the
+    /// multibuffer's order — what `]q` walks in a list and `]d` in any
+    /// multibuffer (docs/design/lists.md Decision 4). A run is the
+    /// excerpt's that shows its start.
+    pub fn multi_runs(
+        &self,
+        id: BufferId,
+        layer: &str,
+    ) -> Vec<(Range<usize>, BufferId, kawoosh_doc::Run)> {
+        let (Some(m), Some(bodies)) = (self.multis.get(&id), self.bodies_now(id)) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (e, b) in m.excerpts.iter().zip(&bodies) {
+            let Some(sb) = self.buffers.get(e.source) else {
+                continue;
+            };
+            if e.dead || e.pending || e.src_ver != sb.version() {
+                continue;
+            }
+            for r in sb.runs(layer, e.src.clone()) {
+                if r.range.start < e.src.start || r.range.start >= e.src.end.max(e.src.start + 1) {
+                    continue;
+                }
+                let a = b.start + (r.range.start - e.src.start);
+                let z = (b.start + r.range.end.saturating_sub(e.src.start)).min(b.end);
+                out.push((a..z.max(a), e.source, r));
+            }
+        }
+        out
+    }
+
+    /// The coloured runs of multibuffer `id`'s gaps, where they are in
+    /// its text now, each with its colour's name.
+    pub fn multi_paints(&self, id: BufferId) -> Vec<(Range<usize>, &str)> {
+        let (Some(m), Some(bodies), Some(buf)) = (
+            self.multis.get(&id),
+            self.bodies_now(id),
+            self.buffers.get(id),
+        ) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (e, b) in m.excerpts.iter().zip(&bodies) {
+            let at = b.start.saturating_sub(e.gap.len());
+            out.extend(
+                e.gap_paint
+                    .iter()
+                    .map(|(r, c)| (at + r.start..at + r.end, c.as_str())),
+            );
+        }
+        let at = buf.len().saturating_sub(m.tail.len());
+        out.extend(
+            m.tail_paint
+                .iter()
+                .map(|(r, c)| (at + r.start..at + r.end, c.as_str())),
+        );
+        out
     }
 
     /// What each line of multibuffer `id` from `lines.start` is: a
