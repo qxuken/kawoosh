@@ -65,11 +65,13 @@ local SELECTED = 4
 
 -- The pane's state: the cursor's variant by name, the grid the last
 -- frame laid the cards out in (rows of names), which the walk reads,
--- and `reveal`, the frames left to try to scroll the cursor's card
--- into view: `env.reveal` names a card by the label it was declared
--- with, which the view has not declared yet when it asks — the last
--- frame's is found, and on the pane's first frame there is none, so it
--- is asked again the frame after.
+-- and `reveal`, the frames left to scroll the cursor's card into view:
+-- `env.reveal` names a card by the label it was declared with, which
+-- the view has not declared yet when it asks — the last frame's is
+-- found, and on the pane's first frame there is none — and a reveal
+-- the frame after the pane opened resolves against a column not yet
+-- its height, and moves nothing. So it is asked on each of a few
+-- frames: a card already in view is not moved by it.
 local S = nil
 local REVEAL_FRAMES = 3
 
@@ -214,13 +216,12 @@ kawoosh.view(VIEW, function(ctx)
     local first = S.grid and S.grid[1] or {}
     local top = false
     for _, n in ipairs(first) do top = top or n == S.cursor end
-    local ok
     if top then
-      ok = pcall(ctx.env.set_scroll, "body", 0, 0)
+      pcall(ctx.env.set_scroll, "body", 0, 0)
     else
-      ok = pcall(ctx.env.reveal, "card " .. S.cursor)
+      pcall(ctx.env.reveal, "card " .. S.cursor)
     end
-    S.reveal = (not ok and S.reveal > 1) and S.reveal - 1 or nil
+    S.reveal = S.reveal > 1 and S.reveal - 1 or nil
   end
   S.scrolled = ctx.env.scroll_offset("body").y
   local w = (ctx.width or 0) > 0 and ctx.width or 900

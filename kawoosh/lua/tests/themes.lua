@@ -5,8 +5,13 @@ local themes = kawoosh.themes
 local names = {}
 for _, v in ipairs(themes.variants) do names[#names + 1] = v.name end
 kawoosh.test.eq(table.concat(names, " "),
-  "rose-pine rose-pine-moon ayu-dark ayu-mirage high-contrast-dark rose-pine-dawn ayu-light high-contrast-light")
-local mirage = themes.variants[4]
+  "rose-pine rose-pine-moon ayu-dark ayu-mirage gruvbox-dark gruvbox-dark-hard gruvbox-dark-soft "
+  .. "tokyo-night tokyo-night-storm tokyo-night-moon high-contrast-dark rose-pine-dawn ayu-light "
+  .. "gruvbox-light gruvbox-light-hard gruvbox-light-soft tokyo-night-day high-contrast-light")
+local function variant(name)
+  for _, v in ipairs(themes.variants) do if v.name == name then return v end end
+end
+local mirage = variant("ayu-mirage")
 kawoosh.test.eq(mirage.title, "Ayu Mirage")
 kawoosh.test.eq(mirage.dark, true)
 kawoosh.test.eq(mirage.roles.bg, 0x242936ff, "a role as 0xRRGGBBAA")
@@ -18,7 +23,12 @@ kawoosh.test.eq(themes.families[1].name, "rose-pine")
 -- the high-contrast pair alone.
 kawoosh.test.eq(mirage.styles.comment.italic, true)
 kawoosh.test.eq(mirage.styles.keyword, nil)
-kawoosh.test.eq(themes.variants[5].styles.keyword.bold, true)
+kawoosh.test.eq(variant("high-contrast-dark").styles.keyword.bold, true)
+-- Gruvbox's functions bold, Tokyo Night's keywords italic.
+kawoosh.test.eq(variant("gruvbox-dark").styles["function"].bold, true)
+kawoosh.test.eq(variant("gruvbox-dark").syntax.keyword, 0xfb4934ff)
+kawoosh.test.eq(variant("tokyo-night").styles.keyword.italic, true)
+kawoosh.test.eq(variant("tokyo-night-day").dark, false)
 
 -- A highlighted text's runs carry the style, and `tokens.styles` turns
 -- it off.
@@ -99,20 +109,23 @@ kawoosh.press("<CR>")
 kawoosh.frame()
 kawoosh.test.eq(themes.current().dark, "rose-pine-moon")
 kawoosh.test.eq(kawoosh.opt("theme.dark"), "rose-pine-moon")
--- Down to the light row, the column held where it can be.
-for _ = 1, 4 do kawoosh.press("j") end
-kawoosh.frame()
+-- Down to the light cards, the column held where it can be.
+for _ = 1, 20 do
+  if not variant(themes.state().cursor).dark then break end
+  kawoosh.press("j")
+  kawoosh.frame()
+end
 local c = themes.state().cursor
-kawoosh.test.ok(c == "rose-pine-dawn" or c == "ayu-light" or c == "high-contrast-light", c)
+kawoosh.test.eq(variant(c).dark, false, c)
 kawoosh.press("<CR>")
 kawoosh.frame()
 kawoosh.test.eq(themes.current().light, c)
 -- The walk keeps the cursor's card in view: to the last and back up.
-for _ = 1, 8 do kawoosh.press("j") end
+for _ = 1, 24 do kawoosh.press("j") end
 kawoosh.frame(3)
 kawoosh.test.eq(themes.state().cursor, "high-contrast-light")
 kawoosh.test.ok(themes.state().scrolled > 0, "scrolled down to the last card")
-for _ = 1, 8 do kawoosh.press("k") end
+for _ = 1, 24 do kawoosh.press("k") end
 kawoosh.frame(3)
 kawoosh.test.eq(themes.state().cursor, "rose-pine")
 kawoosh.test.eq(themes.state().scrolled, 0, "and back to the first")
@@ -129,6 +142,18 @@ for _, ch in ipairs(hc.checks) do kawoosh.test.ok(ch.ok, ch.what) end
 kawoosh.test.eq(hc.syntax.keyword, 0xa3006bff)
 kawoosh.test.eq(hc.styles.keyword.bold, true)
 kawoosh.test.ok(not pcall(themes.check, "nope"), "a stranger is an error")
+-- Opened on a card far down, the pane scrolls to it.
+kawoosh.press("q")
+kawoosh.cmd("theme dark gruvbox-dark-soft")
+kawoosh.cmd("theme dark")
+kawoosh.frame(2)
+kawoosh.cmd("themes")
+kawoosh.frame(5)
+kawoosh.test.eq(themes.state().cursor, "gruvbox-dark-soft")
+kawoosh.test.ok(themes.state().scrolled > 0, "opened on the card on show")
+kawoosh.cmd("theme dark rose-pine-moon")
+kawoosh.cmd("theme system")
+kawoosh.frame()
 -- `y` copies the line; `q` closes.
 kawoosh.press("y")
 kawoosh.frame()
