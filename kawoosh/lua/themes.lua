@@ -1,12 +1,16 @@
 -- The themes' pane (docs/design/themes.md Decision 4): `:themes`
--- (`<leader>oo`) opens a pane below with the appearance as three chips
--- — system, dark, light — and every variant as a card, the dark ones
--- and the light ones apart, each card drawn in its own colours rather
--- than the window's: its page, a few lines of code in its hues with a
--- gutter and a line selected, a status strip with its accent's mode
--- chip, and its sixteen as swatches. The card each half holds says so
--- ("in use"), the one on show is outlined, the cursor's ringed in the
--- window's accent.
+-- (`<leader>oo`) opens a column of its own beside the focused one —
+-- `SHARE` of the width, the column it opened from giving up the rest so
+-- the two are on screen together and a pick is seen on the code — with
+-- the appearance as three chips — system, dark, light — and every
+-- variant as a card, the dark ones and the light ones apart, as many
+-- to a row as the column is wide, each card drawn in its own colours
+-- rather than the window's: its page, a few lines of code in its hues
+-- and styles with a gutter and a line selected, a status strip with
+-- its accent's mode chip, and its sixteen as swatches. The card each
+-- half holds says so ("in use"), the one on show is outlined, the
+-- cursor's ringed in the window's accent and scrolled into view as it
+-- walks.
 --
 -- A click, or `<CR>` on the cursor's card, puts the variant in its
 -- half (`:theme dark NAME`, `:theme light NAME`) — the session's, as
@@ -30,14 +34,17 @@ local PANE_FACT = "lua:" .. VIEW
 -- The pane's title bar, which `ctx.height` counts (`app::TITLE_H`).
 local TITLE_H = 22
 -- The chrome's text size, read off the length tokens each frame as the
--- picker's is; a card's width follows it.
+-- picker's is; a card's least width follows it, and the cards of a row
+-- share what the column has past that.
 local SIZE = 13
 local function sizes(env)
   local l = env and env.tokens and env.tokens.lengths or {}
   SIZE = l.chrome or 13
 end
-local function card_w() return SIZE * 22 end
+local function card_min() return SIZE * 22 end
 local GAP = 12
+-- The column's share of the window's width.
+local SHARE = 0.4
 local PAD = 14
 
 -- The code each card shows: lines of `{ text, token }` pieces, a piece
@@ -56,9 +63,15 @@ themes.sample = {
 }
 local SELECTED = 4
 
--- The pane's state: the cursor's variant by name, and the grid the last
--- frame laid the cards out in (rows of names), which the walk reads.
+-- The pane's state: the cursor's variant by name, the grid the last
+-- frame laid the cards out in (rows of names), which the walk reads,
+-- and `reveal`, the frames left to try to scroll the cursor's card
+-- into view: `env.reveal` names a card by the label it was declared
+-- with, which the view has not declared yet when it asks — the last
+-- frame's is found, and on the pane's first frame there is none, so it
+-- is asked again the frame after.
 local S = nil
+local REVEAL_FRAMES = 3
 
 local function by_name(name)
   for _, v in ipairs(themes.variants) do
@@ -95,7 +108,7 @@ end
 -- ------------------------------------------------------------ the card
 
 -- A card: the variant drawn in its own colours.
-local function card(v, cur, ctx, is_cursor)
+local function card(v, cur, ctx, is_cursor, width)
   local r, t = v.roles, ctx.env.theme
   local half = v.dark and "dark" or "light"
   local held = cur[half] == v.name
@@ -119,7 +132,9 @@ local function card(v, cur, ctx, is_cursor)
   for i, line in ipairs(themes.sample) do
     local spans = {}
     for _, p in ipairs(line) do
-      spans[#spans + 1] = { p[1], color = (p[2] and v.syntax[p[2]]) or r.fg }
+      local st = p[2] and v.styles[p[2]] or {}
+      spans[#spans + 1] = { p[1], color = (p[2] and v.syntax[p[2]]) or r.fg, bold = st.bold,
+                            italic = st.italic, underline = st.underline, strikethrough = st.strikethrough }
     end
     code[#code + 1] = row {
       width = "grow", pad = { x = 8 }, gap = 10, bg = i == SELECTED and r.selection or nil,
@@ -151,7 +166,7 @@ local function card(v, cur, ctx, is_cursor)
     ring = { w = 1, color = r.border }
   end
   return column {
-    key = "card " .. v.name, width = card_w(), bg = r.bg, radius = 6, clip = true, gap = 0,
+    key = "card " .. v.name, width = width, bg = r.bg, radius = 6, clip = true, gap = 0,
     border = ring, on_click = { kind = "take", name = v.name },
     head, code, status, swatches,
   }
@@ -168,12 +183,12 @@ local function chip(label, on, ev, t)
   }
 end
 
-local function section(title, note, vs, cur, ctx, cols)
+local function section(title, note, vs, cur, ctx, cols, width)
   local t = ctx.env.theme
   local col = column { width = "grow", gap = 8 }
-  col[#col + 1] = row { gap = 8, cross_align = "end",
+  col[#col + 1] = row { width = "grow", gap = 8, cross_align = "end",
     text({ { title, bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }),
-    text(note, { size = SIZE - 1, color = t.muted, wrap = "none" }) }
+    row { width = "grow", text(note, { size = SIZE - 1, color = t.muted, wrap = "word" }) } }
   local line
   for i, v in ipairs(vs) do
     if (i - 1) % cols == 0 then
@@ -183,7 +198,7 @@ local function section(title, note, vs, cur, ctx, cols)
     end
     local g = S.grid[#S.grid]
     g[#g + 1] = v.name
-    line[#line + 1] = card(v, cur, ctx, v.name == S.cursor)
+    line[#line + 1] = card(v, cur, ctx, v.name == S.cursor, width)
   end
   return col
 end
@@ -192,41 +207,59 @@ kawoosh.view(VIEW, function(ctx)
   sizes(ctx.env)
   local t = ctx.env.theme
   local cur = themes.current()
-  if not S then S = { cursor = on_show(cur) } end
+  if not S then S = { cursor = on_show(cur), reveal = REVEAL_FRAMES } end
   if not by_name(S.cursor) then S.cursor = themes.variants[1].name end
+  -- The first row's card brings the chips above it back too: to the top.
+  if S.reveal then
+    local first = S.grid and S.grid[1] or {}
+    local top = false
+    for _, n in ipairs(first) do top = top or n == S.cursor end
+    local ok
+    if top then
+      ok = pcall(ctx.env.set_scroll, "body", 0, 0)
+    else
+      ok = pcall(ctx.env.reveal, "card " .. S.cursor)
+    end
+    S.reveal = (not ok and S.reveal > 1) and S.reveal - 1 or nil
+  end
+  S.scrolled = ctx.env.scroll_offset("body").y
   local w = (ctx.width or 0) > 0 and ctx.width or 900
-  local cols = math.max(1, math.floor((w - 2 * PAD + GAP) / (card_w() + GAP)))
+  local room = w - 2 * PAD
+  local cols = math.max(1, math.floor((room + GAP) / (card_min() + GAP)))
+  local width = math.max(card_min(), math.floor((room - (cols - 1) * GAP) / cols))
   S.grid = {}
 
-  local head = row { width = "grow", gap = 8, cross_align = "center",
+  -- The base's chips and what is on show; the keys under them, folded
+  -- to the column's width.
+  local chips = row { gap = 8, cross_align = "center",
     text({ { "base", bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }) }
   for _, word in ipairs { "system", "dark", "light" } do
-    head[#head + 1] = chip(word, cur.appearance == word, { kind = "appearance", word = word }, t)
+    chips[#chips + 1] = chip(word, cur.appearance == word, { kind = "appearance", word = word }, t)
   end
   local shown = by_name(on_show(cur))
-  head[#head + 1] = row { width = "grow", clip = true,
+  local head = column { width = "grow", gap = 6, chips,
     text("on show: " .. (shown and shown.title or "the system's") .. " (" .. cur.base .. ")",
-      { size = SIZE - 1, color = t.muted, wrap = "none" }) }
-  head[#head + 1] = text("hjkl walk · ⏎ takes · t toggles · s system · y copies · q closes",
-    { size = SIZE - 2, color = t.faint, wrap = "none" })
+      { size = SIZE - 1, color = t.muted, wrap = "word" }),
+    text("hjkl walk · ⏎ takes · t toggles · s system · y copies · q closes",
+      { size = SIZE - 2, color = t.faint, wrap = "word" }) }
 
   local family = cur.family ~= "system" and ("family " .. cur.family .. " · ") or ""
-  local dark = section("dark", family .. "theme.dark = " .. cur.dark, of_base(true), cur, ctx, cols)
-  local light = section("light", family .. "theme.light = " .. cur.light, of_base(false), cur, ctx, cols)
+  local dark = section("dark", family .. "theme.dark = " .. cur.dark, of_base(true), cur, ctx, cols, width)
+  local light = section("light", family .. "theme.light = " .. cur.light, of_base(false), cur, ctx, cols, width)
 
   local keep = keep_line(cur)
   local foot = column { width = "grow", gap = 6,
     text("a pick is the session's; to keep it, in settings.lua:",
-      { size = SIZE - 1, color = t.muted, wrap = "none" }),
-    row { gap = 8, cross_align = "center",
-      row { pad = { x = 8, y = 4 }, radius = 4, bg = t.sunken,
-        text(keep, { family = "mono", size = SIZE - 1, color = t.fg, wrap = "none" }) },
+      { size = SIZE - 1, color = t.muted, wrap = "word" }),
+    row { width = "grow", gap = 8, cross_align = "center",
+      row { width = "grow", pad = { x = 8, y = 4 }, radius = 4, bg = t.sunken,
+        text(keep, { family = "mono", size = SIZE - 1, color = t.fg, wrap = "word" }) },
       row { key = "copy", pad = { x = 8, y = 4 }, radius = 4, bg = t.raised, hover_bg = t.surface,
         border = { w = 1, color = t.border }, on_click = { kind = "copy" },
         text("copy", { size = SIZE - 1, color = t.fg, wrap = "none" }) } },
   }
 
-  return column { width = "grow", height = "grow", bg = t.bg, pad = PAD, gap = 16, scroll_y = true,
+  return column { key = "body", width = "grow", height = "grow", bg = t.bg, pad = PAD, gap = 16, scroll_y = true,
     head, dark, light, foot }
 end, function(ev)
   if not S then return end
@@ -258,11 +291,12 @@ end
 
 -- themes.state(): what the pane shows — `cursor` (a variant's name),
 -- `grid` (the cards' names, in the rows the last frame laid them out
--- in) and `keep` (the line for `settings.lua`) — or nil when it is not
--- open.
+-- in), `scrolled` (how far down the cards are scrolled, px) and `keep`
+-- (the line for `settings.lua`) — or nil when it is not open.
 function themes.state()
   if not S then return nil end
-  return { cursor = S.cursor, grid = S.grid, keep = keep_line(themes.current()) }
+  return { cursor = S.cursor, grid = S.grid, scrolled = S.scrolled or 0,
+           keep = keep_line(themes.current()) }
 end
 
 -- The cursor's place in the grid: its row and column.
@@ -282,7 +316,7 @@ local function walk(dx, dy)
   local r, c = where()
   if dy ~= 0 then
     r = math.max(1, math.min(#S.grid, r + dy))
-    c = math.min(c, #S.grid[r])
+    S.cursor = S.grid[r][math.min(c, #S.grid[r])]
   else
     local flat, at = {}, 1
     for _, names in ipairs(S.grid) do
@@ -292,9 +326,8 @@ local function walk(dx, dy)
       end
     end
     S.cursor = flat[math.max(1, math.min(#flat, at + dx))]
-    return
   end
-  S.cursor = S.grid[r][c]
+  S.reveal = REVEAL_FRAMES
 end
 
 local function close()
@@ -304,8 +337,8 @@ end
 
 kawoosh.command("themes", function()
   S = nil
-  kawoosh.view_open(VIEW, { below = true, share = 0.55 })
-end, { doc = "the themes, each drawn in its own colours: pick a dark and a light, flip the base" })
+  kawoosh.view_open(VIEW, { share = SHARE })
+end, { doc = "the themes in a column, each drawn in its own colours: pick a dark and a light, flip the base" })
 
 local function on(name, fn, doc)
   kawoosh.command("themes " .. name, fn, { when = { PANE_FACT }, doc = doc })

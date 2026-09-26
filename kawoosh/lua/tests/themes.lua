@@ -14,6 +14,28 @@ kawoosh.test.eq(mirage.syntax.keyword, 0xffad66ff)
 kawoosh.test.eq(mirage.syntax.plain, nil, "plain text has no hue")
 kawoosh.test.eq(#mirage.ansi, 16)
 kawoosh.test.eq(themes.families[1].name, "rose-pine")
+-- Styles beside the hues: comments italic everywhere, keywords bold in
+-- the high-contrast pair alone.
+kawoosh.test.eq(mirage.styles.comment.italic, true)
+kawoosh.test.eq(mirage.styles.keyword, nil)
+kawoosh.test.eq(themes.variants[5].styles.keyword.bold, true)
+
+-- A highlighted text's runs carry the style, and `tokens.styles` turns
+-- it off.
+local function highlight(text)
+  local got
+  kawoosh.highlight(text, { language = "rust" }, function(runs) got = runs end)
+  kawoosh.wait(function() return got end, nil, "the highlight")
+  for _, r in ipairs(got) do
+    if r.token == "comment" then return r end
+  end
+end
+kawoosh.test.eq(highlight("// hi\nfn main() {}\n").italic, true)
+kawoosh.opt("tokens.styles", { comment = { italic = false } })
+kawoosh.frame()
+kawoosh.test.eq(highlight("// hi\nfn main() {}\n").italic, nil)
+kawoosh.opt("tokens.styles", nil)
+kawoosh.frame()
 
 -- What is on show: the default family, the base the headless OS's.
 kawoosh.frame()
@@ -85,6 +107,15 @@ kawoosh.test.ok(c == "rose-pine-dawn" or c == "ayu-light" or c == "high-contrast
 kawoosh.press("<CR>")
 kawoosh.frame()
 kawoosh.test.eq(themes.current().light, c)
+-- The walk keeps the cursor's card in view: to the last and back up.
+for _ = 1, 8 do kawoosh.press("j") end
+kawoosh.frame(3)
+kawoosh.test.eq(themes.state().cursor, "high-contrast-light")
+kawoosh.test.ok(themes.state().scrolled > 0, "scrolled down to the last card")
+for _ = 1, 8 do kawoosh.press("k") end
+kawoosh.frame(3)
+kawoosh.test.eq(themes.state().cursor, "rose-pine")
+kawoosh.test.eq(themes.state().scrolled, 0, "and back to the first")
 kawoosh.test.eq(themes.state().keep,
   string.format('theme = { dark = "rose-pine-moon", light = "%s" }', c))
 -- `y` copies the line; `q` closes.

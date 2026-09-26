@@ -279,7 +279,7 @@ local function highlight_preview(pv)
 end
 
 -- Line `i` of a preview as spans: the runs that reach into it, each
--- its colour, the rest `color`.
+-- its colour and its style, the rest `color`.
 local function preview_spans(pv, i, l, color)
   local runs = pv.runs
   if not runs or #runs == 0 then return { { l, color = color } } end
@@ -291,7 +291,10 @@ local function preview_spans(pv, i, l, color)
       local a = math.max(r.from, from) - from + 1
       local b = math.min(r.to, to) - from + 1
       if a > at then out[#out + 1] = { l:sub(at, a - 1), color = color } end
-      if b >= a then out[#out + 1] = { l:sub(a, b), color = r.color } end
+      if b >= a then
+        out[#out + 1] = { l:sub(a, b), color = r.color, bold = r.bold, italic = r.italic,
+                          underline = r.underline, strikethrough = r.strikethrough }
+      end
       at = math.max(at, b + 1)
     end
   end
