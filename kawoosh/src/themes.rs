@@ -133,10 +133,11 @@ impl Named {
 impl Flavour {
     /// kui's roles from the variant: the page on `base`, panels on
     /// `surface`, floats on `overlay`; the text, `subtle` and `muted`
-    /// for the two quieter greys; `iris` the accent; the selection the
-    /// highlight Rosé Pine gives a visual selection, translucent so the
-    /// glyphs keep their colours; the states in the family's own hues
-    /// (success in foam, as there is no green).
+    /// for the two quieter greys; `iris` the accent; the selection
+    /// translucent so the glyphs keep their colours — dark, the highlight
+    /// Rosé Pine gives a visual selection; light, iris, as dawn's grey
+    /// highlight is barely a step off the page — the states in the
+    /// family's own hues (success in foam, as there is no green).
     pub fn theme(&self) -> Theme {
         let base = if self.dark {
             Theme::dark()
@@ -175,7 +176,11 @@ impl Flavour {
             fg: c(self.text),
             muted: c(self.subtle),
             faint: c(self.muted),
-            selection: c(self.hl_high).with_alpha(if self.dark { 0.7 } else { 0.6 }),
+            selection: if self.dark {
+                c(self.hl_high).with_alpha(0.7)
+            } else {
+                c(self.iris).with_alpha(0.33)
+            },
             success: c(self.foam),
             warning: c(self.gold),
             danger: c(self.love),
@@ -238,22 +243,35 @@ impl Flavour {
 /// over it in their own colours, so what is checked is the text over
 /// the selection laid on the page — body text at 4.5:1, and every other
 /// ink at 2:1 where it had that much on the page — and the selection's
-/// alpha is stepped down until they clear, or to a trace.
+/// alpha is stepped down until they clear. The body text may take it
+/// to a trace; the other inks only as far as the selection is still
+/// seen, [`SEEN`] off the page — an ink with no room to spare (dawn's
+/// gold, 2.05:1 on the page) had washed any selection out of sight.
 pub fn legible_selection(mut t: Theme, inks: &[Color]) -> Theme {
-    let mut sel = t.selection;
-    let passes = |s: Color| {
-        let under = t.bg.mix(Color::rgba(s.r, s.g, s.b, 1.0), s.a);
-        t.fg.contrast(under) >= 4.5
-            && inks
-                .iter()
-                .all(|i| i.contrast(t.bg) < 2.0 || i.contrast(under) >= 2.0)
+    let under = |s: Color| t.bg.mix(Color::rgba(s.r, s.g, s.b, 1.0), s.a);
+    let text = |s: Color| t.fg.contrast(under(s)) >= 4.5;
+    let inked = |s: Color| {
+        let u = under(s);
+        inks.iter()
+            .all(|i| i.contrast(t.bg) < 2.0 || i.contrast(u) >= 2.0)
     };
-    while !passes(sel) && sel.a > 0.12 {
-        sel = sel.with_alpha(sel.a * 0.85);
+    let seen = |s: Color| under(s).contrast(t.bg) >= SEEN;
+    let mut sel = t.selection;
+    while sel.a > 0.12 {
+        let next = sel.with_alpha(sel.a * 0.85);
+        if !text(sel) || (!inked(sel) && seen(next)) {
+            sel = next;
+        } else {
+            break;
+        }
     }
     t.selection = sel;
     t
 }
+
+/// How far off the page a selection has to be to be seen at a glance:
+/// the contrast of the page under it against the page.
+pub const SEEN: f32 = 1.4;
 
 #[cfg(test)]
 mod tests {
@@ -303,5 +321,26 @@ mod tests {
         let fixed = legible_selection(t, &[]);
         assert!(fixed.fg.contrast(under(&fixed)) >= 4.5);
         assert!(fixed.selection.a < t.selection.a && fixed.selection.a > 0.1);
+    }
+
+    #[test]
+    fn an_ink_with_no_room_does_not_wash_the_selection_away() {
+        let under = |t: &Theme| {
+            let s = t.selection;
+            t.bg.mix(Color::rgba(s.r, s.g, s.b, 1.0), s.a)
+        };
+        for f in [&MAIN, &MOON, &DAWN] {
+            let t = f.theme();
+            let inks: Vec<Color> = Token::ALL.iter().filter_map(|k| f.syntax(*k)).collect();
+            let held = legible_selection(t, &inks);
+            assert!(under(&held).contrast(held.bg) >= SEEN, "{f:?}");
+            assert!(held.fg.contrast(under(&held)) >= 4.5, "{f:?}");
+        }
+        // A loud accent is still washed for the inks, down to seen.
+        let t = DAWN.theme().with_accent(Color::hex(0x2060ffff));
+        let inks: Vec<Color> = Token::ALL.iter().filter_map(|k| DAWN.syntax(*k)).collect();
+        let held = legible_selection(t, &inks);
+        assert!(held.selection.a < t.selection.a);
+        assert!(under(&held).contrast(held.bg) >= SEEN * 0.85);
     }
 }
