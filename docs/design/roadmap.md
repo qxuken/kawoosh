@@ -2166,8 +2166,26 @@ then breadth.
     `systems/src/lsp.rs`; tested against the fake server, and against
     typescript-language-server 6 on TypeScript 5 in a scratch install
     (TypeScript 7, npm's now, has no tsserver for it to run).
-41. ~~**Compile commands, deduced** ([compile.md](compile.md)): a
-    bare `:compile` without `compile.command` runs the last compiled
+41. ~~**Themes** ([themes.md](themes.md)): the family one of several —
+    Rosé Pine, Ayu (dark, mirage, light), Gruvbox (dark and light, hard,
+    medium, soft), Tokyo Night (night, storm, moon, day), Catppuccin
+    (mocha, macchiato, frappé, latte), Kanagawa (wave, dragon, lotus),
+    Everforest (dark and light, three grades), One (dark, light),
+    Dracula (with Alucard), black and white (`mono`, `mono-soft`),
+    paper, and a high-contrast pair to WCAG AAA — each a variant of data (`themes::Variant`: kui's roles,
+    a hue per token, the sixteen); `theme.dark` and `theme.light` a
+    variant for each base apart from `theme.name`'s family; `:theme`
+    (`toggle`, `system`, `dark`/`light [NAME]`, a family, `reset`) and
+    `<leader>o` (`ot` `os` `oo`); `:themes`, a column of cards each
+    drawn in its own colours, over the `kawoosh.themes` door; a style
+    per token beside its hue, `tokens.styles` over it; `:theme check`
+    and `:theme lab` (`<leader>ol`) for theme work, every pair the
+    editor draws measured and drawn; the selection's and a search hit's
+    washes held legible by one rule, both ways.~~ Built
+    2026-09-26.
+
+42. ~~**Compile commands, deduced** ([compile.md](compile.md)): a
+    bare `:compile` without a default runs the last compiled
     here, else what the project's files offer first, ranked by the
     caret's language server; `:compile pick` lists them all.~~ Landed
     2026-09-26: `kawoosh/src/deduce.rs` reads `Cargo.toml`,

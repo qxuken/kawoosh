@@ -687,16 +687,16 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
 
     // Off a listing: refused with the reason, nothing moved.
     d.keys(&mut app, " cd");
-    assert_eq!(app.ed.message, "dir cd needs language:dir");
+    assert_eq!(app.ed.message, "dir cd: only in a dir buffer");
     assert_eq!(app.cwd, cwd);
     ex(&mut d, &mut app, "dir cd");
-    assert_eq!(app.ed.message, "dir cd needs language:dir");
+    assert_eq!(app.ed.message, "dir cd: only in a dir buffer");
     ex(&mut d, &mut app, "dir?");
     assert_eq!(app.ed.message, "no listing here");
     app.run_lua_source(
         "t",
         r#"
-        assert(kawoosh.can("dir cd") == "dir cd needs language:dir", tostring(kawoosh.can("dir cd")))
+        assert(kawoosh.can("dir cd") == "dir cd: only in a dir buffer", tostring(kawoosh.can("dir cd")))
         assert(kawoosh.can("dir") == true)
         local found
         for _, c in ipairs(kawoosh.commands()) do
@@ -722,7 +722,7 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
     // on a `path:line` it opens the file; `dir_enter` itself is refused.
     app.run_lua_source(
         "t",
-        r#"assert(kawoosh.can("dir_enter") == "dir_enter needs language:dir")"#,
+        r#"assert(kawoosh.can("dir_enter") == "dir_enter: only in a dir buffer")"#,
     );
     ex(&mut d, &mut app, "enew");
     d.keys(&mut app, &format!("i{}:1", file.display()));
@@ -775,13 +775,13 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
         "#,
     );
     ex(&mut d, &mut app, "ready");
-    assert_eq!(app.ed.message, "ready needs plug:ready");
+    assert_eq!(app.ed.message, "ready: only where plug:ready holds");
     app.run_lua_source("t", r#"kawoosh.fact("plug:ready")"#);
     ex(&mut d, &mut app, "ready");
     assert_eq!(app.ed.message, "ran");
     app.run_lua_source("t", r#"kawoosh.fact("plug:ready", false)"#);
     ex(&mut d, &mut app, "ready");
-    assert_eq!(app.ed.message, "ready needs plug:ready");
+    assert_eq!(app.ed.message, "ready: only where plug:ready holds");
     ex(&mut d, &mut app, "plain!");
     assert_eq!(app.ed.message, "plain takes no !");
     ex(&mut d, &mut app, "plain");

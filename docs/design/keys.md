@@ -347,7 +347,7 @@ objects, or any other character on both sides.
 | `<leader>bD` | delete the buffer, discarding its unsaved changes (`:bd!`) |
 | `<leader>bn` `<leader>bp` | next, previous buffer |
 | `<leader>tn` `<leader>tq` | a new tab, close the tab |
-| `<leader>tt` | the tools (`kawoosh.tool`, and `settings.lua`'s `tools` table), as a picker: `git` (lazygit), `top`, `shell`, `compile` and `run` from `compile.command` and `run.command` |
+| `<leader>tt` | the tools (`kawoosh.tool`, and `settings.lua`'s `tools` table), as a picker: `git` (lazygit), `top`, `shell`, `compile` and `run` from `compile.default` and `run.command` |
 | `<leader>f` | the files git sees under the working directory, as a picker |
 | `<leader>g` | grep the project: `rg` run on the query as it is typed |
 | `<leader>sf` `<leader>sg` | the same two from the file's directory — a listing's own in `dir` (`:picker files here`, `:picker grep here`) |
@@ -384,6 +384,9 @@ objects, or any other character on both sides.
 | `<leader>ee` `<leader>ea` | the workspace's pinned files (`:memory pins`), pin or unpin the buffer's file |
 | `<leader>e1`…`9` `<A-1>`…`9` | open the workspace's Nth pin |
 | `<leader>?` | the which-key for every first key (`:keys`) |
+| `<leader>ot` `<leader>os` | the other base, dark for light and light for dark (`theme toggle`); the base the OS's again (`theme system`) — the session's `theme.appearance` ([themes.md](themes.md)) |
+| `<leader>ol` | the theme lab (`:theme lab`): the selected theme through every situation the editor draws — code with the caret, a hit, a selection and a diagnostic; each token on the page, under a selection, under a hit; the surfaces, the chrome, the terminal — each pair's contrast and floor, `✓` or `✗`; `f` only what falls short, `r` the report (`:theme check`), `j` `k` `<C-d>` `<C-u>` `gg` `G` scroll, `q` closes |
+| `<leader>oo` | the themes' pane (`:themes`), a column of its own: every theme a card in its own colours, the dark ones and the light ones apart; `⏎` or a click puts the cursor's card in its half (`theme.dark`, `theme.light`), `h` `j` `k` `l` walk (the card scrolled into view), `t` `s` as above, `y` copies the line that keeps the pick, `q` closes |
 | `<leader>Q` | quit all |
 | `-` | oil: the file's directory |
 | `_` | oil: the working directory's listing, from anywhere (`:dir .`) |
@@ -391,7 +394,8 @@ objects, or any other character on both sides.
 
 The groups are the which-key ones from the neovim config: `b` buffers,
 `t` tabs, `s` search and lists, `w` the workspace, `c` code, `y` the
-path copies (the neovim config's six, `unnamedplus` and all), single
+path copies (the neovim config's six, `unnamedplus` and all), `o` the
+look (`<leader>u` being the undo history, LazyVim's toggles are here), single
 letters for the daily few. A picker that does not exist yet has its
 spelling kept for it below rather than given to something else.
 
@@ -474,7 +478,10 @@ so that nothing else takes the key meanwhile.
   because `<leader>bd` does. The one refinement: a binding whose `when`
   does not hold where the key was pressed does not shadow, and the
   sequence stays open for what lies beneath (`<CR>` is `dir enter` in a
-  listing and `goto location` elsewhere by this). A plugin's prefix is
+  listing and `goto location` elsewhere by this) — nor does it shadow
+  the mode a key falls through to: a Lua pane's `<A-S-l>`, gated to
+  the picker, is the column's in every other pane, and a key gated off
+  with nothing under it is unbound there, not a message. A plugin's prefix is
   a key the engine leaves alone: the listing's sort keys are yazi's
   under `m` (`ms`, `mS`, `mm`, `mM`, `ma`, `mA`, `me`, `mE`), which is
   nothing anywhere else, rather than under `,`, which keeps the primary

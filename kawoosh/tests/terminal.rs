@@ -65,7 +65,7 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
     d.keys(&mut app, "k");
     d.keys(&mut app, ":scrollback");
     d.key(&mut app, "enter", KeyMods::default());
-    assert_eq!(app.ed.message, "scrollback needs terminal");
+    assert_eq!(app.ed.message, "scrollback: only in a terminal pane");
     assert_eq!(app.layout.visible_panes().len(), 2);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
@@ -198,7 +198,7 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
         Some(Content::Editor(_))
     ));
     d.key(&mut app, "X", shifted);
-    assert_eq!(app.ed.message, "scrollback needs terminal");
+    assert_eq!(app.ed.message, "scrollback: only in a terminal pane");
     assert_eq!(app.layout.visible_panes().len(), 2);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }

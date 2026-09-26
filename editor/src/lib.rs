@@ -1566,15 +1566,22 @@ impl Editor {
     fn binding_runs(&self, view: ViewId, b: &Binding) -> Result<(), String> {
         let facts = self.facts(Some(view));
         match b.when.iter().find(|c| facts.holds(&c.fact) != c.holds) {
-            Some(c) => Err(match c.holds {
-                true => format!("{} needs {}", b.line(), c.fact),
-                false => format!("{} is not for {}", b.line(), c.fact),
-            }),
+            Some(c) => Err(command::unmet(&b.line(), c)),
             None => {
                 let name = self.commands.resolve(&b.command, &b.args).name;
                 self.can(Some(view), &name)
             }
         }
+    }
+
+    /// Whether every binding of `bs` is gated off on `view` by its own
+    /// `when`: the key is not bound here at all — a picker's key in
+    /// another pane — as good as unbound, where a binding whose command
+    /// cannot run has a reason worth saying.
+    fn gated_off(&self, view: ViewId, bs: &[Binding]) -> bool {
+        let facts = self.facts(Some(view));
+        bs.iter()
+            .all(|b| b.when.iter().any(|c| facts.holds(&c.fact) != c.holds))
     }
 
     /// A command running for a key says the key is not its here
@@ -2475,7 +2482,10 @@ impl Editor {
                     // here, types: `:` bound for one field is a colon
                     // in every other, `(` for a plugin's buffers is a
                     // paren in the prompt.
-                    if !(plain && self.pick_binding(view, &bs).is_err())
+                    // A chord whose every binding is gated off here is
+                    // unbound here: nothing said.
+                    let unbound = plain || self.gated_off(view, &bs);
+                    if !(unbound && self.pick_binding(view, &bs).is_err())
                         && (self.run_bindings(view, &bs, None) || !plain)
                     {
                         return true;
@@ -2545,15 +2555,13 @@ impl Editor {
         };
         // Visual and operator-pending sequences fall through to normal
         // mode's; a pane's only for what every pane shares with it.
+        let falls_through = match lookup_mode {
+            Mode::Normal => false,
+            Mode::Pane => self.keymap.shared_from_pane(&self.pending),
+            _ => true,
+        };
         let lookup = match self.keymap.lookup_lenient(lookup_mode, &self.pending) {
-            Lookup::None if lookup_mode == Mode::Pane => {
-                if self.keymap.shared_from_pane(&self.pending) {
-                    self.keymap.lookup_lenient(Mode::Normal, &self.pending)
-                } else {
-                    Lookup::None
-                }
-            }
-            Lookup::None if lookup_mode != Mode::Normal => {
+            Lookup::None if falls_through => {
                 self.keymap.lookup_lenient(Mode::Normal, &self.pending)
             }
             l => l,
@@ -2567,15 +2575,41 @@ impl Editor {
                 false
             }
             Lookup::Exact(bs) => {
-                let bs = bs.to_vec();
+                let mut bs = bs.to_vec();
                 // A binding that cannot run here does not shadow the
                 // longer ones beneath it: the sequence stays open for
                 // them (`,` keeps the primary selection off a listing,
                 // and in one is the sort prefix, `,s`).
                 let deeper = self.keymap.has_deeper(lookup_mode, &self.pending);
-                let picked = self.pick_binding(view, &bs).cloned();
+                let mut picked = self.pick_binding(view, &bs).cloned();
                 if picked.is_err() && deeper {
                     return true;
+                }
+                // Nor does one gated off here by its own `when` shadow
+                // the mode it falls through to — the picker's `<A-S-l>`
+                // in pane mode, in any other pane, is the column's —
+                // and with nothing there the key is unbound here: no
+                // binding's reason is said for it.
+                if picked.is_err() && self.gated_off(view, &bs) {
+                    let under = match falls_through {
+                        true => match self.keymap.lookup_lenient(Mode::Normal, &self.pending) {
+                            Lookup::Exact(u) => Some(u.to_vec()),
+                            _ => None,
+                        },
+                        false => None,
+                    };
+                    match under.filter(|u| !self.gated_off(view, u)) {
+                        Some(u) => {
+                            picked = self.pick_binding(view, &u).cloned();
+                            bs = u;
+                        }
+                        None => {
+                            self.pending.clear();
+                            self.count = None;
+                            self.pending_op = None;
+                            return false;
+                        }
+                    }
                 }
                 self.pending.clear();
                 let count = self.count.take();

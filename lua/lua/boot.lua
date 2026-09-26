@@ -456,7 +456,9 @@ end
 -- path (and the first line) says; `fn(runs)` when done, each run
 -- `{ from =, to =, token =, color = }` — the bytes it covers (from 1,
 -- `to` the last), the token's name ("keyword", "string", …) and the
--- colour the theme paints it, `0xRRGGBBAA`, or nil for none. For a
+-- colour the theme paints it, `0xRRGGBBAA`, or nil for none, and the
+-- style it sets the text in as a span's flags — `bold`, `italic`,
+-- `underline`, `strikethrough` — each there when on. For a
 -- preview, a pane of a plugin's own: a few hundred lines is a moment.
 --
 -- kawoosh.fs.walk(root, fn): every file under `root` as git sees it —

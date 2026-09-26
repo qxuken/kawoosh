@@ -570,7 +570,7 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     assert!(r.contains(&"dir cd".to_string()), "{r:?}");
     let t = texts(&d);
     assert!(
-        t.iter().any(|s| s.contains("dir cd needs language:dir")),
+        t.iter().any(|s| s.contains("dir cd: only in a dir buffer")),
         "what a command needs, from the pane the keyboard came from: {t:?}"
     );
     assert!(
@@ -591,9 +591,9 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     assert_eq!(key_x, cell_x(&d, "n J"), "the key column");
     let name_x = cell_x(&d, "dir cd");
     assert!(key_x > name_x + 100.0, "{key_x} past the names at {name_x}");
-    let doc_x = cell_x(&d, "dir cd needs language:dir");
+    let doc_x = cell_x(&d, "dir cd: only in a dir buffer");
     assert!(doc_x > key_x + 100.0, "{doc_x} past the keys at {key_x}");
-    assert_eq!(doc_x, cell_x(&d, "dir cd needs language:dir"));
+    assert_eq!(doc_x, cell_x(&d, "dir cd: only in a dir buffer"));
     // The columns hold still: sized from every item, not the window,
     // so a page down and another query leave the key column where it
     // was.
@@ -689,7 +689,7 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     assert!(
         texts(&d)
             .iter()
-            .any(|s| s.contains("memory clear needs store")),
+            .any(|s| s.contains("memory clear: only in a session with a store")),
         "{:?}",
         texts(&d)
     );

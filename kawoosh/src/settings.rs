@@ -230,6 +230,11 @@ pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
             "a syntax token's colour, one or `{ light, dark }`",
         ),
         (
+            "tokens.styles",
+            K::Open,
+            "a syntax token's style: words (`bold italic`, `none`) or `{ italic = false }`",
+        ),
+        (
             "lsp",
             K::Open,
             "a server by name and its rules: `cmd`, `args`, `roots`, `languages`, `settings`, `enabled`, `load_all`, `load_max`, `inlay_hints` (lsp-rules.md)",

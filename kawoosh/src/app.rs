@@ -517,17 +517,22 @@ impl Kawoosh {
             let dark = self.dark;
             for a in texts {
                 self.pending_jobs = self.pending_jobs.saturating_sub(1);
-                let runs: Vec<(usize, usize, &str, Option<u32>)> = a
+                let runs: Vec<kawoosh_lua::HighlightRun<'_>> = a
                     .runs
                     .iter()
                     .map(|r| {
                         let t = Token::from_style(r.style);
-                        (
-                            r.range.start,
-                            r.range.end,
-                            t.name(),
-                            self.syntax_color_for(t, dark).map(|c| c.to_hex()),
-                        )
+                        let st = self.syntax_style_for(t, dark);
+                        kawoosh_lua::HighlightRun {
+                            from: r.range.start,
+                            to: r.range.end,
+                            token: t.name(),
+                            color: self.syntax_color_for(t, dark).map(|c| c.to_hex()),
+                            bold: st.bold,
+                            italic: st.italic,
+                            underline: st.underline,
+                            strike: st.strike,
+                        }
                     })
                     .collect();
                 rt.publish(&self.ed, self.focused_view());
@@ -2215,6 +2220,9 @@ impl kui_native::App for Kawoosh {
         }
         self.sync_look(ui);
         self.pal = ui.theme().into();
+        if let Some(hit) = self.look.hit {
+            self.pal.hit = hit;
+        }
         self.dark = ui.theme().is_dark();
         self.sync_term_palettes();
         self.sync_term_settings();
