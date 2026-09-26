@@ -1468,6 +1468,23 @@ impl Kawoosh {
             .iter()
             .map(|t| self.syntax_color_for(*t, dark))
             .collect();
+        // And their styles, as a row's marks — none for a plain token,
+        // so a buffer of plain runs pays nothing (themes.md Decision 6).
+        let token_marks: Vec<Option<rows::Mark>> = Token::ALL
+            .iter()
+            .map(|t| {
+                let st = self.syntax_style_for(*t, dark);
+                (st != crate::themes::Style::PLAIN).then_some(rows::Mark {
+                    bold: st.bold,
+                    italic: st.italic,
+                    underline: st.underline,
+                    strike: st.strike,
+                    color: None,
+                    bg: None,
+                })
+            })
+            .collect();
+        let any_styled = token_marks.iter().any(Option::is_some);
         let tag = Value::map([("kind", "pane".into()), ("pane", Value::Int(pane as i64))]);
         let cell_w = self.cell.0;
         let gutter = rows::gutter_w(cell_w, buf.line_count(), self.marks.any(buf_id));
@@ -1818,6 +1835,22 @@ impl Kawoosh {
                                     },
                                 ))
                                 .collect();
+                            // The styled tokens' runs as marks.
+                            let syntax_marks: Vec<(Range<usize>, rows::Mark)> = if any_styled {
+                                runs_buf
+                                    .runs(SYNTAX_LAYER, there(&src))
+                                    .iter()
+                                    .filter_map(|r| {
+                                        let m =
+                                            token_marks.get(r.style as usize).copied().flatten()?;
+                                        let a = clip(here(r.range.start));
+                                        let b = clip(here(r.range.end).min(range.end));
+                                        (a < b).then_some((a..b, m))
+                                    })
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
                             let washed: Vec<(Range<usize>, kui_native::Color)> = washes
                                 .iter()
                                 .filter(|(r, _)| r.start < range.end && r.end > range.start)
@@ -1866,6 +1899,7 @@ impl Kawoosh {
                             // wrap at the column's width less its number,
                             // the code's panel, a rule, an image.
                             let label = format!("md{ln}");
+                            let joined: Vec<(Range<usize>, rows::Mark)>;
                             let (marks, form) = match &md_row {
                                 Some((marks, scale, code, rule, wrap, img)) => {
                                     if let Some(r) = ui.layout_of(ui.child_key(&label)) {
@@ -1900,6 +1934,19 @@ impl Kawoosh {
                                     (marks.as_slice(), Some(form))
                                 }
                                 None => (&[][..], None),
+                            };
+                            // A rendered row's marks and the syntax's, both.
+                            let marks = if syntax_marks.is_empty() {
+                                marks
+                            } else if marks.is_empty() {
+                                syntax_marks.as_slice()
+                            } else {
+                                joined = marks
+                                    .iter()
+                                    .cloned()
+                                    .chain(syntax_marks.iter().cloned())
+                                    .collect();
+                                joined.as_slice()
                             };
                             ghost_drawn |= rows::emit_line(
                                 ui,

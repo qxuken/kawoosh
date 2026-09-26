@@ -24,6 +24,84 @@ use kui_native::{Appearance, Color, Theme};
 /// How many syntax tokens there are: a variant's hues are one each.
 const TOKENS: usize = Token::ALL.len();
 
+/// How a token's text is set beside its hue (docs/design/themes.md
+/// Decision 6): the four a kui span can carry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Style {
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strike: bool,
+}
+
+impl Style {
+    pub const PLAIN: Style = Style {
+        bold: false,
+        italic: false,
+        underline: false,
+        strike: false,
+    };
+
+    /// The words of `tokens.styles`: any of `bold`, `italic`,
+    /// `underline`, `strike`, apart by spaces or commas; `none` or
+    /// nothing is plain. A word it does not know is none.
+    pub fn parse(s: &str) -> Option<Style> {
+        let mut out = Style::PLAIN;
+        for w in s.split([' ', ',']).filter(|w| !w.is_empty()) {
+            match w {
+                "bold" => out.bold = true,
+                "italic" => out.italic = true,
+                "underline" => out.underline = true,
+                "strike" | "strikethrough" => out.strike = true,
+                "none" | "plain" => {}
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
+
+    /// Spelt as `parse` reads it, `none` for plain.
+    pub fn words(self) -> String {
+        let mut w = Vec::new();
+        for (on, name) in [
+            (self.bold, "bold"),
+            (self.italic, "italic"),
+            (self.underline, "underline"),
+            (self.strike, "strike"),
+        ] {
+            if on {
+                w.push(name);
+            }
+        }
+        if w.is_empty() {
+            "none".into()
+        } else {
+            w.join(" ")
+        }
+    }
+}
+
+/// The styles every theme starts from, and `system`'s: comments in
+/// italic, markup's headings and strong in bold, its emphasis in
+/// italic and its links underlined — what the families' own editor
+/// ports agree on. Code is otherwise upright and regular: weight is
+/// kept for what a theme means to stand out.
+pub fn base_style(token: Token) -> Style {
+    use Token as T;
+    let (bold, italic, underline) = match token {
+        T::Comment | T::Emphasis => (false, true, false),
+        T::Heading | T::Strong => (true, false, false),
+        T::Link => (false, false, true),
+        _ => return Style::PLAIN,
+    };
+    Style {
+        bold,
+        italic,
+        underline,
+        strike: false,
+    }
+}
+
 /// One base's colours, whole: what `theme.dark` or `theme.light` names.
 #[derive(Clone, Debug)]
 pub struct Variant {
@@ -35,6 +113,8 @@ pub struct Variant {
     pub theme: Theme,
     /// A hue per token, by `Token as usize`; none for plain text.
     syntax: [Option<Color>; TOKENS],
+    /// A style per token, by `Token as usize`.
+    styles: [Style; TOKENS],
     /// The terminal's sixteen, `0xRRGGBBAA`.
     pub ansi: [u32; 16],
 }
@@ -48,16 +128,25 @@ impl Variant {
         ansi: [u32; 16],
     ) -> Variant {
         let mut hues = [None; TOKENS];
+        let mut styles = [Style::PLAIN; TOKENS];
         for t in Token::ALL {
             hues[*t as usize] = syntax(*t).map(c);
+            styles[*t as usize] = base_style(*t);
         }
         Variant {
             name,
             title,
             theme,
             syntax: hues,
+            styles,
             ansi: ansi.map(|x| (x << 8) | 0xFF),
         }
+    }
+
+    /// The variant with `token` set in `style` instead of the base's.
+    fn styled(mut self, token: Token, style: Style) -> Variant {
+        self.styles[token as usize] = style;
+        self
     }
 
     pub fn dark(&self) -> bool {
@@ -67,6 +156,11 @@ impl Variant {
     /// A syntax token's hue on this variant's page.
     pub fn syntax(&self, token: Token) -> Option<Color> {
         self.syntax[token as usize]
+    }
+
+    /// How a syntax token's text is set.
+    pub fn style(&self, token: Token) -> Style {
+        self.styles[token as usize]
     }
 }
 
@@ -685,7 +779,13 @@ impl Contrast {
                 T::Removed => self.danger,
             })
         };
-        Variant::new(name, title, theme, syntax, self.ansi)
+        // Weight carries what a hue alone might not to a reader who
+        // needs the contrast: the keywords in bold.
+        let bold = Style {
+            bold: true,
+            ..Style::PLAIN
+        };
+        Variant::new(name, title, theme, syntax, self.ansi).styled(Token::Keyword, bold)
     }
 }
 
@@ -914,6 +1014,31 @@ mod tests {
                 "theme.name: no family \"gruvbox\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, high-contrast)"
             ]
         );
+    }
+
+    #[test]
+    fn styles_are_words_and_every_variant_has_the_base() {
+        assert_eq!(Style::parse("bold italic").unwrap().words(), "bold italic");
+        assert_eq!(
+            Style::parse("italic, underline").unwrap().words(),
+            "italic underline"
+        );
+        assert_eq!(Style::parse(""), Some(Style::PLAIN));
+        assert_eq!(Style::parse("none"), Some(Style::PLAIN));
+        assert_eq!(Style::parse("strikethrough").unwrap().words(), "strike");
+        assert_eq!(Style::parse("bold loud"), None);
+        for v in variants() {
+            assert!(v.style(Token::Comment).italic, "{}", v.name);
+            assert!(v.style(Token::Heading).bold, "{}", v.name);
+            assert_eq!(v.style(Token::Plain), Style::PLAIN, "{}", v.name);
+        }
+        assert!(
+            variant("high-contrast-dark")
+                .unwrap()
+                .style(Token::Keyword)
+                .bold
+        );
+        assert!(!variant("ayu-dark").unwrap().style(Token::Keyword).bold);
     }
 
     /// A hue whose green channel leads both others by much: the todo's

@@ -52,6 +52,12 @@
 //!   filled in, is declared as the host's kui tokens, so a Lua view
 //!   paints `color = "$keyword"` and gets the frame's half. `kawoosh.
 //!   colors { keyword = "ff0000" }` from code lands over the file's.
+//! - **`tokens.styles`** sets a token's text beside its hue (themes.md
+//!   Decision 6): a string of words — `bold`, `italic`, `underline`,
+//!   `strike`, or `none` — in place of the theme's, or a table of
+//!   booleans over it (`comment = { italic = false }`). Each theme
+//!   starts from `themes::base_style` — comments italic, headings and
+//!   strong bold — and the high-contrast pair sets keywords bold.
 
 use std::collections::HashMap;
 
@@ -65,7 +71,7 @@ use kui_native::{
 use crate::app::Kawoosh;
 use crate::notify::{Level, Note};
 use crate::rows::{FONT, LH};
-use crate::themes::{self, Pair};
+use crate::themes::{self, Pair, Style};
 
 /// The face every mono run is shaped in: the font, its size, the row's
 /// height and the shaper's features. `Copy`, since it rides into every
@@ -159,6 +165,8 @@ pub struct Look {
     pub shown: std::rc::Rc<std::cell::RefCell<Shown>>,
     /// The syntax colours the config set, a light and a dark half each.
     pub syntax: HashMap<Token, (Color, Color)>,
+    /// The styles the config set: what each turns on, and off.
+    pub styles: HashMap<Token, (Style, Style)>,
     /// The family a toast already said was missing.
     missing: Option<String>,
 }
@@ -178,7 +186,8 @@ pub struct Shown {
 /// `kawoosh.themes` (docs/design/themes.md Decision 4), set on the
 /// runtime before the bundled plugins load: `variants`, each one's
 /// `name`, `title`, `dark`, `roles` (every kui role by name), `syntax`
-/// (a hue per token by name) and `ansi` (the sixteen), colours as
+/// (a hue per token by name), `styles` (a token's that is not plain, as
+/// a kui span's flags: `{ italic = true }`) and `ansi` (the sixteen), colours as
 /// `0xRRGGBBAA`; `families`, each `{ name, dark, light }`; and
 /// `current()`, what is on show — `family`, `dark` and `light` (a
 /// variant's name, or `system`), `base` (`dark` or `light`) and
@@ -207,6 +216,25 @@ pub(crate) fn lua_door(
             }
         }
         t.set("syntax", syntax)?;
+        let styles = lua.create_table()?;
+        for tok in Token::ALL {
+            let st = v.style(*tok);
+            if st != Style::PLAIN {
+                let f = lua.create_table()?;
+                for (on, k) in [
+                    (st.bold, "bold"),
+                    (st.italic, "italic"),
+                    (st.underline, "underline"),
+                    (st.strike, "strikethrough"),
+                ] {
+                    if on {
+                        f.set(k, true)?;
+                    }
+                }
+                styles.set(tok.name(), f)?;
+            }
+        }
+        t.set("styles", styles)?;
         t.set("ansi", lua.create_sequence_from(v.ansi.map(|x| x as i64))?)?;
         variants.set(i + 1, t)?;
     }
@@ -247,6 +275,38 @@ pub(crate) fn parse_color(s: &str) -> Option<Color> {
         8 => Color::hex(v),
         _ => return None,
     })
+}
+
+/// A token's style as `tokens.styles` spells it: what it turns on and
+/// what off. Words replace the theme's style, so what they leave out is
+/// off; a table of booleans turns on and off only what it names.
+fn style_of(v: &Setting) -> Option<(Style, Style)> {
+    let all = Style {
+        bold: true,
+        italic: true,
+        underline: true,
+        strike: true,
+    };
+    match v {
+        Setting::Str(s) => Some((Style::parse(s)?, all)),
+        Setting::Table(t) => {
+            let (mut on, mut off) = (Style::PLAIN, Style::PLAIN);
+            for (k, v) in t {
+                let b = v.as_bool()?;
+                let (on, off) = match k.as_str() {
+                    "bold" => (&mut on.bold, &mut off.bold),
+                    "italic" => (&mut on.italic, &mut off.italic),
+                    "underline" => (&mut on.underline, &mut off.underline),
+                    "strike" | "strikethrough" => (&mut on.strike, &mut off.strike),
+                    _ => return None,
+                };
+                *on = b;
+                *off = !b;
+            }
+            Some((on, off))
+        }
+        _ => None,
+    }
 }
 
 /// A token's colour as the tree spells it: one colour, `{ light, dark
@@ -480,6 +540,24 @@ impl Kawoosh {
         for (t, c) in &self.scripting.colors {
             syntax.insert(*t, (*c, *c));
         }
+        let mut styles = HashMap::new();
+        if let Some(Setting::Table(t)) = self.ed.settings.get("tokens.styles") {
+            for (name, v) in t {
+                let Some(tok) = Token::ALL.iter().copied().find(|t| t.name() == name) else {
+                    notes.push(format!("tokens.styles: no token \"{name}\""));
+                    continue;
+                };
+                match style_of(v) {
+                    Some(st) => {
+                        styles.insert(tok, st);
+                    }
+                    None => notes.push(format!(
+                        "tokens.styles.{name}: {v} is not a style (bold, italic, underline, strike, none)"
+                    )),
+                }
+            }
+        }
+        self.look.styles = styles;
         // The whole vocabulary, so `$comment` resolves whether or not
         // the config named it; a token with no hue (plain text) has no
         // entry, and a `$plain` is kui's `unknown-token`.
@@ -520,6 +598,25 @@ impl Kawoosh {
         match self.look.syntax.get(&token) {
             Some((l, d)) => Some(if dark { *d } else { *l }),
             None => self.default_syntax(token, dark),
+        }
+    }
+
+    /// How a token's text is set on the theme's base: the variant's
+    /// style (`themes::base_style` under `system`), with what
+    /// `tokens.styles` turns on and off.
+    pub fn syntax_style_for(&self, token: Token, dark: bool) -> Style {
+        let base = match self.look.pair.of(dark) {
+            Some(v) => v.style(token),
+            None => themes::base_style(token),
+        };
+        match self.look.styles.get(&token) {
+            Some((on, off)) => Style {
+                bold: on.bold || (base.bold && !off.bold),
+                italic: on.italic || (base.italic && !off.italic),
+                underline: on.underline || (base.underline && !off.underline),
+                strike: on.strike || (base.strike && !off.strike),
+            },
+            None => base,
         }
     }
 

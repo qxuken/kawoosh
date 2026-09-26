@@ -841,6 +841,43 @@ fn the_look_reaches_kui() {
         d.core.theme_source(),
         ThemeSource::Pinned(Theme::derive(Appearance::Light, None))
     );
+    // Styles (themes.md Decision 6): the variant's — keywords bold in
+    // high contrast, comments italic everywhere — and `tokens.styles`
+    // over them, words in place of the theme's, a table only what it
+    // names; a word it does not know is a toast.
+    assert!(!app.syntax_style_for(Token::Keyword, true).bold);
+    assert!(
+        app.syntax_style_for(Token::Comment, false).italic,
+        "system's base"
+    );
+    ex(&mut d, &mut app, "set theme.dark=high-contrast-dark");
+    assert!(app.syntax_style_for(Token::Keyword, true).bold);
+    assert!(app.syntax_style_for(Token::Comment, true).italic);
+    {
+        use kawoosh_editor::{Layer, Setting};
+        let mut styles = Setting::table();
+        styles.set("keyword", Setting::Str("italic underline".into()));
+        let mut off = Setting::table();
+        off.set("italic", Setting::Bool(false));
+        off.set("bold", Setting::Bool(true));
+        styles.set("comment", off);
+        styles.set("string", Setting::Str("loud".into()));
+        app.ed.settings.set(Layer::Session, "tokens.styles", styles);
+    }
+    d.frame(&mut app);
+    let kw = app.syntax_style_for(Token::Keyword, false);
+    assert_eq!(kw.words(), "italic underline", "words replace the theme's");
+    let kw = app.syntax_style_for(Token::Keyword, true);
+    assert_eq!(kw.words(), "italic underline", "words replace the bold");
+    assert_eq!(app.syntax_style_for(Token::Comment, true).words(), "bold");
+    assert!(
+        app.notes.shown.iter().any(|s| s.toast
+            && s.text
+                == "tokens.styles.string: \"loud\" is not a style (bold, italic, underline, strike, none)"),
+        "{:?}",
+        app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
+    );
+    ex(&mut d, &mut app, "set tokens.styles!");
     ex(&mut d, &mut app, "theme reset");
     ex(&mut d, &mut app, "set theme.dark!");
     ex(&mut d, &mut app, "set theme.light!");
