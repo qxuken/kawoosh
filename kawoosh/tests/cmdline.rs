@@ -213,8 +213,8 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     assert!(texts(&d).iter().any(|t| t == "forget"), "the row is drawn");
     leave(&mut d, &mut app);
     // `<Tab>` with nothing to complete is not a character.
-    d.keys(&mut app, ":di");
-    assert_eq!(app.cmdline_ghost().as_deref(), Some("r"));
+    d.keys(&mut app, ":dir");
+    assert_eq!(app.cmdline_ghost().as_deref(), None);
     tab(&mut d, &mut app);
     tab(&mut d, &mut app);
     assert!(

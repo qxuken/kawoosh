@@ -506,33 +506,63 @@ fn rename_references_actions_format_and_diagnostics() {
         .values()
         .find(|b| b.name == "*references*")
         .unwrap();
+    // A list multibuffer (lists.md Decision 3): the file's header with
+    // its count, the lines around each place — here the whole file.
     let text = refs.text();
-    assert!(text.contains("main.rs:1:1: // renamed"), "{text}");
-    assert!(text.contains("main.rs:2:5: fn main() {"), "{text}");
+    assert!(
+        text.contains("main.rs  2\n// renamed\nfn main() {\n"),
+        "{text}"
+    );
+    assert_eq!(refs.language.as_ref(), "multibuffer");
+    let refs_id = app
+        .ed
+        .buffers
+        .iter()
+        .find(|(_, b)| b.name == "*references*")
+        .map(|(id, _)| id);
     assert_eq!(
         app.ed.buffer_of(app.focused_view().unwrap()).name,
         "*references*",
         "the list has the keys"
     );
-    d.keys(&mut app, "]q");
-    let v = app.focused_view().unwrap();
-    assert_eq!(app.ed.views[v].buffer, buf_id);
+    // The places are marked on the file.
+    let marked = app.ed.buffers[buf_id].runs("places", 0..100);
     assert_eq!(
-        app.ed
-            .buffer_of(v)
-            .line_of(app.ed.views[v].sels.primary().head),
-        0
+        marked.iter().map(|r| r.range.clone()).collect::<Vec<_>>(),
+        [0..2, 15..18]
     );
+    let caret = |a: &Kawoosh| {
+        let v = a.focused_view().unwrap();
+        let b = a.ed.buffer_of(v);
+        let h = a.ed.views[v].sels.primary().head;
+        (
+            a.ed.views[v].buffer,
+            b.line_of(h),
+            h - b.line_start(b.line_of(h)),
+        )
+    };
     d.keys(&mut app, "]q");
-    let v = app.focused_view().unwrap();
-    assert_eq!(
-        app.ed
-            .buffer_of(v)
-            .line_of(app.ed.views[v].sels.primary().head),
-        1
-    );
+    assert_eq!(caret(&app), (buf_id, 0, 0));
+    d.keys(&mut app, "]q");
+    assert_eq!(caret(&app), (buf_id, 1, 4), "at the place's column");
     d.keys(&mut app, "]q");
     assert_eq!(app.ed.message, "no more locations");
+    d.keys(&mut app, "[q");
+    assert_eq!(caret(&app), (buf_id, 0, 0));
+    // The list stays beside, its caret on the place walked to.
+    let list_view = app
+        .ed
+        .views
+        .values()
+        .find(|v| Some(v.buffer) == refs_id)
+        .expect("the list still shown");
+    assert_eq!(
+        app.ed
+            .multi_at(refs_id.unwrap(), list_view.sels.primary().head),
+        Some((buf_id, 0))
+    );
+    d.keys(&mut app, "]q");
+    assert_eq!(caret(&app), (buf_id, 1, 4));
 
     // A code action on the call's line: the picker lists both, with
     // their kinds; the preview of the first is its edit as a diff.
@@ -1217,5 +1247,146 @@ fn diagnostics_whole_and_of_files_no_buffer_holds() {
     );
     let runs = app.ed.buffers[oid].runs(DIAG_LAYER, 0..100);
     assert!(!runs.is_empty(), "on the buffer's layer");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `:diagnostics` (lists.md Decisions 3–5): the workspace's as a list
+/// beside — files with an error first, each message whole under its
+/// line in its colour, a file never opened among them — `]d` and
+/// `<C-e>` in it, `]q` walking them into the file; and made again when
+/// they move, but not while the keyboard is in it.
+#[test]
+fn the_diagnostics_list() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-list-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(
+        &file,
+        "fn main() {\n    let a = 1; // @long @workspace\n}\n",
+    )
+    .unwrap();
+    let other = dir.join("src/other.rs");
+    std::fs::write(&other, "fn f() {\n    nope\n}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    let v = app.focused_view().unwrap();
+    let main_id = app.ed.views[v].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, main_id).len() == 2
+            && !a.ed.diagnostics.file(&other).is_empty()),
+        "main.rs's and other.rs's"
+    );
+    // The workspace's: the tab's working directory's.
+    ex(&mut d, &mut app, &format!("cd {}", dir.display()));
+    ex(&mut d, &mut app, "diagnostics");
+    let list_text = |a: &Kawoosh| {
+        a.ed.buffers
+            .values()
+            .find(|b| b.name == "*diagnostics*")
+            .map(|b| b.text())
+            .unwrap_or_default()
+    };
+    let text = list_text(&app);
+    assert!(
+        text.contains("main.rs  2 errors\n"),
+        "{text} / {}",
+        app.ed.message
+    );
+    assert!(
+        text.contains(
+            "    let a = 1; // @long @workspace\n  error ts(2322): Type 'A' is not assignable to type 'B'.\n      Property 'b' is missing in type 'A'.\n}\n"
+        ),
+        "the message whole under its line, the excerpt going on after it: {text}"
+    );
+    assert!(text.contains("other.rs  1 warning\n"), "{text}");
+    assert!(
+        text.contains("    nope\n  warning rustc(E0425): cannot find value `nope`\n"),
+        "{text}"
+    );
+    assert!(
+        text.find("main.rs").unwrap() < text.find("other.rs").unwrap(),
+        "a file with an error first"
+    );
+    let list = app
+        .ed
+        .buffers
+        .iter()
+        .find(|(_, b)| b.name == "*diagnostics*")
+        .map(|(id, _)| id)
+        .unwrap();
+    assert_eq!(
+        app.ed.views[app.focused_view().unwrap()].buffer,
+        list,
+        "the keys in the list"
+    );
+    let colors: Vec<&str> = app
+        .ed
+        .multi_paints(list)
+        .into_iter()
+        .map(|(_, c)| c)
+        .collect();
+    assert!(
+        colors.contains(&"error") && colors.contains(&"warning"),
+        "{colors:?}"
+    );
+
+    // other.rs, opened by the list, was sent to the server, whose word
+    // on the open (`boom` on its first line) replaced the kept warning —
+    // but the list, with the keys in it, is not made again under them.
+    let other_id = app.ed.buffer_at(&other).expect("opened by the list");
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, other_id) == ["boom"]),
+        "the server's word on other.rs"
+    );
+    d.frame(&mut app);
+    assert!(
+        list_text(&app).contains("cannot find value"),
+        "not remade under the caret"
+    );
+    assert_eq!(app.ed.views[app.focused_view().unwrap()].buffer, list);
+    // `]d` in the list: its diagnostics in order; `<C-e>` the one there.
+    d.keys(&mut app, "gg]d");
+    assert_eq!(app.ed.message, "boom");
+    d.keys(&mut app, "]d");
+    assert_eq!(app.ed.message, "Type 'A' is not assignable to type 'B'.");
+    d.ctrl(&mut app, "e");
+    let shown = app
+        .ed
+        .buffers
+        .values()
+        .find(|b| b.name == "*diagnostic*")
+        .unwrap()
+        .text();
+    assert!(shown.starts_with("error  ts(2322)\n"), "{shown}");
+    // `<C-e>` took the keys out of the list, and it was made again.
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    let text = list_text(&app);
+    assert!(!text.contains("cannot find value"), "{text}");
+    assert!(text.contains("other.rs  1 error\n"), "{text}");
+
+    // To the file's pane.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+
+    // `]q` from the file walks the list: main.rs's first, at it.
+    d.keys(&mut app, "]q");
+    let v = app.focused_view().unwrap();
+    let b = app.ed.buffer_of(v);
+    assert_eq!(app.ed.views[v].buffer, main_id);
+    assert_eq!(b.line_of(app.ed.views[v].sels.primary().head), 0);
+    d.keys(&mut app, "]q");
+    let v = app.focused_view().unwrap();
+    assert_eq!(
+        app.ed
+            .buffer_of(v)
+            .line_of(app.ed.views[v].sels.primary().head),
+        1
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
