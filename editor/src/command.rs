@@ -346,6 +346,64 @@ impl Facts<'_> {
     }
 }
 
+/// Why `what` — a command, a binding's line — does not run here: the
+/// condition it failed in words (`scrollback: only in a terminal pane`,
+/// `picker list wider: only in the picker pane`); a fact a plugin
+/// published, by its name (`ready: only where plug:ready holds`).
+pub fn unmet(what: &str, c: &Cond) -> String {
+    match (fact_words(&c.fact), c.holds) {
+        (Some(w), true) => format!("{what}: only in {w}"),
+        (Some(w), false) => format!("{what}: not in {w}"),
+        (None, true) => format!("{what}: only where {} holds", c.fact),
+        (None, false) => format!("{what}: not where {} holds", c.fact),
+    }
+}
+
+/// A fact as a message says where it holds: the engine's and the
+/// shell's by name, a Lua view's pane (`lua:NAME`), a field (`field:
+/// lua:VIEW/NAME`), a buffer by name or language; none for a fact a
+/// plugin published that none of these spells.
+pub fn fact_words(fact: &str) -> Option<String> {
+    let words = match fact {
+        "editor" => "an editor pane",
+        "terminal" => "a terminal pane",
+        "lua" => "a plugin's pane",
+        "memory" => "the memory pane",
+        "undo" => "the undo history",
+        "listing" => "a list pane",
+        "dock" => "the dock",
+        "store" => "a session with a store",
+        "lsp" => "a buffer with a language server",
+        "visual" => "a selection",
+        "field" => "a field",
+        "prompt" => "the command line",
+        "modified" => "a buffer with unsaved changes",
+        "file" => "a buffer with a file",
+        "readonly" => "a read-only buffer",
+        _ => "",
+    };
+    if !words.is_empty() {
+        return Some(words.to_string());
+    }
+    if let Some(field) = fact.strip_prefix("field:") {
+        return Some(
+            match field.strip_prefix("lua:").and_then(|f| f.split_once('/')) {
+                Some((view, name)) => format!("the {view} pane's {name} field"),
+                None => format!("the {field} field"),
+            },
+        );
+    }
+    Some(match fact.split_once(':') {
+        Some(("lua", view)) => format!("the {view} pane"),
+        Some(("buffer", name)) => format!("the buffer {name}"),
+        Some(("language", lang)) => {
+            let an = lang.starts_with(['a', 'e', 'i', 'o', 'u']);
+            format!("{} {lang} buffer", if an { "an" } else { "a" })
+        }
+        _ => return None,
+    })
+}
+
 /// Everything about a command that is not its behaviour.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Spec {
@@ -428,14 +486,11 @@ impl Spec {
     }
 
     /// Whether every condition of `when` holds; the error is the reason,
-    /// for the message.
+    /// for the message ([`unmet`]).
     pub fn check(&self, facts: &Facts<'_>) -> Result<(), String> {
         for c in &self.when {
             if facts.holds(&c.fact) != c.holds {
-                return Err(match c.holds {
-                    true => format!("{} needs {}", self.name, c.fact),
-                    false => format!("{} is not for {}", self.name, c.fact),
-                });
+                return Err(unmet(&self.name, c));
             }
         }
         Ok(())

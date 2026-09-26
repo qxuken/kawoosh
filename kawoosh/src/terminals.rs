@@ -837,7 +837,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 {
                     k.scrollback_close();
                 } else {
-                    k.ed.message = "scrollback needs terminal".into();
+                    k.ed.message = "scrollback: only in a terminal pane".into();
                 }
             },
         ),

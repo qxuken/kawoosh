@@ -887,7 +887,7 @@ fn tabs_move_along_the_strip_and_switch_from_a_pane() {
     assert_eq!(app.layout.tab, 2);
     d.keys(&mut app, "]b");
     assert!(
-        app.ed.message.contains("needs editor"),
+        app.ed.message.contains("only in an editor pane"),
         "{}",
         app.ed.message
     );
