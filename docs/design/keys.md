@@ -178,8 +178,8 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `]b` `[b` | buffer (an editor pane's) |
 | `]t` `[t` | tab |
 | `]T` `[T` | *move* the tab a place right / left, COUNT places (`:tabmove +N` `-N` `N`, bare to the end) — the shifted letter, as `gT` is `gt` the other way |
-| `]q` `[q` | location in the compile output, or in the references `gr` listed |
-| `]d` `[d` | diagnostic (the message on the status line) |
+| `]q` `[q` | location in the compile output, or the next place of the last list — `gr`'s references, `:diagnostics` — opened beside it ([lists.md](lists.md)) |
+| `]d` `[d` | diagnostic (the message on the status line); in a multibuffer, the ones its excerpts show |
 | `]p` `[p` | right after a put: the text put replaced with the next newer / older one in the memory (the yank-pop), COUNT steps; the one chosen is the register from then on, and one `u` takes the put back whole |
 | `]h` `[h` | *reserved*: hunk |
 | `]e` `[e` | *reserved*: the next, previous pin |
@@ -196,13 +196,13 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `gsa` `gsd` `gsr` | surrounds: add, delete, replace (mini.surround's letters) |
 | `gd` | definition; in the hover, the symbol it names — looked up in the workspace, opened in the pane the hover came from |
 | `gx` | open the link under the caret: a path here (a `.md` beside, a directory listed), a URL in the OS (`open link`) |
-| `gr` | references, as a locations list beside the code (`<CR>` opens one, `]q` walks them) |
+| `gr` | references, as `*references*` beside the code: a live multibuffer of the lines around each, washed (`<CR>` opens one, `]q` walks them, `q` closes it; [lists.md](lists.md)) |
 | `K` | hover (vim's, not `g`, but the same family); in the hover, the hover of a symbol it names, from where that is defined |
-| `<C-e>` | the diagnostic under the caret, whole, in a pane |
+| `<C-e>` | every diagnostic under the caret, whole — every line of it — headed by where it came from (`error  ts(2322)`), in a pane; in a multibuffer, the excerpt's file's |
 | `gt` `gT` | tabs |
 | `g-` `g+` | undo by time |
-| `gI` | implementation: one is gone to, several are a list |
-| `gD` | declaration |
+| `gI` | implementation: one is gone to, several are a list as `gr`'s |
+| `gD` | declaration: one is gone to, several are a list as `gr`'s |
 
 ### Selections: Ctrl counts them, Alt moves one
 
@@ -353,6 +353,7 @@ objects, or any other character on both sides.
 | `<leader>ss` `<D-S-f>` `<leader>sS` | the project search ([search.md](search.md)), from visual mode the selection as its pattern: a bar below the pane — find, include and exclude as comma lists (`src/*.[ts,tsx], tests/`), `<A-r>` `<A-c>` `<A-w>` `<A-g>` regex, case, whole word, ignored files — whose `<CR>` fills `*search*`, a live multibuffer of the matches; `<A-a>` adds a stage searching what the one before found (`<A-k>`: `in`, `keep`, `drop`), `<A-x>` (or its `×`) takes one out, `<A-h>` `<A-l>` move between them, `<Up>` `<Down>` the searches made here before, `<C-j>` to the results, where `<CR>` or `g<Space>` (Zed's) opens the file at the caret — with carets on several files, the rest opened too; `<leader>ss` from the workspace's root every time, `<leader>sS` from the file's directory (`:search project`, `:grep`, `:search here`) |
 | `<leader>/` | the buffer's lines, the pane following the cursor as `<leader>bs` does |
 | `<leader>.` | the smart picker: the buffers, then the files opened before, then the walk |
+| `<leader>ce` `<leader>cE` | the diagnostics as `*diagnostics*` beside the code ([lists.md](lists.md)): the workspace's — a file never opened among them when its server spoke of it — or the file's (`:diagnostics`, `:diagnostics buffer`); each message whole under its line in its severity's colour, errors' files first, made again as they move but not while the keyboard is in it; `]q` walks them |
 | `<leader>sp` | the commands (the palette): every spec, what it needs where the keyboard came from, `<CR>` runs it |
 | `<leader>so` | the workspace's files attended before, ranked by the memory (the picker's `recent`) |
 | `<leader>sr` | the last picker again, its query and cursor as they were |

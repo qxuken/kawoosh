@@ -81,9 +81,9 @@ for them; not built — see the end.
 
 ### 3. A list of places is a multibuffer
 
-`:diagnostics` (`<leader>sd`) lists the workspace's — every buffer's
+`:diagnostics` (`<leader>ce`) lists the workspace's — every buffer's
 under the tab's working directory and every file's kept by Decision 2 —
-and `:diagnostics buffer` (`<leader>sD`) the file's, as
+and `:diagnostics buffer` (`<leader>cE`) the file's, as
 `*diagnostics*`. `gr` answers `*references*`, `gI` with several answers
 `*implementations*`, `gD` with several `*declarations*`. Each is a
 multibuffer (search.md Decision 1), so a place's code is there around
@@ -99,9 +99,11 @@ after the line and goes on after the message, as Zed's blocks sit — so
 a long TypeScript error is read where it happens. The files are in
 path order, those with an error first; the places in a file by line.
 
-The list opens beside the pane it was asked from, the keyboard in it,
-as `*references*` did; `<CR>` opens the place in the pane it came from
-(the list stays), `g<Space>` in the list's own pane (the search's).
+The list opens in a split beside the pane it was asked from, the
+keyboard in it, as `*references*` did; `<CR>` (and `g<Space>`) opens
+the place in the pane it came from, the list staying; `q` closes it.
+The list writes its own notes under the lines, so its rows draw no
+message at their ends.
 
 Beaten: a picker (telescope's and Trouble's shape). A row per place is
 quicker to filter, but has no code to read or edit, and the picker's
@@ -157,13 +159,36 @@ state: `gr` again makes the list again.
   another buffer.
 - `kawoosh.on_places(fn)`: `fn(title, items)` with a server's list —
   `references`, `implementations`, `declarations` — each item `{ path,
-  line, col, end_line, end_col }`; the bundled `places.lua` makes the
+  line, col, end_line, end_col }`; the bundled `lists.lua` makes the
   lists, and a config may make them otherwise.
 - `kawoosh.multibuffer`'s parts take `{ text =, color = }` — a gap in a
   paint's colour (`error` `warning` `info` `hint` among them) — and its
   options `places = { … }`, the places marked on the files and walked
   by `]q`, or `places = "diagnostics"`, the diagnostics its files have;
   `beside = true` shows it as a list beside.
+
+## Built
+
+2026-09-26, in four commits and one from a look: the store and whole
+messages (`doc/src/diagnostic.rs`, `editor/src/diagnostics.rs`,
+`editor/tests/diagnostics.rs`); the multibuffer's painted gaps, its way
+back from a file's offset, a layer's runs where the excerpts show them
+and a refill that keeps the carets and the undo (`editor/src/multi.rs`);
+the shell's half and the doors (`kawoosh/src/lists.rs`, the Lua
+runtime); and the lists (`kawoosh/lua/lists.lua`), tested against the
+fake server in `kawoosh/tests/lsp.rs` (`the_diagnostics_list`,
+`diagnostics_whole_and_of_files_no_buffer_holds`, the references in
+`rename_references_actions_format_and_diagnostics`). Looked at against
+rust-analyzer: a file never opened listed from its check, rustc's
+two-line `mismatched types` whole under its line. The look found three
+things, fixed: a row's end said the first diagnostic on it, not the
+worst (a hint before an error); a list's rows repeated its notes at
+their ends; the references' wash showed in `*diagnostics*` too.
+
+Departed from the note as written: the keys are `<leader>ce`
+`<leader>cE` (the code group's, beside `<C-e>`), not `<leader>sd`
+`<leader>sD` — `<leader>sd` is the directory jumps. `:di` completes to
+`diagnostics` now, before `dir`.
 
 ## Not built
 

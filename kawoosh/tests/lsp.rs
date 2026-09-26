@@ -1283,7 +1283,7 @@ fn the_diagnostics_list() {
     );
     // The workspace's: the tab's working directory's.
     ex(&mut d, &mut app, &format!("cd {}", dir.display()));
-    ex(&mut d, &mut app, "diagnostics");
+    d.keys(&mut app, " ce");
     let list_text = |a: &Kawoosh| {
         a.ed.buffers
             .values()

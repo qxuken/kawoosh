@@ -273,8 +273,7 @@ three rows.
   over it.
 - **Expanding an excerpt** (Zed's `⋯` click, more lines above or below).
   The engine takes excerpts as given; growing one is a re-make.
-- **A multibuffer for other answers**: references, diagnostics, a
-  diff's hunks. The engine is ready for them; the search is the first
-  caller.
+- **A multibuffer for other answers**: a diff's hunks. References and
+  diagnostics are lists now ([lists.md](lists.md), 2026-09-26).
 - **A session's search**: a session keeps neither the results nor the
   stages; the bar is asked for again, as the picker is.
