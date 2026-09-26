@@ -383,6 +383,7 @@ objects, or any other character on both sides.
 | `<leader>e1`…`9` `<A-1>`…`9` | open the workspace's Nth pin |
 | `<leader>?` | the which-key for every first key (`:keys`) |
 | `<leader>ot` `<leader>os` | the other base, dark for light and light for dark (`theme toggle`); the base the OS's again (`theme system`) — the session's `theme.appearance` ([themes.md](themes.md)) |
+| `<leader>ol` | the theme lab (`:theme lab`): the look on show through every situation the editor draws — code with the caret, a hit, a selection and a diagnostic; each token on the page, under a selection, under a hit; the surfaces, the chrome, the terminal — each pair's contrast and floor, `✓` or `✗`; `f` only what falls short, `r` the report (`:theme check`), `j` `k` `<C-d>` `<C-u>` `gg` `G` scroll, `q` closes |
 | `<leader>oo` | the themes' pane (`:themes`), a column of its own: every theme a card in its own colours, the dark ones and the light ones apart; `⏎` or a click puts the cursor's card in its half (`theme.dark`, `theme.light`), `h` `j` `k` `l` walk (the card scrolled into view), `t` `s` as above, `y` copies the line that keeps the pick, `q` closes |
 | `<leader>Q` | quit all |
 | `-` | oil: the file's directory |

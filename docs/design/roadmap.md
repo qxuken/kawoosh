@@ -2140,7 +2140,9 @@ then breadth.
     (`toggle`, `system`, `dark`/`light [NAME]`, a family, `reset`) and
     `<leader>o` (`ot` `os` `oo`); `:themes`, a column of cards each
     drawn in its own colours, over the `kawoosh.themes` door; a style
-    per token beside its hue, `tokens.styles` over it.~~ Built
+    per token beside its hue, `tokens.styles` over it; `:theme check`
+    and `:theme lab` (`<leader>ol`) for theme work, every pair the
+    editor draws measured and drawn.~~ Built
     2026-09-26.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),

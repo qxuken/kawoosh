@@ -9,7 +9,8 @@ half each the user's to pick, and gives picking a place to happen.
 Each decision keeps the alternative it beat. Amended the same day at
 the user's word after a look: tokens carry styles beside their hues
 (Decision 6), and the pane is a column of its own whose walk keeps the
-cursor's card in view (Decision 4).
+cursor's card in view (Decision 4); and again for theme work, a check
+and a lab (Decision 7).
 
 ## What there was
 
@@ -180,6 +181,49 @@ bold = }`) — one table, but a colour's two halves are already its
 table's shape there, and a style has none: a style does not change
 with the base.
 
+### 7. A theme is checked, and seen through every situation
+
+For making or tuning a theme: every pair of colours the editor draws
+one over the other is measured (`theme_check.rs`) — a foreground and
+what it lands on, a translucent wash (the selection, a search hit)
+laid on the page first as the rows lay it — against a floor:
+
+| floor | for |
+|---|---|
+| 4.5:1 | the body text on every surface, under a selection or a hit; a label on a fill (the active tab) |
+| 3:1 | a syntax hue on the page, the muted grey, a state's colour, a mode's name on the strip, the terminal's hues, the caret |
+| 2:1 | a syntax hue under a selection or a hit; the faint grey |
+| 1.4:1 | a wash or a line seen, not read: the selection, a hit, the strong border (`SEEN`) |
+
+`:theme check` writes the report — what falls short first — into
+`*theme check*`, of the look on show (the settings' accent, roles,
+`tokens.colors` and `tokens.styles` over the variant), `:theme check
+NAME` of a variant as it ships, `:theme check all` of each. `:theme
+lab` (`<leader>ol`) is a column beside the code drawing the look on
+show through the situations the numbers are of — the sample with the
+caret, a hit, a selected line and a diagnostic's wavy line and message;
+each hued token on the page, under a selection and under a hit; the
+four surfaces with the three greys; the tab strip, the mode names and
+a toast; the sixteen — each pair with its ratio and `✓` or `✗`, and
+every pair listed at the end, `f` narrowing to what falls short. It is
+measured again whenever the look is rebuilt, so a `settings.lua` saved
+beside it is seen at once. Both read one snapshot of the look on show
+taken at each rebuild (`look::Shown::subject`); the door is
+`kawoosh.themes.check([NAME])`.
+
+Run on what ships (2026-09-26): the high-contrast pair clears every
+floor; the dark variants fall short only under a search hit — the hit's
+wash, the warning at 0.35, is the editor's choice rather than the
+theme's, and holds Ayu Mirage's body text to 3.5:1; Rosé Pine Dawn and
+Ayu Light, pale palettes on white, fall short across their hues. What
+to do about each is left to the user: the check says, the themes are as
+their authors made them.
+
+*Beat:* tests only (`cargo test`, as the variants' own units are) —
+they are for kawoosh's code, not for a user tuning `theme.*` in their
+settings, and a number with no picture beside it does not say what the
+eye will see.
+
 ## Built
 
 As decided. `themes.rs` holds the variants (`Variant`), the families
@@ -189,7 +233,9 @@ commands; `kawoosh/lua/themes.lua` the pane; the door is set on the
 runtime before the bundled plugins load (`scripting.rs`). Decision 6:
 `themes::Style` on the variants, `Kawoosh::syntax_style_for` over
 `tokens.styles`, the rows' marks in `panes.rs`, `HighlightRun` in the
-Lua runtime. Tests:
+Lua runtime. Decision 7: `theme_check.rs` (`run`, `report`,
+`Subject`), `:theme check` in `look.rs`, `kawoosh/lua/theme_lab.lua`.
+Tests:
 `themes.rs`'s units (every variant reads, the high-contrast floors,
 no green in Rosé Pine or high contrast, resolution), `tests/settings.rs`
 for the slots and the commands through a frame, and
