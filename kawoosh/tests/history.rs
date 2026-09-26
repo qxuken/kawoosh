@@ -281,7 +281,7 @@ fn a_quiet_buffer_is_written_on_its_own() {
 
 /// `:q!` discards: the buffer is back on the disk text, the row gone,
 /// and a relaunch finds the file as on disk. `:bd!` on a hidden
-/// modified buffer does the same.
+/// modified buffer does the same, and `<leader>bD` is `:bd!`.
 #[test]
 fn a_bang_discards_the_draft() {
     let dir = tmp("bang");
@@ -297,10 +297,14 @@ fn a_bang_discards_the_draft() {
     d.keys(&mut app, "x");
     app.sync_histories(true);
     assert_eq!(app.store.as_ref().unwrap().history_keys().len(), 2);
-    // `:bd` on the modified b refuses; `:bd!` drops its draft.
+    // `:bd` on the modified b refuses, and `<leader>bd` with it;
+    // `<leader>bD`, `:bd!`, drops its draft.
     ex(&mut d, &mut app, "bd");
     assert!(app.ed.message.contains("unsaved"), "{}", app.ed.message);
-    ex(&mut d, &mut app, "bd!");
+    app.ed.message.clear();
+    d.keys(&mut app, " bd");
+    assert!(app.ed.message.contains("unsaved"), "{}", app.ed.message);
+    d.keys(&mut app, " bD");
     assert_eq!(app.ed.buffers.len(), 1);
     assert_eq!(
         app.store.as_ref().unwrap().history_keys(),

@@ -344,6 +344,7 @@ objects, or any other character on both sides.
 |---|---|
 | `<leader><leader>` `<leader>bb` | the buffers, as a picker — the current one last, so `<CR>` at once is the one before; `<C-x>` closes the row's |
 | `<leader>bd` `<leader>bo` | delete the buffer, every other buffer |
+| `<leader>bD` | delete the buffer, discarding its unsaved changes (`:bd!`) |
 | `<leader>bn` `<leader>bp` | next, previous buffer |
 | `<leader>tn` `<leader>tq` | a new tab, close the tab |
 | `<leader>tt` | the tools (`kawoosh.tool`, and `settings.lua`'s `tools` table), as a picker: `git` (lazygit), `top`, `shell`, `compile` and `run` from `compile.command` and `run.command` |
