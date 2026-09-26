@@ -442,7 +442,11 @@ fn a_language_server_runs_on_the_host() {
     let v = app.focused_view().unwrap();
     let id = app.ed.views[v].buffer;
     until(&mut d, &mut app, "the server's diagnostic", |a| {
-        a.lsp.messages.get(&id).is_some_and(|m| m == &["boom"])
+        a.ed.diagnostics
+            .of(id)
+            .iter()
+            .map(|d| d.message.as_str())
+            .eq(["boom"])
     });
     // Its root is the host's project, spelled on the domain.
     let roots: Vec<String> = app

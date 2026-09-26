@@ -14,12 +14,13 @@ use std::process::{Child, Stdio};
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, select, unbounded};
-use kawoosh_doc::{BufferId, Run, Update, Version};
+use kawoosh_doc::diagnostic::Placed;
+use kawoosh_doc::{BufferId, Diagnostic, Run, Update, Version};
 use serde_json::{Value, json};
 
 use crate::WakeHandle;
 
-pub const DIAG_LAYER: &str = "diagnostics";
+pub use kawoosh_doc::diagnostic::LAYER as DIAG_LAYER;
 
 /// How a language is served: the server's command and its LSP id.
 #[derive(Clone, Debug)]
@@ -312,6 +313,9 @@ pub struct Location {
     pub path: PathBuf,
     pub line: u32,
     pub character: u32,
+    /// Where the range ends — its start again when the server gave none.
+    pub end_line: u32,
+    pub end_character: u32,
 }
 
 /// A symbol a server listed: a document's (its container the symbol it
@@ -443,11 +447,18 @@ pub fn completion_kind_name(kind: u64) -> &'static str {
 
 pub enum Event {
     /// Runs with `style` = severity (1 error … 4 hint) and `tag` = index
-    /// into `messages`.
+    /// into `diagnostics`.
     Diagnostics {
         buffer: BufferId,
         update: Update,
-        messages: Vec<String>,
+        diagnostics: Vec<Diagnostic>,
+    },
+    /// What a server said about a file it was not sent — rust-analyzer's
+    /// check, a workspace-wide pass (docs/design/lists.md Decision 2):
+    /// kept by path; none clears it.
+    FileDiagnostics {
+        path: PathBuf,
+        diagnostics: Vec<Placed>,
     },
     Definition {
         path: PathBuf,
@@ -636,6 +647,10 @@ fn on_host(ev: Event, d: &str) -> Event {
                     ..l
                 })
                 .collect(),
+        },
+        Event::FileDiagnostics { path, diagnostics } => Event::FileDiagnostics {
+            path: sp(path),
+            diagnostics,
         },
         Event::CodeActions { buffer, actions } => Event::CodeActions {
             buffer,
@@ -1724,20 +1739,26 @@ impl Pool {
         let params = message.get("params");
         match method {
             Some("textDocument/publishDiagnostics") => {
-                if let Some(params) = params
-                    && let Some(uri) = params.get("uri").and_then(Value::as_str)
-                    && let Some(doc) = server.documents.get(&canonical_uri(uri))
-                {
-                    let (update, messages) = diagnostics_update(params, doc);
+                let Some(params) = params else { return };
+                let Some(uri) = params.get("uri").and_then(Value::as_str) else {
+                    return;
+                };
+                if let Some(doc) = server.documents.get(&canonical_uri(uri)) {
+                    let (update, diagnostics) = diagnostics_update(params, doc);
                     let buffer = doc.buffer;
                     self.emit_from(
                         key,
                         Event::Diagnostics {
                             buffer,
                             update,
-                            messages,
+                            diagnostics,
                         },
                     );
+                } else if let Some(path) = path_of_uri(uri) {
+                    // A file it was not sent: kept by path, placed as the
+                    // server placed it.
+                    let diagnostics = placed_diagnostics(params);
+                    self.emit_from(key, Event::FileDiagnostics { path, diagnostics });
                 }
             }
             Some(m @ ("window/showMessage" | "window/logMessage")) => {
@@ -2033,20 +2054,24 @@ fn locations(result: Option<&Value>) -> Vec<Location> {
     list.iter()
         .filter_map(|l| {
             // A `Location`, or a `LocationLink` (its target).
-            let (uri, start) = match l.get("uri") {
-                Some(uri) => (uri, l.pointer("/range/start")),
+            let (uri, range) = match l.get("uri") {
+                Some(uri) => (uri, l.get("range")),
                 None => (
                     l.get("targetUri")?,
-                    l.pointer("/targetSelectionRange/start")
-                        .or_else(|| l.pointer("/targetRange/start")),
+                    l.get("targetSelectionRange")
+                        .or_else(|| l.get("targetRange")),
                 ),
             };
             let path = path_of_uri(uri.as_str()?)?;
-            let (line, character) = position(start)?;
+            let range = range?;
+            let (line, character) = position(range.get("start"))?;
+            let (end_line, end_character) = position(range.get("end")).unwrap_or((line, character));
             Some(Location {
                 path,
                 line,
                 character,
+                end_line,
+                end_character,
             })
         })
         .collect()
@@ -2160,45 +2185,66 @@ fn completion_items(result: Option<&Value>) -> Vec<CompletionItem> {
         .collect()
 }
 
-fn diagnostics_update(params: &Value, doc: &Document) -> (Update, Vec<String>) {
+/// One diagnostic's record from the protocol's: the message whole,
+/// its source and code (a number or a string) kept.
+fn diagnostic_of(d: &Value) -> Diagnostic {
+    Diagnostic {
+        severity: d.get("severity").and_then(Value::as_u64).unwrap_or(3) as u32,
+        message: d
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim_end()
+            .to_string(),
+        source: d
+            .get("source")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        code: match d.get("code") {
+            Some(Value::String(c)) if !c.is_empty() => Some(c.clone()),
+            Some(Value::Number(n)) => Some(n.to_string()),
+            _ => None,
+        },
+    }
+}
+
+/// A diagnostic's range as the protocol gives it: start and end line and
+/// character.
+fn range_of(d: &Value) -> Option<(u32, u32, u32, u32)> {
+    let range = d.get("range")?;
+    let at = |p: &str| range.pointer(p).and_then(Value::as_u64).map(|n| n as u32);
+    Some((
+        at("/start/line")?,
+        at("/start/character")?,
+        at("/end/line")?,
+        at("/end/character")?,
+    ))
+}
+
+fn diagnostics_update(params: &Value, doc: &Document) -> (Update, Vec<Diagnostic>) {
     let mut runs = Vec::new();
-    let mut messages = Vec::new();
+    let mut diagnostics = Vec::new();
     if let Some(list) = params.get("diagnostics").and_then(Value::as_array) {
         for d in list {
-            let Some(range) = d.get("range") else {
+            let Some((sl, sc, el, ec)) = range_of(d) else {
                 continue;
             };
-            let (Some(sl), Some(sc), Some(el), Some(ec)) = (
-                range.pointer("/start/line").and_then(Value::as_u64),
-                range.pointer("/start/character").and_then(Value::as_u64),
-                range.pointer("/end/line").and_then(Value::as_u64),
-                range.pointer("/end/character").and_then(Value::as_u64),
-            ) else {
-                continue;
-            };
-            let start = offset_of_position(&doc.text, sl as u32, sc as u32);
-            let mut end = offset_of_position(&doc.text, el as u32, ec as u32);
+            let start = offset_of_position(&doc.text, sl, sc);
+            let mut end = offset_of_position(&doc.text, el, ec);
             if end <= start {
                 end = (start + 1).min(doc.text.len());
             }
             if start >= end {
                 continue;
             }
-            let severity = d.get("severity").and_then(Value::as_u64).unwrap_or(3) as u32;
-            let message = d
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .lines()
-                .next()
-                .unwrap_or("")
-                .to_string();
-            messages.push(message);
+            let diagnostic = diagnostic_of(d);
             runs.push(Run {
                 range: start..end,
-                style: severity,
-                tag: (messages.len() - 1) as u32,
+                style: diagnostic.severity,
+                tag: diagnostics.len() as u32,
             });
+            diagnostics.push(diagnostic);
         }
     }
     // Errors first at one start, so the row's underline is the worst.
@@ -2210,8 +2256,28 @@ fn diagnostics_update(params: &Value, doc: &Document) -> (Update, Vec<String>) {
             span: 0..doc.text.len(),
             runs,
         },
-        messages,
+        diagnostics,
     )
+}
+
+/// The diagnostics of a file no document stands for, placed by the
+/// server's lines and characters.
+fn placed_diagnostics(params: &Value) -> Vec<Placed> {
+    let Some(list) = params.get("diagnostics").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|d| {
+            let (line, character, end_line, end_character) = range_of(d)?;
+            Some(Placed {
+                line,
+                character,
+                end_line,
+                end_character,
+                diagnostic: diagnostic_of(d),
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -2272,16 +2338,24 @@ mod tests {
             lsp_version: 1,
         };
         let params = json!({ "uri": "file:///t.rs", "diagnostics": [
-            { "range": { "start": { "line": 1, "character": 4 }, "end": { "line": 1, "character": 5 } }, "severity": 1, "message": "missing type\nmore" },
-            { "range": { "start": { "line": 0, "character": 4 }, "end": { "line": 0, "character": 5 } }, "severity": 2, "message": "unused" }
+            { "range": { "start": { "line": 1, "character": 4 }, "end": { "line": 1, "character": 5 } }, "severity": 1, "message": "missing type\n  more\n", "source": "ts", "code": 2322 },
+            { "range": { "start": { "line": 0, "character": 4 }, "end": { "line": 0, "character": 5 } }, "severity": 2, "message": "unused", "code": "E1" }
         ]});
         let (u, m) = diagnostics_update(&params, &doc);
         assert_eq!(u.runs.len(), 2);
         assert_eq!(u.runs[0].range, 4..5);
         assert_eq!(u.runs[0].style, 2);
-        assert_eq!(m[u.runs[0].tag as usize], "unused");
+        assert_eq!(m[u.runs[0].tag as usize].message, "unused");
+        assert_eq!(m[u.runs[0].tag as usize].origin(), "(E1)");
         assert_eq!(u.runs[1].range, 15..16);
-        assert_eq!(m[u.runs[1].tag as usize], "missing type");
+        // Whole, every line of it; where it came from kept.
+        let d = &m[u.runs[1].tag as usize];
+        assert_eq!(d.message, "missing type\n  more");
+        assert_eq!(d.first_line(), "missing type");
+        assert_eq!(d.origin(), "ts(2322)");
+        let placed = placed_diagnostics(&params);
+        assert_eq!((placed[0].line, placed[0].character), (1, 4));
+        assert_eq!(placed[1].diagnostic.message, "unused");
     }
 
     #[test]

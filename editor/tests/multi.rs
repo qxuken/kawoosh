@@ -351,3 +351,119 @@ fn write_writes_the_files_it_shows() {
     assert_eq!(ed.take_released(), vec![b]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A list made again (docs/design/lists.md Decision 5): the caret stays
+/// on its file's place, and what was changed through the list is still
+/// undone by `u`.
+#[test]
+fn made_again_the_caret_and_the_undo_stay() {
+    let mut t = two();
+    // On `b1`, and a change made through the multibuffer.
+    t.keys("4j");
+    assert_eq!(
+        t.ed.multi_at(t.m, t.ed.views[t.v].sels.primary().head),
+        Some((t.b, 3))
+    );
+    t.keys("xu<C-r>");
+    assert_eq!(t.text(t.b), "b0\n1\nb2");
+    // Made again with `a`'s excerpt gone and a header of another size.
+    t.ed.fill_multi(
+        t.m,
+        vec![Part::Gap("the b file\n".into()), Part::Lines(t.b, 0..3)],
+    );
+    assert_eq!(t.multi(), "the b file\nb0\n1\nb2\n");
+    let head = t.ed.views[t.v].sels.primary().head;
+    assert_eq!(
+        t.ed.multi_at(t.m, head),
+        Some((t.b, 3)),
+        "on the same place"
+    );
+    assert_eq!(head, t.ed.multi_offset(t.m, t.b, 3).unwrap());
+    t.keys("u");
+    assert_eq!(
+        t.text(t.b),
+        "b0\nb1\nb2",
+        "undone through the list made again"
+    );
+    // A place no excerpt shows any more: the top.
+    t.ed.fill_multi(t.m, vec![Part::Lines(t.a, 0..1)]);
+    assert_eq!(t.ed.views[t.v].sels.primary().head, 0);
+    assert_eq!(t.ed.multi_offset(t.m, t.b, 3), None);
+}
+
+/// A gap in a colour: where it is in the text, found again after an
+/// edit in an excerpt before it moved it.
+#[test]
+fn painted_gaps_are_found_where_they_are() {
+    let mut ed = Editor::new();
+    let a = ed.add_buffer(Buffer::new("a", "a0\na1\na2\n"));
+    let m = ed.open_multi(
+        "list",
+        vec![
+            Part::Gap("A\n".into()),
+            Part::Lines(a, 0..1),
+            Part::Painted("error: boom\n".into(), "error".into()),
+            Part::Lines(a, 1..2),
+            Part::Painted("the end\n".into(), "dim".into()),
+        ],
+    );
+    assert_eq!(ed.buffers[m].text(), "A\na0\nerror: boom\na1\nthe end\n");
+    let text = ed.buffers[m].text();
+    let spans: Vec<(String, String)> = ed
+        .multi_paints(m)
+        .into_iter()
+        .map(|(r, c)| (text[r].to_string(), c.to_string()))
+        .collect();
+    assert_eq!(
+        spans,
+        [
+            ("error: boom\n".to_string(), "error".to_string()),
+            ("the end\n".to_string(), "dim".to_string())
+        ]
+    );
+    // Typed into the first excerpt: the paint moves with its gap.
+    let v = ed.add_view(m);
+    for k in ["j", "A", "x", "x"] {
+        let mut st = KeyStroke::plain(k);
+        st.text = Some(k.to_string());
+        ed.key(v, st);
+    }
+    ed.sync_multis();
+    assert_eq!(ed.buffers[a].text(), "a0xx\na1\na2\n");
+    let text = ed.buffers[m].text();
+    let (r, _) = ed.multi_paints(m)[0].clone();
+    assert_eq!(&text[r], "error: boom\n");
+}
+
+/// A source's layer as the multibuffer shows it: each run where its
+/// excerpt puts it.
+#[test]
+fn a_sources_runs_are_found_in_its_excerpts() {
+    let mut t = two();
+    let b = &mut t.ed.buffers[t.b];
+    let v = b.version();
+    b.apply(kawoosh_doc::Update {
+        layer: "places",
+        version: v,
+        span: 0..b.len(),
+        runs: vec![
+            kawoosh_doc::Run {
+                range: 0..2,
+                style: 0,
+                tag: 0,
+            },
+            kawoosh_doc::Run {
+                range: 4..5,
+                style: 0,
+                tag: 1,
+            },
+        ],
+    })
+    .unwrap();
+    // `b0` is not shown; `b1`'s `1` is, at the multibuffer's 11.
+    let runs = t.ed.multi_runs(t.m, "places");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].0, 11..12);
+    assert_eq!(runs[0].1, t.b);
+    assert_eq!(&t.multi()[11..12], "1");
+}

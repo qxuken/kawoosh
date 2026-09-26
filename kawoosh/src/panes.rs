@@ -1419,11 +1419,22 @@ impl Kawoosh {
                     _ => None,
                 }));
         }
+        // The places a list marked on its files, drawn in that list
+        // alone: another multibuffer on the same lines is not the list.
+        let places_here =
+            self.is_list(buf_id) && self.locations.layer == Some(crate::lists::PLACES_LAYER);
+        // The multibuffer's gaps in a colour of their own, as painted.
+        let gap_paints: Vec<(Range<usize>, kui::Color)> = self
+            .ed
+            .multi_paints(buf_id)
+            .into_iter()
+            .filter(|(r, _)| r.end > buf.line_start(top))
+            .filter_map(|(r, c)| Some((r, self.paint_color(c, ui.theme().is_dark())?)))
+            .collect();
         // The marks' letters beside their lines (docs/design/marks.md).
         let letters = self.marks.letters(buf_id, top..last);
         let title = buf.name.clone();
         let dark = ui.theme().is_dark();
-        let diag_messages = self.lsp.messages.get(&buf_id);
         let diag_colors = [pal.dim, pal.danger, pal.command, pal.dim, pal.faint];
         // The notes on the rows drawn (`kawoosh.buf.annotate`): each
         // on the tracked line it was put on, wherever the line is now
@@ -1719,7 +1730,7 @@ impl Kawoosh {
                             // The search's matches in the drawn slice, found
                             // now: a few kilobytes of regex per row, and
                             // nothing kept for the rows off screen.
-                            let hits: Vec<Range<usize>> = match &search {
+                            let mut hits: Vec<Range<usize>> = match &search {
                                 Some(re) => search::hits_in(buf.tree(), re, src.clone())
                                     .into_iter()
                                     .map(|r| clip(r.start)..clip(r.end.min(range.end)))
@@ -1727,6 +1738,21 @@ impl Kawoosh {
                                     .collect(),
                                 None => Vec::new(),
                             };
+                            // A list's places on an excerpt's line, drawn as
+                            // the search's matches (docs/design/lists.md
+                            // Decision 4): the file's layer, where it is now.
+                            if runs_id != buf_id && places_here {
+                                hits.extend(
+                                    runs_buf
+                                        .runs(crate::lists::PLACES_LAYER, there(&src))
+                                        .iter()
+                                        .map(|r| {
+                                            clip(here(r.range.start))
+                                                ..clip(here(r.range.end).min(range.end))
+                                        })
+                                        .filter(|r| r.start < r.end),
+                                );
+                            }
                             if previewing && ln == cur_line {
                                 let at = clip(primary.head);
                                 if let Some(h) = hits.iter().find(|h| h.start == at) {
@@ -1754,6 +1780,21 @@ impl Kawoosh {
                                 // A multibuffer's gap: a file's header in
                                 // the accent (on its band), a `⋯` faint —
                                 // a plugin's paint over either.
+                                // A gap's own colour — a diagnostic's message
+                                // in its severity's — over the gap's faint.
+                                .chain(
+                                    gap_paints
+                                        .iter()
+                                        .filter(|(r, _)| r.start < range.end && r.end > range.start)
+                                        .map(|(r, c)| {
+                                            (
+                                                clip(r.start.max(range.start))
+                                                    ..clip(r.end.min(range.end)),
+                                                *c,
+                                            )
+                                        })
+                                        .filter(|(r, _)| r.start < r.end),
+                                )
                                 .chain(match from_files.get(ln - top) {
                                     Some(MultiLine::Header(_)) => {
                                         Some((0..drawn.text.len(), pal.accent))
@@ -1794,15 +1835,18 @@ impl Kawoosh {
                                     (a < b).then_some((a..b, c))
                                 })
                                 .collect();
+                            // The worst on the row, not the first: a hint
+                            // before an error on one line says the lesser.
+                            // A list that writes its own notes under the
+                            // lines (lists.md Decision 3) draws none.
                             let trailing = diags
-                                .first()
+                                .iter()
+                                .filter(|_| runs_id == buf_id || gap_paints.is_empty())
+                                .min_by_key(|r| r.style)
                                 .and_then(|r| {
-                                    let m = if runs_id == buf_id {
-                                        diag_messages?.get(r.tag as usize)?
-                                    } else {
-                                        self.lsp.messages.get(&runs_id)?.get(r.tag as usize)?
-                                    };
-                                    Some((m.as_str(), diag_colors[(r.style as usize).min(4)]))
+                                    // The first line: the rest is `<C-e>`'s.
+                                    let m = self.ed.diagnostics.get(runs_id, r.tag)?.first_line();
+                                    Some((m, diag_colors[(r.style as usize).min(4)]))
                                 })
                                 .or_else(|| annotated.get(&ln).map(|t| (t.as_str(), pal.dim)));
                             let ghost_here = ghost

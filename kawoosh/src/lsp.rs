@@ -26,7 +26,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use kawoosh_doc::{Buffer, BufferId, Update, Version};
+use kawoosh_doc::{Buffer, BufferId, Diagnostic, Update, Version};
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Mode, Prompt, Selection, Spec, ViewId};
 use kawoosh_lua::{ActionSnap, CandidateSnap};
 use kawoosh_systems::lsp::{
@@ -102,10 +102,8 @@ pub struct LspState {
     /// The newest diagnostics answer per buffer still being typed in,
     /// kept until the text has been still for [`DIAG_QUIET`] or insert
     /// mode ends; the alarm brings the frame that applies it.
-    pub held: HashMap<BufferId, (Update, Vec<String>)>,
+    pub held: HashMap<BufferId, (Update, Vec<Diagnostic>)>,
     alarm: Alarm,
-    /// Diagnostic messages per buffer, indexed by a run's `tag`.
-    pub messages: HashMap<BufferId, Vec<String>>,
     pub completion: Option<Completion>,
     /// A completion asked for and not yet answered: the buffer and where
     /// the word started.
@@ -164,7 +162,6 @@ impl LspState {
             moved: HashMap::new(),
             held: HashMap::new(),
             alarm: Alarm::spawn(wake),
-            messages: HashMap::new(),
             completion: None,
             requested: None,
             said_unavailable: HashSet::new(),
@@ -301,13 +298,20 @@ impl Kawoosh {
                 Event::Diagnostics {
                     buffer,
                     update,
-                    messages,
+                    diagnostics,
                 } => {
                     if self.lsp.typing(buffer, self.pane_mode()) {
-                        self.lsp.held.insert(buffer, (update, messages));
+                        self.lsp.held.insert(buffer, (update, diagnostics));
                         self.lsp.alarm.set(self.lsp.moved[&buffer] + DIAG_QUIET);
                     } else {
-                        self.apply_diagnostics(buffer, update, messages);
+                        self.apply_diagnostics(buffer, update, diagnostics);
+                    }
+                }
+                Event::FileDiagnostics { path, diagnostics } => {
+                    // A buffer on the file after all — opened since the
+                    // server looked — is sent to it and hears again.
+                    if self.ed.buffer_at(&path).is_none() {
+                        self.ed.diagnostics.set_file(path, diagnostics);
                     }
                 }
                 Event::Definition {
@@ -370,7 +374,13 @@ impl Kawoosh {
                     self.lsp.caps.insert(language, caps);
                 }
                 Event::WorkspaceEdit { title, edit } => self.apply_workspace_edit(&title, edit),
-                Event::Locations { title, items } => self.show_locations(&title, items),
+                // A list plugin's to make (lists.md Decision 3); the
+                // plain one when none took it.
+                Event::Locations { title, items } => {
+                    if items.is_empty() || !self.places_to_lua(&title, &items) {
+                        self.show_locations(&title, items);
+                    }
+                }
                 Event::CodeActions { buffer, actions } => self.offer_actions(buffer, actions),
                 Event::Symbols { token, result } => {
                     if let Some((name, then)) = self.lsp.symbol_asks.remove(&token) {
@@ -505,9 +515,11 @@ impl Kawoosh {
             .filter(|id| !self.lsp.typing(*id, mode))
             .collect();
         for id in quiet {
-            let (update, messages) = self.lsp.held.remove(&id).unwrap();
-            self.apply_diagnostics(id, update, messages);
+            let (update, diagnostics) = self.lsp.held.remove(&id).unwrap();
+            self.apply_diagnostics(id, update, diagnostics);
         }
+        // A file's kept diagnostics to the buffer opened on it.
+        self.ed.adopt_file_diagnostics();
         self.push_documents();
         self.ask_inlay_hints(mode);
     }
@@ -706,11 +718,12 @@ impl Kawoosh {
         self.positional_cmd(cmd);
     }
 
-    fn apply_diagnostics(&mut self, buffer: BufferId, update: Update, messages: Vec<String>) {
+    fn apply_diagnostics(&mut self, buffer: BufferId, update: Update, list: Vec<Diagnostic>) {
         if let Some(b) = self.ed.buffers.get_mut(buffer)
             && b.apply(update).is_ok()
         {
-            self.lsp.messages.insert(buffer, messages);
+            let path = b.path.clone();
+            self.ed.diagnostics.set(buffer, path.as_deref(), list);
         }
     }
 
@@ -824,7 +837,6 @@ impl Kawoosh {
             self.lsp.sent.remove(&id);
             self.lsp.moved.remove(&id);
             self.lsp.held.remove(&id);
-            self.lsp.messages.remove(&id);
             self.lsp.hints.remove(&id);
             self.lsp.hints_asked.remove(&id);
             let b = &self.ed.buffers[id];
@@ -1077,7 +1089,7 @@ impl Kawoosh {
             .map(|(id, _)| id);
         self.locations = crate::compile::Locations {
             buffer,
-            cursor_line: None,
+            ..Default::default()
         };
         let n = items.len();
         self.ed.message = format!("{n} {title} — <CR> opens one, ]q walks them");
@@ -1211,50 +1223,76 @@ impl Kawoosh {
     }
 
     /// The diagnostics at the caret (or over the selection): `(start,
-    /// end, severity, message)`.
+    /// end, severity, message)` — what a code action request sends.
     fn diagnostics_at(
         &self,
         buffer: BufferId,
         range: Range<usize>,
     ) -> Vec<(usize, usize, u32, String)> {
+        self.diagnostics_here(buffer, range)
+            .into_iter()
+            .map(|(r, d)| (r.start, r.end, d.severity, d.message))
+            .collect()
+    }
+
+    /// The diagnostics of `buffer` over `range` (at an offset, those
+    /// that hold it), each with its range.
+    fn diagnostics_here(
+        &self,
+        buffer: BufferId,
+        range: Range<usize>,
+    ) -> Vec<(Range<usize>, Diagnostic)> {
         let b = &self.ed.buffers[buffer];
-        let messages = self.lsp.messages.get(&buffer);
         b.runs(DIAG_LAYER, range.start..range.end.max(range.start + 1))
             .into_iter()
             .map(|r| {
-                let msg = messages
-                    .and_then(|m| m.get(r.tag as usize))
+                let d = self
+                    .ed
+                    .diagnostics
+                    .get(buffer, r.tag)
                     .cloned()
                     .unwrap_or_default();
-                (r.range.start, r.range.end, r.style, msg)
+                (r.range, d)
             })
             .collect()
     }
 
-    /// `<C-e>`: the diagnostic under the caret, whole, in a pane.
+    /// The buffer and offset the caret stands for: a multibuffer's the
+    /// file's under it (docs/design/lists.md Decision 4).
+    fn caret_in_file(&self) -> Option<(ViewId, BufferId, usize)> {
+        let (v, buffer, caret) = self.lsp_at_caret()?;
+        match self.ed.multi_at(buffer, caret) {
+            Some((src, at)) => Some((v, src, at)),
+            None => Some((v, buffer, caret)),
+        }
+    }
+
+    /// `<C-e>`: every diagnostic under the caret, whole, in a pane —
+    /// each headed by its severity and where it came from (`error
+    /// ts(2322)`), in a multibuffer the excerpt's file's.
     fn show_diagnostic(&mut self) {
-        let Some((_, buffer, caret)) = self.lsp_at_caret() else {
+        let Some((_, buffer, caret)) = self.caret_in_file() else {
             return;
         };
-        let here = self.diagnostics_at(buffer, caret..caret);
+        let here = self.diagnostics_here(buffer, caret..caret);
         if here.is_empty() {
             self.ed.message = "no diagnostic under the caret".into();
             return;
         }
         let text = here
             .iter()
-            .map(|(_, _, severity, m)| {
-                let level = match severity {
-                    1 => "error",
-                    2 => "warning",
-                    3 => "info",
-                    _ => "hint",
+            .map(|(_, d)| {
+                let origin = d.origin();
+                let head = if origin.is_empty() {
+                    d.level().to_string()
+                } else {
+                    format!("{}  {origin}", d.level())
                 };
-                format!("{level}: {m}")
+                format!("{head}\n{}", d.message)
             })
             .collect::<Vec<_>>()
             .join("\n\n");
-        self.show_in_pane("*diagnostic*", &text);
+        self.show_in_pane("*diagnostic*", &format!("{text}\n"));
     }
 
     /// `]d` / `[d`: the caret to the next or previous diagnostic's start.
@@ -1262,6 +1300,35 @@ impl Kawoosh {
         let Some((v, buffer, caret)) = self.lsp_at_caret() else {
             return;
         };
+        // In a multibuffer, the diagnostics its excerpts show (lists.md
+        // Decision 4).
+        if self.ed.is_multi(buffer) {
+            let shown = self.ed.multi_runs(buffer, DIAG_LAYER);
+            let target = if forward {
+                shown.iter().find(|p| p.0.start > caret)
+            } else {
+                shown.iter().rev().find(|p| p.0.start < caret)
+            };
+            match target {
+                Some((at, src, run)) => {
+                    self.ed.views[v].sels =
+                        kawoosh_editor::Selections::single(Selection::point(at.start));
+                    if let Some(d) = self.ed.diagnostics.get(*src, run.tag) {
+                        self.ed.message = d.first_line().to_string();
+                    }
+                }
+                None => {
+                    self.ed.message = if shown.is_empty() {
+                        "no diagnostics".into()
+                    } else if forward {
+                        "no diagnostic after the caret".into()
+                    } else {
+                        "no diagnostic before the caret".into()
+                    };
+                }
+            }
+            return;
+        }
         let b = &self.ed.buffers[buffer];
         let mut starts: Vec<usize> = b
             .runs(DIAG_LAYER, 0..b.len())
@@ -1278,9 +1345,9 @@ impl Kawoosh {
         match target {
             Some(off) => {
                 self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(off));
-                let here = self.diagnostics_at(buffer, off..off);
-                if let Some((_, _, _, m)) = here.first() {
-                    self.ed.message = m.clone();
+                let here = self.diagnostics_here(buffer, off..off);
+                if let Some((_, d)) = here.first() {
+                    self.ed.message = d.first_line().to_string();
                 }
             }
             None => {

@@ -960,7 +960,23 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   The search is the engine's (`systems::search`, ripgrep's walk and
   globs, open buffers as they are), not `rg`'s; the `grep` picker stays
   the as-you-type one. Not built: a replace field, growing an excerpt,
-  multibuffers for references and diagnostics.
+  multibuffers for references and diagnostics (built the next day: the
+  entry below).
+- **Diagnostics per buffer and workspace, whole; lists as multibuffers**
+  — done 2026-09-26 [asked]; step 39, [lists.md](lists.md). Asked as
+  "do we have diagnostics per buffer and workspace? in neovim `C-e`
+  showed the full message (they can be long in ts)", then "route lsp
+  things through multi, like references". `<C-e>` was not whole: the
+  pool kept a message's first line. The diagnostics are the editor's
+  now (`Editor::diagnostics`), each whole with its `source` and
+  `code`; a file a server speaks of unasked (rust-analyzer's check) is
+  kept by path until a buffer opens it. `:diagnostics` (`<leader>ce`)
+  and `:diagnostics buffer` (`<leader>cE`) list them as a live
+  multibuffer beside, each message under its line; `gr`, and `gI` `gD`
+  with several, answer the same way; `]q` walks a list from the list
+  or the file. The layout is a plugin's (`lists.lua`) over
+  `kawoosh.lsp.diagnostics`, `on_diagnostics`, `on_focus`,
+  `on_places`. Not built: LSP's pull model, two servers on one file.
 - **Search from the file's directory** — done 2026-09-25 [todo]; step
   30. `:picker SOURCE here` roots a picker at `picker.here()` — a
   `dir` listing's own directory, the buffer's file's, else the working
@@ -2109,6 +2125,12 @@ then breadth.
     symbol's line and stays adrift, so an undo finds it again.
     `kawoosh/tests/marks.rs`.
 38. **Folds** ([marks.md](marks.md) Decision 6), when use asks for them.
+39. ~~**Lists** ([lists.md](lists.md)): the diagnostics the editor's
+    and whole, a file's kept when no buffer holds it, and the
+    diagnostics and a server's places as live multibuffers `]q`
+    walks.~~ Landed 2026-09-26: `editor/src/diagnostics.rs`,
+    `kawoosh/src/lists.rs`, `kawoosh/lua/lists.lua`; looked at against
+    rust-analyzer.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),

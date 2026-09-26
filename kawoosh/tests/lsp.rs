@@ -48,6 +48,16 @@ fn fake_server() -> ServerDef {
     }
 }
 
+/// Buffer `id`'s diagnostic messages, in the order they were said.
+fn msgs(app: &Kawoosh, id: kawoosh_doc::BufferId) -> Vec<String> {
+    app.ed
+        .diagnostics
+        .of(id)
+        .iter()
+        .map(|d| d.message.clone())
+        .collect()
+}
+
 /// Frames until `pred` holds, letting the server thread answer.
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -87,7 +97,7 @@ fn diagnostics_definition_hover_and_completion() {
             .is_empty()),
         "diagnostics arrived"
     );
-    assert_eq!(app.lsp.messages[&buf_id], ["boom"]);
+    assert_eq!(msgs(&app, buf_id), ["boom"]);
     let nodes = d.core.nodes();
     assert!(
         nodes.iter().any(|n| n.text.as_deref() == Some("boom")),
@@ -230,8 +240,7 @@ fn diagnostics_wait_for_the_typing_to_pause() {
     let buf_id = app.ed.views[v].buffer;
     // The open's answer lands at once: nothing was typed.
     assert!(
-        until(&mut d, &mut app, |a| a.lsp.messages.get(&buf_id)
-            == Some(&vec!["boom".into()])),
+        until(&mut d, &mut app, |a| msgs(a, buf_id) == ["boom"]),
         "the open's diagnostics"
     );
     assert!(app.lsp.held.is_empty());
@@ -245,7 +254,7 @@ fn diagnostics_wait_for_the_typing_to_pause() {
         "the answer is held"
     );
     assert_eq!(
-        app.lsp.messages[&buf_id],
+        msgs(&app, buf_id),
         ["boom"],
         "the rows keep the answer before"
     );
@@ -262,7 +271,7 @@ fn diagnostics_wait_for_the_typing_to_pause() {
         app.lsp.held.contains_key(&buf_id),
         "the pause restarted with the keystroke"
     );
-    assert_eq!(app.lsp.messages[&buf_id], ["boom"]);
+    assert_eq!(msgs(&app, buf_id), ["boom"]);
     // Still for the quiet period: the frame after applies it, insert
     // mode or not.
     std::thread::sleep(kawoosh::lsp::DIAG_QUIET);
@@ -271,7 +280,7 @@ fn diagnostics_wait_for_the_typing_to_pause() {
         "the answer landed"
     );
     assert_eq!(app.focused_mode(), Mode::Insert);
-    let messages = &app.lsp.messages[&buf_id];
+    let messages = msgs(&app, buf_id);
     assert_eq!(messages.len(), 4, "{messages:?}");
     assert!(messages.iter().all(|m| m == "expected SEMICOLON"));
     assert_eq!(app.ed.buffers[buf_id].runs(DIAG_LAYER, 0..100).len(), 4);
@@ -401,8 +410,7 @@ fn rename_references_actions_format_and_diagnostics() {
     let v = app.focused_view().unwrap();
     let buf_id = app.ed.views[v].buffer;
     assert!(
-        until(&mut d, &mut app, |a| a.lsp.messages.get(&buf_id)
-            == Some(&vec!["boom".into()])),
+        until(&mut d, &mut app, |a| msgs(a, buf_id) == ["boom"]),
         "the open's diagnostics"
     );
     assert!(
@@ -429,7 +437,7 @@ fn rename_references_actions_format_and_diagnostics() {
         app.ed
             .buffers
             .values()
-            .any(|b| b.name == "*diagnostic*" && b.text() == "error: boom"),
+            .any(|b| b.name == "*diagnostic*" && b.text() == "error\nboom\n"),
         "the diagnostic pane"
     );
     // It has the keys; `q` gives them back.
@@ -498,33 +506,63 @@ fn rename_references_actions_format_and_diagnostics() {
         .values()
         .find(|b| b.name == "*references*")
         .unwrap();
+    // A list multibuffer (lists.md Decision 3): the file's header with
+    // its count, the lines around each place — here the whole file.
     let text = refs.text();
-    assert!(text.contains("main.rs:1:1: // renamed"), "{text}");
-    assert!(text.contains("main.rs:2:5: fn main() {"), "{text}");
+    assert!(
+        text.contains("main.rs  2\n// renamed\nfn main() {\n"),
+        "{text}"
+    );
+    assert_eq!(refs.language.as_ref(), "multibuffer");
+    let refs_id = app
+        .ed
+        .buffers
+        .iter()
+        .find(|(_, b)| b.name == "*references*")
+        .map(|(id, _)| id);
     assert_eq!(
         app.ed.buffer_of(app.focused_view().unwrap()).name,
         "*references*",
         "the list has the keys"
     );
-    d.keys(&mut app, "]q");
-    let v = app.focused_view().unwrap();
-    assert_eq!(app.ed.views[v].buffer, buf_id);
+    // The places are marked on the file.
+    let marked = app.ed.buffers[buf_id].runs("places", 0..100);
     assert_eq!(
-        app.ed
-            .buffer_of(v)
-            .line_of(app.ed.views[v].sels.primary().head),
-        0
+        marked.iter().map(|r| r.range.clone()).collect::<Vec<_>>(),
+        [0..2, 15..18]
     );
+    let caret = |a: &Kawoosh| {
+        let v = a.focused_view().unwrap();
+        let b = a.ed.buffer_of(v);
+        let h = a.ed.views[v].sels.primary().head;
+        (
+            a.ed.views[v].buffer,
+            b.line_of(h),
+            h - b.line_start(b.line_of(h)),
+        )
+    };
     d.keys(&mut app, "]q");
-    let v = app.focused_view().unwrap();
-    assert_eq!(
-        app.ed
-            .buffer_of(v)
-            .line_of(app.ed.views[v].sels.primary().head),
-        1
-    );
+    assert_eq!(caret(&app), (buf_id, 0, 0));
+    d.keys(&mut app, "]q");
+    assert_eq!(caret(&app), (buf_id, 1, 4), "at the place's column");
     d.keys(&mut app, "]q");
     assert_eq!(app.ed.message, "no more locations");
+    d.keys(&mut app, "[q");
+    assert_eq!(caret(&app), (buf_id, 0, 0));
+    // The list stays beside, its caret on the place walked to.
+    let list_view = app
+        .ed
+        .views
+        .values()
+        .find(|v| Some(v.buffer) == refs_id)
+        .expect("the list still shown");
+    assert_eq!(
+        app.ed
+            .multi_at(refs_id.unwrap(), list_view.sels.primary().head),
+        Some((buf_id, 0))
+    );
+    d.keys(&mut app, "]q");
+    assert_eq!(caret(&app), (buf_id, 1, 4));
 
     // A code action on the call's line: the picker lists both, with
     // their kinds; the preview of the first is its edit as a diff.
@@ -1080,8 +1118,7 @@ fn a_rename_reaches_the_files_a_multibuffer_holds() {
     // Held, unedited and on no pane, it is the server's all the same:
     // its diagnostics came back.
     assert!(
-        until(&mut d, &mut app, |a| a.lsp.messages.get(&lib_id)
-            == Some(&vec!["boom".into()])),
+        until(&mut d, &mut app, |a| msgs(a, lib_id) == ["boom"]),
         "lib.rs sent to its server"
     );
     // A line put above the excerpt's, through the multibuffer: in
@@ -1116,6 +1153,240 @@ fn a_rename_reaches_the_files_a_multibuffer_holds() {
         app.ed.message.contains("in a multibuffer"),
         "{}",
         app.ed.message
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Diagnostics are the editor's (docs/design/lists.md Decisions 1–2):
+/// a message kept whole with where it came from — the row shows its
+/// first line, `<C-e>` all of it — and what a server says of a file it
+/// was never sent kept by path, listed, and taken by the buffer that
+/// opens the file; closed, the buffer leaves its last word to the file.
+#[test]
+fn diagnostics_whole_and_of_files_no_buffer_holds() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-whole-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(
+        &file,
+        "fn main() {\n    let a = 1; // @long @workspace\n}\n",
+    )
+    .unwrap();
+    let other = dir.join("src/other.rs");
+    std::fs::write(&other, "fn f() {\n    nope\n}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, buf_id).len() == 2),
+        "the open's diagnostics"
+    );
+    let long = &app.ed.diagnostics.of(buf_id)[1];
+    assert_eq!(
+        long.message,
+        "Type 'A' is not assignable to type 'B'.\n  Property 'b' is missing in type 'A'."
+    );
+    assert_eq!(long.origin(), "ts(2322)");
+    let nodes = d.core.nodes();
+    assert!(
+        nodes
+            .iter()
+            .any(|n| n.text.as_deref() == Some("Type 'A' is not assignable to type 'B'.")),
+        "the row shows the first line"
+    );
+    // `<C-e>` on it: the whole, headed.
+    d.keys(&mut app, "j");
+    d.key(
+        &mut app,
+        "e",
+        KeyMods {
+            ctrl: true,
+            ..Default::default()
+        },
+    );
+    let shown = app
+        .ed
+        .buffers
+        .values()
+        .find(|b| b.name == "*diagnostic*")
+        .expect("the diagnostic pane")
+        .text();
+    assert_eq!(
+        shown,
+        "error  ts(2322)\nType 'A' is not assignable to type 'B'.\n  Property 'b' is missing in type 'A'.\n"
+    );
+
+    // other.rs, never opened: kept by path and listed.
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.diagnostics.file(&other).len()
+            == 1),
+        "a file no buffer holds keeps what was said of it"
+    );
+    let listed = app.ed.diagnostics_listed(None);
+    let o = listed
+        .iter()
+        .find(|l| l.path.as_deref() == Some(other.as_path()))
+        .expect("listed");
+    assert_eq!((o.buffer, o.line, o.col, o.end_col), (None, 1, 4, 7));
+    assert_eq!(o.diagnostic.origin(), "rustc(E0425)");
+
+    // Opened: the buffer takes it as its own, placed in its text, until
+    // the server's own word on the open lands.
+    let before = app.ed.diagnostics.version();
+    ex(&mut d, &mut app, &format!("e {}", other.display()));
+    let oid = app.ed.buffer_at(&other).unwrap();
+    d.frame(&mut app);
+    assert!(app.ed.diagnostics.version() > before);
+    assert!(
+        app.ed.diagnostics.file(&other).is_empty(),
+        "taken from the file"
+    );
+    let runs = app.ed.buffers[oid].runs(DIAG_LAYER, 0..100);
+    assert!(!runs.is_empty(), "on the buffer's layer");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `:diagnostics` (lists.md Decisions 3–5): the workspace's as a list
+/// beside — files with an error first, each message whole under its
+/// line in its colour, a file never opened among them — `]d` and
+/// `<C-e>` in it, `]q` walking them into the file; and made again when
+/// they move, but not while the keyboard is in it.
+#[test]
+fn the_diagnostics_list() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-list-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(
+        &file,
+        "fn main() {\n    let a = 1; // @long @workspace\n}\n",
+    )
+    .unwrap();
+    let other = dir.join("src/other.rs");
+    std::fs::write(&other, "fn f() {\n    nope\n}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    let v = app.focused_view().unwrap();
+    let main_id = app.ed.views[v].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, main_id).len() == 2
+            && !a.ed.diagnostics.file(&other).is_empty()),
+        "main.rs's and other.rs's"
+    );
+    // The workspace's: the tab's working directory's.
+    ex(&mut d, &mut app, &format!("cd {}", dir.display()));
+    d.keys(&mut app, " ce");
+    let list_text = |a: &Kawoosh| {
+        a.ed.buffers
+            .values()
+            .find(|b| b.name == "*diagnostics*")
+            .map(|b| b.text())
+            .unwrap_or_default()
+    };
+    let text = list_text(&app);
+    assert!(
+        text.contains("main.rs  2 errors\n"),
+        "{text} / {}",
+        app.ed.message
+    );
+    assert!(
+        text.contains(
+            "    let a = 1; // @long @workspace\n  error ts(2322): Type 'A' is not assignable to type 'B'.\n      Property 'b' is missing in type 'A'.\n}\n"
+        ),
+        "the message whole under its line, the excerpt going on after it: {text}"
+    );
+    assert!(text.contains("other.rs  1 warning\n"), "{text}");
+    assert!(
+        text.contains("    nope\n  warning rustc(E0425): cannot find value `nope`\n"),
+        "{text}"
+    );
+    assert!(
+        text.find("main.rs").unwrap() < text.find("other.rs").unwrap(),
+        "a file with an error first"
+    );
+    let list = app
+        .ed
+        .buffers
+        .iter()
+        .find(|(_, b)| b.name == "*diagnostics*")
+        .map(|(id, _)| id)
+        .unwrap();
+    assert_eq!(
+        app.ed.views[app.focused_view().unwrap()].buffer,
+        list,
+        "the keys in the list"
+    );
+    let colors: Vec<&str> = app
+        .ed
+        .multi_paints(list)
+        .into_iter()
+        .map(|(_, c)| c)
+        .collect();
+    assert!(
+        colors.contains(&"error") && colors.contains(&"warning"),
+        "{colors:?}"
+    );
+
+    // other.rs, opened by the list, was sent to the server, whose word
+    // on the open (`boom` on its first line) replaced the kept warning —
+    // but the list, with the keys in it, is not made again under them.
+    let other_id = app.ed.buffer_at(&other).expect("opened by the list");
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, other_id) == ["boom"]),
+        "the server's word on other.rs"
+    );
+    d.frame(&mut app);
+    assert!(
+        list_text(&app).contains("cannot find value"),
+        "not remade under the caret"
+    );
+    assert_eq!(app.ed.views[app.focused_view().unwrap()].buffer, list);
+    // `]d` in the list: its diagnostics in order; `<C-e>` the one there.
+    d.keys(&mut app, "gg]d");
+    assert_eq!(app.ed.message, "boom");
+    d.keys(&mut app, "]d");
+    assert_eq!(app.ed.message, "Type 'A' is not assignable to type 'B'.");
+    d.ctrl(&mut app, "e");
+    let shown = app
+        .ed
+        .buffers
+        .values()
+        .find(|b| b.name == "*diagnostic*")
+        .unwrap()
+        .text();
+    assert!(shown.starts_with("error  ts(2322)\n"), "{shown}");
+    // `<C-e>` took the keys out of the list, and it was made again.
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    let text = list_text(&app);
+    assert!(!text.contains("cannot find value"), "{text}");
+    assert!(text.contains("other.rs  1 error\n"), "{text}");
+
+    // To the file's pane.
+    d.ctrl(&mut app, "w");
+    d.keys(&mut app, "h");
+
+    // `]q` from the file walks the list: main.rs's first, at it.
+    d.keys(&mut app, "]q");
+    let v = app.focused_view().unwrap();
+    let b = app.ed.buffer_of(v);
+    assert_eq!(app.ed.views[v].buffer, main_id);
+    assert_eq!(b.line_of(app.ed.views[v].sels.primary().head), 0);
+    d.keys(&mut app, "]q");
+    let v = app.focused_view().unwrap();
+    assert_eq!(
+        app.ed
+            .buffer_of(v)
+            .line_of(app.ed.views[v].sels.primary().head),
+        1
     );
     std::fs::remove_dir_all(&dir).ok();
 }

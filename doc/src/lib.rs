@@ -12,6 +12,7 @@
 //! rather than dropped, so a token keeps its colour while it is typed in
 //! and the producer's answer, which covers the edit, corrects it.
 
+pub mod diagnostic;
 pub mod fs;
 pub mod paths;
 pub mod version;
@@ -22,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 
+pub use diagnostic::Diagnostic;
 use slotmap::new_key_type;
 pub use version::{Bias, Edit, Journal, Stale, Version};
 

@@ -68,6 +68,9 @@ pub struct Kawoosh {
     pub multis: crate::multis::Multis,
     /// The buffer `]q` walks (`compile.rs`).
     pub locations: crate::compile::Locations,
+    /// The marks a list put on its files, and what its plugin last
+    /// heard (`lists.rs`).
+    pub lists: crate::lists::Lists,
     /// Toasts, the corner log and the full log (`notify.rs`).
     pub notes: Notifications,
     /// The log version the `*messages*` buffer was last filled from.
@@ -306,6 +309,7 @@ impl Kawoosh {
             compile: Compile::default(),
             multis: Default::default(),
             locations: Default::default(),
+            lists: Default::default(),
             notes: Notifications::new(wake.clone()),
             messages_shown: 0,
             log_sink: None,
@@ -2194,6 +2198,7 @@ impl kui::App for Kawoosh {
         self.sync_notifications();
         let t = Instant::now();
         self.fire_changes();
+        self.sync_lists();
         self.drain_lua();
         self.sync_multis();
         if let Some(rt) = self.scripting.rt.clone() {

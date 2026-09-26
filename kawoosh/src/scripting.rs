@@ -676,7 +676,9 @@ impl Kawoosh {
                 show,
                 focus,
                 line,
-            } => self.multi_from_lua(&name, parts, show, focus, line),
+                places,
+                beside,
+            } => self.multi_from_lua(&name, parts, show, focus, line, places, beside),
             Msg::Walk { token, root } => {
                 // A host's walk is capped and kept: said once.
                 if let Some((d, _)) = kawoosh_systems::fs::domain_of(&root)
@@ -1281,7 +1283,7 @@ impl Kawoosh {
     /// The colour a paint names: a role of the palette, a version
     /// control state, a syntax token, or itself as `#rrggbb` — what
     /// copy mode paints a terminal's colours with.
-    fn paint_color(&self, name: &str, dark: bool) -> Option<Color> {
+    pub(crate) fn paint_color(&self, name: &str, dark: bool) -> Option<Color> {
         if name.starts_with('#') {
             return crate::look::parse_color(name);
         }
@@ -1294,6 +1296,11 @@ impl Kawoosh {
             "danger" | "conflict" | "deleted" => p.danger,
             "added" | "untracked" | "insert" => p.insert,
             "modified" | "command" => p.command,
+            // A diagnostic's severity, as the rows underline it.
+            "error" => p.danger,
+            "warning" => p.command,
+            "info" => p.dim,
+            "hint" => p.faint,
             _ => {
                 let t = Token::ALL.iter().find(|t| t.name() == name)?;
                 return self.syntax_color_for(*t, dark);
