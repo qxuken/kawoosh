@@ -248,6 +248,55 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     d.keys(&mut app, ":settings re");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("load"));
     leave(&mut d, &mut app);
+
+    // Past an option's path, after a `=` or a space, its value: the
+    // families kui can see for `font.family` (not a `.` one unless
+    // asked), the rest of the line the
+    // token, spaces and all; a one-of's words, the value it has first;
+    // a flag's `true` and `false`.
+    d.keys(&mut app, ":set font.fam");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("ily"));
+    leave(&mut d, &mut app);
+    let families: Vec<String> = d
+        .core
+        .system_font_families()
+        .into_iter()
+        .filter(|f| !f.starts_with('.'))
+        .collect();
+    d.keys(&mut app, ":set font.family ");
+    let c = app.cmd_completion.clone().unwrap();
+    assert_eq!(c.start, "set font.family ".len());
+    assert_eq!(c.candidates, families, "the OS's hidden faces left out");
+    leave(&mut d, &mut app);
+    if let Some(spaced) = families.iter().find(|f| f.contains(' ')) {
+        let (head, _) = spaced.split_once(' ').unwrap();
+        d.keys(&mut app, &format!(":set font.family={head} "));
+        let c = app.cmd_completion.clone().unwrap();
+        assert_eq!(c.start, "set font.family=".len());
+        assert!(c.candidates.contains(spaced), "{:?}", c.candidates);
+        tab(&mut d, &mut app);
+        assert!(
+            app.ed
+                .prompt_text()
+                .unwrap_or_default()
+                .starts_with(&format!("set font.family={head} ")),
+        );
+        leave(&mut d, &mut app);
+    }
+    d.keys(&mut app, ":set theme.appearance=");
+    assert_eq!(
+        app.cmd_completion.as_ref().unwrap().candidates,
+        ["system", "dark", "light"]
+    );
+    d.keys(&mut app, "d");
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("ark"));
+    leave(&mut d, &mut app);
+    d.keys(&mut app, ":set expandtab ");
+    assert_eq!(
+        app.cmd_completion.as_ref().unwrap().candidates,
+        ["true", "false"]
+    );
+    leave(&mut d, &mut app);
     d.keys(&mut app, ":dir ");
     let cands = app.cmd_completion.as_ref().unwrap().candidates.clone();
     assert_eq!(

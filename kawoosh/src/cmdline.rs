@@ -6,6 +6,9 @@
 //! and Lua's — and an argument to what the command declares it takes
 //! (`kawoosh_editor::ArgKind`): a path for `:e`, `:w`, `:cd`, `:vs`,
 //! `:dir`; a buffer for `:b`; a tool, a view, an option, a command.
+//! Past an option's path (`:set font.family=`, `:set font.family `)
+//! its value completes: the families for `font.family`, a one-of's
+//! words, `true` and `false`.
 //! A command's subcommands complete as its first word (`:memory fo`
 //! is `:memory forget`), and the words after complete as the
 //! subcommand's own. Nothing is a popup: the candidates are a row in
@@ -17,6 +20,7 @@
 use std::collections::HashSet;
 use std::path::{MAIN_SEPARATOR, Path};
 
+use kawoosh_editor::commands::set_value;
 use kawoosh_editor::{ArgKind, Cond, Mode, Prompt, Spec};
 
 use crate::commands::{ShellCommand, cmd};
@@ -57,6 +61,19 @@ fn token_start(line: &str) -> usize {
     line.rfind(char::is_whitespace).map(|i| i + 1).unwrap_or(0)
 }
 
+/// Where each word of the line starts.
+fn word_starts(line: &str) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut prev_space = true;
+    for (i, c) in line.char_indices() {
+        if !c.is_whitespace() && prev_space {
+            out.push(i);
+        }
+        prev_space = c.is_whitespace();
+    }
+    out
+}
+
 impl Kawoosh {
     /// The token the command line is on and its candidates: command
     /// names for the first word, what the command takes after it.
@@ -74,6 +91,19 @@ impl Kawoosh {
         // subcommands consumed — and which of its arguments the token is.
         let inv = self.ed.commands.resolve(name, &words);
         let index = inv.args.len();
+        let args_at = self.ed.command_args(&inv.name);
+        // An option's value, once its path is whole: the rest of the
+        // line, spaces and all, from where `:set` reads it.
+        if args_at.and_then(|a| a.kind_at(0)) == Some(ArgKind::Option) {
+            let first = word_starts(line)
+                .get(1 + words.len().saturating_sub(index))
+                .copied()
+                .unwrap_or(start);
+            if let Some((path, value)) = set_value(&line[first..]) {
+                let at = line.len() - value.len();
+                return (at, self.setting_value_candidates(path, value));
+            }
+        }
         // The first word after a command with subcommands is one of
         // them, or its own first argument: both are offered.
         let mut out: Vec<String> = Vec::new();
@@ -106,10 +136,7 @@ impl Kawoosh {
             out.dedup();
             return (start, out);
         }
-        let kind = self
-            .ed
-            .command_args(&inv.name)
-            .and_then(|a| a.kind_at(index));
+        let kind = args_at.and_then(|a| a.kind_at(index));
         let args: Vec<String> = match kind {
             None | Some(ArgKind::Text) => Vec::new(),
             Some(ArgKind::Path) => self.path_candidates(token),
@@ -188,6 +215,64 @@ impl Kawoosh {
         out.extend(args);
         out.dedup();
         (start, out)
+    }
+
+    /// What a setting's value may be, narrowed by `typed`: the value it
+    /// has first, then its words — the families kui can see for
+    /// `font.family`, the families for `theme.name` and a base's
+    /// variants for `theme.dark` and `theme.light`, a one-of's words,
+    /// `true` and `false` for a flag. A candidate that starts with what
+    /// is typed comes before one that only contains it, case aside.
+    fn setting_value_candidates(&self, path: &str, typed: &str) -> Vec<String> {
+        use kawoosh_editor::{Setting, SettingKind};
+        let settings = &self.ed.settings;
+        let mut all: Vec<String> = Vec::new();
+        match settings.get(path) {
+            Some(Setting::Str(s)) if !s.is_empty() => all.push(s.clone()),
+            Some(v @ (Setting::Bool(_) | Setting::Int(_) | Setting::Float(_))) => {
+                all.push(v.to_string())
+            }
+            _ => {}
+        }
+        match (path, settings.kind(path)) {
+            // The OS's own faces (`.SF NS`) only asked for, like a
+            // hidden file.
+            ("font.family", _) => all.extend(
+                self.look
+                    .families
+                    .iter()
+                    .flatten()
+                    .filter(|f| typed.starts_with('.') || !f.starts_with('.'))
+                    .cloned(),
+            ),
+            ("theme.name", _) => {
+                all.push("system".into());
+                all.extend(crate::themes::FAMILIES.iter().map(|f| f.name.to_string()));
+            }
+            ("theme.dark" | "theme.light", _) => {
+                let dark = path == "theme.dark";
+                all.push("system".into());
+                all.extend(
+                    crate::themes::variants()
+                        .iter()
+                        .filter(|v| v.dark() == dark)
+                        .map(|v| v.name.to_string()),
+                );
+            }
+            (_, Some(SettingKind::OneOf(words))) => all.extend(words),
+            (_, Some(SettingKind::Bool)) => all.extend(["true".into(), "false".into()]),
+            _ => {}
+        }
+        let mut seen = HashSet::new();
+        all.retain(|v| seen.insert(v.clone()));
+        let lower = typed.to_lowercase();
+        let (mut out, rest): (Vec<String>, Vec<String>) =
+            all.into_iter().partition(|v| v.starts_with(typed));
+        out.extend(
+            rest.into_iter()
+                .filter(|v| v.to_lowercase().contains(&lower)),
+        );
+        out
     }
 
     /// Every name the engine knows a command by, the ones meant for

@@ -155,15 +155,17 @@ fn layers_merge_in_order_and_a_cd_swaps_the_project() {
     ex(&mut d, &mut app, "set notes.enabled");
     assert_eq!(app.ed.settings.bool("notes.enabled"), Some(true));
     assert!(app.ed.settings.get("tes.enabled").is_none());
-    // A value missing its `=` is refused, not a setting named with a
-    // space.
+    // The value may follow a space as well as a `=`, and is not part
+    // of the path.
     ex(&mut d, &mut app, "set markdown.render false");
-    assert!(
-        app.ed.message.starts_with("set: not a path"),
-        "{}",
-        app.ed.message
-    );
+    assert_eq!(app.ed.settings.bool("markdown.render"), Some(false));
     assert!(app.ed.settings.get("markdown.render false").is_none());
+    ex(&mut d, &mut app, "set compile.default cargo test --all");
+    assert_eq!(
+        app.ed.settings.str("compile.default"),
+        Some("cargo test --all")
+    );
+    ex(&mut d, &mut app, "set markdown.render!");
     // A plugin's `opt` at runtime is the session's too.
     ex(&mut d, &mut app, "later");
     assert_eq!(app.ed.settings.int("scrolloff"), Some(7));
