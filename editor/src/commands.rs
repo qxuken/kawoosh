@@ -3424,6 +3424,7 @@ pub fn default_keymap(km: &mut Keymap) {
         // the workspace, c code, and single letters for the daily few.
         ("<leader><leader>", "buffer list"),
         ("<leader>bd", "buffer delete"),
+        ("<leader>bD", "buffer delete!"),
         ("<leader>bo", "buffer delete others"),
         ("<leader>bn", "buffer next"),
         ("<leader>bp", "buffer prev"),
