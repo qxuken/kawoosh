@@ -6,8 +6,9 @@ local names = {}
 for _, v in ipairs(themes.variants) do names[#names + 1] = v.name end
 kawoosh.test.eq(table.concat(names, " "),
   "rose-pine rose-pine-moon ayu-dark ayu-mirage gruvbox-dark gruvbox-dark-hard gruvbox-dark-soft "
-  .. "tokyo-night tokyo-night-storm tokyo-night-moon high-contrast-dark rose-pine-dawn ayu-light "
-  .. "gruvbox-light gruvbox-light-hard gruvbox-light-soft tokyo-night-day high-contrast-light")
+  .. "tokyo-night tokyo-night-storm tokyo-night-moon mono-dark mono-soft-dark paper-dark "
+  .. "high-contrast-dark rose-pine-dawn ayu-light gruvbox-light gruvbox-light-hard gruvbox-light-soft "
+  .. "tokyo-night-day mono-light mono-soft-light paper high-contrast-light")
 local function variant(name)
   for _, v in ipairs(themes.variants) do if v.name == name then return v end end
 end
@@ -29,6 +30,10 @@ kawoosh.test.eq(variant("gruvbox-dark").styles["function"].bold, true)
 kawoosh.test.eq(variant("gruvbox-dark").syntax.keyword, 0xfb4934ff)
 kawoosh.test.eq(variant("tokyo-night").styles.keyword.italic, true)
 kawoosh.test.eq(variant("tokyo-night-day").dark, false)
+-- Black and white by weight; paper's strings in a hue.
+kawoosh.test.eq(variant("mono-dark").styles.keyword.bold, true)
+kawoosh.test.eq(variant("mono-dark").syntax.string, 0xb3b3b3ff)
+kawoosh.test.eq(variant("paper").syntax.string, 0x448c27ff)
 
 -- A highlighted text's runs carry the style, and `tokens.styles` turns
 -- it off.

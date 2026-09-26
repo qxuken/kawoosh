@@ -15,8 +15,10 @@
 //! what the todo asked of a theme first; Ayu (ayu-colors v5), its
 //! translucent hues laid flat on their page, strings green as Ayu has
 //! them; Gruvbox (morhetz), dark and light at three grades; Tokyo Night
-//! (folke), night, storm and moon with day; and a high-contrast pair of
-//! kawoosh's own, drawn to WCAG AAA.
+//! (folke), night, storm and moon with day; and of kawoosh's own, black
+//! and white (`mono`, `mono-soft`: no hue, the code told apart by
+//! weight, slant and brightness), paper (the same with a few hues, as
+//! Alabaster places them) and a high-contrast pair drawn to WCAG AAA.
 
 use std::sync::LazyLock;
 
@@ -227,6 +229,21 @@ pub const FAMILIES: &[Family] = &[
         light: "tokyo-night-day",
     },
     Family {
+        name: "mono",
+        dark: "mono-dark",
+        light: "mono-light",
+    },
+    Family {
+        name: "mono-soft",
+        dark: "mono-soft-dark",
+        light: "mono-soft-light",
+    },
+    Family {
+        name: "paper",
+        dark: "paper-dark",
+        light: "paper",
+    },
+    Family {
         name: "high-contrast",
         dark: "high-contrast-dark",
         light: "high-contrast-light",
@@ -247,6 +264,9 @@ pub fn variants() -> &'static [Variant] {
             TOKYO_NIGHT.variant("tokyo-night", "Tokyo Night"),
             TOKYO_STORM.variant("tokyo-night-storm", "Tokyo Night Storm"),
             TOKYO_MOON.variant("tokyo-night-moon", "Tokyo Night Moon"),
+            mono(true, false),
+            mono(true, true),
+            paper(true),
             high_contrast_dark(),
             DAWN.variant("rose-pine-dawn", "Rosé Pine Dawn"),
             AYU_LIGHT.variant("ayu-light", "Ayu Light"),
@@ -254,6 +274,9 @@ pub fn variants() -> &'static [Variant] {
             gruvbox(false, Grade::Hard),
             gruvbox(false, Grade::Soft),
             TOKYO_DAY.variant("tokyo-night-day", "Tokyo Night Day"),
+            mono(false, false),
+            mono(false, true),
+            paper(false),
             high_contrast_light(),
         ]
     });
@@ -1210,6 +1233,284 @@ impl Tokyo {
     }
 }
 
+// ------------------------------------------------------- Mono and Paper
+
+/// Ink on a page, kawoosh's own: the code told apart by weight and
+/// slant first — keywords and labels bold, numbers and constants
+/// italic, comments italic, a removed line struck through — and by a
+/// few inks: `fg` the text, `mid` the punctuation, the operators and
+/// what a macro or an attribute is, and one each for the strings, the
+/// literals, the comments, a removed line and a link. Black and white
+/// (`mono`) gives those greys; paper (`paper`) gives the few a writer
+/// marks a page with, as Alabaster has it — only the strings, the
+/// constants and the comments are worth a colour. The states are the
+/// family's too; the accent is the text's own colour or the paper's
+/// blue, a label on it the page's.
+struct Ink {
+    roles: Roles,
+    fg: u32,
+    mid: u32,
+    string: u32,
+    literal: u32,
+    comment: u32,
+    removed: u32,
+    link: u32,
+    ansi: [u32; 16],
+}
+
+impl Ink {
+    fn variant(&self, name: &'static str, title: &'static str) -> Variant {
+        let syntax = |token: Token| {
+            use Token as T;
+            Some(match token {
+                T::Plain | T::Variable => return None,
+                T::Comment => self.comment,
+                T::Removed => self.removed,
+                T::String | T::Raw | T::Added => self.string,
+                T::Number | T::Constant => self.literal,
+                T::Link => self.link,
+                T::Operator | T::Punctuation | T::Macro | T::Attribute | T::Emphasis => self.mid,
+                _ => self.fg,
+            })
+        };
+        let st = |bold, italic, strike| Style {
+            bold,
+            italic,
+            underline: false,
+            strike,
+        };
+        Variant::new(name, title, self.roles.theme(), syntax, self.ansi)
+            .styled(Token::Keyword, st(true, false, false))
+            .styled(Token::Label, st(true, false, false))
+            .styled(Token::Number, st(false, true, false))
+            .styled(Token::Constant, st(false, true, false))
+            .styled(Token::Removed, st(false, false, true))
+    }
+}
+
+/// A black-and-white terminal: black, the six hues' grey, white, bright
+/// black, the bright hues' grey, bright white.
+fn grey_ansi([black, hue, white, bright_black, bright_hue, bright_white]: [u32; 6]) -> [u32; 16] {
+    [
+        black,
+        hue,
+        hue,
+        hue,
+        hue,
+        hue,
+        hue,
+        white,
+        bright_black,
+        bright_hue,
+        bright_hue,
+        bright_hue,
+        bright_hue,
+        bright_hue,
+        bright_hue,
+        bright_white,
+    ]
+}
+
+/// Black and white (`mono`, `mono-soft`): no hue anywhere — three greys,
+/// the text, the literals' and punctuation's, the comments' — the
+/// states by brightness, an error the brightest.
+fn mono(dark: bool, soft: bool) -> Variant {
+    let (roles, fg, mid, dim, ansi) = match (dark, soft) {
+        (true, false) => (
+            Roles {
+                dark,
+                bg: 0x000000,
+                surface: 0x0d0d0d,
+                raised: 0x1a1a1a,
+                sunken: 0x050505,
+                border: 0x333333,
+                border_strong: 0x4d4d4d,
+                fg: 0xffffff,
+                muted: 0xb3b3b3,
+                faint: 0x6b6b6b,
+                accent: 0xffffff,
+                selection: (0xffffff, 0.2),
+                success: 0x9a9a9a,
+                warning: 0xd0d0d0,
+                danger: 0xffffff,
+            },
+            0xffffff,
+            0xb3b3b3,
+            0x8c8c8c,
+            [0x262626, 0xb3b3b3, 0xd9d9d9, 0x6b6b6b, 0xffffff, 0xffffff],
+        ),
+        (false, false) => (
+            Roles {
+                dark,
+                bg: 0xffffff,
+                surface: 0xf5f5f5,
+                raised: 0xffffff,
+                sunken: 0xebebeb,
+                border: 0xd9d9d9,
+                border_strong: 0xa6a6a6,
+                fg: 0x000000,
+                muted: 0x4d4d4d,
+                faint: 0x8c8c8c,
+                accent: 0x000000,
+                selection: (0x000000, 0.18),
+                success: 0x666666,
+                warning: 0x333333,
+                danger: 0x000000,
+            },
+            0x000000,
+            0x4d4d4d,
+            0x6b6b6b,
+            [0xd9d9d9, 0x4d4d4d, 0x262626, 0x8c8c8c, 0x000000, 0x000000],
+        ),
+        (true, true) => (
+            Roles {
+                dark,
+                bg: 0x1e1e1e,
+                surface: 0x252525,
+                raised: 0x2e2e2e,
+                sunken: 0x181818,
+                border: 0x333333,
+                border_strong: 0x4a4a4a,
+                fg: 0xd4d4d4,
+                muted: 0xa8a8a8,
+                faint: 0x6a6a6a,
+                accent: 0xd4d4d4,
+                selection: (0xd4d4d4, 0.2),
+                success: 0x8e8e8e,
+                warning: 0xc8c8c8,
+                danger: 0xf0f0f0,
+            },
+            0xd4d4d4,
+            0xa8a8a8,
+            0x7f7f7f,
+            [0x333333, 0xa8a8a8, 0xc8c8c8, 0x6a6a6a, 0xe0e0e0, 0xf0f0f0],
+        ),
+        (false, true) => (
+            Roles {
+                dark,
+                bg: 0xf4f4f4,
+                surface: 0xececec,
+                raised: 0xfafafa,
+                sunken: 0xe6e6e6,
+                border: 0xd6d6d6,
+                border_strong: 0xb0b0b0,
+                fg: 0x262626,
+                muted: 0x4f4f4f,
+                faint: 0x8f8f8f,
+                accent: 0x262626,
+                selection: (0x262626, 0.18),
+                success: 0x5c5c5c,
+                warning: 0x3a3a3a,
+                danger: 0x0d0d0d,
+            },
+            0x262626,
+            0x4f4f4f,
+            0x6e6e6e,
+            [0xd6d6d6, 0x4f4f4f, 0x333333, 0x8f8f8f, 0x1a1a1a, 0x0d0d0d],
+        ),
+    };
+    let (name, title) = match (dark, soft) {
+        (true, false) => ("mono-dark", "Mono Dark"),
+        (false, false) => ("mono-light", "Mono Light"),
+        (true, true) => ("mono-soft-dark", "Mono Soft Dark"),
+        (false, true) => ("mono-soft-light", "Mono Soft Light"),
+    };
+    Ink {
+        roles,
+        fg,
+        mid,
+        string: mid,
+        literal: fg,
+        comment: dim,
+        removed: dim,
+        link: fg,
+        ansi: grey_ansi(ansi),
+    }
+    .variant(name, title)
+}
+
+/// Paper (`paper`): ink on a warm page, and on a charcoal one for the
+/// dark half — mono's weights and slants, and hues only where Alabaster
+/// (tonsky) puts them: strings green, numbers and constants purple,
+/// comments brick on the page and a highlighter's yellow on charcoal,
+/// a link the ink's blue.
+fn paper(dark: bool) -> Variant {
+    let ink = if dark {
+        let (red, green, yellow, blue, purple, cyan) =
+            (0xe68a7e, 0x95cb82, 0xdfdf8e, 0x71ade9, 0xcc8bc9, 0x7ecbc4);
+        Ink {
+            roles: Roles {
+                dark,
+                bg: 0x1a1a18,
+                surface: 0x212120,
+                raised: 0x2a2a28,
+                sunken: 0x121211,
+                border: 0x33332f,
+                border_strong: 0x4d4d47,
+                fg: 0xd6d3cb,
+                muted: 0xa39f95,
+                faint: 0x6e6b63,
+                accent: blue,
+                selection: (blue, 0.25),
+                success: green,
+                warning: yellow,
+                danger: red,
+            },
+            fg: 0xd6d3cb,
+            mid: 0x9a968c,
+            string: green,
+            literal: purple,
+            comment: yellow,
+            removed: red,
+            link: blue,
+            ansi: [
+                0x2a2a28, red, green, yellow, blue, purple, cyan, 0xbdb9b0, 0x6e6b63, red, green,
+                yellow, blue, purple, cyan, 0xd6d3cb,
+            ],
+        }
+    } else {
+        let (red, green, yellow, blue, purple, cyan) =
+            (0xaa3731, 0x448c27, 0x8a6100, 0x325cc0, 0x7a3e9d, 0x0f7473);
+        Ink {
+            roles: Roles {
+                dark,
+                bg: 0xf5f3ec,
+                surface: 0xede9df,
+                raised: 0xfaf8f2,
+                sunken: 0xe8e3d8,
+                border: 0xd9d3c5,
+                border_strong: 0xb3ab99,
+                fg: 0x1f1d1a,
+                muted: 0x5c574e,
+                faint: 0x928b7d,
+                accent: blue,
+                // 0.24: at 0.18 not quite seen off the paper.
+                selection: (blue, 0.24),
+                success: green,
+                warning: yellow,
+                danger: red,
+            },
+            fg: 0x1f1d1a,
+            mid: 0x66615a,
+            string: green,
+            literal: purple,
+            comment: red,
+            removed: red,
+            link: blue,
+            ansi: [
+                0xe8e3d8, red, green, yellow, blue, purple, cyan, 0x3b3833, 0x928b7d, red, green,
+                yellow, blue, purple, cyan, 0x1f1d1a,
+            ],
+        }
+    };
+    let (name, title) = if dark {
+        ("paper-dark", "Paper Dark")
+    } else {
+        ("paper", "Paper")
+    };
+    ink.variant(name, title)
+}
+
 // -------------------------------------------------------- high contrast
 
 /// The high-contrast pair (docs/design/themes.md Decision 1), kawoosh's
@@ -1553,7 +1854,7 @@ mod tests {
             [
                 "theme.name: \"ayu-dark\" is a variant — theme.dark = \"ayu-dark\" shows it",
                 "theme.dark: \"rose-pine-dawn\" is not a dark theme",
-                "theme.light: no theme \"nope\" (system, rose-pine-dawn, ayu-light, gruvbox-light, gruvbox-light-hard, gruvbox-light-soft, tokyo-night-day, high-contrast-light)",
+                "theme.light: no theme \"nope\" (system, rose-pine-dawn, ayu-light, gruvbox-light, gruvbox-light-hard, gruvbox-light-soft, tokyo-night-day, mono-light, mono-soft-light, paper, high-contrast-light)",
             ]
         );
         notes.clear();
@@ -1561,7 +1862,7 @@ mod tests {
         assert_eq!(
             notes,
             [
-                "theme.name: no family \"solarized\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, gruvbox, gruvbox-hard, gruvbox-soft, tokyo-night, tokyo-night-storm, tokyo-night-moon, high-contrast)"
+                "theme.name: no family \"solarized\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, gruvbox, gruvbox-hard, gruvbox-soft, tokyo-night, tokyo-night-storm, tokyo-night-moon, mono, mono-soft, paper, high-contrast)"
             ]
         );
     }
@@ -1600,6 +1901,43 @@ mod tests {
             HIT_ALPHA,
             "kept exactly"
         );
+    }
+
+    /// Black and white has no hue: every syntax ink and every one of
+    /// the sixteen a grey; paper keeps its few, and neither family has
+    /// a hue on a keyword, which is weight's (bold) alone.
+    #[test]
+    fn mono_is_grey_and_paper_marks_a_few() {
+        let grey = |c: Color| (c.r - c.g).abs() < 1e-3 && (c.g - c.b).abs() < 1e-3;
+        for name in [
+            "mono-dark",
+            "mono-light",
+            "mono-soft-dark",
+            "mono-soft-light",
+        ] {
+            let v = variant(name).unwrap();
+            for tok in Token::ALL {
+                if let Some(h) = v.syntax(*tok) {
+                    assert!(grey(h), "{tok:?} in {name}");
+                }
+            }
+            assert!(v.ansi.iter().all(|&x| grey(Color::hex(x))), "{name}");
+            assert!(grey(v.theme.accent) && grey(v.theme.danger), "{name}");
+        }
+        for name in ["paper", "paper-dark"] {
+            let v = variant(name).unwrap();
+            let hued: Vec<Token> = Token::ALL
+                .iter()
+                .copied()
+                .filter(|t| v.syntax(*t).is_some_and(|h| !grey(h) && h != v.theme.fg))
+                .collect();
+            assert!(
+                hued.contains(&Token::String) && hued.contains(&Token::Comment),
+                "{name}"
+            );
+            assert!(!hued.contains(&Token::Keyword) && !hued.contains(&Token::Function));
+            assert!(v.style(Token::Keyword).bold, "{name}");
+        }
     }
 
     #[test]

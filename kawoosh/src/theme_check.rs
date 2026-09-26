@@ -302,8 +302,9 @@ mod tests {
     /// wash was held (themes.md Decision 8), and on the accent until the
     /// label was chosen (`Roles`). A palette's syntax and terminal hues
     /// are its authors', which the check reports and this does not
-    /// hold them to — Tokyo Night's comments are 2.8:1 by design. High
-    /// contrast clears those too.
+    /// hold them to — Tokyo Night's comments are 2.8:1 by design. Where
+    /// the palette is kawoosh's own — high contrast, black and white,
+    /// paper — every floor holds, light and dark.
     #[test]
     fn what_the_editor_chooses_clears_its_floor() {
         let theirs = |c: &Check| {
@@ -313,7 +314,9 @@ mod tests {
                     && !c.what.starts_with("body"))
         };
         for v in themes::variants() {
-            let high = v.name.starts_with("high-contrast");
+            let high = ["high-contrast", "mono", "paper"]
+                .iter()
+                .any(|own| v.name.starts_with(own));
             if !v.dark() && !high {
                 continue;
             }

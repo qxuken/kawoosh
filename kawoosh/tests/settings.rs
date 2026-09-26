@@ -818,7 +818,7 @@ fn the_look_reaches_kui() {
     assert!(
         app.notes.shown.iter().any(|s| s.toast
             && s.text
-                == "theme.name: no family \"solarized\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, gruvbox, gruvbox-hard, gruvbox-soft, tokyo-night, tokyo-night-storm, tokyo-night-moon, high-contrast)"),
+                == "theme.name: no family \"solarized\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, gruvbox, gruvbox-hard, gruvbox-soft, tokyo-night, tokyo-night-storm, tokyo-night-moon, mono, mono-soft, paper, high-contrast)"),
         "{:?}",
         app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
     );
