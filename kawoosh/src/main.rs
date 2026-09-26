@@ -4,6 +4,7 @@
 // terminal's `$EDITOR`, which has to be waited for, is `kawoosh-edit`.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use kawoosh::Kawoosh;
@@ -28,7 +29,7 @@ fn fonts_dir() -> std::path::PathBuf {
     shipped.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts"))
 }
 
-/// The bundled faces — every folder in `fonts/` — loaded onto a core
+/// The bundled faces — every file in `fonts/` — loaded onto a core
 /// the launcher then opens the window on (`Launcher::core`): Iosevka,
 /// which every mono run names by `FontId`, so a machine with no Iosevka
 /// installed draws the same glyphs; the families shipped to pick from
@@ -37,26 +38,16 @@ fn fonts_dir() -> std::path::PathBuf {
 /// font database, it is the fallback a face without an icon's code point
 /// finds it in, so a prompt's or a listing's icons draw on a machine
 /// with no Nerd Font installed. The user's own folder is `fonts.rs`'s.
-fn load_fonts(core: &mut Core) -> Option<kui_native::FontId> {
-    let mut dirs: Vec<std::path::PathBuf> = std::fs::read_dir(fonts_dir())
-        .map(|it| {
-            it.flatten()
-                .map(|e| e.path())
-                .filter(|p| p.is_dir())
-                .collect()
-        })
-        .unwrap_or_default();
-    dirs.sort();
-    for dir in dirs {
-        let n = core.load_fonts_dir(&dir);
-        // A startup fact, not news: a trace.
-        log::trace!("loaded {n} font faces from {}", dir.display());
-    }
-    let family = core
+/// The shipped families come back too (`fonts::load_shipped`), for the
+/// fonts pane's order.
+fn load_fonts(core: &mut Core) -> (Option<kui_native::FontId>, HashSet<String>) {
+    let shipped = kawoosh::fonts::load_shipped(core, &fonts_dir());
+    let bundled = core
         .system_font_families()
         .into_iter()
-        .find(|f| f.contains("Iosevka"))?;
-    core.add_system_font(&family)
+        .find(|f| f.contains("Iosevka"))
+        .and_then(|family| core.add_system_font(&family));
+    (bundled, shipped)
 }
 
 /// `kawoosh edit [--wait] [+LINE] PATH…`, `kawoosh ex LINE`, `kawoosh
@@ -247,9 +238,10 @@ fn main() -> anyhow::Result<()> {
     let (keep, stderr) = log_levels();
     let log_sink = Logger::install(wake.clone(), keep);
     let mut core = Core::new();
-    let font = load_fonts(&mut core);
+    let (font, shipped) = load_fonts(&mut core);
     let mut app = Kawoosh::new("*scratch*", if path.is_some() { "" } else { SCRATCH });
     app.bundled_font = font;
+    app.shipped_fonts(shipped);
     app.face.id = font;
     app.log_sink = log_sink;
     app.notes.stderr = stderr;

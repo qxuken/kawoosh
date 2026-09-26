@@ -4,8 +4,10 @@
 -- a card drawn in itself — its name in its own face, whether it is
 -- monospaced, its weights and italic, and two lines of code in its own
 -- face at the editor's size and row, in the hues and styles of the theme
--- on show. The face kawoosh ships first, then the rest by name; `mono`
--- (the default) or `all`.
+-- on show. The families from the user's fonts folder first ("yours"),
+-- then the ones kawoosh ships ("shipped", the editor's own face ahead
+-- of them), then the machine's, each by name — the order `families()`
+-- gives; `mono` (the default) or `all`.
 --
 -- `⏎` or a click takes the cursor's family (`font.family`, the
 -- session's), `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `m` flips mono and
@@ -174,7 +176,13 @@ local function card(f, cur, ctx, is_cursor, height, query)
   end
   local shown = on_show(cur) == f.name
   local notes = {}
-  if f.bundled then notes[#notes + 1] = "kawoosh's" end
+  if f.bundled then
+    notes[#notes + 1] = "kawoosh's"
+  elseif f.origin == "user" then
+    notes[#notes + 1] = "yours"
+  elseif f.origin == "shipped" then
+    notes[#notes + 1] = "shipped"
+  end
   notes[#notes + 1] = f.mono and "mono" or "proportional"
   notes[#notes + 1] = weights_word(f)
   if shown then notes[#notes + 1] = "selected" end

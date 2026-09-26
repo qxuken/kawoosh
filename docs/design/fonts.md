@@ -40,8 +40,8 @@ shows it.
 ### 2. `kawoosh.fonts`, a door of data
 
 Beside `kawoosh.themes`, set before the bundled plugins load:
-`families()` — each `{ name, mono, weights, italic, bundled }`, the
-face kawoosh ships first — `current()` — the face on show: `family`
+`families()` — each `{ name, mono, weights, italic, bundled, origin }`,
+in the order of Decision 8 — `current()` — the face on show: `family`
 (the setting, `""` for the shipped face), `name` (the family it
 resolved to), `size`, `line_height` (the ratio), `row` (px), `cell`
 (a cell's width, px), `features`, `chrome` (the chrome's size),
@@ -69,8 +69,9 @@ its own face, whether it is monospaced, how many weights and whether it
 has an italic, and two lines of code in its own face at the editor's
 size and row height, in the hues and styles of the theme on show — the
 font seen as the editor would set it, in the colours it would be set
-in. The face kawoosh ships is first ("kawoosh's"), then the rest by
-name; the one on show says "selected".
+in. The families come in the order of Decision 8 — the user's
+("yours"), the shipped ("shipped"; the editor's own face, "kawoosh's",
+ahead of them), the machine's; the one on show says "selected".
 
 `⏎` or a click takes the cursor's family (`font.family`, the session's;
 the shipped face is the empty string), `j` `k` `gg` `G` `<C-d>` `<C-u>`
@@ -234,17 +235,38 @@ Mono.
 through the OS is the OS's to announce, and its folders are many and
 large; a restart sees it.
 
+### 8. The families by where they came from
+
+At the user's ask ("loaded from config dir first, ones shipped by us
+second, then the rest"): every family carries its `origin` — `"user"`,
+a file in the user's folder (Decision 7); `"shipped"`, a file kawoosh
+ships (Decision 6), the editor's face first of these; `"system"`, the
+machine's — and `families()` lists them in that order, each by name.
+The pane and the `font.family` completion (monospaced first, then this
+order) follow it.
+
+A family is the user's or kawoosh's by the files it came from, not by
+being new: the shipped folder is loaded a file at a time, as the user's
+is, and each file's family kept, so JetBrains Mono installed on the
+machine as well is still "shipped". A family in both the user's folder
+and the shipped one is the user's.
+
+*Beat:* diffing the family names before and after loading the shipped
+folder — it calls a family the machine's whenever it is installed too.
+*Beat:* a heading between the groups: the list is `uniform_list`, every
+row a card's height; the note on each card says the group.
+
 ## Built
 
 As decided. kui F97 (`Core::system_fonts`); the symbols in
 `assets/fonts/NerdFontsSymbolsOnly/` and Intel One Mono in
-`assets/fonts/IntelOneMono/`, every folder loaded by `main.rs`'s
-`load_fonts`; `fonts.rs` keeps the families and the face as the door
+`assets/fonts/IntelOneMono/`, every file loaded by `main.rs`'s
+`load_fonts`, its family kept as shipped; `fonts.rs` keeps the families and the face as the door
 has them (`Fonts`), registers them at the first ask, warms what a view
 asked for within the frame's budget, reads and watches the user's
 folder (`user_fonts_dir`, `user_fonts_watch`), and holds `:font`; `kawoosh/lua/fonts.lua`
 the pane; `kawoosh/lua/theme_lab.lua` the face and its scene. Tests:
 `kawoosh/lua/tests/fonts.lua` (the door, the pane's walk, search, take,
 copy and close, the lab's face), `tests/cmdline.rs` for the completion,
-`tests/fonts_folder.rs` for the user's folder (a file dropped in and
-taken out).
+`tests/fonts_folder.rs` for the user's folder (a file dropped in, first
+in the list, and taken out); `fonts.rs`'s own for the order.

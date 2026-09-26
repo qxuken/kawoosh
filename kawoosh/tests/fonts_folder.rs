@@ -1,7 +1,7 @@
 //! The user's fonts folder (fonts.md Decision 7): loaded at start and
 //! watched — a font file dropped in is a family the completion, the
-//! pane and `font.family` know within a second, with a note; a file
-//! taken out goes the same way.
+//! pane and `font.family` know within a second, first in their lists,
+//! with a note; a file taken out goes the same way.
 
 mod drive;
 
@@ -44,12 +44,21 @@ fn a_font_dropped_in_the_users_folder_is_a_family() {
     std::fs::create_dir_all(dir.join("fonts")).unwrap();
     // SAFETY: this test binary's only test, set before any thread reads it.
     unsafe { std::env::set_var("KAWOOSH_FONTS", dir.join("fonts")) };
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../assets/fonts/IntelOneMono/IntelOneMono-Regular.otf");
+    let shipped_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts");
+    let src = shipped_dir.join("IntelOneMono/IntelOneMono-Regular.otf");
     let mut app = Kawoosh::from_file(&dir.join("a.txt"));
     let ext = app.attach_lua().unwrap();
     let mut d = Drive::new(900.0, 500.0);
     d.extension("lua", ext);
+    // What kawoosh ships, as `main` loads it — but Intel One Mono, which
+    // the user's folder is given below. None where LFS left pointers.
+    let mut shipped = std::collections::HashSet::new();
+    for e in std::fs::read_dir(&shipped_dir).unwrap().flatten() {
+        if e.path().is_dir() && e.file_name() != "IntelOneMono" {
+            shipped.extend(kawoosh::fonts::load_shipped(&mut d.core, &e.path()));
+        }
+    }
+    app.shipped_fonts(shipped.clone());
     app.set_cwd(&dir);
     d.frame(&mut app);
     let name = "Intel One Mono";
@@ -66,6 +75,17 @@ fn a_font_dropped_in_the_users_folder_is_a_family() {
             .iter()
             .any(|f| f == name)),
         "the family appears"
+    );
+    // The user's first, then the shipped, then the machine's (fonts.md
+    // Decision 8) — every one of them monospaced, so in the completion's
+    // order too, which puts the monospaced first.
+    let all = families(&mut d, &mut app);
+    assert_eq!(all.first().map(String::as_str), Some(name));
+    let n = all.iter().filter(|f| shipped.contains(*f)).count();
+    assert!(
+        all[1..=n].iter().all(|f| shipped.contains(f)),
+        "the shipped next: {:?}",
+        &all[..(n + 3).min(all.len())]
     );
     assert!(
         app.notes
