@@ -214,7 +214,7 @@ pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
         (
             "lsp",
             K::Open,
-            "a language's server: `cmd`, `args`, `roots`, `settings`",
+            "a server by name and its rules: `cmd`, `args`, `roots`, `languages`, `settings`, `enabled`, `load_all`, `load_max`, `inlay_hints` (lsp-rules.md)",
         ),
         (
             "domains",

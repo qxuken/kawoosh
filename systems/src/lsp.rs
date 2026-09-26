@@ -5,9 +5,12 @@
 //! `Update` at the version the server saw, and `doc` carries them
 //! forward. Definition, hover, completion, rename, references, code
 //! actions and formatting are request/response; a server's own
-//! `workspace/applyEdit` is answered and handed up as an edit.
+//! `workspace/applyEdit` is answered and handed up as an edit. A
+//! language with `load_all` (docs/design/lsp-rules.md) has every file
+//! of it in the workspace sent from disk as a document no buffer owns,
+//! which a buffer opened on the file takes over and gives back.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -22,10 +25,16 @@ use crate::WakeHandle;
 
 pub use kawoosh_doc::diagnostic::LAYER as DIAG_LAYER;
 
-/// How a language is served: the server's command and its LSP id.
-#[derive(Clone, Debug)]
+/// A language server: its command, the languages it serves, and the
+/// rules its settings switch (docs/design/lsp-rules.md).
+#[derive(Clone, Debug, PartialEq)]
 pub struct ServerDef {
+    /// Its name: the language it is first for, and its settings' key
+    /// (`lsp.typescript`).
     pub language: String,
+    /// Every language whose files it serves — `typescript`, `tsx`,
+    /// `javascript` for one; empty for its `language` alone.
+    pub languages: Vec<String>,
     pub command: String,
     pub args: Vec<String>,
     /// Files that mark a workspace root, nearest first wins.
@@ -35,6 +44,99 @@ pub struct ServerDef {
     /// at that dotted path, and the whole is sent once the server is up.
     /// `Null` for none.
     pub settings: Value,
+    /// Every file of its languages in the workspace sent to the server
+    /// from disk, so it speaks of the project and not only of what is
+    /// open (`lsp.NAME.load_all`, lsp-rules.md Decision 3).
+    pub load_all: bool,
+    /// The most files `load_all` sends.
+    pub load_max: usize,
+    /// Which files are each language's, for `load_all` — the language
+    /// registry's, filled in by the shell.
+    pub files: Vec<LanguageFiles>,
+    /// Files `load_all` never sends: the secrets rules' `files` globs —
+    /// on a file's name, or its whole path when the glob has a `/` — as
+    /// a private buffer's text never leaves the process
+    /// (docs/design/secrets.md Decision 1).
+    pub private: Vec<String>,
+}
+
+/// A language's files: by extension (no dot, any case) or whole name.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LanguageFiles {
+    pub language: String,
+    pub extensions: Vec<String>,
+    pub filenames: Vec<String>,
+}
+
+/// The most files `load_all` sends a server, unless `lsp.NAME.load_max`
+/// says otherwise.
+pub const LOAD_MAX: usize = 2000;
+
+impl Default for ServerDef {
+    fn default() -> Self {
+        Self {
+            language: String::new(),
+            languages: Vec::new(),
+            command: String::new(),
+            args: Vec::new(),
+            roots: Vec::new(),
+            settings: Value::Null,
+            load_all: false,
+            load_max: LOAD_MAX,
+            files: Vec::new(),
+            private: Vec::new(),
+        }
+    }
+}
+
+/// A file larger than this is not loaded: a bundle, a generated table.
+const LOAD_FILE_MAX_BYTES: u64 = 1 << 20;
+
+/// The most files a `load_all` walk looks through before it filters by
+/// language: a root at `/` is not walked whole.
+const LOAD_WALK_MAX: usize = 200_000;
+
+impl ServerDef {
+    /// The languages it serves.
+    pub fn served(&self) -> Vec<&str> {
+        if self.languages.is_empty() {
+            vec![self.language.as_str()]
+        } else {
+            self.languages.iter().map(String::as_str).collect()
+        }
+    }
+
+    /// Whether it serves `language`.
+    pub fn serves(&self, language: &str) -> bool {
+        self.served().contains(&language)
+    }
+
+    /// Which of its languages `path` is, by its whole name and then its
+    /// extension; `None` for a file none of them claims.
+    pub fn language_of(&self, path: &Path) -> Option<&str> {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if let Some(f) = self
+            .files
+            .iter()
+            .find(|f| f.filenames.iter().any(|n| n == name))
+        {
+            return Some(&f.language);
+        }
+        let ext = path.extension().and_then(|e| e.to_str())?;
+        self.files
+            .iter()
+            .find(|f| f.extensions.iter().any(|x| x.eq_ignore_ascii_case(ext)))
+            .map(|f| f.language.as_str())
+    }
+}
+
+/// What a server reads as a document's `languageId`: kawoosh's name,
+/// but for the ones LSP spells otherwise.
+fn language_id(language: &str) -> &str {
+    match language {
+        "tsx" => "typescriptreact",
+        l => l,
+    }
 }
 
 /// The value at `section`'s dotted path in `settings` — `"Lua"`,
@@ -53,36 +155,32 @@ fn setting_at(settings: &Value, section: Option<&str>) -> Value {
 impl ServerDef {
     /// The obvious servers for the grammars kawoosh ships, each by the
     /// command its project installs it as (roadmap step 7); a
-    /// `kawoosh.lsp.server` from Lua replaces a language's. Two
-    /// languages on one command share a server: the pool keys by
-    /// `(root, command)`.
+    /// `kawoosh.lsp.server` from Lua replaces one by name. One server
+    /// serves the languages one program reads — typescript-language-
+    /// server the three of TypeScript and JavaScript, clangd C and C++
+    /// (lsp-rules.md Decision 1).
     pub fn builtin() -> Vec<ServerDef> {
         let def = |language: &str, command: &str, args: &[&str], roots: &[&str]| ServerDef {
             language: language.into(),
             command: command.into(),
             args: args.iter().map(|a| a.to_string()).collect(),
             roots: roots.iter().map(|r| r.to_string()).collect(),
-            settings: Value::Null,
+            ..Default::default()
+        };
+        let serving = |mut d: ServerDef, languages: &[&str]| {
+            d.languages = languages.iter().map(|l| l.to_string()).collect();
+            d
         };
         vec![
             def("rust", "rust-analyzer", &[], &["Cargo.toml"]),
-            def(
-                "typescript",
-                "typescript-language-server",
-                &["--stdio"],
-                &["tsconfig.json", "package.json"],
-            ),
-            def(
-                "tsx",
-                "typescript-language-server",
-                &["--stdio"],
-                &["tsconfig.json", "package.json"],
-            ),
-            def(
-                "javascript",
-                "typescript-language-server",
-                &["--stdio"],
-                &["jsconfig.json", "package.json"],
+            serving(
+                def(
+                    "typescript",
+                    "typescript-language-server",
+                    &["--stdio"],
+                    &["tsconfig.json", "jsconfig.json", "package.json"],
+                ),
+                &["typescript", "tsx", "javascript"],
             ),
             def(
                 "lua",
@@ -102,30 +200,87 @@ impl ServerDef {
                 ],
             ),
             def("go", "gopls", &[], &["go.work", "go.mod"]),
-            def(
-                "c",
-                "clangd",
-                &[],
-                &[
-                    "compile_commands.json",
-                    ".clangd",
-                    "CMakeLists.txt",
-                    "Makefile",
-                ],
-            ),
-            def(
-                "cpp",
-                "clangd",
-                &[],
-                &[
-                    "compile_commands.json",
-                    ".clangd",
-                    "CMakeLists.txt",
-                    "Makefile",
-                ],
+            serving(
+                def(
+                    "c",
+                    "clangd",
+                    &[],
+                    &[
+                        "compile_commands.json",
+                        ".clangd",
+                        "CMakeLists.txt",
+                        "Makefile",
+                    ],
+                ),
+                &["c", "cpp"],
             ),
         ]
     }
+}
+
+/// What `load_all` sends a server started in `root` for `defs`: the
+/// workspace's files of each one's languages, in the walk's order (by
+/// path), at most its `load_max`, none over [`LOAD_FILE_MAX_BYTES`], not
+/// text, or private.
+fn load(root: &Path, defs: &[ServerDef]) -> Loaded {
+    let mut out = Loaded {
+        files: Vec::new(),
+        capped: Vec::new(),
+    };
+    let paths = match crate::fs::walk(root, LOAD_WALK_MAX) {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("lsp load_all: {e}");
+            return out;
+        }
+    };
+    for d in defs {
+        let private = private_globs(&d.private);
+        let mine: Vec<(PathBuf, String)> = paths
+            .iter()
+            .map(|rel| crate::fs::join(root, Path::new(rel)))
+            .filter(|p| !private(p))
+            .filter_map(|p| {
+                let l = d.language_of(&p)?.to_string();
+                Some((p, l))
+            })
+            .collect();
+        if mine.len() > d.load_max {
+            out.capped
+                .push((d.language.clone(), mine.len(), d.load_max));
+        }
+        for (path, language) in mine.into_iter().take(d.load_max) {
+            if crate::fs::stat(&path).is_ok_and(|s| s.size <= LOAD_FILE_MAX_BYTES)
+                && let Ok(text) = crate::fs::read(&path)
+            {
+                out.files.push((path, language, text));
+            }
+        }
+    }
+    out
+}
+
+/// Whether a path is one `globs` name — a glob with a `/` on the whole
+/// path, one without on the file's name, as the secrets rules read
+/// them. A glob that does not parse names nothing.
+fn private_globs(globs: &[String]) -> impl Fn(&Path) -> bool + use<> {
+    let (mut names, mut paths) = (
+        globset::GlobSetBuilder::new(),
+        globset::GlobSetBuilder::new(),
+    );
+    for g in globs {
+        let Ok(glob) = globset::Glob::new(g) else {
+            continue;
+        };
+        if g.contains('/') {
+            paths.add(glob);
+        } else {
+            names.add(glob);
+        }
+    }
+    let names = names.build().unwrap_or_else(|_| globset::GlobSet::empty());
+    let paths = paths.build().unwrap_or_else(|_| globset::GlobSet::empty());
+    move |p: &Path| p.file_name().is_some_and(|n| names.is_match(n)) || paths.is_match(p)
 }
 
 /// The workspace root for `path` under `def`: the *outermost* ancestor
@@ -205,8 +360,15 @@ pub enum Cmd {
         offset: usize,
         version: Version,
     },
-    /// Replace the server table (from Lua).
+    /// Replace the server table (the shell's: Lua's and the builtin
+    /// ones, each language's settings over it). A running server takes
+    /// its new `settings` and rules as they come; a new command or
+    /// arguments are the shell's to restart for.
     Servers(Vec<ServerDef>),
+    /// The servers on these commands stopped: no language uses them now.
+    Stop {
+        commands: Vec<String>,
+    },
     Rename {
         buffer: BufferId,
         offset: usize,
@@ -475,9 +637,10 @@ pub enum Event {
         offset: usize,
         items: Vec<CompletionItem>,
     },
-    /// A server said what it does, at `initialize`.
+    /// A server said what it does, at `initialize`: what each of its
+    /// languages' buffers can ask.
     Capabilities {
-        language: String,
+        languages: Vec<String>,
         caps: Caps,
     },
     /// Edits to apply — a rename's answer, a code action's, a server's
@@ -528,8 +691,9 @@ pub enum Event {
     Restarted {
         commands: Vec<String>,
     },
-    /// The pool's shape, for the status line: `(root, server, open docs)`.
-    Status(Vec<(PathBuf, String, usize)>),
+    /// The pool's shape, for the status line: `(root, server, the
+    /// buffers it holds, the files `load_all` sent it)`.
+    Status(Vec<(PathBuf, String, usize, usize)>),
     /// `window/showMessage` (`log` false) or `window/logMessage` (`log`
     /// true): `kind` is the protocol's MessageType, 1 error … 4 log —
     /// and 5, below it, for a line of the server's stderr.
@@ -754,7 +918,11 @@ fn percent_decode(s: &str) -> String {
 // ---------------------------------------------------------------- the pool
 
 struct Document {
-    buffer: BufferId,
+    /// The buffer it is; `None` for a file `load_all` sent from disk,
+    /// which a buffer opened on it takes over.
+    buffer: Option<BufferId>,
+    /// Its language — its `languageId`, and which rule loaded it.
+    language: String,
     text: String,
     version: Version,
     lsp_version: i64,
@@ -770,7 +938,9 @@ struct Server {
     /// for, the offset).
     pending: HashMap<i64, (&'static str, BufferId, Version, usize)>,
     documents: HashMap<String, Document>,
+    /// Its definition's name (`typescript`), and the languages it serves.
     language: String,
+    languages: Vec<String>,
     /// The command it was started as — what a message from it is
     /// attributed to.
     name: String,
@@ -779,6 +949,10 @@ struct Server {
     /// The domain it runs on: the paths it speaks of are that host's,
     /// spelled `box:/…` on the way out (`Pool::emit_from`).
     domain: Option<String>,
+    /// The workspace root it was started in: what `load_all` walks.
+    root: PathBuf,
+    /// The languages whose files `load_all` sent it, or is sending.
+    loading: BTreeSet<String>,
 }
 
 impl Server {
@@ -867,9 +1041,12 @@ impl Server {
             pending: HashMap::new(),
             documents: HashMap::new(),
             language: def.language.clone(),
+            languages: def.served().iter().map(|l| l.to_string()).collect(),
             name: def.command.clone(),
             settings: def.settings.clone(),
             domain,
+            root: root.to_path_buf(),
+            loading: BTreeSet::new(),
         })
     }
 
@@ -909,7 +1086,7 @@ impl Server {
     fn doc_of(&self, buffer: BufferId) -> Option<(String, &Document)> {
         self.documents
             .iter()
-            .find(|(_, d)| d.buffer == buffer)
+            .find(|(_, d)| d.buffer == Some(buffer))
             .map(|(u, d)| (u.clone(), d))
     }
 }
@@ -936,10 +1113,20 @@ struct Pool {
 }
 
 /// What a server's threads hand the pool: a JSON-RPC message from its
-/// stdout, or a line of its stderr.
+/// stdout, or a line of its stderr — or, from a `load_all` walk for
+/// it, the files read.
 enum FromServer {
     Message(Value),
     Stderr(String),
+    Loaded(Loaded),
+}
+
+/// A `load_all` walk's answer: each file with its language and text,
+/// and each language whose files were more than it took — how many
+/// there were and how many it took.
+struct Loaded {
+    files: Vec<(PathBuf, String, String)>,
+    capped: Vec<(String, usize, usize)>,
 }
 
 fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
@@ -967,6 +1154,7 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
                 match from {
                     FromServer::Message(m) => pool.handle_message(key, m),
                     FromServer::Stderr(line) => pool.handle_stderr(key, line),
+                    FromServer::Loaded(l) => pool.handle_loaded(key, l),
                 }
             }
             recv(refreshed_rx) -> commands => {
@@ -999,20 +1187,155 @@ impl Pool {
     }
 
     fn status(&self) {
-        let mut list: Vec<(PathBuf, String, usize)> = self
+        let mut list: Vec<(PathBuf, String, usize, usize)> = self
             .keys
             .iter()
             .filter_map(|((root, cmd), key)| {
                 let s = self.servers.get(*key)?.as_ref()?;
-                Some((root.clone(), cmd.clone(), s.documents.len()))
+                let loaded = s.documents.values().filter(|d| d.buffer.is_none()).count();
+                Some((
+                    root.clone(),
+                    cmd.clone(),
+                    s.documents.len() - loaded,
+                    loaded,
+                ))
             })
             .collect();
         list.sort();
         self.emit(Event::Status(list));
     }
 
+    /// Server `key`'s loaded files brought to what the rules say: the
+    /// languages of a definition switched on walked for (once it is
+    /// up), those switched off closed and their diagnostics dropped.
+    fn reconcile_loads(&mut self, key: usize) {
+        let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
+            return;
+        };
+        let want: Vec<&ServerDef> = self
+            .defs
+            .iter()
+            .filter(|d| d.command == server.name && d.load_all)
+            .collect();
+        let off: Vec<String> = server
+            .loading
+            .iter()
+            .filter(|l| !want.iter().any(|d| d.serves(l)))
+            .cloned()
+            .collect();
+        let mut dropped = Vec::new();
+        for language in &off {
+            server.loading.remove(language);
+            let uris: Vec<String> = server
+                .documents
+                .iter()
+                .filter(|(_, d)| d.buffer.is_none() && &d.language == language)
+                .map(|(u, _)| u.clone())
+                .collect();
+            for uri in uris {
+                server.documents.remove(&uri);
+                server.notify(
+                    "textDocument/didClose",
+                    json!({ "textDocument": { "uri": uri } }),
+                );
+                dropped.extend(path_of_uri(&uri));
+            }
+        }
+        // Each definition's languages not loading yet: walked for with
+        // only their files, under its `load_max`.
+        let on: Vec<ServerDef> = if server.initialized {
+            want.into_iter()
+                .filter_map(|d| {
+                    let mut d = d.clone();
+                    d.files.retain(|f| !server.loading.contains(&f.language));
+                    (!d.files.is_empty()).then_some(d)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for f in on.iter().flat_map(|d| &d.files) {
+            server.loading.insert(f.language.clone());
+        }
+        if !on.is_empty() {
+            let root = server.root.clone();
+            let tx = self.from_tx.clone();
+            let spawned = thread::Builder::new()
+                .name("lsp-load".into())
+                .spawn(move || {
+                    let _ = tx.send((key, FromServer::Loaded(load(&root, &on))));
+                });
+            if let Err(e) = spawned {
+                log::warn!("lsp load_all: no thread to walk on: {e}");
+            }
+        }
+        // A server that clears a closed file's diagnostics says so; one
+        // that does not would leave them listed.
+        for path in dropped {
+            self.emit_from(
+                key,
+                Event::FileDiagnostics {
+                    path,
+                    diagnostics: Vec::new(),
+                },
+            );
+        }
+        if !off.is_empty() {
+            self.status();
+        }
+    }
+
+    /// A `load_all` walk's files sent to server `key` — each one no
+    /// buffer holds already, of a language still switched on — and a
+    /// language with more files than it took said.
+    fn handle_loaded(&mut self, key: usize, loaded: Loaded) {
+        let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
+            return;
+        };
+        for (path, language, text) in loaded.files {
+            let uri = uri_of(&path);
+            if !server.loading.contains(&language) || server.documents.contains_key(&uri) {
+                continue;
+            }
+            server.notify(
+                "textDocument/didOpen",
+                json!({
+                    "textDocument": {
+                        "uri": uri, "languageId": language_id(&language),
+                        "version": 1, "text": text
+                    }
+                }),
+            );
+            server.documents.insert(
+                uri,
+                Document {
+                    buffer: None,
+                    language,
+                    text,
+                    version: Version::INITIAL,
+                    lsp_version: 1,
+                },
+            );
+        }
+        let name = server.name.clone();
+        for (language, found, took) in loaded.capped {
+            self.emit_from(
+                key,
+                Event::Message {
+                    server: name.clone(),
+                    kind: 3,
+                    text: format!(
+                        "loaded {took} of {found} {language} files (lsp.{language}.load_max)"
+                    ),
+                    log: false,
+                },
+            );
+        }
+        self.status();
+    }
+
     fn server_for(&mut self, path: &Path, language: &str) -> Option<usize> {
-        let def = self.defs.iter().find(|d| d.language == language)?.clone();
+        let def = self.defs.iter().find(|d| d.serves(language))?.clone();
         let root = workspace_root(path, &def);
         let k = (root.clone(), def.command.clone());
         if let Some(&key) = self.keys.get(&k) {
@@ -1084,7 +1407,48 @@ impl Pool {
 
     fn handle_cmd(&mut self, cmd: Cmd) {
         match cmd {
-            Cmd::Servers(defs) => self.defs = defs,
+            Cmd::Servers(defs) => {
+                self.defs = defs;
+                for key in 0..self.servers.len() {
+                    // New settings reach a server running, as the
+                    // protocol has them change.
+                    let Some(server) = self.servers[key].as_mut() else {
+                        continue;
+                    };
+                    if let Some(d) = self
+                        .defs
+                        .iter()
+                        .find(|d| d.command == server.name && d.language == server.language)
+                        && d.settings != server.settings
+                    {
+                        server.settings = d.settings.clone();
+                        // One not up yet is sent them at `initialize`.
+                        if server.initialized {
+                            let settings = server.settings.clone();
+                            server.notify(
+                                "workspace/didChangeConfiguration",
+                                json!({ "settings": settings }),
+                            );
+                        }
+                    }
+                    // A rule switched reaches it too.
+                    self.reconcile_loads(key);
+                }
+            }
+            Cmd::Stop { commands } => {
+                let stopped: Vec<usize> = self
+                    .keys
+                    .iter()
+                    .filter(|((_, c), _)| commands.contains(c))
+                    .map(|(_, &key)| key)
+                    .collect();
+                self.keys.retain(|(_, c), _| !commands.contains(c));
+                self.homes.retain(|_, key| !stopped.contains(key));
+                for key in stopped {
+                    self.servers[key] = None;
+                }
+                self.status();
+            }
             Cmd::Restart { commands } => {
                 // Dropped, each server is killed; what it still says on
                 // its threads finds no server at its key, and a document
@@ -1133,8 +1497,14 @@ impl Pool {
                 let uri = uri_of(&path);
                 match server.documents.get_mut(&uri) {
                     Some(doc) => {
+                        // A file `load_all` sent is the buffer's now: the
+                        // server holds it open already.
+                        let took = doc.buffer.replace(buffer).is_none();
                         if doc.text == text {
                             doc.version = version;
+                            if took {
+                                self.status();
+                            }
                             return;
                         }
                         doc.text = text.clone();
@@ -1148,26 +1518,29 @@ impl Pool {
                                 "contentChanges": [{ "text": text }]
                             }),
                         );
+                        if took {
+                            self.status();
+                        }
                     }
                     None => {
-                        server.documents.insert(
-                            uri.clone(),
-                            Document {
-                                buffer,
-                                text: text.clone(),
-                                version,
-                                lsp_version: 1,
-                            },
-                        );
-                        let lang = server.language.clone();
                         server.notify(
                             "textDocument/didOpen",
                             json!({
                                 "textDocument": {
-                                    "uri": uri, "languageId": lang,
+                                    "uri": uri, "languageId": language_id(&language),
                                     "version": 1, "text": text
                                 }
                             }),
+                        );
+                        server.documents.insert(
+                            uri,
+                            Document {
+                                buffer: Some(buffer),
+                                language,
+                                text,
+                                version,
+                                lsp_version: 1,
+                            },
                         );
                         self.status();
                     }
@@ -1180,12 +1553,45 @@ impl Pool {
                 let Some(server) = self.servers[key].as_mut() else {
                     return;
                 };
-                if let Some((uri, _)) = server.doc_of(buffer) {
-                    server.documents.remove(&uri);
-                    server.notify(
-                        "textDocument/didClose",
-                        json!({ "textDocument": { "uri": uri } }),
-                    );
+                if let Some((uri, doc)) = server.doc_of(buffer) {
+                    // A file of a language `load_all` holds goes back to
+                    // being the pool's, as the disk has it.
+                    let disk = server
+                        .loading
+                        .contains(&doc.language)
+                        .then(|| path_of_uri(&uri))
+                        .flatten()
+                        .map(|p| match &server.domain {
+                            Some(d) => crate::fs::on_domain(d, &p),
+                            None => p,
+                        })
+                        .and_then(|p| crate::fs::read(&p).ok());
+                    match disk {
+                        Some(text) => {
+                            let doc = server.documents.get_mut(&uri).unwrap();
+                            doc.buffer = None;
+                            doc.version = Version::INITIAL;
+                            if doc.text != text {
+                                doc.text = text.clone();
+                                doc.lsp_version += 1;
+                                let v = doc.lsp_version;
+                                server.notify(
+                                    "textDocument/didChange",
+                                    json!({
+                                        "textDocument": { "uri": uri, "version": v },
+                                        "contentChanges": [{ "text": text }]
+                                    }),
+                                );
+                            }
+                        }
+                        None => {
+                            server.documents.remove(&uri);
+                            server.notify(
+                                "textDocument/didClose",
+                                json!({ "textDocument": { "uri": uri } }),
+                            );
+                        }
+                    }
                 }
                 self.homes.remove(&buffer);
                 self.status();
@@ -1526,9 +1932,10 @@ impl Pool {
                     for q in std::mem::take(&mut server.queued) {
                         server.send(q);
                     }
-                    let language = server.language.clone();
+                    let languages = server.languages.clone();
                     let caps = capabilities(result);
-                    self.emit_from(key, Event::Capabilities { language, caps });
+                    self.emit_from(key, Event::Capabilities { languages, caps });
+                    self.reconcile_loads(key);
                 }
                 "textDocument/rename" => {
                     let edit = workspace_edit(result);
@@ -1609,7 +2016,7 @@ impl Pool {
                     let path = server
                         .documents
                         .iter()
-                        .find(|(_, d)| d.buffer == buffer)
+                        .find(|(_, d)| d.buffer == Some(buffer))
                         .and_then(|(uri, _)| path_of_uri(uri));
                     let symbols = match path {
                         Some(p) => document_symbols(result, &p),
@@ -1743,9 +2150,10 @@ impl Pool {
                 let Some(uri) = params.get("uri").and_then(Value::as_str) else {
                     return;
                 };
-                if let Some(doc) = server.documents.get(&canonical_uri(uri)) {
+                if let Some(doc) = server.documents.get(&canonical_uri(uri))
+                    && let Some(buffer) = doc.buffer
+                {
                     let (update, diagnostics) = diagnostics_update(params, doc);
-                    let buffer = doc.buffer;
                     self.emit_from(
                         key,
                         Event::Diagnostics {
@@ -1755,8 +2163,9 @@ impl Pool {
                         },
                     );
                 } else if let Some(path) = path_of_uri(uri) {
-                    // A file it was not sent: kept by path, placed as the
-                    // server placed it.
+                    // A file it was not sent, or one `load_all` sent that
+                    // no buffer holds: kept by path, placed as the server
+                    // placed it.
                     let diagnostics = placed_diagnostics(params);
                     self.emit_from(key, Event::FileDiagnostics { path, diagnostics });
                 }
@@ -2332,7 +2741,8 @@ mod tests {
     #[test]
     fn diagnostics_become_runs_with_messages() {
         let doc = Document {
-            buffer: BufferId::default(),
+            buffer: Some(BufferId::default()),
+            language: "rust".into(),
             text: "let x = 1;\nlet y;\n".into(),
             version: Version::INITIAL,
             lsp_version: 1,
@@ -2371,6 +2781,82 @@ mod tests {
             completion_items(Some(&json!([{ "label": "a" }])))[0].insert,
             "a"
         );
+    }
+
+    #[test]
+    fn load_all_takes_a_languages_files_by_path_capped() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-load-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        for f in [
+            "src/b.ts",
+            "src/a.ts",
+            "src/c.tsx",
+            "src/keys.secret.ts",
+            "d.js",
+            "README.md",
+        ] {
+            std::fs::write(dir.join(f), format!("// {f}\n")).unwrap();
+        }
+        std::fs::write(
+            dir.join("src/big.ts"),
+            "x".repeat(LOAD_FILE_MAX_BYTES as usize + 1),
+        )
+        .unwrap();
+        let files = |language: &str, ext: &str| LanguageFiles {
+            language: language.into(),
+            extensions: vec![ext.into()],
+            filenames: Vec::new(),
+        };
+        // One server for both, each file with its own language.
+        let ts = ServerDef {
+            language: "typescript".into(),
+            languages: vec!["typescript".into(), "tsx".into()],
+            load_all: true,
+            load_max: 5,
+            files: vec![files("typescript", "ts"), files("tsx", "TSX")],
+            private: vec!["*.secret.ts".into()],
+            ..Default::default()
+        };
+        assert!(ts.serves("tsx") && !ts.serves("javascript"));
+        let got = load(&dir, std::slice::from_ref(&ts));
+        let names: Vec<(String, &str)> = got
+            .files
+            .iter()
+            .map(|(p, l, _)| {
+                (
+                    p.strip_prefix(&dir).unwrap().display().to_string(),
+                    l.as_str(),
+                )
+            })
+            .collect();
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(
+            names,
+            [
+                (format!("src{sep}a.ts"), "typescript"),
+                (format!("src{sep}b.ts"), "typescript"),
+                (format!("src{sep}c.tsx"), "tsx"),
+            ],
+            "the language's files by path; the one over a MiB and the private one not sent"
+        );
+        assert_eq!(got.files[0].2, "// src/a.ts\n");
+        assert!(got.capped.is_empty());
+
+        let one = load(&dir, &[ServerDef { load_max: 1, ..ts }]);
+        assert_eq!(one.files.len(), 1);
+        assert_eq!(
+            one.capped,
+            [("typescript".to_string(), 4, 1)],
+            "the server's cap, over all its languages"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_tsx_document_is_typescriptreact() {
+        assert_eq!(language_id("tsx"), "typescriptreact");
+        assert_eq!(language_id("typescript"), "typescript");
     }
 
     #[test]

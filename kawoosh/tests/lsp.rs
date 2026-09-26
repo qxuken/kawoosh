@@ -44,7 +44,7 @@ fn fake_server() -> ServerDef {
         command,
         args,
         roots: vec!["Cargo.toml".into()],
-        settings: Default::default(),
+        ..Default::default()
     }
 }
 
@@ -1388,5 +1388,284 @@ fn the_diagnostics_list() {
             .line_of(app.ed.views[v].sels.primary().head),
         1
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The rules (docs/design/lsp-rules.md): `load_all` sends every file of
+/// the language to its server — their diagnostics listed though no
+/// buffer holds them — a buffer opened on one takes it over, and
+/// switched off they are closed and their diagnostics dropped;
+/// `inlay_hints` per language; `enabled` off stops the server and takes
+/// its diagnostics back, on again starts it with the buffers.
+#[test]
+fn rules_load_all_hints_and_enabled() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-rules-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(dir.join("src/a.rs"), "fn a() {}\n").unwrap();
+    std::fs::write(dir.join("src/b.rs"), "fn b() {}\n").unwrap();
+    std::fs::write(dir.join("notes.md"), "# not rust\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&dir.join("src/main.rs"));
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let main_id = app.ed.views[app.focused_view().unwrap()].buffer;
+    let status = |a: &Kawoosh| a.lsp.status.first().map(|s| (s.2, s.3));
+    assert!(
+        until(&mut d, &mut app, |a| status(a) == Some((1, 0))
+            && !msgs(a, main_id).is_empty()),
+        "the buffer's server, nothing loaded unasked: {:?}",
+        app.lsp.status
+    );
+    // The files a server spoke of that no buffer holds, by name.
+    let listed = |a: &Kawoosh| -> Vec<String> {
+        let mut v: Vec<String> =
+            a.ed.diagnostics
+                .files()
+                .filter(|(_, l)| !l.is_empty())
+                .filter_map(|(p, _)| Some(p.file_name()?.to_string_lossy().into_owned()))
+                .collect();
+        v.sort();
+        v
+    };
+    assert!(listed(&app).is_empty());
+
+    ex(&mut d, &mut app, "lsp toggle load_all");
+    assert_eq!(app.ed.message, "lsp.rust.load_all on");
+    assert!(
+        until(&mut d, &mut app, |a| status(a) == Some((1, 2))
+            && listed(a) == ["a.rs", "b.rs"]),
+        "a.rs and b.rs sent and their diagnostics kept: {:?} {:?}",
+        app.lsp.status,
+        listed(&app)
+    );
+    ex(&mut d, &mut app, "lsp info");
+    let rows = d.line_rows().join("\n");
+    assert!(rows.contains("loaded  2"), "{rows}");
+    assert!(rows.contains("rust  load_all (session)"), "{rows}");
+    d.keys(&mut app, "q");
+
+    // A buffer opened on a loaded file takes it over, its diagnostics
+    // the ones the file had.
+    let a_path = app.ed.buffers[main_id]
+        .path
+        .clone()
+        .unwrap()
+        .with_file_name("a.rs");
+    ex(&mut d, &mut app, &format!("e {}", a_path.display()));
+    let a_id = app.ed.views[app.focused_view().unwrap()].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| status(a) == Some((2, 1))
+            && msgs(a, a_id) == ["boom"]),
+        "a.rs is the buffer's: {:?} {:?}",
+        app.lsp.status,
+        msgs(&app, a_id)
+    );
+
+    // Hints for the language alone, the global switch left off.
+    let hinted = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some(": i32"))
+    };
+    d.frame(&mut app);
+    assert!(!hinted(&d));
+    ex(&mut d, &mut app, "lsp toggle inlay_hints");
+    assert_eq!(app.ed.message, "lsp.rust.inlay_hints on");
+    let mut seen = false;
+    for _ in 0..200 {
+        d.frame(&mut app);
+        if hinted(&d) {
+            seen = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(seen, "the language's hints drawn");
+    assert_eq!(app.ed.settings.bool("lsp.inlay_hints"), Some(false));
+
+    // Off: the loaded file closed and its diagnostics dropped; the
+    // buffer's stays.
+    ex(&mut d, &mut app, "lsp toggle load_all");
+    assert_eq!(app.ed.message, "lsp.rust.load_all off");
+    assert!(
+        until(&mut d, &mut app, |a| status(a) == Some((2, 0))
+            && listed(a).is_empty()),
+        "b.rs closed: {:?} {:?}",
+        app.lsp.status,
+        listed(&app)
+    );
+
+    // The server off, and on again.
+    ex(&mut d, &mut app, "lsp toggle enabled");
+    assert_eq!(app.ed.message, "lsp.rust.enabled off");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.is_empty()
+            && msgs(a, main_id).is_empty()
+            && msgs(a, a_id).is_empty()),
+        "stopped, its diagnostics gone: {:?}",
+        app.lsp.status
+    );
+    ex(&mut d, &mut app, "lsp toggle enabled");
+    assert_eq!(app.ed.message, "lsp.rust.enabled on");
+    assert!(
+        until(&mut d, &mut app, |a| status(a) == Some((2, 0))
+            && msgs(a, main_id) == ["boom"]),
+        "started again with both buffers: {:?}",
+        app.lsp.status
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `lsp.LANGUAGE` is the server too (lsp-rules.md Decision 2): its
+/// `settings` reach the server running, and new `args` start a new one.
+#[test]
+fn the_settings_table_is_the_server() {
+    use kawoosh_editor::Setting;
+    use kawoosh_editor::settings::Layer;
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-table-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&dir.join("src/main.rs"));
+    let def = fake_server();
+    app.add_lsp_server(def.clone());
+    let mut d = Drive::new(900.0, 500.0);
+    let main_id = app.ed.views[app.focused_view().unwrap()].buffer;
+    assert!(until(&mut d, &mut app, |a| !msgs(a, main_id).is_empty()));
+
+    app.ed.settings.set(
+        Layer::Session,
+        "lsp.rust.settings.fake.enable",
+        Setting::Bool(true),
+    );
+    d.frame(&mut app);
+    assert!(
+        !app.ed.message.starts_with("lsp: restarting"),
+        "settings are sent, not restarted for: {}",
+        app.ed.message
+    );
+    let settings = app.lsp.defs.iter().find(|d| d.language == "rust").unwrap();
+    assert_eq!(
+        settings.settings,
+        serde_json::json!({ "fake": { "enable": true } })
+    );
+
+    let mut args: Vec<Setting> = def.args.iter().map(|a| Setting::Str(a.clone())).collect();
+    args.push(Setting::Str("--again".into()));
+    app.ed
+        .settings
+        .set(Layer::Session, "lsp.rust.args", Setting::List(args));
+    d.frame(&mut app);
+    assert_eq!(app.ed.message, format!("lsp: restarting {}", def.command));
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.len() == 1
+            && a.lsp.status[0].2 == 1
+            && msgs(a, main_id) == ["boom"]),
+        "a new server with the buffer: {:?}",
+        app.lsp.status
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// One server for the languages one program reads (lsp-rules.md
+/// Decision 1): `lsp.typescript` serves `.ts`, `.tsx` and `.js`, its
+/// `load_all` loads all three, and a buffer of any is its; `lsp.tsx`
+/// with no `cmd` is no server, and says where its rules go; a
+/// `lsp.javascript` with a `cmd` of its own takes javascript away.
+#[test]
+fn one_server_serves_typescript_tsx_and_javascript() {
+    use kawoosh_editor::Setting;
+    use kawoosh_editor::settings::Layer;
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-ts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("tsconfig.json"), "{}\n").unwrap();
+    std::fs::write(dir.join("src/a.ts"), "let a = 1;\n").unwrap();
+    std::fs::write(dir.join("src/b.tsx"), "let b = 2;\n").unwrap();
+    std::fs::write(dir.join("src/c.js"), "let c = 3;\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&dir.join("src/a.ts"));
+    let fake = fake_server();
+    app.add_lsp_server(ServerDef {
+        language: "typescript".into(),
+        languages: vec!["typescript".into(), "tsx".into(), "javascript".into()],
+        roots: vec!["tsconfig.json".into()],
+        ..fake.clone()
+    });
+    let mut d = Drive::new(900.0, 500.0);
+    let status = |a: &Kawoosh| a.lsp.status.first().map(|s| (s.2, s.3));
+    assert!(until(&mut d, &mut app, |a| status(a) == Some((1, 0))));
+
+    ex(&mut d, &mut app, "lsp toggle load_all");
+    assert_eq!(app.ed.message, "lsp.typescript.load_all on");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.len() == 1
+            && status(a) == Some((1, 2))),
+        "b.tsx and c.js loaded on the one server: {:?}",
+        app.lsp.status
+    );
+    // A tsx buffer is the same server's, and takes its file over.
+    let b = app.ed.buffers[app.ed.views[app.focused_view().unwrap()].buffer]
+        .path
+        .clone()
+        .unwrap()
+        .with_file_name("b.tsx");
+    ex(&mut d, &mut app, &format!("e {}", b.display()));
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.status.len() == 1
+            && status(a) == Some((2, 1))),
+        "{:?}",
+        app.lsp.status
+    );
+    // From the tsx buffer, a toggle is the server's rule.
+    ex(&mut d, &mut app, "lsp toggle inlay_hints");
+    assert_eq!(app.ed.message, "lsp.typescript.inlay_hints on");
+
+    // `lsp.tsx` is no server: said, once.
+    app.ed
+        .settings
+        .set(Layer::Session, "lsp.tsx.load_all", Setting::Bool(false));
+    d.frame(&mut app);
+    let said = |a: &Kawoosh| {
+        a.notes
+            .log
+            .iter()
+            .filter(|e| e.text.contains("lsp.tsx: tsx is served by lsp.typescript"))
+            .count()
+    };
+    assert_eq!(said(&app), 1);
+    app.ed
+        .settings
+        .set(Layer::Session, "lsp.tsx.load_max", Setting::Int(3));
+    d.frame(&mut app);
+    assert_eq!(said(&app), 1, "said once");
+
+    // A server of javascript's own takes it from typescript's.
+    let mut js = Setting::table();
+    js.set("cmd", Setting::Str(fake.command.clone()));
+    js.set(
+        "args",
+        Setting::List(fake.args.iter().map(|a| Setting::Str(a.clone())).collect()),
+    );
+    app.ed.settings.set(Layer::Session, "lsp.javascript", js);
+    d.frame(&mut app);
+    let served = |a: &Kawoosh, name: &str| {
+        a.lsp
+            .defs
+            .iter()
+            .find(|d| d.language == name)
+            .map(|d| d.served().join(" "))
+    };
+    assert_eq!(
+        served(&app, "typescript").as_deref(),
+        Some("typescript tsx")
+    );
+    assert_eq!(served(&app, "javascript").as_deref(), Some("javascript"));
     std::fs::remove_dir_all(&dir).ok();
 }

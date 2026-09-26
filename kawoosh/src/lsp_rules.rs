@@ -1,0 +1,435 @@
+//! A language server as the settings say it (docs/design/lsp-rules.md):
+//! `lsp.NAME` in the settings tree over the definition of that name Lua
+//! or the builtin table gave — `cmd`, `args`, `roots`, `languages`,
+//! `settings` replaced, and the rules switched: `enabled`, `load_all`
+//! (every file of its languages sent to the server, `load_max` of them
+//! at most) and `inlay_hints`. A server is named by the language it is
+//! first for and serves the languages one program reads —
+//! `lsp.typescript` is typescript-language-server for `.ts`, `.tsx` and
+//! `.js` alike. The tree is layered, so a rule holds for the user, a
+//! project or the session; the table the pool runs is made again when
+//! it moves, and what a running server cannot take as it comes — a new
+//! command, arguments, roots or languages, a server switched off —
+//! restarts or stops it.
+
+use std::collections::HashSet;
+
+use kawoosh_editor::settings::Layer;
+use kawoosh_editor::{ArgKind, Args, Setting, Spec};
+use kawoosh_systems::lsp::{Cmd, LanguageFiles, ServerDef};
+use serde_json::Value;
+
+use crate::app::Kawoosh;
+use crate::commands::{ShellCommand, cmd};
+use crate::notify::Level;
+
+/// The rules that are on or off, as `:lsp toggle` flips them, and what
+/// each does.
+const SWITCHES: [(&str, &str); 3] = [
+    (
+        "enabled",
+        "the server of the caret's language — or LANGUAGE's — on or off for the session (`lsp.NAME.enabled`)",
+    ),
+    (
+        "load_all",
+        "every file of the server's languages sent to it, so it speaks of the whole project — the diagnostics of files not open (`lsp.NAME.load_all`)",
+    ),
+    (
+        "inlay_hints",
+        "the server's inlay hints on or off for the session (`lsp.NAME.inlay_hints`)",
+    ),
+];
+
+/// The keys of `lsp.NAME` that are rules, for `:lsp info`.
+const RULES: [&str; 4] = ["enabled", "load_all", "load_max", "inlay_hints"];
+
+impl Kawoosh {
+    /// The pool's table made again when the settings moved, or the base
+    /// table or the languages did (`rules_seen` taken back to `None`),
+    /// and sent when it is not what it was — with the servers a change
+    /// cannot reach as it comes restarted or stopped, and the buffers of
+    /// a language switched off taken back from its server.
+    pub(crate) fn sync_lsp_rules(&mut self) {
+        let v = self.ed.settings.version();
+        if self.lsp.rules_seen == Some(v) {
+            return;
+        }
+        self.lsp.rules_seen = Some(v);
+        let (new, strays) = self.lsp_table();
+        for (name, served_by) in strays {
+            if self.lsp.said_strays.insert(name.clone()) {
+                self.notify(
+                    Level::Warn,
+                    match served_by {
+                        Some(by) => format!(
+                            "lsp.{name}: {name} is served by lsp.{by}; its rules go there (or give lsp.{name} a cmd)"
+                        ),
+                        None => format!("lsp.{name}: no server of that name; give it a cmd"),
+                    },
+                );
+            }
+        }
+        if new == self.lsp.defs {
+            return;
+        }
+        let old = std::mem::replace(&mut self.lsp.defs, new);
+        self.lsp.lsp.send(Cmd::Servers(self.lsp.defs.clone()));
+
+        // What a server was started as: a change there is a new one.
+        let started = |d: &ServerDef| {
+            (
+                d.command.clone(),
+                d.args.clone(),
+                d.roots.clone(),
+                d.served().join(" "),
+            )
+        };
+        let mut gone = HashSet::new();
+        let mut moved = HashSet::new();
+        let mut restart = Vec::new();
+        for o in &old {
+            let served = o.served().into_iter().map(str::to_string);
+            match self.lsp.defs.iter().find(|n| n.language == o.language) {
+                None => gone.extend(served),
+                Some(n) if started(n) != started(o) => {
+                    moved.extend(served);
+                    restart.push(o.command.clone());
+                }
+                Some(_) => {}
+            }
+        }
+        // Only what runs is restarted or stopped: one not started yet
+        // starts as the table says now.
+        let running: HashSet<String> = self.lsp.status.iter().map(|s| s.1.clone()).collect();
+        restart.retain(|c| running.contains(c));
+        restart.sort();
+        restart.dedup();
+        let mut stop: Vec<String> = old
+            .iter()
+            .filter(|o| !self.lsp.defs.iter().any(|n| n.language == o.language))
+            .map(|o| o.command.clone())
+            .filter(|c| {
+                running.contains(c)
+                    && !restart.contains(c)
+                    && !self.lsp.defs.iter().any(|n| &n.command == c)
+            })
+            .collect();
+        stop.sort();
+        stop.dedup();
+
+        if !gone.is_empty() {
+            self.lsp_forget_languages(&gone, true);
+        }
+        if !moved.is_empty() {
+            // A language gone to another command is sent there whole.
+            self.lsp_forget_languages(&moved, false);
+        }
+        if !stop.is_empty() {
+            self.lsp.lsp.send(Cmd::Stop { commands: stop });
+        }
+        if !restart.is_empty() {
+            self.ed.message = format!("lsp: restarting {}", restart.join(", "));
+            self.lsp_restart_commands(restart);
+        }
+    }
+
+    /// The table the pool runs: every server Lua or the builtin table
+    /// defines, and every `lsp.NAME` that names a `cmd`, each with its
+    /// settings over it and its languages' files the registry's; one
+    /// switched off (`enabled = false`) left out. A language with a
+    /// server of its own name is that server's, not another's. Beside
+    /// it, each `lsp.NAME` that is no server's — a language another one
+    /// serves (`lsp.tsx`), and which — for a word to the user.
+    fn lsp_table(&self) -> (Vec<ServerDef>, Vec<(String, Option<String>)>) {
+        let said = match self.ed.settings.get("lsp") {
+            Some(Setting::Table(t)) => Some(t),
+            _ => None,
+        };
+        let mut names: Vec<String> = self
+            .scripting
+            .servers
+            .iter()
+            .map(|d| d.language.clone())
+            .collect();
+        for (k, v) in said.into_iter().flatten() {
+            // `lsp.inlay_hints` is the global switch, not a server.
+            if v.is_table() && !names.contains(k) {
+                names.push(k.clone());
+            }
+        }
+        let private = private_files(self.ed.settings.get("secrets.masks"));
+        let mut out = Vec::new();
+        let mut strays: Vec<String> = Vec::new();
+        for name in names {
+            let t = said.and_then(|t| t.get(&name)).filter(|v| v.is_table());
+            let field = |key: &str| t.and_then(|t| t.get(key));
+            let base = self
+                .scripting
+                .servers
+                .iter()
+                .find(|d| d.language == name)
+                .cloned();
+            let mut def = match base {
+                Some(d) => d,
+                None if field("cmd").and_then(Setting::as_str).is_some() => ServerDef {
+                    language: name.clone(),
+                    ..Default::default()
+                },
+                None => {
+                    strays.push(name);
+                    continue;
+                }
+            };
+            if field("enabled").and_then(Setting::as_bool) == Some(false) {
+                continue;
+            }
+            if let Some(c) = field("cmd").and_then(Setting::as_str) {
+                def.command = c.to_string();
+            }
+            if let Some(a) = field("args").and_then(strings) {
+                def.args = a;
+            }
+            if let Some(r) = field("roots").and_then(strings) {
+                def.roots = r;
+            }
+            if let Some(l) = field("languages").and_then(strings) {
+                def.languages = l;
+            }
+            if let Some(s) = field("settings") {
+                def.settings = setting_json(s);
+            }
+            if let Some(b) = field("load_all").and_then(Setting::as_bool) {
+                def.load_all = b;
+            }
+            if let Some(n) = field("load_max").and_then(Setting::as_int) {
+                def.load_max = n.max(0) as usize;
+            }
+            def.private = private.clone();
+            // The Lua API's types stay on the Lua server's library
+            // however often a config redefines it (`types.rs`).
+            if name == "lua"
+                && let Some(dir) = &self.lua_types
+            {
+                crate::types::with_library(&mut def.settings, dir);
+            }
+            out.push(def);
+        }
+        // A language with a server of its own name is served there: a
+        // `lsp.javascript = { cmd = … }` takes it from typescript's.
+        let own: HashSet<String> = out.iter().map(|d| d.language.clone()).collect();
+        for d in &mut out {
+            let name = d.language.clone();
+            d.languages.retain(|l| *l == name || !own.contains(l));
+            d.files = d
+                .served()
+                .iter()
+                .filter_map(|l| self.languages.get(l))
+                .map(|l| LanguageFiles {
+                    language: l.name.clone(),
+                    extensions: l.extensions.clone(),
+                    filenames: l.filenames.clone(),
+                })
+                .collect();
+        }
+        let strays = strays
+            .into_iter()
+            .map(|name| {
+                let by = out
+                    .iter()
+                    .chain(self.scripting.servers.iter())
+                    .find(|d| d.serves(&name))
+                    .map(|d| d.language.clone());
+                (name, by)
+            })
+            .collect();
+        (out, strays)
+    }
+
+    /// The name of the server for `language` — the running table's, else
+    /// the one it would be when switched back on — or the language.
+    pub(crate) fn lsp_name_of(&self, language: &str) -> String {
+        self.lsp
+            .defs
+            .iter()
+            .chain(self.scripting.servers.iter())
+            .find(|d| d.serves(language))
+            .map(|d| d.language.clone())
+            .unwrap_or_else(|| language.to_string())
+    }
+
+    /// Whether `language`'s buffers show inlay hints: its server's
+    /// `lsp.NAME.inlay_hints`, else `lsp.inlay_hints`.
+    pub(crate) fn lsp_hints_on(&self, language: &str) -> bool {
+        let name = self.lsp_name_of(language);
+        self.ed
+            .settings
+            .bool(&format!("lsp.{name}.inlay_hints"))
+            .or_else(|| self.ed.settings.bool("lsp.inlay_hints"))
+            == Some(true)
+    }
+
+    /// Server `name`'s rules that are set, and where each was said:
+    /// `load_all (project: /repo/.kawoosh/settings.lua)`.
+    pub(crate) fn lsp_rules_said(&self, name: &str) -> Vec<String> {
+        RULES
+            .iter()
+            .filter_map(|rule| {
+                let path = format!("lsp.{name}.{rule}");
+                let v = self.ed.settings.get(&path)?;
+                let value = match v {
+                    Setting::Bool(true) => rule.to_string(),
+                    Setting::Bool(false) => format!("no {rule}"),
+                    Setting::Int(n) => format!("{rule}={n}"),
+                    other => format!("{rule}={other:?}"),
+                };
+                Some(match self.ed.settings.origin(&path) {
+                    Some(o) => format!("{value} ({o})"),
+                    None => value,
+                })
+            })
+            .collect()
+    }
+
+    /// `:lsp toggle RULE [LANGUAGE]`: the rule flipped for the server of
+    /// the caret buffer's language, or `LANGUAGE`'s, in the session's
+    /// layer.
+    fn lsp_toggle(&mut self, rule: &str, language: Option<String>) {
+        let language = language.or_else(|| {
+            let v = self.focused_view()?;
+            Some(
+                self.ed.buffers[self.ed.views[v].buffer]
+                    .language
+                    .to_string(),
+            )
+        });
+        let Some(language) = language else {
+            self.ed.message = format!("lsp toggle {rule}: which language?");
+            return;
+        };
+        let name = self.lsp_name_of(&language);
+        let known = self
+            .lsp
+            .defs
+            .iter()
+            .chain(self.scripting.servers.iter())
+            .any(|d| d.language == name)
+            || self.ed.settings.str(&format!("lsp.{name}.cmd")).is_some();
+        if !known {
+            self.ed.message = format!("no language server for {language}");
+            return;
+        }
+        let path = format!("lsp.{name}.{rule}");
+        let now = match self.ed.settings.bool(&path) {
+            Some(b) => b,
+            None => match rule {
+                "enabled" => true,
+                "inlay_hints" => self.lsp_hints_on(&language),
+                _ => false,
+            },
+        };
+        self.ed
+            .settings
+            .set(Layer::Session, &path, Setting::Bool(!now));
+        self.sync_lsp_rules();
+        // A restart's word, if the switch made one, is the one to read.
+        if !self.ed.message.starts_with("lsp: restarting") {
+            self.ed.message = format!("{path} {}", if now { "off" } else { "on" });
+        }
+    }
+}
+
+/// A list of strings, or `None` for anything else.
+fn strings(v: &Setting) -> Option<Vec<String>> {
+    v.as_list()?
+        .iter()
+        .map(|s| s.as_str().map(str::to_string))
+        .collect()
+}
+
+/// The `files` globs of the secrets rules (`secrets.masks`, a rule
+/// switched off with `false` left out): what `load_all` never sends.
+fn private_files(masks: Option<&Setting>) -> Vec<String> {
+    let Some(Setting::Table(t)) = masks else {
+        return Vec::new();
+    };
+    t.values()
+        .filter_map(|rule| rule.get("files"))
+        .flat_map(|f| match f {
+            Setting::Str(s) => vec![s.clone()],
+            other => strings(other).unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// A setting as the JSON a server reads its configuration as.
+fn setting_json(v: &Setting) -> Value {
+    match v {
+        Setting::Bool(b) => Value::Bool(*b),
+        Setting::Int(n) => Value::from(*n),
+        Setting::Float(f) => Value::from(*f),
+        Setting::Str(s) => Value::String(s.clone()),
+        Setting::List(l) => Value::Array(l.iter().map(setting_json).collect()),
+        Setting::Table(t) => Value::Object(
+            t.iter()
+                .map(|(k, v)| (k.clone(), setting_json(v)))
+                .collect(),
+        ),
+    }
+}
+
+/// `:lsp toggle RULE [LANGUAGE]`, a command per rule so each completes.
+pub(crate) fn commands() -> Vec<ShellCommand> {
+    SWITCHES
+        .iter()
+        .map(|&(rule, doc)| {
+            cmd(
+                Spec::new(&format!("lsp toggle {rule}"))
+                    .args(Args::new(&[ArgKind::Language]))
+                    .doc(doc),
+                move |k, ctx| k.lsp_toggle(rule, ctx.args.first().cloned()),
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_secrets_files_are_never_loaded() {
+        let mut m = Setting::table();
+        m.set("env.files", Setting::Str(".env".into()));
+        m.set(
+            "vault.files",
+            Setting::List(vec![
+                Setting::Str("vault.yml".into()),
+                Setting::Str("vault.yaml".into()),
+            ]),
+        );
+        m.set("pem.from", Setting::Str("x".into()));
+        m.set("off", Setting::Bool(false));
+        let mut got = private_files(Some(&m));
+        got.sort();
+        assert_eq!(got, [".env", "vault.yaml", "vault.yml"]);
+        assert!(private_files(None).is_empty());
+    }
+
+    #[test]
+    fn a_settings_table_is_the_json_a_server_reads() {
+        let mut t = Setting::table();
+        t.set("Lua.hint.enable", Setting::Bool(true));
+        t.set(
+            "Lua.workspace.library",
+            Setting::List(vec![Setting::Str("/x".into())]),
+        );
+        t.set("n", Setting::Int(3));
+        assert_eq!(
+            setting_json(&t),
+            serde_json::json!({
+                "Lua": { "hint": { "enable": true }, "workspace": { "library": ["/x"] } },
+                "n": 3
+            })
+        );
+    }
+}

@@ -53,17 +53,10 @@ impl Kawoosh {
             }
         }
         // Kept, so a later `kawoosh.lsp.server('lua', …)` — a project's
-        // init.lua on `:cd` — gets it too (`add_lsp_server`).
+        // init.lua on `:cd` — gets it too (`lsp_table`).
         self.lua_types = Some(dir.to_path_buf());
-        if let Some(def) = self
-            .scripting
-            .servers
-            .iter()
-            .find(|d| d.language == "lua")
-            .cloned()
-        {
-            self.add_lsp_server(def);
-        }
+        self.lsp.rules_seen = None;
+        self.sync_lsp_rules();
     }
 }
 

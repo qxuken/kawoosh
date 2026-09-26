@@ -113,7 +113,18 @@ pub struct LspState {
     /// by how many restarts: no document is sent them meanwhile, which
     /// would start one on the PATH before.
     restarting: HashMap<String, usize>,
-    pub status: Vec<(PathBuf, String, usize)>,
+    /// Each server: its root, its command, the buffers it holds and the
+    /// files `load_all` sent it.
+    pub status: Vec<(PathBuf, String, usize, usize)>,
+    /// The table the pool runs: `scripting.servers` with each language's
+    /// `lsp.LANGUAGE` settings over it, a language switched off left out
+    /// (docs/design/lsp-rules.md) — what "is it served" reads.
+    pub defs: Vec<ServerDef>,
+    /// The settings version `defs` was made at; `None` when the base
+    /// table or the languages moved since.
+    pub(crate) rules_seen: Option<u64>,
+    /// The `lsp.NAME` tables that are no server's, said once each.
+    pub(crate) said_strays: HashSet<String>,
     /// What each language's server said it does.
     pub caps: HashMap<String, Caps>,
     /// The code actions on offer, in the picker's order, and the
@@ -137,7 +148,8 @@ pub struct LspState {
     symbol_asks: HashMap<u64, (String, HoverThen)>,
     next_ask: u64,
     /// Buffers the server is to be sent though no pane shows them: a
-    /// rename's edits in files it loaded.
+    /// rename's edits in files it loaded, and what a server held before
+    /// a restart or a rule took it away.
     also_sync: HashSet<BufferId>,
 }
 
@@ -167,6 +179,9 @@ impl LspState {
             said_unavailable: HashSet::new(),
             restarting: HashMap::new(),
             status: Vec::new(),
+            defs: ServerDef::builtin(),
+            rules_seen: None,
+            said_strays: HashSet::new(),
             caps: HashMap::new(),
             actions: Vec::new(),
             actions_for: None,
@@ -273,26 +288,19 @@ impl Kawoosh {
     /// Sends changed documents, applies what came back.
     /// Registers a language server — `kawoosh.lsp.server` from Lua, a
     /// test's scripted one — replacing the language's earlier one, and
-    /// tells the pool. The list is also what `sync_lsp` reads to know
-    /// which buffers have anyone to sync to.
-    pub fn add_lsp_server(&mut self, mut def: ServerDef) {
-        // The Lua API's types stay on the Lua server's library however
-        // often a config redefines it (`types.rs`).
-        if def.language == "lua"
-            && let Some(dir) = &self.lua_types
-        {
-            crate::types::with_library(&mut def.settings, dir);
-        }
+    /// tells the pool, the language's settings over it
+    /// (`sync_lsp_rules`).
+    pub fn add_lsp_server(&mut self, def: ServerDef) {
         self.scripting
             .servers
             .retain(|d| d.language != def.language);
         self.scripting.servers.push(def);
-        self.lsp
-            .lsp
-            .send(Cmd::Servers(self.scripting.servers.clone()));
+        self.lsp.rules_seen = None;
+        self.sync_lsp_rules();
     }
 
     pub(crate) fn sync_lsp(&mut self) {
+        self.sync_lsp_rules();
         for ev in self.lsp.lsp.drain() {
             match ev {
                 Event::Diagnostics {
@@ -370,8 +378,10 @@ impl Kawoosh {
                     };
                     self.offer_completion(buffer, start, items, &typed);
                 }
-                Event::Capabilities { language, caps } => {
-                    self.lsp.caps.insert(language, caps);
+                Event::Capabilities { languages, caps } => {
+                    for l in languages {
+                        self.lsp.caps.insert(l, caps.clone());
+                    }
                 }
                 Event::WorkspaceEdit { title, edit } => self.apply_workspace_edit(&title, edit),
                 // A list plugin's to make (lists.md Decision 3); the
@@ -524,17 +534,30 @@ impl Kawoosh {
         self.ask_inlay_hints(mode);
     }
 
-    /// With `lsp.inlay_hints` on: every shown buffer a server that does
+    /// With inlay hints on for its language (`lsp.LANGUAGE.inlay_hints`,
+    /// else `lsp.inlay_hints`): every shown buffer a server that does
     /// hints holds, asked again for the whole text when its version
     /// moved and it is not being typed in (the hints of the version
     /// before are carried meanwhile).
     fn ask_inlay_hints(&mut self, mode: Mode) {
-        if self.ed.settings.bool("lsp.inlay_hints") != Some(true) {
-            if !self.lsp.hints.is_empty() {
-                self.lsp.hints.clear();
-                self.lsp.hints_asked.clear();
+        if !self.lsp.hints.is_empty() || !self.lsp.hints_asked.is_empty() {
+            let off: Vec<BufferId> = self
+                .lsp
+                .hints
+                .keys()
+                .chain(self.lsp.hints_asked.keys())
+                .copied()
+                .filter(|id| {
+                    self.ed
+                        .buffers
+                        .get(*id)
+                        .is_none_or(|b| !self.lsp_hints_on(&b.language))
+                })
+                .collect();
+            for id in off {
+                self.lsp.hints.remove(&id);
+                self.lsp.hints_asked.remove(&id);
             }
-            return;
         }
         let shown: HashSet<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();
         for id in shown {
@@ -543,6 +566,7 @@ impl Kawoosh {
             };
             let version = b.version();
             if b.private
+                || !self.lsp_hints_on(&b.language)
                 || self.lsp.sent.get(&id) != Some(&version)
                 || self.lsp.hints_asked.get(&id) == Some(&version)
                 || self.lsp.typing(id, mode)
@@ -803,10 +827,10 @@ impl Kawoosh {
     /// again then, its diagnostics cleared until the new server's land.
     fn lsp_restart(&mut self, language: Option<&str>) {
         let mut commands: Vec<String> = self
-            .scripting
-            .servers
+            .lsp
+            .defs
             .iter()
-            .filter(|d| language.is_none_or(|l| d.language == l))
+            .filter(|d| language.is_none_or(|l| d.serves(l)))
             .map(|d| d.command.clone())
             .collect();
         commands.sort();
@@ -818,14 +842,37 @@ impl Kawoosh {
             };
             return;
         }
+        self.ed.message = format!("lsp: restarting {}", commands.join(", "));
+        self.lsp_restart_commands(commands);
+    }
+
+    /// The servers on `commands` stopped and started again once the
+    /// shell gave its PATH (`Event::Restarted`): every language on them
+    /// forgotten as sent, so its buffers go to the new ones whole.
+    pub(crate) fn lsp_restart_commands(&mut self, commands: Vec<String>) {
         // Every language on those commands: two share a server.
         let languages: HashSet<String> = self
-            .scripting
-            .servers
+            .lsp
+            .defs
             .iter()
             .filter(|d| commands.contains(&d.command))
-            .map(|d| d.language.clone())
+            .flat_map(|d| d.served())
+            .map(str::to_string)
             .collect();
+        self.lsp_forget_languages(&languages, false);
+        self.lsp.said_unavailable.retain(|c| !commands.contains(c));
+        for c in &commands {
+            *self.lsp.restarting.entry(c.clone()).or_default() += 1;
+        }
+        self.lsp.lsp.send(Cmd::Restart { commands });
+    }
+
+    /// The buffers of `languages` as if no server had seen them: not
+    /// sent, their diagnostics and hints cleared until a server's land,
+    /// what the servers said they do forgotten. `close` tells the server
+    /// holding each — one that goes on for other languages; a server
+    /// being stopped needs no telling.
+    pub(crate) fn lsp_forget_languages(&mut self, languages: &HashSet<String>, close: bool) {
         let held: Vec<BufferId> = self
             .ed
             .buffers
@@ -834,6 +881,14 @@ impl Kawoosh {
             .map(|(id, _)| id)
             .collect();
         for id in held {
+            // One a server held is sent again when one serves it, shown
+            // or not, as it was before.
+            if self.lsp.sent.contains_key(&id) {
+                self.lsp.also_sync.insert(id);
+            }
+            if close {
+                self.lsp_close_buffer(id);
+            }
             self.lsp.sent.remove(&id);
             self.lsp.moved.remove(&id);
             self.lsp.held.remove(&id);
@@ -849,14 +904,8 @@ impl Kawoosh {
             self.apply_diagnostics(id, clear, Vec::new());
         }
         self.lsp.caps.retain(|l, _| !languages.contains(l));
-        self.lsp.said_unavailable.retain(|c| !commands.contains(c));
-        for c in &commands {
-            *self.lsp.restarting.entry(c.clone()).or_default() += 1;
-        }
         self.lsp.completion = None;
         self.lsp.requested = None;
-        self.ed.message = format!("lsp: restarting {}", commands.join(", "));
-        self.lsp.lsp.send(Cmd::Restart { commands });
     }
 
     /// Tells the server holding buffer `id` it closed, and forgets it
@@ -941,8 +990,8 @@ impl Kawoosh {
     /// Whether anyone serves `language`: a definition, its command not
     /// found missing and not being restarted.
     fn lsp_serves(&self, language: &str) -> bool {
-        self.scripting.servers.iter().any(|d| {
-            d.language == language
+        self.lsp.defs.iter().any(|d| {
+            d.serves(language)
                 && !self.lsp.said_unavailable.contains(&d.command)
                 && !self.lsp.restarting.contains_key(&d.command)
         })
@@ -984,10 +1033,11 @@ impl Kawoosh {
         };
         let language = self.ed.buffers[buffer].language.to_string();
         if !self.lsp_serves(&language) {
-            let restarting =
-                self.scripting.servers.iter().any(|d| {
-                    d.language == language && self.lsp.restarting.contains_key(&d.command)
-                });
+            let restarting = self
+                .lsp
+                .defs
+                .iter()
+                .any(|d| d.serves(&language) && self.lsp.restarting.contains_key(&d.command));
             self.ed.message = if restarting {
                 format!("the {language} server is restarting")
             } else {
@@ -1482,12 +1532,17 @@ impl Kawoosh {
         self.lsp
             .status
             .iter()
-            .map(|(root, cmd, n)| {
+            .map(|(root, cmd, n, loaded)| {
                 format!(
-                    "{cmd} @ {} ({n} docs)",
+                    "{cmd} @ {} ({n} docs{})",
                     root.file_name()
                         .map(|f| f.to_string_lossy().into_owned())
-                        .unwrap_or_default()
+                        .unwrap_or_default(),
+                    if *loaded > 0 {
+                        format!(", {loaded} loaded")
+                    } else {
+                        String::new()
+                    }
                 )
             })
             .collect::<Vec<_>>()
@@ -1503,18 +1558,25 @@ impl Kawoosh {
             return "no language servers running\n".into();
         }
         let mut out = String::new();
-        for (root, cmd, n) in &self.lsp.status {
+        for (root, cmd, n, loaded) in &self.lsp.status {
             out += &format!(
                 "{cmd}\n  root  {}\n  docs  {n}\n",
                 kawoosh_systems::fs::abbreviate_home(root)
             );
-            let languages: Vec<&str> = self
-                .scripting
-                .servers
-                .iter()
-                .filter(|d| &d.command == cmd)
-                .map(|d| d.language.as_str())
-                .collect();
+            if *loaded > 0 {
+                out += &format!("  loaded  {loaded}\n");
+            }
+            let defs: Vec<&ServerDef> =
+                self.lsp.defs.iter().filter(|d| &d.command == cmd).collect();
+            let languages: Vec<&str> = defs.iter().flat_map(|d| d.served()).collect();
+            out += &format!("  serves  {}\n", languages.join(" "));
+            // Each definition's rules that are set, and where.
+            for d in &defs {
+                let rules = self.lsp_rules_said(&d.language);
+                if !rules.is_empty() {
+                    out += &format!("  lsp.{}  {}\n", d.language, rules.join(" "));
+                }
+            }
             let mut open: Vec<String> = self
                 .ed
                 .buffers

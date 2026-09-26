@@ -1064,6 +1064,23 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   server, since the pool keys by root and command), lua-language-server,
   pyright-langserver, gopls, clangd (c, cpp), each with its root
   markers; `kawoosh.lsp.server` replaces a language's.
+- **Rules per server** — done 2026-09-26 [asked]; step 40,
+  [lsp-rules.md](lsp-rules.md). Asked as "toggleable rules for specific
+  lsp's (load all files in ts for example for a complete diagnostics
+  and stuff)". `lsp.NAME` in the settings is a server over Lua's or the
+  builtin one — `cmd`, `args`, `roots`, `languages`, `settings` (step
+  34 declared them; nothing read them) — and its rules: `enabled`,
+  `load_all` (every file of its languages in the workspace sent from
+  disk, `load_max` of them, so typescript-language-server speaks of the
+  project and `:diagnostics` is whole), `inlay_hints` over
+  `lsp.inlay_hints`. One server serves the languages one program reads:
+  `lsp.typescript` is `.ts`, `.tsx` and `.js`, `lsp.c` is C and C++.
+  Per project through `.kawoosh/settings.lua`; `:lsp toggle RULE
+  [LANGUAGE]` for the session. A server's `settings` reach it running
+  (`didChangeConfiguration`); a new command line restarts it. Beside
+  it: `languageId` is the document's own (`tsx` as `typescriptreact`),
+  and a buffer no pane shows is sent again after a restart, as `:lsp
+  restart` said it was.
 
 ### Config, theme, fonts
 
@@ -2131,6 +2148,15 @@ then breadth.
     walks.~~ Landed 2026-09-26: `editor/src/diagnostics.rs`,
     `kawoosh/src/lists.rs`, `kawoosh/lua/lists.lua`; looked at against
     rust-analyzer.
+40. ~~**Rules per server** ([lsp-rules.md](lsp-rules.md)):
+    `lsp.NAME` read as the server and its switches — `enabled`,
+    `load_all` for a whole project's diagnostics, `inlay_hints` — per
+    project, per session with `:lsp toggle`; one server for
+    TypeScript's three languages.~~ Landed 2026-09-26:
+    `kawoosh/src/lsp_rules.rs`, the pool's loaded documents in
+    `systems/src/lsp.rs`; tested against the fake server, and against
+    typescript-language-server 6 on TypeScript 5 in a scratch install
+    (TypeScript 7, npm's now, has no tsserver for it to run).
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),
