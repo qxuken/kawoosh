@@ -82,31 +82,49 @@ kawoosh.test.eq(fonts.state().all, true)
 kawoosh.test.eq(#fonts.state().list, #fams)
 kawoosh.press("m")
 kawoosh.frame()
--- The filter: any part of the name, case aside.
+-- The search, as `/` in a buffer: the list stays whole, the cursor goes
+-- to the first match from where the search began, `⏎` ends it and takes
+-- nothing, `n` `N` walk the matches round the end.
+local whole = #fonts.state().list
+local family = kawoosh.opt("font.family")
 local part = a.name:sub(2, 4):upper()
+kawoosh.press("gg")
 kawoosh.press("/")
 kawoosh.press(part)
 kawoosh.frame(2)
 st = fonts.state()
 kawoosh.test.eq(st.query, part)
-kawoosh.test.ok(#st.list >= 1, "the part matches its own")
-for _, n in ipairs(st.list) do kawoosh.test.ok(n:lower():find(part:lower(), 1, true), n) end
--- Normal mode over the filter: `j` `k` walk what it left.
-kawoosh.press("<Esc>")
+kawoosh.test.eq(#st.list, whole, "the list stays whole")
+kawoosh.test.ok(#st.matches >= 1, "the part matches its own")
+for _, n in ipairs(st.matches) do kawoosh.test.ok(n:lower():find(part:lower(), 1, true), n) end
+kawoosh.test.eq(st.cursor, st.matches[1], "the cursor on the first match")
+kawoosh.press("<CR>")
 kawoosh.frame()
-if #st.list > 1 then
-  local was = fonts.state().cursor
-  kawoosh.press("gg")
-  kawoosh.press("j")
+kawoosh.test.eq(kawoosh.opt("font.family"), family, "⏎ ends the search and takes nothing")
+kawoosh.test.eq(fonts.state().query, part, "the matches kept")
+if #st.matches > 1 then
+  kawoosh.press("n")
   kawoosh.frame()
-  kawoosh.test.eq(fonts.state().cursor, st.list[2], "j walks the filtered list")
-  kawoosh.test.eq(fonts.state().query, part, "and leaves the filter's text")
-  kawoosh.press("k")
+  kawoosh.test.eq(fonts.state().cursor, st.matches[2])
+  kawoosh.press("N")
   kawoosh.frame()
-  kawoosh.test.eq(fonts.state().cursor, st.list[1])
+  kawoosh.test.eq(fonts.state().cursor, st.matches[1])
+  kawoosh.press("N")
+  kawoosh.frame()
+  kawoosh.test.eq(fonts.state().cursor, st.matches[#st.matches], "round the end")
 end
-kawoosh.press("<Esc>")
+-- A search for nothing leaves the cursor where it was; `n` says so.
+local here = fonts.state().cursor
+kawoosh.press("/")
+kawoosh.press("zqzqzq")
+kawoosh.frame(2)
+kawoosh.test.eq(#fonts.state().matches, 0)
+kawoosh.test.eq(fonts.state().cursor, here)
+kawoosh.press("<CR>")
 kawoosh.frame()
+kawoosh.press("n")
+kawoosh.frame()
+kawoosh.test.ok(kawoosh.message():find("no family holds", 1, true), kawoosh.message())
 -- `+`: the size; `y` copies the line that keeps the pick.
 kawoosh.press("+")
 kawoosh.frame(2)

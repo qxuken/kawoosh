@@ -8,11 +8,15 @@
 -- (the default) or `all`.
 --
 -- `⏎` or a click takes the cursor's family (`font.family`, the
--- session's), `j` `k` `gg` `G` `<C-d>` `<C-u>` walk — over the filter's
--- normal mode too — `/` (or `i`) types a filter — any part of the name,
--- case aside — `m` flips mono and all,
--- `+` `-` the size, `y` copies the line that keeps the pick in
+-- session's), `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `m` flips mono and
+-- all, `+` `-` the size, `y` copies the line that keeps the pick in
 -- `settings.lua`, `q` closes.
+--
+-- `/` searches as the editor's does: the list stays whole, typing takes
+-- the cursor to the first family whose name holds what is typed (case
+-- aside) from where the search began, `⏎` ends the search there, and
+-- `n` `N` go to the next and the previous match, round the end; each
+-- match's name washed where it matched, the head counting them.
 --
 -- Only the cards on screen are built (`uniform_list`): a card shapes in
 -- its family, and hundreds of families shaped at once is seconds.
@@ -47,9 +51,11 @@ fonts.sample = {
     { ";", "punctuation" }, { " " }, { "// O0 Il1 != =>", "comment" } },
 }
 
--- The pane's state: the families shown (filtered), the cursor's family
--- by name, whether all or only the monospaced show, the query they were
--- filtered by, and `reveal` — the cursor to be scrolled into view.
+-- The pane's state: the families shown, the cursor's family by name,
+-- whether all or only the monospaced show; the search — `query`, the
+-- `matches` (indices into the list, in order) and `origin`, the family
+-- the cursor was on when it began — and `reveal`, the cursor to be
+-- scrolled into view.
 local S = nil
 
 -- The look's colours and styles, as the lab has them, taken again when
@@ -72,25 +78,76 @@ local function keep_line(cur)
   return "font = { " .. table.concat(parts, ", ") .. " }"
 end
 
--- The families the pane lists, for the query and the mode.
-local function refilter(query)
-  local q = (query or ""):lower()
+-- The families the pane lists, for the mode; the cursor kept on its
+-- family where it still is.
+local function relist()
   local out = {}
   for _, f in ipairs(fonts.families()) do
-    if (S.all or f.mono or f.bundled) and (q == "" or f.name:lower():find(q, 1, true)) then
-      out[#out + 1] = f
-    end
+    if S.all or f.mono or f.bundled then out[#out + 1] = f end
   end
-  S.list, S.query = out, query or ""
+  S.list = out
   local at = 1
   for i, f in ipairs(out) do if f.name == S.cursor then at = i end end
   S.cursor = out[at] and out[at].name or nil
   S.reveal = true
 end
 
-local function index()
-  for i, f in ipairs(S.list or {}) do if f.name == S.cursor then return i end end
+local function index_of(name)
+  for i, f in ipairs(S.list or {}) do if f.name == name then return i end end
   return 1
+end
+local function index() return index_of(S.cursor) end
+
+-- Where `query` is in a family's name, case aside: its first and last
+-- byte, or nil.
+local function found(name, query)
+  if query == "" then return nil end
+  return name:lower():find(query:lower(), 1, true)
+end
+
+-- The matches for the query; as it is typed, the cursor on the first
+-- from where the search began (round the end), or back there when
+-- nothing matches.
+local function research(query)
+  S.query = query
+  S.matches = {}
+  for i, f in ipairs(S.list) do
+    if found(f.name, query) then S.matches[#S.matches + 1] = i end
+  end
+  if query == "" then return end
+  local from = index_of(S.origin)
+  local to = S.matches[1]
+  for _, i in ipairs(S.matches) do
+    if i >= from then to = i break end
+  end
+  S.cursor = to and S.list[to].name or S.origin
+  S.reveal = true
+end
+
+-- The cursor to the next match past it (`dir` 1) or the one before it
+-- (-1), round the end.
+local function next_match(dir)
+  if not S or not S.matches or #S.matches == 0 then
+    if S and S.query ~= "" then kawoosh.echo("no family holds \"" .. S.query .. "\"") end
+    return
+  end
+  local at = index()
+  local pick
+  if dir > 0 then
+    for _, i in ipairs(S.matches) do if i > at then pick = i break end end
+    pick = pick or S.matches[1]
+  else
+    for k = #S.matches, 1, -1 do if S.matches[k] < at then pick = S.matches[k] break end end
+    pick = pick or S.matches[#S.matches]
+  end
+  S.cursor = S.list[pick].name
+  S.reveal = true
+end
+
+-- Which match the cursor is on, 1-based, or nil.
+local function match_no()
+  local at = index()
+  for k, i in ipairs(S.matches or {}) do if i == at then return k end end
 end
 
 -- The family on show: its name, or the shipped face's.
@@ -106,7 +163,7 @@ local function weights_word(f)
   return f.italic and (w .. ", italic") or w
 end
 
-local function card(f, cur, ctx, is_cursor, height)
+local function card(f, cur, ctx, is_cursor, height, query)
   local t = ctx.env.theme
   local s = colours()
   local r = s.roles
@@ -122,9 +179,15 @@ local function card(f, cur, ctx, is_cursor, height)
   notes[#notes + 1] = weights_word(f)
   if shown then notes[#notes + 1] = "selected" end
 
+  -- The name, washed where the search matched it.
+  local name = { { f.name } }
+  local a, b = found(f.name, query or "")
+  if a then
+    name = { { f.name:sub(1, a - 1) }, { f.name:sub(a, b), bg = s.hit }, { f.name:sub(b + 1) } }
+  end
   local head = row { width = "grow", gap = 8, cross_align = "center", main_align = "spaceBetween",
     row { width = "grow", clip = true,
-      text(f.name, face { size = SIZE + 2, line_height = SIZE + 8, color = r.fg, wrap = "none" }) },
+      text(name, face { size = SIZE + 2, line_height = SIZE + 8, color = r.fg, wrap = "none" }) },
     text(table.concat(notes, " · "), { size = SIZE - 2, color = shown and t.accent or r.muted, wrap = "none" }) }
 
   local code = column { width = "grow", gap = 0, clip = true }
@@ -178,12 +241,14 @@ kawoosh.view(VIEW, function(ctx)
   sizes(ctx.env)
   local t = ctx.env.theme
   local cur = fonts.current()
-  if not S then S = { cursor = on_show(cur), all = false } end
-  local q = ctx.field_text(FIELD) or ""
-  if S.list == nil or q ~= S.query or S.dirty then
+  if not S then S = { cursor = on_show(cur), all = false, query = "", matches = {} } end
+  if S.list == nil or S.dirty then
     S.dirty = nil
-    refilter(q)
+    relist()
+    research(S.query)
   end
+  local q = ctx.field_text(FIELD) or ""
+  if q ~= S.query then research(q) end
   local h = card_h(cur)
   local stride = h + GAP
 
@@ -220,19 +285,27 @@ kawoosh.view(VIEW, function(ctx)
     row { width = "grow", gap = 8, cross_align = "center",
       text("/", { family = "mono", size = SIZE, color = t.accent }),
       (function()
-        local f = ctx.field { name = FIELD, placeholder = "filter by name", size = SIZE }
+        local f = ctx.field { name = FIELD, placeholder = "search by name", size = SIZE }
         f.width = "grow"
         return f
       end)(),
-      text(#S.list .. " of " .. #fonts.families(), { size = SIZE - 2, color = t.faint, wrap = "none" }) },
-    text("jk walk · ⏎ takes · / filters · m mono or all · + − size · y copies · q closes",
+      (function()
+        local n, count, color = #S.matches, #S.list .. " families", t.faint
+        if S.query ~= "" then
+          local k = match_no()
+          count = n == 0 and "no match" or ((k and (k .. " of ") or "") .. n .. (n == 1 and " match" or " matches"))
+          color = n == 0 and t.danger or t.muted
+        end
+        return text(count, { size = SIZE - 2, color = color, wrap = "none" })
+      end)() },
+    text("jk walk · ⏎ takes · / searches, n N · m mono or all · + − size · y copies · q closes",
       { size = SIZE - 2, color = t.faint, wrap = "word" }) }
 
   local list = uniform_list(ctx.env, { key = "list", rows = #S.list, row_h = stride, width = "grow",
                                        height = "grow", pad = { x = PAD } }, function(i)
     local f = S.list[i + 1]
     return column { width = "grow", height = stride,
-      card(f, cur, ctx, f.name == S.cursor, h) }
+      card(f, cur, ctx, f.name == S.cursor, h, S.query) }
   end)
 
   local foot = column { width = "grow", gap = 6, pad = { x = PAD, bottom = PAD },
@@ -275,13 +348,14 @@ function fonts.copy()
 end
 
 -- fonts.state(): what the pane shows — `cursor` (a family's name),
--- `list` (the names shown), `all`, `query`, `scrolled` (px) and `keep`
--- — or nil when it is not open.
+-- `list` (the names shown), `all`, `query`, `matches` (the names that
+-- match it), `scrolled` (px) and `keep` — or nil when it is not open.
 function fonts.state()
   if not S or not S.list then return nil end
-  local names = {}
+  local names, matches = {}, {}
   for i, f in ipairs(S.list) do names[i] = f.name end
-  return { cursor = S.cursor, list = names, all = S.all, query = S.query,
+  for k, i in ipairs(S.matches or {}) do matches[k] = S.list[i].name end
+  return { cursor = S.cursor, list = names, all = S.all, query = S.query, matches = matches,
            scrolled = S.scrolled or 0, keep = keep_line(fonts.current()) }
 end
 
@@ -313,7 +387,15 @@ on("page up", function() walk(-5) end, "the cursor five cards up")
 on("first", function() walk(-1e9) end, "the cursor on the first card")
 on("last", function() walk(1e9) end, "the cursor on the last card")
 on("mode", function() if S then S.all, S.dirty = not S.all, true end end, "monospaced families only, or all")
-on("query", function() kawoosh.field_focus(VIEW, FIELD) end, "the keys to the filter")
+on("search", function()
+  if not S then return end
+  S.origin = S.cursor
+  kawoosh.field_set(VIEW, FIELD, "")
+  kawoosh.field_focus(VIEW, FIELD)
+end, "search the families by name, as `/` does in a buffer")
+on("search done", function() kawoosh.field_focus(VIEW, nil) end, "end the search on the match the cursor is on")
+on("next", function() next_match(1) end, "the cursor to the next match")
+on("prev", function() next_match(-1) end, "the cursor to the previous match")
 on("bigger", function() kawoosh.run("font bigger") end, "the font a pixel bigger")
 on("smaller", function() kawoosh.run("font smaller") end, "the font a pixel smaller")
 on("copy", function() fonts.copy() end, "the line that keeps the face, on the clipboard")
@@ -322,23 +404,24 @@ on("close", close, "close the pane")
 for k, c in pairs {
   ["<CR>"] = "take", j = "down", k = "up", ["<Down>"] = "down", ["<Up>"] = "up",
   ["<C-d>"] = "page down", ["<C-u>"] = "page up", gg = "first", G = "last",
-  m = "mode", ["/"] = "query", i = "query", ["+"] = "bigger", ["="] = "bigger", ["-"] = "smaller",
+  m = "mode", ["/"] = "search", n = "next", N = "prev",
+  ["+"] = "bigger", ["="] = "bigger", ["-"] = "smaller",
   y = "copy", q = "close", ["<Esc>"] = "close",
 } do
   kawoosh.map("p", k, "fonts " .. c, { when = { PANE_FACT } })
 end
--- Over the filter: the list's keys that are not a letter; in its
--- normal mode the letters too, as the picker has them — `j` `k` walk
--- the families the filter left, not the filter's text.
+-- Over the search: `⏎` ends it where the cursor is, as the editor's
+-- `/` does; the arrows walk; in its normal mode `j` `k` walk the list
+-- and `n` `N` the matches, not the search's text.
 local at = { when = { FIELD_FACT } }
 for _, mode in ipairs { "i", "n" } do
-  kawoosh.map(mode, "<CR>", "fonts take", at)
+  kawoosh.map(mode, "<CR>", "fonts search done", at)
   kawoosh.map(mode, "<Down>", "fonts down", at)
   kawoosh.map(mode, "<Up>", "fonts up", at)
   kawoosh.map(mode, "<C-n>", "fonts down", at)
   kawoosh.map(mode, "<C-p>", "fonts up", at)
 end
 for k, c in pairs { j = "down", k = "up", ["<C-d>"] = "page down", ["<C-u>"] = "page up",
-                    gg = "first", G = "last" } do
+                    gg = "first", G = "last", n = "next", N = "prev" } do
   kawoosh.map("n", k, "fonts " .. c, at)
 end

@@ -53,7 +53,7 @@ until then), 10 ms once for 613 in a debug build — so nothing is
 registered until a view looks, and after that no card waits.
 
 *Beat:* registering each family as its card first asked for it — the
-first build. Every card the pane scrolled or filtered to was drawn for
+first build. Every card the pane scrolled or searched to was drawn for
 a frame in kui's mono and then in its own face: a flicker the user saw
 at once. A card with no handle yet is its frame alone, which only the
 pane's first frame shows.
@@ -63,8 +63,7 @@ pane's first frame shows.
 A column of its own beside the focused one, as `:themes` is (0.4 of
 the width), so a pick is seen on the code at once. Its head says the
 face on show and what keeps it; `mono` and `all` as two chips (mono
-first, `m` flips them); a field that narrows the list by any part of
-the name (`/` or `i`); the size, `+` and `-` (the session's `font.size`,
+first, `m` flips them); a search by name (`/`, below); the size, `+` and `-` (the session's `font.size`,
 as ⌘= ⌘- do). Every family is a card **drawn in itself**: its name in
 its own face, whether it is monospaced, how many weights and whether it
 has an italic, and two lines of code in its own face at the editor's
@@ -75,8 +74,23 @@ name; the one on show says "selected".
 
 `⏎` or a click takes the cursor's family (`font.family`, the session's;
 the shipped face is the empty string), `j` `k` `gg` `G` `<C-d>` `<C-u>`
-walk — over the filter's normal mode too, where they walk what it left — the cursor kept in view, `y` copies the line that keeps the pick
+walk, the cursor kept in view, `y` copies the line that keeps the pick
 in `settings.lua` — `font = { family = "…", size = N }` — `q` closes.
+
+`/` searches as it does in a buffer (amended the same day, at the
+user's word: "let's search be more like a `/` in editor. just make a
+list of matches and n/N work"): the list stays whole; typing takes the
+cursor to the first family whose name holds what is typed, case aside,
+from where the search began (back there while nothing matches); `⏎`
+ends the search on that card and takes nothing; `n` and `N` go to the
+next and the previous match, round the end (and say so when there is
+none). Each match's name is washed where it matched, in the look's
+search-hit wash, and the head counts them — "3 of 12 matches".
+
+*Beat:* the first build's filter, the list narrowed to what the query
+held. The user's editor habit is `/` and `n` — a family is found in
+its place among its neighbours, and the list does not jump under the
+cursor as the query grows.
 
 The list is a `uniform_list`: only the cards on screen are built, so a
 frame shapes a screenful of families however many are installed (300
@@ -156,5 +170,5 @@ As decided. kui F97 (`Core::system_fonts`); the symbols in
 families and the face as the door has them (`Fonts`), registers what a
 view asked for at the frame, and holds `:font`; `kawoosh/lua/fonts.lua`
 the pane; `kawoosh/lua/theme_lab.lua` the face and its scene. Tests:
-`kawoosh/lua/tests/fonts.lua` (the door, the pane's walk, filter, take,
+`kawoosh/lua/tests/fonts.lua` (the door, the pane's walk, search, take,
 copy and close, the lab's face), `tests/cmdline.rs` for the completion.

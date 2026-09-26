@@ -2208,7 +2208,7 @@ then breadth.
 43. ~~**Fonts** ([fonts.md](fonts.md)): `:fonts` (`<leader>of`), a
     column of every family each drawn in itself — its name, whether it
     is monospaced, its weights, two lines of code at the editor's size
-    in the theme on show — monospaced first, filtered by name, `⏎`
+    in the theme on show — monospaced first, `/` and `n` `N` by name, `⏎`
     taking one for the session; `:font NAME`; the families as data
     (`kawoosh.fonts`, over kui F97's `system_fonts`); and the lab the
     look's — every sample in the editor's face, a font scene of
