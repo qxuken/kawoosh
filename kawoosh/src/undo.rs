@@ -310,27 +310,31 @@ impl Kawoosh {
             |ui| {
                 // The header: how many states, how many branches, and
                 // what the keys do.
-                ui.with(strip().on_click(tag.clone()), |ui| {
-                    let changes = n.saturating_sub(1);
-                    let branches = graph.branches();
-                    let mut head =
-                        format!("{changes} change{}", if changes == 1 { "" } else { "s" });
-                    if branches > 0 {
-                        head.push_str(&format!(
-                            " · {branches} branch{}",
-                            if branches == 1 { "" } else { "es" }
-                        ));
-                    }
-                    if pending {
-                        head.push_str(" · typing…");
-                    }
-                    if !watching {
-                        head = "no buffer".into();
-                    }
-                    ui.text(&head, small(pal.dim));
-                    ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
-                    ui.text("⏎ restore · u ⌃r g- g+ step · q close", small(pal.faint));
-                });
+                ui.with(
+                    strip()
+                        .on_click(tag.clone())
+                        .main_align(Align::SpaceBetween),
+                    |ui| {
+                        let changes = n.saturating_sub(1);
+                        let branches = graph.branches();
+                        let mut head =
+                            format!("{changes} change{}", if changes == 1 { "" } else { "s" });
+                        if branches > 0 {
+                            head.push_str(&format!(
+                                " · {branches} branch{}",
+                                if branches == 1 { "" } else { "es" }
+                            ));
+                        }
+                        if pending {
+                            head.push_str(" · typing…");
+                        }
+                        if !watching {
+                            head = "no buffer".into();
+                        }
+                        ui.text(&head, small(pal.dim));
+                        ui.text("⏎ restore · u ⌃r g- g+ step · q close", small(pal.faint));
+                    },
+                );
                 // The columns named, over the numbers they hold.
                 ui.with(tm.line(&pal, 0).hover_bg(Color::TRANSPARENT), |ui| {
                     ui.with(

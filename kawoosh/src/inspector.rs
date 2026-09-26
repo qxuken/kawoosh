@@ -370,6 +370,7 @@ impl Kawoosh {
                     .pad_xy(8.0, 0.0)
                     .gap(8.0)
                     .cross_align(Align::Center)
+                    .main_align(Align::SpaceBetween)
                     .bg(pal.strip),
                 |ui| {
                     let state = match parsed {
@@ -379,7 +380,6 @@ impl Kawoosh {
                         Some(_) => format!("{rows_n} nodes"),
                     };
                     ui.text(&format!("{language} · {state}"), style().color(pal.dim));
-                    ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
                     ui.with_keyed(
                         "anonymous",
                         NodeSpec::row()

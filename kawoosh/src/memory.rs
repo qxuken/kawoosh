@@ -1636,7 +1636,7 @@ impl Kawoosh {
                 );
                 // The detail: a text's lines, a file's draft against
                 // the disk, a subject's facts.
-                ui.with(tm.strip(&pal), |ui| {
+                ui.with(tm.strip(&pal).main_align(kui_native::Align::SpaceBetween), |ui| {
                     let head = match rows.get(cursor) {
                         Some(Row::Text(t)) => {
                             let (took, linewise, text, from, age) = &texts[*t];
@@ -1682,7 +1682,6 @@ impl Kawoosh {
                         },
                     };
                     ui.text(&head, small(pal.dim));
-                    ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
                     ui.text(
                         "⏎ open · y recall · o origin · x forget · ⇥ view · q close",
                         small(pal.faint),
