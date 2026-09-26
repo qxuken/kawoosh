@@ -2175,7 +2175,11 @@ then breadth.
     Makefiles, `CMakeLists.txt`, `go.mod`, `pyproject.toml` and
     `build.zig`; `<leader>cC` the picker (`kawoosh.compile_offer()`);
     a typed command runs where its program's kind does; tsc's
-    `path(line,col)` a location.
+    `path(line,col)` a location. Round two the same day: the last
+    compile read from the memory's `tool` row, so it holds across
+    launches; `build.nu` as a script (`main`, `main SUB`) or a module
+    (`export def`), a command wanting arguments put in the prompt with
+    the caret where they go, `<C-e>` for any.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),

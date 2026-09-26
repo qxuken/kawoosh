@@ -3,7 +3,6 @@
 //! there, in a scrollback buffer, or in a terminal — is one mechanism
 //! with three consumers.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -11,6 +10,7 @@ use kawoosh_doc::BufferId;
 use kawoosh_editor::{ArgKind, Args, Selection, Spec, ViewId};
 use kawoosh_lua::CompileOfferSnap;
 use kawoosh_systems::io::{IoMsg, ProcHandle};
+use kawoosh_systems::store::MomentKey;
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -33,9 +33,6 @@ pub struct Compile {
     /// The running command's, for `compile kill` (`<C-c>` in
     /// `*compile*`) and for the next `:compile`, which replaces it.
     pub proc: Option<ProcHandle>,
-    /// The command last compiled in each workspace this session, and
-    /// where: what a bare `:compile` runs again (compile.md Decision 2).
-    pub last: HashMap<String, (String, PathBuf)>,
     /// The rows `compile pick` offered, in the picker's order.
     pub offer: Vec<Offer>,
 }
@@ -48,6 +45,35 @@ pub struct Offer {
     /// `compile.command`, `last run here`, or the file's path.
     pub from: String,
     pub why: String,
+    /// It takes arguments it has no default for: taken, it goes to the
+    /// prompt to finish rather than running (compile.md Decision 6).
+    pub needs: bool,
+    /// Where in `cmd` arguments go.
+    pub args_at: usize,
+    /// How it is declared, for the preview.
+    pub detail: Vec<String>,
+}
+
+impl Offer {
+    fn of(cmd: &str, cwd: PathBuf, from: &str, why: &str) -> Self {
+        Offer {
+            cmd: cmd.to_string(),
+            cwd,
+            from: from.to_string(),
+            why: why.to_string(),
+            needs: false,
+            args_at: cmd.len(),
+            detail: Vec::new(),
+        }
+    }
+
+    /// The `:` line that finishes it: `compile CMD ` with the caret where
+    /// its arguments go — inside a `nu -c '…'`'s quote.
+    pub fn prompt(&self) -> (String, usize) {
+        let (head, tail) = self.cmd.split_at(self.args_at.min(self.cmd.len()));
+        let line = format!("compile {head} {tail}");
+        (line, "compile ".len() + head.len() + 1)
+    }
 }
 
 /// What a bare `:compile` runs (compile.md Decision 2).
@@ -55,7 +81,7 @@ pub struct Offer {
 pub enum Bare {
     /// `compile.command`: the project's word.
     Setting(String),
-    /// The command last compiled in this workspace, again.
+    /// The command last compiled in this workspace — the memory's — again.
     Again(String, PathBuf),
     /// The first the project's files offer.
     Deduced(Deduced),
@@ -119,16 +145,23 @@ impl Kawoosh {
         deduce::deduce(&dir, &markers)
     }
 
-    /// The workspace a compile from here is remembered under: the
-    /// memory's (`.kawoosh`, else the repository), else the directory.
-    fn compile_workspace(&self) -> String {
-        let (dir, _) = self.compile_start();
-        let ws = crate::moments::workspace_of(&dir);
-        if ws.is_empty() {
-            dir.display().to_string()
-        } else {
-            ws
-        }
+    /// The command last compiled in this workspace, and where, as the
+    /// memory keeps it (its `tool` row for `compile`, memory.md): what
+    /// is pending of it first, else the store's — across launches, and
+    /// gone once the row is forgotten.
+    pub fn last_compile(&self) -> Option<(String, PathBuf)> {
+        let key = MomentKey::new("tool", "compile", self.moments.workspace());
+        let meta = self
+            .moments
+            .pending_meta(&key)
+            .or_else(|| Some(self.store.as_ref()?.moment(&key)?.meta))?;
+        let meta: serde_json::Value = serde_json::from_str(&meta).ok()?;
+        let cmd = meta.get("cmd")?.as_str()?.to_string();
+        let cwd = match meta.get("cwd").and_then(|c| c.as_str()) {
+            Some(c) => PathBuf::from(c),
+            None => self.compile_dir(),
+        };
+        Some((cmd, cwd))
     }
 
     /// What a bare `:compile` runs from here (compile.md Decision 2).
@@ -136,10 +169,17 @@ impl Kawoosh {
         if let Some(c) = self.ed.settings.str("compile.command") {
             return Bare::Setting(c.to_string());
         }
-        if let Some((cmd, cwd)) = self.compile.last.get(&self.compile_workspace()) {
-            return Bare::Again(cmd.clone(), cwd.clone());
+        if let Some((cmd, cwd)) = self.last_compile() {
+            return Bare::Again(cmd, cwd);
         }
-        match self.deduce_compile().commands.into_iter().next() {
+        // The first that runs as it is: one wanting arguments is the
+        // picker's to offer.
+        match self
+            .deduce_compile()
+            .commands
+            .into_iter()
+            .find(|d| !d.needs)
+        {
             Some(d) => Bare::Deduced(d),
             None => Bare::Nothing,
         }
@@ -178,11 +218,9 @@ impl Kawoosh {
             .unwrap_or_else(|| self.cwd.clone())
     }
 
-    /// `cmd` run in `cwd` into `*compile*`, and remembered as this
-    /// workspace's last.
+    /// `cmd` run in `cwd` into `*compile*`, and remembered — the
+    /// memory's `tool` row — as this workspace's last.
     pub fn compile_in(&mut self, cmd: &str, cwd: PathBuf) {
-        let ws = self.compile_workspace();
-        self.compile.last.insert(ws, (cmd.to_string(), cwd.clone()));
         let cwd = Some(cwd);
         self.note_tool(
             "compile",
@@ -247,36 +285,19 @@ impl Kawoosh {
                 .unwrap_or_else(|| self.compile_dir());
             add(
                 &mut rows,
-                Offer {
-                    cmd: c.to_string(),
-                    cwd,
-                    from: "compile.command".into(),
-                    why: "the settings' word".into(),
-                },
+                Offer::of(c, cwd, "compile.command", "the settings' word"),
             );
         }
-        if let Some((cmd, cwd)) = self.compile.last.get(&self.compile_workspace()) {
-            add(
-                &mut rows,
-                Offer {
-                    cmd: cmd.clone(),
-                    cwd: cwd.clone(),
-                    from: "last run here".into(),
-                    why: String::new(),
-                },
-            );
+        if let Some((cmd, cwd)) = self.last_compile() {
+            add(&mut rows, Offer::of(&cmd, cwd, "last run here", ""));
         }
         for d in project.commands {
             let from = self.compile_from(&d.file);
-            add(
-                &mut rows,
-                Offer {
-                    cmd: d.cmd,
-                    cwd: d.cwd,
-                    from,
-                    why: d.why,
-                },
-            );
+            let mut o = Offer::of(&d.cmd, d.cwd, &from, &d.why);
+            o.needs = d.needs;
+            o.args_at = d.args_at;
+            o.detail = d.detail;
+            add(&mut rows, o);
         }
         if rows.is_empty() {
             self.ed.message = NOTHING.into();
@@ -295,6 +316,8 @@ impl Kawoosh {
                 from: o.from.clone(),
                 cwd: kawoosh_systems::fs::abbreviate_home(&o.cwd),
                 why: o.why.clone(),
+                needs: o.needs,
+                detail: o.detail.clone(),
             })
             .collect();
         rt.set_compile_offer(Some(Rc::new(snap)));
@@ -302,16 +325,29 @@ impl Kawoosh {
         self.run_lua_source("compile", "kawoosh.picker.open(\"compile\")");
     }
 
-    /// Row `n` (from 1) of the last `compile pick`, run where it said.
-    pub fn compile_offered(&mut self, n: usize) {
-        match n
+    /// Row `n` (from 1) of the last `compile pick`, run where it said —
+    /// or, when it wants arguments or `edit` asks, put in the prompt to
+    /// finish (compile.md Decision 6).
+    pub fn compile_offered(&mut self, n: usize, edit: bool) {
+        let Some(o) = n
             .checked_sub(1)
             .and_then(|i| self.compile.offer.get(i))
             .cloned()
-        {
-            Some(o) => self.compile_in(&o.cmd, o.cwd),
-            None => self.ed.message = format!("no compile command {n} on offer (:compile pick)"),
+        else {
+            self.ed.message = format!("no compile command {n} on offer (:compile pick)");
+            return;
+        };
+        if !(edit || o.needs) {
+            self.compile_in(&o.cmd, o.cwd);
+            return;
         }
+        let (line, caret) = o.prompt();
+        self.open_cmdline();
+        self.ed.set_prompt_text(&line);
+        if let Some(v) = self.ed.prompt_view() {
+            self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(caret));
+        }
+        self.cmdline_refresh();
     }
 
     /// `compile kill`: stops the running command, and everything it
@@ -569,8 +605,19 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .args(Args::new(&[ArgKind::Text]))
                 .doc("what the project can compile — compile.command, the last run, its files' commands — in a picker"),
             |k, ctx| match ctx.args.first().and_then(|a| a.parse::<usize>().ok()) {
-                Some(n) => k.compile_offered(n),
+                Some(n) => k.compile_offered(n, false),
                 None => k.offer_compile(),
+            },
+        ),
+        // `<C-e>` on the picker's row: its command in the prompt, the
+        // caret where arguments go, to finish before it runs.
+        cmd(
+            Spec::new("compile edit")
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("command N of the last compile pick in the prompt, to add arguments before it runs"),
+            |k, ctx| match ctx.args.first().and_then(|a| a.parse::<usize>().ok()) {
+                Some(n) => k.compile_offered(n, true),
+                None => k.ed.message = "compile edit N: the Nth of :compile pick".into(),
             },
         ),
         // `<C-c>` in `*compile*` while it runs (emacs's `C-c C-k`);

@@ -14,6 +14,7 @@ pub enum Kind {
     Cargo,
     Node,
     Just,
+    Nu,
     Make,
     CMake,
     Go,
@@ -22,10 +23,11 @@ pub enum Kind {
 }
 
 impl Kind {
-    const ALL: [Kind; 8] = [
+    const ALL: [Kind; 9] = [
         Kind::Cargo,
         Kind::Node,
         Kind::Just,
+        Kind::Nu,
         Kind::Make,
         Kind::CMake,
         Kind::Go,
@@ -40,6 +42,7 @@ impl Kind {
             Kind::Cargo => &["Cargo.toml"],
             Kind::Node => &["package.json"],
             Kind::Just => &["justfile", "Justfile", ".justfile"],
+            Kind::Nu => &["build.nu"],
             Kind::Make => &["GNUmakefile", "makefile", "Makefile"],
             Kind::CMake => &["CMakeLists.txt"],
             Kind::Go => &["go.mod"],
@@ -57,7 +60,7 @@ impl Kind {
     /// A task runner: a project's own front door, ranked after the
     /// server's kinds and before the rest.
     fn runner(self) -> bool {
-        matches!(self, Kind::Just | Kind::Make)
+        matches!(self, Kind::Just | Kind::Nu | Kind::Make)
     }
 
     /// The programs whose commands are this kind's (Decision 4): a typed
@@ -67,6 +70,7 @@ impl Kind {
             Kind::Cargo => &["cargo"],
             Kind::Node => &["npm", "npx", "pnpm", "yarn", "bun", "bunx", "tsc", "node"],
             Kind::Just => &["just"],
+            Kind::Nu => &["nu"],
             Kind::Make => &["make", "gmake"],
             Kind::CMake => &["cmake", "ctest"],
             Kind::Go => &["go"],
@@ -93,6 +97,29 @@ pub struct Deduced {
     /// What it does, as the file says it — a script's body, a recipe's
     /// comment — or empty.
     pub why: String,
+    /// It takes arguments it has no default for: run bare it would be
+    /// refused, so it is offered to the prompt to finish (Decision 6).
+    pub needs: bool,
+    /// Where in `cmd` arguments go — its end, or inside the quote of a
+    /// `nu -c '…'`.
+    pub args_at: usize,
+    /// How it is declared — a `def`'s signature, a recipe's header — for
+    /// the preview, or empty.
+    pub detail: Vec<String>,
+}
+
+impl Deduced {
+    fn new(cmd: String, f: &Found, why: &str) -> Self {
+        Deduced {
+            args_at: cmd.len(),
+            cmd,
+            cwd: f.dir.clone(),
+            file: f.file.clone(),
+            why: why.to_string(),
+            needs: false,
+            detail: Vec::new(),
+        }
+    }
 }
 
 /// What a project offers, as read from `start` up.
@@ -215,12 +242,7 @@ fn walked(start: &Path) -> Vec<PathBuf> {
 
 fn commands_of(f: &Found, dirs: &[PathBuf]) -> Vec<Deduced> {
     let text = kawoosh_systems::fs::read(&f.file).unwrap_or_default();
-    let row = |cmd: String, why: &str| Deduced {
-        cmd,
-        cwd: f.dir.clone(),
-        file: f.file.clone(),
-        why: why.to_string(),
-    };
+    let row = |cmd: String, why: &str| Deduced::new(cmd, f, why);
     match f.kind {
         Kind::Cargo => {
             let bin = f.dir.join("src/main.rs").is_file()
@@ -244,11 +266,15 @@ fn commands_of(f: &Found, dirs: &[PathBuf]) -> Vec<Deduced> {
             if let Some(first) = recipes.default.as_deref() {
                 out.push(row("just".into(), &format!("its default recipe, {first}")));
             }
-            for (name, why) in recipes.public {
-                out.push(row(format!("just {name}"), &why));
+            for r in recipes.public {
+                let mut d = row(format!("just {}", r.name), &r.why);
+                d.needs = r.needs;
+                d.detail = vec![r.header];
+                out.push(d);
             }
             out
         }
+        Kind::Nu => nu(f, &text),
         Kind::Make => {
             let targets = make_targets(&text);
             let mut out = Vec::new();
@@ -397,12 +423,22 @@ fn node(
     out
 }
 
-/// A justfile's recipes: the one a bare `just` runs, and the ones to
-/// offer — public, and needing no argument — with their comments.
+/// A justfile's recipes: the one a bare `just` runs, and the public
+/// ones to offer, with their comments and whether they need arguments.
 #[derive(Debug, Default, PartialEq)]
 struct Recipes {
     default: Option<String>,
-    public: Vec<(String, String)>,
+    public: Vec<Recipe>,
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct Recipe {
+    name: String,
+    why: String,
+    /// A parameter with no default.
+    needs: bool,
+    /// Its line, parameters and all.
+    header: String,
 }
 
 fn just_recipes(text: &str) -> Recipes {
@@ -477,8 +513,13 @@ fn just_recipes(text: &str) -> Recipes {
                 .any(|p| !p.contains('=') && !p.starts_with('*'));
             if name == "default" {
                 out.default = Some(name.clone());
-            } else if !private && !name.starts_with('_') && !needs {
-                out.public.push((name, std::mem::take(&mut comment)));
+            } else if !private && !name.starts_with('_') {
+                out.public.push(Recipe {
+                    name,
+                    why: std::mem::take(&mut comment),
+                    needs,
+                    header: line.to_string(),
+                });
             }
         }
         comment.clear();
@@ -488,6 +529,267 @@ fn just_recipes(text: &str) -> Recipes {
         out.default = first;
     }
     out
+}
+
+/// A `build.nu`'s commands (Decision 6). Run as a script when it has a
+/// `main` — `def main`, `def "main SUB"`, `alias "main SUB" = …` are
+/// `nu build.nu` and `nu build.nu SUB` — else used as a module, each
+/// `export def NAME` `nu -c 'use build.nu; build NAME'`. Each with the
+/// comment above it and its signature.
+fn nu(f: &Found, text: &str) -> Vec<Deduced> {
+    let (defs, aliases) = nu_defs(text);
+    let file = f
+        .file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "build.nu".into());
+    let module = file.trim_end_matches(".nu").to_string();
+    let row = |cmd: String, args_at: usize, d: &NuDef| {
+        let mut out = Deduced::new(cmd, f, &d.doc);
+        out.args_at = args_at;
+        out.needs = d.needs;
+        out.detail = d.sig.clone();
+        out
+    };
+    let sub = |name: &str| {
+        if name == "main" {
+            Some(String::new())
+        } else {
+            name.strip_prefix("main ").map(|s| format!(" {}", s.trim()))
+        }
+    };
+    let mut out: Vec<Deduced> = Vec::new();
+    if defs.iter().any(|d| sub(&d.name).is_some()) {
+        // `main` first: what the file runs bare.
+        let mains = defs.iter().filter(|d| d.name == "main");
+        for d in mains.chain(defs.iter().filter(|d| d.name != "main")) {
+            if let Some(s) = sub(&d.name) {
+                let cmd = format!("nu {file}{s}");
+                out.push(row(cmd.clone(), cmd.len(), d));
+            }
+        }
+        for a in &aliases {
+            let (Some(s), Some(d)) = (sub(&a.name), defs.iter().find(|d| d.name == a.target))
+            else {
+                continue;
+            };
+            let cmd = format!("nu {file}{s}");
+            if !out.iter().any(|o| o.cmd == cmd) {
+                out.push(row(cmd.clone(), cmd.len(), d));
+            }
+        }
+    } else {
+        for d in defs.iter().filter(|d| d.exported) {
+            let cmd = format!("nu -c 'use {file}; {module} {}'", d.name);
+            out.push(row(cmd.clone(), cmd.len() - 1, d));
+        }
+    }
+    out
+}
+
+/// A nushell `def`, as its file declares it.
+#[derive(Debug, PartialEq)]
+struct NuDef {
+    name: String,
+    exported: bool,
+    /// The comment above it.
+    doc: String,
+    /// Its lines from `def` to the signature's `]`.
+    sig: Vec<String>,
+    /// A positional parameter with no default.
+    needs: bool,
+}
+
+/// `alias NAME = TARGET`.
+#[derive(Debug, PartialEq)]
+struct NuAlias {
+    name: String,
+    target: String,
+}
+
+/// A nushell name: `'main ui'`, `"main ui"`, `` `x` `` or a bare word,
+/// and what follows it.
+fn nu_name(s: &str) -> (String, &str) {
+    let s = s.trim_start();
+    if let Some(q) = s.chars().next().filter(|c| "'\"`".contains(*c))
+        && let Some(end) = s[1..].find(q)
+    {
+        return (s[1..1 + end].to_string(), &s[2 + end..]);
+    }
+    let end = s
+        .find(|c: char| c.is_whitespace() || c == '[' || c == '=')
+        .unwrap_or(s.len());
+    (s[..end].to_string(), &s[end..])
+}
+
+/// A line's code and its comment: split at the first `#` outside a
+/// string.
+fn nu_code(line: &str) -> (&str, &str) {
+    let mut quote = None;
+    for (i, c) in line.char_indices() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if "'\"`".contains(c) => quote = Some(c),
+            None if c == '#' => return (&line[..i], &line[i + 1..]),
+            None => {}
+        }
+    }
+    (line, "")
+}
+
+fn nu_defs(text: &str) -> (Vec<NuDef>, Vec<NuAlias>) {
+    let lines: Vec<&str> = text.lines().collect();
+    let (mut defs, mut aliases) = (Vec::new(), Vec::new());
+    let mut doc: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i].trim();
+        i += 1;
+        if let Some(c) = line.strip_prefix('#') {
+            doc.push(c.trim().to_string());
+            continue;
+        }
+        let (exported, rest) = match line.strip_prefix("export ") {
+            Some(r) => (true, r.trim_start()),
+            None => (false, line),
+        };
+        if let Some(rest) = rest.strip_prefix("alias ") {
+            let (name, after) = nu_name(rest);
+            if let Some(target) = after.trim_start().strip_prefix('=') {
+                aliases.push(NuAlias {
+                    name,
+                    target: nu_name(target).0,
+                });
+            }
+            doc.clear();
+            continue;
+        }
+        let Some(mut rest) = rest.strip_prefix("def ") else {
+            doc.clear();
+            continue;
+        };
+        // `def --env`, `def --wrapped`.
+        while let Some(r) = rest.trim_start().strip_prefix("--") {
+            rest = r.split_once(char::is_whitespace).map_or("", |(_, r)| r);
+        }
+        let (name, after) = nu_name(rest);
+        // The signature: from its `[` to the `]` that closes it, across
+        // lines, the comments on them left out of the reading.
+        let mut sig = vec![lines[i - 1].trim_end().to_string()];
+        let mut params = String::new();
+        let mut depth = 0i32;
+        let mut started = false;
+        let mut code = nu_code(after).0.to_string();
+        loop {
+            for c in code.chars() {
+                match c {
+                    '[' if !started => {
+                        started = true;
+                        depth = 1;
+                        continue;
+                    }
+                    '[' => depth += 1,
+                    ']' if started => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                if started {
+                    params.push(c);
+                }
+            }
+            params.push('\n');
+            if (started && depth == 0) || i >= lines.len() {
+                break;
+            }
+            sig.push(lines[i].trim_end().to_string());
+            code = nu_code(lines[i]).0.to_string();
+            i += 1;
+        }
+        defs.push(NuDef {
+            name,
+            exported,
+            doc: doc.first().cloned().unwrap_or_default(),
+            sig,
+            needs: nu_needs(&params),
+        });
+        doc.clear();
+    }
+    (defs, aliases)
+}
+
+/// Whether a signature's parameters have a positional one with no
+/// default: not a `--flag` or its `(-f)`, not `...rest`, not `name?`,
+/// not `name = value`; a type after `:` and a value after `=` skipped.
+fn nu_needs(params: &str) -> bool {
+    // Words, with `:` and `=` their own, at depth 0 of brackets and
+    // outside strings: `list<string>` and `'a b'` are one.
+    let mut words: Vec<String> = Vec::new();
+    let mut word = String::new();
+    let (mut depth, mut quote) = (0i32, None);
+    fn end(word: &mut String, words: &mut Vec<String>) {
+        if !word.is_empty() {
+            words.push(std::mem::take(word));
+        }
+    }
+    for c in params.chars() {
+        if let Some(q) = quote {
+            word.push(c);
+            if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => {
+                quote = Some(c);
+                word.push(c);
+            }
+            '(' | '[' | '{' | '<' => {
+                depth += 1;
+                word.push(c);
+            }
+            ')' | ']' | '}' | '>' => {
+                depth -= 1;
+                word.push(c);
+            }
+            ':' | '=' if depth == 0 => {
+                end(&mut word, &mut words);
+                words.push(c.to_string());
+            }
+            c if depth == 0 && (c.is_whitespace() || c == ',') => end(&mut word, &mut words),
+            c => word.push(c),
+        }
+    }
+    end(&mut word, &mut words);
+    let mut required: Vec<bool> = Vec::new();
+    let mut last: Option<usize> = None;
+    let mut skip = false;
+    for w in &words {
+        if skip {
+            skip = false;
+            continue;
+        }
+        match w.as_str() {
+            ":" => skip = true,
+            "=" => {
+                skip = true;
+                if let Some(p) = last {
+                    required[p] = false;
+                }
+            }
+            w if w.starts_with('-') || w.starts_with('(') || w.starts_with("...") => last = None,
+            w => {
+                required.push(!w.ends_with('?'));
+                last = Some(required.len() - 1);
+            }
+        }
+    }
+    required.contains(&true)
 }
 
 /// A Makefile's plain targets, in the file's order, each with its `##`
@@ -620,13 +922,86 @@ mod tests {
             "set shell := [\"bash\", \"-c\"]\nversion := \"1\"\n\n# build it\nbuild target=\"debug\":\n  cargo build\n\n[private]\nhelper:\n  echo\n\n_hidden:\n  echo\n\n[doc('run the tests')]\n@test: build\n  cargo test\n\ndeploy host:\n  scp\n\nalias b := build\n",
         );
         assert_eq!(r.default.as_deref(), Some("build"));
+        let public: Vec<(&str, &str, bool)> = r
+            .public
+            .iter()
+            .map(|r| (r.name.as_str(), r.why.as_str(), r.needs))
+            .collect();
         assert_eq!(
-            r.public,
-            vec![
-                ("build".to_string(), "build it".to_string()),
-                ("test".to_string(), "run the tests".to_string()),
+            public,
+            [
+                ("build", "build it", false),
+                ("test", "run the tests", false),
+                ("deploy", "", true),
             ]
         );
+    }
+
+    #[test]
+    fn a_build_nu_offers_its_commands() {
+        let script = r#"
+# The binary.
+export def 'main binary' [
+	dist_dir: string = './dist' # where
+] {
+  cargo build
+}
+def "main ui" [] { npm run build }
+export def install [--install-path: string, --build (-b)] { }
+export alias "main install" = install
+export def main [target: string, --debug (-d)] { }
+"#;
+        let dir = tree("nu-script", &[("build.nu", script)]);
+        let p = deduce(&dir, &[]);
+        let rows: Vec<(&str, bool)> = p
+            .commands
+            .iter()
+            .map(|d| (d.cmd.as_str(), d.needs))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("nu build.nu", true),
+                ("nu build.nu binary", false),
+                ("nu build.nu ui", false),
+                ("nu build.nu install", false),
+            ]
+        );
+        assert_eq!(p.commands[1].why, "The binary.");
+        assert_eq!(p.commands[1].detail.len(), 3, "{:?}", p.commands[1].detail);
+        assert_eq!(p.dir_for("nu build.nu"), Some(dir.as_path()));
+
+        let module = r#"
+def optimizations [] { ["none", "size"] }
+export def run-example [
+    entry: string@examples     = "full.odin" # Entry for the build
+  --flags         (-F): list<string>         # Additional flags
+  --release                                  # Build relese
+] { }
+export alias r = run-example
+# Runs the unit tests.
+export def test [] { }
+export def pick [name: string, extra?: int, ...rest: string] { }
+"#;
+        let dir = tree("nu-module", &[("build.nu", module)]);
+        let p = deduce(&dir, &[]);
+        let rows: Vec<(&str, bool)> = p
+            .commands
+            .iter()
+            .map(|d| (d.cmd.as_str(), d.needs))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("nu -c 'use build.nu; build run-example'", false),
+                ("nu -c 'use build.nu; build test'", false),
+                ("nu -c 'use build.nu; build pick'", true),
+            ]
+        );
+        let d = &p.commands[0];
+        assert_eq!(&d.cmd[d.args_at..], "'", "arguments go inside the quote");
+        assert_eq!(p.commands[1].why, "Runs the unit tests.");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

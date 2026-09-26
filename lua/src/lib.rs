@@ -645,6 +645,10 @@ pub struct CompileOfferSnap {
     pub cwd: String,
     /// What it does as its file says, or empty.
     pub why: String,
+    /// It wants arguments: taken, it goes to the prompt to finish.
+    pub needs: bool,
+    /// How it is declared (a `def`'s signature, a recipe's line).
+    pub detail: Vec<String>,
 }
 
 /// One completion candidate as `kawoosh.lsp.candidates()` reads it
@@ -2692,7 +2696,8 @@ fn seed(
         })?,
     )?;
     // ---- kawoosh.compile_offer(): what `compile pick` last offered —
-    // `{ index, cmd, from, cwd, why }` each — or nil before it asked.
+    // `{ index, cmd, from, cwd, why, needs, detail }` each, `needs` when
+    // it wants arguments, `detail` how it is declared — or nil before.
     let pp = published.clone();
     k.set(
         "compile_offer",
@@ -2709,6 +2714,11 @@ fn seed(
                 e.set("from", o.from.as_str())?;
                 e.set("cwd", o.cwd.as_str())?;
                 e.set("why", o.why.as_str())?;
+                e.set("needs", o.needs)?;
+                e.set(
+                    "detail",
+                    lua.create_sequence_from(o.detail.iter().map(String::as_str))?,
+                )?;
                 t.set(i + 1, e)?;
             }
             Ok(LV::Table(t))

@@ -1385,12 +1385,19 @@ picker.source("actions", {
 })
 
 -- What the project can compile (`<leader>cC`, `compile pick`,
--- docs/design/compile.md Decision 3): `compile.command`, the last run
--- here, and the commands its files offer — the command, what said so
--- beside it, the preview where it runs and why; `⏎` runs it (`compile
--- pick N`). The rows are what `kawoosh.compile_offer()` says.
+-- docs/design/compile.md Decisions 3 and 6): `compile.command`, the last
+-- run here, and the commands its files offer — the command, what said
+-- so beside it (`…` when it wants arguments), the preview where it runs,
+-- why and how it is declared; `⏎` runs it (`compile pick N`), or puts
+-- one wanting arguments in the prompt to finish, as `<C-e>` does any
+-- (`compile edit N`). The rows are what `kawoosh.compile_offer()` says.
 picker.source("compile", {
-  title = "compile", placeholder = "a command",
+  title = "compile", placeholder = "a command · <C-e> adds arguments first",
+  keys = { ["<C-e>"] = function(item)
+    if not item then return end
+    picker.close()
+    kawoosh.run("compile edit " .. item.index)
+  end },
   columns = {
     { "text", grow = true },
     { "from", muted = true, min = 90, max = 240, share = 0.3 },
@@ -1398,7 +1405,8 @@ picker.source("compile", {
   items = function()
     local items = {}
     for _, o in ipairs(kawoosh.compile_offer() or {}) do
-      items[#items + 1] = { text = o.cmd, from = o.from, index = o.index, cwd = o.cwd, why = o.why }
+      items[#items + 1] = { text = o.cmd .. (o.needs and " …" or ""), from = o.from, index = o.index,
+                            cwd = o.cwd, why = o.why, detail = o.detail }
     end
     return items
   end,
@@ -1408,6 +1416,10 @@ picker.source("compile", {
     if item.why ~= "" then
       lines[#lines + 1] = ""
       lines[#lines + 1] = item.why
+    end
+    if #item.detail > 0 then
+      lines[#lines + 1] = ""
+      for _, l in ipairs(item.detail) do lines[#lines + 1] = l end
     end
     return { title = item.text, lines = lines }
   end,

@@ -397,6 +397,74 @@ fn a_bare_compile_runs_what_the_project_offers() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A `build.nu` used as a module (docs/design/compile.md Decision 6):
+/// each `export def` offered, one wanting an argument skipped by a bare
+/// `:compile` and put in the prompt by the picker, the caret inside the
+/// quote where the argument goes.
+#[cfg(unix)]
+#[test]
+fn a_build_nu_command_wanting_arguments_goes_to_the_prompt() {
+    if std::process::Command::new("nu")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("no nu on PATH: skipped");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kawoosh-compile-nu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    std::fs::write(
+        dir.join("build.nu"),
+        "# Ships it.\nexport def deploy [\n  host: string # where to\n  --dry (-n)\n] { print $\"to ($host)\" }\n\nexport def hello [] { print 'hi' }\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("a.txt"), "x\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&dir.join("a.txt"));
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "compile?");
+    let m = app.ed.message.clone();
+    assert!(
+        m.starts_with("nu -c 'use build.nu; build hello' (") && m.ends_with("build.nu)"),
+        "{m}"
+    );
+    ex(&mut d, &mut app, "compile pick");
+    d.frame(&mut app);
+    assert_eq!(
+        app.compile.offer[0].cmd,
+        "nu -c 'use build.nu; build deploy'"
+    );
+    assert!(app.compile.offer[0].needs);
+    assert_eq!(app.compile.offer[0].why, "Ships it.");
+    assert_eq!(app.compile.offer[0].detail.len(), 4);
+    // `<CR>` on it: the prompt, the caret before the closing quote.
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(!app.compile.running, "not run bare");
+    d.keys(&mut app, "box");
+    d.key(&mut app, "enter", KeyMods::default());
+    for _ in 0..500 {
+        d.frame(&mut app);
+        if !app.compile.running && app.compile.buffer.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let text = app.ed.buffers[app.compile.buffer.expect("it ran")].text();
+    assert!(
+        text.contains("$ nu -c 'use build.nu; build deploy box'") && text.contains("to box"),
+        "{text}"
+    );
+    assert_eq!(app.compile.cwd.as_deref(), Some(dir.as_path()));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `<C-c>` in `*compile*` stops the compile — the shell and what it
 /// started, a grandchild holding the output open included — and once
 /// it is done the key is `normal`'s again.
