@@ -2138,8 +2138,9 @@ then breadth.
     a hue per token, the sixteen); `theme.dark` and `theme.light` a
     variant for each base apart from `theme.name`'s family; `:theme`
     (`toggle`, `system`, `dark`/`light [NAME]`, a family, `reset`) and
-    `<leader>o` (`ot` `os` `oo`); `:themes`, a pane of cards each drawn
-    in its own colours, over the `kawoosh.themes` door.~~ Built
+    `<leader>o` (`ot` `os` `oo`); `:themes`, a column of cards each
+    drawn in its own colours, over the `kawoosh.themes` door; a style
+    per token beside its hue, `tokens.styles` over it.~~ Built
     2026-09-26.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),

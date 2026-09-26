@@ -383,7 +383,7 @@ objects, or any other character on both sides.
 | `<leader>e1`…`9` `<A-1>`…`9` | open the workspace's Nth pin |
 | `<leader>?` | the which-key for every first key (`:keys`) |
 | `<leader>ot` `<leader>os` | the other base, dark for light and light for dark (`theme toggle`); the base the OS's again (`theme system`) — the session's `theme.appearance` ([themes.md](themes.md)) |
-| `<leader>oo` | the themes' pane (`:themes`): every theme a card in its own colours, the dark ones and the light ones apart; `⏎` or a click puts the cursor's card in its half (`theme.dark`, `theme.light`), `h` `j` `k` `l` walk, `t` `s` as above, `y` copies the line that keeps the pick, `q` closes |
+| `<leader>oo` | the themes' pane (`:themes`), a column of its own: every theme a card in its own colours, the dark ones and the light ones apart; `⏎` or a click puts the cursor's card in its half (`theme.dark`, `theme.light`), `h` `j` `k` `l` walk (the card scrolled into view), `t` `s` as above, `y` copies the line that keeps the pick, `q` closes |
 | `<leader>Q` | quit all |
 | `-` | oil: the file's directory |
 | `_` | oil: the working directory's listing, from anywhere (`:dir .`) |
