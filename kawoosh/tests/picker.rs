@@ -841,7 +841,7 @@ fn resume_sessions_and_a_plugins_own_source() {
 /// `<A-p>` hides the preview and shows it again, `<A-w>` folds a long
 /// row's text so the whole path shows — both settings, for the
 /// session; and `<leader>tt` lists the bundled tools, with `compile`
-/// among them once `compile.command` is set.
+/// among them once `compile.default` is set.
 #[test]
 fn scrolling_wrapping_the_preview_and_the_tools() {
     let _serial = serial();
@@ -1150,7 +1150,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     );
     assert!(!r.contains(&"compile".to_string()), "{r:?}");
     d.ctrl(&mut app, "c");
-    app.run_lua_source("t", r#"kawoosh.opt("compile.command", "cargo test")"#);
+    app.run_lua_source("t", r#"kawoosh.opt("compile.default", "cargo test")"#);
     d.frame(&mut app);
     d.keys(&mut app, " tt");
     d.frame(&mut app);

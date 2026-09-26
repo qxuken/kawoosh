@@ -347,7 +347,7 @@ objects, or any other character on both sides.
 | `<leader>bD` | delete the buffer, discarding its unsaved changes (`:bd!`) |
 | `<leader>bn` `<leader>bp` | next, previous buffer |
 | `<leader>tn` `<leader>tq` | a new tab, close the tab |
-| `<leader>tt` | the tools (`kawoosh.tool`, and `settings.lua`'s `tools` table), as a picker: `git` (lazygit), `top`, `shell`, `compile` and `run` from `compile.command` and `run.command` |
+| `<leader>tt` | the tools (`kawoosh.tool`, and `settings.lua`'s `tools` table), as a picker: `git` (lazygit), `top`, `shell`, `compile` and `run` from `compile.default` and `run.command` |
 | `<leader>f` | the files git sees under the working directory, as a picker |
 | `<leader>g` | grep the project: `rg` run on the query as it is typed |
 | `<leader>sf` `<leader>sg` | the same two from the file's directory — a listing's own in `dir` (`:picker files here`, `:picker grep here`) |
@@ -363,7 +363,8 @@ objects, or any other character on both sides.
 | `<leader>sd` `<C-S-z>` | the directory jumps (`picker dirs`): zoxide's directories by frecency (the memory's without it); `<CR>` makes one the working directory, `<C-o>` lists it in `dir` and leaves the working directory, `<C-v>` `<C-s>` `<C-t>` list it in a split or a tab; a shell asks the same picker with `kawoosh pick dirs` |
 | `<leader>sl` | the memory's ring (`:memory recent`): where was I — every subject attended in this workspace, in order, newest first |
 | `<leader>ws` `<leader>wr` | save, restore the session |
-| `<leader>cc` | compile; in `*compile*` while it runs, `<C-c>` stops it, and what it started (`:compile kill`) — done, the key is `normal`'s again |
+| `<leader>cc` | compile: `compile.default` (a name of `compile.commands`, or a command; `%` the file), else the command last compiled here (the memory's, across launches), else the first the project's files offer — `Cargo.toml`, `package.json`, a justfile, a `build.nu`, a Makefile, ranked by the file's language server ([compile.md](compile.md)); in `*compile*` while it runs, `<C-c>` stops it, and what it started (`:compile kill`) — done, the key is `normal`'s again |
+| `<leader>cC` | what the project can compile in a picker: `compile.default`, the named `compile.commands`, the lines run here, every script, recipe and target its files offer, what said so beside each; `<CR>` runs it (`:compile pick`), or — when it wants arguments, as a `build.nu` def or a recipe with a parameter without a default — puts it in the prompt with the caret where they go; `<C-e>` does that for any row (`:compile edit N`) |
 | `<leader>ca` | the code actions at the caret (or over the selection) in a picker: searched by title, the kind beside it, what taking one does as the preview — its edit as a diff, a command it runs; `<CR>` takes it (`:lsp action N` runs the Nth, `kawoosh.lsp.actions()`) |
 | `<leader>cF` | format the buffer through its server |
 | `<leader>cI` | inlay hints on or off for the session (`lsp.inlay_hints`), drawn in the line, faint |

@@ -848,7 +848,7 @@ mod tests {
                     "/repo/.kawoosh".into(),
                     tbl(&[
                         ("tabstop", Setting::Int(8)),
-                        ("compile.command", Setting::Str("make".into())),
+                        ("compile.default", Setting::Str("make".into())),
                     ]),
                 ),
                 (
@@ -859,7 +859,7 @@ mod tests {
         );
         assert_eq!(s.int("tabstop"), Some(3), "the innermost project file wins");
         assert_eq!(
-            s.str("compile.command"),
+            s.str("compile.default"),
             Some("make"),
             "the outer one's other keys stay"
         );
@@ -877,7 +877,7 @@ mod tests {
         // Leaving the project keeps what was typed.
         s.replace(Layer::Project, vec![]);
         assert_eq!(s.int("tabstop"), Some(1));
-        assert_eq!(s.str("compile.command"), None);
+        assert_eq!(s.str("compile.default"), None);
         s.unset(Layer::Session, "tabstop");
         assert_eq!(
             s.int("tabstop"),

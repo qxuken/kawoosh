@@ -1023,12 +1023,17 @@ impl Kawoosh {
             // compile with the command it ran.
             "tool" => {
                 if key.subject == "compile" {
-                    let cmd: Option<String> = serde_json::from_str::<serde_json::Value>(meta)
-                        .ok()
-                        .and_then(|m| m.get("cmd")?.as_str().map(str::to_string));
-                    match cmd {
-                        Some(c) => self.compile(&c),
-                        None => self.ed.message = "the compile's command is not remembered".into(),
+                    let meta = serde_json::from_str::<serde_json::Value>(meta).ok();
+                    let field = |k: &str| {
+                        meta.as_ref()
+                            .and_then(|m| m.get(k)?.as_str().map(str::to_string))
+                    };
+                    match (field("cmd"), field("cwd")) {
+                        (Some(c), Some(cwd)) => self.compile_in(&c, PathBuf::from(cwd)),
+                        (Some(c), None) => self.compile(&c),
+                        (None, _) => {
+                            self.ed.message = "the compile's command is not remembered".into()
+                        }
                     }
                 } else {
                     let name = key.subject.clone();

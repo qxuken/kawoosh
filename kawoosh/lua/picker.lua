@@ -1387,6 +1387,50 @@ picker.source("actions", {
   empty = "no action matches",
 })
 
+-- What the project can compile (`<leader>cC`, `compile pick`,
+-- docs/design/compile.md Decisions 3, 6 and 7): `compile.default`, the
+-- named `compile.commands`, the lines run here, and the commands its
+-- files offer — the name and command, what said so beside it (`…` when
+-- it wants arguments), the preview where it runs,
+-- why and how it is declared; `⏎` runs it (`compile pick N`), or puts
+-- one wanting arguments in the prompt to finish, as `<C-e>` does any
+-- (`compile edit N`). The rows are what `kawoosh.compile_offer()` says.
+picker.source("compile", {
+  title = "compile", placeholder = "a command · <C-e> adds arguments first",
+  keys = { ["<C-e>"] = function(item)
+    if not item then return end
+    picker.close()
+    kawoosh.run("compile edit " .. item.index)
+  end },
+  columns = {
+    { "text", grow = true },
+    { "from", muted = true, min = 90, max = 240, share = 0.3 },
+  },
+  items = function()
+    local items = {}
+    for _, o in ipairs(kawoosh.compile_offer() or {}) do
+      local text = (o.name and (o.name .. "  ") or "") .. o.cmd .. (o.needs and " …" or "")
+      items[#items + 1] = { text = text, from = o.from, index = o.index, cmd = o.cmd,
+                            cwd = o.cwd, why = o.why, detail = o.detail }
+    end
+    return items
+  end,
+  pick = function(item) kawoosh.run("compile pick " .. item.index) end,
+  preview = function(item)
+    local lines = { "$ " .. item.cmd, "in " .. item.cwd, "from " .. item.from }
+    if item.why ~= "" then
+      lines[#lines + 1] = ""
+      lines[#lines + 1] = item.why
+    end
+    if #item.detail > 0 then
+      lines[#lines + 1] = ""
+      for _, l in ipairs(item.detail) do lines[#lines + 1] = l end
+    end
+    return { title = item.text, lines = lines }
+  end,
+  empty = "no command matches",
+})
+
 -- `:picker [SOURCE]`: bare, the smart one.
 kawoosh.command("picker", function(ctx)
   picker.open(ctx.args[1] or "smart")

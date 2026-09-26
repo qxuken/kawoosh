@@ -9,7 +9,7 @@
 --
 -- The defaults: `git` (lazygit at the working directory), `top`,
 -- `shell` (`$SHELL` at the working directory), and — while the
--- settings name them — `compile` (`compile.command` in a terminal, for
+-- settings name them — `compile` (`compile.default` in a terminal, for
 -- an interactive run of what `:compile` streams into a buffer) and
 -- `run` (`run.command`, `cargo run` say). `settings.lua`'s `tools`
 -- table adds or replaces by name:
@@ -43,14 +43,27 @@ local function register(name, def)
   kawoosh.tool(name, { cmd = def.cmd, cwd = def.cwd, dock = def.dock, restore = def.restore })
 end
 
+-- kawoosh.compile_default(): `compile.default` as a command line — a
+-- name of `compile.commands` made its command, the line's other words
+-- after it — or nil. Nil too when it has a `%`: a terminal has no file
+-- to put there, so the `compile` tool is for a line without one.
+function kawoosh.compile_default()
+  local line = kawoosh.opt("compile.default")
+  if type(line) ~= "string" or line == "" then return nil end
+  local word, rest = line:match("^%s*(%S+)%s*(.-)%s*$")
+  local named = (kawoosh.opt("compile.commands") or {})[word]
+  if type(named) == "table" then named = named.cmd end
+  if type(named) == "string" then line = rest ~= "" and (named .. " " .. rest) or named end
+  if line:find("%", 1, true) then return nil end
+  return line
+end
+
 -- kawoosh.tools_sync(): the tools as the settings have them now — the
 -- defaults, the two the settings name, and the `tools` table.
 function kawoosh.tools_sync()
   for name, def in pairs(DEFAULTS) do register(name, def) end
-  local compile = kawoosh.opt("compile.command")
-  if type(compile) == "string" and compile ~= "" then
-    register("compile", { cmd = compile, cwd = "root" })
-  end
+  local compile = kawoosh.compile_default()
+  if compile then register("compile", { cmd = compile, cwd = "root" }) end
   local run = kawoosh.opt("run.command")
   if type(run) == "string" and run ~= "" then
     register("run", { cmd = run, cwd = "root" })

@@ -2085,7 +2085,7 @@ pub fn install(ed: &mut Editor) {
             .doc("set an option for the session (PATH=VALUE, +FLAG, -FLAG, PATH?, PATH!)"),
         |ed, ctx| {
             // One setting per line: what follows a `=` is the value, spaces
-            // and all (`:set compile.command=cargo test`).
+            // and all (`:set compile.default=cargo test`).
             let a = ctx.args.join(" ");
             if a.is_empty() {
                 ed.message = "set what? (:set PATH=VALUE, :set PATH?)".into();
@@ -3437,6 +3437,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>ws", "session save"),
         ("<leader>wr", "session restore"),
         ("<leader>cc", "compile"),
+        ("<leader>cC", "compile pick"),
         ("<leader>ca", "lsp action"),
         ("<leader>cF", "lsp format"),
         ("<leader>cr", "markdown toggle"),

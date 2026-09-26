@@ -58,7 +58,7 @@ fn tree(tag: &str) -> Tree {
     std::fs::remove_dir_all(other.join(PROJECT_DIR)).unwrap();
     std::fs::write(
         root.join(PROJECT_DIR).join(SETTINGS_FILE),
-        "return { tabstop = 8, compile = { command = 'make' }, lsp = { rust = { roots = { 'Cargo.toml' } } } }",
+        "return { tabstop = 8, compile = { default = 'make' }, lsp = { rust = { roots = { 'Cargo.toml' } } } }",
     )
     .unwrap();
     std::fs::write(
@@ -116,7 +116,7 @@ fn layers_merge_in_order_and_a_cd_swaps_the_project() {
     app.set_cwd(&t.sub);
     d.frame(&mut app);
     assert_eq!(app.ed.tabstop(), 3);
-    assert_eq!(app.ed.settings.str("compile.command"), Some("make"));
+    assert_eq!(app.ed.settings.str("compile.default"), Some("make"));
     assert_eq!(
         app.ed.settings.get("lsp.rust.roots").map(|v| v.to_string()),
         Some(r#"{ "Cargo.toml" }"#.into()),
@@ -172,18 +172,18 @@ fn layers_merge_in_order_and_a_cd_swaps_the_project() {
         Some("session")
     );
     // The value is shaped like what is there: a number stays one.
-    ex(&mut d, &mut app, "set compile.command=cargo test");
-    assert_eq!(app.ed.settings.str("compile.command"), Some("cargo test"));
+    ex(&mut d, &mut app, "set compile.default=cargo test");
+    assert_eq!(app.ed.settings.str("compile.default"), Some("cargo test"));
 
     // Out of the project: its layer goes, the session's stays.
     app.set_cwd(&t.other);
     d.frame(&mut app);
     assert_eq!(app.ed.tabstop(), 1);
-    assert_eq!(app.ed.settings.str("compile.command"), Some("cargo test"));
+    assert_eq!(app.ed.settings.str("compile.default"), Some("cargo test"));
     ex(&mut d, &mut app, "set tabstop!");
-    ex(&mut d, &mut app, "set compile.command!");
+    ex(&mut d, &mut app, "set compile.default!");
     assert_eq!(app.ed.tabstop(), 2, "the user's again");
-    assert_eq!(app.ed.settings.str("compile.command"), None);
+    assert_eq!(app.ed.settings.str("compile.default"), None);
     ex(&mut d, &mut app, "set tabstop?");
     assert_eq!(
         app.ed.message,
@@ -198,17 +198,17 @@ fn layers_merge_in_order_and_a_cd_swaps_the_project() {
     assert_eq!(app.ed.tabstop(), 8);
     assert!(app.ed.settings.get("lsp.rust.args").is_none());
 
-    // `:compile` bare runs the project's command.
+    // `:compile` bare runs the project's default.
     ex(&mut d, &mut app, "compile");
     assert!(
         app.ed.buffers.values().any(|b| b.name == "*compile*"),
-        "compile.command ran"
+        "compile.default ran"
     );
 
     // The command line completes the tree's paths, a sign and `=`
     // aside — and a path that starts with `no` as itself.
     d.keys(&mut app, ":set comp");
-    assert_eq!(app.cmdline_ghost().as_deref(), Some("ile.command"));
+    assert_eq!(app.cmdline_ghost().as_deref(), Some("ile.default"));
     d.key(&mut app, "escape", KeyMods::default());
     d.keys(&mut app, ":set -exp");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("andtab"));
@@ -300,7 +300,7 @@ fn a_saved_config_file_reloads_its_layer() {
     .unwrap();
     until(&mut d, &mut app, "project file", |a| a.ed.tabstop() == 9);
     assert_eq!(
-        app.ed.settings.str("compile.command"),
+        app.ed.settings.str("compile.default"),
         Some("make"),
         "the outer file is still there"
     );
@@ -487,7 +487,7 @@ fn the_settings_tab_shows_the_layers_and_opens_a_file() {
         has(&rel("project: repo/.kawoosh/settings.lua")),
         "{texts:?}"
     );
-    assert!(has("compile.command") && has(r#""make""#), "{texts:?}");
+    assert!(has("compile.default") && has(r#""make""#), "{texts:?}");
     assert!(has("session"), "the effective tabstop names its layer");
     let top = texts.iter().position(|t| t.contains("session — ")).unwrap();
     let bottom = texts.iter().position(|t| t.contains("default — ")).unwrap();
@@ -1043,7 +1043,7 @@ fn an_undeclared_key_is_named_once_and_the_types_know_the_rest() {
         r##"---@type kawoosh.Settings
 return {
   tabstop = 2,
-  compile = { comand = "make" },
+  compile = { comand = "make", command = "make" },
   run = { command = "cargo run" },
   dirs = { backend = "memory" },
   tools = { anything = "goes" },
@@ -1071,6 +1071,14 @@ return {
             rel(".kawoosh/settings.lua")
         )]
     );
+    assert!(
+        app.notes.shown.iter().any(|n| n.text
+            == format!(
+                "`compile.command` is now `compile.default` ({})",
+                rel(".kawoosh/settings.lua")
+            )),
+        "the renamed key says where it went"
+    );
     // Again, a reload later: not said twice.
     app.reload_project_settings();
     d.frame(&mut app);
@@ -1081,7 +1089,8 @@ return {
         "---@class kawoosh.Settings",
         "---@field tabstop? integer",
         "---@class kawoosh.Settings.compile",
-        "---@field command? string what a bare `:compile` runs",
+        "---@field default? string what a bare `:compile` runs",
+        "---@field commands? table<string, any>",
         "---@field backend? \"auto\"|\"zoxide\"|\"memory\" where the directory jumps come from",
         "---@class kawoosh.Settings.theme\n---@field [string] any",
     ] {

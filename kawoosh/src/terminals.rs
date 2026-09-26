@@ -96,7 +96,8 @@ pub(crate) enum TermScroll {
 /// A `path[:line[:col]]` in `text` around byte `at` — rustc, tsc, grep
 /// and shell spellings. Extensible from Lua later (Decision 5c).
 pub fn location_at(text: &str, at: usize) -> Option<(String, Option<usize>, Option<usize>)> {
-    let token = &text[location_span(text, at)?];
+    let span = location_span(text, at)?;
+    let token = &text[span.clone()];
     // A drive's colon (`C:\x`) is the path's, not a line's.
     let drive = token
         .as_bytes()
@@ -107,7 +108,23 @@ pub fn location_at(text: &str, at: usize) -> Option<(String, Option<usize>, Opti
     let path = format!("{}{}", &token[..drive], parts.next()?);
     let line = parts.next().and_then(|s| s.parse().ok());
     let col = parts.next().and_then(|s| s.parse().ok());
+    if line.is_none()
+        && let Some((l, c)) = paren_position(&text[span.end..])
+    {
+        return Some((path, Some(l), c));
+    }
     Some((path, line, col))
+}
+
+/// `(3,5)` or `(3)` right after a path — how `tsc` and MSVC print a
+/// place (docs/design/compile.md Decision 5).
+fn paren_position(after: &str) -> Option<(usize, Option<usize>)> {
+    let (inner, _) = after.strip_prefix('(')?.split_once(')')?;
+    let (l, c) = match inner.split_once(',') {
+        Some((l, c)) => (l, Some(c.trim().parse().ok()?)),
+        None => (inner, None),
+    };
+    Some((l.trim().parse().ok()?, c))
 }
 
 /// Where in `text` the location [`location_at`] reads at byte `at` is:
@@ -1033,6 +1050,19 @@ mod tests {
         assert_eq!(
             location_at("at C:\\work\\a.rs:3 here", 6),
             Some(("C:\\work\\a.rs".into(), Some(3), None))
+        );
+        // tsc's and MSVC's parentheses.
+        assert_eq!(
+            location_at("src/a.ts(3,5): error TS2322: no", 2),
+            Some(("src/a.ts".into(), Some(3), Some(5)))
+        );
+        assert_eq!(
+            location_at("main.c(12): warning C4996", 2),
+            Some(("main.c".into(), Some(12), None))
+        );
+        assert_eq!(
+            location_at("see a.ts (the file)", 5),
+            Some(("a.ts".into(), None, None))
         );
     }
 }

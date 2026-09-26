@@ -16,6 +16,7 @@ pub mod cmdline;
 pub mod commands;
 pub mod compile;
 pub mod confirm;
+pub mod deduce;
 pub mod devtab;
 pub mod diff;
 pub mod disk;

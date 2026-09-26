@@ -555,7 +555,7 @@ that holds it is a Lua table, not a Lua program**:
 -- ~/.config/kawoosh/settings.lua, or <project>/.kawoosh/settings.lua
 return {
   tabstop = 2,
-  compile = { command = "cargo test" },
+  compile = { default = "cargo test" },
   lsp = { rust = { roots = { "Cargo.toml" }, args = { "-v" } } },
 }
 ```
@@ -595,7 +595,7 @@ again; `:set PATH?` says the value and its origin (`project:
 repo/.kawoosh/settings.lua`). `init.lua` runs after the user's file, so
 code can read what data said; what it sets lands in the user layer
 under the project's files, which is what makes a project file an
-*override*. `:compile` with no argument runs `compile.command` — the
+*override*. `:compile` with no argument runs `compile.default` — the
 setting a project file is there to set.
 
 **The leader is a setting** (`leader = ","`), and a map keeps

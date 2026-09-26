@@ -243,6 +243,11 @@ impl Moments {
         self.delta(key).visits += 1;
     }
 
+    /// The meta pending for `key`, not yet flushed.
+    pub fn pending_meta(&self, key: &MomentKey) -> Option<String> {
+        self.pending.borrow().deltas.get(key)?.meta.clone()
+    }
+
     /// A subject known, with nothing counted: its row exists after the
     /// next flush.
     pub fn touch(&mut self, key: MomentKey) {

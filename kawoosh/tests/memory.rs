@@ -1028,6 +1028,16 @@ fn runs_are_remembered_as_tools_and_locations() {
         "the command: {}",
         compile.meta
     );
+    // Flushed, a bare `:compile` reads it back from the store — the
+    // command compiled last here, again, the next launch as well.
+    ex(&mut d, &mut app, "compile?");
+    assert!(
+        app.ed
+            .message
+            .starts_with("printf 'error at src/a.rs:3:1 boom\\n'; exit 1 (again"),
+        "{}",
+        app.ed.message
+    );
     // A tool: its row, and the terminal's dwell to it.
     lua(
         &mut app,
