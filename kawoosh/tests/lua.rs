@@ -2593,12 +2593,8 @@ fn the_lua_types_are_written_for_the_language_server() {
     let kui = std::fs::read_to_string(dir.join("kui.lua")).unwrap();
     assert!(kui.starts_with("---@meta kui"));
     assert!(kui.contains("function row(t) end"));
-    let def = app
-        .scripting
-        .servers
-        .iter()
-        .find(|s| s.language == "lua")
-        .unwrap();
+    // What the pool runs: the config's definition with the library.
+    let def = app.lsp.defs.iter().find(|s| s.language == "lua").unwrap();
     assert_eq!(def.settings["Lua"]["hint"]["enable"], true, "theirs kept");
     assert_eq!(
         def.settings["Lua"]["workspace"]["library"][0],
@@ -2613,12 +2609,8 @@ fn the_lua_types_are_written_for_the_language_server() {
     )
     .unwrap();
     app.run_lua_file(&again);
-    let def = app
-        .scripting
-        .servers
-        .iter()
-        .find(|s| s.language == "lua")
-        .unwrap();
+    // What the pool runs: the config's definition with the library.
+    let def = app.lsp.defs.iter().find(|s| s.language == "lua").unwrap();
     assert_eq!(
         def.settings["Lua"]["workspace"]["library"][0],
         dir.display().to_string(),

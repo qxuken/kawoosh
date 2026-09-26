@@ -50,15 +50,12 @@ impl Kawoosh {
             .and_then(|v| self.ed.buffer_of(v).path.clone())
             .map(|p| {
                 let def = kawoosh_systems::lsp::ServerDef {
-                    language: String::new(),
-                    command: String::new(),
-                    args: vec![],
                     roots: vec![
                         "Cargo.toml".into(),
                         "package.json".into(),
                         "Makefile".into(),
                     ],
-                    settings: Default::default(),
+                    ..Default::default()
                 };
                 kawoosh_systems::lsp::workspace_root(&p, &def)
             })

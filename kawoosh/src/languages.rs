@@ -91,6 +91,8 @@ impl Kawoosh {
         );
         let name = def.name.clone();
         self.ts.add_language(def, grammar);
+        // Its files are what `load_all` sends its server.
+        self.lsp.rules_seen = None;
         let mut resend = Vec::new();
         for (id, b) in self.ed.buffers.iter_mut() {
             if *b.language == *name {
