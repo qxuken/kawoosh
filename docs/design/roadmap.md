@@ -2179,7 +2179,13 @@ then breadth.
     compile read from the memory's `tool` row, so it holds across
     launches; `build.nu` as a script (`main`, `main SUB`) or a module
     (`export def`), a command wanting arguments put in the prompt with
-    the caret where they go, `<C-e>` for any.
+    the caret where they go, `<C-e>` for any. Round three: `compile.default`
+    (was `compile.command`) and `compile.commands` — `:compile NAME
+    [ARGS]`, `args = true`, a `cwd` relative to its project —
+    `compile.deduce`, `%` from the command's directory, the last ten
+    lines run kept exactly and offered again, npm's `--`, `<Tab>` over
+    names and paths, `kawoosh.project` and a many-part `kawoosh.fs.join`
+    for a trusted `init.lua`.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),

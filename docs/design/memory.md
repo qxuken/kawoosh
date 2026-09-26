@@ -45,7 +45,7 @@ jumped to — `]q` `[q` and `<CR>` on a listing's line, a server's
 definition — with `meta.from` (the listing's name, `definition`) and
 `meta.message` (the line that named it, two hundred characters at
 most); a `tool` row per `:tool NAME` (run or focused again) and per
-`kawoosh.compile` (`compile`, with `meta.cmd`); a terminal pane's
+`kawoosh.compile` (`compile`, with `meta.cmd`, and `meta.recent` the last ten lines run with their directories — compile.md Decision 7); a terminal pane's
 dwell to its tool's row while it is a tool's; `⏎` on either in the
 pane opens the file at the line or runs the tool again; and a run's
 row goes at thirty days whatever `memory.keep_days` says

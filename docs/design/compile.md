@@ -4,7 +4,10 @@ Status: written 2026-09-26 from the user's ask — "compile commands
 deductions from lsp's, maybe some heuristics like cargo project or
 package.json files", and then "makefiles/justfiles as well"; round two
 the same day, "let's read the memory" and "i also sometimes make
-build.nu files with arguments" (Decisions 2 and 6). The calls
+build.nu files with arguments" (Decisions 2 and 6); round three,
+from "propose a way to pass arguments. i often use `yarn pw
+...some-project-path`" and "we probably need custom compile commands
+that i can call", shaped over three exchanges (Decision 7). The calls
 below are taken here, each the user's to overturn. Amends mvp.md
 Decision 5c (compile mode), whose `:compile` ran what it was told or
 `compile.command`, and said "compile what?" otherwise.
@@ -73,7 +76,8 @@ runs anything; a deducer registry waits for a second use.
 
 ### 2. A bare `:compile` runs the project's word, else again, else the first
 
-1. `compile.command`, when the settings say one — the project's word.
+1. `compile.default`, when the settings say one — the project's word
+   (`compile.command` before round three; Decision 7).
 2. Else the command last compiled in this workspace — typed, picked or
    deduced: `:compile cargo test`, then `<leader>cc`, tests again;
    emacs's `recompile`. **Read from the memory** (round two): the
@@ -90,8 +94,9 @@ runs anything; a deducer registry waits for a second use.
 
 ### 3. `:compile pick` (`<leader>cC`) lists them
 
-A picker of the setting's command, the last one run here, and every
-deduced one, deduplicated: the command, what said so (`Cargo.toml`,
+A picker of `compile.default`, the named `compile.commands`, the lines
+run here (newest first; Decision 7), and every deduced one, a command
+listed once: the command, what said so (`Cargo.toml`,
 `web/package.json`) muted beside it, the preview its directory, its
 why (the script's body, the recipe's comment) and how it is declared
 (a `def`'s signature, a recipe's line). `<CR>` runs it (`:compile pick
@@ -144,9 +149,103 @@ the file's text says it. A row per flag or per completion of a
 parameter (`entry: string@examples`) — too many rows, and the
 completer is code.
 
+### 7. Commands by name, `%`, and the lines run
+
+**The settings name commands.** `compile` is a closed table of options
+and one open table of the user's commands:
+
+```lua
+compile = {
+  default = "pw",                   -- a :compile line: a name, or a command
+  commands = {
+    pw = "yarn pw %",               -- a string is its command
+    e2e = { cmd = "yarn pw", args = true, doc = "a path to finish" },
+    web = { cmd = "yarn build", cwd = "apps/web" },
+  },
+  deduce = true,                    -- Decision 1's files read; on unless false
+}
+```
+
+- **`:compile NAME [ARGS]`** runs `NAME`'s command with the words after
+  it appended — `:compile e2e e2e/login.spec.ts` is `yarn pw
+  e2e/login.spec.ts`. Names first: a name hides a program of the same
+  name, since the user wrote it; `pick`, `edit` and `kill` are the
+  command's own. `kawoosh.compile(line)` reads a line the same way.
+- **`compile.default`** is a line, not a command: `"pw"` is `:compile
+  pw`, `"cargo build --workspace"` itself. It sits beside `commands`,
+  not in it — a setting of compile mode, not one of the commands.
+- **`args = true`**: called with nothing after it, the command is not
+  run but put in the prompt, `:compile e2e ` with the caret at its end.
+- **`cwd`**: a relative one is the project's whose `.kawoosh/settings.lua`
+  said it, joined in Rust; from the user's file or `:set`, the caret's
+  project's (its `.kawoosh`, else its repository). Without one, where its
+  program's kind runs (Decision 4).
+- **Why a table inside the table**: step 34's declared settings flag a
+  misspelt key (`compile = { comand = … }`) and give the language
+  server its types. A table of the user's names has to be open — any
+  key goes — so commands straight in `compile` would open it all, and
+  a command named `deduce` would be an option. `compile` stays closed;
+  `commands` is the one open table (`table<string, any>` to LuaLS).
+- **`compile.command` is gone**, not aliased: a file still setting it is
+  told `compile.command is now compile.default` (the undeclared-key
+  toast, worded as a move). This repository's `.kawoosh/settings.lua`,
+  the `compile` tool (`tools.lua`, `kawoosh.compile_default()`: the
+  default made a command line; none when it has a `%`, which a terminal
+  has no file for) and the tests moved with it.
+
+**`%` is the file, from where the command runs.** As `:!` has it
+(`%`, `%:h`, `%:t`, `%%` a `%`, each quoted), but a path under the
+command's directory is written from there: in `apps/web`, `%` from
+`apps/web/e2e/login.spec.ts` is `'e2e/login.spec.ts'` — what a test
+runner filters by and what reads in the header. Put in when the line
+runs, so `pw = "yarn pw %"` is always *the file I'm in*; a `%` with no
+file (in `*compile*`) says so and runs nothing.
+
+**The lines run are kept, exactly.** The memory's `tool` row for the
+compile (Decision 2) holds the last ten lines run in the workspace with
+their directories, newest first, as they ran — `%` put in, the name's
+command spelled out. A bare `:compile` runs the first again: after
+`:compile pw` from a spec, `<leader>cc` from the code under test runs
+*that spec*, not `yarn pw src/Button.tsx`. The two meanings stay apart
+without a switch: the setting is a template, the memory a record. The
+picker lists the lines after the named commands, `last run here` then
+`recent`; a line that is a named command's is listed once.
+
+**npm's `--`**: `npm run pw path` gives `path` to npm, not the script,
+so arguments after an `npm run X` go past a `--` — appended to a name,
+and in the prompt `<C-e>` opens; yarn, pnpm and bun pass them on.
+
+**`<Tab>` after `:compile `** completes the names, then paths from the
+directory the line will run in — `:compile pw e2e/lo` in `apps/web`
+from anywhere.
+
+**A trusted `init.lua` says where in code.** `settings.lua` is data (no
+`kawoosh` in its sandbox); a project's `init.lua`, once trusted, has the
+API and writes the same project layer with `kawoosh.opt`. It is told
+where it lives — `kawoosh.project` is `{ root, dir }` while it runs,
+nil after, so it is captured at the top — and `kawoosh.fs.join` takes
+any number of parts:
+
+```lua
+local root = kawoosh.project.root
+kawoosh.opt("compile.commands.web", {
+  cmd = "yarn build",
+  cwd = kawoosh.fs.join(root, "apps", "web"),
+})
+```
+
+Beaten: `compile.commands.default` (the default is compile mode's, not
+a command's); commands straight in `compile` (above); `@name` to call
+one (names first reads better; a hidden program is the user's own
+doing); a row per argument set in the settings (the recent lines are
+that, unwritten); a second picker for the path (completion and `%`
+are fewer keys).
+
 ## Not built
 
 - rust-analyzer's runnables as a kind (the test at the caret).
 - A deducer registry for plugins (Decision 1's beaten).
 - Other nushell files than `build.nu` (a `toolkit.nu`, nushell's own
   habit), and a parameter's completer offered in the prompt.
+- `run.command` as a `tools` entry: the same shape question as
+  `compile.command`, left for its own round.
