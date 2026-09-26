@@ -127,9 +127,32 @@ monospaced first), a family kui cannot see saying so. `font bigger`,
 `smaller`, `reset` are as they were. `:set font.family ` completes the
 same way (the step before this one), monospaced first.
 
+### 6. Nerd Fonts' symbols ship as the icons' fallback
+
+Asked the same day ("add fallback nerd icons font … should be put
+inside a repo under LFS"): Nerd Fonts' Symbols Only (v3.5.1, its
+`Symbols Nerd Font Mono`, 2.6 MB, with its license and readme) is in
+`assets/fonts/NerdFontsSymbolsOnly/` under LFS as Iosevka is, loaded at
+start beside it and shipped in both bundles. No run names it: in the
+font database, it is where a face without an icon's code point finds
+it (checked against cosmic-text with Menlo alone: the icons were
+glyph 0, a box, and with it are the symbols' own). So a prompt's, a
+listing's or a statusline's icons draw on a machine with no Nerd Font
+installed, whatever `font.family` is. The Mono variant, since the
+terminal places every glyph at its cell; in the editor's shaped rows an
+icon is an em wide, not a cell, and a line with one runs past the grid
+by the difference. A family that has its own icons (a patched Nerd
+Font) draws them first.
+
+*Beat:* the proportional `Symbols Nerd Font` beside it — its icons are
+wider than a cell everywhere, and nothing kawoosh draws is proportional
+text that would want them.
+
 ## Built
 
-As decided. kui F97 (`Core::system_fonts`); `look.rs` keeps the
+As decided. kui F97 (`Core::system_fonts`); the symbols in
+`assets/fonts/NerdFontsSymbolsOnly/`, loaded by `main.rs`'s
+`load_fonts`; `look.rs` keeps the
 families and the face as the door has them (`Fonts`), registers what a
 view asked for at the frame, and holds `:font`; `kawoosh/lua/fonts.lua`
 the pane; `kawoosh/lua/theme_lab.lua` the face and its scene. Tests:
