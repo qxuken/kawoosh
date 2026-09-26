@@ -1384,6 +1384,18 @@ impl Editor {
     /// directory, `%:t` its name — put in, each quoted for the shell;
     /// `%%` is a `%`. What `:!CMD` runs.
     pub fn expand_percent(&self, view: ViewId, line: &str) -> Result<String, String> {
+        self.expand_percent_from(view, line, None)
+    }
+
+    /// [`Self::expand_percent`], a path under `base` written from it —
+    /// what a compile running in `base` is given (compile.md Decision
+    /// 7): `e2e/login.spec.ts`, not the whole path; `.` for `base`.
+    pub fn expand_percent_from(
+        &self,
+        view: ViewId,
+        line: &str,
+        base: Option<&Path>,
+    ) -> Result<String, String> {
         let mut out = String::with_capacity(line.len());
         let mut rest = line;
         while let Some(at) = rest.find('%') {
@@ -1407,7 +1419,11 @@ impl Editor {
             } else {
                 (path, rest)
             };
-            let p = path.display().to_string();
+            let p = match base.and_then(|b| path.strip_prefix(b).ok()) {
+                Some(rel) if rel.as_os_str().is_empty() => ".".to_string(),
+                Some(rel) => rel.display().to_string(),
+                None => path.display().to_string(),
+            };
             out.push('\'');
             out.push_str(&p.replace('\'', "'\\''"));
             out.push('\'');

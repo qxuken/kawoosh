@@ -188,6 +188,10 @@ impl Config {
     }
 }
 
+/// Settings that were renamed: a file still setting the old one is told
+/// where it went rather than that it is nobody's.
+const MOVED: [(&str, &str); 1] = [("compile.command", "compile.default")];
+
 /// The settings the shell reads that have no default of their own, and
 /// the tables whose keys are the user's (roadmap step 34): declared so
 /// a settings file may set them, and so the language server's types
@@ -195,7 +199,21 @@ impl Config {
 pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
     use kawoosh_editor::SettingKind as K;
     for (path, kind, doc) in [
-        ("compile.command", K::Str, "what a bare `:compile` runs"),
+        (
+            "compile.default",
+            K::Str,
+            "what a bare `:compile` runs: a `:compile` line, a name of `compile.commands` or a command, `%` the file",
+        ),
+        (
+            "compile.commands",
+            K::Open,
+            "`:compile NAME`'s commands: a command line, or `{ cmd, cwd, args, doc }`",
+        ),
+        (
+            "compile.deduce",
+            K::Bool,
+            "offer what the project's files say it runs (`Cargo.toml`, `package.json`, …); on unless false",
+        ),
         (
             "theme",
             K::Open,
@@ -341,9 +359,11 @@ impl Kawoosh {
                 continue;
             }
             let file = self.short_name(Path::new(&source));
-            self.notify_with(
-                Note::new(Level::Warn, format!("no setting `{path}` ({file})")).source("settings"),
-            );
+            let text = match MOVED.iter().find(|(old, _)| *old == path) {
+                Some((_, new)) => format!("`{path}` is now `{new}` ({file})"),
+                None => format!("no setting `{path}` ({file})"),
+            };
+            self.notify_with(Note::new(Level::Warn, text).source("settings"));
         }
     }
 

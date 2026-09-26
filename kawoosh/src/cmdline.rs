@@ -87,6 +87,25 @@ impl Kawoosh {
                     .map(str::to_string),
             );
         }
+        // `:compile`: its commands' names first, then paths from where
+        // the line will run (compile.md Decision 7).
+        if inv.name == "compile" {
+            if index == 0 {
+                let mut names: Vec<String> = self
+                    .compile_commands()
+                    .into_iter()
+                    .map(|n| n.name)
+                    .filter(|n| n.starts_with(token))
+                    .collect();
+                names.sort();
+                out.extend(names);
+            } else {
+                let dir = self.compile_dir_of(&inv.args.join(" "));
+                out.extend(self.path_candidates_in(token, &dir));
+            }
+            out.dedup();
+            return (start, out);
+        }
         let kind = self
             .ed
             .command_args(&inv.name)
@@ -235,15 +254,20 @@ impl Kawoosh {
     /// `~/projects/`, not to the home's absolute path). A hidden entry
     /// is offered only to a token that starts with `.`.
     fn path_candidates(&self, token: &str) -> Vec<String> {
+        self.path_candidates_in(token, &self.cwd)
+    }
+
+    /// [`Self::path_candidates`] with a relative token read from `base`.
+    fn path_candidates_in(&self, token: &str, base: &Path) -> Vec<String> {
         let cut = token
             .rfind(['/', MAIN_SEPARATOR])
             .map(|i| i + 1)
             .unwrap_or(0);
         let (dir_text, prefix) = token.split_at(cut);
         let dir = if dir_text.is_empty() {
-            self.cwd.clone()
+            base.to_path_buf()
         } else {
-            self.resolve(Path::new(dir_text))
+            kawoosh_doc::paths::expand(Path::new(dir_text), base)
         };
         let Ok(entries) = kawoosh_systems::fs::list(&dir) else {
             return Vec::new();

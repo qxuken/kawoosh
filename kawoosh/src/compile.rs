@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use kawoosh_doc::BufferId;
-use kawoosh_editor::{ArgKind, Args, Selection, Spec, ViewId};
+use kawoosh_editor::{ArgKind, Args, Selection, Setting, Spec, ViewId};
 use kawoosh_lua::CompileOfferSnap;
 use kawoosh_systems::io::{IoMsg, ProcHandle};
 use kawoosh_systems::store::MomentKey;
@@ -22,7 +22,12 @@ use crate::terminals::location_at;
 pub const COMPILE_BUFFER: &str = "*compile*";
 
 /// A bare `:compile` with nothing to run.
-const NOTHING: &str = "compile what? no compile.command, no project file here (:compile CMD)";
+const NOTHING: &str =
+    "compile what? no compile.default, no project file here (:compile CMD, or compile.commands)";
+
+/// How many command lines the memory keeps per workspace (compile.md
+/// Decision 7).
+pub const RECENT: usize = 10;
 
 #[derive(Default)]
 pub struct Compile {
@@ -37,14 +42,33 @@ pub struct Compile {
     pub offer: Vec<Offer>,
 }
 
+/// A command the settings name (`compile.commands.NAME`, compile.md
+/// Decision 7): a string is its `cmd`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Named {
+    pub name: String,
+    pub cmd: String,
+    /// Where it runs, resolved: a relative `cwd` against the project
+    /// whose settings file said it.
+    pub cwd: Option<PathBuf>,
+    /// It wants arguments: called bare, it is put in the prompt.
+    pub args: bool,
+    pub doc: String,
+}
+
 /// A row of `compile pick`: a command, where it runs, and what said so.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Offer {
     pub cmd: String,
     pub cwd: PathBuf,
-    /// `compile.command`, `last run here`, or the file's path.
+    /// `compile.default`, `compile.commands`, `recent`, or the file's path.
     pub from: String,
     pub why: String,
+    /// A `:compile` line resolved when the row is taken — a name, the
+    /// default — so its `%` is the file then; `None` runs `cmd` as it is.
+    pub line: Option<String>,
+    /// The settings' name for it.
+    pub name: Option<String>,
     /// It takes arguments it has no default for: taken, it goes to the
     /// prompt to finish rather than running (compile.md Decision 6).
     pub needs: bool,
@@ -61,31 +85,74 @@ impl Offer {
             cwd,
             from: from.to_string(),
             why: why.to_string(),
+            line: None,
+            name: None,
             needs: false,
             args_at: cmd.len(),
             detail: Vec::new(),
         }
     }
 
-    /// The `:` line that finishes it: `compile CMD ` with the caret where
-    /// its arguments go — inside a `nu -c '…'`'s quote.
+    /// The `:` line that finishes it, and the caret where its arguments
+    /// go: `compile NAME ` for a named one, else `compile CMD ` — inside
+    /// a `nu -c '…'`'s quote, after npm's `--`.
     pub fn prompt(&self) -> (String, usize) {
+        if let Some(name) = &self.name {
+            let line = format!("compile {name} ");
+            let caret = line.len();
+            return (line, caret);
+        }
         let (head, tail) = self.cmd.split_at(self.args_at.min(self.cmd.len()));
-        let line = format!("compile {head} {tail}");
-        (line, "compile ".len() + head.len() + 1)
+        let sep = if tail.is_empty() && npm_wants_dashes(head) {
+            " --"
+        } else {
+            ""
+        };
+        let line = format!("compile {head}{sep} {tail}");
+        (line, "compile ".len() + head.len() + sep.len() + 1)
     }
 }
 
-/// What a bare `:compile` runs (compile.md Decision 2).
+/// Whether arguments after `cmd` need a `--` to reach the script: npm
+/// takes them as its own otherwise; yarn, pnpm and bun pass them on.
+fn npm_wants_dashes(cmd: &str) -> bool {
+    let mut words = cmd.split_whitespace();
+    words.next() == Some("npm")
+        && matches!(words.next(), Some("run" | "run-script"))
+        && !cmd.split_whitespace().any(|w| w == "--")
+}
+
+/// `cmd` with `args` after it — past a `--` for npm's scripts.
+pub fn with_args(cmd: &str, args: &str) -> String {
+    let args = args.trim();
+    if args.is_empty() {
+        cmd.to_string()
+    } else if npm_wants_dashes(cmd) && !args.starts_with("--") {
+        format!("{cmd} -- {args}")
+    } else {
+        format!("{cmd} {args}")
+    }
+}
+
+/// What a bare `:compile` runs (compile.md Decisions 2 and 7).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Bare {
-    /// `compile.command`: the project's word.
-    Setting(String),
+    /// `compile.default`: a `:compile` line — a name, or a command.
+    Default(String),
     /// The command last compiled in this workspace — the memory's — again.
     Again(String, PathBuf),
     /// The first the project's files offer.
     Deduced(Deduced),
     Nothing,
+}
+
+/// What a `:compile` line comes to.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Line {
+    /// Run `cmd` in `cwd`.
+    Run(String, PathBuf),
+    /// A named command wanting arguments, called without: the prompt.
+    Finish(String),
 }
 
 /// The buffer `]q` / `[q` walk: the last list of locations made — a
@@ -129,8 +196,11 @@ impl Kawoosh {
     /// The project around the caret, as its files say (compile.md
     /// Decision 1), ranked by the root markers of the server for the
     /// caret's language — the running table's, else the one it would
-    /// be switched back on.
+    /// be switched back on. Nothing when `compile.deduce` is off.
     pub fn deduce_compile(&self) -> Project {
+        if self.ed.settings.bool("compile.deduce") == Some(false) {
+            return Project::default();
+        }
         let (dir, language) = self.compile_start();
         let markers = language
             .and_then(|l| {
@@ -145,29 +215,155 @@ impl Kawoosh {
         deduce::deduce(&dir, &markers)
     }
 
-    /// The command last compiled in this workspace, and where, as the
-    /// memory keeps it (its `tool` row for `compile`, memory.md): what
-    /// is pending of it first, else the store's — across launches, and
-    /// gone once the row is forgotten.
-    pub fn last_compile(&self) -> Option<(String, PathBuf)> {
+    /// The commands the settings name (`compile.commands`), by name. A
+    /// relative `cwd` is the project's whose `.kawoosh/settings.lua`
+    /// said it; from any other source — the user's file, an `init.lua`,
+    /// `:set` — the caret's project's (its `.kawoosh`, else its
+    /// repository).
+    pub fn compile_commands(&self) -> Vec<Named> {
+        let Some(Setting::Table(t)) = self.ed.settings.get("compile.commands") else {
+            return Vec::new();
+        };
+        t.iter()
+            .filter_map(|(name, v)| {
+                let (cmd, cwd, args, doc) = match v {
+                    Setting::Str(c) => (c.clone(), None, false, String::new()),
+                    Setting::Table(_) => (
+                        v.get("cmd")?.as_str()?.to_string(),
+                        v.get("cwd").and_then(Setting::as_str).map(str::to_string),
+                        v.get("args").and_then(Setting::as_bool).unwrap_or(false),
+                        v.get("doc")
+                            .and_then(Setting::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    ),
+                    _ => return None,
+                };
+                let cwd = cwd.map(|c| {
+                    let c = kawoosh_doc::paths::expand(Path::new(&c), Path::new(""));
+                    if kawoosh_systems::fs::is_absolute(&c) {
+                        c
+                    } else {
+                        let base = self.named_base(&format!("compile.commands.{name}"));
+                        kawoosh_systems::fs::join(&base, &c)
+                    }
+                });
+                Some(Named {
+                    name: name.clone(),
+                    cmd,
+                    cwd,
+                    args,
+                    doc,
+                })
+            })
+            .collect()
+    }
+
+    /// What a relative `cwd` under `path` is relative to.
+    fn named_base(&self, path: &str) -> PathBuf {
+        let file = self
+            .ed
+            .settings
+            .source_of(path)
+            .map(|(_, src)| PathBuf::from(src))
+            .filter(|p| {
+                p.parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|d| d == crate::settings::PROJECT_DIR)
+            });
+        if let Some(root) = file
+            .as_deref()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+        {
+            return root.to_path_buf();
+        }
+        let (dir, _) = self.compile_start();
+        match crate::moments::workspace_of(&dir) {
+            ws if ws.is_empty() => self.compile_dir(),
+            ws => PathBuf::from(ws),
+        }
+    }
+
+    /// A `:compile` line as it will run (compile.md Decision 7): a name
+    /// first — its command, the line's other words after it, in its
+    /// `cwd` — else the line itself where its program's kind runs; `%`
+    /// put in as the caret's file from that directory.
+    pub fn compile_line(&self, line: &str) -> Result<Line, String> {
+        let line = line.trim();
+        let (word, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
+        let named = self.compile_commands().into_iter().find(|n| n.name == word);
+        let cmd = match named {
+            Some(n) if n.args && rest.trim().is_empty() => return Ok(Line::Finish(n.name)),
+            Some(n) => with_args(&n.cmd, rest),
+            None => line.to_string(),
+        };
+        let cwd = self.compile_dir_of(line);
+        let cmd = match self.focused_view() {
+            Some(v) if cmd.contains('%') => self.ed.expand_percent_from(v, &cmd, Some(&cwd))?,
+            _ if cmd.contains('%') => return Err("no file for %".into()),
+            _ => cmd,
+        };
+        Ok(Line::Run(cmd, cwd))
+    }
+
+    /// Where a `:compile` line runs: a name's `cwd`, else where the
+    /// program of its command runs (compile.md Decision 4), else the
+    /// outermost project file in the repository.
+    pub fn compile_dir_of(&self, line: &str) -> PathBuf {
+        let word = line.split_whitespace().next().unwrap_or_default();
+        let (cmd, cwd) = match self.compile_commands().into_iter().find(|n| n.name == word) {
+            Some(n) => (n.cmd, n.cwd),
+            None => (line.to_string(), None),
+        };
+        cwd.or_else(|| self.deduce_compile().dir_for(&cmd).map(Path::to_path_buf))
+            .unwrap_or_else(|| self.compile_dir())
+    }
+
+    /// The memory's row for this workspace's compiles (its `tool` row,
+    /// memory.md round four): what is pending of it first, else the
+    /// store's — across launches, gone once the row is forgotten.
+    fn compile_memory(&self) -> Option<serde_json::Value> {
         let key = MomentKey::new("tool", "compile", self.moments.workspace());
         let meta = self
             .moments
             .pending_meta(&key)
             .or_else(|| Some(self.store.as_ref()?.moment(&key)?.meta))?;
-        let meta: serde_json::Value = serde_json::from_str(&meta).ok()?;
-        let cmd = meta.get("cmd")?.as_str()?.to_string();
-        let cwd = match meta.get("cwd").and_then(|c| c.as_str()) {
-            Some(c) => PathBuf::from(c),
-            None => self.compile_dir(),
-        };
-        Some((cmd, cwd))
+        serde_json::from_str(&meta).ok()
     }
 
-    /// What a bare `:compile` runs from here (compile.md Decision 2).
+    /// The command lines compiled in this workspace, newest first, and
+    /// where each ran (compile.md Decision 7): the memory's.
+    pub fn recent_compiles(&self) -> Vec<(String, PathBuf)> {
+        let Some(meta) = self.compile_memory() else {
+            return Vec::new();
+        };
+        let entry = |v: &serde_json::Value| {
+            let cmd = v.get("cmd")?.as_str()?.to_string();
+            let cwd = v
+                .get("cwd")
+                .and_then(|c| c.as_str())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| self.compile_dir());
+            Some((cmd, cwd))
+        };
+        match meta.get("recent").and_then(|r| r.as_array()) {
+            Some(list) => list.iter().filter_map(entry).collect(),
+            // A row from before the list: its one command.
+            None => entry(&meta).into_iter().collect(),
+        }
+    }
+
+    /// The command last compiled in this workspace, and where.
+    pub fn last_compile(&self) -> Option<(String, PathBuf)> {
+        self.recent_compiles().into_iter().next()
+    }
+
+    /// What a bare `:compile` runs from here (compile.md Decisions 2
+    /// and 7).
     pub fn bare_compile(&self) -> Bare {
-        if let Some(c) = self.ed.settings.str("compile.command") {
-            return Bare::Setting(c.to_string());
+        if let Some(c) = self.ed.settings.str("compile.default") {
+            return Bare::Default(c.to_string());
         }
         if let Some((cmd, cwd)) = self.last_compile() {
             return Bare::Again(cmd, cwd);
@@ -185,16 +381,29 @@ impl Kawoosh {
         }
     }
 
-    /// `:compile CMD` / `kawoosh.compile(cmd)`: runs it, streams into
-    /// `*compile*`, shown beside the code with focus staying put — in
-    /// the directory its program's kind runs in (compile.md Decision
-    /// 4), else the outermost project file in the repository.
-    pub fn compile(&mut self, cmd: &str) {
-        let cwd = match self.deduce_compile().dir_for(cmd) {
-            Some(d) => d.to_path_buf(),
-            None => self.compile_dir(),
-        };
-        self.compile_in(cmd, cwd);
+    /// `:compile LINE` / `kawoosh.compile(line)`: the line resolved
+    /// ([`Self::compile_line`]) and run into `*compile*`, shown beside
+    /// the code with focus staying put; a named command wanting
+    /// arguments put in the prompt instead.
+    pub fn compile(&mut self, line: &str) {
+        match self.compile_line(line) {
+            Ok(Line::Run(cmd, cwd)) => self.compile_in(&cmd, cwd),
+            Ok(Line::Finish(name)) => {
+                let line = format!("compile {name} ");
+                self.compile_prompt(&line, line.len());
+            }
+            Err(e) => self.ed.message = e,
+        }
+    }
+
+    /// The prompt open on `line`, the caret at byte `caret`.
+    fn compile_prompt(&mut self, line: &str, caret: usize) {
+        self.open_cmdline();
+        self.ed.set_prompt_text(line);
+        if let Some(v) = self.ed.prompt_view() {
+            self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(caret));
+        }
+        self.cmdline_refresh();
     }
 
     /// Where a command no project file claims runs: the outermost
@@ -218,14 +427,25 @@ impl Kawoosh {
             .unwrap_or_else(|| self.cwd.clone())
     }
 
-    /// `cmd` run in `cwd` into `*compile*`, and remembered — the
-    /// memory's `tool` row — as this workspace's last.
+    /// `cmd` run in `cwd` into `*compile*`, exactly, and remembered at
+    /// the head of the memory's list for this workspace.
     pub fn compile_in(&mut self, cmd: &str, cwd: PathBuf) {
-        let cwd = Some(cwd);
+        let mut recent: Vec<serde_json::Value> = self
+            .recent_compiles()
+            .into_iter()
+            .filter(|(c, d)| !(c == cmd && *d == cwd))
+            .map(|(c, d)| serde_json::json!({ "cmd": c, "cwd": d.display().to_string() }))
+            .collect();
+        recent.insert(
+            0,
+            serde_json::json!({ "cmd": cmd, "cwd": cwd.display().to_string() }),
+        );
+        recent.truncate(RECENT);
         self.note_tool(
             "compile",
-            serde_json::json!({ "cmd": cmd, "cwd": cwd.as_ref().map(|c| c.display().to_string()) }),
+            serde_json::json!({ "cmd": cmd, "cwd": cwd.display().to_string(), "recent": recent }),
         );
+        let cwd = Some(cwd);
         // One compile at a time: the one before, still running, is
         // stopped rather than left to finish unseen.
         if let Some(p) = self.compile.proc.take() {
@@ -267,29 +487,59 @@ impl Kawoosh {
             .unwrap_or_else(|_| kawoosh_systems::fs::abbreviate_home(file))
     }
 
-    /// `compile pick`: `compile.command`, the last run here and every
-    /// command the project's files offer, one row per command, as the
-    /// picker's `compile` source (`kawoosh.compile_offer()`).
+    /// `compile pick`: `compile.default`, the named commands, the
+    /// command lines run here and every command the project's files
+    /// offer, one row per command, as the picker's `compile` source
+    /// (`kawoosh.compile_offer()`).
     pub fn offer_compile(&mut self) {
         let mut rows: Vec<Offer> = Vec::new();
         let add = |rows: &mut Vec<Offer>, o: Offer| {
-            if !rows.iter().any(|r| r.cmd == o.cmd) {
+            if !rows
+                .iter()
+                .any(|r| r.cmd == o.cmd && (r.name.is_some() || o.name.is_none()))
+            {
                 rows.push(o);
             }
         };
         let project = self.deduce_compile();
-        if let Some(c) = self.ed.settings.str("compile.command") {
-            let cwd = project
-                .dir_for(c)
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| self.compile_dir());
-            add(
-                &mut rows,
-                Offer::of(c, cwd, "compile.command", "the settings' word"),
-            );
+        let named = self.compile_commands();
+        let dir_of = |n: &Named| {
+            n.cwd
+                .clone()
+                .or_else(|| project.dir_for(&n.cmd).map(Path::to_path_buf))
+                .unwrap_or_else(|| self.compile_dir())
+        };
+        if let Some(d) = self.ed.settings.str("compile.default") {
+            // Named, it is that command's row, marked; else a row of its own.
+            let word = d.split_whitespace().next().unwrap_or_default();
+            if let Some(n) = named.iter().find(|n| n.name == word) {
+                let mut o = Offer::of(&n.cmd, dir_of(n), "compile.default", &n.doc);
+                o.line = Some(d.to_string());
+                o.name = Some(n.name.clone());
+                o.needs = n.args && d.trim() == n.name;
+                add(&mut rows, o);
+            } else {
+                let cwd = project
+                    .dir_for(d)
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| self.compile_dir());
+                let mut o = Offer::of(d, cwd, "compile.default", "");
+                o.line = Some(d.to_string());
+                add(&mut rows, o);
+            }
         }
-        if let Some((cmd, cwd)) = self.last_compile() {
-            add(&mut rows, Offer::of(&cmd, cwd, "last run here", ""));
+        for n in &named {
+            let mut o = Offer::of(&n.cmd, dir_of(n), "compile.commands", &n.doc);
+            o.line = Some(n.name.clone());
+            o.name = Some(n.name.clone());
+            o.needs = n.args;
+            if !rows.iter().any(|r| r.name == o.name) {
+                rows.push(o);
+            }
+        }
+        for (i, (cmd, cwd)) in self.recent_compiles().into_iter().enumerate() {
+            let from = if i == 0 { "last run here" } else { "recent" };
+            add(&mut rows, Offer::of(&cmd, cwd, from, ""));
         }
         for d in project.commands {
             let from = self.compile_from(&d.file);
@@ -313,6 +563,7 @@ impl Kawoosh {
             .map(|(i, o)| CompileOfferSnap {
                 index: i + 1,
                 cmd: o.cmd.clone(),
+                name: o.name.clone(),
                 from: o.from.clone(),
                 cwd: kawoosh_systems::fs::abbreviate_home(&o.cwd),
                 why: o.why.clone(),
@@ -326,8 +577,9 @@ impl Kawoosh {
     }
 
     /// Row `n` (from 1) of the last `compile pick`, run where it said —
-    /// or, when it wants arguments or `edit` asks, put in the prompt to
-    /// finish (compile.md Decision 6).
+    /// a named one resolved then, its `%` the file then — or, when it
+    /// wants arguments or `edit` asks, put in the prompt to finish
+    /// (compile.md Decisions 6 and 7).
     pub fn compile_offered(&mut self, n: usize, edit: bool) {
         let Some(o) = n
             .checked_sub(1)
@@ -337,17 +589,15 @@ impl Kawoosh {
             self.ed.message = format!("no compile command {n} on offer (:compile pick)");
             return;
         };
-        if !(edit || o.needs) {
-            self.compile_in(&o.cmd, o.cwd);
+        if edit || o.needs {
+            let (line, caret) = o.prompt();
+            self.compile_prompt(&line, caret);
             return;
         }
-        let (line, caret) = o.prompt();
-        self.open_cmdline();
-        self.ed.set_prompt_text(&line);
-        if let Some(v) = self.ed.prompt_view() {
-            self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(caret));
+        match &o.line {
+            Some(line) => self.compile(line),
+            None => self.compile_in(&o.cmd, o.cwd),
         }
-        self.cmdline_refresh();
     }
 
     /// `compile kill`: stops the running command, and everything it
@@ -561,16 +811,17 @@ impl Kawoosh {
 
 pub(crate) fn commands() -> Vec<ShellCommand> {
     vec![
-        // `:compile CMD`, or bare, the project's `compile.command` —
-        // the setting a `.kawoosh/settings.lua` is there to set — else
-        // the last compiled here, else what its files offer first
-        // (compile.md Decision 2).
+        // `:compile LINE`: a name of `compile.commands` with arguments
+        // after it, or a command, `%` the caret's file (compile.md
+        // Decision 7). Bare, `compile.default` — the line a
+        // `.kawoosh/settings.lua` is there to set — else the last
+        // compiled here, else what its files offer first (Decision 2).
         cmd(
             Spec::new("compile")
                 .alias(&["make"])
                 .args(Args::rest(&[ArgKind::Text]))
                 .query("say what a bare :compile would run")
-                .doc("run CMD (or compile.command, the last run here, what the project's files offer) into the *compile* buffer"),
+                .doc("run NAME [ARGS] (compile.commands) or CMD, `%` the file — bare, compile.default, the last run here, what the project's files offer — into the *compile* buffer"),
             |k, ctx| {
                 if !ctx.args.is_empty() {
                     k.compile(&ctx.args.join(" "));
@@ -579,15 +830,24 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 let bare = k.bare_compile();
                 if ctx.query() {
                     k.ed.message = match bare {
-                        Bare::Setting(c) => format!("compile.command = {c}"),
-                        Bare::Again(c, _) => format!("{c} (again: compile.command is not set)"),
+                        Bare::Default(c) => match k.compile_line(&c) {
+                            Ok(Line::Run(cmd, _)) if cmd != c => {
+                                format!("compile.default = {c}: {cmd}")
+                            }
+                            Ok(Line::Finish(name)) => {
+                                format!("compile.default = {c}: asks for {name}'s arguments")
+                            }
+                            Err(e) => format!("compile.default = {c}: {e}"),
+                            _ => format!("compile.default = {c}"),
+                        },
+                        Bare::Again(c, _) => format!("{c} (again: compile.default is not set)"),
                         Bare::Deduced(d) => format!("{} ({})", d.cmd, k.compile_from(&d.file)),
                         Bare::Nothing => NOTHING.into(),
                     };
                     return;
                 }
                 match bare {
-                    Bare::Setting(c) => k.compile(&c),
+                    Bare::Default(c) => k.compile(&c),
                     Bare::Again(c, cwd) => k.compile_in(&c, cwd),
                     Bare::Deduced(d) => {
                         let from = k.compile_from(&d.file);
@@ -603,7 +863,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("compile pick")
                 .args(Args::new(&[ArgKind::Text]))
-                .doc("what the project can compile — compile.command, the last run, its files' commands — in a picker"),
+                .doc("what the project can compile — compile.default, compile.commands, the recent runs, its files' commands — in a picker"),
             |k, ctx| match ctx.args.first().and_then(|a| a.parse::<usize>().ok()) {
                 Some(n) => k.compile_offered(n, false),
                 None => k.offer_compile(),
@@ -652,4 +912,41 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             |k, _| k.error_step(false),
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn npm_s_scripts_take_their_arguments_past_dashes() {
+        assert_eq!(
+            with_args("npm run pw", "e2e/a.spec.ts"),
+            "npm run pw -- e2e/a.spec.ts"
+        );
+        assert_eq!(
+            with_args("npm run pw -- --ui", "e2e"),
+            "npm run pw -- --ui e2e"
+        );
+        assert_eq!(with_args("npm run pw", "-- e2e"), "npm run pw -- e2e");
+        assert_eq!(
+            with_args("yarn pw", "e2e/a.spec.ts"),
+            "yarn pw e2e/a.spec.ts"
+        );
+        assert_eq!(with_args("npm run pw", "  "), "npm run pw");
+        let o = Offer::of("npm run pw", PathBuf::new(), "package.json", "");
+        assert_eq!(o.prompt(), ("compile npm run pw -- ".to_string(), 22));
+        let o = Offer::of("yarn run pw", PathBuf::new(), "package.json", "");
+        assert_eq!(o.prompt(), ("compile yarn run pw ".to_string(), 20));
+        let mut o = Offer::of(
+            "nu -c 'use build.nu; build x'",
+            PathBuf::new(),
+            "build.nu",
+            "",
+        );
+        o.args_at = o.cmd.len() - 1;
+        let (line, caret) = o.prompt();
+        assert_eq!(line, "compile nu -c 'use build.nu; build x '");
+        assert_eq!(&line[caret..], "'");
+    }
 }

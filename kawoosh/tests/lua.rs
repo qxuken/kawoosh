@@ -304,7 +304,7 @@ fn compile_mode_streams_and_jumps_to_locations() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// A bare `:compile` with no `compile.command` runs what the project's
+/// A bare `:compile` with no `compile.default` runs what the project's
 /// files offer first (docs/design/compile.md), then what it ran last;
 /// `compile pick` offers them all, `compile pick N` runs one; the
 /// output's `path(line,col)` is a location as `path:line:col` is.

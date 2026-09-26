@@ -4,7 +4,7 @@
 -- a terminal, or `:compile nu scripts/verify.nu` for its locations.
 ---@type kawoosh.Settings
 return {
-  compile = { command = "cargo build --workspace --all-targets" },
+  compile = { default = "cargo build --workspace --all-targets" },
   run = { command = "cargo run -p kawoosh" },
   tools = {
     verify = { cmd = "nu scripts/verify.nu", cwd = "root" },

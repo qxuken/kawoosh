@@ -639,7 +639,9 @@ pub struct CompileOfferSnap {
     /// 1-based, what `compile pick N` takes.
     pub index: usize,
     pub cmd: String,
-    /// What said so: `compile.command`, `last run here`, a file's path.
+    /// Its name in `compile.commands`, when it has one.
+    pub name: Option<String>,
+    /// What said so: `compile.default`, `compile.commands`, `recent`, a file's path.
     pub from: String,
     /// Where it runs, `~` for home.
     pub cwd: String,
@@ -1001,6 +1003,28 @@ impl Runtime {
     }
 
     /// Runs a config or plugin file; the error is a message, not a crash.
+    /// `kawoosh.project` while a project's `init.lua` runs — `{ root,
+    /// dir }`, the directory holding its `.kawoosh` and that directory —
+    /// and nil after (compile.md Decision 7): code capturing it at its
+    /// top level knows where it lives, on any platform.
+    pub fn set_project(&self, dir: Option<&std::path::Path>) -> mlua::Result<()> {
+        let k: Table = self.lua.globals().get("kawoosh")?;
+        match dir {
+            Some(dir) => {
+                let t = self.lua.create_table()?;
+                t.set("dir", kawoosh_systems::fs::display(dir))?;
+                t.set(
+                    "root",
+                    dir.parent()
+                        .map(kawoosh_systems::fs::display)
+                        .unwrap_or_default(),
+                )?;
+                k.set("project", t)
+            }
+            None => k.set("project", LV::Nil),
+        }
+    }
+
     pub fn load_file(&self, path: &std::path::Path) -> Result<(), String> {
         let src = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         self.load_source(&path.display().to_string(), &src)
@@ -2696,7 +2720,7 @@ fn seed(
         })?,
     )?;
     // ---- kawoosh.compile_offer(): what `compile pick` last offered —
-    // `{ index, cmd, from, cwd, why, needs, detail }` each, `needs` when
+    // `{ index, cmd, name, from, cwd, why, needs, detail }` each, `needs` when
     // it wants arguments, `detail` how it is declared — or nil before.
     let pp = published.clone();
     k.set(
@@ -2711,6 +2735,7 @@ fn seed(
                 let e = lua.create_table()?;
                 e.set("index", o.index)?;
                 e.set("cmd", o.cmd.as_str())?;
+                e.set("name", o.name.as_deref())?;
                 e.set("from", o.from.as_str())?;
                 e.set("cwd", o.cwd.as_str())?;
                 e.set("why", o.why.as_str())?;
@@ -4008,13 +4033,17 @@ fn seed(
         "expand",
         lua.create_function(|_, p: String| Ok(kfs::display(&expand(&p))))?,
     )?;
+    // `fs.join(a, b, …)`: the parts joined with the platform's
+    // separator — a host's `/` on a host's path — each after the last.
     fs.set(
         "join",
-        lua.create_function(|_, (a, b): (String, String)| {
-            Ok(kfs::display(&kfs::join(
-                std::path::Path::new(&a),
-                std::path::Path::new(&b),
-            )))
+        lua.create_function(|_, parts: mlua::Variadic<String>| {
+            let mut it = parts.iter();
+            let mut out = std::path::PathBuf::from(it.next().cloned().unwrap_or_default());
+            for p in it {
+                out = kfs::join(&out, std::path::Path::new(p));
+            }
+            Ok(kfs::display(&out))
         })?,
     )?;
     fs.set(
@@ -4930,7 +4959,7 @@ mod tests {
                 local ts = 2
                 return {
                   tabstop = ts * 2,
-                  compile = { command = ("cargo %s"):format("test") },
+                  compile = { default = ("cargo %s"):format("test") },
                   lsp = { rust = { roots = { "Cargo.toml" }, args = {} } },
                   ratio = 1.5,
                 }
@@ -4939,7 +4968,7 @@ mod tests {
             .unwrap();
         assert_eq!(s.get("tabstop"), Some(&Setting::Int(4)));
         assert_eq!(
-            s.get("compile.command").and_then(Setting::as_str),
+            s.get("compile.default").and_then(Setting::as_str),
             Some("cargo test")
         );
         assert_eq!(

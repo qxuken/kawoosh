@@ -1385,9 +1385,10 @@ picker.source("actions", {
 })
 
 -- What the project can compile (`<leader>cC`, `compile pick`,
--- docs/design/compile.md Decisions 3 and 6): `compile.command`, the last
--- run here, and the commands its files offer — the command, what said
--- so beside it (`…` when it wants arguments), the preview where it runs,
+-- docs/design/compile.md Decisions 3, 6 and 7): `compile.default`, the
+-- named `compile.commands`, the lines run here, and the commands its
+-- files offer — the name and command, what said so beside it (`…` when
+-- it wants arguments), the preview where it runs,
 -- why and how it is declared; `⏎` runs it (`compile pick N`), or puts
 -- one wanting arguments in the prompt to finish, as `<C-e>` does any
 -- (`compile edit N`). The rows are what `kawoosh.compile_offer()` says.
@@ -1405,14 +1406,15 @@ picker.source("compile", {
   items = function()
     local items = {}
     for _, o in ipairs(kawoosh.compile_offer() or {}) do
-      items[#items + 1] = { text = o.cmd .. (o.needs and " …" or ""), from = o.from, index = o.index,
+      local text = (o.name and (o.name .. "  ") or "") .. o.cmd .. (o.needs and " …" or "")
+      items[#items + 1] = { text = text, from = o.from, index = o.index, cmd = o.cmd,
                             cwd = o.cwd, why = o.why, detail = o.detail }
     end
     return items
   end,
   pick = function(item) kawoosh.run("compile pick " .. item.index) end,
   preview = function(item)
-    local lines = { "$ " .. item.text, "in " .. item.cwd, "from " .. item.from }
+    local lines = { "$ " .. item.cmd, "in " .. item.cwd, "from " .. item.from }
     if item.why ~= "" then
       lines[#lines + 1] = ""
       lines[#lines + 1] = item.why

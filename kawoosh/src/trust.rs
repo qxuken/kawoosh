@@ -142,7 +142,14 @@ impl Kawoosh {
                 Standing::Trusted => {
                     log::debug!("trust: running {}", p.display());
                     self.config.loading = Some(Layer::Project);
+                    let rt = self.scripting.rt.clone();
+                    if let Some(rt) = &rt {
+                        let _ = rt.set_project(p.parent());
+                    }
                     self.run_lua_file(&p);
+                    if let Some(rt) = &rt {
+                        let _ = rt.set_project(None);
+                    }
                     self.config.loading = None;
                 }
                 standing => {
