@@ -15,7 +15,9 @@
 //! what the todo asked of a theme first; Ayu (ayu-colors v5), its
 //! translucent hues laid flat on their page, strings green as Ayu has
 //! them; Gruvbox (morhetz), dark and light at three grades; Tokyo Night
-//! (folke), night, storm and moon with day; and of kawoosh's own, black
+//! (folke), night, storm and moon with day; Catppuccin, its four
+//! flavours; Kanagawa, wave, dragon and lotus; Everforest at three
+//! grades; Atom's One; Dracula with Alucard; and of kawoosh's own, black
 //! and white (`mono`, `mono-soft`: no hue, the code told apart by
 //! weight, slant and brightness), paper (the same with a few hues, as
 //! Alabaster places them) and a high-contrast pair drawn to WCAG AAA.
@@ -229,6 +231,56 @@ pub const FAMILIES: &[Family] = &[
         light: "tokyo-night-day",
     },
     Family {
+        name: "catppuccin",
+        dark: "catppuccin-mocha",
+        light: "catppuccin-latte",
+    },
+    Family {
+        name: "catppuccin-macchiato",
+        dark: "catppuccin-macchiato",
+        light: "catppuccin-latte",
+    },
+    Family {
+        name: "catppuccin-frappe",
+        dark: "catppuccin-frappe",
+        light: "catppuccin-latte",
+    },
+    Family {
+        name: "kanagawa",
+        dark: "kanagawa-wave",
+        light: "kanagawa-lotus",
+    },
+    Family {
+        name: "kanagawa-dragon",
+        dark: "kanagawa-dragon",
+        light: "kanagawa-lotus",
+    },
+    Family {
+        name: "everforest",
+        dark: "everforest-dark",
+        light: "everforest-light",
+    },
+    Family {
+        name: "everforest-hard",
+        dark: "everforest-dark-hard",
+        light: "everforest-light-hard",
+    },
+    Family {
+        name: "everforest-soft",
+        dark: "everforest-dark-soft",
+        light: "everforest-light-soft",
+    },
+    Family {
+        name: "one",
+        dark: "one-dark",
+        light: "one-light",
+    },
+    Family {
+        name: "dracula",
+        dark: "dracula",
+        light: "alucard",
+    },
+    Family {
         name: "mono",
         dark: "mono-dark",
         light: "mono-light",
@@ -264,6 +316,16 @@ pub fn variants() -> &'static [Variant] {
             TOKYO_NIGHT.variant("tokyo-night", "Tokyo Night"),
             TOKYO_STORM.variant("tokyo-night-storm", "Tokyo Night Storm"),
             TOKYO_MOON.variant("tokyo-night-moon", "Tokyo Night Moon"),
+            MOCHA.variant("catppuccin-mocha", "Catppuccin Mocha"),
+            MACCHIATO.variant("catppuccin-macchiato", "Catppuccin Macchiato"),
+            FRAPPE.variant("catppuccin-frappe", "Catppuccin Frappé"),
+            kanagawa("wave"),
+            kanagawa("dragon"),
+            everforest(true, Grade::Medium),
+            everforest(true, Grade::Hard),
+            everforest(true, Grade::Soft),
+            one(true),
+            dracula(true),
             mono(true, false),
             mono(true, true),
             paper(true),
@@ -274,6 +336,13 @@ pub fn variants() -> &'static [Variant] {
             gruvbox(false, Grade::Hard),
             gruvbox(false, Grade::Soft),
             TOKYO_DAY.variant("tokyo-night-day", "Tokyo Night Day"),
+            LATTE.variant("catppuccin-latte", "Catppuccin Latte"),
+            kanagawa("lotus"),
+            everforest(false, Grade::Medium),
+            everforest(false, Grade::Hard),
+            everforest(false, Grade::Soft),
+            one(false),
+            dracula(false),
             mono(false, false),
             mono(false, true),
             paper(false),
@@ -1233,6 +1302,794 @@ impl Tokyo {
     }
 }
 
+// ----------------------------------------------------------------- Code
+
+/// A hue for every hued token, spelt out: what a family whose port
+/// scopes each token its own way fills in as a literal, so the mapping
+/// is read off the variant rather than a function of its names.
+#[derive(Clone, Copy, Debug)]
+struct Code {
+    keyword: u32,
+    function: u32,
+    kind: u32,
+    constructor: u32,
+    string: u32,
+    number: u32,
+    constant: u32,
+    comment: u32,
+    property: u32,
+    operator: u32,
+    punct: u32,
+    attribute: u32,
+    macros: u32,
+    label: u32,
+    tag: u32,
+    heading: u32,
+    strong: u32,
+    emphasis: u32,
+    link: u32,
+    raw: u32,
+    added: u32,
+    removed: u32,
+}
+
+impl Code {
+    fn hue(&self, token: Token) -> Option<u32> {
+        use Token as T;
+        Some(match token {
+            T::Plain | T::Variable => return None,
+            T::Keyword => self.keyword,
+            T::Function => self.function,
+            T::Type => self.kind,
+            T::Constructor => self.constructor,
+            T::String => self.string,
+            T::Number => self.number,
+            T::Constant => self.constant,
+            T::Comment => self.comment,
+            T::Property => self.property,
+            T::Operator => self.operator,
+            T::Punctuation => self.punct,
+            T::Attribute => self.attribute,
+            T::Macro => self.macros,
+            T::Label => self.label,
+            T::Tag => self.tag,
+            T::Heading => self.heading,
+            T::Strong => self.strong,
+            T::Emphasis => self.emphasis,
+            T::Link => self.link,
+            T::Raw => self.raw,
+            T::Added => self.added,
+            T::Removed => self.removed,
+        })
+    }
+}
+
+/// A variant from its roles, its code and its sixteen.
+fn coded(
+    name: &'static str,
+    title: &'static str,
+    roles: Roles,
+    code: Code,
+    ansi: [u32; 16],
+) -> Variant {
+    Variant::new(name, title, roles.theme(), |t| code.hue(t), ansi)
+}
+
+const ITALIC: Style = Style {
+    bold: false,
+    italic: true,
+    underline: false,
+    strike: false,
+};
+
+// ----------------------------------------------------------- Catppuccin
+
+/// One Catppuccin flavour (catppuccin/palette), by its own names.
+#[derive(Clone, Copy, Debug)]
+struct Cat {
+    dark: bool,
+    red: u32,
+    maroon: u32,
+    peach: u32,
+    yellow: u32,
+    green: u32,
+    teal: u32,
+    sky: u32,
+    sapphire: u32,
+    blue: u32,
+    lavender: u32,
+    mauve: u32,
+    pink: u32,
+    text: u32,
+    subtext1: u32,
+    subtext0: u32,
+    overlay2: u32,
+    overlay0: u32,
+    surface2: u32,
+    surface1: u32,
+    surface0: u32,
+    base: u32,
+    mantle: u32,
+    crust: u32,
+}
+
+const LATTE: Cat = Cat {
+    dark: false,
+    red: 0xd20f39,
+    maroon: 0xe64553,
+    peach: 0xfe640b,
+    yellow: 0xdf8e1d,
+    green: 0x40a02b,
+    teal: 0x179299,
+    sky: 0x04a5e5,
+    sapphire: 0x209fb5,
+    blue: 0x1e66f5,
+    lavender: 0x7287fd,
+    mauve: 0x8839ef,
+    pink: 0xea76cb,
+    text: 0x4c4f69,
+    subtext1: 0x5c5f77,
+    subtext0: 0x6c6f85,
+    overlay2: 0x7c7f93,
+    overlay0: 0x9ca0b0,
+    surface2: 0xacb0be,
+    surface1: 0xbcc0cc,
+    surface0: 0xccd0da,
+    base: 0xeff1f5,
+    mantle: 0xe6e9ef,
+    crust: 0xdce0e8,
+};
+
+const FRAPPE: Cat = Cat {
+    dark: true,
+    red: 0xe78284,
+    maroon: 0xea999c,
+    peach: 0xef9f76,
+    yellow: 0xe5c890,
+    green: 0xa6d189,
+    teal: 0x81c8be,
+    sky: 0x99d1db,
+    sapphire: 0x85c1dc,
+    blue: 0x8caaee,
+    lavender: 0xbabbf1,
+    mauve: 0xca9ee6,
+    pink: 0xf4b8e4,
+    text: 0xc6d0f5,
+    subtext1: 0xb5bfe2,
+    subtext0: 0xa5adce,
+    overlay2: 0x949cbb,
+    overlay0: 0x737994,
+    surface2: 0x626880,
+    surface1: 0x51576d,
+    surface0: 0x414559,
+    base: 0x303446,
+    mantle: 0x292c3c,
+    crust: 0x232634,
+};
+
+const MACCHIATO: Cat = Cat {
+    dark: true,
+    red: 0xed8796,
+    maroon: 0xee99a0,
+    peach: 0xf5a97f,
+    yellow: 0xeed49f,
+    green: 0xa6da95,
+    teal: 0x8bd5ca,
+    sky: 0x91d7e3,
+    sapphire: 0x7dc4e4,
+    blue: 0x8aadf4,
+    lavender: 0xb7bdf8,
+    mauve: 0xc6a0f6,
+    pink: 0xf5bde6,
+    text: 0xcad3f5,
+    subtext1: 0xb8c0e0,
+    subtext0: 0xa5adcb,
+    overlay2: 0x939ab7,
+    overlay0: 0x6e738d,
+    surface2: 0x5b6078,
+    surface1: 0x494d64,
+    surface0: 0x363a4f,
+    base: 0x24273a,
+    mantle: 0x1e2030,
+    crust: 0x181926,
+};
+
+const MOCHA: Cat = Cat {
+    dark: true,
+    red: 0xf38ba8,
+    maroon: 0xeba0ac,
+    peach: 0xfab387,
+    yellow: 0xf9e2af,
+    green: 0xa6e3a1,
+    teal: 0x94e2d5,
+    sky: 0x89dceb,
+    sapphire: 0x74c7ec,
+    blue: 0x89b4fa,
+    lavender: 0xb4befe,
+    mauve: 0xcba6f7,
+    pink: 0xf5c2e7,
+    text: 0xcdd6f4,
+    subtext1: 0xbac2de,
+    subtext0: 0xa6adc8,
+    overlay2: 0x9399b2,
+    overlay0: 0x6c7086,
+    surface2: 0x585b70,
+    surface1: 0x45475a,
+    surface0: 0x313244,
+    base: 0x1e1e2e,
+    mantle: 0x181825,
+    crust: 0x11111b,
+};
+
+impl Cat {
+    /// The roles as the style guide has them — the page `base`, panels
+    /// `mantle`, wells `crust`, floats `surface0`, the gutter `overlay0`
+    /// — the accent mauve, the selection `overlay2` washed; the code as
+    /// catppuccin/nvim scopes it: keywords mauve, functions blue, types
+    /// yellow, strings green, numbers and constants peach, members
+    /// lavender, operators sky, punctuation and comments `overlay2`.
+    fn variant(&self, name: &'static str, title: &'static str) -> Variant {
+        let roles = Roles {
+            dark: self.dark,
+            bg: self.base,
+            surface: self.mantle,
+            raised: self.surface0,
+            sunken: self.crust,
+            border: self.surface0,
+            border_strong: self.surface2,
+            fg: self.text,
+            muted: self.subtext0,
+            faint: self.overlay0,
+            accent: self.mauve,
+            // Latte's a step stronger: at 0.3 not quite seen.
+            selection: (self.overlay2, if self.dark { 0.3 } else { 0.32 }),
+            success: self.green,
+            warning: self.yellow,
+            danger: self.red,
+        };
+        let code = Code {
+            keyword: self.mauve,
+            function: self.blue,
+            kind: self.yellow,
+            constructor: self.sapphire,
+            string: self.green,
+            number: self.peach,
+            constant: self.peach,
+            comment: self.overlay2,
+            property: self.lavender,
+            operator: self.sky,
+            punct: self.overlay2,
+            attribute: self.yellow,
+            macros: self.teal,
+            label: self.sapphire,
+            tag: self.mauve,
+            heading: self.red,
+            strong: self.maroon,
+            emphasis: self.maroon,
+            link: self.lavender,
+            raw: self.teal,
+            added: self.green,
+            removed: self.red,
+        };
+        // The sixteen as catppuccin's terminal ports set them.
+        let ansi = if self.dark {
+            [
+                self.surface1,
+                self.red,
+                self.green,
+                self.yellow,
+                self.blue,
+                self.pink,
+                self.teal,
+                self.subtext1,
+                self.surface2,
+                self.red,
+                self.green,
+                self.yellow,
+                self.blue,
+                self.pink,
+                self.teal,
+                self.subtext0,
+            ]
+        } else {
+            [
+                self.subtext1,
+                self.red,
+                self.green,
+                self.yellow,
+                self.blue,
+                self.pink,
+                self.teal,
+                self.surface2,
+                self.subtext0,
+                self.red,
+                self.green,
+                self.yellow,
+                self.blue,
+                self.pink,
+                self.teal,
+                self.surface1,
+            ]
+        };
+        coded(name, title, roles, code, ansi)
+    }
+}
+
+// ------------------------------------------------------------- Kanagawa
+
+/// Kanagawa (rebelot/kanagawa.nvim): wave, dragon, and lotus the light,
+/// each its own palette; keywords italic as the port sets them.
+fn kanagawa(which: &str) -> Variant {
+    let (name, title, roles, code, ansi) = match which {
+        "wave" => (
+            "kanagawa-wave",
+            "Kanagawa Wave",
+            Roles {
+                dark: true,
+                bg: 0x1f1f28,
+                surface: 0x16161d,
+                raised: 0x2a2a37,
+                sunken: 0x16161d,
+                border: 0x363646,
+                border_strong: 0x54546d,
+                fg: 0xdcd7ba,
+                muted: 0x938aa9,
+                faint: 0x54546d,
+                accent: 0x7e9cd8,
+                selection: (0x2d4f67, 0.8),
+                success: 0x98bb6c,
+                warning: 0xff9e3b,
+                danger: 0xe82424,
+            },
+            Code {
+                keyword: 0x957fb8,
+                function: 0x7e9cd8,
+                kind: 0x7aa89f,
+                constructor: 0x7fb4ca,
+                string: 0x98bb6c,
+                number: 0xd27e99,
+                constant: 0xffa066,
+                comment: 0x727169,
+                property: 0xe6c384,
+                operator: 0xc0a36e,
+                punct: 0x9cabca,
+                attribute: 0xe46876,
+                macros: 0xe46876,
+                label: 0x957fb8,
+                tag: 0x7fb4ca,
+                heading: 0x7e9cd8,
+                strong: 0xff5d62,
+                emphasis: 0xffa066,
+                link: 0x7fb4ca,
+                raw: 0x98bb6c,
+                added: 0x76946a,
+                removed: 0xc34043,
+            },
+            [
+                0x16161d, 0xc34043, 0x76946a, 0xc0a36e, 0x7e9cd8, 0x957fb8, 0x6a9589, 0xc8c093,
+                0x727169, 0xe82424, 0x98bb6c, 0xe6c384, 0x7fb4ca, 0x938aa9, 0x7aa89f, 0xdcd7ba,
+            ],
+        ),
+        "dragon" => (
+            "kanagawa-dragon",
+            "Kanagawa Dragon",
+            Roles {
+                dark: true,
+                bg: 0x181616,
+                surface: 0x12120f,
+                raised: 0x282727,
+                sunken: 0x0d0c0c,
+                border: 0x393836,
+                border_strong: 0x625e5a,
+                fg: 0xc5c9c5,
+                muted: 0xa6a69c,
+                faint: 0x625e5a,
+                accent: 0x8ba4b0,
+                selection: (0x2d4f67, 0.8),
+                success: 0x87a987,
+                warning: 0xff9e3b,
+                danger: 0xe82424,
+            },
+            Code {
+                keyword: 0x8992a7,
+                function: 0x8ba4b0,
+                kind: 0x8ea4a2,
+                constructor: 0x8ea4a2,
+                string: 0x8a9a7b,
+                number: 0xa292a3,
+                constant: 0xb6927b,
+                comment: 0x737c73,
+                property: 0xc4b28a,
+                operator: 0xc4746e,
+                punct: 0x9e9b93,
+                attribute: 0xc4746e,
+                macros: 0xc4746e,
+                label: 0x8992a7,
+                tag: 0x8ea4a2,
+                heading: 0x8ba4b0,
+                strong: 0xc4746e,
+                emphasis: 0xb6927b,
+                link: 0x8ea4a2,
+                raw: 0x8a9a7b,
+                added: 0x87a987,
+                removed: 0xc4746e,
+            },
+            [
+                0x0d0c0c, 0xc4746e, 0x8a9a7b, 0xc4b28a, 0x8ba4b0, 0xa292a3, 0x8ea4a2, 0xc8c093,
+                0xa6a69c, 0xe46876, 0x87a987, 0xe6c384, 0x7fb4ca, 0x938aa9, 0x7aa89f, 0xc5c9c5,
+            ],
+        ),
+        _ => (
+            "kanagawa-lotus",
+            "Kanagawa Lotus",
+            Roles {
+                dark: false,
+                bg: 0xf2ecbc,
+                surface: 0xe5ddb0,
+                raised: 0xf5f0cf,
+                sunken: 0xe7dba0,
+                border: 0xd5cea3,
+                border_strong: 0xa09cac,
+                // Lotus's second ink, a step darker than its first
+                // (#545464): at the first, no selection was seen and read
+                // through at once.
+                fg: 0x43436c,
+                muted: 0x716e61,
+                faint: 0x8a8980,
+                accent: 0x4d699b,
+                selection: (0x4d699b, 0.27),
+                success: 0x6f894e,
+                warning: 0xcc6d00,
+                danger: 0xc84053,
+            },
+            Code {
+                keyword: 0x624c83,
+                function: 0x4d699b,
+                kind: 0x597b75,
+                constructor: 0x4e8ca2,
+                string: 0x6f894e,
+                number: 0xb35b79,
+                constant: 0xcc6d00,
+                comment: 0x8a8980,
+                property: 0x77713f,
+                operator: 0x836f4a,
+                punct: 0x4e8ca2,
+                attribute: 0xc84053,
+                macros: 0xc84053,
+                label: 0x624c83,
+                tag: 0x4e8ca2,
+                heading: 0x4d699b,
+                strong: 0xd7474b,
+                emphasis: 0xcc6d00,
+                link: 0x4e8ca2,
+                raw: 0x6f894e,
+                added: 0x6e915f,
+                removed: 0xd7474b,
+            },
+            [
+                0x1f1f28, 0xc84053, 0x6f894e, 0x77713f, 0x4d699b, 0xb35b79, 0x597b75, 0x545464,
+                0x8a8980, 0xd7474b, 0x6e915f, 0x836f4a, 0x6693bf, 0x624c83, 0x5e857a, 0x43436c,
+            ],
+        ),
+    };
+    coded(name, title, roles, code, ansi).styled(Token::Keyword, ITALIC)
+}
+
+// ----------------------------------------------------------- Everforest
+
+/// Everforest (sainnhe/everforest): dark and light, each at three
+/// grades of page; the code as its treesitter groups — keywords red,
+/// functions green, types yellow, strings aqua, numbers purple,
+/// members blue, operators orange, comments grey and italic. Its
+/// `bg_visual` is a tint barely off the page (1.2:1 on the dark medium),
+/// so the selection is the tint's own hue washed stronger — red on the
+/// dark, green on the light — where it is seen.
+fn everforest(dark: bool, grade: Grade) -> Variant {
+    // On the light pages the text is a step darker than Everforest's
+    // #5c6a72, which becomes the quieter grey (its `grey2` was 2.8:1 on
+    // the soft page) and `grey1` the faint: at its own, no selection was
+    // seen and read through at once (Ayu Light's and Tokyo Night Day's
+    // reason).
+    let (red, orange, yellow, green, aqua, blue, purple, faint, grey1, muted, fg) = if dark {
+        (
+            0xe67e80, 0xe69875, 0xdbbc7f, 0xa7c080, 0x83c092, 0x7fbbb3, 0xd699b6, 0x7a8478,
+            0x859289, 0x9da9a0, 0xd3c6aa,
+        )
+    } else {
+        (
+            0xf85552, 0xf57d26, 0xdfa000, 0x8da101, 0x35a77c, 0x3a94c5, 0xdf69ba, 0x939f91,
+            0x939f91, 0x5c6a72, 0x4a555c,
+        )
+    };
+    // bg_dim, bg0, bg1, bg2, bg3, bg5.
+    let [dim, bg0, bg1, bg2, bg3, bg5] = match (dark, grade) {
+        (true, Grade::Hard) => [0x1e2326, 0x272e33, 0x2e383c, 0x374145, 0x414b50, 0x4f5b58],
+        (true, Grade::Medium) => [0x232a2e, 0x2d353b, 0x343f44, 0x3d484d, 0x475258, 0x56635f],
+        (true, Grade::Soft) => [0x293136, 0x333c43, 0x3a464c, 0x434f55, 0x4d5960, 0x5d6b66],
+        (false, Grade::Hard) => [0xf2efdf, 0xfffbef, 0xf8f5e4, 0xf2efdf, 0xedeada, 0xbec5b2],
+        (false, Grade::Medium) => [0xefebd4, 0xfdf6e3, 0xf4f0d9, 0xefebd4, 0xe6e2cc, 0xbdc3af],
+        (false, Grade::Soft) => [0xe5dfc5, 0xf3ead3, 0xeae4ca, 0xe5dfc5, 0xddd8be, 0xb9c0ab],
+    };
+    let roles = Roles {
+        dark,
+        bg: bg0,
+        surface: bg1,
+        raised: bg2,
+        sunken: dim,
+        border: bg3,
+        border_strong: bg5,
+        fg,
+        muted,
+        faint,
+        accent: green,
+        // Each where it is seen and the text reads through it.
+        selection: match (dark, grade) {
+            (true, Grade::Soft) => (red, 0.27),
+            (true, _) => (red, 0.3),
+            (false, Grade::Hard) => (green, 0.36),
+            (false, Grade::Medium) => (green, 0.37),
+            (false, Grade::Soft) => (green, 0.41),
+        },
+        success: green,
+        warning: yellow,
+        danger: red,
+    };
+    let code = Code {
+        keyword: red,
+        function: green,
+        kind: yellow,
+        constructor: green,
+        string: aqua,
+        number: purple,
+        constant: aqua,
+        comment: grey1,
+        property: blue,
+        operator: orange,
+        punct: muted,
+        attribute: purple,
+        macros: purple,
+        label: orange,
+        tag: orange,
+        heading: red,
+        strong: orange,
+        emphasis: purple,
+        link: blue,
+        raw: green,
+        added: green,
+        removed: red,
+    };
+    let ansi = [
+        bg3, red, green, yellow, blue, purple, aqua, fg, grey1, red, green, yellow, blue, purple,
+        aqua, fg,
+    ];
+    let (name, title) = match (dark, grade) {
+        (true, Grade::Hard) => ("everforest-dark-hard", "Everforest Dark Hard"),
+        (true, Grade::Medium) => ("everforest-dark", "Everforest Dark"),
+        (true, Grade::Soft) => ("everforest-dark-soft", "Everforest Dark Soft"),
+        (false, Grade::Hard) => ("everforest-light-hard", "Everforest Light Hard"),
+        (false, Grade::Medium) => ("everforest-light", "Everforest Light"),
+        (false, Grade::Soft) => ("everforest-light-soft", "Everforest Light Soft"),
+    };
+    coded(name, title, roles, code, ansi)
+}
+
+// ------------------------------------------------------------------ One
+
+/// Atom's One Dark and One Light: keywords purple, functions blue,
+/// types yellow, strings green, numbers and constants orange, members
+/// and tags red, operators cyan, comments grey and italic — the
+/// comments as dim as Atom made them.
+fn one(dark: bool) -> Variant {
+    if dark {
+        let (red, orange, yellow, green, cyan, blue, purple, comment, fg) = (
+            0xe06c75, 0xd19a66, 0xe5c07b, 0x98c379, 0x56b6c2, 0x61afef, 0xc678dd, 0x5c6370,
+            0xabb2bf,
+        );
+        coded(
+            "one-dark",
+            "One Dark",
+            Roles {
+                dark,
+                bg: 0x282c34,
+                surface: 0x21252b,
+                raised: 0x2c313a,
+                sunken: 0x1e2227,
+                border: 0x3e4452,
+                border_strong: 0x4b5263,
+                fg,
+                muted: 0x828997,
+                faint: comment,
+                accent: blue,
+                selection: (0x3e4452, 1.0),
+                success: green,
+                warning: yellow,
+                danger: red,
+            },
+            Code {
+                keyword: purple,
+                function: blue,
+                kind: yellow,
+                constructor: yellow,
+                string: green,
+                number: orange,
+                constant: orange,
+                comment,
+                property: red,
+                operator: cyan,
+                punct: fg,
+                attribute: orange,
+                macros: cyan,
+                label: red,
+                tag: red,
+                heading: red,
+                strong: orange,
+                emphasis: purple,
+                link: blue,
+                raw: green,
+                added: green,
+                removed: red,
+            },
+            [
+                0x3f4451, red, green, yellow, blue, purple, cyan, 0xd7dae0, 0x4f5666, 0xbe5046,
+                green, orange, blue, purple, cyan, 0xffffff,
+            ],
+        )
+    } else {
+        let (red, orange, yellow, green, cyan, blue, purple, comment, fg) = (
+            0xe45649, 0x986801, 0xc18401, 0x50a14f, 0x0184bc, 0x4078f2, 0xa626a4, 0xa0a1a7,
+            0x383a42,
+        );
+        coded(
+            "one-light",
+            "One Light",
+            Roles {
+                dark,
+                bg: 0xfafafa,
+                surface: 0xf0f0f0,
+                raised: 0xffffff,
+                sunken: 0xeaeaeb,
+                border: 0xdbdbdc,
+                border_strong: 0xa0a1a7,
+                fg,
+                muted: 0x696c77,
+                faint: comment,
+                accent: blue,
+                // Atom's #e5e5e6 is not seen (1.2:1); its blue washed is.
+                selection: (blue, 0.28),
+                success: green,
+                warning: yellow,
+                danger: red,
+            },
+            Code {
+                keyword: purple,
+                function: blue,
+                kind: yellow,
+                constructor: yellow,
+                string: green,
+                number: orange,
+                constant: orange,
+                comment,
+                property: red,
+                operator: cyan,
+                punct: fg,
+                attribute: orange,
+                macros: cyan,
+                label: red,
+                tag: red,
+                heading: red,
+                strong: orange,
+                emphasis: purple,
+                link: blue,
+                raw: green,
+                added: green,
+                removed: red,
+            },
+            [
+                0xe5e5e6, red, green, yellow, blue, purple, cyan, fg, comment, 0xca1243, green,
+                orange, blue, purple, cyan, 0x090a0b,
+            ],
+        )
+    }
+}
+
+// -------------------------------------------------------------- Dracula
+
+/// Dracula (draculatheme.com's spec), and Alucard its light half: keywords
+/// and operators pink, functions green, types cyan and italic, strings
+/// yellow, numbers and constants purple, members the text's own, comments
+/// the spec's blue-grey.
+fn dracula(dark: bool) -> Variant {
+    let (bg, fg, comment, red, orange, yellow, green, purple, cyan, pink) = if dark {
+        (
+            0x282a36, 0xf8f8f2, 0x6272a4, 0xff5555, 0xffb86c, 0xf1fa8c, 0x50fa7b, 0xbd93f9,
+            0x8be9fd, 0xff79c6,
+        )
+    } else {
+        (
+            0xfffbeb, 0x1f1f1f, 0x6c664b, 0xcb3a2a, 0xa34d14, 0x846e15, 0x14710a, 0x644ac9,
+            0x036a96, 0xa3144d,
+        )
+    };
+    let roles = if dark {
+        Roles {
+            dark,
+            bg,
+            surface: 0x21222c,
+            raised: 0x343746,
+            sunken: 0x191a21,
+            border: 0x44475a,
+            border_strong: comment,
+            fg,
+            muted: 0xa3abcc,
+            faint: comment,
+            accent: purple,
+            selection: (0x44475a, 1.0),
+            success: green,
+            warning: orange,
+            danger: red,
+        }
+    } else {
+        Roles {
+            dark,
+            bg,
+            surface: 0xf5f0dc,
+            raised: 0xffffff,
+            sunken: 0xefe9d4,
+            border: 0xdfd8c0,
+            border_strong: 0xa9a38a,
+            fg,
+            muted: comment,
+            faint: 0x8f8a73,
+            accent: purple,
+            selection: (0xcfcfde, 1.0),
+            success: green,
+            warning: orange,
+            danger: red,
+        }
+    };
+    let code = Code {
+        keyword: pink,
+        function: green,
+        kind: cyan,
+        constructor: cyan,
+        string: yellow,
+        number: purple,
+        constant: purple,
+        comment,
+        property: fg,
+        operator: pink,
+        punct: fg,
+        attribute: green,
+        macros: cyan,
+        label: pink,
+        tag: pink,
+        heading: purple,
+        strong: orange,
+        emphasis: yellow,
+        link: cyan,
+        raw: green,
+        added: green,
+        removed: red,
+    };
+    let ansi = if dark {
+        [
+            0x21222c, red, green, yellow, purple, pink, cyan, fg, comment, 0xff6e6e, 0x69ff94,
+            0xffffa5, 0xd6acff, 0xff92df, 0xa4ffff, 0xffffff,
+        ]
+    } else {
+        [
+            0xcfcfde, red, green, yellow, purple, pink, cyan, fg, comment, red, green, yellow,
+            purple, pink, cyan, fg,
+        ]
+    };
+    let (name, title) = if dark {
+        ("dracula", "Dracula")
+    } else {
+        ("alucard", "Alucard")
+    };
+    coded(name, title, roles, code, ansi).styled(Token::Type, ITALIC)
+}
+
 // ------------------------------------------------------- Mono and Paper
 
 /// Ink on a page, kawoosh's own: the code told apart by weight and
@@ -1849,21 +2706,32 @@ mod tests {
         // each a note, and what it would have replaced stands.
         let p = resolve("ayu-dark", "rose-pine-dawn", "nope", &mut notes);
         assert_eq!(names(p), (Some("rose-pine"), Some("rose-pine-dawn")));
+        let lights: Vec<&str> = variants()
+            .iter()
+            .filter(|v| !v.dark())
+            .map(|v| v.name)
+            .collect();
         assert_eq!(
             notes,
             [
-                "theme.name: \"ayu-dark\" is a variant — theme.dark = \"ayu-dark\" shows it",
-                "theme.dark: \"rose-pine-dawn\" is not a dark theme",
-                "theme.light: no theme \"nope\" (system, rose-pine-dawn, ayu-light, gruvbox-light, gruvbox-light-hard, gruvbox-light-soft, tokyo-night-day, mono-light, mono-soft-light, paper, high-contrast-light)",
+                "theme.name: \"ayu-dark\" is a variant — theme.dark = \"ayu-dark\" shows it"
+                    .to_string(),
+                "theme.dark: \"rose-pine-dawn\" is not a dark theme".to_string(),
+                format!(
+                    "theme.light: no theme \"nope\" (system, {})",
+                    lights.join(", ")
+                ),
             ]
         );
         notes.clear();
         resolve("solarized", "", "", &mut notes);
+        let families: Vec<&str> = FAMILIES.iter().map(|f| f.name).collect();
         assert_eq!(
             notes,
-            [
-                "theme.name: no family \"solarized\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, gruvbox, gruvbox-hard, gruvbox-soft, tokyo-night, tokyo-night-storm, tokyo-night-moon, mono, mono-soft, paper, high-contrast)"
-            ]
+            [format!(
+                "theme.name: no family \"solarized\" (system, {})",
+                families.join(", ")
+            )]
         );
     }
 

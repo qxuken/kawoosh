@@ -4,11 +4,15 @@
 local themes = kawoosh.themes
 local names = {}
 for _, v in ipairs(themes.variants) do names[#names + 1] = v.name end
-kawoosh.test.eq(table.concat(names, " "),
-  "rose-pine rose-pine-moon ayu-dark ayu-mirage gruvbox-dark gruvbox-dark-hard gruvbox-dark-soft "
-  .. "tokyo-night tokyo-night-storm tokyo-night-moon mono-dark mono-soft-dark paper-dark "
-  .. "high-contrast-dark rose-pine-dawn ayu-light gruvbox-light gruvbox-light-hard gruvbox-light-soft "
-  .. "tokyo-night-day mono-light mono-soft-light paper high-contrast-light")
+-- The dark ones, then the light, Rosé Pine first and high contrast
+-- last in each.
+kawoosh.test.eq(names[1], "rose-pine")
+kawoosh.test.eq(names[#names], "high-contrast-light")
+local seen_light = false
+for _, v in ipairs(themes.variants) do
+  if not v.dark then seen_light = true end
+  kawoosh.test.ok(not (seen_light and v.dark), "a dark one after the light: " .. v.name)
+end
 local function variant(name)
   for _, v in ipairs(themes.variants) do if v.name == name then return v end end
 end
@@ -34,6 +38,15 @@ kawoosh.test.eq(variant("tokyo-night-day").dark, false)
 kawoosh.test.eq(variant("mono-dark").styles.keyword.bold, true)
 kawoosh.test.eq(variant("mono-dark").syntax.string, 0xb3b3b3ff)
 kawoosh.test.eq(variant("paper").syntax.string, 0x448c27ff)
+-- The ports' own: Catppuccin's mauve keywords, Dracula's italic types,
+-- Kanagawa's italic keywords; every family's halves known.
+kawoosh.test.eq(variant("catppuccin-mocha").syntax.keyword, 0xcba6f7ff)
+kawoosh.test.eq(variant("dracula").styles.type.italic, true)
+kawoosh.test.eq(variant("kanagawa-wave").styles.keyword.italic, true)
+for _, f in ipairs(themes.families) do
+  kawoosh.test.ok(variant(f.dark) and variant(f.dark).dark, f.name)
+  kawoosh.test.ok(variant(f.light) and not variant(f.light).dark, f.name)
+end
 
 -- A highlighted text's runs carry the style, and `tokens.styles` turns
 -- it off.
@@ -115,7 +128,7 @@ kawoosh.frame()
 kawoosh.test.eq(themes.current().dark, "rose-pine-moon")
 kawoosh.test.eq(kawoosh.opt("theme.dark"), "rose-pine-moon")
 -- Down to the light cards, the column held where it can be.
-for _ = 1, 20 do
+for _ = 1, #themes.variants do
   if not variant(themes.state().cursor).dark then break end
   kawoosh.press("j")
   kawoosh.frame()
@@ -126,11 +139,11 @@ kawoosh.press("<CR>")
 kawoosh.frame()
 kawoosh.test.eq(themes.current().light, c)
 -- The walk keeps the cursor's card in view: to the last and back up.
-for _ = 1, 24 do kawoosh.press("j") end
+for _ = 1, #themes.variants do kawoosh.press("j") end
 kawoosh.frame(3)
 kawoosh.test.eq(themes.state().cursor, "high-contrast-light")
 kawoosh.test.ok(themes.state().scrolled > 0, "scrolled down to the last card")
-for _ = 1, 24 do kawoosh.press("k") end
+for _ = 1, #themes.variants do kawoosh.press("k") end
 kawoosh.frame(3)
 kawoosh.test.eq(themes.state().cursor, "rose-pine")
 kawoosh.test.eq(themes.state().scrolled, 0, "and back to the first")

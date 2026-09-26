@@ -27,7 +27,9 @@
 //!   [`rows::mono`] over the one [`Face`], so the cell size follows.
 //! - **`theme.name`** is a family of [`crate::themes`] — `rose-pine`
 //!   (the default), `rose-pine-moon`, `ayu`, `ayu-mirage`, `gruvbox`
-//!   (`-hard`, `-soft`), `tokyo-night` (`-storm`, `-moon`), `mono`,
+//!   (`-hard`, `-soft`), `tokyo-night` (`-storm`, `-moon`),
+//!   `catppuccin` (`-macchiato`, `-frappe`), `kanagawa` (`-dragon`),
+//!   `everforest` (`-hard`, `-soft`), `one`, `dracula`, `mono`,
 //!   `mono-soft`, `paper`, `high-contrast` — a dark variant and a light
 //!   one, each setting the
 //!   chrome's roles, the syntax hues and the terminal's sixteen from one

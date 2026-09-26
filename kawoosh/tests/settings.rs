@@ -815,10 +815,13 @@ fn the_look_reaches_kui() {
     ex(&mut d, &mut app, "set theme.name=rose-pine-moon");
     assert_eq!(d.core.theme().bg, kawoosh::themes::MOON.theme().bg);
     ex(&mut d, &mut app, "set theme.name=solarized");
+    let families: Vec<&str> = kawoosh::themes::FAMILIES.iter().map(|f| f.name).collect();
+    let said = format!(
+        "theme.name: no family \"solarized\" (system, {})",
+        families.join(", ")
+    );
     assert!(
-        app.notes.shown.iter().any(|s| s.toast
-            && s.text
-                == "theme.name: no family \"solarized\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, gruvbox, gruvbox-hard, gruvbox-soft, tokyo-night, tokyo-night-storm, tokyo-night-moon, mono, mono-soft, paper, high-contrast)"),
+        app.notes.shown.iter().any(|s| s.toast && s.text == said),
         "{:?}",
         app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
     );
