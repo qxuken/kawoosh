@@ -1669,3 +1669,74 @@ fn one_server_serves_typescript_tsx_and_javascript() {
     assert_eq!(served(&app, "javascript").as_deref(), Some("javascript"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `:lsp logs`: every line a server said — its stderr too, which the
+/// notification log drops unless asked — in `*lsp logs*`, the caret on
+/// the newest, drawn again as it says more.
+#[test]
+fn lsp_logs_keep_what_a_server_said() {
+    let server = fake_server().command;
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-logs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    std::fs::write(dir.join("src/main.rs"), "fn main() {\n}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&dir.join("src/main.rs"));
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let main_pane = app.layout.focused();
+    assert!(
+        until(&mut d, &mut app, |a| a
+            .lsp
+            .logs
+            .of(&server)
+            .any(|l| l.text == "fake server starting")),
+        "the stderr line kept"
+    );
+    assert!(
+        !app.notes
+            .log
+            .iter()
+            .any(|e| e.text == "fake server starting"),
+        "the notification log dropped it, as it does a trace"
+    );
+
+    ex(&mut d, &mut app, "lsp logs");
+    let v = app.focused_view().unwrap();
+    let shown = |a: &Kawoosh| a.ed.buffer_of(a.focused_view().unwrap()).text();
+    assert_eq!(app.ed.buffer_of(v).name, "*lsp logs*");
+    assert!(
+        shown(&app).contains("  stderr  fake server starting\n"),
+        "{}",
+        shown(&app)
+    );
+
+    // An edit in the file: the server logs a line, and the pane has it.
+    let logs_pane = app.layout.focused();
+    app.layout.focus(main_pane);
+    d.keys(&mut app, "O");
+    d.text(&mut app, "//");
+    d.key(&mut app, "escape", KeyMods::default());
+    app.layout.focus(logs_pane);
+    assert!(
+        until(&mut d, &mut app, |a| shown(a)
+            .contains("  debug   the log line\n")),
+        "{}",
+        shown(&app)
+    );
+    let b = app.ed.buffer_of(app.focused_view().unwrap());
+    let caret = app.ed.views[app.focused_view().unwrap()]
+        .sels
+        .primary()
+        .head;
+    assert_eq!(b.line_of(caret) + 2, b.line_count(), "on the newest line");
+    // `:lsp info` reads the same log.
+    ex(&mut d, &mut app, "lsp info");
+    assert!(
+        shown(&app).contains("fake server starting"),
+        "{}",
+        shown(&app)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

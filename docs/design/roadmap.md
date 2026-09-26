@@ -1081,6 +1081,15 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   it: `languageId` is the document's own (`tsx` as `typescriptreact`),
   and a buffer no pane shows is sent again after a restart, as `:lsp
   restart` said it was.
+- **`:lsp logs`** — done 2026-09-26 [asked]. Everything a server said
+  — its stderr, `logMessage`, `showMessage` — kept per server (5000
+  lines, `lsp_logs.rs`), apart from the notification log, which drops
+  a server's stderr as a trace unless `notes.keep` asks and keeps 1000
+  lines of everything. `:lsp logs [LANGUAGE]` shows the caret's
+  server's (bare, every one's when the buffer has none) in `*lsp logs*`,
+  live, the caret following the newest line; `:lsp logs clear`.
+  `:lsp info`'s "said" reads the same log, so clangd's and
+  rust-analyzer's stderr shows there now.
 
 ### Config, theme, fonts
 

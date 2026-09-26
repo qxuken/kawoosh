@@ -165,6 +165,10 @@ Found on the way: `:lsp restart` said each buffer the server held is
 sent again, and one no pane showed was not; a reset now keeps them in
 `also_sync`.
 
+`:lsp logs [LANGUAGE]` came with it, asked while configuring clangd:
+what a server said — stderr included, which the notification log drops
+as a trace — kept per server and shown live (`kawoosh/src/lsp_logs.rs`).
+
 ## Not built
 
 - **A loaded file changed on disk by another program** is not read

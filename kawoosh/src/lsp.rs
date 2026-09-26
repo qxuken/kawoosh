@@ -125,6 +125,8 @@ pub struct LspState {
     pub(crate) rules_seen: Option<u64>,
     /// The `lsp.NAME` tables that are no server's, said once each.
     pub(crate) said_strays: HashSet<String>,
+    /// What each server said, all of it (`:lsp logs`).
+    pub logs: crate::lsp_logs::ServerLogs,
     /// What each language's server said it does.
     pub caps: HashMap<String, Caps>,
     /// The code actions on offer, in the picker's order, and the
@@ -182,6 +184,7 @@ impl LspState {
             defs: ServerDef::builtin(),
             rules_seen: None,
             said_strays: HashSet::new(),
+            logs: Default::default(),
             caps: HashMap::new(),
             actions: Vec::new(),
             actions_for: None,
@@ -488,6 +491,7 @@ impl Kawoosh {
                     text,
                     log,
                 } => {
+                    self.lsp.logs.push(&server, kind, &text);
                     let mut note = Note::new(Level::from_lsp(kind), text).source(server);
                     if log {
                         note = note.show(Show::Log);
@@ -532,6 +536,7 @@ impl Kawoosh {
         self.ed.adopt_file_diagnostics();
         self.push_documents();
         self.ask_inlay_hints(mode);
+        self.sync_lsp_logs();
     }
 
     /// With inlay hints on for its language (`lsp.LANGUAGE.inlay_hints`,
@@ -1594,15 +1599,11 @@ impl Kawoosh {
             for p in open {
                 out += &format!("        {p}\n");
             }
-            let said: Vec<&crate::notify::Entry> = self
-                .notes
-                .log
-                .iter()
-                .filter(|e| e.source.as_deref() == Some(cmd.as_str()))
-                .collect();
+            // The tail of what it said; `:lsp logs` has the rest.
+            let said: Vec<&crate::lsp_logs::Said> = self.lsp.logs.of(cmd).rev().take(20).collect();
             if !said.is_empty() {
-                out += "  said\n";
-                for e in &said[said.len().saturating_sub(20)..] {
+                out += "  said  (all of it: :lsp logs)\n";
+                for e in said.into_iter().rev() {
                     for (i, line) in e.text.lines().enumerate() {
                         out += if i == 0 { "        " } else { "          " };
                         out += line;
