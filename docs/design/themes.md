@@ -51,6 +51,16 @@ Shipped:
 | `tokyo-night` | `tokyo-night` | `tokyo-night-day` |
 | `tokyo-night-storm` | `tokyo-night-storm` | `tokyo-night-day` |
 | `tokyo-night-moon` | `tokyo-night-moon` | `tokyo-night-day` |
+| `catppuccin` | `catppuccin-mocha` | `catppuccin-latte` |
+| `catppuccin-macchiato` | `catppuccin-macchiato` | `catppuccin-latte` |
+| `catppuccin-frappe` | `catppuccin-frappe` | `catppuccin-latte` |
+| `kanagawa` | `kanagawa-wave` | `kanagawa-lotus` |
+| `kanagawa-dragon` | `kanagawa-dragon` | `kanagawa-lotus` |
+| `everforest` | `everforest-dark` | `everforest-light` |
+| `everforest-hard` | `everforest-dark-hard` | `everforest-light-hard` |
+| `everforest-soft` | `everforest-dark-soft` | `everforest-light-soft` |
+| `one` | `one-dark` | `one-light` |
+| `dracula` | `dracula` | `alucard` |
 | `mono` | `mono-dark` | `mono-light` |
 | `mono-soft` | `mono-soft-dark` | `mono-soft-light` |
 | `paper` | `paper-dark` | `paper` |
@@ -79,6 +89,26 @@ high-contrast pair is kawoosh's own, drawn to WCAG AAA: body text over
 15:1, every syntax hue and `muted` 7:1 on the page, `faint` 4.5:1, the
 borders 3:1 (the non-text minimum), and no green either, as the
 default's.
+
+Catppuccin (its four flavours, Latte the light half of each), Kanagawa
+(wave and dragon, lotus the light), Everforest (dark and light at three
+grades), One (Atom's One Dark and One Light) and Dracula (with Alucard,
+its own light half) are their projects' palettes, each filled in as a
+`themes::Code` — a hue for every token spelt out as a literal, the
+mapping each family's port makes read off the variant — as their ports
+scope the code: Catppuccin's keywords mauve and members lavender,
+Kanagawa's keywords violet and italic, Everforest's keywords red and
+strings aqua, One's members and tags red, Dracula's types cyan and
+italic. The steps off them, each for the check's sake: Kanagawa
+Lotus's text is its second ink (#43436c), Everforest Light's a shade
+darker than its #5c6a72, which becomes the quieter grey — at their own
+no selection was seen and read through at once; Everforest's `bg_visual`
+tint (1.2:1 off its page) is washed stronger in its own hue, and One
+Light's grey selection (1.2:1) is its blue washed; each selection's
+alpha is where it is seen and the text reads through (Latte 0.32, One
+Light 0.28, the Everforest lights 0.36–0.41). What remains short is the
+palettes': One Dark's comments (2.3:1) and One Light's (2.5:1); Latte's
+and the Everforest lights' hues, pale on their pages.
 
 Black and white (`mono`, stark black and white; `mono-soft`, charcoal
 and paper greys) and paper are kawoosh's own, one builder

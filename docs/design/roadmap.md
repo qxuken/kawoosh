@@ -2134,9 +2134,11 @@ then breadth.
 
 40. ~~**Themes** ([themes.md](themes.md)): the family one of several —
     Rosé Pine, Ayu (dark, mirage, light), Gruvbox (dark and light, hard,
-    medium, soft), Tokyo Night (night, storm, moon, day), black and
-    white (`mono`, `mono-soft`), paper, and a high-contrast pair to WCAG
-    AAA — each a variant of data (`themes::Variant`: kui's roles,
+    medium, soft), Tokyo Night (night, storm, moon, day), Catppuccin
+    (mocha, macchiato, frappé, latte), Kanagawa (wave, dragon, lotus),
+    Everforest (dark and light, three grades), One (dark, light),
+    Dracula (with Alucard), black and white (`mono`, `mono-soft`),
+    paper, and a high-contrast pair to WCAG AAA — each a variant of data (`themes::Variant`: kui's roles,
     a hue per token, the sixteen); `theme.dark` and `theme.light` a
     variant for each base apart from `theme.name`'s family; `:theme`
     (`toggle`, `system`, `dark`/`light [NAME]`, a family, `reset`) and
