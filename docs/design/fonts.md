@@ -116,9 +116,21 @@ asked again at the next frame; a card not warm is its frame alone. Only
 what a frame asked for is warmed, so a fling does not spend frames on
 cards already gone, and the list builds two cards past each edge, so at
 a walking pace they are warm before they are seen. A cold page is 22 ms
-now, where it was 70: one family's setup cannot be cut, which is what
-moving it off the frame would take — in kui (cosmic-text builds it in
-its own cache as it shapes), not here.
+now, where it was 70: one family's setup cannot be cut here.
+
+Whose setup it is, looked into at the user's word ("little
+investigation will not harm, so we can sure it's just cosmic-text and
+not a kui bottleneck"): cosmic-text's. Its `FontSystem::get_font_matches`
+scores every face in the database — 1312 on this machine — and sorts
+them the first time a family (weight, style) is asked for: 10.5 ms,
+then 0.4 ms to shape with the matches cached. Through kui the same
+first measure is 9.3 ms, a family's registration 0.04 ms and a second
+text 0.01 ms, so kui adds nothing; its spans' colours and indices do not
+split cosmic-text's cache (a new colour on a known family is 0.00 ms).
+The cache holds 256 and is emptied whole when full, so a pane that
+shows more families than that pays again coming back. The cure is
+cosmic-text's — matching the asked family's faces first and scoring the
+rest only when a glyph needs a fallback — not kawoosh's or kui's.
 
 ### 4. One lab for the look: the theme through the font
 
