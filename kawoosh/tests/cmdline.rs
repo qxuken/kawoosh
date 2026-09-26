@@ -250,23 +250,38 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     leave(&mut d, &mut app);
 
     // Past an option's path, after a `=` or a space, its value: the
-    // families kui can see for `font.family` (not a `.` one unless
-    // asked), the rest of the line the
+    // families kui can see for `font.family` (the monospaced first, not
+    // the OS's `.` ones), the rest of the line the
     // token, spaces and all; a one-of's words, the value it has first;
     // a flag's `true` and `false`.
     d.keys(&mut app, ":set font.fam");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("ily"));
     leave(&mut d, &mut app);
-    let families: Vec<String> = d
+    let fonts: Vec<_> = d
         .core
-        .system_font_families()
+        .system_fonts()
         .into_iter()
-        .filter(|f| !f.starts_with('.'))
+        .filter(|f| !f.family.starts_with('.'))
+        .collect();
+    let families: Vec<String> = fonts
+        .iter()
+        .filter(|f| f.monospaced)
+        .chain(fonts.iter().filter(|f| !f.monospaced))
+        .map(|f| f.family.clone())
         .collect();
     d.keys(&mut app, ":set font.family ");
     let c = app.cmd_completion.clone().unwrap();
     assert_eq!(c.start, "set font.family ".len());
-    assert_eq!(c.candidates, families, "the OS's hidden faces left out");
+    assert_eq!(
+        c.candidates, families,
+        "the monospaced first, the OS's hidden faces left out"
+    );
+    leave(&mut d, &mut app);
+    // `:font NAME` the same, the rest of the line.
+    d.keys(&mut app, ":font ");
+    let c = app.cmd_completion.clone().unwrap();
+    assert_eq!(c.start, "font ".len());
+    assert_eq!(c.candidates, families);
     leave(&mut d, &mut app);
     if let Some(spaced) = families.iter().find(|f| f.contains(' ')) {
         let (head, _) = spaced.split_once(' ').unwrap();

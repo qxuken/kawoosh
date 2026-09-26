@@ -1,21 +1,29 @@
--- The theme lab (docs/design/themes.md Decision 7): `:theme lab`
--- (`<leader>ol`) opens a column beside the code with the look on show
--- drawn through every situation the editor puts a colour in — the
+-- The look's lab (docs/design/themes.md Decision 7, fonts.md Decision
+-- 4): `:theme lab` or `:font lab` (`<leader>ol`) opens a column beside
+-- the code with the look on show — the theme through the editor's face,
+-- every sample set in it at its size, row and features — drawn through
+-- every situation the editor puts a colour in — the
 -- code, each token on the page, under the selection and under a search
 -- hit; a line with the caret, a selection, a hit and a diagnostic's
 -- wavy line and message; the surfaces with the three greys on each;
 -- the chrome's tabs, mode names and a toast; the terminal's sixteen —
 -- each pair with its contrast and the floor it has to clear, `✓` or
--- `✗`, and every pair listed at the end. It follows the look as it
--- changes: a saved `settings.lua` (`theme.*`, `tokens.colors`,
--- `tokens.styles`) or a pick in `:themes` is measured again at once, so
--- a theme is tuned with the lab open beside it.
+-- `✗`, and every pair listed at the end; and the face itself: the
+-- look-alikes, the operators under `font.features`, its four styles
+-- (a style the family has no face for said so: kui synthesizes it, or
+-- a variable font's axis draws it — kui lists its default weight only), box drawing, and what a
+-- fallback draws. It follows the look as it changes: a saved
+-- `settings.lua` (`theme.*`, `font.*`, `tokens.colors`,
+-- `tokens.styles`) or a pick in `:themes` or `:fonts` is measured and
+-- drawn again at once, so a theme and a face are tried together with
+-- the lab open beside them.
 --
 -- `f` shows only what falls short, `r` writes the report
 -- (`:theme check`), `j` `k` `<C-d>` `<C-u>` `gg` `G` scroll, `q` closes. It reads `kawoosh.themes.check()`, the
 -- same numbers `:theme check` writes, which a plugin can read too.
 
 local themes = kawoosh.themes
+local fonts = kawoosh.fonts
 
 local VIEW = "theme lab"
 local PANE_FACT = "lua:" .. VIEW
@@ -29,6 +37,19 @@ end
 -- The lab's state: whether only the pairs short of their floor show,
 -- and the check of the version of the look it was taken at.
 local L = nil
+
+-- The face on show (`kawoosh.fonts.current()`), read each frame, and a
+-- text style in it: the editor's size and row, or `size` for a sample
+-- at the chrome's; kui's mono where the face did not resolve.
+local F = nil
+local function face(extra)
+  local st = { size = F.size, line_height = F.row, wrap = "none" }
+  if F.font then st.font = F.font else st.family = "mono" end
+  if F.features ~= "" then st.features = F.features end
+  for k, v in pairs(extra or {}) do st[k] = v end
+  if extra and extra.size and not extra.line_height then st.line_height = nil end
+  return st
+end
 
 local function checked()
   local v = themes.current().version
@@ -57,7 +78,7 @@ local function swatch(label, fg, bg, style, w)
   local span = { label, color = fg }
   for k, v in pairs(style or {}) do span[k] = v end
   return row { width = w, pad = { x = 6, y = 2 }, radius = 3, bg = bg, clip = true,
-    text({ span }, { family = "mono", size = SIZE - 1, wrap = "none" }) }
+    text({ span }, face { size = SIZE - 1 }) }
 end
 
 local function heading(title, note, t)
@@ -99,10 +120,10 @@ local function code_scene(s, t)
     end
     local body = row { width = "grow", gap = 10, pad = { x = 8 },
       bg = i == 4 and r.selection or nil,
-      text(tostring(i), { family = "mono", size = SIZE - 1, color = r.faint, wrap = "none" }),
-      text(spans, { family = "mono", size = SIZE - 1, wrap = "none" }) }
+      text(tostring(i), face { color = r.faint }),
+      text(spans, face()) }
     if i == 2 then
-      body[#body + 1] = text("  unused: name", { family = "mono", size = SIZE - 1, color = r.danger, wrap = "none" })
+      body[#body + 1] = text("  unused: name", face { color = r.danger })
     end
     col[#col + 1] = body
   end
@@ -169,7 +190,7 @@ local function chrome_scene(s, t)
   local strip = row { width = "grow", gap = 12, pad = { x = 8, y = 3 }, bg = r.sunken, cross_align = "center" }
   for _, m in ipairs { { "NORMAL", r.focus_ring }, { "INSERT", r.success }, { "VISUAL", r.warning } } do
     strip[#strip + 1] = row { gap = 4, cross_align = "center",
-      text({ { m[1], bold = true } }, { family = "mono", size = SIZE - 1, color = m[2], wrap = "none" }),
+      text({ { m[1], bold = true } }, face { size = SIZE - 1, color = m[2] }),
       verdict(L.by[m[1] .. " on the strip"], t) }
   end
   local toast = column { width = "grow", bg = r.raised, radius = 6, pad = 8, gap = 4,
@@ -192,10 +213,49 @@ local function terminal_scene(s, t)
     local line = row { gap = 10 }
     for i = 1, 8 do
       local c = s.ansi[half * 8 + i]
-      line[#line + 1] = text(names[i]:sub(1, 3), { family = "mono", size = SIZE - 1, color = c, wrap = "none" })
+      line[#line + 1] = text(names[i]:sub(1, 3), face { color = c })
     end
     col[#col + 1] = line
   end
+  return col
+end
+
+-- The face: what it is, the look-alikes, the operators under the
+-- features, its four styles (said when the family has no face for one:
+-- kui synthesizes it, or a variable font's axis draws it), box drawing and blocks, and what a fallback draws.
+local function font_scene(s, t)
+  local r = s.roles
+  local col = column { width = "grow", bg = r.bg, radius = 4, pad = 8, gap = 6,
+    border = { w = 1, color = r.border } }
+  local function note(words)
+    return text(words, { size = SIZE - 2, color = r.muted, wrap = "word" })
+  end
+  local weights = F.weights or {}
+  local bold = false
+  for _, w in ipairs(weights) do bold = bold or w >= 600 end
+  local what = F.name ~= "" and F.name or "kui's mono"
+  local cell = F.cell and F.cell > 0 and string.format(" · cell %.1f × %g px", F.cell, F.row) or ""
+  col[#col + 1] = note(string.format("%s%s · %g px · row %g px (%g×)%s%s", what,
+    F.family == "" and " (kawoosh's)" or "", F.size, F.row, F.line_height, cell,
+    F.features ~= "" and (" · features " .. F.features) or ""))
+  local function line(label, spans, extra)
+    local st = face(extra)
+    return row { width = "grow", gap = 10, cross_align = "center",
+      row { width = SIZE * 7, clip = true, text(label, { size = SIZE - 2, color = r.faint, wrap = "none" }) },
+      row { width = "grow", clip = true, text(spans, st) } }
+  end
+  local fg = r.fg
+  col[#col + 1] = line("look-alikes", { { "0O o 1lI| rn m  {[()]} ;: ,. '\"`", color = fg } })
+  col[#col + 1] = line("operators", { { "-> => != !== == === <= >= :: |> <- && || // /* */", color = fg } })
+  local sample = "fn greet(name: &str) -> String"
+  col[#col + 1] = line("regular", { { sample, color = fg } })
+  col[#col + 1] = line(bold and "bold" or "bold (no face)", { { sample, color = fg, bold = true } })
+  col[#col + 1] = line(F.italic and "italic" or "italic (no face)", { { sample, color = fg, italic = true } })
+  col[#col + 1] = line("bold italic", { { sample, color = fg, bold = true, italic = true } })
+  col[#col + 1] = line("box, blocks", { { "┌─┬─┐ │ ├─┼─┤ └─┴─┘ ▁▂▃▄▅▆▇█ ░▒▓", color = fg } })
+  col[#col + 1] = line("fallbacks", { { "漢字 かな ✓ ✗ → … ⏎ ⌘ λ \u{E7A8} \u{F07B} \u{E0B0}", color = fg } })
+  col[#col + 1] = note(F.mono == false and "this family does not say it is monospaced: the cells follow `M`'s width"
+    or "the terminal draws box drawing and blocks from the cell itself, seamless in any face")
   return col
 end
 
@@ -222,6 +282,7 @@ kawoosh.view(VIEW, function(ctx)
   sizes(ctx.env)
   local t = ctx.env.theme
   if not L then L = {} end
+  F = fonts.current()
   local s = checked()
   -- A scroll the keys asked for, from where the lab is.
   if L.scroll then
@@ -233,7 +294,8 @@ kawoosh.view(VIEW, function(ctx)
   local short = 0
   for _, c in ipairs(s.checks) do if not c.ok then short = short + 1 end end
   local head = column { width = "grow", gap = 4,
-    text({ { s.title, bold = true } }, { size = SIZE, color = t.fg, wrap = "word" }),
+    text({ { s.title .. " · " .. (F.name ~= "" and F.name or "kui's mono") .. string.format(" %g px", F.size),
+             bold = true } }, { size = SIZE, color = t.fg, wrap = "word" }),
     text(string.format("%d pairs · %d below their floor%s", #s.checks, short,
       L.short and " · only those shown" or ""),
       { size = SIZE - 1, color = short > 0 and t.danger or t.muted, wrap = "word" }),
@@ -247,6 +309,7 @@ kawoosh.view(VIEW, function(ctx)
   end
   if not L.short then
     add("code", "the caret on 42, a hit on count, line 4 selected, a diagnostic under name", code_scene(s, t))
+    add("font", "the face, as the editor sets it", font_scene(s, t))
   end
   add("tokens", "on the page ≥ 3 · under a selection or a hit ≥ 2", token_scene(s, t))
   if not L.short then
@@ -260,10 +323,14 @@ end, function() end, { session = false })
 
 -- -------------------------------------------------------- the commands
 
-kawoosh.command("theme lab", function()
+local function open()
   L = nil
   kawoosh.view_open(VIEW, { share = SHARE })
-end, { doc = "the selected theme through every situation the editor draws, each pair measured" })
+end
+kawoosh.command("theme lab", open,
+  { doc = "the selected theme through every situation the editor draws, in the editor's face, each pair measured" })
+kawoosh.command("font lab", open,
+  { doc = "the editor's face with the theme on show: the look-alikes, the operators, its styles, each pair measured" })
 
 local function on(name, fn, doc)
   kawoosh.command("theme lab " .. name, fn, { when = { PANE_FACT }, doc = doc })
@@ -285,10 +352,12 @@ for k, c in pairs { f = "short", r = "report", q = "close", ["<Esc>"] = "close",
 end
 
 -- themes.lab(): what the lab shows — `title`, `short` (how many pairs
--- fall short), `only_short` — or nil when it is not open; for a test.
+-- fall short), `only_short`, `face` (the family its samples are set
+-- in, and `size`) — or nil when it is not open; for a test.
 function themes.lab()
   if not L or not L.subject then return nil end
   local n = 0
   for _, c in ipairs(L.subject.checks) do if not c.ok then n = n + 1 end end
-  return { title = L.subject.title, short = n, only_short = L.short == true }
+  return { title = L.subject.title, short = n, only_short = L.short == true,
+           face = F and F.name, size = F and F.size }
 end

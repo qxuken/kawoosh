@@ -1,0 +1,137 @@
+# Fonts: a pane to pick a face, and a lab that shows it with the theme
+
+Status: decided and built 2026-09-26 (roadmap step 43), at the user's
+ask: "we got theme panel and theme lab. how about we make a font panel
+so i preview theme and font in a lab". Before this a face was picked by
+typing `:set font.family=…` blind: the completion listed every family
+(it did not know a monospaced one from a display face), and nothing
+showed a family before it was taken. Each decision keeps the
+alternative it beat; every call here was taken for the user and is
+theirs to overturn.
+
+## What there was
+
+`font.family`, `font.size`, `font.line_height`, `font.features` and
+`font.chrome_size` (`look.rs`, roadmap step 5); the empty family is the
+face kawoosh ships; `font bigger`, `font smaller` and `font reset` step
+the size (⌘= ⌘- ⌘0). kui listed the installed families by name alone
+(`Core::system_font_families`). The theme lab (themes.md Decision 7)
+drew its samples in kui's generic `mono`, not in the editor's face, so
+it showed a theme through a font the editor was not using.
+
+## Decisions
+
+### 1. kui says what a family is; kawoosh does not measure
+
+kui's `Core::system_fonts` (kui F97, added for this) lists each family
+with what its font database already knew and the name-only list threw
+away: whether every face is fixed-pitch (the `post` table's flag),
+the weights its faces come in, and whether it has an italic. A family
+whose name starts with `.` is the OS's own (`.SF NS`) and is left out
+of every list here, as a hidden file is — but for the face kawoosh
+ships, which its files name `.IosevkaNavcon`.
+
+*Beat:* telling a monospaced family by measuring `i` against `M` from
+kawoosh — 5 s for 613 families (each font file loaded to shape two
+strings), and wrong on symbol faces (Webdings measured "monospaced").
+The flag misses a face that does not set it (Monaco); `all` in the pane
+shows it.
+
+### 2. `kawoosh.fonts`, a door of data
+
+Beside `kawoosh.themes`, set before the bundled plugins load:
+`families()` — each `{ name, mono, weights, italic, bundled }`, the
+face kawoosh ships first — `current()` — the face on show: `family`
+(the setting, `""` for the shipped face), `name` (the family it
+resolved to), `size`, `line_height` (the ratio), `row` (px), `cell`
+(a cell's width, px), `features`, `chrome` (the chrome's size),
+`font` (a handle for a kui text's `font =`), and the family's `mono`,
+`weights`, `italic` — and `face(NAME)`, the handle a view draws a
+family with. The families are registered with kui when a view
+first asks for one — all of them, at the next frame (`face` answers nil
+until then), 10 ms once for 613 in a debug build — so nothing is
+registered until a view looks, and after that no card waits.
+
+*Beat:* registering each family as its card first asked for it — the
+first build. Every card the pane scrolled or filtered to was drawn for
+a frame in kui's mono and then in its own face: a flicker the user saw
+at once. A card with no handle yet is its frame alone, which only the
+pane's first frame shows.
+
+### 3. The pane: `:fonts` (`<leader>of`)
+
+A column of its own beside the focused one, as `:themes` is (0.4 of
+the width), so a pick is seen on the code at once. Its head says the
+face on show and what keeps it; `mono` and `all` as two chips (mono
+first, `m` flips them); a field that narrows the list by any part of
+the name (`/` or `i`); the size, `+` and `-` (the session's `font.size`,
+as ⌘= ⌘- do). Every family is a card **drawn in itself**: its name in
+its own face, whether it is monospaced, how many weights and whether it
+has an italic, and two lines of code in its own face at the editor's
+size and row height, in the hues and styles of the theme on show — the
+font seen as the editor would set it, in the colours it would be set
+in. The face kawoosh ships is first ("kawoosh's"), then the rest by
+name; the one on show says "selected".
+
+`⏎` or a click takes the cursor's family (`font.family`, the session's;
+the shipped face is the empty string), `j` `k` `gg` `G` `<C-d>` `<C-u>`
+walk — over the filter's normal mode too, where they walk what it left — the cursor kept in view, `y` copies the line that keeps the pick
+in `settings.lua` — `font = { family = "…", size = N }` — `q` closes.
+
+The list is a `uniform_list`: only the cards on screen are built, so a
+frame shapes a screenful of families however many are installed (300
+monospaced ones on the machine it was built on, most of them a retro
+pack).
+
+*Beat:* a picker source (`:picker fonts`). The picker's rows are its own
+text in one face — a family cannot be drawn in itself there — and its
+preview is a buffer. *Beat:* a card for every family built each frame,
+as the themes' pane does for its forty — shaping three hundred fonts is
+the five seconds of Decision 1.
+
+### 4. One lab for the look: the theme through the font
+
+The theme lab is the look's lab. Every sample in it — the code, the
+tokens, the terminal's sixteen — is drawn in the editor's face, at its
+size, row height and features, where it drew kui's `mono` before; its
+title names the face beside the theme ("rose-pine (selected, dark) ·
+Iosevka 13 px"); and it gains a **font** scene under the code, what a face is looked at
+for:
+
+- the face: family, size, row, a cell's width, the features on;
+- the look-alikes: `0O o 1lI| rn m` and the brackets;
+- the operators, under `font.features` (ligatures on or off as set);
+- regular, bold, italic and bold italic, each saying when the family
+  has **no face** for it — kui synthesizes the style, or a variable
+  font's axis draws it (kui lists a variable font's default weight
+  only, so the two are not told apart);
+- box drawing and blocks, as the text draws them (the terminal draws
+  them from the cell itself, kui F66);
+- what the face does not have, drawn by a fallback: CJK, symbols, a
+  Nerd Font icon.
+
+`:font lab` opens the same lab as `:theme lab` (`<leader>ol`). With
+`:fonts` or `:themes` beside it, a pick in either is measured and drawn
+again at once: the preview is the pick, the session's, and `:font
+reset`, `:set font.family!` or `:theme reset` take it back.
+
+*Beat:* a font lab of its own. A theme is only ever seen through a font
+— a hue's weight, a comment's italic, a selection over thin strokes —
+and the ask was to see the two together.
+
+### 5. `:font`, and `:font NAME`
+
+`:font` says the face on show; `:font NAME` takes a family for the
+session (the name may have spaces; it completes from the families,
+monospaced first), a family kui cannot see saying so. `font bigger`,
+`smaller`, `reset` are as they were. `:set font.family ` completes the
+same way (the step before this one), monospaced first.
+
+## Built
+
+As decided. kui F97 (`Core::system_fonts`); `look.rs` keeps the
+families and the face as the door has them (`Fonts`), registers what a
+view asked for at the frame, and holds `:font`; `kawoosh/lua/fonts.lua`
+the pane; `kawoosh/lua/theme_lab.lua` the face and its scene. Tests:
+`kawoosh/lua/tests/fonts.lua` (the door, the pane's walk, filter, take,
+copy and close, the lab's face), `tests/cmdline.rs` for the completion.

@@ -2205,6 +2205,16 @@ then breadth.
     names and paths, `kawoosh.project` and a many-part `kawoosh.fs.join`
     for a trusted `init.lua`.
 
+43. ~~**Fonts** ([fonts.md](fonts.md)): `:fonts` (`<leader>of`), a
+    column of every family each drawn in itself — its name, whether it
+    is monospaced, its weights, two lines of code at the editor's size
+    in the theme on show — monospaced first, filtered by name, `⏎`
+    taking one for the session; `:font NAME`; the families as data
+    (`kawoosh.fonts`, over kui F97's `system_fonts`); and the lab the
+    look's — every sample in the editor's face, a font scene of
+    look-alikes, operators, the four styles and fallbacks — so a theme
+    and a face are tried together.~~ Built 2026-09-26.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),
 kitty graphics and native extensions (deferred), WSL (domains.md's

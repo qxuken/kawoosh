@@ -22,6 +22,7 @@ pub mod diff;
 pub mod disk;
 pub mod dock;
 pub mod domains;
+pub mod fonts;
 pub mod graph;
 pub mod harness;
 pub mod history;

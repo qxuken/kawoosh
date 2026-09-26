@@ -11,6 +11,8 @@ pub const BUNDLED: &[(&str, &str)] = &[
     ("kawoosh:tools", include_str!("../lua/tools.lua")),
     ("kawoosh:launcher", include_str!("../lua/launcher.lua")),
     ("kawoosh:themes", include_str!("../lua/themes.lua")),
+    // After themes: its cards set the sample in the theme on show.
+    ("kawoosh:fonts", include_str!("../lua/fonts.lua")),
     // After themes: the lab shares its sample.
     ("kawoosh:theme_lab", include_str!("../lua/theme_lab.lua")),
     ("kawoosh:pairs", include_str!("../lua/pairs.lua")),

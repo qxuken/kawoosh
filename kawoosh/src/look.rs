@@ -177,9 +177,9 @@ pub struct Look {
     pub hit: Option<Color>,
     /// The family a toast already said was missing.
     missing: Option<String>,
-    /// The families kui can see, read once: what `:set font.family`
-    /// completes to.
-    pub families: Option<Vec<String>>,
+    /// The families kui can see and the face on show, shared with the
+    /// `kawoosh.fonts` door (`fonts.rs`).
+    pub fonts: crate::fonts::SharedFonts,
 }
 
 /// What the look resolved to, as the Lua door says it: the family, the
@@ -417,9 +417,7 @@ impl Kawoosh {
     /// Builds the look again when the settings or the OS's appearance
     /// moved since the last frame, and pushes it into the core.
     pub(crate) fn sync_look(&mut self, ui: &mut Ui<'_>) {
-        if self.look.families.is_none() {
-            self.look.families = Some(ui.core().system_font_families());
-        }
+        self.sync_fonts(ui);
         let v = self.ed.settings.version();
         let system = ui.env().system;
         let sys = system.appearance;

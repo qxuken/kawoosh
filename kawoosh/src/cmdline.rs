@@ -5,9 +5,11 @@
 //! completes to a command — the ex spellings, the shell's, the engine's
 //! and Lua's — and an argument to what the command declares it takes
 //! (`kawoosh_editor::ArgKind`): a path for `:e`, `:w`, `:cd`, `:vs`,
-//! `:dir`; a buffer for `:b`; a tool, a view, an option, a command.
+//! `:dir`; a buffer for `:b`; a tool, a view, an option, a command, a
+//! font family (`:font`, the rest of the line, monospaced first).
 //! Past an option's path (`:set font.family=`, `:set font.family `)
-//! its value completes: the families for `font.family`, a one-of's
+//! its value completes: the families for `font.family` (monospaced
+//! first, the OS's `.`-faces left out), a one-of's
 //! words, `true` and `false`.
 //! A command's subcommands complete as its first word (`:memory fo`
 //! is `:memory forget`), and the words after complete as the
@@ -92,17 +94,25 @@ impl Kawoosh {
         let inv = self.ed.commands.resolve(name, &words);
         let index = inv.args.len();
         let args_at = self.ed.command_args(&inv.name);
-        // An option's value, once its path is whole: the rest of the
-        // line, spaces and all, from where `:set` reads it.
-        if args_at.and_then(|a| a.kind_at(0)) == Some(ArgKind::Option) {
-            let first = word_starts(line)
-                .get(1 + words.len().saturating_sub(index))
-                .copied()
-                .unwrap_or(start);
-            if let Some((path, value)) = set_value(&line[first..]) {
-                let at = line.len() - value.len();
-                return (at, self.setting_value_candidates(path, value));
+        let first = word_starts(line)
+            .get(1 + words.len().saturating_sub(index))
+            .copied()
+            .unwrap_or(start);
+        match args_at.and_then(|a| a.kind_at(0)) {
+            // An option's value, once its path is whole: the rest of the
+            // line, spaces and all, from where `:set` reads it.
+            Some(ArgKind::Option) => {
+                if let Some((path, value)) = set_value(&line[first..]) {
+                    let at = line.len() - value.len();
+                    return (at, self.setting_value_candidates(path, value));
+                }
             }
+            // A family is the rest of the line too (`:font Fira Code`).
+            Some(ArgKind::Font) => {
+                let names = self.look.fonts.borrow().names();
+                return (first, narrow(names, &line[first..]));
+            }
+            _ => {}
         }
         // The first word after a command with subcommands is one of
         // them, or its own first argument: both are offered.
@@ -138,7 +148,7 @@ impl Kawoosh {
         }
         let kind = args_at.and_then(|a| a.kind_at(index));
         let args: Vec<String> = match kind {
-            None | Some(ArgKind::Text) => Vec::new(),
+            None | Some(ArgKind::Text) | Some(ArgKind::Font) => Vec::new(),
             Some(ArgKind::Path) => self.path_candidates(token),
             Some(ArgKind::Command) => self.command_name_candidates(token),
             Some(ArgKind::Buffer) => {
@@ -235,16 +245,7 @@ impl Kawoosh {
             _ => {}
         }
         match (path, settings.kind(path)) {
-            // The OS's own faces (`.SF NS`) only asked for, like a
-            // hidden file.
-            ("font.family", _) => all.extend(
-                self.look
-                    .families
-                    .iter()
-                    .flatten()
-                    .filter(|f| typed.starts_with('.') || !f.starts_with('.'))
-                    .cloned(),
-            ),
+            ("font.family", _) => all.extend(self.look.fonts.borrow().names()),
             ("theme.name", _) => {
                 all.push("system".into());
                 all.extend(crate::themes::FAMILIES.iter().map(|f| f.name.to_string()));
@@ -265,16 +266,24 @@ impl Kawoosh {
         }
         let mut seen = HashSet::new();
         all.retain(|v| seen.insert(v.clone()));
-        let lower = typed.to_lowercase();
-        let (mut out, rest): (Vec<String>, Vec<String>) =
-            all.into_iter().partition(|v| v.starts_with(typed));
-        out.extend(
-            rest.into_iter()
-                .filter(|v| v.to_lowercase().contains(&lower)),
-        );
-        out
+        narrow(all, typed)
     }
+}
 
+/// The candidates for `typed`: the ones it starts, then the ones that
+/// only contain it, case aside.
+fn narrow(all: Vec<String>, typed: &str) -> Vec<String> {
+    let lower = typed.to_lowercase();
+    let (mut out, rest): (Vec<String>, Vec<String>) =
+        all.into_iter().partition(|v| v.starts_with(typed));
+    out.extend(
+        rest.into_iter()
+            .filter(|v| v.to_lowercase().contains(&lower)),
+    );
+    out
+}
+
+impl Kawoosh {
     /// Every name the engine knows a command by, the ones meant for
     /// the command line first: the ex spellings, the commands that have
     /// one (`:vsplit`, `:tab` for `:tabnew`) and the ones no key runs

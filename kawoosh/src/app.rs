@@ -2250,6 +2250,7 @@ impl kui_native::App for Kawoosh {
         self.sync_undo_view();
         let m = ui.measure_text("M", &rows::mono(self.face, &pal), None);
         self.cell = (m.width.max(1.0), self.face.line_height);
+        self.publish_face();
         if let Some(text) = self.clip_out.take() {
             self.clip_last = Some(text.clone());
             ui.set_clipboard(text, None);

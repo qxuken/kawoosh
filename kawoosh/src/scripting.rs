@@ -104,6 +104,9 @@ impl Kawoosh {
         if let Err(e) = crate::look::lua_door(rt.lua(), self.look.shown.clone()) {
             log::error!("kawoosh.themes: {e}");
         }
+        if let Err(e) = crate::fonts::lua_door(rt.lua(), self.look.fonts.clone()) {
+            log::error!("kawoosh.fonts: {e}");
+        }
         for (name, src) in crate::plugins::BUNDLED {
             if let Err(e) = rt.load_source(name, src) {
                 log::error!("{name}: {e}");
