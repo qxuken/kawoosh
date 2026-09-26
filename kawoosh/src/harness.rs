@@ -18,7 +18,7 @@ use std::path::Path;
 
 use kawoosh_editor::keymap::{LEADER, parse_notation};
 use kawoosh_lua::TestStep;
-use kui::{
+use kui_native::{
     App, Core, Extension, Extensions, InputEvent, KeyCode, KeyMods, KeyPress, Size, UiEvent, Vec2,
 };
 
@@ -307,7 +307,7 @@ impl Harness {
                     let (mut line, mut extra) = (String::new(), String::new());
                     let mut j = i + 1;
                     while j < nodes.len() && nodes[j].depth > depth {
-                        if nodes[j].role == Some(kui::Role::None) {
+                        if nodes[j].role == Some(kui_native::Role::None) {
                             let d = nodes[j].depth;
                             j += 1;
                             while j < nodes.len() && nodes[j].depth > d {

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::notify::{CORNER_TTL, Level, MESSAGES_BUFFER, Note, TOAST_TTL};
-use kui::{InputEvent, KeyMods, Vec2};
+use kui_native::{InputEvent, KeyMods, Vec2};
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");

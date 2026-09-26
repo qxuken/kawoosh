@@ -10,7 +10,7 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn tmp(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("kawoosh-marks-{tag}-{}", std::process::id()));

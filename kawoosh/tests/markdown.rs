@@ -9,7 +9,7 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn fixture(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("kawoosh-md-{tag}-{}", std::process::id()));
@@ -129,7 +129,7 @@ fn rendered_rows_fold_the_marks_and_the_caret_line_is_raw() {
         .core
         .nodes()
         .iter()
-        .find(|n| n.kind == kui::NodeKind::Image)
+        .find(|n| n.kind == kui_native::NodeKind::Image)
         .map(|n| (n.rect.w, n.rect.h))
         .expect("the image drawn");
     assert_eq!(image, (120.0, 40.0));
@@ -200,7 +200,7 @@ fn a_click_lands_through_the_folds() {
         .nodes()
         .iter()
         .find(|n| {
-            n.kind == kui::NodeKind::Box
+            n.kind == kui_native::NodeKind::Box
                 && n.rect.w == 2.0
                 && n.rect.y >= row.y
                 && n.rect.y < row.y + row.h
@@ -306,7 +306,7 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
         .core
         .nodes()
         .iter()
-        .filter(|n| n.kind == kui::NodeKind::Image)
+        .filter(|n| n.kind == kui_native::NodeKind::Image)
         .map(|n| (n.rect.x, n.rect.y))
         .collect();
     assert_eq!(
@@ -324,7 +324,7 @@ fn a_wide_table_scrolls_images_line_up_and_anchors_jump() {
     );
     // The left rule of each of its rows, 1px wide: they meet, from the
     // top edge's row to the bottom's.
-    let mut rules: Vec<kui::Rect> = d
+    let mut rules: Vec<kui_native::Rect> = d
         .core
         .nodes()
         .iter()
@@ -535,7 +535,7 @@ fn a_caret_past_a_headings_end_sits_after_it() {
         .nodes()
         .into_iter()
         .find(|n| {
-            n.width == kui::Sizing::Fixed(8.0)
+            n.width == kui_native::Sizing::Fixed(8.0)
                 && n.rect.y >= text.rect.y
                 && n.rect.y < text.rect.y + text.rect.h
         })

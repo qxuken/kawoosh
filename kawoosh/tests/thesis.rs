@@ -7,7 +7,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh_systems::lsp::DIAG_LAYER;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 #[test]
 fn two_panes_one_rust_analyzer() {

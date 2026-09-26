@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use kawoosh_doc::{BufferId, Version};
-use kui::{Align, Color, FloatConfig, Min, NodeSpec, Role, Sizing, Span, TextStyle, Ui};
+use kui_native::{Align, Color, FloatConfig, Min, NodeSpec, Role, Sizing, Span, TextStyle, Ui};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
@@ -746,7 +746,7 @@ impl Mark {
 pub struct RowForm {
     pub key: String,
     pub scale: f32,
-    pub wrap: Option<kui::TextWrap>,
+    pub wrap: Option<kui_native::TextWrap>,
     pub bg: Option<Color>,
     /// The gutter's width, and what it shows beside the row and
     /// whether it is the caret's line.
@@ -756,7 +756,7 @@ pub struct RowForm {
     /// Images instead of text, side by side, each at its size in px;
     /// the alt of one still being read (or that cannot be), dim, in its
     /// place.
-    pub images: Vec<Result<(kui::ImageId, f32, f32), String>>,
+    pub images: Vec<Result<(kui_native::ImageId, f32, f32), String>>,
     /// As wide as its text, which does not wrap: a table's row, in a
     /// block that scrolls sideways.
     pub fit: bool,
@@ -786,7 +786,7 @@ pub enum TableCell {
     /// These drawn bytes of the row.
     Text(Range<usize>),
     /// An image, sized; or the alt of one not read.
-    Image(Result<(kui::ImageId, f32, f32), String>),
+    Image(Result<(kui_native::ImageId, f32, f32), String>),
 }
 
 /// The pad above and below an image in a table's cell.
@@ -1189,6 +1189,13 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
     let form = line.form;
     let scale = form.map_or(1.0, |f| f.scale);
     let lh = lh * scale;
+    // A heading's number stands on its first line's baseline, where
+    // centred in the line it floated above the larger text. Only there:
+    // the numbers of lines at the body's size sit on it already, and an
+    // image or a rule has no baseline to share.
+    let on_baseline = form.is_some_and(|f| {
+        f.scale != 1.0 && f.gutter.is_some() && f.images.is_empty() && !f.rule && f.table.is_none()
+    });
     // At least the pane's width, and as wide as its text: the floor is
     // what the lines column's horizontal scroll measures its content by.
     // A rendered row is the column's width and as tall as its text
@@ -1212,9 +1219,13 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 // and a column compresses its children toward their
                 // floors when it does.
                 .min_height(Min::FIT)
-                .cross_align(Align::Start)
+                .cross_align(if on_baseline {
+                    Align::Baseline
+                } else {
+                    Align::Start
+                })
                 .role(Role::Line)
-                .on_layout(kui::Value::map([("kind", "mdrow".into())]));
+                .on_layout(kui_native::Value::map([("kind", "mdrow".into())]));
             if let Some(bg) = f.bg {
                 r = r.bg(bg);
             }
@@ -1252,20 +1263,25 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 .line_height(lh)
                 .features(face.features)
                 .color(pal.fg)
-                .wrap(f.wrap.unwrap_or(kui::TextWrap::None));
+                .wrap(f.wrap.unwrap_or(kui_native::TextWrap::None));
             if let Some(id) = face.id {
                 base = base.font(id);
             }
             // The line's number, in the row: decoration, not text.
             if let Some((w, label, current)) = &f.gutter {
+                // On a baseline the box is its text's height, so that
+                // lowering it does not reach below the line.
+                let spec = NodeSpec::row()
+                    .width(Sizing::Fixed(*w))
+                    .pad_xy(GUTTER_PAD, 0.0)
+                    .main_align(Align::End)
+                    .role(Role::None);
                 ui.with(
-                    NodeSpec::row()
-                        .width(Sizing::Fixed(*w))
-                        .height(Sizing::Fixed(lh))
-                        .pad_xy(GUTTER_PAD, 0.0)
-                        .main_align(Align::End)
-                        .cross_align(Align::Center)
-                        .role(Role::None),
+                    if on_baseline {
+                        spec
+                    } else {
+                        spec.height(Sizing::Fixed(lh)).cross_align(Align::Center)
+                    },
                     |ui| {
                         let color = if *current { pal.dim } else { pal.faint };
                         ui.text(label, mono(face, pal).color(color));
@@ -1311,7 +1327,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             }
         }
         let wraps = form.is_some_and(|f| f.wrap.is_some());
-        let text_key: std::cell::Cell<Option<kui::Key>> = std::cell::Cell::new(None);
+        let text_key: std::cell::Cell<Option<kui_native::Key>> = std::cell::Cell::new(None);
         spacer(ui, before);
         let flush = |ui: &mut Ui<'_>, segs: &[(Range<usize>, Look)]| {
             if segs.is_empty() {
@@ -1346,7 +1362,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                         s = s
                             .underline()
                             .underline_color(c)
-                            .underline_style(kui::UnderlineStyle::Wavy);
+                            .underline_style(kui_native::UnderlineStyle::Wavy);
                     } else if l.mark.underline {
                         s = s.underline();
                     }
@@ -1499,7 +1515,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
         if let Some((t, color)) = line.trailing {
             ui.with(
                 NodeSpec::row()
-                    .padding(kui::Edges {
+                    .padding(kui_native::Edges {
                         l: (TRAILING_GAP - boxes).max(0.0),
                         r: TRAILING_GAP,
                         t: 0.0,

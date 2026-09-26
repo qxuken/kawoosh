@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use kui::{Align, Min, NodeSpec, Sizing, Ui};
+use kui_native::{Align, Min, NodeSpec, Sizing, Ui};
 
 use crate::devtab::Tab;
 

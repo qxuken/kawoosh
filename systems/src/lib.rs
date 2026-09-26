@@ -1,5 +1,5 @@
 //! `systems`: threads that talk to the main loop through channels (mvp.md
-//! Decision 6). Each holds a [`Wake`] — the shell passes `kui::Waker`'s
+//! Decision 6). Each holds a [`Wake`] — the shell passes `kui_native::Waker`'s
 //! `wake` — and calls it after posting, so the parked loop draws.
 
 pub mod fs;
@@ -23,7 +23,7 @@ pub fn no_wake() -> Wake {
 }
 
 /// A wake every system thread holds, settable after they started: the
-/// shell learns its `kui::Waker` in `App::setup`, after the app — and
+/// shell learns its `kui_native::Waker` in `App::setup`, after the app — and
 /// its systems — exist. Until then a wake is a no-op, which is also what
 /// a headless test wants.
 #[derive(Clone)]

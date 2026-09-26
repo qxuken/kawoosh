@@ -7,7 +7,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh_editor::Mode;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn texts(d: &Drive) -> Vec<String> {
     d.core

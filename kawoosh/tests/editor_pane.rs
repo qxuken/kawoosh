@@ -5,7 +5,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh_editor::Mode;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 const DOC: &str = "line one\nline two\nline three\n\tindented\nlast";
 
@@ -243,7 +243,7 @@ fn the_block_caret_is_solid_and_only_the_bar_arms_the_blink_clock() {
         .access_tree()
         .nodes
         .iter()
-        .find(|n| n.role == kui::Role::MultilineTextInput)
+        .find(|n| n.role == kui_native::Role::MultilineTextInput)
         .cloned()
         .expect("the pane's editor node");
     assert_eq!(editor.caret, Some(0), "and still reads as the caret");
@@ -641,7 +641,7 @@ fn typing_a_run_is_one_piece() {
 /// own `:` sits on Shift+6.
 #[test]
 fn a_cyrillic_layout_drives_the_motions_and_types_itself() {
-    use kui::{InputEvent, KeyCode, KeyPress};
+    use kui_native::{InputEvent, KeyCode, KeyPress};
     let mut app = Kawoosh::new("t", "one\ntwo\nthree");
     let mut d = Drive::new(800.0, 400.0);
     d.frame(&mut app);

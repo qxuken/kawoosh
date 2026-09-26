@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::settings::{PROJECT_DIR, SETTINGS_FILE};
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 /// `s` with the platform's separator, as the settings tab spells a path.
 fn rel(s: &str) -> String {
@@ -692,7 +692,7 @@ fn an_empty_layer_offers_a_file_to_create() {
 #[test]
 fn the_look_reaches_kui() {
     use kawoosh_systems::ts::Token;
-    use kui::{Appearance, Color, FontFeatures, ThemeSource};
+    use kui_native::{Appearance, Color, FontFeatures, ThemeSource};
     let t = tree("look");
     std::fs::write(
         &t.user,

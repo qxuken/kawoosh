@@ -8,7 +8,7 @@ use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
 use kawoosh_editor::Mode;
 use kawoosh_systems::lsp::{DIAG_LAYER, ServerDef};
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 /// A Python that runs: `python3`, `python`, or uv's — Windows puts Store
 /// aliases named `python3` and `python` on the path that only say to

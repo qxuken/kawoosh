@@ -8,7 +8,7 @@ use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh_editor::Mode;
 use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
-use kui::{KeyMods, Rect};
+use kui_native::{KeyMods, Rect};
 
 const SRC: &str = "interface P { n: number }\nconst e = <div className=\"x\">{1}</div>;\n";
 

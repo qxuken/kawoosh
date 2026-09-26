@@ -9,7 +9,7 @@
 //! }` (`Msg::Confirm`); the actions are a toast's, `(label, command)`.
 
 use kawoosh_editor::KeyStroke;
-use kui::{Align, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value};
+use kui_native::{Align, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value};
 
 use crate::app::Kawoosh;
 use crate::rows;
@@ -170,12 +170,12 @@ impl Kawoosh {
                 let spec = if column {
                     NodeSpec::column()
                         .width(Sizing::Grow(1.0))
-                        .min_width(kui::Min::FIT)
+                        .min_width(kui_native::Min::FIT)
                         .gap(2.0)
                 } else {
                     NodeSpec::row()
                         .width(Sizing::Grow(1.0))
-                        .min_width(kui::Min::FIT)
+                        .min_width(kui_native::Min::FIT)
                         .gap(6.0)
                         .main_align(Align::End)
                         .cross_align(Align::Center)
@@ -196,7 +196,9 @@ impl Kawoosh {
                                 ("action", Value::Int(i as i64)),
                             ]));
                         if column {
-                            button = button.width(Sizing::Grow(1.0)).min_width(kui::Min::FIT);
+                            button = button
+                                .width(Sizing::Grow(1.0))
+                                .min_width(kui_native::Min::FIT);
                         }
                         ui.with_indexed(i as u64, button, |ui| {
                             if column && i < 9 {

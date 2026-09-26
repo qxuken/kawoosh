@@ -10,7 +10,7 @@ use std::ops::Range;
 
 use kawoosh_editor::search;
 use kawoosh_editor::{Mode, ViewId, motions};
-use kui::{Align, Enter, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
+use kui_native::{Align, Enter, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
 
 use crate::app::{DIVIDER, Kawoosh};
 use crate::layout::{Content, Drop, Kind, Node, PaneId, SplitDir, Strip};
@@ -70,7 +70,7 @@ const CANDIDATES_SHOWN: usize = 200;
 impl Kawoosh {
     // ------------------------------------------------------------ view
 
-    pub(crate) fn strip(&self, ui: &mut Ui<'_>, items: &[(&str, kui::Color)], right: &str) {
+    pub(crate) fn strip(&self, ui: &mut Ui<'_>, items: &[(&str, kui_native::Color)], right: &str) {
         let pal = self.pal;
         ui.with(
             NodeSpec::row()
@@ -351,14 +351,14 @@ impl Kawoosh {
                                 .gap(12.0)
                                 .cross_align(Align::Center)
                                 .scroll_x()
-                                .scrollbar(kui::ScrollbarMode::Hidden),
+                                .scrollbar(kui_native::ScrollbarMode::Hidden),
                             |ui| {
                                 for (i, c) in cands.iter().enumerate().take(CANDIDATES_SHOWN) {
                                     let on = i == index;
                                     let color = if on { pal.fg } else { pal.dim };
                                     let key = ui.with_indexed(
                                         i as u64,
-                                        NodeSpec::row().min_width(kui::Min::FIT),
+                                        NodeSpec::row().min_width(kui_native::Min::FIT),
                                         |ui| {
                                             ui.text(c, TextStyle::new(small).color(color).nowrap());
                                         },
@@ -631,7 +631,7 @@ impl Kawoosh {
                             .width(Sizing::Fixed(gap))
                             .height(Sizing::Grow(1.0))
                             .bg(if active { pal.accent } else { pal.border })
-                            .cursor(kui::CursorShape::EwResize)
+                            .cursor(kui_native::CursorShape::EwResize)
                             .on_drag(Value::map([
                                 ("kind", "split".into()),
                                 ("path", Value::str(&path)),
@@ -717,11 +717,11 @@ impl Kawoosh {
                         SplitDir::H => NodeSpec::column()
                             .width(Sizing::Fixed(DIVIDER))
                             .height(Sizing::Grow(1.0))
-                            .cursor(kui::CursorShape::EwResize),
+                            .cursor(kui_native::CursorShape::EwResize),
                         SplitDir::V => NodeSpec::column()
                             .width(Sizing::Grow(1.0))
                             .height(Sizing::Fixed(DIVIDER))
-                            .cursor(kui::CursorShape::NsResize),
+                            .cursor(kui_native::CursorShape::NsResize),
                     };
                     ui.with_keyed(
                         "divider",
@@ -840,9 +840,9 @@ impl Kawoosh {
                         ("pane", Value::Int(pane as i64)),
                     ]))
                     .cursor(if dragged {
-                        kui::CursorShape::Grabbing
+                        kui_native::CursorShape::Grabbing
                     } else {
-                        kui::CursorShape::Grab
+                        kui_native::CursorShape::Grab
                     });
                 ui.with(title, |ui| {
                     ui.text(
@@ -936,7 +936,7 @@ impl Kawoosh {
                 },
             )
         });
-        let grid = kui::CellGrid {
+        let grid = kui_native::CellGrid {
             rows: screen.rows,
             cols: screen.cols,
             cells: &screen.cells,
@@ -967,7 +967,7 @@ impl Kawoosh {
                 .on_key(tag.clone())
                 // A click past the grid's last cell focuses too.
                 .on_click(tag.clone())
-                .cursor(kui::CursorShape::Text)
+                .cursor(kui_native::CursorShape::Text)
                 .label("terminal"),
             |ui| {
                 // The grid is a selection scope, and a node's own click
@@ -1011,13 +1011,17 @@ impl Kawoosh {
                         let mut cells = screen.cells.clone();
                         let at = row * screen.cols;
                         for c in cols.start.min(screen.cols)..cols.end.min(screen.cols) {
-                            cells[at + c].flags |= kui::cells::flags::UNDERLINE;
+                            cells[at + c].flags |= kui_native::cells::flags::UNDERLINE;
                         }
-                        let lit = kui::CellGrid {
+                        let lit = kui_native::CellGrid {
                             cells: &cells,
                             ..grid
                         };
-                        ui.cells_keyed("cells", &lit, spec.cursor(kui::CursorShape::Pointer));
+                        ui.cells_keyed(
+                            "cells",
+                            &lit,
+                            spec.cursor(kui_native::CursorShape::Pointer),
+                        );
                     }
                     None => ui.cells_keyed("cells", &grid, spec),
                 }
@@ -1035,7 +1039,7 @@ impl Kawoosh {
                             )
                             .width(Sizing::Fixed(8.0))
                             .height(Sizing::Percent(1.0))
-                            .cursor(kui::CursorShape::Default)
+                            .cursor(kui_native::CursorShape::Default)
                             .on_drag(Value::map([
                                 ("kind", "termbar".into()),
                                 ("pane", Value::Int(pane as i64)),
@@ -1067,7 +1071,7 @@ impl Kawoosh {
                             .radius(4.0)
                             .bg(pal.strip)
                             .border(1.0, pal.border)
-                            .cursor(kui::CursorShape::Pointer)
+                            .cursor(kui_native::CursorShape::Pointer)
                             .on_click(Value::map([
                                 ("kind", "termbottom".into()),
                                 ("pane", Value::Int(pane as i64)),
@@ -1299,7 +1303,7 @@ impl Kawoosh {
             let cell_w = self.cell.0;
             let table_row =
                 |r: &crate::markdown::Rendered,
-                 img: &[Result<(kui::ImageId, f32, f32), String>]| {
+                 img: &[Result<(kui_native::ImageId, f32, f32), String>]| {
                     let n = r.columns.max(1) as f32;
                     let max_w = ((width_guess - 16.0 - n * 2.0 * cell_w - (n + 1.0)) / n).max(40.0);
                     let cells: Vec<rows::TableCell> = r
@@ -1424,7 +1428,7 @@ impl Kawoosh {
         let places_here =
             self.is_list(buf_id) && self.locations.layer == Some(crate::lists::PLACES_LAYER);
         // The multibuffer's gaps in a colour of their own, as painted.
-        let gap_paints: Vec<(Range<usize>, kui::Color)> = self
+        let gap_paints: Vec<(Range<usize>, kui_native::Color)> = self
             .ed
             .multi_paints(buf_id)
             .into_iter()
@@ -1460,7 +1464,7 @@ impl Kawoosh {
             Caret::Block
         };
         // The token colours, once: a minified line has ten thousand runs.
-        let token_colors: Vec<Option<kui::Color>> = Token::ALL
+        let token_colors: Vec<Option<kui_native::Color>> = Token::ALL
             .iter()
             .map(|t| self.syntax_color_for(*t, dark))
             .collect();
@@ -1542,7 +1546,7 @@ impl Kawoosh {
                 .on_key(tag.clone())
                 .on_drag(tag.clone())
                 .on_scroll(tag.clone())
-                .cursor(kui::CursorShape::Text)
+                .cursor(kui_native::CursorShape::Text)
                 .role(Role::MultilineTextInput)
                 .label(title.as_str()),
             |ui| {
@@ -1767,7 +1771,7 @@ impl Kawoosh {
                                 .collect();
                             // A painted range first: the first that
                             // covers a span is its colour.
-                            let styled: Vec<(Range<usize>, kui::Color)> = painted
+                            let styled: Vec<(Range<usize>, kui_native::Color)> = painted
                                 .iter()
                                 .filter(|(r, _)| r.start < range.end && r.end > range.start)
                                 .map(|(r, c)| {
@@ -1814,7 +1818,7 @@ impl Kawoosh {
                                     },
                                 ))
                                 .collect();
-                            let washed: Vec<(Range<usize>, kui::Color)> = washes
+                            let washed: Vec<(Range<usize>, kui_native::Color)> = washes
                                 .iter()
                                 .filter(|(r, _)| r.start < range.end && r.end > range.start)
                                 .map(|(r, c)| {
@@ -1826,7 +1830,7 @@ impl Kawoosh {
                                 .filter(|(r, _)| r.start < r.end)
                                 .collect();
                             let diags = runs_buf.runs(DIAG_LAYER, there(&range));
-                            let underlined: Vec<(Range<usize>, kui::Color)> = diags
+                            let underlined: Vec<(Range<usize>, kui_native::Color)> = diags
                                 .iter()
                                 .filter_map(|r| {
                                     let a = clip(here(r.range.start));
@@ -1962,7 +1966,7 @@ impl Kawoosh {
                                 NodeSpec::row()
                                     .width(Sizing::Grow(1.0))
                                     .height(Sizing::Fit)
-                                    .min_height(kui::Min::FIT),
+                                    .min_height(kui_native::Min::FIT),
                                 |ui| {
                                     ui.with(
                                         NodeSpec::column()
@@ -2004,7 +2008,7 @@ impl Kawoosh {
                                         NodeSpec::column()
                                             .width(Sizing::Grow(1.0))
                                             .height(Sizing::Fit)
-                                            .min_height(kui::Min::FIT)
+                                            .min_height(kui_native::Min::FIT)
                                             .scroll_x()
                                             .on_scroll(Value::map([
                                                 ("kind", "pane".into()),
@@ -2021,7 +2025,7 @@ impl Kawoosh {
                                                 NodeSpec::table()
                                                     .width(Sizing::Fit)
                                                     .height(Sizing::Fit)
-                                                    .min_height(kui::Min::FIT),
+                                                    .min_height(kui_native::Min::FIT),
                                                 |ui| {
                                                     if top {
                                                         rows::table_edge(ui, columns, pal.dim);
@@ -2050,7 +2054,9 @@ impl Kawoosh {
                                                             ui.with(
                                                                 NodeSpec::column()
                                                                     .height(Sizing::Fixed(lh))
-                                                                    .min_height(kui::Min::FIT),
+                                                                    .min_height(
+                                                                        kui_native::Min::FIT,
+                                                                    ),
                                                                 |ui| emit(ui, l, true, edges),
                                                             );
                                                         }

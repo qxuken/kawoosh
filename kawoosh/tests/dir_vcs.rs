@@ -7,7 +7,7 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn git(dir: &std::path::Path, args: &[&str]) {
     let ok = std::process::Command::new("git")

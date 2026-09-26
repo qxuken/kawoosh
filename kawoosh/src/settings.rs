@@ -51,7 +51,7 @@ use std::time::Instant;
 use kawoosh_editor::{Layer, Setting};
 use kawoosh_systems::WakeHandle;
 use kawoosh_systems::watch::Watcher;
-use kui::{NodeSpec, Sizing, TextStyle, Ui, Value, Vec2};
+use kui_native::{Align, NodeSpec, Sizing, TextStyle, Ui, Value, Vec2};
 
 use crate::devtab::Tab;
 
@@ -458,7 +458,7 @@ impl Kawoosh {
         let style = move || tm.style(&pal, font);
         let dim = move || style().color(pal.dim);
         // The path column's style: the same face, folding at the column.
-        let wrapping = move || style().wrap(kui::TextWrap::Word);
+        let wrapping = move || style().wrap(kui_native::TextWrap::Word);
         let default_open = self.settings_default_open;
         // The facts, gathered before the tree is built.
         let watched = self.config.project.len()
@@ -662,14 +662,13 @@ impl Kawoosh {
         // the counts as a note, the reload as a small button of the
         // panel's kind — then the layers, with room between them.
         ui.with(NodeSpec::column().fill().gap(tm.section_gap), |ui| {
-            ui.with(tm.toolbar(), |ui| {
+            ui.with(tm.toolbar().main_align(Align::SpaceBetween), |ui| {
                 let mut head = format!("{sources_n} sources · watching {watched} files");
                 if let Some(r) = &reloaded {
                     head.push_str(" · ");
                     head.push_str(r);
                 }
                 ui.text(&head, TextStyle::new(tm.small_text).color(pal.dim).nowrap());
-                ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
                 ui.with_keyed(
                     "reload",
                     tm.button(&theme)

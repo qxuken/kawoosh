@@ -4,7 +4,7 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 /// The texts in the which-key card, top to bottom; none when it is
 /// not on show.

@@ -80,7 +80,7 @@ milestone; nothing is kept for having existed.
 ## System shape
 
 ```
-┌────────────────────────── kawoosh (kui::App) ──────────────────────────┐
+┌─────────────────────── kawoosh (kui_native::App) ────────────────────────┐
 │  view(): pane tree → kui nodes            on_event(): UiEvent → commands │
 │  editor pane = rows of runs  · term pane = ui.cells  · lua pane = slot   │
 └──────▲──────────────────────────────▲──────────────────────────▲────────┘
@@ -94,14 +94,14 @@ milestone; nothing is kept for having existed.
        │ Update{version,span,runs}    │ bytes                    │ data
 ┌──────┴───────────────────────────────┴──────────────────────────┴────────┐
 │  systems: io (ptys, fs, socket) · ts · lsp · store — threads + channels  │
-│  each holds a kui::Waker clone; a message + wake() is how the loop draws │
+│  each holds a kui_native::Waker; a message + wake() is how the loop draws│
 └──────────────────────────────────────────────────────────────────────────┘
                               kui runner (winit + wgpu)
              parks between events · Waker wakes · KUI_DEVTOOLS=1 for free
 ```
 
 One process, one writer, unchanged. What moved: the shell is now a
-`kui::App` impl; layout, text, painting, input decoding, focus, theme,
+`kui_native::App` impl; layout, text, painting, input decoding, focus, theme,
 devtools and the headless harness are kui's.
 
 ## Crate layout
@@ -115,7 +115,7 @@ devtools and the headless harness are kui's.
 | `languages` | the language contract and table: names, detection, a tree-sitter grammar per feature (Decision 13) | `tree-sitter` | new |
 | `systems` | `io`, `ts`, `lsp`, `store` threads; message enums; a `Wake` callback | `doc`, `term`, `languages` | rewrite; `systems/src/lsp.rs` JSON-RPC plumbing is salvage |
 | `lua` | `kawoosh.*` API seeded into a `kui_lua::LuaExtension`; the bootstrap script | `kui-lua`, `doc`, `editor` | rewrite |
-| `kawoosh` | the `kui::App`: pane tree, tabs, docks, the three pane kinds, status/command strips, wiring, CLI shim | everything, `kui` | rewrite |
+| `kawoosh` | the `kui_native::App`: pane tree, tabs, docks, the three pane kinds, status/command strips, wiring, CLI shim | everything, `kui-native` | rewrite |
 | ~~`ui`~~ | — | — | **deleted** (kui-core) |
 | ~~`core`~~ | — | — | **deleted** (becomes `doc`) |
 
@@ -126,17 +126,17 @@ runner, so this is the same kind of dependency as `serde`. Only `kawoosh`
 and `lua` depend on the runner and the binding.
 
 Workspace dependencies that go: `sdl3`, `cosmic-text` (kui owns shaping).
-That come: `kui`, `kui-core`, `kui-lua` at one pinned pre-release
-(`=0.1.0-alpha.14`, forgejo registry), `mlua` with **`lua55` + `vendored`**.
+That come: `kui-native` (the runner, `kui` until alpha.19), `kui-core`,
+`kui-lua` at one pinned pre-release (`=0.1.0-alpha.19`, forgejo registry), `mlua` with **`lua55` + `vendored`**.
 
 ## Decisions
 
 ### 1. Platform: the kui runner. SDL3 is gone.
 
-`kui::app("kawoosh").run(app)` — winit + wgpu, one instanced draw call per
+`kui_native::app("kawoosh").run(app)` — winit + wgpu, one instanced draw call per
 frame, subpixel text where the GPU can blend it, fonts from
 `Core::load_fonts_dir("assets/fonts")`. The loop parks between events;
-systems threads hold a `kui::Waker` clone and call `wake()` after posting
+systems threads hold a `kui_native::Waker` clone and call `wake()` after posting
 a message, which is exactly the "SDL user event wakes the loop" design
 with the plumbing already written. Event-driven redraw stays the rule:
 kawoosh never asks for a frame it has no dirty state for.
@@ -308,7 +308,7 @@ anywhere, with no editor pane open at all.
 Modifier state arrives as `{kind="modifiers"}` and is kept in the model,
 which is how ⌘-drag pane moves and plain clicks coexist (splitmux).
 
-`kui::Core::press` drives the same path headless — kawoosh's key-sequence
+`kui_native::Core::press` drives the same path headless — kawoosh's key-sequence
 tests are kui `Core` tests, not a harness kawoosh maintains.
 
 ### 6. Lua: kui-lua's binding, one state, `kawoosh.*` seeded into it

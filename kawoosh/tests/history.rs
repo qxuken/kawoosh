@@ -15,7 +15,7 @@ use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
 use kawoosh::memory::State;
 use kawoosh_systems::store::{MomentKey, MomentQuery};
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -351,7 +351,7 @@ fn quit_all_with_a_bang_discards_everything() {
 /// error toast.
 #[test]
 fn teardown_keeps_drafts_hidden_ones_return_and_a_moved_disk_is_said() {
-    use kui::App;
+    use kui_native::App;
     let dir = tmp("teardown");
     let db = dir.join("state.db");
     let a = dir.join("a.txt");

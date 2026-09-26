@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use kawoosh_editor::{ArgKind, Args, Spec};
-use kui::{NodeSpec, Sizing, Ui};
+use kui_native::{NodeSpec, Sizing, Ui};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};

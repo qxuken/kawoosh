@@ -13,7 +13,7 @@
 //! `rose-pine-moon` moon and dawn.
 
 use kawoosh_systems::ts::Token;
-use kui::{Appearance, Color, Theme};
+use kui_native::{Appearance, Color, Theme};
 
 /// One variant's colours, by Rosé Pine's own names.
 #[derive(Clone, Copy, Debug)]

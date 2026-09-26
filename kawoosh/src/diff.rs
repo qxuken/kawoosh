@@ -9,7 +9,7 @@
 use std::borrow::Cow;
 
 use kawoosh_doc::Hunk;
-use kui::{Align, Color, NodeSpec, Sizing, TextStyle, Ui};
+use kui_native::{Align, Color, NodeSpec, Sizing, TextStyle, Ui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {

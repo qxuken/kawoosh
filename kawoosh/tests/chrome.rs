@@ -8,7 +8,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::chrome::TAB_MIN_W;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -138,7 +138,7 @@ fn tabs_share_the_strip_and_scroll_past_their_floor() {
     let (tx, ty, tw, th) = d.rect_of("tab0").unwrap();
     d.input(
         &mut app,
-        kui::InputEvent::CursorMoved(kui::Vec2::new(tx + tw / 2.0, ty + th / 2.0)),
+        kui_native::InputEvent::CursorMoved(kui_native::Vec2::new(tx + tw / 2.0, ty + th / 2.0)),
     );
     // The hover is known after the frame that lays it out.
     d.frame(&mut app);

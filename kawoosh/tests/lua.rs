@@ -7,7 +7,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn app_with_lua(d: &mut Drive, title: &str, text: &str) -> Kawoosh {
     let mut app = Kawoosh::new(title, text);
@@ -891,7 +891,7 @@ fn a_listing_is_annotated_and_refreshed() {
         let nodes = d.core.nodes();
         nodes
             .iter()
-            .filter(|n| n.role == Some(kui::Role::None))
+            .filter(|n| n.role == Some(kui_native::Role::None))
             .flat_map(|n| {
                 nodes
                     .iter()

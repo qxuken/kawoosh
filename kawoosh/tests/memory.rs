@@ -11,7 +11,7 @@ use kawoosh::layout::Content;
 use kawoosh::memory::Row;
 use kawoosh_editor::{Mode, Took};
 use kawoosh_systems::store::MomentKey;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn text_of(app: &Kawoosh) -> String {
     app.ed.buffer_of(app.focused_view().unwrap()).text()

@@ -11,7 +11,7 @@
 //! and a line runs down to it. [`Graph::row`] draws one row's box with
 //! kui, sized by a [`Geometry`].
 
-use kui::{Color, NodeSpec, Sizing, Stroke, Ui, Vec2};
+use kui_native::{Color, NodeSpec, Sizing, Stroke, Ui, Vec2};
 
 /// How a graph is drawn: a lane's width, a row's height, the stroke,
 /// the dot.
