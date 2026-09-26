@@ -187,6 +187,49 @@ function kawoosh._cwd(path, how)
   end
 end
 
+-- kawoosh.on_diagnostics(fn): `fn()` after a frame in which the
+-- diagnostics moved — a server's word, a file's kept ones taken by the
+-- buffer that opened it — with `kawoosh.lsp.diagnostics` reading them.
+-- kawoosh.on_focus(fn): `fn(buffer)` when the keyboard goes to an
+-- editor pane on another buffer (docs/design/lists.md Decision 5).
+-- kawoosh.on_places(fn): `fn(title, items)` with a server's list —
+-- `references`, `implementations`, `declarations` — each `{ path, line,
+-- col, end_line, end_col }` from 1; a hook that returns true made the
+-- list, and the engine's plain one is not made.
+kawoosh._diagnostics_hooks = {}
+function kawoosh.on_diagnostics(fn)
+  kawoosh._diagnostics_hooks[#kawoosh._diagnostics_hooks + 1] = fn
+end
+function kawoosh._diagnostics()
+  for _, fn in ipairs(kawoosh._diagnostics_hooks) do
+    local ok, err = pcall(fn)
+    if not ok then kawoosh.echo("on_diagnostics: " .. tostring(err)) end
+  end
+end
+kawoosh._focus_hooks = {}
+function kawoosh.on_focus(fn)
+  kawoosh._focus_hooks[#kawoosh._focus_hooks + 1] = fn
+end
+function kawoosh._focus(buffer)
+  for _, fn in ipairs(kawoosh._focus_hooks) do
+    local ok, err = pcall(fn, buffer)
+    if not ok then kawoosh.echo("on_focus: " .. tostring(err)) end
+  end
+end
+kawoosh._places_hooks = {}
+function kawoosh.on_places(fn)
+  kawoosh._places_hooks[#kawoosh._places_hooks + 1] = fn
+end
+function kawoosh._places(title, items)
+  local taken = false
+  for _, fn in ipairs(kawoosh._places_hooks) do
+    local ok, r = pcall(fn, title, items)
+    if not ok then kawoosh.echo("on_places: " .. tostring(r))
+    elseif r then taken = true end
+  end
+  return taken
+end
+
 -- kawoosh.term.send(text[, { prompt = true }]): `text` typed into the
 -- terminal pane with the keys, as the keyboard would (`\r` runs a
 -- line); with `prompt`, only while its shell sits at an empty prompt —

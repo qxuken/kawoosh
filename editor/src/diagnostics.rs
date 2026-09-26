@@ -106,7 +106,7 @@ impl Diagnostics {
 
 /// Line `line`, character `character` (UTF-16 units) of `buf` as a byte
 /// offset, held to the line's end.
-fn offset_at(buf: &Buffer, line: u32, character: u32) -> usize {
+pub fn offset_at(buf: &Buffer, line: u32, character: u32) -> usize {
     let line = line as usize;
     if line >= buf.line_count() {
         return buf.len();

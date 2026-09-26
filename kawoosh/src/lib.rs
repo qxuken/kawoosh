@@ -29,6 +29,7 @@ pub mod languages;
 pub mod launcher;
 pub mod layout;
 pub mod listing;
+pub mod lists;
 pub mod logger;
 pub mod look;
 pub mod lsp;

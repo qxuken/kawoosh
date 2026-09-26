@@ -1419,6 +1419,14 @@ impl Kawoosh {
                     _ => None,
                 }));
         }
+        // The multibuffer's gaps in a colour of their own, as painted.
+        let gap_paints: Vec<(Range<usize>, kui::Color)> = self
+            .ed
+            .multi_paints(buf_id)
+            .into_iter()
+            .filter(|(r, _)| r.end > buf.line_start(top))
+            .filter_map(|(r, c)| Some((r, self.paint_color(c, ui.theme().is_dark())?)))
+            .collect();
         // The marks' letters beside their lines (docs/design/marks.md).
         let letters = self.marks.letters(buf_id, top..last);
         let title = buf.name.clone();
@@ -1718,7 +1726,7 @@ impl Kawoosh {
                             // The search's matches in the drawn slice, found
                             // now: a few kilobytes of regex per row, and
                             // nothing kept for the rows off screen.
-                            let hits: Vec<Range<usize>> = match &search {
+                            let mut hits: Vec<Range<usize>> = match &search {
                                 Some(re) => search::hits_in(buf.tree(), re, src.clone())
                                     .into_iter()
                                     .map(|r| clip(r.start)..clip(r.end.min(range.end)))
@@ -1726,6 +1734,21 @@ impl Kawoosh {
                                     .collect(),
                                 None => Vec::new(),
                             };
+                            // A list's places on an excerpt's line, drawn as
+                            // the search's matches (docs/design/lists.md
+                            // Decision 4): the file's layer, where it is now.
+                            if runs_id != buf_id {
+                                hits.extend(
+                                    runs_buf
+                                        .runs(crate::lists::PLACES_LAYER, there(&src))
+                                        .iter()
+                                        .map(|r| {
+                                            clip(here(r.range.start))
+                                                ..clip(here(r.range.end).min(range.end))
+                                        })
+                                        .filter(|r| r.start < r.end),
+                                );
+                            }
                             if previewing && ln == cur_line {
                                 let at = clip(primary.head);
                                 if let Some(h) = hits.iter().find(|h| h.start == at) {
@@ -1753,6 +1776,21 @@ impl Kawoosh {
                                 // A multibuffer's gap: a file's header in
                                 // the accent (on its band), a `⋯` faint —
                                 // a plugin's paint over either.
+                                // A gap's own colour — a diagnostic's message
+                                // in its severity's — over the gap's faint.
+                                .chain(
+                                    gap_paints
+                                        .iter()
+                                        .filter(|(r, _)| r.start < range.end && r.end > range.start)
+                                        .map(|(r, c)| {
+                                            (
+                                                clip(r.start.max(range.start))
+                                                    ..clip(r.end.min(range.end)),
+                                                *c,
+                                            )
+                                        })
+                                        .filter(|(r, _)| r.start < r.end),
+                                )
                                 .chain(match from_files.get(ln - top) {
                                     Some(MultiLine::Header(_)) => {
                                         Some((0..drawn.text.len(), pal.accent))

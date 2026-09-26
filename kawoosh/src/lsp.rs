@@ -374,7 +374,13 @@ impl Kawoosh {
                     self.lsp.caps.insert(language, caps);
                 }
                 Event::WorkspaceEdit { title, edit } => self.apply_workspace_edit(&title, edit),
-                Event::Locations { title, items } => self.show_locations(&title, items),
+                // A list plugin's to make (lists.md Decision 3); the
+                // plain one when none took it.
+                Event::Locations { title, items } => {
+                    if items.is_empty() || !self.places_to_lua(&title, &items) {
+                        self.show_locations(&title, items);
+                    }
+                }
                 Event::CodeActions { buffer, actions } => self.offer_actions(buffer, actions),
                 Event::Symbols { token, result } => {
                     if let Some((name, then)) = self.lsp.symbol_asks.remove(&token) {
@@ -1083,7 +1089,7 @@ impl Kawoosh {
             .map(|(id, _)| id);
         self.locations = crate::compile::Locations {
             buffer,
-            cursor_line: None,
+            ..Default::default()
         };
         let n = items.len();
         self.ed.message = format!("{n} {title} — <CR> opens one, ]q walks them");
@@ -1294,6 +1300,35 @@ impl Kawoosh {
         let Some((v, buffer, caret)) = self.lsp_at_caret() else {
             return;
         };
+        // In a multibuffer, the diagnostics its excerpts show (lists.md
+        // Decision 4).
+        if self.ed.is_multi(buffer) {
+            let shown = self.ed.multi_runs(buffer, DIAG_LAYER);
+            let target = if forward {
+                shown.iter().find(|p| p.0.start > caret)
+            } else {
+                shown.iter().rev().find(|p| p.0.start < caret)
+            };
+            match target {
+                Some((at, src, run)) => {
+                    self.ed.views[v].sels =
+                        kawoosh_editor::Selections::single(Selection::point(at.start));
+                    if let Some(d) = self.ed.diagnostics.get(*src, run.tag) {
+                        self.ed.message = d.first_line().to_string();
+                    }
+                }
+                None => {
+                    self.ed.message = if shown.is_empty() {
+                        "no diagnostics".into()
+                    } else if forward {
+                        "no diagnostic after the caret".into()
+                    } else {
+                        "no diagnostic before the caret".into()
+                    };
+                }
+            }
+            return;
+        }
         let b = &self.ed.buffers[buffer];
         let mut starts: Vec<usize> = b
             .runs(DIAG_LAYER, 0..b.len())

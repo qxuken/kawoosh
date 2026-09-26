@@ -24,13 +24,34 @@ use slotmap::{Key, KeyData};
 
 const BOOT: &str = include_str!("../lua/boot.lua");
 
-/// A part of a multibuffer as Lua gives it: the caller's text, or a
-/// file's lines (from 0, end exclusive), the file opened as `:e` would
-/// when no buffer has it.
+/// A part of a multibuffer as Lua gives it: the caller's text — plain,
+/// or in a paint's colour — or a file's lines (from 0, end exclusive),
+/// the file opened as `:e` would when no buffer has it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MultiPart {
     Gap(String),
+    Painted(String, String),
     Lines(PathBuf, std::ops::Range<usize>),
+}
+
+/// What a list multibuffer lists (docs/design/lists.md Decision 4):
+/// places given — marked on their files — or a layer its files have.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MultiPlaces {
+    /// The `diagnostics` layer, say: walked as the files have it.
+    Layer(String),
+    /// Each place's file, and its lines and columns from 0 — columns
+    /// as a language server counts them (UTF-16 units).
+    At(Vec<Place>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Place {
+    pub path: PathBuf,
+    pub line: u32,
+    pub col: u32,
+    pub end_line: u32,
+    pub end_col: u32,
 }
 
 /// What Lua asked for. Editor-level messages are applied inside the
@@ -137,6 +158,10 @@ pub enum Msg {
         show: bool,
         focus: bool,
         line: Option<usize>,
+        /// A list: what it lists, which `]q` walks.
+        places: Option<MultiPlaces>,
+        /// Shown in a pane of its own beside, as a list is.
+        beside: bool,
     },
     /// `kawoosh.search_paint{ pattern =, regex =, word =, case = }`: the
     /// editor's search set to what a project search looked for — what
@@ -585,6 +610,9 @@ pub struct Published {
     pub candidate: usize,
     /// The code actions a server last offered, for the picker on them.
     pub actions: Option<Rc<Vec<ActionSnap>>>,
+    /// Every diagnostic (`kawoosh.lsp.diagnostics`), shared with the
+    /// runtime's cache while none moved.
+    pub diagnostics: Rc<Vec<kawoosh_editor::diagnostics::Listed>>,
 }
 
 /// One code action as `kawoosh.lsp.actions()` reads it (the picker's
@@ -671,6 +699,7 @@ impl Default for Published {
             candidates: None,
             candidate: 0,
             actions: None,
+            diagnostics: Rc::new(Vec::new()),
         }
     }
 }
@@ -766,10 +795,16 @@ pub struct Runtime {
     jobs: JobsCell,
     /// The memory as last published, by the memory's version.
     memory_snap: RefCell<Option<(u64, Rc<Vec<MomentSnap>>)>>,
+    /// The diagnostics as last published, by the store's version and
+    /// the versions of the buffers that have some — an edit moves them.
+    diag_snap: RefCell<Option<DiagSnap>>,
     /// A test script under way (`kawoosh test`): the coroutine its
     /// chunk runs as.
     test: RefCell<Option<mlua::Thread>>,
 }
+
+type DiagKey = (u64, Vec<(BufferId, kawoosh_doc::Version)>);
+type DiagSnap = (DiagKey, Rc<Vec<kawoosh_editor::diagnostics::Listed>>);
 
 /// What a test script yielded: the harness's next move.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -811,6 +846,7 @@ impl Runtime {
                 register_map: RefCell::new(None),
                 jobs,
                 memory_snap: RefCell::new(None),
+                diag_snap: RefCell::new(None),
                 test: RefCell::new(None),
             },
             ext,
@@ -1200,6 +1236,25 @@ impl Runtime {
                 entries,
             }
         });
+        p.diagnostics = {
+            let key: DiagKey = (
+                ed.diagnostics.version(),
+                ed.buffers
+                    .iter()
+                    .filter(|(id, _)| !ed.diagnostics.of(*id).is_empty())
+                    .map(|(id, b)| (id, b.version()))
+                    .collect(),
+            );
+            let mut cached = self.diag_snap.borrow_mut();
+            match &*cached {
+                Some((k, snap)) if *k == key => snap.clone(),
+                _ => {
+                    let snap = Rc::new(ed.diagnostics_listed(None));
+                    *cached = Some((key, snap.clone()));
+                    snap
+                }
+            }
+        };
         p.memory = {
             let mut cached = self.memory_snap.borrow_mut();
             match &*cached {
@@ -1423,6 +1478,54 @@ impl Runtime {
             self.queue
                 .borrow_mut()
                 .push(Msg::Echo(format!("on_settings: {e}")));
+        }
+    }
+
+    /// Tells the plugins the diagnostics moved (`kawoosh.on_diagnostics`).
+    pub fn diagnostics_hook(&self) {
+        self.hook("_diagnostics", (), "on_diagnostics");
+    }
+
+    /// Tells the plugins the keyboard went to buffer `id`
+    /// (`kawoosh.on_focus`).
+    pub fn focus_hook(&self, id: BufferId) {
+        self.hook("_focus", handle_of(id), "on_focus");
+    }
+
+    /// Hands a server's list of places — `references`, `implementations`,
+    /// `declarations` — to the plugins (`kawoosh.on_places`): whether one
+    /// took it. Each is `(path, line, col, end_line, end_col)` from 0,
+    /// columns as the server counts them.
+    pub fn places_hook(&self, title: &str, items: &[(PathBuf, u32, u32, u32, u32)]) -> bool {
+        let Ok(f) = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Function>("_places"))
+        else {
+            return false;
+        };
+        let list = (|| {
+            let t = self.lua.create_table()?;
+            for (i, (path, line, col, end_line, end_col)) in items.iter().enumerate() {
+                let e = self.lua.create_table()?;
+                e.set("path", path.display().to_string())?;
+                e.set("line", line + 1)?;
+                e.set("col", col + 1)?;
+                e.set("end_line", end_line + 1)?;
+                e.set("end_col", end_col + 1)?;
+                t.set(i + 1, e)?;
+            }
+            Ok::<_, mlua::Error>(t)
+        })();
+        match list.and_then(|t| f.call::<bool>((title, t))) {
+            Ok(taken) => taken,
+            Err(e) => {
+                self.queue
+                    .borrow_mut()
+                    .push(Msg::Echo(format!("on_places: {e}")));
+                false
+            }
         }
     }
 
@@ -2667,6 +2770,86 @@ fn seed(
                 t.set(i + 1, e)?;
             }
             Ok(LV::Table(t))
+        })?,
+    )?;
+    // ---- kawoosh.lsp.diagnostics({ buffer =, root =, severity = })
+    // (docs/design/lists.md Decision 6): a row per diagnostic — `path`,
+    // `buffer` when one holds it, `line` `col` `end_line` `end_col` from
+    // 1 (a column in characters), `severity` 1–4 and its `level`,
+    // `message` whole, `source`, `code` — buffer `buffer`'s (`0` the
+    // current one), those of the files under `root`, or all; `severity
+    // = 2` keeps warnings and worse. A buffer's in its text's order, then
+    // the files no buffer holds, by path.
+    let pp = published.clone();
+    lsp.set(
+        "diagnostics",
+        lua.create_function(move |lua, opts: Option<Table>| {
+            let get = |k: &str| opts.as_ref().map(|t| t.get::<LV>(k)).transpose();
+            let p = pp.borrow();
+            let only = match get("buffer")? {
+                Some(LV::Integer(0)) => p.current,
+                Some(LV::Integer(n)) => Some(n as u64),
+                Some(LV::Number(n)) => Some(n as u64),
+                _ => None,
+            };
+            let root = match get("root")? {
+                Some(LV::String(s)) => Some(expand(&s.to_str()?)),
+                _ => None,
+            };
+            let worst = match get("severity")? {
+                Some(LV::Integer(n)) => n as u32,
+                Some(LV::Number(n)) => n as u32,
+                _ => 4,
+            };
+            // Under the root as spelled, else as the disk resolves both —
+            // `/tmp/x` is `/private/tmp/x`, and a server may say either.
+            let resolved = root.as_ref().and_then(|r| r.canonicalize().ok());
+            let under = |p: &std::path::Path| match &root {
+                None => true,
+                Some(r) => {
+                    p.starts_with(r)
+                        || resolved
+                            .as_ref()
+                            .is_some_and(|rr| p.canonicalize().is_ok_and(|pp| pp.starts_with(rr)))
+                }
+            };
+            let t = lua.create_table()?;
+            let mut i = 0;
+            for l in p.diagnostics.iter() {
+                if only.is_some_and(|h| l.buffer.map(handle_of) != Some(h)) {
+                    continue;
+                }
+                if root.is_some() && !l.path.as_deref().is_some_and(under) {
+                    continue;
+                }
+                let d = &l.diagnostic;
+                if d.severity > worst {
+                    continue;
+                }
+                let e = lua.create_table()?;
+                if let Some(path) = &l.path {
+                    e.set("path", path.display().to_string())?;
+                }
+                if let Some(b) = l.buffer {
+                    e.set("buffer", handle_of(b))?;
+                }
+                e.set("line", l.line + 1)?;
+                e.set("col", l.col + 1)?;
+                e.set("end_line", l.end_line + 1)?;
+                e.set("end_col", l.end_col + 1)?;
+                e.set("severity", d.severity)?;
+                e.set("level", d.level())?;
+                e.set("message", d.message.as_str())?;
+                if let Some(s) = &d.source {
+                    e.set("source", s.as_str())?;
+                }
+                if let Some(c) = &d.code {
+                    e.set("code", c.as_str())?;
+                }
+                i += 1;
+                t.set(i, e)?;
+            }
+            Ok(t)
         })?,
     )?;
     let qq = q(queue);
@@ -4029,6 +4212,13 @@ fn seed(
                 {
                     match p? {
                         LV::String(s) => out.push(MultiPart::Gap(s.to_str()?.to_string())),
+                        LV::Table(t) if t.contains_key("text")? => {
+                            let text: String = t.get("text")?;
+                            match t.get::<Option<String>>("color")? {
+                                Some(c) => out.push(MultiPart::Painted(text, c)),
+                                None => out.push(MultiPart::Gap(text)),
+                            }
+                        }
                         LV::Table(t) => {
                             let path: String = t.get("path")?;
                             let from: usize = t.get::<Option<usize>>("from")?.unwrap_or(1).max(1);
@@ -4037,12 +4227,37 @@ fn seed(
                         }
                         _ => {
                             return Err(mlua::Error::runtime(
-                                "multibuffer: a part is a string or { path =, from =, to = }",
+                                "multibuffer: a part is a string, { text =, color = } or { path =, from =, to = }",
                             ));
                         }
                     }
                 }
                 let get = |k: &str| opts.as_ref().and_then(|t| t.get::<LV>(k).ok());
+                let places = match get("places") {
+                    Some(LV::String(s)) => Some(MultiPlaces::Layer(s.to_str()?.to_string())),
+                    Some(LV::Table(list)) => {
+                        let mut at = Vec::new();
+                        for pl in list.sequence_values::<Table>() {
+                            let pl = pl?;
+                            let path: String = pl.get("path")?;
+                            let line: u32 = pl.get::<Option<u32>>("line")?.unwrap_or(1).max(1) - 1;
+                            let col: u32 = pl.get::<Option<u32>>("col")?.unwrap_or(1).max(1) - 1;
+                            let end_line = pl
+                                .get::<Option<u32>>("end_line")?
+                                .map_or(line, |n| n.max(1) - 1);
+                            let end_col = pl.get::<Option<u32>>("end_col")?.map_or(col, |n| n.max(1) - 1);
+                            at.push(Place {
+                                path: expand(&path),
+                                line,
+                                col,
+                                end_line,
+                                end_col,
+                            });
+                        }
+                        Some(MultiPlaces::At(at))
+                    }
+                    _ => None,
+                };
                 qq.borrow_mut().push(Msg::Multi {
                     name,
                     parts: (!keep).then_some(out),
@@ -4051,6 +4266,8 @@ fn seed(
                     line: opts
                         .as_ref()
                         .and_then(|t| t.get::<Option<usize>>("line").ok().flatten()),
+                    places,
+                    beside: matches!(get("beside"), Some(LV::Boolean(true))),
                 });
                 Ok(())
             },

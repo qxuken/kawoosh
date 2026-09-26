@@ -26,12 +26,16 @@ pub struct Compile {
 }
 
 /// The buffer `]q` / `[q` walk: the last list of locations made — a
-/// compile's output, a server's references (`lsp.rs`) — and the line
+/// compile's output, a list multibuffer (`lists.rs`) — and the line
 /// last jumped to in it.
 #[derive(Default)]
 pub struct Locations {
     pub buffer: Option<BufferId>,
     pub cursor_line: Option<usize>,
+    /// A list multibuffer's: the layer its files mark its places with.
+    pub layer: Option<&'static str>,
+    /// A list's place last opened: its file and offset there.
+    pub last: Option<(BufferId, usize)>,
 }
 
 impl Kawoosh {
@@ -74,7 +78,7 @@ impl Kawoosh {
         self.compile.cwd = cwd.clone();
         self.locations = Locations {
             buffer,
-            cursor_line: None,
+            ..Default::default()
         };
         match self.io.run_process(id, cmd, cwd.as_deref()) {
             Ok(_) => self.compile.running = true,
@@ -189,7 +193,7 @@ impl Kawoosh {
     /// `from` (the compile buffer stays visible), and remembers it (a
     /// `location` moment, memory.md round four) with the listing it
     /// came from and the line that named it.
-    fn open_location(
+    pub(crate) fn open_location(
         &mut self,
         path: &Path,
         line: Option<usize>,
@@ -234,6 +238,14 @@ impl Kawoosh {
     /// `]q` / `[q`: the next or previous line of the locations buffer
     /// (`*compile*`, `*references*`) naming a location, opened.
     pub(crate) fn error_step(&mut self, forward: bool) {
+        if self
+            .locations
+            .buffer
+            .is_some_and(|b| self.is_list(b) && self.ed.buffers.contains_key(b))
+        {
+            self.list_step(forward);
+            return;
+        }
         let Some(buffer) = self
             .locations
             .buffer

@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use kawoosh_doc::BufferId;
 use kawoosh_editor::{Part, Selection, Spec};
-use kawoosh_lua::MultiPart;
+use kawoosh_lua::{MultiPart, MultiPlaces};
 use kawoosh_systems::io::IoMsg;
 use kawoosh_systems::search::{Cancel, Compiled, Query};
 
@@ -33,7 +33,10 @@ pub struct Multis {
 
 impl Kawoosh {
     /// `kawoosh.multibuffer(name, parts, opts)`: the files opened, the
-    /// multibuffer made or refilled, and shown.
+    /// multibuffer made or refilled, made the list `]q` walks when it
+    /// lists `places` (docs/design/lists.md), and shown — beside, as a
+    /// list is, with `beside`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn multi_from_lua(
         &mut self,
         name: &str,
@@ -41,6 +44,8 @@ impl Kawoosh {
         show: bool,
         focus: bool,
         line: Option<usize>,
+        places: Option<MultiPlaces>,
+        beside: bool,
     ) {
         let open = self
             .ed
@@ -51,7 +56,7 @@ impl Kawoosh {
         let Some(parts) = parts else {
             // Shown as it is: the search's `<C-j>` back to its results.
             if let Some(id) = open {
-                self.show_multi(id, focus, line);
+                self.show_multi(id, focus, line, beside);
             }
             return;
         };
@@ -59,6 +64,7 @@ impl Kawoosh {
         for p in parts {
             match p {
                 MultiPart::Gap(g) => out.push(Part::Gap(g)),
+                MultiPart::Painted(g, c) => out.push(Part::Painted(g, c)),
                 MultiPart::Lines(path, lines) => {
                     let had = self.ed.buffer_at(&self.resolve(&path));
                     let Some(id) = self.buffer_for(&path) else {
@@ -80,24 +86,40 @@ impl Kawoosh {
             }
             None => self.ed.open_multi(name, out),
         };
+        if let Some(places) = places {
+            self.set_places(id, places);
+        }
         if show {
-            self.show_multi(id, focus, line);
+            self.show_multi(id, focus, line, beside);
         }
         self.release_borrowed();
     }
 
     /// Multibuffer `id` on show: where it is on show already; else the
-    /// focused editor pane; else — asked from a view, the search's bar —
-    /// the first editor pane on screen; else a split of its own. The
-    /// caret on `line` (from 1) when given.
-    fn show_multi(&mut self, id: BufferId, focus: bool, line: Option<usize>) {
+    /// focused editor pane — or, `beside`, a split beside it, as a list
+    /// is; else — asked from a view, the search's bar — the first editor
+    /// pane on screen; else a split of its own. The caret on `line`
+    /// (from 1) when given.
+    fn show_multi(&mut self, id: BufferId, focus: bool, line: Option<usize>, beside: bool) {
         let focused = self.layout.focused();
         let on = |k: &Self, p| k.view_of(p).is_some_and(|v| k.ed.views[v].buffer == id);
         let visible = self.layout.visible_panes();
-        let pane = visible
-            .iter()
-            .copied()
-            .find(|p| on(self, *p))
+        let shown = visible.iter().copied().find(|p| on(self, *p));
+        if beside && shown.is_none() {
+            let v = self.ed.add_view(id);
+            self.layout.split(SplitDir::V, Content::Editor(v));
+            if !focus {
+                self.layout.focus(focused);
+            }
+            if let Some(ln) = line {
+                let b = &self.ed.buffers[id];
+                let at = b.line_start(ln.saturating_sub(1).min(b.line_count() - 1));
+                self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(at));
+            }
+            self.follow_caret = true;
+            return;
+        }
+        let pane = shown
             .or_else(|| self.view_of(focused).map(|_| focused))
             .or_else(|| visible.iter().copied().find(|p| self.view_of(*p).is_some()));
         let v = match pane.and_then(|p| self.view_of(p).map(|v| (p, v))) {
@@ -212,6 +234,12 @@ impl Kawoosh {
         };
         let id = self.ed.views[v].buffer;
         let head = self.ed.views[v].sels.primary().head;
+        // A list's place opens beside it, as `]q` opens one (lists.md
+        // Decision 3); `split` asks for a split of the list's own.
+        if split.is_none() && self.is_list(id) {
+            self.list_open(id, head);
+            return;
+        }
         // The other carets' files, Zed's `g<Space>` over several: each
         // opened — listed, in `:ls` and the buffers picker — the
         // primary's shown.
