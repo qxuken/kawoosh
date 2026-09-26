@@ -193,6 +193,16 @@ Code (v2407.24, OFL, 12, 6.1 MB), Source Code Pro (2.042R, OFL, 14,
 OFL, 3, 0.6 MB; the latter two from Google Fonts' copies) — every face
 monospaced, 17 MB with Intel One Mono. Plain Fira over Nerd Fonts'
 patched build (51 MB): the symbols above give any face its icons.
+And five more the same day ("let's also get Monaspace, Geist Mono,
+Hack, Commit Mono, Victor Mono"): Monaspace v1.400 (OFL; Neon, Argon,
+Xenon, Radon and Krypton at regular, italic, bold and bold italic —
+twenty of its 210 static faces, 7.3 MB, the SemiWide and Wide cuts and
+the other weights left out), Geist Mono v1.7.2 (OFL, 18 faces, 2.7 MB),
+Hack v3.003 (MIT with Bitstream Vera's terms, 4, 1.2 MB), Commit Mono
+v1.143 (OFL, 4, 1.1 MB; its italics name their family `CommitMonoV143`
+first and `CommitMono` second, so the pane lists both names and an
+italic still resolves in the family) and Victor Mono v1.5.6 (OFL, 21,
+4.5 MB).
 
 ### 7. The user's fonts folder, watched
 
