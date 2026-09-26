@@ -1419,6 +1419,10 @@ impl Kawoosh {
                     _ => None,
                 }));
         }
+        // The places a list marked on its files, drawn in that list
+        // alone: another multibuffer on the same lines is not the list.
+        let places_here =
+            self.is_list(buf_id) && self.locations.layer == Some(crate::lists::PLACES_LAYER);
         // The multibuffer's gaps in a colour of their own, as painted.
         let gap_paints: Vec<(Range<usize>, kui::Color)> = self
             .ed
@@ -1737,7 +1741,7 @@ impl Kawoosh {
                             // A list's places on an excerpt's line, drawn as
                             // the search's matches (docs/design/lists.md
                             // Decision 4): the file's layer, where it is now.
-                            if runs_id != buf_id {
+                            if runs_id != buf_id && places_here {
                                 hits.extend(
                                     runs_buf
                                         .runs(crate::lists::PLACES_LAYER, there(&src))
@@ -1831,8 +1835,14 @@ impl Kawoosh {
                                     (a < b).then_some((a..b, c))
                                 })
                                 .collect();
+                            // The worst on the row, not the first: a hint
+                            // before an error on one line says the lesser.
+                            // A list that writes its own notes under the
+                            // lines (lists.md Decision 3) draws none.
                             let trailing = diags
-                                .first()
+                                .iter()
+                                .filter(|_| runs_id == buf_id || gap_paints.is_empty())
+                                .min_by_key(|r| r.style)
                                 .and_then(|r| {
                                     // The first line: the rest is `<C-e>`'s.
                                     let m = self.ed.diagnostics.get(runs_id, r.tag)?.first_line();

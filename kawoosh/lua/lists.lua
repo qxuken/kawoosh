@@ -160,7 +160,13 @@ local function diagnostic_files()
     if (a.worst == 1) ~= (b.worst == 1) then return a.worst == 1 end
     return a.rel < b.rel
   end)
-  for _, f in ipairs(order) do f.count = counts(f.places) end
+  for _, f in ipairs(order) do
+    f.count = counts(f.places)
+    -- The worst said first under a line.
+    for _, p in ipairs(f.places) do
+      table.sort(p.notes, function(a, b) return a.severity < b.severity end)
+    end
+  end
   return order
 end
 
