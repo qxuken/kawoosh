@@ -331,8 +331,9 @@ impl Kawoosh {
         self.config.loading = None;
     }
 
-    /// Puts the config files on the watch: the user's two and every
-    /// project candidate above the working directory.
+    /// Puts the config files on the watch: the user's two, every
+    /// project candidate above the working directory, and the user's
+    /// fonts folder with the folders in it (`fonts.rs`).
     pub(crate) fn rewatch_config(&mut self) {
         self.config.project = project_settings_candidates(&self.cwd);
         self.config.project_init = crate::trust::project_init_candidates(&self.cwd);
@@ -340,6 +341,7 @@ impl Kawoosh {
         paths.extend(self.config.project_init.clone());
         paths.extend(self.config.user.clone());
         paths.extend(self.config.init.clone());
+        paths.extend(crate::fonts::user_fonts_watch());
         self.config.watch.watch(paths);
     }
 
@@ -378,7 +380,16 @@ impl Kawoosh {
         if changed.is_empty() {
             return;
         }
-        self.reload_changed(&changed);
+        // The user's fonts folder: read again at the frame (`fonts.rs`).
+        let (fonts, changed): (Vec<PathBuf>, Vec<PathBuf>) = changed
+            .into_iter()
+            .partition(|p| crate::fonts::in_user_fonts(p));
+        if !fonts.is_empty() {
+            self.look.fonts.borrow_mut().rescan = true;
+        }
+        if !changed.is_empty() {
+            self.reload_changed(&changed);
+        }
     }
 
     /// Reloads the layers `paths` belong to — each layer once — and

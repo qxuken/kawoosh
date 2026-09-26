@@ -551,6 +551,22 @@ impl Settings {
             Layer::Default,
             vec![(Layer::Default.name().to_string(), defaults)],
         );
+        // The defaults that are a word of a few: what the language
+        // server's types and `:set`'s completion offer.
+        let words = |w: &[&str]| SettingKind::OneOf(w.iter().map(|w| w.to_string()).collect());
+        let bare = ["launcher", "same", "scratch", "terminal", "dir"];
+        for (path, kind) in [
+            ("layout.default", words(&["tree", "scroll"])),
+            ("layout.scroll.center", words(&["always", "never"])),
+            ("layout.new_pane", words(&bare)),
+            ("layout.new_tab", words(&bare)),
+            ("layout.dock", words(&["tree", "scroll"])),
+            ("launcher.start", words(&["normal", "insert"])),
+            ("buffers.scope", words(&["tab", "all"])),
+            ("theme.appearance", words(&["system", "dark", "light"])),
+        ] {
+            s.declare(path, kind, "");
+        }
         s
     }
 
@@ -629,6 +645,18 @@ impl Settings {
                 doc: doc.to_string(),
             },
         );
+    }
+
+    /// What `path` holds: its declaration's kind, else its default's.
+    pub fn kind(&self, path: &str) -> Option<SettingKind> {
+        if let Some(d) = self.decls.get(path) {
+            return Some(d.kind.clone());
+        }
+        self.layers[Layer::Default as usize]
+            .iter()
+            .rev()
+            .find_map(|(_, s)| s.get(path))
+            .map(SettingKind::of)
     }
 
     /// Whether `path` is a setting anyone declared: itself, under an

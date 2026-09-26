@@ -1880,9 +1880,7 @@ dependencies = [
 
 [[package]]
 name = "kui-core"
-version = "0.1.0-alpha.19"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "7fe336393b94861d447a04ecbf74acc97f1294b7f9d2bd45bfdb2d14c6c8518f"
+version = "0.1.0-alpha.20"
 dependencies = [
  "cosmic-text",
  "kui-derive",
@@ -1896,9 +1894,7 @@ dependencies = [
 
 [[package]]
 name = "kui-derive"
-version = "0.1.0-alpha.19"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "708f444902541b54268dbc82b77ffa01591f19d28c0db636c7b8ca095b6fa0cc"
+version = "0.1.0-alpha.20"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1907,18 +1903,14 @@ dependencies = [
 
 [[package]]
 name = "kui-ffi"
-version = "0.1.0-alpha.19"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "1c43615a84ba41f11507b3b06a8dad627905e1c69b027b9872812fa44e6a7915"
+version = "0.1.0-alpha.20"
 dependencies = [
  "kui-core",
 ]
 
 [[package]]
 name = "kui-lua"
-version = "0.1.0-alpha.19"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "f64818c18afabddc5ca68ae07ec0e5388822532fb0726e941ff900db4c3249dd"
+version = "0.1.0-alpha.20"
 dependencies = [
  "kui-core",
  "kui-ffi",
@@ -1927,9 +1919,7 @@ dependencies = [
 
 [[package]]
 name = "kui-native"
-version = "0.1.0-alpha.19"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "56435dd27240992aa1eb9eea9a82dc74269cd3e4cf3b5158582ddb02e8f1505b"
+version = "0.1.0-alpha.20"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -1949,9 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "kui-wgpu"
-version = "0.1.0-alpha.19"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "b1f6221b1d61ad2c35e4e1067974af259c9860df17edd7dfbdaf4447e9a682d8"
+version = "0.1.0-alpha.20"
 dependencies = [
  "bytemuck",
  "kui-core",

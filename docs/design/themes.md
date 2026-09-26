@@ -293,6 +293,11 @@ beside it is seen at once. Both read one snapshot of the look on show
 taken at each rebuild (`look::Shown::subject`); the door is
 `kawoosh.themes.check([NAME])`.
 
+Amended 2026-09-26 by fonts.md Decision 4: the lab is the look's —
+its samples set in the editor's face (they were kui's `mono`), the face
+in its title, a font scene beside the others, `:font lab` its other
+name.
+
 Run on what ships (2026-09-26): the high-contrast pair cleared every
 floor; the dark variants fell short only under a search hit — the
 hit's wash, the warning at 0.35, is the editor's choice rather than the

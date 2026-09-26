@@ -152,6 +152,8 @@ pub enum ArgKind {
     View,
     /// A language the registry knows (`:syntax`).
     Language,
+    /// A font family kui can see (`:font`), the rest of the line.
+    Font,
     /// Anything.
     Text,
 }
@@ -167,6 +169,7 @@ impl ArgKind {
             "tool" => Self::Tool,
             "view" => Self::View,
             "language" => Self::Language,
+            "font" => Self::Font,
             "text" | "string" => Self::Text,
             _ => return None,
         })
@@ -181,6 +184,7 @@ impl ArgKind {
             Self::Tool => "tool",
             Self::View => "view",
             Self::Language => "language",
+            Self::Font => "font",
             Self::Text => "text",
         }
     }

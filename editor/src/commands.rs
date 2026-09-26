@@ -15,6 +15,20 @@ use crate::{
     Spec, ViewId,
 };
 
+/// `:set`'s line split into its path and its value: the value is past
+/// a `=` or the path's first space, whichever comes first
+/// (`font.family=Iosevka`, `font.family Iosevka`); none for a flag, a
+/// `PATH?` or a `PATH!`. The command line completes the value from the
+/// same split.
+pub fn set_value(line: &str) -> Option<(&str, &str)> {
+    let i = line.find(|c: char| c == '=' || c.is_whitespace())?;
+    let (path, rest) = line.split_at(i);
+    Some(match rest.strip_prefix('=') {
+        Some(v) => (path, v),
+        None => (path, rest.trim_start()),
+    })
+}
+
 fn view<'a>(ed: &'a Editor, ctx: &Ctx) -> &'a crate::View {
     &ed.views[ctx.view]
 }
@@ -2073,53 +2087,54 @@ pub fn install(ed: &mut Editor) {
             None => ed.message = "edit what?".into(),
         },
     );
-    // `:set PATH=VALUE`, `:set FLAG` or `:set +FLAG`, `:set -FLAG` set
-    // into the session layer, shaped like the value already there;
-    // `:set PATH?` says what it is and where it came from; `:set PATH!`
-    // takes the session's value back out. Not vim's `noFLAG`: a path
-    // may start with `no` (`notes.enabled`), none starts with a sign.
+    // `:set PATH=VALUE` or `:set PATH VALUE`, `:set FLAG` or `:set
+    // +FLAG`, `:set -FLAG` set into the session layer, shaped like the
+    // value already there; `:set PATH?` says what it is and where it
+    // came from; `:set PATH!` takes the session's value back out. Not
+    // vim's `noFLAG`: a path may start with `no` (`notes.enabled`), none
+    // starts with a sign.
     ed.register_spec(
         Spec::new("set")
             .alias(&["se"])
             .args(Args::rest(&[ArgKind::Option]))
-            .doc("set an option for the session (PATH=VALUE, +FLAG, -FLAG, PATH?, PATH!)"),
+            .doc("set an option for the session (PATH=VALUE, PATH VALUE, +FLAG, -FLAG, PATH?, PATH!)"),
         |ed, ctx| {
-            // One setting per line: what follows a `=` is the value, spaces
-            // and all (`:set compile.default=cargo test`).
+            // One setting per line: what follows the path is the value,
+            // spaces and all (`:set compile.default=cargo test`).
             let a = ctx.args.join(" ");
             if a.is_empty() {
                 ed.message = "set what? (:set PATH=VALUE, :set PATH?)".into();
                 return;
             }
             let a = a.as_str();
-            if let Some(path) = a.strip_suffix('?') {
-                ed.message = match ed.settings.get(path) {
-                    Some(v) => match ed.settings.origin(path) {
-                        Some(from) => format!("{path} = {v}  ({from})"),
-                        None => format!("{path} = {v}"),
-                    },
-                    None => format!("{path} is not set"),
-                };
-                return;
-            }
-            if let Some(path) = a.strip_suffix('!') {
-                ed.settings.unset(Layer::Session, path);
-                return;
-            }
-            let (path, value) = match a.split_once('=') {
+            let (path, value) = match set_value(a) {
                 Some((k, v)) => (k.to_string(), Setting::parse_like(v, ed.settings.get(k))),
-                None => match a.strip_prefix('-') {
-                    Some(flag) => (flag.to_string(), Setting::Bool(false)),
-                    None => (
-                        a.strip_prefix('+').unwrap_or(a).to_string(),
-                        Setting::Bool(true),
-                    ),
-                },
+                None => {
+                    if let Some(path) = a.strip_suffix('?') {
+                        ed.message = match ed.settings.get(path) {
+                            Some(v) => match ed.settings.origin(path) {
+                                Some(from) => format!("{path} = {v}  ({from})"),
+                                None => format!("{path} = {v}"),
+                            },
+                            None => format!("{path} is not set"),
+                        };
+                        return;
+                    }
+                    if let Some(path) = a.strip_suffix('!') {
+                        ed.settings.unset(Layer::Session, path);
+                        return;
+                    }
+                    match a.strip_prefix('-') {
+                        Some(flag) => (flag.to_string(), Setting::Bool(false)),
+                        None => (
+                            a.strip_prefix('+').unwrap_or(a).to_string(),
+                            Setting::Bool(true),
+                        ),
+                    }
+                }
             };
-            // A path has no spaces: `:set markdown.render false` is a
-            // value missing its `=`, not a setting of that name.
-            if path.is_empty() || path.contains(char::is_whitespace) {
-                ed.message = format!("set: not a path: {path:?} (:set PATH=VALUE)");
+            if path.is_empty() {
+                ed.message = "set: no path (:set PATH=VALUE)".into();
                 return;
             }
             ed.settings.set(Layer::Session, &path, value);
@@ -3483,10 +3498,12 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>Q", "quit all"),
         ("<leader>?", "keys"),
         // `o`: the look (docs/design/themes.md Decision 3) — the base
-        // flipped, the OS's again, the themes' pane.
+        // flipped, the OS's again, the themes' pane, the fonts' (fonts.md
+        // Decision 3), the lab of both.
         ("<leader>ot", "theme toggle"),
         ("<leader>os", "theme system"),
         ("<leader>oo", "themes"),
+        ("<leader>of", "fonts"),
         ("<leader>ol", "theme lab"),
     ];
     for (k, c) in n {

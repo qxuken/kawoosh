@@ -28,14 +28,30 @@ fn fonts_dir() -> std::path::PathBuf {
     shipped.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts"))
 }
 
-/// The bundled face, loaded onto a core the launcher then opens the
-/// window on (`Launcher::core`): every mono run names it by `FontId`, so a
-/// machine with no Iosevka installed draws the same glyphs.
+/// The bundled faces — every folder in `fonts/` — loaded onto a core
+/// the launcher then opens the window on (`Launcher::core`): Iosevka,
+/// which every mono run names by `FontId`, so a machine with no Iosevka
+/// installed draws the same glyphs; the families shipped to pick from
+/// (Intel One Mono, fonts.md Decision 6); and Nerd Fonts' symbols
+/// (`Symbols Nerd Font Mono`, a cell wide), which no run names — in the
+/// font database, it is the fallback a face without an icon's code point
+/// finds it in, so a prompt's or a listing's icons draw on a machine
+/// with no Nerd Font installed. The user's own folder is `fonts.rs`'s.
 fn load_fonts(core: &mut Core) -> Option<kui_native::FontId> {
-    let dir = fonts_dir().join("IosevkaNavcon");
-    let n = core.load_fonts_dir(&dir);
-    // A startup fact, not news: a trace.
-    log::trace!("loaded {n} font faces from {}", dir.display());
+    let mut dirs: Vec<std::path::PathBuf> = std::fs::read_dir(fonts_dir())
+        .map(|it| {
+            it.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect()
+        })
+        .unwrap_or_default();
+    dirs.sort();
+    for dir in dirs {
+        let n = core.load_fonts_dir(&dir);
+        // A startup fact, not news: a trace.
+        log::trace!("loaded {n} font faces from {}", dir.display());
+    }
     let family = core
         .system_font_families()
         .into_iter()
