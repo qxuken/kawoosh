@@ -2166,6 +2166,16 @@ then breadth.
     `systems/src/lsp.rs`; tested against the fake server, and against
     typescript-language-server 6 on TypeScript 5 in a scratch install
     (TypeScript 7, npm's now, has no tsserver for it to run).
+41. ~~**Compile commands, deduced** ([compile.md](compile.md)): a
+    bare `:compile` without `compile.command` runs the last compiled
+    here, else what the project's files offer first, ranked by the
+    caret's language server; `:compile pick` lists them all.~~ Landed
+    2026-09-26: `kawoosh/src/deduce.rs` reads `Cargo.toml`,
+    `package.json` (its package manager by lockfile), justfiles,
+    Makefiles, `CMakeLists.txt`, `go.mod`, `pyproject.toml` and
+    `build.zig`; `<leader>cC` the picker (`kawoosh.compile_offer()`);
+    a typed command runs where its program's kind does; tsc's
+    `path(line,col)` a location.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),

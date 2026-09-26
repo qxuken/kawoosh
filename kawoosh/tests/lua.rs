@@ -304,6 +304,99 @@ fn compile_mode_streams_and_jumps_to_locations() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A bare `:compile` with no `compile.command` runs what the project's
+/// files offer first (docs/design/compile.md), then what it ran last;
+/// `compile pick` offers them all, `compile pick N` runs one; the
+/// output's `path(line,col)` is a location as `path:line:col` is.
+#[cfg(unix)]
+#[test]
+fn a_bare_compile_runs_what_the_project_offers() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-compile-deduce-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Makefile"),
+        "# say where\nwhere:\n\t@echo 'src/a.rs(2,1): error here'\n\nother: ## the other one\n\t@echo other\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/a.rs"), "one\ntwo\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&dir.join("src/a.rs"));
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    let wait = |d: &mut Drive, app: &mut Kawoosh| {
+        for _ in 0..300 {
+            d.frame(app);
+            if !app.compile.running {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the compile did not finish");
+    };
+    ex(&mut d, &mut app, "compile?");
+    assert!(app.ed.message.starts_with("make ("), "{}", app.ed.message);
+    ex(&mut d, &mut app, "compile");
+    assert!(
+        app.ed.message.starts_with("make — from"),
+        "{}",
+        app.ed.message
+    );
+    wait(&mut d, &mut app);
+    assert_eq!(
+        app.compile.cwd.as_deref(),
+        Some(dir.as_path()),
+        "beside the Makefile"
+    );
+    let text = app.ed.buffers[app.compile.buffer.unwrap()].text();
+    assert!(text.contains("src/a.rs(2,1): error here"), "{text}");
+    d.keys(&mut app, "]q");
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.buffer_of(v);
+    assert!(buf.path.as_ref().unwrap().ends_with("src/a.rs"));
+    assert_eq!(
+        buf.line_of(app.ed.views[v].sels.primary().head),
+        1,
+        "tsc's (2,1)"
+    );
+
+    // The picker: the last run, then the file's, each once.
+    ex(&mut d, &mut app, "compile pick");
+    d.frame(&mut app);
+    let offered: Vec<(&str, &str)> = app
+        .compile
+        .offer
+        .iter()
+        .map(|o| (o.cmd.as_str(), o.from.as_str()))
+        .collect();
+    assert_eq!(offered[0], ("make", "last run here"));
+    assert_eq!(offered[1].0, "make where");
+    assert_eq!(offered[2].0, "make other");
+    assert_eq!(app.compile.offer[2].why, "the other one");
+    app.run_lua_source(
+        "t",
+        r#"local o = kawoosh.compile_offer(); kawoosh.echo(#o .. " " .. o[3].cmd)"#,
+    );
+    assert_eq!(app.ed.message, "3 make other");
+    d.ctrl(&mut app, "c");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "compile pick 3");
+    wait(&mut d, &mut app);
+    let text = app.ed.buffers[app.compile.buffer.unwrap()].text();
+    assert!(text.contains("$ make other"), "{text}");
+    // Bare again: the last one, not the first offered.
+    ex(&mut d, &mut app, "compile?");
+    assert!(
+        app.ed.message.starts_with("make other (again"),
+        "{}",
+        app.ed.message
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `<C-c>` in `*compile*` stops the compile — the shell and what it
 /// started, a grandchild holding the output open included — and once
 /// it is done the key is `normal`'s again.

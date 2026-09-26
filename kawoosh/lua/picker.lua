@@ -1384,6 +1384,36 @@ picker.source("actions", {
   empty = "no action matches",
 })
 
+-- What the project can compile (`<leader>cC`, `compile pick`,
+-- docs/design/compile.md Decision 3): `compile.command`, the last run
+-- here, and the commands its files offer — the command, what said so
+-- beside it, the preview where it runs and why; `⏎` runs it (`compile
+-- pick N`). The rows are what `kawoosh.compile_offer()` says.
+picker.source("compile", {
+  title = "compile", placeholder = "a command",
+  columns = {
+    { "text", grow = true },
+    { "from", muted = true, min = 90, max = 240, share = 0.3 },
+  },
+  items = function()
+    local items = {}
+    for _, o in ipairs(kawoosh.compile_offer() or {}) do
+      items[#items + 1] = { text = o.cmd, from = o.from, index = o.index, cwd = o.cwd, why = o.why }
+    end
+    return items
+  end,
+  pick = function(item) kawoosh.run("compile pick " .. item.index) end,
+  preview = function(item)
+    local lines = { "$ " .. item.text, "in " .. item.cwd, "from " .. item.from }
+    if item.why ~= "" then
+      lines[#lines + 1] = ""
+      lines[#lines + 1] = item.why
+    end
+    return { title = item.text, lines = lines }
+  end,
+  empty = "no command matches",
+})
+
 -- `:picker [SOURCE]`: bare, the smart one.
 kawoosh.command("picker", function(ctx)
   picker.open(ctx.args[1] or "smart")

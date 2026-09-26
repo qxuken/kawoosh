@@ -3437,6 +3437,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>ws", "session save"),
         ("<leader>wr", "session restore"),
         ("<leader>cc", "compile"),
+        ("<leader>cC", "compile pick"),
         ("<leader>ca", "lsp action"),
         ("<leader>cF", "lsp format"),
         ("<leader>cr", "markdown toggle"),

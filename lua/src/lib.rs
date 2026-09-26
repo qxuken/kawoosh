@@ -612,6 +612,8 @@ pub struct Published {
     pub candidate: usize,
     /// The code actions a server last offered, for the picker on them.
     pub actions: Option<Rc<Vec<ActionSnap>>>,
+    /// The compile commands `compile pick` last offered.
+    pub compile_offer: Option<Rc<Vec<CompileOfferSnap>>>,
     /// Every diagnostic (`kawoosh.lsp.diagnostics`), shared with the
     /// runtime's cache while none moved.
     pub diagnostics: Rc<Vec<kawoosh_editor::diagnostics::Listed>>,
@@ -628,6 +630,21 @@ pub struct ActionSnap {
     pub kind: String,
     /// What taking it does: its edit as a diff, a command it runs.
     pub preview: Vec<String>,
+}
+
+/// One compile command as `kawoosh.compile_offer()` reads it (the
+/// picker's `compile` source, docs/design/compile.md Decision 3).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CompileOfferSnap {
+    /// 1-based, what `compile pick N` takes.
+    pub index: usize,
+    pub cmd: String,
+    /// What said so: `compile.command`, `last run here`, a file's path.
+    pub from: String,
+    /// Where it runs, `~` for home.
+    pub cwd: String,
+    /// What it does as its file says, or empty.
+    pub why: String,
 }
 
 /// One completion candidate as `kawoosh.lsp.candidates()` reads it
@@ -701,6 +718,7 @@ impl Default for Published {
             candidates: None,
             candidate: 0,
             actions: None,
+            compile_offer: None,
             diagnostics: Rc::new(Vec::new()),
         }
     }
@@ -964,6 +982,11 @@ impl Runtime {
     /// The code actions for `kawoosh.lsp.actions()`.
     pub fn set_actions(&self, actions: Option<Rc<Vec<ActionSnap>>>) {
         self.published.borrow_mut().actions = actions;
+    }
+
+    /// The compile commands for `kawoosh.compile_offer()`.
+    pub fn set_compile_offer(&self, offer: Option<Rc<Vec<CompileOfferSnap>>>) {
+        self.published.borrow_mut().compile_offer = offer;
     }
 
     /// What the memory has not flushed yet (memory.md Decision 3):
@@ -2666,6 +2689,29 @@ fn seed(
         lua.create_function(move |_, cmd: String| {
             qq.borrow_mut().push(Msg::Compile(cmd));
             Ok(())
+        })?,
+    )?;
+    // ---- kawoosh.compile_offer(): what `compile pick` last offered —
+    // `{ index, cmd, from, cwd, why }` each — or nil before it asked.
+    let pp = published.clone();
+    k.set(
+        "compile_offer",
+        lua.create_function(move |lua, ()| {
+            let p = pp.borrow();
+            let Some(offer) = &p.compile_offer else {
+                return Ok(LV::Nil);
+            };
+            let t = lua.create_table()?;
+            for (i, o) in offer.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("index", o.index)?;
+                e.set("cmd", o.cmd.as_str())?;
+                e.set("from", o.from.as_str())?;
+                e.set("cwd", o.cwd.as_str())?;
+                e.set("why", o.why.as_str())?;
+                t.set(i + 1, e)?;
+            }
+            Ok(LV::Table(t))
         })?,
     )?;
     let qq = q(queue);
