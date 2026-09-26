@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use kawoosh_doc::BufferId;
 use kawoosh_editor::{ArgKind, Args, Selection, Spec, ViewId};
-use kawoosh_systems::io::IoMsg;
+use kawoosh_systems::io::{IoMsg, ProcHandle};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -23,6 +23,9 @@ pub struct Compile {
     pub proc_id: u64,
     pub cwd: Option<PathBuf>,
     pub running: bool,
+    /// The running command's, for `compile kill` (`<C-c>` in
+    /// `*compile*`) and for the next `:compile`, which replaces it.
+    pub proc: Option<ProcHandle>,
 }
 
 /// The buffer `]q` / `[q` walk: the last list of locations made — a
@@ -61,6 +64,11 @@ impl Kawoosh {
             "compile",
             serde_json::json!({ "cmd": cmd, "cwd": cwd.as_ref().map(|c| c.display().to_string()) }),
         );
+        // One compile at a time: the one before, still running, is
+        // stopped rather than left to finish unseen.
+        if let Some(p) = self.compile.proc.take() {
+            p.kill();
+        }
         self.compile.proc_id += 1;
         let id = self.compile.proc_id;
         let header = format!("$ {cmd}\n");
@@ -78,11 +86,23 @@ impl Kawoosh {
             ..Default::default()
         };
         match self.io.run_process(id, cmd, cwd.as_deref()) {
-            Ok(_) => self.compile.running = true,
+            Ok(p) => {
+                self.compile.proc = Some(p);
+                self.compile.running = true;
+            }
             Err(e) => {
                 self.compile_append(&format!("cannot run: {e}\n"));
                 self.compile.running = false;
             }
+        }
+    }
+
+    /// `compile kill`: stops the running command, and everything it
+    /// started. Its exit reports it (`[killed]`), as any exit does.
+    pub fn compile_kill(&mut self) {
+        match self.compile.proc.as_ref().filter(|_| self.compile.running) {
+            Some(p) => p.kill(),
+            None => self.ed.message = "nothing compiling".into(),
         }
     }
 
@@ -112,6 +132,7 @@ impl Kawoosh {
             }
             IoMsg::ProcExit { id, code } if id == self.compile.proc_id => {
                 self.compile.running = false;
+                self.compile.proc = None;
                 let status = match code {
                     Some(0) => "finished".to_string(),
                     Some(c) => format!("exited with {c}"),
@@ -317,6 +338,14 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     }
                 }
             },
+        ),
+        // `<C-c>` in `*compile*` while it runs (emacs's `C-c C-k`);
+        // elsewhere, or once it is done, the key is `normal`'s.
+        cmd(
+            Spec::new("compile kill")
+                .when(&["compiling"])
+                .doc("stop the running compile, and what it started"),
+            |k, _| k.compile_kill(),
         ),
         cmd(
             Spec::new("goto location").doc("open the path:line under the caret"),

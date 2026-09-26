@@ -111,6 +111,17 @@ impl Kawoosh {
             "close",
             &[Cond::parse("readonly"), Cond::parse("!file")],
         );
+        // `<C-c>` in the compile's output stops it while it runs
+        // (`compile kill`'s own `when`); done, the key is `normal`.
+        self.ed.keymap.bind_when(
+            Mode::Normal,
+            "<C-c>",
+            "compile kill",
+            &[Cond::parse(&format!(
+                "buffer:{}",
+                crate::compile::COMPILE_BUFFER
+            ))],
+        );
         // In the hover, `gd` and `K` act on a symbol it names: looked up
         // in the workspace, since the hover's text is no document a
         // server holds.
@@ -265,6 +276,7 @@ impl Kawoosh {
                 matches!(content, Some(Content::Memory | Content::Undo)),
             ),
             ("dock", dock),
+            ("compiling", self.compile.running),
         ];
         for (name, on) in facts {
             self.ed.fact(name, on);

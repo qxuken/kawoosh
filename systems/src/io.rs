@@ -388,18 +388,31 @@ pub fn shell_quote(s: &str) -> String {
 }
 
 /// A process [`Io::run_process`] started, to be killed early — a search
-/// the next keystroke made stale. Its exit still arrives as
-/// [`IoMsg::ProcExit`], with no code.
+/// the next keystroke made stale, a compile stopped. Its exit still
+/// arrives as [`IoMsg::ProcExit`], with no code.
 #[derive(Clone)]
 pub struct ProcHandle {
     child: Arc<Mutex<Option<std::process::Child>>>,
 }
 
 impl ProcHandle {
+    /// Kills the process and, on unix, everything it started: the shell
+    /// that ran the command need not `exec` it (nushell does not), and
+    /// a `cargo` left behind would hold the pipes open and the exit
+    /// back until it finished. The process leads a session of its own
+    /// (`run_process_with`), so its group is the command's.
     pub fn kill(&self) {
         if let Ok(mut c) = self.child.lock()
             && let Some(child) = c.as_mut()
         {
+            // Not yet waited on, so the pid is still this process's.
+            #[cfg(unix)]
+            if let Ok(pid) = libc::pid_t::try_from(child.id()) {
+                // SAFETY: a signal to a process group; no memory involved.
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
             let _ = child.kill();
         }
     }
