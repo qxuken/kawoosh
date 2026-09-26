@@ -14,7 +14,9 @@
 //! code has no green — pine, foam, iris, gold, rose, love — which is
 //! what the todo asked of a theme first; Ayu (ayu-colors v5), its
 //! translucent hues laid flat on their page, strings green as Ayu has
-//! them; and a high-contrast pair of kawoosh's own, drawn to WCAG AAA.
+//! them; Gruvbox (morhetz), dark and light at three grades; Tokyo Night
+//! (folke), night, storm and moon with day; and a high-contrast pair of
+//! kawoosh's own, drawn to WCAG AAA.
 
 use std::sync::LazyLock;
 
@@ -195,6 +197,36 @@ pub const FAMILIES: &[Family] = &[
         light: "ayu-light",
     },
     Family {
+        name: "gruvbox",
+        dark: "gruvbox-dark",
+        light: "gruvbox-light",
+    },
+    Family {
+        name: "gruvbox-hard",
+        dark: "gruvbox-dark-hard",
+        light: "gruvbox-light-hard",
+    },
+    Family {
+        name: "gruvbox-soft",
+        dark: "gruvbox-dark-soft",
+        light: "gruvbox-light-soft",
+    },
+    Family {
+        name: "tokyo-night",
+        dark: "tokyo-night",
+        light: "tokyo-night-day",
+    },
+    Family {
+        name: "tokyo-night-storm",
+        dark: "tokyo-night-storm",
+        light: "tokyo-night-day",
+    },
+    Family {
+        name: "tokyo-night-moon",
+        dark: "tokyo-night-moon",
+        light: "tokyo-night-day",
+    },
+    Family {
         name: "high-contrast",
         dark: "high-contrast-dark",
         light: "high-contrast-light",
@@ -209,9 +241,19 @@ pub fn variants() -> &'static [Variant] {
             MOON.variant("rose-pine-moon", "Rosé Pine Moon"),
             AYU_DARK.variant("ayu-dark", "Ayu Dark"),
             AYU_MIRAGE.variant("ayu-mirage", "Ayu Mirage"),
+            gruvbox(true, Grade::Medium),
+            gruvbox(true, Grade::Hard),
+            gruvbox(true, Grade::Soft),
+            TOKYO_NIGHT.variant("tokyo-night", "Tokyo Night"),
+            TOKYO_STORM.variant("tokyo-night-storm", "Tokyo Night Storm"),
+            TOKYO_MOON.variant("tokyo-night-moon", "Tokyo Night Moon"),
             high_contrast_dark(),
             DAWN.variant("rose-pine-dawn", "Rosé Pine Dawn"),
             AYU_LIGHT.variant("ayu-light", "Ayu Light"),
+            gruvbox(false, Grade::Medium),
+            gruvbox(false, Grade::Hard),
+            gruvbox(false, Grade::Soft),
+            TOKYO_DAY.variant("tokyo-night-day", "Tokyo Night Day"),
             high_contrast_light(),
         ]
     });
@@ -349,7 +391,26 @@ struct Roles {
 impl Roles {
     fn theme(&self) -> Theme {
         let t = base(self.dark, self.accent);
+        // A label on the accent (the active tab, a mode chip) in the
+        // theme's own page or text colour when either reads at 4.5:1,
+        // else whichever of those and black and white reads best: kui's
+        // own pick put white on gruvbox's and Tokyo Night's mid blues,
+        // 2.5:1 (the theme check's "active tab label").
+        let accent = c(self.accent);
+        let on = |cs: &[Color]| {
+            cs.iter()
+                .copied()
+                .max_by(|a, b| a.contrast(accent).total_cmp(&b.contrast(accent)))
+                .unwrap_or(t.on_accent)
+        };
+        let own = on(&[c(self.bg), c(self.fg)]);
+        let on_accent = if own.contrast(accent) >= 4.5 {
+            own
+        } else {
+            on(&[own, Color::BLACK, Color::WHITE])
+        };
         Theme {
+            on_accent,
             bg: c(self.bg),
             surface: c(self.surface),
             raised: c(self.raised),
@@ -752,6 +813,403 @@ impl Ayu {
     }
 }
 
+// -------------------------------------------------------------- Gruvbox
+
+/// Gruvbox's contrast: the page a step darker or lighter (`hard`), or
+/// softer, the rest of the palette the same.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Grade {
+    Hard,
+    Medium,
+    Soft,
+}
+
+/// Gruvbox (morhetz/gruvbox), by its own names: the dark ramp from
+/// `dark0_hard` to `dark4` and the light from `light0_hard` to `light4`;
+/// the bright hues on the dark page, the faded on the light, the
+/// neutral eight the terminal's darker half.
+mod gruvbox {
+    pub const DARK0_HARD: u32 = 0x1d2021;
+    pub const DARK0: u32 = 0x282828;
+    pub const DARK0_SOFT: u32 = 0x32302f;
+    pub const DARK1: u32 = 0x3c3836;
+    pub const DARK2: u32 = 0x504945;
+    pub const DARK3: u32 = 0x665c54;
+    pub const DARK4: u32 = 0x7c6f64;
+    pub const GRAY: u32 = 0x928374;
+    pub const LIGHT0_HARD: u32 = 0xf9f5d7;
+    pub const LIGHT0: u32 = 0xfbf1c7;
+    pub const LIGHT0_SOFT: u32 = 0xf2e5bc;
+    pub const LIGHT1: u32 = 0xebdbb2;
+    pub const LIGHT2: u32 = 0xd5c4a1;
+    pub const LIGHT3: u32 = 0xbdae93;
+    pub const LIGHT4: u32 = 0xa89984;
+    /// red, green, yellow, blue, purple, aqua, orange.
+    pub const BRIGHT: [u32; 7] = [
+        0xfb4934, 0xb8bb26, 0xfabd2f, 0x83a598, 0xd3869b, 0x8ec07c, 0xfe8019,
+    ];
+    pub const NEUTRAL: [u32; 7] = [
+        0xcc241d, 0x98971a, 0xd79921, 0x458588, 0xb16286, 0x689d6a, 0xd65d0e,
+    ];
+    pub const FADED: [u32; 7] = [
+        0x9d0006, 0x79740e, 0xb57614, 0x076678, 0x8f3f71, 0x427b58, 0xaf3a03,
+    ];
+}
+
+/// A Gruvbox variant: the page by its grade, the panels a step off it,
+/// floats and wells either side; the accent blue (yellow is the
+/// warning's, and the visual mode's name), the selection the ramp's
+/// third step as gruvbox's visual mode has it; the code as gruvbox.nvim
+/// scopes it — keywords red, functions green and bold, types yellow,
+/// strings green, numbers and constants purple, members blue, macros
+/// and attributes aqua, operators orange, comments grey and italic.
+fn gruvbox(dark: bool, grade: Grade) -> Variant {
+    use gruvbox as g;
+    let [red, green, yellow, blue, purple, aqua, orange] = if dark { g::BRIGHT } else { g::FADED };
+    let roles = if dark {
+        let bg = match grade {
+            Grade::Hard => g::DARK0_HARD,
+            Grade::Medium => g::DARK0,
+            Grade::Soft => g::DARK0_SOFT,
+        };
+        Roles {
+            dark,
+            bg,
+            surface: if grade == Grade::Soft {
+                g::DARK0
+            } else {
+                g::DARK0_SOFT
+            },
+            raised: g::DARK1,
+            sunken: if grade == Grade::Hard {
+                0x161819
+            } else {
+                g::DARK0_HARD
+            },
+            border: g::DARK1,
+            border_strong: g::DARK2,
+            fg: g::LIGHT1,
+            muted: g::LIGHT4,
+            faint: g::DARK4,
+            accent: blue,
+            selection: (g::DARK3, 0.6),
+            success: green,
+            warning: yellow,
+            danger: red,
+        }
+    } else {
+        let bg = match grade {
+            Grade::Hard => g::LIGHT0_HARD,
+            Grade::Medium => g::LIGHT0,
+            Grade::Soft => g::LIGHT0_SOFT,
+        };
+        Roles {
+            dark,
+            bg,
+            surface: if grade == Grade::Soft {
+                g::LIGHT0
+            } else {
+                g::LIGHT0_SOFT
+            },
+            raised: if grade == Grade::Hard {
+                0xfdfbe8
+            } else {
+                g::LIGHT0_HARD
+            },
+            sunken: g::LIGHT1,
+            border: g::LIGHT2,
+            border_strong: g::LIGHT3,
+            fg: g::DARK1,
+            muted: g::DARK4,
+            faint: g::LIGHT4,
+            accent: blue,
+            selection: (g::LIGHT3, 0.7),
+            success: green,
+            warning: yellow,
+            danger: red,
+        }
+    };
+    let fg4 = if dark { g::LIGHT4 } else { g::DARK4 };
+    let syntax = |token: Token| {
+        use Token as T;
+        Some(match token {
+            T::Plain | T::Variable => return None,
+            T::Keyword | T::Label | T::Removed => red,
+            T::Function | T::String | T::Added => green,
+            T::Type | T::Heading => yellow,
+            T::Constructor | T::Operator | T::Strong => orange,
+            T::Number | T::Constant | T::Emphasis => purple,
+            T::Comment => g::GRAY,
+            T::Property | T::Link => blue,
+            T::Punctuation => fg4,
+            T::Attribute | T::Macro | T::Tag | T::Raw => aqua,
+        })
+    };
+    let n = g::NEUTRAL;
+    let ansi = if dark {
+        [
+            g::DARK0,
+            n[0],
+            n[1],
+            n[2],
+            n[3],
+            n[4],
+            n[5],
+            g::LIGHT4,
+            g::GRAY,
+            red,
+            green,
+            yellow,
+            blue,
+            purple,
+            aqua,
+            g::LIGHT1,
+        ]
+    } else {
+        [
+            g::LIGHT0,
+            n[0],
+            n[1],
+            n[2],
+            n[3],
+            n[4],
+            n[5],
+            g::DARK4,
+            g::GRAY,
+            red,
+            green,
+            yellow,
+            blue,
+            purple,
+            aqua,
+            g::DARK1,
+        ]
+    };
+    let (name, title) = match (dark, grade) {
+        (true, Grade::Hard) => ("gruvbox-dark-hard", "Gruvbox Dark Hard"),
+        (true, Grade::Medium) => ("gruvbox-dark", "Gruvbox Dark"),
+        (true, Grade::Soft) => ("gruvbox-dark-soft", "Gruvbox Dark Soft"),
+        (false, Grade::Hard) => ("gruvbox-light-hard", "Gruvbox Light Hard"),
+        (false, Grade::Medium) => ("gruvbox-light", "Gruvbox Light"),
+        (false, Grade::Soft) => ("gruvbox-light-soft", "Gruvbox Light Soft"),
+    };
+    let bold = Style {
+        bold: true,
+        ..Style::PLAIN
+    };
+    Variant::new(name, title, roles.theme(), syntax, ansi).styled(Token::Function, bold)
+}
+
+// ---------------------------------------------------------- Tokyo Night
+
+/// One Tokyo Night style (folke/tokyonight.nvim), by its own names: the
+/// backgrounds, the foregrounds, and the hues.
+#[derive(Clone, Copy, Debug)]
+struct Tokyo {
+    dark: bool,
+    bg: u32,
+    bg_dark: u32,
+    bg_highlight: u32,
+    terminal_black: u32,
+    fg: u32,
+    fg_dark: u32,
+    fg_gutter: u32,
+    dark3: u32,
+    comment: u32,
+    blue0: u32,
+    blue: u32,
+    cyan: u32,
+    blue1: u32,
+    blue5: u32,
+    magenta: u32,
+    purple: u32,
+    orange: u32,
+    yellow: u32,
+    green: u32,
+    green1: u32,
+    teal: u32,
+    red: u32,
+    /// The terminal's black, its bright black being `terminal_black`.
+    black: u32,
+}
+
+const TOKYO_NIGHT: Tokyo = Tokyo {
+    dark: true,
+    bg: 0x1a1b26,
+    bg_dark: 0x16161e,
+    bg_highlight: 0x292e42,
+    terminal_black: 0x414868,
+    fg: 0xc0caf5,
+    fg_dark: 0xa9b1d6,
+    fg_gutter: 0x3b4261,
+    dark3: 0x545c7e,
+    comment: 0x565f89,
+    blue0: 0x3d59a1,
+    blue: 0x7aa2f7,
+    cyan: 0x7dcfff,
+    blue1: 0x2ac3de,
+    blue5: 0x89ddff,
+    magenta: 0xbb9af7,
+    purple: 0x9d7cd8,
+    orange: 0xff9e64,
+    yellow: 0xe0af68,
+    green: 0x9ece6a,
+    green1: 0x73daca,
+    teal: 0x1abc9c,
+    red: 0xf7768e,
+    black: 0x15161e,
+};
+
+const TOKYO_STORM: Tokyo = Tokyo {
+    bg: 0x24283b,
+    bg_dark: 0x1f2335,
+    black: 0x1d202f,
+    ..TOKYO_NIGHT
+};
+
+const TOKYO_MOON: Tokyo = Tokyo {
+    dark: true,
+    bg: 0x222436,
+    bg_dark: 0x1e2030,
+    bg_highlight: 0x2f334d,
+    terminal_black: 0x444a73,
+    fg: 0xc8d3f5,
+    fg_dark: 0x828bb8,
+    fg_gutter: 0x3b4261,
+    dark3: 0x545c7e,
+    comment: 0x636da6,
+    blue0: 0x3e68d7,
+    blue: 0x82aaff,
+    cyan: 0x86e1fc,
+    blue1: 0x65bcff,
+    blue5: 0x89ddff,
+    magenta: 0xc099ff,
+    purple: 0xfca7ea,
+    orange: 0xff966c,
+    yellow: 0xffc777,
+    green: 0xc3e88d,
+    green1: 0x4fd6be,
+    teal: 0x4fd6be,
+    red: 0xff757f,
+    black: 0x1b1d2b,
+};
+
+const TOKYO_DAY: Tokyo = Tokyo {
+    dark: false,
+    bg: 0xe1e2e7,
+    bg_dark: 0xd0d5e3,
+    bg_highlight: 0xc4c8da,
+    terminal_black: 0xa1a6c5,
+    // A step darker than Tokyo Night Day's #3760bf, as Ayu Light's text
+    // is: at its own, 4.5:1 on the page and no more, no selection could
+    // be seen and keep the text readable over it.
+    fg: 0x25479a,
+    fg_dark: 0x6172b0,
+    fg_gutter: 0xa8aecb,
+    dark3: 0x8990b3,
+    comment: 0x848cb5,
+    blue0: 0x7890dd,
+    blue: 0x2e7de9,
+    cyan: 0x007197,
+    blue1: 0x188092,
+    blue5: 0x006a83,
+    magenta: 0x9854f1,
+    purple: 0x7847bd,
+    orange: 0xb15c00,
+    yellow: 0x8c6c3e,
+    green: 0x587539,
+    green1: 0x387068,
+    teal: 0x118c74,
+    red: 0xf52a65,
+    black: 0xe9e9ed,
+};
+
+impl Tokyo {
+    /// The roles as tokyonight.nvim sets its UI: the page `bg`, sidebars
+    /// and floats on `bg_dark` (a float here on `bg_highlight`, so it is
+    /// seen), the gutter in `dark3`, the accent blue, the selection
+    /// `blue0` at the 0.4 its `bg_visual` is; the code as its treesitter
+    /// groups — keywords purple and italic, functions blue, types
+    /// `blue1`, strings green, numbers and constants orange, members
+    /// `green1`, operators and punctuation `blue5`, tags red.
+    fn variant(&self, name: &'static str, title: &'static str) -> Variant {
+        let roles = Roles {
+            dark: self.dark,
+            bg: self.bg,
+            surface: self.bg_dark,
+            raised: if self.dark {
+                self.bg_highlight
+            } else {
+                0xeeeff3
+            },
+            sunken: self.bg_dark,
+            border: if self.dark {
+                self.fg_gutter
+            } else {
+                self.bg_highlight
+            },
+            border_strong: if self.dark {
+                self.dark3
+            } else {
+                self.fg_gutter
+            },
+            fg: self.fg,
+            muted: self.fg_dark,
+            faint: self.dark3,
+            accent: self.blue,
+            // `blue0`, a step stronger than its `bg_visual`'s 0.4: at
+            // 0.4 the selection was not quite seen (`SEEN`) off either
+            // page.
+            selection: (self.blue0, if self.dark { 0.5 } else { 0.45 }),
+            success: self.green,
+            warning: self.yellow,
+            danger: self.red,
+        };
+        let syntax = |token: Token| {
+            use Token as T;
+            Some(match token {
+                T::Plain | T::Variable => return None,
+                T::Keyword | T::Emphasis => self.purple,
+                T::Function | T::Label | T::Heading => self.blue,
+                T::Type => self.blue1,
+                T::Constructor => self.magenta,
+                T::String | T::Added => self.green,
+                T::Number | T::Constant | T::Strong => self.orange,
+                T::Comment => self.comment,
+                T::Property => self.green1,
+                T::Operator | T::Punctuation => self.blue5,
+                T::Attribute | T::Macro => self.cyan,
+                T::Tag | T::Removed => self.red,
+                T::Link | T::Raw => self.teal,
+            })
+        };
+        let ansi = [
+            self.black,
+            self.red,
+            self.green,
+            self.yellow,
+            self.blue,
+            self.magenta,
+            self.cyan,
+            self.fg_dark,
+            self.terminal_black,
+            self.red,
+            self.green,
+            self.yellow,
+            self.blue,
+            self.magenta,
+            self.cyan,
+            self.fg,
+        ];
+        // Tokyo Night sets its keywords in italic, as its comments.
+        let italic = Style {
+            italic: true,
+            ..Style::PLAIN
+        };
+        Variant::new(name, title, roles.theme(), syntax, ansi).styled(Token::Keyword, italic)
+    }
+}
+
 // -------------------------------------------------------- high contrast
 
 /// The high-contrast pair (docs/design/themes.md Decision 1), kawoosh's
@@ -1095,15 +1553,15 @@ mod tests {
             [
                 "theme.name: \"ayu-dark\" is a variant — theme.dark = \"ayu-dark\" shows it",
                 "theme.dark: \"rose-pine-dawn\" is not a dark theme",
-                "theme.light: no theme \"nope\" (system, rose-pine-dawn, ayu-light, high-contrast-light)",
+                "theme.light: no theme \"nope\" (system, rose-pine-dawn, ayu-light, gruvbox-light, gruvbox-light-hard, gruvbox-light-soft, tokyo-night-day, high-contrast-light)",
             ]
         );
         notes.clear();
-        resolve("gruvbox", "", "", &mut notes);
+        resolve("solarized", "", "", &mut notes);
         assert_eq!(
             notes,
             [
-                "theme.name: no family \"gruvbox\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, high-contrast)"
+                "theme.name: no family \"solarized\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, gruvbox, gruvbox-hard, gruvbox-soft, tokyo-night, tokyo-night-storm, tokyo-night-moon, high-contrast)"
             ]
         );
     }

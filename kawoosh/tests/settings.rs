@@ -814,11 +814,11 @@ fn the_look_reaches_kui() {
     // The moon, and a name nobody ships: a toast, the default stands.
     ex(&mut d, &mut app, "set theme.name=rose-pine-moon");
     assert_eq!(d.core.theme().bg, kawoosh::themes::MOON.theme().bg);
-    ex(&mut d, &mut app, "set theme.name=gruvbox");
+    ex(&mut d, &mut app, "set theme.name=solarized");
     assert!(
         app.notes.shown.iter().any(|s| s.toast
             && s.text
-                == "theme.name: no family \"gruvbox\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, high-contrast)"),
+                == "theme.name: no family \"solarized\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, gruvbox, gruvbox-hard, gruvbox-soft, tokyo-night, tokyo-night-storm, tokyo-night-moon, high-contrast)"),
         "{:?}",
         app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
     );

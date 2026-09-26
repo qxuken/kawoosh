@@ -295,22 +295,34 @@ mod tests {
         assert_eq!(checks.iter().filter(|c| c.group == "terminal").count(), 12);
     }
 
-    /// The dark variants and the high-contrast pair clear every floor as
-    /// the editor shows them — the dark ones fell short only under a
-    /// search hit until its wash was held legible (themes.md Decision 8).
+    /// Every dark variant and the high-contrast pair clear every floor
+    /// the editor's own choices meet: the text on the surfaces, the
+    /// washes seen and the body under them, the caret, the chrome, the
+    /// states — the dark ones fell short under a search hit until its
+    /// wash was held (themes.md Decision 8), and on the accent until the
+    /// label was chosen (`Roles`). A palette's syntax and terminal hues
+    /// are its authors', which the check reports and this does not
+    /// hold them to — Tokyo Night's comments are 2.8:1 by design. High
+    /// contrast clears those too.
     #[test]
-    fn the_dark_variants_and_high_contrast_clear_every_floor() {
-        let names = themes::variants()
-            .iter()
-            .filter(|v| v.dark() || v.name.starts_with("high-contrast"))
-            .map(|v| v.name);
-        for name in names {
-            let short: Vec<String> = of(themes::variant(name).unwrap())
+    fn what_the_editor_chooses_clears_its_floor() {
+        let theirs = |c: &Check| {
+            matches!(c.group, "code" | "terminal")
+                || (matches!(c.group, "selection" | "search")
+                    && !c.what.contains("seen")
+                    && !c.what.starts_with("body"))
+        };
+        for v in themes::variants() {
+            let high = v.name.starts_with("high-contrast");
+            if !v.dark() && !high {
+                continue;
+            }
+            let short: Vec<String> = of(v)
                 .iter()
-                .filter(|c| !c.ok())
+                .filter(|c| !c.ok() && (high || !theirs(c)))
                 .map(|c| format!("{} {:.2}", c.what, c.ratio))
                 .collect();
-            assert!(short.is_empty(), "{name}: {short:?}");
+            assert!(short.is_empty(), "{}: {short:?}", v.name);
         }
     }
 
