@@ -3498,10 +3498,12 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>Q", "quit all"),
         ("<leader>?", "keys"),
         // `o`: the look (docs/design/themes.md Decision 3) — the base
-        // flipped, the OS's again, the themes' pane.
+        // flipped, the OS's again, the themes' pane, the fonts' (fonts.md
+        // Decision 3), the lab of both.
         ("<leader>ot", "theme toggle"),
         ("<leader>os", "theme system"),
         ("<leader>oo", "themes"),
+        ("<leader>of", "fonts"),
         ("<leader>ol", "theme lab"),
     ];
     for (k, c) in n {
