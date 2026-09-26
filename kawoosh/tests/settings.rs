@@ -692,7 +692,7 @@ fn an_empty_layer_offers_a_file_to_create() {
 #[test]
 fn the_look_reaches_kui() {
     use kawoosh_systems::ts::Token;
-    use kui_native::{Appearance, Color, FontFeatures, ThemeSource};
+    use kui_native::{Appearance, Color, FontFeatures, Theme, ThemeSource};
     let t = tree("look");
     std::fs::write(
         &t.user,
@@ -810,12 +810,41 @@ fn the_look_reaches_kui() {
     ex(&mut d, &mut app, "set theme.name=gruvbox");
     assert!(
         app.notes.shown.iter().any(|s| s.toast
-            && s.text == "theme.name: no palette \"gruvbox\" (system, rose-pine, rose-pine-moon)"),
+            && s.text
+                == "theme.name: no family \"gruvbox\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, high-contrast)"),
         "{:?}",
         app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
     );
     assert_eq!(d.core.theme().bg, kawoosh::themes::MAIN.theme().bg);
     ex(&mut d, &mut app, "set theme.name!");
+    // Each base's half apart from the family (themes.md Decision 2):
+    // the dark one on show, its hues and its sixteen; the light one
+    // waiting for the base, and `system` for one half alone.
+    let variant = |n| kawoosh::themes::variant(n).unwrap();
+    ex(&mut d, &mut app, "set theme.dark=ayu-mirage");
+    ex(&mut d, &mut app, "set theme.light=high-contrast-light");
+    assert_eq!(d.core.theme().bg, variant("ayu-mirage").theme.bg);
+    assert_eq!(
+        app.syntax_color_for(Token::String, true),
+        variant("ayu-mirage").syntax(Token::String)
+    );
+    assert_eq!(app.ansi_for(true), variant("ayu-mirage").ansi);
+    assert_eq!(
+        app.syntax_color_for(Token::Keyword, false),
+        variant("high-contrast-light").syntax(Token::Keyword)
+    );
+    ex(&mut d, &mut app, "theme toggle");
+    assert!(!app.dark);
+    assert_eq!(d.core.theme().bg, variant("high-contrast-light").theme.bg);
+    ex(&mut d, &mut app, "set theme.light=system");
+    assert_eq!(
+        d.core.theme_source(),
+        ThemeSource::Pinned(Theme::derive(Appearance::Light, None))
+    );
+    ex(&mut d, &mut app, "theme reset");
+    ex(&mut d, &mut app, "set theme.dark!");
+    ex(&mut d, &mut app, "set theme.light!");
+    assert_eq!(d.core.theme().bg, kawoosh::themes::MAIN.theme().bg);
     // A role misspelt is a toast naming it.
     ex(&mut d, &mut app, "set theme.background=#000000");
     assert!(

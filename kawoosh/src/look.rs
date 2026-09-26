@@ -9,7 +9,8 @@
 //! return {
 //!   font = { family = "JetBrains Mono", size = 14, line_height = 1.5,
 //!            features = "-liga +calt" },
-//!   theme = { name = "rose-pine", appearance = "dark", accent = "#e0af68" },
+//!   theme = { name = "rose-pine", dark = "ayu-mirage", appearance = "dark",
+//!             accent = "#e0af68" },
 //!   tokens = { colors = { keyword = { light = "#7a2fb0", dark = "#c78fe8" },
 //!                         string = "#9cc87a" } },
 //! }
@@ -24,15 +25,20 @@
 //!   kui's spelling (`liga=0`, `-liga`, `tnum`). Every mono run — the
 //!   rows, the gutter, the terminals' cells, the panes' tables — is
 //!   [`rows::mono`] over the one [`Face`], so the cell size follows.
-//! - **`theme.name`** is a palette of [`crate::themes`] — `rose-pine`
-//!   (the default), `rose-pine-moon` — which sets the chrome's roles,
-//!   the syntax hues and the terminal's sixteen from one set of colours,
-//!   pinned (roadmap step 28); or `system`, the way below.
+//! - **`theme.name`** is a family of [`crate::themes`] — `rose-pine`
+//!   (the default), `rose-pine-moon`, `ayu`, `ayu-mirage`,
+//!   `high-contrast` — a dark variant and a light one, each setting the
+//!   chrome's roles, the syntax hues and the terminal's sixteen from one
+//!   set of colours, pinned (roadmap step 28); or `system`, the way
+//!   below. **`theme.dark`** and **`theme.light`** name a variant for
+//!   their base apart from the family (`ayu-dark`, `rose-pine-dawn`, …;
+//!   docs/design/themes.md), `system` for the way below on that base
+//!   alone, empty for the family's half.
 //!   **`theme.appearance`** is `system` (the OS's base), `dark` or
 //!   `light`; `theme.accent` a colour, or `system` for the OS's; every
 //!   other key under `theme` a role of kui's `Theme` by name (`bg`,
 //!   `surface`, `fg`, `muted`, `selection`, `focus_ring`, `danger`, …),
-//!   written over the palette. Under `theme.name = "system"` the OS's
+//!   written over the palette. Where the base's half is `system` the OS's
 //!   appearance with no role set keeps following the OS
 //!   (`ThemeSource::Derived`, with the accent when one is given); an
 //!   appearance named or a role set pins a palette derived from the
@@ -59,7 +65,7 @@ use kui_native::{
 use crate::app::Kawoosh;
 use crate::notify::{Level, Note};
 use crate::rows::{FONT, LH};
-use crate::themes::{self, Named};
+use crate::themes::{self, Pair};
 
 /// The face every mono run is shaped in: the font, its size, the row's
 /// height and the shaper's features. `Copy`, since it rides into every
@@ -146,12 +152,90 @@ pub struct Look {
     appearance: Appearance,
     /// The OS accent the theme was resolved under.
     accent: Option<Color>,
-    /// The palette `theme.name` names; none under `system`.
-    pub named: Option<&'static Named>,
+    /// The variant for each base, and the family (`themes::resolve`).
+    pub pair: Pair,
+    /// What is on show, for `kawoosh.themes.current()`: shared with the
+    /// Lua door, rewritten at each rebuild.
+    pub shown: std::rc::Rc<std::cell::RefCell<Shown>>,
     /// The syntax colours the config set, a light and a dark half each.
     pub syntax: HashMap<Token, (Color, Color)>,
     /// The family a toast already said was missing.
     missing: Option<String>,
+}
+
+/// What the look resolved to, as the Lua door says it: the family, the
+/// variant on each base (`system` where kui's roles off the OS stand),
+/// the base on show and the appearance setting.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Shown {
+    pub family: String,
+    pub dark: String,
+    pub light: String,
+    pub is_dark: bool,
+    pub appearance: String,
+}
+
+/// `kawoosh.themes` (docs/design/themes.md Decision 4), set on the
+/// runtime before the bundled plugins load: `variants`, each one's
+/// `name`, `title`, `dark`, `roles` (every kui role by name), `syntax`
+/// (a hue per token by name) and `ansi` (the sixteen), colours as
+/// `0xRRGGBBAA`; `families`, each `{ name, dark, light }`; and
+/// `current()`, what is on show — `family`, `dark` and `light` (a
+/// variant's name, or `system`), `base` (`dark` or `light`) and
+/// `appearance` — as of the last frame the look was built.
+pub(crate) fn lua_door(
+    lua: &mlua::Lua,
+    shown: std::rc::Rc<std::cell::RefCell<Shown>>,
+) -> mlua::Result<()> {
+    let hex = |c: Color| c.to_hex() as i64;
+    let door = lua.create_table()?;
+    let variants = lua.create_table()?;
+    for (i, v) in themes::variants().iter().enumerate() {
+        let t = lua.create_table()?;
+        t.set("name", v.name)?;
+        t.set("title", v.title)?;
+        t.set("dark", v.dark())?;
+        let roles = lua.create_table()?;
+        for r in THEME_ROLES {
+            roles.set(r.name, hex((r.get)(&v.theme)))?;
+        }
+        t.set("roles", roles)?;
+        let syntax = lua.create_table()?;
+        for tok in Token::ALL {
+            if let Some(c) = v.syntax(*tok) {
+                syntax.set(tok.name(), hex(c))?;
+            }
+        }
+        t.set("syntax", syntax)?;
+        t.set("ansi", lua.create_sequence_from(v.ansi.map(|x| x as i64))?)?;
+        variants.set(i + 1, t)?;
+    }
+    door.set("variants", variants)?;
+    let families = lua.create_table()?;
+    for (i, f) in themes::FAMILIES.iter().enumerate() {
+        let t = lua.create_table()?;
+        t.set("name", f.name)?;
+        t.set("dark", f.dark)?;
+        t.set("light", f.light)?;
+        families.set(i + 1, t)?;
+    }
+    door.set("families", families)?;
+    door.set(
+        "current",
+        lua.create_function(move |lua, ()| {
+            let s = shown.borrow();
+            let t = lua.create_table()?;
+            t.set("family", s.family.as_str())?;
+            t.set("dark", s.dark.as_str())?;
+            t.set("light", s.light.as_str())?;
+            t.set("base", if s.is_dark { "dark" } else { "light" })?;
+            t.set("appearance", s.appearance.as_str())?;
+            Ok(t)
+        })?,
+    )?;
+    lua.globals()
+        .get::<mlua::Table>("kawoosh")?
+        .set("themes", door)
 }
 
 /// `#rrggbb` or `#rrggbbaa`, the `#` optional.
@@ -210,7 +294,7 @@ impl Kawoosh {
         self.note_undeclared();
         let mut notes = Vec::new();
         self.sync_font(ui, &mut notes);
-        self.look.named = self.theme_named(&mut notes);
+        self.look.pair = self.theme_pair(&mut notes);
         self.sync_tokens(ui, &mut notes);
         self.sync_theme(ui, &system, &mut notes);
         for n in notes {
@@ -260,22 +344,18 @@ impl Kawoosh {
         self.chrome = Chrome::of(self.face, chrome);
     }
 
-    /// `theme.name`: a palette of `themes.rs`, or `system` for none. A
-    /// name nobody ships is a toast, and the default stands.
-    fn theme_named(&self, notes: &mut Vec<String>) -> Option<&'static Named> {
-        let name = self.ed.settings.str("theme.name").unwrap_or("").trim();
-        match name {
-            "system" => None,
-            "" => Some(&themes::NAMED[0]),
-            n => themes::named(n).or_else(|| {
-                let known: Vec<&str> = themes::NAMED.iter().map(|n| n.name).collect();
-                notes.push(format!(
-                    "theme.name: no palette \"{n}\" (system, {})",
-                    known.join(", ")
-                ));
-                Some(&themes::NAMED[0])
-            }),
-        }
+    /// `theme.name`, `theme.dark` and `theme.light` resolved
+    /// (`themes::resolve`); what cannot be is a toast, and the default
+    /// stands.
+    fn theme_pair(&self, notes: &mut Vec<String>) -> Pair {
+        let s = &self.ed.settings;
+        let get = |k: &str| s.str(k).unwrap_or("");
+        themes::resolve(
+            get("theme.name"),
+            get("theme.dark"),
+            get("theme.light"),
+            notes,
+        )
     }
 
     fn sync_theme(&mut self, ui: &mut Ui<'_>, system: &SystemEnv, notes: &mut Vec<String>) {
@@ -308,7 +388,10 @@ impl Kawoosh {
         let mut roles = Vec::new();
         if let Some(Setting::Table(t)) = s.get("theme") {
             for (name, v) in t {
-                if name == "appearance" || name == "accent" || name == "name" {
+                if matches!(
+                    name.as_str(),
+                    "appearance" | "accent" | "name" | "dark" | "light"
+                ) {
                     continue;
                 }
                 let Some(role) = THEME_ROLES.iter().find(|r| r.name == name) else {
@@ -321,14 +404,14 @@ impl Kawoosh {
                 }
             }
         }
-        let source = match self.look.named {
-            // A palette: its variant for the base, the accent over it
-            // (the palette's selection kept — it is the palette's, not
-            // the accent's), the roles over that. Pinned, whatever the
-            // OS says, but for the base under `system`.
-            Some(p) => {
-                let f = p.flavour(appearance.unwrap_or(sys) != Appearance::Light);
-                let mut t = f.theme();
+        let base_dark = appearance.unwrap_or(sys) != Appearance::Light;
+        let source = match self.look.pair.of(base_dark) {
+            // A variant for the base: the accent over it (its selection
+            // kept — it is the variant's, not the accent's), the roles
+            // over that. Pinned, whatever the OS says, but for the base
+            // under `system`.
+            Some(v) => {
+                let mut t = v.theme;
                 if let Some(c) = accent {
                     let selection = t.selection;
                     t = t.with_accent(c);
@@ -367,6 +450,15 @@ impl Kawoosh {
         if ui.core().theme_source() != source {
             ui.core().set_theme_source(source);
         }
+        let pair = self.look.pair;
+        let name = |v: Option<&themes::Variant>| v.map_or("system", |v| v.name).to_string();
+        *self.look.shown.borrow_mut() = Shown {
+            family: pair.family.map_or("system", |f| f.name).to_string(),
+            dark: name(pair.dark),
+            light: name(pair.light),
+            is_dark: held.is_dark(),
+            appearance: if named.is_empty() { "system" } else { named }.to_string(),
+        };
     }
 
     fn sync_tokens(&mut self, ui: &mut Ui<'_>, notes: &mut Vec<String>) {
@@ -433,19 +525,85 @@ impl Kawoosh {
 
     /// A token's hue when the config names none.
     fn default_syntax(&self, token: Token, dark: bool) -> Option<Color> {
-        match self.look.named {
-            Some(p) => p.flavour(dark).syntax(token),
+        match self.look.pair.of(dark) {
+            Some(v) => v.syntax(token),
             None => crate::palette::syntax_color(token, dark),
         }
     }
 
-    /// The terminal's sixteen on a base: the palette's, or Tomorrow's
+    /// The terminal's sixteen on a base: the variant's, or Tomorrow's
     /// under `system` (`palette::ansi`).
     pub fn ansi_for(&self, dark: bool) -> [u32; 16] {
-        match self.look.named {
-            Some(p) => p.flavour(dark).ansi(),
+        match self.look.pair.of(dark) {
+            Some(v) => v.ansi,
             None => crate::palette::ansi(dark),
         }
+    }
+}
+
+/// The `theme.*` keys a pick sets, and `theme reset` takes out.
+const PICKED: [&str; 4] = [
+    "theme.name",
+    "theme.dark",
+    "theme.light",
+    "theme.appearance",
+];
+
+impl Kawoosh {
+    /// `:theme`'s line: the variant on show and its base, both halves,
+    /// the family and the appearance.
+    pub(crate) fn theme_line(&self) -> String {
+        let s = self.look.shown.borrow();
+        let (on, base) = if s.is_dark {
+            (&s.dark, "dark")
+        } else {
+            (&s.light, "light")
+        };
+        format!(
+            "theme {on} ({base}) · dark {} · light {} · family {} · appearance {}",
+            s.dark, s.light, s.family, s.appearance
+        )
+    }
+
+    /// `theme.dark` or `theme.light` set to `name` for the session — a
+    /// variant of that base, or `system` — else a message saying why
+    /// not.
+    fn pick_half(&mut self, dark: bool, name: &str) {
+        use kawoosh_editor::Layer;
+        let key = if dark { "theme.dark" } else { "theme.light" };
+        let base = if dark { "dark" } else { "light" };
+        let ok = name == "system" || themes::variant(name).is_some_and(|v| v.dark() == dark);
+        if !ok {
+            let names: Vec<&str> = themes::variants()
+                .iter()
+                .filter(|v| v.dark() == dark)
+                .map(|v| v.name)
+                .collect();
+            self.ed.message = format!(
+                "theme {base}: no {base} theme \"{name}\" (system, {})",
+                names.join(", ")
+            );
+            return;
+        }
+        self.ed
+            .settings
+            .set(Layer::Session, key, Setting::Str(name.into()));
+        self.ed.message = if self.dark == dark {
+            format!("{key} = {name}")
+        } else {
+            format!("{key} = {name} — shown when the base is {base}")
+        };
+    }
+
+    /// `theme.appearance` pinned (or `system`) for the session.
+    fn pick_appearance(&mut self, word: &str) {
+        use kawoosh_editor::Layer;
+        self.ed.settings.set(
+            Layer::Session,
+            "theme.appearance",
+            Setting::Str(word.into()),
+        );
+        self.ed.message = format!("theme.appearance = {word}");
     }
 }
 
@@ -453,9 +611,78 @@ impl Kawoosh {
 /// layer, within what is honoured; `font reset` takes the session's
 /// value out, back to the settings files'. ⌘= ⌘+ ⌘- ⌘_ ⌘0, Ctrl where
 /// there is no ⌘ (keys.md).
+///
+/// `theme` (docs/design/themes.md Decision 3) says what is shown;
+/// `theme toggle` pins the other base, `theme system` follows the OS
+/// again, `theme dark` and `theme light` pin a base — or with a name set
+/// that base's variant — and `theme FAMILY` takes a family whole: its
+/// name and both its halves, so a lower layer's half cannot hide the
+/// pick. `theme reset` takes the session's out. All the session's.
 pub(crate) fn commands() -> Vec<crate::commands::ShellCommand> {
     use crate::commands::cmd;
-    use kawoosh_editor::{Layer, Spec};
+    use kawoosh_editor::{ArgKind, Args, Layer, Spec};
+    let half = |dark: bool| {
+        let base = if dark { "dark" } else { "light" };
+        cmd(
+            Spec::new(&format!("theme {base}"))
+                .args(Args::new(&[ArgKind::Text]))
+                .doc(&format!(
+                    "the base {base} for the session; with a NAME, the theme shown when it is"
+                )),
+            move |k, ctx| match ctx.args.first() {
+                Some(n) => k.pick_half(dark, n),
+                None => k.pick_appearance(base),
+            },
+        )
+    };
+    let mut theme = vec![
+        cmd(
+            Spec::new("theme").doc("the theme on show, both halves, the family, the appearance"),
+            |k, _| k.ed.message = k.theme_line(),
+        ),
+        cmd(
+            Spec::new("theme toggle")
+                .doc("the other base — dark for light, light for dark — for the session"),
+            |k, _| {
+                let to = if k.dark { "light" } else { "dark" };
+                k.pick_appearance(to);
+            },
+        ),
+        cmd(
+            Spec::new("theme system").doc("the base the OS's again, for the session"),
+            |k, _| k.pick_appearance("system"),
+        ),
+        half(true),
+        half(false),
+        cmd(
+            Spec::new("theme reset").doc("the session's theme picks taken out, back to the files'"),
+            |k, _| {
+                for key in PICKED {
+                    k.ed.settings.unset(Layer::Session, key);
+                }
+                k.ed.message = "theme: the files' again".into();
+            },
+        ),
+    ];
+    for f in themes::FAMILIES {
+        theme.push(cmd(
+            Spec::new(&format!("theme {}", f.name)).doc(&format!(
+                "the {} family for the session: {} and {}",
+                f.name, f.dark, f.light
+            )),
+            move |k, _| {
+                for (key, v) in [
+                    ("theme.name", f.name),
+                    ("theme.dark", f.dark),
+                    ("theme.light", f.light),
+                ] {
+                    k.ed.settings
+                        .set(Layer::Session, key, Setting::Str(v.into()));
+                }
+                k.ed.message = format!("theme {}: {} and {}", f.name, f.dark, f.light);
+            },
+        ));
+    }
     let step = |k: &mut Kawoosh, by: f64| {
         let now =
             k.ed.settings
@@ -467,7 +694,7 @@ pub(crate) fn commands() -> Vec<crate::commands::ShellCommand> {
             .set(Layer::Session, "font.size", Setting::Float(next));
         k.ed.message = format!("font {next}");
     };
-    vec![
+    theme.extend([
         cmd(
             Spec::new("font bigger").doc("the font a pixel bigger, for the session"),
             move |k, ctx| step(k, ctx.count.max(1) as f64),
@@ -488,5 +715,6 @@ pub(crate) fn commands() -> Vec<crate::commands::ShellCommand> {
                 k.ed.message = format!("font {size}");
             },
         ),
-    ]
+    ]);
+    theme
 }
