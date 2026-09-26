@@ -51,6 +51,9 @@ Shipped:
 | `tokyo-night` | `tokyo-night` | `tokyo-night-day` |
 | `tokyo-night-storm` | `tokyo-night-storm` | `tokyo-night-day` |
 | `tokyo-night-moon` | `tokyo-night-moon` | `tokyo-night-day` |
+| `mono` | `mono-dark` | `mono-light` |
+| `mono-soft` | `mono-soft-dark` | `mono-soft-light` |
+| `paper` | `paper-dark` | `paper` |
 | `high-contrast` | `high-contrast-dark` | `high-contrast-light` |
 
 Gruvbox (added the same week, the user's favourite of late) is
@@ -76,6 +79,20 @@ high-contrast pair is kawoosh's own, drawn to WCAG AAA: body text over
 15:1, every syntax hue and `muted` 7:1 on the page, `faint` 4.5:1, the
 borders 3:1 (the non-text minimum), and no green either, as the
 default's.
+
+Black and white (`mono`, stark black and white; `mono-soft`, charcoal
+and paper greys) and paper are kawoosh's own, one builder
+(`themes::Ink`): the code told apart by weight and slant first —
+keywords and labels bold, numbers and constants italic, comments
+italic, a removed line struck — and by a few inks. Mono's are greys:
+the text, the punctuation's and literals' mid grey, the comments' dim;
+its states by brightness, an error the brightest, a search hit a
+brighter grey than the selection; its sixteen greys. Paper's are the
+few a writer marks a page with, where Alabaster (tonsky) puts them:
+strings green, numbers and constants purple, comments brick on the
+warm page and a highlighter's yellow on the charcoal one, a link the
+ink's blue — keywords and functions still ink. Being kawoosh's, both
+are held to every floor of the check, as high contrast is.
 
 What the families share past their vocabularies is `themes::Roles`,
 kui's roles as a family names them, turned into a theme in one place.
