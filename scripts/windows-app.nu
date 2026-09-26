@@ -24,7 +24,7 @@
 # the system, else it draws in the system's mono.
 def main [
   out_dir?: path  # where the Kawoosh folder goes (default: target\release, or %LOCALAPPDATA%\Programs with --install)
-  --no-fonts      # leave the 220 MB of faces out
+  --no-fonts      # leave the 235 MB of faces out
   --install       # into %LOCALAPPDATA%\Programs, with a Start menu shortcut
 ] {
   let root = $env.FILE_PWD | path dirname

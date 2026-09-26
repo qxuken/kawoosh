@@ -184,9 +184,15 @@ Families to pick from ship the same way (the user's word, the same day:
 (OFL, its eight faces and `OFL.txt`, 1.3 MB) in
 `assets/fonts/IntelOneMono/`, under LFS (`*.otf` joins `*.ttf` there).
 Every folder in `fonts/` is loaded at start, so shipping a family is a
-folder. Fira Mono waits on which build: the one at hand is Nerd Fonts'
-patched set, 51 MB, where plain Fira Mono is a few hundred KB and the
-symbols above give it its icons.
+folder. Then, at the user's "plain fira is fine. can you download
+these fonts?", five more from their projects' own releases, each its
+static faces — a real bold and italic rather than a variable axis — and
+its license: JetBrains Mono (v2.304, OFL, 16 faces, 4.2 MB), Cascadia
+Code (v2407.24, OFL, 12, 6.1 MB), Source Code Pro (2.042R, OFL, 14,
+2.5 MB), IBM Plex Mono (OFL, 14, 1.9 MB) and plain Fira Mono (3.2,
+OFL, 3, 0.6 MB; the latter two from Google Fonts' copies) — every face
+monospaced, 17 MB with Intel One Mono. Plain Fira over Nerd Fonts'
+patched build (51 MB): the symbols above give any face its icons.
 
 ### 7. The user's fonts folder, watched
 

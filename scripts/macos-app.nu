@@ -25,7 +25,7 @@
 # the system, else it draws in the system's mono.
 def main [
   out_dir?: path  # where Kawoosh.app goes (default: target/release)
-  --no-fonts      # leave the 220 MB of faces out
+  --no-fonts      # leave the 235 MB of faces out
 ] {
   let root = $env.FILE_PWD | path dirname
   let target = $env.CARGO_TARGET_DIR? | default ($root | path join target)
