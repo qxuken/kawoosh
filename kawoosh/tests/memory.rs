@@ -370,6 +370,16 @@ fn moments_are_counted_flushed_by_increments_and_capped_by_score() {
             .map(|e| e.text.clone())
             .collect::<Vec<_>>()
     );
+    // Quiet: the log has it and the pane's head counts it; the corner
+    // does not.
+    assert!(
+        app.notes
+            .log
+            .iter()
+            .filter(|e| e.text.contains("moments evicted"))
+            .all(|e| e.level == kawoosh::notify::Level::Debug)
+    );
+    assert!(app.moments.evicted > 0);
     // The ring at its cap: the flush of the burst added no ring rows,
     // so a thousand visits pushed through it keep the last thousand.
     let ring: Vec<kawoosh_systems::store::RingRow> = (0..1200)

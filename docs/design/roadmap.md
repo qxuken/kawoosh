@@ -1064,6 +1064,32 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   server, since the pool keys by root and command), lua-language-server,
   pyright-langserver, gopls, clangd (c, cpp), each with its root
   markers; `kawoosh.lsp.server` replaces a language's.
+- **Rules per server** — done 2026-09-26 [asked]; step 40,
+  [lsp-rules.md](lsp-rules.md). Asked as "toggleable rules for specific
+  lsp's (load all files in ts for example for a complete diagnostics
+  and stuff)". `lsp.NAME` in the settings is a server over Lua's or the
+  builtin one — `cmd`, `args`, `roots`, `languages`, `settings` (step
+  34 declared them; nothing read them) — and its rules: `enabled`,
+  `load_all` (every file of its languages in the workspace sent from
+  disk, `load_max` of them, so typescript-language-server speaks of the
+  project and `:diagnostics` is whole), `inlay_hints` over
+  `lsp.inlay_hints`. One server serves the languages one program reads:
+  `lsp.typescript` is `.ts`, `.tsx` and `.js`, `lsp.c` is C and C++.
+  Per project through `.kawoosh/settings.lua`; `:lsp toggle RULE
+  [LANGUAGE]` for the session. A server's `settings` reach it running
+  (`didChangeConfiguration`); a new command line restarts it. Beside
+  it: `languageId` is the document's own (`tsx` as `typescriptreact`),
+  and a buffer no pane shows is sent again after a restart, as `:lsp
+  restart` said it was.
+- **`:lsp logs`** — done 2026-09-26 [asked]. Everything a server said
+  — its stderr, `logMessage`, `showMessage` — kept per server (5000
+  lines, `lsp_logs.rs`), apart from the notification log, which drops
+  a server's stderr as a trace unless `notes.keep` asks and keeps 1000
+  lines of everything. `:lsp logs [LANGUAGE]` shows the caret's
+  server's (bare, every one's when the buffer has none) in `*lsp logs*`,
+  live, the caret following the newest line; `:lsp logs clear`.
+  `:lsp info`'s "said" reads the same log, so clangd's and
+  rust-analyzer's stderr shows there now.
 
 ### Config, theme, fonts
 
@@ -2131,8 +2157,17 @@ then breadth.
     walks.~~ Landed 2026-09-26: `editor/src/diagnostics.rs`,
     `kawoosh/src/lists.rs`, `kawoosh/lua/lists.lua`; looked at against
     rust-analyzer.
+40. ~~**Rules per server** ([lsp-rules.md](lsp-rules.md)):
+    `lsp.NAME` read as the server and its switches — `enabled`,
+    `load_all` for a whole project's diagnostics, `inlay_hints` — per
+    project, per session with `:lsp toggle`; one server for
+    TypeScript's three languages.~~ Landed 2026-09-26:
+    `kawoosh/src/lsp_rules.rs`, the pool's loaded documents in
+    `systems/src/lsp.rs`; tested against the fake server, and against
+    typescript-language-server 6 on TypeScript 5 in a scratch install
+    (TypeScript 7, npm's now, has no tsserver for it to run).
 
-40. ~~**Themes** ([themes.md](themes.md)): the family one of several —
+41. ~~**Themes** ([themes.md](themes.md)): the family one of several —
     Rosé Pine, Ayu (dark, mirage, light), Gruvbox (dark and light, hard,
     medium, soft), Tokyo Night (night, storm, moon, day), Catppuccin
     (mocha, macchiato, frappé, latte), Kanagawa (wave, dragon, lotus),

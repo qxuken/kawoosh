@@ -917,6 +917,7 @@ impl Kawoosh {
             }
             Msg::LspServer {
                 language,
+                languages,
                 command,
                 args,
                 roots,
@@ -924,10 +925,12 @@ impl Kawoosh {
             } => {
                 self.add_lsp_server(ServerDef {
                     language,
+                    languages,
                     command,
                     args,
                     roots,
                     settings,
+                    ..Default::default()
                 });
             }
             Msg::Language {

@@ -1,6 +1,6 @@
 # Themes: a registry, a dark and a light chosen apart, and a pane to see them
 
-Status: decided and built 2026-09-26 (roadmap step 40), at the user's
+Status: decided and built 2026-09-26 (roadmap step 41), at the user's
 ask: "improve theming, add toggles and settings. add more like high
 contrast, maybe Ayu. panel for theme preview and independent
 (light/dark setting)". Step 28 made one family, Rosé Pine, the pinned

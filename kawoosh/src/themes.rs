@@ -1,4 +1,4 @@
-//! The themes (roadmap steps 28 and 40, docs/design/themes.md): a
+//! The themes (roadmap steps 28 and 41, docs/design/themes.md): a
 //! theme that holds still. A **variant** is one base's colours whole —
 //! kui's roles for the chrome, a hue per syntax token for the code and
 //! the ANSI sixteen for a terminal, from one set of colours — and a

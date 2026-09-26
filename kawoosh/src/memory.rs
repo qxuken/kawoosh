@@ -1295,6 +1295,7 @@ impl Kawoosh {
         };
         let has_store = self.store.is_some();
         let pending = self.moments.pending();
+        let evicted = self.moments.evicted;
         let tag = Value::map([("kind", "memory".into()), ("pane", Value::Int(pane as i64))]);
         // With a filter: `12 of 138 texts`.
         let filter = self.memory_pane.filter;
@@ -1351,6 +1352,9 @@ impl Kawoosh {
                     s.push_str(" · no store: kept for the session");
                 } else if pending > 0 {
                     s.push_str(&format!(" · {pending} pending"));
+                }
+                if evicted > 0 {
+                    s.push_str(&format!(" · {evicted} evicted"));
                 }
                 s
             }

@@ -344,6 +344,7 @@ objects, or any other character on both sides.
 |---|---|
 | `<leader><leader>` `<leader>bb` | the buffers, as a picker — the current one last, so `<CR>` at once is the one before; `<C-x>` closes the row's |
 | `<leader>bd` `<leader>bo` | delete the buffer, every other buffer |
+| `<leader>bD` | delete the buffer, discarding its unsaved changes (`:bd!`) |
 | `<leader>bn` `<leader>bp` | next, previous buffer |
 | `<leader>tn` `<leader>tq` | a new tab, close the tab |
 | `<leader>tt` | the tools (`kawoosh.tool`, and `settings.lua`'s `tools` table), as a picker: `git` (lazygit), `top`, `shell`, `compile` and `run` from `compile.command` and `run.command` |
@@ -362,7 +363,7 @@ objects, or any other character on both sides.
 | `<leader>sd` `<C-S-z>` | the directory jumps (`picker dirs`): zoxide's directories by frecency (the memory's without it); `<CR>` makes one the working directory, `<C-o>` lists it in `dir` and leaves the working directory, `<C-v>` `<C-s>` `<C-t>` list it in a split or a tab; a shell asks the same picker with `kawoosh pick dirs` |
 | `<leader>sl` | the memory's ring (`:memory recent`): where was I — every subject attended in this workspace, in order, newest first |
 | `<leader>ws` `<leader>wr` | save, restore the session |
-| `<leader>cc` | compile |
+| `<leader>cc` | compile; in `*compile*` while it runs, `<C-c>` stops it, and what it started (`:compile kill`) — done, the key is `normal`'s again |
 | `<leader>ca` | the code actions at the caret (or over the selection) in a picker: searched by title, the kind beside it, what taking one does as the preview — its edit as a diff, a command it runs; `<CR>` takes it (`:lsp action N` runs the Nth, `kawoosh.lsp.actions()`) |
 | `<leader>cF` | format the buffer through its server |
 | `<leader>cI` | inlay hints on or off for the session (`lsp.inlay_hints`), drawn in the line, faint |

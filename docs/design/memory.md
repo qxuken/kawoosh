@@ -329,7 +329,10 @@ user's Lua, and it must not need Lua to run at all. A row is never
 evicted while it is **held**: `pinned` (Decision 5); its subject open
 in a buffer; a history with unsaved text hanging off it (Decision 6);
 the `"` register's text. Aging by `keep_days` runs at the first frame
-of a launch, as the histories' does, and respects the same holds.
+of a launch, as the histories' does, and respects the same holds. Eviction is quiet: it runs after any flush the caps
+are crossed by, so it says so in the log (`*messages*`) and as
+`N evicted` on the `:memory` pane's head for the session, never in the
+corner.
 
 Bytes: a `text` over 1 MiB is remembered for the session and not
 written, with the pane saying so in its row, as a draft past

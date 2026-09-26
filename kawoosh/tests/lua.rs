@@ -304,6 +304,82 @@ fn compile_mode_streams_and_jumps_to_locations() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `<C-c>` in `*compile*` stops the compile — the shell and what it
+/// started, a grandchild holding the output open included — and once
+/// it is done the key is `normal`'s again.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_in_the_compile_buffer_kills_the_compile() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-compile-kill-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "").unwrap();
+    std::fs::write(dir.join("a.rs"), "one\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::from_file(&dir.join("a.rs"));
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    // Elsewhere, and with nothing running, `<C-c>` is not the compile's.
+    d.press(&mut app, "<C-c>");
+    assert_ne!(app.ed.message, "nothing compiling");
+    // `sleep` under a second shell, so killing the first alone would
+    // leave the pipes open for its thirty seconds.
+    ex(
+        &mut d,
+        &mut app,
+        "compile echo started; sh -c 'sleep 30'; echo late",
+    );
+    let started = |app: &Kawoosh| {
+        app.compile
+            .buffer
+            .is_some_and(|b| app.ed.buffers[b].text().contains("\nstarted\n"))
+    };
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if started(&app) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        app.compile.running && started(&app),
+        "{}",
+        app.ed.buffers[app.compile.buffer.unwrap()].text()
+    );
+    // `<C-c>` in the code pane is still `normal`'s.
+    d.press(&mut app, "<C-c>");
+    assert!(app.compile.running);
+    let buffer = app.compile.buffer.unwrap();
+    let pane = app
+        .layout
+        .visible_panes()
+        .into_iter()
+        .find(|p| matches!(app.layout.content(*p), Some(Content::Editor(v)) if app.ed.views[v].buffer == buffer))
+        .unwrap();
+    app.layout.focus(pane);
+    d.press(&mut app, "<C-c>");
+    let t0 = std::time::Instant::now();
+    while app.compile.running && t0.elapsed() < std::time::Duration::from_secs(5) {
+        d.frame(&mut app);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!app.compile.running, "still running after the kill");
+    let text = app.ed.buffers[buffer].text();
+    assert!(
+        text.contains("[killed]") && !text.contains("\nlate"),
+        "{text}"
+    );
+    // Done: the key is `normal`'s again, and `:compile kill` says so.
+    d.press(&mut app, "<C-c>");
+    assert!(
+        !app.ed.message.contains("compile kill"),
+        "{}",
+        app.ed.message
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn dash_opens_the_files_directory_and_can_move_the_cwd() {
     let dir = std::env::temp_dir().join(format!("kawoosh-dash-{}", std::process::id()));
@@ -2517,12 +2593,8 @@ fn the_lua_types_are_written_for_the_language_server() {
     let kui = std::fs::read_to_string(dir.join("kui.lua")).unwrap();
     assert!(kui.starts_with("---@meta kui"));
     assert!(kui.contains("function row(t) end"));
-    let def = app
-        .scripting
-        .servers
-        .iter()
-        .find(|s| s.language == "lua")
-        .unwrap();
+    // What the pool runs: the config's definition with the library.
+    let def = app.lsp.defs.iter().find(|s| s.language == "lua").unwrap();
     assert_eq!(def.settings["Lua"]["hint"]["enable"], true, "theirs kept");
     assert_eq!(
         def.settings["Lua"]["workspace"]["library"][0],
@@ -2537,12 +2609,8 @@ fn the_lua_types_are_written_for_the_language_server() {
     )
     .unwrap();
     app.run_lua_file(&again);
-    let def = app
-        .scripting
-        .servers
-        .iter()
-        .find(|s| s.language == "lua")
-        .unwrap();
+    // What the pool runs: the config's definition with the library.
+    let def = app.lsp.defs.iter().find(|s| s.language == "lua").unwrap();
     assert_eq!(
         def.settings["Lua"]["workspace"]["library"][0],
         dir.display().to_string(),

@@ -431,7 +431,7 @@ fn a_language_server_runs_on_the_host() {
         command: "python3".into(),
         args: vec![script.display().to_string()],
         roots: vec!["Cargo.toml".into()],
-        settings: Default::default(),
+        ..Default::default()
     });
     let file = format!("{name}:{}", proj.join("src/main.rs").display());
     ex(&mut d, &mut app, &format!("e {file}"));

@@ -393,6 +393,8 @@ pub enum Msg {
     Compile(String),
     LspServer {
         language: String,
+        /// Every language it serves; empty for `language` alone.
+        languages: Vec<String>,
         command: String,
         args: Vec<String>,
         roots: Vec<String>,
@@ -2885,6 +2887,9 @@ fn seed(
         lua.create_function(move |_, (language, t): (String, Table)| {
             qq.borrow_mut().push(Msg::LspServer {
                 language,
+                languages: t
+                    .get::<Option<Vec<String>>>("languages")?
+                    .unwrap_or_default(),
                 command: t.get("cmd")?,
                 args: t.get::<Option<Vec<String>>>("args")?.unwrap_or_default(),
                 roots: t.get::<Option<Vec<String>>>("roots")?.unwrap_or_default(),

@@ -622,7 +622,7 @@ fn entry_line(e: &Entry) -> String {
 }
 
 /// `HH:MM:SS` in local time.
-fn clock(t: SystemTime) -> String {
+pub(crate) fn clock(t: SystemTime) -> String {
     let secs = t
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
