@@ -382,6 +382,8 @@ objects, or any other character on both sides.
 | `<leader>ee` `<leader>ea` | the workspace's pinned files (`:memory pins`), pin or unpin the buffer's file |
 | `<leader>e1`…`9` `<A-1>`…`9` | open the workspace's Nth pin |
 | `<leader>?` | the which-key for every first key (`:keys`) |
+| `<leader>ot` `<leader>os` | the other base, dark for light and light for dark (`theme toggle`); the base the OS's again (`theme system`) — the session's `theme.appearance` ([themes.md](themes.md)) |
+| `<leader>oo` | the themes' pane (`:themes`): every theme a card in its own colours, the dark ones and the light ones apart; `⏎` or a click puts the cursor's card in its half (`theme.dark`, `theme.light`), `h` `j` `k` `l` walk, `t` `s` as above, `y` copies the line that keeps the pick, `q` closes |
 | `<leader>Q` | quit all |
 | `-` | oil: the file's directory |
 | `_` | oil: the working directory's listing, from anywhere (`:dir .`) |
@@ -389,7 +391,8 @@ objects, or any other character on both sides.
 
 The groups are the which-key ones from the neovim config: `b` buffers,
 `t` tabs, `s` search and lists, `w` the workspace, `c` code, `y` the
-path copies (the neovim config's six, `unnamedplus` and all), single
+path copies (the neovim config's six, `unnamedplus` and all), `o` the
+look (`<leader>u` being the undo history, LazyVim's toggles are here), single
 letters for the daily few. A picker that does not exist yet has its
 spelling kept for it below rather than given to something else.
 

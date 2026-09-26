@@ -2132,6 +2132,16 @@ then breadth.
     `kawoosh/src/lists.rs`, `kawoosh/lua/lists.lua`; looked at against
     rust-analyzer.
 
+40. ~~**Themes** ([themes.md](themes.md)): the family one of several —
+    Rosé Pine, Ayu (dark, mirage, light) and a high-contrast pair to
+    WCAG AAA — each a variant of data (`themes::Variant`: kui's roles,
+    a hue per token, the sixteen); `theme.dark` and `theme.light` a
+    variant for each base apart from `theme.name`'s family; `:theme`
+    (`toggle`, `system`, `dark`/`light [NAME]`, a family, `reset`) and
+    `<leader>o` (`ot` `os` `oo`); `:themes`, a pane of cards each drawn
+    in its own colours, over the `kawoosh.themes` door.~~ Built
+    2026-09-26.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),
 kitty graphics and native extensions (deferred), WSL (domains.md's
