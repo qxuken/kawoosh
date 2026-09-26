@@ -475,7 +475,10 @@ so that nothing else takes the key meanwhile.
   because `<leader>bd` does. The one refinement: a binding whose `when`
   does not hold where the key was pressed does not shadow, and the
   sequence stays open for what lies beneath (`<CR>` is `dir enter` in a
-  listing and `goto location` elsewhere by this). A plugin's prefix is
+  listing and `goto location` elsewhere by this) — nor does it shadow
+  the mode a key falls through to: a Lua pane's `<A-S-l>`, gated to
+  the picker, is the column's in every other pane, and a key gated off
+  with nothing under it is unbound there, not a message. A plugin's prefix is
   a key the engine leaves alone: the listing's sort keys are yazi's
   under `m` (`ms`, `mS`, `mm`, `mM`, `ma`, `mA`, `me`, `mE`), which is
   nothing anywhere else, rather than under `,`, which keeps the primary
