@@ -143,6 +143,9 @@ pub struct Moments {
     /// Bumped when the store's rows moved (a flush, a forget, an
     /// eviction): the pane and the Lua cache read again only then.
     pub changed: u64,
+    /// Rows the caps took this session, for the `:memory` pane's head:
+    /// eviction says so there and in the log, never in the corner.
+    pub evicted: usize,
     swept: bool,
     alarm: Alarm,
     /// [`QUIET`], settable by a test.
@@ -167,6 +170,7 @@ impl Moments {
             dirty_since: None,
             changed_at: now,
             changed: 0,
+            evicted: 0,
             swept: false,
             alarm: Alarm::spawn(wake),
             quiet: QUIET,
@@ -784,8 +788,9 @@ impl Kawoosh {
         }
         if evicted > 0 {
             self.moments.changed += 1;
+            self.moments.evicted += evicted;
             self.notify(
-                Level::Info,
+                Level::Debug,
                 format!(
                     "{evicted} moment{} evicted: the memory was over its caps ({MAX_MB})",
                     if evicted == 1 { "" } else { "s" }
