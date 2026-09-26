@@ -322,6 +322,52 @@ fn base(dark: bool, accent: u32) -> Theme {
     Theme { appearance, ..t }.with_accent(c(accent))
 }
 
+/// kui's roles as a family names them: the page, the panels, a float,
+/// a well; the hairline and the strong line; the three greys; the
+/// accent; the selection's colour and alpha (translucent, so the glyphs
+/// keep their hues); the states. What every family but Rosé Pine — whose
+/// roles are its own derivation — turns into a theme.
+#[derive(Clone, Copy, Debug)]
+struct Roles {
+    dark: bool,
+    bg: u32,
+    surface: u32,
+    raised: u32,
+    sunken: u32,
+    border: u32,
+    border_strong: u32,
+    fg: u32,
+    muted: u32,
+    faint: u32,
+    accent: u32,
+    selection: (u32, f32),
+    success: u32,
+    warning: u32,
+    danger: u32,
+}
+
+impl Roles {
+    fn theme(&self) -> Theme {
+        let t = base(self.dark, self.accent);
+        Theme {
+            bg: c(self.bg),
+            surface: c(self.surface),
+            raised: c(self.raised),
+            sunken: c(self.sunken),
+            border: c(self.border),
+            border_strong: c(self.border_strong),
+            fg: c(self.fg),
+            muted: c(self.muted),
+            faint: c(self.faint),
+            selection: c(self.selection.0).with_alpha(self.selection.1),
+            success: c(self.success),
+            warning: c(self.warning),
+            danger: c(self.danger),
+            ..t
+        }
+    }
+}
+
 // ------------------------------------------------------------ Rosé Pine
 
 /// One variant's colours, by Rosé Pine's own names.
@@ -659,23 +705,24 @@ impl Ayu {
     /// kui's roles: the editor's page, the UI's panels, Ayu's accent
     /// and its blue selection; the states in its vcs and error hues.
     pub fn theme(&self) -> Theme {
-        let t = base(self.dark, self.accent);
-        Theme {
-            bg: c(self.bg),
-            surface: c(self.panel),
-            raised: c(self.raised),
-            sunken: c(self.sunken),
-            border: c(self.line),
-            border_strong: c(self.line_strong),
-            fg: c(self.fg),
-            muted: c(self.muted),
-            faint: c(self.faint),
-            selection: c(self.selection.0).with_alpha(self.selection.1),
-            success: c(self.added),
-            warning: c(self.func),
-            danger: c(self.error),
-            ..t
+        Roles {
+            dark: self.dark,
+            bg: self.bg,
+            surface: self.panel,
+            raised: self.raised,
+            sunken: self.sunken,
+            border: self.line,
+            border_strong: self.line_strong,
+            fg: self.fg,
+            muted: self.muted,
+            faint: self.faint,
+            accent: self.accent,
+            selection: self.selection,
+            success: self.added,
+            warning: self.func,
+            danger: self.error,
         }
+        .theme()
     }
 
     /// A syntax token's hue, as Ayu's own editor themes scope them.
@@ -744,23 +791,24 @@ struct Contrast {
 
 impl Contrast {
     fn variant(&self, name: &'static str, title: &'static str) -> Variant {
-        let t = base(self.dark, self.accent);
-        let theme = Theme {
-            bg: c(self.bg),
-            surface: c(self.surface),
-            raised: c(self.raised),
-            sunken: c(self.sunken),
-            border: c(self.border),
-            border_strong: c(self.border_strong),
-            fg: c(self.fg),
-            muted: c(self.muted),
-            faint: c(self.faint),
-            selection: c(self.selection.0).with_alpha(self.selection.1),
-            success: c(self.success),
-            warning: c(self.warning),
-            danger: c(self.danger),
-            ..t
-        };
+        let theme = Roles {
+            dark: self.dark,
+            bg: self.bg,
+            surface: self.surface,
+            raised: self.raised,
+            sunken: self.sunken,
+            border: self.border,
+            border_strong: self.border_strong,
+            fg: self.fg,
+            muted: self.muted,
+            faint: self.faint,
+            accent: self.accent,
+            selection: self.selection,
+            success: self.success,
+            warning: self.warning,
+            danger: self.danger,
+        }
+        .theme();
         let syntax = |token: Token| {
             use Token as T;
             Some(match token {
