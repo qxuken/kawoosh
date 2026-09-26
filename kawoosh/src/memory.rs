@@ -48,7 +48,7 @@ use std::time::{Duration, Instant};
 use kawoosh_doc::{BufferId, Hunk};
 use kawoosh_editor::{ArgKind, Args, Selection, Selections, Spec, Took, ViewId};
 use kawoosh_systems::store::{MomentKey, MomentQuery, MomentRow, RingRow, history_key_of, now};
-use kui::{Color, NodeSpec, Sizing, Ui, Value, Vec2};
+use kui_native::{Color, NodeSpec, Sizing, Ui, Value, Vec2};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -1379,7 +1379,7 @@ impl Kawoosh {
                                     ("pane", Value::Int(pane as i64)),
                                     ("view", v.name().into()),
                                 ]))
-                                .cursor(kui::CursorShape::Pointer)
+                                .cursor(kui_native::CursorShape::Pointer)
                                 .label(v.name()),
                             |ui| {
                                 ui.text(v.name(), small(if on { pal.accent } else { pal.faint }));
@@ -1400,7 +1400,7 @@ impl Kawoosh {
                                 ("filter", Value::Bool(true)),
                             ])),
                         |ui| {
-                            ui.with(col(2.0).main_align(kui::Align::Start), |ui| {
+                            ui.with(col(2.0).main_align(kui_native::Align::Start), |ui| {
                                 ui.text("/", rows::mono(self.face, &pal).color(pal.command))
                             });
                             self.field_line(ui, f, filtering, None, self.face);
@@ -1409,28 +1409,28 @@ impl Kawoosh {
                 }
                 ui.with(tm.line(&pal, 0).hover_bg(Color::TRANSPARENT), |ui| match view {
                     View::Texts => {
-                        ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
+                        ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
                             ui.text("took", small(pal.faint))
                         });
                         ui.with(tm.rest(), |ui| ui.text("text", small(pal.faint)));
-                        ui.with(col(14.0).main_align(kui::Align::Start), |ui| {
+                        ui.with(col(14.0).main_align(kui_native::Align::Start), |ui| {
                             ui.text("from", small(pal.faint))
                         });
                         ui.with(col(8.0), |ui| ui.text("when", small(pal.faint)));
                     }
                     View::Recent => {
-                        ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
+                        ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
                             ui.text("kind", small(pal.faint))
                         });
                         ui.with(tm.rest(), |ui| ui.text("subject", small(pal.faint)));
                         ui.with(col(8.0), |ui| ui.text("when", small(pal.faint)));
                     }
                     _ => {
-                        ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
+                        ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
                             ui.text(if view == View::Files { "state" } else { "kind" }, small(pal.faint))
                         });
                         ui.with(tm.rest(), |ui| ui.text("subject", small(pal.faint)));
-                        ui.with(col(22.0).main_align(kui::Align::Start), |ui| {
+                        ui.with(col(22.0).main_align(kui_native::Align::Start), |ui| {
                             ui.text("signals", small(pal.faint))
                         });
                         ui.with(col(8.0), |ui| ui.text("when", small(pal.faint)));
@@ -1453,7 +1453,7 @@ impl Kawoosh {
                         ui.set_scroll(list, Vec2::new(0.0, (y - g.rect.h / 2.0).max(0.0)));
                     }
                 }
-                kui::widgets::virtual_column(
+                kui_native::widgets::uniform_list(
                     ui,
                     "rows",
                     NodeSpec::column()
@@ -1492,14 +1492,14 @@ impl Kawoosh {
                         ui.with_keyed(
                             &label,
                             line.on_click(payload)
-                                .cursor(kui::CursorShape::Pointer)
+                                .cursor(kui_native::CursorShape::Pointer)
                                 .label(label.as_str()),
                             |ui| match r {
                                 Row::Text(t) => {
                                     let (took, _, text, from, age) = &texts[*t];
                                     let lines =
                                         text.matches('\n').count() + usize::from(!text.ends_with('\n'));
-                                    ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
+                                    ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
                                         let color = match took {
                                             Took::Yank => pal.insert,
                                             Took::Delete | Took::Change => pal.danger,
@@ -1520,7 +1520,7 @@ impl Kawoosh {
                                             );
                                         }
                                     });
-                                    ui.with(col(14.0).main_align(kui::Align::Start), |ui| {
+                                    ui.with(col(14.0).main_align(kui_native::Align::Start), |ui| {
                                         ui.text(from, dim());
                                     });
                                     ui.with(col(8.0), |ui| {
@@ -1534,7 +1534,7 @@ impl Kawoosh {
                                     state,
                                     draft,
                                 } => {
-                                    ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
+                                    ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
                                         match state {
                                             Some(s) if view == View::Files => {
                                                 let color = match s {
@@ -1580,7 +1580,7 @@ impl Kawoosh {
                                             _ => {}
                                         }
                                     });
-                                    ui.with(col(22.0).main_align(kui::Align::Start), |ui| {
+                                    ui.with(col(22.0).main_align(kui_native::Align::Start), |ui| {
                                         // A mark has no signals: its line
                                         // as it reads now in their place.
                                         if row.key.kind == crate::marks::KIND {
@@ -1608,7 +1608,7 @@ impl Kawoosh {
                                     });
                                 }
                                 Row::Recent(rr) => {
-                                    ui.with(col(9.0).main_align(kui::Align::Start), |ui| {
+                                    ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
                                         ui.text(&rr.key.kind, small(pal.dim));
                                     });
                                     ui.with(tm.rest(), |ui| {

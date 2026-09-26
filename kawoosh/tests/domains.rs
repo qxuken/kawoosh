@@ -9,7 +9,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh_doc::fs::{Entry, Fs, Stat};
-use kui::KeyMods;
+use kui_native::KeyMods;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

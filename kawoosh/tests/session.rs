@@ -6,7 +6,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -179,7 +179,7 @@ fn a_file_opened_on_the_io_thread_arrives_mapped_and_saves_beside_itself() {
 /// the layout after it.
 #[test]
 fn a_window_closed_from_outside_saves_the_session() {
-    use kui::App;
+    use kui_native::App;
     let dir = std::env::temp_dir().join(format!("kawoosh-teardown-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let a = dir.join("a.txt");

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use kawoosh_editor::Spec;
 use kawoosh_languages::{Block, Token};
-use kui::{Color, TextWrap};
+use kui_native::{Color, TextWrap};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -546,13 +546,20 @@ pub type Pixels = (u32, u32, Vec<u8>);
 
 /// A rendered row worked out ahead of the frame, and each image it
 /// shows: kui's id and its size in px once read, else its alt.
-pub type Ahead = (Rendered, Vec<Result<(kui::ImageId, f32, f32), String>>);
+pub type Ahead = (
+    Rendered,
+    Vec<Result<(kui_native::ImageId, f32, f32), String>>,
+);
 
 /// An image a markdown buffer shows: being read, ready (kui's id and its
 /// size in px), or why not.
 pub enum Image {
     Loading,
-    Ready { id: kui::ImageId, w: u32, h: u32 },
+    Ready {
+        id: kui_native::ImageId,
+        w: u32,
+        h: u32,
+    },
     Failed(String),
 }
 
@@ -812,7 +819,7 @@ impl Kawoosh {
     }
 
     /// The images read since the last frame, into kui.
-    pub(crate) fn register_images(&mut self, ui: &mut kui::Ui<'_>) {
+    pub(crate) fn register_images(&mut self, ui: &mut kui_native::Ui<'_>) {
         for (path, (w, h, rgba)) in std::mem::take(&mut self.md_pending) {
             let id = ui.core().resources.add_image(w, h, rgba);
             // What a Lua view asked for by path (`kawoosh.image`) too.

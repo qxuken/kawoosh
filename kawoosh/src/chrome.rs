@@ -1,7 +1,7 @@
 //! The window's chrome (roadmap step 13): the title bar and the tab
 //! strip, the two rows above the panes.
 //!
-//! **The title bar** is kawoosh's own (`kui::app(…).custom_titlebar()`),
+//! **The title bar** is kawoosh's own (`kui_native::app(…).custom_titlebar()`),
 //! drawn in kui's `titlebar_with` so the platform's controls keep their
 //! place — the traffic lights inset on macOS, drawn buttons elsewhere —
 //! and the whole row drags the window. It carries what the tab strip
@@ -19,7 +19,7 @@
 //! close button, when there is another tab to go to. When the tabs are
 //! in more than one directory each label leads with its own.
 
-use kui::{Align, CursorShape, NodeSpec, Role, Sizing, Span, Ui, Value, widgets};
+use kui_native::{Align, CursorShape, NodeSpec, Role, Sizing, Span, Ui, Value, widgets};
 
 use crate::app::Kawoosh;
 use crate::layout::Content;
@@ -50,7 +50,7 @@ impl Kawoosh {
         };
         let full = kawoosh_systems::fs::abbreviate_home(&self.cwd);
         // Each block with what a click on it runs, if anything.
-        let mut blocks: Vec<(String, kui::Color, Option<&str>)> = Vec::new();
+        let mut blocks: Vec<(String, kui_native::Color, Option<&str>)> = Vec::new();
         if !self.lsp.status.is_empty() {
             let n: usize = self.lsp.status.iter().map(|s| s.2).sum();
             let servers = self.lsp.status.len();
@@ -215,7 +215,7 @@ impl Kawoosh {
                 // No bar: at the strip's height it would lie over the
                 // labels and take their clicks; the wheel and the
                 // reveal move it.
-                .scrollbar(kui::ScrollbarMode::Hidden)
+                .scrollbar(kui_native::ScrollbarMode::Hidden)
                 .transition(TABS_MS)
                 .role(Role::TabList),
             |ui| {

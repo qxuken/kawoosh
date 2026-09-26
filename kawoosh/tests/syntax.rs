@@ -6,7 +6,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh_systems::ts::{SYNTAX_LAYER, Token};
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 /// `<A-o>` selects the node under the caret, then the one around it;
 /// `<A-i>` comes back; `<A-n>` / `<A-p>` go along the siblings.
@@ -21,7 +21,7 @@ fn selections_walk_the_syntax_tree() {
     d.frame(&mut app);
     app.wait_for_syntax();
     d.frame(&mut app);
-    let alt = kui::KeyMods {
+    let alt = kui_native::KeyMods {
         alt: true,
         ..Default::default()
     };
@@ -51,7 +51,7 @@ fn selections_walk_the_syntax_tree() {
     d.key(&mut app, "i", alt);
     assert_eq!(selected(&app), "x");
     // The tree follows an edit once the parser has answered for it.
-    d.key(&mut app, "escape", kui::KeyMods::default());
+    d.key(&mut app, "escape", kui_native::KeyMods::default());
     d.keys(&mut app, "x");
     app.wait_for_syntax();
     d.frame(&mut app);

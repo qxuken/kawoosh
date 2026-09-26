@@ -51,8 +51,10 @@ use std::collections::HashMap;
 
 use kawoosh_editor::Setting;
 use kawoosh_systems::ts::Token;
-use kui::schema::THEME_ROLES;
-use kui::{Appearance, Color, FontFeatures, FontId, SystemEnv, Theme, ThemeSource, Tokens, Ui};
+use kui_native::schema::THEME_ROLES;
+use kui_native::{
+    Appearance, Color, FontFeatures, FontId, SystemEnv, Theme, ThemeSource, Tokens, Ui,
+};
 
 use crate::app::Kawoosh;
 use crate::notify::{Level, Note};

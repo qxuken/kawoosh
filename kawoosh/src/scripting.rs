@@ -14,7 +14,7 @@ use kawoosh_editor::{ArgKind, Args, Cond, KeyStroke, Mode, Spec, ViewId};
 use kawoosh_lua::{Msg, Runtime};
 use kawoosh_systems::lsp::ServerDef;
 use kawoosh_systems::ts::Token;
-use kui::{Color, NodeSpec, Sizing, Ui, Value};
+use kui_native::{Color, NodeSpec, Sizing, Ui, Value};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};

@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1e3

@@ -10,7 +10,7 @@ use kawoosh::Kawoosh;
 use kawoosh::logger::Logger;
 use kawoosh::notify::Level;
 use kawoosh_systems::WakeHandle;
-use kui::Core;
+use kui_native::Core;
 
 /// Where the bundled faces are: `fonts/` beside the binary (a folder
 /// shipped as is, Windows), `../Resources/fonts/` from it (the macOS
@@ -31,7 +31,7 @@ fn fonts_dir() -> std::path::PathBuf {
 /// The bundled face, loaded onto a core the launcher then opens the
 /// window on (`Launcher::core`): every mono run names it by `FontId`, so a
 /// machine with no Iosevka installed draws the same glyphs.
-fn load_fonts(core: &mut Core) -> Option<kui::FontId> {
+fn load_fonts(core: &mut Core) -> Option<kui_native::FontId> {
     let dir = fonts_dir().join("IosevkaNavcon");
     let n = core.load_fonts_dir(&dir);
     // A startup fact, not news: a trace.
@@ -272,7 +272,7 @@ fn main() -> anyhow::Result<()> {
             app.restore_session();
         }
     }
-    let launcher = kui::app("kawoosh")
+    let launcher = kui_native::app("kawoosh")
         // The title row is kawoosh's (chrome.rs): the cwd and the
         // status blocks in it, the platform's controls kept.
         .custom_titlebar()
@@ -296,7 +296,7 @@ const ICON_RESOURCE: u16 = 1;
 /// the resource above; macOS draws Kawoosh.app's `.icns` in the Dock, and
 /// Wayland the `.desktop` file's, with no window icon on either.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn window_icon(launcher: kui::Launcher) -> kui::Launcher {
+fn window_icon(launcher: kui_native::Launcher) -> kui_native::Launcher {
     match icon_rgba() {
         Ok((rgba, w, h)) => launcher.icon(rgba, w, h),
         Err(e) => {
@@ -307,7 +307,7 @@ fn window_icon(launcher: kui::Launcher) -> kui::Launcher {
 }
 
 #[cfg(not(all(unix, not(target_os = "macos"))))]
-fn window_icon(launcher: kui::Launcher) -> kui::Launcher {
+fn window_icon(launcher: kui_native::Launcher) -> kui_native::Launcher {
     launcher
 }
 

@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Spec};
 use kawoosh_systems::{Alarm, WakeHandle};
-use kui::{Align, FloatConfig, NodeSpec, Sizing, Span, TextStyle, Ui, Value};
+use kui_native::{Align, FloatConfig, NodeSpec, Sizing, Span, TextStyle, Ui, Value};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -920,7 +920,7 @@ impl Kawoosh {
                                             .bg(if on { pal.select } else { pal.panel })
                                             .hover_bg(pal.select)
                                             .on_hover(hover.clone())
-                                            .role(kui::Role::Button)
+                                            .role(kui_native::Role::Button)
                                             .label(a.label.as_str())
                                             .on_click(Value::map([
                                                 ("kind", "toast".into()),

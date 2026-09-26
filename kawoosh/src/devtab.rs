@@ -9,7 +9,7 @@
 //! buffer text ([`Tab::line_h`]): a pane that shows what a buffer holds
 //! — a change's text, a diff's lines — shows it as the buffer does.
 
-use kui::{Align, Color, Metrics, NodeSpec, Sizing, TextStyle};
+use kui_native::{Align, Color, Metrics, NodeSpec, Sizing, TextStyle};
 
 use crate::palette::Pal;
 
@@ -159,7 +159,7 @@ impl Tab {
     pub(crate) fn toolbar(&self) -> NodeSpec {
         NodeSpec::row()
             .width(Sizing::Grow(1.0))
-            .min_height(kui::Min::FIT)
+            .min_height(kui_native::Min::FIT)
             .pad_xy(self.pad_x, 0.0)
             .gap(self.gap)
             .cross_align(Align::Center)
@@ -167,7 +167,7 @@ impl Tab {
 
     /// A small button of the panel's kind, for a toolbar: raised, with a
     /// hairline border, lit on hover, pressed darker.
-    pub(crate) fn button(&self, theme: &kui::Theme) -> NodeSpec {
+    pub(crate) fn button(&self, theme: &kui_native::Theme) -> NodeSpec {
         NodeSpec::row()
             .pad_xy(self.button_pad.0, self.button_pad.1)
             .radius(self.radius)
@@ -175,7 +175,7 @@ impl Tab {
             .hover_bg(theme.hover)
             .pressed_bg(theme.pressed)
             .border(1.0, theme.border)
-            .cursor(kui::CursorShape::Pointer)
+            .cursor(kui_native::CursorShape::Pointer)
     }
 
     /// The tabs' text: the app's mono face at the row size, one line.

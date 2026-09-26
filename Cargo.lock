@@ -1054,6 +1054,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
  "bitflags 2.13.1",
+ "block2 0.6.2",
+ "libc",
  "objc2 0.6.4",
 ]
 
@@ -1721,8 +1723,8 @@ dependencies = [
  "kawoosh-lua",
  "kawoosh-systems",
  "kawoosh-term",
- "kui",
  "kui-lua",
+ "kui-native",
  "libc",
  "log",
  "mlua",
@@ -1877,10 +1879,57 @@ dependencies = [
 ]
 
 [[package]]
-name = "kui"
-version = "0.1.0-alpha.18"
+name = "kui-core"
+version = "0.1.0-alpha.19"
 source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "b427580e70545a27eef8cee3398e3e53f4d401ba4f9f9e358efe5f71081b3eb2"
+checksum = "7fe336393b94861d447a04ecbf74acc97f1294b7f9d2bd45bfdb2d14c6c8518f"
+dependencies = [
+ "cosmic-text",
+ "kui-derive",
+ "naga",
+ "rustc-hash 2.1.3",
+ "slotmap",
+ "swash",
+ "unicode-linebreak",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "kui-derive"
+version = "0.1.0-alpha.19"
+source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
+checksum = "708f444902541b54268dbc82b77ffa01591f19d28c0db636c7b8ca095b6fa0cc"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "kui-ffi"
+version = "0.1.0-alpha.19"
+source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
+checksum = "1c43615a84ba41f11507b3b06a8dad627905e1c69b027b9872812fa44e6a7915"
+dependencies = [
+ "kui-core",
+]
+
+[[package]]
+name = "kui-lua"
+version = "0.1.0-alpha.19"
+source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
+checksum = "f64818c18afabddc5ca68ae07ec0e5388822532fb0726e941ff900db4c3249dd"
+dependencies = [
+ "kui-core",
+ "kui-ffi",
+ "mlua",
+]
+
+[[package]]
+name = "kui-native"
+version = "0.1.0-alpha.19"
+source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
+checksum = "56435dd27240992aa1eb9eea9a82dc74269cd3e4cf3b5158582ddb02e8f1505b"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -1891,55 +1940,22 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
- "pollster",
+ "objc2-quartz-core 0.3.2",
+ "pollster 1.0.1",
+ "rfd",
  "windows-sys 0.52.0",
  "winit",
 ]
 
 [[package]]
-name = "kui-core"
-version = "0.1.0-alpha.18"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "9fd871875d89e339e28858ea8d09117e1c662d22579235bb3c46aa79285f7f16"
-dependencies = [
- "cosmic-text",
- "naga",
- "rustc-hash 2.1.3",
- "slotmap",
- "swash",
- "unicode-linebreak",
- "unicode-segmentation",
-]
-
-[[package]]
-name = "kui-ffi"
-version = "0.1.0-alpha.18"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "146756a6be2cf69ac3dd1d17681309f98d80de5a46999db22effb21be50c5e7b"
-dependencies = [
- "kui-core",
-]
-
-[[package]]
-name = "kui-lua"
-version = "0.1.0-alpha.18"
-source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "9eceb5a2ffd499ff2f6df89c0c8161e45b7967ad1b74610a9ba99cd52618bc65"
-dependencies = [
- "kui-core",
- "kui-ffi",
- "mlua",
-]
-
-[[package]]
 name = "kui-wgpu"
-version = "0.1.0-alpha.18"
+version = "0.1.0-alpha.19"
 source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "a6e0f2f16335a6a849fa3390f30c06bccb0b95bdc88e6a641f0523cb076cbdd4"
+checksum = "b1f6221b1d61ad2c35e4e1067974af259c9860df17edd7dfbdaf4447e9a682d8"
 dependencies = [
  "bytemuck",
  "kui-core",
- "pollster",
+ "pollster 1.0.1",
  "wgpu",
  "windows",
 ]
@@ -2350,10 +2366,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
 dependencies = [
  "bitflags 2.13.1",
+ "block2 0.6.2",
  "objc2 0.6.4",
  "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
 ]
 
 [[package]]
@@ -2902,6 +2920,12 @@ dependencies = [
 
 [[package]]
 name = "pollster"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
+
+[[package]]
+name = "pollster"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc6355899e1c9462875b6757c79f3caa011a1fdae12bbb1a2e72dd1f234f8336"
@@ -3153,6 +3177,30 @@ name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+
+[[package]]
+name = "rfd"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20dafead71c16a34e1ff357ddefc8afc11e7d51d6d2b9fbd07eaa48e3e540220"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "js-sys",
+ "libc",
+ "log",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "percent-encoding",
+ "pollster 0.4.0",
+ "raw-window-handle",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "roxmltree"

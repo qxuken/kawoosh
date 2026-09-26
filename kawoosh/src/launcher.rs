@@ -8,7 +8,7 @@
 
 use kawoosh_doc::Buffer;
 use kawoosh_editor::{Mode, Spec, View, ViewId};
-use kui::Value;
+use kui_native::Value;
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};

@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{HistoryRow, Hunk, Mode, Spec, ViewId};
-use kui::{Align, Color, NodeSpec, Sizing, Ui, Value, Vec2};
+use kui_native::{Align, Color, NodeSpec, Sizing, Ui, Value, Vec2};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -362,7 +362,7 @@ impl Kawoosh {
                         ui.set_scroll(list, Vec2::new(0.0, (y - g.rect.h / 2.0).max(0.0)));
                     }
                 }
-                kui::widgets::virtual_column(
+                kui_native::widgets::uniform_list(
                     ui,
                     "rows",
                     NodeSpec::column()
@@ -393,7 +393,7 @@ impl Kawoosh {
                         ui.with_keyed(
                             &label,
                             line.on_click(payload)
-                                .cursor(kui::CursorShape::Pointer)
+                                .cursor(kui_native::CursorShape::Pointer)
                                 .label(label.as_str()),
                             |ui| {
                                 // The graph: the lines through this row,

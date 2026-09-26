@@ -5,7 +5,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::{Content, Rect};
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -552,19 +552,19 @@ fn a_pane_is_dragged_by_its_title_bar() {
     let from = title(&app, 3);
     d.input(
         &mut app,
-        kui::InputEvent::CursorMoved(kui::Vec2::new(from.0, from.1)),
+        kui_native::InputEvent::CursorMoved(kui_native::Vec2::new(from.0, from.1)),
     );
-    d.input(&mut app, kui::InputEvent::mouse_down(1));
+    d.input(&mut app, kui_native::InputEvent::mouse_down(1));
     let over = (r2.x + r2.w / 2.0, r2.y + 10.0);
     d.input(
         &mut app,
-        kui::InputEvent::CursorMoved(kui::Vec2::new(over.0, over.1)),
+        kui_native::InputEvent::CursorMoved(kui_native::Vec2::new(over.0, over.1)),
     );
     d.frame(&mut app);
     let drop = d.rect_of("drop").expect("the drop drawn while held");
     assert!((drop.0 - r2.x).abs() < 1.0 && (drop.1 - r2.y).abs() < 1.0);
     assert!((drop.2 - r2.w).abs() < 1.0 && (drop.3 - r2.h / 2.0).abs() < 1.0);
-    d.input(&mut app, kui::InputEvent::mouse_up());
+    d.input(&mut app, kui_native::InputEvent::mouse_up());
     d.frame(&mut app);
     assert!(d.rect_of("drop").is_none(), "gone once let go");
     assert_eq!(app.layout.visible_panes(), [1, 3, 2]);

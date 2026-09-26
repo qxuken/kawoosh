@@ -1,4 +1,4 @@
-//! The `kui::App`: the pane tree (milestone 3) with the modal editor in
+//! The `kui_native::App`: the pane tree (milestone 3) with the modal editor in
 //! every editor pane (milestone 2). The engine (`kawoosh-editor`) owns
 //! buffers, views, selections, modes and the keymap; the layout owns
 //! which view is where; this file draws both and routes kui's events —
@@ -18,7 +18,7 @@ use kawoosh_systems::WakeHandle;
 use kawoosh_systems::io::{Incoming, Io, IoMsg, Request};
 use kawoosh_systems::ts::{Job, Token, Ts};
 use kawoosh_term::TermSize;
-use kui::{FontId, NodeSpec, Sizing, Ui, UiEvent, Value, WindowCommand};
+use kui_native::{FontId, NodeSpec, Sizing, Ui, UiEvent, Value, WindowCommand};
 
 use crate::Pal;
 use crate::commands::ShellCommands;
@@ -203,7 +203,7 @@ pub struct Kawoosh {
     /// terminal's grid follows kui's focus only when a press moved it
     /// there since (`render_terminal`), not when the pane focus has just
     /// moved on and kui has not caught up.
-    pub(crate) key_focus_seen: Option<kui::Key>,
+    pub(crate) key_focus_seen: Option<kui_native::Key>,
     /// The last text kawoosh put on the clipboard, which is not news.
     pub(crate) clip_last: Option<String>,
     /// The window's focus and whether an editor pane had the keys, last
@@ -478,7 +478,7 @@ impl Kawoosh {
     /// have it back (`reclaim_focus`) or nothing holds it — a press on a
     /// dead spot of the devtools panel blurs kui's focus to none, and a
     /// modal editor has no state in which the keyboard goes nowhere.
-    pub(crate) fn focus_sink(&mut self, ui: &mut Ui<'_>, sink: kui::Key) {
+    pub(crate) fn focus_sink(&mut self, ui: &mut Ui<'_>, sink: kui_native::Key) {
         ui.take_key_focus(sink);
         if std::mem::take(&mut self.reclaim_focus) || ui.key_focus().is_none() {
             ui.focus(sink);
@@ -2120,8 +2120,8 @@ fn editor_link(socket: &Path) -> Option<PathBuf> {
 /// worth of patience; a gigabyte does not.
 pub const ASYNC_OPEN_BYTES: usize = 64 << 20;
 
-impl kui::App for Kawoosh {
-    fn setup(&mut self, waker: kui::Waker) {
+impl kui_native::App for Kawoosh {
+    fn setup(&mut self, waker: kui_native::Waker) {
         let wake: kawoosh_systems::Wake = Arc::new(move || waker.wake());
         for w in &self.shared_wakes {
             w.set(wake.clone());
@@ -2264,7 +2264,7 @@ impl kui::App for Kawoosh {
         let lh = self.face.line_height;
         // The title bar's height is the platform's; its hairline is one
         // more pixel.
-        self.title_h = kui::widgets::titlebar_height(ui);
+        self.title_h = kui_native::widgets::titlebar_height(ui);
         let c = self.chrome;
         self.body_h = (vp.h - self.title_h - 1.0 - c.tab_h - 2.0 * c.strip_h).max(lh);
         let body_h = self.body_h;
@@ -2304,7 +2304,7 @@ impl kui::App for Kawoosh {
                                 .width(Sizing::Grow(1.0))
                                 .height(Sizing::Fixed(DIVIDER))
                                 .bg(if active { pal.accent } else { pal.border })
-                                .cursor(kui::CursorShape::NsResize)
+                                .cursor(kui_native::CursorShape::NsResize)
                                 .on_drag(Value::map([
                                     ("kind", "split".into()),
                                     ("path", "dock".into()),
@@ -2337,7 +2337,7 @@ impl kui::App for Kawoosh {
         self.key_focus_seen = ui.key_focus();
         self.perf.end_frame(ms(frame_started));
         if self.hud {
-            kui::widgets::latency_hud(ui);
+            kui_native::widgets::latency_hud(ui);
         }
     }
 
@@ -2591,14 +2591,14 @@ mod shim_tests {
         assert_eq!(shipped_editor(&base.join("kawoosh")), None, "none beside");
         let mut app = Kawoosh::new("t", "");
         app.editor_shim = edit;
-        kui::App::teardown(&mut app);
+        kui_native::App::teardown(&mut app);
         assert!(
             bin.join("kawoosh-edit").is_file(),
             "the binary's directory kept"
         );
         let link = editor_link(&base.join("k.sock")).expect("a link");
         app.editor_link_dir = link.parent().map(|d| d.to_path_buf());
-        kui::App::teardown(&mut app);
+        kui_native::App::teardown(&mut app);
         assert!(
             !link.parent().unwrap().exists(),
             "the link's directory removed"

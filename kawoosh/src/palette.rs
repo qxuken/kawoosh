@@ -2,7 +2,7 @@
 //! OS appearance and accent without kawoosh naming a hue. Syntax colours
 //! are tokens, declared from Lua, and are not here.
 
-use kui::{Color, Theme};
+use kui_native::{Color, Theme};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Pal {

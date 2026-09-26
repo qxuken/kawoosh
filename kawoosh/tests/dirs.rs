@@ -8,7 +8,7 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kui::KeyMods;
+use kui_native::KeyMods;
 #[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;

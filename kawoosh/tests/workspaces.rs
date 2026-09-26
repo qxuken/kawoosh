@@ -9,7 +9,7 @@ mod drive;
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kui::KeyMods;
+use kui_native::KeyMods;
 use std::path::PathBuf;
 
 fn tmp(tag: &str) -> PathBuf {

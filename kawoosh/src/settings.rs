@@ -51,7 +51,7 @@ use std::time::Instant;
 use kawoosh_editor::{Layer, Setting};
 use kawoosh_systems::WakeHandle;
 use kawoosh_systems::watch::Watcher;
-use kui::{NodeSpec, Sizing, TextStyle, Ui, Value, Vec2};
+use kui_native::{NodeSpec, Sizing, TextStyle, Ui, Value, Vec2};
 
 use crate::devtab::Tab;
 
@@ -458,7 +458,7 @@ impl Kawoosh {
         let style = move || tm.style(&pal, font);
         let dim = move || style().color(pal.dim);
         // The path column's style: the same face, folding at the column.
-        let wrapping = move || style().wrap(kui::TextWrap::Word);
+        let wrapping = move || style().wrap(kui_native::TextWrap::Word);
         let default_open = self.settings_default_open;
         // The facts, gathered before the tree is built.
         let watched = self.config.project.len()

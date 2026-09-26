@@ -32,7 +32,7 @@ fn remote_port() -> u16 {
 pub struct Terminals {
     pub map: HashMap<TermId, Terminal>,
     /// The bell's sound, registered with kui the first time one rings.
-    bell_sound: Option<kui::SoundId>,
+    bell_sound: Option<kui_native::SoundId>,
     /// When the bell was last heard: at most one in [`BELL_GAP`].
     bell_at: Option<std::time::Instant>,
     next: TermId,
@@ -150,7 +150,7 @@ impl Kawoosh {
     /// terminal's does: `sound` (the default) a short chime, `visual`
     /// none, `off` nothing at all. Unless off, a terminal not on screen
     /// marks its tab, i3's urgent workspace, until the tab is visited.
-    pub(crate) fn ring_bells(&mut self, ui: &mut kui::Ui<'_>) {
+    pub(crate) fn ring_bells(&mut self, ui: &mut kui_native::Ui<'_>) {
         let rang: Vec<TermId> = self
             .terms
             .map
@@ -205,9 +205,9 @@ impl Kawoosh {
         self.terms.bell_at = Some(now);
         let id = *self.terms.bell_sound.get_or_insert_with(|| {
             ui.core()
-                .add_sound(kui::audio::blip(44_100, 988.0, 120.0, 0.25))
+                .add_sound(kui_native::audio::blip(44_100, 988.0, 120.0, 0.25))
         });
-        ui.play(id, kui::PlayOptions::default());
+        ui.play(id, kui_native::PlayOptions::default());
     }
 
     /// Spawns a shell (or `cmd`) sized for a pane, with the `$EDITOR`

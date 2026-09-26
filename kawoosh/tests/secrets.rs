@@ -11,7 +11,7 @@ use std::time::Duration;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh_systems::store::MomentKey;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -411,9 +411,9 @@ fn a_concealed_paste_is_a_secret() {
     ex(&mut d, &mut app, "paste clipboard");
     d.input(
         &mut app,
-        kui::InputEvent::Paste {
+        kui_native::InputEvent::Paste {
             text: "hunter22".into(),
-            marks: kui::ClipboardMarks::SECRET,
+            marks: kui_native::ClipboardMarks::SECRET,
         },
     );
     d.frame(&mut app);
@@ -426,9 +426,9 @@ fn a_concealed_paste_is_a_secret() {
     ex(&mut d, &mut app, "paste clipboard");
     d.input(
         &mut app,
-        kui::InputEvent::Paste {
+        kui_native::InputEvent::Paste {
             text: "plain".into(),
-            marks: kui::ClipboardMarks::default(),
+            marks: kui_native::ClipboardMarks::default(),
         },
     );
     d.frame(&mut app);

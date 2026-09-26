@@ -7,7 +7,7 @@
 //!
 //! The rows are data read off the tree once per change ([`Row`]), not a
 //! walk per frame, and only the visible ones are built (kui's
-//! `virtual_column`) — the same shape a Lua `syntax.nodes` would answer.
+//! `uniform_list`) — the same shape a Lua `syntax.nodes` would answer.
 //! A small tree is read in the frame; a large one (a minified bundle is
 //! half a million nodes, forty milliseconds to walk) on a worker
 //! thread, the tab showing the rows it had until the new ones land, so
@@ -20,7 +20,7 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{Mode, Selection, Selections};
 use kawoosh_systems::WakeHandle;
-use kui::{Align, Color, NodeSpec, Sizing, TextStyle, Ui, Value, Vec2};
+use kui_native::{Align, Color, NodeSpec, Sizing, TextStyle, Ui, Value, Vec2};
 use tree_sitter::{Point, Tree};
 
 use crate::app::Kawoosh;
@@ -440,7 +440,7 @@ impl Kawoosh {
                     .then(|| lang.as_ref().and_then(|l| l.field_name_for_id(id)))
                     .flatten()
             };
-            kui::widgets::virtual_column(
+            kui_native::widgets::uniform_list(
                 ui,
                 "rows",
                 NodeSpec::column()

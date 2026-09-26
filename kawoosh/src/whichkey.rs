@@ -13,7 +13,7 @@
 //! never cover each other.
 
 use kawoosh_editor::{ArgKind, Args, Binding, Mode, Spec};
-use kui::{Align, FloatConfig, NodeSpec, TextStyle, Ui};
+use kui_native::{Align, FloatConfig, NodeSpec, TextStyle, Ui};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};

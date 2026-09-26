@@ -9,7 +9,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 /// The files section walks the working directory, which is the
 /// process's: one test at a time.

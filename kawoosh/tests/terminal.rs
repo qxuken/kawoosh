@@ -6,7 +6,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
-use kui::{InputEvent, KeyMods, Vec2};
+use kui_native::{InputEvent, KeyMods, Vec2};
 
 #[test]
 fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
@@ -22,7 +22,7 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
         .core
         .nodes()
         .into_iter()
-        .filter(|n| n.kind == kui::NodeKind::Cells)
+        .filter(|n| n.kind == kui_native::NodeKind::Cells)
         .count();
     assert_eq!(cells, 1, "one cells node for the terminal pane");
     let term = &app.terms.map[&t];
@@ -214,7 +214,7 @@ fn a_bell_chimes_and_marks_a_tab_out_of_sight() {
         d.core
             .take_audio_commands()
             .iter()
-            .filter(|c| matches!(c, kui::AudioCommand::Play { .. }))
+            .filter(|c| matches!(c, kui_native::AudioCommand::Play { .. }))
             .count()
     };
     let mut app = Kawoosh::new("t", "hello");
@@ -307,7 +307,7 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
         .core
         .nodes()
         .into_iter()
-        .find(|n| n.kind == kui::NodeKind::Cells)
+        .find(|n| n.kind == kui_native::NodeKind::Cells)
         .unwrap();
     let (cw, ch) = app.cell_metrics();
     d.input(
@@ -327,13 +327,17 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
     d.input(&mut app, InputEvent::CursorMoved(at(8.5, 1.5)));
     d.frame(&mut app);
     d.frame(&mut app);
-    assert_eq!(d.core.cursor_shape(), kui::CursorShape::Pointer, "a path");
+    assert_eq!(
+        d.core.cursor_shape(),
+        kui_native::CursorShape::Pointer,
+        "a path"
+    );
     d.input(&mut app, InputEvent::CursorMoved(at(2.5, 0.5)));
     d.frame(&mut app);
     d.frame(&mut app);
     assert_ne!(
         d.core.cursor_shape(),
-        kui::CursorShape::Pointer,
+        kui_native::CursorShape::Pointer,
         "`error[E0000]:` is no path"
     );
     d.input(&mut app, InputEvent::Modifiers(KeyMods::default()));
@@ -342,7 +346,7 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
     d.frame(&mut app);
     assert_ne!(
         d.core.cursor_shape(),
-        kui::CursorShape::Pointer,
+        kui_native::CursorShape::Pointer,
         "without ctrl, text"
     );
     d.input(
@@ -477,15 +481,21 @@ fn a_program_that_asks_for_the_mouse_gets_clicks_drags_and_the_wheel() {
         .core
         .nodes()
         .into_iter()
-        .find(|n| n.kind == kui::NodeKind::Cells)
+        .find(|n| n.kind == kui_native::NodeKind::Cells)
         .unwrap();
     let (cw, ch) = app.cell_metrics();
     let at = |c: f32, r: f32| (cells.rect.x + (c + 0.5) * cw, cells.rect.y + (r + 0.5) * ch);
     let (x, y) = at(4.0, 2.0);
-    d.input(&mut app, InputEvent::CursorMoved(kui::Vec2::new(x, y)));
+    d.input(
+        &mut app,
+        InputEvent::CursorMoved(kui_native::Vec2::new(x, y)),
+    );
     d.input(&mut app, InputEvent::mouse_down(1));
     let (x2, y2) = at(6.0, 2.0);
-    d.input(&mut app, InputEvent::CursorMoved(kui::Vec2::new(x2, y2)));
+    d.input(
+        &mut app,
+        InputEvent::CursorMoved(kui_native::Vec2::new(x2, y2)),
+    );
     d.input(&mut app, InputEvent::mouse_up());
     d.frame(&mut app);
     let sent = app.terms.map.get_mut(&t).unwrap().take_sent();
@@ -826,7 +836,7 @@ fn a_drag_selects_in_the_live_pane() {
         .core
         .nodes()
         .into_iter()
-        .find(|n| n.kind == kui::NodeKind::Cells)
+        .find(|n| n.kind == kui_native::NodeKind::Cells)
         .unwrap()
         .rect;
     // The editor pane has the keys; a plain click on the terminal takes

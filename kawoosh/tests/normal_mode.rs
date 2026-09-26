@@ -9,7 +9,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh_editor::Mode;
-use kui::KeyMods;
+use kui_native::KeyMods;
 
 fn text(app: &Kawoosh) -> String {
     app.ed.buffer_of(app.focused_view().unwrap()).text()
