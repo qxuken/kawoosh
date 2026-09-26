@@ -242,6 +242,11 @@ kawoosh.view(VIEW, function(ctx)
   local t = ctx.env.theme
   local cur = fonts.current()
   if not S then S = { cursor = on_show(cur), all = false, query = "", matches = {} } end
+  -- The families read again (a font added to or taken from the user's
+  -- folder): the list taken again.
+  if S.generation ~= cur.generation then
+    S.generation, S.dirty = cur.generation, true
+  end
   if S.list == nil or S.dirty then
     S.dirty = nil
     relist()

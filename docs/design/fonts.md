@@ -103,6 +103,23 @@ preview is a buffer. *Beat:* a card for every family built each frame,
 as the themes' pane does for its forty — shaping three hundred fonts is
 the five seconds of Decision 1.
 
+**Warming** (amended the same day, at the user's word: "very fast
+scroll kinda lags … maybe we should render them async (load → rasterize
+→ show)"). Measured first: paging onto families never drawn cost a
+frame 70 ms (release), paging back over them 1.5 ms. Of a family's
+first sight, reading its file is 0.03 ms and loading it 0.24 ms; its
+first shaping is 8 ms and its second 0.04 — a one-time setup per family.
+So a family is *warm* once shaped, and `kawoosh.fonts.face` answers
+only for a warm one (or the face on show): what a view asks for is
+warmed at the frame, in the order asked, until 6 ms are spent, the rest
+asked again at the next frame; a card not warm is its frame alone. Only
+what a frame asked for is warmed, so a fling does not spend frames on
+cards already gone, and the list builds two cards past each edge, so at
+a walking pace they are warm before they are seen. A cold page is 22 ms
+now, where it was 70: one family's setup cannot be cut, which is what
+moving it off the frame would take — in kui (cosmic-text builds it in
+its own cache as it shapes), not here.
+
 ### 4. One lab for the look: the theme through the font
 
 The theme lab is the look's lab. Every sample in it — the code, the
@@ -162,13 +179,44 @@ Font) draws them first.
 wider than a cell everywhere, and nothing kawoosh draws is proportional
 text that would want them.
 
+Families to pick from ship the same way (the user's word, the same day:
+"we can ship Intel and Fira, they should have license"): Intel One Mono
+(OFL, its eight faces and `OFL.txt`, 1.3 MB) in
+`assets/fonts/IntelOneMono/`, under LFS (`*.otf` joins `*.ttf` there).
+Every folder in `fonts/` is loaded at start, so shipping a family is a
+folder. Fira Mono waits on which build: the one at hand is Nerd Fonts'
+patched set, 51 MB, where plain Fira Mono is a few hundred KB and the
+symbols above give it its icons.
+
+### 7. The user's fonts folder, watched
+
+`fonts/` beside `settings.lua` (`~/.config/kawoosh/fonts`, or
+`$KAWOOSH_FONTS`), at the user's ask ("I want folder to be watched for a
+new fonts"): every font file under it (`.ttf`, `.otf`, `.ttc`, `.otc`,
+in folders or not) is loaded at start, and the config watch keeps the
+folder and every folder in it — a folder's stamp moves when an entry is
+added or taken out — so a file dropped in is a family within a second:
+the pane lists it, the completion offers it, a `font.family` that named
+it before it was there takes it, and a note says "fonts: added …". A
+file taken out has its faces taken out of kui's font database. It is
+the place for a face one may use but not ship — the user's Berkeley
+Mono.
+
+*Beat:* watching the system's font folders too. A font installed
+through the OS is the OS's to announce, and its folders are many and
+large; a restart sees it.
+
 ## Built
 
 As decided. kui F97 (`Core::system_fonts`); the symbols in
-`assets/fonts/NerdFontsSymbolsOnly/`, loaded by `main.rs`'s
-`load_fonts`; `look.rs` keeps the
-families and the face as the door has them (`Fonts`), registers what a
-view asked for at the frame, and holds `:font`; `kawoosh/lua/fonts.lua`
+`assets/fonts/NerdFontsSymbolsOnly/` and Intel One Mono in
+`assets/fonts/IntelOneMono/`, every folder loaded by `main.rs`'s
+`load_fonts`; `fonts.rs` keeps the families and the face as the door
+has them (`Fonts`), registers them at the first ask, warms what a view
+asked for within the frame's budget, reads and watches the user's
+folder (`user_fonts_dir`, `user_fonts_watch`), and holds `:font`; `kawoosh/lua/fonts.lua`
 the pane; `kawoosh/lua/theme_lab.lua` the face and its scene. Tests:
 `kawoosh/lua/tests/fonts.lua` (the door, the pane's walk, search, take,
-copy and close, the lab's face), `tests/cmdline.rs` for the completion.
+copy and close, the lab's face), `tests/cmdline.rs` for the completion,
+`tests/fonts_folder.rs` for the user's folder (a file dropped in and
+taken out).
