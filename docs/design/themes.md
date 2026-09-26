@@ -45,7 +45,29 @@ Shipped:
 | `rose-pine-moon` | `rose-pine-moon` | `rose-pine-dawn` |
 | `ayu` | `ayu-dark` | `ayu-light` |
 | `ayu-mirage` | `ayu-mirage` | `ayu-light` |
+| `gruvbox` | `gruvbox-dark` | `gruvbox-light` |
+| `gruvbox-hard` | `gruvbox-dark-hard` | `gruvbox-light-hard` |
+| `gruvbox-soft` | `gruvbox-dark-soft` | `gruvbox-light-soft` |
+| `tokyo-night` | `tokyo-night` | `tokyo-night-day` |
+| `tokyo-night-storm` | `tokyo-night-storm` | `tokyo-night-day` |
+| `tokyo-night-moon` | `tokyo-night-moon` | `tokyo-night-day` |
 | `high-contrast` | `high-contrast-dark` | `high-contrast-light` |
+
+Gruvbox (added the same week, the user's favourite of late) is
+morhetz's palette: the bright hues on the dark page, the faded on the
+light, the neutral eight the terminal's darker half, the page by its
+grade (hard, medium, soft); its code as gruvbox.nvim scopes it —
+keywords red, functions green and bold, strings green. Tokyo Night is
+folke's four styles (night, storm, moon; day the light half of each),
+keywords purple and italic as it sets them. Two departures, each for
+the check's sake and each a step: Tokyo Night Day's text is #25479a,
+darker than its #3760bf, which was 4.5:1 on its page and no more, so
+no selection could be seen and read through (Ayu Light's reason too);
+and its selection is `blue0` at 0.5 dark and 0.45 light, where its
+`bg_visual` is 0.4, not quite seen. What remains short is the
+palettes': Tokyo Night's comments are 2.8:1 (storm 2.35), Gruvbox's
+terminal red is 2.7:1 on the dark page, the light Gruvboxes' yellow and
+aqua pale on cream.
 
 Ayu is ayu-colors' (v5), its translucent hues laid flat on their page;
 its strings are green — Ayu's, kept, though Rosé Pine was chosen for
@@ -54,6 +76,14 @@ high-contrast pair is kawoosh's own, drawn to WCAG AAA: body text over
 15:1, every syntax hue and `muted` 7:1 on the page, `faint` 4.5:1, the
 borders 3:1 (the non-text minimum), and no green either, as the
 default's.
+
+What the families share past their vocabularies is `themes::Roles`,
+kui's roles as a family names them, turned into a theme in one place.
+It chooses the label on the accent (the active tab, a mode chip)
+itself: the theme's own page or text colour where either reads at
+4.5:1 on the accent, else whichever of those and black and white reads
+best — kui's pick put white on Gruvbox's and Tokyo Night's mid blues at
+2.5:1.
 
 *Beat:* a generic palette struct every family fills (base, surface,
 red, yellow, …). Families disagree on what the slots are — Rosé Pine

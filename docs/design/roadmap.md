@@ -2133,8 +2133,9 @@ then breadth.
     rust-analyzer.
 
 40. ~~**Themes** ([themes.md](themes.md)): the family one of several —
-    Rosé Pine, Ayu (dark, mirage, light) and a high-contrast pair to
-    WCAG AAA — each a variant of data (`themes::Variant`: kui's roles,
+    Rosé Pine, Ayu (dark, mirage, light), Gruvbox (dark and light, hard,
+    medium, soft), Tokyo Night (night, storm, moon, day) and a
+    high-contrast pair to WCAG AAA — each a variant of data (`themes::Variant`: kui's roles,
     a hue per token, the sixteen); `theme.dark` and `theme.light` a
     variant for each base apart from `theme.name`'s family; `:theme`
     (`toggle`, `system`, `dark`/`light [NAME]`, a family, `reset`) and
