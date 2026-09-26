@@ -190,7 +190,10 @@ the light ones apart, as many to a row as the column is wide — each
 card drawn in its own colours, not the window's: its page, a few lines
 of code in its hues and styles with a gutter and one line selected, a
 status strip with the accent's mode chip, and the sixteen as swatches.
-The card each slot holds is marked, the one on show outlined. A click,
+The card each slot holds is marked — "selected" on the one the window
+shows, outlined, "selected for light" (or dark) on the other base's —
+and the pane's head says which is selected and on which base (the
+wording since 2026-09-26; it said "on show" and "in use"). A click,
 or `⏎` on the cursor's card, puts it in its slot (`:theme dark NAME`);
 `t` toggles the base, `s` follows the system, `h` `j` `k` `l` and the
 arrows walk the cards, the cursor's scrolled into view as it moves
@@ -274,7 +277,8 @@ laid on the page first as the rows lay it — against a floor:
 | 1.4:1 | a wash or a line seen, not read: the selection, a hit, the strong border (`SEEN`) |
 
 `:theme check` writes the report — what falls short first — into
-`*theme check*`, of the look on show (the settings' accent, roles,
+`*theme check*`, of the selected theme as the window has it (the
+settings' accent, roles,
 `tokens.colors` and `tokens.styles` over the variant), `:theme check
 NAME` of a variant as it ships, `:theme check all` of each. `:theme
 lab` (`<leader>ol`) is a column beside the code drawing the look on

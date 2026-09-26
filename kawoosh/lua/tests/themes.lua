@@ -152,7 +152,7 @@ kawoosh.test.eq(themes.state().keep,
 -- The check (themes.md Decision 7): the look on show whole, and a
 -- variant as it ships; high contrast clears every floor.
 local now = themes.check()
-kawoosh.test.ok(now.title:find("as shown", 1, true), now.title)
+kawoosh.test.ok(now.title:find("(selected, ", 1, true), now.title)
 kawoosh.test.ok(#now.checks > 50, "every pair")
 kawoosh.test.ok(now.hit & 0xff < 0xff, "a hit is a wash")
 local hc = themes.check("high-contrast-light")
@@ -168,7 +168,7 @@ kawoosh.frame(2)
 kawoosh.cmd("themes")
 kawoosh.frame(5)
 kawoosh.test.eq(themes.state().cursor, "gruvbox-dark-soft")
-kawoosh.test.ok(themes.state().scrolled > 0, "opened on the card on show")
+kawoosh.test.ok(themes.state().scrolled > 0, "opened on the selected card")
 kawoosh.cmd("theme dark rose-pine-moon")
 kawoosh.cmd("theme system")
 kawoosh.frame()

@@ -8,7 +8,8 @@
 -- rather than the window's: its page, a few lines of code in its hues
 -- and styles with a gutter and a line selected, a status strip with
 -- its accent's mode chip, and its sixteen as swatches. The card each
--- half holds says so ("in use"), the one on show is outlined, the
+-- half holds says so ("selected", and "selected for light" on the one
+-- the other base shows), the one on the screen outlined, the
 -- cursor's ringed in the window's accent and scrolled into view as it
 -- walks.
 --
@@ -127,7 +128,8 @@ local function card(v, cur, ctx, is_cursor, width)
     width = "grow", pad = { x = 10, y = 6 }, gap = 8, cross_align = "center", bg = r.surface,
     main_align = "spaceBetween",
     text({ { v.title, bold = true } }, { size = SIZE, color = r.fg, wrap = "none" }),
-    text(shown and "on show" or held and "in use" or "", { size = SIZE - 2, color = r.muted, wrap = "none" }),
+    text(shown and "selected" or held and ("selected for " .. half) or "",
+      { size = SIZE - 2, color = r.muted, wrap = "none" }),
   }
 
   local code = column { width = "grow", pad = { y = 6 }, gap = 0 }
@@ -239,7 +241,7 @@ kawoosh.view(VIEW, function(ctx)
   end
   local shown = by_name(on_show(cur))
   local head = column { width = "grow", gap = 6, chips,
-    text("on show: " .. (shown and shown.title or "the system's") .. " (" .. cur.base .. ")",
+    text("selected: " .. (shown and shown.title or "the system's") .. " (" .. cur.base .. ")",
       { size = SIZE - 1, color = t.muted, wrap = "word" }),
     text("hjkl walk · ⏎ takes · t toggles · s system · y copies · q closes",
       { size = SIZE - 2, color = t.faint, wrap = "word" }) }

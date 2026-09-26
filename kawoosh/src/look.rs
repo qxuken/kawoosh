@@ -594,7 +594,7 @@ impl Kawoosh {
         let (dark_name, light_name) = (name(pair.dark), name(pair.light));
         let on = if dark { &dark_name } else { &light_name };
         let subject = crate::theme_check::Subject {
-            title: format!("{on} ({}, as shown)", if dark { "dark" } else { "light" }),
+            title: format!("{on} (selected, {})", if dark { "dark" } else { "light" }),
             theme: held,
             hit,
             syntax: Token::ALL
@@ -865,7 +865,7 @@ pub(crate) fn commands() -> Vec<crate::commands::ShellCommand> {
     };
     let mut theme = vec![
         cmd(
-            Spec::new("theme").doc("the theme on show, both halves, the family, the appearance"),
+            Spec::new("theme").doc("the selected theme, both halves, the family, the appearance"),
             |k, _| k.ed.message = k.theme_line(),
         ),
         cmd(
@@ -885,7 +885,7 @@ pub(crate) fn commands() -> Vec<crate::commands::ShellCommand> {
         cmd(
             Spec::new("theme check")
                 .args(Args::new(&[ArgKind::Text]))
-                .doc("every pair of colours the editor draws, measured: the look on show, a NAME, or all"),
+                .doc("every pair of colours the editor draws, measured: the selected theme, a NAME, or all"),
             |k, ctx| k.theme_check(ctx.args.first().map(String::as_str)),
         ),
         cmd(

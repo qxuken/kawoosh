@@ -263,7 +263,7 @@ end, function() end, { session = false })
 kawoosh.command("theme lab", function()
   L = nil
   kawoosh.view_open(VIEW, { share = SHARE })
-end, { doc = "the look on show through every situation the editor draws, each pair measured" })
+end, { doc = "the selected theme through every situation the editor draws, each pair measured" })
 
 local function on(name, fn, doc)
   kawoosh.command("theme lab " .. name, fn, { when = { PANE_FACT }, doc = doc })
