@@ -788,6 +788,13 @@ fn the_look_reaches_kui() {
     d.frame(&mut app);
     assert!(matches!(d.core.theme_source(), ThemeSource::Pinned(_)));
     assert_eq!(d.core.theme().bg, kawoosh::themes::MAIN.theme().bg);
+    // A search hit's wash, held under Rosé Pine's text: fainter than
+    // the gold's own, and the rows' (themes.md Decision 8).
+    assert!(
+        app.pal.hit.a < kawoosh::themes::HIT_ALPHA,
+        "{:?}",
+        app.pal.hit
+    );
     assert_eq!(app.face.size, 13.0);
     assert_eq!(app.face.line_height, 20.0);
     assert_eq!(

@@ -862,34 +862,78 @@ fn high_contrast_light() -> Variant {
 }
 
 /// The selection held legible whatever made it (roadmap step 28): a
-/// system accent, a `theme.accent`, a `selection` role. Glyphs are drawn
-/// over it in their own colours, so what is checked is the text over
-/// the selection laid on the page — body text at 4.5:1, and every other
-/// ink at 2:1 where it had that much on the page — and the selection's
-/// alpha is stepped down until they clear. The body text may take it
-/// to a trace; the other inks only as far as the selection is still
-/// seen, [`SEEN`] off the page — an ink with no room to spare (dawn's
-/// gold, 2.05:1 on the page) had washed any selection out of sight.
+/// system accent, a `theme.accent`, a `selection` role — the selection
+/// as [`legible_wash`] holds any wash, on the page, under the body text
+/// and the inks.
 pub fn legible_selection(mut t: Theme, inks: &[Color]) -> Theme {
-    let under = |s: Color| t.bg.mix(Color::rgba(s.r, s.g, s.b, 1.0), s.a);
-    let text = |s: Color| t.fg.contrast(under(s)) >= 4.5;
-    let inked = |s: Color| {
-        let u = under(s);
-        inks.iter()
-            .all(|i| i.contrast(t.bg) < 2.0 || i.contrast(u) >= 2.0)
+    t.selection = legible_wash(t.bg, t.fg, t.selection, inks);
+    t
+}
+
+/// How strong a search hit's wash is meant to be over the page: the
+/// warning's colour at this alpha, before [`legible_wash`] holds it.
+pub const HIT_ALPHA: f32 = 0.35;
+
+/// A search hit's wash for a theme and its inks: the warning's colour
+/// at [`HIT_ALPHA`], held as [`legible_wash`] holds any.
+pub fn legible_hit(t: &Theme, inks: &[Color]) -> Color {
+    legible_wash(t.bg, t.fg, t.warning.with_alpha(HIT_ALPHA), inks)
+}
+
+/// A translucent wash under text — the selection, a search hit — held
+/// legible (roadmap step 28, themes.md Decision 8). Glyphs are drawn
+/// over it in their own colours, so what is checked is the text over
+/// the wash laid on the page, and the wash's alpha is what gives: the
+/// body text first, at 4.5:1 over it; then the wash seen at all, [`SEEN`]
+/// off the page; then as many of the other inks at 2:1 over it as can be,
+/// each that had that much on the page — and of the alphas that do as
+/// well as any, the one nearest the wash's own. So a wash too strong for
+/// the text is faded (a pale accent under white text, a dark theme's
+/// gold hit under its body text), one too faint to be seen is
+/// strengthened (a light theme's gold hit on its cream page), and one
+/// that clears everything is left as it is. No alpha keeps the body
+/// text: the most seen that keeps it, else the wash as given.
+pub fn legible_wash(page: Color, fg: Color, wash: Color, inks: &[Color]) -> Color {
+    let under = |a: f32| page.mix(Color::rgba(wash.r, wash.g, wash.b, 1.0), a);
+    let room: Vec<Color> = inks
+        .iter()
+        .copied()
+        .filter(|i| i.contrast(page) >= 2.0)
+        .collect();
+    // Best first: (the body reads and it is seen, inks clear, closeness);
+    // with the body only, how seen.
+    let score = |a: f32| -> Option<(u8, usize, f32)> {
+        let u = under(a);
+        if fg.contrast(u) < 4.5 {
+            return None;
+        }
+        let seen = u.contrast(page);
+        if seen < SEEN {
+            return Some((0, 0, seen));
+        }
+        let inked = room.iter().filter(|i| i.contrast(u) >= 2.0).count();
+        Some((1, inked, -(a - wash.a).abs()))
     };
-    let seen = |s: Color| under(s).contrast(t.bg) >= SEEN;
-    let mut sel = t.selection;
-    while sel.a > 0.12 {
-        let next = sel.with_alpha(sel.a * 0.85);
-        if !text(sel) || (!inked(sel) && seen(next)) {
-            sel = next;
-        } else {
-            break;
+    let better = |x: &(u8, usize, f32), y: &(u8, usize, f32)| {
+        (x.0, x.1)
+            .cmp(&(y.0, y.1))
+            .then(x.2.total_cmp(&y.2))
+            .is_gt()
+    };
+    // The wash's own alpha first, so a tie keeps it exactly.
+    let mut best: Option<((u8, usize, f32), f32)> = score(wash.a).map(|s| (s, wash.a));
+    for step in 5..=90 {
+        let a = step as f32 / 100.0;
+        if let Some(s) = score(a)
+            && best.as_ref().is_none_or(|(b, _)| better(&s, b))
+        {
+            best = Some((s, a));
         }
     }
-    t.selection = sel;
-    t
+    match best {
+        Some((_, a)) => wash.with_alpha(a),
+        None => wash,
+    }
 }
 
 /// How far off the page a selection has to be to be seen at a glance:
@@ -1013,6 +1057,42 @@ mod tests {
             [
                 "theme.name: no family \"gruvbox\" (system, rose-pine, rose-pine-moon, ayu, ayu-mirage, high-contrast)"
             ]
+        );
+    }
+
+    /// A search hit's wash (themes.md Decision 8): faded where it hid
+    /// the body text (a dark theme's gold), strengthened where it was
+    /// not seen (a light theme's gold on cream), kept where it clears.
+    #[test]
+    fn a_hit_is_held_both_ways() {
+        let under = |t: &Theme, w: Color| t.bg.mix(Color::rgba(w.r, w.g, w.b, 1.0), w.a);
+        let inks = |v: &Variant| -> Vec<Color> {
+            Token::ALL.iter().filter_map(|k| v.syntax(*k)).collect()
+        };
+        let mirage = variant("ayu-mirage").unwrap();
+        let t = mirage.theme;
+        let raw = t.warning.with_alpha(HIT_ALPHA);
+        assert!(t.fg.contrast(under(&t, raw)) < 4.5, "the gold hid the text");
+        let hit = legible_hit(&t, &inks(mirage));
+        assert!(hit.a < HIT_ALPHA);
+        assert!(t.fg.contrast(under(&t, hit)) >= 4.5);
+        assert!(under(&t, hit).contrast(t.bg) >= SEEN);
+        let dawn = variant("rose-pine-dawn").unwrap();
+        let t = dawn.theme;
+        let raw = t.warning.with_alpha(HIT_ALPHA);
+        assert!(
+            under(&t, raw).contrast(t.bg) < SEEN,
+            "the gold was not seen"
+        );
+        let hit = legible_hit(&t, &inks(dawn));
+        assert!(hit.a > HIT_ALPHA);
+        assert!(under(&t, hit).contrast(t.bg) >= SEEN);
+        assert!(t.fg.contrast(under(&t, hit)) >= 4.5);
+        let hc = variant("high-contrast-dark").unwrap();
+        assert_eq!(
+            legible_hit(&hc.theme, &inks(hc)).a,
+            HIT_ALPHA,
+            "kept exactly"
         );
     }
 

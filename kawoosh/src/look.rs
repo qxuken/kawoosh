@@ -43,7 +43,8 @@
 //!   (`ThemeSource::Derived`, with the accent when one is given); an
 //!   appearance named or a role set pins a palette derived from the
 //!   appearance and the accent. Whatever the source, the selection is
-//!   held legible under the text (`themes::legible_selection`): an
+//!   held legible under the text (`themes::legible_selection`, and a
+//!   search hit's wash the same way, `themes::legible_hit`): an
 //!   accent that would hide it is pinned fainter.
 //! - **`tokens.colors`** names a syntax token (`keyword`, `string`,
 //!   `comment`, … — `Token::name`) and gives it one colour or a light
@@ -167,6 +168,9 @@ pub struct Look {
     pub syntax: HashMap<Token, (Color, Color)>,
     /// The styles the config set: what each turns on, and off.
     pub styles: HashMap<Token, (Style, Style)>,
+    /// A search hit's wash for the look on show, held legible
+    /// (`themes::legible_hit`); none before the first build.
+    pub hit: Option<Color>,
     /// The family a toast already said was missing.
     missing: Option<String>,
 }
@@ -295,13 +299,15 @@ fn styles_table(lua: &mlua::Lua, style: impl Fn(Token) -> Style) -> mlua::Result
 }
 
 /// `kawoosh.themes.check()`'s answer: the subject whole — `title`,
-/// `dark`, `roles`, `syntax`, `styles`, `ansi` — and its `checks`, each
+/// `dark`, `roles`, `hit` (a search hit's wash), `syntax`, `styles`,
+/// `ansi` — and its `checks`, each
 /// `{ group, what, fg, bg, ratio, need, ok }`, colours as `0xRRGGBBAA`.
 fn subject_table(lua: &mlua::Lua, s: &crate::theme_check::Subject) -> mlua::Result<mlua::Table> {
     let hex = |c: Color| c.to_hex() as i64;
     let t = lua.create_table()?;
     t.set("title", s.title.as_str())?;
     t.set("dark", s.theme.is_dark())?;
+    t.set("hit", hex(s.hit))?;
     let roles = lua.create_table()?;
     for r in THEME_ROLES {
         roles.set(r.name, hex((r.get)(&s.theme)))?;
@@ -568,6 +574,8 @@ impl Kawoosh {
             .filter_map(|tok| self.syntax_color_for(*tok, t.is_dark()))
             .collect();
         let held = themes::legible_selection(t, &inks);
+        let hit = themes::legible_hit(&held, &inks);
+        self.look.hit = Some(hit);
         let source = if held.selection == t.selection {
             source
         } else {
@@ -584,6 +592,7 @@ impl Kawoosh {
         let subject = crate::theme_check::Subject {
             title: format!("{on} ({}, as shown)", if dark { "dark" } else { "light" }),
             theme: held,
+            hit,
             syntax: Token::ALL
                 .iter()
                 .map(|t| self.syntax_color_for(*t, dark))

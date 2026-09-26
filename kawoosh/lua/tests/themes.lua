@@ -123,6 +123,7 @@ kawoosh.test.eq(themes.state().keep,
 local now = themes.check()
 kawoosh.test.ok(now.title:find("as shown", 1, true), now.title)
 kawoosh.test.ok(#now.checks > 50, "every pair")
+kawoosh.test.ok(now.hit & 0xff < 0xff, "a hit is a wash")
 local hc = themes.check("high-contrast-light")
 for _, ch in ipairs(hc.checks) do kawoosh.test.ok(ch.ok, ch.what) end
 kawoosh.test.eq(hc.syntax.keyword, 0xa3006bff)

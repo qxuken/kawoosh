@@ -1169,7 +1169,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 } else if flashed {
                     Some(pal.insert.with_alpha(0.45))
                 } else if hit {
-                    Some(pal.command.with_alpha(0.35))
+                    Some(pal.hit)
                 } else {
                     washed.or(mark.bg)
                 },

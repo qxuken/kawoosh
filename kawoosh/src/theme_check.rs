@@ -32,10 +32,6 @@ pub const BODY: f32 = 4.5;
 pub const UI: f32 = 3.0;
 pub const INK: f32 = 2.0;
 
-/// How strong a search hit's wash is over the page (`rows::emit_line`:
-/// the warning's colour at this alpha).
-pub const HIT_ALPHA: f32 = 0.35;
-
 /// One pair measured.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Check {
@@ -63,9 +59,15 @@ pub fn under(page: Color, wash: Color) -> Color {
     page.mix(Color::rgba(wash.r, wash.g, wash.b, 1.0), wash.a)
 }
 
-/// Every pair of `theme`, with `syntax` the hue each token is painted
-/// in (none for plain text) and `ansi` the terminal's sixteen.
-pub fn run(theme: &Theme, syntax: impl Fn(Token) -> Option<Color>, ansi: [u32; 16]) -> Vec<Check> {
+/// Every pair of `theme`, with `hit` a search hit's wash, `syntax` the
+/// hue each token is painted in (none for plain text) and `ansi` the
+/// terminal's sixteen.
+pub fn run(
+    theme: &Theme,
+    hit: Color,
+    syntax: impl Fn(Token) -> Option<Color>,
+    ansi: [u32; 16],
+) -> Vec<Check> {
     let t = theme;
     let mut out = Vec::new();
     let mut add = |group: &'static str, what: String, fg: Color, bg: Color, need: f32| {
@@ -94,7 +96,7 @@ pub fn run(theme: &Theme, syntax: impl Fn(Token) -> Option<Color>, ansi: [u32; 1
     add("text", "faint on page".into(), t.faint, t.bg, INK);
 
     let sel = under(t.bg, t.selection);
-    let hit = under(t.bg, t.warning.with_alpha(HIT_ALPHA));
+    let hit = under(t.bg, hit);
     add(
         "selection",
         "selection seen on page".into(),
@@ -176,14 +178,16 @@ pub fn run(theme: &Theme, syntax: impl Fn(Token) -> Option<Color>, ansi: [u32; 1
     out
 }
 
-/// What a check is run on, whole: a title, kui's theme, and a hue and a
-/// style per token (by `Token as usize`) and the sixteen — a variant as
-/// it ships, or the look on show with the settings' accent, roles,
-/// `tokens.colors` and `tokens.styles` over it.
+/// What a check is run on, whole: a title, kui's theme, a search hit's
+/// wash, and a hue and a style per token (by `Token as usize`) and the
+/// sixteen — a variant as it ships, or the look on show with the
+/// settings' accent, roles, `tokens.colors` and `tokens.styles` over
+/// it; the selection and the hit held legible as the editor holds them.
 #[derive(Clone, Debug)]
 pub struct Subject {
     pub title: String,
     pub theme: Theme,
+    pub hit: Color,
     pub syntax: Vec<Option<Color>>,
     pub styles: Vec<Style>,
     pub ansi: [u32; 16],
@@ -194,6 +198,7 @@ impl Default for Subject {
         Subject {
             title: String::new(),
             theme: Theme::dark(),
+            hit: Theme::dark().warning.with_alpha(crate::themes::HIT_ALPHA),
             syntax: vec![None; Token::ALL.len()],
             styles: vec![Style::PLAIN; Token::ALL.len()],
             ansi: [0; 16],
@@ -202,11 +207,15 @@ impl Default for Subject {
 }
 
 impl Subject {
-    /// A variant as it ships.
+    /// A variant as it ships, as the editor shows it with no settings:
+    /// its selection and a hit held legible under its hues.
     pub fn of_variant(v: &Variant) -> Subject {
+        let inks: Vec<Color> = Token::ALL.iter().filter_map(|t| v.syntax(*t)).collect();
+        let theme = crate::themes::legible_selection(v.theme, &inks);
         Subject {
             title: format!("{} (as it ships)", v.name),
-            theme: v.theme,
+            hit: crate::themes::legible_hit(&theme, &inks),
+            theme,
             syntax: Token::ALL.iter().map(|t| v.syntax(*t)).collect(),
             styles: Token::ALL.iter().map(|t| v.style(*t)).collect(),
             ansi: v.ansi,
@@ -214,7 +223,12 @@ impl Subject {
     }
 
     pub fn checks(&self) -> Vec<Check> {
-        run(&self.theme, |t| self.syntax[t as usize], self.ansi)
+        run(
+            &self.theme,
+            self.hit,
+            |t| self.syntax[t as usize],
+            self.ansi,
+        )
     }
 
     pub fn report(&self) -> String {
@@ -263,13 +277,13 @@ mod tests {
     use crate::themes;
 
     fn of(v: &themes::Variant) -> Vec<Check> {
-        run(&v.theme, |t| v.syntax(t), v.ansi)
+        Subject::of_variant(v).checks()
     }
 
     #[test]
     fn a_wash_is_measured_where_it_lands() {
         let t = Theme::dark();
-        let checks = run(&t, |_| None, [0xffffffff; 16]);
+        let checks = run(&t, t.warning.with_alpha(0.35), |_| None, [0xffffffff; 16]);
         let sel = checks
             .iter()
             .find(|c| c.what == "body under selection")
@@ -281,9 +295,16 @@ mod tests {
         assert_eq!(checks.iter().filter(|c| c.group == "terminal").count(), 12);
     }
 
+    /// The dark variants and the high-contrast pair clear every floor as
+    /// the editor shows them — the dark ones fell short only under a
+    /// search hit until its wash was held legible (themes.md Decision 8).
     #[test]
-    fn high_contrast_clears_every_floor() {
-        for name in ["high-contrast-dark", "high-contrast-light"] {
+    fn the_dark_variants_and_high_contrast_clear_every_floor() {
+        let names = themes::variants()
+            .iter()
+            .filter(|v| v.dark() || v.name.starts_with("high-contrast"))
+            .map(|v| v.name);
+        for name in names {
             let short: Vec<String> = of(themes::variant(name).unwrap())
                 .iter()
                 .filter(|c| !c.ok())

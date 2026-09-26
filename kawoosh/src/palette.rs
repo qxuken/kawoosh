@@ -20,6 +20,10 @@ pub struct Pal {
     pub danger: Color,
     /// A hovered row's wash, the theme's own.
     pub hover: Color,
+    /// A search hit's wash: the warning's, held legible over the page
+    /// under the text and the syntax (`themes::legible_hit`, set with
+    /// the look).
+    pub hit: Color,
     /// Every other row of a table: the foreground at a whisper, so it
     /// reads on any base without a hue of its own.
     pub zebra: Color,
@@ -41,6 +45,7 @@ impl From<Theme> for Pal {
             border: t.border,
             danger: t.danger,
             hover: t.hover,
+            hit: t.warning.with_alpha(crate::themes::HIT_ALPHA),
             zebra: t.fg.with_alpha(0.04),
         }
     }

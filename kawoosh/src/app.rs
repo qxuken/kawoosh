@@ -2220,6 +2220,9 @@ impl kui_native::App for Kawoosh {
         }
         self.sync_look(ui);
         self.pal = ui.theme().into();
+        if let Some(hit) = self.look.hit {
+            self.pal.hit = hit;
+        }
         self.dark = ui.theme().is_dark();
         self.sync_term_palettes();
         self.sync_term_settings();

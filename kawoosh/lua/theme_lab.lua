@@ -74,7 +74,7 @@ local function code_scene(s, t)
   local r = s.roles
   local col = column { width = "grow", bg = r.bg, radius = 4, pad = { y = 6 }, gap = 0,
     border = { w = 1, color = r.border } }
-  local hit = r.warning & 0xffffff00 | math.floor(0.35 * 255 + 0.5)
+  local hit = s.hit
   local function piece(p)
     local st = p[2] and s.styles[p[2]] or {}
     return { p[1], color = (p[2] and s.syntax[p[2]]) or r.fg, bold = st.bold, italic = st.italic,
