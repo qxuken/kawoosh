@@ -173,14 +173,18 @@ pub struct Look {
 
 /// What the look resolved to, as the Lua door says it: the family, the
 /// variant on each base (`system` where kui's roles off the OS stand),
-/// the base on show and the appearance setting.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// the base on show and the appearance setting; and the look on show
+/// whole, what `:theme check` and `:theme lab` measure, with the
+/// rebuild it is of (`version`, counted up at each).
+#[derive(Clone, Debug, Default)]
 pub struct Shown {
     pub family: String,
     pub dark: String,
     pub light: String,
     pub is_dark: bool,
     pub appearance: String,
+    pub subject: crate::theme_check::Subject,
+    pub version: u64,
 }
 
 /// `kawoosh.themes` (docs/design/themes.md Decision 4), set on the
@@ -190,8 +194,11 @@ pub struct Shown {
 /// a kui span's flags: `{ italic = true }`) and `ansi` (the sixteen), colours as
 /// `0xRRGGBBAA`; `families`, each `{ name, dark, light }`; and
 /// `current()`, what is on show — `family`, `dark` and `light` (a
-/// variant's name, or `system`), `base` (`dark` or `light`) and
-/// `appearance` — as of the last frame the look was built.
+/// variant's name, or `system`), `base` (`dark` or `light`),
+/// `appearance` and `version`, counted up at each rebuild — as of the
+/// last frame the look was built; `check([NAME])`, the theme check
+/// (docs/design/themes.md Decision 7) of the look on show, or of a
+/// variant as it ships.
 pub(crate) fn lua_door(
     lua: &mlua::Lua,
     shown: std::rc::Rc<std::cell::RefCell<Shown>>,
@@ -216,25 +223,7 @@ pub(crate) fn lua_door(
             }
         }
         t.set("syntax", syntax)?;
-        let styles = lua.create_table()?;
-        for tok in Token::ALL {
-            let st = v.style(*tok);
-            if st != Style::PLAIN {
-                let f = lua.create_table()?;
-                for (on, k) in [
-                    (st.bold, "bold"),
-                    (st.italic, "italic"),
-                    (st.underline, "underline"),
-                    (st.strike, "strikethrough"),
-                ] {
-                    if on {
-                        f.set(k, true)?;
-                    }
-                }
-                styles.set(tok.name(), f)?;
-            }
-        }
-        t.set("styles", styles)?;
+        t.set("styles", styles_table(lua, |tok| v.style(tok))?)?;
         t.set("ansi", lua.create_sequence_from(v.ansi.map(|x| x as i64))?)?;
         variants.set(i + 1, t)?;
     }
@@ -248,6 +237,20 @@ pub(crate) fn lua_door(
         families.set(i + 1, t)?;
     }
     door.set("families", families)?;
+    let at = shown.clone();
+    door.set(
+        "check",
+        lua.create_function(move |lua, name: Option<String>| {
+            let subject = match name.as_deref() {
+                None | Some("") => at.borrow().subject.clone(),
+                Some(n) => match themes::variant(n) {
+                    Some(v) => crate::theme_check::Subject::of_variant(v),
+                    None => return Err(mlua::Error::runtime(format!("no theme \"{n}\""))),
+                },
+            };
+            subject_table(lua, &subject)
+        })?,
+    )?;
     door.set(
         "current",
         lua.create_function(move |lua, ()| {
@@ -258,12 +261,75 @@ pub(crate) fn lua_door(
             t.set("light", s.light.as_str())?;
             t.set("base", if s.is_dark { "dark" } else { "light" })?;
             t.set("appearance", s.appearance.as_str())?;
+            t.set("version", s.version)?;
             Ok(t)
         })?,
     )?;
     lua.globals()
         .get::<mlua::Table>("kawoosh")?
         .set("themes", door)
+}
+
+/// A token's style for Lua, as a kui span's flags — `{ italic = true }`
+/// — for each token whose style is not plain.
+fn styles_table(lua: &mlua::Lua, style: impl Fn(Token) -> Style) -> mlua::Result<mlua::Table> {
+    let styles = lua.create_table()?;
+    for tok in Token::ALL {
+        let st = style(*tok);
+        if st != Style::PLAIN {
+            let f = lua.create_table()?;
+            for (on, k) in [
+                (st.bold, "bold"),
+                (st.italic, "italic"),
+                (st.underline, "underline"),
+                (st.strike, "strikethrough"),
+            ] {
+                if on {
+                    f.set(k, true)?;
+                }
+            }
+            styles.set(tok.name(), f)?;
+        }
+    }
+    Ok(styles)
+}
+
+/// `kawoosh.themes.check()`'s answer: the subject whole — `title`,
+/// `dark`, `roles`, `syntax`, `styles`, `ansi` — and its `checks`, each
+/// `{ group, what, fg, bg, ratio, need, ok }`, colours as `0xRRGGBBAA`.
+fn subject_table(lua: &mlua::Lua, s: &crate::theme_check::Subject) -> mlua::Result<mlua::Table> {
+    let hex = |c: Color| c.to_hex() as i64;
+    let t = lua.create_table()?;
+    t.set("title", s.title.as_str())?;
+    t.set("dark", s.theme.is_dark())?;
+    let roles = lua.create_table()?;
+    for r in THEME_ROLES {
+        roles.set(r.name, hex((r.get)(&s.theme)))?;
+    }
+    t.set("roles", roles)?;
+    let syntax = lua.create_table()?;
+    for tok in Token::ALL {
+        if let Some(c) = s.syntax[*tok as usize] {
+            syntax.set(tok.name(), hex(c))?;
+        }
+    }
+    t.set("syntax", syntax)?;
+    t.set("styles", styles_table(lua, |tok| s.styles[tok as usize])?)?;
+    t.set("ansi", lua.create_sequence_from(s.ansi.map(|x| x as i64))?)?;
+    let checks = lua.create_table()?;
+    for (i, c) in s.checks().iter().enumerate() {
+        let r = lua.create_table()?;
+        r.set("group", c.group)?;
+        r.set("what", c.what.as_str())?;
+        r.set("fg", hex(c.fg))?;
+        r.set("bg", hex(c.bg))?;
+        r.set("ratio", c.ratio)?;
+        r.set("need", c.need)?;
+        r.set("ok", c.ok())?;
+        checks.set(i + 1, r)?;
+    }
+    t.set("checks", checks)?;
+    Ok(t)
 }
 
 /// `#rrggbb` or `#rrggbbaa`, the `#` optional.
@@ -512,12 +578,31 @@ impl Kawoosh {
         }
         let pair = self.look.pair;
         let name = |v: Option<&themes::Variant>| v.map_or("system", |v| v.name).to_string();
+        let dark = held.is_dark();
+        let (dark_name, light_name) = (name(pair.dark), name(pair.light));
+        let on = if dark { &dark_name } else { &light_name };
+        let subject = crate::theme_check::Subject {
+            title: format!("{on} ({}, as shown)", if dark { "dark" } else { "light" }),
+            theme: held,
+            syntax: Token::ALL
+                .iter()
+                .map(|t| self.syntax_color_for(*t, dark))
+                .collect(),
+            styles: Token::ALL
+                .iter()
+                .map(|t| self.syntax_style_for(*t, dark))
+                .collect(),
+            ansi: self.ansi_for(dark),
+        };
+        let version = self.look.shown.borrow().version + 1;
         *self.look.shown.borrow_mut() = Shown {
             family: pair.family.map_or("system", |f| f.name).to_string(),
-            dark: name(pair.dark),
-            light: name(pair.light),
-            is_dark: held.is_dark(),
+            dark: dark_name,
+            light: light_name,
+            is_dark: dark,
             appearance: if named.is_empty() { "system" } else { named }.to_string(),
+            subject,
+            version,
         };
     }
 
@@ -692,6 +777,39 @@ impl Kawoosh {
         };
     }
 
+    /// `:theme check [NAME|all]`: the report in `*theme check*`, and a
+    /// line saying how many pairs fall short — of the look on show, a
+    /// variant as it ships, or every variant, each its own report.
+    fn theme_check(&mut self, name: Option<&str>) {
+        use crate::theme_check::Subject;
+        let subjects: Vec<Subject> = match name {
+            None => vec![self.look.shown.borrow().subject.clone()],
+            Some("all") => themes::variants().iter().map(Subject::of_variant).collect(),
+            Some(n) => match themes::variant(n) {
+                Some(v) => vec![Subject::of_variant(v)],
+                None => {
+                    let names: Vec<&str> = themes::variants().iter().map(|v| v.name).collect();
+                    self.ed.message =
+                        format!("theme check: no theme \"{n}\" (all, {})", names.join(", "));
+                    return;
+                }
+            },
+        };
+        let mut text = String::new();
+        let mut short = Vec::new();
+        for s in &subjects {
+            let checks = s.checks();
+            let n = checks.iter().filter(|c| !c.ok()).count();
+            short.push(format!("{} {n}", s.title.split(' ').next().unwrap_or("")));
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&crate::theme_check::report(&s.title, &checks));
+        }
+        self.show_in_pane("*theme check*", &text);
+        self.ed.message = format!("theme check: below their floor — {}", short.join(", "));
+    }
+
     /// `theme.appearance` pinned (or `system`) for the session.
     fn pick_appearance(&mut self, word: &str) {
         use kawoosh_editor::Layer;
@@ -751,6 +869,12 @@ pub(crate) fn commands() -> Vec<crate::commands::ShellCommand> {
         ),
         half(true),
         half(false),
+        cmd(
+            Spec::new("theme check")
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("every pair of colours the editor draws, measured: the look on show, a NAME, or all"),
+            |k, ctx| k.theme_check(ctx.args.first().map(String::as_str)),
+        ),
         cmd(
             Spec::new("theme reset").doc("the session's theme picks taken out, back to the files'"),
             |k, _| {
