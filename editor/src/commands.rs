@@ -3481,6 +3481,12 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>yN", "path copy stem"),
         ("<leader>Q", "quit all"),
         ("<leader>?", "keys"),
+        // `o`: the look (docs/design/themes.md Decision 3) — the base
+        // flipped, the OS's again, the themes' pane.
+        ("<leader>ot", "theme toggle"),
+        ("<leader>os", "theme system"),
+        ("<leader>oo", "themes"),
+        ("<leader>ol", "theme lab"),
     ];
     for (k, c) in n {
         km.bind(Normal, k, c);
@@ -3511,6 +3517,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>w", "workspace"),
         ("<leader>c", "code"),
         ("<leader>y", "copy the path"),
+        ("<leader>o", "look"),
         ("g", "goto"),
         ("gs", "surround"),
         ("<C-w>", "panes, tabs, dock"),

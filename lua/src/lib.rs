@@ -630,6 +630,21 @@ pub struct ActionSnap {
     pub preview: Vec<String>,
 }
 
+/// One run of a `kawoosh.highlight` answer: its bytes (`to` past the
+/// last), the token's name, its colour and its style as the theme sets
+/// them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HighlightRun<'a> {
+    pub from: usize,
+    pub to: usize,
+    pub token: &'a str,
+    pub color: Option<u32>,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strike: bool,
+}
+
 /// One completion candidate as `kawoosh.lsp.candidates()` reads it
 /// (the shell's `lsp candidates`, the picker's `candidates` source).
 #[derive(Clone, Debug, PartialEq)]
@@ -1647,16 +1662,28 @@ impl Runtime {
     /// A text highlighted for `kawoosh.highlight`: the callback called
     /// with the runs, each `{ from =, to =, token =, color = }` — bytes
     /// from 1, `to` the last one, the token's name, the colour as the
-    /// theme paints it (`0xRRGGBBAA`) or nil when it paints none.
-    pub fn highlighted(&self, token: u64, runs: &[(usize, usize, &str, Option<u32>)]) {
+    /// theme paints it (`0xRRGGBBAA`) or nil when it paints none — and
+    /// the style it sets the text in as a kui span's flags (`bold`,
+    /// `italic`, `underline`, `strikethrough`), each there when on.
+    pub fn highlighted(&self, token: u64, runs: &[HighlightRun<'_>]) {
         let table = self.lua.create_table().and_then(|t| {
-            for (i, (from, to, name, color)) in runs.iter().enumerate() {
+            for (i, run) in runs.iter().enumerate() {
                 let r = self.lua.create_table()?;
-                r.set("from", from + 1)?;
-                r.set("to", *to)?;
-                r.set("token", *name)?;
-                if let Some(c) = color {
-                    r.set("color", *c)?;
+                r.set("from", run.from + 1)?;
+                r.set("to", run.to)?;
+                r.set("token", run.token)?;
+                if let Some(c) = run.color {
+                    r.set("color", c)?;
+                }
+                for (on, k) in [
+                    (run.bold, "bold"),
+                    (run.italic, "italic"),
+                    (run.underline, "underline"),
+                    (run.strike, "strikethrough"),
+                ] {
+                    if on {
+                        r.set(k, true)?;
+                    }
                 }
                 t.set(i + 1, r)?;
             }

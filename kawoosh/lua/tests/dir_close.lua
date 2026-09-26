@@ -37,5 +37,5 @@ kawoosh.test.eq(kawoosh.buf.name(), "f.txt", "back on the file")
 kawoosh.test.eq(listings(), 1, "an edited listing stays")
 
 -- Elsewhere `<C-c>` is not the listing's.
-kawoosh.test.eq(kawoosh.can("dir close"), "dir close needs language:dir")
+kawoosh.test.eq(kawoosh.can("dir close"), "dir close: only in a dir buffer")
 kawoosh.fs.remove(dir)

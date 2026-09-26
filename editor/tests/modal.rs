@@ -1141,7 +1141,7 @@ fn commands_are_specs_with_forms_conditions_and_subcommands() {
     // `when`: a fact the shell publishes, one the engine answers.
     t.ed.declare(Spec::new("scroll").when(&["terminal"]));
     t.keys(":scroll<CR>");
-    assert_eq!(t.ed.message, "scroll needs terminal");
+    assert_eq!(t.ed.message, "scroll: only in a terminal pane");
     assert!(effects(&mut t).is_empty());
     t.ed.fact("terminal", true);
     t.keys(":scroll<CR>");
@@ -1152,7 +1152,7 @@ fn commands_are_specs_with_forms_conditions_and_subcommands() {
     t.ed.fact("terminal", false);
     assert_eq!(
         t.ed.can(Some(t.v), "scroll"),
-        Err("scroll needs terminal".into())
+        Err("scroll: only in a terminal pane".into())
     );
     t.ed.register_spec(
         Spec::new("only_here").when(&["language:oil", "!modified"]),
@@ -1160,13 +1160,16 @@ fn commands_are_specs_with_forms_conditions_and_subcommands() {
     );
     ran.borrow_mut().clear();
     t.keys(":only_here<CR>");
-    assert_eq!(t.ed.message, "only_here needs language:oil");
+    assert_eq!(t.ed.message, "only_here: only in an oil buffer");
     let b = t.ed.views[t.v].buffer;
     t.ed.buffers[b].language = "oil".into();
     t.keys(":only_here<CR>");
     assert_eq!(ran.borrow().len(), 1);
     t.keys("x:only_here<CR>");
-    assert_eq!(t.ed.message, "only_here is not for modified");
+    assert_eq!(
+        t.ed.message,
+        "only_here: not in a buffer with unsaved changes"
+    );
     assert_eq!(ran.borrow().len(), 1);
     assert!(t.ed.holds(Some(t.v), "buffer:a") || t.ed.holds(Some(t.v), "modified"));
 
@@ -1232,6 +1235,44 @@ fn a_gated_insert_binding_on_a_typing_key_types_elsewhere() {
     assert_eq!(t.ed.message, "colon");
 }
 
+/// A binding gated off by its own `when` is not bound there: it does
+/// not shadow the mode a sequence falls through to — a plugin's
+/// pane-mode `<A-S-l>`, in another plugin's pane, is normal mode's —
+/// and with nothing under it the key is quiet. A binding whose command
+/// cannot run still says why, in words.
+#[test]
+fn a_gated_off_binding_is_unbound_and_shadows_nothing() {
+    use kawoosh_editor::Cond;
+    let mut t = T::new("a\n");
+    t.ed.register("column wider", |ed, _| ed.message = "wider".into());
+    t.ed.register_spec(Spec::new("picker wrap").when(&["lua:picker"]), |ed, _| {
+        ed.message = "wrap".into()
+    });
+    t.ed.register("picker list wider", |ed, _| ed.message = "list".into());
+    let on_picker = [Cond::parse("lua:picker")];
+    t.ed.keymap.bind(Mode::Normal, "<A-S-l>", "column wider");
+    t.ed.keymap
+        .bind_when(Mode::Pane, "<A-S-l>", "picker list wider", &on_picker);
+    t.ed.keymap
+        .bind_when(Mode::Pane, "x", "picker list wider", &on_picker);
+    t.ed.keymap.bind(Mode::Pane, "w", "picker wrap");
+    t.v = t.ed.pane_view();
+    // In another pane: the column's, and a key only the picker has is
+    // nothing at all.
+    t.keys("<A-S-l>");
+    assert_eq!(t.ed.message, "wider");
+    t.ed.message.clear();
+    t.keys("x");
+    assert_eq!(t.ed.message, "", "quiet");
+    // A bare binding whose command cannot run here says why.
+    t.keys("w");
+    assert_eq!(t.ed.message, "picker wrap: only in the picker pane");
+    // In the picker's pane: the picker's.
+    t.ed.fact("lua:picker", true);
+    t.keys("<A-S-l>");
+    assert_eq!(t.ed.message, "list");
+}
+
 /// A key can carry several bindings, newest first: the first whose own
 /// `when` holds and whose command can run is the one that runs; none
 /// of them is the newest one's reason; a bare binding on a bare command
@@ -1267,7 +1308,7 @@ fn a_key_falls_through_its_bindings_by_when() {
     );
     t.ed.keymap.bind(Mode::Normal, "<C-g>", "oil enter");
     t.keys("<C-g>");
-    assert_eq!(t.ed.message, "oil enter needs language:oil");
+    assert_eq!(t.ed.message, "oil enter: only in an oil buffer");
     t.ed.fact("store", true);
     t.keys("<C-g>");
     assert_eq!(t.ed.message, "plain");

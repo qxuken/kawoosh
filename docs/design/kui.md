@@ -827,9 +827,11 @@ engine as they change (`store`, `lsp`, `editor`, `terminal`, `lua`,
 engine answers the ones it can from the view (`visual`, `modified`,
 `file`, `buffer:NAME`, `language:NAME`), and a spec names them, `!` for
 must-not (`when = { "language:dir", "!terminal" }`). The engine refuses
-with the reason in one voice — "scrollback needs terminal", "dir cd needs
-language:dir" — whether the command came from the line, a key, a toast's
-action or Lua, and `kawoosh.can(name)` is that reason or `true`. This is
+with the reason in one voice — "scrollback: only in a terminal pane",
+"dir cd: only in a dir buffer" (`command::unmet`, the facts in words; a
+plugin's own by its name, "ready: only where plug:ready holds") —
+whether the command came from the line, a key, a toast's action or Lua,
+and `kawoosh.can(name)` is that reason or `true`. This is
 VS Code's `when` clause without the expression language; a list with
 negation is enough, and if a day comes when it is not, that is the day to
 add one. Facts are strings, not an enum, so a plugin can invent one
@@ -848,7 +850,12 @@ command's, so `kawoosh.map("n", "<CR>", "goto location", { when = {
 "!language:dir" } })` and then `kawoosh.map("n", "<CR>", "dir enter")`
 — a command gated on the listing — make one key do the right thing in
 each place without either command knowing about the other; when none
-can run, the message is the newest binding's reason; a bare binding on a
+can run, the message is the newest binding's reason — unless every one
+is gated off by its own `when`: the key is not bound there at all, it
+falls through to what the mode falls through to (a pane's shared
+chords, normal mode's) and is quiet with nothing there, so the
+picker's `<A-S-l>` in another pane widens the column rather than
+saying the picker's condition (2026-09-26); a bare binding on a
 bare command shadows the older ones, so a rebinding in `init.lua` still
 replaces the default. The bundled file manager, `dir`, is the acceptance
 test: `dir cd` is a subcommand gated on `language:dir`, `dir enter` is

@@ -692,7 +692,7 @@ fn an_empty_layer_offers_a_file_to_create() {
 #[test]
 fn the_look_reaches_kui() {
     use kawoosh_systems::ts::Token;
-    use kui_native::{Appearance, Color, FontFeatures, ThemeSource};
+    use kui_native::{Appearance, Color, FontFeatures, Theme, ThemeSource};
     let t = tree("look");
     std::fs::write(
         &t.user,
@@ -788,6 +788,13 @@ fn the_look_reaches_kui() {
     d.frame(&mut app);
     assert!(matches!(d.core.theme_source(), ThemeSource::Pinned(_)));
     assert_eq!(d.core.theme().bg, kawoosh::themes::MAIN.theme().bg);
+    // A search hit's wash, held under Rosé Pine's text: fainter than
+    // the gold's own, and the rows' (themes.md Decision 8).
+    assert!(
+        app.pal.hit.a < kawoosh::themes::HIT_ALPHA,
+        "{:?}",
+        app.pal.hit
+    );
     assert_eq!(app.face.size, 13.0);
     assert_eq!(app.face.line_height, 20.0);
     assert_eq!(
@@ -807,15 +814,84 @@ fn the_look_reaches_kui() {
     // The moon, and a name nobody ships: a toast, the default stands.
     ex(&mut d, &mut app, "set theme.name=rose-pine-moon");
     assert_eq!(d.core.theme().bg, kawoosh::themes::MOON.theme().bg);
-    ex(&mut d, &mut app, "set theme.name=gruvbox");
+    ex(&mut d, &mut app, "set theme.name=solarized");
+    let families: Vec<&str> = kawoosh::themes::FAMILIES.iter().map(|f| f.name).collect();
+    let said = format!(
+        "theme.name: no family \"solarized\" (system, {})",
+        families.join(", ")
+    );
     assert!(
-        app.notes.shown.iter().any(|s| s.toast
-            && s.text == "theme.name: no palette \"gruvbox\" (system, rose-pine, rose-pine-moon)"),
+        app.notes.shown.iter().any(|s| s.toast && s.text == said),
         "{:?}",
         app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
     );
     assert_eq!(d.core.theme().bg, kawoosh::themes::MAIN.theme().bg);
     ex(&mut d, &mut app, "set theme.name!");
+    // Each base's half apart from the family (themes.md Decision 2):
+    // the dark one on show, its hues and its sixteen; the light one
+    // waiting for the base, and `system` for one half alone.
+    let variant = |n| kawoosh::themes::variant(n).unwrap();
+    ex(&mut d, &mut app, "set theme.dark=ayu-mirage");
+    ex(&mut d, &mut app, "set theme.light=high-contrast-light");
+    assert_eq!(d.core.theme().bg, variant("ayu-mirage").theme.bg);
+    assert_eq!(
+        app.syntax_color_for(Token::String, true),
+        variant("ayu-mirage").syntax(Token::String)
+    );
+    assert_eq!(app.ansi_for(true), variant("ayu-mirage").ansi);
+    assert_eq!(
+        app.syntax_color_for(Token::Keyword, false),
+        variant("high-contrast-light").syntax(Token::Keyword)
+    );
+    ex(&mut d, &mut app, "theme toggle");
+    assert!(!app.dark);
+    assert_eq!(d.core.theme().bg, variant("high-contrast-light").theme.bg);
+    ex(&mut d, &mut app, "set theme.light=system");
+    assert_eq!(
+        d.core.theme_source(),
+        ThemeSource::Pinned(Theme::derive(Appearance::Light, None))
+    );
+    // Styles (themes.md Decision 6): the variant's — keywords bold in
+    // high contrast, comments italic everywhere — and `tokens.styles`
+    // over them, words in place of the theme's, a table only what it
+    // names; a word it does not know is a toast.
+    assert!(!app.syntax_style_for(Token::Keyword, true).bold);
+    assert!(
+        app.syntax_style_for(Token::Comment, false).italic,
+        "system's base"
+    );
+    ex(&mut d, &mut app, "set theme.dark=high-contrast-dark");
+    assert!(app.syntax_style_for(Token::Keyword, true).bold);
+    assert!(app.syntax_style_for(Token::Comment, true).italic);
+    {
+        use kawoosh_editor::{Layer, Setting};
+        let mut styles = Setting::table();
+        styles.set("keyword", Setting::Str("italic underline".into()));
+        let mut off = Setting::table();
+        off.set("italic", Setting::Bool(false));
+        off.set("bold", Setting::Bool(true));
+        styles.set("comment", off);
+        styles.set("string", Setting::Str("loud".into()));
+        app.ed.settings.set(Layer::Session, "tokens.styles", styles);
+    }
+    d.frame(&mut app);
+    let kw = app.syntax_style_for(Token::Keyword, false);
+    assert_eq!(kw.words(), "italic underline", "words replace the theme's");
+    let kw = app.syntax_style_for(Token::Keyword, true);
+    assert_eq!(kw.words(), "italic underline", "words replace the bold");
+    assert_eq!(app.syntax_style_for(Token::Comment, true).words(), "bold");
+    assert!(
+        app.notes.shown.iter().any(|s| s.toast
+            && s.text
+                == "tokens.styles.string: \"loud\" is not a style (bold, italic, underline, strike, none)"),
+        "{:?}",
+        app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
+    );
+    ex(&mut d, &mut app, "set tokens.styles!");
+    ex(&mut d, &mut app, "theme reset");
+    ex(&mut d, &mut app, "set theme.dark!");
+    ex(&mut d, &mut app, "set theme.light!");
+    assert_eq!(d.core.theme().bg, kawoosh::themes::MAIN.theme().bg);
     // A role misspelt is a toast naming it.
     ex(&mut d, &mut app, "set theme.background=#000000");
     assert!(

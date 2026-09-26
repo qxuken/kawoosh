@@ -101,6 +101,9 @@ impl Kawoosh {
         // The memory's pending deltas are the runtime's to read
         // (`kawoosh.memory { … }` folds them in).
         self.moments.adopt_pending(rt.pending_moments());
+        if let Err(e) = crate::look::lua_door(rt.lua(), self.look.shown.clone()) {
+            log::error!("kawoosh.themes: {e}");
+        }
         for (name, src) in crate::plugins::BUNDLED {
             if let Err(e) = rt.load_source(name, src) {
                 log::error!("{name}: {e}");
