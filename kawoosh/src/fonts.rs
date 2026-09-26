@@ -32,6 +32,30 @@ pub struct Family {
     /// The weights its faces come in, sorted.
     pub weights: Vec<u16>,
     pub italic: bool,
+    pub origin: Origin,
+}
+
+/// Where a family came from — the order the families are listed in:
+/// the user's folder, then what kawoosh ships, then the machine's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Origin {
+    /// A file in the user's fonts folder ([`user_fonts_dir`]).
+    User,
+    /// A file kawoosh ships (`assets/fonts/`).
+    Shipped,
+    /// Installed on the machine.
+    System,
+}
+
+impl Origin {
+    /// The door's word for it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Origin::User => "user",
+            Origin::Shipped => "shipped",
+            Origin::System => "system",
+        }
+    }
 }
 
 /// The face on show, as the door says it.
@@ -59,10 +83,14 @@ pub struct Shown {
 #[derive(Debug, Default)]
 pub struct Fonts {
     /// Read at the first frame, and again when the user's folder
-    /// changed; the face kawoosh ships first, then by name. None before.
+    /// changed; the user's first, then the shipped — the editor's face
+    /// ahead of them — then the machine's, each by name. None before.
     pub families: Option<Vec<Family>>,
     /// The family kawoosh ships, when it loaded.
     pub bundled: Option<String>,
+    /// The families of the files kawoosh ships, set at start: a family
+    /// installed on the machine as well is still one of these.
+    pub shipped: HashSet<String>,
     pub shown: Shown,
     /// Counted up whenever `shown` changes.
     pub version: u64,
@@ -94,8 +122,8 @@ impl Fonts {
         self.families.as_ref()?.iter().find(|f| f.name == name)
     }
 
-    /// The names, the monospaced first — what `font.family` completes
-    /// to.
+    /// The names, the monospaced first, each in the families' order —
+    /// what `font.family` completes to.
     pub fn names(&self) -> Vec<String> {
         let all = self.families.as_deref().unwrap_or_default();
         let (mono, rest): (Vec<&Family>, Vec<&Family>) = all.iter().partition(|f| f.mono);
@@ -166,6 +194,29 @@ fn font_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// The font files kawoosh ships under `dir` loaded onto `core`, a file
+/// at a time as the user's are, for the families they hold: the fonts
+/// pane lists these after the user's and before the machine's, even one
+/// installed on the machine too (fonts.md Decision 8).
+pub fn load_shipped(core: &mut kui_native::Core, dir: &Path) -> HashSet<String> {
+    let mut shipped = HashSet::new();
+    let files = font_files(dir);
+    for p in &files {
+        match core.load_font_file(p.clone()) {
+            Some(id) => shipped.extend(core.font_family(id).map(str::to_string)),
+            None => log::warn!("fonts: no usable face in {}", p.display()),
+        }
+    }
+    // A startup fact, not news: a trace.
+    log::trace!(
+        "loaded {} font files, {} families, from {}",
+        files.len(),
+        shipped.len(),
+        dir.display()
+    );
+    shipped
+}
+
 fn walk(dir: &Path, f: &mut dyn FnMut(&Path, bool)) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -181,6 +232,12 @@ fn walk(dir: &Path, f: &mut dyn FnMut(&Path, bool)) {
 }
 
 impl Kawoosh {
+    /// The families of the files kawoosh ships, loaded before the window
+    /// opens (`main`'s `load_fonts`).
+    pub fn shipped_fonts(&mut self, families: HashSet<String>) {
+        self.look.fonts.borrow_mut().shipped = families;
+    }
+
     /// The user's folder read (at the first frame, and when the watch saw
     /// it change) and the families read again; every family registered
     /// once a view asked for one; and what a view asked for this frame
@@ -383,34 +440,53 @@ fn load_user_fonts(f: &mut Fonts, ui: &mut Ui<'_>) -> (Vec<String>, usize) {
 }
 
 /// The families kui can see, the OS's `.` ones left out but the face
-/// kawoosh ships (`.IosevkaNavcon`), which comes first.
+/// kawoosh ships (`.IosevkaNavcon`), each with where it came from, in
+/// [`order`].
 fn read_families(f: &mut Fonts, ui: &mut Ui<'_>, bundled_font: Option<FontId>) {
     let bundled = bundled_font.and_then(|id| ui.core().font_family(id).map(str::to_string));
+    let user: HashSet<String> = f
+        .user
+        .values()
+        .filter_map(|&id| ui.core().font_family(id).map(str::to_string))
+        .collect();
     let mut all: Vec<Family> = ui
         .core()
         .system_fonts()
         .into_iter()
         .filter(|s| !s.family.starts_with('.') || bundled.as_ref() == Some(&s.family))
-        .map(|s| Family {
-            name: s.family,
-            mono: s.monospaced,
-            weights: s.weights,
-            italic: s.italic,
+        .map(|s| {
+            let origin = if user.contains(&s.family) {
+                Origin::User
+            } else if f.shipped.contains(&s.family) || bundled.as_ref() == Some(&s.family) {
+                Origin::Shipped
+            } else {
+                Origin::System
+            };
+            Family {
+                name: s.family,
+                mono: s.monospaced,
+                weights: s.weights,
+                italic: s.italic,
+                origin,
+            }
         })
         .collect();
-    if let Some(b) = &bundled
-        && let Some(at) = all.iter().position(|f| &f.name == b)
-    {
-        let own = all.remove(at);
-        all.insert(0, own);
-    }
+    order(&mut all, bundled.as_deref());
     f.families = Some(all);
     f.bundled = bundled;
 }
 
+/// The families' order: the user's, then the shipped with the editor's
+/// face (`bundled`) ahead of them, then the machine's — each by name,
+/// as they come.
+fn order(all: &mut [Family], bundled: Option<&str>) {
+    all.sort_by_key(|f| (f.origin, bundled != Some(f.name.as_str())));
+}
+
 /// `kawoosh.fonts` (docs/design/fonts.md Decision 2): `families()`,
-/// each `{ name, mono, weights, italic, bundled }`, the shipped face
-/// first; `current()`, the face on show — `family`, `name`, `size`,
+/// each `{ name, mono, weights, italic, bundled, origin }` — `origin`
+/// `"user"`, `"shipped"` or `"system"`, the order they come in, the
+/// editor's shipped face first of its own; `current()`, the face on show — `family`, `name`, `size`,
 /// `line_height`, `row`, `cell`, `features`, `chrome`, `font` (a handle
 /// for a text's `font =`), the family's `mono`, `weights` and `italic`,
 /// `version`, and `generation` (counted up when the families are read
@@ -432,6 +508,7 @@ pub(crate) fn lua_door(lua: &mlua::Lua, fonts: SharedFonts) -> mlua::Result<()> 
             )?;
             t.set("italic", fam.italic)?;
             t.set("bundled", bundled)?;
+            t.set("origin", fam.origin.as_str())?;
             Ok(t)
         };
     let at = fonts.clone();
@@ -520,4 +597,47 @@ pub(crate) fn commands() -> Vec<crate::commands::ShellCommand> {
             }
         },
     )]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Family, Origin, order};
+
+    fn fam(name: &str, origin: Origin) -> Family {
+        Family {
+            name: name.into(),
+            mono: true,
+            weights: vec![400],
+            italic: false,
+            origin,
+        }
+    }
+
+    #[test]
+    fn the_users_come_first_then_the_shipped_then_the_machines() {
+        // As `system_fonts` gives them: by name.
+        let mut all = vec![
+            fam("Berkeley Mono", Origin::User),
+            fam("Cascadia Code", Origin::Shipped),
+            fam("Hack", Origin::Shipped),
+            fam("IosevkaNavcon", Origin::Shipped),
+            fam("Menlo", Origin::System),
+            fam("Monaco", Origin::System),
+            fam("Zed Mono", Origin::User),
+        ];
+        order(&mut all, Some("IosevkaNavcon"));
+        let names: Vec<&str> = all.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "Berkeley Mono",
+                "Zed Mono",
+                "IosevkaNavcon",
+                "Cascadia Code",
+                "Hack",
+                "Menlo",
+                "Monaco",
+            ]
+        );
+    }
 }
