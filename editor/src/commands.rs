@@ -3485,6 +3485,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>ot", "theme toggle"),
         ("<leader>os", "theme system"),
         ("<leader>oo", "themes"),
+        ("<leader>ol", "theme lab"),
     ];
     for (k, c) in n {
         km.bind(Normal, k, c);

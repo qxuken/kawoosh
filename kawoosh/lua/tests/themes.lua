@@ -118,6 +118,16 @@ kawoosh.test.eq(themes.state().cursor, "rose-pine")
 kawoosh.test.eq(themes.state().scrolled, 0, "and back to the first")
 kawoosh.test.eq(themes.state().keep,
   string.format('theme = { dark = "rose-pine-moon", light = "%s" }', c))
+-- The check (themes.md Decision 7): the look on show whole, and a
+-- variant as it ships; high contrast clears every floor.
+local now = themes.check()
+kawoosh.test.ok(now.title:find("as shown", 1, true), now.title)
+kawoosh.test.ok(#now.checks > 50, "every pair")
+local hc = themes.check("high-contrast-light")
+for _, ch in ipairs(hc.checks) do kawoosh.test.ok(ch.ok, ch.what) end
+kawoosh.test.eq(hc.syntax.keyword, 0xa3006bff)
+kawoosh.test.eq(hc.styles.keyword.bold, true)
+kawoosh.test.ok(not pcall(themes.check, "nope"), "a stranger is an error")
 -- `y` copies the line; `q` closes.
 kawoosh.press("y")
 kawoosh.frame()
@@ -125,5 +135,37 @@ kawoosh.test.eq(kawoosh.memory()[1].text, themes.state().keep)
 kawoosh.press("q")
 kawoosh.frame()
 kawoosh.test.eq(themes.state(), nil)
+kawoosh.cmd("theme reset")
+kawoosh.frame()
+
+-- The report: `*theme check*`, a head and the pairs; a variant's
+-- shortfall on the line.
+kawoosh.cmd("theme check high-contrast-dark")
+kawoosh.frame()
+kawoosh.test.eq(kawoosh.buf.name(), "*theme check*")
+kawoosh.test.ok(kawoosh.buf.line(1):find("theme check · high-contrast-dark", 1, true), kawoosh.buf.line(1))
+kawoosh.test.ok(kawoosh.message():find("high-contrast-dark 0", 1, true), kawoosh.message())
+kawoosh.cmd("theme check all")
+kawoosh.frame()
+kawoosh.test.ok(kawoosh.message():find("ayu-light", 1, true), kawoosh.message())
+
+-- The lab: the look on show measured, `f` narrowing to what falls
+-- short, following a pick.
+kawoosh.press("<leader>ol")
+kawoosh.frame(2)
+local lab = themes.lab()
+kawoosh.test.ok(lab, "the lab is open")
+local short = 0
+for _, ch in ipairs(themes.check().checks) do if not ch.ok then short = short + 1 end end
+kawoosh.test.eq(lab.short, short)
+kawoosh.press("f")
+kawoosh.frame()
+kawoosh.test.eq(themes.lab().only_short, true)
+kawoosh.cmd("theme high-contrast")
+kawoosh.frame(2)
+kawoosh.test.eq(themes.lab().short, 0, "high contrast, measured again")
+kawoosh.press("q")
+kawoosh.frame()
+kawoosh.test.eq(themes.lab(), nil)
 kawoosh.cmd("theme reset")
 kawoosh.frame()
