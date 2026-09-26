@@ -1189,6 +1189,13 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
     let form = line.form;
     let scale = form.map_or(1.0, |f| f.scale);
     let lh = lh * scale;
+    // A heading's number stands on its first line's baseline, where
+    // centred in the line it floated above the larger text. Only there:
+    // the numbers of lines at the body's size sit on it already, and an
+    // image or a rule has no baseline to share.
+    let on_baseline = form.is_some_and(|f| {
+        f.scale != 1.0 && f.gutter.is_some() && f.images.is_empty() && !f.rule && f.table.is_none()
+    });
     // At least the pane's width, and as wide as its text: the floor is
     // what the lines column's horizontal scroll measures its content by.
     // A rendered row is the column's width and as tall as its text
@@ -1212,7 +1219,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 // and a column compresses its children toward their
                 // floors when it does.
                 .min_height(Min::FIT)
-                .cross_align(Align::Start)
+                .cross_align(if on_baseline {
+                    Align::Baseline
+                } else {
+                    Align::Start
+                })
                 .role(Role::Line)
                 .on_layout(kui_native::Value::map([("kind", "mdrow".into())]));
             if let Some(bg) = f.bg {
@@ -1258,14 +1269,19 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             }
             // The line's number, in the row: decoration, not text.
             if let Some((w, label, current)) = &f.gutter {
+                // On a baseline the box is its text's height, so that
+                // lowering it does not reach below the line.
+                let spec = NodeSpec::row()
+                    .width(Sizing::Fixed(*w))
+                    .pad_xy(GUTTER_PAD, 0.0)
+                    .main_align(Align::End)
+                    .role(Role::None);
                 ui.with(
-                    NodeSpec::row()
-                        .width(Sizing::Fixed(*w))
-                        .height(Sizing::Fixed(lh))
-                        .pad_xy(GUTTER_PAD, 0.0)
-                        .main_align(Align::End)
-                        .cross_align(Align::Center)
-                        .role(Role::None),
+                    if on_baseline {
+                        spec
+                    } else {
+                        spec.height(Sizing::Fixed(lh)).cross_align(Align::Center)
+                    },
                     |ui| {
                         let color = if *current { pal.dim } else { pal.faint };
                         ui.text(label, mono(face, pal).color(color));
