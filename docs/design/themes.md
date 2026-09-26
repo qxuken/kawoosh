@@ -10,7 +10,8 @@ Each decision keeps the alternative it beat. Amended the same day at
 the user's word after a look: tokens carry styles beside their hues
 (Decision 6), and the pane is a column of its own whose walk keeps the
 cursor's card in view (Decision 4); and again for theme work, a check
-and a lab (Decision 7).
+and a lab (Decision 7), and the washes held both ways from what the
+check found (Decision 8).
 
 ## What there was
 
@@ -211,18 +212,42 @@ beside it is seen at once. Both read one snapshot of the look on show
 taken at each rebuild (`look::Shown::subject`); the door is
 `kawoosh.themes.check([NAME])`.
 
-Run on what ships (2026-09-26): the high-contrast pair clears every
-floor; the dark variants fall short only under a search hit — the hit's
-wash, the warning at 0.35, is the editor's choice rather than the
-theme's, and holds Ayu Mirage's body text to 3.5:1; Rosé Pine Dawn and
-Ayu Light, pale palettes on white, fall short across their hues. What
-to do about each is left to the user: the check says, the themes are as
-their authors made them.
+Run on what ships (2026-09-26): the high-contrast pair cleared every
+floor; the dark variants fell short only under a search hit — the
+hit's wash, the warning at 0.35, is the editor's choice rather than the
+theme's, and held Ayu Mirage's body text to 3.5:1 (Decision 8 fixed
+it); Rosé Pine Dawn and Ayu Light, pale palettes on white, fall short
+across their hues, which is the palettes' and left as their authors
+made them.
 
 *Beat:* tests only (`cargo test`, as the variants' own units are) —
 they are for kawoosh's code, not for a user tuning `theme.*` in their
 settings, and a number with no picture beside it does not say what the
 eye will see.
+
+### 8. A wash is held both ways, the selection and a hit alike
+
+A translucent wash under text — the selection, a search hit — is held
+legible by one rule (`themes::legible_wash`), which the selection's
+old one (step 28: stepped down until the text cleared) was a half of.
+Of every alpha from 0.05 to 0.90 and the wash's own, the one taken
+keeps the body text at 4.5:1 over it, is seen (`SEEN`) off the page,
+puts as many of the other inks at 2:1 over it as any does (each that
+had 2:1 on the page), and is nearest the wash's own — so a wash that
+clears is left exactly. Where none keeps the body and is seen, the most
+seen that keeps the body; where none keeps the body, the wash as given.
+
+A hit's wash is the warning's at 0.35 (`HIT_ALPHA`), held so for each
+look (`themes::legible_hit`, `Pal::hit`): faded on the dark variants,
+where the gold hid the body text (Ayu Mirage 0.20, Rosé Pine 0.22),
+strengthened on the light, where it was not seen (Dawn 0.48, Ayu Light
+0.55). The check measures the washes as held, the variants' as the
+editor would show them. After it, every dark variant clears every
+floor, as high contrast does.
+
+*Beat:* a hit colour per theme (a `hit` role) — every theme would have
+to be tuned by hand, and a user's accent or roles would undo it; the
+rule holds whatever the colours are, as the selection's always has.
 
 ## Built
 
@@ -235,6 +260,7 @@ runtime before the bundled plugins load (`scripting.rs`). Decision 6:
 `tokens.styles`, the rows' marks in `panes.rs`, `HighlightRun` in the
 Lua runtime. Decision 7: `theme_check.rs` (`run`, `report`,
 `Subject`), `:theme check` in `look.rs`, `kawoosh/lua/theme_lab.lua`.
+Decision 8: `themes::legible_wash`, `legible_hit`, `Pal::hit`.
 Tests:
 `themes.rs`'s units (every variant reads, the high-contrast floors,
 no green in Rosé Pine or high contrast, resolution), `tests/settings.rs`

@@ -2142,7 +2142,8 @@ then breadth.
     drawn in its own colours, over the `kawoosh.themes` door; a style
     per token beside its hue, `tokens.styles` over it; `:theme check`
     and `:theme lab` (`<leader>ol`) for theme work, every pair the
-    editor draws measured and drawn.~~ Built
+    editor draws measured and drawn; the selection's and a search hit's
+    washes held legible by one rule, both ways.~~ Built
     2026-09-26.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
