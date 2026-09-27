@@ -556,3 +556,32 @@ fn bracket_p_walks_the_last_put_through_the_memory() {
     d.keys(&mut app, "[p");
     assert_eq!(app.ed.message, "the last change was not a put");
 }
+
+/// A `g` or `z` after `v` or an operator is a sequence, with the bundled
+/// plugins loaded: the launcher binds bare letters in normal mode, gated
+/// on its empty query, and a sequence that fell through to normal mode
+/// found that one-key binding and asked the mode it started in for the
+/// longer ones — none there — so the `g` was dropped: `vgg`, `vgl`,
+/// `dgg`, `vgsa)` did one thing short, or typed.
+#[test]
+fn g_sequences_hold_in_visual_and_operator_pending_mode() {
+    let mut app = Kawoosh::new("t", "one\ntwo\nthree");
+    let mut d = Drive::new(900.0, 500.0);
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    d.keys(&mut app, "jjvggd");
+    assert_eq!(text(&app), "hree", "vgg");
+    d.keys(&mut app, "u");
+    d.keys(&mut app, "Gdgg");
+    assert_eq!(text(&app), "", "dgg");
+    d.keys(&mut app, "u");
+    d.keys(&mut app, "ggvgld");
+    assert_eq!(text(&app), "\ntwo\nthree", "vgl");
+    d.keys(&mut app, "u");
+    d.keys(&mut app, "ggviwgsa)");
+    assert_eq!(text(&app), "(one)\ntwo\nthree", "vgsa");
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Normal);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

@@ -2577,8 +2577,12 @@ impl Editor {
                 // A binding that cannot run here does not shadow the
                 // longer ones beneath it: the sequence stays open for
                 // them (`,` keeps the primary selection off a listing,
-                // and in one is the sort prefix, `,s`).
-                let deeper = self.keymap.has_deeper(lookup_mode, &self.pending);
+                // and in one is the sort prefix, `,s`). Where the
+                // sequence falls through, normal mode's longer ones
+                // count too: the launcher's bare `g`, gated off outside
+                // it, had hidden `gg` from visual mode.
+                let deeper = self.keymap.has_deeper(lookup_mode, &self.pending)
+                    || falls_through && self.keymap.has_deeper(Mode::Normal, &self.pending);
                 let mut picked = self.pick_binding(view, &bs).cloned();
                 if picked.is_err() && deeper {
                     return true;
