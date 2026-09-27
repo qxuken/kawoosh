@@ -631,6 +631,10 @@ pub struct Memory {
     /// Bumped whenever the moments change: what a snapshot of them is
     /// good for.
     pub version: u64,
+    /// The head was a secret, and it went — put once, or its time up —
+    /// with nothing taken since: `p` says so rather than putting the
+    /// text the secret had covered, which nobody asked for.
+    spent: bool,
 }
 
 impl Memory {
@@ -665,6 +669,7 @@ impl Memory {
     /// A moment taken: the head from now on.
     pub fn remember(&mut self, m: Moment) {
         self.version += 1;
+        self.spent = false;
         self.next_id += 1;
         if let Some(head) = self.moments.last_mut()
             && head.text == m.text
@@ -694,6 +699,7 @@ impl Memory {
             self.ids.push(id);
         }
         self.version += 1;
+        self.spent = false;
         true
     }
 
@@ -701,6 +707,9 @@ impl Memory {
     pub fn forget(&mut self, i: usize) -> bool {
         if i >= self.moments.len() {
             return false;
+        }
+        if i + 1 == self.moments.len() && self.moments[i].secret {
+            self.spent = true;
         }
         self.moments.remove(i);
         self.ids.remove(i);
@@ -717,6 +726,9 @@ impl Memory {
             .iter()
             .map(|m| !m.secret || m.at >= before)
             .collect();
+        if keep.last() == Some(&false) {
+            self.spent = true;
+        }
         let mut k = keep.iter();
         self.moments.retain(|_| *k.next().unwrap());
         let mut k = keep.iter();
@@ -726,6 +738,24 @@ impl Memory {
             self.version += 1;
         }
         gone
+    }
+
+    /// Whether the head was a secret that went, nothing taken since.
+    pub fn spent(&self) -> bool {
+        self.spent
+    }
+
+    /// Moment `i` made a secret from here on: put into a private buffer,
+    /// a text is one (docs/design/secrets.md Decision 2) — masked in a
+    /// list, never on the clipboard again, forgotten on the timer.
+    pub fn make_secret(&mut self, i: usize) {
+        if let Some(m) = self.moments.get_mut(i)
+            && !m.secret
+        {
+            m.secret = true;
+            m.at = Instant::now();
+            self.version += 1;
+        }
     }
 
     /// When the oldest secret was taken, if one is held: what the timer

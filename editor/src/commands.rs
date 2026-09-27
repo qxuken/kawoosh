@@ -1174,6 +1174,39 @@ fn case_turned(t: &str, op: &str) -> String {
     }
 }
 
+/// Whether there is a register to put, saying why not when there is
+/// none: nothing taken yet, or a secret that went, whose covering text
+/// is not what `p` was pressed for.
+fn has_register(ed: &mut Editor) -> bool {
+    if ed.memory.spent() {
+        ed.message =
+            "the register's secret is gone — put once, or its time was up: yank it again".into();
+        false
+    } else if ed.memory.head().is_none() {
+        ed.message = "nothing to paste".into();
+        false
+    } else {
+        true
+    }
+}
+
+/// Whether a put into buffer `id` spends the register's head
+/// (docs/design/secrets.md Decision 2, amended 2026-09-27): a secret
+/// leaving for a buffer that is not private is put once; inside a
+/// private buffer nothing leaves, so a put spends nothing there, and
+/// what is put becomes a secret if it was not one.
+fn spend_on_put(ed: &mut Editor, id: kawoosh_doc::BufferId) -> bool {
+    let n = ed.memory.len();
+    if n == 0 {
+        return false;
+    }
+    if ed.buffers[id].private {
+        ed.memory.make_secret(n - 1);
+        return false;
+    }
+    ed.memory.head().is_some_and(|m| m.secret)
+}
+
 /// `p` / `P` on a visual selection: every selection replaced with the
 /// register, COUNT times, and normal mode. `p` puts what it replaced in
 /// the register, as vim's does, so the next `p` swaps it back; `P`
@@ -1181,14 +1214,16 @@ fn case_turned(t: &str, op: &str) -> String {
 /// Lines put over characters go on lines of their own; characters over
 /// lines are a line.
 fn paste_over(ed: &mut Editor, ctx: &Ctx, keep: bool) {
+    if !has_register(ed) {
+        return;
+    }
+    let id = view(ed, ctx).buffer;
+    let once = spend_on_put(ed, id);
     let Some(head) = ed.memory.head() else {
-        ed.message = "nothing to paste".into();
         return;
     };
     let mut text = head.text.repeat(ctx.count.max(1));
     let from_lines = head.linewise;
-    let id = view(ed, ctx).buffer;
-    let once = head.secret || ed.buffers[id].private;
     let buf = &ed.buffers[id];
     let lines = ed.views[ctx.view].visual_linewise;
     let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
@@ -1308,16 +1343,16 @@ fn blank_lines(ed: &mut Editor, ctx: &Ctx, below: bool) {
 /// before; `walk` is a `[p` `]p` walk under way (its order and place),
 /// kept on the put it makes — none starts one at the register.
 fn put(ed: &mut Editor, view: ViewId, count: usize, after: bool, walk: Option<(Vec<u64>, usize)>) {
+    if !has_register(ed) {
+        return;
+    }
+    let id = ed.views[view].buffer;
+    let once = spend_on_put(ed, id);
     let Some(head) = ed.memory.head() else {
-        ed.message = "nothing to paste".into();
         return;
     };
     let mut text = head.text.repeat(count);
     let linewise = head.linewise;
-    let id = ed.views[view].buffer;
-    // A secret is put once and forgotten, and so is anything put into
-    // a private buffer (docs/design/secrets.md Decision 2).
-    let once = head.secret || ed.buffers[id].private;
     let before = ed.views[view].sels.clone();
     let version = ed.buffers[id].version();
     let sels = before.items.clone();

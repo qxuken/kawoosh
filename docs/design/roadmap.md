@@ -2305,10 +2305,14 @@ then breadth.
     inside `scrolloff`, `line blank above` / `below`; `Vx` took one
     character as `Vs` did. Five tests in `normal_mode.rs`, the bundled
     plugins loaded.
-46. **Secrets' put-once, again** ([secrets.md](secrets.md)): a secret is
+46. ~~**Secrets' put-once, again** ([secrets.md](secrets.md)): a secret is
     put once, but a yank that was never one is not forgotten for being
     put into a private buffer, and a spent entry says so rather than
-    putting the older one.
+    putting the older one.~~ Landed 2026-09-27, as secrets.md's
+    Decision 2 amended: a put into a private buffer spends nothing and
+    makes what it put a secret (`Memory::make_secret`); a secret put
+    elsewhere is once, and leaves the register spent (`Memory::spent`)
+    until something is taken.
 47. **The window uncovered** (kui): a redraw on `Occluded(false)` and a
     bounded retry after a skipped frame, the way a new window's first
     frame already has — an F-round, then kawoosh on it.
