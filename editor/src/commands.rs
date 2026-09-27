@@ -4078,6 +4078,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>sp", "commands"),
         ("<leader>so", "memory files"),
         ("<leader>sm", "messages"),
+        ("<leader>sh", "help"),
         ("<leader>ws", "session save"),
         ("<leader>wr", "session restore"),
         ("<leader>cc", "compile"),

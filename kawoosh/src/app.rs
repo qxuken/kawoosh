@@ -2112,6 +2112,7 @@ impl kui_native::App for Kawoosh {
     /// (`:q` saved it already when it got here).
     fn teardown(&mut self) {
         self.domains_teardown();
+        self.help_teardown();
         // The link's directory, made for this run: never the shipped
         // editor's, which is the binary's own.
         if let Some(dir) = self.editor_link_dir.take() {

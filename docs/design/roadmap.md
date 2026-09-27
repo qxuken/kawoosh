@@ -93,6 +93,29 @@ tests and 9 Lua acceptance scripts. What is left is step 35, a
 drawing, and each note's own "not built". The drawing came the same
 day and both bundles carry it, and the windows too, through kui.
 
+Steps 36–43 followed (2026-09-25–26), each merged to `main` as it was
+built: the project search over live multibuffers ([search.md](search.md),
+asked for by name), the outline and marks ([marks.md](marks.md)), the
+lists — diagnostics and references as multibuffers
+([lists.md](lists.md)) — the language servers' rules per language
+([lsp-rules.md](lsp-rules.md)), the themes registry
+([themes.md](themes.md)), compile commands deduced from the project
+([compile.md](compile.md)) and the fonts' pane ([fonts.md](fonts.md));
+step 38, folds, waits for use to ask. Then the todo's quirks from use
+(2026-09-27–28, below "From the todo, 2026-09-27"), steps 44–52 on one
+branch: the paste loop and the fallen-through `g`, the vim gaps, the
+secret's put-once, the window uncovered (kui F102), the markdown
+buffer's boxes and its rounded selection (kui F101), links
+([links.rs](../../kawoosh/src/links.rs): `gx` and ⌘-click on a path at
+its line or a URL), tab titles, helix's selections by a pattern
+([selections.md](selections.md)) and a disk-usage pane (`:du`); and
+beside them, kawoosh moved onto kui's DX round (its typed events,
+`testing::Drive`, `on_event_with`, `splitter`, a family by name).
+477 commits, 38 integration test files, 581 tests and 14 Lua
+acceptance scripts. Step 53, the docs — a README, `:help` and
+`:tutor` — followed the next day; what is left is each note's own
+"not built" and "Scheduled nowhere" below.
+
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
 `:dir refresh` / `<C-l>` reads again, `:dir PATH` / `:dir %` / `-` from
@@ -2409,8 +2432,19 @@ then breadth.
     Measured on `~/projects` (29,068 directories, 254,137 files, 73 GB):
     2.1 s warm, 3.2 cold, where `du -sk` took 3.5. Tests:
     `kawoosh/tests/du.rs`, `du` in `systems/src/du.rs`.
-53. **Docs**: "Where it stands" brought up to the list; then a README,
-    `:help` pages and a tutorial, before a release.
+53. ~~**Docs**: "Where it stands" brought up to the list; then a README,
+    `:help` pages and a tutorial, before a release.~~ Landed 2026-09-28:
+    "Where it stands" to step 52; a README; `:help [TOPIC]`
+    (`<leader>sh`, `kawoosh/src/help.rs`) over thirteen pages in
+    `kawoosh/help/`, written out at first use and opened read-only in
+    the markdown buffer, so `gx` follows their links, with `commands.md`
+    and `keys.md` written from the registry and the keymap as they run;
+    a topic is a page, a command, a key or a heading; `:tutor`, ten
+    lessons in a scratch. `kawoosh/tests/help.rs` opens them and checks
+    every link reaches a page and a heading. Writing them found `cw`
+    taking the space after a word (vim's keeps it), `:help` taken by
+    the commands picker as an alias, and a dozen doc strings behind the
+    code, each fixed.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),

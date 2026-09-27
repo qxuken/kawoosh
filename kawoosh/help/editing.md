@@ -1,0 +1,179 @@
+# Editing
+
+How text is edited: the modes, where kawoosh differs from vim, multiple
+selections, surround and align, repeating and macros, and where yanked
+text goes.
+
+## Modes
+
+| mode | enter with | what |
+|---|---|---|
+| normal | `<Esc>`, `<C-c>` | keys are commands |
+| insert | `i` `a` `I` `A` `o` `O`, `s` `S` `C`, `c` + motion | keys type text |
+| visual | `v` | motions extend the selection |
+| visual line | `V` | the same, by whole lines |
+| operator-pending | `d` `c` `y` `>` `<` `gu` `gU` `g~` `gsa` `ga` | waiting for a motion or a text object |
+
+An operator doubled works on lines, as in vim: `dd`, `yy`, `cc`, `>>`,
+`guu`, `gUU`, `g~~`, with a count for more lines. `<Esc>` in normal mode
+backs out of whatever is open, one step a press: a pending operator, then
+the extra cursors, then the search highlight.
+
+## What differs from vim
+
+Most of vim's letters mean what they always did. The exceptions:
+
+| keys | here |
+|---|---|
+| `U` | redo, like `<C-r>` |
+| `;` | repeats the last `f` `t` `F` `T` **across lines**, so `f=` then `;;;` walks every `=` in the file |
+| `,` | keeps the primary selection and drops the rest (there is no reverse `;`) |
+| `S` | changes the line, keeping its indent |
+| `s` `x` in `V` mode | change, delete the selected lines |
+| `zz` `zs` `ze` | place the focused column of a [strip](panes.md#the-scrolling-strip), not the cursor line |
+| `-` `_` | open the file's directory, the working directory, as a listing ([files](files.md)) |
+| `<CR>` | on a `path:line` in the text, opens it |
+| `m` `'` `` ` `` | marks as vim's, but a capital letter is the workspace's, across files; `]'` `['` walk the marked lines, `<leader>m` lists them |
+
+Missing on purpose: named registers (`"a`) — the [memory](memory.md) is
+what they were for — and visual block `<C-v>`, whose job `<C-j>` in
+visual mode does with carets (below).
+
+## Motions and text objects
+
+Beside vim's `hjkl`, `w` `b` `e` `ge`, `0` `^` `$`, `gg` `G`, `f` `t`,
+`%`, `n` `N` `*` and `/` `?`:
+
+| keys | what |
+|---|---|
+| `gh` `gl` | the line's first non-blank, its end (helix) |
+| `W` `B` `E` `gE` | WORDs: runs that only whitespace ends, like `a.b(c)` or a path |
+| `}` `{` | the blank line after, before the paragraph — also after an operator (`d}`) |
+| `H` `M` `L` | the pane's top, middle, bottom line |
+| `<C-d>` `<C-u>` `<C-f>` `<C-b>` | half a screen, a screen |
+| `]<Space>` `[<Space>` | add an empty line below, above, the caret staying |
+| `<C-a>` `<C-x>` | add to, subtract from the number under or after the caret, per selection |
+
+Text objects follow `i` (inside) or `a` (around): `w` word, `W` WORD,
+`p` paragraph, `(` `)` or `b`, `[` `]`, `{` `}` or `B`, `<` `>`, and the
+quotes `"` `'` `` ` ``. So `ciw`, `da(`, `yi"`, `vip`. When the object is
+not there, the operator does nothing — nothing is yanked over the
+register.
+
+`:s/PAT/REP/g` replaces on the lines every selection touches (the
+caret's line, with one caret), `:%s` in the whole file, `:N,Ms` on lines N
+to M. Searching is covered in [search](search.md).
+
+## Case
+
+| keys | what |
+|---|---|
+| `gu` `gU` `g~` + motion | lower-case, upper-case, flip the case of what the motion covers |
+| `guu` `gUU` `g~~` | the same for the line |
+| `~` | flip the case of COUNT characters and step past them |
+| `u` `U` `~` in visual mode | lower, upper, flip the selection (`u` is not undo there) |
+
+## Multiple selections
+
+The editor always holds a set of selections; one cursor is a set of one.
+Every command acts on each selection, so inserting, deleting, operators,
+`<C-a>` and surround all work at every caret at once. The rule of thumb:
+**Ctrl counts them, Alt moves one.**
+
+| keys | what |
+|---|---|
+| `<C-j>` `<C-k>` | add a caret on the line below, above (also `<C-Down>` `<C-Up>`) |
+| `<C-j>` `<C-k>` in visual mode | a caret on every selected line, at the same column |
+| `<C-n>` | select the word under the caret; again, the next match too (`⌘d` on macOS) |
+| `<C-S-n>` | select every match at once (`⌘⇧L`) |
+| `,` | keep only the primary selection |
+| `(` `)` | make the previous, next selection the primary one |
+| `<Esc>` | in normal mode, drop the extra carets |
+| `<A-j>` `<A-k>` | move each selection's lines down, up — in insert mode too |
+| `<A-h>` `<A-l>` | on lines: dedent, indent, keeping the selection; in `v` mode: drag the text a column left, right |
+| `<A-o>` `<A-i>` | select the syntax node under the caret, then the one around it; back in |
+| `<A-n>` `<A-p>` | the next, previous sibling node |
+| `⌘a` | select the whole buffer |
+| `o` in visual mode | swap the selection's ends |
+
+The primary selection is drawn solid, the others washed. `<C-n>` also
+sets the search, so `n` carries on from wherever the caret is.
+`V<A-l><A-l><A-j>` indents a block twice and moves it a line down in one
+gesture.
+
+### Selecting inside selections
+
+Helix's pattern tools live under `<leader>v` in visual mode. Each opens a
+prompt that previews the result as you type; `<Esc>` puts the selections
+back.
+
+| keys | what |
+|---|---|
+| `<leader>vs` | the matches of a pattern inside every selection become the selections (`:select within`) |
+| `<leader>vS` | split every selection on a pattern (`:select split`) |
+| `<leader>vk` | keep the selections that match; `!pattern` keeps those that do not (`:select keep`) |
+| `<leader>vl` | every line of every selection its own selection (`:select lines`) |
+| `<leader>v,` | drop the primary selection, from normal mode too (`:select drop primary`) |
+
+`⌘a<leader>vs` then a pattern selects every match in the file;
+`vip<leader>vs` every match in the paragraph.
+
+## Putting over a selection
+
+In visual mode `p` replaces the selection with the register and puts
+what it replaced in the register, so a second `p` elsewhere swaps them
+back. `P` keeps the register, to paste one text over many places.
+
+## Surround and align
+
+| keys | what |
+|---|---|
+| `gsa` + motion + char | wrap what the motion covers: `gsaiw)` wraps a word in `()` |
+| `gsa` + char in visual | wrap the selection: `viwgsa"` |
+| `gsd` + char | take the pair off from around the caret: `gsd"` |
+| `gsr` + char + char | swap one pair for another: `gsr)]` |
+| `ga` + motion + char | line the lines up on their first char: `gaip=`, `Vjga:` |
+
+Either bracket of a pair names it (`(` or `)`), `b` and `B` are round and
+curly, and any other character wraps with itself on both sides.
+
+## Auto-pairs
+
+Typing an opening bracket or quote types its closer with the caret
+between; typing the closer steps over it; `<BS>` between a pair deletes
+both; `<CR>` between brackets opens the block. Quotes pair only where a
+quote can start. It works at every caret. Set `pairs.enabled = false` to
+turn it off, or change the pairs per language with `pairs.rules` — see
+[the settings](settings.md).
+
+## Repeat and macros
+
+| keys | what |
+|---|---|
+| `.` | the last change again, on the selections as they are now; a count replaces its count |
+| `q` + letter … `q` | record a macro into that register; a capital letter appends to it |
+| `@` + letter | play it, COUNT times |
+| `@@` | the macro played last |
+| `@:` | the last command line again |
+
+While recording, the status line says `REC @a`. A macro records commands,
+not raw keys, so it keeps working after you remap a key, and it runs to
+the end rather than stopping on a failed motion: `100@a` is how to run
+one over a whole file. Search and `:` lines are recorded too.
+
+## Yanks, puts and the memory
+
+`y`, `d` and `c` put the text in the register and on the system clipboard,
+and text copied in another program becomes the register when you come
+back to the window — so `p` pastes it. In insert mode `⌘v` (`<C-S-v>`)
+pastes the clipboard; `<C-S-u>` deletes the whole line into the register
+without leaving insert mode.
+
+Every yank and delete is also kept in the **memory**, newest first:
+
+| keys | what |
+|---|---|
+| `[p` `]p` | right after a put: swap it for the older, newer text in the memory |
+| `<leader>p` | the memory pane: every text, to put again (`:memory`) |
+
+Texts survive a restart for a few days. See [memory](memory.md).

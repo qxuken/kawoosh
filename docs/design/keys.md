@@ -373,6 +373,7 @@ objects, or any other character on both sides.
 | `<leader>so` | the workspace's files attended before, ranked by the memory (the picker's `recent`) |
 | `<leader>sr` | the last picker again, its query and cursor as they were |
 | `<leader>sm` | the messages |
+| `<leader>sh` | the help (`:help [TOPIC]`: a page, a command, a key), read-only, `gx` following its links; `:tutor` a tutorial to try the keys on |
 | `<leader>sw` | the workspaces worked in before (`picker workspaces`, a launcher section too): a pick moves the tab there and opens the file last attended (workspaces.md Decision 11) |
 | `<leader>sd` `<C-S-z>` | the directory jumps (`picker dirs`): zoxide's directories by frecency (the memory's without it); `<CR>` makes one the working directory, `<C-o>` lists it in `dir` and leaves the working directory, `<C-v>` `<C-s>` `<C-t>` list it in a split or a tab; a shell asks the same picker with `kawoosh pick dirs` |
 | `<leader>sl` | the memory's ring (`:memory recent`): where was I — every subject attended in this workspace, in order, newest first |
@@ -480,11 +481,9 @@ so that nothing else takes the key meanwhile.
 |---|---|
 | `gsf` `gsh` | find, highlight a surrounding pair |
 | `<leader>E` | an explorer |
-| `<leader>sh` | help |
 | `<leader>R` | rename the file |
 | `<leader>h*` `<leader>bg` `<leader>bl` `<leader>wd` `<leader>wc` | hunks, git, log, diff, commit |
 | `<leader>G*` | the debugger |
-| `<C-w>H` `<C-w>L` | move a column in a scrolling tab ([scrolling-tab.md](scrolling-tab.md)); unbound in a tree |
 
 ## Not done, deliberately
 

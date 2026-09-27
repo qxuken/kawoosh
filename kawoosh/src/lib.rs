@@ -26,6 +26,7 @@ pub mod du;
 pub mod fonts;
 pub mod graph;
 pub mod harness;
+pub mod help;
 pub mod history;
 pub mod inspector;
 pub mod languages;
