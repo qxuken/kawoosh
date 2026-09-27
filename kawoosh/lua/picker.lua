@@ -106,13 +106,11 @@ end
 -- A path for a row: under the working directory, relative to it; under
 -- home, with `~`; else whole.
 local function short_path(path)
-  local cwd = fs.cwd()
-  local sep = fs.join("a", "b"):sub(2, 2)
-  if path:sub(1, #cwd + 1) == cwd .. sep then return path:sub(#cwd + 2) end
-  local home = fs.home()
-  if home and path:sub(1, #home + 1) == home .. sep then return "~" .. path:sub(#home + 1) end
-  return path
+  local rel = fs.relative(path)
+  if rel and rel ~= "." then return rel end
+  return fs.short(path)
 end
+picker.short_path = short_path
 
 -- ------------------------------------------------------------- ranking
 
@@ -1546,10 +1544,10 @@ end
 local function workspace_items()
   local by, order = {}, {}
   local here = fs.cwd()
-  local sep = fs.join("a", "b"):sub(2, 2)
   for _, r in ipairs(kawoosh.memory { kind = "file", limit = 2000 }) do
     local ws = r.workspace
-    if ws and ws ~= "" and here ~= ws and here:sub(1, #ws + 1) ~= ws .. sep then
+    -- Not the one in front, nor one holding it.
+    if ws and ws ~= "" and not fs.relative(here, ws) then
       local w = by[ws]
       if not w then
         w = { ws = ws, last = -1 }
@@ -1564,8 +1562,8 @@ local function workspace_items()
   table.sort(order, function(a, b) return a.last > b.last end)
   local items = {}
   for _, w in ipairs(order) do
-    local name = w.ws:match("[^/\\]+$") or w.ws
-    local file = w.path and w.path:sub(1, #w.ws + 1) == w.ws .. sep and w.path:sub(#w.ws + 2) or w.path
+    local name = fs.basename(w.ws) or w.ws
+    local file = w.path and (fs.relative(w.path, w.ws) or w.path)
     items[#items + 1] = { text = name, sub = short_path(w.ws) .. (file and ("  " .. file) or ""),
                           ws = w.ws, file = w.path, at = w.line }
   end
@@ -1581,7 +1579,8 @@ picker.source("workspaces", {
     if item.file and fs.exists(item.file) then
       kawoosh.open(item.file, { line = item.at })
     else
-      kawoosh.cmd("dir " .. item.ws)
+      -- The path as it is, not through a command line's words.
+      kawoosh.dir.open(item.ws)
     end
   end,
   empty = "no other workspace in the memory",
@@ -1721,10 +1720,7 @@ local function symbol_rows(items, root)
     local where = #path > 0 and table.concat(path, " › ") or (s.container or "")
     path[depth + 1] = s.name
     if root and s.path then
-      -- Under the root as `fs.join` spells it: `\` here on Windows, `/`
-      -- on a host.
-      local under = fs.join(root, "x"):sub(1, -2)
-      local rel = s.path:sub(1, #under) == under and s.path:sub(#under + 1) or s.path
+      local rel = fs.relative(s.path, root) or s.path
       where = (where ~= "" and (where .. " · ") or "") .. rel .. ":" .. s.line
     end
     -- A short detail rides faint beside the kind: a server's signature,

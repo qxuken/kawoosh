@@ -47,11 +47,17 @@ local function vault_command()
   return (type(c) == "string" and c ~= "") and c or "ansible-vault"
 end
 
+-- `path` as the tool is given it, run in `cwd`: from `cwd` when under
+-- it — on a host, the host's own spelling, not `box:/…` — else whole.
+local function arg(path, cwd)
+  return quote(fs.relative(path, cwd) or path)
+end
+
 -- The vault's password file flag, when the settings name one.
-local function password_flag()
+local function password_flag(cwd)
   local f = kawoosh.opt("secrets.vault_password_file")
   if type(f) == "string" and f ~= "" then
-    return " --vault-password-file " .. quote(fs.expand(f))
+    return " --vault-password-file " .. arg(fs.expand(f), cwd)
   end
   return ""
 end
@@ -132,8 +138,9 @@ local function write_back(path)
   return function(lines)
     local text = table.concat(lines, "\n") .. "\n"
     local out = {}
-    kawoosh.spawn(vault_command() .. " encrypt" .. password_flag() .. " --output " .. quote(path) .. " -", {
-      cwd = M.config_dir(path),
+    local cwd = M.config_dir(path)
+    kawoosh.spawn(vault_command() .. " encrypt" .. password_flag(cwd) .. " --output " .. arg(path, cwd) .. " -", {
+      cwd = cwd,
       stdin = text,
       on_lines = function(ls) for _, l in ipairs(ls) do out[#out + 1] = l end end,
       on_exit = function(code)
@@ -160,8 +167,9 @@ function M.open_vault(path)
   kawoosh.buf.mask_with("vault", name)
   kawoosh.echo("decrypting " .. path .. "…")
   local lines, err = {}, {}
-  kawoosh.spawn(vault_command() .. " view" .. password_flag() .. " " .. quote(path), {
-    cwd = M.config_dir(path),
+  local cwd = M.config_dir(path)
+  kawoosh.spawn(vault_command() .. " view" .. password_flag(cwd) .. " " .. arg(path, cwd), {
+    cwd = cwd,
     on_lines = function(ls) for _, l in ipairs(ls) do lines[#lines + 1] = l end end,
     on_exit = function(code)
       if code ~= 0 then

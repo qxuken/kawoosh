@@ -711,18 +711,14 @@ impl Kawoosh {
         rows.into_iter()
             .map(|row| {
                 let label = match row.key.kind.as_str() {
-                    "file" => Path::new(&row.key.subject)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
+                    "file" => kawoosh_systems::fs::basename(Path::new(&row.key.subject))
                         .unwrap_or_else(|| row.key.subject.clone()),
                     "text" => row.text_head.clone().unwrap_or_default(),
                     // A mark: `name:line` (its letter is in the kind's
                     // column, its line's text after).
                     "mark" => crate::marks::Record::from_meta(&row.meta)
                         .map(|r| {
-                            let name = Path::new(&r.path)
-                                .file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
+                            let name = kawoosh_systems::fs::basename(Path::new(&r.path))
                                 .unwrap_or_default();
                             format!("{name}:{}", r.line + 1)
                         })
@@ -735,9 +731,7 @@ impl Kawoosh {
                             .rsplit_once(':')
                             .filter(|(_, l)| l.parse::<usize>().is_ok())
                             .unwrap_or((row.key.subject.as_str(), ""));
-                        let name = Path::new(p)
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
+                        let name = kawoosh_systems::fs::basename(Path::new(p))
                             .unwrap_or_else(|| p.to_string());
                         if l.is_empty() {
                             name
@@ -1622,9 +1616,7 @@ impl Kawoosh {
                                     });
                                     ui.with(tm.rest(), |ui| {
                                         let label = if rr.key.kind == "file" {
-                                            Path::new(&rr.key.subject)
-                                                .file_name()
-                                                .map(|n| n.to_string_lossy().into_owned())
+                                            kawoosh_systems::fs::basename(Path::new(&rr.key.subject))
                                                 .unwrap_or_else(|| rr.key.subject.clone())
                                         } else {
                                             rr.key.subject.clone()
@@ -1800,8 +1792,8 @@ enum Read {
 /// The file's text for a compare, if it is there and not past twice
 /// the draft cap.
 fn read_disk(path: &Path) -> Read {
-    match std::fs::metadata(path) {
-        Ok(m) if m.len() as usize > 2 * MAX_TEXT => Read::TooBig,
+    match kawoosh_systems::fs::stat(path) {
+        Ok(s) if s.size as usize > 2 * MAX_TEXT => Read::TooBig,
         Ok(_) => match kawoosh_doc::Buffer::from_file(path) {
             Ok(b) => Read::Text(b.text_root()),
             Err(_) => Read::Gone,

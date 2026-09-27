@@ -67,14 +67,8 @@ local TITLE_H = 22
 -- hits, the rows drawn (a header, or a hit), the cursor and the window.
 local L = nil
 
-local function short_path(path)
-  local cwd = fs.cwd()
-  local sep = fs.join("a", "b"):sub(2, 2)
-  if path:sub(1, #cwd + 1) == cwd .. sep then return path:sub(#cwd + 2) end
-  local home = fs.home()
-  if home and path:sub(1, #home + 1) == home .. sep then return "~" .. path:sub(#home + 1) end
-  return path
-end
+-- A path for a row, as the picker writes one.
+local short_path = picker.short_path
 
 -- ------------------------------------------------------------ sections
 

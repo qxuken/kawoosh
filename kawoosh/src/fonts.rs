@@ -201,11 +201,25 @@ fn font_files(dir: &Path) -> Vec<PathBuf> {
 pub fn load_shipped(core: &mut kui_native::Core, dir: &Path) -> HashSet<String> {
     let mut shipped = HashSet::new();
     let files = font_files(dir);
+    // A checkout Git LFS has not filled holds pointers where the faces
+    // go: not handed to fontdb, which would warn of each, and said once
+    // for them all.
+    let mut pointers = 0;
     for p in &files {
+        if lfs_pointer(p) {
+            pointers += 1;
+            continue;
+        }
         match core.load_font_file(p.clone()) {
             Some(id) => shipped.extend(core.font_family(id).map(str::to_string)),
             None => log::warn!("fonts: no usable face in {}", p.display()),
         }
+    }
+    if pointers > 0 {
+        log::warn!(
+            "fonts: {pointers} shipped font files in {} are Git LFS pointers; `git lfs pull` fetches them",
+            dir.display()
+        );
     }
     // A startup fact, not news: a trace.
     log::trace!(
@@ -215,6 +229,17 @@ pub fn load_shipped(core: &mut kui_native::Core, dir: &Path) -> HashSet<String> 
         dir.display()
     );
     shipped
+}
+
+/// Whether `path` is a Git LFS pointer — the text LFS leaves in a
+/// checkout until the file is pulled — rather than the file.
+fn lfs_pointer(path: &Path) -> bool {
+    use std::io::Read;
+    const HEAD: &[u8] = b"version https://git-lfs.github.com/spec/";
+    let mut head = [0u8; HEAD.len()];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .is_ok_and(|()| head == HEAD)
 }
 
 fn walk(dir: &Path, f: &mut dyn FnMut(&Path, bool)) {
@@ -601,7 +626,7 @@ pub(crate) fn commands() -> Vec<crate::commands::ShellCommand> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Family, Origin, order};
+    use super::{Family, Origin, lfs_pointer, order};
 
     fn fam(name: &str, origin: Origin) -> Family {
         Family {
@@ -639,5 +664,23 @@ mod tests {
                 "Monaco",
             ]
         );
+    }
+
+    #[test]
+    fn a_file_lfs_has_not_filled_is_told_from_a_face() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-lfs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pointer = dir.join("Pointer.ttf");
+        std::fs::write(
+            &pointer,
+            "version https://git-lfs.github.com/spec/v1\noid sha256:58197c5c\nsize 4\n",
+        )
+        .unwrap();
+        let face = dir.join("Face.ttf");
+        std::fs::write(&face, b"\0\x01\0\0").unwrap();
+        assert!(lfs_pointer(&pointer));
+        assert!(!lfs_pointer(&face), "a face, or too short to be a pointer");
+        assert!(!lfs_pointer(&dir.join("gone.ttf")));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -197,10 +197,11 @@ impl Kawoosh {
                 let modified = ps
                     .iter()
                     .any(|p| matches!(self.view_of(*p), Some(v) if self.ed.buffer_of(v).modified));
-                let name = match tab.cwd.as_ref().unwrap_or(&self.cwd).file_name() {
-                    Some(d) if show_dir => format!("{} · {name}", d.to_string_lossy()),
-                    _ => name,
-                };
+                let name =
+                    match kawoosh_systems::fs::basename(tab.cwd.as_ref().unwrap_or(&self.cwd)) {
+                        Some(d) if show_dir => format!("{d} · {name}"),
+                        _ => name,
+                    };
                 (name, modified, tab.bell)
             })
             .collect();

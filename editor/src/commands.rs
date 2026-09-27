@@ -1004,7 +1004,8 @@ pub(crate) fn save_beside(
         let (fs, p) = host?;
         let mut bytes = Vec::with_capacity(buf.len());
         buf.write_to(&mut bytes)?;
-        if let Some(dir) = p.parent()
+        // The host's path, cut on `/` alone: a `\` there is a name's.
+        if let Some(dir) = kawoosh_doc::paths::host_parent(&p)
             && !dir.as_os_str().is_empty()
             && fs.stat(dir).is_err()
         {
@@ -1047,8 +1048,7 @@ fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
     let id = view(ed, ctx).buffer;
     if let Some(p) = ctx.args.first() {
         ed.buffers[id].path = Some(std::path::PathBuf::from(p));
-        ed.buffers[id].name = std::path::Path::new(p)
-            .file_name()
+        ed.buffers[id].name = kawoosh_doc::paths::file_name(std::path::Path::new(p))
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| p.clone());
     }

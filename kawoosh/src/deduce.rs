@@ -226,7 +226,7 @@ pub fn deduce(start: &Path, markers: &[String]) -> Project {
 /// The directories looked in, nearest first.
 fn walked(start: &Path) -> Vec<PathBuf> {
     let repo = start.ancestors().find(|d| d.join(".git").exists());
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = kawoosh_systems::fs::home();
     let mut out = Vec::new();
     for d in start.ancestors() {
         if repo.is_none() && home.as_deref() == Some(d) {
@@ -245,8 +245,8 @@ fn commands_of(f: &Found, dirs: &[PathBuf]) -> Vec<Deduced> {
     let row = |cmd: String, why: &str| Deduced::new(cmd, f, why);
     match f.kind {
         Kind::Cargo => {
-            let bin = f.dir.join("src/main.rs").is_file()
-                || f.dir.join("src/bin").is_dir()
+            let bin = f.dir.join("src").join("main.rs").is_file()
+                || f.dir.join("src").join("bin").is_dir()
                 || text.contains("[[bin]]");
             let mut out = vec![
                 row("cargo check".into(), "type-check without building"),
@@ -287,7 +287,7 @@ fn commands_of(f: &Found, dirs: &[PathBuf]) -> Vec<Deduced> {
             out
         }
         Kind::CMake => {
-            if f.dir.join("build/CMakeCache.txt").is_file() {
+            if f.dir.join("build").join("CMakeCache.txt").is_file() {
                 vec![
                     row("cmake --build build".into(), ""),
                     row("ctest --test-dir build".into(), ""),

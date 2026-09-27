@@ -6,7 +6,7 @@ os.remove(dir)
 dir = dir .. "-enter"
 kawoosh.fs.create(dir, true)
 for _, n in ipairs { "a.txt", "b.txt" } do
-  local f = assert(io.open(dir .. "/" .. n, "w")) f:write(n) f:close()
+  local f = assert(io.open(kawoosh.fs.join(dir, n), "w")) f:write(n) f:close()
 end
 
 local function listings()

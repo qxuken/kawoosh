@@ -845,10 +845,14 @@ fn on_host(ev: Event, d: &str) -> Event {
 /// behind a `/`, upper-cased, the separators forward — as every server
 /// reads it.
 fn uri_of(path: &Path) -> String {
-    // A host's path is sent as the host's own: the server runs there.
-    let path = crate::fs::domain_of(path).map_or(path, |(_, rest)| rest);
+    // A host's path is sent as the host's own: the server runs there,
+    // and a `\` there is a name's character, not a separator.
+    let (path, host) = match crate::fs::domain_of(path) {
+        Some((_, rest)) => (rest, true),
+        None => (path, false),
+    };
     let s = path.display().to_string();
-    let s = if cfg!(windows) {
+    let s = if cfg!(windows) && !host {
         upper_drive(s.replace('\\', "/"))
     } else {
         s
@@ -868,14 +872,26 @@ fn uri_of(path: &Path) -> String {
     out
 }
 
+/// The path a `file:` URI names. On Windows a local one has a drive
+/// (`/C:/a/b` is `C:\a\b`) or a server (`file://srv/share/x` and
+/// `file:////srv/share/x` are `\\srv\share\x`); a path from the root
+/// with neither is a host's — a server on a domain answers with its own
+/// — and keeps its `/` for [`on_host`] to put on the domain.
 fn path_of_uri(uri: &str) -> Option<PathBuf> {
     let rest = percent_decode(uri.strip_prefix("file://")?);
     if cfg!(windows) {
-        // `/C:/a/b` is `C:\a\b`.
         let b = rest.as_bytes();
         let drive = b.len() > 2 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':';
-        let rest = if drive { &rest[1..] } else { &rest[..] };
-        return Some(PathBuf::from(upper_drive(rest.replace('/', "\\"))));
+        if drive {
+            return Some(PathBuf::from(upper_drive(rest[1..].replace('/', "\\"))));
+        }
+        let unc = match rest.strip_prefix("//") {
+            Some(unc) => Some(unc),
+            None => (!rest.starts_with('/')).then_some(rest.as_str()),
+        };
+        if let Some(unc) = unc {
+            return Some(PathBuf::from(format!(r"\\{}", unc.replace('/', "\\"))));
+        }
     }
     Some(PathBuf::from(rest))
 }
@@ -1369,7 +1385,7 @@ impl Pool {
             "params": {
                 "processId": std::process::id(),
                 "rootUri": uri_of(&root),
-                "workspaceFolders": [{ "uri": uri_of(&root), "name": root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default() }],
+                "workspaceFolders": [{ "uri": uri_of(&root), "name": crate::fs::basename(&root).unwrap_or_default() }],
                 "capabilities": {
                     "textDocument": {
                         "publishDiagnostics": { "relatedInformation": false },
@@ -2725,7 +2741,30 @@ mod tests {
                 canonical_uri("file:///c%3A/work/a%20b/main.rs"),
                 "file:///C:/work/a%20b/main.rs"
             );
+            let unc = PathBuf::from(r"\\srv\share\x.rs");
+            assert_eq!(path_of_uri("file://srv/share/x.rs"), Some(unc.clone()));
+            assert_eq!(path_of_uri("file:////srv/share/x.rs"), Some(unc));
         }
+        // A server on a host answers with the host's paths: `/` kept on
+        // every platform, and put on the domain whole.
+        let ev = on_host(
+            Event::Definition {
+                path: path_of_uri("file:///home/me/x.rs").unwrap(),
+                line: 0,
+                character: 0,
+            },
+            "box",
+        );
+        let Event::Definition { path, .. } = ev else {
+            unreachable!()
+        };
+        assert_eq!(path.display().to_string(), "box:/home/me/x.rs");
+        assert_eq!(crate::fs::domain_of(&path).map(|(d, _)| d), Some("box"));
+        assert_eq!(
+            uri_of(Path::new(r"box:/home/me/a\b.rs")),
+            "file:///home/me/a%5Cb.rs",
+            "a host's `\\` is a name's"
+        );
         let plain = json!([{ "uri": "file:///x/y.rs", "range": { "start": { "line": 3, "character": 7 }, "end": { "line": 3, "character": 9 } } }]);
         assert_eq!(
             first_location(Some(&plain)),

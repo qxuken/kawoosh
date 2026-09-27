@@ -4,16 +4,16 @@
 local dir = os.tmpname()
 os.remove(dir)
 dir = dir .. "-picker"
-local function write(p, s) kawoosh.fs.write(p, s) end
-kawoosh.fs.create(dir .. "/.git", true)
+local function write(p, s) kawoosh.fs.write(kawoosh.fs.join(dir, p), s) end
+kawoosh.fs.create(kawoosh.fs.join(dir, ".git"), true)
 -- A path as the platform writes it: `src/x`, with a backslash on Windows.
 local sep = kawoosh.fs.join("a", "b"):sub(2, 2)
 local function native(p) return (p:gsub("/", sep)) end
-write(dir .. "/src/main.rs", "fn main() {}\nfn helper() {}\n")
-write(dir .. "/src/lib.rs", "pub fn lib() {}\n")
-write(dir .. "/README.md", "# notes\nalpha\nbeta\n")
-write(dir .. "/target/out.o", "x")
-write(dir .. "/.gitignore", "target/\n")
+write("src/main.rs", "fn main() {}\nfn helper() {}\n")
+write("src/lib.rs", "pub fn lib() {}\n")
+write("README.md", "# notes\nalpha\nbeta\n")
+write("target/out.o", "x")
+write(".gitignore", "target/\n")
 
 kawoosh.cmd("cd " .. dir)
 kawoosh.cmd("e README.md")
@@ -42,4 +42,6 @@ local path = kawoosh.buf.path() or ""
 local tail = native("-picker/src/lib.rs")
 kawoosh.test.eq(path:sub(-#tail), tail, "the pick is open: " .. path)
 kawoosh.test.eq(kawoosh.buf.line(1), "pub fn lib() {}")
-kawoosh.fs.remove(dir)
+-- `pcall`: a language server started on `lib.rs` holds the directory as
+-- its cwd, and Windows will not remove it then.
+pcall(kawoosh.fs.remove, dir)

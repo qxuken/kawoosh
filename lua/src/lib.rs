@@ -1042,8 +1042,8 @@ impl Runtime {
                 t.set("dir", kawoosh_systems::fs::display(dir))?;
                 t.set(
                     "root",
-                    dir.parent()
-                        .map(kawoosh_systems::fs::display)
+                    kawoosh_systems::fs::parent(dir)
+                        .map(|p| kawoosh_systems::fs::display(&p))
                         .unwrap_or_default(),
                 )?;
                 k.set("project", t)
@@ -1806,7 +1806,10 @@ impl Runtime {
                 let files = lua.create_table()?;
                 for (i, f) in found.files.iter().enumerate() {
                     let ft = lua.create_table()?;
-                    ft.set("path", root.join(&f.path).to_string_lossy().into_owned())?;
+                    ft.set(
+                        "path",
+                        kawoosh_systems::fs::display(&kawoosh_systems::fs::join(root, &f.path)),
+                    )?;
                     ft.set("rel", f.path.to_string_lossy().into_owned())?;
                     let lines = lua.create_table()?;
                     for (j, l) in f.lines.iter().enumerate() {
@@ -2937,15 +2940,22 @@ fn seed(
                 _ => 4,
             };
             // Under the root as spelled, else as the disk resolves both —
-            // `/tmp/x` is `/private/tmp/x`, and a server may say either.
-            let resolved = root.as_ref().and_then(|r| r.canonicalize().ok());
+            // `/tmp/x` is `/private/tmp/x`, and a server may say either; a
+            // host's only as spelled, this disk knowing nothing of it.
+            let canon = |p: &std::path::Path| {
+                kfs::domain_of(p)
+                    .is_none()
+                    .then(|| p.canonicalize().ok())
+                    .flatten()
+            };
+            let resolved = root.as_deref().and_then(canon);
             let under = |p: &std::path::Path| match &root {
                 None => true,
                 Some(r) => {
-                    p.starts_with(r)
+                    kfs::relative(p, r).is_some()
                         || resolved
                             .as_ref()
-                            .is_some_and(|rr| p.canonicalize().is_ok_and(|pp| pp.starts_with(rr)))
+                            .is_some_and(|rr| canon(p).is_some_and(|pp| pp.starts_with(rr)))
                 }
             };
             let t = lua.create_table()?;
@@ -3494,9 +3504,10 @@ fn seed(
     buf.set(
         "retarget",
         lua.create_function(move |_, (from, to): (String, String)| {
+            // Expanded as every `fs` path is: a buffer's path is absolute.
             qq.borrow_mut().push(Msg::Retarget {
-                from: PathBuf::from(from),
-                to: PathBuf::from(to),
+                from: expand(&from),
+                to: expand(&to),
             });
             Ok(())
         })?,
@@ -4108,6 +4119,24 @@ fn seed(
         "basename",
         lua.create_function(|_, p: String| Ok(kfs::basename(std::path::Path::new(&p))))?,
     )?;
+    // `fs.relative(path, base)`: `path` from `base` (the working
+    // directory when none) — `.` for `base` itself — or nil when it is
+    // not under it; a host's cut on `/`, as its paths are
+    // (`kawoosh_doc::paths::relative`). What a plugin would otherwise
+    // do with `base .. sep` and `sub`.
+    fs.set(
+        "relative",
+        lua.create_function(|_, (p, base): (String, Option<String>)| {
+            let base = base.map_or_else(editor_cwd, |b| expand(&b));
+            Ok(kfs::relative(&expand(&p), &base).map(|r| kfs::display(&r)))
+        })?,
+    )?;
+    // `fs.short(path)`: the path with the home written as `~`, for a
+    // row or a title.
+    fs.set(
+        "short",
+        lua.create_function(|_, p: String| Ok(kfs::abbreviate_home(&expand(&p))))?,
+    )?;
     // `fs.form(path, form)`: the path as `path copy` would copy it —
     // `relative` (to the working directory), `absolute`, `dir`, `dir
     // absolute`, `name`, `stem`; nil and the reason for another form.
@@ -4259,7 +4288,7 @@ fn seed(
             }
             let root = match t.get::<Option<String>>("root")? {
                 Some(r) => expand(&r),
-                None => kawoosh_systems::fs::cwd(),
+                None => editor_cwd(),
             };
             let token = {
                 let mut j = jj.borrow_mut();
@@ -4461,10 +4490,19 @@ fn seed(
         "head",
         lua.create_function(|_, (p, n): (String, usize)| {
             use std::io::Read;
-            let mut out = Vec::with_capacity(n.min(1 << 16));
-            std::fs::File::open(expand(&p))
-                .and_then(|f| f.take(n as u64).read_to_end(&mut out))
-                .map_err(io_err)?;
+            let path = expand(&p);
+            let out = if kfs::domain_of(&path).is_some() {
+                // A host's whole, through its domain, and cut here.
+                let mut b = kfs::read_bytes(&path).map_err(io_err)?;
+                b.truncate(n);
+                b
+            } else {
+                let mut out = Vec::with_capacity(n.min(1 << 16));
+                std::fs::File::open(&path)
+                    .and_then(|f| f.take(n as u64).read_to_end(&mut out))
+                    .map_err(io_err)?;
+                out
+            };
             Ok(String::from_utf8_lossy(&out).into_owned())
         })?,
     )?;
@@ -5076,6 +5114,12 @@ mod tests {
             assert(fs.parent("/") == nil)
             assert(fs.basename(fs.join(dir, "a.txt")) == "a.txt")
             assert(fs.basename(fs.join(dir, "sub/")) == "sub")
+            assert(fs.relative(fs.join(dir, "sub/f.txt"), dir) == fs.join("sub", "f.txt"))
+            assert(fs.relative(dir, dir) == ".")
+            assert(fs.relative(dir .. "x", dir) == nil, "a component, not a prefix")
+            assert(fs.relative("box:/w/src/a", "box:/w") == "src/a", "a host's on `/`")
+            assert(fs.short(fs.join({home:?}, "p")) == fs.join("~", "p"), fs.short(fs.join({home:?}, "p")))
+            assert(fs.short(dir) == dir or fs.short(dir):sub(1, 1) == "~")
             fs.create(fs.join(dir, "sub/deep"), true)
             fs.write(fs.join(dir, "sub/f.txt"), "hello")
             assert(fs.read(fs.join(dir, "sub/f.txt")) == "hello")
