@@ -2846,10 +2846,11 @@ fn a_double_click_enters_a_listing_line() {
 }
 
 /// A Lua view's field rounds its selection as the panes do while
-/// `editor.selection_radius` is on: the field's row is the shell's
-/// fragment, told where the selection starts and ends along the line,
-/// and its spans carry none (boot.lua's `field_node`). Off, it is the
-/// square spans it always was.
+/// `editor.selection_radius` is on: the field's selected spans carry the
+/// radius and kui rounds them (its F101) — one piece, no neighbours, so
+/// every corner round — with the block caret drawn over it rather than
+/// cutting a hole in it (boot.lua's `field_node`). Off, it is the square
+/// spans it always was.
 #[test]
 fn a_lua_fields_selection_is_rounded_as_the_panes_is() {
     use kawoosh_editor::{Layer, Setting};
@@ -2878,12 +2879,12 @@ fn a_lua_fields_selection_is_rounded_as_the_panes_is() {
     d.key(&mut app, "escape", KeyMods::default());
     d.keys(&mut app, "0v4l");
     d.frame(&mut app);
-    let fragments = |d: &mut Drive| -> Vec<(kui_native::Rect, [f32; 16])> {
+    let fragments = |d: &mut Drive| -> Vec<(kui_native::Rect, [f32; 16], kui_native::Color)> {
         let dl = d.core.output().0;
         dl.quads
             .iter()
             .filter(|q| q.kind == kui_native::QuadKind::Fragment)
-            .map(|q| (q.rect, dl.fragments[q.uv[0] as usize].params))
+            .map(|q| (q.rect, dl.fragments[q.uv[0] as usize].params, q.color))
             .collect()
     };
     assert!(fragments(&mut d).is_empty(), "square while the radius is 0");
@@ -2906,7 +2907,7 @@ fn a_lua_fields_selection_is_rounded_as_the_panes_is() {
     d.frame(&mut app);
     let quads = fragments(&mut d);
     assert_eq!(quads.len(), 1, "the field's row: {quads:?}");
-    let (rect, p) = quads[0];
+    let (rect, p, sel) = quads[0];
     // `hello`, from the line's start: five cells of the field's face.
     let style = kui_native::TextStyle::new(16.0).mono();
     let w = d.core.measure_text("hello", &style, None).width;
@@ -2917,19 +2918,28 @@ fn a_lua_fields_selection_is_rounded_as_the_panes_is() {
         p[1]
     );
     assert_eq!((p[6], p[7]), (4.0, 0.0), "the radius, and no neighbours");
-    let sel = kui_native::Color::rgba(p[8], p[9], p[10], p[11]);
     assert!(
         before.iter().any(|c| c.to_hex() == sel.to_hex()),
         "the field's own selection colour {sel:?}, one of {before:?}"
     );
-    assert!(rect.w >= w, "the row still fits its text: {rect:?}");
+    assert!(rect.w + 1.0 >= w, "the piece holds `hello`: {rect:?}");
+    let cell = d.core.measure_text("o", &style, None).width;
+    let dl = d.core.output().0;
     assert!(
-        !d.core
-            .output()
-            .0
-            .quads
+        !dl.quads
             .iter()
             .any(|q| q.kind == kui_native::QuadKind::Solid && q.color == sel),
-        "no span paints the selection"
+        "no square selection"
+    );
+    // The caret on `o`, over the selection: a cell of its own at the
+    // piece's last character.
+    assert!(
+        dl.quads
+            .iter()
+            .any(|q| q.kind == kui_native::QuadKind::Solid
+                && q.color.a == 1.0
+                && (q.rect.x - (rect.x + p[1] - cell)).abs() < 1.0
+                && (q.rect.w - cell).abs() < 1.0),
+        "the block caret over the selection's last cell"
     );
 }

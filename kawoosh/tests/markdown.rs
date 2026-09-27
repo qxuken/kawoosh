@@ -648,3 +648,58 @@ fn a_visual_selection_draws_every_line_it_covers_raw() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `editor.selection_radius` rounds a selection over the markdown
+/// buffer's rows too: a wrapped paragraph's selection is a piece a wrapped
+/// line, and kui joins them (its F101) with each other and with the rows
+/// around them — where the rendered rows had kept square spans.
+#[test]
+fn a_rounded_selection_joins_across_wrapped_rows() {
+    use kawoosh_editor::{Layer, Setting};
+    let dir = fixture("rounded");
+    let (mut d, mut app) = launch(&dir, 700.0);
+    app.ed.settings.set(
+        Layer::Session,
+        "editor.selection_radius",
+        Setting::Float(4.0),
+    );
+    // The long paragraph, which wraps, and the blank line under it.
+    d.keys(&mut app, "3GVj");
+    settle(&mut d, &mut app);
+    let sel = app.pal.select;
+    let dl = d.core.output().0;
+    assert!(
+        !dl.quads
+            .iter()
+            .any(|q| q.kind == kui_native::QuadKind::Solid && q.color == sel),
+        "no square selection"
+    );
+    let mut lines: Vec<(f32, f32, f32, f32, u32)> = dl
+        .quads
+        .iter()
+        .filter(|q| q.kind == kui_native::QuadKind::Fragment && q.color == sel)
+        .map(|q| {
+            let p = dl.fragments[q.uv[0] as usize].params;
+            (
+                q.rect.y,
+                q.rect.y + q.rect.h,
+                q.rect.x + p[0],
+                q.rect.x + p[1],
+                p[7] as u32,
+            )
+        })
+        .collect();
+    lines.sort_by(|a, b| a.0.total_cmp(&b.0));
+    lines.dedup();
+    assert!(
+        lines.len() >= 3,
+        "the paragraph's wrapped lines and the blank one: {lines:?}"
+    );
+    for w in lines.windows(2) {
+        assert_eq!(w[0].1, w[1].0, "the lines meet: {lines:?}");
+        assert_eq!(w[0].4 & 2, 2, "each told the one below: {lines:?}");
+        assert_eq!(w[1].4 & 1, 1, "and the one above: {lines:?}");
+    }
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

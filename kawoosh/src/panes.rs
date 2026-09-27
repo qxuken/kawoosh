@@ -211,23 +211,16 @@ impl Kawoosh {
         self.strip(ui, &items, &right);
     }
 
-    /// The rounded selection's fragment and radius, while
-    /// `editor.selection_radius` is more than 0 (`rows::RoundedSel`).
-    pub(crate) fn selection_rounding(
-        &self,
-        ui: &mut Ui<'_>,
-    ) -> Option<(kui_native::FragmentId, f32)> {
-        let radius = self
-            .ed
+    /// The selection's corner radius, `editor.selection_radius`: 0 is
+    /// square. Above it, a selection's span backgrounds are rounded and
+    /// kui joins them across lines into one shape (its F101).
+    pub(crate) fn selection_radius(&self) -> f32 {
+        self.ed
             .settings
             .get("editor.selection_radius")
             .and_then(kawoosh_editor::Setting::as_float)
             .unwrap_or(0.0)
-            .max(0.0) as f32;
-        if radius <= 0.0 {
-            return None;
-        }
-        Some((ui.core().add_fragment(rows::SELECTION_WGSL)?, radius))
+            .max(0.0) as f32
     }
 
     /// A field's one line, drawn as a pane's row is (`rows::emit_line`):
@@ -298,44 +291,6 @@ impl Kawoosh {
                 }
             }
         }
-        // Rounded as a pane's selection is, when it is one range: a
-        // field's line has no neighbours, so its corners are all round.
-        let rounded = match (self.selection_rounding(ui), selected.as_slice()) {
-            (Some((fragment, radius)), [r]) => {
-                let style = rows::mono(font, &pal);
-                let len = drawn.text.len();
-                // The ghost sits after the primary caret and moves what
-                // follows it; at a range's own start its text follows it.
-                let ghost_w =
-                    ghost.map(|g| (clip(primary.head), ui.measure_text(g, &style, None).width));
-                let mut x = |d: usize, start: bool| {
-                    let d = d.min(len);
-                    ui.measure_text(&drawn.text[..d], &style, None).width
-                        + ghost_w
-                            .filter(|(b, _)| *b < d || (start && *b == d))
-                            .map_or(0.0, |(_, w)| w)
-                };
-                let a = x(r.start, true);
-                let b = if r.end > len {
-                    // Past the end: the line and its cell.
-                    x(len, true) + ui.measure_text(" ", &style, None).width
-                } else {
-                    x(r.end, false)
-                };
-                (a < b).then_some(rows::RoundedSel {
-                    fragment,
-                    own: (a, b),
-                    prev: None,
-                    next: None,
-                    radius,
-                    color: pal.select,
-                })
-            }
-            _ => None,
-        };
-        if rounded.is_some() {
-            selected.clear();
-        }
         let _ = rows::emit_line(
             ui,
             font,
@@ -360,7 +315,7 @@ impl Kawoosh {
                 marks: &[],
                 form: None,
                 band: None,
-                rounded,
+                sel_radius: self.selection_radius(),
             },
         );
     }
@@ -1672,92 +1627,7 @@ impl Kawoosh {
                 // — a kui scroll container under the pointer would take
                 // the notch itself, both axes, and `top` would never
                 // hear it — and the app hands the offset back each frame.
-                // A rounded selection (`editor.selection_radius`): each
-                // visible line's one selected range, x from the row's left
-                // in logical px, worked out before the rows so each row
-                // knows its neighbours' (`rows::RoundedSel`). Through the
-                // drawn line, as the row draws it, past the hints and the
-                // completion's ghost before it; the newline's cell when
-                // the range takes it. A line with more than one range, or
-                // rendered, keeps the square spans, and its neighbours
-                // round toward it as toward nothing.
-                let rounding = self.selection_rounding(ui);
-                let sel_frag = rounding.map(|(f, _)| f);
-                let radius = rounding.map_or(0.0, |(_, r)| r);
-                let mut sel_x: HashMap<usize, (f32, f32)> = HashMap::new();
-                if sel_frag.is_some() {
-                    let style = rows::mono(font, &pal);
-                    for ln in top..last {
-                        if md_rows.contains_key(&ln) {
-                            continue;
-                        }
-                        let range = buf.line_range(ln);
-                        let mut on_line = sels
-                            .iter()
-                            .map(|s| shown(buf, s, mode, linewise))
-                            .filter(|&(rs, re)| rs < re && rs <= range.end && re > range.start);
-                        let (Some((rs, re)), None) = (on_line.next(), on_line.next()) else {
-                            continue;
-                        };
-                        let window = Window {
-                            left,
-                            width,
-                            cell_w,
-                        };
-                        let index = (range.len() >= rows::LONG_LINE_BYTES)
-                            .then(|| cells.get(buf_id, buf, &range, tabstop).clone());
-                        let (drawn, _) =
-                            crate::secrets::masked_line(buf, range.clone(), tabstop, &masks, 0)
-                                .unwrap_or_else(|| {
-                                    Drawn::for_line(
-                                        buf,
-                                        range.clone(),
-                                        tabstop,
-                                        Some(window),
-                                        0,
-                                        index.as_ref(),
-                                    )
-                                });
-                        let clip = |o: usize| {
-                            drawn.to_drawn(o.clamp(range.start, range.end) - range.start)
-                        };
-                        // What sits between the text's bytes: the hints,
-                        // and on the caret's line the ghost.
-                        let mut virtuals: Vec<(usize, f32)> = inlay
-                            .iter()
-                            .filter(|(o, _)| *o >= range.start && *o <= range.end)
-                            .map(|(o, l)| (clip(*o), ui.measure_text(l, &style, None).width))
-                            .collect();
-                        if let Some(g) = ghost.as_deref().filter(|_| ln == cur_line) {
-                            let w = ui.measure_text(g, &style, None).width;
-                            virtuals.push((clip(primary.head), w));
-                        }
-                        // A byte's x: its cells, and what sits before it —
-                        // at its own byte too for a range's start, whose
-                        // text follows what sits there.
-                        let x = |d: usize, start: bool| {
-                            let cols = drawn.before_cols + rows::col_of(&drawn.text, d);
-                            cols as f32 * cell_w
-                                + virtuals
-                                    .iter()
-                                    .filter(|(b, _)| *b < d || (start && *b == d))
-                                    .map(|(_, w)| w)
-                                    .sum::<f32>()
-                        };
-                        let a = x(clip(rs), true);
-                        let b = if re > range.end {
-                            // Past the newline: the line and its cell.
-                            drawn.cols as f32 * cell_w
-                                + virtuals.iter().map(|(_, w)| w).sum::<f32>()
-                                + ui.measure_text(" ", &style, None).width
-                        } else {
-                            x(clip(re), false)
-                        };
-                        if a < b {
-                            sel_x.insert(ln, (a, b));
-                        }
-                    }
-                }
+                let sel_radius = self.selection_radius();
                 let lines_spec = NodeSpec::column()
                     .width(Sizing::Grow(1.0))
                     .height(Sizing::Grow(1.0))
@@ -1856,29 +1726,9 @@ impl Kawoosh {
                             let mut selected: Vec<Range<usize>> = Vec::new();
                             let mut carets: Vec<(Range<usize>, Caret)> = Vec::new();
                             let mut access = (None, None);
-                            // A rounded selection's row draws its part
-                            // itself, and its spans carry none.
-                            let rounded =
-                                sel_frag
-                                    .zip(sel_x.get(&ln).copied())
-                                    .map(|(fragment, own)| rows::RoundedSel {
-                                        fragment,
-                                        own,
-                                        prev: ln
-                                            .checked_sub(1)
-                                            .and_then(|p| sel_x.get(&p))
-                                            .copied(),
-                                        next: sel_x.get(&(ln + 1)).copied(),
-                                        radius,
-                                        color: pal.select,
-                                    });
                             for s in sels.iter() {
                                 let (rs, re) = shown(buf, s, mode, linewise);
-                                if rounded.is_none()
-                                    && rs < re
-                                    && rs <= range.end
-                                    && re > range.start
-                                {
+                                if rs < re && rs <= range.end && re > range.start {
                                     let a = clip(rs);
                                     let b = if re > range.end {
                                         drawn.text.len() + 1
@@ -2147,7 +1997,7 @@ impl Kawoosh {
                                         Some(MultiLine::Header(_))
                                     )
                                     .then_some(pal.strip),
-                                    rounded,
+                                    sel_radius,
                                 },
                             );
                         };

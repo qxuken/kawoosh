@@ -592,10 +592,9 @@ pub struct Published {
     pub prompt: bool,
     /// The Lua views' fields (`lua:<view>/<name>`), by name.
     pub fields: HashMap<String, FieldSnap>,
-    /// The rounded selection, while `editor.selection_radius` is on: the
-    /// shell's fragment (a `fragment { id }`) and the radius, so a view's
-    /// field draws its selection in the panes' shape.
-    pub selection_round: Option<(u64, f32)>,
+    /// The selection's corner radius, while `editor.selection_radius` is
+    /// on, so a view's field draws its selection in the panes' shape.
+    pub selection_radius: Option<f32>,
     /// Which field each view's keys are on.
     pub field_focus: HashMap<String, String>,
     /// For a tracked buffer: what each tracked line has become (see
@@ -736,7 +735,7 @@ impl Default for Published {
             field: None,
             prompt: false,
             fields: HashMap::new(),
-            selection_round: None,
+            selection_radius: None,
             field_focus: HashMap::new(),
             tracked: HashMap::new(),
             register: None,
@@ -979,14 +978,13 @@ impl Runtime {
         *self.store.borrow_mut() = Some(store);
     }
 
-    /// The workspace moments are made under, as the shell knows it.
-    /// The rounded selection's fragment and radius for the views' fields
-    /// (`kawoosh._selection_round()`), or none while the selection is
-    /// square.
-    pub fn set_selection_round(&self, round: Option<(u64, f32)>) {
-        self.published.borrow_mut().selection_round = round;
+    /// The selection's corner radius for the views' fields
+    /// (`kawoosh._selection_radius()`), or none while it is square.
+    pub fn set_selection_radius(&self, radius: Option<f32>) {
+        self.published.borrow_mut().selection_radius = radius;
     }
 
+    /// The workspace moments are made under, as the shell knows it.
     pub fn set_workspace(&self, ws: &str) {
         let mut p = self.published.borrow_mut();
         if p.workspace != ws {
@@ -2451,16 +2449,8 @@ fn seed(
     )?;
     let pp = published.clone();
     k.set(
-        "_selection_round",
-        lua.create_function(move |lua, ()| {
-            let Some((id, radius)) = pp.borrow().selection_round else {
-                return Ok(LV::Nil);
-            };
-            let t = lua.create_table()?;
-            t.set("id", id)?;
-            t.set("radius", radius)?;
-            Ok(LV::Table(t))
-        })?,
+        "_selection_radius",
+        lua.create_function(move |_, ()| Ok(pp.borrow().selection_radius))?,
     )?;
     let qq = q(queue);
     k.set(

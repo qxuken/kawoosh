@@ -2323,7 +2323,7 @@ then breadth.
 47. **The window uncovered** (kui): a redraw on `Occluded(false)` and a
     bounded retry after a skipped frame, the way a new window's first
     frame already has — an F-round, then kawoosh on it.
-48. **The markdown buffer's round**: task boxes drawn at the font's
+48. ~~**The markdown buffer's round**: task boxes drawn at the font's
     size and legible, checked or not; the rounded selection over
     rendered rows — each row's selected span measured in its drawn
     text, so the shape joins across raw and rendered lines — and held
@@ -2344,7 +2344,17 @@ then breadth.
     they are drawn, so either each row's lines are kept from the last
     frame and a frame asked for when they move, or kui answers a text
     node's line boxes for a byte range (an F-round) — decided at the
-    round's start.
+    round's start.~~ Landed 2026-09-27 on neither: a line-box query is
+    answered from the frame before, as `caret_rect` is, so it lagged as
+    much as keeping the lines would. kui F101 paints span backgrounds
+    with a radius as one shape after layout — pieces of one colour and
+    radius meeting end to end on a line are one extent, and those
+    meeting edge to edge on the lines above and below are its
+    neighbours, whichever text drew them — and kawoosh's rows, fields
+    and rendered rows put the radius on the selection's spans and its
+    newline's cell. `rows::RoundedSel`, `SELECTION_WGSL` and the panes'
+    neighbour arithmetic went; a block caret inside a rounded selection
+    is drawn over it, so the shape has no hole there.
 49. **Links**: `gx` on a path with its line, ⌘-click in an editor pane
     as `gx`, and URLs in a terminal's ⌘-click — one finder for a link
     under a point, the markdown's and the terminal's merged.
