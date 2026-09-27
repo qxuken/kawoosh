@@ -1228,7 +1228,9 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   `:cd` out. `:trust` allows the cwd's untrusted files, `:trust
   revoke` forgets, `:trust?` says where each stands. Without a store
   the grant holds for the run.
-- **A theme that holds still** — open [todo]; step 28. Seen on
+- **A theme that holds still** — done 2026-09-25 [todo]; step 28
+  (`themes.rs`: Rosé Pine pinned, the selection held legible; the
+  registry of step 41 after it). What the entry said before: seen on
   Windows: the derived theme took the system's accent, and the
   selection it derived from it made the text under it unreadable.
   What is there: with no `theme.*` set, kui derives every role from the
