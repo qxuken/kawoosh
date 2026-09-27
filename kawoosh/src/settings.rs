@@ -157,6 +157,14 @@ pub struct Config {
     pub init: Option<PathBuf>,
     /// The user's `settings.lua`, when there is a config dir.
     pub user: Option<PathBuf>,
+    /// The config dir, where a language's parser and queries are looked
+    /// for when it says nowhere (`languages.rs`) — set by `load_config`,
+    /// so an app that never loads the user's config (a test) never
+    /// reads what is in it.
+    pub dir: Option<PathBuf>,
+    /// The user's fonts folder (`fonts.rs`), the same way: set by
+    /// `load_config`, or given (`Kawoosh::user_fonts`).
+    pub fonts: Option<PathBuf>,
     /// The project candidates the watch was last set from.
     pub project: Vec<PathBuf>,
     /// The project `init.lua` candidates on the watch (`trust.rs`).
@@ -178,6 +186,8 @@ impl Config {
         Self {
             init: None,
             user: None,
+            dir: None,
+            fonts: None,
             project: Vec::new(),
             project_init: Vec::new(),
             watch: Watcher::spawn(wake, beat),
@@ -341,7 +351,7 @@ impl Kawoosh {
         paths.extend(self.config.project_init.clone());
         paths.extend(self.config.user.clone());
         paths.extend(self.config.init.clone());
-        paths.extend(crate::fonts::user_fonts_watch());
+        paths.extend(crate::fonts::user_fonts_watch(self.config.fonts.as_deref()));
         self.config.watch.watch(paths);
     }
 
@@ -381,9 +391,12 @@ impl Kawoosh {
             return;
         }
         // The user's fonts folder: read again at the frame (`fonts.rs`).
-        let (fonts, changed): (Vec<PathBuf>, Vec<PathBuf>) = changed
-            .into_iter()
-            .partition(|p| crate::fonts::in_user_fonts(p));
+        let (fonts, changed): (Vec<PathBuf>, Vec<PathBuf>) = changed.into_iter().partition(|p| {
+            self.config
+                .fonts
+                .as_deref()
+                .is_some_and(|d| p.starts_with(d))
+        });
         if !fonts.is_empty() {
             self.look.fonts.borrow_mut().rescan = true;
         }

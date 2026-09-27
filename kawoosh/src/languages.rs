@@ -40,7 +40,7 @@ impl Kawoosh {
             highlights: highlights.map(PathBuf::from),
             injections: injections.map(PathBuf::from),
         };
-        let home = crate::settings::config_dir();
+        let home = self.config.dir.clone();
         let grammar = match Library::find(&name, &said, home.as_deref()) {
             Ok(lib) => lib.map(Source::Library),
             Err(e) => {

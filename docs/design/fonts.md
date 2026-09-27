@@ -231,6 +231,12 @@ file taken out has its faces taken out of kui's font database. It is
 the place for a face one may use but not ship — the user's Berkeley
 Mono.
 
+The folder is the config's, as `settings.lua` is: `load_config` names
+it (`Kawoosh::user_fonts`), and an app that never loads the user's
+config — every test — has none, so a test's families are the machine's
+and the shipped whatever the user keeps in theirs. The config dir a
+language's parser is looked for in goes the same way.
+
 *Beat:* watching the system's font folders too. A font installed
 through the OS is the OS's to announce, and its folders are many and
 large; a restart sees it.

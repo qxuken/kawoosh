@@ -154,21 +154,16 @@ pub fn user_fonts_dir() -> Option<PathBuf> {
     Some(crate::settings::config_dir()?.join("fonts"))
 }
 
-/// Whether `path` is the user's fonts folder or under it.
-pub fn in_user_fonts(path: &Path) -> bool {
-    user_fonts_dir().is_some_and(|d| path.starts_with(d))
-}
-
 /// What the watch keeps an eye on for the user's fonts: the folder and
 /// every folder under it — a folder's stamp moves when an entry is added
 /// or taken out, and the watch stats paths — or the folder alone, made
 /// later, while there is none.
-pub fn user_fonts_watch() -> Vec<PathBuf> {
-    let Some(dir) = user_fonts_dir() else {
+pub fn user_fonts_watch(dir: Option<&Path>) -> Vec<PathBuf> {
+    let Some(dir) = dir else {
         return Vec::new();
     };
-    let mut out = vec![dir.clone()];
-    walk(&dir, &mut |p, is_dir| {
+    let mut out = vec![dir.to_path_buf()];
+    walk(dir, &mut |p, is_dir| {
         if is_dir {
             out.push(p.to_path_buf());
         }
@@ -263,6 +258,19 @@ impl Kawoosh {
         self.look.fonts.borrow_mut().shipped = families;
     }
 
+    /// The user's fonts folder, `load_config`'s [`user_fonts_dir`] —
+    /// none until it is given, so an app that never loads the user's
+    /// config (a test) lists the machine's families and the shipped
+    /// alone. Read at the next frame, and watched.
+    pub fn user_fonts(&mut self, dir: Option<PathBuf>) {
+        if self.config.fonts == dir {
+            return;
+        }
+        self.config.fonts = dir;
+        self.look.fonts.borrow_mut().rescan = true;
+        self.rewatch_config();
+    }
+
     /// The user's folder read (at the first frame, and when the watch saw
     /// it change) and the families read again; every family registered
     /// once a view asked for one; and what a view asked for this frame
@@ -276,7 +284,7 @@ impl Kawoosh {
             if f.families.is_none() || f.rescan {
                 let first = f.families.is_none();
                 f.rescan = false;
-                let (added, removed) = load_user_fonts(&mut f, ui);
+                let (added, removed) = load_user_fonts(&mut f, self.config.fonts.as_deref(), ui);
                 if !first && (!added.is_empty() || removed > 0) {
                     let mut said = Vec::new();
                     if !added.is_empty() {
@@ -431,8 +439,8 @@ impl Kawoosh {
 /// The user's folder against what was loaded from it: a new file
 /// loaded, a gone one's faces taken out. The families added, by name,
 /// and how many files went.
-fn load_user_fonts(f: &mut Fonts, ui: &mut Ui<'_>) -> (Vec<String>, usize) {
-    let files = user_fonts_dir().map(|d| font_files(&d)).unwrap_or_default();
+fn load_user_fonts(f: &mut Fonts, dir: Option<&Path>, ui: &mut Ui<'_>) -> (Vec<String>, usize) {
+    let files = dir.map(font_files).unwrap_or_default();
     let gone: Vec<PathBuf> = f
         .user
         .keys()
