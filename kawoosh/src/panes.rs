@@ -566,12 +566,14 @@ impl Kawoosh {
         // a sliding column is drawn between two places, and only the
         // one it is going to is known here.
         self.culled.clear();
+        // Keyed by its tab: each tab's ribbon is its own scroller.
+        let strip_key = ui.child_key("strip").index(tab as u64);
         if !settling && !arriving {
             // Where the ribbon *is*, which during a glide is not where
             // it is going (kui F80): the geometry answers the drawn
             // offset, and describes the frame before, which the half a
             // viewport of slack covers.
-            let key = ui.child_key(&format!("strip{tab}"));
+            let key = strip_key;
             let offset = ui
                 .scroll_geometry(key)
                 .map(|g| g.offset.x)
@@ -588,8 +590,8 @@ impl Kawoosh {
             }
         }
         let mut focus_key = None;
-        let row = ui.with_keyed(
-            &format!("strip{tab}"),
+        let row = ui.with_key(
+            strip_key,
             NodeSpec::row()
                 .fill()
                 .scroll_x()
@@ -622,7 +624,7 @@ impl Kawoosh {
                     }
                     if i + 1 < n {
                         let path = format!("gap{i}");
-                        let divider = ui.child_key(&format!("gap{}", col.id));
+                        let divider = ui.child_key("gap").index(col.id);
                         let active = ui.is_hovered(divider)
                             || ui.is_pressed(divider)
                             || self.dragging.as_deref() == Some(path.as_str());
@@ -636,7 +638,7 @@ impl Kawoosh {
                                 ("path", Value::str(&path)),
                                 ("dir", "h".into()),
                             ]));
-                        ui.leaf_keyed(&format!("gap{}", col.id), bar);
+                        ui.leaf_key(divider, bar);
                     }
                 }
                 if trail > 0.0 {
@@ -797,8 +799,8 @@ impl Kawoosh {
             .and_then(|(p, x, y)| self.layout.drop_at(x, y).filter(|(t, _)| *t != p))
             .filter(|(t, _)| *t == pane)
             .map(|(_, d)| d);
-        ui.with_keyed(
-            &format!("pane{pane}"),
+        ui.with_key(
+            ui.child_key("pane").index(pane),
             NodeSpec::column()
                 .fill()
                 .bg(pal.panel)
@@ -2035,8 +2037,8 @@ impl Kawoosh {
                                             }
                                         },
                                     );
-                                    let block = ui.with_keyed(
-                                        &format!("tbl{table}"),
+                                    let block = ui.with_key(
+                                        ui.child_key("tbl").index(table as u64),
                                         NodeSpec::column()
                                             .grow_width()
                                             .height(Sizing::Fit)

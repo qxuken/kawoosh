@@ -183,8 +183,8 @@ impl Kawoosh {
             |ui| {
                 for (i, col) in strip.columns.iter().enumerate() {
                     let px = (col.width.fraction() * vw).round().max(160.0);
-                    let key = ui.with_keyed(
-                        &format!("dockcol{}", col.id),
+                    let key = ui.with_key(
+                        ui.child_key("dockcol").index(col.id),
                         NodeSpec::column().width(px).grow_height(),
                         |ui| self.render_node(ui, &col.node, &format!("d:{i}/")),
                     );

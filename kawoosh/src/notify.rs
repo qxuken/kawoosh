@@ -981,8 +981,8 @@ impl Kawoosh {
                 // Inside the panel's padding (10 a side).
                 let line = || NodeSpec::row().max_width(max_w - 20.0).clip();
                 for (gi, source) in sources.iter().enumerate() {
-                    ui.with_indexed(
-                        1 << 32 | gi as u64,
+                    ui.with_key(
+                        ui.child_key("source").index(gi as u64),
                         NodeSpec::column().gap(1.0).cross_align(Align::End),
                         |ui| {
                             for s in self
@@ -1024,8 +1024,8 @@ impl Kawoosh {
                                 // loader: the line, and a bar under it
                                 // filled that far.
                                 let bar = (!p.done).then_some(p.percentage).flatten();
-                                ui.with_indexed(
-                                    1 << 33 | pi as u64,
+                                ui.with_key(
+                                    ui.child_key("progress").index(pi as u64),
                                     NodeSpec::column().gap(2.0).cross_align(Align::End),
                                     |ui| {
                                         ui.text_in(line(), &text, dim);
@@ -1054,7 +1054,7 @@ impl Kawoosh {
                                 );
                             }
                             if let Some(src) = source {
-                                ui.with_indexed(1 << 34, NodeSpec::row().gap(6.0), |ui| {
+                                ui.with_keyed("source", NodeSpec::row().gap(6.0), |ui| {
                                     ui.text(src, TextStyle::new(small).color(pal.accent).nowrap());
                                     let has_progress =
                                         self.notes.progress.iter().any(|p| p.source == *src);

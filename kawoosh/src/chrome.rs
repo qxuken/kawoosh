@@ -97,8 +97,9 @@ impl Kawoosh {
                     ui.leaf(NodeSpec::row().grow_width());
                     for (i, (text, color, run)) in blocks.iter().enumerate() {
                         if i > 0 {
-                            ui.leaf_indexed(
-                                2000 + i as u64,
+                            let sep = ui.child_key("sep").index(i as u64);
+                            ui.leaf_key(
+                                sep,
                                 NodeSpec::column().size(1.0, tab_h - 10.0).bg(pal.border),
                             );
                         }
@@ -308,8 +309,9 @@ impl Kawoosh {
                     }
                     // A hairline between blocks, as i3 draws.
                     if i + 1 < n {
-                        ui.leaf_indexed(
-                            1000 + i as u64,
+                        let sep = ui.child_key("sep").index(i as u64);
+                        ui.leaf_key(
+                            sep,
                             NodeSpec::column().width(1.0).grow_height().bg(pal.border),
                         );
                     }
