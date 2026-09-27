@@ -51,6 +51,15 @@ pub enum MouseAction {
     Motion,
 }
 
+/// A link a program printed on purpose (OSC 8,
+/// [`Terminal::hyperlink_at`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hyperlink {
+    pub uri: String,
+    /// The columns of its row it covers.
+    pub cols: std::ops::Range<usize>,
+}
+
 /// The screen, ready for `ui.cells`: the app owns the `Vec` for a frame.
 pub struct Screen {
     pub rows: usize,
@@ -1102,6 +1111,51 @@ impl Terminal {
         (grid.history_size() + point.line.0 as usize, col)
     }
 
+    /// The link a program printed on purpose (OSC 8) at `(row, col)` of
+    /// the screen: its URI and the columns of the row it covers — the
+    /// run of cells around `col` with the same link.
+    pub fn hyperlink_at(&self, row: usize, col: usize) -> Option<Hyperlink> {
+        let grid = self.term.grid();
+        if row >= grid.screen_lines() || col >= grid.columns() {
+            return None;
+        }
+        let line = Line(row as i32 - grid.display_offset() as i32);
+        let at = grid[line][Column(col)].hyperlink()?;
+        let same = |c: usize| grid[line][Column(c)].hyperlink().as_ref() == Some(&at);
+        let mut start = col;
+        while start > 0 && same(start - 1) {
+            start -= 1;
+        }
+        let mut end = col + 1;
+        while end < grid.columns() && same(end) {
+            end += 1;
+        }
+        Some(Hyperlink {
+            uri: at.uri().to_string(),
+            cols: start..end,
+        })
+    }
+
+    /// A `file://` link's path as this terminal's, and the line its
+    /// fragment names (`#12`, `#L12`): on its domain whatever host the
+    /// URL names (`box:/…`), else here when the host is this machine.
+    /// None for another host's file, or a URL that is not a file's.
+    pub fn file_link(&self, uri: &str) -> Option<(std::path::PathBuf, Option<usize>)> {
+        let (url, fragment) = uri.split_once('#').unwrap_or((uri, ""));
+        let path = file_url_path(url, self.domain.is_some())?;
+        let path = match &self.domain {
+            Some(d) => format!("{d}:{}", path.display()).into(),
+            None => path,
+        };
+        let line = fragment
+            .trim_start_matches(['L', 'l'])
+            .split(|c: char| !c.is_ascii_digit())
+            .next()
+            .and_then(|n| n.parse().ok())
+            .filter(|n| *n > 0);
+        Some((path, line))
+    }
+
     /// The text of screen row `row` (0-based on the displayed screen).
     pub fn row_text(&self, row: usize) -> String {
         let grid = self.term.grid();
@@ -1658,6 +1712,14 @@ impl Handler for Hooked<'_> {
     fn reset_color(&mut self, a0: usize) {
         self.term.reset_color(a0)
     }
+    // OSC 8: the cells printed after it carry the link
+    // (`Terminal::hyperlink_at`). The kitty keyboard protocol's and
+    // `modifyOtherKeys`' sequences stay unforwarded: `encode_key` speaks
+    // neither, and a program told they are on would wait for keys it
+    // never gets (roadmap step 57).
+    fn set_hyperlink(&mut self, link: Option<alacritty_terminal::vte::ansi::Hyperlink>) {
+        self.term.set_hyperlink(link);
+    }
     fn clipboard_store(&mut self, a0: u8, a1: &[u8]) {
         self.term.clipboard_store(a0, a1)
     }
@@ -1755,6 +1817,53 @@ mod tests {
         assert_eq!(rows(&t)[..2], ["hello", "world"]);
         assert_eq!(s.cursor.map(|(r, c, _)| (r, c)), Some((1, 5)));
         assert_eq!(s.cells[s.cols].fg, ANSI[1]);
+    }
+
+    #[test]
+    fn a_hyperlink_is_found_across_its_cells() {
+        let mut t = Terminal::headless(TermSize { rows: 3, cols: 30 });
+        t.feed(b"see \x1b]8;;https://kawoosh.dev/x\x1b\\the docs\x1b]8;;\x1b\\ now");
+        let h = t.hyperlink_at(0, 6).unwrap();
+        assert_eq!(h.uri, "https://kawoosh.dev/x");
+        assert_eq!(h.cols, 4..12, "`the docs`, not the text around it");
+        assert_eq!(t.hyperlink_at(0, 2), None);
+        assert_eq!(t.hyperlink_at(0, 13), None);
+        // Two links side by side with the same text stay two.
+        t.feed(b"\r\n\x1b]8;id=a;https://a\x1b\\ab\x1b]8;id=b;https://b\x1b\\cd\x1b]8;;\x1b\\");
+        assert_eq!(t.hyperlink_at(1, 1).unwrap().cols, 0..2);
+        assert_eq!(t.hyperlink_at(1, 2).unwrap().uri, "https://b");
+        // Scrolled back, the rows are the screen's.
+        for _ in 0..4 {
+            t.feed(b"\r\n");
+        }
+        assert_eq!(t.hyperlink_at(0, 6), None, "off the screen");
+        t.scroll(t.history_size() as i32);
+        assert_eq!(t.hyperlink_at(0, 6).unwrap().uri, "https://kawoosh.dev/x");
+    }
+
+    #[test]
+    fn a_file_link_is_a_path_here_or_on_the_domain() {
+        let mut t = Terminal::headless(TermSize { rows: 3, cols: 30 });
+        assert_eq!(
+            t.file_link("file:///tmp/a%20b.rs#L12"),
+            Some(("/tmp/a b.rs".into(), Some(12)))
+        );
+        assert_eq!(
+            t.file_link("file://localhost/tmp/x#7"),
+            Some(("/tmp/x".into(), Some(7)))
+        );
+        assert_eq!(
+            t.file_link("file:///tmp/x#top"),
+            Some(("/tmp/x".into(), None))
+        );
+        assert_eq!(t.file_link("file://elsewhere.example/tmp/x"), None);
+        assert_eq!(t.file_link("https://kawoosh.dev"), None);
+        t.set_domain("box", "box:/home".into());
+        assert_eq!(
+            t.file_link("file://elsewhere.example/tmp/x"),
+            Some(("box:/tmp/x".into(), None)),
+            "a host's shell names its own files"
+        );
     }
 
     #[test]

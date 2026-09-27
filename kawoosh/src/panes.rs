@@ -985,7 +985,7 @@ impl Kawoosh {
                         (row < screen.rows)
                             .then(|| self.location_cols(id, row, col))
                             .flatten()
-                            .map(|cols| (row, cols))
+                            .map(|(cols, uri)| (row, cols, uri))
                     })
                     .flatten();
                 spec = if reporting {
@@ -993,8 +993,12 @@ impl Kawoosh {
                 } else {
                     spec.selectable()
                 };
+                // A program's link (OSC 8) says where it goes while
+                // hovered, at the grid's foot, as a browser's status
+                // does: its text need not be its address.
+                let target = hover.as_ref().and_then(|(_, _, uri)| uri.clone());
                 match hover {
-                    Some((row, cols)) => {
+                    Some((row, cols, _)) => {
                         let mut cells = screen.cells.clone();
                         let at = row * screen.cols;
                         for c in cols.start.min(screen.cols)..cols.end.min(screen.cols) {
@@ -1011,6 +1015,28 @@ impl Kawoosh {
                         );
                     }
                     None => ui.cells_keyed("cells", &grid, spec),
+                }
+                if let Some(uri) = target {
+                    ui.text_in_keyed(
+                        "link target",
+                        NodeSpec::row()
+                            .float(
+                                FloatConfig::parent()
+                                    .inside(Align::Start, Align::End)
+                                    .offset(6.0, -6.0),
+                            )
+                            .max_width((screen.cols as f32 * self.cell.0 * 0.8).max(160.0))
+                            .pad_xy(8.0, 3.0)
+                            .radius(4.0)
+                            .bg(pal.strip)
+                            .border(1.0, pal.border)
+                            .label("link target"),
+                        &uri,
+                        TextStyle::new(self.chrome.small)
+                            .color(pal.dim)
+                            .max_lines(1)
+                            .ellipsis(),
+                    );
                 }
                 if offset > 0 && history > 0 {
                     let total = (history + rows_n) as f32;

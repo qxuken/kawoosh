@@ -1764,8 +1764,8 @@ follow the theme every frame (`panes.rs`).
   own beep (a motion that fails, a search with no match) is the same
   setting's second half, `editor.bell`, off by default — vim users
   turn it off first.
-- **Mouse buttons and OSC 8** — open [kui.md, req §10]; steps 55 and 54
-  (asked 2026-09-28). What it said before: kui routes
+- **Mouse buttons and OSC 8** — OSC 8 done 2026-09-28 (step 54, not
+  kui's after all); the buttons open, step 55. What it said before: kui routes
   only the primary button; the middle button and hyperlinks are kui's
   wish list, not kawoosh's.
 - **Kitty graphics** — open [req §9]; step 56 (asked 2026-09-28). A `term` APC hook before it is
@@ -2452,12 +2452,23 @@ then breadth.
 Asked 2026-09-28 ("osc 8, mouse and kitty graphics, than we will
 think on a kitty keyboard"), the terminal's third round, in that order:
 
-54. **OSC 8 hyperlinks**: a link a program prints on purpose (`ls
+54. ~~**OSC 8 hyperlinks**: a link a program prints on purpose (`ls
     --hyperlink`, `gcc`, `cargo`, `delta`, `gh`) is what ⌘-hover
     underlines and ⌘-click opens, before the text is searched for one;
     its target shown while hovered, since the text need not be the
     link; a `file://` URL a path on the terminal's own host or domain,
-    with a line when its fragment gives one.
+    with a line when its fragment gives one.~~ Landed 2026-09-28, and
+    not kui's: alacritty keeps a link per cell, but `term`'s handler
+    wrapper never passed OSC 8 on, so every link was dropped as it
+    came. Forwarded now (the kitty keyboard's and `modifyOtherKeys`'
+    sequences still are not, on purpose: `encode_key` speaks neither —
+    step 57); `Terminal::hyperlink_at` is the run of cells with the link
+    under a cell, `Terminal::file_link` a `file://` URL's path here or
+    on the domain, with `#12` / `#L12` a line. `terminals.rs`'s
+    `term_link` asks for it before searching the text; the hover draws
+    the address at the grid's foot; another machine's file is
+    `Target::Elsewhere`, said and not opened. Tests: `term`'s two,
+    `kawoosh/tests/links.rs`'s `a_programs_link_in_a_terminal_opens_its_address`.
 55. **Mouse buttons**: the middle button pastes, and the secondary and
     middle buttons reach a program that asked for mouse reports (tmux,
     htop, a TUI's menus). kui routes the primary button to a widget

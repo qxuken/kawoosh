@@ -73,7 +73,7 @@ inline node, virtual text a run in a `role="none"` wrapper.
 | R4.3 | The wheel and a drag past the edge arrive as whole lines the app adds to its own `top` | ✓ | `on_scroll` → `{kind="scroll", lines}` (ADR 0029). M4 |
 | R4.4 | A click says which cell, for `gf` from terminal output | ✓ | pointer payload `cell: {row, col}` (C20). M4 |
 | R4.5 | Underline color and undercurl per cell (SGR 58 / 4:3) | ✓ | **K4, alpha.13**: `Cell::ul`, `cells::flags::WAVY` / `DOTTED`. M4 |
-| R4.6 | Hyperlinks per cell (OSC 8) | ○ | not MVP; the path-pattern table covers the common case. A `Cell` link id + a `link` field on the pointer payload is the shape when asked. |
+| R4.6 | Hyperlinks per cell (OSC 8) | ✓ | not kui's after all (roadmap step 54, 2026-09-28): `term` keeps each cell's link (alacritty's) and kawoosh finds the run under the pointer's `cell: {row, col}` (R4.4), so the grid needs no link field. |
 | R4.7 | The middle button, for the Linux primary-selection paste | ○ | kui's own wish (C2). |
 | R4.8 | Blink, dim, inverse, hidden, and the cursor's own color | ✓ | app-side attributes resolved into `fg`/`bg` before the grid; cursor takes a `Color`. |
 
@@ -152,7 +152,7 @@ kawoosh's account — these are on the road, in roughly this order:
 
 K1–K4 shipped in alpha.13 (2026-09-15). What is left is kui's own wish
 list, unchanged in priority: window position (M8's session restore), the
-middle button, OSC 8 — and, from §9, the kitty graphics path once `term`
+middle button — OSC 8 turned out kawoosh's own (R4.6) — and, from §9, the kitty graphics path once `term`
 can feed it.
 
 Everything else kawoosh needs, alpha.13 has, and the doors are named
