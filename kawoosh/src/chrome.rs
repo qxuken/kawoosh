@@ -67,9 +67,12 @@ impl Kawoosh {
             blocks.push(("compiling…".into(), pal.command, None));
         }
         ui.with(
+            // Its clicks run a command or list the cwd: the keyboard
+            // stays with the pane.
             NodeSpec::column()
                 .grow_width()
                 .bg(pal.strip)
+                .keep_focus()
                 .label("titlebar"),
             |ui| {
                 widgets::titlebar_with(ui, |ui| {
@@ -204,6 +207,7 @@ impl Kawoosh {
                 // reveal move it.
                 .scrollbar(kui_native::ScrollbarMode::Hidden)
                 .transition(TABS_MS)
+                .keep_focus()
                 .role(Role::TabList),
             |ui| {
                 for (i, (name, modified, bell)) in labels.iter().enumerate() {

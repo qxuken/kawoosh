@@ -1108,3 +1108,55 @@ fn cmd_v_pastes_the_clipboard_into_a_terminal() {
     d.keys(&mut app, "v");
     assert_eq!(sent(&mut app), b"v", "a plain key is the shell's");
 }
+
+/// A press in a terminal's grid starts a selection — no handler hears
+/// it — and takes kui's keyboard to the terminal's sink: the pane focus
+/// follows it there (the sink's `on_focus`, by the pointer).
+#[test]
+fn a_press_in_a_terminals_grid_focuses_its_pane() {
+    let mut app = Kawoosh::new("t", "a\nb");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    app.add_headless_terminal();
+    d.frame(&mut app);
+    let panes = app.layout.all_panes();
+    let term = panes
+        .iter()
+        .copied()
+        .find(|p| matches!(app.layout.content(*p), Some(Content::Terminal(_))))
+        .unwrap();
+    let editor = panes.iter().copied().find(|p| *p != term).unwrap();
+    app.layout.focus(editor);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), editor);
+    let r = app.layout.rects[&term];
+    let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    d.drag(&mut app, (x, y), (x + 20.0, y));
+    assert_eq!(app.layout.focused(), term, "the pane followed the press");
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), term, "and stays");
+}
+
+/// The window back in front is when the clipboard is looked at (the
+/// window's `focused` event): what another program put there is the
+/// register's.
+#[test]
+fn the_window_back_in_front_looks_at_the_clipboard() {
+    let mut app = Kawoosh::new("t", "abc");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(!d.core.awaiting_paste());
+    d.core.set_focused(false);
+    d.frame(&mut app);
+    assert!(!d.core.awaiting_paste(), "not while away");
+    d.core.set_focused(true);
+    d.frame(&mut app);
+    assert!(d.core.awaiting_paste(), "a look, as the window came back");
+    d.input(&mut app, InputEvent::Commit("from elsewhere".into()));
+    d.frame(&mut app);
+    assert_eq!(app.ed.memory.head().unwrap().text, "from elsewhere");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).text(), "abc", "a look is not a paste");
+}

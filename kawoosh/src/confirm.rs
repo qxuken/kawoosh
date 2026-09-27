@@ -47,7 +47,6 @@ impl Kawoosh {
         let Some(c) = self.confirm.take() else {
             return;
         };
-        self.reclaim_focus = true;
         if let Some(cmd) = index
             .and_then(|i| c.actions.get(i))
             .map(|(_, cmd)| cmd.clone())

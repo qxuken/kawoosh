@@ -826,9 +826,10 @@ impl Kawoosh {
                     .gap(6.0)
                     .cross_align(Align::Center)
                     .on_click(Value::map([
-                        ("kind", "focus".into()),
+                        ("kind", "title".into()),
                         ("pane", Value::Int(pane as i64)),
                     ]))
+                    .keep_focus()
                     .label(name.as_str());
                 title = title
                     .on_drag(Value::map([
@@ -959,6 +960,10 @@ impl Kawoosh {
                 .pad(pad)
                 .clip()
                 .on_key(tag.clone())
+                // A press in the grid starts a selection, not a click,
+                // and takes kui's keyboard here: the pane follows it
+                // (`on_event_with`'s `focus`).
+                .on_focus(tag.clone())
                 // A click past the grid's last cell focuses too.
                 .on_click(tag.clone())
                 .cursor(kui_native::CursorShape::Text)
@@ -1063,6 +1068,7 @@ impl Kawoosh {
                                 ("kind", "termbottom".into()),
                                 ("pane", Value::Int(pane as i64)),
                             ]))
+                            .keep_focus()
                             .label("lines below"),
                         &format!(
                             "↓ {below} line{} below · ⇧End",
@@ -1075,14 +1081,6 @@ impl Kawoosh {
         );
         if focused {
             self.focus_sink(ui, sink);
-        } else if ui.key_focus() == Some(sink) && self.key_focus_seen != Some(sink) {
-            // A press in the grid starts a selection, not a click, and
-            // takes kui's keyboard to this pane's sink: the pane follows.
-            // Only a move since last frame: kui still names this sink on
-            // the frame the pane focus leaves it (`<C-w>j`, `gf`), and a
-            // terminal drawn first would take the focus straight back.
-            self.layout.focus(pane);
-            ui.request_frame();
         }
     }
 

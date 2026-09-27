@@ -71,7 +71,8 @@ impl Harness {
         app.view(&mut ui);
         ui.finish();
         let pending = self.core.take_pending_events();
-        self.exts.route(pending, |ev| app.on_event(ev));
+        self.exts
+            .route(pending, |ev| app.on_event_with(ev, &mut self.core));
     }
 
     pub fn advance(&mut self, secs: f64) {
@@ -80,7 +81,8 @@ impl Harness {
 
     pub fn input(&mut self, app: &mut impl App, ev: InputEvent) -> Vec<UiEvent> {
         let out = self.core.handle_input(ev);
-        self.exts.route(out.clone(), |ev| app.on_event(ev));
+        self.exts
+            .route(out.clone(), |ev| app.on_event_with(ev, &mut self.core));
         out
     }
 

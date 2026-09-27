@@ -19,7 +19,8 @@ use kawoosh_systems::io::{Incoming, Io, IoMsg, Request};
 use kawoosh_systems::ts::{Job, Token, Ts};
 use kawoosh_term::TermSize;
 use kui_native::{
-    Drag, DragPhase, FontId, KeyMods, KeyPress, NodeSpec, Scroll, Ui, UiEvent, Value, WindowCommand,
+    Core, Drag, DragPhase, FontId, KeyMods, KeyPress, NodeSpec, Scroll, Ui, UiEvent, Value,
+    WindowCommand,
 };
 
 use crate::Pal;
@@ -201,16 +202,15 @@ pub struct Kawoosh {
     /// that accepts one it cannot see put an invisible word in the text
     /// on `<CR>` (`Kawoosh::completion_key`).
     pub(crate) ghost_shown: bool,
-    /// Which sink held kui's keyboard at the end of the last frame: a
-    /// terminal's grid follows kui's focus only when a press moved it
-    /// there since (`render_terminal`), not when the pane focus has just
-    /// moved on and kui has not caught up.
-    pub(crate) key_focus_seen: Option<kui_native::Key>,
+    /// The focused pane's key sink as last drawn (`focus_sink`): where a
+    /// click that opened a file sends the keyboard (`on_event_with`).
+    pub(crate) sink: Option<kui_native::Key>,
     /// The last text kawoosh put on the clipboard, which is not news.
     pub(crate) clip_last: Option<String>,
-    /// The window's focus and whether an editor pane had the keys, last
-    /// frame: a change is when the clipboard is looked at.
-    pub(crate) clip_seen: (bool, bool),
+    /// Whether an editor pane had the keys last frame: the keys coming
+    /// back to one is when the clipboard is looked at, as the window
+    /// coming back is.
+    pub(crate) clip_editor_seen: bool,
     /// Buffers a view stopped showing since the last sweep — switched
     /// away from (`show_buffer`) or closed with its pane (`drop_view`) —
     /// the only ones `sweep_scratches` looks at.
@@ -223,9 +223,6 @@ pub struct Kawoosh {
     /// False after a wheel scroll, so the view stays where the wheel put
     /// it until the caret moves again.
     pub(crate) follow_caret: bool,
-    /// The next frame moves the keyboard to the focused pane, whatever
-    /// kui put it on — a click in the devtools panel that opened a file.
-    pub(crate) reclaim_focus: bool,
     pub(crate) drag_anchor: Option<usize>,
     /// The split divider being dragged, by path.
     pub(crate) dragging: Option<String>,
@@ -361,14 +358,13 @@ impl Kawoosh {
             awaiting_paste: false,
             clip_probe: false,
             ghost_shown: false,
-            key_focus_seen: None,
+            sink: None,
             clip_last: None,
-            clip_seen: (true, true),
+            clip_editor_seen: true,
             left: Vec::new(),
             secrets: crate::secrets::Secrets::new(secrets_wake),
             scroll_carry: 0.0,
             follow_caret: true,
-            reclaim_focus: false,
             drag_anchor: None,
             dragging: None,
             pane_drag: None,
@@ -475,13 +471,15 @@ impl Kawoosh {
     }
 
     /// Declares `sink` the focused pane's: it takes the keyboard when the
-    /// declaration starts (kui's rule), or now, when the shell asked to
-    /// have it back (`reclaim_focus`) or nothing holds it — a press on a
-    /// dead spot of the devtools panel blurs kui's focus to none, and a
-    /// modal editor has no state in which the keyboard goes nowhere.
+    /// declaration starts (kui's rule), or now, when nothing holds it — a
+    /// press on a dead spot of the devtools panel blurs kui's focus to
+    /// none, and a modal editor has no state in which the keyboard goes
+    /// nowhere. A click on the chrome leaves the keyboard where it was
+    /// (`keep_focus` on the title bar, the tabs, a pane's title).
     pub(crate) fn focus_sink(&mut self, ui: &mut Ui<'_>, sink: kui_native::Key) {
+        self.sink = Some(sink);
         ui.take_key_focus(sink);
-        if std::mem::take(&mut self.reclaim_focus) || ui.key_focus().is_none() {
+        if ui.key_focus().is_none() {
             ui.focus(sink);
         }
     }
@@ -1080,27 +1078,26 @@ impl Kawoosh {
     /// when the window comes back to the front and when the keys come
     /// into an editor pane from another kind, and made the register's
     /// newest (`Editor::adopt_clipboard`), so `p` puts it.
-    fn sync_clipboard(&mut self, ui: &mut Ui<'_>) {
-        let window = ui.env().focused;
+    fn sync_clipboard(&mut self, core: &mut Core, window_back: bool) {
         let editor = self.focused_view().is_some();
-        let (was_window, was_editor) = std::mem::replace(&mut self.clip_seen, (window, editor));
+        let was_editor = std::mem::replace(&mut self.clip_editor_seen, editor);
         if self.ed.settings.bool("clipboard.system") == Some(false) {
             return;
         }
         // A look kui no longer awaits was answered — its text reached
-        // `on_event` before this frame, which took the flag — or went
-        // elsewhere; either way the next text is typing, not the
+        // `on_event_with` before this frame, which took the flag — or
+        // went elsewhere; either way the next text is typing, not the
         // clipboard.
-        if self.clip_probe && !ui.awaiting_paste() {
+        if self.clip_probe && !core.awaiting_paste() {
             self.clip_probe = false;
         }
-        let back = (window && !was_window) || (editor && !was_editor);
+        let back = window_back || (editor && !was_editor);
         // kui holds one ask at a time and drops a second: a look asked
         // while another paste is out would claim that paste's answer, so
         // it is asked only when the ask is its own.
-        if back && !self.awaiting_paste && !self.clip_probe && !ui.awaiting_paste() {
-            ui.request_paste();
-            self.clip_probe = ui.awaiting_paste();
+        if back && !self.awaiting_paste && !self.clip_probe && !core.awaiting_paste() {
+            core.request_paste();
+            self.clip_probe = core.awaiting_paste();
         }
     }
 
@@ -2117,7 +2114,7 @@ impl kui_native::App for Kawoosh {
         self.fire_watches();
         self.sync_histories(false);
         self.moments.window_focused = ui.env().focused;
-        self.sync_disk(ui.env().focused);
+        self.sync_disk(false);
         self.sync_marks();
         self.sync_moments(false);
         // A file's edit from the io thread (it landed, a reload, a
@@ -2193,7 +2190,7 @@ impl kui_native::App for Kawoosh {
             self.clip_last = Some(text.clone());
             ui.set_clipboard(text, None);
         }
-        self.sync_clipboard(ui);
+        self.sync_clipboard(ui.core(), false);
         // Secure keyboard entry while a terminal at a password prompt
         // has the keys (kui F85; per frame, so it goes when this does).
         if self
@@ -2268,14 +2265,31 @@ impl kui_native::App for Kawoosh {
             self.confirm_float(ui);
         });
         self.line_cells.sweep();
-        self.key_focus_seen = ui.key_focus();
         self.perf.end_frame(ms(frame_started));
         if self.hud {
             kui_native::widgets::latency_hud(ui);
         }
     }
 
-    fn on_event(&mut self, ev: UiEvent) {
+    /// Every event, lent the window's core (kui ADR 0036): what an
+    /// answer does beyond the model — the keyboard moved, the clipboard
+    /// looked at — is done here, in the event's turn.
+    fn on_event_with(&mut self, ev: UiEvent, core: &mut Core) {
+        let asking = self.confirm.is_some();
+        self.on_ui_event(ev, core);
+        // A confirm answered: the keyboard was its, and goes back to the
+        // pane.
+        if asking
+            && self.confirm.is_none()
+            && let Some(sink) = self.sink
+        {
+            core.set_focus(Some(sink));
+        }
+    }
+}
+
+impl Kawoosh {
+    fn on_ui_event(&mut self, ev: UiEvent, core: &mut Core) {
         self.sync_facts();
         let p = &ev.payload;
         let tag = ev.tag();
@@ -2283,6 +2297,15 @@ impl kui_native::App for Kawoosh {
         let tag_kind = tag.and_then(|t| t.get_str("kind"));
         // Anything but the modifier state is the hands on the keys: the
         // memory's idle guard (`moments.rs`).
+        // The window back in front: the files and the clipboard are
+        // looked at for what changed while it was away.
+        if ev.kind() == Some("window") {
+            if p.get_str("phase") == Some("focused") {
+                self.sync_disk(true);
+                self.sync_clipboard(core, true);
+            }
+            return;
+        }
         if let Some(m) = ev.modifiers() {
             self.mods = m;
             return;
@@ -2379,7 +2402,16 @@ impl kui_native::App for Kawoosh {
         }
         match ev.kind() {
             Some("syntax") => self.on_syntax_click(p),
-            Some("settings") => self.on_settings_click(p),
+            // A click in the Settings tab that opened a file or turned a
+            // row: the keyboard to the pane, from wherever kui had it —
+            // the devtools strip's tab, say.
+            Some("settings") => {
+                if self.on_settings_click(p)
+                    && let Some(sink) = self.sink
+                {
+                    core.set_focus(Some(sink));
+                }
+            }
             Some("undo") => self.on_undo_click(p),
             Some("memory") => self.on_memory_click(p),
             // A click's payload is the `on_click` value itself, with the
@@ -2392,9 +2424,20 @@ impl kui_native::App for Kawoosh {
                     self.layout.focus(pane as PaneId);
                     self.term_scroll(t, crate::terminals::TermScroll::Bottom);
                 }
-                self.reclaim_focus = true;
             }
-            Some("focus" | "luapane") => {
+            // A press in a terminal's grid starts a selection, which no
+            // handler hears, and takes kui's keyboard to its sink: the
+            // pane follows. Only the pointer's: kui moving it to a sink
+            // the view declared is the pane focus already there.
+            Some("focus") => {
+                if p.get_str("phase") == Some("in")
+                    && p.get_str("by") == Some("pointer")
+                    && let Some(pane) = pane
+                {
+                    self.layout.focus(pane);
+                }
+            }
+            Some("title" | "luapane") => {
                 if let Some(pane) = p.get_int("pane") {
                     self.layout.focus(pane as PaneId);
                 }
@@ -2414,7 +2457,6 @@ impl kui_native::App for Kawoosh {
                     self.layout.tab = (i as usize).min(self.layout.tabs.len() - 1);
                     self.layout.dock_focused = false;
                 }
-                self.reclaim_focus = true;
             }
             // A tab's close button: that tab, as `:tabclose` closes the
             // one it is in.
@@ -2431,7 +2473,6 @@ impl kui_native::App for Kawoosh {
                         self.layout.tab = if i < was { was - 1 } else { was };
                     }
                 }
-                self.reclaim_focus = true;
             }
             // A title-bar block's command (the servers: `lsp info`).
             Some("chrome") => {
@@ -2439,7 +2480,6 @@ impl kui_native::App for Kawoosh {
                     let run = run.to_string();
                     self.run_line(&run);
                 }
-                self.reclaim_focus = true;
             }
             // The title bar's cwd: listed.
             Some("cwd") => {
@@ -2448,7 +2488,6 @@ impl kui_native::App for Kawoosh {
                 let cwd = self.cwd.display().to_string();
                 self.shell_command("dir", &[cwd], None);
                 self.drain_lua();
-                self.reclaim_focus = true;
             }
             Some("term") => {
                 // A click focuses; with ⌘ held it opens the path under the

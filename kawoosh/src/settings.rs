@@ -827,12 +827,12 @@ impl Kawoosh {
     /// and nothing on disk — `:w` is the user's, and the watch takes
     /// it from there; `reload` reloads every layer. The keyboard goes
     /// to what opened.
-    pub(crate) fn on_settings_click(&mut self, p: &Value) {
+    pub(crate) fn on_settings_click(&mut self, p: &Value) -> bool {
         let path = p.get_str("path").map(PathBuf::from);
         match (p.get_str("what"), path) {
             (Some("open"), Some(path)) => {
                 self.open_in_editor(&path, None, None);
-                self.reclaim_focus = true;
+                true
             }
             (Some("new"), Some(path)) => {
                 self.open_in_editor(&path, None, None);
@@ -852,9 +852,12 @@ impl Kawoosh {
                     self.ed.message =
                         format!("{} — a template; :w keeps it", self.short_name(&path));
                 }
-                self.reclaim_focus = true;
+                true
             }
-            (Some("reload"), _) => self.reload_all_settings(),
+            (Some("reload"), _) => {
+                self.reload_all_settings();
+                false
+            }
             // A boolean's switch: flipped in the session layer, over
             // whatever file set it, as `:set +…` and `:set -…` do.
             (Some("toggle"), Some(path)) => {
@@ -864,14 +867,14 @@ impl Kawoosh {
                     .settings
                     .set(Layer::Session, &path, Setting::Bool(on));
                 self.ed.message = format!("{path} = {on}");
-                self.reclaim_focus = true;
+                true
             }
             (Some("toggle-default"), _) => {
                 self.settings_default_open = !self.settings_default_open;
                 // A fold is not a place for the keyboard: back to the pane.
-                self.reclaim_focus = true;
+                true
             }
-            _ => {}
+            _ => false,
         }
     }
 
