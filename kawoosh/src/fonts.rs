@@ -1,20 +1,17 @@
 //! The fonts as data (docs/design/fonts.md): the families kui can see,
 //! what each is (kui's `system_fonts`: monospaced, its weights, an
-//! italic), the face on show, and which families are warm — shaped
-//! once, so a Lua view's text in one costs its frame nothing more —
-//! `kawoosh.fonts`, the door the fonts' pane and the lab read — and
-//! `:font`, `:font NAME`.
+//! italic) and the face on show — `kawoosh.fonts`, the door the fonts'
+//! pane and the lab read — and `:font`, `:font NAME`.
 //!
 //! A view draws a family by its name (`family = NAME`, kui's ADR 0037),
-//! which kui resolves in the frame that names it; what kawoosh does is
-//! warm the ones a view asks about (`kawoosh.fonts.warm`), a few a
-//! frame within a budget, registering each with kui as it goes.
+//! which kui resolves and shapes in the frame that names it: a family's
+//! first shaping is well under a millisecond since kui DX24, so a pane
+//! showing many for the first time costs its frame nothing to speak of.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use kawoosh_editor::Setting;
 use kui_native::{FontId, Ui};
@@ -96,12 +93,6 @@ pub struct Fonts {
     /// Counted up whenever the families are read again, so a view
     /// holding a list of them knows to take it again.
     pub generation: u64,
-    /// The families shaped once — their file read and parsed, what a
-    /// first sight costs (14 ms each on the machine it was measured on)
-    /// — so a view's text in them costs a frame nothing more.
-    warm: HashSet<String>,
-    /// Asked for since the last frame and not warm, in the order asked.
-    cold: Vec<String>,
     /// The user's folder's files loaded, each with its handle.
     user: HashMap<PathBuf, FontId>,
     /// The watch saw the user's folder change: read it again at the
@@ -128,14 +119,6 @@ impl Fonts {
 }
 
 pub type SharedFonts = Rc<RefCell<Fonts>>;
-
-/// How long a frame spends warming families a view asked for: past it,
-/// the rest wait for the next frame, which is asked for. One family is
-/// warmed whatever its cost.
-const WARM_BUDGET: Duration = Duration::from_millis(6);
-
-/// What a family is warmed with: the characters a card shows.
-const WARM_TEXT: &str = "fn greet(name: &str) -> String { let n = 0x1F; // O0 Il1 != => }";
 
 /// The user's fonts: `$KAWOOSH_FONTS`, else `fonts/` beside
 /// `settings.lua` — loaded at start, watched, a file dropped in or taken
@@ -265,9 +248,7 @@ impl Kawoosh {
     }
 
     /// The user's folder read (at the first frame, and when the watch saw
-    /// it change) and the families read again; and what a view asked for
-    /// this frame warmed, within the budget — a frame asked for either way, so the
-    /// view draws what is ready and asks again for the rest.
+    /// it change) and the families read again.
     pub(crate) fn sync_fonts(&mut self, ui: &mut Ui<'_>) {
         let mut notes = Vec::new();
         let mut rewatch = false;
@@ -292,25 +273,6 @@ impl Kawoosh {
                 rewatch = !first;
                 // A `font.family` that named a family not there yet.
                 self.look.seen = None;
-            }
-            if !f.cold.is_empty() {
-                let t = Instant::now();
-                for name in std::mem::take(&mut f.cold) {
-                    if t.elapsed() > WARM_BUDGET {
-                        break;
-                    }
-                    let id = if f.bundled.as_deref() == Some(name.as_str()) {
-                        self.bundled_font
-                    } else {
-                        ui.system_font(&name)
-                    };
-                    if let Some(id) = id {
-                        let style = kui_native::TextStyle::new(14.0).font(id);
-                        ui.measure_text(&format!("{name} {WARM_TEXT}"), &style, None);
-                    }
-                    f.warm.insert(name);
-                }
-                ui.request_frame();
             }
         }
         if rewatch {
@@ -490,11 +452,7 @@ fn order(all: &mut [Family], bundled: Option<&str>) {
 /// `line_height`, `row`, `cell`, `features`, `chrome`, `font` (a handle
 /// for a text's `font =`), the family's `mono`, `weights` and `italic`,
 /// `version`, and `generation` (counted up when the families are read
-/// again); `warm(NAME)`, whether the family is warm — read and shaped
-/// once, a few a frame within a budget, from the frame after a view
-/// first asks — so a view that shows many families for the first time
-/// draws each in it (`family = NAME`) as it is ready rather than
-/// stalling the frame on all of them. The face on show is warm.
+/// again). A view draws a family by its name (`family = NAME`).
 pub(crate) fn lua_door(lua: &mlua::Lua, fonts: SharedFonts) -> mlua::Result<()> {
     let door = lua.create_table()?;
     let family_table =
@@ -551,20 +509,6 @@ pub(crate) fn lua_door(lua: &mlua::Lua, fonts: SharedFonts) -> mlua::Result<()> 
                 t.set("italic", fam.italic)?;
             }
             Ok(t)
-        })?,
-    )?;
-    door.set(
-        "warm",
-        lua.create_function(move |_, name: String| {
-            let mut f = fonts.borrow_mut();
-            // Warm, or the face on show — the editor draws in it.
-            if f.warm.contains(&name) || f.shown.name == name {
-                return Ok(true);
-            }
-            if f.family(&name).is_some() && !f.cold.contains(&name) {
-                f.cold.push(name);
-            }
-            Ok(false)
         })?,
     )?;
     lua.globals()

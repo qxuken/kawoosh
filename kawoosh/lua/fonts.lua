@@ -169,10 +169,8 @@ local function card(f, cur, ctx, is_cursor, height, query)
   local t = ctx.env.theme
   local s = colours()
   local r = s.roles
-  -- In its own face once warm (`fonts.warm`), kui's until then.
-  local family = fonts.warm(f.name) and f.name or nil
   local face = function(style)
-    style.family = family
+    style.family = f.name
     return style
   end
   local shown = on_show(cur) == f.name

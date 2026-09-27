@@ -57,7 +57,10 @@ kui ADR 0037), resolving it in the frame that names it, so there is no
 handle to hand down and no frame in a fallback to register ahead of:
 `face(NAME)` is `warm(NAME)`, whether the family is warm (below), and
 the view names the family itself. Nothing registers the 613 at once; a
-family is registered as it is warmed.
+family is registered as it is warmed. *And again the same day:* with
+a family's first shaping under a millisecond (kui DX24, below),
+warming is gone too — `warm(NAME)` with it — and a card is drawn in
+its family from the frame it appears.
 
 *Beat:* registering each family as its card first asked for it — the
 first build. Every card the pane scrolled or searched to was drawn for
@@ -141,6 +144,18 @@ shows more families than that pays again coming back. The cure is
 cosmic-text's — matching the asked family's faces first and scoring the
 rest only when a glyph needs a fallback — not kawoosh's or kui's.
 
+*Amended 2026-09-27 (kui DX24):* kui took it after all. It maps the
+installed font files once, on the first font an app registers (~30 ms,
+at kawoosh's launch), so `get_font_matches` no longer reopens every
+face's file to read its axis: a family's first shaping is ~0.4 ms,
+where it was ~9.7 (release, 1,311 faces). Measured here, headless and
+in release, paging `<C-d>` through all 612 families with the warming
+kept: 6.75 ms a press on the kui before DX24 (the 6 ms budget spent,
+each family ~9 ms) and 0.93 ms after. The warming was there to spread
+that cost over frames; with nothing left to spread, it went — the
+`warm`/`cold` sets, the budget, `kawoosh.fonts.warm` — and the pane
+names each card's family outright. The same walk with no warming was
+0.3 ms a press, its worst 0.6 ms, and raised no `unknown-family`.
 ### 4. One lab for the look: the theme through the font
 
 The theme lab is the look's lab. Every sample in it — the code, the
@@ -276,9 +291,9 @@ As decided. kui F97 (`Core::system_fonts`); the symbols in
 `assets/fonts/NerdFontsSymbolsOnly/` and Intel One Mono in
 `assets/fonts/IntelOneMono/`, every file loaded by `main.rs`'s
 `load_fonts`, its family kept as shipped; `fonts.rs` keeps the families and the face as the door
-has them (`Fonts`), warms what a view asked about within the frame's
-budget (registering each as it goes; all at the first ask until kui's
-ADR 0037), reads and watches the user's
+has them (`Fonts`) — it registered every family at the first ask until
+kui's ADR 0037, and warmed what a view asked about within the frame's
+budget until kui's DX24 — reads and watches the user's
 folder (`user_fonts_dir`, `user_fonts_watch`), and holds `:font`; `kawoosh/lua/fonts.lua`
 the pane; `kawoosh/lua/theme_lab.lua` the face and its scene. Tests:
 `kawoosh/lua/tests/fonts.lua` (the door, the pane's walk, search, take,
