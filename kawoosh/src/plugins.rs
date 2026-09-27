@@ -4,6 +4,8 @@
 pub const BUNDLED: &[(&str, &str)] = &[
     ("kawoosh:memory", include_str!("../lua/memory.lua")),
     ("kawoosh:dir", include_str!("../lua/dir.lua")),
+    // After dir: it deletes through `kawoosh.dir.remove`.
+    ("kawoosh:du", include_str!("../lua/du.lua")),
     ("kawoosh:picker", include_str!("../lua/picker.lua")),
     ("kawoosh:search", include_str!("../lua/search.lua")),
     ("kawoosh:lists", include_str!("../lua/lists.lua")),

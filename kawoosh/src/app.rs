@@ -47,6 +47,8 @@ pub struct Kawoosh {
     pub bundled_font: Option<FontId>,
     /// What the look was last built from (`look.rs`).
     pub(crate) look: crate::look::Look,
+    /// The disk-usage pane's walks (`du.rs`, roadmap step 52).
+    pub(crate) du: crate::du::SharedDu,
     pub ed: Editor,
     pub layout: Layout,
     pub terms: Terminals,
@@ -292,6 +294,7 @@ impl Kawoosh {
             chrome: Default::default(),
             bundled_font: None,
             look: Default::default(),
+            du: Default::default(),
             ed,
             layout: Layout::new(Content::Editor(view)),
             terms: Terminals::default(),
@@ -726,6 +729,7 @@ impl Kawoosh {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     self.searched(token, root, result);
                 }
+                IoMsg::Sized { walk, batch } => self.sized(walk, batch),
                 IoMsg::Walked { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     if let Some(rt) = self.scripting.rt.clone() {
@@ -2163,6 +2167,7 @@ impl kui_native::App for Kawoosh {
             ui.window_command(WindowCommand::Close(ui.env().window.id));
         }
         self.sync_look(ui);
+        self.sync_du();
         self.pal = ui.theme().into();
         if let Some(hit) = self.look.hit {
             self.pal.hit = hit;

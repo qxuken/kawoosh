@@ -24,7 +24,7 @@
 -- its family, and hundreds of families shaped at once is seconds.
 --
 -- Hackable: the pane reads `kawoosh.fonts` — `families()`, `current()`,
--- `face(name)` — and `kawoosh.themes.check()` for the look's colours;
+-- and `kawoosh.themes.check()` for the look's colours;
 -- `kawoosh.fonts.sample` is the code a card shows, lines of
 -- `{ text, token }` pieces, for a config to replace; `state()` is what
 -- the pane shows, for a test.

@@ -2393,9 +2393,22 @@ then breadth.
     over helix's letters, which are vim's `s` `S` `K` there — each
     pattern a prompt previewed as it is typed; helix's `C` is `<C-j>`
     already.
-52. **A disk-usage pane**: a sizing walk on the io thread, unfiltered,
+52. ~~**A disk-usage pane**: a sizing walk on the io thread, unfiltered,
     streaming each directory's total as it is known, and a pane over it
-    that sorts, descends and deletes through `dir`'s plan.
+    that sorts, descends and deletes through `dir`'s plan.~~ Landed
+    2026-09-28: `kawoosh_systems::du::walk` reads directories in
+    parallel, a worker a core, and sends each directory's total as its
+    subtree is done, every 50 ms (`Io::stream`, `IoMsg::Sized`) —
+    unfiltered, on the root's device, links not followed, a hard link
+    once, sizes as a listing says them. The totals stay in Rust
+    (`kawoosh/src/du.rs`) and the pane asks `kawoosh.du` for the ones it
+    shows. `:du [PATH]` (`<leader>wu`, `kawoosh/lua/du.lua`): the
+    largest first, a bar and a share each, `l` `h` in and out, `s` the
+    sort, `m` marks, `d` deletes through `kawoosh.dir.remove` —
+    the write's confirm and order — and out of every total above.
+    Measured on `~/projects` (29,068 directories, 254,137 files, 73 GB):
+    2.1 s warm, 3.2 cold, where `du -sk` took 3.5. Tests:
+    `kawoosh/tests/du.rs`, `du` in `systems/src/du.rs`.
 53. **Docs**: "Where it stands" brought up to the list; then a README,
     `:help` pages and a tutorial, before a release.
 

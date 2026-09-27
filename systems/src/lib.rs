@@ -2,6 +2,7 @@
 //! Decision 6). Each holds a [`Wake`] — the shell passes `kui_native::Waker`'s
 //! `wake` — and calls it after posting, so the parked loop draws.
 
+pub mod du;
 pub mod fs;
 pub mod io;
 pub mod lsp;
