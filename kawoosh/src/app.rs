@@ -2399,8 +2399,12 @@ impl kui_native::App for Kawoosh {
                     }
                     return;
                 }
+                // The answer ends the ask, whichever pane takes it: left
+                // open, every frame asked again and a terminal pasted
+                // each answer, for good.
+                let pasted = std::mem::take(&mut self.awaiting_paste);
                 if let Some(v) = self.focused_view() {
-                    if std::mem::take(&mut self.awaiting_paste) {
+                    if pasted {
                         self.ed.paste_text_marked(v, &text, secret);
                     } else {
                         self.ed.text(v, &text);

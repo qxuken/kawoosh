@@ -1113,6 +1113,12 @@ fn cmd_v_pastes_the_clipboard_into_a_terminal() {
         d.input(&mut app, InputEvent::Commit("echo hi".into()));
         d.frame(&mut app);
         assert_eq!(sent(&mut app), b"echo hi", "{chord} pastes");
+        // Once: the answer ends the ask, where it had stayed open and
+        // each frame after pasted the clipboard again.
+        d.frame(&mut app);
+        assert!(!d.core.awaiting_paste(), "{chord}: no second ask");
+        d.frame(&mut app);
+        assert!(sent(&mut app).is_empty(), "{chord}: pasted once");
     }
     d.press(&mut app, "<D-k>");
     assert!(
