@@ -422,6 +422,13 @@ could be. Seven are bugs, and two of them explain most of the rest:
   and nothing asks for one when the window is uncovered. kui's.
 - **Markdown's task boxes** are `☐` `☑` at the text's size, dimmed, in
   whatever face has them — a thin, small box.
+- **A rounded selection skips markdown** (asked the same day):
+  `editor.selection_radius` rounds the panes' selection, but a
+  rendered row keeps the square spans on purpose (`panes.rs`, "or
+  rendered, keeps the square spans"), its neighbours rounding toward
+  it as toward nothing; and the selection jumps as a line turns raw
+  under the caret and back, the row's text and height changing under
+  it.
 
 And the rest, filed:
 
@@ -2316,8 +2323,11 @@ then breadth.
 47. **The window uncovered** (kui): a redraw on `Occluded(false)` and a
     bounded retry after a skipped frame, the way a new window's first
     frame already has — an F-round, then kawoosh on it.
-48. **Task boxes** in the markdown buffer drawn at the font's size and
-    legible, checked or not.
+48. **The markdown buffer's round**: task boxes drawn at the font's
+    size and legible, checked or not; the rounded selection over
+    rendered rows — each row's selected span measured in its drawn
+    text, so the shape joins across raw and rendered lines — and held
+    still while a line turns raw under the caret and back.
 49. **Links**: `gx` on a path with its line, ⌘-click in an editor pane
     as `gx`, and URLs in a terminal's ⌘-click — one finder for a link
     under a point, the markdown's and the terminal's merged.
