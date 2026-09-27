@@ -202,7 +202,31 @@ went over, Ac437 ACM VGA 8x16 at 15.8 ms (layout 14.1) and Victor Mono
 at 10.9, which the next two runs drew in 2.4 and 2.8: the files not yet
 in the system's cache. The slowest otherwise are layout's, 4–5 ms for a
 few faces (Mishafi Gold, Menlo, Hiragino Mincho ProN, SF Pro Display).
-The warming stays out: with nothing over 8 ms, it would spread nothing. One lab for the look: the theme through the font
+The warming stays out: with nothing over 8 ms, it would spread nothing.
+
+*Scrolling in a face (2026-09-28, "will usage of Victor Mono degrade
+kawoosh's performance?"):* a family's first sight is one frame a run;
+what a face costs after it is the editor's own frames. The scrolling
+probe (`scroll_probe.rs`, `scripts/probe-scroll.nu`) opens a file in a
+window with settings holding only the font, and holds `j` (1500 frames),
+`<C-d>` (400) and `<C-f>` (300) from its top, one press a frame, timing
+each. On the workspace's Rust sources joined (80,977 lines), 1100×760 at
+13 px, comments italic as every theme has them (so Victor Mono's cursive
+italic drawn too), four runs, a frame's work mean, lowest–highest:
+
+| key | bundled Iosevka | Victor Mono | JetBrains Mono |
+|---|---|---|---|
+| `j` | 0.60–0.88 ms | 0.66–0.89 | 0.65–0.93 |
+| `<C-d>` | 0.88–1.02 ms | 0.89–1.19 | 0.93–1.30 |
+| `<C-f>` | 1.06–1.29 ms | 1.03–1.31 | 1.06–1.41 |
+
+A face is lost in the run-to-run spread. Of 8,800 frames the slowest was
+5.5 ms, one of Iosevka's `j`; none else over 4.1, Victor Mono's worst
+3.9. Render is about 0.1 ms more in the two installed faces (0.13 → 0.2
+to 0.3) — out of a frame's 8.3 at 120 Hz. Not measured: a trackpad's
+scroll and a full-screen window, where every face draws more rows alike.
+
+### 4. One lab for the look: the theme through the font
 
 The theme lab is the look's lab. Every sample in it — the code, the
 tokens, the terminal's sixteen — is drawn in the editor's face, at its
@@ -345,4 +369,7 @@ the pane; `kawoosh/lua/theme_lab.lua` the face and its scene. Tests:
 `kawoosh/lua/tests/fonts.lua` (the door, the pane's walk, search, take,
 copy and close, the lab's face), `tests/cmdline.rs` for the completion,
 `tests/fonts_folder.rs` for the user's folder (a file dropped in, first
-in the list, and taken out); `fonts.rs`'s own for the order.
+in the list, and taken out); `fonts.rs`'s own for the order. The windowed
+probes: `fonts::Probe` (`scripts/probe-fonts.nu`) for the pane and
+`scroll_probe::ScrollProbe` (`scripts/probe-scroll.nu`) for a face in
+the editor.
