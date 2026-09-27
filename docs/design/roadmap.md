@@ -1765,7 +1765,7 @@ follow the theme every frame (`panes.rs`).
   setting's second half, `editor.bell`, off by default — vim users
   turn it off first.
 - **Mouse buttons and OSC 8** — done 2026-09-28: OSC 8 in step 54,
-  not kui's after all; the buttons in step 55 over kui F104. What it said before: kui routes
+  not kui's after all; the buttons in step 55 over kui F105. What it said before: kui routes
   only the primary button; the middle button and hyperlinks are kui's
   wish list, not kawoosh's.
 - **Kitty graphics** — done 2026-09-28 [req §9]; step 56, kitty-graphics.md. A `term` APC hook before it is
@@ -2473,7 +2473,7 @@ think on a kitty keyboard"), the terminal's third round, in that order:
     middle buttons reach a program that asked for mouse reports (tmux,
     htop, a TUI's menus). kui routes the primary button to a widget
     and the secondary to a context menu, so this starts as a kui round.~~
-    Landed 2026-09-28 with kui F104 (branch `claude/kawoosh-mouse-buttons`,
+    Landed 2026-09-28 with kui F105 (merged to kui main 9a8c852; branch `claude/kawoosh-mouse-buttons`,
     e66939d and 01f0b49): `on_button` claims the non-primary buttons
     for a node, `buttons` which, each captured from press to release
     with `cell` on a grid. The grid claims the middle button always —

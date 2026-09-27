@@ -74,7 +74,7 @@ inline node, virtual text a run in a `role="none"` wrapper.
 | R4.4 | A click says which cell, for `gf` from terminal output | ✓ | pointer payload `cell: {row, col}` (C20). M4 |
 | R4.5 | Underline color and undercurl per cell (SGR 58 / 4:3) | ✓ | **K4, alpha.13**: `Cell::ul`, `cells::flags::WAVY` / `DOTTED`. M4 |
 | R4.6 | Hyperlinks per cell (OSC 8) | ✓ | not kui's after all (roadmap step 54, 2026-09-28): `term` keeps each cell's link (alacritty's) and kawoosh finds the run under the pointer's `cell: {row, col}` (R4.4), so the grid needs no link field. |
-| R4.7 | The middle button, for the Linux primary-selection paste | ✓ | kui F104 (2026-09-28, roadmap step 55): `on_button` + `buttons` — a node claims the non-primary buttons, captured from press to release, with `cell` on a grid; a claimed secondary press is the node's instead of a context menu. kawoosh's middle button pastes the clipboard (macOS has no primary selection). |
+| R4.7 | The middle button, for the Linux primary-selection paste | ✓ | kui F105 (2026-09-28, roadmap step 55): `on_button` + `buttons` — a node claims the non-primary buttons, captured from press to release, with `cell` on a grid; a claimed secondary press is the node's instead of a context menu. kawoosh's middle button pastes the clipboard (macOS has no primary selection). |
 | R4.8 | Blink, dim, inverse, hidden, and the cursor's own color | ✓ | app-side attributes resolved into `fg`/`bg` before the grid; cursor takes a `Color`. |
 
 ## 5. Input
