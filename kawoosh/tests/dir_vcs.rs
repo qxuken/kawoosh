@@ -50,7 +50,7 @@ fn a_listing_in_a_repository_paints_what_git_says() {
     let mut app = Kawoosh::new("*scratch*", "");
     let mut d = Drive::new(900.0, 500.0);
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     d.keys(&mut app, &format!(":dir {}", dir.display()));
     d.key(&mut app, "enter", KeyMods::default());

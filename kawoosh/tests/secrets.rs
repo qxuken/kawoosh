@@ -326,7 +326,7 @@ fn vault_app(tool: &std::path::Path) -> (Drive, Kawoosh) {
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = Kawoosh::new("*scratch*", "");
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     ex(
         &mut d,

@@ -252,7 +252,7 @@ fn a_heading_typed_takes_its_size() {
     d.press(&mut app, "gg");
     d.keys(&mut app, "jo");
     for c in ["#", "#", " ", "N", "e", "w"] {
-        d.text(&mut app, c);
+        d.commit(&mut app, c);
         settle(&mut d, &mut app);
     }
     let h2 = rect_of_text(&d, "A list").expect("an h2").3;

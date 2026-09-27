@@ -96,7 +96,7 @@ fn rust_is_highlighted_and_stays_so_across_edits() {
         .unwrap()
         .clone();
     d.keys(&mut app, "O");
-    d.text(&mut app, "// c");
+    d.commit(&mut app, "// c");
     d.key(&mut app, "escape", KeyMods::default());
     let buf = app.ed.buffer_of(v);
     let moved = buf

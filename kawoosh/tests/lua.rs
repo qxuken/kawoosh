@@ -13,7 +13,7 @@ fn app_with_lua(d: &mut Drive, title: &str, text: &str) -> Kawoosh {
     let mut app = Kawoosh::new(title, text);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app
 }
 
@@ -122,13 +122,13 @@ fn a_lua_view_is_a_pane_and_its_clicks_come_back() {
         "the click reached Lua"
     );
     // Keys in the pane reach the handler; the pane prefix still works.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     assert!(matches!(
         app.layout.focused_content(),
         Some(Content::Editor(_))
     ));
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "q");
     assert_eq!(
@@ -266,7 +266,7 @@ fn compile_mode_streams_and_jumps_to_locations() {
     let mut app = Kawoosh::from_file(&dir.join("src/a.rs"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     ex(
         &mut d,
@@ -325,7 +325,7 @@ fn a_bare_compile_runs_what_the_project_offers() {
     let mut app = Kawoosh::from_file(&dir.join("src/a.rs"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     let wait = |d: &mut Drive, app: &mut Kawoosh| {
         for _ in 0..300 {
@@ -381,7 +381,7 @@ fn a_bare_compile_runs_what_the_project_offers() {
         r#"local o = kawoosh.compile_offer(); kawoosh.echo(#o .. " " .. o[3].cmd)"#,
     );
     assert_eq!(app.ed.message, "3 make other");
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     d.frame(&mut app);
     ex(&mut d, &mut app, "compile pick 3");
     wait(&mut d, &mut app);
@@ -425,7 +425,7 @@ fn a_build_nu_command_wanting_arguments_goes_to_the_prompt() {
     let mut app = Kawoosh::from_file(&dir.join("a.txt"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     ex(&mut d, &mut app, "compile?");
     let m = app.ed.message.clone();
@@ -479,7 +479,7 @@ fn ctrl_c_in_the_compile_buffer_kills_the_compile() {
     let mut app = Kawoosh::from_file(&dir.join("a.rs"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     // Elsewhere, and with nothing running, `<C-c>` is not the compile's.
     d.press(&mut app, "<C-c>");
@@ -552,7 +552,7 @@ fn dash_opens_the_files_directory_and_can_move_the_cwd() {
     let mut app = Kawoosh::from_file(&file);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     d.keys(&mut app, "-");
     let name = app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
@@ -593,7 +593,7 @@ fn dash_lands_on_the_entry_it_came_from_and_reuses_the_listing() {
     let mut app = Kawoosh::from_file(&dir.join("inner/b.txt"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     let buffers = |app: &Kawoosh| app.ed.buffers.len();
     let line = |app: &Kawoosh| {
@@ -681,7 +681,7 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
     let mut app = Kawoosh::from_file(&file);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     let cwd = app.cwd.clone();
 
@@ -1073,7 +1073,7 @@ fn a_listing_is_annotated_and_refreshed() {
     // made behind the listing's back appears, the caret still on its
     // entry.
     d.keys(&mut app, "jjjj");
-    d.ctrl(&mut app, "l");
+    d.press(&mut app, "<C-l>");
     d.frame(&mut app);
     assert!(
         d.confirm_texts()[0].starts_with("Drop the edits to "),
@@ -1103,7 +1103,7 @@ fn a_listing_is_annotated_and_refreshed() {
     std::fs::remove_file(dir.join("c.txt")).unwrap();
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(app.ed.message, "");
-    d.ctrl(&mut app, "l");
+    d.press(&mut app, "<C-l>");
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);
     assert_eq!(app.ed.message, "", "not refused");
@@ -1168,7 +1168,7 @@ fn a_path_argument_knows_the_current_file() {
     let mut app = Kawoosh::from_file(&dir.join("inner/f.txt"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     let line = |app: &Kawoosh| {
         let v = app.focused_view().unwrap();
@@ -1221,7 +1221,7 @@ fn a_listing_previews_the_entry_under_the_caret() {
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);
     d.keys(&mut app, "jj");
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     d.frame(&mut app);
     d.frame(&mut app);
     assert_eq!(app.layout.visible_panes().len(), 2, "a preview pane");
@@ -1267,12 +1267,12 @@ fn a_listing_previews_the_entry_under_the_caret() {
         t.contains(&"inside.txt".to_string()) && !t.contains(&"reading…".to_string()),
         "{t:?}"
     );
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     d.frame(&mut app);
     assert_eq!(app.layout.visible_panes().len(), 1, "closed again");
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     d.frame(&mut app);
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     assert!(matches!(
         app.layout.focused_content(),
@@ -1400,7 +1400,7 @@ fn a_split_listing_moves_on_alone() {
     };
     let top = format!("dir: {}", dir.display());
     let sub = format!("dir: {}", dir.join("sub").display());
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "v");
     // The new pane asks; `<CR>` is the same listing, vim's split.
     d.key(&mut app, "enter", KeyMods::default());
@@ -1421,7 +1421,7 @@ fn a_split_listing_moves_on_alone() {
     assert_eq!(names(&app), [top.clone(), sub.clone()]);
     // And from the left pane, with the right one in `sub`: `<CR>` on
     // `../` in the left goes up in the left alone.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.key(&mut app, "enter", KeyMods::default());
     assert_eq!(
@@ -1466,17 +1466,17 @@ fn a_yanked_line_pasted_into_another_listing_is_a_copy() {
     assert_eq!(d.line_rows(), ["../", "a1.txt", "../", "sub/", "b1.txt"]);
     // `yy` on b1.txt and on sub/, pasted into a; a1.txt moved to b.
     d.keys(&mut app, "jyy");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "jp");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "jyy");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "p");
     d.keys(&mut app, "ggjdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "Gp");
     assert_eq!(
@@ -1576,17 +1576,17 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     );
     // a's file.txt cut and pasted below b's; then b's own cut and pasted
     // into a.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "jdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "Gp");
     d.frame(&mut app);
     let e = extras(&d);
     assert!(e[3].ends_with("← twice"), "{e:?} / {}", app.ed.message);
     d.keys(&mut app, "ggjdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "p");
     d.frame(&mut app);
@@ -1621,7 +1621,7 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     );
     // Pasted and renamed: moved under the new name.
     d.keys(&mut app, "jdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "Gp");
     d.keys(&mut app, "ccrenamed.txt");
@@ -1679,10 +1679,10 @@ fn a_file_replaced_by_a_copy_is_kept_until_the_copy_arrives() {
         ex(d, app, &format!("dir {}", dir.join("a").display()));
         ex(d, app, "vsplit");
         ex(d, app, &format!("dir {}", dir.join("b").display()));
-        d.ctrl(app, "w");
+        d.press(app, "<C-w>");
         d.keys(app, "h");
         d.keys(app, "jyy");
-        d.ctrl(app, "w");
+        d.press(app, "<C-w>");
         d.keys(app, "l");
         d.keys(app, "jpkdd");
         ex(d, app, "w");
@@ -1832,7 +1832,7 @@ fn a_listings_edits_are_kept_until_written_or_dropped() {
     assert_eq!(d.line_rows(), ["../", "b.txt"]);
     assert!(app.ed.buffer_of(app.focused_view().unwrap()).modified);
     // <C-l> asks; Keep keeps; Drop drops.
-    d.ctrl(&mut app, "l");
+    d.press(&mut app, "<C-l>");
     d.frame(&mut app);
     let t = d.confirm_texts();
     assert!(t[0].starts_with("Drop the edits to "), "{t:?}");
@@ -1840,7 +1840,7 @@ fn a_listings_edits_are_kept_until_written_or_dropped() {
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "b.txt"], "kept");
-    d.ctrl(&mut app, "l");
+    d.press(&mut app, "<C-l>");
     d.frame(&mut app);
     d.keys(&mut app, "1");
     d.frame(&mut app);
@@ -2033,7 +2033,7 @@ fn a_pasted_line_yanked_again_is_still_its_entry() {
     d.keys(&mut app, "kdd");
     d.frame(&mut app);
     d.keys(&mut app, "yy");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "jp");
     d.frame(&mut app);
@@ -2138,10 +2138,10 @@ fn renames_and_moves_swap_without_writing_over_anything() {
         &mut app,
         &format!("dir {}", dir.join("b").display()),
     );
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "Gdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "Gp");
     d.frame(&mut app);
@@ -2171,7 +2171,7 @@ fn renames_and_moves_swap_without_writing_over_anything() {
         ("from a".into(), "from b".into())
     );
     d.keys(&mut app, "u");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "u");
     // A name taken by a file the listing does not know (made behind
@@ -2248,7 +2248,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     );
     assert_eq!(name(&app), b);
     assert_eq!(app.ed.listed_buffers().len(), n + 1, "a buffer of its own");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     assert_eq!(name(&app), a, "the other pane keeps its listing");
     // Each writes to its own directory, from its own entries.
@@ -2263,7 +2263,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert!(dir.join("a/a2.txt").is_file() && dir.join("b/b1.txt").is_file());
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     assert_eq!(name(&app), b);
     d.keys(&mut app, "jccb2.txt");
@@ -2285,12 +2285,12 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     // moves the files and lists both directories again, the other
     // pane's listing where it is.
     d.keys(&mut app, "jdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     assert_eq!(name(&app), a);
     d.keys(&mut app, "jp");
     d.keys(&mut app, "kdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "p");
     assert_eq!(
@@ -2343,7 +2343,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     // grouped under their directories; cancelled, and both listings
     // read again.
     d.keys(&mut app, "jdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "p");
     d.keys(&mut app, "kcca3.txt");
@@ -2365,7 +2365,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     );
     d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "dir refresh!");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     ex(&mut d, &mut app, "dir refresh!");
     // `:dir!` lists in a new buffer; the one it came from stays listed
@@ -2387,7 +2387,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     assert_eq!(app.ed.listed_buffers().len(), n + 2, "moved on in place");
     // The preview follows the keyboard from one listing to another.
     d.keys(&mut app, "j");
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     d.frame(&mut app);
     d.frame(&mut app);
     let texts = |d: &Drive| -> Vec<String> {
@@ -2402,7 +2402,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
         "{:?}",
         texts(&d)
     );
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     assert_eq!(name(&app), a);
     d.keys(&mut app, "j");
@@ -2430,7 +2430,7 @@ fn a_renamed_file_is_still_its_buffer() {
     let mut app = Kawoosh::from_file(&dir.join("a.txt"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     ex(
         &mut d,
@@ -2548,7 +2548,7 @@ fn joined_lines_are_refused_and_a_typed_name_is_new() {
         &mut app,
         &format!("dir {}", dir.join("b").display()),
     );
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "Gob1.txt");
     d.key(&mut app, "escape", KeyMods::default());
@@ -2645,7 +2645,7 @@ fn a_directory_opens_as_a_listing() {
     let mut app = Kawoosh::new("*scratch*", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.open_first(&dir);
     d.frame(&mut app);
     assert_eq!(

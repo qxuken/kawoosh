@@ -8,7 +8,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::chrome::TAB_MIN_W;
-use kui_native::KeyMods;
+use kui_native::{KeyMods, Rect};
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -45,11 +45,11 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
     let mut app = Kawoosh::new("t", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.set_cwd(&kawoosh_systems::fs::canonicalize(&deep).unwrap());
     d.frame(&mut app);
-    let (_, cy, _, _) = d.rect_of("cwd").expect("the cwd in the title bar");
-    let (_, ty, _, _) = d.rect_of("tab0").expect("the tab");
+    let Rect { y: cy, .. } = d.rect("cwd").expect("the cwd in the title bar");
+    let Rect { y: ty, .. } = d.rect("tab0").expect("the tab");
     assert!(cy < ty, "the title bar is above the tabs");
     let shown = texts(&d)
         .into_iter()
@@ -62,7 +62,7 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
     );
     assert!(shown.len() < deep.display().to_string().len());
     // Hovered, it floats the whole path (the spec's `tooltip`).
-    let (x, y, w, h) = d.rect_of("cwd").unwrap();
+    let Rect { x, y, w, h } = d.rect("cwd").unwrap();
     let full = kawoosh_systems::fs::canonicalize(&deep)
         .unwrap()
         .display()
@@ -76,7 +76,7 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
     };
     // (The status line carries it too.)
     let before = hints(&d);
-    d.hover(&mut app, x + w / 2.0, y + h / 2.0);
+    d.move_to(&mut app, x + w / 2.0, y + h / 2.0);
     d.frame(&mut app);
     assert_eq!(hints(&d), before + 1, "the hint: {:?}", texts(&d));
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
@@ -114,13 +114,13 @@ fn tabs_share_the_strip_and_scroll_past_their_floor() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("a", "");
     d.frame(&mut app);
-    assert!(d.rect_of("close").is_none(), "a lone tab has no close");
+    assert!(d.rect("close").is_none(), "a lone tab has no close");
     ex(&mut d, &mut app, "tabnew");
     ex(&mut d, &mut app, "tabnew");
     settle(&mut d, &mut app);
     let widths: Vec<f32> = ["tab0", "tab1", "tab2"]
         .iter()
-        .map(|l| d.rect_of(l).unwrap_or_else(|| panic!("{l}")).0)
+        .map(|l| d.rect(l).unwrap_or_else(|| panic!("{l}")).x)
         .collect();
     let step = widths[1] - widths[0];
     assert!((widths[2] - widths[1] - step).abs() < 1.5, "{widths:?}");
@@ -131,28 +131,33 @@ fn tabs_share_the_strip_and_scroll_past_their_floor() {
     }
     settle(&mut d, &mut app);
     assert_eq!(app.layout.tab, 11);
-    let (x, _, w, _) = d.rect_of("tab11").expect("the last tab");
+    let Rect { x, w, .. } = d.rect("tab11").expect("the last tab");
     assert!((w - TAB_MIN_W).abs() < 0.5, "at its floor: {w}");
     assert!(
         x >= 0.0 && x + w <= 900.5,
         "the active tab in view: {x} {w}"
     );
-    let (x1, _, _, _) = d.rect_of("tab0").unwrap();
+    let Rect { x: x1, .. } = d.rect("tab0").unwrap();
     assert!(x1 < 0.0, "the first scrolled off: {x1}");
     d.keys(&mut app, "1gt");
     settle(&mut d, &mut app);
-    let (x1, _, _, _) = d.rect_of("tab0").unwrap();
+    let Rect { x: x1, .. } = d.rect("tab0").unwrap();
     assert!(x1 >= 0.0, "back in view: {x1}");
 
     // The close button on the active tab closes that tab.
-    let (x, y, w, h) = d.rect_of("close").expect("the active tab's close");
+    let Rect { x, y, w, h } = d.rect("close").expect("the active tab's close");
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     assert_eq!(app.layout.tabs.len(), 11);
     // One on a tab behind, under the pointer, closes that one and
     // leaves the user where they were.
     app.layout.tab = 2;
     settle(&mut d, &mut app);
-    let (tx, ty, tw, th) = d.rect_of("tab0").unwrap();
+    let Rect {
+        x: tx,
+        y: ty,
+        w: tw,
+        h: th,
+    } = d.rect("tab0").unwrap();
     d.input(
         &mut app,
         kui_native::InputEvent::CursorMoved(kui_native::Vec2::new(tx + tw / 2.0, ty + th / 2.0)),
@@ -230,7 +235,7 @@ fn the_chrome_follows_the_font_to_a_cap() {
     let mut app = Kawoosh::new("a", "text");
     d.frame(&mut app);
     d.frame(&mut app);
-    assert_eq!(d.rect_of("tab0").unwrap().3, 22.0, "the default strip");
+    assert_eq!(d.rect("tab0").unwrap().h, 22.0, "the default strip");
     assert_eq!(app.chrome.strip_h, 24.0);
     assert_eq!(app.chrome.pane_title_h, 22.0);
     ex(&mut d, &mut app, "set font.size=29");
@@ -238,7 +243,7 @@ fn the_chrome_follows_the_font_to_a_cap() {
     settle(&mut d, &mut app);
     assert_eq!(app.face.size, 29.0);
     assert_eq!(app.chrome.face.size, 16.0, "capped");
-    assert_eq!(d.rect_of("tab0").unwrap().3, 26.0);
+    assert_eq!(d.rect("tab0").unwrap().h, 26.0);
     // The sizes are length tokens too, for a Lua view's text and sums.
     let tokens = d.core.tokens().expect("the host's tokens");
     let length = |name: &str| {
@@ -255,7 +260,7 @@ fn the_chrome_follows_the_font_to_a_cap() {
     ex(&mut d, &mut app, "set font.chrome_size=20");
     settle(&mut d, &mut app);
     assert_eq!(app.chrome.face.size, 20.0, "pinned");
-    assert_eq!(d.rect_of("tab0").unwrap().3, 32.0);
+    assert_eq!(d.rect("tab0").unwrap().h, 32.0);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

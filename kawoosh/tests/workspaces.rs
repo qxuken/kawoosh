@@ -31,7 +31,7 @@ fn launch() -> (Drive, Kawoosh) {
     let mut app = Kawoosh::new("*scratch*", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     // A new tab on a scratch, not the launcher, so `gt` is a key.
     ex(&mut d, &mut app, "set layout.new_tab=scratch");

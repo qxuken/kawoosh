@@ -35,7 +35,7 @@ fn keys_edit_through_the_real_dispatch() {
     assert_eq!(text(&app).lines().next(), Some("line "));
     d.keys(&mut app, "i");
     assert_eq!(app.focused_mode(), Mode::Insert);
-    d.text(&mut app, "ünï");
+    d.commit(&mut app, "ünï");
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(d.line_rows()[0], "line ünï");
     assert_eq!(app.focused_mode(), Mode::Normal);
@@ -63,7 +63,7 @@ fn the_view_follows_the_caret_with_scrolloff() {
     assert_eq!(d.line_rows().last().map(String::as_str), Some(""));
     d.keys(&mut app, "gg");
     assert_eq!(app.ed.views[app.focused_view().unwrap()].top, 0);
-    d.ctrl(&mut app, "d");
+    d.press(&mut app, "<C-d>");
     assert_eq!(
         app.ed.buffer_of(app.focused_view().unwrap()).line_of(
             app.ed.views[app.focused_view().unwrap()]
@@ -604,7 +604,7 @@ fn typing_a_run_is_one_piece() {
     let pieces = |app: &Kawoosh| app.ed.buffer_of(app.focused_view().unwrap()).piece_count();
     let before = pieces(&app);
     d.keys(&mut app, "A");
-    d.text(&mut app, " and some words typed one key at a time");
+    d.commit(&mut app, " and some words typed one key at a time");
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(
         pieces(&app),
@@ -612,7 +612,7 @@ fn typing_a_run_is_one_piece() {
         "the line's piece split around one run of typing"
     );
     d.keys(&mut app, "jI");
-    d.text(&mut app, "start: ");
+    d.commit(&mut app, "start: ");
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(
         pieces(&app),

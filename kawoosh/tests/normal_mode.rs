@@ -472,7 +472,7 @@ fn ctrl_shift_u_deletes_the_line_in_insert_mode() {
     assert_eq!(text(&app), "one\nthree\n");
     assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Insert);
     assert_eq!(app.ed.memory.head().map(|m| m.text.as_str()), Some("two\n"));
-    d.text(&mut app, "x");
+    d.commit(&mut app, "x");
     assert_eq!(text(&app), "one\nxthree\n");
 }
 
@@ -552,7 +552,7 @@ fn g_sequences_hold_in_visual_and_operator_pending_mode() {
     let mut d = Drive::new(900.0, 500.0);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     d.keys(&mut app, "jjvggd");
     assert_eq!(text(&app), "hree", "vgg");
@@ -574,7 +574,7 @@ fn with_plugins(text: &str) -> (Drive, Kawoosh) {
     let mut d = Drive::new(900.0, 500.0);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     (d, app)
 }

@@ -24,7 +24,7 @@ fn launch(db: &std::path::Path, path: &std::path::Path) -> (Drive, Kawoosh) {
     let mut app = Kawoosh::from_file(path);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.set_cwd(db.parent().unwrap());
     app.open_store(Some(db));
     d.frame(&mut app);

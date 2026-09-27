@@ -22,7 +22,7 @@ fn app_with_lua(d: &mut Drive) -> Kawoosh {
     let mut app = Kawoosh::new("t", "hello\n");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     // The first frame declares the key sink the keys go to.
     d.frame(&mut app);
     app
@@ -585,14 +585,14 @@ fn a_boolean_setting_is_a_switch_in_the_tab() {
     // the list's edge is clipped and takes no click. Scrolled again
     // for the second: the first adds a row to the session layer above.
     fn click_whichkey(d: &mut Drive, app: &mut Kawoosh) {
-        let list = d.rect_of("devtools-tab:settings").expect("the tab");
-        d.wheel(app, list.0 + 20.0, list.1 + list.3 / 2.0, 0.0, -100_000.0);
-        let rect = d.rect_of("toggle whichkey").expect("the switch row");
+        let list = d.rect("devtools-tab:settings").expect("the tab");
+        d.wheel(app, list.x + 20.0, list.y + list.h / 2.0, 0.0, -100_000.0);
+        let rect = d.rect("toggle whichkey").expect("the switch row");
         assert!(
-            rect.1 + rect.3 <= list.1 + list.3,
+            rect.y + rect.h <= list.y + list.h,
             "the switch row is on screen"
         );
-        d.click(app, rect.0 + 20.0, rect.1 + rect.3 / 2.0);
+        d.click(app, rect.x + 20.0, rect.y + rect.h / 2.0);
         d.frame(app);
     }
     let mut d = Drive::new(1100.0, 700.0);
@@ -619,7 +619,7 @@ fn a_boolean_setting_is_a_switch_in_the_tab() {
     click_whichkey(&mut d, &mut app);
     assert_eq!(app.ed.settings.bool("whichkey"), Some(true));
     // A number is not a switch.
-    assert!(d.rect_of("toggle tabstop").is_none());
+    assert!(d.rect("toggle tabstop").is_none());
 }
 
 #[test]
@@ -659,7 +659,7 @@ fn an_empty_layer_offers_a_file_to_create() {
     assert_eq!(app.ed.buffer_of(v).language.to_string(), "lua");
     // And the keyboard is in it, on the table's line: typing edits it.
     d.keys(&mut app, "O");
-    d.text(&mut app, "  tabstop = 7,");
+    d.commit(&mut app, "  tabstop = 7,");
     d.key(&mut app, "escape", KeyMods::default());
     assert!(
         app.ed

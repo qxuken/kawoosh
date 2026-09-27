@@ -30,7 +30,7 @@ fn open(d: &mut Drive, dir: &Path) -> Kawoosh {
     let mut app = Kawoosh::from_file(&dir.join("src/a.rs"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.set_cwd(dir);
     d.frame(&mut app);
     app
@@ -121,7 +121,7 @@ fn named_commands_the_default_and_the_recent_lines() {
     assert_eq!(rows[5], (None, "echo 'src/a.rs'", "recent"));
     assert!(rows.iter().any(|r| r.1 == "cargo check"), "{rows:?}");
     assert!(app.compile.offer[1].needs);
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     d.frame(&mut app);
 
     // `<C-e>` on a named row: `compile NAME `, the arguments to come.
@@ -147,7 +147,7 @@ fn named_commands_the_default_and_the_recent_lines() {
         !app.compile.offer.iter().any(|o| o.cmd == "cargo check"),
         "no deduced rows"
     );
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     std::fs::remove_dir_all(&dir).ok();
 }
 

@@ -5,7 +5,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::{Content, Rect};
-use kui_native::KeyMods;
+use kui_native::{KeyMods, Vec2};
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -14,7 +14,7 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
 }
 
 fn ctrl_w(d: &mut Drive, app: &mut Kawoosh, then: &str) {
-    d.ctrl(app, "w");
+    d.press(app, "<C-w>");
     d.keys(app, then);
 }
 
@@ -173,11 +173,11 @@ fn a_pane_moves_in_and_out_of_the_dock() {
     d.frame(&mut app);
     let title = |app: &Kawoosh, p: u64| {
         let r = app.layout.rects[&p];
-        (r.x + r.w / 2.0, r.y + 8.0)
+        Vec2::new(r.x + r.w / 2.0, r.y + 8.0)
     };
     let r = app.layout.rects[&term];
     let from = title(&app, two);
-    d.drag(&mut app, from, (r.x + r.w - 10.0, r.y + r.h / 2.0));
+    d.drag(&mut app, from, Vec2::new(r.x + r.w - 10.0, r.y + r.h / 2.0));
     assert!(app.layout.in_dock(two));
     assert_eq!(app.layout.visible_panes(), [1, term, two]);
     assert_eq!(app.layout.focused(), two);
@@ -186,7 +186,7 @@ fn a_pane_moves_in_and_out_of_the_dock() {
     // And the terminal out by its title bar, onto the tab pane's left.
     let r1 = app.layout.rects[&1];
     let from = title(&app, term);
-    d.drag(&mut app, from, (r1.x + 10.0, r1.y + r1.h / 2.0));
+    d.drag(&mut app, from, Vec2::new(r1.x + 10.0, r1.y + r1.h / 2.0));
     assert!(!app.layout.in_dock(term));
     assert_eq!(app.layout.visible_panes(), [term, 1, two]);
     assert_eq!(app.layout.focused(), term);
@@ -278,7 +278,7 @@ fn new_scratches() {
     assert_eq!(app.ed.buffers.len(), 2, "the first buffer stays");
     // Typed into and left, it is a buffer like any other.
     d.keys(&mut app, "i");
-    d.text(&mut app, "note");
+    d.commit(&mut app, "note");
     d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "b t");
     assert_eq!(d.line_rows()[0], "one");
@@ -334,7 +334,7 @@ fn buffers_are_listed_and_switched() {
     );
     // Switching back lands where the buffer was left.
     d.keys(&mut app, "A");
-    d.text(&mut app, "!");
+    d.commit(&mut app, "!");
     d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "b b.rs");
     ex(&mut d, &mut app, "b a.txt");
@@ -367,8 +367,8 @@ fn buffers_are_listed_and_switched() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-fn centre(r: &Rect) -> (f32, f32) {
-    (r.x + r.w / 2.0, r.y + r.h / 2.0)
+fn centre(r: &Rect) -> Vec2 {
+    Vec2::new(r.x + r.w / 2.0, r.y + r.h / 2.0)
 }
 
 /// A click anywhere in a pane gives it the keyboard: the editor's rows,
@@ -504,7 +504,7 @@ fn a_pane_is_dragged_by_its_title_bar() {
     assert_eq!(app.layout.visible_panes(), [1, 2, 3]);
     let title = |app: &Kawoosh, p: u64| {
         let r = app.layout.rects[&p];
-        (r.x + r.w / 2.0, r.y + 8.0)
+        Vec2::new(r.x + r.w / 2.0, r.y + 8.0)
     };
     // 3 onto the middle of 1: a swap, 3 with the keyboard.
     let to = centre(&app.layout.rects[&1]);
@@ -517,7 +517,7 @@ fn a_pane_is_dragged_by_its_title_bar() {
     // split with 2.
     let r3 = app.layout.rects[&3];
     let from = title(&app, 1);
-    d.drag(&mut app, from, (r3.x + 10.0, r3.y + r3.h / 2.0));
+    d.drag(&mut app, from, Vec2::new(r3.x + 10.0, r3.y + r3.h / 2.0));
     assert_eq!(app.layout.visible_panes(), [1, 3, 2]);
     assert_eq!(app.layout.focused(), 1);
     assert_eq!(app.layout.tab().split_of(2).as_deref(), Some(""));
@@ -526,34 +526,28 @@ fn a_pane_is_dragged_by_its_title_bar() {
     // let go there, 3 is stacked over 2.
     let r2 = app.layout.rects[&2];
     let from = title(&app, 3);
-    d.input(
-        &mut app,
-        kui_native::InputEvent::CursorMoved(kui_native::Vec2::new(from.0, from.1)),
-    );
+    d.input(&mut app, kui_native::InputEvent::CursorMoved(from));
     d.input(&mut app, kui_native::InputEvent::mouse_down(1));
-    let over = (r2.x + r2.w / 2.0, r2.y + 10.0);
-    d.input(
-        &mut app,
-        kui_native::InputEvent::CursorMoved(kui_native::Vec2::new(over.0, over.1)),
-    );
+    let over = Vec2::new(r2.x + r2.w / 2.0, r2.y + 10.0);
+    d.input(&mut app, kui_native::InputEvent::CursorMoved(over));
     d.frame(&mut app);
-    let drop = d.rect_of("drop").expect("the drop drawn while held");
-    assert!((drop.0 - r2.x).abs() < 1.0 && (drop.1 - r2.y).abs() < 1.0);
-    assert!((drop.2 - r2.w).abs() < 1.0 && (drop.3 - r2.h / 2.0).abs() < 1.0);
+    let drop = d.rect("drop").expect("the drop drawn while held");
+    assert!((drop.x - r2.x).abs() < 1.0 && (drop.y - r2.y).abs() < 1.0);
+    assert!((drop.w - r2.w).abs() < 1.0 && (drop.h - r2.h / 2.0).abs() < 1.0);
     d.input(&mut app, kui_native::InputEvent::mouse_up());
     d.frame(&mut app);
-    assert!(d.rect_of("drop").is_none(), "gone once let go");
+    assert!(d.rect("drop").is_none(), "gone once let go");
     assert_eq!(app.layout.visible_panes(), [1, 3, 2]);
     assert_eq!(app.layout.tab().split_of(3).as_deref(), Some("b"));
     d.frame(&mut app);
     // Let go on the status strip: nothing moves.
     let from = title(&app, 2);
-    d.drag(&mut app, from, (450.0, 590.0));
+    d.drag(&mut app, from, Vec2::new(450.0, 590.0));
     assert_eq!(app.layout.visible_panes(), [1, 3, 2]);
     // The title bar's click still focuses.
     d.frame(&mut app);
     let t1 = title(&app, 1);
-    d.click(&mut app, t1.0, t1.1);
+    d.click(&mut app, t1.x, t1.y);
     assert_eq!(app.layout.focused(), 1);
     // `<C-w>x` trades places with the next pane, as the middle drop does.
     ctrl_w(&mut d, &mut app, "x");
@@ -577,7 +571,7 @@ fn pane_moves_are_one_chord_everywhere() {
     assert_eq!(app.layout.focused(), 2);
     d.key(&mut app, "H", shifted);
     assert_eq!(app.layout.focused(), 1, "<C-S-h> moves left");
-    d.ctrl(&mut app, "l");
+    d.press(&mut app, "<C-l>");
     assert_eq!(app.layout.focused(), 1, "<C-l> is not a pane move");
     d.key(&mut app, "L", shifted);
     assert_eq!(app.layout.focused(), 2, "<C-S-l> moves right");
@@ -587,7 +581,7 @@ fn pane_moves_are_one_chord_everywhere() {
     assert_eq!(app.layout.focused(), 1);
     assert_eq!(app.focused_mode(), kawoosh_editor::Mode::Normal);
     d.keys(&mut app, "i");
-    d.ctrl(&mut app, "h");
+    d.press(&mut app, "<C-h>");
     assert_eq!(app.layout.focused(), 1, "<C-h> stays insert mode's");
     d.key(&mut app, "escape", KeyMods::default());
     // A terminal below: the shifted chord moves up and back down, the
@@ -602,7 +596,7 @@ fn pane_moves_are_one_chord_everywhere() {
     );
     d.key(&mut app, "J", shifted);
     assert!(matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t));
-    d.ctrl(&mut app, "k");
+    d.press(&mut app, "<C-k>");
     assert!(
         matches!(app.layout.focused_content(), Some(Content::Terminal(_))),
         "<C-k> is the shell's"
@@ -665,7 +659,7 @@ fn a_pane_without_a_view_has_the_pane_keys() {
     app.jobs_inline = true;
     let mut d = Drive::new(900.0, 500.0);
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     // Forty texts in the memory, then the pane on them.
     for _ in 0..40 {
@@ -690,10 +684,10 @@ fn a_pane_without_a_view_has_the_pane_keys() {
     assert_eq!(app.memory_pane.cursor, 1);
     d.keys(&mut app, "3j");
     assert_eq!(app.memory_pane.cursor, 4);
-    d.ctrl(&mut app, "d");
+    d.press(&mut app, "<C-d>");
     assert!(app.memory_pane.cursor > 4, "{}", app.memory_pane.cursor);
     let after_half = app.memory_pane.cursor;
-    d.ctrl(&mut app, "u");
+    d.press(&mut app, "<C-u>");
     assert_eq!(app.memory_pane.cursor, 4);
     d.keys(&mut app, "G");
     assert_eq!(app.memory_pane.cursor, 39);
@@ -750,7 +744,7 @@ fn a_pane_without_a_view_has_the_pane_keys() {
     let top = app.undo.cursor;
     d.keys(&mut app, "j");
     assert_eq!(app.undo.cursor, top - 1, "down the list is back in time");
-    d.ctrl(&mut app, "d");
+    d.press(&mut app, "<C-d>");
     assert!(app.undo.cursor < top - 1);
     d.keys(&mut app, "G");
     assert_eq!(app.undo.cursor, 0);
@@ -762,7 +756,7 @@ fn a_pane_without_a_view_has_the_pane_keys() {
         top - 1,
         "`u` from the pane undoes the buffer"
     );
-    d.ctrl(&mut app, "r");
+    d.press(&mut app, "<C-r>");
     assert_eq!(app.undo.cursor, top);
     // `<leader>…` from a pane: the picker opens; its list, blurred,
     // has the plugin's own pane-mode keys, and `:` still works.
@@ -1075,7 +1069,7 @@ fn the_dock_is_a_strip_under_layout_dock_scroll() {
     assert_eq!(cols(&app), 2);
     assert_eq!(app.layout.focused(), first, "the column before");
     d.frame(&mut app);
-    assert!(d.rect_of("dockstrip").is_some(), "drawn as a ribbon");
+    assert!(d.rect("dockstrip").is_some(), "drawn as a ribbon");
     app.shell_command("set", &["layout.dock=tree".into()], None);
     d.frame(&mut app);
     let dock = app.layout.dock.as_ref().unwrap();
