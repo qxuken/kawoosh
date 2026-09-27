@@ -49,7 +49,9 @@ pub fn is_absolute(path: &Path) -> bool {
 }
 
 /// `a/b`, a domain kept: on a host joined by [`host_join`], so with `/`
-/// whatever this platform's separator is; here as `Path::join` has it.
+/// whatever this platform's separator is; here as `Path::join` has it,
+/// in this platform's separators ([`native`]) — `src/main.rs`, as a
+/// plugin or a literal writes a part, is `src\main.rs` on Windows.
 /// `b` spelled with a domain is `b` itself, as an absolute `b` is.
 pub fn join(a: &Path, b: &Path) -> PathBuf {
     if domain_of(b).is_some() {
@@ -57,8 +59,50 @@ pub fn join(a: &Path, b: &Path) -> PathBuf {
     }
     match domain_of(a) {
         Some((d, rest)) => on_domain(d, &host_join(rest, b)),
-        None => a.join(b),
+        None => native(&a.join(b)),
     }
+}
+
+/// `path` from `base`: the rest of it when `path` is under `base` — `.`
+/// when it is `base` — else `None`, a path on another domain, or on
+/// none where `base` is on one, never under it. On a host the paths
+/// are cut on `/` ([`host_join`]'s terms), here by components, so
+/// `C:\p` is not a prefix of `C:\pq`; the rest is in this platform's
+/// separators ([`native`]).
+pub fn relative(path: &Path, base: &Path) -> Option<PathBuf> {
+    match (domain_of(path), domain_of(base)) {
+        (Some((dp, p)), Some((db, b))) if dp == db => {
+            let (p, b) = (p.to_str()?, b.to_str()?);
+            let (p, b) = (p.trim_end_matches('/'), b.trim_end_matches('/'));
+            if p == b {
+                return Some(PathBuf::from("."));
+            }
+            let rest = p.strip_prefix(b)?.strip_prefix('/')?;
+            Some(PathBuf::from(rest.trim_start_matches('/')))
+        }
+        (None, None) => {
+            let rest = path.strip_prefix(base).ok()?;
+            Some(match rest.as_os_str().is_empty() {
+                true => PathBuf::from("."),
+                false => native(rest),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// A local path in this platform's separators: on Windows, where `/`
+/// is a separator too but never a name's character, every `/` is `\`;
+/// elsewhere the path as it is. A host's path is not one to give it —
+/// its `\` is a name's character and its separator `/`.
+pub fn native(path: &Path) -> PathBuf {
+    if cfg!(windows)
+        && let Some(s) = path.to_str()
+        && s.contains('/')
+    {
+        return PathBuf::from(s.replace('/', "\\"));
+    }
+    path.to_path_buf()
 }
 
 /// The directory holding `path`, a domain kept: a host's root is its
@@ -80,13 +124,29 @@ pub fn parent(path: &Path) -> Option<PathBuf> {
 /// which puts `\` between them on Windows.
 pub fn host_join(dir: &Path, name: &Path) -> PathBuf {
     let (d, n) = (dir.to_string_lossy(), name.to_string_lossy());
-    if n.starts_with('/') || d.is_empty() {
+    // The host's home is a root of its own: `~/x` is not under `dir`.
+    let rooted = n.starts_with('/') || n == "~" || n.starts_with("~/");
+    if rooted || d.is_empty() {
         return name.to_path_buf();
     }
     if n.is_empty() {
         return dir.to_path_buf();
     }
     PathBuf::from(format!("{}/{n}", d.trim_end_matches('/')))
+}
+
+/// The last component, a domain's cut on `/` alone — a `\` is a
+/// character of a name there — and here as `Path::file_name` has it:
+/// `x.rs` of `box:/a/x.rs`, `a` of `box:/a/`; `None` at a root
+/// (`box:/`, `/`, `C:\`), never the domain's name.
+pub fn file_name(path: &Path) -> Option<&std::ffi::OsStr> {
+    match domain_of(path) {
+        Some((_, rest)) => {
+            let name = rest.to_str()?.trim_end_matches('/').rsplit('/').next()?;
+            (!name.is_empty()).then(|| std::ffi::OsStr::new(name))
+        }
+        None => path.file_name(),
+    }
 }
 
 /// The directory holding a host's `path`, split on `/` alone: `/a` of
@@ -264,6 +324,75 @@ mod tests {
         assert_eq!(s("box:~/p/../q", "/"), "box:~/q");
         assert_eq!(s("box:~/..", "/"), "box:~");
         assert_eq!(s("box:~bob/p/..", "/"), "box:~bob");
+        // The host's home against a cwd on it: the host's, not under the cwd.
+        assert_eq!(s("~/p", "box:/home/me"), "box:~/p");
+        assert_eq!(s("~", "box:/home/me"), "box:~");
+    }
+
+    #[test]
+    fn a_name_is_the_last_component_a_hosts_cut_on_slash() {
+        let n = |p: &str| file_name(Path::new(p)).map(|n| n.to_string_lossy().into_owned());
+        assert_eq!(n("box:/a/x.rs").as_deref(), Some("x.rs"));
+        assert_eq!(n("box:/a/").as_deref(), Some("a"));
+        assert_eq!(
+            n("box:/a\\b").as_deref(),
+            Some("a\\b"),
+            "a `\\` is a name's on a host"
+        );
+        assert_eq!(n("box:/"), None, "not the domain's name");
+        assert_eq!(n("box:~/p").as_deref(), Some("p"));
+        assert_eq!(n("dir/x.rs").as_deref(), Some("x.rs"));
+    }
+
+    #[test]
+    fn a_local_join_is_in_this_platforms_separators() {
+        // The text, not a `PathBuf`: Windows compares `\` and `/` alike.
+        let j = |a: &str, b: &str| join(Path::new(a), Path::new(b)).display().to_string();
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(j("dir", "src/main.rs"), format!("dir{sep}src{sep}main.rs"));
+        assert_eq!(j("dir/", "x"), format!("dir{sep}x"), "not doubled");
+        if cfg!(windows) {
+            assert_eq!(
+                j(r"C:\p\kawoosh", "../assets/fonts"),
+                r"C:\p\kawoosh\..\assets\fonts"
+            );
+            assert_eq!(j("C:/p", "a"), r"C:\p\a");
+            assert_eq!(native(Path::new("a/b\\c")), PathBuf::from(r"a\b\c"));
+        } else {
+            assert_eq!(
+                native(Path::new("a/b\\c")),
+                PathBuf::from("a/b\\c"),
+                "`\\` a name's"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_from_a_base() {
+        let r = |p: &str, b: &str| {
+            relative(Path::new(p), Path::new(b)).map(|r| r.display().to_string())
+        };
+        let sep = std::path::MAIN_SEPARATOR;
+        let root = if cfg!(windows) { r"C:\" } else { "/" };
+        let p = |s: &str| format!("{root}{}", s.replace('/', &sep.to_string()));
+        assert_eq!(r(&p("w/src/a.rs"), &p("w")), Some(format!("src{sep}a.rs")));
+        assert_eq!(r(&p("w"), &p("w")).as_deref(), Some("."));
+        assert_eq!(r(&p("wx/a"), &p("w")), None, "a component, not a prefix");
+        assert_eq!(r(&p("a"), root).as_deref(), Some("a"), "from the root");
+        assert_eq!(r(&p("other/a"), &p("w")), None);
+        // A host's, on `/` whatever this platform's separator is.
+        assert_eq!(r("box:/w/src/a.rs", "box:/w").as_deref(), Some("src/a.rs"));
+        assert_eq!(r("box:/w/", "box:/w").as_deref(), Some("."));
+        assert_eq!(r("box:/x", "box:/").as_deref(), Some("x"));
+        assert_eq!(r("box:~/p", "box:~").as_deref(), Some("p"));
+        assert_eq!(r("box:/wx", "box:/w"), None);
+        assert_eq!(r("box:/w/a", "other:/w"), None, "another host");
+        assert_eq!(
+            r("box:/w/a", "/w"),
+            None,
+            "a host's is never under a local one"
+        );
+        assert_eq!(r("/w/a", "box:/w"), None);
     }
 
     #[test]

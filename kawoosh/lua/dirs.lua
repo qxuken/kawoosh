@@ -119,14 +119,6 @@ end)
 
 -- ------------------------------------------------------------ the source
 
-local function short(path)
-  local home = fs.home()
-  local sep = fs.join("a", "b"):sub(2, 2)
-  if home and path == home then return "~" end
-  if home and path:sub(1, #home + 1) == home .. sep then return "~" .. path:sub(#home + 1) end
-  return path
-end
-
 -- Where the open picker came from: a pick into a terminal types `cd`.
 local from_terminal = false
 
@@ -164,7 +156,7 @@ picker.source("dirs", {
         -- Gone since it was counted: not offered.
         if fs.is_dir(r.path) then
           items[#items + 1] = {
-            text = short(r.path),
+            text = fs.short(r.path),
             path = r.path,
             score = r.score,
             -- The best-ranked 0.5, the rest in proportion (the files'

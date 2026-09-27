@@ -518,7 +518,12 @@ impl Library {
     /// language of files alone; something said and not there is the
     /// error, naming what was looked for.
     pub fn find(name: &str, said: &Locate, home: Option<&Path>) -> Result<Option<Library>, String> {
-        let user_home = std::env::var_os("HOME").map(PathBuf::from);
+        // As `kawoosh_doc::paths::home` finds it — `$USERPROFILE` on a
+        // Windows with no `$HOME` — this crate standing below that one.
+        let user_home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .filter(|h| !h.is_empty())
+            .map(PathBuf::from);
         let expand = |p: &Path| expand_tilde(p, user_home.as_deref());
         let ext = std::env::consts::DLL_EXTENSION;
         let mut lib_names = vec![format!("{name}.{ext}")];

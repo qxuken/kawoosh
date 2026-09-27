@@ -327,25 +327,24 @@ pub const PATH_FORMS: [(&str, &str); 6] = [
 /// the rest of the path (`.` for `cwd` itself), else the path whole, as
 /// vim's `%:.` does.
 pub fn path_form(cwd: &Path, path: &Path, form: &str) -> Result<String, String> {
-    use kawoosh_doc::paths::domain_of;
+    use kawoosh_doc::paths::{domain_of, file_name, relative};
     let abs = if kawoosh_doc::paths::is_absolute(path) {
         path.to_path_buf()
     } else {
         kawoosh_doc::paths::join(cwd, path)
     };
     // Under the working directory as spelled, else as the disk resolves
-    // both — the editor's `/tmp/x` is the process's `/private/tmp/x`.
-    let under = |base: &Path, p: &Path| {
-        p.strip_prefix(base)
-            .ok()
-            .map(|r| match r.as_os_str().is_empty() {
-                true => PathBuf::from("."),
-                false => r.to_path_buf(),
-            })
+    // both — the editor's `/tmp/x` is the process's `/private/tmp/x`; a
+    // host's only as spelled, this disk knowing nothing of it.
+    let resolved = |p: &Path| {
+        domain_of(p)
+            .is_none()
+            .then(|| p.canonicalize().ok())
+            .flatten()
     };
     let rel = |p: &Path| {
-        under(cwd, p)
-            .or_else(|| under(&cwd.canonicalize().ok()?, &p.canonicalize().ok()?))
+        relative(p, cwd)
+            .or_else(|| relative(&resolved(p)?, &resolved(cwd)?))
             .unwrap_or_else(|| p.to_path_buf())
     };
     // A host's root is its own (`box:/x`'s directory is `box:/`).
@@ -355,12 +354,11 @@ pub fn path_form(cwd: &Path, path: &Path, form: &str) -> Result<String, String> 
         "absolute" => abs.clone(),
         "dir" => rel(&dir),
         "dir absolute" => dir,
-        "name" => domain_of(&abs)
-            .map_or(abs.as_path(), |(_, rest)| rest)
-            .file_name()
+        "name" => file_name(&abs).map(PathBuf::from).unwrap_or_default(),
+        "stem" => file_name(&abs)
+            .and_then(|n| Path::new(n).file_stem())
             .map(PathBuf::from)
             .unwrap_or_default(),
-        "stem" => abs.file_stem().map(PathBuf::from).unwrap_or_default(),
         other => return Err(format!("no path form {other}")),
     };
     Ok(out.display().to_string())
@@ -1411,7 +1409,7 @@ impl Editor {
                 (kawoosh_doc::paths::parent(&path).unwrap_or(path), r)
             } else if let Some(r) = rest.strip_prefix(":t") {
                 (
-                    path.file_name()
+                    kawoosh_doc::paths::file_name(&path)
                         .map(std::path::PathBuf::from)
                         .unwrap_or(path),
                     r,
@@ -1449,7 +1447,7 @@ impl Editor {
             )
         } else if let Some(r) = rest.strip_prefix(":t") {
             (
-                path.file_name()
+                kawoosh_doc::paths::file_name(&path)
                     .map(std::path::PathBuf::from)
                     .unwrap_or(path.clone()),
                 r,

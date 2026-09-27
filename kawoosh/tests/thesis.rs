@@ -68,12 +68,32 @@ fn two_panes_one_rust_analyzer() {
     assert!(ok, "one server, two docs: {:?}", app.lsp.status);
     assert_eq!(app.lsp.status[0].1, "rust-analyzer");
     assert_eq!(app.lsp.status[0].0, root);
+    // Typed into once the server is idle, its first `cargo check` done:
+    // rust-analyzer (1.98.1) publishes nothing, then or after, for edits
+    // that reach it during its first cache priming (2026-09-27, Windows).
+    let mut checked = false;
+    for _ in 0..1500 {
+        d.frame(&mut app);
+        let progress = &app.notes.progress;
+        checked |= progress
+            .iter()
+            .any(|p| p.done && p.title.contains("cargo check"));
+        if checked && progress.iter().all(|p| p.done) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        checked,
+        "rust-analyzer's first check: {:?}",
+        d.corner_texts()
+    );
+    let v = app.focused_view().unwrap();
+    let id = app.ed.views[v].buffer;
     // Break the second file in memory and expect a diagnostic within a
     // reasonable while (rust-analyzer indexes first).
     d.keys(&mut app, "ggOfn broken( {");
     d.key(&mut app, "escape", KeyMods::default());
-    let v = app.focused_view().unwrap();
-    let id = app.ed.views[v].buffer;
     let mut got = false;
     let mut seen: Vec<String> = Vec::new();
     for i in 0..3000 {

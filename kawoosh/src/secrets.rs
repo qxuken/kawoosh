@@ -314,12 +314,17 @@ impl Kawoosh {
 }
 
 /// Whether `path` is under the temp directory (`$TMPDIR`, `/tmp`, and
-/// the canonical forms macOS resolves them to).
+/// the canonical forms macOS resolves them to); a host's under its own
+/// `/tmp` or `/var/tmp` — a tool run there waits on a file of the host's.
 fn under_temp(path: &Path) -> bool {
-    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let path = kawoosh_systems::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if let Some((_, rest)) = kawoosh_systems::fs::domain_of(&path) {
+        let host = rest.to_string_lossy();
+        return ["/tmp/", "/var/tmp/"].iter().any(|t| host.starts_with(t));
+    }
     let mut temps = vec![std::env::temp_dir(), "/tmp".into(), "/var/tmp".into()];
     for t in temps.clone() {
-        if let Ok(c) = t.canonicalize() {
+        if let Ok(c) = kawoosh_systems::fs::canonicalize(&t) {
             temps.push(c);
         }
     }

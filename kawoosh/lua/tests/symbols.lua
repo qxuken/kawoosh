@@ -8,7 +8,8 @@ local dir = os.tmpname()
 os.remove(dir)
 dir = dir .. "-symbols"
 kawoosh.fs.create(dir, true)
-kawoosh.fs.write(dir .. "/a.rs", table.concat({
+local file = kawoosh.fs.join(dir, "a.rs")
+kawoosh.fs.write(file, table.concat({
   "struct S {",
   "    a: u8,",
   "}",
@@ -28,7 +29,7 @@ kawoosh.fs.write(dir .. "/a.rs", table.concat({
 }, "\n"))
 -- The grammar's, whatever server this machine has.
 kawoosh.opt("symbols.source", "syntax")
-kawoosh.cmd("e " .. dir .. "/a.rs")
+kawoosh.cmd("e " .. file)
 kawoosh.wait(function() return kawoosh.buf.line(1) == "struct S {" end, nil, "the file read")
 local h = kawoosh.buf.current()
 kawoosh.buf.set_cursor(kawoosh.buf.offset(11, 9))
@@ -93,4 +94,6 @@ local merged = kawoosh.picker.merge_symbols(
 local shape = {}
 for _, m in ipairs(merged) do shape[#shape + 1] = m.depth .. " " .. m.name end
 eq(table.concat(shape, ", "), "0 impl S, 1 get, 2 v, 0 main")
-kawoosh.fs.remove(dir)
+-- `pcall`: rust-analyzer, started on the `.rs`, holds the directory as
+-- its cwd, and Windows will not remove it then.
+pcall(kawoosh.fs.remove, dir)

@@ -745,7 +745,7 @@ impl Kawoosh {
         };
         let base = t.cwd().unwrap_or_else(|| self.cwd.clone());
         let full = kawoosh_systems::fs::expand(Path::new(&path), &base);
-        if !full.exists() {
+        if !kawoosh_systems::fs::exists(&full) {
             self.ed.message = format!("not found: {}", full.display());
             return false;
         }

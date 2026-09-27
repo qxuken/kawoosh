@@ -482,9 +482,9 @@ impl Kawoosh {
     /// A project file as a picker row names it: from the working
     /// directory, else from home.
     fn compile_from(&self, file: &Path) -> String {
-        file.strip_prefix(&self.cwd)
+        kawoosh_systems::fs::relative(file, &self.cwd)
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| kawoosh_systems::fs::abbreviate_home(file))
+            .unwrap_or_else(|| kawoosh_systems::fs::abbreviate_home(file))
     }
 
     /// `compile pick`: `compile.default`, the named commands, the

@@ -407,8 +407,7 @@ impl Buffer {
     /// system's `open_file` is mapping and indexing it — so a pane can
     /// show it and say how far it is. [`Buffer::attach`] brings the text.
     pub fn opening(path: &Path, total: usize) -> Self {
-        let name = path
-            .file_name()
+        let name = crate::paths::file_name(path)
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
         let mut buf = Self::new(name, "");
@@ -465,8 +464,7 @@ impl Buffer {
                 .into_owned()
                 .into_bytes(),
         };
-        let name = path
-            .file_name()
+        let name = crate::paths::file_name(path)
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
         let mut buf = Self::new(name, "");

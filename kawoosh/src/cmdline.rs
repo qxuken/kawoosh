@@ -353,10 +353,12 @@ impl Kawoosh {
 
     /// [`Self::path_candidates`] with a relative token read from `base`.
     fn path_candidates_in(&self, token: &str, base: &Path) -> Vec<String> {
-        let cut = token
-            .rfind(['/', MAIN_SEPARATOR])
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        // On a host `/` is the one separator — a `\` is a name's there —
+        // and what a directory is completed with.
+        use kawoosh_systems::fs::domain_of;
+        let host = domain_of(Path::new(token)).is_some() || domain_of(base).is_some();
+        let sep = if host { '/' } else { MAIN_SEPARATOR };
+        let cut = token.rfind(['/', sep]).map(|i| i + 1).unwrap_or(0);
         let (dir_text, prefix) = token.split_at(cut);
         let dir = if dir_text.is_empty() {
             base.to_path_buf()
@@ -373,7 +375,7 @@ impl Kawoosh {
             .map(|e| {
                 let mut s = format!("{dir_text}{}", e.name);
                 if e.is_dir {
-                    s.push(MAIN_SEPARATOR);
+                    s.push(sep);
                 }
                 s
             })
