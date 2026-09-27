@@ -2284,13 +2284,16 @@ then breadth.
     look-alikes, operators, the four styles and fallbacks — so a theme
     and a face are tried together.~~ Built 2026-09-26.
 
-44. **The two bugs that explain most of the todo**: `awaiting_paste`
+44. ~~**The two bugs that explain most of the todo**: `awaiting_paste`
     taken before the answer branches, so a terminal's paste is one; and
     a key sequence that fell through to normal mode asking normal mode
     for longer bindings. Each with a test that would have caught it —
     a second frame after a terminal's paste, and `vgg` `dgg` `vgsa`
     with the launcher loaded. First because one floods a shell and the
-    other breaks every `g` and `z` outside normal mode.
+    other breaks every `g` and `z` outside normal mode.~~ Landed
+    2026-09-27: the ask closed by its answer whichever pane takes it;
+    `has_deeper` asked of normal mode too where a sequence falls
+    through (`editor/src/lib.rs`).
 45. **The vim gaps**: visual `p` replacing (the register kept for `P`),
     a failed object cancelling its operator, `Vs` on lines, the case
     operators and visual `u` `U` `~`, `W` `B` `E` `ge` and `iW` `aW`,
