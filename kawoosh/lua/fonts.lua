@@ -165,7 +165,22 @@ local function weights_word(f)
   return f.italic and (w .. ", italic") or w
 end
 
+-- The windowed probe's (`KAWOOSH_PROBE_FONTS`, fonts.rs's `Probe`):
+-- the families whose cards were built for the first time since it last
+-- asked — nil until it asks, so nothing is kept otherwise.
+local probe_seen, probe_new = nil, nil
+function fonts._probe_take()
+  probe_seen = probe_seen or {}
+  local out = probe_new or {}
+  probe_new = {}
+  return out
+end
+
 local function card(f, cur, ctx, is_cursor, height, query)
+  if probe_seen and not probe_seen[f.name] then
+    probe_seen[f.name] = true
+    probe_new[#probe_new + 1] = f.name
+  end
   local t = ctx.env.theme
   local s = colours()
   local r = s.roles
@@ -210,13 +225,6 @@ local function card(f, cur, ctx, is_cursor, height, query)
   end
 
   local ring
-  -- Until the frame registers the families (the pane's first), a card
-  -- is its frame alone: drawn in another face it would change under
-  -- the eye a frame later.
-  if not id then
-    return column { key = "card " .. f.name, width = "grow", height = height, bg = r.bg, radius = 6,
-      border = { w = 1, color = r.border } }
-  end
   if is_cursor then
     ring = { w = 2, color = t.accent }
   elseif shown then
