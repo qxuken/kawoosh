@@ -1530,8 +1530,11 @@ impl Kawoosh {
         // the third column — a pty has no use for ⌘ at all, which is
         // what makes the digits reachable there. An editor pane has
         // them in its own maps, and every other pane reaches them
-        // through pane mode (`listing.rs`).
-        let chord = ((stroke.ctrl || stroke.alt) && stroke.shift || stroke.sup)
+        // through pane mode (`listing.rs`). So is `<C-Tab>`, which a pty
+        // reads as a plain `<Tab>` — the next tab, as `<C-S-Tab>` is the
+        // previous.
+        let ctrl_tab = stroke.ctrl && stroke.code == "tab";
+        let chord = ((stroke.ctrl || stroke.alt) && stroke.shift || stroke.sup || ctrl_tab)
             && self.ed.prompt_view().is_none()
             && self.term_of(self.layout.focused()).is_some()
             && self.pane_chord(&stroke);

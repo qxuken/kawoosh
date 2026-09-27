@@ -894,6 +894,50 @@ fn tabs_move_along_the_strip_and_switch_from_a_pane() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// `<C-Tab>` `<C-S-Tab>` are the next and the previous tab from every
+/// mode and every pane — a terminal's too, whose pty could not tell
+/// `<C-Tab>` from `<Tab>` anyway.
+#[test]
+fn ctrl_tab_switches_tabs_from_any_mode_and_pane() {
+    let mut app = Kawoosh::new("t", "one");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, "tabnew");
+    assert_eq!(app.layout.tab, 2);
+    d.press(&mut app, "<C-S-Tab>");
+    assert_eq!(app.layout.tab, 1);
+    d.press(&mut app, "<C-Tab>");
+    assert_eq!(app.layout.tab, 2);
+    d.press(&mut app, "<C-Tab>");
+    assert_eq!(app.layout.tab, 0, "round to the first");
+    // Insert and visual mode, the text untouched.
+    d.keys(&mut app, "i");
+    d.press(&mut app, "<C-Tab>");
+    assert_eq!(app.layout.tab, 1);
+    d.press(&mut app, "<C-S-Tab>");
+    assert_eq!(app.layout.tab, 0);
+    d.press(&mut app, "<Esc>");
+    d.keys(&mut app, "v");
+    d.press(&mut app, "<C-Tab>");
+    assert_eq!(app.layout.tab, 1);
+    d.press(&mut app, "<C-S-Tab>");
+    assert_eq!(app.layout.tab, 0);
+    d.press(&mut app, "<Esc>");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).text(), "one");
+    // A terminal pane.
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    assert_eq!(app.term_of_focused(), Some(t));
+    d.press(&mut app, "<C-Tab>");
+    assert_eq!(app.layout.tab, 1);
+    d.press(&mut app, "<C-S-Tab>");
+    assert_eq!(app.layout.tab, 0);
+    assert_eq!(app.term_of_focused(), Some(t), "back on the terminal");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// A jump more than half a screen off puts its line in the middle, as
 /// vim does — a definition, a far search — while a step scrolls the
 /// least; `G` stops with the last line at the bottom.

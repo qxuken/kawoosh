@@ -2217,6 +2217,10 @@ then breadth.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),
+an extended key protocol in the terminal (kitty's, or xterm's
+`modifyOtherKeys` — until then a pty cannot tell `<C-Tab>` from
+`<Tab>`, so `<C-Tab>` `<C-S-Tab>` are the tabs' from every pane,
+2026-09-27; whether a program gets them back is decided with it),
 kitty graphics and native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision
 3's after — when the walk's cap or the poll hurt).

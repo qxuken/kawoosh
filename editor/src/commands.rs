@@ -3708,6 +3708,16 @@ pub fn default_keymap(km: &mut Keymap) {
             km.bind(mode, &format!("<{m}-{k}>"), c);
         }
     }
+    // The next and the previous tab, from every mode and every pane, as
+    // a browser has them. A pty cannot tell `<C-Tab>` from `<Tab>`
+    // without an extended key protocol, which the terminal does not
+    // speak, so a terminal pane lets it through too
+    // (`Kawoosh::pane_chord`).
+    for (k, c) in [("<C-Tab>", "tab next"), ("<C-S-Tab>", "tab prev")] {
+        for mode in [Normal, Visual, Insert, Pane] {
+            km.bind(mode, k, c);
+        }
+    }
     // `m` marks, but not in a listing, where `ma` `ms` `mm` `me` sort
     // (dir.lua) and a bare `m` would shadow them.
     km.bind_when(Normal, "m", "mark", &[Cond::parse("!language:dir")]);

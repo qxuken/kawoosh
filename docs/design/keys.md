@@ -70,6 +70,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `<C-S-o>` | the last command's output to the clipboard (the same marks) |
 | `<C-S-z>` | the directory jumps (`picker dirs`, zoxide's directories): a pick types `cd 'PATH'⏎` while the shell sits at an empty prompt (the same marks, nothing typed since), and says why not otherwise; from an editor pane, `<leader>sd` |
 | `gt` `gT` `]t` `[t` | next and previous tab |
+| `<C-Tab>` `<C-S-Tab>` | the same, as a browser has them — from **every** pane and mode, a terminal's too: a pty reads `<C-Tab>` as a plain `<Tab>`, since the terminal speaks no extended key protocol (kitty's, xterm's `modifyOtherKeys`); if it ever does, whether a program gets these back is decided then |
 | `]T` `[T` `:tabmove` | move the tab along the strip |
 | `<leader>tq` | close the tab |
 
@@ -149,7 +150,7 @@ and `:e` reachable when the memory pane is the only pane there is.
 | `q` | `close` — the pane, not the last one |
 | `<Esc>` | `pane back`: the keyboard to the editor pane it came from |
 | `:` | the command line |
-| `]t` `[t` `gt` `gT` `]q` `[q` | the next-and-previous cluster is shared too (`]b` needs an editor pane and says so) |
+| `]t` `[t` `gt` `gT` `]q` `[q` | the next-and-previous cluster is shared too (`]b` needs an editor pane and says so; `<C-Tab>` `<C-S-Tab>` are bound in pane mode too) |
 
 A pane's own keys are commands gated by its fact, so one key can
 mean each pane's thing: the memory pane's `y` `o` `x` `m` `p` `/` are
