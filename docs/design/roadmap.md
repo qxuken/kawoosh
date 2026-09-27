@@ -2320,9 +2320,18 @@ then breadth.
     makes what it put a secret (`Memory::make_secret`); a secret put
     elsewhere is once, and leaves the register spent (`Memory::spent`)
     until something is taken.
-47. **The window uncovered** (kui): a redraw on `Occluded(false)` and a
+47. ~~**The window uncovered** (kui): a redraw on `Occluded(false)` and a
     bounded retry after a skipped frame, the way a new window's first
-    frame already has — an F-round, then kawoosh on it.
+    frame already has — an F-round, then kawoosh on it.~~ Landed
+    2026-09-27 as kui F102 (branch `claude/uncovered-window-f102`):
+    a skipped frame is asked for again 16 ms apart, up to 60 times,
+    until one lands, and `Occluded(false)` asks for one at once.
+    Probed on macOS with kui's `counter` hidden and shown: before, the
+    window kept its old frame; after, it draws 1 ms after it is
+    uncovered. kawoosh needed no change of its own. Windows reports no
+    occlusion, so Alt-Tab rides on the retry alone, not yet tried
+    there. A hidden window spinning through skipped frames while an
+    animation runs is filed as kui F103.
 48. ~~**The markdown buffer's round**: task boxes drawn at the font's
     size and legible, checked or not; the rounded selection over
     rendered rows — each row's selected span measured in its drawn
