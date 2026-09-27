@@ -59,7 +59,7 @@ fn rect_of_text(d: &Drive, text: &str) -> Option<(f32, f32, f32, f32)> {
 
 /// Away from the caret every mark is folded: the heading's `#`, the
 /// emphasis, the code span's backticks, the link's destination, a
-/// bullet `•`, a task `☐` `☑`, a quote `▎`, a fence's backticks (its
+/// bullet `•`, a task's box (the Nerd Font's, open or checked), a quote `▎`, a fence's backticks (its
 /// info stays), a table's cells in columns between rules, a setext
 /// underline gone; the caret's line is its source. A heading is drawn
 /// larger than the body, a long paragraph wraps, and the image is an
@@ -75,8 +75,8 @@ fn rendered_rows_fold_the_marks_and_the_caret_line_is_raw() {
     for want in [
         "• item one",
         "• item two with bold",
-        "• ☐ a task",
-        "• ☑ a done task",
+        "• \u{F0131} a task",
+        "• \u{F0C52} a done task",
         "1. first",
         "▎ a quoted line with emphasis",
         "rust",

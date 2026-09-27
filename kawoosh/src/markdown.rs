@@ -220,6 +220,10 @@ pub fn render(
     out
 }
 
+/// A task's boxes as the rendered row draws them.
+pub const TASK_OPEN: &str = "\u{F0131}";
+pub const TASK_DONE: &str = "\u{F0C52}";
+
 fn bold(color: Option<Color>) -> Mark {
     Mark {
         bold: true,
@@ -318,10 +322,17 @@ fn prose(
                     marks.push((at..at + 1, dim(style.dim)));
                 }
             }
+            // The Nerd Font's boxes (`nf-md-checkbox_blank_outline`,
+            // `nf-md-checkbox_outline`), which ship with kawoosh and fill a
+            // cell at the font's size: `☐` `☑` are in few monospaced faces,
+            // so they came thin and small from whatever fallback had them.
+            // Open in the text's colour, done in the links' accent.
             Block::TaskOpen | Block::TaskDone => {
                 let open = *b == Block::TaskOpen;
-                folds.push((r.clone(), if open { "☐" } else { "☑" }.into()));
-                marks.push((r.clone(), dim(style.dim)));
+                folds.push((r.clone(), if open { TASK_OPEN } else { TASK_DONE }.into()));
+                if !open {
+                    marks.push((r.clone(), dim(style.link)));
+                }
             }
             _ => {}
         }

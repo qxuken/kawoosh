@@ -73,7 +73,9 @@ those runs and the line's text and produces three things per row:
   body size, bold); everything else the body;
 - **the fold table** — byte ranges of the row drawn as something
   else: the marks hidden (`""`), a list's `-` `*` `+` drawn `•`, `[ ]`
-  and `[x]` drawn `☐` `☑`, a blockquote's `>` a bar in the margin
+  and `[x]` drawn as the shipped Nerd Font's boxes (`U+F0131`, and
+  `U+F0C52` in the links' accent — `☐` `☑` until 2026-09-27, which few
+  monospaced faces have, so a fallback drew them thin and small), a blockquote's `>` a bar in the margin
   colour, a fence's opening and closing lines a thin rule with the
   info string dim, a link's destination hidden with its parentheses,
   `---` a rule across the row.
