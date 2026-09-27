@@ -2476,7 +2476,11 @@ think on a kitty keyboard"), the terminal's third round, in that order:
 56. **Kitty graphics**: images in the grid (`kitty +kitten icat`,
     yazi's previews, plots) — the protocol in `term` (APC, the
     transmit/put/delete actions, placements that scroll with their
-    cells) and a texture drawn over the grid in kui. A note first.
+    cells) and a texture drawn over the grid in kui. A note first:
+    [kitty-graphics.md](kitty-graphics.md), decided 2026-09-28 — no
+    kui round after all (an image node floated at its cell), the
+    decode on a worker, animation, shared memory and unicode
+    placeholders answered "not supported" until asked.
 57. **The terminal's keys, a note** (not built until decided): the
     kitty keyboard protocol, so a program can tell `<C-Tab>` from
     `<Tab>` and `<S-CR>` from `<CR>` — which asks what kawoosh keeps
