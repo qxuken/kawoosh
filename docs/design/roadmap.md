@@ -2336,7 +2336,15 @@ then breadth.
     reaches raw and the one it left rendered, reflowing the text under
     it. A rendered row wraps and is scaled, so its part of the shape is
     one extent per *wrapped* line, measured in kui's layout — not the
-    one extent per row `RoundedSel` has.
+    one extent per row `RoundedSel` has. *The jump landed the same
+    day*: in visual mode every line a selection covers is raw
+    (markdown.md Decision 3 amended). Left: the rounding over rendered
+    rows. A row can measure its own wrapped lines (`wrapped_at`, kui's
+    `caret_rect` from the frame before) but not its neighbours' before
+    they are drawn, so either each row's lines are kept from the last
+    frame and a frame asked for when they move, or kui answers a text
+    node's line boxes for a byte range (an F-round) — decided at the
+    round's start.
 49. **Links**: `gx` on a path with its line, ⌘-click in an editor pane
     as `gx`, and URLs in a terminal's ⌘-click — one finder for a link
     under a point, the markdown's and the terminal's merged.
