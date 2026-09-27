@@ -2896,3 +2896,38 @@ fn a_lua_fields_selection_is_rounded_as_the_panes_is() {
         "the block caret over the selection's last cell"
     );
 }
+
+/// No bundled plugin takes an engine command's name: `search.lua`'s
+/// whole-word switch was `search word`, gated to its pane, and so `*` —
+/// the engine's `search word` — ran only in the search pane (reported
+/// 2026-09-28). `*` works with the plugins loaded, and no engine
+/// command has another `when` once they are.
+#[test]
+fn the_bundled_plugins_take_no_engine_command_name() {
+    let bare = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "foo bar\nbaz foo qux\nfoo");
+    d.frame(&mut app);
+    let taken: Vec<String> = app
+        .ed
+        .commands
+        .specs()
+        .into_iter()
+        .filter(|s| {
+            bare.ed
+                .commands
+                .spec(&s.name)
+                .is_some_and(|e| e.when != s.when)
+        })
+        .map(|s| s.name.clone())
+        .collect();
+    assert_eq!(
+        taken,
+        Vec::<String>::new(),
+        "engine commands a plugin gated"
+    );
+    d.press(&mut app, "*");
+    let v = app.focused_view().unwrap();
+    let head = app.ed.views[v].sels.primary().head;
+    assert_eq!(head, 12, "`*` on the next foo: {}", app.ed.message);
+}
