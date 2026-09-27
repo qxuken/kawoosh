@@ -749,3 +749,83 @@ fn a_join_reaching_the_last_line_starts_on_its_own_line() {
     assert_eq!(text(&app), "one\ntwo three four", "`3J`");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// How much of the selection's alpha the quads leave at the pixel centred
+/// on (`x`, `y`): kui's shader coverage for a square quad (the area of
+/// the pixel inside it, drawn only where the pixel's centre is), through
+/// the clip it names, composited as the blend does.
+fn alpha_at(quads: &[(kui_native::Quad, kui_native::Clip)], x: f32, y: f32) -> f32 {
+    let clear = quads.iter().fold(1.0, |left, (q, clip)| {
+        let r = q.rect;
+        let c = clip.rect;
+        let hit = x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+        let clipped = x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h;
+        if !hit || !clipped {
+            return left;
+        }
+        let span = |p: f32, lo: f32, len: f32| {
+            let l = p - lo;
+            ((l + 0.5).min(len) - (l - 0.5).max(0.0)).clamp(0.0, 1.0)
+        };
+        left * (1.0 - q.color.a * span(x, r.x, r.w) * span(y, r.y, r.h))
+    });
+    1.0 - clear
+}
+
+/// A selection over lines, an empty one among them, is one surface: its
+/// rows meet, each line's newline cell meets its text, and the empty
+/// line's cell the rows above and below — at scales where a line is not
+/// whole physical pixels. The newline's cell was a box, drawn where
+/// layout put it, while kui draws a text's backgrounds on whole pixels,
+/// and where the two met the pixel between them was drawn twice (a
+/// bright line) or not at all (a dark one) (2026-09-27).
+#[test]
+fn a_selection_over_lines_has_no_seam_at_any_scale() {
+    for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 2.175] {
+        let mut app = Kawoosh::new("t", "fn a() {\n    x,\n\n}\nend\n");
+        let mut d = Drive::new(600.0, 300.0);
+        d.scale = scale;
+        d.frame(&mut app);
+        // From the fourth line up to the first's end, so the caret is on
+        // `{` and not in the column below.
+        d.keys(&mut app, "ggjjjVkkk$");
+        let sel = app.pal.select;
+        let quads: Vec<(kui_native::Quad, kui_native::Clip)> = {
+            let dl = d.core.output().0;
+            dl.quads
+                .iter()
+                .filter(|q| q.kind == kui_native::QuadKind::Solid && q.color == sel)
+                .map(|q| (*q, dl.clip_of(q)))
+                .collect()
+        };
+        assert!(quads.len() >= 5, "four lines and their newlines, {scale}×");
+        let (x0, y0, x1, y1) = quads.iter().fold(
+            (f32::MAX, f32::MAX, f32::MIN, f32::MIN),
+            |(a, b, c, e), (q, _)| {
+                let r = q.rect;
+                (a.min(r.x), b.min(r.y), c.max(r.x + r.w), e.max(r.y + r.h))
+            },
+        );
+        for px in x0.floor() as i32..x1.ceil() as i32 {
+            for py in y0.floor() as i32..y1.ceil() as i32 {
+                let (cx, cy) = (px as f32 + 0.5, py as f32 + 0.5);
+                let a = alpha_at(&quads, cx, cy);
+                assert!(
+                    a < sel.a + 1e-4,
+                    "drawn twice at ({cx}, {cy}), {scale}×: {a}"
+                );
+            }
+        }
+        // The first cell's column, which every line covers (the empty
+        // one with its newline), is one surface from top to bottom.
+        let cx = x0.ceil() + 1.5;
+        for py in y0.ceil() as i32..y1.floor() as i32 {
+            let cy = py as f32 + 0.5;
+            let a = alpha_at(&quads, cx, cy);
+            assert!(
+                (a - sel.a).abs() < 1e-4,
+                "the selection's own alpha at ({cx}, {cy}), {scale}×: {a}"
+            );
+        }
+    }
+}

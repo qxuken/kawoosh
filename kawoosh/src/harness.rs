@@ -30,6 +30,9 @@ const TEST_VIEWPORT: (f32, f32) = (1000.0, 700.0);
 pub struct Harness {
     pub core: Core,
     viewport: Size,
+    /// The display's scale, 1 unless a test sets it: at 1.75 or 2.175 a
+    /// 20 px line is not whole physical pixels, where joins go wrong.
+    pub scale: f32,
     now: f64,
     pub frames: u64,
     /// The extensions filling the frame's slots — the Lua runtime, when
@@ -45,6 +48,7 @@ impl Harness {
         Self {
             core,
             viewport: Size::new(w, h),
+            scale: 1.0,
             now: 0.0,
             frames: 0,
             exts: Extensions::new(),
@@ -61,7 +65,9 @@ impl Harness {
     pub fn frame(&mut self, app: &mut impl App) {
         self.frames += 1;
         self.core.set_time(self.now);
-        let mut ui = self.core.frame_with(self.viewport, 1.0, &mut self.exts);
+        let mut ui = self
+            .core
+            .frame_with(self.viewport, self.scale, &mut self.exts);
         app.view(&mut ui);
         ui.finish();
         let pending = self.core.take_pending_events();

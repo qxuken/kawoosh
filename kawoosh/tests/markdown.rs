@@ -535,7 +535,7 @@ fn a_caret_past_a_headings_end_sits_after_it() {
         .nodes()
         .into_iter()
         .find(|n| {
-            n.width == kui_native::Sizing::Fixed(8.0)
+            n.bg == app.pal.accent
                 && n.rect.y >= text.rect.y
                 && n.rect.y < text.rect.y + text.rect.h
         })
@@ -548,4 +548,73 @@ fn a_caret_past_a_headings_end_sits_after_it() {
         caret.rect.x,
         text.rect
     );
+}
+
+/// A code block's rows are one surface at any scale: each row paints its
+/// band, and at a scale where a row is not whole physical pixels two
+/// neighbours each drew part of the pixel they shared, a line between
+/// them. Painted on whole pixels (`pixel_snap`), every pixel down the
+/// block is one row's, wholly (2026-09-27).
+#[test]
+fn a_code_blocks_rows_meet_without_a_line_at_any_scale() {
+    let dir = fixture("codeband");
+    std::fs::write(
+        dir.join("doc.md"),
+        "# Code\n\n```\none\ntwo\nthree\nfour\nfive\nsix\n```\n\nafter\n",
+    )
+    .unwrap();
+    for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 2.175] {
+        let mut d = Drive::new(700.0, 600.0);
+        d.scale = scale;
+        let mut app = Kawoosh::from_file(&dir.join("doc.md"));
+        app.jobs_inline = true;
+        // The caret away from the block, so it is drawn rendered.
+        d.frame(&mut app);
+        settle(&mut d, &mut app);
+        d.press(&mut app, "G");
+        settle(&mut d, &mut app);
+        let band = app.pal.strip;
+        // The block's rows: the quads in the strip's colour between its
+        // first line and its last (the chrome is in that colour too).
+        let one = rect_of_text(&d, "one").expect("the block's first line");
+        let six = rect_of_text(&d, "six").expect("its last");
+        let (y0, y1) = (one.1 * scale - 1.0, (six.1 + six.3) * scale + 1.0);
+        let quads: Vec<kui_native::Rect> = d
+            .core
+            .output()
+            .0
+            .quads
+            .iter()
+            .filter(|q| q.kind == kui_native::QuadKind::Solid && q.color == band)
+            .map(|q| q.rect)
+            .filter(|q| q.y >= y0 && q.y + q.h <= y1 && q.x <= one.0 * scale)
+            .collect();
+        assert!(quads.len() >= 6, "the block's rows, {scale}×: {quads:?}");
+        let top = quads.iter().map(|r| r.y).fold(f32::MAX, f32::min);
+        let bottom = quads.iter().map(|r| r.y + r.h).fold(f32::MIN, f32::max);
+        let cx = quads[0].x + 4.5;
+        // Drawn where the pixel's centre is inside, by the area of it
+        // inside, as kui's shader draws a square quad.
+        let area = |r: &kui_native::Rect, cy: f32| -> f32 {
+            let inside = cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h;
+            if !inside {
+                return 0.0;
+            }
+            let span = |p: f32, lo: f32, len: f32| {
+                let l = p - lo;
+                ((l + 0.5).min(len) - (l - 0.5).max(0.0)).clamp(0.0, 1.0)
+            };
+            span(cx, r.x, r.w) * span(cy, r.y, r.h)
+        };
+        for py in top.ceil() as i32..bottom.floor() as i32 {
+            let cy = py as f32 + 0.5;
+            let hits: Vec<f32> = quads
+                .iter()
+                .map(|r| area(r, cy))
+                .filter(|a| *a > 0.0)
+                .collect();
+            assert_eq!(hits, [1.0], "one row, wholly, at ({cx}, {cy}), {scale}×");
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
 }

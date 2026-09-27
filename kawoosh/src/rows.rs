@@ -18,11 +18,8 @@ use crate::look::Face;
 
 pub const FONT: f32 = 13.0;
 pub const LH: f32 = 20.0;
-/// The box a block caret past a line's end, or a selection past its
-/// newline, takes in the row.
-const PAST_END_W: f32 = 8.0;
 /// The gap before a row's trailing text (an annotation, a diagnostic's
-/// message); the past-end boxes are taken out of it.
+/// message); the past-end cell is taken out of it.
 const TRAILING_GAP: f32 = 12.0;
 /// The gutter's padding either side of its numbers.
 const GUTTER_PAD: f32 = 12.0;
@@ -982,7 +979,8 @@ pub fn gutter_row(
     });
     let mut spec = NodeSpec::row();
     if header {
-        spec = spec.bg(pal.strip);
+        // On whole pixels, as the header's band beside it is.
+        spec = spec.bg(pal.strip).pixel_snap();
     }
     ui.with(
         spec.width(Sizing::Grow(1.0))
@@ -1040,8 +1038,9 @@ struct Look {
 /// needs a span, split only where the completion ghost sits, since that
 /// is not the document's text and the access tree and a click's byte
 /// must not count it. The bar caret is a float measured to its byte;
-/// what follows the text (a block caret past the end, a selection over
-/// the newline, a trailing message) is a sibling node. A long line's
+/// what follows the text (a block caret past the end or a selection over
+/// the newline, one cell of its own; a trailing message) is a sibling
+/// node. A long line's
 /// text is its window's slice (`Drawn::for_line`) between two spacers
 /// sized by column — a monospace grid's placement (a fallback glyph can
 /// drift it a pixel or two), the tolerance kui's own chunked long line
@@ -1226,8 +1225,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 })
                 .role(Role::Line)
                 .on_layout(kui_native::Value::map([("kind", "mdrow".into())]));
+            // On whole pixels, so a code block's rows, stacked at a
+            // pitch that is not whole pixels, meet without a line
+            // between them.
             if let Some(bg) = f.bg {
-                r = r.bg(bg);
+                r = r.bg(bg).pixel_snap();
             }
             r
         }
@@ -1238,8 +1240,10 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             .cross_align(Align::Center)
             .role(Role::Line),
     };
+    // On whole pixels, where the band's neighbours — the gutter's strip,
+    // the rows around it and their selection — are.
     if let Some(bg) = line.band {
-        row = row.bg(bg);
+        row = row.bg(bg).pixel_snap();
     }
     if let Some(c) = line.access.0 {
         row = row.caret(c);
@@ -1477,46 +1481,45 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 .sum::<f32>();
             caret_bar(ui, pal.accent, line.caret_on, x, lh);
         }
-        // A block caret past the end of the line, and a selection
-        // running past the newline: boxes in the row's flow, so the
-        // trailing text's gap gives way to them and keeps its place. A
-        // wrapped row's text grows to the row's width, where in its flow
-        // they sat at the far edge (a heading's, 2026-09-25): there they
-        // hang where its last visual line ends, the caret over the
-        // selection.
-        let end = wraps.then(|| wrapped_at(ui, len));
-        let mut boxes = 0.0;
-        let mut past_end = |ui: &mut Ui<'_>, h: f32, dy: f32, bg: Color| {
-            let mut b = NodeSpec::column()
-                .width(Sizing::Fixed(PAST_END_W))
-                .height(Sizing::Fixed(h))
-                .bg(bg);
-            match end {
-                Some((x, y)) => b = b.float(FloatConfig::parent().offset(x, y + dy)),
-                None => boxes += PAST_END_W,
-            }
-            ui.with(b, |_| {});
-        };
+        // A block caret past the end of the line, or a selection
+        // running past the newline: one cell after the text, in the
+        // caret's colour or the selection's — the caret's where it sits on
+        // the newline, as vim draws it — full height, as a block caret on
+        // a char is. Painted on whole pixels (`pixel_snap`), where kui
+        // draws a text's backgrounds, so it meets the line's selection and
+        // the rows' above and below on one pixel line: drawn where layout
+        // put it, the pixel it shared with them was drawn twice or not at
+        // all (2026-09-27). In the row's flow the trailing text's gap
+        // gives way to it; a wrapped row's text grows to the row's width,
+        // where in its flow it sat at the far edge (a heading's,
+        // 2026-09-25), so there it hangs where the last visual line ends.
         let caret = line
             .carets
             .iter()
             .find(|(r, k)| r.start >= len && *k != Caret::Bar)
             .map(|(_, k)| caret_bg(pal, *k));
         let selected = line.selected.iter().any(|r| r.end > len);
-        if let Some(bg) = caret.filter(|_| !wraps) {
-            past_end(ui, lh - 4.0, 2.0, bg);
-        }
-        if selected {
-            past_end(ui, lh, 0.0, pal.select);
-        }
-        if let Some(bg) = caret.filter(|_| wraps) {
-            past_end(ui, lh - 4.0, 2.0, bg);
+        let mut cell_w = 0.0;
+        if let Some(bg) = caret.or(selected.then_some(pal.select)) {
+            let w = ui.measure_text(" ", &base, None).width;
+            let mut cell = NodeSpec::column()
+                .width(Sizing::Fixed(w))
+                .height(Sizing::Fixed(lh))
+                .bg(bg)
+                .pixel_snap();
+            if wraps {
+                let (x, y) = wrapped_at(ui, len);
+                cell = cell.float(FloatConfig::parent().offset(x, y));
+            } else {
+                cell_w = w;
+            }
+            ui.with(cell, |_| {});
         }
         if let Some((t, color)) = line.trailing {
             ui.with(
                 NodeSpec::row()
                     .padding(kui_native::Edges {
-                        l: (TRAILING_GAP - boxes).max(0.0),
+                        l: (TRAILING_GAP - cell_w).max(0.0),
                         r: TRAILING_GAP,
                         t: 0.0,
                         b: 0.0,
