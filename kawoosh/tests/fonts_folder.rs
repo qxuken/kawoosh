@@ -42,8 +42,6 @@ fn a_font_dropped_in_the_users_folder_is_a_family() {
     let dir = std::env::temp_dir().join(format!("kawoosh-fonts-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("fonts")).unwrap();
-    // SAFETY: this test binary's only test, set before any thread reads it.
-    unsafe { std::env::set_var("KAWOOSH_FONTS", dir.join("fonts")) };
     let shipped_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts");
     let src = shipped_dir.join("IntelOneMono/IntelOneMono-Regular.otf");
     let mut app = Kawoosh::from_file(&dir.join("a.txt"));
@@ -59,6 +57,7 @@ fn a_font_dropped_in_the_users_folder_is_a_family() {
         }
     }
     app.shipped_fonts(shipped.clone());
+    app.user_fonts(Some(dir.join("fonts")));
     app.set_cwd(&dir);
     d.frame(&mut app);
     let name = "Intel One Mono";
