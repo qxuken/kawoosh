@@ -48,7 +48,7 @@ use std::time::{Duration, Instant};
 use kawoosh_doc::{BufferId, Hunk};
 use kawoosh_editor::{ArgKind, Args, Selection, Selections, Spec, Took, ViewId};
 use kawoosh_systems::store::{MomentKey, MomentQuery, MomentRow, RingRow, history_key_of, now};
-use kui_native::{Color, NodeSpec, Sizing, Ui, Value, Vec2};
+use kui_native::{Color, NodeSpec, Sizing, Ui, Value, widgets};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -1227,18 +1227,18 @@ impl Kawoosh {
 
     /// A click on a row: the pane takes the keyboard and the row opens.
     pub(crate) fn on_memory_click(&mut self, p: &Value) {
-        if let Some(pane) = p.get("pane").and_then(Value::as_int) {
+        if let Some(pane) = p.get_int("pane") {
             self.layout.focus(pane as PaneId);
         }
-        if let Some(view) = p.get("view").and_then(Value::as_str).and_then(View::parse) {
+        if let Some(view) = p.get_str("view").and_then(View::parse) {
             self.set_view(view);
             return;
         }
-        if p.get("filter").and_then(Value::as_bool) == Some(true) {
+        if p.get_bool("filter") == Some(true) {
             self.memory_filter(None);
             return;
         }
-        if let Some(i) = p.get("row").and_then(Value::as_int) {
+        if let Some(i) = p.get_int("row") {
             self.memory_pane.filtering = false;
             self.sync_memory_rows();
             let i = (i.max(0) as usize).min(self.memory_pane.rows.len().saturating_sub(1));
@@ -1361,8 +1361,7 @@ impl Kawoosh {
         let sink = ui.with_keyed(
             "memory",
             NodeSpec::column()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Grow(1.0))
+                .fill()
                 .clip()
                 .on_key(tag.clone())
                 .on_click(tag.clone())
@@ -1370,10 +1369,10 @@ impl Kawoosh {
             |ui| {
                 ui.with(tm.strip(&pal).on_click(tag.clone()), |ui| {
                     ui.text(&head, small(pal.dim));
-                    ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
+                    ui.leaf(NodeSpec::row().grow_width());
                     for v in View::ALL {
                         let on = v == view;
-                        ui.with_keyed(
+                        ui.text_in_keyed(
                             v.name(),
                             NodeSpec::row()
                                 .pad_xy(4.0, 0.0)
@@ -1384,9 +1383,8 @@ impl Kawoosh {
                                 ]))
                                 .cursor(kui_native::CursorShape::Pointer)
                                 .label(v.name()),
-                            |ui| {
-                                ui.text(v.name(), small(if on { pal.accent } else { pal.faint }));
-                            },
+                            v.name(),
+                            small(if on { pal.accent } else { pal.faint }),
                         );
                     }
                 });
@@ -1415,28 +1413,28 @@ impl Kawoosh {
                         ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
                             ui.text("took", small(pal.faint))
                         });
-                        ui.with(tm.rest(), |ui| ui.text("text", small(pal.faint)));
+                        ui.text_in(tm.rest(), "text", small(pal.faint));
                         ui.with(col(14.0).main_align(kui_native::Align::Start), |ui| {
                             ui.text("from", small(pal.faint))
                         });
-                        ui.with(col(8.0), |ui| ui.text("when", small(pal.faint)));
+                        ui.text_in(col(8.0), "when", small(pal.faint));
                     }
                     View::Recent => {
                         ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
                             ui.text("kind", small(pal.faint))
                         });
-                        ui.with(tm.rest(), |ui| ui.text("subject", small(pal.faint)));
-                        ui.with(col(8.0), |ui| ui.text("when", small(pal.faint)));
+                        ui.text_in(tm.rest(), "subject", small(pal.faint));
+                        ui.text_in(col(8.0), "when", small(pal.faint));
                     }
                     _ => {
                         ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
                             ui.text(if view == View::Files { "state" } else { "kind" }, small(pal.faint))
                         });
-                        ui.with(tm.rest(), |ui| ui.text("subject", small(pal.faint)));
+                        ui.text_in(tm.rest(), "subject", small(pal.faint));
                         ui.with(col(22.0).main_align(kui_native::Align::Start), |ui| {
                             ui.text("signals", small(pal.faint))
                         });
-                        ui.with(col(8.0), |ui| ui.text("when", small(pal.faint)));
+                        ui.text_in(col(8.0), "when", small(pal.faint));
                     }
                 });
                 // The cursor's row into view when it moved — before the
@@ -1444,23 +1442,15 @@ impl Kawoosh {
                 // rows by the offset it scrolls to (the geometry a view
                 // reads carries a `set_scroll` made in the same build)
                 // rather than a frame late.
-                let list = ui.child_key("rows");
-                self.memory_pane.page = ui
-                    .scroll_geometry(list)
-                    .map_or(0, |g| (g.rect.h / tm.line_h).floor() as usize);
+                self.memory_pane.page = widgets::rows_in_view(ui, "rows", tm.line_h);
                 if reveal && n > 0 {
-                    let y = cursor as f32 * tm.line_h;
-                    if let Some(g) = ui.scroll_geometry(list)
-                        && !(g.offset.y <= y && y + tm.line_h <= g.offset.y + g.rect.h)
-                    {
-                        ui.set_scroll(list, Vec2::new(0.0, (y - g.rect.h / 2.0).max(0.0)));
-                    }
+                    widgets::reveal_row(ui, "rows", cursor, tm.line_h);
                 }
-                kui_native::widgets::uniform_list(
+                widgets::uniform_list(
                     ui,
                     "rows",
                     NodeSpec::column()
-                        .width(Sizing::Grow(1.0))
+                        .grow_width()
                         .height(Sizing::Grow(3.0)),
                     n,
                     tm.line_h,
@@ -1523,12 +1513,16 @@ impl Kawoosh {
                                             );
                                         }
                                     });
-                                    ui.with(col(14.0).main_align(kui_native::Align::Start), |ui| {
-                                        ui.text(from, dim());
-                                    });
-                                    ui.with(col(8.0), |ui| {
-                                        ui.text(&crate::settings::ago(*age), style().color(pal.faint));
-                                    });
+                                    ui.text_in(
+                                        col(14.0).main_align(kui_native::Align::Start),
+                                        from,
+                                        dim(),
+                                    );
+                                    ui.text_in(
+                                        col(8.0),
+                                        &crate::settings::ago(*age),
+                                        style().color(pal.faint),
+                                    );
                                 }
                                 Row::Moment {
                                     row,
@@ -1611,9 +1605,11 @@ impl Kawoosh {
                                     });
                                 }
                                 Row::Recent(rr) => {
-                                    ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
-                                        ui.text(&rr.key.kind, small(pal.dim));
-                                    });
+                                    ui.text_in(
+                                        col(9.0).main_align(kui_native::Align::Start),
+                                        &rr.key.kind,
+                                        small(pal.dim),
+                                    );
                                     ui.with(tm.rest(), |ui| {
                                         let label = if rr.key.kind == "file" {
                                             kawoosh_systems::fs::basename(Path::new(&rr.key.subject))
@@ -1692,7 +1688,7 @@ impl Kawoosh {
                 ui.with_keyed(
                     "detail",
                     NodeSpec::column()
-                        .width(Sizing::Grow(1.0))
+                        .grow_width()
                         .height(Sizing::Grow(2.0))
                         .scroll_y()
                         .clip(),
@@ -1702,21 +1698,15 @@ impl Kawoosh {
                             let shown: Vec<&str> = text.lines().take(LINES_SHOWN).collect();
                             for (k, l) in shown.iter().enumerate() {
                                 ui.with(tm.line(&pal, k).hover_bg(Color::TRANSPARENT), |ui| {
-                                    ui.with(tm.rest(), |ui| {
-                                        ui.text(&l.replace('\t', "    "), style());
-                                    });
+                                    ui.text_in(tm.rest(), &l.replace('\t', "    "), style());
                                 });
                             }
                             let all = text.lines().count();
                             if all > shown.len() {
-                                ui.with(
+                                ui.text_in(
                                     tm.line(&pal, shown.len()).hover_bg(Color::TRANSPARENT),
-                                    |ui| {
-                                        ui.text(
-                                            &format!("… {} more", all - shown.len()),
-                                            small(pal.faint),
-                                        );
-                                    },
+                                    &format!("… {} more", all - shown.len()),
+                                    small(pal.faint),
                                 );
                             }
                         }
@@ -1752,8 +1742,8 @@ impl Kawoosh {
                             }
                             for (k, (name, value)) in facts.iter().enumerate() {
                                 ui.with(tm.line(&pal, k).hover_bg(Color::TRANSPARENT), |ui| {
-                                    ui.with(col(9.0), |ui| ui.text(name, dim()));
-                                    ui.with(tm.rest(), |ui| ui.text(value, style()));
+                                    ui.text_in(col(9.0), name, dim());
+                                    ui.text_in(tm.rest(), value, style());
                                 });
                             }
                             if let Some(h) = inspect.as_ref().and_then(|i| i.hunk.as_ref()) {
@@ -1835,13 +1825,13 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("memory")
                 .args(Args::new(&[ArgKind::Text]))
-                .doc("the memory pane: texts, files, recent, commands, searches, pins (the workspace's), all (every workspace's)"),
+                .doc("the memory pane: texts, files, recent, commands, searches, pins, marks (the workspace's), all (every workspace's)"),
             |k, ctx| match ctx.args.first().map(String::as_str) {
                 Some(name) => match View::parse(name) {
                     Some(v) => k.toggle_memory_panel(Some(v)),
                     None => {
                         k.ed.message = format!(
-                            "no memory view {name} (texts, files, recent, commands, searches, pins, all)"
+                            "no memory view {name} (texts, files, recent, commands, searches, pins, marks, all)"
                         )
                     }
                 },

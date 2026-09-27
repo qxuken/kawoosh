@@ -84,16 +84,41 @@ fn a_private_file_keeps_nothing_and_draws_its_values_masked() {
         Some("TOKEN=hunter22\n"),
         "not on the clipboard"
     );
-    // Put once, then forgotten.
-    d.keys(&mut app, "p");
+    // Put inside the private buffer as often as wanted: it never left.
+    d.keys(&mut app, "pp");
     d.frame(&mut app);
-    assert_eq!(app.ed.memory.len(), before, "the secret went with its put");
     assert!(
         app.ed
             .buffer_of(v)
             .text()
-            .starts_with("TOKEN=hunter22\nTOKEN=hunter22\n")
+            .starts_with("TOKEN=hunter22\nTOKEN=hunter22\nTOKEN=hunter22\n")
     );
+    assert!(app.ed.memory.head().is_some_and(|m| m.secret));
+    // Out of it, once, and then `p` says so rather than putting what
+    // the secret covered.
+    ex(&mut d, &mut app, "enew");
+    let out = app.focused_view().unwrap();
+    d.keys(&mut app, "p");
+    d.frame(&mut app);
+    assert_eq!(app.ed.buffer_of(out).text(), "\nTOKEN=hunter22");
+    assert_eq!(app.ed.memory.len(), before, "the secret went with its put");
+    d.keys(&mut app, "p");
+    assert_eq!(app.ed.buffer_of(out).text(), "\nTOKEN=hunter22");
+    assert!(
+        app.ed.message.contains("secret is gone"),
+        "{}",
+        app.ed.message
+    );
+    // A text yanked outside and put inside is a secret from then on,
+    // and still there for the next put.
+    d.keys(&mut app, "ggyy");
+    assert!(app.ed.memory.head().is_some_and(|m| !m.secret));
+    ex(&mut d, &mut app, &format!("e {}", env.display()));
+    d.keys(&mut app, "pp");
+    let head = app.ed.memory.head().unwrap();
+    assert!(head.secret && head.text == "\n", "made a secret, kept");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[v].buffer, id, "back in the .env");
 
     // An edit, flushed: no history row, no file moment, no text row.
     d.keys(&mut app, "x");
@@ -157,8 +182,8 @@ fn zv_reveals_the_mask_under_the_caret_until_it_leaves() {
 }
 
 /// A secret nothing puts is forgotten after `secrets.forget_secs`; a
-/// text put into a private buffer is a secret too, and goes with its
-/// put.
+/// text put into a private buffer is a secret from then on — kept for
+/// the next put there, and forgotten on the same timer.
 #[test]
 fn a_secret_is_forgotten_on_a_timer_and_a_put_into_a_private_buffer_is_one() {
     let dir = tmp("forget");
@@ -192,8 +217,23 @@ fn a_secret_is_forgotten_on_a_timer_and_a_put_into_a_private_buffer_is_one() {
     ex(&mut d, &mut app, &format!("e {}", env.display()));
     d.keys(&mut app, "p");
     assert!(
-        app.ed.memory.head().is_none_or(|m| m.text != "plain"),
-        "put into a private buffer, it went"
+        app.ed
+            .memory
+            .head()
+            .is_some_and(|m| m.secret && m.text == "plain"),
+        "put into a private buffer, a secret"
+    );
+    std::thread::sleep(Duration::from_millis(1100));
+    d.frame(&mut app);
+    assert!(
+        app.ed.memory.moments().iter().all(|m| m.text != "plain"),
+        "and forgotten on the timer"
+    );
+    d.keys(&mut app, "p");
+    assert!(
+        app.ed.message.contains("secret is gone"),
+        "{}",
+        app.ed.message
     );
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -286,7 +326,7 @@ fn vault_app(tool: &std::path::Path) -> (Drive, Kawoosh) {
     let mut d = Drive::new(1000.0, 600.0);
     let mut app = Kawoosh::new("*scratch*", "");
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     ex(
         &mut d,
@@ -422,6 +462,12 @@ fn a_concealed_paste_is_a_secret() {
     assert!(
         app.ed.memory.moments().iter().all(|m| m.text != "hunter22"),
         "and not kept"
+    );
+    d.keys(&mut app, "p");
+    assert!(
+        app.ed.message.contains("secret is gone"),
+        "{}",
+        app.ed.message
     );
     ex(&mut d, &mut app, "paste clipboard");
     d.input(

@@ -41,8 +41,6 @@ pub struct DiskWatch {
     /// The file's stamp when it was last acted on or asked about, so a
     /// change is answered once however many frames see it.
     told: HashMap<BufferId, Option<Stamp>>,
-    /// Whether the window had the keyboard on the last frame.
-    focused: bool,
 }
 
 impl DiskWatch {
@@ -52,16 +50,15 @@ impl DiskWatch {
             watched: HashSet::new(),
             toasts: HashMap::new(),
             told: HashMap::new(),
-            focused: true,
         }
     }
 }
 
 impl Kawoosh {
-    /// Once a frame: the watch's set kept to the open files, what it
-    /// saw acted on, and everything checked when the window comes back
-    /// to the front.
-    pub(crate) fn sync_disk(&mut self, focused: bool) {
+    /// Once a frame: the watch's set kept to the open files and what it
+    /// saw acted on — and, `back`, everything checked, for the window
+    /// has come back to the front (its `focused` event).
+    pub(crate) fn sync_disk(&mut self, back: bool) {
         // The files the buffers stand on; handed to the watch only when
         // the set moved, which a frame checks without allocating.
         let files = || {
@@ -78,8 +75,6 @@ impl Kawoosh {
             self.disk.watch.watch(set.iter().cloned().collect());
             self.disk.watched = set;
         }
-        let back = focused && !self.disk.focused;
-        self.disk.focused = focused;
         let changed: HashSet<PathBuf> = self.disk.watch.drain().into_iter().collect();
         if !back && changed.is_empty() {
             return;

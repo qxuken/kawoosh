@@ -50,7 +50,7 @@ fn two_panes_one_rust_analyzer() {
     let mut app = Kawoosh::from_file(&a);
     let mut d = Drive::new(1000.0, 600.0);
     d.frame(&mut app);
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "v");
     d.keys(&mut app, ":");
     d.keys(&mut app, &format!("e {}", b.display()));

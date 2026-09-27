@@ -13,7 +13,7 @@ fn app_with_lua(d: &mut Drive, title: &str, text: &str) -> Kawoosh {
     let mut app = Kawoosh::new(title, text);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app
 }
 
@@ -122,13 +122,13 @@ fn a_lua_view_is_a_pane_and_its_clicks_come_back() {
         "the click reached Lua"
     );
     // Keys in the pane reach the handler; the pane prefix still works.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     assert!(matches!(
         app.layout.focused_content(),
         Some(Content::Editor(_))
     ));
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "q");
     assert_eq!(
@@ -266,7 +266,7 @@ fn compile_mode_streams_and_jumps_to_locations() {
     let mut app = Kawoosh::from_file(&dir.join("src/a.rs"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     ex(
         &mut d,
@@ -325,7 +325,7 @@ fn a_bare_compile_runs_what_the_project_offers() {
     let mut app = Kawoosh::from_file(&dir.join("src/a.rs"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     let wait = |d: &mut Drive, app: &mut Kawoosh| {
         for _ in 0..300 {
@@ -381,7 +381,7 @@ fn a_bare_compile_runs_what_the_project_offers() {
         r#"local o = kawoosh.compile_offer(); kawoosh.echo(#o .. " " .. o[3].cmd)"#,
     );
     assert_eq!(app.ed.message, "3 make other");
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     d.frame(&mut app);
     ex(&mut d, &mut app, "compile pick 3");
     wait(&mut d, &mut app);
@@ -425,7 +425,7 @@ fn a_build_nu_command_wanting_arguments_goes_to_the_prompt() {
     let mut app = Kawoosh::from_file(&dir.join("a.txt"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     ex(&mut d, &mut app, "compile?");
     let m = app.ed.message.clone();
@@ -479,7 +479,7 @@ fn ctrl_c_in_the_compile_buffer_kills_the_compile() {
     let mut app = Kawoosh::from_file(&dir.join("a.rs"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     // Elsewhere, and with nothing running, `<C-c>` is not the compile's.
     d.press(&mut app, "<C-c>");
@@ -552,7 +552,7 @@ fn dash_opens_the_files_directory_and_can_move_the_cwd() {
     let mut app = Kawoosh::from_file(&file);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     d.keys(&mut app, "-");
     let name = app.ed.buffer_of(app.focused_view().unwrap()).name.clone();
@@ -593,7 +593,7 @@ fn dash_lands_on_the_entry_it_came_from_and_reuses_the_listing() {
     let mut app = Kawoosh::from_file(&dir.join("inner/b.txt"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     let buffers = |app: &Kawoosh| app.ed.buffers.len();
     let line = |app: &Kawoosh| {
@@ -681,7 +681,7 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
     let mut app = Kawoosh::from_file(&file);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     let cwd = app.cwd.clone();
 
@@ -1015,14 +1015,7 @@ fn a_listing_is_annotated_and_refreshed() {
     ex(&mut d, &mut app, &format!("dir {}", dir.display()));
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);
-    // The columns are padded with no-break spaces, which fonts keep.
-    let extras = |d: &Drive| -> Vec<String> {
-        d.row_extras()
-            .iter()
-            .map(|s| s.replace('\u{a0}', " "))
-            .collect()
-    };
-    let e = extras(&d);
+    let e = d.row_extras();
     assert_eq!(e[0], "", "nothing on ../");
     assert!(e[2].contains(" 5 B  20"), "{e:?}");
     assert!(e[3].contains(" 2.0 KB  20"), "{e:?}");
@@ -1036,7 +1029,7 @@ fn a_listing_is_annotated_and_refreshed() {
     d.key(&mut app, "escape", KeyMods::default());
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["new.txt", "../", "sub/", "a.txt", "b.txt"]);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[3].contains(" 5 B"), "{e:?}");
     // The line typed above says what it is: new. The entry's line
     // deleted: its annotation is gone; the deletion undone, it is back
@@ -1048,12 +1041,12 @@ fn a_listing_is_annotated_and_refreshed() {
     d.keys(&mut app, "jjjdd");
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["new.txt", "../", "sub/", "b.txt"]);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(!e.iter().any(|x| x.contains(" 5 B")), "{e:?}");
     assert!(e[3].contains(" 2.0 KB"), "{e:?}");
     d.keys(&mut app, "u");
     d.frame(&mut app);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[3].contains(" 5 B"), "back: {e:?}");
     assert!(e[4].contains(" 2.0 KB"), "{e:?}");
     d.keys(&mut app, "ggjjjjccrenamed.txt");
@@ -1063,7 +1056,7 @@ fn a_listing_is_annotated_and_refreshed() {
         d.line_rows(),
         ["new.txt", "../", "sub/", "a.txt", "renamed.txt"]
     );
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(
         e[4].contains(" 2.0 KB") && e[4].ends_with("← was b.txt"),
         "{e:?}"
@@ -1073,7 +1066,7 @@ fn a_listing_is_annotated_and_refreshed() {
     // made behind the listing's back appears, the caret still on its
     // entry.
     d.keys(&mut app, "jjjj");
-    d.ctrl(&mut app, "l");
+    d.press(&mut app, "<C-l>");
     d.frame(&mut app);
     assert!(
         d.confirm_texts()[0].starts_with("Drop the edits to "),
@@ -1103,7 +1096,7 @@ fn a_listing_is_annotated_and_refreshed() {
     std::fs::remove_file(dir.join("c.txt")).unwrap();
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(app.ed.message, "");
-    d.ctrl(&mut app, "l");
+    d.press(&mut app, "<C-l>");
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);
     assert_eq!(app.ed.message, "", "not refused");
@@ -1168,7 +1161,7 @@ fn a_path_argument_knows_the_current_file() {
     let mut app = Kawoosh::from_file(&dir.join("inner/f.txt"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     let line = |app: &Kawoosh| {
         let v = app.focused_view().unwrap();
@@ -1221,7 +1214,7 @@ fn a_listing_previews_the_entry_under_the_caret() {
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);
     d.keys(&mut app, "jj");
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     d.frame(&mut app);
     d.frame(&mut app);
     assert_eq!(app.layout.visible_panes().len(), 2, "a preview pane");
@@ -1267,12 +1260,12 @@ fn a_listing_previews_the_entry_under_the_caret() {
         t.contains(&"inside.txt".to_string()) && !t.contains(&"reading…".to_string()),
         "{t:?}"
     );
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     d.frame(&mut app);
     assert_eq!(app.layout.visible_panes().len(), 1, "closed again");
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     d.frame(&mut app);
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     assert!(matches!(
         app.layout.focused_content(),
@@ -1400,7 +1393,7 @@ fn a_split_listing_moves_on_alone() {
     };
     let top = format!("dir: {}", dir.display());
     let sub = format!("dir: {}", dir.join("sub").display());
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "v");
     // The new pane asks; `<CR>` is the same listing, vim's split.
     d.key(&mut app, "enter", KeyMods::default());
@@ -1421,7 +1414,7 @@ fn a_split_listing_moves_on_alone() {
     assert_eq!(names(&app), [top.clone(), sub.clone()]);
     // And from the left pane, with the right one in `sub`: `<CR>` on
     // `../` in the left goes up in the left alone.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.key(&mut app, "enter", KeyMods::default());
     assert_eq!(
@@ -1466,17 +1459,17 @@ fn a_yanked_line_pasted_into_another_listing_is_a_copy() {
     assert_eq!(d.line_rows(), ["../", "a1.txt", "../", "sub/", "b1.txt"]);
     // `yy` on b1.txt and on sub/, pasted into a; a1.txt moved to b.
     d.keys(&mut app, "jyy");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "jp");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "jyy");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "p");
     d.keys(&mut app, "ggjdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "Gp");
     assert_eq!(
@@ -1487,11 +1480,7 @@ fn a_yanked_line_pasted_into_another_listing_is_a_copy() {
     );
     // Before the write, each pasted line says where it comes from.
     d.frame(&mut app);
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(e[1].ends_with("← copy from ../b/"), "{e:?}");
     assert!(e[2].ends_with("← copy from ../b/"), "{e:?}");
     assert!(e[6].ends_with("← move from ../a/"), "{e:?}");
@@ -1557,12 +1546,6 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     let mut app = app_with_lua(&mut d, "t", "");
     d.frame(&mut app);
     let read = |p: &str| std::fs::read_to_string(dir.join(p)).unwrap();
-    let extras = |d: &Drive| -> Vec<String> {
-        d.row_extras()
-            .iter()
-            .map(|s| s.replace('\u{a0}', " "))
-            .collect()
-    };
     ex(
         &mut d,
         &mut app,
@@ -1576,22 +1559,22 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     );
     // a's file.txt cut and pasted below b's; then b's own cut and pasted
     // into a.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "jdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "Gp");
     d.frame(&mut app);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[3].ends_with("← twice"), "{e:?} / {}", app.ed.message);
     d.keys(&mut app, "ggjdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "p");
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "file.txt", "../", "file.txt"]);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(
         e[1].contains("14 B") && e[1].ends_with("← move from ../b/"),
         "{e:?}"
@@ -1621,13 +1604,13 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     );
     // Pasted and renamed: moved under the new name.
     d.keys(&mut app, "jdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "Gp");
     d.keys(&mut app, "ccrenamed.txt");
     d.key(&mut app, "escape", KeyMods::default());
     d.frame(&mut app);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[3].ends_with("← move from ../a/file.txt"), "{e:?}");
     ex(&mut d, &mut app, "w");
     d.frame(&mut app);
@@ -1650,7 +1633,7 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     d.keys(&mut app, "ggjddp");
     d.frame(&mut app);
     assert_eq!(d.line_rows()[1..], ["../", "renamed.txt", "file.txt"]);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[3].contains(" 6 B") && !e[3].contains("←"), "{e:?}");
     ex(&mut d, &mut app, "w");
     assert_eq!(app.ed.message, "nothing to apply");
@@ -1679,10 +1662,10 @@ fn a_file_replaced_by_a_copy_is_kept_until_the_copy_arrives() {
         ex(d, app, &format!("dir {}", dir.join("a").display()));
         ex(d, app, "vsplit");
         ex(d, app, &format!("dir {}", dir.join("b").display()));
-        d.ctrl(app, "w");
+        d.press(app, "<C-w>");
         d.keys(app, "h");
         d.keys(app, "jyy");
-        d.ctrl(app, "w");
+        d.press(app, "<C-w>");
         d.keys(app, "l");
         d.keys(app, "jpkdd");
         ex(d, app, "w");
@@ -1750,25 +1733,19 @@ fn an_entry_cut_and_undone_keeps_its_meta() {
     d.frame(&mut app);
     ex(&mut d, &mut app, &format!("dir {}", dir.display()));
     d.frame(&mut app);
-    let extras = |d: &Drive| -> Vec<String> {
-        d.row_extras()
-            .iter()
-            .map(|s| s.replace('\u{a0}', " "))
-            .collect()
-    };
-    assert!(extras(&d)[1].contains(" 5 B"));
+    assert!(d.row_extras()[1].contains(" 5 B"));
     d.keys(&mut app, "jddu");
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "a.txt", "b.txt"]);
     assert!(!app.ed.buffer_of(app.focused_view().unwrap()).modified);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[1].contains(" 5 B") && e[2].contains(" 2 B"), "{e:?}");
     // And the same on the last line, in two frames.
     d.keys(&mut app, "jdd");
     d.frame(&mut app);
     d.keys(&mut app, "u");
     d.frame(&mut app);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[2].contains(" 2 B"), "{e:?}");
     // Renamed after, the entry come back is still the entry.
     d.keys(&mut app, "ccb2.txt");
@@ -1832,7 +1809,7 @@ fn a_listings_edits_are_kept_until_written_or_dropped() {
     assert_eq!(d.line_rows(), ["../", "b.txt"]);
     assert!(app.ed.buffer_of(app.focused_view().unwrap()).modified);
     // <C-l> asks; Keep keeps; Drop drops.
-    d.ctrl(&mut app, "l");
+    d.press(&mut app, "<C-l>");
     d.frame(&mut app);
     let t = d.confirm_texts();
     assert!(t[0].starts_with("Drop the edits to "), "{t:?}");
@@ -1840,7 +1817,7 @@ fn a_listings_edits_are_kept_until_written_or_dropped() {
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "b.txt"], "kept");
-    d.ctrl(&mut app, "l");
+    d.press(&mut app, "<C-l>");
     d.frame(&mut app);
     d.keys(&mut app, "1");
     d.frame(&mut app);
@@ -2033,7 +2010,7 @@ fn a_pasted_line_yanked_again_is_still_its_entry() {
     d.keys(&mut app, "kdd");
     d.frame(&mut app);
     d.keys(&mut app, "yy");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "jp");
     d.frame(&mut app);
@@ -2041,11 +2018,7 @@ fn a_pasted_line_yanked_again_is_still_its_entry() {
         d.line_rows(),
         ["../", "file.txt", "file2.txt", "../", "file2.txt"]
     );
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(
         e[2].contains(" 4 B") && e[2].ends_with("← copy from ../dir2/"),
         "{e:?}"
@@ -2138,10 +2111,10 @@ fn renames_and_moves_swap_without_writing_over_anything() {
         &mut app,
         &format!("dir {}", dir.join("b").display()),
     );
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "Gdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "Gp");
     d.frame(&mut app);
@@ -2149,11 +2122,7 @@ fn renames_and_moves_swap_without_writing_over_anything() {
         d.line_rows(),
         ["../", "one.txt", "two.txt", "../", "x.txt", "x.txt"]
     );
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(e[4].contains(" B") && e[5].ends_with("← twice"), "{e:?}");
     ex(&mut d, &mut app, "w");
     d.frame(&mut app);
@@ -2171,7 +2140,7 @@ fn renames_and_moves_swap_without_writing_over_anything() {
         ("from a".into(), "from b".into())
     );
     d.keys(&mut app, "u");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "u");
     // A name taken by a file the listing does not know (made behind
@@ -2248,7 +2217,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     );
     assert_eq!(name(&app), b);
     assert_eq!(app.ed.listed_buffers().len(), n + 1, "a buffer of its own");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     assert_eq!(name(&app), a, "the other pane keeps its listing");
     // Each writes to its own directory, from its own entries.
@@ -2263,7 +2232,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert!(dir.join("a/a2.txt").is_file() && dir.join("b/b1.txt").is_file());
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     assert_eq!(name(&app), b);
     d.keys(&mut app, "jccb2.txt");
@@ -2285,12 +2254,12 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     // moves the files and lists both directories again, the other
     // pane's listing where it is.
     d.keys(&mut app, "jdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     assert_eq!(name(&app), a);
     d.keys(&mut app, "jp");
     d.keys(&mut app, "kdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     d.keys(&mut app, "p");
     assert_eq!(
@@ -2300,11 +2269,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
         d.line_rows()
     );
     d.frame(&mut app);
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(e[1].ends_with("← move from ../b/"), "{e:?}");
     assert!(e[3].ends_with("← move from ../a/"), "{e:?}");
     ex(&mut d, &mut app, "w");
@@ -2343,7 +2308,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     // grouped under their directories; cancelled, and both listings
     // read again.
     d.keys(&mut app, "jdd");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "p");
     d.keys(&mut app, "kcca3.txt");
@@ -2365,7 +2330,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     );
     d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "dir refresh!");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     ex(&mut d, &mut app, "dir refresh!");
     // `:dir!` lists in a new buffer; the one it came from stays listed
@@ -2387,7 +2352,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
     assert_eq!(app.ed.listed_buffers().len(), n + 2, "moved on in place");
     // The preview follows the keyboard from one listing to another.
     d.keys(&mut app, "j");
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     d.frame(&mut app);
     d.frame(&mut app);
     let texts = |d: &Drive| -> Vec<String> {
@@ -2402,7 +2367,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
         "{:?}",
         texts(&d)
     );
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     assert_eq!(name(&app), a);
     d.keys(&mut app, "j");
@@ -2430,7 +2395,7 @@ fn a_renamed_file_is_still_its_buffer() {
     let mut app = Kawoosh::from_file(&dir.join("a.txt"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     ex(
         &mut d,
@@ -2518,11 +2483,7 @@ fn joined_lines_are_refused_and_a_typed_name_is_new() {
         app.ed.message,
         d.warnings()
     );
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(
         e[1].contains(" 3 B  ") && e[1].ends_with("← joined") && !e[1].contains("was"),
         "{e:?}"
@@ -2548,16 +2509,12 @@ fn joined_lines_are_refused_and_a_typed_name_is_new() {
         &mut app,
         &format!("dir {}", dir.join("b").display()),
     );
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.keys(&mut app, "Gob1.txt");
     d.key(&mut app, "escape", KeyMods::default());
     d.frame(&mut app);
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(e[3].ends_with("← new"), "{e:?}");
     ex(&mut d, &mut app, "w");
     d.frame(&mut app);
@@ -2645,7 +2602,7 @@ fn a_directory_opens_as_a_listing() {
     let mut app = Kawoosh::new("*scratch*", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.open_first(&dir);
     d.frame(&mut app);
     assert_eq!(
@@ -2697,11 +2654,7 @@ fn a_moment_recalled_keeps_its_entry() {
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "a1.txt", "a2.txt", "../", "a1.txt"]);
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(
         e[4].contains(" 3 B") && e[4].ends_with("← copy from ../a/"),
         "{e:?}"
@@ -2846,10 +2799,11 @@ fn a_double_click_enters_a_listing_line() {
 }
 
 /// A Lua view's field rounds its selection as the panes do while
-/// `editor.selection_radius` is on: the field's row is the shell's
-/// fragment, told where the selection starts and ends along the line,
-/// and its spans carry none (boot.lua's `field_node`). Off, it is the
-/// square spans it always was.
+/// `editor.selection_radius` is on: the field's selected spans carry the
+/// radius and kui rounds them (its F101) — one piece, no neighbours, so
+/// every corner round — with the block caret drawn over it rather than
+/// cutting a hole in it (boot.lua's `field_node`). Off, it is the square
+/// spans it always was.
 #[test]
 fn a_lua_fields_selection_is_rounded_as_the_panes_is() {
     use kawoosh_editor::{Layer, Setting};
@@ -2878,12 +2832,12 @@ fn a_lua_fields_selection_is_rounded_as_the_panes_is() {
     d.key(&mut app, "escape", KeyMods::default());
     d.keys(&mut app, "0v4l");
     d.frame(&mut app);
-    let fragments = |d: &mut Drive| -> Vec<(kui_native::Rect, [f32; 16])> {
+    let fragments = |d: &mut Drive| -> Vec<(kui_native::Rect, [f32; 16], kui_native::Color)> {
         let dl = d.core.output().0;
         dl.quads
             .iter()
             .filter(|q| q.kind == kui_native::QuadKind::Fragment)
-            .map(|q| (q.rect, dl.fragments[q.uv[0] as usize].params))
+            .map(|q| (q.rect, dl.fragments[q.uv[0] as usize].params, q.color))
             .collect()
     };
     assert!(fragments(&mut d).is_empty(), "square while the radius is 0");
@@ -2906,7 +2860,7 @@ fn a_lua_fields_selection_is_rounded_as_the_panes_is() {
     d.frame(&mut app);
     let quads = fragments(&mut d);
     assert_eq!(quads.len(), 1, "the field's row: {quads:?}");
-    let (rect, p) = quads[0];
+    let (rect, p, sel) = quads[0];
     // `hello`, from the line's start: five cells of the field's face.
     let style = kui_native::TextStyle::new(16.0).mono();
     let w = d.core.measure_text("hello", &style, None).width;
@@ -2917,19 +2871,63 @@ fn a_lua_fields_selection_is_rounded_as_the_panes_is() {
         p[1]
     );
     assert_eq!((p[6], p[7]), (4.0, 0.0), "the radius, and no neighbours");
-    let sel = kui_native::Color::rgba(p[8], p[9], p[10], p[11]);
     assert!(
         before.iter().any(|c| c.to_hex() == sel.to_hex()),
         "the field's own selection colour {sel:?}, one of {before:?}"
     );
-    assert!(rect.w >= w, "the row still fits its text: {rect:?}");
+    assert!(rect.w + 1.0 >= w, "the piece holds `hello`: {rect:?}");
+    let cell = d.core.measure_text("o", &style, None).width;
+    let dl = d.core.output().0;
     assert!(
-        !d.core
-            .output()
-            .0
-            .quads
+        !dl.quads
             .iter()
             .any(|q| q.kind == kui_native::QuadKind::Solid && q.color == sel),
-        "no span paints the selection"
+        "no square selection"
     );
+    // The caret on `o`, over the selection: a cell of its own at the
+    // piece's last character.
+    assert!(
+        dl.quads
+            .iter()
+            .any(|q| q.kind == kui_native::QuadKind::Solid
+                && q.color.a == 1.0
+                && (q.rect.x - (rect.x + p[1] - cell)).abs() < 1.0
+                && (q.rect.w - cell).abs() < 1.0),
+        "the block caret over the selection's last cell"
+    );
+}
+
+/// No bundled plugin takes an engine command's name: `search.lua`'s
+/// whole-word switch was `search word`, gated to its pane, and so `*` —
+/// the engine's `search word` — ran only in the search pane (reported
+/// 2026-09-28). `*` works with the plugins loaded, and no engine
+/// command has another `when` once they are.
+#[test]
+fn the_bundled_plugins_take_no_engine_command_name() {
+    let bare = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "foo bar\nbaz foo qux\nfoo");
+    d.frame(&mut app);
+    let taken: Vec<String> = app
+        .ed
+        .commands
+        .specs()
+        .into_iter()
+        .filter(|s| {
+            bare.ed
+                .commands
+                .spec(&s.name)
+                .is_some_and(|e| e.when != s.when)
+        })
+        .map(|s| s.name.clone())
+        .collect();
+    assert_eq!(
+        taken,
+        Vec::<String>::new(),
+        "engine commands a plugin gated"
+    );
+    d.press(&mut app, "*");
+    let v = app.focused_view().unwrap();
+    let head = app.ed.views[v].sels.primary().head;
+    assert_eq!(head, 12, "`*` on the next foo: {}", app.ed.message);
 }

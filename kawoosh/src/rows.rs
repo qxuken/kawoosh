@@ -9,9 +9,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use kawoosh_doc::{BufferId, Version};
-use kui_native::{
-    Align, Color, FloatConfig, FragmentId, Min, NodeSpec, Role, Sizing, Span, TextStyle, Ui,
-};
+use kui_native::{Align, Color, FloatConfig, Min, NodeSpec, Role, Sizing, Span, TextStyle, Ui};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
@@ -41,8 +39,11 @@ pub fn gutter_w(cell_w: f32, lines: usize, marked: bool) -> f32 {
 /// `emit_line`.
 const DIM_ESCAPES_MAX: usize = 32;
 /// A drawn line this long (bytes) is sliced to the pane's window before
-/// it is emitted — kui's own long-line threshold, past which a plain
-/// `text` is shaped in chunks and a `rich_text` is not (backlog C19).
+/// it is emitted — kui's own long-line threshold, past which it shapes a
+/// text in chunks (C19; a `rich_text` too since C42). The slice bounds
+/// kawoosh's own per-row work, which is the line's length a frame
+/// otherwise: the text cloned, its escapes expanded, its grapheme
+/// boundaries found.
 pub const LONG_LINE_BYTES: usize = 4096;
 /// Columns emitted past either edge of the window on a sliced line, so
 /// a scroll of a few columns lands on text already shaped.
@@ -706,138 +707,11 @@ pub struct LineDraw<'a> {
     pub form: Option<&'a RowForm>,
     /// A background across the whole row: a multibuffer's file header.
     pub band: Option<Color>,
-    /// The row's part of a rounded selection (`editor.selection_radius`),
-    /// drawn by the row itself; `selected` then holds only what is washed
-    /// over it (a search's previewed hit).
-    pub rounded: Option<RoundedSel>,
+    /// The selection's corner radius (`editor.selection_radius`), 0 for
+    /// square: its span backgrounds rounded, which kui joins with the
+    /// rows' above and below into one shape (its F101).
+    pub sel_radius: f32,
 }
-
-/// A selection with rounded corners, as one editor row draws its part:
-/// its own extent and its neighbours', logical px from the row's left
-/// edge, each a line's one selected range with its newline's cell when it
-/// takes it. The row is a `pixel_snap` fragment ([`SELECTION_WGSL`])
-/// under its text, so the rows' parts meet on one pixel line and each
-/// corner is decided from both sides of it the same way.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RoundedSel {
-    pub fragment: FragmentId,
-    pub own: (f32, f32),
-    pub prev: Option<(f32, f32)>,
-    pub next: Option<(f32, f32)>,
-    pub radius: f32,
-    pub color: Color,
-}
-
-impl RoundedSel {
-    /// The fragment's sixteen params, as [`SELECTION_WGSL`] reads them.
-    pub fn params(&self) -> [f32; 12] {
-        let (pa, pb) = self.prev.unwrap_or((0.0, 0.0));
-        let (na, nb) = self.next.unwrap_or((0.0, 0.0));
-        let flags = u8::from(self.prev.is_some()) | (u8::from(self.next.is_some()) << 1);
-        let c = self.color;
-        [
-            self.own.0,
-            self.own.1,
-            pa,
-            pb,
-            na,
-            nb,
-            self.radius,
-            f32::from(flags),
-            c.r,
-            c.g,
-            c.b,
-            c.a,
-        ]
-    }
-}
-
-/// One row's part of a rounded selection, a kui fragment (ADR 0015 in
-/// kui). `params[0]` is this row's selection `[a, b]` and the row above's,
-/// `params[1]` the row below's, the radius and which neighbours there
-/// are (1 above, 2 below), `params[2]` the colour — logical px from the
-/// row's left. A corner is convex where this row reaches past its
-/// neighbour on that side, a fillet in this row past its end where the
-/// neighbour reaches past it (concave), square where the two end together,
-/// and round where there is no neighbour or it does not overlap. At a
-/// join the radius is half the step at most, and both rows work it out
-/// from the same two ends, so the convex half above and the fillet below
-/// meet. The row is on whole pixels and a square node is covered by area,
-/// so the rows' parts meet without a seam; the ends and the arcs are
-/// sampled sixteen times a pixel, and only near them.
-pub const SELECTION_WGSL: &str = r#"
-fn kw_radii(cx: f32, e: f32, has: bool, sx: f32, r: f32, lone: f32) -> vec2<f32> {
-    // A corner's (convex, concave) radii: `e` the neighbour's end on this
-    // side, `sx` outward.
-    if !has {
-        return vec2<f32>(lone, 0.0);
-    }
-    let d = (e - cx) * sx;
-    return vec2<f32>(min(r, max(-d, 0.0) * 0.5), min(r, max(d, 0.0) * 0.5));
-}
-
-fn kw_cut(p: vec2<f32>, cx: f32, cy: f32, sx: f32, sy: f32, rc: f32) -> bool {
-    // Inside the row's box, but outside a convex corner's arc.
-    let near = (cx - p.x) * sx < rc && (cy - p.y) * sy < rc;
-    let c = vec2<f32>(cx - sx * rc, cy - sy * rc);
-    return rc > 0.0 && near && distance(p, c) > rc;
-}
-
-fn kw_fillet(p: vec2<f32>, cx: f32, cy: f32, sx: f32, sy: f32, rf: f32) -> bool {
-    // Past the row's end, inside a concave corner's fillet.
-    let dx = (p.x - cx) * sx;
-    let dy = (cy - p.y) * sy;
-    let c = vec2<f32>(cx + sx * rf, cy - sy * rf);
-    return rf > 0.0 && dx >= 0.0 && dx < rf && dy >= 0.0 && dy < rf && distance(p, c) >= rf;
-}
-
-fn kw_inside(p: vec2<f32>, h: f32, a: f32, b: f32, pv: vec2<f32>, hp: bool, nx: vec2<f32>, hn: bool, r: f32) -> bool {
-    let lone = min(r, (b - a) * 0.5);
-    let tl = kw_radii(a, pv.x, hp, -1.0, r, lone);
-    let tr = kw_radii(b, pv.y, hp, 1.0, r, lone);
-    let bl = kw_radii(a, nx.x, hn, -1.0, r, lone);
-    let br = kw_radii(b, nx.y, hn, 1.0, r, lone);
-    let in_box = p.x >= a && p.x < b && p.y >= 0.0 && p.y < h;
-    let cut = kw_cut(p, a, 0.0, -1.0, -1.0, tl.x) || kw_cut(p, b, 0.0, 1.0, -1.0, tr.x)
-        || kw_cut(p, a, h, -1.0, 1.0, bl.x) || kw_cut(p, b, h, 1.0, 1.0, br.x);
-    let fill = kw_fillet(p, a, 0.0, -1.0, -1.0, tl.y) || kw_fillet(p, b, 0.0, 1.0, -1.0, tr.y)
-        || kw_fillet(p, a, h, -1.0, 1.0, bl.y) || kw_fillet(p, b, h, 1.0, 1.0, br.y);
-    return (in_box && !cut) || fill;
-}
-
-fn fragment(in: FragmentIn, params: array<vec4<f32>, 4>) -> vec4<f32> {
-    let s = in.scale;
-    let a = params[0].x * s;
-    let b = params[0].y * s;
-    let pv = params[0].zw * s;
-    let nx = params[1].xy * s;
-    let h = in.size.y;
-    let r = min(params[1].z * s, h * 0.5);
-    let flags = u32(params[1].w + 0.5);
-    // A neighbour shapes the corners only where it overlaps this row.
-    let hp = (flags & 1u) != 0u && pv.x < b && pv.y > a;
-    let hn = (flags & 2u) != 0u && nx.x < b && nx.y > a;
-    let color = params[2];
-    let x = in.local.x;
-    // Past the fillets nothing; away from both ends every pixel.
-    if x < a - r - 1.0 || x > b + r + 1.0 {
-        return vec4<f32>(0.0);
-    }
-    if x > a + r + 1.0 && x < b - r - 1.0 {
-        return color;
-    }
-    var n = 0.0;
-    for (var i = 0; i < 4; i++) {
-        for (var j = 0; j < 4; j++) {
-            let o = vec2<f32>((f32(i) + 0.5) * 0.25 - 0.5, (f32(j) + 0.5) * 0.25 - 0.5);
-            if kw_inside(in.local + o, h, a, b, pv, hp, nx, hn, r) {
-                n += 1.0;
-            }
-        }
-    }
-    return vec4<f32>(color.rgb, color.a * n / 16.0);
-}
-"#;
 
 /// What a rendered row adds to a span's look, over the syntax's.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -932,16 +806,10 @@ pub fn table_cells(
     mut text: impl FnMut(&mut Ui<'_>, Range<usize>),
 ) {
     let rule = |ui: &mut Ui<'_>| {
-        ui.with(
-            NodeSpec::row()
-                .width(Sizing::Fixed(1.0))
-                .height(Sizing::Fixed(t.height))
-                .bg(t.rule),
-            |_| {},
-        );
+        ui.leaf(NodeSpec::row().size(1.0, t.height).bg(t.rule));
     };
     let cell = NodeSpec::row()
-        .height(Sizing::Fixed(t.height))
+        .height(t.height)
         .pad_xy(t.pad, 0.0)
         .cross_align(Align::Center);
     for j in 0..t.columns.max(t.cells.len()) {
@@ -949,13 +817,7 @@ pub fn table_cells(
         if t.delimiter {
             // Across the cell to the rules, no pad.
             ui.with(cell.clone().pad_xy(0.0, 0.0), |ui| {
-                ui.with(
-                    NodeSpec::row()
-                        .width(Sizing::Grow(1.0))
-                        .height(Sizing::Fixed(1.0))
-                        .bg(t.rule),
-                    |_| {},
-                );
+                ui.leaf(NodeSpec::row().grow_width().height(1.0).bg(t.rule));
             });
             continue;
         }
@@ -965,23 +827,20 @@ pub fn table_cells(
             }
             Some(TableCell::Image(Ok((id, w, h)))) => {
                 ui.with(cell.clone().pad_xy(t.pad, TABLE_IMAGE_PAD), |ui| {
-                    ui.image(
-                        *id,
-                        NodeSpec::column()
-                            .width(Sizing::Fixed(*w))
-                            .height(Sizing::Fixed(*h)),
-                    );
+                    ui.image(*id, NodeSpec::column().size(*w, *h));
                 });
             }
             Some(TableCell::Image(Err(alt))) => {
                 ui.with(cell.clone(), |ui| {
-                    ui.with(NodeSpec::row().role(Role::None), |ui| {
-                        ui.text(&format!("🖼 {alt}"), mono(face, pal).color(pal.dim));
-                    });
+                    ui.text_in(
+                        NodeSpec::row().role(Role::None),
+                        &format!("🖼 {alt}"),
+                        mono(face, pal).color(pal.dim),
+                    );
                 });
             }
             None => {
-                ui.with(cell.clone(), |_| {});
+                ui.leaf(cell.clone());
             }
         }
     }
@@ -994,38 +853,26 @@ pub fn table_cells(
 /// and `k` through a table moved every column its widest cell was on.
 pub fn table_ghost(ui: &mut Ui<'_>, face: Face, pal: &Pal, t: &TableRow, drawn: &str) {
     let style = mono(face, pal);
-    ui.with(
-        NodeSpec::row()
-            .height(Sizing::Fixed(0.0))
-            .clip()
-            .role(Role::None),
-        |ui| {
-            table_cells(ui, face, pal, t, |ui, r| {
-                ui.text(&drawn[r], style);
-            })
-        },
-    );
+    ui.with(NodeSpec::row().height(0.0).clip().role(Role::None), |ui| {
+        table_cells(ui, face, pal, t, |ui, r| {
+            ui.text(&drawn[r], style);
+        })
+    });
 }
 
 /// A table's rule 1px tall across it, above its first row or below its
 /// last: a row of the table, so it is as wide as its columns.
 pub fn table_edge(ui: &mut Ui<'_>, columns: usize, rule: Color) {
-    ui.with(
-        NodeSpec::row().height(Sizing::Fixed(1.0)).role(Role::None),
-        |ui| {
-            for j in 0..columns * 2 + 1 {
-                let w = if j % 2 == 0 {
-                    Sizing::Fixed(1.0)
-                } else {
-                    Sizing::Fit
-                };
-                ui.with(
-                    NodeSpec::row().width(w).height(Sizing::Fixed(1.0)).bg(rule),
-                    |_| {},
-                );
-            }
-        },
-    );
+    ui.with(NodeSpec::row().height(1.0).role(Role::None), |ui| {
+        for j in 0..columns * 2 + 1 {
+            let w = if j % 2 == 0 {
+                Sizing::Fixed(1.0)
+            } else {
+                Sizing::Fit
+            };
+            ui.leaf(NodeSpec::row().size(w, 1.0).bg(rule));
+        }
+    });
 }
 
 /// How a pane's gutter numbers its lines this frame: from 1, or by
@@ -1116,19 +963,20 @@ pub fn gutter_row(
         spec = spec.bg(pal.strip).pixel_snap();
     }
     ui.with(
-        spec.width(Sizing::Grow(1.0))
-            .height(Sizing::Fixed(face.line_height))
+        spec.grow_width()
+            .height(face.line_height)
             .pad_xy(GUTTER_ROW_PAD, 0.0)
             .main_align(Align::End)
             .cross_align(Align::Center),
         |ui| {
             if let Some(c) = mark {
-                ui.with(
+                ui.text_in(
                     NodeSpec::row()
-                        .height(Sizing::Fixed(face.line_height))
+                        .height(face.line_height)
                         .cross_align(Align::Center)
                         .float(FloatConfig::parent().offset(GUTTER_ROW_PAD, 0.0)),
-                    |ui| ui.text(&c.to_string(), mono(face, pal).color(pal.accent)),
+                    &c.to_string(),
+                    mono(face, pal).color(pal.accent),
                 );
             }
             ui.text(&numbers.label(ln), mono(face, pal).color(color));
@@ -1149,10 +997,9 @@ fn caret_bar(ui: &mut Ui<'_>, color: Color, on: bool, x: f32, lh: f32) {
 /// row's.
 fn caret_bar_at(ui: &mut Ui<'_>, color: Color, on: bool, x: f32, y: f32, lh: f32) {
     let bar = NodeSpec::column()
-        .width(Sizing::Fixed(2.0))
-        .height(Sizing::Fixed(lh - 4.0))
+        .size(2.0, lh - 4.0)
         .float(FloatConfig::parent().offset(x - 1.0, y + 2.0));
-    ui.with(if on { bar.bg(color) } else { bar }, |_| {});
+    ui.leaf(if on { bar.bg(color) } else { bar });
 }
 
 /// One span's resolved look, so neighbours that agree merge.
@@ -1160,6 +1007,8 @@ fn caret_bar_at(ui: &mut Ui<'_>, color: Color, on: bool, x: f32, y: f32, lh: f32
 struct Look {
     color: Option<Color>,
     bg: Option<Color>,
+    /// The background's radius: the selection's, when it is rounded.
+    radius: f32,
     underline: Option<Color>,
     mark: Mark,
 }
@@ -1247,18 +1096,29 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
 
     // The spans, neighbours of one look joined.
     let mut segs: Vec<(Range<usize>, Look)> = Vec::new();
+    // Block carets inside a rounded selection: their characters keep the
+    // selection's background, so its shape has no hole where the caret
+    // is, and the caret is drawn over them on its own (`lifted`).
+    let mut lifted: Vec<(Range<usize>, Caret)> = Vec::new();
     for w in cuts.windows(2) {
         let (a, b) = (w[0], w[1]);
         if a == b {
             continue;
         }
-        let block = line
+        let selected = line.selected.iter().any(|r| r.start <= a && b <= r.end);
+        let mut block = line
             .carets
             .iter()
             .find(|(r, k)| *k != Caret::Bar && r.start <= a && b <= r.end)
             .map(|(_, k)| *k);
+        if let Some(kind) = block.filter(|_| selected && line.sel_radius > 0.0) {
+            match lifted.last_mut() {
+                Some((r, k)) if *k == kind && r.end == a => r.end = b,
+                _ => lifted.push((a..b, kind)),
+            }
+            block = None;
+        }
         let escape = escapes.iter().any(|r| r.start <= a && b <= r.end);
-        let selected = line.selected.iter().any(|r| r.start <= a && b <= r.end);
         let hit = line.hits.iter().any(|r| r.start <= a && b <= r.end);
         let flashed = line.flashed.iter().any(|r| r.start <= a && b <= r.end);
         let washed = line
@@ -1290,12 +1150,14 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             Look {
                 color: Some(pal.bg),
                 bg: Some(caret_bg(pal, kind)),
+                radius: 0.0,
                 underline,
                 mark,
             }
         } else {
             Look {
                 color,
+                radius: if selected { line.sel_radius } else { 0.0 },
                 bg: if selected {
                     Some(pal.select)
                 } else if flashed {
@@ -1335,11 +1197,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
     let mut row = match form {
         Some(f) => {
             let mut r = NodeSpec::row()
-                .width(if f.fit {
-                    Sizing::Fit
-                } else {
-                    Sizing::Grow(1.0)
-                })
+                .width(if f.fit { Sizing::Fit } else { Sizing::GROW })
                 .min_width(if f.wrap.is_some() {
                     Min::px(0.0)
                 } else {
@@ -1367,9 +1225,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             r
         }
         None => NodeSpec::row()
-            .width(Sizing::Grow(1.0))
+            .grow_width()
             .min_width(Min::FIT)
-            .height(Sizing::Fixed(lh))
+            .height(lh)
             .cross_align(Align::Center)
             .role(Role::Line),
     };
@@ -1389,7 +1247,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
     }
     let spacer = |ui: &mut Ui<'_>, w: f32| {
         if w > 0.0 {
-            ui.with(NodeSpec::row().width(Sizing::Fixed(w)), |_| {});
+            ui.leaf(NodeSpec::row().width(w));
         }
     };
     let body = |ui: &mut Ui<'_>| {
@@ -1409,7 +1267,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 // On a baseline the box is its text's height, so that
                 // lowering it does not reach below the line.
                 let spec = NodeSpec::row()
-                    .width(Sizing::Fixed(*w))
+                    .width(*w)
                     .pad_xy(GUTTER_PAD, 0.0)
                     .main_align(Align::End)
                     .role(Role::None);
@@ -1417,7 +1275,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     if on_baseline {
                         spec
                     } else {
-                        spec.height(Sizing::Fixed(lh)).cross_align(Align::Center)
+                        spec.height(lh).cross_align(Align::Center)
                     },
                     |ui| {
                         let color = if *current { pal.dim } else { pal.faint };
@@ -1429,12 +1287,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 ui.with(NodeSpec::row().gap(8.0).role(Role::None), |ui| {
                     for img in &f.images {
                         match img {
-                            Ok((id, w, h)) => ui.image(
-                                *id,
-                                NodeSpec::column()
-                                    .width(Sizing::Fixed(*w))
-                                    .height(Sizing::Fixed(*h)),
-                            ),
+                            Ok((id, w, h)) => ui.image(*id, NodeSpec::column().size(*w, *h)),
                             Err(alt) => {
                                 ui.text(&format!("🖼 {alt}"), mono(face, pal).color(pal.dim))
                             }
@@ -1446,18 +1299,12 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             if f.rule {
                 ui.with(
                     NodeSpec::row()
-                        .width(Sizing::Grow(1.0))
-                        .height(Sizing::Fixed(lh))
+                        .grow_width()
+                        .height(lh)
                         .cross_align(Align::Center)
                         .role(Role::None),
                     |ui| {
-                        ui.with(
-                            NodeSpec::row()
-                                .width(Sizing::Grow(1.0))
-                                .height(Sizing::Fixed(1.0))
-                                .bg(pal.border),
-                            |_| {},
-                        );
+                        ui.leaf(NodeSpec::row().grow_width().height(1.0).bg(pal.border));
                     },
                 );
                 return;
@@ -1494,6 +1341,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     }
                     if let Some(c) = l.bg {
                         s = s.bg(c);
+                        if l.radius > 0.0 {
+                            s = s.bg_radius(l.radius);
+                        }
                     }
                     if let Some(c) = l.underline {
                         s = s
@@ -1524,11 +1374,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     ui.with_keyed(
                         "text",
                         NodeSpec::row()
-                            .width(Sizing::Grow(1.0))
+                            .grow_width()
                             .height(Sizing::Fit)
                             .min_height(Min::FIT),
                         |ui| {
-                            text_key.set(Some(ui.child_key_index(0)));
+                            text_key.set(Some(ui.child_key_indexed(0)));
                             ui.rich_text(&spans, base)
                         },
                     );
@@ -1572,8 +1422,22 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             let at = segs.partition_point(|(r, _)| r.end <= *b);
             flush(ui, &segs[from..at.max(from)]);
             from = at.max(from);
+            // A rounded selection runs through a hint or the ghost inside
+            // it, so its two sides meet the text between as one shape.
+            let through =
+                line.sel_radius > 0.0 && line.selected.iter().any(|r| r.start < *b && *b < r.end);
             ui.with(NodeSpec::row().role(Role::None), |ui| {
-                ui.text(t, base.color(*color));
+                if through {
+                    ui.rich_text(
+                        &[Span::new(t)
+                            .color(*color)
+                            .bg(pal.select)
+                            .bg_radius(line.sel_radius)],
+                        base,
+                    );
+                } else {
+                    ui.text(t, base.color(*color));
+                }
             });
         }
         flush(ui, &segs[from..]);
@@ -1614,6 +1478,36 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 .sum::<f32>();
             caret_bar(ui, pal.accent, line.caret_on, x, lh);
         }
+        // The block carets a rounded selection runs under: each its
+        // characters again over the selection, inverted in the caret's
+        // colour, where the row laid them out.
+        for (r, kind) in &lifted {
+            let (x, y) = if wraps {
+                wrapped_at(ui, r.start)
+            } else {
+                let x = before
+                    + ui.measure_text(&text[..r.start], &base, None).width
+                    + virtual_w
+                        .iter()
+                        .filter(|(b, _)| r.start > *b)
+                        .map(|(_, w)| w)
+                        .sum::<f32>();
+                (x, 0.0)
+            };
+            ui.with(
+                NodeSpec::row()
+                    .role(Role::None)
+                    .float(FloatConfig::parent().offset(x, y)),
+                |ui| {
+                    ui.rich_text(
+                        &[Span::new(&text[r.clone()])
+                            .color(pal.bg)
+                            .bg(caret_bg(pal, *kind))],
+                        base,
+                    )
+                },
+            );
+        }
         // A block caret past the end of the line, or a selection
         // running past the newline: one cell after the text, in the
         // caret's colour or the selection's — the caret's where it sits on
@@ -1633,23 +1527,38 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             .map(|(_, k)| caret_bg(pal, *k));
         let selected = line.selected.iter().any(|r| r.end > len);
         let mut cell_w = 0.0;
-        if let Some(bg) = caret.or(selected.then_some(pal.select)) {
+        if caret.is_none() && selected && line.sel_radius > 0.0 {
+            // A rounded selection's newline is a space of the text's own
+            // with the selection's background, which kui joins with the
+            // line's into one extent (its F101); the box below is square.
+            let cell = [Span::new(" ").bg(pal.select).bg_radius(line.sel_radius)];
+            if wraps {
+                let (x, y) = wrapped_at(ui, len);
+                ui.with(
+                    NodeSpec::row()
+                        .role(Role::None)
+                        .float(FloatConfig::parent().offset(x, y)),
+                    |ui| ui.rich_text(&cell, base),
+                );
+            } else {
+                cell_w = ui.measure_text(" ", &base, None).width;
+                ui.with(NodeSpec::row().role(Role::None), |ui| {
+                    ui.rich_text(&cell, base)
+                });
+            }
+        } else if let Some(bg) = caret.or(selected.then_some(pal.select)) {
             let w = ui.measure_text(" ", &base, None).width;
-            let mut cell = NodeSpec::column()
-                .width(Sizing::Fixed(w))
-                .height(Sizing::Fixed(lh))
-                .bg(bg)
-                .pixel_snap();
+            let mut cell = NodeSpec::column().size(w, lh).bg(bg).pixel_snap();
             if wraps {
                 let (x, y) = wrapped_at(ui, len);
                 cell = cell.float(FloatConfig::parent().offset(x, y));
             } else {
                 cell_w = w;
             }
-            ui.with(cell, |_| {});
+            ui.leaf(cell);
         }
         if let Some((t, color)) = line.trailing {
-            ui.with(
+            ui.text_in(
                 NodeSpec::row()
                     .padding(kui_native::Edges {
                         l: (TRAILING_GAP - cell_w).max(0.0),
@@ -1659,21 +1568,17 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     })
                     .cross_align(Align::Center)
                     .role(Role::None),
-                |ui| ui.text(t, base.color(color)),
+                t,
+                base.color(color),
             );
         }
         spacer(ui, after);
     };
-    match (form, line.rounded) {
-        (Some(f), _) => {
+    match form {
+        Some(f) => {
             ui.with_keyed(&f.key, row, body);
         }
-        // Its selection drawn by the row, under the text, on whole
-        // pixels so the next row's part meets it.
-        (None, Some(sel)) => {
-            ui.fragment_with(sel.fragment, &sel.params(), row.pixel_snap(), body);
-        }
-        (None, None) => {
+        None => {
             ui.with(row, body);
         }
     }

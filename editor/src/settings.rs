@@ -485,6 +485,11 @@ impl Settings {
         // editor rings for its own failures — a search with no match.
         defaults.set("terminal.bell", Setting::Str("sound".into()));
         defaults.set("editor.bell", Setting::Bool(false));
+        // The directory in a tab's label (roadmap step 50): `auto` while
+        // the tabs are in more than one (workspaces.md Decision 6),
+        // `always`, or `never`. A tab on a terminal is where its shell
+        // says it is (OSC 7).
+        defaults.set("tabs.directory", Setting::Str("auto".into()));
         // The selection's corners, in logical px: 0 square, as a text's
         // span backgrounds are; more rounds the selection as one shape
         // across its lines, the corners where a line reaches past its
@@ -568,6 +573,7 @@ impl Settings {
             ("layout.dock", words(&["tree", "scroll"])),
             ("launcher.start", words(&["normal", "insert"])),
             ("buffers.scope", words(&["tab", "all"])),
+            ("tabs.directory", words(&["auto", "always", "never"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
         ] {
             s.declare(path, kind, "");
@@ -986,6 +992,7 @@ mod tests {
                 "secrets.private_temp",
                 "secrets.reveal_secs",
                 "secrets.scan_max_kb",
+                "tabs.directory",
                 "tabstop",
                 "terminal.bell",
                 "terminal.scrollback",

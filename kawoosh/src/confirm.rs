@@ -9,7 +9,7 @@
 //! }` (`Msg::Confirm`); the actions are a toast's, `(label, command)`.
 
 use kawoosh_editor::KeyStroke;
-use kui_native::{Align, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value};
+use kui_native::{Align, FloatConfig, NodeSpec, Role, TextStyle, Ui, Value};
 
 use crate::app::Kawoosh;
 use crate::rows;
@@ -47,7 +47,6 @@ impl Kawoosh {
         let Some(c) = self.confirm.take() else {
             return;
         };
-        self.reclaim_focus = true;
         if let Some(cmd) = index
             .and_then(|i| c.actions.get(i))
             .map(|(_, cmd)| cmd.clone())
@@ -89,7 +88,7 @@ impl Kawoosh {
 
     /// A click on a confirm's button (`{kind = "confirm", action = i}`).
     pub(crate) fn on_confirm(&mut self, p: &Value) {
-        if let Some(i) = p.get("action").and_then(Value::as_int) {
+        if let Some(i) = p.get_int("action") {
             self.confirm_answer(Some(i as usize));
         }
     }
@@ -97,10 +96,7 @@ impl Kawoosh {
     /// kui's `dismiss` on the confirm's modal: `<Esc>` or a press
     /// outside it, answered with none.
     pub(crate) fn on_dismiss(&mut self, p: &Value) {
-        let tag = p
-            .get("tag")
-            .and_then(|t| t.get("kind"))
-            .and_then(Value::as_str);
+        let tag = p.get("tag").and_then(|t| t.get_str("kind"));
         if tag == Some("confirm") {
             self.confirm_answer(None);
         }
@@ -120,11 +116,7 @@ impl Kawoosh {
         let sink = ui.with_keyed(
             "confirm",
             NodeSpec::column()
-                .float(
-                    FloatConfig::viewport()
-                        .at(Align::Center, Align::Center)
-                        .self_at(Align::Center, Align::Center),
-                )
+                .float(FloatConfig::viewport().inside(Align::Center, Align::Center))
                 .modal(tag.clone())
                 .role(Role::Dialog)
                 .label(c.title.as_str())
@@ -169,12 +161,12 @@ impl Kawoosh {
                 let column = c.actions.len() > 3 || long;
                 let spec = if column {
                     NodeSpec::column()
-                        .width(Sizing::Grow(1.0))
+                        .grow_width()
                         .min_width(kui_native::Min::FIT)
                         .gap(2.0)
                 } else {
                     NodeSpec::row()
-                        .width(Sizing::Grow(1.0))
+                        .grow_width()
                         .min_width(kui_native::Min::FIT)
                         .gap(6.0)
                         .main_align(Align::End)
@@ -196,9 +188,7 @@ impl Kawoosh {
                                 ("action", Value::Int(i as i64)),
                             ]));
                         if column {
-                            button = button
-                                .width(Sizing::Grow(1.0))
-                                .min_width(kui_native::Min::FIT);
+                            button = button.grow_width().min_width(kui_native::Min::FIT);
                         }
                         ui.with_indexed(i as u64, button, |ui| {
                             if column && i < 9 {

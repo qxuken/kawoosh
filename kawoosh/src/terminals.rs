@@ -93,69 +93,6 @@ pub(crate) enum TermScroll {
     Bottom,
 }
 
-/// A `path[:line[:col]]` in `text` around byte `at` — rustc, tsc, grep
-/// and shell spellings. Extensible from Lua later (Decision 5c).
-pub fn location_at(text: &str, at: usize) -> Option<(String, Option<usize>, Option<usize>)> {
-    let span = location_span(text, at)?;
-    let token = &text[span.clone()];
-    // A drive's colon (`C:\x`) is the path's, not a line's.
-    let drive = token
-        .as_bytes()
-        .get(..3)
-        .filter(|b| b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
-        .map_or(0, |_| 2);
-    let mut parts = token[drive..].split(':');
-    let path = format!("{}{}", &token[..drive], parts.next()?);
-    let line = parts.next().and_then(|s| s.parse().ok());
-    let col = parts.next().and_then(|s| s.parse().ok());
-    if line.is_none()
-        && let Some((l, c)) = paren_position(&text[span.end..])
-    {
-        return Some((path, Some(l), c));
-    }
-    Some((path, line, col))
-}
-
-/// `(3,5)` or `(3)` right after a path — how `tsc` and MSVC print a
-/// place (docs/design/compile.md Decision 5).
-fn paren_position(after: &str) -> Option<(usize, Option<usize>)> {
-    let (inner, _) = after.strip_prefix('(')?.split_once(')')?;
-    let (l, c) = match inner.split_once(',') {
-        Some((l, c)) => (l, Some(c.trim().parse().ok()?)),
-        None => (inner, None),
-    };
-    Some((l.trim().parse().ok()?, c))
-}
-
-/// Where in `text` the location [`location_at`] reads at byte `at` is:
-/// the token around it, a sentence's trailing punctuation off — what a
-/// ⌘-click opens and a ⌘-hover underlines.
-pub fn location_span(text: &str, at: usize) -> Option<std::ops::Range<usize>> {
-    // `\` for the paths Windows tools print (`src\main.rs:42`).
-    let is_path_char = |c: char| c.is_alphanumeric() || "./_-~+@:%\\".contains(c);
-    let at = at.min(text.len());
-    let start = text[..at]
-        .char_indices()
-        .rev()
-        .find(|(_, c)| !is_path_char(*c))
-        .map(|(i, c)| i + c.len_utf8())
-        .unwrap_or(0);
-    let end = text[at..]
-        .char_indices()
-        .find(|(_, c)| !is_path_char(*c))
-        .map(|(i, _)| at + i)
-        .unwrap_or(text.len());
-    // Trailing punctuation is the sentence's, a leading `./` is the path's.
-    let raw = &text[start..end];
-    let tail = raw.trim_end_matches(|c: char| ":.,;".contains(c));
-    let token = tail.trim_start_matches([':', ',', ';']);
-    if token.is_empty() || !token.contains(['/', '.', '\\']) {
-        return None;
-    }
-    let from = start + (tail.len() - token.len());
-    Some(from..from + token.len())
-}
-
 /// The shortest time between two bells heard: a program that prints a
 /// stream of BELs is one chime, not a buzz.
 pub const BELL_GAP: std::time::Duration = std::time::Duration::from_millis(250);
@@ -699,17 +636,16 @@ impl Kawoosh {
         }
     }
 
-    /// The columns of terminal `id`'s screen row `row` a ⌘-click at `col`
-    /// would open: the location's span when what it names is a file or a
-    /// directory there, else none — so the hover underlines only what a
-    /// click will open. A column is a character of the row's text, as
-    /// [`Self::open_location_at`] counts them.
-    pub(crate) fn location_cols(
+    /// The link at `(row, col)` of terminal `id`'s screen, the columns it
+    /// covers, and where a path in it is looked for: the terminal's
+    /// directory, then the working directory. A column is a character
+    /// of the row's text.
+    fn term_link(
         &self,
         id: TermId,
         row: usize,
         col: usize,
-    ) -> Option<std::ops::Range<usize>> {
+    ) -> Option<(crate::links::Link, std::ops::Range<usize>, Vec<PathBuf>)> {
         let t = self.terms.map.get(&id)?;
         let text = t.row_text(row);
         let at = text
@@ -717,40 +653,44 @@ impl Kawoosh {
             .nth(col)
             .map(|(i, _)| i)
             .unwrap_or(text.len());
-        let span = location_span(&text, at)?;
-        let (path, _, _) = location_at(&text, at)?;
-        let base = t.cwd().unwrap_or_else(|| self.cwd.clone());
-        if !kawoosh_systems::fs::expand(Path::new(&path), &base).exists() {
-            return None;
+        let link = crate::links::link_at(&text, at)?;
+        let first = text[..link.span.start].chars().count();
+        let cols = first..first + text[link.span.clone()].chars().count();
+        let mut bases = vec![t.cwd().unwrap_or_else(|| self.cwd.clone())];
+        if !bases.contains(&self.cwd) {
+            bases.push(self.cwd.clone());
         }
-        let first = text[..span.start].chars().count();
-        Some(first..first + text[span].chars().count())
+        Some((link, cols, bases))
     }
 
-    /// Opens the file named at `(row, col)` of terminal `id`'s screen —
-    /// `gf` across the terminal/editor boundary (Decision 5c).
-    pub fn open_location_at(&mut self, id: TermId, row: usize, col: usize) -> bool {
-        let Some(t) = self.terms.map.get(&id) else {
-            return false;
-        };
-        let text = t.row_text(row);
-        let at = text
-            .char_indices()
-            .nth(col)
-            .map(|(i, _)| i)
-            .unwrap_or(text.len());
-        let Some((path, line, colno)) = location_at(&text, at) else {
-            self.ed.message = "no path under the pointer".into();
-            return false;
-        };
-        let base = t.cwd().unwrap_or_else(|| self.cwd.clone());
-        let full = kawoosh_systems::fs::expand(Path::new(&path), &base);
-        if !kawoosh_systems::fs::exists(&full) {
-            self.ed.message = format!("not found: {}", full.display());
-            return false;
+    /// The columns of terminal `id`'s screen row `row` a ⌘-click at `col`
+    /// would open: a URL's, or a path's when it names a file or a
+    /// directory there — so the hover underlines only what a click will
+    /// open.
+    pub(crate) fn location_cols(
+        &self,
+        id: TermId,
+        row: usize,
+        col: usize,
+    ) -> Option<std::ops::Range<usize>> {
+        let (link, cols, bases) = self.term_link(id, row, col)?;
+        match link.target {
+            crate::links::Target::Url(_) => Some(cols),
+            crate::links::Target::Path { path, .. } => {
+                crate::links::resolve(&path, &bases).map(|_| cols)
+            }
         }
-        self.open_in_editor(&full, line, colno);
-        true
+    }
+
+    /// Opens the link at `(row, col)` of terminal `id`'s screen — a URL
+    /// in the OS, a path in an editor pane at its line: `gx` across the
+    /// terminal/editor boundary (Decision 5c).
+    pub fn open_location_at(&mut self, id: TermId, row: usize, col: usize) -> bool {
+        let Some((link, _, bases)) = self.term_link(id, row, col) else {
+            self.ed.message = "no link under the pointer".into();
+            return false;
+        };
+        self.follow_link(link.target, &bases)
     }
 
     /// Opens `path` in an editor pane — the focused one, or a split
@@ -1020,49 +960,3 @@ def --env zk [...q] { cd (^$env.KAWOOSH_BIN pick dirs ...$q) }
 # zsh, bash:
 zk() { local d; d=$("$KAWOOSH_BIN" pick dirs "$@") && cd "$d"; }
 "#;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn locations() {
-        let l = "error: x\n  --> src/main.rs:42:7\n";
-        let at = l.find("main").unwrap();
-        assert_eq!(
-            location_at(l, at),
-            Some(("src/main.rs".into(), Some(42), Some(7)))
-        );
-        assert_eq!(
-            location_at("see ./a.txt.", 6),
-            Some(("./a.txt".into(), None, None))
-        );
-        assert_eq!(location_at("just words here", 6), None);
-        assert_eq!(
-            location_at("lib/foo.rb:10: warning", 4),
-            Some(("lib/foo.rb".into(), Some(10), None))
-        );
-        // Windows spellings: a backslash path, and a drive's colon.
-        assert_eq!(
-            location_at("  --> src\\main.rs:42:7", 8),
-            Some(("src\\main.rs".into(), Some(42), Some(7)))
-        );
-        assert_eq!(
-            location_at("at C:\\work\\a.rs:3 here", 6),
-            Some(("C:\\work\\a.rs".into(), Some(3), None))
-        );
-        // tsc's and MSVC's parentheses.
-        assert_eq!(
-            location_at("src/a.ts(3,5): error TS2322: no", 2),
-            Some(("src/a.ts".into(), Some(3), Some(5)))
-        );
-        assert_eq!(
-            location_at("main.c(12): warning C4996", 2),
-            Some(("main.c".into(), Some(12), None))
-        );
-        assert_eq!(
-            location_at("see a.ts (the file)", 5),
-            Some(("a.ts".into(), None, None))
-        );
-    }
-}

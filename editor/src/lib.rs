@@ -434,7 +434,25 @@ pub const PANE_FIELD: &str = "pane";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Prompt {
     Command,
-    Search { backwards: bool },
+    Search {
+        backwards: bool,
+    },
+    /// A pattern for the selections (docs/design/selections.md).
+    Select {
+        how: Select,
+    },
+}
+
+/// What a `select` prompt's pattern does to the selections
+/// (docs/design/selections.md Decision 1).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Select {
+    /// The matches inside every selection become the selections.
+    Within,
+    /// Every selection split on the matches.
+    Split,
+    /// The selections that match kept; after `!`, those that do not.
+    Keep,
 }
 
 impl Prompt {
@@ -443,6 +461,7 @@ impl Prompt {
         match self {
             Prompt::Command => "cmdline",
             Prompt::Search { .. } => "search",
+            Prompt::Select { .. } => "select",
         }
     }
 
@@ -452,6 +471,11 @@ impl Prompt {
             Prompt::Command => ":",
             Prompt::Search { backwards: false } => "/",
             Prompt::Search { backwards: true } => "?",
+            Prompt::Select {
+                how: Select::Within,
+            } => "select ",
+            Prompt::Select { how: Select::Split } => "split ",
+            Prompt::Select { how: Select::Keep } => "keep ",
         }
     }
 }
@@ -500,6 +524,8 @@ struct SearchOrigin {
     top: usize,
     left: f32,
     search: Option<search::Search>,
+    /// `V`'s, which a `select` prompt's preview leaves.
+    linewise: bool,
 }
 
 /// Where a moment's text came from, when one yank or delete of one
@@ -631,6 +657,10 @@ pub struct Memory {
     /// Bumped whenever the moments change: what a snapshot of them is
     /// good for.
     pub version: u64,
+    /// The head was a secret, and it went — put once, or its time up —
+    /// with nothing taken since: `p` says so rather than putting the
+    /// text the secret had covered, which nobody asked for.
+    spent: bool,
 }
 
 impl Memory {
@@ -665,6 +695,7 @@ impl Memory {
     /// A moment taken: the head from now on.
     pub fn remember(&mut self, m: Moment) {
         self.version += 1;
+        self.spent = false;
         self.next_id += 1;
         if let Some(head) = self.moments.last_mut()
             && head.text == m.text
@@ -694,6 +725,7 @@ impl Memory {
             self.ids.push(id);
         }
         self.version += 1;
+        self.spent = false;
         true
     }
 
@@ -701,6 +733,9 @@ impl Memory {
     pub fn forget(&mut self, i: usize) -> bool {
         if i >= self.moments.len() {
             return false;
+        }
+        if i + 1 == self.moments.len() && self.moments[i].secret {
+            self.spent = true;
         }
         self.moments.remove(i);
         self.ids.remove(i);
@@ -717,6 +752,9 @@ impl Memory {
             .iter()
             .map(|m| !m.secret || m.at >= before)
             .collect();
+        if keep.last() == Some(&false) {
+            self.spent = true;
+        }
         let mut k = keep.iter();
         self.moments.retain(|_| *k.next().unwrap());
         let mut k = keep.iter();
@@ -726,6 +764,24 @@ impl Memory {
             self.version += 1;
         }
         gone
+    }
+
+    /// Whether the head was a secret that went, nothing taken since.
+    pub fn spent(&self) -> bool {
+        self.spent
+    }
+
+    /// Moment `i` made a secret from here on: put into a private buffer,
+    /// a text is one (docs/design/secrets.md Decision 2) — masked in a
+    /// list, never on the clipboard again, forgotten on the timer.
+    pub fn make_secret(&mut self, i: usize) {
+        if let Some(m) = self.moments.get_mut(i)
+            && !m.secret
+        {
+            m.secret = true;
+            m.at = Instant::now();
+            self.version += 1;
+        }
     }
 
     /// When the oldest secret was taken, if one is held: what the timer
@@ -1049,13 +1105,16 @@ impl Editor {
             self.cancel_prompt();
         }
         let origin = match kind {
-            Prompt::Search { .. } => self.views.get(view).map(|v| SearchOrigin {
-                view,
-                sels: v.sels.clone(),
-                top: v.top,
-                left: v.left,
-                search: self.search.clone(),
-            }),
+            Prompt::Search { .. } | Prompt::Select { .. } => {
+                self.views.get(view).map(|v| SearchOrigin {
+                    view,
+                    sels: v.sels.clone(),
+                    top: v.top,
+                    left: v.left,
+                    search: self.search.clone(),
+                    linewise: v.visual_linewise,
+                })
+            }
             Prompt::Command => None,
         };
         let field = self.open_field(kind.field_name(), "");
@@ -1143,6 +1202,16 @@ impl Editor {
                 };
                 self.run(view, cmd, &[], None);
             }
+            // From the selections as they were when the prompt opened,
+            // not the preview's.
+            Prompt::Select { how } => {
+                if let Some(origin) = &p.origin {
+                    self.restore_origin(origin);
+                }
+                if self.views.contains_key(view) && !line.is_empty() {
+                    commands::select_by(self, view, how, &line);
+                }
+            }
         }
     }
 
@@ -1174,7 +1243,7 @@ impl Editor {
     fn history_mut(&mut self, kind: Prompt) -> &mut Vec<String> {
         match kind {
             Prompt::Command => &mut self.cmd_history,
-            Prompt::Search { .. } => &mut self.search_history,
+            Prompt::Search { .. } | Prompt::Select { .. } => &mut self.search_history,
         }
     }
 
@@ -1247,6 +1316,7 @@ impl Editor {
         {
             self.prompt.as_mut().unwrap().seen = version;
             self.preview_search();
+            self.preview_select();
         }
     }
 
@@ -2577,8 +2647,12 @@ impl Editor {
                 // A binding that cannot run here does not shadow the
                 // longer ones beneath it: the sequence stays open for
                 // them (`,` keeps the primary selection off a listing,
-                // and in one is the sort prefix, `,s`).
-                let deeper = self.keymap.has_deeper(lookup_mode, &self.pending);
+                // and in one is the sort prefix, `,s`). Where the
+                // sequence falls through, normal mode's longer ones
+                // count too: the launcher's bare `g`, gated off outside
+                // it, had hidden `gg` from visual mode.
+                let deeper = self.keymap.has_deeper(lookup_mode, &self.pending)
+                    || falls_through && self.keymap.has_deeper(Mode::Normal, &self.pending);
                 let mut picked = self.pick_binding(view, &bs).cloned();
                 if picked.is_err() && deeper {
                     return true;
@@ -2744,6 +2818,32 @@ impl Editor {
             .map(|s| Selection::new(s.anchor.min(len), s.head.min(len)));
         v.top = origin.top;
         v.left = origin.left;
+        v.visual_linewise = origin.linewise;
+    }
+
+    /// A `select` prompt as it reads now, previewed: the selections back
+    /// as they were when it opened, and then what `<CR>` will make of
+    /// them — unless the pattern does not compile yet or makes no
+    /// selection, which leaves them as they were and says nothing.
+    fn preview_select(&mut self) {
+        let Some(p) = self.prompt.as_ref() else {
+            return;
+        };
+        let (Some(origin), Prompt::Select { how }, field) = (p.origin.clone(), p.kind, p.field)
+        else {
+            return;
+        };
+        if !self.views.contains_key(origin.view) {
+            return;
+        }
+        self.restore_origin(&origin);
+        let line = self.field_text(field).unwrap_or_default();
+        if line.is_empty() {
+            return;
+        }
+        let said = std::mem::take(&mut self.message);
+        commands::select_by(self, origin.view, how, &line);
+        self.message = said;
     }
 
     /// The search prompt as it reads now, previewed: the primary

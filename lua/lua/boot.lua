@@ -124,6 +124,21 @@ function kawoosh.on_open(fn)
   kawoosh._openers[#kawoosh._openers + 1] = fn
 end
 
+-- kawoosh.tab_title(fn): the tab strip's labels written by
+-- `fn(tab)`, wezterm's `format-tab-title` — `tab` is `{ index, active,
+-- title, dir, cwd, kind, name, path, modified, bell, panes }`: `title`
+-- the label kawoosh would draw (`N: name`, the directory as
+-- `tabs.directory` says, ` ●` when modified), `dir` the last part of
+-- `cwd` (a terminal's is where its shell says it is), `kind` its focused
+-- pane's (`editor`, `terminal`, `lua`, `undo`, `memory`), `name` that
+-- pane's buffer, terminal title or view, `path` its file. It returns
+-- the label, or nil for kawoosh's; `kawoosh.tab_title(nil)` takes it
+-- off, and so does an error, said once. Called for every tab, every
+-- frame the strip is drawn: keep it to strings.
+function kawoosh.tab_title(fn)
+  kawoosh._tab_title = fn
+end
+
 -- kawoosh.on_memory_open(kind, fn): how a moment of a plugin's own
 -- kind (`<plugin>.<kind>`, memory.md Decision 9) is opened from the
 -- memory pane — `fn(row)`, `row` its `kind`, `subject` and `meta` (a
@@ -357,7 +372,7 @@ end
 -- taken off with `false`; the notes not named are kept. `buffer` is a
 -- handle, a name (a scratch just asked for by `open_scratch`, which is
 -- not in the snapshot yet — its ids are its line numbers then), or the
--- current one. Spaces in it are `\u{A0}`, which every font keeps.
+-- current one.
 -- `kawoosh.buf.tracked_lines([buffer])` is where each line a hooked
 -- buffer opened with is now (a line number from 1, or false), beside
 -- `tracked()`'s what it became, both by the line's id — its index;
@@ -527,10 +542,14 @@ local function field_node(view_name, env, opts)
     block_lo = st.caret
     block_hi = st.caret + math.max(char_len(line, st.caret + 1), 1)
   end
-  -- A rounded selection (`editor.selection_radius`) is the row's to
-  -- draw, as a pane's row draws its part: the shell's fragment under the
-  -- text, told where the selection starts and ends; the spans carry none.
-  local round = sel_lo and kawoosh._selection_round()
+  -- A rounded selection (`editor.selection_radius`): the spans' own
+  -- backgrounds, which kui joins into one shape (its F101), as a pane's.
+  local radius = sel_lo and kawoosh._selection_radius() or nil
+  -- A block caret inside a rounded selection: its character keeps the
+  -- selection's background, so the shape has no hole there, and the
+  -- caret is drawn over it on its own.
+  local lifted = radius and block_lo and block_lo < #line
+    and block_lo >= sel_lo and block_hi <= sel_hi
   -- The text as spans, cut at every edge, each styled by what it is in.
   local cuts = { 0, #line }
   local function cut(b) if b and b > 0 and b < #line then cuts[#cuts + 1] = b end end
@@ -544,8 +563,15 @@ local function field_node(view_name, env, opts)
       if a >= from and b <= to and b > a then
         local piece = line:sub(a + 1, b)
         local span = { piece }
-        if sel_lo and not round and a >= sel_lo and b <= sel_hi then span.bg = t.selection end
-        if block_lo and a >= block_lo and b <= block_hi then span.bg = t.accent; span.color = t.bg end
+        if sel_lo and a >= sel_lo and b <= sel_hi then
+          span.bg = t.selection
+          span.bg_radius = radius
+        end
+        if block_lo and not lifted and a >= block_lo and b <= block_hi then
+          span.bg = t.accent
+          span.color = t.bg
+          span.bg_radius = nil
+        end
         out[#out + 1] = span
       end
     end
@@ -564,9 +590,20 @@ local function field_node(view_name, env, opts)
   else
     local all = spans_between(0, #line)
     if #all > 0 then push(text(all, style)) end
-    -- A block caret past the end sits on a space of its own.
+    -- A block caret past the end sits on a space of its own, and so
+    -- does a selection that takes the line's end.
     if block_lo and block_lo >= #line then
       push(text({ { " ", bg = t.accent, color = t.bg } }, style))
+    elseif sel_hi and sel_hi > #line then
+      push(text({ { " ", bg = t.selection, bg_radius = radius } }, style))
+    end
+    if lifted then
+      local glyph = line:sub(block_lo + 1, block_hi)
+      local h = env.measure_text(glyph, style).height
+      push(row {
+        float = { dx = env.measure_text(line:sub(1, block_lo), style).width, dy = (row_h - h) / 2 },
+        text({ { glyph, bg = t.accent, color = t.bg } }, style),
+      })
     end
   end
   if #line == 0 and not focused and opts.placeholder then
@@ -583,33 +620,7 @@ local function field_node(view_name, env, opts)
   }
   local node = row(props)
   for _, c in ipairs(children) do node[#node + 1] = c end
-  if not round then return node end
-  -- Where the selection starts and ends along the line, and past its end
-  -- the cell a block caret takes there. A field's line has no neighbours,
-  -- so every corner is round. The fragment is the field — its key, its
-  -- click, its line and caret — and lays out as a column, so the row of
-  -- the text sits inside it.
-  local function width(s) return env.measure_text(s, style).width end
-  local a = width(line:sub(1, sel_lo))
-  local b = sel_hi > #line and width(line) + width(" ") or width(line:sub(1, sel_hi))
-  -- In the field's own selection colour, as its spans painted it.
-  local v = t.selection
-  if type(v) == "string" then v = tonumber((v:gsub("#", "")), 16) end
-  local function ch(shift) return math.floor(v / 2 ^ shift) % 256 / 255 end
-  local c = { ch(24), ch(16), ch(8), ch(0) }
-  local inner = row { height = row_h, cross_align = "center" }
-  for _, child in ipairs(children) do inner[#inner + 1] = child end
-  return fragment {
-    key = props.key,
-    on_click = props.on_click,
-    role = props.role,
-    caret = props.caret,
-    label = props.label,
-    id = round.id,
-    params = { a, b, 0, 0, 0, 0, round.radius, 0, c[1], c[2], c[3], c[4] },
-    pixel_snap = true,
-    inner,
-  }
+  return node
 end
 
 -- kawoosh.field_text(view, name): a view's field's line, "" before it

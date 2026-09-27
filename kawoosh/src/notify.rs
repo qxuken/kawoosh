@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Spec};
 use kawoosh_systems::{Alarm, WakeHandle};
-use kui_native::{Align, FloatConfig, NodeSpec, Sizing, Span, TextStyle, Ui, Value};
+use kui_native::{Align, FloatConfig, Hover, HoverPhase, NodeSpec, Span, TextStyle, Ui, Value};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -735,11 +735,11 @@ impl Kawoosh {
     /// A toast clicked: its body (without actions) takes it down; an
     /// action runs its command and takes it down.
     pub(crate) fn on_toast(&mut self, p: &Value) {
-        let Some(id) = p.get("id").and_then(Value::as_int) else {
+        let Some(id) = p.get_int("id") else {
             return;
         };
         let id = id as u64;
-        match p.get("action").and_then(Value::as_int) {
+        match p.get_int("action") {
             Some(index) => {
                 if let Some(cmd) = self.notes.take_action(id, index as usize) {
                     self.run_line(&cmd);
@@ -752,18 +752,13 @@ impl Kawoosh {
     /// The pointer over a toast, or one of its buttons, or off it:
     /// while it is over, the toast stays; once it leaves, the toast's
     /// time starts over.
-    pub(crate) fn on_toast_hover(&mut self, p: &Value) {
-        let Some(id) = p
-            .get("tag")
-            .and_then(|t| t.get("id"))
-            .and_then(Value::as_int)
-        else {
+    pub(crate) fn on_toast_hover(&mut self, h: Hover, tag: Option<&Value>) {
+        let Some(id) = tag.and_then(|t| t.get_int("id")) else {
             return;
         };
-        match p.get("phase").and_then(Value::as_str) {
-            Some("enter") => self.notes.hover_enter(id as u64),
-            Some("leave") => self.notes.hover_leave(id as u64, Instant::now()),
-            _ => {}
+        match h.phase {
+            HoverPhase::Enter => self.notes.hover_enter(id as u64),
+            HoverPhase::Leave => self.notes.hover_leave(id as u64, Instant::now()),
         }
     }
 
@@ -858,8 +853,7 @@ impl Kawoosh {
             NodeSpec::column()
                 .float(
                     FloatConfig::viewport()
-                        .at(Align::End, Align::Start)
-                        .self_at(Align::End, Align::Start)
+                        .inside(Align::End, Align::Start)
                         .offset(-12.0, self.title_h + 1.0 + self.chrome.tab_h + 8.0),
                 )
                 .max_width(max_w)
@@ -912,7 +906,7 @@ impl Kawoosh {
                             ui.with(NodeSpec::row().gap(6.0).cross_align(Align::Center), |ui| {
                                 for (i, a) in s.actions.iter().enumerate() {
                                     let on = focused && focus.is_some_and(|f| f.action == i);
-                                    ui.with_indexed(
+                                    ui.text_in_indexed(
                                         i as u64,
                                         NodeSpec::row()
                                             .pad_xy(8.0, 2.0)
@@ -927,12 +921,8 @@ impl Kawoosh {
                                                 ("id", Value::Int(s.id as i64)),
                                                 ("action", Value::Int(i as i64)),
                                             ])),
-                                        |ui| {
-                                            ui.text(
-                                                &a.label,
-                                                TextStyle::new(small).color(pal.fg).nowrap(),
-                                            );
-                                        },
+                                        &a.label,
+                                        TextStyle::new(small).color(pal.fg).nowrap(),
                                     );
                                 }
                             });
@@ -991,8 +981,8 @@ impl Kawoosh {
                 // Inside the panel's padding (10 a side).
                 let line = || NodeSpec::row().max_width(max_w - 20.0).clip();
                 for (gi, source) in sources.iter().enumerate() {
-                    ui.with_indexed(
-                        1 << 32 | gi as u64,
+                    ui.with_key(
+                        ui.child_key("source").index(gi as u64),
                         NodeSpec::column().gap(1.0).cross_align(Align::End),
                         |ui| {
                             for s in self
@@ -1006,9 +996,7 @@ impl Kawoosh {
                                 } else {
                                     s.text.clone()
                                 };
-                                ui.with_indexed(s.id, line(), |ui| {
-                                    ui.text(&text, dim);
-                                });
+                                ui.text_in_indexed(s.id, line(), &text, dim);
                             }
                             let mut running = false;
                             for (pi, p) in self
@@ -1036,32 +1024,28 @@ impl Kawoosh {
                                 // loader: the line, and a bar under it
                                 // filled that far.
                                 let bar = (!p.done).then_some(p.percentage).flatten();
-                                ui.with_indexed(
-                                    1 << 33 | pi as u64,
+                                ui.with_key(
+                                    ui.child_key("progress").index(pi as u64),
                                     NodeSpec::column().gap(2.0).cross_align(Align::End),
                                     |ui| {
-                                        ui.with(line(), |ui| {
-                                            ui.text(&text, dim);
-                                        });
+                                        ui.text_in(line(), &text, dim);
                                         if let Some(pct) = bar {
                                             ui.with_keyed(
                                                 "bar",
                                                 NodeSpec::row()
-                                                    .width(Sizing::Fixed(BAR_W))
-                                                    .height(Sizing::Fixed(3.0))
+                                                    .size(BAR_W, 3.0)
                                                     .radius(1.5)
                                                     .bg(pal.border)
                                                     .clip(),
                                                 |ui| {
-                                                    ui.with_keyed(
+                                                    ui.leaf_keyed(
                                                         "fill",
                                                         NodeSpec::row()
-                                                            .width(Sizing::Fixed(
+                                                            .width(
                                                                 BAR_W * pct.min(100) as f32 / 100.0,
-                                                            ))
-                                                            .height(Sizing::Grow(1.0))
+                                                            )
+                                                            .grow_height()
                                                             .bg(pal.accent),
-                                                        |_| {},
                                                     );
                                                 },
                                             );
@@ -1070,7 +1054,7 @@ impl Kawoosh {
                                 );
                             }
                             if let Some(src) = source {
-                                ui.with_indexed(1 << 34, NodeSpec::row().gap(6.0), |ui| {
+                                ui.with_keyed("source", NodeSpec::row().gap(6.0), |ui| {
                                     ui.text(src, TextStyle::new(small).color(pal.accent).nowrap());
                                     let has_progress =
                                         self.notes.progress.iter().any(|p| p.source == *src);

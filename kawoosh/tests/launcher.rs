@@ -35,7 +35,7 @@ fn launch(dir: &std::path::Path) -> (Drive, Kawoosh) {
     let mut app = Kawoosh::from_file(&dir.join("a.txt"));
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.set_cwd(dir);
     d.frame(&mut app);
     (d, app)

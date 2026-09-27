@@ -6,7 +6,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
-use kui_native::{InputEvent, KeyMods, Vec2};
+use kui_native::{InputEvent, KeyMods, Rect, Vec2};
 
 #[test]
 fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
@@ -32,7 +32,7 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
         term.size()
     );
     // <C-w> then k: the pane command runs, nothing reaches the shell.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     assert!(app.terms.prefix);
     d.keys(&mut app, "k");
     assert!(!app.terms.prefix);
@@ -42,14 +42,14 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
     ));
     // Back down; ctrl-\ ctrl-n materialises the scrollback in the
     // terminal's own pane, and `q` gives the pane back.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "j");
     assert!(matches!(
         app.layout.focused_content(),
         Some(Content::Terminal(_))
     ));
-    d.ctrl(&mut app, "\\");
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-\\>");
+    d.press(&mut app, "<C-n>");
     let v = app
         .focused_view()
         .expect("an editor pane with the scrollback");
@@ -61,7 +61,7 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
     assert_eq!(app.layout.visible_panes().len(), 2);
     // `:scrollback` is the terminal pane's (`when = terminal`): from the
     // editor pane above, the engine says so and nothing opens.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "k");
     d.keys(&mut app, ":scrollback");
     d.key(&mut app, "enter", KeyMods::default());
@@ -82,11 +82,7 @@ fn copy_mode_is_a_mode_in_colour_and_esc_leaves_it() {
     let t = app.add_headless_terminal();
     app.feed_terminal(t, b"plain \x1b[31mred\x1b[0m plain\r\n$ ");
     d.frame(&mut app);
-    let shifted = KeyMods {
-        ctrl: true,
-        shift: true,
-        ..Default::default()
-    };
+    let shifted = KeyMods::NONE.with_shift().with_ctrl();
     d.key(&mut app, "X", shifted);
     d.frame(&mut app);
     let v = app.focused_view().expect("copy mode");
@@ -132,11 +128,7 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     let t = app.add_headless_terminal();
     app.feed_terminal(t, b"$ ls\r\nCargo.toml\r\n$ ");
     d.frame(&mut app);
-    let shifted = KeyMods {
-        ctrl: true,
-        shift: true,
-        ..Default::default()
-    };
+    let shifted = KeyMods::NONE.with_shift().with_ctrl();
     let pane = app.layout.focused();
     d.key(&mut app, "X", shifted);
     let v = app
@@ -191,7 +183,7 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     assert_eq!(head, buf.line_start(top), "{:?}", buf.line_text(top));
     d.key(&mut app, "X", shifted);
     // From the editor pane the chord is refused with its reason.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "k");
     assert!(matches!(
         app.layout.focused_content(),
@@ -310,13 +302,7 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
         .find(|n| n.kind == kui_native::NodeKind::Cells)
         .unwrap();
     let (cw, ch) = app.cell_metrics();
-    d.input(
-        &mut app,
-        InputEvent::Modifiers(KeyMods {
-            ctrl: true,
-            ..Default::default()
-        }),
-    );
+    d.input(&mut app, InputEvent::Modifiers(KeyMods::NONE.with_ctrl()));
     // The frame after the modifier, as the runner draws one: the grid
     // takes clicks while ctrl is held.
     d.frame(&mut app);
@@ -349,13 +335,7 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
         kui_native::CursorShape::Pointer,
         "without ctrl, text"
     );
-    d.input(
-        &mut app,
-        InputEvent::Modifiers(KeyMods {
-            ctrl: true,
-            ..Default::default()
-        }),
-    );
+    d.input(&mut app, InputEvent::Modifiers(KeyMods::NONE.with_ctrl()));
     d.frame(&mut app);
     d.click(&mut app, cells.rect.x + 8.5 * cw, cells.rect.y + 1.5 * ch);
     let v = app
@@ -565,18 +545,18 @@ fn ctrl_w_ctrl_w_is_ctrl_w_w_and_f12_toggles_devtools() {
     let mut app = Kawoosh::new("t", "a\nb");
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
-    d.ctrl(&mut app, "w");
-    d.ctrl(&mut app, "v");
+    d.press(&mut app, "<C-w>");
+    d.press(&mut app, "<C-v>");
     assert_eq!(app.layout.visible_panes().len(), 2, "<C-w><C-v> splits");
     let before = app.layout.focused();
-    d.ctrl(&mut app, "w");
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
+    d.press(&mut app, "<C-w>");
     assert_ne!(app.layout.focused(), before, "<C-w><C-w> hops");
     // From a terminal pane too.
     let t = app.add_headless_terminal();
     assert!(matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t));
-    d.ctrl(&mut app, "w");
-    d.ctrl(&mut app, "k");
+    d.press(&mut app, "<C-w>");
+    d.press(&mut app, "<C-k>");
     assert!(matches!(
         app.layout.focused_content(),
         Some(Content::Editor(_))
@@ -601,7 +581,7 @@ fn the_pane_answers_colour_questions_and_reports_a_flip() {
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
     let mut d = Drive::new(900.0, 500.0);
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     let t = app.add_headless_terminal();
     d.frame(&mut app);
@@ -624,7 +604,7 @@ fn the_pane_answers_colour_questions_and_reports_a_flip() {
     // A light base from the settings (typed in the editor pane above —
     // the terminal has the keys): the report, the light sixteen, and
     // the question answered with the light panel.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "k");
     assert!(matches!(
         app.layout.focused_content(),
@@ -692,15 +672,12 @@ fn prompts_output_and_the_view_through_history() {
     d.press(&mut app, "<C-S-Down>");
     assert_eq!(top(&app), "$ second");
     d.frame(&mut app);
-    assert!(
-        d.rect_of("scrollbar").is_some(),
-        "scrolled away, a scrollbar"
-    );
-    let (x, y, w, h) = d.rect_of("lines below").expect("the badge");
+    assert!(d.rect("scrollbar").is_some(), "scrolled away, a scrollbar");
+    let Rect { x, y, w, h } = d.rect("lines below").expect("the badge");
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     d.frame(&mut app);
     assert_eq!(app.terms.map[&t].display_offset(), 0, "back at the prompt");
-    assert!(d.rect_of("lines below").is_none());
+    assert!(d.rect("lines below").is_none());
     assert_eq!(
         app.terms.map[&t].last_output().as_deref(),
         Some("last 0\nlast 1")
@@ -737,7 +714,7 @@ fn a_session_starts_the_shells_again_where_they_were() {
     let mut app = Kawoosh::new("t", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.open_store(Some(&db));
     app.set_cwd(&dir);
     d.frame(&mut app);
@@ -782,7 +759,7 @@ fn a_session_starts_the_shells_again_where_they_were() {
     let mut app = Kawoosh::new("*scratch*", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.run_lua_source(
         "t",
         r#"kawoosh.tool("sleeper", { cmd = "sleep 30", cwd = "root", restore = true })"#,
@@ -841,7 +818,7 @@ fn a_drag_selects_in_the_live_pane() {
         .rect;
     // The editor pane has the keys; a plain click on the terminal takes
     // them back.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "k");
     assert_ne!(app.layout.focused(), term_pane);
     d.click(&mut app, cells.x + 40.0, cells.y + 30.0);
@@ -853,8 +830,8 @@ fn a_drag_selects_in_the_live_pane() {
     );
     d.drag(
         &mut app,
-        (cells.x + 2.0, cells.y + 5.0),
-        (cells.x + 60.0, cells.y + 25.0),
+        Vec2::new(cells.x + 2.0, cells.y + 5.0),
+        Vec2::new(cells.x + 60.0, cells.y + 25.0),
     );
     d.frame(&mut app);
     assert_eq!(
@@ -875,7 +852,7 @@ fn the_register_follows_the_system_clipboard() {
     d.frame(&mut app);
     app.add_headless_terminal();
     d.frame(&mut app);
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "k");
     d.frame(&mut app);
     assert!(app.focused_view().is_some());
@@ -900,7 +877,7 @@ fn a_clipboard_look_claims_only_its_own_ask() {
     d.frame(&mut app);
     app.add_headless_terminal();
     d.frame(&mut app);
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.core.request_paste();
     d.keys(&mut app, "k");
     d.frame(&mut app);
@@ -934,7 +911,7 @@ fn focus_leaves_a_terminal_drawn_first() {
     d.frame(&mut app);
     app.add_headless_terminal();
     d.frame(&mut app);
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "x");
     d.frame(&mut app);
     let panes = app.layout.all_panes();
@@ -994,7 +971,7 @@ fn only_answers_a_waiting_caller_whose_pane_it_closed() {
     }
     d.frame(&mut app);
     // A second pane on a new scratch, then `:only` from it.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "v");
     d.keys(&mut app, ":enew");
     d.key(&mut app, "enter", KeyMods::default());
@@ -1113,6 +1090,12 @@ fn cmd_v_pastes_the_clipboard_into_a_terminal() {
         d.input(&mut app, InputEvent::Commit("echo hi".into()));
         d.frame(&mut app);
         assert_eq!(sent(&mut app), b"echo hi", "{chord} pastes");
+        // Once: the answer ends the ask, where it had stayed open and
+        // each frame after pasted the clipboard again.
+        d.frame(&mut app);
+        assert!(!d.core.awaiting_paste(), "{chord}: no second ask");
+        d.frame(&mut app);
+        assert!(sent(&mut app).is_empty(), "{chord}: pasted once");
     }
     d.press(&mut app, "<D-k>");
     assert!(
@@ -1121,4 +1104,56 @@ fn cmd_v_pastes_the_clipboard_into_a_terminal() {
     );
     d.keys(&mut app, "v");
     assert_eq!(sent(&mut app), b"v", "a plain key is the shell's");
+}
+
+/// A press in a terminal's grid starts a selection — no handler hears
+/// it — and takes kui's keyboard to the terminal's sink: the pane focus
+/// follows it there (the sink's `on_focus`, by the pointer).
+#[test]
+fn a_press_in_a_terminals_grid_focuses_its_pane() {
+    let mut app = Kawoosh::new("t", "a\nb");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    app.add_headless_terminal();
+    d.frame(&mut app);
+    let panes = app.layout.all_panes();
+    let term = panes
+        .iter()
+        .copied()
+        .find(|p| matches!(app.layout.content(*p), Some(Content::Terminal(_))))
+        .unwrap();
+    let editor = panes.iter().copied().find(|p| *p != term).unwrap();
+    app.layout.focus(editor);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), editor);
+    let r = app.layout.rects[&term];
+    let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    d.drag(&mut app, Vec2::new(x, y), Vec2::new(x + 20.0, y));
+    assert_eq!(app.layout.focused(), term, "the pane followed the press");
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), term, "and stays");
+}
+
+/// The window back in front is when the clipboard is looked at (the
+/// window's `focused` event): what another program put there is the
+/// register's.
+#[test]
+fn the_window_back_in_front_looks_at_the_clipboard() {
+    let mut app = Kawoosh::new("t", "abc");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(!d.core.awaiting_paste());
+    d.core.set_focused(false);
+    d.frame(&mut app);
+    assert!(!d.core.awaiting_paste(), "not while away");
+    d.core.set_focused(true);
+    d.frame(&mut app);
+    assert!(d.core.awaiting_paste(), "a look, as the window came back");
+    d.input(&mut app, InputEvent::Commit("from elsewhere".into()));
+    d.frame(&mut app);
+    assert_eq!(app.ed.memory.head().unwrap().text, "from elsewhere");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).text(), "abc", "a look is not a paste");
 }

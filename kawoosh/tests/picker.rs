@@ -9,7 +9,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
-use kui_native::KeyMods;
+use kui_native::{KeyMods, Rect, Vec2};
 
 /// The files sources walk the working directory, which is the
 /// process's: one test at a time.
@@ -40,7 +40,7 @@ fn app_with_lua(d: &mut Drive, path: &std::path::Path) -> Kawoosh {
     let mut app = Kawoosh::from_file(path);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app
 }
 
@@ -194,20 +194,20 @@ fn the_querys_modes_and_keys() {
     ex(&mut d, &mut app, "picker files");
     d.frame(&mut app);
     assert_eq!(cursor_text(&mut app), "README.md");
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     assert_eq!(cursor_text(&mut app), native("src/lib.rs"));
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     assert_eq!(cursor_text(&mut app), native("src/main.rs"));
     // `<C-n>` `<C-p>` go round, as a menu's keys do.
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     assert_eq!(cursor_text(&mut app), "README.md", "round to the first");
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     assert_eq!(
         cursor_text(&mut app),
         native("src/main.rs"),
         "and back to the last"
     );
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     assert_eq!(cursor_text(&mut app), native("src/lib.rs"));
     // Normal mode over the query: `j`, `k`, then `<Esc>` closes.
     d.keys(&mut app, "ma");
@@ -235,13 +235,13 @@ fn the_querys_modes_and_keys() {
     d.keys(&mut app, " f");
     d.frame(&mut app);
     assert!(picker_open(&app));
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     d.frame(&mut app);
     assert!(!picker_open(&app));
     // `<C-v>`: the row into a split beside; the picker gone.
     d.keys(&mut app, " f");
     d.keys(&mut app, "lib");
-    d.ctrl(&mut app, "v");
+    d.press(&mut app, "<C-v>");
     d.frame(&mut app);
     assert!(!picker_open(&app));
     assert_eq!(app.layout.visible_panes().len(), 2, "a split beside");
@@ -261,12 +261,12 @@ fn the_querys_modes_and_keys() {
     d.keys(&mut app, " f");
     d.frame(&mut app);
     let label = &format!("row {}", native("src/main.rs"));
-    let (x, y, _, h) = d.rect_of(label).expect("the row on show");
+    let Rect { x, y, h, .. } = d.rect(label).expect("the row on show");
     d.click(&mut app, x + 10.0, y + h / 2.0);
     d.frame(&mut app);
     assert!(picker_open(&app));
     assert_eq!(cursor_text(&mut app), native("src/main.rs"));
-    let (x, y, _, h) = d.rect_of(label).expect("still there");
+    let Rect { x, y, h, .. } = d.rect(label).expect("still there");
     d.click(&mut app, x + 10.0, y + h / 2.0);
     d.frame(&mut app);
     assert!(!picker_open(&app), "the second click takes it");
@@ -322,7 +322,7 @@ fn buffers_lines_recent_and_smart() {
     d.frame(&mut app);
     assert!(picker_open(&app), "<leader><leader> too");
     assert_eq!(rows(&d), ["main.rs", "README.md"]);
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     // Lines: the third line taken.
     d.keys(&mut app, " /");
     d.frame(&mut app);
@@ -344,7 +344,7 @@ fn buffers_lines_recent_and_smart() {
         r.iter().any(|s| s == "README.md") && r.iter().any(|s| *s == native("src/main.rs")),
         "{r:?}"
     );
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     // Smart: buffers first, then the rest of the walk, nothing twice.
     d.keys(&mut app, " .");
     d.frame(&mut app);
@@ -356,14 +356,14 @@ fn buffers_lines_recent_and_smart() {
         "the buffers first: {r:?}"
     );
     assert_eq!(r[2], native("src/lib.rs"));
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     // `<C-x>` in the buffers picker closes the row's buffer and the
     // list is read again; one with unsaved changes is asked about —
     // `<Esc>` keeps it, `<CR>` (Discard) drops the changes.
     d.keys(&mut app, " bb");
     d.frame(&mut app);
     assert_eq!(rows(&d), ["main.rs", "README.md"]);
-    d.ctrl(&mut app, "x");
+    d.press(&mut app, "<C-x>");
     d.frame(&mut app);
     assert!(picker_open(&app), "the picker stays");
     assert_eq!(rows(&d), ["README.md"], "main.rs closed");
@@ -371,13 +371,13 @@ fn buffers_lines_recent_and_smart() {
         d.confirm_texts().is_empty(),
         "a clean buffer is not asked about"
     );
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     d.keys(&mut app, "ihello");
     d.key(&mut app, "escape", KeyMods::default());
     d.keys(&mut app, " bb");
     d.frame(&mut app);
     assert_eq!(rows(&d), ["README.md"]);
-    d.ctrl(&mut app, "x");
+    d.press(&mut app, "<C-x>");
     d.frame(&mut app);
     let t = d.confirm_texts();
     assert!(
@@ -389,7 +389,7 @@ fn buffers_lines_recent_and_smart() {
     d.frame(&mut app);
     assert!(d.confirm_texts().is_empty());
     assert_eq!(rows(&d), ["README.md"], "kept");
-    d.ctrl(&mut app, "x");
+    d.press(&mut app, "<C-x>");
     d.frame(&mut app);
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
@@ -397,7 +397,7 @@ fn buffers_lines_recent_and_smart() {
     assert!(d.confirm_texts().is_empty());
     assert_eq!(rows(&d), ["*scratch*"], "the last buffer closed: a scratch");
     assert!(picker_open(&app));
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     assert!(
         !app.ed
             .buffers
@@ -479,7 +479,7 @@ fn the_preview_is_highlighted() {
         "the line drawn whole: {:?}",
         texts(&d)
     );
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -531,7 +531,7 @@ fn grep_runs_rg_as_the_query_is_typed() {
     d.frame(&mut app);
     assert_eq!(rows(&d).len(), 0);
     assert!(texts(&d).iter().any(|s| s == "no matches"));
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -550,7 +550,7 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     let mut app = Kawoosh::new("*scratch*", "hello\n");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     ex(&mut d, &mut app, "commands");
     d.frame(&mut app);
@@ -597,7 +597,7 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     // The columns hold still: sized from every item, not the window,
     // so a page down and another query leave the key column where it
     // was.
-    d.ctrl(&mut app, "u");
+    d.press(&mut app, "<C-u>");
     d.frame(&mut app);
     let first = rows(&d)[0].clone();
     d.key(&mut app, "pagedown", KeyMods::default());
@@ -619,7 +619,7 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     );
     // And the doc column: the key column is as wide as it was even
     // when the page's widest key is wider than the first page's.
-    d.ctrl(&mut app, "u");
+    d.press(&mut app, "<C-u>");
     d.keys(&mut app, "picker b");
     d.frame(&mut app);
     let long_key_x = d
@@ -648,34 +648,20 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     );
     // `<A-w>`: every cell folds to its column, the name too, so a long
     // name with its alias takes two lines and the row grows with it.
-    d.ctrl(&mut app, "u");
+    d.press(&mut app, "<C-u>");
     d.keys(&mut app, "buffer delete others");
     d.frame(&mut app);
-    let one = d.rect_of("row buffer delete others!").expect("the row").3;
+    let one = d.rect("row buffer delete others!").expect("the row").h;
     assert!((one - ROW_H).abs() < 1.0, "one line, cut: {one}");
-    d.key(
-        &mut app,
-        "w",
-        KeyMods {
-            alt: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "w", KeyMods::NONE.with_alt());
     d.frame(&mut app);
-    let two = d.rect_of("row buffer delete others!").expect("the row").3;
+    let two = d.rect("row buffer delete others!").expect("the row").h;
     assert!(two > ROW_H * 1.5, "the name folded, the row taller: {two}");
-    d.key(
-        &mut app,
-        "w",
-        KeyMods {
-            alt: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "w", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     // A query the names do not match is looked for in the rest of the
     // row: an alias, a key, the doc.
-    d.ctrl(&mut app, "u");
+    d.press(&mut app, "<C-u>");
     d.keys(&mut app, "chdir");
     d.frame(&mut app);
     assert!(
@@ -683,7 +669,7 @@ fn the_commands_source_is_the_registry_as_a_picker() {
         "found by its alias: {:?}",
         rows(&d)
     );
-    d.ctrl(&mut app, "u");
+    d.press(&mut app, "<C-u>");
     d.keys(&mut app, "memory clear");
     d.frame(&mut app);
     assert!(
@@ -693,7 +679,7 @@ fn the_commands_source_is_the_registry_as_a_picker() {
         "{:?}",
         texts(&d)
     );
-    d.ctrl(&mut app, "u");
+    d.press(&mut app, "<C-u>");
     d.keys(&mut app, "buffer del");
     d.frame(&mut app);
     let r = rows(&d);
@@ -709,7 +695,7 @@ fn the_commands_source_is_the_registry_as_a_picker() {
         "the form's meaning: {t:?}"
     );
     // `⏎` on a command with arguments: the command line on it.
-    d.ctrl(&mut app, "u");
+    d.press(&mut app, "<C-u>");
     d.keys(&mut app, "vsplit");
     d.frame(&mut app);
     assert_eq!(rows(&d)[0], "vsplit");
@@ -735,7 +721,7 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     d.frame(&mut app);
     assert!(picker_open(&app));
     assert!(texts(&d).iter().any(|s| s == "commands"));
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
@@ -755,11 +741,11 @@ fn resume_sessions_and_a_plugins_own_source() {
     d.frame(&mut app);
     d.keys(&mut app, " f");
     d.keys(&mut app, "rs");
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     d.frame(&mut app);
     let before = rows(&d);
     assert_eq!(before.len(), 2, "{before:?}");
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     assert!(!picker_open(&app));
     d.keys(&mut app, " sr");
     d.frame(&mut app);
@@ -779,7 +765,7 @@ fn resume_sessions_and_a_plugins_own_source() {
     let mut app = Kawoosh::new("*scratch*", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.open_store(Some(&db));
     assert!(app.restore_session());
     d.frame(&mut app);
@@ -808,10 +794,10 @@ fn resume_sessions_and_a_plugins_own_source() {
         "an item's sub text"
     );
     d.keys(&mut app, "gr");
-    d.ctrl(&mut app, "x");
+    d.press(&mut app, "<C-x>");
     lua(&mut app, r#"assert(starred == "green", tostring(starred))"#);
     assert!(picker_open(&app), "a source's key leaves the picker up");
-    d.ctrl(&mut app, "t");
+    d.press(&mut app, "<C-t>");
     d.frame(&mut app);
     assert!(!picker_open(&app));
     lua(
@@ -881,9 +867,9 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         Some(native("many/f00.png").as_str()),
         "the binary under the text: {r:?}"
     );
-    d.ctrl(&mut app, "u");
+    d.press(&mut app, "<C-u>");
     d.frame(&mut app);
-    let (x, y, w, h) = d.rect_of("row README.md").expect("the first row");
+    let Rect { x, y, w, h } = d.rect("row README.md").expect("the first row");
     let state = |app: &mut Kawoosh| -> (usize, usize) {
         app.run_lua_source(
             "t",
@@ -898,16 +884,16 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     d.wheel(&mut app, x + w / 2.0, y + h * 3.0, 0.0, -ROW_H * 3.0);
     d.frame(&mut app);
     assert_eq!(state(&mut app), (4, 1));
-    assert!(d.rect_of("row README.md").is_none(), "scrolled off the top");
+    assert!(d.rect("row README.md").is_none(), "scrolled off the top");
     // A key on the cursor brings the window back to it.
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     assert_eq!(state(&mut app), (2, 2));
     d.wheel(&mut app, x + w / 2.0, y + h * 3.0, 0.0, ROW_H * 10.0);
     d.frame(&mut app);
     assert_eq!(state(&mut app), (1, 2), "up stops at the top");
     // `J` `K` in normal mode scroll the preview by half of it; a
     // count multiplies; the top is the floor.
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     d.key(&mut app, "escape", KeyMods::default());
     d.frame(&mut app);
     let pv_top = |app: &mut Kawoosh| -> String {
@@ -937,7 +923,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     d.keys(&mut app, "tall");
     d.frame(&mut app);
     // Not walked yet: the file was written after the walk. Reopen.
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     d.keys(&mut app, " f");
     d.frame(&mut app);
     d.frame(&mut app);
@@ -966,22 +952,15 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     d.keys(&mut app, "K");
     d.frame(&mut app);
     assert_eq!(first_shown(&d), "line 1", "held at the top");
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     d.keys(&mut app, " f");
     d.frame(&mut app);
     d.frame(&mut app);
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     // The preview off and on again, a setting for the session (the
     // cursor is on the second row, the long file).
     assert!(texts(&d).iter().any(|s| s == "long"), "the preview");
-    d.key(
-        &mut app,
-        "p",
-        KeyMods {
-            alt: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     assert!(!texts(&d).iter().any(|s| s == "long"), "hidden");
     lua(
@@ -989,35 +968,21 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         r#"assert(kawoosh.opt("picker.preview") == false)"#,
     );
     let wide = d
-        .rect_of(&format!("row {}", native("many/f00.txt")))
+        .rect(&format!("row {}", native("many/f00.txt")))
         .unwrap()
-        .2;
+        .w;
     assert!(wide > w * 1.5, "the list takes the room: {wide} vs {w}");
-    d.key(
-        &mut app,
-        "p",
-        KeyMods {
-            alt: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     assert!(texts(&d).iter().any(|s| s == "long"), "shown again");
     // Wrap: the long row folds and the window holds fewer rows.
     let before = rows(&d).len();
-    let tall = d.rect_of(&format!("row {long}")).expect("the long row").3;
+    let tall = d.rect(&format!("row {long}")).expect("the long row").h;
     assert!((tall - ROW_H).abs() < 1.0, "one line, cut: {tall}");
-    d.key(
-        &mut app,
-        "w",
-        KeyMods {
-            alt: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "w", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     lua(&mut app, r#"assert(kawoosh.opt("picker.wrap") == true)"#);
-    let (_, ly, _, tall) = d.rect_of(&format!("row {long}")).expect("the long row");
+    let Rect { y: ly, h: tall, .. } = d.rect(&format!("row {long}")).expect("the long row");
     assert!(tall > ROW_H * 2.0, "folded to several lines: {tall}");
     let shown = rows(&d);
     assert!(
@@ -1029,7 +994,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     // compresses a column's fit children toward their floors when
     // they overflow; the list's floor is its content).
     let at = shown.iter().position(|r| *r == long).unwrap();
-    let (_, ny, _, nh) = d.rect_of(&format!("row {}", shown[at + 1])).unwrap();
+    let Rect { y: ny, h: nh, .. } = d.rect(&format!("row {}", shown[at + 1])).unwrap();
     assert!(
         ny >= ly + tall - 0.5,
         "the next row at {ny}, the long one ends at {}",
@@ -1039,14 +1004,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         (nh - ROW_H).abs() < 1.0,
         "a short row keeps its height: {nh}"
     );
-    d.key(
-        &mut app,
-        "w",
-        KeyMods {
-            alt: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "w", KeyMods::NONE.with_alt());
     // The pane's height and the list's width beside the preview:
     // `<A-K>` (the editor's pane key) makes the pane taller, the
     // height kept as the setting, and `<A-L>` the list wider, a
@@ -1054,20 +1012,12 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     // ⌥⇧ with a letter: kui reports the letter with `shift` set, the
     // binding's `<A-K>`.
     let alt = |name: &str, app: &mut Kawoosh, d: &mut Drive| {
-        d.key(
-            app,
-            name,
-            KeyMods {
-                alt: true,
-                shift: true,
-                ..Default::default()
-            },
-        );
+        d.key(app, name, KeyMods::NONE.with_shift().with_alt());
         d.frame(app);
     };
-    let (_, y0, w0, _) = d.rect_of("row README.md").unwrap();
+    let Rect { y: y0, w: w0, .. } = d.rect("row README.md").unwrap();
     alt("k", &mut app, &mut d);
-    let (_, y1, _, _) = d.rect_of("row README.md").unwrap();
+    let Rect { y: y1, .. } = d.rect("row README.md").unwrap();
     assert!(
         y1 < y0 - 20.0,
         "the pane taller, its rows higher up: {y1} < {y0}"
@@ -1077,30 +1027,35 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         r#"assert(math.abs(kawoosh.opt("picker.share") - 0.55) < 0.001)"#,
     );
     alt("j", &mut app, &mut d);
-    let (_, y2, _, _) = d.rect_of("row README.md").unwrap();
+    let Rect { y: y2, .. } = d.rect("row README.md").unwrap();
     assert!((y2 - y0).abs() < 1.0, "and back: {y2} vs {y0}");
     alt("l", &mut app, &mut d);
-    let (_, _, w1, _) = d.rect_of("row README.md").unwrap();
+    let Rect { w: w1, .. } = d.rect("row README.md").unwrap();
     assert!(w1 > w0 + 20.0, "the list wider: {w1} > {w0}");
     lua(
         &mut app,
         r#"assert(math.abs(kawoosh.opt("picker.split") - 0.55) < 0.001)"#,
     );
     alt("h", &mut app, &mut d);
-    let (_, _, w2, _) = d.rect_of("row README.md").unwrap();
+    let Rect { w: w2, .. } = d.rect("row README.md").unwrap();
     assert!((w2 - w0).abs() < 1.0, "and back: {w2} vs {w0}");
-    let (dx, dy, dw, dh) = d.rect_of("picker divider").expect("the divider");
+    let Rect {
+        x: dx,
+        y: dy,
+        w: dw,
+        h: dh,
+    } = d.rect("picker divider").expect("the divider");
     assert!(
         (dx - w0).abs() < 1.0,
         "the divider after the list: {dx} vs {w0}"
     );
     d.drag(
         &mut app,
-        (dx + dw / 2.0, dy + dh / 2.0),
-        (dx + dw / 2.0 - 200.0, dy + dh / 2.0),
+        Vec2::new(dx + dw / 2.0, dy + dh / 2.0),
+        Vec2::new(dx + dw / 2.0 - 200.0, dy + dh / 2.0),
     );
     d.frame(&mut app);
-    let (_, _, w3, _) = d.rect_of("row README.md").unwrap();
+    let Rect { w: w3, .. } = d.rect("row README.md").unwrap();
     assert!(w3 < w0 - 150.0, "dragged narrower: {w3} < {w0}");
     lua(
         &mut app,
@@ -1109,16 +1064,21 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     app.run_lua_source("t", r#"kawoosh.opt("picker.split", 0.5)"#);
     // The pane's own divider dragged with the mouse: the height it
     // was left at is the setting, so the picker opens there next.
-    let (px, py, pw, ph) = d.rect_of("divider").expect("the pane divider");
-    let (_, before, _, _) = d.rect_of("row README.md").unwrap();
+    let Rect {
+        x: px,
+        y: py,
+        w: pw,
+        h: ph,
+    } = d.rect("divider").expect("the pane divider");
+    let Rect { y: before, .. } = d.rect("row README.md").unwrap();
     d.drag(
         &mut app,
-        (px + pw / 2.0, py + ph / 2.0),
-        (px + pw / 2.0, py + ph / 2.0 - 100.0),
+        Vec2::new(px + pw / 2.0, py + ph / 2.0),
+        Vec2::new(px + pw / 2.0, py + ph / 2.0 - 100.0),
     );
     d.frame(&mut app);
     d.frame(&mut app);
-    let (_, dragged, _, _) = d.rect_of("row README.md").unwrap();
+    let Rect { y: dragged, .. } = d.rect("row README.md").unwrap();
     assert!(
         dragged < before - 80.0,
         "the rows higher up: {dragged} < {before}"
@@ -1127,17 +1087,17 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         &mut app,
         r#"assert(kawoosh.opt("picker.share") > 0.6, kawoosh.opt("picker.share"))"#,
     );
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     d.keys(&mut app, " f");
     d.frame(&mut app);
     d.frame(&mut app);
-    let (_, again, _, _) = d.rect_of("row README.md").unwrap();
+    let Rect { y: again, .. } = d.rect("row README.md").unwrap();
     assert!(
         (again - dragged).abs() < 2.0,
         "opened at the dragged height: {again} vs {dragged}"
     );
     app.run_lua_source("t", r#"kawoosh.opt("picker.share", 0.5)"#);
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     // The tools: the bundled ones, and `compile` once the setting names it.
     d.keys(&mut app, " tt");
     d.frame(&mut app);
@@ -1149,7 +1109,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         "{r:?}"
     );
     assert!(!r.contains(&"compile".to_string()), "{r:?}");
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     app.run_lua_source("t", r#"kawoosh.opt("compile.default", "cargo test")"#);
     d.frame(&mut app);
     d.keys(&mut app, " tt");
@@ -1160,7 +1120,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         texts(&d).iter().any(|s| s.contains("cargo test")),
         "its command in the row"
     );
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -1200,7 +1160,7 @@ fn opening_the_picker_does_not_scroll_the_pane_above() {
         if close == "enter" {
             d.key(&mut app, "enter", KeyMods::default());
         } else {
-            d.ctrl(&mut app, "c");
+            d.press(&mut app, "<C-c>");
         }
         d.frame(&mut app);
         d.frame(&mut app);
@@ -1214,7 +1174,7 @@ fn opening_the_picker_does_not_scroll_the_pane_above() {
     d.keys(&mut app, "  ");
     d.frame(&mut app);
     d.key(&mut app, "escape", KeyMods::default());
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "k");
     d.frame(&mut app);
     d.frame(&mut app);
@@ -1251,11 +1211,11 @@ fn the_pointer_over_a_row_takes_the_cursor() {
     d.frame(&mut app);
     d.frame(&mut app);
     assert_eq!(cursor_text(&mut app), "1  one");
-    let (x, y, w, h) = d.rect_of("row 2  two").expect("the row");
-    d.hover(&mut app, x + w / 2.0, y + h / 2.0);
+    let Rect { x, y, w, h } = d.rect("row 2  two").expect("the row");
+    d.move_to(&mut app, x + w / 2.0, y + h / 2.0);
     d.frame(&mut app);
     assert_eq!(cursor_text(&mut app), "1  one", "come to the list: no move");
-    d.hover(&mut app, x + w / 2.0, y + h * 1.5);
+    d.move_to(&mut app, x + w / 2.0, y + h * 1.5);
     d.frame(&mut app);
     assert_eq!(
         cursor_text(&mut app),
@@ -1274,7 +1234,7 @@ fn the_pointer_over_a_row_takes_the_cursor() {
         b.line_of(app.ed.views[v].sels.primary().head)
     };
     assert_eq!(caret(&app), 2, "the pane followed");
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     d.frame(&mut app);
     d.frame(&mut app);
     assert_eq!(

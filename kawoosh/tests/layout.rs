@@ -8,7 +8,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::{Content, Width};
-use kui_native::KeyMods;
+use kui_native::{KeyMods, Vec2};
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -17,7 +17,7 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
 }
 
 fn ctrl_w(d: &mut Drive, app: &mut Kawoosh, then: &str) {
-    d.ctrl(app, "w");
+    d.press(app, "<C-w>");
     d.press(app, then);
 }
 
@@ -243,7 +243,11 @@ fn the_gap_drags_a_columns_width_and_a_click_reveals_a_column() {
     // following it.
     let gap_x = r1.x + r1.w + 2.0;
     let gap_y = r1.y + r1.h / 2.0;
-    d.drag(&mut app, (gap_x, gap_y), (vw / 3.0, gap_y));
+    d.drag(
+        &mut app,
+        Vec2::new(gap_x, gap_y),
+        Vec2::new(vw / 3.0, gap_y),
+    );
     settle(&mut d, &mut app);
     let w = app.layout.tab().strip().unwrap().columns[0].width;
     assert!(
@@ -287,7 +291,7 @@ fn a_new_tab_follows_the_default_and_a_session_keeps_the_kind() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::from_file(&a);
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.open_store(Some(&db));
     d.frame(&mut app);
     // `layout.default` is the strip, and it decided the window's own
@@ -324,7 +328,7 @@ fn a_new_tab_follows_the_default_and_a_session_keeps_the_kind() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("*scratch*", "");
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.open_store(Some(&db));
     assert!(app.restore_session());
     d.frame(&mut app);
@@ -733,8 +737,8 @@ fn a_pane_leaves_its_stack_for_a_column_of_its_own() {
     let r3 = app.layout.rects[&3];
     d.drag(
         &mut app,
-        (r3.x + r3.w / 2.0, r3.y + 8.0),
-        (r1.x + r1.w - 6.0, r1.y + r1.h / 2.0),
+        Vec2::new(r3.x + r3.w / 2.0, r3.y + 8.0),
+        Vec2::new(r1.x + r1.w - 6.0, r1.y + r1.h / 2.0),
     );
     settle(&mut d, &mut app);
     assert_eq!(
@@ -863,6 +867,33 @@ fn a_column_is_consumed_into_the_stack_beside_it() {
         app.ed.message.contains(":layout scroll"),
         "{}",
         app.ed.message
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A closed column fades where it stood; a tab switched away takes its
+/// columns with it at once (kui DX19: an `exit` plays only under a
+/// parent still declared, and the strip is the tab's).
+#[test]
+fn a_closed_column_fades_and_a_tab_switch_does_not() {
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    assert_eq!(d.core.depart.node_count(), 0);
+    ctrl_w(&mut d, &mut app, "c");
+    assert!(d.core.depart.node_count() > 0, "the closed column fades");
+    settle(&mut d, &mut app);
+    assert_eq!(d.core.depart.node_count(), 0, "and is gone");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    ex(&mut d, &mut app, "tab new");
+    assert_eq!(
+        d.core.depart.node_count(),
+        0,
+        "the tab left keeps its columns out of sight"
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }

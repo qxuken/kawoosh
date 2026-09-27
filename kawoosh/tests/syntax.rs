@@ -21,10 +21,7 @@ fn selections_walk_the_syntax_tree() {
     d.frame(&mut app);
     app.wait_for_syntax();
     d.frame(&mut app);
-    let alt = kui_native::KeyMods {
-        alt: true,
-        ..Default::default()
-    };
+    let alt = kui_native::KeyMods::NONE.with_alt();
     let selected = |app: &Kawoosh| {
         let v = app.focused_view().unwrap();
         let s = app.ed.views[v].sels.primary();
@@ -99,7 +96,7 @@ fn rust_is_highlighted_and_stays_so_across_edits() {
         .unwrap()
         .clone();
     d.keys(&mut app, "O");
-    d.text(&mut app, "// c");
+    d.commit(&mut app, "// c");
     d.key(&mut app, "escape", KeyMods::default());
     let buf = app.ed.buffer_of(v);
     let moved = buf

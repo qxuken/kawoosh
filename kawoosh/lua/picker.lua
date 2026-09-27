@@ -91,7 +91,6 @@ local PREVIEW_LINES = 200
 -- The pane's title bar, which `ctx.height` counts and the rows cannot
 -- use (`app::TITLE_H`).
 local TITLE_H = 22
-local NBSP = "\u{A0}"
 
 -- The open picker: its source, items, the hits for the query, the
 -- cursor and the window onto them.
@@ -431,6 +430,8 @@ end
 -- text) is indented by that many steps, and a column marked `path` is
 -- left blank — a tree's rows. With `opts.keys` a table, each drawn
 -- row's key is put in it by its index — what `env.is_hovered` asks by.
+-- With `opts.hover` a kind, each row hears the pointer as
+-- `{ kind = "hover", phase, by, tag = { kind = opts.hover, i = i } }`.
 function picker.rows(ctx, hits, opts)
   local t = ctx.env.theme
   local top = opts.top or 1
@@ -478,6 +479,7 @@ function picker.rows(ctx, hits, opts)
       bg = selected and (ctx.focused and t.selection or t.sunken) or nil,
       hover_bg = not selected and t.sunken or nil,
       on_click = { kind = opts.kind or "row", i = i },
+      on_hover = opts.hover and { kind = opts.hover, i = i } or nil,
     }
     local off = it.can ~= nil and it.can ~= true
     local color = off and t.muted or t.fg
@@ -570,7 +572,7 @@ function picker.preview(ctx, pv, rows, from)
     -- Numbered when the lines are a file's or a buffer's (`from` says
     -- where they start); a spec's lines are not.
     if pv.from then
-      r[#r + 1] = text(string.format("%4d", ln):gsub(" ", NBSP), { family = "mono", size = PREVIEW_SIZE, color = t.faint })
+      r[#r + 1] = text(string.format("%4d", ln), { family = "mono", size = PREVIEW_SIZE, color = t.faint })
     end
     if l ~= "" then
       -- The syntax's colours over the line, the tabs widened after
@@ -1142,24 +1144,12 @@ kawoosh.view(VIEW, function(ctx)
   head[#head + 1] = field
   head[#head + 1] = text(count, { size = SIZE - 1, color = t.faint, wrap = "none" })
   local indent = P.src.tree and (P.query or "") == "" and function(it) return it.depth or 0 end or nil
-  -- The pointer moving from one row onto another takes the cursor
-  -- there — the pane follows it too. Asked of the rows the frame before
-  -- drew, and only while the window and the rows hold still since: rows
-  -- scrolled or refiltered under a pointer at rest are not the pointer
-  -- moving, and neither is the pointer come to the list to wheel it
-  -- (kui says which node is under the pointer, not that it moved).
-  local over
-  if P.row_keys and P.hover_top == P.top and P.hover_hits == P.hits and ctx.env.is_hovered then
-    for i, key in pairs(P.row_keys) do
-      if ctx.env.is_hovered(key) then over = i end
-    end
-    if over and P.hover_row and over ~= P.hover_row then P.cursor = over end
-  end
-  local keys = {}
+  -- A row the pointer left is forgotten by the next frame: a row
+  -- entered after it is the pointer come back to the list.
+  P.left_row = nil
   local list = picker.rows(ctx, P.hits, { top = P.top, cursor = P.cursor, rows = rows, wrap = P.wrap, lines = lines_of,
                                           columns = P.src.columns, widths = P.widths, width = P.list_w,
-                                          indent = indent, keys = keys })
-  P.row_keys, P.hover_row, P.hover_top, P.hover_hits = keys, over, P.top, P.hits
+                                          indent = indent, hover = "row" })
   if #P.hits == 0 and not P.loading then
     list[#list + 1] = row { pad = { x = 8, y = 4 }, text((P.query ~= "" and "no matches") or P.src.empty or "nothing here", { size = SIZE, color = t.muted }) }
   end
@@ -1188,9 +1178,8 @@ kawoosh.view(VIEW, function(ctx)
     local prows = math.max(math.floor((h - TITLE_H - ROW_H - 4 - 16 - 2 * PREVIEW_ROW) / PREVIEW_ROW), 1)
     P.prows = prows
     -- The divider: dragged, the list's share follows the pointer.
-    body[#body + 1] = column { key = "picker divider", width = DIVIDER, height = "grow",
-      bg = P.dragging and t.accent or t.border, hover_bg = t.accent, cursor = "ewResize",
-      on_drag = { kind = "divide" } }
+    body[#body + 1] = splitter(ctx.env, { key = "picker divider", thickness = DIVIDER,
+      on_drag = { kind = "divide" } })
     body[#body + 1] = picker.preview(ctx, pv, prows, P.pv_top)
   end
 
@@ -1202,15 +1191,24 @@ end, function(ev)
   elseif ev.kind == "drag" then
     -- The divider under the pointer: its x over the body's width is
     -- the list's share, kept for the session.
-    if ev.phase == "end" then
-      P.dragging = nil
-    else
-      P.dragging = true
-      local par = ev.parent or {}
-      if par.w and par.w > 0 then
-        local at = ((ev.x or 0) - (par.x or 0)) / par.w
-        kawoosh.opt("picker.split", math.max(0.1, math.min(0.9, at)))
-      end
+    local par = ev.parent or {}
+    if ev.phase ~= "end" and par.w and par.w > 0 then
+      local at = ((ev.x or 0) - (par.x or 0)) / par.w
+      kawoosh.opt("picker.split", math.max(0.1, math.min(0.9, at)))
+    end
+  elseif ev.kind == "hover" then
+    -- The pointer moving from one row onto another takes the cursor
+    -- there — the pane follows it too. Rows scrolled or refiltered under
+    -- a pointer at rest are `by = "content"`, not the pointer moving;
+    -- nor is the pointer come to the list to wheel it, an enter with no
+    -- row left before it.
+    if ev.by ~= "pointer" then
+      P.left_row = nil
+    elseif ev.phase == "leave" then
+      P.left_row = true
+    elseif P.left_row then
+      P.left_row = nil
+      P.cursor = ev.tag.i
     end
   elseif ev.kind == "row" then
     kawoosh.field_focus(VIEW, FIELD)
@@ -1432,7 +1430,7 @@ picker.source("compile", {
 -- `:picker [SOURCE]`: bare, the smart one.
 kawoosh.command("picker", function(ctx)
   picker.open(ctx.args[1] or "smart")
-end, { args = { "text" }, doc = "the picker on SOURCE (files, buffers, recent, smart, grep, lines, commands, tools)" })
+end, { args = { "text" }, doc = "the picker on SOURCE (files, buffers, recent, smart, grep, lines, symbols, workspace_symbols, marks, pins, workspaces, dirs, commands, tools, compile)" })
 kawoosh.command("picker resume", function() picker.resume() end, { doc = "the last picker again, where it was left" })
 
 -- -------------------------------------------------------- the sources
@@ -1994,7 +1992,7 @@ picker.source("commands", {
 kawoosh.command("commands", function(ctx)
   picker.open("commands", { query = ctx.args[1] })
 end, {
-  aliases = { "cmds", "help" },
+  aliases = { "cmds" },
   args = { "command" },
   doc = "every command as a picker, searched as you type; QUERY starts the search",
 })

@@ -126,6 +126,15 @@ each tab is. A directory jump's `<C-t>` opens a new tab *on* the
 directory — its cwd, and the directory listed — which is the "tab a
 project" gesture.
 
+*Amended 2026-09-27 (roadmap step 50):* that rule is `tabs.directory =
+"auto"`, the default; `always` leads every label with its directory,
+`never` none. A tab whose focused pane is a terminal is where its shell
+says it is (OSC 7), not where the tab was opened. `kawoosh.tab_title(fn)`
+writes the labels outright, wezterm's `format-tab-title`: `fn(tab)` is
+handed the label kawoosh would draw and its parts (`index`, `active`,
+`dir`, `cwd`, `kind`, `name`, `path`, `modified`, `bell`, `panes`) and
+returns the label, or nil for kawoosh's.
+
 ### 7. A tab lists its own buffers
 
 *Added 2026-09-25 (roadmap step 30), asked as "workspaces should have

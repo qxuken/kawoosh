@@ -189,7 +189,8 @@ Options:
 Environment:
   RUST_LOG           stderr log level (trace, debug, info, warn, error, off)
   KAWOOSH_INIT       init.lua (default: $XDG_CONFIG_HOME/kawoosh/init.lua)
-  KAWOOSH_SETTINGS   settings.lua (default: beside init.lua)
+  KAWOOSH_SETTINGS   settings.lua (default: $XDG_CONFIG_HOME/kawoosh/settings.lua)
+  KAWOOSH_FONTS      your fonts folder (default: $XDG_CONFIG_HOME/kawoosh/fonts)
   KAWOOSH_STATE      the state db (default: $XDG_DATA_HOME/kawoosh/state.db)
   KAWOOSH_TYPES      where the Lua type stubs go (default: beside the db)
 ";

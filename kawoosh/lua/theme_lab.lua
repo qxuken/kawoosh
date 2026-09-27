@@ -288,7 +288,7 @@ kawoosh.view(VIEW, function(ctx)
   if L.scroll then
     local y = L.scroll == "top" and 0 or L.scroll == "end" and 1e7
       or ctx.env.scroll_offset("lab").y + L.scroll * (L.scroll_page and ((ctx.height or 400) / 2) or SIZE * 3)
-    pcall(ctx.env.set_scroll, "lab", 0, math.max(0, y))
+    ctx.env.set_scroll("lab", 0, math.max(0, y))
     L.scroll, L.scroll_page = nil, nil
   end
   local short = 0

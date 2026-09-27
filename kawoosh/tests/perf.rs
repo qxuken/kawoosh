@@ -118,24 +118,32 @@ fn keystroke_cost() {
         };
         step(&mut d, &mut app, "20 × ctrl-d", &|d, app| {
             for _ in 0..20 {
-                d.ctrl(app, "d");
+                d.press(app, "<C-d>");
             }
         });
-        step(&mut d, &mut app, "G (end)", &|d, app| d.keys(app, "G"));
+        step(&mut d, &mut app, "G (end)", &|d, app| {
+            d.keys(app, "G");
+        });
         step(&mut d, &mut app, "20 × ctrl-u", &|d, app| {
             for _ in 0..20 {
-                d.ctrl(app, "u");
+                d.press(app, "<C-u>");
             }
         });
-        step(&mut d, &mut app, "gg (top)", &|d, app| d.keys(app, "gg"));
+        step(&mut d, &mut app, "gg (top)", &|d, app| {
+            d.keys(app, "gg");
+        });
         step(&mut d, &mut app, "50% (middle)", &|d, app| {
-            d.keys(app, "50%")
+            d.keys(app, "50%");
         });
         step(&mut d, &mut app, "10 × j", &|d, app| {
-            d.keys(app, "jjjjjjjjjj")
+            d.keys(app, "jjjjjjjjjj");
         });
-        step(&mut d, &mut app, "x (one edit)", &|d, app| d.keys(app, "x"));
-        step(&mut d, &mut app, "u (undo)", &|d, app| d.keys(app, "u"));
+        step(&mut d, &mut app, "x (one edit)", &|d, app| {
+            d.keys(app, "x");
+        });
+        step(&mut d, &mut app, "u (undo)", &|d, app| {
+            d.keys(app, "u");
+        });
         // A search: `/` walks from the cursor to the next hit and the
         // count goes to a thread (half the cores; a frame goes on beside
         // it); `n` and `N` are walks from the cursor, the count remembered;
@@ -158,14 +166,14 @@ fn keystroke_cost() {
             d.key(app, "enter", KeyMods::default());
         });
         step(&mut d, &mut app, "j (during the count)", &|d, app| {
-            d.keys(app, "j")
+            d.keys(app, "j");
         });
         settle(&mut d, &mut app, "counting");
         step(&mut d, &mut app, "10 × n", &|d, app| {
-            d.keys(app, "nnnnnnnnnn")
+            d.keys(app, "nnnnnnnnnn");
         });
         step(&mut d, &mut app, "10 × N", &|d, app| {
-            d.keys(app, "NNNNNNNNNN")
+            d.keys(app, "NNNNNNNNNN");
         });
         step(&mut d, &mut app, "/ absent ((?m)^99999999,)", &|d, app| {
             d.keys(app, "/(?m)^99999999,");
@@ -173,7 +181,7 @@ fn keystroke_cost() {
         });
         settle(&mut d, &mut app, "searching");
         step(&mut d, &mut app, "N (absent, walks back)", &|d, app| {
-            d.keys(app, "N")
+            d.keys(app, "N");
         });
         settle(&mut d, &mut app, "searching");
         // Substitution: one line, then the whole file (every core for the
@@ -198,10 +206,10 @@ fn keystroke_cost() {
             app.ed.buffer_of(app.focused_view().unwrap()).piece_count()
         );
         step(&mut d, &mut app, "u (undo the lot)", &|d, app| {
-            d.keys(app, "u")
+            d.keys(app, "u");
         });
         step(&mut d, &mut app, "j (a frame after)", &|d, app| {
-            d.keys(app, "j")
+            d.keys(app, "j");
         });
         return;
     }
@@ -210,7 +218,7 @@ fn keystroke_cost() {
     load_fonts(&mut d, &mut app);
     // As `main.rs` runs it: Lua attached, the store open, the config in.
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.open_store(None);
     app.load_config();
     d.frame(&mut app);
@@ -280,7 +288,7 @@ fn keystroke_cost() {
         for _ in 0..n {
             // `^d` spells a control key.
             if let Some(k) = keys.strip_prefix('^') {
-                d.ctrl(&mut app, k);
+                d.press(&mut app, &format!("<C-{k}>"));
             } else {
                 d.keys(&mut app, &keys);
             }
@@ -292,8 +300,8 @@ fn keystroke_cost() {
     let mut worst = 0.0f64;
     for _ in 0..10 {
         let t = Instant::now();
-        d.ctrl(&mut app, "d");
-        d.ctrl(&mut app, "u");
+        d.press(&mut app, "<C-d>");
+        d.press(&mut app, "<C-u>");
         worst = worst.max(ms(t) / 2.0);
     }
     eprintln!("{:<28} worst {worst:7.2} ms", "scroll (ctrl-d/ctrl-u)");
@@ -317,14 +325,7 @@ fn keystroke_cost() {
     d.keys(&mut app, ":syntax_tree off");
     d.key(&mut app, "enter", KeyMods::default());
     for _ in 0..4 {
-        d.key(
-            &mut app,
-            "j",
-            KeyMods {
-                alt: true,
-                ..Default::default()
-            },
-        );
+        d.key(&mut app, "j", KeyMods::NONE.with_alt());
     }
     time(&mut d, &mut app, "edit, five cursors (x)", "x", 10);
     d.keys(&mut app, "i");
@@ -356,7 +357,7 @@ fn ribbon_frame_cost() {
         d.keys(&mut app, "layout scroll");
         d.key(&mut app, "enter", KeyMods::default());
         for _ in 1..n {
-            d.ctrl(&mut app, "w");
+            d.press(&mut app, "<C-w>");
             d.keys(&mut app, "v");
         }
         for _ in 0..20 {

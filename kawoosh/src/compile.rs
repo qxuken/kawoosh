@@ -16,8 +16,8 @@ use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
 use crate::deduce::{self, Deduced, Project};
 use crate::layout::PaneId;
+use crate::links::location_at;
 use crate::notify::{Level, Note};
-use crate::terminals::location_at;
 
 pub const COMPILE_BUFFER: &str = "*compile*";
 

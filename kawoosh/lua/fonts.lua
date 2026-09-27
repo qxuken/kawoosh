@@ -24,7 +24,7 @@
 -- its family, and hundreds of families shaped at once is seconds.
 --
 -- Hackable: the pane reads `kawoosh.fonts` — `families()`, `current()`,
--- `face(name)` — and `kawoosh.themes.check()` for the look's colours;
+-- and `kawoosh.themes.check()` for the look's colours;
 -- `kawoosh.fonts.sample` is the code a card shows, lines of
 -- `{ text, token }` pieces, for a config to replace; `state()` is what
 -- the pane shows, for a test.
@@ -165,13 +165,27 @@ local function weights_word(f)
   return f.italic and (w .. ", italic") or w
 end
 
+-- The windowed probe's (`KAWOOSH_PROBE_FONTS`, fonts.rs's `Probe`):
+-- the families whose cards were built for the first time since it last
+-- asked — nil until it asks, so nothing is kept otherwise.
+local probe_seen, probe_new = nil, nil
+function fonts._probe_take()
+  probe_seen = probe_seen or {}
+  local out = probe_new or {}
+  probe_new = {}
+  return out
+end
+
 local function card(f, cur, ctx, is_cursor, height, query)
+  if probe_seen and not probe_seen[f.name] then
+    probe_seen[f.name] = true
+    probe_new[#probe_new + 1] = f.name
+  end
   local t = ctx.env.theme
   local s = colours()
   local r = s.roles
-  local id = fonts.face(f.name)
   local face = function(style)
-    style.font = id
+    style.family = f.name
     return style
   end
   local shown = on_show(cur) == f.name
@@ -211,13 +225,6 @@ local function card(f, cur, ctx, is_cursor, height, query)
   end
 
   local ring
-  -- Until the frame registers the families (the pane's first), a card
-  -- is its frame alone: drawn in another face it would change under
-  -- the eye a frame later.
-  if not id then
-    return column { key = "card " .. f.name, width = "grow", height = height, bg = r.bg, radius = 6,
-      border = { w = 1, color = r.border } }
-  end
   if is_cursor then
     ring = { w = 2, color = t.accent }
   elseif shown then
@@ -272,12 +279,12 @@ kawoosh.view(VIEW, function(ctx)
     local y = (index() - 1) * stride
     if g then
       if y < g.offset.y then
-        pcall(ctx.env.set_scroll, "list", 0, y)
+        ctx.env.set_scroll("list", 0, y)
       elseif y + stride > g.offset.y + g.h then
-        pcall(ctx.env.set_scroll, "list", 0, y + stride - g.h)
+        ctx.env.set_scroll("list", 0, y + stride - g.h)
       end
     else
-      pcall(ctx.env.set_scroll, "list", 0, y)
+      ctx.env.set_scroll("list", 0, y)
     end
   end
   local g = ctx.env.scroll_geometry("list")
@@ -317,8 +324,7 @@ kawoosh.view(VIEW, function(ctx)
   local list = uniform_list(ctx.env, { key = "list", rows = #S.list, row_h = stride, width = "grow",
                                        height = "grow", pad = { x = PAD } }, function(i)
     local f = S.list[i + 1]
-    return column { width = "grow", height = stride,
-      card(f, cur, ctx, f.name == S.cursor, h, S.query) }
+    return card(f, cur, ctx, f.name == S.cursor, h, S.query)
   end)
 
   local foot = column { width = "grow", gap = 6, pad = { x = PAD, bottom = PAD },

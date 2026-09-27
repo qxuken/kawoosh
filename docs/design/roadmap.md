@@ -17,7 +17,8 @@ Amended 2026-09-25 with the todo reconciled against it: every item it
 held that the list had built is checked there, and the ten it held
 that the list never took are filed below ("From the todo, 2026-09-25")
 and ordered as steps 28–35, with the asks of the same day; steps 36–38
-the evening's (marks.md).
+the evening's (marks.md). Amended 2026-09-27 with the todo's quirks
+from use ("From the todo, 2026-09-27"), ordered as steps 44–53.
 
 ## Where it stands
 
@@ -91,6 +92,29 @@ and declared settings — 305 commits, 31 integration test files, 468
 tests and 9 Lua acceptance scripts. What is left is step 35, a
 drawing, and each note's own "not built". The drawing came the same
 day and both bundles carry it, and the windows too, through kui.
+
+Steps 36–43 followed (2026-09-25–26), each merged to `main` as it was
+built: the project search over live multibuffers ([search.md](search.md),
+asked for by name), the outline and marks ([marks.md](marks.md)), the
+lists — diagnostics and references as multibuffers
+([lists.md](lists.md)) — the language servers' rules per language
+([lsp-rules.md](lsp-rules.md)), the themes registry
+([themes.md](themes.md)), compile commands deduced from the project
+([compile.md](compile.md)) and the fonts' pane ([fonts.md](fonts.md));
+step 38, folds, waits for use to ask. Then the todo's quirks from use
+(2026-09-27–28, below "From the todo, 2026-09-27"), steps 44–52 on one
+branch: the paste loop and the fallen-through `g`, the vim gaps, the
+secret's put-once, the window uncovered (kui F102), the markdown
+buffer's boxes and its rounded selection (kui F101), links
+([links.rs](../../kawoosh/src/links.rs): `gx` and ⌘-click on a path at
+its line or a URL), tab titles, helix's selections by a pattern
+([selections.md](selections.md)) and a disk-usage pane (`:du`); and
+beside them, kawoosh moved onto kui's DX round (its typed events,
+`testing::Drive`, `on_event_with`, `splitter`, a family by name).
+477 commits, 38 integration test files, 581 tests and 14 Lua
+acceptance scripts. Step 53, the docs — a README, `:help` and
+`:tutor` — followed the next day; what is left is each note's own
+"not built" and "Scheduled nowhere" below.
 
 The todo's items that are done and were not checked (verified in the
 code, not the log): the whole `oil` block — renamed to `dir` (5cf4f3d),
@@ -385,6 +409,81 @@ Two lines of the todo, and an ask on top of them, decided in
 - **The symbol search interactive, and a tree with more symbols**: the
   pane follows the picker's cursor, and a buffer without a server gets
   its grammar's outline. Step 36, built the same evening.
+
+## From the todo, 2026-09-27
+
+A few days of use filled the todo's tail; read against this list and
+the code, with each quirk reproduced through `kawoosh test` where it
+could be. Seven are bugs, and two of them explain most of the rest:
+
+- **A paste into a terminal repeats forever**, and a new terminal
+  gets the repeats: `paste clipboard` sets `awaiting_paste`, every
+  frame asks kui for the clipboard while it is set, and only the
+  editor's branch of the answer takes it (`app.rs`'s text handler) —
+  the terminal's pastes and leaves it on. Global, so it follows focus.
+- **`g` and `z` dropped in visual and operator-pending mode**, so
+  `vgg`, `vgh`, `vgl`, `dgg`, `ygg`, `vgsa)` all fail — the todo's
+  "systemic bug", and its "`s` in visual" too (`vgsa` loses its `g`
+  and is `s`). The launcher binds bare letters in normal mode, gated
+  on an empty query (`launcher.lua`); visual's lookup falls through
+  to normal and finds that one-key binding, and the check for longer
+  ones asks the mode it started in (`has_deeper(lookup_mode, …)`,
+  `editor/src/lib.rs`) rather than normal, where they are. The engine
+  tests never load the launcher, so they pass.
+- **Visual `p`** puts after the selection's end, a character early,
+  without replacing it, and stays in visual mode; `Vs` changes a
+  character, not the lines.
+- **Visual `u` `U`** fall through to undo and redo; and a text object
+  that does not exist still runs its operator — `yiW` yanks `""` over
+  the register and the clipboard.
+- **Yanks in a secret buffer**: `y` works; a private buffer's put is
+  once, so the second `p` puts the memory's next-older entry — where
+  the todo's stray indented line came from — and a yank from outside
+  put there is forgotten too, though it was never a secret.
+- **The window after ⌘-Tab / Alt-Tab** comes up late: kui drops a frame
+  the surface skips as occluded and retries only a new window's first,
+  and nothing asks for one when the window is uncovered. kui's.
+- **Markdown's task boxes** are `☐` `☑` at the text's size, dimmed, in
+  whatever face has them — a thin, small box.
+- **A rounded selection skips markdown** (asked the same day):
+  `editor.selection_radius` rounds the panes' selection, but a
+  rendered row keeps the square spans on purpose (`panes.rs`, "or
+  rendered, keeps the square spans"), its neighbours rounding toward
+  it as toward nothing; and the selection jumps as a line turns raw
+  under the caret and back, the row's text and height changing under
+  it.
+
+And the rest, filed:
+
+- **The vim gaps**: `W` `B` `E` `ge` `{` `}` `H` `M` `L`, `iW` `aW`,
+  `~` `gu` `gU` `g~` and visual `u` `U` `~`, `[<Space>` `]<Space>`
+  (engine).
+- **Selections, helix's**: `<C-S-n>` is every match in the buffer and
+  never within the selection; `s` `S` `K` `<A-K>` `<A-s>` `C` `<A-,>`
+  have no counterpart, and several of their letters are vim's here —
+  a note before keys (engine).
+- **Links in code**: `gx` already opens a bare URL anywhere; a path
+  (`src/foo.rs:42`) does not, nor does a ⌘-click in an editor pane, and
+  a terminal's ⌘-click opens paths but not URLs (panes).
+- **The directory in a tab's title**: shown today only when the tabs
+  span more than one; no setting and no Lua hook, and a terminal's
+  OSC 7 directory is not read (panes).
+- **`<C-Tab>` `<C-S-Tab>`** as the next and the previous tab — built
+  the same day, no step: from every mode and pane, a terminal's too,
+  since its pty cannot tell `<C-Tab>` from `<Tab>`.
+- **A disk-usage pane**, the storage, async io and kui tried at once:
+  `dir` sizes files but not directories, and `kawoosh.fs.walk` is
+  gitignore-filtered, hidden-skipping, sizeless and answers once — the
+  pane wants a sizing walk that streams per-directory totals (buffers).
+- **Docs**: this file's "Where it stands" stops at step 35; there is
+  no README, no `:help` and no tutorial — the last two before a
+  release (the app).
+
+Stand as decided: the press-and-hold toggle (later, kui's), packages
+(the plugin manager is out of the MVP on purpose; `qd` as its backbone
+would be the question that reopens it), an OS daemon (mvp.md's
+non-goal), folds (step 38). The Nerd Font symbols were done already
+(fonts.md Decision 6). The order is steps 44–53.
 
 ## The list, by track
 
@@ -2215,8 +2314,144 @@ then breadth.
     look-alikes, operators, the four styles and fallbacks — so a theme
     and a face are tried together.~~ Built 2026-09-26.
 
+44. ~~**The two bugs that explain most of the todo**: `awaiting_paste`
+    taken before the answer branches, so a terminal's paste is one; and
+    a key sequence that fell through to normal mode asking normal mode
+    for longer bindings. Each with a test that would have caught it —
+    a second frame after a terminal's paste, and `vgg` `dgg` `vgsa`
+    with the launcher loaded. First because one floods a shell and the
+    other breaks every `g` and `z` outside normal mode.~~ Landed
+    2026-09-27: the ask closed by its answer whichever pane takes it;
+    `has_deeper` asked of normal mode too where a sequence falls
+    through (`editor/src/lib.rs`).
+45. ~~**The vim gaps**: visual `p` replacing (the register kept for `P`),
+    a failed object cancelling its operator, `Vs` on lines, the case
+    operators and visual `u` `U` `~`, `W` `B` `E` `ge` and `iW` `aW`,
+    `[<Space>` `]<Space>`, `{` `}`, `H` `M` `L`. One round: each is an
+    hour and they share `normal_mode.rs`'s shape.~~ Landed 2026-09-27:
+    `paste over` / `paste over keep`, `case lower` `upper` `toggle` as
+    operators with `~` (`case toggle char`), `bigword *`, `word end
+    back`, `paragraph next` / `prev`, `screen top` `middle` `bottom`
+    inside `scrolloff`, `line blank above` / `below`; `Vx` took one
+    character as `Vs` did. Five tests in `normal_mode.rs`, the bundled
+    plugins loaded.
+46. ~~**Secrets' put-once, again** ([secrets.md](secrets.md)): a secret is
+    put once, but a yank that was never one is not forgotten for being
+    put into a private buffer, and a spent entry says so rather than
+    putting the older one.~~ Landed 2026-09-27, as secrets.md's
+    Decision 2 amended: a put into a private buffer spends nothing and
+    makes what it put a secret (`Memory::make_secret`); a secret put
+    elsewhere is once, and leaves the register spent (`Memory::spent`)
+    until something is taken.
+47. ~~**The window uncovered** (kui): a redraw on `Occluded(false)` and a
+    bounded retry after a skipped frame, the way a new window's first
+    frame already has — an F-round, then kawoosh on it.~~ Landed
+    2026-09-27 as kui F102 (kui main 1e49f19):
+    a skipped frame is asked for again 16 ms apart, up to 60 times,
+    until one lands, and `Occluded(false)` asks for one at once.
+    Probed on macOS with kui's `counter` hidden and shown: before, the
+    window kept its old frame; after, it draws 1 ms after it is
+    uncovered. kawoosh needed no change of its own. Windows reports no
+    occlusion, so Alt-Tab rides on the retry alone, not yet tried
+    there. A hidden window spinning through skipped frames while an
+    animation runs is filed as kui F103.
+48. ~~**The markdown buffer's round**: task boxes drawn at the font's
+    size and legible, checked or not; the rounded selection over
+    rendered rows — each row's selected span measured in its drawn
+    text, so the shape joins across raw and rendered lines — and held
+    still while a line turns raw under the caret and back. *The boxes
+    landed 2026-09-27* (the Nerd Font's pair). What reading the
+    selection found: every visible line of a rendered buffer is an
+    `md_row`, the raw ones too, and the rounding skips them all, so no
+    line of markdown rounds; and the raw lines are every selection's
+    head's (`panes.rs`), so a selection grown by `j` turns each line it
+    reaches raw and the one it left rendered, reflowing the text under
+    it. A rendered row wraps and is scaled, so its part of the shape is
+    one extent per *wrapped* line, measured in kui's layout — not the
+    one extent per row `RoundedSel` has. *The jump landed the same
+    day*: in visual mode every line a selection covers is raw
+    (markdown.md Decision 3 amended). Left: the rounding over rendered
+    rows. A row can measure its own wrapped lines (`wrapped_at`, kui's
+    `caret_rect` from the frame before) but not its neighbours' before
+    they are drawn, so either each row's lines are kept from the last
+    frame and a frame asked for when they move, or kui answers a text
+    node's line boxes for a byte range (an F-round) — decided at the
+    round's start.~~ Landed 2026-09-27 on neither: a line-box query is
+    answered from the frame before, as `caret_rect` is, so it lagged as
+    much as keeping the lines would. kui F101 paints span backgrounds
+    with a radius as one shape after layout — pieces of one colour and
+    radius meeting end to end on a line are one extent, and those
+    meeting edge to edge on the lines above and below are its
+    neighbours, whichever text drew them — and kawoosh's rows, fields
+    and rendered rows put the radius on the selection's spans and its
+    newline's cell. `rows::RoundedSel`, `SELECTION_WGSL` and the panes'
+    neighbour arithmetic went; a block caret inside a rounded selection
+    is drawn over it, so the shape has no hole there.
+49. ~~**Links**: `gx` on a path with its line, ⌘-click in an editor pane
+    as `gx`, and URLs in a terminal's ⌘-click — one finder for a link
+    under a point, the markdown's and the terminal's merged.~~ Landed
+    2026-09-27: `kawoosh/src/links.rs`'s `link_at` — a markdown link,
+    then a URL, then a path with its line and column — under `gx`, an
+    editor pane's ⌘-click, and a terminal's ⌘-click and ⌘-hover (a
+    URL underlined as a path is). A path is looked for beside the
+    buffer's file, then under the working directory; a terminal's under
+    its own directory, then the working one. Tests: `kawoosh/tests/links.rs`.
+    Not built: an editor pane's ⌘-hover (the terminal's underline and
+    hand) — a click there finds out.
+50. ~~**Tab titles**: the directory on every tab behind a setting, a
+    terminal's own from OSC 7, and a Lua hook that writes the label,
+    wezterm's way.~~ Landed 2026-09-27: `tabs.directory` (`auto`, the
+    old rule — while the tabs are in more than one — `always`,
+    `never`); a tab on a terminal is where its shell says it is
+    (`Kawoosh::tab_dir`, OSC 7); `kawoosh.tab_title(fn)`, `fn(tab)` with
+    the label kawoosh would draw and what it is made of, returning the
+    label or nil, taken off and said once when it fails. Tests:
+    `a_tabs_directory_is_in_its_label_as_the_setting_says`,
+    `a_plugin_writes_the_tabs_labels` (chrome.rs).
+51. ~~**Selections, helix's** (a note first): which of `s` `S` `K` `<A-K>`
+    `<A-s>` `C` `<A-,>` come, on which keys, and selecting within a
+    selection.~~ Landed 2026-09-27 ([selections.md](selections.md)):
+    `select within`, `split`, `keep` (`!` drops), `lines`, `drop
+    primary` on a `<leader>v` group from visual mode — the user's pick
+    over helix's letters, which are vim's `s` `S` `K` there — each
+    pattern a prompt previewed as it is typed; helix's `C` is `<C-j>`
+    already.
+52. ~~**A disk-usage pane**: a sizing walk on the io thread, unfiltered,
+    streaming each directory's total as it is known, and a pane over it
+    that sorts, descends and deletes through `dir`'s plan.~~ Landed
+    2026-09-28: `kawoosh_systems::du::walk` reads directories in
+    parallel, a worker a core, and sends each directory's total as its
+    subtree is done, every 50 ms (`Io::stream`, `IoMsg::Sized`) —
+    unfiltered, on the root's device, links not followed, a hard link
+    once, sizes as a listing says them. The totals stay in Rust
+    (`kawoosh/src/du.rs`) and the pane asks `kawoosh.du` for the ones it
+    shows. `:du [PATH]` (`<leader>wu`, `kawoosh/lua/du.lua`): the
+    largest first, a bar and a share each, `l` `h` in and out, `s` the
+    sort, `m` marks, `d` deletes through `kawoosh.dir.remove` —
+    the write's confirm and order — and out of every total above.
+    Measured on `~/projects` (29,068 directories, 254,137 files, 73 GB):
+    2.1 s warm, 3.2 cold, where `du -sk` took 3.5. Tests:
+    `kawoosh/tests/du.rs`, `du` in `systems/src/du.rs`.
+53. ~~**Docs**: "Where it stands" brought up to the list; then a README,
+    `:help` pages and a tutorial, before a release.~~ Landed 2026-09-28:
+    "Where it stands" to step 52; a README; `:help [TOPIC]`
+    (`<leader>sh`, `kawoosh/src/help.rs`) over thirteen pages in
+    `kawoosh/help/`, written out at first use and opened read-only in
+    the markdown buffer, so `gx` follows their links, with `commands.md`
+    and `keys.md` written from the registry and the keymap as they run;
+    a topic is a page, a command, a key or a heading; `:tutor`, ten
+    lessons in a scratch. `kawoosh/tests/help.rs` opens them and checks
+    every link reaches a page and a heading. Writing them found `cw`
+    taking the space after a word (vim's keeps it), `:help` taken by
+    the commands picker as an alias, and a dozen doc strings behind the
+    code, each fixed.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),
+an extended key protocol in the terminal (kitty's, or xterm's
+`modifyOtherKeys` — until then a pty cannot tell `<C-Tab>` from
+`<Tab>`, so `<C-Tab>` `<C-S-Tab>` are the tabs' from every pane,
+2026-09-27; whether a program gets them back is decided with it),
 kitty graphics and native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision
 3's after — when the walk's cap or the poll hurt).

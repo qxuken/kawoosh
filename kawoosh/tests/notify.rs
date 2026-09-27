@@ -198,7 +198,7 @@ fn notify_from_the_command_line_and_from_lua() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("t", "hello\n");
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
 
     d.frame(&mut app);
     ex(&mut d, &mut app, "notify warn from the prompt");
@@ -276,7 +276,7 @@ fn the_keyboard_reaches_the_toasts() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("t", "hello\n");
     d.frame(&mut app);
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "n");
     assert_eq!(app.ed.message, "no toasts");
 
@@ -288,7 +288,7 @@ fn the_keyboard_reaches_the_toasts() {
     );
     app.notify(Level::Warn, "third");
     d.frame(&mut app);
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "n");
     let focused = |a: &Kawoosh| a.notes.focused().map(|s| s.text.clone());
     assert_eq!(focused(&app).as_deref(), Some("third"), "the newest");

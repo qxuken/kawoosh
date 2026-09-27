@@ -20,7 +20,7 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{Mode, Selection, Selections};
 use kawoosh_systems::WakeHandle;
-use kui_native::{Align, Color, NodeSpec, Sizing, TextStyle, Ui, Value, Vec2};
+use kui_native::{Align, Color, NodeSpec, TextStyle, Ui, Value};
 use tree_sitter::{Point, Tree};
 
 use crate::app::Kawoosh;
@@ -333,9 +333,11 @@ impl Kawoosh {
             }
         };
         let Some(view) = self.focused_view() else {
-            ui.with(NodeSpec::column().fill().bg(pal.bg).pad(8.0), |ui| {
-                ui.text("no editor pane focused", style().color(pal.dim));
-            });
+            ui.text_in(
+                NodeSpec::column().fill().bg(pal.bg).pad(8.0),
+                "no editor pane focused",
+                style().color(pal.dim),
+            );
             return;
         };
         let (buffer, language, version, len, sel) = {
@@ -365,8 +367,8 @@ impl Kawoosh {
             // The header: what is shown, and the anonymous toggle.
             ui.with(
                 NodeSpec::row()
-                    .width(Sizing::Grow(1.0))
-                    .height(Sizing::Fixed(ROW_H + 6.0))
+                    .grow_width()
+                    .height(ROW_H + 6.0)
                     .pad_xy(8.0, 0.0)
                     .gap(8.0)
                     .cross_align(Align::Center)
@@ -380,7 +382,7 @@ impl Kawoosh {
                         Some(_) => format!("{rows_n} nodes"),
                     };
                     ui.text(&format!("{language} · {state}"), style().color(pal.dim));
-                    ui.with_keyed(
+                    ui.text_in_keyed(
                         "anonymous",
                         NodeSpec::row()
                             .pad_xy(6.0, 1.0)
@@ -395,37 +397,24 @@ impl Kawoosh {
                                 ("what", "anonymous".into()),
                             ]))
                             .label("anonymous nodes"),
-                        |ui| {
-                            ui.text(
-                                "anonymous",
-                                style().color(if anonymous { pal.fg } else { pal.dim }),
-                            );
-                        },
+                        "anonymous",
+                        style().color(if anonymous { pal.fg } else { pal.dim }),
                     );
                 },
             );
-            let list = ui.child_key("rows");
             if let Some(i) = reveal {
-                let y = i as f32 * ROW_H;
-                let seen = ui
-                    .scroll_geometry(list)
-                    .is_some_and(|g| g.offset.y <= y && y + ROW_H <= g.offset.y + g.rect.h);
-                if !seen {
-                    let h = ui.scroll_geometry(list).map_or(0.0, |g| g.rect.h);
-                    ui.set_scroll(list, Vec2::new(0.0, (y - h / 2.0).max(0.0)));
-                }
+                kui_native::widgets::reveal_row(ui, "rows", i, ROW_H);
             }
             if rows_n == 0 {
-                ui.with(NodeSpec::column().fill().pad(8.0), |ui| {
-                    ui.text(
-                        if parsed.is_some() {
-                            "empty"
-                        } else {
-                            "no tree for this language"
-                        },
-                        style().color(pal.dim),
-                    );
-                });
+                ui.text_in(
+                    NodeSpec::column().fill().pad(8.0),
+                    if parsed.is_some() {
+                        "empty"
+                    } else {
+                        "no tree for this language"
+                    },
+                    style().color(pal.dim),
+                );
                 return;
             }
             let rows = std::mem::take(&mut self.inspector.rows);
@@ -440,89 +429,72 @@ impl Kawoosh {
                     .then(|| lang.as_ref().and_then(|l| l.field_name_for_id(id)))
                     .flatten()
             };
-            kui_native::widgets::uniform_list(
+            kui_native::widgets::uniform_list_with(
                 ui,
                 "rows",
-                NodeSpec::column()
-                    .width(Sizing::Grow(1.0))
-                    .height(Sizing::Grow(1.0)),
+                NodeSpec::column().fill(),
                 rows.len(),
                 ROW_H,
+                |i| {
+                    let r = &rows[i];
+                    NodeSpec::row()
+                        .cross_align(Align::Center)
+                        .bg(if Some(r.id) == current {
+                            pal.select
+                        } else {
+                            Color::TRANSPARENT
+                        })
+                        .hover_bg(pal.panel)
+                        .on_click(Value::map([
+                            ("kind", "syntax".into()),
+                            ("what", "select".into()),
+                            ("start", Value::Int(r.range.start as i64)),
+                            ("end", Value::Int(r.range.end as i64)),
+                        ]))
+                },
                 |ui, i| {
                     let r = &rows[i];
-                    let is_current = Some(r.id) == current;
-                    let payload = Value::map([
-                        ("kind", "syntax".into()),
-                        ("what", "select".into()),
-                        ("start", Value::Int(r.range.start as i64)),
-                        ("end", Value::Int(r.range.end as i64)),
-                    ]);
-                    ui.with(
-                        NodeSpec::row()
-                            .width(Sizing::Grow(1.0))
-                            .height(Sizing::Fixed(ROW_H))
-                            .cross_align(Align::Center)
-                            .bg(if is_current {
-                                pal.select
-                            } else {
-                                Color::TRANSPARENT
-                            })
-                            .hover_bg(pal.panel)
-                            .on_click(payload),
-                        |ui| {
-                            ui.with(
-                                NodeSpec::row()
-                                    .width(Sizing::Fixed(4.0 + r.depth as f32 * INDENT))
-                                    .height(Sizing::Fixed(ROW_H)),
-                                |_| {},
-                            );
-                            // The fold: a click of its own, over the row's.
-                            let glyph = match (r.branch, r.folded) {
-                                (false, _) => " ",
-                                (true, true) => "▸",
-                                (true, false) => "▾",
-                            };
-                            let mut fold = NodeSpec::row()
-                                .width(Sizing::Fixed(14.0))
-                                .height(Sizing::Fixed(ROW_H))
-                                .cross_align(Align::Center);
-                            if r.branch {
-                                fold = fold
-                                    .on_click(Value::map([
-                                        ("kind", "syntax".into()),
-                                        ("what", "fold".into()),
-                                        ("id", Value::Int(r.id as i64)),
-                                    ]))
-                                    .label(if r.folded { "unfold" } else { "fold" });
-                            }
-                            ui.with_keyed("fold", fold, |ui| {
-                                ui.text(glyph, style().color(pal.dim))
-                            });
-                            if let Some(f) = field(r.field_id) {
-                                ui.text(&format!("{f}: "), style().color(pal.dim));
-                            }
-                            let kind = name(r.kind_id);
-                            let (text, color) = if r.missing {
-                                (format!("MISSING {kind}"), pal.danger)
-                            } else if r.error {
-                                (kind.to_string(), pal.danger)
-                            } else if r.named {
-                                (kind.to_string(), pal.fg)
-                            } else {
-                                (format!("{kind:?}"), pal.dim)
-                            };
-                            ui.text(&text, style().color(color));
-                            ui.text(
-                                &format!(
-                                    "  [{}:{} – {}:{}]",
-                                    r.start.row + 1,
-                                    r.start.column,
-                                    r.end.row + 1,
-                                    r.end.column
-                                ),
-                                style().color(pal.faint),
-                            );
-                        },
+                    ui.leaf(NodeSpec::row().size(4.0 + r.depth as f32 * INDENT, ROW_H));
+                    // The fold: a click of its own, over the row's.
+                    let glyph = match (r.branch, r.folded) {
+                        (false, _) => " ",
+                        (true, true) => "▸",
+                        (true, false) => "▾",
+                    };
+                    let mut fold = NodeSpec::row().size(14.0, ROW_H).cross_align(Align::Center);
+                    if r.branch {
+                        fold = fold
+                            .on_click(Value::map([
+                                ("kind", "syntax".into()),
+                                ("what", "fold".into()),
+                                ("id", Value::Int(r.id as i64)),
+                            ]))
+                            .label(if r.folded { "unfold" } else { "fold" });
+                    }
+                    ui.with_keyed("fold", fold, |ui| ui.text(glyph, style().color(pal.dim)));
+                    if let Some(f) = field(r.field_id) {
+                        ui.text(&format!("{f}: "), style().color(pal.dim));
+                    }
+                    let kind = name(r.kind_id);
+                    let (text, color) = if r.missing {
+                        (format!("MISSING {kind}"), pal.danger)
+                    } else if r.error {
+                        (kind.to_string(), pal.danger)
+                    } else if r.named {
+                        (kind.to_string(), pal.fg)
+                    } else {
+                        (format!("{kind:?}"), pal.dim)
+                    };
+                    ui.text(&text, style().color(color));
+                    ui.text(
+                        &format!(
+                            "  [{}:{} – {}:{}]",
+                            r.start.row + 1,
+                            r.start.column,
+                            r.end.row + 1,
+                            r.end.column
+                        ),
+                        style().color(pal.faint),
                     );
                 },
             );
@@ -533,18 +505,15 @@ impl Kawoosh {
     /// A click in the tab: a row selects its node, a fold toggles it,
     /// the header's toggle shows the anonymous nodes.
     pub(crate) fn on_syntax_click(&mut self, p: &Value) {
-        match p.get("what").and_then(Value::as_str) {
+        match p.get_str("what") {
             Some("fold") => {
-                if let Some(id) = p.get("id").and_then(Value::as_int) {
+                if let Some(id) = p.get_int("id") {
                     self.inspector.toggle_fold(id as usize);
                 }
             }
             Some("anonymous") => self.inspector.toggle_anonymous(),
             Some("select") => {
-                let (Some(start), Some(end)) = (
-                    p.get("start").and_then(Value::as_int),
-                    p.get("end").and_then(Value::as_int),
-                ) else {
+                let (Some(start), Some(end)) = (p.get_int("start"), p.get_int("end")) else {
                     return;
                 };
                 let Some(view) = self.focused_view() else {

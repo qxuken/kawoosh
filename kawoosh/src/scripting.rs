@@ -14,7 +14,7 @@ use kawoosh_editor::{ArgKind, Args, Cond, KeyStroke, Mode, Spec, ViewId};
 use kawoosh_lua::{Msg, Runtime};
 use kawoosh_systems::lsp::ServerDef;
 use kawoosh_systems::ts::Token;
-use kui_native::{Color, NodeSpec, Sizing, Ui, Value};
+use kui_native::{Color, NodeSpec, Ui, Value};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -106,6 +106,9 @@ impl Kawoosh {
         }
         if let Err(e) = crate::fonts::lua_door(rt.lua(), self.look.fonts.clone()) {
             log::error!("kawoosh.fonts: {e}");
+        }
+        if let Err(e) = crate::du::lua_door(rt.lua(), self.du.clone()) {
+            log::error!("kawoosh.du: {e}");
         }
         for (name, src) in crate::plugins::BUNDLED {
             if let Err(e) = rt.load_source(name, src) {
@@ -1567,8 +1570,7 @@ impl Kawoosh {
         let sink = ui.with_keyed(
             "lua",
             NodeSpec::column()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Grow(1.0))
+                .fill()
                 .clip()
                 .on_key(tag.clone())
                 // A click the view's own nodes do not take focuses the

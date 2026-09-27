@@ -52,6 +52,18 @@ first asks for one — all of them, at the next frame (`face` answers nil
 until then), 10 ms once for 613 in a debug build — so nothing is
 registered until a view looks, and after that no card waits.
 
+*Amended 2026-09-27:* kui draws a family by its name (`family = NAME`,
+kui ADR 0037), resolving it in the frame that names it, so there is no
+handle to hand down and no frame in a fallback to register ahead of:
+`face(NAME)` is `warm(NAME)`, whether the family is warm (below), and
+the view names the family itself. Nothing registers the 613 at once; a
+family is registered as it is warmed. *And again the same day:* with
+a family's first shaping under a millisecond (kui DX24, below),
+warming is gone too — `warm(NAME)` with it — and a card is drawn in
+its family from the frame it appears. (A family's first sight turned
+out to cost a frame ~5 ms still, in a window; see Decision 3's last
+note.)
+
 *Beat:* registering each family as its card first asked for it — the
 first build. Every card the pane scrolled or searched to was drawn for
 a frame in kui's mono and then in its own face: a flicker the user saw
@@ -111,7 +123,8 @@ frame 70 ms (release), paging back over them 1.5 ms. Of a family's
 first sight, reading its file is 0.03 ms and loading it 0.24 ms; its
 first shaping is 8 ms and its second 0.04 — a one-time setup per family.
 So a family is *warm* once shaped, and `kawoosh.fonts.face` answers
-only for a warm one (or the face on show): what a view asks for is
+(`warm` since kui's ADR 0037, see Decision 2) only for a warm one (or
+the face on show): what a view asks for is
 warmed at the frame, in the order asked, until 6 ms are spent, the rest
 asked again at the next frame; a card not warm is its frame alone. Only
 what a frame asked for is warmed, so a fling does not spend frames on
@@ -133,7 +146,44 @@ shows more families than that pays again coming back. The cure is
 cosmic-text's — matching the asked family's faces first and scoring the
 rest only when a glyph needs a fallback — not kawoosh's or kui's.
 
-### 4. One lab for the look: the theme through the font
+*Amended 2026-09-27 (kui DX24):* kui took it after all. It maps the
+installed font files once, on the first font an app registers (~30 ms,
+at kawoosh's launch), so `get_font_matches` no longer reopens every
+face's file to read its axis: a family's first shaping is ~0.4 ms,
+where it was ~9.7 (release, 1,311 faces). Measured here, headless and
+in release, paging `<C-d>` through all 612 families with the warming
+kept: 6.75 ms a press on the kui before DX24 (the 6 ms budget spent,
+each family ~9 ms) and 0.93 ms after. The warming was there to spread
+that cost over frames; with nothing left to spread, it went — the
+`warm`/`cold` sets, the budget, `kawoosh.fonts.warm` — and the pane
+names each card's family outright. The same walk with no warming was
+0.3 ms a press, its worst 0.6 ms, and raised no `unknown-family`.
+
+*Taken back 2026-09-28:* those walks timed empty cards. Moving the
+cards onto a family by name had left a check drawing each card as its
+frame alone (fixed in 04eebe8; `kawoosh/tests/fonts_pane.rs` reads the
+cards now), so no card shaped anything, with the warming or without.
+Measured again in a window (`scripts/probe-fonts.nu`, release, kui
+7ad2cf2, 628 families, a card a frame through them all, each frame's
+work as kui timed it):
+
+| frames | warming | mean | p95 | max | > 8 ms | > 16 ms |
+|---|---|---|---|---|---|---|
+| a family's first card built | none (as shipped) | 6.70 ms | 9.01 | 18.59 | 72 of 620 | 1 |
+| a family's first card built | put back for the run | 6.13 ms | 7.49 | 12.79 | 24 of 620 | 0 |
+| the rest | none | 1.17 ms | 2.91 | 6.79 | 0 of 37 | 0 |
+| the rest | put back | 1.07 ms | 2.44 | 6.59 | 0 of 37 | 0 |
+
+A family's first sight costs a frame about 5 ms either way, most of it
+in the view (where a text's `family` is resolved and the warming
+measures) and, for the variable system faces, in layout: SF Pro
+Display's first card was 18.6 ms (view 7.3, layout 10.8), STIX Two
+Text 14.6, SF Pro Text 14.5, Victor Mono 13.9. That is ten times the
+0.42 ms kui's DX24 measured for a first shaping, so the cost is
+elsewhere — the family's registration by name, or its faces read for
+the first time — and is kui's to find. The warming spread it and cut
+the frames over 8 ms by two thirds; it stays out while kui looks,
+since a card drawn a frame in another face is what it cost. One lab for the look: the theme through the font
 
 The theme lab is the look's lab. Every sample in it — the code, the
 tokens, the terminal's sixteen — is drawn in the editor's face, at its
@@ -268,8 +318,9 @@ As decided. kui F97 (`Core::system_fonts`); the symbols in
 `assets/fonts/NerdFontsSymbolsOnly/` and Intel One Mono in
 `assets/fonts/IntelOneMono/`, every file loaded by `main.rs`'s
 `load_fonts`, its family kept as shipped; `fonts.rs` keeps the families and the face as the door
-has them (`Fonts`), registers them at the first ask, warms what a view
-asked for within the frame's budget, reads and watches the user's
+has them (`Fonts`) — it registered every family at the first ask until
+kui's ADR 0037, and warmed what a view asked about within the frame's
+budget until kui's DX24 — reads and watches the user's
 folder (`user_fonts_dir`, `user_fonts_watch`), and holds `:font`; `kawoosh/lua/fonts.lua`
 the pane; `kawoosh/lua/theme_lab.lua` the face and its scene. Tests:
 `kawoosh/lua/tests/fonts.lua` (the door, the pane's walk, search, take,

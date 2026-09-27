@@ -97,7 +97,7 @@ fn a_write_over_a_changed_file_asks() {
     d.keys(&mut app, "x");
     // Reset under it; the next save must not pass unnoticed.
     outside_write(&f, "one\n");
-    d.ctrl(&mut app, "s");
+    d.press(&mut app, "<C-s>");
     d.frame(&mut app);
     assert_eq!(disk(&f), "one\n", "not written over without asking");
     assert!(

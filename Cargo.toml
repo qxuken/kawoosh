@@ -23,7 +23,9 @@ kawoosh-lua = { path = "./lua" }
 # while a release is in CI, these three lines become
 #   kui-native = { path = "../kui/crates/kui-native" }  (and the same for -core, -lua).
 # The runner crate is `kui-native` (`kui` on crates.io is another crate's).
-# By path while kui F97 (`Core::system_fonts`, fonts.md) is unreleased.
+# By path while kui's alpha.22 is unreleased: F101 (rounded span
+# backgrounds, roadmap step 48) and the DX round kawoosh moved onto (typed
+# events, `testing::Drive`, `splitter`, `on_event_with`, `family` by name).
 kui-native = { path = "../kui/crates/kui-native" }
 kui-core = { path = "../kui/crates/kui-core" }
 kui-lua = { path = "../kui/crates/kui-lua" }

@@ -35,7 +35,7 @@ fn keys_edit_through_the_real_dispatch() {
     assert_eq!(text(&app).lines().next(), Some("line "));
     d.keys(&mut app, "i");
     assert_eq!(app.focused_mode(), Mode::Insert);
-    d.text(&mut app, "ünï");
+    d.commit(&mut app, "ünï");
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(d.line_rows()[0], "line ünï");
     assert_eq!(app.focused_mode(), Mode::Normal);
@@ -63,7 +63,7 @@ fn the_view_follows_the_caret_with_scrolloff() {
     assert_eq!(d.line_rows().last().map(String::as_str), Some(""));
     d.keys(&mut app, "gg");
     assert_eq!(app.ed.views[app.focused_view().unwrap()].top, 0);
-    d.ctrl(&mut app, "d");
+    d.press(&mut app, "<C-d>");
     assert_eq!(
         app.ed.buffer_of(app.focused_view().unwrap()).line_of(
             app.ed.views[app.focused_view().unwrap()]
@@ -604,7 +604,7 @@ fn typing_a_run_is_one_piece() {
     let pieces = |app: &Kawoosh| app.ed.buffer_of(app.focused_view().unwrap()).piece_count();
     let before = pieces(&app);
     d.keys(&mut app, "A");
-    d.text(&mut app, " and some words typed one key at a time");
+    d.commit(&mut app, " and some words typed one key at a time");
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(
         pieces(&app),
@@ -612,7 +612,7 @@ fn typing_a_run_is_one_piece() {
         "the line's piece split around one run of typing"
     );
     d.keys(&mut app, "jI");
-    d.text(&mut app, "start: ");
+    d.commit(&mut app, "start: ");
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(
         pieces(&app),
@@ -677,10 +677,7 @@ fn a_cyrillic_layout_drives_the_motions_and_types_itself() {
     assert_eq!(text(&app), "one\nпwo\nthree");
     d.key(&mut app, "escape", KeyMods::default());
     // A chord too: ctrl with `ц` on W, then `м` on V, is `<C-w>v`.
-    let ctrl = KeyMods {
-        ctrl: true,
-        ..Default::default()
-    };
+    let ctrl = KeyMods::NONE.with_ctrl();
     ru(&mut d, &mut app, 'ц', 'w', ctrl);
     ru(&mut d, &mut app, 'м', 'v', KeyMods::default());
     assert_eq!(
@@ -691,10 +688,7 @@ fn a_cyrillic_layout_drives_the_motions_and_types_itself() {
     // Shift: `О` on J is `J`, which joins; `Ж` on `;` is `:`, which opens
     // the command line; and insert mode still types the layout's own
     // upper-case letter.
-    let shift = KeyMods {
-        shift: true,
-        ..Default::default()
-    };
+    let shift = KeyMods::NONE.with_shift();
     ru(&mut d, &mut app, 'О', 'j', shift);
     assert_eq!(
         text(&app),
@@ -722,10 +716,7 @@ fn a_cyrillic_layout_drives_the_motions_and_types_itself() {
 /// a line up, and `jJ` on three lines joined all three.
 #[test]
 fn a_join_reaching_the_last_line_starts_on_its_own_line() {
-    let shift = KeyMods {
-        shift: true,
-        ..Default::default()
-    };
+    let shift = KeyMods::NONE.with_shift();
     let mut app = Kawoosh::new("t", "one\ntwo\nthree");
     let mut d = Drive::new(800.0, 400.0);
     d.frame(&mut app);
@@ -830,10 +821,11 @@ fn a_selection_over_lines_has_no_seam_at_any_scale() {
     }
 }
 
-/// `rows::SELECTION_WGSL`'s shape, line for line on the CPU: whether the
-/// point `p` (physical px from the row's top-left) is inside the row's
-/// part of the selection. The shader cannot be run here; this is what the
-/// test reads its numbers through, and it changes when the shader does.
+/// kui's `JOIN` fragment's shape (its F101), line for line on the CPU:
+/// the alpha of a piece at the pixel centred on `local` (physical px from
+/// the quad's top-left) of a quad `size` tall, from its params, before the
+/// quad's colour. The shader cannot be run here; this is what the test
+/// reads its numbers through, and it changes when kui's does.
 mod shape {
     fn radii(cx: f32, e: f32, has: bool, sx: f32, r: f32, lone: f32) -> (f32, f32) {
         if !has {
@@ -885,14 +877,12 @@ mod shape {
             || fillet(p, b, h, 1.0, 1.0, br.1);
         (in_box && !c) || f
     }
-    /// The fragment's alpha at the pixel centred on `local` of a quad
-    /// `size` tall, at `scale`, from its sixteen params.
-    pub fn alpha(local: (f32, f32), size: (f32, f32), scale: f32, p: &[f32; 16]) -> f32 {
-        let (a, b) = (p[0] * scale, p[1] * scale);
-        let pv = (p[2] * scale, p[3] * scale);
-        let nx = (p[4] * scale, p[5] * scale);
+    pub fn alpha(local: (f32, f32), size: (f32, f32), p: &[f32; 16]) -> f32 {
+        let (a, b) = (p[0], p[1]);
+        let pv = (p[2], p[3]);
+        let nx = (p[4], p[5]);
         let h = size.1;
-        let r = (p[6] * scale).min(h * 0.5);
+        let r = p[6].min(h * 0.5);
         let flags = (p[7] + 0.5) as u32;
         let hp = flags & 1 != 0 && pv.0 < b && pv.1 > a;
         let hn = flags & 2 != 0 && nx.0 < b && nx.1 > a;
@@ -901,7 +891,7 @@ mod shape {
             return 0.0;
         }
         if x > a + r + 1.0 && x < b - r - 1.0 {
-            return p[11];
+            return 1.0;
         }
         let mut n = 0.0;
         for i in 0..4 {
@@ -912,16 +902,19 @@ mod shape {
                 }
             }
         }
-        p[11] * n / 16.0
+        n / 16.0
     }
 }
 
-/// `editor.selection_radius` rounds the selection as one shape: each
-/// selected row draws its part as a fragment under its text, told its
-/// neighbours' extents, and the text's spans carry none. The rows' parts
-/// meet on one pixel line with nothing drawn twice, the column every line
-/// covers is one surface, and a corner with no neighbour is round — at
-/// scales where a line is not whole physical pixels.
+/// `editor.selection_radius` rounds the selection as one shape: the
+/// selection's span backgrounds and each line's newline cell carry the
+/// radius, and kui joins them (its F101) — a line's pieces one extent, each
+/// told the lines' above and below — so no square background is left. The
+/// lines' parts meet on one pixel line with nothing drawn twice, the
+/// column every line covers is one surface, a corner with no neighbour is
+/// round, a shorter line over a longer one has a concave fillet past its
+/// end, and a longer one over a shorter a convex corner — at scales where a
+/// line is not whole physical pixels.
 #[test]
 fn a_rounded_selection_is_one_shape_across_its_lines() {
     use kawoosh_editor::{Layer, Setting};
@@ -936,53 +929,62 @@ fn a_rounded_selection_is_one_shape_across_its_lines() {
         d.scale = scale;
         d.frame(&mut app);
         d.keys(&mut app, "ggVjjjj");
-        assert_eq!(d.warnings(), Vec::<String>::new(), "the shader compiled");
+        d.frame(&mut app);
+        assert_eq!(d.warnings(), Vec::<String>::new());
         let sel = app.pal.select;
         let dl = d.core.output().0;
         assert!(
             !dl.quads
                 .iter()
                 .any(|q| q.kind == kui_native::QuadKind::Solid && q.color == sel),
-            "no span paints the selection, {scale}×"
+            "no square selection left, {scale}×"
         );
-        let mut rows: Vec<(kui_native::Rect, [f32; 16])> = dl
+        let pieces: Vec<(kui_native::Rect, [f32; 16], kui_native::Clip)> = dl
             .quads
             .iter()
-            .filter(|q| q.kind == kui_native::QuadKind::Fragment)
-            .map(|q| (q.rect, dl.fragments[q.uv[0] as usize].params))
+            .filter(|q| q.kind == kui_native::QuadKind::Fragment && q.color == sel)
+            .map(|q| (q.rect, dl.fragments[q.uv[0] as usize].params, dl.clip_of(q)))
             .collect();
-        rows.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
-        assert_eq!(rows.len(), 5, "one fragment a selected line, {scale}×");
-        for w in rows.windows(2) {
-            let ((_, up), (_, down)) = (&w[0], &w[1]);
-            assert_eq!((up[4], up[5]), (down[0], down[1]), "the row below's own");
-            assert_eq!((down[2], down[3]), (up[0], up[1]), "the row above's own");
-            assert_eq!(up[7] as u32 & 2, 2, "a row below");
-            assert_eq!(down[7] as u32 & 1, 1, "a row above");
-            // Their parts meet on one pixel line.
-            assert_eq!(w[0].0.y + w[0].0.h, w[1].0.y, "{scale}×");
-            assert_eq!(w[1].0.y.fract(), 0.0, "{scale}×");
+        // A line's pieces, told one extent: `(top, bottom, a, b)` each,
+        // in physical px.
+        let own = |(r, p, _): &(kui_native::Rect, [f32; 16], kui_native::Clip)| {
+            (r.y, r.y + r.h, r.x + p[0], r.x + p[1])
+        };
+        let mut lines: Vec<(f32, f32, f32, f32)> = pieces.iter().map(own).collect();
+        lines.sort_by(|a, b| a.0.total_cmp(&b.0));
+        lines.dedup();
+        assert_eq!(
+            lines.len(),
+            5,
+            "five lines, their pieces one extent each, {scale}×"
+        );
+        for w in lines.windows(2) {
+            assert_eq!(w[0].1, w[1].0, "the lines meet, {scale}×");
+            assert_eq!(w[1].0.fract(), 0.0, "on a pixel line, {scale}×");
         }
         assert_eq!(
-            rows[0].1[0], 0.0,
-            "a linewise selection from the row's left"
+            lines.iter().map(|l| l.2).fold(f32::MAX, f32::min),
+            lines[0].2
         );
         let alpha = |x: f32, y: f32| -> f32 {
-            let clear = rows.iter().fold(1.0, |left, (r, p)| {
+            let clear = pieces.iter().fold(1.0, |left, (r, p, clip)| {
                 let inside = x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
-                if !inside {
+                let clipped = x >= clip.rect.x
+                    && y >= clip.rect.y
+                    && x <= clip.rect.x + clip.rect.w
+                    && y <= clip.rect.y + clip.rect.h;
+                if !inside || !clipped {
                     return left;
                 }
-                left * (1.0 - shape::alpha((x - r.x, y - r.y), (r.w, r.h), scale, p))
+                left * (1.0 - sel.a * shape::alpha((x - r.x, y - r.y), (r.w, r.h), p))
             });
             1.0 - clear
         };
-        let top = rows[0].0.y;
-        let bottom = rows[4].0.y + rows[4].0.h;
-        let right = rows.iter().map(|(_, p)| p[1] + 4.0).fold(0.0, f32::max) * scale;
-        let x0 = rows[0].0.x;
+        let (top, bottom) = (lines[0].0, lines[4].1);
+        let x0 = lines[0].2;
+        let right = lines.iter().map(|l| l.3).fold(0.0, f32::max);
         for py in top as i32..bottom as i32 {
-            for px in x0 as i32..(x0 + right) as i32 + 2 {
+            for px in x0 as i32 - 2..(right + 4.0 * scale) as i32 + 2 {
                 let a = alpha(px as f32 + 0.5, py as f32 + 0.5);
                 assert!(
                     a < sel.a + 1e-4,
@@ -990,9 +992,9 @@ fn a_rounded_selection_is_one_shape_across_its_lines() {
                 );
             }
         }
-        // The first cell's column: past the top row's round corner, one
-        // surface down to the bottom row's.
-        let cx = x0 + (4.0 * scale).ceil() + 2.5;
+        // The first cell's column: past the top line's round corner, one
+        // surface down to the bottom line's.
+        let cx = x0 + (4.0 * scale).ceil() + 1.5;
         for py in (top + 4.0 * scale).ceil() as i32..(bottom - 4.0 * scale).floor() as i32 {
             let a = alpha(cx, py as f32 + 0.5);
             assert!(
@@ -1000,22 +1002,29 @@ fn a_rounded_selection_is_one_shape_across_its_lines() {
                 "the selection's own alpha at ({cx}, {py}), {scale}×: {a}"
             );
         }
-        // The top-left corner, with no row above, is round.
+        // The top-left corner, with no line above, is round.
         assert!(alpha(x0 + 0.5, top + 0.5) < sel.a * 0.5, "{scale}×");
-        // `fn a() {` over `    let x = 1;`: the shorter line's bottom-
-        // right corner is concave, a fillet past its end that fills the
-        // pixel beside the join; the longer one's bottom-right, over the
-        // empty line, is convex, its corner pixel cut.
-        let join = |i: usize| rows[i].0.y + rows[i].0.h;
-        let end = |i: usize| x0 + rows[i].1[1] * scale;
-        let fill = alpha(end(0) + 0.5, join(0) - 0.5);
+        // `fn a() {` (and its newline) over `    let x = 1;`: past the
+        // shorter line's end a fillet fills the pixel beside the join;
+        // the longer one's bottom-right, over the empty line, is convex.
+        let fill = alpha(lines[0].3 + 0.5, lines[0].1 - 0.5);
         assert!(fill > sel.a * 0.5, "the fillet, {scale}×: {fill}");
-        let corner = alpha(end(1) - 0.5, join(1) - 0.5);
+        let corner = alpha(lines[1].3 - 0.5, lines[1].1 - 0.5);
         assert!(
             corner < sel.a * 0.5,
             "the convex corner, {scale}×: {corner}"
         );
         // Past the fillet's reach, nothing.
-        assert_eq!(alpha(end(0) + 4.0 * scale + 1.5, join(0) - 0.5), 0.0);
+        assert_eq!(alpha(lines[0].3 + 4.0 * scale + 1.5, lines[0].1 - 0.5), 0.0);
+        // The block caret on `}` is drawn over the selection, which runs
+        // under it whole.
+        let caret = dl
+            .quads
+            .iter()
+            .filter(|q| q.kind == kui_native::QuadKind::Solid && q.color != sel)
+            .any(|q| {
+                q.rect.y == lines[4].0 && q.rect.x == x0 && q.rect.h == lines[4].1 - lines[4].0
+            });
+        assert!(caret, "the caret over the last line, {scale}×");
     }
 }

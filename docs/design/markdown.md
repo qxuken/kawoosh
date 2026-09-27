@@ -73,7 +73,9 @@ those runs and the line's text and produces three things per row:
   body size, bold); everything else the body;
 - **the fold table** — byte ranges of the row drawn as something
   else: the marks hidden (`""`), a list's `-` `*` `+` drawn `•`, `[ ]`
-  and `[x]` drawn `☐` `☑`, a blockquote's `>` a bar in the margin
+  and `[x]` drawn as the shipped Nerd Font's boxes (`U+F0131`, and
+  `U+F0C52` in the links' accent — `☐` `☑` until 2026-09-27, which few
+  monospaced faces have, so a fallback drew them thin and small), a blockquote's `>` a bar in the margin
   colour, a fence's opening and closing lines a thin rule with the
   info string dim, a link's destination hidden with its parentheses,
   `---` a rule across the row.
@@ -105,6 +107,14 @@ where it would in the source. Known from nvim, lived with.
 *Beat:* the caret moving over rendered text, every motion and text
 object reading the fold table to skip hidden bytes — the whole engine
 learning about drawing.
+
+*Amended 2026-09-27, from use:* in visual mode every line a selection
+covers is raw, not only its head's. With the head's alone, a selection
+grown by `j` turned each line it reached raw and the one it left
+rendered again, so the text reflowed under the selection at every
+step; now a line turns raw once, as the selection reaches it, and
+stays so until visual mode ends. The selection is on the source it
+takes.
 
 ### 4. Rendered rows wrap, and this is where soft wrap enters
 

@@ -88,7 +88,7 @@ fn a_which_key_lists_what_can_follow_and_a_setting_hides_it() {
     // `<C-w>` held by a terminal pane opens the pane cluster too.
     app.add_headless_terminal();
     d.frame(&mut app);
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     let t = texts(&d);
     assert!(
         has(&t, "C-w · panes, tabs, dock") && has(&t, "vsplit"),

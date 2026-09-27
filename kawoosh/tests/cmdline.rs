@@ -41,7 +41,7 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     let mut app = Kawoosh::from_file(&dir.join("a.txt"));
     let ext = app.attach_lua().unwrap();
     let mut d = Drive::new(900.0, 500.0);
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.set_cwd(&dir);
     d.frame(&mut app);
 
@@ -58,26 +58,26 @@ fn the_command_line_completes_commands_paths_and_buffers() {
             .any(|n| n.text.as_deref() == Some("iew")),
         "the ghost is on the strip"
     );
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     assert_eq!(
         app.ed.prompt_text().unwrap_or_default(),
         "v",
         "cycling does not take"
     );
     assert_eq!(app.cmdline_ghost().as_deref(), Some("ne"));
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("new"));
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("s"));
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("split"));
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("s"));
-    d.ctrl(&mut app, "p");
-    d.ctrl(&mut app, "p");
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
+    d.press(&mut app, "<C-p>");
+    d.press(&mut app, "<C-p>");
     assert_eq!(app.cmdline_ghost().as_deref(), Some("iew"));
-    d.ctrl(&mut app, "p");
+    d.press(&mut app, "<C-p>");
     let last = app
         .cmd_completion
         .as_ref()
@@ -91,14 +91,7 @@ fn the_command_line_completes_commands_paths_and_buffers() {
         last.strip_prefix('v'),
         "wraps"
     );
-    d.key(
-        &mut app,
-        "tab",
-        KeyMods {
-            shift: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "tab", KeyMods::NONE.with_shift());
     assert_eq!(app.ed.prompt_text().unwrap_or_default(), "v");
     assert_eq!(app.cmdline_ghost().as_deref(), last.strip_prefix('v'));
     tab(&mut d, &mut app);
@@ -113,10 +106,10 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     tab(&mut d, &mut app);
     assert_eq!(app.ed.prompt_text().unwrap_or_default(), "buffer");
     assert_eq!(app.cmdline_ghost(), None);
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     let ghost = app.cmdline_ghost().unwrap();
     assert!(!ghost.is_empty());
-    d.ctrl(&mut app, "y");
+    d.press(&mut app, "<C-y>");
     assert_eq!(
         app.ed.prompt_text().unwrap_or_default(),
         format!("buffer{ghost}")
@@ -134,7 +127,7 @@ fn the_command_line_completes_commands_paths_and_buffers() {
         cands,
         [format!("src{}", std::path::MAIN_SEPARATOR), "a.txt".into()]
     );
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     tab(&mut d, &mut app);
     assert_eq!(
         app.ed.prompt_text().unwrap_or_default(),
@@ -382,7 +375,7 @@ fn the_prompt_is_a_field_with_modes_and_motions() {
     d.key(&mut app, "escape", KeyMods::default());
     d.keys(&mut app, "u");
     assert_eq!(app.ed.prompt_text().as_deref(), Some("echo hello world"));
-    d.ctrl(&mut app, "r");
+    d.press(&mut app, "<C-r>");
     assert_eq!(app.ed.prompt_text().as_deref(), Some("echo hello there"));
     // `<CR>` in normal mode submits too.
     d.key(&mut app, "enter", KeyMods::default());
@@ -403,7 +396,7 @@ fn the_prompt_is_a_field_with_modes_and_motions() {
     let v = app.focused_view().unwrap();
     app.ed.paste_text(v, "echo a\nb");
     assert_eq!(app.ed.prompt_text().as_deref(), Some("echo a b"));
-    d.ctrl(&mut app, "u");
+    d.press(&mut app, "<C-u>");
     assert_eq!(app.ed.prompt_text().as_deref(), Some(""));
     d.key(&mut app, "backspace", KeyMods::default());
     assert!(app.ed.prompt_view().is_none());
@@ -427,7 +420,7 @@ fn the_candidates_scroll_and_keep_their_width() {
     d.frame(&mut app);
     d.keys(&mut app, ":e ");
     for _ in 0..24 {
-        d.ctrl(&mut app, "n");
+        d.press(&mut app, "<C-n>");
     }
     for _ in 0..8 {
         d.advance(0.05);

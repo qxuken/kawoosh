@@ -19,7 +19,7 @@
 //! close button, when there is another tab to go to. When the tabs are
 //! in more than one directory each label leads with its own.
 
-use kui_native::{Align, CursorShape, NodeSpec, Role, Sizing, Span, Ui, Value, widgets};
+use kui_native::{Align, CursorShape, NodeSpec, Role, Span, Ui, Value, widgets};
 
 use crate::app::Kawoosh;
 use crate::layout::Content;
@@ -32,6 +32,18 @@ pub const TAB_MIN_W: f32 = 140.0;
 const TABS_MS: f32 = 160.0;
 
 impl Kawoosh {
+    /// Where tab `t` is: the directory its terminal's shell last said
+    /// it is in (OSC 7), when a terminal has its focus, else the tab's
+    /// own, else the editor's.
+    pub(crate) fn tab_dir(&self, t: &crate::layout::Tab) -> std::path::PathBuf {
+        if let Some(Content::Terminal(id)) = self.layout.content(t.focused)
+            && let Some(dir) = self.terms.map.get(&id).and_then(|term| term.cwd())
+        {
+            return dir;
+        }
+        t.cwd.clone().unwrap_or_else(|| self.cwd.clone())
+    }
+
     /// The title row: the platform's inset and controls around the cwd
     /// and the status blocks.
     pub(crate) fn title_bar(&mut self, ui: &mut Ui<'_>) {
@@ -67,14 +79,15 @@ impl Kawoosh {
             blocks.push(("compiling…".into(), pal.command, None));
         }
         ui.with(
+            // Its clicks run a command or list the cwd: the keyboard
+            // stays with the pane.
             NodeSpec::column()
-                .width(Sizing::Grow(1.0))
+                .grow_width()
                 .bg(pal.strip)
+                .keep_focus()
                 .label("titlebar"),
             |ui| {
                 widgets::titlebar_with(ui, |ui| {
-                    let cwd = ui.child_key("cwd");
-                    let hovered = ui.is_hovered(cwd);
                     let (dim, fg) = if focused {
                         (pal.dim, pal.fg)
                     } else {
@@ -83,36 +96,30 @@ impl Kawoosh {
                     ui.with_keyed(
                         "cwd",
                         NodeSpec::row()
-                            .height(Sizing::Grow(1.0))
+                            .grow_height()
                             .pad_xy(8.0, 0.0)
                             .cross_align(Align::Center)
                             .hover_bg(pal.panel)
                             .cursor(CursorShape::Pointer)
                             .on_click(Value::map([("kind", "cwd".into())]))
                             .label("cwd")
-                            .description(full.as_str()),
+                            .tooltip(&full),
                         |ui| {
                             let spans = [Span::new(&head).color(dim), Span::new(&last).color(fg)];
                             ui.rich_text(&spans, rows::mono(font, &pal));
-                            if hovered {
-                                widgets::tooltip(ui, &full);
-                            }
                         },
                     );
-                    ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
+                    ui.leaf(NodeSpec::row().grow_width());
                     for (i, (text, color, run)) in blocks.iter().enumerate() {
                         if i > 0 {
-                            ui.with_indexed(
-                                2000 + i as u64,
-                                NodeSpec::column()
-                                    .width(Sizing::Fixed(1.0))
-                                    .height(Sizing::Fixed(tab_h - 10.0))
-                                    .bg(pal.border),
-                                |_| {},
+                            let sep = ui.child_key("sep").index(i as u64);
+                            ui.leaf_key(
+                                sep,
+                                NodeSpec::column().size(1.0, tab_h - 10.0).bg(pal.border),
                             );
                         }
                         let mut spec = NodeSpec::row()
-                            .height(Sizing::Grow(1.0))
+                            .grow_height()
                             .pad_xy(10.0, 0.0)
                             .cross_align(Align::Center);
                         if let Some(run) = run {
@@ -132,13 +139,7 @@ impl Kawoosh {
                 });
             },
         );
-        ui.with(
-            NodeSpec::column()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(1.0))
-                .bg(pal.border),
-            |_| {},
-        );
+        ui.leaf(NodeSpec::column().grow_width().height(1.0).bg(pal.border));
     }
 
     /// The tabs, each an even share of the row down to [`TAB_MIN_W`],
@@ -155,62 +156,98 @@ impl Kawoosh {
         // own reveal of its column (kui F82).
         let reveal = self.tabs_seen != Some(shape);
         self.tabs_seen = Some(shape);
-        // Tabs in more than one directory lead with theirs, so the strip
-        // says which project each is (docs/design/workspaces.md
-        // Decision 6).
-        let dirs: std::collections::HashSet<_> = self
+        // A tab's directory: a terminal's is where its shell says it
+        // is (OSC 7), else the tab's own. Shown before the name as
+        // `tabs.directory` says: `auto` while the tabs are in more than
+        // one, so the strip says which project each is
+        // (docs/design/workspaces.md Decision 6), `always`, `never`.
+        let dirs: Vec<std::path::PathBuf> =
+            self.layout.tabs.iter().map(|t| self.tab_dir(t)).collect();
+        let show_dir = match self.ed.settings.str("tabs.directory") {
+            Some("always") => true,
+            Some("never") => false,
+            _ => dirs.iter().collect::<std::collections::HashSet<_>>().len() > 1,
+        };
+        let hook = self
+            .scripting
+            .rt
+            .clone()
+            .filter(|rt| rt.has_tab_title_hook());
+        let labels: Vec<(String, bool)> = self
             .layout
             .tabs
             .iter()
-            .map(|t| t.cwd.as_ref().unwrap_or(&self.cwd))
-            .collect();
-        let show_dir = dirs.len() > 1;
-        let labels: Vec<(String, bool, bool)> = self
-            .layout
-            .tabs
-            .iter()
-            .map(|tab| {
-                let name = match self.layout.content(tab.focused) {
+            .zip(&dirs)
+            .enumerate()
+            .map(|(i, (tab, cwd))| {
+                let (kind, name, path) = match self.layout.content(tab.focused) {
                     // A host's file says which host (domains.md
                     // Decision 8): `box: x.rs`.
                     Some(Content::Editor(v)) => {
                         let b = self.ed.buffer_of(v);
-                        match b.path.as_deref().and_then(kawoosh_systems::fs::domain_of) {
+                        let name = match b.path.as_deref().and_then(kawoosh_systems::fs::domain_of)
+                        {
                             Some((d, _)) => format!("{d}: {}", b.name),
                             None => b.name.clone(),
-                        }
+                        };
+                        let path = b.path.as_ref().map(|p| p.display().to_string());
+                        ("editor", name, path)
                     }
-                    Some(Content::Terminal(t)) => self
-                        .terms
-                        .map
-                        .get(&t)
-                        .filter(|t| !t.title.is_empty())
-                        .map(|t| t.title.clone())
-                        .unwrap_or_else(|| "term".into()),
-                    Some(Content::Lua(n)) => n,
-                    Some(Content::Undo) => "undo".into(),
-                    Some(Content::Memory) => "memory".into(),
-                    None => "?".into(),
+                    Some(Content::Terminal(t)) => {
+                        let title = self
+                            .terms
+                            .map
+                            .get(&t)
+                            .filter(|t| !t.title.is_empty())
+                            .map(|t| t.title.clone())
+                            .unwrap_or_else(|| "term".into());
+                        ("terminal", title, None)
+                    }
+                    Some(Content::Lua(n)) => ("lua", n, None),
+                    Some(Content::Undo) => ("undo", "undo".into(), None),
+                    Some(Content::Memory) => ("memory", "memory".into(), None),
+                    None => ("", "?".into(), None),
                 };
                 let mut ps = Vec::new();
                 tab.panes(&mut ps);
                 let modified = ps
                     .iter()
                     .any(|p| matches!(self.view_of(*p), Some(v) if self.ed.buffer_of(v).modified));
-                let name =
-                    match kawoosh_systems::fs::basename(tab.cwd.as_ref().unwrap_or(&self.cwd)) {
-                        Some(d) if show_dir => format!("{d} · {name}"),
-                        _ => name,
-                    };
-                (name, modified, tab.bell)
+                let dir = kawoosh_systems::fs::basename(cwd).unwrap_or_default();
+                let shown = if show_dir && !dir.is_empty() {
+                    format!("{dir} · {name}")
+                } else {
+                    name.clone()
+                };
+                let title = format!("{}: {shown}{}", i + 1, if modified { " ●" } else { "" });
+                // A plugin's label over it (`kawoosh.tab_title`).
+                let label = hook
+                    .as_ref()
+                    .and_then(|rt| {
+                        rt.tab_title_hook(&kawoosh_lua::TabTitle {
+                            index: i + 1,
+                            active: i == active,
+                            title: &title,
+                            dir: &dir,
+                            cwd: &cwd.display().to_string(),
+                            kind,
+                            name: &name,
+                            path: path.as_deref(),
+                            modified,
+                            bell: tab.bell,
+                            panes: ps.len(),
+                        })
+                    })
+                    .unwrap_or(title);
+                (label, tab.bell)
             })
             .collect();
         let mut active_key = None;
         ui.with_keyed(
             "tabs",
             NodeSpec::row()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(self.chrome.tab_h))
+                .grow_width()
+                .height(self.chrome.tab_h)
                 .bg(pal.strip)
                 .scroll_x()
                 // No bar: at the strip's height it would lie over the
@@ -218,11 +255,11 @@ impl Kawoosh {
                 // reveal move it.
                 .scrollbar(kui_native::ScrollbarMode::Hidden)
                 .transition(TABS_MS)
+                .keep_focus()
                 .role(Role::TabList),
             |ui| {
-                for (i, (name, modified, bell)) in labels.iter().enumerate() {
+                for (i, (label, bell)) in labels.iter().enumerate() {
                     let is_active = i == active;
-                    let label = format!("{}: {}{}", i + 1, name, if *modified { " ●" } else { "" });
                     // The block, its item and its close button are one
                     // hover group: the pointer is on the item or the
                     // button, never on the block itself, and the button
@@ -246,9 +283,9 @@ impl Kawoosh {
                     let key = ui.with_keyed(
                         &format!("tab{i}"),
                         NodeSpec::column()
-                            .width(Sizing::Grow(1.0))
+                            .grow_width()
                             .min_width(TAB_MIN_W)
-                            .height(Sizing::Grow(1.0))
+                            .grow_height()
                             .bg(bg)
                             .hover_bg(if is_active {
                                 theme.accent_hover
@@ -259,25 +296,14 @@ impl Kawoosh {
                             .hover_group(&group),
                         |ui| {
                             // i3's coloured top edge on the block.
+                            ui.leaf(NodeSpec::row().grow_width().height(2.0).bg(edge));
                             ui.with(
-                                NodeSpec::row()
-                                    .width(Sizing::Grow(1.0))
-                                    .height(Sizing::Fixed(2.0))
-                                    .bg(edge),
-                                |_| {},
-                            );
-                            ui.with(
-                                NodeSpec::row()
-                                    .width(Sizing::Grow(1.0))
-                                    .height(Sizing::Grow(1.0))
-                                    .gap(0.0)
-                                    .cross_align(Align::Center),
+                                NodeSpec::row().fill().gap(0.0).cross_align(Align::Center),
                                 |ui| {
                                     ui.with_keyed(
                                         "item",
                                         NodeSpec::row()
-                                            .width(Sizing::Grow(1.0))
-                                            .height(Sizing::Grow(1.0))
+                                            .fill()
                                             .pad_xy(10.0, 0.0)
                                             .cross_align(Align::Center)
                                             .clip()
@@ -291,7 +317,7 @@ impl Kawoosh {
                                             .label(label.as_str()),
                                         |ui| {
                                             ui.text(
-                                                &label,
+                                                label,
                                                 rows::mono(font, &pal).color(fg).ellipsis(),
                                             )
                                         },
@@ -312,7 +338,7 @@ impl Kawoosh {
                                                 pal.border
                                             });
                                         }
-                                        ui.with_keyed(
+                                        ui.text_in_keyed(
                                             "close",
                                             close
                                                 .on_click(Value::map([
@@ -320,9 +346,10 @@ impl Kawoosh {
                                                     ("index", Value::Int(i as i64)),
                                                 ]))
                                                 .label("close tab"),
-                                            |ui| ui.text("×", rows::mono(font, &pal).color(fg)),
+                                            "×",
+                                            rows::mono(font, &pal).color(fg),
                                         );
-                                        ui.with(NodeSpec::row().width(Sizing::Fixed(6.0)), |_| {});
+                                        ui.leaf(NodeSpec::row().width(6.0));
                                     }
                                 },
                             );
@@ -333,13 +360,10 @@ impl Kawoosh {
                     }
                     // A hairline between blocks, as i3 draws.
                     if i + 1 < n {
-                        ui.with_indexed(
-                            1000 + i as u64,
-                            NodeSpec::column()
-                                .width(Sizing::Fixed(1.0))
-                                .height(Sizing::Grow(1.0))
-                                .bg(pal.border),
-                            |_| {},
+                        let sep = ui.child_key("sep").index(i as u64);
+                        ui.leaf_key(
+                            sep,
+                            NodeSpec::column().width(1.0).grow_height().bg(pal.border),
                         );
                     }
                 }

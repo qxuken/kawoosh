@@ -64,15 +64,15 @@ fn a_scratch_comes_back_with_its_history() {
     app.histories.quiet = Duration::from_secs(3600);
     d.frame(&mut app);
     d.keys(&mut app, "i");
-    d.text(&mut app, "first");
+    d.commit(&mut app, "first");
     d.key(&mut app, "escape", KeyMods::default());
     d.keys(&mut app, "o");
-    d.text(&mut app, "second");
+    d.commit(&mut app, "second");
     d.key(&mut app, "escape", KeyMods::default());
     // A second scratch in a tab of its own, its own text.
     ex(&mut d, &mut app, "tabnew");
     d.keys(&mut app, "i");
-    d.text(&mut app, "other");
+    d.commit(&mut app, "other");
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(app.ed.buffers.values().filter(|b| b.modified).count(), 2);
     // Nothing written yet: the buffers were not still for QUIET.
@@ -108,8 +108,8 @@ fn a_scratch_comes_back_with_its_history() {
     assert_eq!(text_of(&app), "", "nothing before the first step");
     // Redo brings it back; a new edit after it is drafted under the
     // same number, not a new row.
-    d.ctrl(&mut app, "r");
-    d.ctrl(&mut app, "r");
+    d.press(&mut app, "<C-r>");
+    d.press(&mut app, "<C-r>");
     assert_eq!(text_of(&app), "first\nsecond");
     app.sync_histories(true);
     assert_eq!(app.store.as_ref().unwrap().history_keys().len(), 2);
@@ -119,7 +119,7 @@ fn a_scratch_comes_back_with_its_history() {
     // path, and `g-` reaches the branch.
     d.keys(&mut app, "u");
     d.keys(&mut app, "o");
-    d.text(&mut app, "third");
+    d.commit(&mut app, "third");
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(text_of(&app), "first\nthird");
     ex(&mut d, &mut app, "qa");
@@ -135,7 +135,7 @@ fn a_scratch_comes_back_with_its_history() {
     );
     d.keys(&mut app, "u");
     assert_eq!(text_of(&app), "first");
-    d.ctrl(&mut app, "r");
+    d.press(&mut app, "<C-r>");
     assert_eq!(text_of(&app), "first\nthird");
     d.keys(&mut app, "g-");
     assert_eq!(text_of(&app), "first\nsecond", "the branch, by time");
@@ -194,7 +194,7 @@ fn a_modified_file_comes_back_over_the_disk_and_a_write_ends_it() {
     // Modified again, written: the row is history again, and the
     // history survives a relaunch on the file, as neovim's undofile
     // does — `u` undoes the saved change.
-    d.ctrl(&mut app, "r");
+    d.press(&mut app, "<C-r>");
     app.sync_histories(true);
     assert!(!app.store.as_ref().unwrap().history_rows()[0].clean);
     ex(&mut d, &mut app, "w");
@@ -211,7 +211,7 @@ fn a_modified_file_comes_back_over_the_disk_and_a_write_ends_it() {
     d.keys(&mut app, "u");
     assert_eq!(text_of(&app), "one\ntwo\n", "the saved change, undone");
     assert!(focused_modified(&app));
-    d.ctrl(&mut app, "r");
+    d.press(&mut app, "<C-r>");
     assert!(!focused_modified(&app));
     // The disk moves under a clean row: the history is refused and the
     // row dropped, silently — the tree was of another text.
@@ -249,7 +249,7 @@ fn a_quiet_buffer_is_written_on_its_own() {
     app.histories.quiet = Duration::from_millis(200);
     d.frame(&mut app);
     d.keys(&mut app, "i");
-    d.text(&mut app, "abc");
+    d.commit(&mut app, "abc");
     d.frame(&mut app);
     assert!(app.store.as_ref().unwrap().history_keys().is_empty());
     std::thread::sleep(Duration::from_millis(300));
@@ -260,7 +260,7 @@ fn a_quiet_buffer_is_written_on_its_own() {
     assert_eq!(text, b"abc");
     // Still in insert mode: the open checkpoint is the history's
     // newest, so a relaunch can undo the typing.
-    d.text(&mut app, "d");
+    d.commit(&mut app, "d");
     std::thread::sleep(Duration::from_millis(300));
     d.frame(&mut app);
     let (text, meta) = store.load_history("scratch:1").unwrap();
@@ -336,7 +336,7 @@ fn quit_all_with_a_bang_discards_everything() {
     d.keys(&mut app, "x");
     ex(&mut d, &mut app, "tabnew");
     d.keys(&mut app, "i");
-    d.text(&mut app, "note");
+    d.commit(&mut app, "note");
     d.key(&mut app, "escape", KeyMods::default());
     app.sync_histories(true);
     assert_eq!(app.store.as_ref().unwrap().history_keys().len(), 2);
@@ -455,7 +455,7 @@ fn a_buffer_over_the_cap_is_not_drafted() {
     app.histories.max_text = 8;
     d.frame(&mut app);
     d.keys(&mut app, "i");
-    d.text(&mut app, "twelve chars");
+    d.commit(&mut app, "twelve chars");
     d.key(&mut app, "escape", KeyMods::default());
     app.sync_histories(true);
     assert!(app.store.as_ref().unwrap().history_keys().is_empty());
@@ -487,7 +487,7 @@ fn drafts_come_back_without_a_session() {
     let (mut d, mut app) = launch(&db, None);
     d.frame(&mut app);
     d.keys(&mut app, "i");
-    d.text(&mut app, "kept");
+    d.commit(&mut app, "kept");
     d.key(&mut app, "escape", KeyMods::default());
     app.sync_histories(true);
     assert_eq!(app.store.as_ref().unwrap().history_keys(), ["scratch:1"]);

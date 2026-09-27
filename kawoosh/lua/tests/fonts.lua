@@ -45,15 +45,6 @@ kawoosh.frame()
 kawoosh.test.ok(kawoosh.message():find('no family "No Such Face 9000"', 1, true), kawoosh.message())
 kawoosh.test.eq(kawoosh.opt("font.family"), a.name, "the face stays")
 
--- A family's handle: asked, registered and warmed over the frames after
--- — nil until then — and the face on show's at once.
-kawoosh.test.eq(fonts.face(b.name), nil, "not yet")
-kawoosh.frame()
-kawoosh.test.eq(type(fonts.face(a.name)), "number", "the face on show needs no warming")
-kawoosh.wait(function() kawoosh.frame() return fonts.face(b.name) end, nil, "b warmed")
-kawoosh.test.eq(type(fonts.face(b.name)), "number")
-kawoosh.test.eq(fonts.face("No Such Face 9000"), nil)
-
 -- The pane: the monospaced families, the cursor on the face on show.
 kawoosh.press("<leader>of")
 kawoosh.frame(2)

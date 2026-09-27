@@ -50,6 +50,12 @@ pub enum IoMsg {
         token: u64,
         result: Result<Vec<String>, String>,
     },
+    /// A sizing walk's news (`du::walk`, the disk-usage pane): the walk's
+    /// number and what it found since it last spoke.
+    Sized {
+        walk: u64,
+        batch: crate::du::Sized,
+    },
     /// A project search for a plugin (`kawoosh.search(query, fn)`,
     /// docs/design/search.md): the job's token, the root its paths are
     /// relative to, and what it found.
@@ -505,6 +511,27 @@ impl Io {
                 if tx.send(job()).is_ok() {
                     wake.wake();
                 }
+            })
+            .expect("spawning a job thread");
+    }
+
+    /// Runs `job` on a thread of its own, handing it `send`: every message
+    /// it sends is delivered as it goes, the loop woken for each — a job
+    /// that has something to say before it is done (the sizing walk).
+    /// `send` is false once the loop has gone.
+    pub fn stream(&self, name: &str, job: impl FnOnce(&dyn Fn(IoMsg) -> bool) + Send + 'static) {
+        let tx = self.tx.clone();
+        let wake = self.wake.clone();
+        thread::Builder::new()
+            .name(name.into())
+            .spawn(move || {
+                job(&|msg| {
+                    let sent = tx.send(msg).is_ok();
+                    if sent {
+                        wake.wake();
+                    }
+                    sent
+                })
             })
             .expect("spawning a job thread");
     }

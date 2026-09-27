@@ -18,7 +18,8 @@
 -- listing, and `ms` `mm` `ma` `me` (`mS` `mM` `mA` `mE` for the reverse)
 -- list it again by size, mtime, name or type, yazi's keys under `m`;
 -- `g.` shows or hides the dot files (`dir.hidden`); version control's
--- word on each entry colours its name (`dir.vcs`, git bundled). A listing's
+-- word on each entry colours its name (`dir.vcs_enabled`; the providers
+-- are `kawoosh.dir.vcs`, git bundled). A listing's
 -- directory is on a watch: made, removed or renamed by anything, it is
 -- read again where it is unless it has edits of its own. The preview
 -- draws a picture as one (`kawoosh.image`). A
@@ -96,8 +97,6 @@ local PREFIX = "dir: "
 local PREVIEW = "dir preview"
 -- The listing above every root on Windows: the drives.
 local DRIVES = "<drives>"
--- The space fonts keep (a run's trailing spaces are unreliable).
-local NBSP = "\u{A0}"
 local ARROW = "\u{2190} "
 
 -- A size for people: `512 B`, `1.5 KB`, `12 MB`.
@@ -168,8 +167,8 @@ local function shape(d, entries)
     local line = lines[i + 1]
     local pad = width - (utf8.len(line) or #line)
     local size = e.is_dir and "" or human(e.size)
-    local cols = string.format("%9s", size):gsub(" ", NBSP)
-    meta[i + 1] = NBSP:rep(pad) .. cols .. NBSP:rep(2) .. when(e.modified)
+    local cols = string.format("%9s", size)
+    meta[i + 1] = string.rep(" ", pad) .. cols .. "  " .. when(e.modified)
   end
   return lines, meta, width
 end
@@ -647,7 +646,7 @@ local function relist_all(touched, here, from)
     local d = lists(h)
     if d and touched[d] and d ~= here then relist(d, h) end
   end
-  dir.open(here, from, false, true)
+  if here then dir.open(here, from, false, true) end
 end
 
 -- Applies every group's ops and the ops between listings. The order is
@@ -809,6 +808,51 @@ function dir.write()
   return false
 end
 
+-- dir.remove(paths, done): the deletes of `paths` as the write plans
+-- them — one confirm listing them by directory, applied on `Apply` in
+-- the write's order, every listing of their directories read again and
+-- the count said under `dir` — what a pane over the tree deletes
+-- through (the disk-usage pane, `du.lua`). `done()` runs once they are
+-- applied; `Cancel` runs nothing.
+function dir.remove(paths, done)
+  local bydir, groups = {}, {}
+  for _, p in ipairs(paths) do
+    local d, name = fs.parent(p), fs.basename(p)
+    if d and name then
+      if not bydir[d] then
+        bydir[d] = { dir = d, ops = {} }
+        groups[#groups + 1] = bydir[d]
+      end
+      local st = fs.stat(p)
+      table.insert(bydir[d].ops, { kind = "delete", name = name .. ((st and st.is_dir) and "/" or "") })
+    end
+  end
+  if #groups == 0 then return end
+  table.sort(groups, function(x, y) return x.dir < y.dir end)
+  local desc, title = {}, nil
+  if #groups == 1 then
+    title = "delete " .. #groups[1].ops .. " in " .. groups[1].dir .. "?"
+    for _, op in ipairs(groups[1].ops) do desc[#desc + 1] = describe(op) end
+  else
+    title = "delete " .. #paths .. " in " .. #groups .. " directories?"
+    for _, g in ipairs(groups) do
+      desc[#desc + 1] = g.dir .. ":"
+      for _, op in ipairs(g.ops) do desc[#desc + 1] = "  " .. describe(op) end
+    end
+  end
+  kawoosh.confirm {
+    title = title,
+    lines = desc,
+    actions = {
+      { label = "Delete", run = function()
+          apply(groups, {}, {}, nil, nil)
+          if done then done() end
+        end },
+      { label = "Cancel" },
+    },
+  }
+end
+
 -- ---------------------------------------------------- the annotations
 
 -- Every listing's notes, as its text is now: on each line whose story
@@ -852,12 +896,12 @@ function dir.changed()
       local m = who and who.meta
       if m and m ~= "" then return m end
       local l = reads[id] or ""
-      return NBSP:rep(math.max(st.width - (utf8.len(l) or #l), 0))
+      return string.rep(" ", math.max(st.width - (utf8.len(l) or #l), 0))
     end
     local notes = {}
     for id in pairs(st.noted) do if not story[id] then notes[id] = base(id) end end
     for id in pairs(L.fresh) do if not story[id] then notes[id] = base(id) end end
-    for id, text in pairs(story) do notes[id] = base(id) .. NBSP:rep(2) .. ARROW .. text end
+    for id, text in pairs(story) do notes[id] = base(id) .. "  " .. ARROW .. text end
     st.noted = {}
     for id in pairs(story) do st.noted[id] = true end
     if next(notes) then kawoosh.buf.annotate(notes, L.h) end

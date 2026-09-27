@@ -54,6 +54,31 @@ pub struct Place {
     pub end_col: u32,
 }
 
+/// A tab as `kawoosh.tab_title`'s hook reads it (roadmap step 50).
+#[derive(Clone, Debug, Default)]
+pub struct TabTitle<'a> {
+    /// From 1, as the strip numbers it.
+    pub index: usize,
+    pub active: bool,
+    /// The label kawoosh would draw: `N: name`, the directory before
+    /// the name as `tabs.directory` says, ` ●` when modified.
+    pub title: &'a str,
+    /// The last part of `cwd`.
+    pub dir: &'a str,
+    /// Where the tab is: its own directory, or a terminal's shell's.
+    pub cwd: &'a str,
+    /// What its focused pane is: `editor`, `terminal`, `lua`, `undo`,
+    /// `memory`.
+    pub kind: &'a str,
+    /// The focused pane's buffer, terminal title or view name.
+    pub name: &'a str,
+    /// The focused buffer's file.
+    pub path: Option<&'a str>,
+    pub modified: bool,
+    pub bell: bool,
+    pub panes: usize,
+}
+
 /// What Lua asked for. Editor-level messages are applied inside the
 /// command that ran the script; the rest reach the shell.
 #[derive(Clone, Debug, PartialEq)]
@@ -592,10 +617,9 @@ pub struct Published {
     pub prompt: bool,
     /// The Lua views' fields (`lua:<view>/<name>`), by name.
     pub fields: HashMap<String, FieldSnap>,
-    /// The rounded selection, while `editor.selection_radius` is on: the
-    /// shell's fragment (a `fragment { id }`) and the radius, so a view's
-    /// field draws its selection in the panes' shape.
-    pub selection_round: Option<(u64, f32)>,
+    /// The selection's corner radius, while `editor.selection_radius` is
+    /// on, so a view's field draws its selection in the panes' shape.
+    pub selection_radius: Option<f32>,
     /// Which field each view's keys are on.
     pub field_focus: HashMap<String, String>,
     /// For a tracked buffer: what each tracked line has become (see
@@ -736,7 +760,7 @@ impl Default for Published {
             field: None,
             prompt: false,
             fields: HashMap::new(),
-            selection_round: None,
+            selection_radius: None,
             field_focus: HashMap::new(),
             tracked: HashMap::new(),
             register: None,
@@ -979,14 +1003,13 @@ impl Runtime {
         *self.store.borrow_mut() = Some(store);
     }
 
-    /// The workspace moments are made under, as the shell knows it.
-    /// The rounded selection's fragment and radius for the views' fields
-    /// (`kawoosh._selection_round()`), or none while the selection is
-    /// square.
-    pub fn set_selection_round(&self, round: Option<(u64, f32)>) {
-        self.published.borrow_mut().selection_round = round;
+    /// The selection's corner radius for the views' fields
+    /// (`kawoosh._selection_radius()`), or none while it is square.
+    pub fn set_selection_radius(&self, radius: Option<f32>) {
+        self.published.borrow_mut().selection_radius = radius;
     }
 
+    /// The workspace moments are made under, as the shell knows it.
     pub fn set_workspace(&self, ws: &str) {
         let mut p = self.published.borrow_mut();
         if p.workspace != ws {
@@ -1522,6 +1545,45 @@ impl Runtime {
                     .borrow_mut()
                     .push(Msg::Echo(format!("memory {kind}: {e}")));
                 false
+            }
+        }
+    }
+
+    /// Whether a plugin writes the tabs' labels (`kawoosh.tab_title`).
+    pub fn has_tab_title_hook(&self) -> bool {
+        self.lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Function>("_tab_title"))
+            .is_ok()
+    }
+
+    /// A tab's label as the plugin's `kawoosh.tab_title` writes it, or
+    /// none for kawoosh's own (`tab.title`). A hook that fails is taken
+    /// off and says why once, rather than every frame.
+    pub fn tab_title_hook(&self, tab: &TabTitle<'_>) -> Option<String> {
+        let kawoosh = self.lua.globals().get::<Table>("kawoosh").ok()?;
+        let f = kawoosh.get::<mlua::Function>("_tab_title").ok()?;
+        let t = self.lua.create_table().ok()?;
+        let _ = t.set("index", tab.index);
+        let _ = t.set("active", tab.active);
+        let _ = t.set("title", tab.title);
+        let _ = t.set("dir", tab.dir);
+        let _ = t.set("cwd", tab.cwd);
+        let _ = t.set("kind", tab.kind);
+        let _ = t.set("name", tab.name);
+        let _ = t.set("path", tab.path);
+        let _ = t.set("modified", tab.modified);
+        let _ = t.set("bell", tab.bell);
+        let _ = t.set("panes", tab.panes);
+        match f.call::<Option<String>>(t) {
+            Ok(label) => label,
+            Err(e) => {
+                let _ = kawoosh.set("_tab_title", LV::Nil);
+                self.queue
+                    .borrow_mut()
+                    .push(Msg::Echo(format!("tab_title: {e} (the hook is off)")));
+                None
             }
         }
     }
@@ -2451,16 +2513,8 @@ fn seed(
     )?;
     let pp = published.clone();
     k.set(
-        "_selection_round",
-        lua.create_function(move |lua, ()| {
-            let Some((id, radius)) = pp.borrow().selection_round else {
-                return Ok(LV::Nil);
-            };
-            let t = lua.create_table()?;
-            t.set("id", id)?;
-            t.set("radius", radius)?;
-            Ok(LV::Table(t))
-        })?,
+        "_selection_radius",
+        lua.create_function(move |_, ()| Ok(pp.borrow().selection_radius))?,
     )?;
     let qq = q(queue);
     k.set(

@@ -101,7 +101,7 @@ fn the_panel_lists_the_states_and_restores_one() {
     assert!(!app.ed.buffer_of(app.undo.view.unwrap()).modified);
     d.keys(&mut app, "u");
     assert_eq!(app.ed.message, "already at oldest change");
-    d.ctrl(&mut app, "r");
+    d.press(&mut app, "<C-r>");
     assert_eq!(text(&app), "bc\ndef\n");
     assert!(app.ed.buffer_of(app.undo.view.unwrap()).modified);
     // `k` up to the newest, `⏎` again: everything back.
@@ -220,13 +220,13 @@ fn a_click_restores_and_the_panel_follows_the_keyboard() {
     // The pane it watched closed: it takes the one still on show.
     ex(&mut d, &mut app, "undo history");
     assert_eq!(app.layout.focused(), panel);
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "v");
     assert!(app.focused_view().is_some());
     let extra = app.layout.focused();
     ex(&mut d, &mut app, "undo history");
     assert_eq!(app.layout.focused(), panel);
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "l");
     assert_eq!(app.layout.focused(), extra);
     ex(&mut d, &mut app, "close");
@@ -246,7 +246,7 @@ fn the_panel_is_kept_by_a_session() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::from_file(&a);
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.open_store(Some(&db));
     d.frame(&mut app);
     ex(&mut d, &mut app, "undo history");
@@ -257,7 +257,7 @@ fn the_panel_is_kept_by_a_session() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("*scratch*", "");
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.open_store(Some(&db));
     assert!(app.restore_session());
     d.frame(&mut app);

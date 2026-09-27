@@ -127,7 +127,7 @@ fn a_hosts_file_is_opened_written_and_listed_through_its_domain() {
     let mut app = Kawoosh::new("*scratch*", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     let file = format!("{name}:/src/a.txt");
     ex(&mut d, &mut app, &format!("e {file}"));
@@ -216,7 +216,7 @@ fn ssh_app(name: &str, host: &str) -> (Drive, Kawoosh) {
     let mut app = Kawoosh::new("*scratch*", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     ex(
         &mut d,

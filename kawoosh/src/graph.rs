@@ -11,7 +11,7 @@
 //! and a line runs down to it. [`Graph::row`] draws one row's box with
 //! kui, sized by a [`Geometry`].
 
-use kui_native::{Color, NodeSpec, Sizing, Stroke, Ui, Vec2};
+use kui_native::{Color, NodeSpec, Stroke, Ui, Vec2};
 
 /// How a graph is drawn: a lane's width, a row's height, the stroke,
 /// the dot.
@@ -177,22 +177,17 @@ impl Graph {
         size: Option<f32>,
     ) {
         let w = self.lanes as f32 * geo.lane_w;
-        ui.with(
-            NodeSpec::row()
-                .width(Sizing::Fixed(w))
-                .height(Sizing::Fixed(geo.row_h)),
-            |ui| {
-                for (a, b) in self.strokes(i, geo) {
-                    ui.line(a, b, Stroke::new(geo.line_w, line), NodeSpec::row());
-                }
-                let x = self.lane[i] as f32 * geo.lane_w + geo.lane_w / 2.0;
-                let c = Vec2::new(x, geo.row_h / 2.0);
-                ui.polygon(
-                    &octagon(c, size.unwrap_or(geo.dot)),
-                    NodeSpec::row().bg(dot),
-                );
-            },
-        );
+        ui.with(NodeSpec::row().size(w, geo.row_h), |ui| {
+            for (a, b) in self.strokes(i, geo) {
+                ui.line(a, b, Stroke::new(geo.line_w, line), NodeSpec::row());
+            }
+            let x = self.lane[i] as f32 * geo.lane_w + geo.lane_w / 2.0;
+            let c = Vec2::new(x, geo.row_h / 2.0);
+            ui.polygon(
+                &octagon(c, size.unwrap_or(geo.dot)),
+                NodeSpec::row().bg(dot),
+            );
+        });
     }
 }
 

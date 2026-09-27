@@ -10,7 +10,9 @@ use std::ops::Range;
 
 use kawoosh_editor::search;
 use kawoosh_editor::{Mode, ViewId, motions};
-use kui_native::{Align, Enter, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
+use kui_native::{
+    Align, Dir, Enter, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2, widgets,
+};
 
 use crate::app::{DIVIDER, Kawoosh};
 use crate::layout::{Content, Drop, Kind, Node, PaneId, SplitDir, Strip};
@@ -74,8 +76,8 @@ impl Kawoosh {
         let pal = self.pal;
         ui.with(
             NodeSpec::row()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(self.chrome.strip_h))
+                .grow_width()
+                .height(self.chrome.strip_h)
                 .bg(pal.strip)
                 .pad_xy(8.0, 0.0)
                 .gap(8.0)
@@ -86,7 +88,7 @@ impl Kawoosh {
                         ui.text(t, rows::mono(self.chrome.face, &pal).color(*c));
                     }
                 }
-                ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
+                ui.leaf(NodeSpec::row().grow_width());
                 ui.text(right, rows::mono(self.chrome.face, &pal).color(pal.dim));
             },
         );
@@ -211,23 +213,16 @@ impl Kawoosh {
         self.strip(ui, &items, &right);
     }
 
-    /// The rounded selection's fragment and radius, while
-    /// `editor.selection_radius` is more than 0 (`rows::RoundedSel`).
-    pub(crate) fn selection_rounding(
-        &self,
-        ui: &mut Ui<'_>,
-    ) -> Option<(kui_native::FragmentId, f32)> {
-        let radius = self
-            .ed
+    /// The selection's corner radius, `editor.selection_radius`: 0 is
+    /// square. Above it, a selection's span backgrounds are rounded and
+    /// kui joins them across lines into one shape (its F101).
+    pub(crate) fn selection_radius(&self) -> f32 {
+        self.ed
             .settings
             .get("editor.selection_radius")
             .and_then(kawoosh_editor::Setting::as_float)
             .unwrap_or(0.0)
-            .max(0.0) as f32;
-        if radius <= 0.0 {
-            return None;
-        }
-        Some((ui.core().add_fragment(rows::SELECTION_WGSL)?, radius))
+            .max(0.0) as f32
     }
 
     /// A field's one line, drawn as a pane's row is (`rows::emit_line`):
@@ -298,44 +293,6 @@ impl Kawoosh {
                 }
             }
         }
-        // Rounded as a pane's selection is, when it is one range: a
-        // field's line has no neighbours, so its corners are all round.
-        let rounded = match (self.selection_rounding(ui), selected.as_slice()) {
-            (Some((fragment, radius)), [r]) => {
-                let style = rows::mono(font, &pal);
-                let len = drawn.text.len();
-                // The ghost sits after the primary caret and moves what
-                // follows it; at a range's own start its text follows it.
-                let ghost_w =
-                    ghost.map(|g| (clip(primary.head), ui.measure_text(g, &style, None).width));
-                let mut x = |d: usize, start: bool| {
-                    let d = d.min(len);
-                    ui.measure_text(&drawn.text[..d], &style, None).width
-                        + ghost_w
-                            .filter(|(b, _)| *b < d || (start && *b == d))
-                            .map_or(0.0, |(_, w)| w)
-                };
-                let a = x(r.start, true);
-                let b = if r.end > len {
-                    // Past the end: the line and its cell.
-                    x(len, true) + ui.measure_text(" ", &style, None).width
-                } else {
-                    x(r.end, false)
-                };
-                (a < b).then_some(rows::RoundedSel {
-                    fragment,
-                    own: (a, b),
-                    prev: None,
-                    next: None,
-                    radius,
-                    color: pal.select,
-                })
-            }
-            _ => None,
-        };
-        if rounded.is_some() {
-            selected.clear();
-        }
         let _ = rows::emit_line(
             ui,
             font,
@@ -360,7 +317,7 @@ impl Kawoosh {
                 marks: &[],
                 form: None,
                 band: None,
-                rounded,
+                sel_radius: self.selection_radius(),
             },
         );
     }
@@ -372,8 +329,8 @@ impl Kawoosh {
         let strip_h = self.chrome.strip_h;
         ui.with(
             NodeSpec::row()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(strip_h))
+                .grow_width()
+                .height(strip_h)
                 .bg(pal.bg)
                 .pad_xy(8.0, 0.0)
                 .cross_align(Align::Center),
@@ -403,8 +360,8 @@ impl Kawoosh {
                         ui.with_keyed(
                             "candidates",
                             NodeSpec::row()
-                                .width(Sizing::Grow(1.0))
-                                .height(Sizing::Fixed(strip_h))
+                                .grow_width()
+                                .height(strip_h)
                                 .pad_xy(16.0, 0.0)
                                 .gap(12.0)
                                 .cross_align(Align::Center)
@@ -414,12 +371,11 @@ impl Kawoosh {
                                 for (i, c) in cands.iter().enumerate().take(CANDIDATES_SHOWN) {
                                     let on = i == index;
                                     let color = if on { pal.fg } else { pal.dim };
-                                    let key = ui.with_indexed(
+                                    let key = ui.text_in_indexed(
                                         i as u64,
                                         NodeSpec::row().min_width(kui_native::Min::FIT),
-                                        |ui| {
-                                            ui.text(c, TextStyle::new(small).color(color).nowrap());
-                                        },
+                                        c,
+                                        TextStyle::new(small).color(color).nowrap(),
                                     );
                                     if on {
                                         current = Some(key);
@@ -460,13 +416,7 @@ impl Kawoosh {
         if !self.culled.contains(&pane) {
             return false;
         }
-        ui.with(
-            NodeSpec::column()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Grow(1.0))
-                .bg(self.pal.panel),
-            |_| {},
-        );
+        ui.leaf(NodeSpec::column().fill().bg(self.pal.panel));
         true
     }
 
@@ -507,7 +457,6 @@ impl Kawoosh {
     /// (`strip left` / `right` / `center`) and `layout.scroll.center`
     /// put it at an edge or in the middle instead.
     pub(crate) fn render_strip(&mut self, ui: &mut Ui<'_>, strip: &Strip) {
-        let pal = self.pal;
         let vw = ui.viewport().w.max(1.0);
         let gap = self.strip_gap();
         let focused = self.layout.focused();
@@ -618,12 +567,14 @@ impl Kawoosh {
         // a sliding column is drawn between two places, and only the
         // one it is going to is known here.
         self.culled.clear();
+        // Keyed by its tab: each tab's ribbon is its own scroller.
+        let strip_key = ui.child_key("strip").index(tab as u64);
         if !settling && !arriving {
             // Where the ribbon *is*, which during a glide is not where
             // it is going (kui F80): the geometry answers the drawn
             // offset, and describes the frame before, which the half a
             // viewport of slack covers.
-            let key = ui.child_key(&format!("strip{tab}"));
+            let key = strip_key;
             let offset = ui
                 .scroll_geometry(key)
                 .map(|g| g.offset.x)
@@ -640,8 +591,8 @@ impl Kawoosh {
             }
         }
         let mut focus_key = None;
-        let row = ui.with_keyed(
-            &format!("strip{tab}"),
+        let row = ui.with_key(
+            strip_key,
             NodeSpec::row()
                 .fill()
                 .scroll_x()
@@ -652,54 +603,47 @@ impl Kawoosh {
                 .cross_align(Align::Start)
                 .label("strip"),
             |ui| {
-                let room = |px: f32| {
-                    NodeSpec::column()
-                        .width(Sizing::Fixed(px))
-                        .height(Sizing::Grow(1.0))
-                };
+                let room = |px: f32| NodeSpec::column().width(px).grow_height();
                 if lead > 0.0 {
-                    ui.with_keyed("lead", room(lead), |_| {});
+                    ui.leaf_keyed("lead", room(lead));
                 }
                 for (i, col) in strip.columns.iter().enumerate() {
                     let px = widths[i];
-                    let mut wrap = NodeSpec::column().height(Sizing::Grow(1.0));
+                    // A closed column fades where it stood; one that goes
+                    // with its strip — a tab switched away, `:layout
+                    // tree` — goes at once, its parent gone too (kui
+                    // DX19).
+                    let mut wrap = NodeSpec::column()
+                        .grow_height()
+                        .transition(RIBBON_MS)
+                        .exit(Enter::default().opacity(0.0));
                     if arriving && !self.strip_known.contains(&col.id) {
-                        wrap = wrap
-                            .transition(RIBBON_MS)
-                            .enter(Enter::from((px / 3.0).min(200.0), 0.0).opacity(0.0));
+                        wrap = wrap.enter(Enter::from((px / 3.0).min(200.0), 0.0).opacity(0.0));
                     }
                     let key = ui.with_keyed(&format!("col{}", col.id), wrap, |ui| {
-                        ui.with(
-                            NodeSpec::column()
-                                .width(Sizing::Fixed(px))
-                                .height(Sizing::Grow(1.0)),
-                            |ui| self.render_node(ui, &col.node, &format!("{i}/")),
-                        );
+                        ui.with(NodeSpec::column().width(px).grow_height(), |ui| {
+                            self.render_node(ui, &col.node, &format!("{i}/"))
+                        });
                     });
                     if Some(i) == fi {
                         focus_key = Some(key);
                     }
                     if i + 1 < n {
-                        let path = format!("gap{i}");
-                        let divider = ui.child_key(&format!("gap{}", col.id));
-                        let active = ui.is_hovered(divider)
-                            || ui.is_pressed(divider)
-                            || self.dragging.as_deref() == Some(path.as_str());
-                        let bar = NodeSpec::column()
-                            .width(Sizing::Fixed(gap))
-                            .height(Sizing::Grow(1.0))
-                            .bg(if active { pal.accent } else { pal.border })
-                            .cursor(kui_native::CursorShape::EwResize)
-                            .on_drag(Value::map([
+                        widgets::splitter(
+                            ui,
+                            &format!("gap{}", col.id),
+                            Dir::Row,
+                            gap,
+                            Value::map([
                                 ("kind", "split".into()),
-                                ("path", Value::str(&path)),
+                                ("path", Value::str(format!("gap{i}"))),
                                 ("dir", "h".into()),
-                            ]));
-                        ui.with_keyed(&format!("gap{}", col.id), bar, |_| {});
+                            ]),
+                        );
                     }
                 }
                 if trail > 0.0 {
-                    ui.with_keyed("trail", room(trail), |_| {});
+                    ui.leaf_keyed("trail", room(trail));
                 }
             },
         );
@@ -750,52 +694,33 @@ impl Kawoosh {
         match node {
             Node::Pane(id) => self.render_pane(ui, *id),
             Node::Split { dir, ratio, a, b } => {
-                let pal = self.pal;
                 let spec = match dir {
                     SplitDir::H => NodeSpec::row(),
                     SplitDir::V => NodeSpec::column(),
                 };
                 let ratio = ratio.clamp(0.1, 0.9);
-                let dragging = self.dragging.as_deref() == Some(path);
                 let grow = |f: f32| match dir {
-                    SplitDir::H => NodeSpec::column()
-                        .width(Sizing::Grow(f))
-                        .height(Sizing::Grow(1.0)),
-                    SplitDir::V => NodeSpec::column()
-                        .width(Sizing::Grow(1.0))
-                        .height(Sizing::Grow(f)),
+                    SplitDir::H => NodeSpec::column().width(Sizing::Grow(f)).grow_height(),
+                    SplitDir::V => NodeSpec::column().grow_width().height(Sizing::Grow(f)),
                 };
                 ui.with(spec.fill(), |ui| {
                     ui.with_keyed("a", grow(ratio), |ui| {
                         self.render_node(ui, a, &format!("{path}a"))
                     });
-                    let divider = ui.child_key("divider");
-                    let active = ui.is_hovered(divider) || ui.is_pressed(divider) || dragging;
-                    let bar = match dir {
-                        SplitDir::H => NodeSpec::column()
-                            .width(Sizing::Fixed(DIVIDER))
-                            .height(Sizing::Grow(1.0))
-                            .cursor(kui_native::CursorShape::EwResize),
-                        SplitDir::V => NodeSpec::column()
-                            .width(Sizing::Grow(1.0))
-                            .height(Sizing::Fixed(DIVIDER))
-                            .cursor(kui_native::CursorShape::NsResize),
+                    let (along, name) = match dir {
+                        SplitDir::H => (Dir::Row, "h"),
+                        SplitDir::V => (Dir::Column, "v"),
                     };
-                    ui.with_keyed(
+                    widgets::splitter(
+                        ui,
                         "divider",
-                        bar.bg(if active { pal.accent } else { pal.border })
-                            .on_drag(Value::map([
-                                ("kind", "split".into()),
-                                ("path", Value::str(path)),
-                                (
-                                    "dir",
-                                    Value::str(match dir {
-                                        SplitDir::H => "h",
-                                        SplitDir::V => "v",
-                                    }),
-                                ),
-                            ])),
-                        |_| {},
+                        along,
+                        DIVIDER,
+                        Value::map([
+                            ("kind", "split".into()),
+                            ("path", Value::str(path)),
+                            ("dir", Value::str(name)),
+                        ]),
                     );
                     ui.with_keyed("b", grow(1.0 - ratio), |ui| {
                         self.render_node(ui, b, &format!("{path}b"))
@@ -861,8 +786,8 @@ impl Kawoosh {
             .and_then(|(p, x, y)| self.layout.drop_at(x, y).filter(|(t, _)| *t != p))
             .filter(|(t, _)| *t == pane)
             .map(|(_, d)| d);
-        ui.with_keyed(
-            &format!("pane{pane}"),
+        ui.with_key(
+            ui.child_key("pane").index(pane),
             NodeSpec::column()
                 .fill()
                 .bg(pal.panel)
@@ -875,8 +800,8 @@ impl Kawoosh {
             |ui| {
                 // The title bar: a click focuses, a drag moves the pane.
                 let mut title = NodeSpec::row()
-                    .width(Sizing::Grow(1.0))
-                    .height(Sizing::Fixed(self.chrome.pane_title_h))
+                    .grow_width()
+                    .height(self.chrome.pane_title_h)
                     .bg(if dragged {
                         pal.accent.with_alpha(0.3)
                     } else if focused {
@@ -888,9 +813,10 @@ impl Kawoosh {
                     .gap(6.0)
                     .cross_align(Align::Center)
                     .on_click(Value::map([
-                        ("kind", "focus".into()),
+                        ("kind", "title".into()),
                         ("pane", Value::Int(pane as i64)),
                     ]))
+                    .keep_focus()
                     .label(name.as_str());
                 title = title
                     .on_drag(Value::map([
@@ -928,16 +854,15 @@ impl Kawoosh {
                         Drop::Up => (Align::Start, Align::Start, 1.0, 0.5),
                         Drop::Down => (Align::Start, Align::End, 1.0, 0.5),
                     };
-                    ui.with_keyed(
+                    ui.leaf_keyed(
                         "drop",
                         NodeSpec::column()
-                            .float(FloatConfig::parent().at(x, y).self_at(x, y))
+                            .float(FloatConfig::parent().inside(x, y))
                             .width(Sizing::Percent(w))
                             .height(Sizing::Percent(h))
                             .bg(pal.accent.with_alpha(0.25))
                             .border(2.0, pal.accent)
                             .label("drop"),
-                        |_| {},
                     );
                 }
                 match &content {
@@ -1006,7 +931,7 @@ impl Kawoosh {
         // A program reporting the mouse gets drags as reports and no cell
         // selection — unless shift is held, the terminal convention for
         // "my selection, not yours".
-        let reporting = term.wants_mouse() && !self.mods.3;
+        let reporting = term.wants_mouse() && !self.mods.shift;
         let drag_tag = Value::map([
             ("kind", "termmouse".into()),
             ("pane", Value::Int(pane as i64)),
@@ -1018,11 +943,14 @@ impl Kawoosh {
         let sink = ui.with_keyed(
             "term",
             NodeSpec::column()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Grow(1.0))
+                .fill()
                 .pad(pad)
                 .clip()
                 .on_key(tag.clone())
+                // A press in the grid starts a selection, not a click,
+                // and takes kui's keyboard here: the pane follows it
+                // (`on_event_with`'s `focus`).
+                .on_focus(tag.clone())
                 // A click past the grid's last cell focuses too.
                 .on_click(tag.clone())
                 .cursor(kui_native::CursorShape::Text)
@@ -1036,13 +964,14 @@ impl Kawoosh {
                 let mut spec = NodeSpec::column()
                     .on_scroll(tag.clone())
                     .on_layout(Value::map([("kind", "termgrid".into())]));
-                if self.mods.0 || self.mods.2 {
+                if self.mods.ctrl || self.mods.super_key {
                     spec = spec.on_click(tag.clone());
                 }
-                // With ⌘ (ctrl) held, the path under the pointer is
+                // With ⌘ (ctrl) held, the link under the pointer is
                 // underlined and the pointer a hand — what a click there
-                // opens, and only when it names something that exists.
-                let hover = (!reporting && (self.mods.0 || self.mods.2))
+                // opens: a URL, or a path that names something that
+                // exists (`links.rs`).
+                let hover = (!reporting && (self.mods.ctrl || self.mods.super_key))
                     .then(|| {
                         let r = ui.layout_of(ui.child_key("cells"))?;
                         let p = ui.core().cursor()?;
@@ -1090,12 +1019,8 @@ impl Kawoosh {
                     ui.with_keyed(
                         "scrollbar",
                         NodeSpec::column()
-                            .float(
-                                FloatConfig::parent()
-                                    .at(Align::End, Align::Start)
-                                    .self_at(Align::End, Align::Start),
-                            )
-                            .width(Sizing::Fixed(8.0))
+                            .float(FloatConfig::parent().inside(Align::End, Align::Start))
+                            .width(8.0)
                             .height(Sizing::Percent(1.0))
                             .cursor(kui_native::CursorShape::Default)
                             .on_drag(Value::map([
@@ -1104,25 +1029,22 @@ impl Kawoosh {
                             ]))
                             .label("scrollbar"),
                         |ui| {
-                            ui.with(NodeSpec::column().height(Sizing::Fixed(above)), |_| {});
-                            ui.with(
+                            ui.leaf(NodeSpec::column().height(above));
+                            ui.leaf(
                                 NodeSpec::column()
-                                    .width(Sizing::Fixed(6.0))
-                                    .height(Sizing::Fixed(thumb))
+                                    .size(6.0, thumb)
                                     .radius(3.0)
                                     .bg(pal.dim.with_alpha(0.6)),
-                                |_| {},
                             );
                         },
                     );
                     let below = offset;
-                    ui.with_keyed(
+                    ui.text_in_keyed(
                         "lines below",
                         NodeSpec::row()
                             .float(
                                 FloatConfig::parent()
-                                    .at(Align::End, Align::End)
-                                    .self_at(Align::End, Align::End)
+                                    .inside(Align::End, Align::End)
                                     .offset(-14.0, -6.0),
                             )
                             .pad_xy(8.0, 3.0)
@@ -1134,30 +1056,19 @@ impl Kawoosh {
                                 ("kind", "termbottom".into()),
                                 ("pane", Value::Int(pane as i64)),
                             ]))
+                            .keep_focus()
                             .label("lines below"),
-                        |ui| {
-                            ui.text(
-                                &format!(
-                                    "↓ {below} line{} below · ⇧End",
-                                    if below == 1 { "" } else { "s" }
-                                ),
-                                TextStyle::new(self.chrome.small).color(pal.dim).nowrap(),
-                            );
-                        },
+                        &format!(
+                            "↓ {below} line{} below · ⇧End",
+                            if below == 1 { "" } else { "s" }
+                        ),
+                        TextStyle::new(self.chrome.small).color(pal.dim).nowrap(),
                     );
                 }
             },
         );
         if focused {
             self.focus_sink(ui, sink);
-        } else if ui.key_focus() == Some(sink) && self.key_focus_seen != Some(sink) {
-            // A press in the grid starts a selection, not a click, and
-            // takes kui's keyboard to this pane's sink: the pane follows.
-            // Only a move since last frame: kui still names this sink on
-            // the frame the pane focus leaves it (`<C-w>j`, `gf`), and a
-            // terminal drawn first would take the focus straight back.
-            self.layout.focus(pane);
-            ui.request_frame();
         }
     }
 
@@ -1287,8 +1198,24 @@ impl Kawoosh {
             let style = self.markdown_style(ui.theme().is_dark());
             let v = &self.ed.views[view];
             let buf = &self.ed.buffers[buf_id];
-            let raw: std::collections::HashSet<usize> =
-                v.sels.iter().map(|s| buf.line_of(s.head)).collect();
+            // The source is drawn where the caret is: each selection's
+            // head's line, and in visual mode every line a selection
+            // covers — so a selection grown line by line turns each line
+            // raw once, as it reaches it, rather than the one it left
+            // turning back and reflowing under it (2026-09-27).
+            let visual = self.ed.mode(view) == kawoosh_editor::Mode::Visual;
+            let raw: std::collections::HashSet<usize> = v
+                .sels
+                .iter()
+                .flat_map(|s| {
+                    if visual {
+                        buf.line_of(s.start())..=buf.line_of(s.end())
+                    } else {
+                        let ln = buf.line_of(s.head);
+                        ln..=ln
+                    }
+                })
+                .collect();
             let mut tables = crate::markdown::Tables::default();
             for ln in v.top..last {
                 let r =
@@ -1615,8 +1542,7 @@ impl Kawoosh {
         let sink = ui.with_keyed(
             "editor",
             NodeSpec::row()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Grow(1.0))
+                .fill()
                 .clip()
                 .on_key(tag.clone())
                 .on_drag(tag.clone())
@@ -1633,8 +1559,8 @@ impl Kawoosh {
                         // The padding is each row's, so a header's band
                         // runs across the gutter into the text's.
                         NodeSpec::column()
-                            .width(Sizing::Fixed(gutter))
-                            .height(Sizing::Grow(1.0))
+                            .width(gutter)
+                            .grow_height()
                             .role(Role::None),
                         |ui| {
                             for ln in top..last {
@@ -1656,96 +1582,8 @@ impl Kawoosh {
                 // — a kui scroll container under the pointer would take
                 // the notch itself, both axes, and `top` would never
                 // hear it — and the app hands the offset back each frame.
-                // A rounded selection (`editor.selection_radius`): each
-                // visible line's one selected range, x from the row's left
-                // in logical px, worked out before the rows so each row
-                // knows its neighbours' (`rows::RoundedSel`). Through the
-                // drawn line, as the row draws it, past the hints and the
-                // completion's ghost before it; the newline's cell when
-                // the range takes it. A line with more than one range, or
-                // rendered, keeps the square spans, and its neighbours
-                // round toward it as toward nothing.
-                let rounding = self.selection_rounding(ui);
-                let sel_frag = rounding.map(|(f, _)| f);
-                let radius = rounding.map_or(0.0, |(_, r)| r);
-                let mut sel_x: HashMap<usize, (f32, f32)> = HashMap::new();
-                if sel_frag.is_some() {
-                    let style = rows::mono(font, &pal);
-                    for ln in top..last {
-                        if md_rows.contains_key(&ln) {
-                            continue;
-                        }
-                        let range = buf.line_range(ln);
-                        let mut on_line = sels
-                            .iter()
-                            .map(|s| shown(buf, s, mode, linewise))
-                            .filter(|&(rs, re)| rs < re && rs <= range.end && re > range.start);
-                        let (Some((rs, re)), None) = (on_line.next(), on_line.next()) else {
-                            continue;
-                        };
-                        let window = Window {
-                            left,
-                            width,
-                            cell_w,
-                        };
-                        let index = (range.len() >= rows::LONG_LINE_BYTES)
-                            .then(|| cells.get(buf_id, buf, &range, tabstop).clone());
-                        let (drawn, _) =
-                            crate::secrets::masked_line(buf, range.clone(), tabstop, &masks, 0)
-                                .unwrap_or_else(|| {
-                                    Drawn::for_line(
-                                        buf,
-                                        range.clone(),
-                                        tabstop,
-                                        Some(window),
-                                        0,
-                                        index.as_ref(),
-                                    )
-                                });
-                        let clip = |o: usize| {
-                            drawn.to_drawn(o.clamp(range.start, range.end) - range.start)
-                        };
-                        // What sits between the text's bytes: the hints,
-                        // and on the caret's line the ghost.
-                        let mut virtuals: Vec<(usize, f32)> = inlay
-                            .iter()
-                            .filter(|(o, _)| *o >= range.start && *o <= range.end)
-                            .map(|(o, l)| (clip(*o), ui.measure_text(l, &style, None).width))
-                            .collect();
-                        if let Some(g) = ghost.as_deref().filter(|_| ln == cur_line) {
-                            let w = ui.measure_text(g, &style, None).width;
-                            virtuals.push((clip(primary.head), w));
-                        }
-                        // A byte's x: its cells, and what sits before it —
-                        // at its own byte too for a range's start, whose
-                        // text follows what sits there.
-                        let x = |d: usize, start: bool| {
-                            let cols = drawn.before_cols + rows::col_of(&drawn.text, d);
-                            cols as f32 * cell_w
-                                + virtuals
-                                    .iter()
-                                    .filter(|(b, _)| *b < d || (start && *b == d))
-                                    .map(|(_, w)| w)
-                                    .sum::<f32>()
-                        };
-                        let a = x(clip(rs), true);
-                        let b = if re > range.end {
-                            // Past the newline: the line and its cell.
-                            drawn.cols as f32 * cell_w
-                                + virtuals.iter().map(|(_, w)| w).sum::<f32>()
-                                + ui.measure_text(" ", &style, None).width
-                        } else {
-                            x(clip(re), false)
-                        };
-                        if a < b {
-                            sel_x.insert(ln, (a, b));
-                        }
-                    }
-                }
-                let lines_spec = NodeSpec::column()
-                    .width(Sizing::Grow(1.0))
-                    .height(Sizing::Grow(1.0))
-                    .on_scroll(tag.clone());
+                let sel_radius = self.selection_radius();
+                let lines_spec = NodeSpec::column().fill().on_scroll(tag.clone());
                 let lines = ui.with_keyed(
                     "lines",
                     if md {
@@ -1840,29 +1678,9 @@ impl Kawoosh {
                             let mut selected: Vec<Range<usize>> = Vec::new();
                             let mut carets: Vec<(Range<usize>, Caret)> = Vec::new();
                             let mut access = (None, None);
-                            // A rounded selection's row draws its part
-                            // itself, and its spans carry none.
-                            let rounded =
-                                sel_frag
-                                    .zip(sel_x.get(&ln).copied())
-                                    .map(|(fragment, own)| rows::RoundedSel {
-                                        fragment,
-                                        own,
-                                        prev: ln
-                                            .checked_sub(1)
-                                            .and_then(|p| sel_x.get(&p))
-                                            .copied(),
-                                        next: sel_x.get(&(ln + 1)).copied(),
-                                        radius,
-                                        color: pal.select,
-                                    });
                             for s in sels.iter() {
                                 let (rs, re) = shown(buf, s, mode, linewise);
-                                if rounded.is_none()
-                                    && rs < re
-                                    && rs <= range.end
-                                    && re > range.start
-                                {
+                                if rs < re && rs <= range.end && re > range.start {
                                     let a = clip(rs);
                                     let b = if re > range.end {
                                         drawn.text.len() + 1
@@ -2131,7 +1949,7 @@ impl Kawoosh {
                                         Some(MultiLine::Header(_))
                                     )
                                     .then_some(pal.strip),
-                                    rounded,
+                                    sel_radius,
                                 },
                             );
                         };
@@ -2162,17 +1980,17 @@ impl Kawoosh {
                                 .map(|l| md_cell_h.get(&l).copied().unwrap_or(lh))
                                 .collect();
                             let edge = |ui: &mut Ui<'_>| {
-                                ui.with(NodeSpec::row().height(Sizing::Fixed(1.0)), |_| {});
+                                ui.leaf(NodeSpec::row().height(1.0));
                             };
                             ui.with(
                                 NodeSpec::row()
-                                    .width(Sizing::Grow(1.0))
+                                    .grow_width()
                                     .height(Sizing::Fit)
                                     .min_height(kui_native::Min::FIT),
                                 |ui| {
                                     ui.with(
                                         NodeSpec::column()
-                                            .width(Sizing::Fixed(gutter))
+                                            .width(gutter)
                                             .height(Sizing::Fit)
                                             .role(Role::None),
                                         |ui| {
@@ -2182,8 +2000,8 @@ impl Kawoosh {
                                             for (l, h) in (first..ln).zip(&heights) {
                                                 ui.with(
                                                     NodeSpec::row()
-                                                        .width(Sizing::Grow(1.0))
-                                                        .height(Sizing::Fixed(*h))
+                                                        .grow_width()
+                                                        .height(*h)
                                                         .pad_xy(12.0, 0.0)
                                                         .main_align(Align::End)
                                                         .cross_align(Align::Start),
@@ -2205,10 +2023,10 @@ impl Kawoosh {
                                             }
                                         },
                                     );
-                                    let block = ui.with_keyed(
-                                        &format!("tbl{table}"),
+                                    let block = ui.with_key(
+                                        ui.child_key("tbl").index(table as u64),
                                         NodeSpec::column()
-                                            .width(Sizing::Grow(1.0))
+                                            .grow_width()
                                             .height(Sizing::Fit)
                                             .min_height(kui_native::Min::FIT)
                                             .scroll_x()
@@ -2255,7 +2073,7 @@ impl Kawoosh {
                                                             // still its number's height.
                                                             ui.with(
                                                                 NodeSpec::column()
-                                                                    .height(Sizing::Fixed(lh))
+                                                                    .height(lh)
                                                                     .min_height(
                                                                         kui_native::Min::FIT,
                                                                     ),

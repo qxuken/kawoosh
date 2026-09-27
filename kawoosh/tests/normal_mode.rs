@@ -29,24 +29,15 @@ fn primary(app: &Kawoosh) -> usize {
 }
 
 fn ctrl() -> KeyMods {
-    KeyMods {
-        ctrl: true,
-        ..Default::default()
-    }
+    KeyMods::NONE.with_ctrl()
 }
 
 fn alt() -> KeyMods {
-    KeyMods {
-        alt: true,
-        ..Default::default()
-    }
+    KeyMods::NONE.with_alt()
 }
 
 fn shift() -> KeyMods {
-    KeyMods {
-        shift: true,
-        ..Default::default()
-    }
+    KeyMods::NONE.with_shift()
 }
 
 fn esc(d: &mut Drive, app: &mut Kawoosh) {
@@ -477,19 +468,11 @@ fn ctrl_shift_u_deletes_the_line_in_insert_mode() {
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     d.keys(&mut app, "jA");
-    d.key(
-        &mut app,
-        "u",
-        KeyMods {
-            ctrl: true,
-            shift: true,
-            ..KeyMods::default()
-        },
-    );
+    d.key(&mut app, "u", KeyMods::NONE.with_shift().with_ctrl());
     assert_eq!(text(&app), "one\nthree\n");
     assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Insert);
     assert_eq!(app.ed.memory.head().map(|m| m.text.as_str()), Some("two\n"));
-    d.text(&mut app, "x");
+    d.commit(&mut app, "x");
     assert_eq!(text(&app), "one\nxthree\n");
 }
 
@@ -555,4 +538,305 @@ fn bracket_p_walks_the_last_put_through_the_memory() {
     d.keys(&mut app, "x");
     d.keys(&mut app, "[p");
     assert_eq!(app.ed.message, "the last change was not a put");
+}
+
+/// A `g` or `z` after `v` or an operator is a sequence, with the bundled
+/// plugins loaded: the launcher binds bare letters in normal mode, gated
+/// on its empty query, and a sequence that fell through to normal mode
+/// found that one-key binding and asked the mode it started in for the
+/// longer ones — none there — so the `g` was dropped: `vgg`, `vgl`,
+/// `dgg`, `vgsa)` did one thing short, or typed.
+#[test]
+fn g_sequences_hold_in_visual_and_operator_pending_mode() {
+    let mut app = Kawoosh::new("t", "one\ntwo\nthree");
+    let mut d = Drive::new(900.0, 500.0);
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    d.keys(&mut app, "jjvggd");
+    assert_eq!(text(&app), "hree", "vgg");
+    d.keys(&mut app, "u");
+    d.keys(&mut app, "Gdgg");
+    assert_eq!(text(&app), "", "dgg");
+    d.keys(&mut app, "u");
+    d.keys(&mut app, "ggvgld");
+    assert_eq!(text(&app), "\ntwo\nthree", "vgl");
+    d.keys(&mut app, "u");
+    d.keys(&mut app, "ggviwgsa)");
+    assert_eq!(text(&app), "(one)\ntwo\nthree", "vgsa");
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Normal);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+fn with_plugins(text: &str) -> (Drive, Kawoosh) {
+    let mut app = Kawoosh::new("t", text);
+    let mut d = Drive::new(900.0, 500.0);
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    (d, app)
+}
+
+fn head(app: &Kawoosh) -> usize {
+    app.ed.views[app.focused_view().unwrap()]
+        .sels
+        .primary()
+        .head
+}
+
+fn register(app: &Kawoosh) -> String {
+    app.ed.memory.head().unwrap().text.clone()
+}
+
+/// `p` on a selection replaces it with the register, and what it
+/// replaced is the register's next, so a second `p` swaps back; `P`
+/// keeps the register for one text put over many. Lines over
+/// characters go on lines of their own, characters over lines are one.
+#[test]
+fn p_on_a_selection_replaces_it() {
+    let (mut d, mut app) = with_plugins("one two three");
+    d.keys(&mut app, "yiwwviwp");
+    assert_eq!(text(&app), "one one three");
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Normal);
+    assert_eq!(register(&app), "two", "what it replaced");
+    d.keys(&mut app, "wviwP");
+    assert_eq!(text(&app), "one one two");
+    assert_eq!(register(&app), "two", "`P` keeps the register");
+    d.keys(&mut app, "0viwP");
+    assert_eq!(text(&app), "two one two");
+    // Lines over lines, the last line too.
+    let (mut d, mut app) = with_plugins("a\nb\nc");
+    d.keys(&mut app, "yyjVp");
+    assert_eq!(text(&app), "a\na\nc");
+    assert_eq!(register(&app), "b\n");
+    d.keys(&mut app, "GVp");
+    assert_eq!(text(&app), "a\na\nb");
+    // Characters over lines, lines over characters.
+    let (mut d, mut app) = with_plugins("x y\nline");
+    d.keys(&mut app, "yiwjVp");
+    assert_eq!(text(&app), "x y\nx");
+    let (mut d, mut app) = with_plugins("ab cd");
+    d.keys(&mut app, "yywviwp");
+    assert_eq!(text(&app), "ab \nab cd\n");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// The case: `gu` `gU` `g~` as operators, doubled for the line, `~` a
+/// character at a time, and `u` `U` `~` on a selection — where `u` had
+/// been undo.
+#[test]
+fn case_operators_and_the_selections_case() {
+    let (mut d, mut app) = with_plugins("Hello World");
+    d.keys(&mut app, "gUiw");
+    assert_eq!(text(&app), "HELLO World");
+    d.keys(&mut app, "guu");
+    assert_eq!(text(&app), "hello world");
+    d.keys(&mut app, "g~~");
+    assert_eq!(text(&app), "HELLO WORLD");
+    d.keys(&mut app, "0~~");
+    assert_eq!(text(&app), "heLLO WORLD");
+    assert_eq!(head(&app), 2, "past what it turned");
+    d.keys(&mut app, "0veU");
+    assert_eq!(text(&app), "HELLO WORLD");
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Normal);
+    d.keys(&mut app, "wv$u");
+    assert_eq!(text(&app), "HELLO world", "`u` on a selection is not undo");
+    d.keys(&mut app, "0v~");
+    assert_eq!(text(&app), "hELLO world");
+    // Another operator's `u` is nothing.
+    d.keys(&mut app, "du");
+    assert_eq!(text(&app), "hELLO world");
+    d.keys(&mut app, "u");
+    assert_eq!(text(&app), "HELLO world", "and `u` is undo again");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// WORDs — `W` `B` `E` `gE`, `iW` `aW` — `ge`, and an object that is
+/// not there leaving the operator off rather than yanking nothing.
+#[test]
+fn words_that_only_whitespace_ends() {
+    let (mut d, mut app) = with_plugins("a.b(c) next.one end");
+    d.keys(&mut app, "W");
+    assert_eq!(head(&app), 7);
+    d.keys(&mut app, "W");
+    assert_eq!(head(&app), 16);
+    d.keys(&mut app, "B");
+    assert_eq!(head(&app), 7);
+    d.keys(&mut app, "E");
+    assert_eq!(head(&app), 14);
+    d.keys(&mut app, "gE");
+    assert_eq!(head(&app), 5);
+    d.keys(&mut app, "ge");
+    assert_eq!(head(&app), 4);
+    d.keys(&mut app, "0diW");
+    assert_eq!(text(&app), " next.one end");
+    d.keys(&mut app, "u0daW");
+    assert_eq!(text(&app), "next.one end");
+    let (mut d, mut app) = with_plugins("one\n\nthree");
+    d.keys(&mut app, "yiwjyiW");
+    assert_eq!(register(&app), "one", "no WORD, nothing yanked");
+    assert!(
+        app.ed.message.contains("no text object"),
+        "{}",
+        app.ed.message
+    );
+    d.keys(&mut app, "diW");
+    assert_eq!(text(&app), "one\n\nthree");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// `}` `{` by paragraphs, as a motion for an operator too; `H` `M` `L`
+/// the pane's lines.
+#[test]
+fn paragraphs_and_the_panes_lines() {
+    let (mut d, mut app) = with_plugins("a\nb\n\nc\nd\n\ne");
+    d.keys(&mut app, "}");
+    assert_eq!(head(&app), 4);
+    d.keys(&mut app, "}");
+    assert_eq!(head(&app), 9);
+    d.keys(&mut app, "}");
+    assert_eq!(head(&app), 11, "the end");
+    d.keys(&mut app, "{");
+    assert_eq!(head(&app), 9);
+    d.keys(&mut app, "2{");
+    assert_eq!(head(&app), 0);
+    d.keys(&mut app, "d}");
+    assert_eq!(text(&app), "\nc\nd\n\ne");
+    let lines: Vec<String> = (0..200).map(|i| format!("line {i}")).collect();
+    let (mut d, mut app) = with_plugins(&lines.join("\n"));
+    d.keys(&mut app, "100G");
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    let (top, rows) = (app.ed.views[v].top, app.ed.views[v].rows);
+    assert!(rows > 8, "{rows}");
+    let line = |app: &Kawoosh| app.ed.buffer_of(v).line_of(head(app));
+    // Inside `scrolloff`'s three lines, so the pane holds still.
+    d.keys(&mut app, "H");
+    assert_eq!(line(&app), top + 3);
+    d.keys(&mut app, "L");
+    assert_eq!(line(&app), top + rows - 1 - 3);
+    d.keys(&mut app, "M");
+    assert_eq!(line(&app), top + (rows - 1) / 2);
+    d.keys(&mut app, "3H");
+    assert_eq!(line(&app), top + 3 + 2);
+    assert_eq!(app.ed.views[v].top, top, "the pane never moved");
+    // At the buffer's top the margin is no reason to stop short.
+    d.keys(&mut app, "ggH");
+    assert_eq!(line(&app), 0);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// `[<Space>` `]<Space>` put empty lines around the caret's line, the
+/// caret staying on its text; `Vx` and `Vs` take the lines.
+#[test]
+fn blank_lines_around_and_whole_lines_in_line_visual() {
+    let (mut d, mut app) = with_plugins("a\nb");
+    d.keys(&mut app, "j");
+    d.press(&mut app, "[<Space>");
+    assert_eq!(text(&app), "a\n\nb");
+    assert_eq!(head(&app), 3, "still on `b`");
+    d.keys(&mut app, "2");
+    d.press(&mut app, "]<Space>");
+    assert_eq!(text(&app), "a\n\nb\n\n");
+    assert_eq!(head(&app), 3);
+    d.keys(&mut app, "G");
+    d.press(&mut app, "]<Space>");
+    assert_eq!(text(&app), "a\n\nb\n\n\n");
+    assert_eq!(
+        app.ed
+            .buffer_of(app.focused_view().unwrap())
+            .line_of(head(&app)),
+        4
+    );
+    let (mut d, mut app) = with_plugins("one\ntwo\nthree");
+    d.keys(&mut app, "jVx");
+    assert_eq!(text(&app), "one\nthree");
+    d.keys(&mut app, "uggjVsX");
+    d.press(&mut app, "<Esc>");
+    assert_eq!(text(&app), "one\nX\nthree");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// helix's selections by a pattern (docs/design/selections.md), on the
+/// `<leader>v` group from visual mode: `vs` the matches inside, previewed
+/// as the pattern is typed and put back by `<Esc>`; `vS` split; `vl`
+/// lines; `vk` keep, `!` to drop; `v,` the primary gone.
+#[test]
+fn selections_within_split_keep_lines_drop() {
+    let doc = "let a = foo(1);\nlet b = bar(foo, 2);\nfoo\n\nend foo\n";
+    let mut app = Kawoosh::new("t", doc);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let texts = |app: &Kawoosh| -> Vec<String> {
+        let v = app.focused_view().unwrap();
+        let buf = app.ed.buffer_of(v);
+        app.ed.views[v]
+            .sels
+            .iter()
+            .map(|s| buf.slice(s.start()..buf.next_char(s.end())))
+            .collect()
+    };
+    // Within the first two lines, live.
+    d.press(&mut app, "Vj<leader>vs");
+    d.keys(&mut app, "foo");
+    assert_eq!(texts(&app), ["foo", "foo"], "previewed as it is typed");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(texts(&app), ["foo", "foo"]);
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Visual);
+    // An abandoned prompt puts the selections back.
+    esc(&mut d, &mut app);
+    d.press(&mut app, "ggVj<leader>vs");
+    d.keys(&mut app, "let");
+    assert_eq!(texts(&app), ["let", "let"]);
+    esc(&mut d, &mut app);
+    esc(&mut d, &mut app);
+    assert_eq!(sels(&app).len(), 1, "back to the one line selection");
+    assert!(app.ed.views[app.focused_view().unwrap()].visual_linewise);
+    // Split the second line on `, `.
+    esc(&mut d, &mut app);
+    d.press(&mut app, "ggjV<leader>vS");
+    d.keys(&mut app, ", ");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(texts(&app), ["let b = bar(foo", "2);"]);
+    // Every line with text its own selection, then keep and drop.
+    esc(&mut d, &mut app);
+    d.press(&mut app, "ggVG<leader>vl");
+    assert_eq!(texts(&app).len(), 4, "the empty line is none");
+    d.press(&mut app, "<leader>vk");
+    d.keys(&mut app, "!^let");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(texts(&app), ["foo", "end foo"]);
+    d.press(&mut app, "<leader>v,");
+    assert_eq!(texts(&app).len(), 1, "the primary gone");
+    // A pattern that makes nothing says so and changes nothing.
+    d.press(&mut app, "<leader>vs");
+    d.keys(&mut app, "zzz");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(texts(&app).len(), 1);
+    assert_eq!(app.ed.message, "no match in the selections");
+    assert_eq!(text(&app), doc, "nothing edited");
+}
+
+/// vim's `cw`: from inside a word it changes to the word's end, the
+/// space after it kept (`ce`), where `dw` takes the space; `cW` the same
+/// over a WORD; a count counts words; on the last char, that char.
+#[test]
+fn cw_changes_to_the_words_end() {
+    for (keys, want) in [
+        ("cwX", "X two three"),
+        ("wcwX", "one X three"),
+        ("cWX", "X two three"),
+        ("2cwX", "X three"),
+        ("llcwX", "onX two three"),
+        ("dw", "two three"),
+    ] {
+        let mut app = Kawoosh::new("t", "one two three");
+        let mut d = Drive::new(900.0, 500.0);
+        d.frame(&mut app);
+        d.keys(&mut app, keys);
+        esc(&mut d, &mut app);
+        assert_eq!(text(&app), want, "{keys}");
+    }
 }

@@ -1,21 +1,17 @@
 //! The fonts as data (docs/design/fonts.md): the families kui can see,
 //! what each is (kui's `system_fonts`: monospaced, its weights, an
-//! italic), the face on show, and the handles a Lua view draws a family
-//! with — `kawoosh.fonts`, the door the fonts' pane and the lab read —
-//! and `:font`, `:font NAME`.
+//! italic) and the face on show — `kawoosh.fonts`, the door the fonts'
+//! pane and the lab read — and `:font`, `:font NAME`.
 //!
-//! The families are registered with kui when a view first asks for one
-//! (`kawoosh.fonts.face`) — every family at once, at the next frame,
-//! which is asked for: a few milliseconds for six hundred, where one at
-//! a time drew each card the pane scrolled to in the wrong face for a
-//! frame, a flicker. Until then `face` answers nil; nobody asking, none
-//! is registered.
+//! A view draws a family by its name (`family = NAME`, kui's ADR 0037),
+//! which kui resolves and shapes in the frame that names it: a family's
+//! first shaping is well under a millisecond since kui DX24, so a pane
+//! showing many for the first time costs its frame nothing to speak of.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use kawoosh_editor::Setting;
 use kui_native::{FontId, Ui};
@@ -97,18 +93,6 @@ pub struct Fonts {
     /// Counted up whenever the families are read again, so a view
     /// holding a list of them knows to take it again.
     pub generation: u64,
-    /// The families registered for a view, by name: every one, once a
-    /// view asked.
-    ids: HashMap<String, FontId>,
-    /// A view asked for a family before they were registered.
-    asked: bool,
-    registered: bool,
-    /// The families shaped once — their file read and parsed, what a
-    /// first sight costs (14 ms each on the machine it was measured on)
-    /// — so a view's text in them costs a frame nothing more.
-    warm: HashSet<String>,
-    /// Asked for since the last frame and not warm, in the order asked.
-    cold: Vec<String>,
     /// The user's folder's files loaded, each with its handle.
     user: HashMap<PathBuf, FontId>,
     /// The watch saw the user's folder change: read it again at the
@@ -136,17 +120,10 @@ impl Fonts {
 
 pub type SharedFonts = Rc<RefCell<Fonts>>;
 
-/// How long a frame spends warming families a view asked for: past it,
-/// the rest wait for the next frame, which is asked for. One family is
-/// warmed whatever its cost.
-const WARM_BUDGET: Duration = Duration::from_millis(6);
-
-/// What a family is warmed with: the characters a card shows.
-const WARM_TEXT: &str = "fn greet(name: &str) -> String { let n = 0x1F; // O0 Il1 != => }";
-
-/// The user's fonts: `$KAWOOSH_FONTS`, else `fonts/` beside
-/// `settings.lua` — loaded at start, watched, a file dropped in or taken
-/// out seen within a second (fonts.md Decision 7).
+/// The user's fonts: `$KAWOOSH_FONTS`, else `fonts/` in the config
+/// directory (`~/.config/kawoosh`, whatever `$KAWOOSH_SETTINGS` says) —
+/// loaded at start, watched, a file dropped in or taken out seen within
+/// a second (fonts.md Decision 7).
 pub fn user_fonts_dir() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("KAWOOSH_FONTS") {
         return Some(PathBuf::from(p));
@@ -272,10 +249,7 @@ impl Kawoosh {
     }
 
     /// The user's folder read (at the first frame, and when the watch saw
-    /// it change) and the families read again; every family registered
-    /// once a view asked for one; and what a view asked for this frame
-    /// warmed, within the budget — a frame asked for either way, so the
-    /// view draws what is ready and asks again for the rest.
+    /// it change) and the families read again.
     pub(crate) fn sync_fonts(&mut self, ui: &mut Ui<'_>) {
         let mut notes = Vec::new();
         let mut rewatch = false;
@@ -296,54 +270,10 @@ impl Kawoosh {
                     notes.push(format!("fonts: {}", said.join(" · ")));
                 }
                 read_families(&mut f, ui, self.bundled_font);
-                // Registered again at the next ask: a family taken out
-                // shapes in a fallback, one added has no handle yet.
-                f.ids.clear();
-                f.registered = false;
                 f.generation += 1;
                 rewatch = !first;
                 // A `font.family` that named a family not there yet.
                 self.look.seen = None;
-            }
-            if f.asked && !f.registered {
-                let t = Instant::now();
-                let names: Vec<String> = f
-                    .families
-                    .iter()
-                    .flatten()
-                    .map(|x| x.name.clone())
-                    .collect();
-                for name in names {
-                    let id = if f.bundled.as_deref() == Some(name.as_str()) {
-                        self.bundled_font
-                    } else {
-                        ui.core().add_system_font(&name)
-                    };
-                    if let Some(id) = id {
-                        f.ids.insert(name, id);
-                    }
-                }
-                f.registered = true;
-                log::debug!(
-                    "registered {} font families in {:?}",
-                    f.ids.len(),
-                    t.elapsed()
-                );
-                ui.request_frame();
-            }
-            if !f.cold.is_empty() {
-                let t = Instant::now();
-                for name in std::mem::take(&mut f.cold) {
-                    if t.elapsed() > WARM_BUDGET {
-                        break;
-                    }
-                    if let Some(&id) = f.ids.get(&name) {
-                        let style = kui_native::TextStyle::new(14.0).font(id);
-                        ui.measure_text(&format!("{name} {WARM_TEXT}"), &style, None);
-                    }
-                    f.warm.insert(name);
-                }
-                ui.request_frame();
             }
         }
         if rewatch {
@@ -523,11 +453,7 @@ fn order(all: &mut [Family], bundled: Option<&str>) {
 /// `line_height`, `row`, `cell`, `features`, `chrome`, `font` (a handle
 /// for a text's `font =`), the family's `mono`, `weights` and `italic`,
 /// `version`, and `generation` (counted up when the families are read
-/// again); `face(NAME)`, a family's handle — nil until the frame after
-/// the first ask registers them all, and until the family is warm: read
-/// and shaped once, a few a frame within a budget, so a view that shows
-/// many families for the first time draws each as it is ready rather
-/// than stalling the frame on all of them.
+/// again). A view draws a family by its name (`family = NAME`).
 pub(crate) fn lua_door(lua: &mlua::Lua, fonts: SharedFonts) -> mlua::Result<()> {
     let door = lua.create_table()?;
     let family_table =
@@ -586,27 +512,6 @@ pub(crate) fn lua_door(lua: &mlua::Lua, fonts: SharedFonts) -> mlua::Result<()> 
             Ok(t)
         })?,
     )?;
-    door.set(
-        "face",
-        lua.create_function(move |_, name: String| {
-            let mut f = fonts.borrow_mut();
-            if !f.registered {
-                f.asked = true;
-                return Ok(None);
-            }
-            let Some(&id) = f.ids.get(&name) else {
-                return Ok(None);
-            };
-            // Warm, or the face on show — the editor draws in it.
-            if f.warm.contains(&name) || f.shown.id == Some(id) || f.shown.name == name {
-                return Ok(Some(id.to_ffi() as i64));
-            }
-            if !f.cold.contains(&name) {
-                f.cold.push(name);
-            }
-            Ok(None)
-        })?,
-    )?;
     lua.globals()
         .get::<mlua::Table>("kawoosh")?
         .set("fonts", door)
@@ -630,6 +535,166 @@ pub(crate) fn commands() -> Vec<crate::commands::ShellCommand> {
             }
         },
     )]
+}
+
+/// The fonts pane's windowed probe (`KAWOOSH_PROBE_FONTS=OUT.csv`,
+/// `scripts/probe-fonts.nu`): the pane opened on every family and walked
+/// a card a frame to the last, each frame's work as kui timed it — view,
+/// layout (the text shaped there), render — paired with the families
+/// whose cards were built for the first time in it, written to OUT and
+/// summed up on stderr and in OUT's `.txt`; then the window closes. A
+/// family's first shaping is a frame's own work since the warming went
+/// (kui DX24), and this is where it shows or does not.
+pub struct Probe {
+    out: PathBuf,
+    frame: u32,
+    seen: u64,
+    walking: bool,
+    tail: u32,
+    rows: Vec<ProbeRow>,
+}
+
+struct ProbeRow {
+    view: f32,
+    layout: f32,
+    render: f32,
+    work: f32,
+    new: Vec<String>,
+}
+
+impl Probe {
+    pub fn from_env() -> Option<Self> {
+        let out = std::env::var_os("KAWOOSH_PROBE_FONTS")?;
+        Some(Self {
+            out: PathBuf::from(out),
+            frame: 0,
+            seen: 0,
+            walking: false,
+            tail: 0,
+            rows: Vec::new(),
+        })
+    }
+
+    fn summary(&self) -> String {
+        let stats = |rows: Vec<&ProbeRow>| -> String {
+            if rows.is_empty() {
+                return "none".into();
+            }
+            let mut w: Vec<f32> = rows.iter().map(|r| r.work).collect();
+            w.sort_by(f32::total_cmp);
+            let mean = w.iter().sum::<f32>() / w.len() as f32;
+            let p95 = w[((w.len() - 1) as f32 * 0.95) as usize];
+            let over = |ms: f32| w.iter().filter(|x| **x > ms).count();
+            format!(
+                "{} frames, mean {mean:.2} ms, p95 {p95:.2}, max {:.2}, >8 ms {}, >16 ms {}",
+                w.len(),
+                w[w.len() - 1],
+                over(8.0),
+                over(16.0)
+            )
+        };
+        let first: Vec<&ProbeRow> = self.rows.iter().filter(|r| !r.new.is_empty()).collect();
+        let rest: Vec<&ProbeRow> = self.rows.iter().filter(|r| r.new.is_empty()).collect();
+        let families: usize = first.iter().map(|r| r.new.len()).sum();
+        let mut worst: Vec<&ProbeRow> = first.clone();
+        worst.sort_by(|a, b| b.work.total_cmp(&a.work));
+        let mut s = format!(
+            "fonts pane probe: {} families first built\nfirst-shape frames: {}\nother frames: {}\nslowest first-shape frames:\n",
+            families,
+            stats(first),
+            stats(rest)
+        );
+        for r in worst.iter().take(8) {
+            s.push_str(&format!(
+                "  {:.2} ms (view {:.2}, layout {:.2}, render {:.2}): {}\n",
+                r.work,
+                r.view,
+                r.layout,
+                r.render,
+                r.new.join(", ")
+            ));
+        }
+        s
+    }
+}
+
+impl Kawoosh {
+    /// A frame of the probe, if one runs: see [`Probe`].
+    pub(crate) fn probe_fonts(&mut self, ui: &mut Ui<'_>) {
+        let Some(mut p) = self.fonts_probe.take() else {
+            return;
+        };
+        let rt = self.scripting.rt.clone();
+        let eval = |src: &str| -> Option<mlua::Value> {
+            rt.as_ref()
+                .and_then(|rt| rt.lua().load(src).eval::<mlua::Value>().ok())
+        };
+        p.frame += 1;
+        ui.request_frame();
+        match p.frame {
+            1 => self.run_line("fonts"),
+            40 => self.run_line("fonts mode"),
+            60 => {
+                let _ = eval("return kawoosh.fonts._probe_take()");
+                p.seen = ui.core().stats.total;
+                p.walking = true;
+            }
+            _ if p.walking => {
+                let total = ui.core().stats.total;
+                if total > p.seen {
+                    p.seen = total;
+                    let new: Vec<String> = match eval("return kawoosh.fonts._probe_take()") {
+                        Some(mlua::Value::Table(t)) => {
+                            t.sequence_values::<String>().flatten().collect()
+                        }
+                        _ => Vec::new(),
+                    };
+                    if let Some(s) = ui.core().stats.iter().last() {
+                        p.rows.push(ProbeRow {
+                            view: s.view_ms,
+                            layout: s.layout_ms,
+                            render: s.render_ms,
+                            work: s.work(),
+                            new,
+                        });
+                    }
+                }
+                let at_end = matches!(
+                    eval(
+                        "local s = kawoosh.fonts.state(); return s ~= nil and s.cursor == s.list[#s.list]"
+                    ),
+                    Some(mlua::Value::Boolean(true))
+                );
+                if at_end {
+                    p.tail += 1;
+                } else {
+                    self.run_line("fonts down");
+                }
+                if p.tail > 30 {
+                    let mut csv =
+                        String::from("work_ms,view_ms,layout_ms,render_ms,new_families\n");
+                    for r in &p.rows {
+                        csv.push_str(&format!(
+                            "{:.3},{:.3},{:.3},{:.3},\"{}\"\n",
+                            r.work,
+                            r.view,
+                            r.layout,
+                            r.render,
+                            r.new.join("; ")
+                        ));
+                    }
+                    let summary = p.summary();
+                    let _ = std::fs::write(&p.out, csv);
+                    let _ = std::fs::write(p.out.with_extension("txt"), &summary);
+                    eprint!("{summary}");
+                    self.quit = true;
+                    return;
+                }
+            }
+            _ => {}
+        }
+        self.fonts_probe = Some(p);
+    }
 }
 
 #[cfg(test)]

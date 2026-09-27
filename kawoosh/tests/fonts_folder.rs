@@ -47,7 +47,7 @@ fn a_font_dropped_in_the_users_folder_is_a_family() {
     let mut app = Kawoosh::from_file(&dir.join("a.txt"));
     let ext = app.attach_lua().unwrap();
     let mut d = Drive::new(900.0, 500.0);
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     // What kawoosh ships, as `main` loads it — but Intel One Mono, which
     // the user's folder is given below. None where LFS left pointers.
     let mut shipped = std::collections::HashSet::new();

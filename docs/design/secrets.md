@@ -78,6 +78,18 @@ from elsewhere is evidently one). A secret moment:
 *Beat:* a count per moment (`uses = 3`) — nobody knows the count ahead
 of time, and a second paste is a second `y` away.
 
+*Amended 2026-09-27, from use:* "put once" read every put, so inside a
+vault `yyp` spent the yank and a second `p` put whatever the secret had
+covered — an older text nobody asked for, which read as "yanking does
+not work here". Once is about a secret *leaving*: a put into a private
+buffer spends nothing, since nothing leaves, and a text put there from
+outside is a secret from then on (masked in a list, off the clipboard,
+forgotten on the timer) rather than forgotten at once. A secret put
+into any other buffer is still put once. And the register a secret
+went from is *spent* until something is taken: `p` says the secret is
+gone rather than putting the text under it; `[p` and the memory pane
+still reach the older ones.
+
 ### 3. Masks are rules the engine draws, not a hook
 
 `secrets.masks` is a table of named rules in the engine's settings

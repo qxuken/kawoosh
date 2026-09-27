@@ -32,7 +32,7 @@ fn app() -> (Drive, Kawoosh) {
     let mut app = Kawoosh::new("*scratch*", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     (d, app)
 }
@@ -64,11 +64,7 @@ fn rows(d: &mut Drive, app: &mut Kawoosh, n: usize) -> String {
 
 #[cfg(unix)]
 fn ctrl_shift() -> KeyMods {
-    KeyMods {
-        ctrl: true,
-        shift: true,
-        ..Default::default()
-    }
+    KeyMods::NONE.with_shift().with_ctrl()
 }
 
 /// Without zoxide the rows are the memory's: every `:cd` a visit, the
@@ -94,7 +90,7 @@ fn the_memorys_directories_are_ranked_and_a_pick_moves_the_cwd() {
     let shown = kawoosh_systems::fs::abbreviate_home(&a);
     assert_eq!(got, format!("2|{shown}"), "visited twice, first");
     // The second row: the working directory moves there.
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert_eq!(app.ed.cwd, b);
@@ -168,7 +164,7 @@ fn zoxides_directories_and_visits() {
     );
     d.keys(&mut app, " sd");
     assert_eq!(rows(&mut d, &mut app, 2), format!("2|{}", a.display()));
-    d.ctrl(&mut app, "o");
+    d.press(&mut app, "<C-o>");
     d.frame(&mut app);
     for _ in 0..100 {
         d.frame(&mut app);
@@ -215,7 +211,7 @@ fn a_pick_from_a_terminal_types_cd_at_an_empty_prompt() {
     app.terms.map.get_mut(&t).unwrap().take_sent();
     d.key(&mut app, "Z", ctrl_shift());
     rows(&mut d, &mut app, 2);
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert_eq!(app.ed.message, "the shell is not at an empty prompt");
@@ -223,7 +219,7 @@ fn a_pick_from_a_terminal_types_cd_at_an_empty_prompt() {
     app.feed_terminal(t, b"\x1b]133;A\x07$ \x1b]133;B\x07");
     d.key(&mut app, "Z", ctrl_shift());
     rows(&mut d, &mut app, 2);
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     let sent = String::from_utf8(app.terms.map.get_mut(&t).unwrap().take_sent()).unwrap();
@@ -267,7 +263,7 @@ fn a_shell_asks_the_picker_over_the_socket() {
     assert_eq!(app.ed.cwd, cwd, "a shell's pick moves nothing here");
     let client = ask("");
     rows(&mut d, &mut app, 2);
-    d.ctrl(&mut app, "c");
+    d.press(&mut app, "<C-c>");
     d.frame(&mut app);
     assert_eq!(client.join().unwrap().unwrap(), "", "closed: nothing");
     std::fs::remove_dir_all(&root).ok();
@@ -286,7 +282,7 @@ fn ctrl_t_opens_a_tab_on_the_directory() {
     ex(&mut d, &mut app, &format!("cd {}", b.display()));
     d.keys(&mut app, " sd");
     rows(&mut d, &mut app, 2);
-    d.ctrl(&mut app, "t");
+    d.press(&mut app, "<C-t>");
     for _ in 0..100 {
         d.frame(&mut app);
         if app

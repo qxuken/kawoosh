@@ -8,7 +8,7 @@ use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
 use kawoosh_editor::Mode;
 use kawoosh_systems::lsp::{DIAG_LAYER, ServerDef};
-use kui_native::KeyMods;
+use kui_native::{KeyMods, Rect};
 
 /// A Python that runs: `python3`, `python`, or uv's — Windows puts Store
 /// aliases named `python3` and `python` on the path that only say to
@@ -106,7 +106,7 @@ fn diagnostics_definition_hover_and_completion() {
 
     // An edit shifts the diagnostic through the journal until the next answer.
     d.keys(&mut app, "O");
-    d.text(&mut app, "//");
+    d.commit(&mut app, "//");
     d.key(&mut app, "escape", KeyMods::default());
     let r = app.ed.buffers[buf_id].runs(DIAG_LAYER, 0..100)[0]
         .range
@@ -170,7 +170,7 @@ fn diagnostics_definition_hover_and_completion() {
             .any(|n| n.text.as_deref() == Some("lo_world")),
         "ghost drawn"
     );
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     assert_eq!(
         app.lsp.completion.as_ref().unwrap().ghost("hel").as_deref(),
         Some("p")
@@ -247,7 +247,7 @@ fn diagnostics_wait_for_the_typing_to_pause() {
 
     // Typing brings the cascade, which waits.
     d.keys(&mut app, "O");
-    d.text(&mut app, "!!");
+    d.commit(&mut app, "!!");
     assert_eq!(app.focused_mode(), Mode::Insert);
     assert!(
         until(&mut d, &mut app, |a| a.lsp.held.contains_key(&buf_id)),
@@ -263,7 +263,7 @@ fn diagnostics_wait_for_the_typing_to_pause() {
     assert_eq!(runs[0].range.start, 3, "shifted past the typed line");
     // More typing within the quiet period: still held, the newest kept.
     std::thread::sleep(kawoosh::lsp::DIAG_QUIET / 2);
-    d.text(&mut app, "x");
+    d.commit(&mut app, "x");
     d.frame(&mut app);
     std::thread::sleep(kawoosh::lsp::DIAG_QUIET / 2);
     d.frame(&mut app);
@@ -286,7 +286,7 @@ fn diagnostics_wait_for_the_typing_to_pause() {
     assert_eq!(app.ed.buffers[buf_id].runs(DIAG_LAYER, 0..100).len(), 4);
 
     // Leaving insert mode lands a held answer at once, quiet or not.
-    d.text(&mut app, " !!");
+    d.commit(&mut app, " !!");
     assert!(
         until(&mut d, &mut app, |a| a.lsp.held.contains_key(&buf_id)),
         "held again"
@@ -335,7 +335,7 @@ fn progress_and_messages_land_in_the_corner() {
 
     // An edit: the server ends the token and speaks.
     d.keys(&mut app, "O");
-    d.text(&mut app, "//");
+    d.commit(&mut app, "//");
     d.key(&mut app, "escape", KeyMods::default());
     assert!(
         until(&mut d, &mut app, |a| a
@@ -406,7 +406,7 @@ fn rename_references_actions_format_and_diagnostics() {
     app.add_lsp_server(fake_server());
     let mut d = Drive::new(900.0, 500.0);
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     let v = app.focused_view().unwrap();
     let buf_id = app.ed.views[v].buffer;
     assert!(
@@ -432,7 +432,7 @@ fn rename_references_actions_format_and_diagnostics() {
         .buffer_of(v)
         .line_of(app.ed.views[v].sels.primary().head);
     assert_eq!(app.ed.message, "boom");
-    d.ctrl(&mut app, "e");
+    d.press(&mut app, "<C-e>");
     assert!(
         app.ed
             .buffers
@@ -459,7 +459,7 @@ fn rename_references_actions_format_and_diagnostics() {
     d.keys(&mut app, "jw");
     d.keys(&mut app, " r");
     assert!(app.ed.prompt_view().is_some(), "the prompt is open");
-    d.text(&mut app, "_again");
+    d.commit(&mut app, "_again");
     d.key(&mut app, "enter", KeyMods::default());
     assert!(
         until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
@@ -483,7 +483,7 @@ fn rename_references_actions_format_and_diagnostics() {
         app.ed.buffers[buf_id].text(),
         "fn main() {\n    hello()\n}\n"
     );
-    d.ctrl(&mut app, "r");
+    d.press(&mut app, "<C-r>");
     assert_eq!(
         app.ed.buffers[buf_id].text(),
         "// renamed\nfn main() {\n    hello_again()\n}\n"
@@ -646,7 +646,7 @@ fn rename_references_actions_format_and_diagnostics() {
     // The second is a command: run on the server, whose applyEdit lands.
     d.keys(&mut app, " ca");
     assert!(until(&mut d, &mut app, picker_up));
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     d.key(&mut app, "enter", KeyMods::default());
     assert!(
         until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
@@ -720,7 +720,7 @@ fn buffer_words_complete_and_the_candidates_picker_browses_them() {
     app.jobs_inline = true;
     let mut d = Drive::new(900.0, 500.0);
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     d.frame(&mut app);
     let v = app.focused_view().unwrap();
     let buf_id = app.ed.views[v].buffer;
@@ -739,7 +739,7 @@ fn buffer_words_complete_and_the_candidates_picker_browses_them() {
     // The picker: a row per candidate with its kind and detail, the
     // query the word so far, the keys on the query; the preview is
     // the cursor's detail.
-    d.ctrl(&mut app, "x");
+    d.press(&mut app, "<C-x>");
     d.frame(&mut app);
     assert!(
         matches!(app.layout.focused_content(), Some(Content::Lua(_))),
@@ -759,7 +759,7 @@ fn buffer_words_complete_and_the_candidates_picker_browses_them() {
     assert!(drawn.iter().any(|t| t == "buffer"), "{drawn:?}");
     // Down one row and `⏎`: `helper` replaces the word, the keys are
     // back in the text, insert mode still.
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert_eq!(
@@ -786,7 +786,7 @@ fn buffer_words_complete_and_the_candidates_picker_browses_them() {
     d.keys(&mut app, " zq");
     d.frame(&mut app);
     assert!(app.lsp.completion.is_none());
-    d.ctrl(&mut app, "x");
+    d.press(&mut app, "<C-x>");
     assert_eq!(app.ed.message, "no candidates");
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(d.warnings(), Vec::<String>::new());
@@ -811,7 +811,7 @@ fn the_servers_block_opens_the_lsp_pane() {
         "the server holds the file"
     );
     d.frame(&mut app);
-    let (x, y, w, h) = d.rect_of("block0").expect("the servers block");
+    let Rect { x, y, w, h } = d.rect("block0").expect("the servers block");
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     let info = app
         .ed
@@ -857,7 +857,7 @@ fn symbols_implementations_hints_and_acting_from_the_hover() {
     app.add_lsp_server(fake_server());
     let mut d = Drive::new(900.0, 500.0);
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     assert!(
         until(&mut d, &mut app, |a| a
             .lsp
@@ -1086,7 +1086,7 @@ fn a_rename_reaches_the_files_a_multibuffer_holds() {
     app.add_lsp_server(fake_server());
     let mut d = Drive::new(900.0, 500.0);
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     assert!(
         until(&mut d, &mut app, |a| a.lsp.caps.contains_key("rust")),
         "capabilities"
@@ -1200,14 +1200,7 @@ fn diagnostics_whole_and_of_files_no_buffer_holds() {
     );
     // `<C-e>` on it: the whole, headed.
     d.keys(&mut app, "j");
-    d.key(
-        &mut app,
-        "e",
-        KeyMods {
-            ctrl: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "e", KeyMods::NONE.with_ctrl());
     let shown = app
         .ed
         .buffers
@@ -1273,7 +1266,7 @@ fn the_diagnostics_list() {
     app.add_lsp_server(fake_server());
     let mut d = Drive::new(900.0, 500.0);
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     let v = app.focused_view().unwrap();
     let main_id = app.ed.views[v].buffer;
     assert!(
@@ -1354,7 +1347,7 @@ fn the_diagnostics_list() {
     assert_eq!(app.ed.message, "boom");
     d.keys(&mut app, "]d");
     assert_eq!(app.ed.message, "Type 'A' is not assignable to type 'B'.");
-    d.ctrl(&mut app, "e");
+    d.press(&mut app, "<C-e>");
     let shown = app
         .ed
         .buffers
@@ -1371,7 +1364,7 @@ fn the_diagnostics_list() {
     assert!(text.contains("other.rs  1 error\n"), "{text}");
 
     // To the file's pane.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
 
     // `]q` from the file walks the list: main.rs's first, at it.
@@ -1716,7 +1709,7 @@ fn lsp_logs_keep_what_a_server_said() {
     let logs_pane = app.layout.focused();
     app.layout.focus(main_pane);
     d.keys(&mut app, "O");
-    d.text(&mut app, "//");
+    d.commit(&mut app, "//");
     d.key(&mut app, "escape", KeyMods::default());
     app.layout.focus(logs_pane);
     assert!(

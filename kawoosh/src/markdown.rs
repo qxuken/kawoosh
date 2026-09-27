@@ -220,6 +220,10 @@ pub fn render(
     out
 }
 
+/// A task's boxes as the rendered row draws them.
+pub const TASK_OPEN: &str = "\u{F0131}";
+pub const TASK_DONE: &str = "\u{F0C52}";
+
 fn bold(color: Option<Color>) -> Mark {
     Mark {
         bold: true,
@@ -318,10 +322,17 @@ fn prose(
                     marks.push((at..at + 1, dim(style.dim)));
                 }
             }
+            // The Nerd Font's boxes (`nf-md-checkbox_blank_outline`,
+            // `nf-md-checkbox_outline`), which ship with kawoosh and fill a
+            // cell at the font's size: `☐` `☑` are in few monospaced faces,
+            // so they came thin and small from whatever fallback had them.
+            // Open in the text's colour, done in the links' accent.
             Block::TaskOpen | Block::TaskDone => {
                 let open = *b == Block::TaskOpen;
-                folds.push((r.clone(), if open { "☐" } else { "☑" }.into()));
-                marks.push((r.clone(), dim(style.dim)));
+                folds.push((r.clone(), if open { TASK_OPEN } else { TASK_DONE }.into()));
+                if !open {
+                    marks.push((r.clone(), dim(style.link)));
+                }
             }
             _ => {}
         }
@@ -839,64 +850,10 @@ impl Kawoosh {
         }
     }
 
-    /// `gx`: the link under the caret opened — a path here (through the
-    /// openers, so a directory is listed), a URL in the OS.
-    fn open_link(&mut self) {
-        let Some(v) = self.focused_view() else { return };
-        let buf = self.ed.buffer_of(v);
-        let head = self.ed.views[v].sels.primary().head;
-        let ln = buf.line_of(head);
-        let range = buf.line_range(ln);
-        let line = buf.slice(range.clone());
-        let at = head - range.start;
-        let Some(target) = link_at(&line, at) else {
-            self.ed.message = "no link under the caret".into();
-            return;
-        };
-        if target.contains("://") || target.starts_with("mailto:") {
-            let opener = if cfg!(target_os = "macos") {
-                ("open", vec![target.clone()])
-            } else if cfg!(windows) {
-                (
-                    "cmd",
-                    vec!["/c".into(), "start".into(), String::new(), target.clone()],
-                )
-            } else {
-                ("xdg-open", vec![target.clone()])
-            };
-            match kawoosh_systems::io::command(opener.0)
-                .args(&opener.1)
-                .spawn()
-            {
-                Ok(_) => self.ed.message = format!("opened {target}"),
-                Err(e) => self.ed.message = format!("{}: {e}", opener.0),
-            }
-            return;
-        }
-        // `#anchor`: a heading of this buffer; `file.md#anchor`, that
-        // file's.
-        let (path, anchor) = match target.split_once('#') {
-            Some((p, a)) => (p, Some(a)),
-            None => (target.as_str(), None),
-        };
-        if !path.is_empty() {
-            let base = buf
-                .path
-                .as_deref()
-                .and_then(kawoosh_systems::fs::parent)
-                .unwrap_or_else(|| self.cwd.clone());
-            let full = kawoosh_systems::fs::expand(Path::new(path), &base);
-            self.open(&full);
-        }
-        if let Some(anchor) = anchor.filter(|a| !a.is_empty()) {
-            self.goto_anchor(anchor);
-        }
-    }
-
     /// The caret to the heading whose slug is `anchor` in the focused
     /// buffer, GitHub's way: the heading's text lower-cased, spaces as
     /// `-`, punctuation dropped, a repeat numbered `-1`, `-2`.
-    fn goto_anchor(&mut self, anchor: &str) {
+    pub(crate) fn goto_anchor(&mut self, anchor: &str) {
         let Some(v) = self.focused_view() else { return };
         let buf = self.ed.buffer_of(v);
         let want = anchor.to_lowercase();
@@ -984,47 +941,6 @@ pub fn slug(text: &str) -> String {
             _ => None,
         })
         .collect()
-}
-
-/// The link at byte `at` of `line`: an inline link's destination when
-/// the caret is anywhere on it, an autolink's, or a bare URL's.
-pub fn link_at(line: &str, at: usize) -> Option<String> {
-    // `[label](dest)`: every link on the line, the one around `at`.
-    let mut i = 0;
-    while let Some(open) = line[i..].find('[').map(|o| o + i) {
-        let Some(mid) = line[open..].find("](").map(|m| m + open) else {
-            break;
-        };
-        let Some(close) = line[mid..].find(')').map(|c| c + mid) else {
-            break;
-        };
-        let start = if open > 0 && line.as_bytes()[open - 1] == b'!' {
-            open - 1
-        } else {
-            open
-        };
-        if (start..=close).contains(&at) {
-            let dest = line[mid + 2..close]
-                .split_whitespace()
-                .next()?
-                .trim_matches(['<', '>']);
-            return Some(dest.to_string());
-        }
-        i = close + 1;
-    }
-    // `<https://…>` or a bare URL.
-    let is_url_char = |c: char| !c.is_whitespace() && !"<>()\"'".contains(c);
-    let start = line[..at.min(line.len())]
-        .char_indices()
-        .rev()
-        .find(|(_, c)| !is_url_char(*c))
-        .map_or(0, |(i, c)| i + c.len_utf8());
-    let end = line[at.min(line.len())..]
-        .char_indices()
-        .find(|(_, c)| !is_url_char(*c))
-        .map_or(line.len(), |(i, _)| at + i);
-    let word = line.get(start..end)?.trim_end_matches(['.', ',', ';']);
-    (word.contains("://") || word.starts_with("mailto:")).then(|| word.to_string())
 }
 
 pub(crate) fn commands() -> Vec<ShellCommand> {
@@ -1168,10 +1084,6 @@ mod tests {
             Some(("p.png".into(), "a".into()))
         );
         assert_eq!(image_line("see ![a](p.png)"), None);
-        let l = "go [here](b.md#top) or https://x.io/a.";
-        assert_eq!(link_at(l, 5).as_deref(), Some("b.md#top"));
-        assert_eq!(link_at(l, 28).as_deref(), Some("https://x.io/a"));
-        assert_eq!(link_at(l, 1), None);
         assert_eq!(
             slug("Self-Hosting / Deployment"),
             "self-hosting--deployment"

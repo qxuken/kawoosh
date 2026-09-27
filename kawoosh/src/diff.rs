@@ -9,7 +9,7 @@
 use std::borrow::Cow;
 
 use kawoosh_doc::Hunk;
-use kui_native::{Align, Color, NodeSpec, Sizing, TextStyle, Ui};
+use kui_native::{Align, Color, NodeSpec, TextStyle, Ui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -101,8 +101,8 @@ pub fn rows<'a>(ui: &mut Ui<'_>, lines: impl IntoIterator<Item = Line<'a>>, styl
         };
         ui.with(
             NodeSpec::row()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(style.row_h))
+                .grow_width()
+                .height(style.row_h)
                 .pad_xy(style.pad_x, 0.0)
                 .gap(style.gap)
                 .cross_align(Align::Center)

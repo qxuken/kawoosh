@@ -59,7 +59,7 @@ fn rect_of_text(d: &Drive, text: &str) -> Option<(f32, f32, f32, f32)> {
 
 /// Away from the caret every mark is folded: the heading's `#`, the
 /// emphasis, the code span's backticks, the link's destination, a
-/// bullet `•`, a task `☐` `☑`, a quote `▎`, a fence's backticks (its
+/// bullet `•`, a task's box (the Nerd Font's, open or checked), a quote `▎`, a fence's backticks (its
 /// info stays), a table's cells in columns between rules, a setext
 /// underline gone; the caret's line is its source. A heading is drawn
 /// larger than the body, a long paragraph wraps, and the image is an
@@ -75,8 +75,8 @@ fn rendered_rows_fold_the_marks_and_the_caret_line_is_raw() {
     for want in [
         "• item one",
         "• item two with bold",
-        "• ☐ a task",
-        "• ☑ a done task",
+        "• \u{F0131} a task",
+        "• \u{F0C52} a done task",
         "1. first",
         "▎ a quoted line with emphasis",
         "rust",
@@ -252,7 +252,7 @@ fn a_heading_typed_takes_its_size() {
     d.press(&mut app, "gg");
     d.keys(&mut app, "jo");
     for c in ["#", "#", " ", "N", "e", "w"] {
-        d.text(&mut app, c);
+        d.commit(&mut app, c);
         settle(&mut d, &mut app);
     }
     let h2 = rect_of_text(&d, "A list").expect("an h2").3;
@@ -616,5 +616,90 @@ fn a_code_blocks_rows_meet_without_a_line_at_any_scale() {
             assert_eq!(hits, [1.0], "one row, wholly, at ({cx}, {cy}), {scale}×");
         }
     }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// In visual mode every line a selection covers is its source, so a
+/// selection grown by `j` turns each line raw once, as it reaches it —
+/// where only the head's line was, and the line it left turned back and
+/// reflowed under the selection; out of visual mode, the caret's line.
+#[test]
+fn a_visual_selection_draws_every_line_it_covers_raw() {
+    let dir = fixture("visual-raw");
+    let (mut d, mut app) = launch(&dir, 700.0);
+    let has = |d: &Drive, s: &str| d.line_rows().iter().any(|r| r == s);
+    d.keys(&mut app, "7G");
+    settle(&mut d, &mut app);
+    assert!(has(&d, "- item one"), "{:#?}", d.line_rows());
+    assert!(has(&d, "• item two with bold"));
+    d.keys(&mut app, "Vj");
+    settle(&mut d, &mut app);
+    assert!(has(&d, "- item one"), "the line it left stays raw");
+    assert!(has(&d, "- item two with **bold**"));
+    assert!(!has(&d, "- [ ] a task"), "the rest rendered");
+    d.keys(&mut app, "j");
+    settle(&mut d, &mut app);
+    assert!(has(&d, "- item one") && has(&d, "- item two with **bold**"));
+    assert!(has(&d, "- [ ] a task"));
+    d.key(&mut app, "escape", KeyMods::default());
+    settle(&mut d, &mut app);
+    assert!(has(&d, "• item one"), "out of visual mode, rendered again");
+    assert!(has(&d, "- [ ] a task"), "but the caret's line");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `editor.selection_radius` rounds a selection over the markdown
+/// buffer's rows too: a wrapped paragraph's selection is a piece a wrapped
+/// line, and kui joins them (its F101) with each other and with the rows
+/// around them — where the rendered rows had kept square spans.
+#[test]
+fn a_rounded_selection_joins_across_wrapped_rows() {
+    use kawoosh_editor::{Layer, Setting};
+    let dir = fixture("rounded");
+    let (mut d, mut app) = launch(&dir, 700.0);
+    app.ed.settings.set(
+        Layer::Session,
+        "editor.selection_radius",
+        Setting::Float(4.0),
+    );
+    // The long paragraph, which wraps, and the blank line under it.
+    d.keys(&mut app, "3GVj");
+    settle(&mut d, &mut app);
+    let sel = app.pal.select;
+    let dl = d.core.output().0;
+    assert!(
+        !dl.quads
+            .iter()
+            .any(|q| q.kind == kui_native::QuadKind::Solid && q.color == sel),
+        "no square selection"
+    );
+    let mut lines: Vec<(f32, f32, f32, f32, u32)> = dl
+        .quads
+        .iter()
+        .filter(|q| q.kind == kui_native::QuadKind::Fragment && q.color == sel)
+        .map(|q| {
+            let p = dl.fragments[q.uv[0] as usize].params;
+            (
+                q.rect.y,
+                q.rect.y + q.rect.h,
+                q.rect.x + p[0],
+                q.rect.x + p[1],
+                p[7] as u32,
+            )
+        })
+        .collect();
+    lines.sort_by(|a, b| a.0.total_cmp(&b.0));
+    lines.dedup();
+    assert!(
+        lines.len() >= 3,
+        "the paragraph's wrapped lines and the blank one: {lines:?}"
+    );
+    for w in lines.windows(2) {
+        assert_eq!(w[0].1, w[1].0, "the lines meet: {lines:?}");
+        assert_eq!(w[0].4 & 2, 2, "each told the one below: {lines:?}");
+        assert_eq!(w[1].4 & 1, 1, "and the one above: {lines:?}");
+    }
+    assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }

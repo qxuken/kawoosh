@@ -66,15 +66,11 @@ local SELECTED = 4
 
 -- The pane's state: the cursor's variant by name, the grid the last
 -- frame laid the cards out in (rows of names), which the walk reads,
--- and `reveal`, the frames left to scroll the cursor's card into view:
--- `env.reveal` names a card by the label it was declared with, which
--- the view has not declared yet when it asks — the last frame's is
--- found, and on the pane's first frame there is none — and a reveal
--- the frame after the pane opened resolves against a column not yet
--- its height, and moves nothing. So it is asked on each of a few
--- frames: a card already in view is not moved by it.
+-- and `reveal`, set when the cursor's card is to be scrolled into view.
+-- `env.reveal` names a card by the label it is declared with below:
+-- kui resolves it when the frame is built (DX15), so the pane's first
+-- frame reaches it too; a card already in view is not moved by it.
 local S = nil
-local REVEAL_FRAMES = 3
 
 local function by_name(name)
   for _, v in ipairs(themes.variants) do
@@ -211,7 +207,7 @@ kawoosh.view(VIEW, function(ctx)
   sizes(ctx.env)
   local t = ctx.env.theme
   local cur = themes.current()
-  if not S then S = { cursor = on_show(cur), reveal = REVEAL_FRAMES } end
+  if not S then S = { cursor = on_show(cur), reveal = true } end
   if not by_name(S.cursor) then S.cursor = themes.variants[1].name end
   -- The first row's card brings the chips above it back too: to the top.
   if S.reveal then
@@ -219,11 +215,11 @@ kawoosh.view(VIEW, function(ctx)
     local top = false
     for _, n in ipairs(first) do top = top or n == S.cursor end
     if top then
-      pcall(ctx.env.set_scroll, "body", 0, 0)
+      ctx.env.set_scroll("body", 0, 0)
     else
-      pcall(ctx.env.reveal, "card " .. S.cursor)
+      ctx.env.reveal("card " .. S.cursor)
     end
-    S.reveal = S.reveal > 1 and S.reveal - 1 or nil
+    S.reveal = nil
   end
   S.scrolled = ctx.env.scroll_offset("body").y
   local w = (ctx.width or 0) > 0 and ctx.width or 900
@@ -330,7 +326,7 @@ local function walk(dx, dy)
     end
     S.cursor = flat[math.max(1, math.min(#flat, at + dx))]
   end
-  S.reveal = REVEAL_FRAMES
+  S.reveal = true
 end
 
 local function close()

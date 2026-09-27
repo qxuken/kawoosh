@@ -1,9 +1,10 @@
 //! Kawoosh's headless harness is kui's `Core` (kui.md D8): a frame is a
 //! function of the tree and the input so far, so a test presses keys
 //! through the real `App::view` / `on_event` and asserts on the model
-//! *and* on the drawn rows. This mirrors `kui-devtools`'s `Drive` (not a
-//! published crate) in the hundred lines kawoosh needs. The Rust tests
-//! take it as `Drive` (`kawoosh/tests/drive.rs`), and `kawoosh test
+//! *and* on the drawn rows. The driving is kui's (`kui_native::testing::
+//! Drive`); what is here is kawoosh's own: keys in map notation and the
+//! readings of its rows, gutters and floats. The Rust tests take it as
+//! `Drive` (`kawoosh/tests/drive.rs`), and `kawoosh test
 //! PATH…` (roadmap step 8) drives a Lua script with it: the script runs
 //! as a coroutine, `kawoosh.press(keys)` yields the keys to press,
 //! `kawoosh.frame(n)` frames to draw and `kawoosh.wait(fn)` frames until
@@ -14,109 +15,51 @@
 //! Lua tests (`kawoosh/lua/tests/*.lua`) run on it, from `cargo test`
 //! and from the CLI alike.
 
+use std::ops::{Deref, DerefMut};
 use std::path::Path;
 
 use kawoosh_editor::keymap::{LEADER, parse_notation};
 use kawoosh_lua::TestStep;
-use kui_native::{
-    App, Core, Extension, Extensions, InputEvent, KeyCode, KeyMods, KeyPress, Size, UiEvent, Vec2,
-};
+use kui_native::testing::Drive;
+use kui_native::{Core, KeyMods, Rect};
 
 use crate::app::Kawoosh;
 
 /// The window a Lua test is drawn in.
 const TEST_VIEWPORT: (f32, f32) = (1000.0, 700.0);
 
-pub struct Harness {
-    pub core: Core,
-    viewport: Size,
-    /// The display's scale, 1 unless a test sets it: at 1.75 or 2.175 a
-    /// 20 px line is not whole physical pixels, where joins go wrong.
-    pub scale: f32,
-    now: f64,
-    pub frames: u64,
-    /// The extensions filling the frame's slots — the Lua runtime, when
-    /// a test attaches it — routed the way the runner routes them.
-    pub exts: Extensions,
+/// kui's headless [`Drive`], framing after every gesture, with
+/// kawoosh's own readings of what it drew: the panes' rows and gutters,
+/// the confirm, the corner — and keys pressed in map notation.
+pub struct Harness(pub Drive);
+
+impl Deref for Harness {
+    type Target = Drive;
+    fn deref(&self) -> &Drive {
+        &self.0
+    }
+}
+
+impl DerefMut for Harness {
+    fn deref_mut(&mut self) -> &mut Drive {
+        &mut self.0
+    }
 }
 
 impl Harness {
+    /// A `w` by `h` window, kui's diagnostics on so a test can assert
+    /// it raised no warning.
     pub fn new(w: f32, h: f32) -> Self {
         let mut core = Core::new();
         core.set_diagnostics(true);
-        core.set_inspect(true);
-        Self {
-            core,
-            viewport: Size::new(w, h),
-            scale: 1.0,
-            now: 0.0,
-            frames: 0,
-            exts: Extensions::new(),
-        }
+        Self(Drive::new(core, w, h).framing())
     }
 
-    /// Loads an extension under `ns`, as `Launcher::extension_as` would.
-    pub fn extension(&mut self, ns: &str, ext: impl Extension + 'static) {
-        self.exts
-            .push_as(ns, Box::new(ext))
-            .expect("a free namespace");
-    }
-
-    pub fn frame(&mut self, app: &mut impl App) {
-        self.frames += 1;
-        self.core.set_time(self.now);
-        let mut ui = self
-            .core
-            .frame_with(self.viewport, self.scale, &mut self.exts);
-        app.view(&mut ui);
-        ui.finish();
-        let pending = self.core.take_pending_events();
-        self.exts.route(pending, |ev| app.on_event(ev));
-    }
-
-    pub fn advance(&mut self, secs: f64) {
-        self.now += secs;
-    }
-
-    pub fn input(&mut self, app: &mut impl App, ev: InputEvent) -> Vec<UiEvent> {
-        let out = self.core.handle_input(ev);
-        self.exts.route(out.clone(), |ev| app.on_event(ev));
-        out
-    }
-
-    /// A key by the name a binding spells it, both channels, then the
-    /// release, then a frame.
-    pub fn key(&mut self, app: &mut impl App, name: &str, mods: KeyMods) {
-        let code = KeyCode::from_name(name).unwrap_or(KeyCode::Unknown);
-        let mut press = KeyPress::new(code, mods);
-        if let KeyCode::Char(c) = code
-            && !mods.ctrl
-            && !mods.alt
-            && !mods.super_key
-        {
-            press = press.with_text(c.to_string());
-        }
-        self.input(app, InputEvent::KeyDown(press.clone()));
-        if let Some(ev) = press.edit_event() {
-            self.input(app, ev);
-        }
-        self.input(app, InputEvent::KeyUp(press.released()));
-        self.frame(app);
-    }
-
-    /// `keys(app, "jjj ww")`: one plain key per character, a space being
-    /// the space key.
-    pub fn keys(&mut self, app: &mut impl App, seq: &str) {
-        for c in seq.chars() {
-            if c == ' ' {
-                let press = KeyPress::new(KeyCode::Space, KeyMods::default()).with_text(" ");
-                self.input(app, InputEvent::KeyDown(press.clone()));
-                self.input(app, InputEvent::KeyUp(press.released()));
-                self.frame(app);
-            } else {
-                self.key(app, &c.to_string(), KeyMods::default());
-            }
-        }
+    /// Where the node labelled `label` was hit last frame (kui's
+    /// `rect_of`, by the name a test knows it by).
+    pub fn rect(&mut self, label: &str) -> Option<Rect> {
+        let key = self.key_of(label)?;
+        self.rect_of(key)
     }
 
     /// Keys in map notation — `jj`, `<C-w>v`, `<leader>f`, `<A-J>`,
@@ -178,13 +121,6 @@ impl Harness {
             };
             let chord = mods.ctrl || mods.alt || mods.super_key;
             let name: String = match named {
-                Some("space") => {
-                    let press = KeyPress::new(KeyCode::Space, mods).with_text(" ");
-                    self.input(app, InputEvent::KeyDown(press.clone()));
-                    self.input(app, InputEvent::KeyUp(press.released()));
-                    self.frame(app);
-                    continue;
-                }
                 Some(n) => n.to_string(),
                 None if base.starts_with('F') && base.len() > 1 => base.to_lowercase(),
                 None if chord && base.len() == 1 && base.as_bytes()[0].is_ascii_uppercase() => {
@@ -195,78 +131,6 @@ impl Harness {
             };
             self.key(app, &name, mods);
         }
-    }
-
-    pub fn ctrl(&mut self, app: &mut impl App, name: &str) {
-        self.key(
-            app,
-            name,
-            KeyMods {
-                ctrl: true,
-                ..Default::default()
-            },
-        );
-    }
-
-    /// An IME commit or the clipboard's answer: text that did not come
-    /// from a key press, as the OS delivers it to a key sink.
-    pub fn text(&mut self, app: &mut impl App, s: &str) {
-        self.input(app, InputEvent::Commit(s.to_string()));
-        self.frame(app);
-    }
-
-    pub fn wheel(&mut self, app: &mut impl App, x: f32, y: f32, dx: f32, dy: f32) {
-        self.input(app, InputEvent::CursorMoved(Vec2::new(x, y)));
-        self.input(app, InputEvent::Scroll(Vec2::new(dx, dy)));
-        self.frame(app);
-    }
-
-    /// The pointer moved to `x`, `y`, and a frame.
-    pub fn hover(&mut self, app: &mut impl App, x: f32, y: f32) {
-        self.input(app, InputEvent::CursorMoved(Vec2::new(x, y)));
-        self.frame(app);
-    }
-
-    pub fn click(&mut self, app: &mut impl App, x: f32, y: f32) {
-        self.input(app, InputEvent::CursorMoved(Vec2::new(x, y)));
-        self.input(app, InputEvent::mouse_down(1));
-        self.input(app, InputEvent::mouse_up());
-        self.frame(app);
-    }
-
-    /// Two clicks at one point, the second counted as the second, as the
-    /// OS counts a double click into the press.
-    pub fn double_click(&mut self, app: &mut impl App, x: f32, y: f32) {
-        self.click(app, x, y);
-        self.input(app, InputEvent::mouse_down(2));
-        self.input(app, InputEvent::mouse_up());
-        self.frame(app);
-    }
-
-    /// A press at one point, the pointer taken to another in two steps
-    /// (past kui's click slop, so the node's `on_drag` reports moves and
-    /// the release is no click), a frame drawn while held, the release.
-    pub fn drag(&mut self, app: &mut impl App, from: (f32, f32), to: (f32, f32)) {
-        self.input(app, InputEvent::CursorMoved(Vec2::new(from.0, from.1)));
-        self.input(app, InputEvent::mouse_down(1));
-        self.input(
-            app,
-            InputEvent::CursorMoved(Vec2::new(from.0 + 8.0, from.1 + 8.0)),
-        );
-        self.input(app, InputEvent::CursorMoved(Vec2::new(to.0, to.1)));
-        self.frame(app);
-        self.input(app, InputEvent::mouse_up());
-        self.frame(app);
-    }
-
-    /// Where the node labelled `label` was drawn last frame, as (x, y,
-    /// w, h); the first one when several carry the label.
-    pub fn rect_of(&self, label: &str) -> Option<(f32, f32, f32, f32)> {
-        self.core
-            .nodes()
-            .iter()
-            .find(|n| n.label.as_deref() == Some(label))
-            .map(|n| (n.rect.x, n.rect.y, n.rect.w, n.rect.h))
     }
 
     /// The text of every row under every node labelled `lines` in the
@@ -377,15 +241,6 @@ impl Harness {
         }
         out
     }
-
-    /// Every warning the core raised so far; a test asserts it empty.
-    pub fn warnings(&mut self) -> Vec<String> {
-        self.core
-            .take_warnings()
-            .into_iter()
-            .map(|w| format!("{}: {}", w.code, w.message))
-            .collect()
-    }
 }
 
 /// Runs the Lua test at `path` headless: a fresh editor with the
@@ -419,7 +274,7 @@ fn run_script(path: &Path) -> Result<(), String> {
     app.jobs_inline = true;
     let ext = app.attach_lua()?;
     let mut h = Harness::new(TEST_VIEWPORT.0, TEST_VIEWPORT.1);
-    h.extension("lua", ext);
+    h.extension("lua", ext)?;
     h.frame(&mut app);
     let rt = app.scripting.rt.clone().ok_or("no lua runtime")?;
     rt.start_test(&path.display().to_string(), &src)?;

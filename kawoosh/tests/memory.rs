@@ -186,7 +186,7 @@ fn launch(db: &std::path::Path, path: &std::path::Path) -> (Drive, Kawoosh) {
     let mut app = Kawoosh::from_file(path);
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     // In the test's directory, which is no repository: the workspace
     // is the empty one, as the keys below spell it.
     app.set_cwd(db.parent().unwrap());
@@ -1062,7 +1062,7 @@ fn runs_are_remembered_as_tools_and_locations() {
     assert!(tool.meta.contains("\"cmd\":\"cat\""), "{}", tool.meta);
     // `:memory all` lists both (from the terminal the command line is
     // `<C-w>:`); `⏎` on the location opens the file at its line.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, ":memory all");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
@@ -1156,7 +1156,7 @@ fn the_pane_filters_its_rows_from_a_field() {
         texts(&d)
     );
     // The list keys from the line.
-    d.ctrl(&mut app, "n");
+    d.press(&mut app, "<C-n>");
     assert_eq!(app.memory_pane.cursor, 1);
     d.key(&mut app, "up", KeyMods::default());
     assert_eq!(app.memory_pane.cursor, 0);
@@ -1248,7 +1248,7 @@ fn a_pin_opens_in_the_pane_that_has_the_keyboard() {
     d.frame(&mut app);
     let first = app.layout.focused();
     // A second column, and a pin opened from it.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "v");
     d.frame(&mut app);
     let second = app.layout.focused();
@@ -1268,7 +1268,7 @@ fn a_pin_opens_in_the_pane_that_has_the_keyboard() {
     assert_eq!(name(&app, second), "c.txt");
     assert_eq!(name(&app, first), "a.txt");
     // Back in the first pane, a pin opens there.
-    d.ctrl(&mut app, "w");
+    d.press(&mut app, "<C-w>");
     d.keys(&mut app, "h");
     d.frame(&mut app);
     assert_eq!(app.layout.focused(), first);
@@ -1290,10 +1290,7 @@ fn shift_tab_walks_the_views_back() {
     ex(&mut d, &mut app, "memory texts");
     d.frame(&mut app);
     assert_eq!(app.memory_pane.view, View::Texts);
-    let shift = KeyMods {
-        shift: true,
-        ..KeyMods::default()
-    };
+    let shift = KeyMods::NONE.with_shift();
     d.key(&mut app, "tab", KeyMods::default());
     assert_eq!(app.memory_pane.view, View::Files);
     d.key(&mut app, "tab", shift);

@@ -112,8 +112,7 @@ impl Kawoosh {
             NodeSpec::column()
                 .float(
                     FloatConfig::viewport()
-                        .at(Align::End, Align::End)
-                        .self_at(Align::End, Align::End)
+                        .inside(Align::End, Align::End)
                         .offset(-12.0, -(2.0 * self.chrome.strip_h + 8.0)),
                 )
                 .gap(8.0)

@@ -12,7 +12,7 @@
 //! candidates in a picker to browse — kind, signature, documentation
 //! as the preview (`picker.lua`'s `candidates` source) — `<CR>` there taking
 //! one. `<leader>r` renames (the prompt filled with `lsp rename WORD`),
-//! `gr` lists references as a locations buffer `]q` walks, `<leader>ca`
+//! `gr` lists references as a live multibuffer `]q` walks (`lists.lua`), `<leader>ca`
 //! puts the code actions in a picker — searched by title, each one's
 //! edit as a diff in the preview (`picker.lua`'s `actions` source) —
 //! `<leader>cF` formats, `<leader>D`

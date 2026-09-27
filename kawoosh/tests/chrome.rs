@@ -8,7 +8,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::chrome::TAB_MIN_W;
-use kui_native::KeyMods;
+use kui_native::{KeyMods, Rect};
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.keys(app, ":");
@@ -45,11 +45,11 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
     let mut app = Kawoosh::new("t", "");
     app.jobs_inline = true;
     let ext = app.attach_lua().unwrap();
-    d.extension("lua", ext);
+    d.extension("lua", ext).unwrap();
     app.set_cwd(&kawoosh_systems::fs::canonicalize(&deep).unwrap());
     d.frame(&mut app);
-    let (_, cy, _, _) = d.rect_of("cwd").expect("the cwd in the title bar");
-    let (_, ty, _, _) = d.rect_of("tab0").expect("the tab");
+    let Rect { y: cy, .. } = d.rect("cwd").expect("the cwd in the title bar");
+    let Rect { y: ty, .. } = d.rect("tab0").expect("the tab");
     assert!(cy < ty, "the title bar is above the tabs");
     let shown = texts(&d)
         .into_iter()
@@ -61,7 +61,24 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
         "{shown}"
     );
     assert!(shown.len() < deep.display().to_string().len());
-    let (x, y, w, h) = d.rect_of("cwd").unwrap();
+    // Hovered, it floats the whole path (the spec's `tooltip`).
+    let Rect { x, y, w, h } = d.rect("cwd").unwrap();
+    let full = kawoosh_systems::fs::canonicalize(&deep)
+        .unwrap()
+        .display()
+        .to_string();
+    // (The snapshot cuts a long text short.)
+    let hints = |d: &Drive| {
+        texts(d)
+            .iter()
+            .filter(|t| full.starts_with(t.trim_end_matches('…')))
+            .count()
+    };
+    // (The status line carries it too.)
+    let before = hints(&d);
+    d.move_to(&mut app, x + w / 2.0, y + h / 2.0);
+    d.frame(&mut app);
+    assert_eq!(hints(&d), before + 1, "the hint: {:?}", texts(&d));
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     for _ in 0..40 {
         if app
@@ -97,13 +114,13 @@ fn tabs_share_the_strip_and_scroll_past_their_floor() {
     let mut d = Drive::new(900.0, 500.0);
     let mut app = Kawoosh::new("a", "");
     d.frame(&mut app);
-    assert!(d.rect_of("close").is_none(), "a lone tab has no close");
+    assert!(d.rect("close").is_none(), "a lone tab has no close");
     ex(&mut d, &mut app, "tabnew");
     ex(&mut d, &mut app, "tabnew");
     settle(&mut d, &mut app);
     let widths: Vec<f32> = ["tab0", "tab1", "tab2"]
         .iter()
-        .map(|l| d.rect_of(l).unwrap_or_else(|| panic!("{l}")).0)
+        .map(|l| d.rect(l).unwrap_or_else(|| panic!("{l}")).x)
         .collect();
     let step = widths[1] - widths[0];
     assert!((widths[2] - widths[1] - step).abs() < 1.5, "{widths:?}");
@@ -114,28 +131,33 @@ fn tabs_share_the_strip_and_scroll_past_their_floor() {
     }
     settle(&mut d, &mut app);
     assert_eq!(app.layout.tab, 11);
-    let (x, _, w, _) = d.rect_of("tab11").expect("the last tab");
+    let Rect { x, w, .. } = d.rect("tab11").expect("the last tab");
     assert!((w - TAB_MIN_W).abs() < 0.5, "at its floor: {w}");
     assert!(
         x >= 0.0 && x + w <= 900.5,
         "the active tab in view: {x} {w}"
     );
-    let (x1, _, _, _) = d.rect_of("tab0").unwrap();
+    let Rect { x: x1, .. } = d.rect("tab0").unwrap();
     assert!(x1 < 0.0, "the first scrolled off: {x1}");
     d.keys(&mut app, "1gt");
     settle(&mut d, &mut app);
-    let (x1, _, _, _) = d.rect_of("tab0").unwrap();
+    let Rect { x: x1, .. } = d.rect("tab0").unwrap();
     assert!(x1 >= 0.0, "back in view: {x1}");
 
     // The close button on the active tab closes that tab.
-    let (x, y, w, h) = d.rect_of("close").expect("the active tab's close");
+    let Rect { x, y, w, h } = d.rect("close").expect("the active tab's close");
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     assert_eq!(app.layout.tabs.len(), 11);
     // One on a tab behind, under the pointer, closes that one and
     // leaves the user where they were.
     app.layout.tab = 2;
     settle(&mut d, &mut app);
-    let (tx, ty, tw, th) = d.rect_of("tab0").unwrap();
+    let Rect {
+        x: tx,
+        y: ty,
+        w: tw,
+        h: th,
+    } = d.rect("tab0").unwrap();
     d.input(
         &mut app,
         kui_native::InputEvent::CursorMoved(kui_native::Vec2::new(tx + tw / 2.0, ty + th / 2.0)),
@@ -213,7 +235,7 @@ fn the_chrome_follows_the_font_to_a_cap() {
     let mut app = Kawoosh::new("a", "text");
     d.frame(&mut app);
     d.frame(&mut app);
-    assert_eq!(d.rect_of("tab0").unwrap().3, 22.0, "the default strip");
+    assert_eq!(d.rect("tab0").unwrap().h, 22.0, "the default strip");
     assert_eq!(app.chrome.strip_h, 24.0);
     assert_eq!(app.chrome.pane_title_h, 22.0);
     ex(&mut d, &mut app, "set font.size=29");
@@ -221,7 +243,7 @@ fn the_chrome_follows_the_font_to_a_cap() {
     settle(&mut d, &mut app);
     assert_eq!(app.face.size, 29.0);
     assert_eq!(app.chrome.face.size, 16.0, "capped");
-    assert_eq!(d.rect_of("tab0").unwrap().3, 26.0);
+    assert_eq!(d.rect("tab0").unwrap().h, 26.0);
     // The sizes are length tokens too, for a Lua view's text and sums.
     let tokens = d.core.tokens().expect("the host's tokens");
     let length = |name: &str| {
@@ -238,7 +260,7 @@ fn the_chrome_follows_the_font_to_a_cap() {
     ex(&mut d, &mut app, "set font.chrome_size=20");
     settle(&mut d, &mut app);
     assert_eq!(app.chrome.face.size, 20.0, "pinned");
-    assert_eq!(d.rect_of("tab0").unwrap().3, 32.0);
+    assert_eq!(d.rect("tab0").unwrap().h, 32.0);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
@@ -285,4 +307,114 @@ fn a_confirm_with_many_answers_lists_them() {
     assert!(a.w > 150.0, "the label at its width: {a:?}");
     assert!(b.y > a.y, "one under another");
     assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// The tabs' labels as the strip draws them.
+fn tab_labels(d: &Drive) -> Vec<String> {
+    d.texts_under("tabs")
+        .into_iter()
+        .filter(|t| t.contains(": "))
+        .collect()
+}
+
+fn two_dirs(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let root = std::env::temp_dir().join(format!("kawoosh-tabdir-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for d in ["alpha", "beta"] {
+        std::fs::create_dir_all(root.join(d)).unwrap();
+    }
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    (root.join("alpha"), root.join("beta"))
+}
+
+/// `tabs.directory` (roadmap step 50): `auto` leads each label with its
+/// tab's directory while the tabs are in more than one, `always` does
+/// with one, `never` does not with two; a tab on a terminal is where its
+/// shell says it is (OSC 7).
+#[test]
+fn a_tabs_directory_is_in_its_label_as_the_setting_says() {
+    let (alpha, beta) = two_dirs("setting");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("a", "");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&alpha);
+    d.frame(&mut app);
+    assert_eq!(tab_labels(&d), ["1: a"], "auto, one directory: none");
+    app.run_lua_source("t", "kawoosh.opt('tabs.directory', 'always')");
+    d.frame(&mut app);
+    assert_eq!(tab_labels(&d), ["1: alpha · a"]);
+    app.run_lua_source("t", "kawoosh.opt('tabs.directory', 'auto')");
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", beta.display()));
+    settle(&mut d, &mut app);
+    let labels = tab_labels(&d);
+    assert!(labels[0].starts_with("1: alpha · "), "{labels:?}");
+    assert!(labels[1].starts_with("2: beta · "), "{labels:?}");
+    app.run_lua_source("t", "kawoosh.opt('tabs.directory', 'never')");
+    d.frame(&mut app);
+    assert!(
+        tab_labels(&d).iter().all(|l| !l.contains(" · ")),
+        "{:?}",
+        tab_labels(&d)
+    );
+    // A terminal's tab is where its shell is.
+    app.run_lua_source("t", "kawoosh.opt('tabs.directory', 'always')");
+    let t = app.add_headless_terminal();
+    let path = beta.join("..").join("alpha");
+    let path = kawoosh_systems::fs::canonicalize(&path).unwrap();
+    let url = path.to_str().unwrap().replace('\\', "/");
+    let url = if url.starts_with('/') {
+        url
+    } else {
+        format!("/{url}")
+    };
+    app.feed_terminal(t, format!("\x1b]7;file://{url}\x07").as_bytes());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let labels = tab_labels(&d);
+    assert!(labels[1].starts_with("2: alpha · "), "{labels:?}");
+    std::fs::remove_dir_all(alpha.parent().unwrap()).ok();
+}
+
+/// `kawoosh.tab_title(fn)` writes the labels, wezterm's way: what it
+/// returns is the label, nil is kawoosh's own, and a hook that fails is
+/// taken off and says so.
+#[test]
+fn a_plugin_writes_the_tabs_labels() {
+    let (alpha, _) = two_dirs("hook");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("a", "");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&alpha);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "tabnew");
+    settle(&mut d, &mut app);
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.tab_title(function(tab)
+             if not tab.active then return nil end
+             return tab.index .. " " .. tab.kind .. " in " .. tab.dir
+           end)"#,
+    );
+    d.frame(&mut app);
+    let labels = tab_labels(&d);
+    assert!(labels[0].starts_with("1: "), "kawoosh's own: {labels:?}");
+    assert!(
+        d.texts_under("tabs").iter().any(|t| t == "2 lua in alpha"),
+        "{:?}",
+        d.texts_under("tabs")
+    );
+    app.run_lua_source("t", "kawoosh.tab_title(function() error('boom') end)");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(app.ed.message.contains("boom"), "{}", app.ed.message);
+    assert!(
+        app.ed.message.contains("the hook is off"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(tab_labels(&d).len(), 2, "kawoosh's labels back");
+    std::fs::remove_dir_all(alpha.parent().unwrap()).ok();
 }
