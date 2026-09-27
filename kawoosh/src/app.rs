@@ -50,6 +50,9 @@ pub struct Kawoosh {
     /// The fonts pane's windowed probe, when `KAWOOSH_PROBE_FONTS` asks
     /// for one (`fonts::Probe`).
     pub(crate) fonts_probe: Option<crate::fonts::Probe>,
+    /// The editor's scrolling probe, when `KAWOOSH_PROBE_SCROLL` asks for
+    /// one (`scroll_probe::ScrollProbe`).
+    pub(crate) scroll_probe: Option<crate::scroll_probe::ScrollProbe>,
     /// The disk-usage pane's walks (`du.rs`, roadmap step 52).
     pub(crate) du: crate::du::SharedDu,
     pub ed: Editor,
@@ -299,6 +302,7 @@ impl Kawoosh {
             look: Default::default(),
             du: Default::default(),
             fonts_probe: crate::fonts::Probe::from_env(),
+            scroll_probe: crate::scroll_probe::ScrollProbe::from_env(),
             ed,
             layout: Layout::new(Content::Editor(view)),
             terms: Terminals::default(),
@@ -2174,6 +2178,7 @@ impl kui_native::App for Kawoosh {
         self.sync_look(ui);
         self.sync_du();
         self.probe_fonts(ui);
+        self.probe_scroll(ui);
         self.pal = ui.theme().into();
         if let Some(hit) = self.look.hit {
             self.pal.hit = hit;
