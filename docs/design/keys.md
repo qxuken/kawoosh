@@ -199,7 +199,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `gu` `gU` `g~` + motion | lower-case, upper-case, turn the case of what it covers; `guu` `gUU` `g~~` the line |
 | `gsa` `gsd` `gsr` | surrounds: add, delete, replace (mini.surround's letters) |
 | `gd` | definition; in the hover, the symbol it names — looked up in the workspace, opened in the pane the hover came from |
-| `gx` | open the link under the caret: a path here (a `.md` beside, a directory listed), a URL in the OS (`open link`) |
+| `gx` | open the link under the caret (`open link`): a markdown link's destination, a URL in the OS, or a path as the tools print one at its line and column (`src/app.rs:42:7`, `a.ts(3,5)`) — looked for beside the buffer's file, then under the working directory; a directory is listed. A ⌘-click (ctrl where there is no ⌘) in an editor pane is `gx` where it lands, and in a terminal it opens a URL as well as a path (`links.rs`) |
 | `gr` | references, as `*references*` beside the code: a live multibuffer of the lines around each, washed (`<CR>` opens one, `]q` walks them, `q` closes it; [lists.md](lists.md)) |
 | `K` | hover (vim's, not `g`, but the same family); in the hover, the hover of a symbol it names, from where that is defined |
 | `<C-e>` | every diagnostic under the caret, whole — every line of it — headed by where it came from (`error  ts(2322)`), in a pane; in a multibuffer, the excerpt's file's |

@@ -30,6 +30,7 @@ pub mod inspector;
 pub mod languages;
 pub mod launcher;
 pub mod layout;
+pub mod links;
 pub mod listing;
 pub mod lists;
 pub mod logger;

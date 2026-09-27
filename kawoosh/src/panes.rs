@@ -962,9 +962,10 @@ impl Kawoosh {
                 if self.mods.ctrl || self.mods.super_key {
                     spec = spec.on_click(tag.clone());
                 }
-                // With ⌘ (ctrl) held, the path under the pointer is
+                // With ⌘ (ctrl) held, the link under the pointer is
                 // underlined and the pointer a hand — what a click there
-                // opens, and only when it names something that exists.
+                // opens: a URL, or a path that names something that
+                // exists (`links.rs`).
                 let hover = (!reporting && (self.mods.ctrl || self.mods.super_key))
                     .then(|| {
                         let r = ui.layout_of(ui.child_key("cells"))?;

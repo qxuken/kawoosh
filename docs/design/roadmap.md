@@ -2364,9 +2364,17 @@ then breadth.
     newline's cell. `rows::RoundedSel`, `SELECTION_WGSL` and the panes'
     neighbour arithmetic went; a block caret inside a rounded selection
     is drawn over it, so the shape has no hole there.
-49. **Links**: `gx` on a path with its line, ⌘-click in an editor pane
+49. ~~**Links**: `gx` on a path with its line, ⌘-click in an editor pane
     as `gx`, and URLs in a terminal's ⌘-click — one finder for a link
-    under a point, the markdown's and the terminal's merged.
+    under a point, the markdown's and the terminal's merged.~~ Landed
+    2026-09-27: `kawoosh/src/links.rs`'s `link_at` — a markdown link,
+    then a URL, then a path with its line and column — under `gx`, an
+    editor pane's ⌘-click, and a terminal's ⌘-click and ⌘-hover (a
+    URL underlined as a path is). A path is looked for beside the
+    buffer's file, then under the working directory; a terminal's under
+    its own directory, then the working one. Tests: `kawoosh/tests/links.rs`.
+    Not built: an editor pane's ⌘-hover (the terminal's underline and
+    hand) — a click there finds out.
 50. **Tab titles**: the directory on every tab behind a setting, a
     terminal's own from OSC 7, and a Lua hook that writes the label,
     wezterm's way.

@@ -270,6 +270,9 @@ pub struct Kawoosh {
     /// For tests: a job runs where it is asked for and its answer lands
     /// in the same frame, so a listing is there when the key returns.
     pub jobs_inline: bool,
+    /// For tests: the URLs a link would have handed the OS, kept here
+    /// instead when set (`links::follow_link`).
+    pub urls_opened: Option<Vec<String>>,
 }
 
 /// How long a yank's ranges stay washed.
@@ -384,6 +387,7 @@ impl Kawoosh {
             confirm: None,
             pending_jobs: 0,
             jobs_inline: false,
+            urls_opened: None,
         };
         app.install_commands();
         crate::settings::declare_shell_settings(&mut app.ed.settings);
@@ -1779,6 +1783,16 @@ impl Kawoosh {
                 // A double click is a gesture a map can take, vim's
                 // `<2-LeftMouse>`, with the caret where it landed — a
                 // listing enters the line; unbound, it selects the word.
+                // With ⌘ (ctrl) held, a click is `gx` where it lands: the
+                // link there followed (`links.rs`), nothing selected.
+                if self.mods.ctrl || self.mods.super_key {
+                    self.ed.views[view].sels =
+                        kawoosh_editor::Selections::single(Selection::point(off));
+                    self.drag_anchor = None;
+                    self.open_link();
+                    self.drain_effects();
+                    return;
+                }
                 if clicks == 2 {
                     self.ed.views[view].sels =
                         kawoosh_editor::Selections::single(Selection::point(off));
@@ -2484,8 +2498,8 @@ impl Kawoosh {
                 self.drain_lua();
             }
             Some("term") => {
-                // A click focuses; with ⌘ held it opens the path under the
-                // pointer (`gf` across the boundary). A program that asked
+                // A click focuses; with ⌘ held it follows the link under
+                // the pointer (`gx` across the boundary). A program that asked
                 // for the mouse gets the click instead (shift bypasses).
                 if let Some(pane) = p.get_int("pane") {
                     let pane = pane as PaneId;
