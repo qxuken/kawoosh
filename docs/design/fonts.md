@@ -60,7 +60,9 @@ the view names the family itself. Nothing registers the 613 at once; a
 family is registered as it is warmed. *And again the same day:* with
 a family's first shaping under a millisecond (kui DX24, below),
 warming is gone too — `warm(NAME)` with it — and a card is drawn in
-its family from the frame it appears.
+its family from the frame it appears. (A family's first sight turned
+out to cost a frame ~5 ms still, in a window; see Decision 3's last
+note.)
 
 *Beat:* registering each family as its card first asked for it — the
 first build. Every card the pane scrolled or searched to was drawn for
@@ -156,7 +158,32 @@ that cost over frames; with nothing left to spread, it went — the
 `warm`/`cold` sets, the budget, `kawoosh.fonts.warm` — and the pane
 names each card's family outright. The same walk with no warming was
 0.3 ms a press, its worst 0.6 ms, and raised no `unknown-family`.
-### 4. One lab for the look: the theme through the font
+
+*Taken back 2026-09-28:* those walks timed empty cards. Moving the
+cards onto a family by name had left a check drawing each card as its
+frame alone (fixed in 04eebe8; `kawoosh/tests/fonts_pane.rs` reads the
+cards now), so no card shaped anything, with the warming or without.
+Measured again in a window (`scripts/probe-fonts.nu`, release, kui
+7ad2cf2, 628 families, a card a frame through them all, each frame's
+work as kui timed it):
+
+| frames | warming | mean | p95 | max | > 8 ms | > 16 ms |
+|---|---|---|---|---|---|---|
+| a family's first card built | none (as shipped) | 6.70 ms | 9.01 | 18.59 | 72 of 620 | 1 |
+| a family's first card built | put back for the run | 6.13 ms | 7.49 | 12.79 | 24 of 620 | 0 |
+| the rest | none | 1.17 ms | 2.91 | 6.79 | 0 of 37 | 0 |
+| the rest | put back | 1.07 ms | 2.44 | 6.59 | 0 of 37 | 0 |
+
+A family's first sight costs a frame about 5 ms either way, most of it
+in the view (where a text's `family` is resolved and the warming
+measures) and, for the variable system faces, in layout: SF Pro
+Display's first card was 18.6 ms (view 7.3, layout 10.8), STIX Two
+Text 14.6, SF Pro Text 14.5, Victor Mono 13.9. That is ten times the
+0.42 ms kui's DX24 measured for a first shaping, so the cost is
+elsewhere — the family's registration by name, or its faces read for
+the first time — and is kui's to find. The warming spread it and cut
+the frames over 8 ms by two thirds; it stays out while kui looks,
+since a card drawn a frame in another face is what it cost. One lab for the look: the theme through the font
 
 The theme lab is the look's lab. Every sample in it — the code, the
 tokens, the terminal's sixteen — is drawn in the editor's face, at its
