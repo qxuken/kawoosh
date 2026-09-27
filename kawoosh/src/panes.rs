@@ -941,7 +941,7 @@ impl Kawoosh {
         // A program reporting the mouse gets drags as reports and no cell
         // selection — unless shift is held, the terminal convention for
         // "my selection, not yours".
-        let reporting = term.wants_mouse() && !self.mods.3;
+        let reporting = term.wants_mouse() && !self.mods.shift;
         let drag_tag = Value::map([
             ("kind", "termmouse".into()),
             ("pane", Value::Int(pane as i64)),
@@ -970,13 +970,13 @@ impl Kawoosh {
                 let mut spec = NodeSpec::column()
                     .on_scroll(tag.clone())
                     .on_layout(Value::map([("kind", "termgrid".into())]));
-                if self.mods.0 || self.mods.2 {
+                if self.mods.ctrl || self.mods.super_key {
                     spec = spec.on_click(tag.clone());
                 }
                 // With ⌘ (ctrl) held, the path under the pointer is
                 // underlined and the pointer a hand — what a click there
                 // opens, and only when it names something that exists.
-                let hover = (!reporting && (self.mods.0 || self.mods.2))
+                let hover = (!reporting && (self.mods.ctrl || self.mods.super_key))
                     .then(|| {
                         let r = ui.layout_of(ui.child_key("cells"))?;
                         let p = ui.core().cursor()?;

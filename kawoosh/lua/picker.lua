@@ -431,6 +431,8 @@ end
 -- text) is indented by that many steps, and a column marked `path` is
 -- left blank — a tree's rows. With `opts.keys` a table, each drawn
 -- row's key is put in it by its index — what `env.is_hovered` asks by.
+-- With `opts.hover` a kind, each row hears the pointer as
+-- `{ kind = "hover", phase, by, tag = { kind = opts.hover, i = i } }`.
 function picker.rows(ctx, hits, opts)
   local t = ctx.env.theme
   local top = opts.top or 1
@@ -478,6 +480,7 @@ function picker.rows(ctx, hits, opts)
       bg = selected and (ctx.focused and t.selection or t.sunken) or nil,
       hover_bg = not selected and t.sunken or nil,
       on_click = { kind = opts.kind or "row", i = i },
+      on_hover = opts.hover and { kind = opts.hover, i = i } or nil,
     }
     local off = it.can ~= nil and it.can ~= true
     local color = off and t.muted or t.fg
@@ -1142,24 +1145,12 @@ kawoosh.view(VIEW, function(ctx)
   head[#head + 1] = field
   head[#head + 1] = text(count, { size = SIZE - 1, color = t.faint, wrap = "none" })
   local indent = P.src.tree and (P.query or "") == "" and function(it) return it.depth or 0 end or nil
-  -- The pointer moving from one row onto another takes the cursor
-  -- there — the pane follows it too. Asked of the rows the frame before
-  -- drew, and only while the window and the rows hold still since: rows
-  -- scrolled or refiltered under a pointer at rest are not the pointer
-  -- moving, and neither is the pointer come to the list to wheel it
-  -- (kui says which node is under the pointer, not that it moved).
-  local over
-  if P.row_keys and P.hover_top == P.top and P.hover_hits == P.hits and ctx.env.is_hovered then
-    for i, key in pairs(P.row_keys) do
-      if ctx.env.is_hovered(key) then over = i end
-    end
-    if over and P.hover_row and over ~= P.hover_row then P.cursor = over end
-  end
-  local keys = {}
+  -- A row the pointer left is forgotten by the next frame: a row
+  -- entered after it is the pointer come back to the list.
+  P.left_row = nil
   local list = picker.rows(ctx, P.hits, { top = P.top, cursor = P.cursor, rows = rows, wrap = P.wrap, lines = lines_of,
                                           columns = P.src.columns, widths = P.widths, width = P.list_w,
-                                          indent = indent, keys = keys })
-  P.row_keys, P.hover_row, P.hover_top, P.hover_hits = keys, over, P.top, P.hits
+                                          indent = indent, hover = "row" })
   if #P.hits == 0 and not P.loading then
     list[#list + 1] = row { pad = { x = 8, y = 4 }, text((P.query ~= "" and "no matches") or P.src.empty or "nothing here", { size = SIZE, color = t.muted }) }
   end
@@ -1211,6 +1202,20 @@ end, function(ev)
         local at = ((ev.x or 0) - (par.x or 0)) / par.w
         kawoosh.opt("picker.split", math.max(0.1, math.min(0.9, at)))
       end
+    end
+  elseif ev.kind == "hover" then
+    -- The pointer moving from one row onto another takes the cursor
+    -- there — the pane follows it too. Rows scrolled or refiltered under
+    -- a pointer at rest are `by = "content"`, not the pointer moving;
+    -- nor is the pointer come to the list to wheel it, an enter with no
+    -- row left before it.
+    if ev.by ~= "pointer" then
+      P.left_row = nil
+    elseif ev.phase == "leave" then
+      P.left_row = true
+    elseif P.left_row then
+      P.left_row = nil
+      P.cursor = ev.tag.i
     end
   elseif ev.kind == "row" then
     kawoosh.field_focus(VIEW, FIELD)

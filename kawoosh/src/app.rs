@@ -18,7 +18,9 @@ use kawoosh_systems::WakeHandle;
 use kawoosh_systems::io::{Incoming, Io, IoMsg, Request};
 use kawoosh_systems::ts::{Job, Token, Ts};
 use kawoosh_term::TermSize;
-use kui_native::{FontId, NodeSpec, Ui, UiEvent, Value, WindowCommand};
+use kui_native::{
+    Drag, DragPhase, FontId, KeyMods, KeyPress, NodeSpec, Scroll, Ui, UiEvent, Value, WindowCommand,
+};
 
 use crate::Pal;
 use crate::commands::ShellCommands;
@@ -261,9 +263,8 @@ pub struct Kawoosh {
     pub(crate) dock_state: crate::dock::DockState,
     /// A mono cell's advance and height, measured each frame.
     pub(crate) cell: (f32, f32),
-    /// Modifier state, from `{kind="modifiers"}` events: ctrl, alt, super,
-    /// shift.
-    pub(crate) mods: (bool, bool, bool, bool),
+    /// Modifier state, from `{kind="modifiers"}` events.
+    pub(crate) mods: KeyMods,
     /// The question on show, if one (`confirm.rs`): the keys are its.
     pub confirm: Option<crate::confirm::Confirm>,
     /// Jobs a plugin asked for (`kawoosh.fs.list(path, fn)`) whose
@@ -383,7 +384,7 @@ impl Kawoosh {
             strip_known: Default::default(),
             dock_state: Default::default(),
             cell: (7.8, crate::rows::LH),
-            mods: (false, false, false, false),
+            mods: KeyMods::NONE,
             confirm: None,
             pending_jobs: 0,
             jobs_inline: false,
@@ -1485,16 +1486,14 @@ impl Kawoosh {
 
     // ------------------------------------------------------------ events
 
-    fn on_key(&mut self, p: &Value) {
-        let code = p.get_str("code").unwrap_or("").to_string();
-        let flag = |k: &str| p.get_bool(k).unwrap_or(false);
+    fn on_key(&mut self, k: KeyPress) {
         let stroke = KeyStroke {
-            code,
-            ctrl: flag("ctrl"),
-            alt: flag("alt"),
-            shift: flag("shift"),
-            sup: flag("super"),
-            text: p.get_str("text").map(str::to_string),
+            code: k.code.name(),
+            ctrl: k.mods.ctrl,
+            alt: k.mods.alt,
+            shift: k.mods.shift,
+            sup: k.mods.super_key,
+            text: k.text,
         };
         // The root which-key (`:keys`) stays until a key is pressed.
         self.keys_help = None;
@@ -1723,23 +1722,22 @@ impl Kawoosh {
 
     /// The mouse over an editor pane: `line` is the ordinal among the
     /// drawn rows, `byte` into that row's drawn text.
-    fn on_drag(&mut self, pane: PaneId, p: &Value) {
-        let phase = p.get_str("phase").unwrap_or("");
-        if phase == "start" {
+    fn on_drag(&mut self, pane: PaneId, d: Drag) {
+        if d.phase == DragPhase::Start {
             self.layout.focus(pane);
         }
         let Some(view) = self.view_of(pane) else {
             return;
         };
-        let (Some(line), Some(byte)) = (p.get_int("line"), p.get_int("byte")) else {
+        let (Some(line), Some(byte)) = (d.line, d.byte) else {
             return;
         };
-        let clicks = p.get_int("clicks").unwrap_or(1);
+        let clicks = d.clicks.unwrap_or(1);
         let tabstop = self.ed.tabstop();
         let top = self.ed.views[view].top;
         let marked = self.marks.any(self.ed.views[view].buffer);
         let buf = self.ed.buffer_of(view);
-        let ln = (top + line.max(0) as usize).min(buf.line_count() - 1);
+        let ln = (top + line as usize).min(buf.line_count() - 1);
         let range = buf.line_range(ln);
         // A long line was drawn from its window's slice, and `byte`
         // counts from the slice's start: the same slice maps it back.
@@ -1774,10 +1772,10 @@ impl Kawoosh {
         } else {
             Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0, None).0
         };
-        let off = (range.start + drawn.to_src(byte.max(0) as usize)).min(range.end);
+        let off = (range.start + drawn.to_src(byte)).min(range.end);
         let word = motions::word_at(buf, off);
-        match phase {
-            "start" => {
+        match d.phase {
+            DragPhase::Start => {
                 if self.ed.prompt_view().is_some() {
                     self.ed.cancel_prompt();
                 }
@@ -1807,7 +1805,7 @@ impl Kawoosh {
                     self.ed.set_mode(view, Mode::Visual);
                 }
             }
-            "move" => {
+            DragPhase::Move => {
                 if let Some(anchor) = self.drag_anchor
                     && anchor != off
                 {
@@ -1818,34 +1816,33 @@ impl Kawoosh {
                     }
                 }
             }
-            _ => self.drag_anchor = None,
+            DragPhase::End => self.drag_anchor = None,
         }
         self.follow_caret = true;
     }
 
-    fn on_scroll(&mut self, pane: PaneId, p: &Value) {
+    fn on_scroll(&mut self, pane: PaneId, s: Scroll, tag: Option<&Value>) {
         if let Some(t) = self.term_of(pane) {
             // A grid: kui already turned the wheel into whole lines. A
             // program reporting the mouse gets wheel buttons; a full-screen
             // one without it gets arrows; a shell scrolls its history.
-            let lines = p.get_int("lines").unwrap_or(0) as i32;
+            let lines = s.lines.unwrap_or(0) as i32;
             // A scroll carries no cell: the pointer against the pane's
             // rect, past its border, title and padding.
-            let f = |k| p.get_float(k).unwrap_or(0.0) as f32;
             let (row, col) = match self.layout.rects.get(&pane) {
                 Some(r) => {
                     let (cw, ch) = self.cell;
                     (
-                        ((f("y") - r.y - self.chrome.pane_title_h - 1.0 - 4.0) / ch).max(0.0)
+                        ((s.pos.y - r.y - self.chrome.pane_title_h - 1.0 - 4.0) / ch).max(0.0)
                             as usize,
-                        ((f("x") - r.x - 1.0 - 4.0) / cw).max(0.0) as usize,
+                        ((s.pos.x - r.x - 1.0 - 4.0) / cw).max(0.0) as usize,
                     )
                 }
                 None => (0, 0),
             };
             if let Some(term) = self.terms.map.get_mut(&t) {
-                if term.wants_mouse() && !self.mods.3 {
-                    let mods = (self.mods.3, self.mods.1, self.mods.0);
+                if term.wants_mouse() && !self.mods.shift {
+                    let mods = (self.mods.shift, self.mods.alt, self.mods.ctrl);
                     let button = if lines > 0 { 65 } else { 64 };
                     for _ in 0..lines.unsigned_abs() {
                         term.mouse(button, kawoosh_term::MouseAction::Press, col, row, mods);
@@ -1861,12 +1858,9 @@ impl Kawoosh {
         let Some(view) = self.view_of(pane) else {
             return;
         };
-        let dx = p.get_float("dx").unwrap_or(0.0) as f32;
+        let dx = s.delta.x;
         // Over a rendered table: sideways is the table's own.
-        let table = p
-            .get("tag")
-            .and_then(|t| t.get_int("table"))
-            .map(|t| t as usize);
+        let table = tag.and_then(|t| t.get_int("table")).map(|t| t as usize);
         if let (Some(first), true) = (table, dx != 0.0) {
             let off = self.md_table_left.entry((view, first)).or_insert(0.0);
             *off = (*off - dx).max(0.0);
@@ -1881,8 +1875,7 @@ impl Kawoosh {
                 self.follow_caret = false;
             }
         }
-        let dy = p.get_float("dy").unwrap_or(0.0) as f32;
-        let total = self.scroll_carry - dy / self.face.line_height;
+        let total = self.scroll_carry - s.delta.y / self.face.line_height;
         let whole = total.trunc();
         self.scroll_carry = total - whole;
         if whole == 0.0 {
@@ -1898,31 +1891,24 @@ impl Kawoosh {
 
     /// A drag over a terminal that asked for the mouse: press, motion
     /// while held, release — as the program's mouse reports.
-    fn on_term_drag(&mut self, p: &Value) {
-        let Some(pane) = p.get("tag").and_then(|t| t.get_int("pane")) else {
+    fn on_term_drag(&mut self, pane: PaneId, d: Drag) {
+        let Some(t) = self.term_of(pane) else {
             return;
         };
-        let Some(t) = self.term_of(pane as PaneId) else {
-            return;
-        };
-        let cell = p.get("cell");
-        let (Some(row), Some(col)) = (
-            cell.and_then(|c| c.get_int("row")),
-            cell.and_then(|c| c.get_int("col")),
-        ) else {
+        let Some((row, col)) = d.cell else {
             return;
         };
         let Some(term) = self.terms.map.get_mut(&t) else {
             return;
         };
-        let mods = (false, self.mods.1, self.mods.0);
-        let action = match p.get_str("phase") {
-            Some("start") => {
-                self.layout.focus(pane as PaneId);
+        let mods = (false, self.mods.alt, self.mods.ctrl);
+        let action = match d.phase {
+            DragPhase::Start => {
+                self.layout.focus(pane);
                 kawoosh_term::MouseAction::Press
             }
-            Some("move") if term.wants_drag() => kawoosh_term::MouseAction::Motion,
-            Some("end") => kawoosh_term::MouseAction::Release,
+            DragPhase::Move if term.wants_drag() => kawoosh_term::MouseAction::Motion,
+            DragPhase::End => kawoosh_term::MouseAction::Release,
             _ => return,
         };
         term.mouse(0, action, col as usize, row as usize, mods);
@@ -1931,24 +1917,13 @@ impl Kawoosh {
     /// The scrollbar on a terminal scrolled away, dragged: the pointer's
     /// height down the pane is where the view is in its history, the
     /// top the oldest line, the bottom the prompt.
-    fn on_term_bar_drag(&mut self, p: &Value) {
-        let Some(pane) = p
-            .get("tag")
-            .and_then(|t| t.get_int("pane"))
-            .map(|p| p as PaneId)
-        else {
-            return;
-        };
-        let (Some(t), Some(r), Some(y)) = (
-            self.term_of(pane),
-            self.layout.rects.get(&pane).copied(),
-            p.get_float("y"),
-        ) else {
+    fn on_term_bar_drag(&mut self, pane: PaneId, d: Drag) {
+        let (Some(t), Some(r)) = (self.term_of(pane), self.layout.rects.get(&pane).copied()) else {
             return;
         };
         let top = r.y + self.chrome.pane_title_h + 1.0;
         let h = (r.h - self.chrome.pane_title_h - 2.0).max(1.0);
-        let at = ((y as f32 - top) / h).clamp(0.0, 1.0);
+        let at = ((d.pos.y - top) / h).clamp(0.0, 1.0);
         if let Some(term) = self.terms.map.get_mut(&t) {
             let history = term.history_size() as f32;
             let want = ((1.0 - at) * history).round() as i32;
@@ -1960,26 +1935,17 @@ impl Kawoosh {
     /// let go — over the middle of another pane, or one of its edges —
     /// is where it lands (`Layout::drop_at`). Let go elsewhere, nothing
     /// moves.
-    fn on_pane_drag(&mut self, p: &Value) {
-        let Some(pane) = p
-            .get("tag")
-            .and_then(|t| t.get_int("pane"))
-            .map(|n| n as PaneId)
-        else {
-            return;
-        };
-        let at = |k| p.get_float(k).unwrap_or(0.0) as f32;
-        match p.get_str("phase") {
-            Some("start") => self.layout.focus(pane),
-            Some("move") => self.pane_drag = Some((pane, at("x"), at("y"))),
-            Some("end") => {
+    fn on_pane_drag(&mut self, pane: PaneId, d: Drag) {
+        match d.phase {
+            DragPhase::Start => self.layout.focus(pane),
+            DragPhase::Move => self.pane_drag = Some((pane, d.pos.x, d.pos.y)),
+            DragPhase::End => {
                 if self.pane_drag.take().is_some()
-                    && let Some((target, drop)) = self.layout.drop_at(at("x"), at("y"))
+                    && let Some((target, drop)) = self.layout.drop_at(d.pos.x, d.pos.y)
                 {
                     self.layout.move_pane(pane, target, drop);
                 }
             }
-            _ => {}
         }
     }
 
@@ -1987,21 +1953,16 @@ impl Kawoosh {
     /// A strip's gap (`gap{i}`) sets the column before it to the width
     /// the pointer makes it, as a fraction of the viewport — a `Ratio`
     /// until a preset key snaps it (scrolling-tab.md Decision 3).
-    fn on_split_drag(&mut self, p: &Value) {
-        let tag = p.get("tag");
+    fn on_split_drag(&mut self, d: Drag, tag: Option<&Value>) {
         let Some(path) = tag.and_then(|t| t.get_str("path")) else {
             return;
         };
         let path = path.to_string();
-        match p.get_str("phase") {
-            Some("end") => self.dragging = None,
-            Some(_) if path.starts_with("gap") => {
-                let x = p.get_float("x").unwrap_or(0.0) as f32;
-                let vw = p
-                    .get("parent")
-                    .and_then(|v| v.get_float("w"))
-                    .unwrap_or(1.0)
-                    .max(1.0) as f32;
+        match d.phase {
+            DragPhase::End => self.dragging = None,
+            _ if path.starts_with("gap") => {
+                let x = d.pos.x;
+                let vw = d.parent.w.max(1.0);
                 let gap = self.strip_gap();
                 if let Ok(i) = path[3..].parse::<usize>()
                     && let Some(s) = self.layout.tab().strip()
@@ -2019,16 +1980,10 @@ impl Kawoosh {
                 }
                 self.dragging = Some(path);
             }
-            Some(_) => {
+            _ => {
                 let horizontal = tag.and_then(|t| t.get_str("dir")) == Some("h");
-                let parent = p.get("parent");
-                let get = |m: Option<&Value>, k| m.and_then(|v| v.get_float(k)).unwrap_or(0.0);
-                let ratio = if horizontal {
-                    (get(Some(p), "x") - get(parent, "x")) / get(parent, "w").max(1.0)
-                } else {
-                    (get(Some(p), "y") - get(parent, "y")) / get(parent, "h").max(1.0)
-                };
-                let ratio = (ratio as f32).clamp(0.1, 0.9);
+                let r = d.ratio();
+                let ratio = if horizontal { r.x } else { r.y }.clamp(0.1, 0.9);
                 if path == "dock" {
                     self.layout.dock_ratio = 1.0 - ratio;
                 } else if let Some(rest) = path.strip_prefix("d:") {
@@ -2040,7 +1995,6 @@ impl Kawoosh {
                 }
                 self.dragging = Some(path);
             }
-            None => {}
         }
     }
 }
@@ -2324,90 +2278,110 @@ impl kui_native::App for Kawoosh {
     fn on_event(&mut self, ev: UiEvent) {
         self.sync_facts();
         let p = &ev.payload;
-        let pane_of = |p: &Value| {
-            p.get("tag")
-                .and_then(|t| t.get_int("pane"))
-                .map(|n| n as PaneId)
-        };
-        let tag_kind = p.get("tag").and_then(|t| t.get_str("kind"));
+        let tag = ev.tag();
+        let pane = tag.and_then(|t| t.get_int("pane")).map(|n| n as PaneId);
+        let tag_kind = tag.and_then(|t| t.get_str("kind"));
         // Anything but the modifier state is the hands on the keys: the
         // memory's idle guard (`moments.rs`).
-        if p.get_str("kind") != Some("modifiers") {
-            self.note_input();
+        if let Some(m) = ev.modifiers() {
+            self.mods = m;
+            return;
         }
-        match p.get_str("kind") {
-            Some("key") => self.on_key(p),
-            Some("text") => {
-                let mut text = p.get_str("text").unwrap_or("").to_string();
-                // What a password manager copied is marked so on the
-                // pasteboard (kui F84): a secret (docs/design/secrets.md
-                // Decision 4).
-                let marked = |k| p.get_bool(k).unwrap_or(false);
-                let secret = marked("concealed") || marked("transient");
-                // A look at the clipboard, not a paste: into the
-                // register, unless it is what was put there from here —
-                // or a secret, which is not the register's at all until
-                // it is pasted.
-                if std::mem::take(&mut self.clip_probe) && !self.awaiting_paste {
-                    if !secret && self.clip_last.as_deref() != Some(text.as_str()) {
-                        self.ed.adopt_clipboard(&text);
-                    }
-                    if secret {
-                        text_buffer::wipe_string(&mut text);
-                    }
-                    return;
-                }
-                // The answer ends the ask, whichever pane takes it: left
-                // open, every frame asked again and a terminal pasted
-                // each answer, for good.
-                let pasted = std::mem::take(&mut self.awaiting_paste);
-                if let Some(v) = self.focused_view() {
-                    if pasted {
-                        self.ed.paste_text_marked(v, &text, secret);
-                    } else {
-                        self.ed.text(v, &text);
-                    }
-                } else if let Some(t) = self
-                    .term_of(self.layout.focused())
-                    .and_then(|t| self.terms.map.get_mut(&t))
-                {
-                    t.paste(&text);
-                }
-                self.follow_caret = true;
-                self.drain_effects();
+        self.note_input();
+        if let Some((_, k)) = ev.key_press() {
+            return self.on_key(k);
+        }
+        if let Some(d) = ev.drag() {
+            match (tag_kind, pane) {
+                (Some("split"), _) => self.on_split_drag(d, tag),
+                (Some("termmouse"), Some(pane)) => self.on_term_drag(pane, d),
+                (Some("termbar"), Some(pane)) => self.on_term_bar_drag(pane, d),
+                (Some("panedrag"), Some(pane)) => self.on_pane_drag(pane, d),
+                (_, Some(pane)) => self.on_drag(pane, d),
+                // A Lua view's own `on_drag`: its handler ran, what it
+                // asked for is applied now.
+                _ if ev.slot.is_some() => self.drain_lua(),
+                _ => {}
             }
+            return;
+        }
+        if let Some(s) = ev.scroll() {
+            match pane {
+                Some(pane) => self.on_scroll(pane, s, tag),
+                // A Lua view's own `on_scroll`: its handler ran, what it
+                // asked for is applied now.
+                None if ev.slot.is_some() => self.drain_lua(),
+                None => {}
+            }
+            return;
+        }
+        if let Some(h) = ev.hover() {
+            if tag_kind == Some("toast") {
+                self.on_toast_hover(h, tag);
+            }
+            return;
+        }
+        if let Some(l) = ev.layout()
+            && ev.slot.is_none()
+        {
+            if let Some(pane) = pane {
+                let r = l.rect;
+                self.layout.rects.insert(
+                    pane,
+                    crate::layout::Rect {
+                        x: r.x,
+                        y: r.y,
+                        w: r.w,
+                        h: r.h,
+                    },
+                );
+            }
+            return;
+        }
+        if let Some(t) = ev.text() {
+            let mut text = t.text.to_string();
+            // What a password manager copied is marked so on the
+            // pasteboard (kui F84): a secret (docs/design/secrets.md
+            // Decision 4).
+            let secret = t.concealed || t.transient;
+            // A look at the clipboard, not a paste: into the
+            // register, unless it is what was put there from here —
+            // or a secret, which is not the register's at all until
+            // it is pasted.
+            if std::mem::take(&mut self.clip_probe) && !self.awaiting_paste {
+                if !secret && self.clip_last.as_deref() != Some(text.as_str()) {
+                    self.ed.adopt_clipboard(&text);
+                }
+                if secret {
+                    text_buffer::wipe_string(&mut text);
+                }
+                return;
+            }
+            // The answer ends the ask, whichever pane takes it: left
+            // open, every frame asked again and a terminal pasted
+            // each answer, for good.
+            let pasted = std::mem::take(&mut self.awaiting_paste);
+            if let Some(v) = self.focused_view() {
+                if pasted {
+                    self.ed.paste_text_marked(v, &text, secret);
+                } else {
+                    self.ed.text(v, &text);
+                }
+            } else if let Some(t) = self
+                .term_of(self.layout.focused())
+                .and_then(|t| self.terms.map.get_mut(&t))
+            {
+                t.paste(&text);
+            }
+            self.follow_caret = true;
+            self.drain_effects();
+            return;
+        }
+        match ev.kind() {
             Some("syntax") => self.on_syntax_click(p),
             Some("settings") => self.on_settings_click(p),
             Some("undo") => self.on_undo_click(p),
             Some("memory") => self.on_memory_click(p),
-            Some("modifiers") => {
-                let f = |k| p.get_bool(k).unwrap_or(false);
-                self.mods = (f("ctrl"), f("alt"), f("super"), f("shift"));
-            }
-            Some("drag") => match tag_kind {
-                Some("split") => self.on_split_drag(p),
-                Some("termmouse") => self.on_term_drag(p),
-                Some("termbar") => self.on_term_bar_drag(p),
-                Some("panedrag") => self.on_pane_drag(p),
-                _ => {
-                    if let Some(pane) = pane_of(p) {
-                        self.on_drag(pane, p);
-                    } else if ev.slot.is_some() {
-                        // A Lua view's own `on_drag`: its handler ran,
-                        // what it asked for is applied now.
-                        self.drain_lua();
-                    }
-                }
-            },
-            Some("scroll") => {
-                if let Some(pane) = pane_of(p) {
-                    self.on_scroll(pane, p);
-                } else if ev.slot.is_some() {
-                    // A Lua view's own `on_scroll`: its handler ran,
-                    // what it asked for is applied now.
-                    self.drain_lua();
-                }
-            }
             // A click's payload is the `on_click` value itself, with the
             // pointer's `cell` beside it on a grid.
             // The badge on a terminal scrolled away: back to the prompt.
@@ -2426,11 +2400,6 @@ impl kui_native::App for Kawoosh {
                 }
             }
             Some("toast") => self.on_toast(p),
-            Some("hover") => {
-                if tag_kind == Some("toast") {
-                    self.on_toast_hover(p);
-                }
-            }
             Some("confirm") => {
                 self.on_confirm(p);
                 self.drain_effects();
@@ -2498,30 +2467,16 @@ impl kui_native::App for Kawoosh {
                             .terms
                             .map
                             .get(&t)
-                            .is_some_and(|term| term.wants_mouse() && !self.mods.3);
+                            .is_some_and(|term| term.wants_mouse() && !self.mods.shift);
                         // Reporting: the drag events (start = press, end =
                         // release) carried it; the click only focused.
-                        if !reporting && (self.mods.0 || self.mods.2) {
+                        if !reporting && (self.mods.ctrl || self.mods.super_key) {
                             self.open_location_at(t, row as usize, col as usize);
                         }
                     }
                 }
             }
             _ if ev.slot.is_some() => self.drain_lua(),
-            Some("layout") => {
-                if let Some(pane) = pane_of(p) {
-                    let f = |k| p.get_float(k).unwrap_or(0.0) as f32;
-                    self.layout.rects.insert(
-                        pane,
-                        crate::layout::Rect {
-                            x: f("x"),
-                            y: f("y"),
-                            w: f("w"),
-                            h: f("h"),
-                        },
-                    );
-                }
-            }
             _ => {}
         }
     }

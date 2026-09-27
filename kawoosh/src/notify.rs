@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Spec};
 use kawoosh_systems::{Alarm, WakeHandle};
-use kui_native::{Align, FloatConfig, NodeSpec, Span, TextStyle, Ui, Value};
+use kui_native::{Align, FloatConfig, Hover, HoverPhase, NodeSpec, Span, TextStyle, Ui, Value};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -752,14 +752,13 @@ impl Kawoosh {
     /// The pointer over a toast, or one of its buttons, or off it:
     /// while it is over, the toast stays; once it leaves, the toast's
     /// time starts over.
-    pub(crate) fn on_toast_hover(&mut self, p: &Value) {
-        let Some(id) = p.get("tag").and_then(|t| t.get_int("id")) else {
+    pub(crate) fn on_toast_hover(&mut self, h: Hover, tag: Option<&Value>) {
+        let Some(id) = tag.and_then(|t| t.get_int("id")) else {
             return;
         };
-        match p.get_str("phase") {
-            Some("enter") => self.notes.hover_enter(id as u64),
-            Some("leave") => self.notes.hover_leave(id as u64, Instant::now()),
-            _ => {}
+        match h.phase {
+            HoverPhase::Enter => self.notes.hover_enter(id as u64),
+            HoverPhase::Leave => self.notes.hover_leave(id as u64, Instant::now()),
         }
     }
 
