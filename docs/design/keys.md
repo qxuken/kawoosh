@@ -293,7 +293,7 @@ the panes table.
 | `.` | the last change again, on the selections as they are; a count replaces the change's count and is its count from then on |
 | `q` + char … `q` | record into the register; an upper-case letter appends to its lower-case one; the status line says `REC @a` meanwhile |
 
-**Pairs** (`pairs.lua`, off until `pairs.enabled`): an opener types
+**Pairs** (`pairs.lua`, on unless `pairs.enabled = false`): an opener types
 its pair with the caret between, a closer before its own steps over
 it, `<BS>` between a pair deletes both, `<CR>` between brackets opens
 the block, a quote pairs only where one can open — at every caret,
@@ -400,7 +400,7 @@ objects, or any other character on both sides.
 | `<leader>?` | the which-key for every first key (`:keys`) |
 | `<leader>ot` `<leader>os` | the other base, dark for light and light for dark (`theme toggle`); the base the OS's again (`theme system`) — the session's `theme.appearance` ([themes.md](themes.md)) |
 | `<leader>ol` | the look's lab (`:theme lab`, `:font lab`): the selected theme in the editor's face through every situation the editor draws — code with the caret, a hit, a selection and a diagnostic; each token on the page, under a selection, under a hit; the surfaces, the chrome, the terminal — each pair's contrast and floor, `✓` or `✗`; the face's own scene — look-alikes, operators, its four styles, box drawing, fallbacks; `f` only what falls short, `r` the report (`:theme check`), `j` `k` `<C-d>` `<C-u>` `gg` `G` scroll, `q` closes |
-| `<leader>wu` | the disk usage of the working directory (`:du [PATH]`), a column of its own: every directory under it sized on the io thread, hidden and ignored files too, each total filling in as it is known, one directory at a time the largest first — a bar and a share each; `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `l` `<CR>` in (a file opens), `h` `-` out, `s` sorts by size, name, files, `m` marks, `d` deletes the marked (or the cursor's) through the file manager's confirm, `o` lists the directory, `r` walks again, `q` closes |
+| `<leader>wu` | the disk usage of the working directory (`:du [PATH]`), a column of its own: every directory under it sized on the io thread, hidden and ignored files too, each total filling in as it is known, one directory at a time the largest first — a bar and a share each; `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `l` `<CR>` in (a file opens), `h` `-` out, `s` sorts by size, name, files, `m` marks, `d` deletes the marked (or the cursor's) through the file manager's confirm, `o` lists the directory, `r` walks again, `q` `<Esc>` close; the arrows walk too, `<Right>` in and `<Left>` out |
 | `<leader>of` | the fonts' pane (`:fonts`), a column of its own: every family a card drawn in itself — its name, mono or not, its weights, two lines of code at the editor's size in the theme on show — the monospaced ones (`m` all); `⏎` or a click takes the cursor's family (`font.family`, the session's), `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `/` searches by name as in a buffer (`⏎` ends it, `n` `N` the next and previous match), `+` `-` the size, `y` copies the line that keeps the pick, `q` closes ([fonts.md](fonts.md)) |
 | `<leader>oo` | the themes' pane (`:themes`), a column of its own: every theme a card in its own colours, the dark ones and the light ones apart; `⏎` or a click puts the cursor's card in its half (`theme.dark`, `theme.light`), `h` `j` `k` `l` walk (the card scrolled into view), `t` `s` as above, `y` copies the line that keeps the pick, `q` closes |
 | `<leader>Q` | quit all |

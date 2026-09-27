@@ -18,7 +18,8 @@
 -- listing, and `ms` `mm` `ma` `me` (`mS` `mM` `mA` `mE` for the reverse)
 -- list it again by size, mtime, name or type, yazi's keys under `m`;
 -- `g.` shows or hides the dot files (`dir.hidden`); version control's
--- word on each entry colours its name (`dir.vcs`, git bundled). A listing's
+-- word on each entry colours its name (`dir.vcs_enabled`; the providers
+-- are `kawoosh.dir.vcs`, git bundled). A listing's
 -- directory is on a watch: made, removed or renamed by anything, it is
 -- read again where it is unless it has edits of its own. The preview
 -- draws a picture as one (`kawoosh.image`). A

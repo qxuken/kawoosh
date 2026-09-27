@@ -1825,13 +1825,13 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("memory")
                 .args(Args::new(&[ArgKind::Text]))
-                .doc("the memory pane: texts, files, recent, commands, searches, pins (the workspace's), all (every workspace's)"),
+                .doc("the memory pane: texts, files, recent, commands, searches, pins, marks (the workspace's), all (every workspace's)"),
             |k, ctx| match ctx.args.first().map(String::as_str) {
                 Some(name) => match View::parse(name) {
                     Some(v) => k.toggle_memory_panel(Some(v)),
                     None => {
                         k.ed.message = format!(
-                            "no memory view {name} (texts, files, recent, commands, searches, pins, all)"
+                            "no memory view {name} (texts, files, recent, commands, searches, pins, marks, all)"
                         )
                     }
                 },

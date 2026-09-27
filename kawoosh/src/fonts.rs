@@ -120,9 +120,10 @@ impl Fonts {
 
 pub type SharedFonts = Rc<RefCell<Fonts>>;
 
-/// The user's fonts: `$KAWOOSH_FONTS`, else `fonts/` beside
-/// `settings.lua` — loaded at start, watched, a file dropped in or taken
-/// out seen within a second (fonts.md Decision 7).
+/// The user's fonts: `$KAWOOSH_FONTS`, else `fonts/` in the config
+/// directory (`~/.config/kawoosh`, whatever `$KAWOOSH_SETTINGS` says) —
+/// loaded at start, watched, a file dropped in or taken out seen within
+/// a second (fonts.md Decision 7).
 pub fn user_fonts_dir() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("KAWOOSH_FONTS") {
         return Some(PathBuf::from(p));

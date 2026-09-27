@@ -1430,7 +1430,7 @@ picker.source("compile", {
 -- `:picker [SOURCE]`: bare, the smart one.
 kawoosh.command("picker", function(ctx)
   picker.open(ctx.args[1] or "smart")
-end, { args = { "text" }, doc = "the picker on SOURCE (files, buffers, recent, smart, grep, lines, commands, tools)" })
+end, { args = { "text" }, doc = "the picker on SOURCE (files, buffers, recent, smart, grep, lines, symbols, workspace_symbols, marks, pins, workspaces, dirs, commands, tools, compile)" })
 kawoosh.command("picker resume", function() picker.resume() end, { doc = "the last picker again, where it was left" })
 
 -- -------------------------------------------------------- the sources
@@ -1992,7 +1992,7 @@ picker.source("commands", {
 kawoosh.command("commands", function(ctx)
   picker.open("commands", { query = ctx.args[1] })
 end, {
-  aliases = { "cmds", "help" },
+  aliases = { "cmds" },
   args = { "command" },
   doc = "every command as a picker, searched as you type; QUERY starts the search",
 })

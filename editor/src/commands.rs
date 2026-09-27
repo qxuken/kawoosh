@@ -2822,11 +2822,11 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "select next",
-        "select the next match of the selection, or the word under the caret (<A-d>, <D-d>)",
+        "select the next match of the selection, or the word under the caret (<C-n>, <D-d>)",
     ),
     (
         "select all matches",
-        "select every match of the selection, or of the word under the caret (<A-l>, <D-L>)",
+        "select every match of the selection, or of the word under the caret (<C-S-n>, <D-L>)",
     ),
     (
         "select within",
@@ -4165,6 +4165,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>c", "code"),
         ("<leader>y", "copy the path"),
         ("<leader>o", "look"),
+        ("<leader>e", "pins"),
         ("<leader>v", "selections"),
         ("g", "goto"),
         ("gs", "surround"),
