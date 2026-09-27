@@ -2327,7 +2327,16 @@ then breadth.
     size and legible, checked or not; the rounded selection over
     rendered rows — each row's selected span measured in its drawn
     text, so the shape joins across raw and rendered lines — and held
-    still while a line turns raw under the caret and back.
+    still while a line turns raw under the caret and back. *The boxes
+    landed 2026-09-27* (the Nerd Font's pair). What reading the
+    selection found: every visible line of a rendered buffer is an
+    `md_row`, the raw ones too, and the rounding skips them all, so no
+    line of markdown rounds; and the raw lines are every selection's
+    head's (`panes.rs`), so a selection grown by `j` turns each line it
+    reaches raw and the one it left rendered, reflowing the text under
+    it. A rendered row wraps and is scaled, so its part of the shape is
+    one extent per *wrapped* line, measured in kui's layout — not the
+    one extent per row `RoundedSel` has.
 49. **Links**: `gx` on a path with its line, ⌘-click in an editor pane
     as `gx`, and URLs in a terminal's ⌘-click — one finder for a link
     under a point, the markdown's and the terminal's merged.
