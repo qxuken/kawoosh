@@ -1764,10 +1764,11 @@ follow the theme every frame (`panes.rs`).
   own beep (a motion that fails, a search with no match) is the same
   setting's second half, `editor.bell`, off by default — vim users
   turn it off first.
-- **Mouse buttons and OSC 8** — later [kui.md, req §10]. kui routes
+- **Mouse buttons and OSC 8** — open [kui.md, req §10]; steps 55 and 54
+  (asked 2026-09-28). What it said before: kui routes
   only the primary button; the middle button and hyperlinks are kui's
   wish list, not kawoosh's.
-- **Kitty graphics** — deferred [req §9]. A `term` APC hook before it is
+- **Kitty graphics** — open [req §9]; step 56 (asked 2026-09-28). A `term` APC hook before it is
   a kui matter.
 - **Terminals in sessions** — done 2026-09-23 [mvp.md notes, use
   2026-09-22]; step 15. The directory is `Terminal::cwd()`: what the
@@ -2448,13 +2449,32 @@ then breadth.
     the commands picker as an alias, and a dozen doc strings behind the
     code, each fixed.
 
+Asked 2026-09-28 ("osc 8, mouse and kitty graphics, than we will
+think on a kitty keyboard"), the terminal's third round, in that order:
+
+54. **OSC 8 hyperlinks**: a link a program prints on purpose (`ls
+    --hyperlink`, `gcc`, `cargo`, `delta`, `gh`) is what ⌘-hover
+    underlines and ⌘-click opens, before the text is searched for one;
+    its target shown while hovered, since the text need not be the
+    link; a `file://` URL a path on the terminal's own host or domain,
+    with a line when its fragment gives one.
+55. **Mouse buttons**: the middle button pastes, and the secondary and
+    middle buttons reach a program that asked for mouse reports (tmux,
+    htop, a TUI's menus). kui routes the primary button to a widget
+    and the secondary to a context menu, so this starts as a kui round.
+56. **Kitty graphics**: images in the grid (`kitty +kitten icat`,
+    yazi's previews, plots) — the protocol in `term` (APC, the
+    transmit/put/delete actions, placements that scroll with their
+    cells) and a texture drawn over the grid in kui. A note first.
+57. **The terminal's keys, a note** (not built until decided): the
+    kitty keyboard protocol, so a program can tell `<C-Tab>` from
+    `<Tab>` and `<S-CR>` from `<CR>` — which asks what kawoosh keeps
+    while a terminal has the keys: a mode for it, a leader to escape
+    it, and before that a map of the commands and keys as they connect
+    (a graph over the registry and the keymap) to regroup them on.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
-the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),
-an extended key protocol in the terminal (kitty's, or xterm's
-`modifyOtherKeys` — until then a pty cannot tell `<C-Tab>` from
-`<Tab>`, so `<C-Tab>` `<C-S-Tab>` are the tabs' from every pane,
-2026-09-27; whether a program gets them back is decided with it),
-kitty graphics and native extensions (deferred), WSL (domains.md's
+the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision
 3's after — when the walk's cap or the poll hurt).
 
