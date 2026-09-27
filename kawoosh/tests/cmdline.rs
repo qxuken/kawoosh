@@ -251,7 +251,8 @@ fn the_command_line_completes_commands_paths_and_buffers() {
 
     // Past an option's path, after a `=` or a space, its value: the
     // families kui can see for `font.family` (the monospaced first, not
-    // the OS's `.` ones), the rest of the line the
+    // the OS's `.` ones — and no user's folder, the config not loaded,
+    // so every one the machine's, in its order), the rest of the line the
     // token, spaces and all; a one-of's words, the value it has first;
     // a flag's `true` and `false`.
     d.keys(&mut app, ":set font.fam");
