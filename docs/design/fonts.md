@@ -204,6 +204,29 @@ in the system's cache. The slowest otherwise are layout's, 4–5 ms for a
 few faces (Mishafi Gold, Menlo, Hiragino Mincho ProN, SF Pro Display).
 The warming stays out: with nothing over 8 ms, it would spread nothing.
 
+*The 4–7 ms layout frames, found (kui DX26, 9babf63, 2026-09-28):* not
+the families named. A family's first card rasterizes its own ~52
+glyphs in ~0.24 ms; the slow frames were the sixteen of the walk
+(about one in forty families) that began on a glyph-atlas page kui
+had just emptied — a list scrolling through fonts keeps filling it —
+and looked up the whole window again, ~600 glyphs in 2.5–5.3 ms, the
+chrome's own text among them. The family on that frame was only the
+one that was new. kui keeps the emptied page for that one frame and
+copies across what it looks up. The same probe on kui main e4bca3c
+(DX26 and a trackpad fix after it), three runs:
+
+| | worst layout frame | layout frames over 3 ms | worst frame | first-shape mean |
+|---|---|---|---|---|
+| kui 9175e82 (DX25), the other session's runs | 5.4–5.5 ms | 8 | 6.6 ms | ~2.1 ms |
+| kui e4bca3c, runs 2 and 3 | 1.98, 2.14 ms | 0 | 4.13, 4.49 ms | 2.33, 2.17 ms |
+| kui e4bca3c, run 1 (first after a build) | 5.61 ms (Kailasa) | 1 | 7.53 ms | 2.24 ms |
+
+The first run after a build had one frame back over 3 ms, Kailasa's,
+the files not yet in the system's cache as with DX25's first run;
+nothing over 8 ms in any. Still kui's, and nothing for kawoosh: the
+page empties as often (now cheaply), and a first sight's ~1 ms of view
+is cosmic-text ranking every installed face for the new family.
+
 *Scrolling in a face (2026-09-28, "will usage of Victor Mono degrade
 kawoosh's performance?"):* a family's first sight is one frame a run;
 what a face costs after it is the editor's own frames. The scrolling
