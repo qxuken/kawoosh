@@ -2375,9 +2375,16 @@ then breadth.
     its own directory, then the working one. Tests: `kawoosh/tests/links.rs`.
     Not built: an editor pane's ⌘-hover (the terminal's underline and
     hand) — a click there finds out.
-50. **Tab titles**: the directory on every tab behind a setting, a
+50. ~~**Tab titles**: the directory on every tab behind a setting, a
     terminal's own from OSC 7, and a Lua hook that writes the label,
-    wezterm's way.
+    wezterm's way.~~ Landed 2026-09-27: `tabs.directory` (`auto`, the
+    old rule — while the tabs are in more than one — `always`,
+    `never`); a tab on a terminal is where its shell says it is
+    (`Kawoosh::tab_dir`, OSC 7); `kawoosh.tab_title(fn)`, `fn(tab)` with
+    the label kawoosh would draw and what it is made of, returning the
+    label or nil, taken off and said once when it fails. Tests:
+    `a_tabs_directory_is_in_its_label_as_the_setting_says`,
+    `a_plugin_writes_the_tabs_labels` (chrome.rs).
 51. **Selections, helix's** (a note first): which of `s` `S` `K` `<A-K>`
     `<A-s>` `C` `<A-,>` come, on which keys, and selecting within a
     selection.

@@ -124,6 +124,21 @@ function kawoosh.on_open(fn)
   kawoosh._openers[#kawoosh._openers + 1] = fn
 end
 
+-- kawoosh.tab_title(fn): the tab strip's labels written by
+-- `fn(tab)`, wezterm's `format-tab-title` — `tab` is `{ index, active,
+-- title, dir, cwd, kind, name, path, modified, bell, panes }`: `title`
+-- the label kawoosh would draw (`N: name`, the directory as
+-- `tabs.directory` says, ` ●` when modified), `dir` the last part of
+-- `cwd` (a terminal's is where its shell says it is), `kind` its focused
+-- pane's (`editor`, `terminal`, `lua`, `undo`, `memory`), `name` that
+-- pane's buffer, terminal title or view, `path` its file. It returns
+-- the label, or nil for kawoosh's; `kawoosh.tab_title(nil)` takes it
+-- off, and so does an error, said once. Called for every tab, every
+-- frame the strip is drawn: keep it to strings.
+function kawoosh.tab_title(fn)
+  kawoosh._tab_title = fn
+end
+
 -- kawoosh.on_memory_open(kind, fn): how a moment of a plugin's own
 -- kind (`<plugin>.<kind>`, memory.md Decision 9) is opened from the
 -- memory pane — `fn(row)`, `row` its `kind`, `subject` and `meta` (a

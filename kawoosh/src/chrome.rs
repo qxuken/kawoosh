@@ -32,6 +32,18 @@ pub const TAB_MIN_W: f32 = 140.0;
 const TABS_MS: f32 = 160.0;
 
 impl Kawoosh {
+    /// Where tab `t` is: the directory its terminal's shell last said
+    /// it is in (OSC 7), when a terminal has its focus, else the tab's
+    /// own, else the editor's.
+    pub(crate) fn tab_dir(&self, t: &crate::layout::Tab) -> std::path::PathBuf {
+        if let Some(Content::Terminal(id)) = self.layout.content(t.focused)
+            && let Some(dir) = self.terms.map.get(&id).and_then(|term| term.cwd())
+        {
+            return dir;
+        }
+        t.cwd.clone().unwrap_or_else(|| self.cwd.clone())
+    }
+
     /// The title row: the platform's inset and controls around the cwd
     /// and the status blocks.
     pub(crate) fn title_bar(&mut self, ui: &mut Ui<'_>) {
@@ -144,54 +156,90 @@ impl Kawoosh {
         // own reveal of its column (kui F82).
         let reveal = self.tabs_seen != Some(shape);
         self.tabs_seen = Some(shape);
-        // Tabs in more than one directory lead with theirs, so the strip
-        // says which project each is (docs/design/workspaces.md
-        // Decision 6).
-        let dirs: std::collections::HashSet<_> = self
+        // A tab's directory: a terminal's is where its shell says it
+        // is (OSC 7), else the tab's own. Shown before the name as
+        // `tabs.directory` says: `auto` while the tabs are in more than
+        // one, so the strip says which project each is
+        // (docs/design/workspaces.md Decision 6), `always`, `never`.
+        let dirs: Vec<std::path::PathBuf> =
+            self.layout.tabs.iter().map(|t| self.tab_dir(t)).collect();
+        let show_dir = match self.ed.settings.str("tabs.directory") {
+            Some("always") => true,
+            Some("never") => false,
+            _ => dirs.iter().collect::<std::collections::HashSet<_>>().len() > 1,
+        };
+        let hook = self
+            .scripting
+            .rt
+            .clone()
+            .filter(|rt| rt.has_tab_title_hook());
+        let labels: Vec<(String, bool)> = self
             .layout
             .tabs
             .iter()
-            .map(|t| t.cwd.as_ref().unwrap_or(&self.cwd))
-            .collect();
-        let show_dir = dirs.len() > 1;
-        let labels: Vec<(String, bool, bool)> = self
-            .layout
-            .tabs
-            .iter()
-            .map(|tab| {
-                let name = match self.layout.content(tab.focused) {
+            .zip(&dirs)
+            .enumerate()
+            .map(|(i, (tab, cwd))| {
+                let (kind, name, path) = match self.layout.content(tab.focused) {
                     // A host's file says which host (domains.md
                     // Decision 8): `box: x.rs`.
                     Some(Content::Editor(v)) => {
                         let b = self.ed.buffer_of(v);
-                        match b.path.as_deref().and_then(kawoosh_systems::fs::domain_of) {
+                        let name = match b.path.as_deref().and_then(kawoosh_systems::fs::domain_of)
+                        {
                             Some((d, _)) => format!("{d}: {}", b.name),
                             None => b.name.clone(),
-                        }
+                        };
+                        let path = b.path.as_ref().map(|p| p.display().to_string());
+                        ("editor", name, path)
                     }
-                    Some(Content::Terminal(t)) => self
-                        .terms
-                        .map
-                        .get(&t)
-                        .filter(|t| !t.title.is_empty())
-                        .map(|t| t.title.clone())
-                        .unwrap_or_else(|| "term".into()),
-                    Some(Content::Lua(n)) => n,
-                    Some(Content::Undo) => "undo".into(),
-                    Some(Content::Memory) => "memory".into(),
-                    None => "?".into(),
+                    Some(Content::Terminal(t)) => {
+                        let title = self
+                            .terms
+                            .map
+                            .get(&t)
+                            .filter(|t| !t.title.is_empty())
+                            .map(|t| t.title.clone())
+                            .unwrap_or_else(|| "term".into());
+                        ("terminal", title, None)
+                    }
+                    Some(Content::Lua(n)) => ("lua", n, None),
+                    Some(Content::Undo) => ("undo", "undo".into(), None),
+                    Some(Content::Memory) => ("memory", "memory".into(), None),
+                    None => ("", "?".into(), None),
                 };
                 let mut ps = Vec::new();
                 tab.panes(&mut ps);
                 let modified = ps
                     .iter()
                     .any(|p| matches!(self.view_of(*p), Some(v) if self.ed.buffer_of(v).modified));
-                let name =
-                    match kawoosh_systems::fs::basename(tab.cwd.as_ref().unwrap_or(&self.cwd)) {
-                        Some(d) if show_dir => format!("{d} · {name}"),
-                        _ => name,
-                    };
-                (name, modified, tab.bell)
+                let dir = kawoosh_systems::fs::basename(cwd).unwrap_or_default();
+                let shown = if show_dir && !dir.is_empty() {
+                    format!("{dir} · {name}")
+                } else {
+                    name.clone()
+                };
+                let title = format!("{}: {shown}{}", i + 1, if modified { " ●" } else { "" });
+                // A plugin's label over it (`kawoosh.tab_title`).
+                let label = hook
+                    .as_ref()
+                    .and_then(|rt| {
+                        rt.tab_title_hook(&kawoosh_lua::TabTitle {
+                            index: i + 1,
+                            active: i == active,
+                            title: &title,
+                            dir: &dir,
+                            cwd: &cwd.display().to_string(),
+                            kind,
+                            name: &name,
+                            path: path.as_deref(),
+                            modified,
+                            bell: tab.bell,
+                            panes: ps.len(),
+                        })
+                    })
+                    .unwrap_or(title);
+                (label, tab.bell)
             })
             .collect();
         let mut active_key = None;
@@ -210,9 +258,8 @@ impl Kawoosh {
                 .keep_focus()
                 .role(Role::TabList),
             |ui| {
-                for (i, (name, modified, bell)) in labels.iter().enumerate() {
+                for (i, (label, bell)) in labels.iter().enumerate() {
                     let is_active = i == active;
-                    let label = format!("{}: {}{}", i + 1, name, if *modified { " ●" } else { "" });
                     // The block, its item and its close button are one
                     // hover group: the pointer is on the item or the
                     // button, never on the block itself, and the button
@@ -270,7 +317,7 @@ impl Kawoosh {
                                             .label(label.as_str()),
                                         |ui| {
                                             ui.text(
-                                                &label,
+                                                label,
                                                 rows::mono(font, &pal).color(fg).ellipsis(),
                                             )
                                         },

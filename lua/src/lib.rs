@@ -54,6 +54,31 @@ pub struct Place {
     pub end_col: u32,
 }
 
+/// A tab as `kawoosh.tab_title`'s hook reads it (roadmap step 50).
+#[derive(Clone, Debug, Default)]
+pub struct TabTitle<'a> {
+    /// From 1, as the strip numbers it.
+    pub index: usize,
+    pub active: bool,
+    /// The label kawoosh would draw: `N: name`, the directory before
+    /// the name as `tabs.directory` says, ` ●` when modified.
+    pub title: &'a str,
+    /// The last part of `cwd`.
+    pub dir: &'a str,
+    /// Where the tab is: its own directory, or a terminal's shell's.
+    pub cwd: &'a str,
+    /// What its focused pane is: `editor`, `terminal`, `lua`, `undo`,
+    /// `memory`.
+    pub kind: &'a str,
+    /// The focused pane's buffer, terminal title or view name.
+    pub name: &'a str,
+    /// The focused buffer's file.
+    pub path: Option<&'a str>,
+    pub modified: bool,
+    pub bell: bool,
+    pub panes: usize,
+}
+
 /// What Lua asked for. Editor-level messages are applied inside the
 /// command that ran the script; the rest reach the shell.
 #[derive(Clone, Debug, PartialEq)]
@@ -1520,6 +1545,45 @@ impl Runtime {
                     .borrow_mut()
                     .push(Msg::Echo(format!("memory {kind}: {e}")));
                 false
+            }
+        }
+    }
+
+    /// Whether a plugin writes the tabs' labels (`kawoosh.tab_title`).
+    pub fn has_tab_title_hook(&self) -> bool {
+        self.lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<mlua::Function>("_tab_title"))
+            .is_ok()
+    }
+
+    /// A tab's label as the plugin's `kawoosh.tab_title` writes it, or
+    /// none for kawoosh's own (`tab.title`). A hook that fails is taken
+    /// off and says why once, rather than every frame.
+    pub fn tab_title_hook(&self, tab: &TabTitle<'_>) -> Option<String> {
+        let kawoosh = self.lua.globals().get::<Table>("kawoosh").ok()?;
+        let f = kawoosh.get::<mlua::Function>("_tab_title").ok()?;
+        let t = self.lua.create_table().ok()?;
+        let _ = t.set("index", tab.index);
+        let _ = t.set("active", tab.active);
+        let _ = t.set("title", tab.title);
+        let _ = t.set("dir", tab.dir);
+        let _ = t.set("cwd", tab.cwd);
+        let _ = t.set("kind", tab.kind);
+        let _ = t.set("name", tab.name);
+        let _ = t.set("path", tab.path);
+        let _ = t.set("modified", tab.modified);
+        let _ = t.set("bell", tab.bell);
+        let _ = t.set("panes", tab.panes);
+        match f.call::<Option<String>>(t) {
+            Ok(label) => label,
+            Err(e) => {
+                let _ = kawoosh.set("_tab_title", LV::Nil);
+                self.queue
+                    .borrow_mut()
+                    .push(Msg::Echo(format!("tab_title: {e} (the hook is off)")));
+                None
             }
         }
     }

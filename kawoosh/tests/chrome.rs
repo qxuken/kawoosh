@@ -308,3 +308,113 @@ fn a_confirm_with_many_answers_lists_them() {
     assert!(b.y > a.y, "one under another");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// The tabs' labels as the strip draws them.
+fn tab_labels(d: &Drive) -> Vec<String> {
+    d.texts_under("tabs")
+        .into_iter()
+        .filter(|t| t.contains(": "))
+        .collect()
+}
+
+fn two_dirs(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let root = std::env::temp_dir().join(format!("kawoosh-tabdir-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for d in ["alpha", "beta"] {
+        std::fs::create_dir_all(root.join(d)).unwrap();
+    }
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    (root.join("alpha"), root.join("beta"))
+}
+
+/// `tabs.directory` (roadmap step 50): `auto` leads each label with its
+/// tab's directory while the tabs are in more than one, `always` does
+/// with one, `never` does not with two; a tab on a terminal is where its
+/// shell says it is (OSC 7).
+#[test]
+fn a_tabs_directory_is_in_its_label_as_the_setting_says() {
+    let (alpha, beta) = two_dirs("setting");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("a", "");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&alpha);
+    d.frame(&mut app);
+    assert_eq!(tab_labels(&d), ["1: a"], "auto, one directory: none");
+    app.run_lua_source("t", "kawoosh.opt('tabs.directory', 'always')");
+    d.frame(&mut app);
+    assert_eq!(tab_labels(&d), ["1: alpha · a"]);
+    app.run_lua_source("t", "kawoosh.opt('tabs.directory', 'auto')");
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", beta.display()));
+    settle(&mut d, &mut app);
+    let labels = tab_labels(&d);
+    assert!(labels[0].starts_with("1: alpha · "), "{labels:?}");
+    assert!(labels[1].starts_with("2: beta · "), "{labels:?}");
+    app.run_lua_source("t", "kawoosh.opt('tabs.directory', 'never')");
+    d.frame(&mut app);
+    assert!(
+        tab_labels(&d).iter().all(|l| !l.contains(" · ")),
+        "{:?}",
+        tab_labels(&d)
+    );
+    // A terminal's tab is where its shell is.
+    app.run_lua_source("t", "kawoosh.opt('tabs.directory', 'always')");
+    let t = app.add_headless_terminal();
+    let path = beta.join("..").join("alpha");
+    let path = kawoosh_systems::fs::canonicalize(&path).unwrap();
+    let url = path.to_str().unwrap().replace('\\', "/");
+    let url = if url.starts_with('/') {
+        url
+    } else {
+        format!("/{url}")
+    };
+    app.feed_terminal(t, format!("\x1b]7;file://{url}\x07").as_bytes());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let labels = tab_labels(&d);
+    assert!(labels[1].starts_with("2: alpha · "), "{labels:?}");
+    std::fs::remove_dir_all(alpha.parent().unwrap()).ok();
+}
+
+/// `kawoosh.tab_title(fn)` writes the labels, wezterm's way: what it
+/// returns is the label, nil is kawoosh's own, and a hook that fails is
+/// taken off and says so.
+#[test]
+fn a_plugin_writes_the_tabs_labels() {
+    let (alpha, _) = two_dirs("hook");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("a", "");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.set_cwd(&alpha);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "tabnew");
+    settle(&mut d, &mut app);
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.tab_title(function(tab)
+             if not tab.active then return nil end
+             return tab.index .. " " .. tab.kind .. " in " .. tab.dir
+           end)"#,
+    );
+    d.frame(&mut app);
+    let labels = tab_labels(&d);
+    assert!(labels[0].starts_with("1: "), "kawoosh's own: {labels:?}");
+    assert!(
+        d.texts_under("tabs").iter().any(|t| t == "2 lua in alpha"),
+        "{:?}",
+        d.texts_under("tabs")
+    );
+    app.run_lua_source("t", "kawoosh.tab_title(function() error('boom') end)");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(app.ed.message.contains("boom"), "{}", app.ed.message);
+    assert!(
+        app.ed.message.contains("the hook is off"),
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(tab_labels(&d).len(), 2, "kawoosh's labels back");
+    std::fs::remove_dir_all(alpha.parent().unwrap()).ok();
+}
