@@ -1015,14 +1015,7 @@ fn a_listing_is_annotated_and_refreshed() {
     ex(&mut d, &mut app, &format!("dir {}", dir.display()));
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);
-    // The columns are padded with no-break spaces, which fonts keep.
-    let extras = |d: &Drive| -> Vec<String> {
-        d.row_extras()
-            .iter()
-            .map(|s| s.replace('\u{a0}', " "))
-            .collect()
-    };
-    let e = extras(&d);
+    let e = d.row_extras();
     assert_eq!(e[0], "", "nothing on ../");
     assert!(e[2].contains(" 5 B  20"), "{e:?}");
     assert!(e[3].contains(" 2.0 KB  20"), "{e:?}");
@@ -1036,7 +1029,7 @@ fn a_listing_is_annotated_and_refreshed() {
     d.key(&mut app, "escape", KeyMods::default());
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["new.txt", "../", "sub/", "a.txt", "b.txt"]);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[3].contains(" 5 B"), "{e:?}");
     // The line typed above says what it is: new. The entry's line
     // deleted: its annotation is gone; the deletion undone, it is back
@@ -1048,12 +1041,12 @@ fn a_listing_is_annotated_and_refreshed() {
     d.keys(&mut app, "jjjdd");
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["new.txt", "../", "sub/", "b.txt"]);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(!e.iter().any(|x| x.contains(" 5 B")), "{e:?}");
     assert!(e[3].contains(" 2.0 KB"), "{e:?}");
     d.keys(&mut app, "u");
     d.frame(&mut app);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[3].contains(" 5 B"), "back: {e:?}");
     assert!(e[4].contains(" 2.0 KB"), "{e:?}");
     d.keys(&mut app, "ggjjjjccrenamed.txt");
@@ -1063,7 +1056,7 @@ fn a_listing_is_annotated_and_refreshed() {
         d.line_rows(),
         ["new.txt", "../", "sub/", "a.txt", "renamed.txt"]
     );
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(
         e[4].contains(" 2.0 KB") && e[4].ends_with("← was b.txt"),
         "{e:?}"
@@ -1487,11 +1480,7 @@ fn a_yanked_line_pasted_into_another_listing_is_a_copy() {
     );
     // Before the write, each pasted line says where it comes from.
     d.frame(&mut app);
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(e[1].ends_with("← copy from ../b/"), "{e:?}");
     assert!(e[2].ends_with("← copy from ../b/"), "{e:?}");
     assert!(e[6].ends_with("← move from ../a/"), "{e:?}");
@@ -1557,12 +1546,6 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     let mut app = app_with_lua(&mut d, "t", "");
     d.frame(&mut app);
     let read = |p: &str| std::fs::read_to_string(dir.join(p)).unwrap();
-    let extras = |d: &Drive| -> Vec<String> {
-        d.row_extras()
-            .iter()
-            .map(|s| s.replace('\u{a0}', " "))
-            .collect()
-    };
     ex(
         &mut d,
         &mut app,
@@ -1583,7 +1566,7 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     d.keys(&mut app, "l");
     d.keys(&mut app, "Gp");
     d.frame(&mut app);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[3].ends_with("← twice"), "{e:?} / {}", app.ed.message);
     d.keys(&mut app, "ggjdd");
     d.press(&mut app, "<C-w>");
@@ -1591,7 +1574,7 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     d.keys(&mut app, "p");
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "file.txt", "../", "file.txt"]);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(
         e[1].contains("14 B") && e[1].ends_with("← move from ../b/"),
         "{e:?}"
@@ -1627,7 +1610,7 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     d.keys(&mut app, "ccrenamed.txt");
     d.key(&mut app, "escape", KeyMods::default());
     d.frame(&mut app);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[3].ends_with("← move from ../a/file.txt"), "{e:?}");
     ex(&mut d, &mut app, "w");
     d.frame(&mut app);
@@ -1650,7 +1633,7 @@ fn a_pasted_line_is_its_entry_so_files_of_one_name_swap() {
     d.keys(&mut app, "ggjddp");
     d.frame(&mut app);
     assert_eq!(d.line_rows()[1..], ["../", "renamed.txt", "file.txt"]);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[3].contains(" 6 B") && !e[3].contains("←"), "{e:?}");
     ex(&mut d, &mut app, "w");
     assert_eq!(app.ed.message, "nothing to apply");
@@ -1750,25 +1733,19 @@ fn an_entry_cut_and_undone_keeps_its_meta() {
     d.frame(&mut app);
     ex(&mut d, &mut app, &format!("dir {}", dir.display()));
     d.frame(&mut app);
-    let extras = |d: &Drive| -> Vec<String> {
-        d.row_extras()
-            .iter()
-            .map(|s| s.replace('\u{a0}', " "))
-            .collect()
-    };
-    assert!(extras(&d)[1].contains(" 5 B"));
+    assert!(d.row_extras()[1].contains(" 5 B"));
     d.keys(&mut app, "jddu");
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "a.txt", "b.txt"]);
     assert!(!app.ed.buffer_of(app.focused_view().unwrap()).modified);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[1].contains(" 5 B") && e[2].contains(" 2 B"), "{e:?}");
     // And the same on the last line, in two frames.
     d.keys(&mut app, "jdd");
     d.frame(&mut app);
     d.keys(&mut app, "u");
     d.frame(&mut app);
-    let e = extras(&d);
+    let e = d.row_extras();
     assert!(e[2].contains(" 2 B"), "{e:?}");
     // Renamed after, the entry come back is still the entry.
     d.keys(&mut app, "ccb2.txt");
@@ -2041,11 +2018,7 @@ fn a_pasted_line_yanked_again_is_still_its_entry() {
         d.line_rows(),
         ["../", "file.txt", "file2.txt", "../", "file2.txt"]
     );
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(
         e[2].contains(" 4 B") && e[2].ends_with("← copy from ../dir2/"),
         "{e:?}"
@@ -2149,11 +2122,7 @@ fn renames_and_moves_swap_without_writing_over_anything() {
         d.line_rows(),
         ["../", "one.txt", "two.txt", "../", "x.txt", "x.txt"]
     );
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(e[4].contains(" B") && e[5].ends_with("← twice"), "{e:?}");
     ex(&mut d, &mut app, "w");
     d.frame(&mut app);
@@ -2300,11 +2269,7 @@ fn listings_are_many_and_each_writes_its_own_directory() {
         d.line_rows()
     );
     d.frame(&mut app);
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(e[1].ends_with("← move from ../b/"), "{e:?}");
     assert!(e[3].ends_with("← move from ../a/"), "{e:?}");
     ex(&mut d, &mut app, "w");
@@ -2518,11 +2483,7 @@ fn joined_lines_are_refused_and_a_typed_name_is_new() {
         app.ed.message,
         d.warnings()
     );
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(
         e[1].contains(" 3 B  ") && e[1].ends_with("← joined") && !e[1].contains("was"),
         "{e:?}"
@@ -2553,11 +2514,7 @@ fn joined_lines_are_refused_and_a_typed_name_is_new() {
     d.keys(&mut app, "Gob1.txt");
     d.key(&mut app, "escape", KeyMods::default());
     d.frame(&mut app);
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(e[3].ends_with("← new"), "{e:?}");
     ex(&mut d, &mut app, "w");
     d.frame(&mut app);
@@ -2697,11 +2654,7 @@ fn a_moment_recalled_keeps_its_entry() {
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "a1.txt", "a2.txt", "../", "a1.txt"]);
-    let e: Vec<String> = d
-        .row_extras()
-        .iter()
-        .map(|s| s.replace('\u{a0}', " "))
-        .collect();
+    let e: Vec<String> = d.row_extras();
     assert!(
         e[4].contains(" 3 B") && e[4].ends_with("← copy from ../a/"),
         "{e:?}"

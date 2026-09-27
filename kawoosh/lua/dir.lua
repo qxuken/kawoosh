@@ -96,8 +96,6 @@ local PREFIX = "dir: "
 local PREVIEW = "dir preview"
 -- The listing above every root on Windows: the drives.
 local DRIVES = "<drives>"
--- The space fonts keep (a run's trailing spaces are unreliable).
-local NBSP = "\u{A0}"
 local ARROW = "\u{2190} "
 
 -- A size for people: `512 B`, `1.5 KB`, `12 MB`.
@@ -168,8 +166,8 @@ local function shape(d, entries)
     local line = lines[i + 1]
     local pad = width - (utf8.len(line) or #line)
     local size = e.is_dir and "" or human(e.size)
-    local cols = string.format("%9s", size):gsub(" ", NBSP)
-    meta[i + 1] = NBSP:rep(pad) .. cols .. NBSP:rep(2) .. when(e.modified)
+    local cols = string.format("%9s", size)
+    meta[i + 1] = string.rep(" ", pad) .. cols .. "  " .. when(e.modified)
   end
   return lines, meta, width
 end
@@ -852,12 +850,12 @@ function dir.changed()
       local m = who and who.meta
       if m and m ~= "" then return m end
       local l = reads[id] or ""
-      return NBSP:rep(math.max(st.width - (utf8.len(l) or #l), 0))
+      return string.rep(" ", math.max(st.width - (utf8.len(l) or #l), 0))
     end
     local notes = {}
     for id in pairs(st.noted) do if not story[id] then notes[id] = base(id) end end
     for id in pairs(L.fresh) do if not story[id] then notes[id] = base(id) end end
-    for id, text in pairs(story) do notes[id] = base(id) .. NBSP:rep(2) .. ARROW .. text end
+    for id, text in pairs(story) do notes[id] = base(id) .. "  " .. ARROW .. text end
     st.noted = {}
     for id in pairs(story) do st.noted[id] = true end
     if next(notes) then kawoosh.buf.annotate(notes, L.h) end

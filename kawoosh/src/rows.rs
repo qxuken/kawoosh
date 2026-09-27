@@ -39,8 +39,11 @@ pub fn gutter_w(cell_w: f32, lines: usize, marked: bool) -> f32 {
 /// `emit_line`.
 const DIM_ESCAPES_MAX: usize = 32;
 /// A drawn line this long (bytes) is sliced to the pane's window before
-/// it is emitted — kui's own long-line threshold, past which a plain
-/// `text` is shaped in chunks and a `rich_text` is not (backlog C19).
+/// it is emitted — kui's own long-line threshold, past which it shapes a
+/// text in chunks (C19; a `rich_text` too since C42). The slice bounds
+/// kawoosh's own per-row work, which is the line's length a frame
+/// otherwise: the text cloned, its escapes expanded, its grapheme
+/// boundaries found.
 pub const LONG_LINE_BYTES: usize = 4096;
 /// Columns emitted past either edge of the window on a sliced line, so
 /// a scroll of a few columns lands on text already shaped.

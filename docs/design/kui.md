@@ -241,9 +241,11 @@ scale) with color excluded, so token runs dedupe across lines. The pane
 emits only `view.top .. view.top + rows`; a 100k-line buffer costs the
 screenful it shows.
 
-Trailing spaces in a run are unreliable across fonts — the examples map
-` ` to NBSP before emitting, and so does kawoosh (one char for one, so
-byte arithmetic on the drawn text still maps back).
+A run's spaces measure at the face's advance, leading, repeated and
+trailing (kui K3, alpha.13), so a run is drawn with its own spaces;
+only a wrap hangs a trailing one past its break, and a row never wraps.
+Kawoosh mapped them to NBSP until then, and its plugins padded columns
+with NBSP until 2026-09-27.
 
 **The road to soft wrap** (still not MVP): the line is already one
 `rich_text`, so wrapping it is a paragraph wrap — with the caret placed
@@ -373,9 +375,10 @@ split or focuses its pane — `focus = false` leaves the keyboard where
 it is, for a preview beside the listing it follows — `view_close`
 takes the pane away, and `view_toggle` does one or the other.
 
-Two things kui does not do today, both small and both kawoosh's to add to
+Two things kui did not do then, both small and both kawoosh's to add to
 kui rather than work around here (the full door-by-door list is
-[kui-requirements.md](kui-requirements.md)):
+[kui-requirements.md](kui-requirements.md)) — both shipped in
+alpha.13 (2026-09-15): `slots = { "*" }` and `UiEvent::slot`:
 
 - **K1 — dynamic slots.** `Extension::slots` is read once at load and a
   slot name is filled only if listed. A view registered from `init.lua`
@@ -387,11 +390,11 @@ kui rather than work around here (the full door-by-door list is
   on dirty frames; cheap, but a convention). Proposed: `UiEvent::slot`
   (the fill's key, or its name) so routing by pane is a field read.
 
-Until K1 lands the fallback is to bypass slot matching from the host:
+Until K1 landed the fallback was to bypass slot matching from the host:
 `Ui::fill(origin, &Slot{..}, |ui| ext.view(&slot, ui))` is public, and
 events under an origin the runner does not know are handed to the host,
-which forwards them to `ext.on_event`. It works and it is a workaround;
-K1 is a better kui.
+which forwards them to `ext.on_event`. It worked and it was a
+workaround; K1 was the better kui.
 
 The rest of mvp.md's Decision 8 holds: Lua is the only configuration
 language; config is code, state is data; the four verbs; the file manager,

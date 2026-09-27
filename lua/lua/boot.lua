@@ -357,7 +357,7 @@ end
 -- taken off with `false`; the notes not named are kept. `buffer` is a
 -- handle, a name (a scratch just asked for by `open_scratch`, which is
 -- not in the snapshot yet — its ids are its line numbers then), or the
--- current one. Spaces in it are `\u{A0}`, which every font keeps.
+-- current one.
 -- `kawoosh.buf.tracked_lines([buffer])` is where each line a hooked
 -- buffer opened with is now (a line number from 1, or false), beside
 -- `tracked()`'s what it became, both by the line's id — its index;

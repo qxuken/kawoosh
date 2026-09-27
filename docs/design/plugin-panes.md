@@ -156,8 +156,8 @@ the run fails it too.
 
 ## What is not here
 
-Two things a plugin pane cannot do yet, both kui's: an entrance or
-keyframe animation on its nodes (kui-requirements §9), and images
-(deferred). And one thing the editor's: a Lua pane has no `session`
-record of its own beyond being reopened by name, so a plugin that
-wants its state back keeps it in `kawoosh.store`.
+One thing the editor's: a Lua pane has no `session` record of its own
+beyond being reopened by name, so a plugin that wants its state back
+keeps it in `kawoosh.store`. (The two that were kui's are here: a view's
+nodes take `enter`, `exit` and `keyframes` as any binding's do, and an
+image is `kawoosh.image(path)`'s handle in kui's `image { id = }`.)

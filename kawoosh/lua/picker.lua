@@ -91,7 +91,6 @@ local PREVIEW_LINES = 200
 -- The pane's title bar, which `ctx.height` counts and the rows cannot
 -- use (`app::TITLE_H`).
 local TITLE_H = 22
-local NBSP = "\u{A0}"
 
 -- The open picker: its source, items, the hits for the query, the
 -- cursor and the window onto them.
@@ -573,7 +572,7 @@ function picker.preview(ctx, pv, rows, from)
     -- Numbered when the lines are a file's or a buffer's (`from` says
     -- where they start); a spec's lines are not.
     if pv.from then
-      r[#r + 1] = text(string.format("%4d", ln):gsub(" ", NBSP), { family = "mono", size = PREVIEW_SIZE, color = t.faint })
+      r[#r + 1] = text(string.format("%4d", ln), { family = "mono", size = PREVIEW_SIZE, color = t.faint })
     end
     if l ~= "" then
       -- The syntax's colours over the line, the tabs widened after
