@@ -10,10 +10,10 @@
 //! chunk by chunk from its pieces, and the query reads a node's text the
 //! same way, only where a predicate asks. tree-sitter reuses every node
 //! the edit did not touch, and the answer covers only the span whose
-//! syntax changed (the edit and `changed_ranges`), the query run over
-//! that span alone; the journal carries the runs outside it. A first
-//! sight of a buffer, edits the journal no longer has, or a change of
-//! language parse and answer for the whole.
+//! syntax changed (the edit and `changed_ranges`, over whole lines),
+//! the query run over that span alone; the journal carries the runs
+//! outside it. A first sight of a buffer, edits the journal no longer
+//! has, or a change of language parse and answer for the whole.
 //!
 //! The languages are a `kawoosh_languages::Registry`'s (kui.md Decision
 //! 13): the builtins, and what the shell adds with [`Ts::add_language`]
@@ -503,14 +503,22 @@ fn highlight(
                 Some(tree) => {
                     if let Some((old_tree, edited)) = &old {
                         // The edits themselves, and every range whose
-                        // syntax the reparse changed; the runs elsewhere
-                        // stand.
+                        // syntax the reparse changed, each over the
+                        // whole lines it touches; the runs elsewhere
+                        // stand. Lines, since tree-sitter's changed
+                        // ranges leave out what a capture reads off an
+                        // edited node's neighbourhood: `tru` typed on
+                        // to `true` is no change to them, the node's
+                        // kind notwithstanding, and `x = ,` given its
+                        // value turns `x` from an error's into the
+                        // field's `name:` unreported.
                         let mut all = edited.clone();
                         all.extend(
                             tree.changed_ranges(old_tree)
                                 .map(|r| r.start_byte.min(len)..r.end_byte.min(len)),
                         );
-                        spans = merge_spans(all);
+                        spans =
+                            merge_spans(all.into_iter().map(|s| whole_lines(text, s)).collect());
                     }
                     let runs = spans
                         .iter()
@@ -2045,6 +2053,68 @@ mod tests {
                 assert_eq!(got, Some(*tok), "{needle:?} + {typed:?} at {o}");
             }
         }
+    }
+
+    /// A value typed a letter at a time into settings.lua reads as a
+    /// whole parse would at every letter: `tru` + `e` is `true` from its
+    /// `t`, and `relativenumber` the field's name once `=` has a value —
+    /// neither a change tree-sitter's changed ranges report.
+    #[test]
+    fn typing_a_token_into_being_repaints_the_whole_of_it() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let src = "-- kawoosh settings\n---@type kawoosh.Settings\nreturn {\n    relativenumber = ,\n    font = { size = 15 },\n}\n";
+        let mut buf = Buffer::new("t", src);
+        buf.language = "lua".into();
+        let mut sent: Option<kawoosh_doc::Version> = None;
+        let mut job = |buf: &Buffer| {
+            let edits = sent
+                .and_then(|v| buf.journal().edits_since(v).ok())
+                .map(|it| it.cloned().collect());
+            sent = Some(buf.version());
+            Job {
+                buffer: BufferId::default(),
+                language: "lua".into(),
+                snapshot: buf.snapshot(),
+                edits,
+            }
+        };
+        let first = highlight(&mut parser, &mut g, &mut parsed, &job(&buf)).update();
+        buf.apply(first).unwrap();
+        let at = buf.text().find(" ,").unwrap() + 1;
+        for (i, letter) in ["t", "r", "u", "e"].into_iter().enumerate() {
+            buf.replace(at + i..at + i, letter);
+            let inc = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
+            for u in inc.updates {
+                buf.apply(u).unwrap();
+            }
+            let whole = highlight(
+                &mut parser,
+                &mut g,
+                &mut Parsed::default(),
+                &Job {
+                    buffer: BufferId::default(),
+                    language: "lua".into(),
+                    snapshot: buf.snapshot(),
+                    edits: None,
+                },
+            )
+            .update();
+            assert_eq!(
+                joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())),
+                joined(&whole.runs),
+                "after {letter:?}"
+            );
+        }
+        let tok = |o: usize| {
+            buf.runs(SYNTAX_LAYER, o..o + 1)
+                .first()
+                .map(|r| Token::from_style(r.style))
+        };
+        assert!((at..at + 4).all(|o| tok(o) == tok(at + 3)));
+        let name = buf.text().find("relativenumber").unwrap();
+        assert_eq!(tok(name), Some(Token::Property));
     }
 
     /// The cover of a sequence of edits is the one edit that replaces
