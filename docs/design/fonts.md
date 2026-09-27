@@ -183,7 +183,26 @@ Text 14.6, SF Pro Text 14.5, Victor Mono 13.9. That is ten times the
 elsewhere — the family's registration by name, or its faces read for
 the first time — and is kui's to find. The warming spread it and cut
 the frames over 8 ms by two thirds; it stays out while kui looks,
-since a card drawn a frame in another face is what it cost. One lab for the look: the theme through the font
+since a card drawn a frame in another face is what it cost.
+
+*Found and fixed the same day (kui DX25, 9175e82):* DX24 shared the
+installed faces with the first font an app registered *before* loading
+it, so that file and every one after — the 167 kawoosh loads from
+`assets/fonts` — stayed file-backed, and cosmic-text reopened and mapped
+each to read its `wght` axis whenever a text shaped in a new family.
+kui shares after loading now. The same probe on kui 9175e82, three runs:
+
+| frames | mean | p95 | max | > 8 ms | > 16 ms |
+|---|---|---|---|---|---|
+| a family's first card built | 1.88–1.99 ms | 2.55–2.82 | 6.28–6.98 | 0 of 620 | 0 |
+| the rest | 0.95–1.02 ms | 1.58–2.17 | 6.19–6.32 | 0 of 37 | 0 |
+
+— but for the first run after a fresh build, where two early frames
+went over, Ac437 ACM VGA 8x16 at 15.8 ms (layout 14.1) and Victor Mono
+at 10.9, which the next two runs drew in 2.4 and 2.8: the files not yet
+in the system's cache. The slowest otherwise are layout's, 4–5 ms for a
+few faces (Mishafi Gold, Menlo, Hiragino Mincho ProN, SF Pro Display).
+The warming stays out: with nothing over 8 ms, it would spread nothing. One lab for the look: the theme through the font
 
 The theme lab is the look's lab. Every sample in it — the code, the
 tokens, the terminal's sixteen — is drawn in the editor's face, at its
