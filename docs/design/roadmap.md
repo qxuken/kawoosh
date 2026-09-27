@@ -2501,6 +2501,68 @@ think on a kitty keyboard"), the terminal's third round, in that order:
     it, and before that a map of the commands and keys as they connect
     (a graph over the registry and the keymap) to regroup them on.
 
+From the todo, 2026-09-28 — nine items added the same night, each read
+against the code:
+
+- **`dir` freezes the app on a long delete** (a 50 GB `target`): a
+  write's plan runs on the frame's thread — `dir.lua`'s apply calls
+  `fs.remove` and `fs.copy` one after another, and `fs.remove` is
+  `remove_dir_all`, so nothing draws until the last file is gone.
+- **`:tool git` in a second tab does nothing**: `tool_terms` is keyed by
+  the tool's name alone; when its terminal lives in another tab,
+  `Kawoosh::tool` finds the terminal, finds no pane for it among this
+  tab's, and returns.
+- **`:du` in another tab takes over the first**: `du.lua` keeps one
+  module-level state (`S`) under one view name, so a second pane is the
+  first's walk, cursor and marks.
+- **The which-key shows what does nothing here**: `whichkey_rows` lists
+  every next key, with no look at its binding's `when` or its command's,
+  so a pane's keys show in an editor and a group whose every key is off
+  still opens.
+- **Scrolling** (three items, one question): a new swipe inside a
+  scroller already at its limit should go on to what holds it, unless
+  told otherwise (chaining); a swipe that started elsewhere is stopped
+  dead by a terminal it passes over, where it should go on scrolling
+  what it started on (latching — and a terminal that wants no scroll
+  events should not take them); and a hovered scroller should be
+  scrolled in its own direction. kui's wheel routing, the same ground
+  as F104 (the trackpad's axis lock, built today by another session).
+- **Wrap settings for the editor**: no soft wrap in an editor pane
+  today, only the markdown buffer's rendered rows; nothing in settings.
+- **A configurable tab bar and title**: diagnostics counts, a clock (for
+  a Windows taskbar kept hidden). What is there: `kawoosh.tab_title(fn)`
+  for each tab's label (step 50); nothing for the strip's own space or
+  the window's title.
+
+In order — the bugs first, then what needs deciding:
+
+58. **`dir`'s writes off the frame**: a plan's deletes renamed aside at
+    once (the step already done for a delete that something takes the
+    place of) and removed on the io thread, a copy likewise, the
+    listing marked busy and read again when they land; a notification
+    with progress for one that takes a while.
+59. **A tool per tab**: `:tool NAME` opens the tool in this tab when its
+    terminal is another tab's — keyed by tab, a docked tool staying the
+    workspace's as the dock is (step 32).
+60. **`:du` panes each their own**: the pane's state per pane, as a
+    view instance, and a second `:du` a second pane.
+61. **The which-key shows what works here**: a row only for a binding
+    whose `when` holds and whose command's does, a group only when a
+    key under it does; `:keys` (the root) the same.
+62. **Scrolling, a note first** (kui's wheel routing): latching (a
+    gesture keeps to the scroller it began on until it ends), chaining
+    (a new gesture at a scroller's limit goes on to its parent, with an
+    opt-out), and what "in its direction" asks of a hovered scroller —
+    decided with the user, and with the trackpad session's F104 in mind.
+63. **Soft wrap in the editor, a note first**: what is asked — a
+    setting per language or buffer, where the caret moves by screen
+    line (`gj` `gk`), and what the gutter and the selections do on a
+    wrapped line.
+64. **The tab bar and the title as Lua's, a note first**: segments a
+    plugin or `init.lua` fills (the diagnostics counts, a clock), on the
+    strip's right and in the window's title, redrawn when their data
+    moves or on a timer — wezterm's `update-status` as the model.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision
