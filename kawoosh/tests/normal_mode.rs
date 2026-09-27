@@ -818,3 +818,25 @@ fn selections_within_split_keep_lines_drop() {
     assert_eq!(app.ed.message, "no match in the selections");
     assert_eq!(text(&app), doc, "nothing edited");
 }
+
+/// vim's `cw`: from inside a word it changes to the word's end, the
+/// space after it kept (`ce`), where `dw` takes the space; `cW` the same
+/// over a WORD; a count counts words; on the last char, that char.
+#[test]
+fn cw_changes_to_the_words_end() {
+    for (keys, want) in [
+        ("cwX", "X two three"),
+        ("wcwX", "one X three"),
+        ("cWX", "X two three"),
+        ("2cwX", "X three"),
+        ("llcwX", "onX two three"),
+        ("dw", "two three"),
+    ] {
+        let mut app = Kawoosh::new("t", "one two three");
+        let mut d = Drive::new(900.0, 500.0);
+        d.frame(&mut app);
+        d.keys(&mut app, keys);
+        esc(&mut d, &mut app);
+        assert_eq!(text(&app), want, "{keys}");
+    }
+}

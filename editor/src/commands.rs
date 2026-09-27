@@ -1561,9 +1561,15 @@ pub fn install(ed: &mut Editor) {
     });
     ed.register_kind("word next", Kind::Motion(Exclusive), |ed, ctx| {
         // Under an operator, `w` stops at the end of its line (`dw` on the
-        // last word never joins lines) — vim's one special case.
+        // last word never joins lines); under `c`, from inside a word, at
+        // the word's end, the space after it kept — vim's two special
+        // cases.
         let op = ed.pending_op.is_some();
+        let change = matches!(ed.pending_op, Some(("change", _)));
         motion(ed, ctx, |b, o, n| {
+            if change && let Some(end) = m::change_word_end(b, o, n, false) {
+                return end;
+            }
             let target = (0..n).fold(o, |o, _| m::next_word_start(b, o));
             let le = b.line_range(b.line_of(o)).end;
             if op && target > le { le } else { target }
@@ -1581,7 +1587,11 @@ pub fn install(ed: &mut Editor) {
     // vim's WORDs: what whitespace alone ends — a path, `a.b(c)`.
     ed.register_kind("bigword next", Kind::Motion(Exclusive), |ed, ctx| {
         let op = ed.pending_op.is_some();
+        let change = matches!(ed.pending_op, Some(("change", _)));
         motion(ed, ctx, |b, o, n| {
+            if change && let Some(end) = m::change_word_end(b, o, n, true) {
+                return end;
+            }
             let target = (0..n).fold(o, |o, _| m::next_bigword_start(b, o));
             let le = b.line_range(b.line_of(o)).end;
             if op && target > le { le } else { target }

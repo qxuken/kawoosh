@@ -1365,7 +1365,11 @@ fn a_count_before_the_operator_is_the_motions() {
     assert_eq!(t.text(), "seven\n");
     let mut t = T::new(w);
     t.keys("2cwX<Esc>");
-    assert_eq!(t.text(), "Xthree four five six seven\n");
+    assert_eq!(
+        t.text(),
+        "X three four five six seven\n",
+        "`cw` keeps the space"
+    );
     let l = "1\n2\n3\n4\n5\n6\n";
     let mut t = T::new(l);
     t.keys("d2j");

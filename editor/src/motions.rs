@@ -190,6 +190,23 @@ fn next_end(buf: &Buffer, mut o: usize, big: bool) -> usize {
     o
 }
 
+/// vim's `cw` and `cW`: from inside a word, the end of the word the
+/// caret is in rather than the start of the next, so the change keeps
+/// the space after it — then the ends of `n - 1` words more. One past
+/// the last char, the change's exclusive end; none on whitespace, where
+/// `cw` is `dw`'s motion.
+pub fn change_word_end(buf: &Buffer, o: usize, n: usize, big: bool) -> Option<usize> {
+    let (a, b) = thing_at(buf, o, big);
+    if a == b {
+        return None;
+    }
+    let mut end = b;
+    for _ in 1..n.max(1) {
+        end = buf.next_char(next_end(buf, buf.prev_char(end), big));
+    }
+    Some(end)
+}
+
 /// The word under `o`: `(start, end)`, or an empty range at `o`.
 pub fn word_at(buf: &Buffer, o: usize) -> (usize, usize) {
     thing_at(buf, o, false)
