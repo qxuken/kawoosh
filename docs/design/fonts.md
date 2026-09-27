@@ -52,6 +52,13 @@ first asks for one — all of them, at the next frame (`face` answers nil
 until then), 10 ms once for 613 in a debug build — so nothing is
 registered until a view looks, and after that no card waits.
 
+*Amended 2026-09-27:* kui draws a family by its name (`family = NAME`,
+kui ADR 0037), resolving it in the frame that names it, so there is no
+handle to hand down and no frame in a fallback to register ahead of:
+`face(NAME)` is `warm(NAME)`, whether the family is warm (below), and
+the view names the family itself. Nothing registers the 613 at once; a
+family is registered as it is warmed.
+
 *Beat:* registering each family as its card first asked for it — the
 first build. Every card the pane scrolled or searched to was drawn for
 a frame in kui's mono and then in its own face: a flicker the user saw
@@ -111,7 +118,8 @@ frame 70 ms (release), paging back over them 1.5 ms. Of a family's
 first sight, reading its file is 0.03 ms and loading it 0.24 ms; its
 first shaping is 8 ms and its second 0.04 — a one-time setup per family.
 So a family is *warm* once shaped, and `kawoosh.fonts.face` answers
-only for a warm one (or the face on show): what a view asks for is
+(`warm` since kui's ADR 0037, see Decision 2) only for a warm one (or
+the face on show): what a view asks for is
 warmed at the frame, in the order asked, until 6 ms are spent, the rest
 asked again at the next frame; a card not warm is its frame alone. Only
 what a frame asked for is warmed, so a fling does not spend frames on
@@ -268,8 +276,9 @@ As decided. kui F97 (`Core::system_fonts`); the symbols in
 `assets/fonts/NerdFontsSymbolsOnly/` and Intel One Mono in
 `assets/fonts/IntelOneMono/`, every file loaded by `main.rs`'s
 `load_fonts`, its family kept as shipped; `fonts.rs` keeps the families and the face as the door
-has them (`Fonts`), registers them at the first ask, warms what a view
-asked for within the frame's budget, reads and watches the user's
+has them (`Fonts`), warms what a view asked about within the frame's
+budget (registering each as it goes; all at the first ask until kui's
+ADR 0037), reads and watches the user's
 folder (`user_fonts_dir`, `user_fonts_watch`), and holds `:font`; `kawoosh/lua/fonts.lua`
 the pane; `kawoosh/lua/theme_lab.lua` the face and its scene. Tests:
 `kawoosh/lua/tests/fonts.lua` (the door, the pane's walk, search, take,
