@@ -609,11 +609,16 @@ impl Kawoosh {
                 }
                 for (i, col) in strip.columns.iter().enumerate() {
                     let px = widths[i];
-                    let mut wrap = NodeSpec::column().grow_height();
+                    // A closed column fades where it stood; one that goes
+                    // with its strip — a tab switched away, `:layout
+                    // tree` — goes at once, its parent gone too (kui
+                    // DX19).
+                    let mut wrap = NodeSpec::column()
+                        .grow_height()
+                        .transition(RIBBON_MS)
+                        .exit(Enter::default().opacity(0.0));
                     if arriving && !self.strip_known.contains(&col.id) {
-                        wrap = wrap
-                            .transition(RIBBON_MS)
-                            .enter(Enter::from((px / 3.0).min(200.0), 0.0).opacity(0.0));
+                        wrap = wrap.enter(Enter::from((px / 3.0).min(200.0), 0.0).opacity(0.0));
                     }
                     let key = ui.with_keyed(&format!("col{}", col.id), wrap, |ui| {
                         ui.with(NodeSpec::column().width(px).grow_height(), |ui| {

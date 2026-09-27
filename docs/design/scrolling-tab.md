@@ -268,9 +268,11 @@ departed from the text above, and what day one found:
     as the ribbon does; the strip's first frame (a conversion, a
     restore, a tab switched to) does neither, those columns not being
     arrivals (`Kawoosh::strip_known`);
-  - **a closing column goes at once**: an `exit` fade replays on a tab
-    switch too, kui playing a ghost whether or not its ancestors
-    survived.
+  - **a closing column fades where it stood** (160 ms), and one that
+    goes with its strip — a tab switched away, `:layout tree` — goes at
+    once: kui plays an `exit` only under a parent still declared (DX19),
+    and holds 4,096 departing nodes (DX23), a whole pane's. It went at
+    once until 2026-09-27; see below.
   Tests: `the_ribbon_glides_to_a_key_and_a_width_lands_at_once`,
   `a_scroll_the_pointer_makes_is_followed_one_to_one` and
   `a_key_reaches_a_column_the_animation_has_not_finished_moving`, which
@@ -408,4 +410,9 @@ departed from the text above, and what day one found:
   themes pane is 1,500 to 1,800 nodes, past the 512 kui's exit store
   holds: closing one fades nothing and warns `exit-budget`. The close
   fade stays off; a fade that does not copy the pane's subtree would
-  bring it back.
+  bring it back. *Back the same day:* kui's exit store holds 4,096
+  nodes (DX23), a departing node costing ~0.065 µs in the frame it
+  leaves and ~0.021 µs a frame while it plays, so the columns have
+  `exit { opacity: 0 }` again (160 ms, the ribbon's), and a tab switch
+  still does not cross-fade. Test:
+  `a_closed_column_fades_and_a_tab_switch_does_not`.

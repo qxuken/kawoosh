@@ -870,3 +870,30 @@ fn a_column_is_consumed_into_the_stack_beside_it() {
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// A closed column fades where it stood; a tab switched away takes its
+/// columns with it at once (kui DX19: an `exit` plays only under a
+/// parent still declared, and the strip is the tab's).
+#[test]
+fn a_closed_column_fades_and_a_tab_switch_does_not() {
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    assert_eq!(d.core.depart.node_count(), 0);
+    ctrl_w(&mut d, &mut app, "c");
+    assert!(d.core.depart.node_count() > 0, "the closed column fades");
+    settle(&mut d, &mut app);
+    assert_eq!(d.core.depart.node_count(), 0, "and is gone");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    ex(&mut d, &mut app, "tab new");
+    assert_eq!(
+        d.core.depart.node_count(),
+        0,
+        "the tab left keeps its columns out of sight"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
