@@ -485,6 +485,11 @@ impl Settings {
         // editor rings for its own failures — a search with no match.
         defaults.set("terminal.bell", Setting::Str("sound".into()));
         defaults.set("editor.bell", Setting::Bool(false));
+        // The selection's corners, in logical px: 0 square, as a text's
+        // span backgrounds are; more rounds the selection as one shape
+        // across its lines, the corners where a line reaches past its
+        // neighbour convex and where it falls short concave (rows.rs).
+        defaults.set("editor.selection_radius", Setting::Float(0.0));
         // The shell whose PATH the window's children get when it was
         // opened outside a terminal — from Finder, the Dock (kawoosh's
         // `shell_env`): a path to it, since a bare name is looked up on
@@ -932,6 +937,7 @@ mod tests {
                 "buffers.scope",
                 "clipboard.system",
                 "editor.bell",
+                "editor.selection_radius",
                 "env.shell",
                 "expandtab",
                 "font.chrome_size",

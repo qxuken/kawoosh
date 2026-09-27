@@ -2844,3 +2844,92 @@ fn a_double_click_enters_a_listing_line() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A Lua view's field rounds its selection as the panes do while
+/// `editor.selection_radius` is on: the field's row is the shell's
+/// fragment, told where the selection starts and ends along the line,
+/// and its spans carry none (boot.lua's `field_node`). Off, it is the
+/// square spans it always was.
+#[test]
+fn a_lua_fields_selection_is_rounded_as_the_panes_is() {
+    use kawoosh_editor::{Layer, Setting};
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "hello\n");
+    app.run_lua_source(
+        "init",
+        r#"
+        kawoosh.view("finder", function(ctx)
+          return column { pad = 8, ctx.field { name = "q", size = 16 } }
+        end, function(ev)
+          if ev.kind == "key" and ev.key == "i" then kawoosh.field_focus("finder", "q") end
+        end)
+        "#,
+    );
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "view finder");
+    // The strip scrolls to the new pane over a few frames.
+    for _ in 0..10 {
+        d.advance(0.1);
+        d.frame(&mut app);
+    }
+    d.keys(&mut app, "i");
+    d.frame(&mut app);
+    d.keys(&mut app, "hello world");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "0v4l");
+    d.frame(&mut app);
+    let fragments = |d: &mut Drive| -> Vec<(kui_native::Rect, [f32; 16])> {
+        let dl = d.core.output().0;
+        dl.quads
+            .iter()
+            .filter(|q| q.kind == kui_native::QuadKind::Fragment)
+            .map(|q| (q.rect, dl.fragments[q.uv[0] as usize].params))
+            .collect()
+    };
+    assert!(fragments(&mut d).is_empty(), "square while the radius is 0");
+    app.ed.settings.set(
+        Layer::Session,
+        "editor.selection_radius",
+        Setting::Float(4.0),
+    );
+    // The field's colour, as its spans painted it while square.
+    let square = |d: &mut Drive| -> Vec<kui_native::Color> {
+        let dl = d.core.output().0;
+        let colors = dl
+            .quads
+            .iter()
+            .filter(|q| q.kind == kui_native::QuadKind::Solid);
+        colors.map(|q| q.color).filter(|c| c.a < 1.0).collect()
+    };
+    let before = square(&mut d);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let quads = fragments(&mut d);
+    assert_eq!(quads.len(), 1, "the field's row: {quads:?}");
+    let (rect, p) = quads[0];
+    // `hello`, from the line's start: five cells of the field's face.
+    let style = kui_native::TextStyle::new(16.0).mono();
+    let w = d.core.measure_text("hello", &style, None).width;
+    assert_eq!(p[0], 0.0);
+    assert!(
+        (p[1] - w).abs() < 0.5,
+        "to `hello`'s end: {} against {w}",
+        p[1]
+    );
+    assert_eq!((p[6], p[7]), (4.0, 0.0), "the radius, and no neighbours");
+    let sel = kui_native::Color::rgba(p[8], p[9], p[10], p[11]);
+    assert!(
+        before.iter().any(|c| c.to_hex() == sel.to_hex()),
+        "the field's own selection colour {sel:?}, one of {before:?}"
+    );
+    assert!(rect.w >= w, "the row still fits its text: {rect:?}");
+    assert!(
+        !d.core
+            .output()
+            .0
+            .quads
+            .iter()
+            .any(|q| q.kind == kui_native::QuadKind::Solid && q.color == sel),
+        "no span paints the selection"
+    );
+}
