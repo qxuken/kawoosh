@@ -536,6 +536,166 @@ pub(crate) fn commands() -> Vec<crate::commands::ShellCommand> {
     )]
 }
 
+/// The fonts pane's windowed probe (`KAWOOSH_PROBE_FONTS=OUT.csv`,
+/// `scripts/probe-fonts.nu`): the pane opened on every family and walked
+/// a card a frame to the last, each frame's work as kui timed it — view,
+/// layout (the text shaped there), render — paired with the families
+/// whose cards were built for the first time in it, written to OUT and
+/// summed up on stderr and in OUT's `.txt`; then the window closes. A
+/// family's first shaping is a frame's own work since the warming went
+/// (kui DX24), and this is where it shows or does not.
+pub struct Probe {
+    out: PathBuf,
+    frame: u32,
+    seen: u64,
+    walking: bool,
+    tail: u32,
+    rows: Vec<ProbeRow>,
+}
+
+struct ProbeRow {
+    view: f32,
+    layout: f32,
+    render: f32,
+    work: f32,
+    new: Vec<String>,
+}
+
+impl Probe {
+    pub fn from_env() -> Option<Self> {
+        let out = std::env::var_os("KAWOOSH_PROBE_FONTS")?;
+        Some(Self {
+            out: PathBuf::from(out),
+            frame: 0,
+            seen: 0,
+            walking: false,
+            tail: 0,
+            rows: Vec::new(),
+        })
+    }
+
+    fn summary(&self) -> String {
+        let stats = |rows: Vec<&ProbeRow>| -> String {
+            if rows.is_empty() {
+                return "none".into();
+            }
+            let mut w: Vec<f32> = rows.iter().map(|r| r.work).collect();
+            w.sort_by(f32::total_cmp);
+            let mean = w.iter().sum::<f32>() / w.len() as f32;
+            let p95 = w[((w.len() - 1) as f32 * 0.95) as usize];
+            let over = |ms: f32| w.iter().filter(|x| **x > ms).count();
+            format!(
+                "{} frames, mean {mean:.2} ms, p95 {p95:.2}, max {:.2}, >8 ms {}, >16 ms {}",
+                w.len(),
+                w[w.len() - 1],
+                over(8.0),
+                over(16.0)
+            )
+        };
+        let first: Vec<&ProbeRow> = self.rows.iter().filter(|r| !r.new.is_empty()).collect();
+        let rest: Vec<&ProbeRow> = self.rows.iter().filter(|r| r.new.is_empty()).collect();
+        let families: usize = first.iter().map(|r| r.new.len()).sum();
+        let mut worst: Vec<&ProbeRow> = first.clone();
+        worst.sort_by(|a, b| b.work.total_cmp(&a.work));
+        let mut s = format!(
+            "fonts pane probe: {} families first built\nfirst-shape frames: {}\nother frames: {}\nslowest first-shape frames:\n",
+            families,
+            stats(first),
+            stats(rest)
+        );
+        for r in worst.iter().take(8) {
+            s.push_str(&format!(
+                "  {:.2} ms (view {:.2}, layout {:.2}, render {:.2}): {}\n",
+                r.work,
+                r.view,
+                r.layout,
+                r.render,
+                r.new.join(", ")
+            ));
+        }
+        s
+    }
+}
+
+impl Kawoosh {
+    /// A frame of the probe, if one runs: see [`Probe`].
+    pub(crate) fn probe_fonts(&mut self, ui: &mut Ui<'_>) {
+        let Some(mut p) = self.fonts_probe.take() else {
+            return;
+        };
+        let rt = self.scripting.rt.clone();
+        let eval = |src: &str| -> Option<mlua::Value> {
+            rt.as_ref()
+                .and_then(|rt| rt.lua().load(src).eval::<mlua::Value>().ok())
+        };
+        p.frame += 1;
+        ui.request_frame();
+        match p.frame {
+            1 => self.run_line("fonts"),
+            40 => self.run_line("fonts mode"),
+            60 => {
+                let _ = eval("return kawoosh.fonts._probe_take()");
+                p.seen = ui.core().stats.total;
+                p.walking = true;
+            }
+            _ if p.walking => {
+                let total = ui.core().stats.total;
+                if total > p.seen {
+                    p.seen = total;
+                    let new: Vec<String> = match eval("return kawoosh.fonts._probe_take()") {
+                        Some(mlua::Value::Table(t)) => {
+                            t.sequence_values::<String>().flatten().collect()
+                        }
+                        _ => Vec::new(),
+                    };
+                    if let Some(s) = ui.core().stats.iter().last() {
+                        p.rows.push(ProbeRow {
+                            view: s.view_ms,
+                            layout: s.layout_ms,
+                            render: s.render_ms,
+                            work: s.work(),
+                            new,
+                        });
+                    }
+                }
+                let at_end = matches!(
+                    eval(
+                        "local s = kawoosh.fonts.state(); return s ~= nil and s.cursor == s.list[#s.list]"
+                    ),
+                    Some(mlua::Value::Boolean(true))
+                );
+                if at_end {
+                    p.tail += 1;
+                } else {
+                    self.run_line("fonts down");
+                }
+                if p.tail > 30 {
+                    let mut csv =
+                        String::from("work_ms,view_ms,layout_ms,render_ms,new_families\n");
+                    for r in &p.rows {
+                        csv.push_str(&format!(
+                            "{:.3},{:.3},{:.3},{:.3},\"{}\"\n",
+                            r.work,
+                            r.view,
+                            r.layout,
+                            r.render,
+                            r.new.join("; ")
+                        ));
+                    }
+                    let summary = p.summary();
+                    let _ = std::fs::write(&p.out, csv);
+                    let _ = std::fs::write(p.out.with_extension("txt"), &summary);
+                    eprint!("{summary}");
+                    self.quit = true;
+                    return;
+                }
+            }
+            _ => {}
+        }
+        self.fonts_probe = Some(p);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Family, Origin, lfs_pointer, order};

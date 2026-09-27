@@ -47,6 +47,9 @@ pub struct Kawoosh {
     pub bundled_font: Option<FontId>,
     /// What the look was last built from (`look.rs`).
     pub(crate) look: crate::look::Look,
+    /// The fonts pane's windowed probe, when `KAWOOSH_PROBE_FONTS` asks
+    /// for one (`fonts::Probe`).
+    pub(crate) fonts_probe: Option<crate::fonts::Probe>,
     /// The disk-usage pane's walks (`du.rs`, roadmap step 52).
     pub(crate) du: crate::du::SharedDu,
     pub ed: Editor,
@@ -295,6 +298,7 @@ impl Kawoosh {
             bundled_font: None,
             look: Default::default(),
             du: Default::default(),
+            fonts_probe: crate::fonts::Probe::from_env(),
             ed,
             layout: Layout::new(Content::Editor(view)),
             terms: Terminals::default(),
@@ -2168,6 +2172,7 @@ impl kui_native::App for Kawoosh {
         }
         self.sync_look(ui);
         self.sync_du();
+        self.probe_fonts(ui);
         self.pal = ui.theme().into();
         if let Some(hit) = self.look.hit {
             self.pal.hit = hit;
