@@ -20,7 +20,7 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{Mode, Selection, Selections};
 use kawoosh_systems::WakeHandle;
-use kui_native::{Align, Color, NodeSpec, TextStyle, Ui, Value, Vec2};
+use kui_native::{Align, Color, NodeSpec, TextStyle, Ui, Value};
 use tree_sitter::{Point, Tree};
 
 use crate::app::Kawoosh;
@@ -402,16 +402,8 @@ impl Kawoosh {
                     );
                 },
             );
-            let list = ui.child_key("rows");
             if let Some(i) = reveal {
-                let y = i as f32 * ROW_H;
-                let seen = ui
-                    .scroll_geometry(list)
-                    .is_some_and(|g| g.offset.y <= y && y + ROW_H <= g.offset.y + g.rect.h);
-                if !seen {
-                    let h = ui.scroll_geometry(list).map_or(0.0, |g| g.rect.h);
-                    ui.set_scroll(list, Vec2::new(0.0, (y - h / 2.0).max(0.0)));
-                }
+                kui_native::widgets::reveal_row(ui, "rows", i, ROW_H);
             }
             if rows_n == 0 {
                 ui.text_in(
@@ -437,80 +429,72 @@ impl Kawoosh {
                     .then(|| lang.as_ref().and_then(|l| l.field_name_for_id(id)))
                     .flatten()
             };
-            kui_native::widgets::uniform_list(
+            kui_native::widgets::uniform_list_with(
                 ui,
                 "rows",
                 NodeSpec::column().fill(),
                 rows.len(),
                 ROW_H,
+                |i| {
+                    let r = &rows[i];
+                    NodeSpec::row()
+                        .cross_align(Align::Center)
+                        .bg(if Some(r.id) == current {
+                            pal.select
+                        } else {
+                            Color::TRANSPARENT
+                        })
+                        .hover_bg(pal.panel)
+                        .on_click(Value::map([
+                            ("kind", "syntax".into()),
+                            ("what", "select".into()),
+                            ("start", Value::Int(r.range.start as i64)),
+                            ("end", Value::Int(r.range.end as i64)),
+                        ]))
+                },
                 |ui, i| {
                     let r = &rows[i];
-                    let is_current = Some(r.id) == current;
-                    let payload = Value::map([
-                        ("kind", "syntax".into()),
-                        ("what", "select".into()),
-                        ("start", Value::Int(r.range.start as i64)),
-                        ("end", Value::Int(r.range.end as i64)),
-                    ]);
-                    ui.with(
-                        NodeSpec::row()
-                            .grow_width()
-                            .height(ROW_H)
-                            .cross_align(Align::Center)
-                            .bg(if is_current {
-                                pal.select
-                            } else {
-                                Color::TRANSPARENT
-                            })
-                            .hover_bg(pal.panel)
-                            .on_click(payload),
-                        |ui| {
-                            ui.leaf(NodeSpec::row().size(4.0 + r.depth as f32 * INDENT, ROW_H));
-                            // The fold: a click of its own, over the row's.
-                            let glyph = match (r.branch, r.folded) {
-                                (false, _) => " ",
-                                (true, true) => "▸",
-                                (true, false) => "▾",
-                            };
-                            let mut fold =
-                                NodeSpec::row().size(14.0, ROW_H).cross_align(Align::Center);
-                            if r.branch {
-                                fold = fold
-                                    .on_click(Value::map([
-                                        ("kind", "syntax".into()),
-                                        ("what", "fold".into()),
-                                        ("id", Value::Int(r.id as i64)),
-                                    ]))
-                                    .label(if r.folded { "unfold" } else { "fold" });
-                            }
-                            ui.with_keyed("fold", fold, |ui| {
-                                ui.text(glyph, style().color(pal.dim))
-                            });
-                            if let Some(f) = field(r.field_id) {
-                                ui.text(&format!("{f}: "), style().color(pal.dim));
-                            }
-                            let kind = name(r.kind_id);
-                            let (text, color) = if r.missing {
-                                (format!("MISSING {kind}"), pal.danger)
-                            } else if r.error {
-                                (kind.to_string(), pal.danger)
-                            } else if r.named {
-                                (kind.to_string(), pal.fg)
-                            } else {
-                                (format!("{kind:?}"), pal.dim)
-                            };
-                            ui.text(&text, style().color(color));
-                            ui.text(
-                                &format!(
-                                    "  [{}:{} – {}:{}]",
-                                    r.start.row + 1,
-                                    r.start.column,
-                                    r.end.row + 1,
-                                    r.end.column
-                                ),
-                                style().color(pal.faint),
-                            );
-                        },
+                    ui.leaf(NodeSpec::row().size(4.0 + r.depth as f32 * INDENT, ROW_H));
+                    // The fold: a click of its own, over the row's.
+                    let glyph = match (r.branch, r.folded) {
+                        (false, _) => " ",
+                        (true, true) => "▸",
+                        (true, false) => "▾",
+                    };
+                    let mut fold = NodeSpec::row().size(14.0, ROW_H).cross_align(Align::Center);
+                    if r.branch {
+                        fold = fold
+                            .on_click(Value::map([
+                                ("kind", "syntax".into()),
+                                ("what", "fold".into()),
+                                ("id", Value::Int(r.id as i64)),
+                            ]))
+                            .label(if r.folded { "unfold" } else { "fold" });
+                    }
+                    ui.with_keyed("fold", fold, |ui| ui.text(glyph, style().color(pal.dim)));
+                    if let Some(f) = field(r.field_id) {
+                        ui.text(&format!("{f}: "), style().color(pal.dim));
+                    }
+                    let kind = name(r.kind_id);
+                    let (text, color) = if r.missing {
+                        (format!("MISSING {kind}"), pal.danger)
+                    } else if r.error {
+                        (kind.to_string(), pal.danger)
+                    } else if r.named {
+                        (kind.to_string(), pal.fg)
+                    } else {
+                        (format!("{kind:?}"), pal.dim)
+                    };
+                    ui.text(&text, style().color(color));
+                    ui.text(
+                        &format!(
+                            "  [{}:{} – {}:{}]",
+                            r.start.row + 1,
+                            r.start.column,
+                            r.end.row + 1,
+                            r.end.column
+                        ),
+                        style().color(pal.faint),
                     );
                 },
             );

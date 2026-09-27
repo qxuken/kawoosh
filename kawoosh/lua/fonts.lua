@@ -317,8 +317,7 @@ kawoosh.view(VIEW, function(ctx)
   local list = uniform_list(ctx.env, { key = "list", rows = #S.list, row_h = stride, width = "grow",
                                        height = "grow", pad = { x = PAD } }, function(i)
     local f = S.list[i + 1]
-    return column { width = "grow", height = stride,
-      card(f, cur, ctx, f.name == S.cursor, h, S.query) }
+    return card(f, cur, ctx, f.name == S.cursor, h, S.query)
   end)
 
   local foot = column { width = "grow", gap = 6, pad = { x = PAD, bottom = PAD },

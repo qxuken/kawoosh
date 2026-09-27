@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use kawoosh_doc::{BufferId, Version};
 use kawoosh_editor::{HistoryRow, Hunk, Mode, Spec, ViewId};
-use kui_native::{Align, Color, NodeSpec, Sizing, Ui, Value, Vec2};
+use kui_native::{Align, Color, NodeSpec, Sizing, Ui, Value, widgets};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -348,19 +348,11 @@ impl Kawoosh {
                 // The cursor's row into view when it moved — before the
                 // list is built, so the frame that scrolls slices by the
                 // offset it scrolls to rather than a frame late.
-                let list = ui.child_key("rows");
-                self.undo.page = ui
-                    .scroll_geometry(list)
-                    .map_or(0, |g| (g.rect.h / tm.line_h).floor() as usize);
+                self.undo.page = widgets::rows_in_view(ui, "rows", tm.line_h);
                 if reveal && n > 0 {
-                    let y = (n - 1 - cursor) as f32 * tm.line_h;
-                    if let Some(g) = ui.scroll_geometry(list)
-                        && !(g.offset.y <= y && y + tm.line_h <= g.offset.y + g.rect.h)
-                    {
-                        ui.set_scroll(list, Vec2::new(0.0, (y - g.rect.h / 2.0).max(0.0)));
-                    }
+                    widgets::reveal_row(ui, "rows", n - 1 - cursor, tm.line_h);
                 }
-                kui_native::widgets::uniform_list(
+                widgets::uniform_list(
                     ui,
                     "rows",
                     NodeSpec::column().grow_width().height(Sizing::Grow(3.0)),

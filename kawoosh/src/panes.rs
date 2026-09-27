@@ -10,7 +10,9 @@ use std::ops::Range;
 
 use kawoosh_editor::search;
 use kawoosh_editor::{Mode, ViewId, motions};
-use kui_native::{Align, Enter, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2};
+use kui_native::{
+    Align, Dir, Enter, FloatConfig, NodeSpec, Role, Sizing, TextStyle, Ui, Value, Vec2, widgets,
+};
 
 use crate::app::{DIVIDER, Kawoosh};
 use crate::layout::{Content, Drop, Kind, Node, PaneId, SplitDir, Strip};
@@ -455,7 +457,6 @@ impl Kawoosh {
     /// (`strip left` / `right` / `center`) and `layout.scroll.center`
     /// put it at an edge or in the middle instead.
     pub(crate) fn render_strip(&mut self, ui: &mut Ui<'_>, strip: &Strip) {
-        let pal = self.pal;
         let vw = ui.viewport().w.max(1.0);
         let gap = self.strip_gap();
         let focused = self.layout.focused();
@@ -623,22 +624,17 @@ impl Kawoosh {
                         focus_key = Some(key);
                     }
                     if i + 1 < n {
-                        let path = format!("gap{i}");
-                        let divider = ui.child_key("gap").index(col.id);
-                        let active = ui.is_hovered(divider)
-                            || ui.is_pressed(divider)
-                            || self.dragging.as_deref() == Some(path.as_str());
-                        let bar = NodeSpec::column()
-                            .width(gap)
-                            .grow_height()
-                            .bg(if active { pal.accent } else { pal.border })
-                            .cursor(kui_native::CursorShape::EwResize)
-                            .on_drag(Value::map([
+                        widgets::splitter(
+                            ui,
+                            &format!("gap{}", col.id),
+                            Dir::Row,
+                            gap,
+                            Value::map([
                                 ("kind", "split".into()),
-                                ("path", Value::str(&path)),
+                                ("path", Value::str(format!("gap{i}"))),
                                 ("dir", "h".into()),
-                            ]));
-                        ui.leaf_key(divider, bar);
+                            ]),
+                        );
                     }
                 }
                 if trail > 0.0 {
@@ -693,13 +689,11 @@ impl Kawoosh {
         match node {
             Node::Pane(id) => self.render_pane(ui, *id),
             Node::Split { dir, ratio, a, b } => {
-                let pal = self.pal;
                 let spec = match dir {
                     SplitDir::H => NodeSpec::row(),
                     SplitDir::V => NodeSpec::column(),
                 };
                 let ratio = ratio.clamp(0.1, 0.9);
-                let dragging = self.dragging.as_deref() == Some(path);
                 let grow = |f: f32| match dir {
                     SplitDir::H => NodeSpec::column().width(Sizing::Grow(f)).grow_height(),
                     SplitDir::V => NodeSpec::column().grow_width().height(Sizing::Grow(f)),
@@ -708,32 +702,20 @@ impl Kawoosh {
                     ui.with_keyed("a", grow(ratio), |ui| {
                         self.render_node(ui, a, &format!("{path}a"))
                     });
-                    let divider = ui.child_key("divider");
-                    let active = ui.is_hovered(divider) || ui.is_pressed(divider) || dragging;
-                    let bar = match dir {
-                        SplitDir::H => NodeSpec::column()
-                            .width(DIVIDER)
-                            .grow_height()
-                            .cursor(kui_native::CursorShape::EwResize),
-                        SplitDir::V => NodeSpec::column()
-                            .grow_width()
-                            .height(DIVIDER)
-                            .cursor(kui_native::CursorShape::NsResize),
+                    let (along, name) = match dir {
+                        SplitDir::H => (Dir::Row, "h"),
+                        SplitDir::V => (Dir::Column, "v"),
                     };
-                    ui.leaf_keyed(
+                    widgets::splitter(
+                        ui,
                         "divider",
-                        bar.bg(if active { pal.accent } else { pal.border })
-                            .on_drag(Value::map([
-                                ("kind", "split".into()),
-                                ("path", Value::str(path)),
-                                (
-                                    "dir",
-                                    Value::str(match dir {
-                                        SplitDir::H => "h",
-                                        SplitDir::V => "v",
-                                    }),
-                                ),
-                            ])),
+                        along,
+                        DIVIDER,
+                        Value::map([
+                            ("kind", "split".into()),
+                            ("path", Value::str(path)),
+                            ("dir", Value::str(name)),
+                        ]),
                     );
                     ui.with_keyed("b", grow(1.0 - ratio), |ui| {
                         self.render_node(ui, b, &format!("{path}b"))

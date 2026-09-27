@@ -48,7 +48,7 @@ use std::time::{Duration, Instant};
 use kawoosh_doc::{BufferId, Hunk};
 use kawoosh_editor::{ArgKind, Args, Selection, Selections, Spec, Took, ViewId};
 use kawoosh_systems::store::{MomentKey, MomentQuery, MomentRow, RingRow, history_key_of, now};
-use kui_native::{Color, NodeSpec, Sizing, Ui, Value, Vec2};
+use kui_native::{Color, NodeSpec, Sizing, Ui, Value, widgets};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -1442,19 +1442,11 @@ impl Kawoosh {
                 // rows by the offset it scrolls to (the geometry a view
                 // reads carries a `set_scroll` made in the same build)
                 // rather than a frame late.
-                let list = ui.child_key("rows");
-                self.memory_pane.page = ui
-                    .scroll_geometry(list)
-                    .map_or(0, |g| (g.rect.h / tm.line_h).floor() as usize);
+                self.memory_pane.page = widgets::rows_in_view(ui, "rows", tm.line_h);
                 if reveal && n > 0 {
-                    let y = cursor as f32 * tm.line_h;
-                    if let Some(g) = ui.scroll_geometry(list)
-                        && !(g.offset.y <= y && y + tm.line_h <= g.offset.y + g.rect.h)
-                    {
-                        ui.set_scroll(list, Vec2::new(0.0, (y - g.rect.h / 2.0).max(0.0)));
-                    }
+                    widgets::reveal_row(ui, "rows", cursor, tm.line_h);
                 }
-                kui_native::widgets::uniform_list(
+                widgets::uniform_list(
                     ui,
                     "rows",
                     NodeSpec::column()

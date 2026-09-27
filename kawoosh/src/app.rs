@@ -2229,22 +2229,16 @@ impl kui_native::App for Kawoosh {
                 ui.with(NodeSpec::column().fill(), |ui| self.render_tab(ui));
                 self.perf.cur.rows = ms(t);
                 if let Some(d) = dock {
-                    let divider = ui.child_key("dockdiv");
-                    let active = ui.is_hovered(divider)
-                        || ui.is_pressed(divider)
-                        || self.dragging.as_deref() == Some("dock");
-                    ui.leaf_keyed(
+                    kui_native::widgets::splitter(
+                        ui,
                         "dockdiv",
-                        NodeSpec::column()
-                            .grow_width()
-                            .height(DIVIDER)
-                            .bg(if active { pal.accent } else { pal.border })
-                            .cursor(kui_native::CursorShape::NsResize)
-                            .on_drag(Value::map([
-                                ("kind", "split".into()),
-                                ("path", "dock".into()),
-                                ("dir", "v".into()),
-                            ])),
+                        kui_native::Dir::Column,
+                        DIVIDER,
+                        Value::map([
+                            ("kind", "split".into()),
+                            ("path", "dock".into()),
+                            ("dir", "v".into()),
+                        ]),
                     );
                     ui.with_keyed(
                         "dock",

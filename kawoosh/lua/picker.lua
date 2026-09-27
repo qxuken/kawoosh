@@ -1179,9 +1179,8 @@ kawoosh.view(VIEW, function(ctx)
     local prows = math.max(math.floor((h - TITLE_H - ROW_H - 4 - 16 - 2 * PREVIEW_ROW) / PREVIEW_ROW), 1)
     P.prows = prows
     -- The divider: dragged, the list's share follows the pointer.
-    body[#body + 1] = column { key = "picker divider", width = DIVIDER, height = "grow",
-      bg = P.dragging and t.accent or t.border, hover_bg = t.accent, cursor = "ewResize",
-      on_drag = { kind = "divide" } }
+    body[#body + 1] = splitter(ctx.env, { key = "picker divider", thickness = DIVIDER,
+      on_drag = { kind = "divide" } })
     body[#body + 1] = picker.preview(ctx, pv, prows, P.pv_top)
   end
 
@@ -1193,15 +1192,10 @@ end, function(ev)
   elseif ev.kind == "drag" then
     -- The divider under the pointer: its x over the body's width is
     -- the list's share, kept for the session.
-    if ev.phase == "end" then
-      P.dragging = nil
-    else
-      P.dragging = true
-      local par = ev.parent or {}
-      if par.w and par.w > 0 then
-        local at = ((ev.x or 0) - (par.x or 0)) / par.w
-        kawoosh.opt("picker.split", math.max(0.1, math.min(0.9, at)))
-      end
+    local par = ev.parent or {}
+    if ev.phase ~= "end" and par.w and par.w > 0 then
+      local at = ((ev.x or 0) - (par.x or 0)) / par.w
+      kawoosh.opt("picker.split", math.max(0.1, math.min(0.9, at)))
     end
   elseif ev.kind == "hover" then
     -- The pointer moving from one row onto another takes the cursor
