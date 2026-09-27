@@ -585,3 +585,193 @@ fn g_sequences_hold_in_visual_and_operator_pending_mode() {
     assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Normal);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+fn with_plugins(text: &str) -> (Drive, Kawoosh) {
+    let mut app = Kawoosh::new("t", text);
+    let mut d = Drive::new(900.0, 500.0);
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext);
+    d.frame(&mut app);
+    (d, app)
+}
+
+fn head(app: &Kawoosh) -> usize {
+    app.ed.views[app.focused_view().unwrap()]
+        .sels
+        .primary()
+        .head
+}
+
+fn register(app: &Kawoosh) -> String {
+    app.ed.memory.head().unwrap().text.clone()
+}
+
+/// `p` on a selection replaces it with the register, and what it
+/// replaced is the register's next, so a second `p` swaps back; `P`
+/// keeps the register for one text put over many. Lines over
+/// characters go on lines of their own, characters over lines are one.
+#[test]
+fn p_on_a_selection_replaces_it() {
+    let (mut d, mut app) = with_plugins("one two three");
+    d.keys(&mut app, "yiwwviwp");
+    assert_eq!(text(&app), "one one three");
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Normal);
+    assert_eq!(register(&app), "two", "what it replaced");
+    d.keys(&mut app, "wviwP");
+    assert_eq!(text(&app), "one one two");
+    assert_eq!(register(&app), "two", "`P` keeps the register");
+    d.keys(&mut app, "0viwP");
+    assert_eq!(text(&app), "two one two");
+    // Lines over lines, the last line too.
+    let (mut d, mut app) = with_plugins("a\nb\nc");
+    d.keys(&mut app, "yyjVp");
+    assert_eq!(text(&app), "a\na\nc");
+    assert_eq!(register(&app), "b\n");
+    d.keys(&mut app, "GVp");
+    assert_eq!(text(&app), "a\na\nb");
+    // Characters over lines, lines over characters.
+    let (mut d, mut app) = with_plugins("x y\nline");
+    d.keys(&mut app, "yiwjVp");
+    assert_eq!(text(&app), "x y\nx");
+    let (mut d, mut app) = with_plugins("ab cd");
+    d.keys(&mut app, "yywviwp");
+    assert_eq!(text(&app), "ab \nab cd\n");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// The case: `gu` `gU` `g~` as operators, doubled for the line, `~` a
+/// character at a time, and `u` `U` `~` on a selection — where `u` had
+/// been undo.
+#[test]
+fn case_operators_and_the_selections_case() {
+    let (mut d, mut app) = with_plugins("Hello World");
+    d.keys(&mut app, "gUiw");
+    assert_eq!(text(&app), "HELLO World");
+    d.keys(&mut app, "guu");
+    assert_eq!(text(&app), "hello world");
+    d.keys(&mut app, "g~~");
+    assert_eq!(text(&app), "HELLO WORLD");
+    d.keys(&mut app, "0~~");
+    assert_eq!(text(&app), "heLLO WORLD");
+    assert_eq!(head(&app), 2, "past what it turned");
+    d.keys(&mut app, "0veU");
+    assert_eq!(text(&app), "HELLO WORLD");
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Normal);
+    d.keys(&mut app, "wv$u");
+    assert_eq!(text(&app), "HELLO world", "`u` on a selection is not undo");
+    d.keys(&mut app, "0v~");
+    assert_eq!(text(&app), "hELLO world");
+    // Another operator's `u` is nothing.
+    d.keys(&mut app, "du");
+    assert_eq!(text(&app), "hELLO world");
+    d.keys(&mut app, "u");
+    assert_eq!(text(&app), "HELLO world", "and `u` is undo again");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// WORDs — `W` `B` `E` `gE`, `iW` `aW` — `ge`, and an object that is
+/// not there leaving the operator off rather than yanking nothing.
+#[test]
+fn words_that_only_whitespace_ends() {
+    let (mut d, mut app) = with_plugins("a.b(c) next.one end");
+    d.keys(&mut app, "W");
+    assert_eq!(head(&app), 7);
+    d.keys(&mut app, "W");
+    assert_eq!(head(&app), 16);
+    d.keys(&mut app, "B");
+    assert_eq!(head(&app), 7);
+    d.keys(&mut app, "E");
+    assert_eq!(head(&app), 14);
+    d.keys(&mut app, "gE");
+    assert_eq!(head(&app), 5);
+    d.keys(&mut app, "ge");
+    assert_eq!(head(&app), 4);
+    d.keys(&mut app, "0diW");
+    assert_eq!(text(&app), " next.one end");
+    d.keys(&mut app, "u0daW");
+    assert_eq!(text(&app), "next.one end");
+    let (mut d, mut app) = with_plugins("one\n\nthree");
+    d.keys(&mut app, "yiwjyiW");
+    assert_eq!(register(&app), "one", "no WORD, nothing yanked");
+    assert!(
+        app.ed.message.contains("no text object"),
+        "{}",
+        app.ed.message
+    );
+    d.keys(&mut app, "diW");
+    assert_eq!(text(&app), "one\n\nthree");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// `}` `{` by paragraphs, as a motion for an operator too; `H` `M` `L`
+/// the pane's lines.
+#[test]
+fn paragraphs_and_the_panes_lines() {
+    let (mut d, mut app) = with_plugins("a\nb\n\nc\nd\n\ne");
+    d.keys(&mut app, "}");
+    assert_eq!(head(&app), 4);
+    d.keys(&mut app, "}");
+    assert_eq!(head(&app), 9);
+    d.keys(&mut app, "}");
+    assert_eq!(head(&app), 11, "the end");
+    d.keys(&mut app, "{");
+    assert_eq!(head(&app), 9);
+    d.keys(&mut app, "2{");
+    assert_eq!(head(&app), 0);
+    d.keys(&mut app, "d}");
+    assert_eq!(text(&app), "\nc\nd\n\ne");
+    let lines: Vec<String> = (0..200).map(|i| format!("line {i}")).collect();
+    let (mut d, mut app) = with_plugins(&lines.join("\n"));
+    d.keys(&mut app, "100G");
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    let (top, rows) = (app.ed.views[v].top, app.ed.views[v].rows);
+    assert!(rows > 8, "{rows}");
+    let line = |app: &Kawoosh| app.ed.buffer_of(v).line_of(head(app));
+    // Inside `scrolloff`'s three lines, so the pane holds still.
+    d.keys(&mut app, "H");
+    assert_eq!(line(&app), top + 3);
+    d.keys(&mut app, "L");
+    assert_eq!(line(&app), top + rows - 1 - 3);
+    d.keys(&mut app, "M");
+    assert_eq!(line(&app), top + (rows - 1) / 2);
+    d.keys(&mut app, "3H");
+    assert_eq!(line(&app), top + 3 + 2);
+    assert_eq!(app.ed.views[v].top, top, "the pane never moved");
+    // At the buffer's top the margin is no reason to stop short.
+    d.keys(&mut app, "ggH");
+    assert_eq!(line(&app), 0);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// `[<Space>` `]<Space>` put empty lines around the caret's line, the
+/// caret staying on its text; `Vx` and `Vs` take the lines.
+#[test]
+fn blank_lines_around_and_whole_lines_in_line_visual() {
+    let (mut d, mut app) = with_plugins("a\nb");
+    d.keys(&mut app, "j");
+    d.press(&mut app, "[<Space>");
+    assert_eq!(text(&app), "a\n\nb");
+    assert_eq!(head(&app), 3, "still on `b`");
+    d.keys(&mut app, "2");
+    d.press(&mut app, "]<Space>");
+    assert_eq!(text(&app), "a\n\nb\n\n");
+    assert_eq!(head(&app), 3);
+    d.keys(&mut app, "G");
+    d.press(&mut app, "]<Space>");
+    assert_eq!(text(&app), "a\n\nb\n\n\n");
+    assert_eq!(
+        app.ed
+            .buffer_of(app.focused_view().unwrap())
+            .line_of(head(&app)),
+        4
+    );
+    let (mut d, mut app) = with_plugins("one\ntwo\nthree");
+    d.keys(&mut app, "jVx");
+    assert_eq!(text(&app), "one\nthree");
+    d.keys(&mut app, "uggjVsX");
+    d.press(&mut app, "<Esc>");
+    assert_eq!(text(&app), "one\nX\nthree");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

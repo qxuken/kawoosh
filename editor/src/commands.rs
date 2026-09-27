@@ -278,6 +278,17 @@ pub(crate) fn apply_operator(
                 }
             }
         }
+        // `gu` `gU` `g~`, and `u` `U` `~` on a selection: the text's
+        // case, the caret at the start of what was turned.
+        "case lower" | "case upper" | "case toggle" => {
+            let edits = ranges
+                .iter()
+                .zip(&texts)
+                .enumerate()
+                .map(|(i, ((r, _), t))| (i, r.clone(), case_turned(t, op)))
+                .collect();
+            ed.edit_each(view, edits, |start, _| Selection::point(start));
+        }
         // `gsa` + a motion: the ranges wait for the pair's character
         // (`surround wrap`); a linewise one keeps its newline outside.
         "surround add" => {
@@ -437,12 +448,27 @@ fn textobject(ed: &mut Editor, ctx: &Ctx, around: bool) {
     let buf = &ed.buffers[id];
     let v = &mut ed.views[ctx.view];
     let mut ok = true;
+    let mut found = false;
     v.sels.map(|s| {
         let range = match c {
             'p' => paragraph_object(buf, s.head, around),
             'w' => {
                 let (a, b) = m::word_at(buf, s.head);
                 if around {
+                    let mut e = b;
+                    while buf.char_at(e).is_some_and(|c| c == ' ' || c == '\t') {
+                        e = buf.next_char(e);
+                    }
+                    Some(a..e)
+                } else {
+                    Some(a..b)
+                }
+            }
+            'W' => {
+                let (a, b) = m::bigword_at(buf, s.head);
+                if a == b {
+                    None
+                } else if around {
                     let mut e = b;
                     while buf.char_at(e).is_some_and(|c| c == ' ' || c == '\t') {
                         e = buf.next_char(e);
@@ -462,13 +488,22 @@ fn textobject(ed: &mut Editor, ctx: &Ctx, around: bool) {
         match range {
             // A paragraph is lines: in visual mode the head sits on the
             // last one's newline, and the selection goes linewise.
-            Some(r) if c == 'p' && visual => Selection::new(r.start, buf.prev_char(r.end)),
+            Some(r) if c == 'p' && visual => {
+                found = true;
+                Selection::new(r.start, buf.prev_char(r.end))
+            }
             // A visual selection's head is on its last character (the
             // range's end is exclusive), so `vi(` ends on the byte
             // before `)` and `d` takes exactly the inside; under an
             // operator the range is taken as it is.
-            Some(r) if visual && r.end > r.start => Selection::new(r.start, buf.prev_char(r.end)),
-            Some(r) => Selection::new(r.start, r.end),
+            Some(r) if visual && r.end > r.start => {
+                found = true;
+                Selection::new(r.start, buf.prev_char(r.end))
+            }
+            Some(r) => {
+                found = true;
+                Selection::new(r.start, r.end)
+            }
             None => {
                 ok = false;
                 s
@@ -480,6 +515,11 @@ fn textobject(ed: &mut Editor, ctx: &Ctx, around: bool) {
     }
     if !ok {
         ed.message = format!("no text object for {c}");
+    }
+    // Found nowhere, the operator waiting on it is off: `yiW` with no
+    // WORD yanked nothing over the register.
+    if !found {
+        ed.pending_op = None;
     }
 }
 
@@ -1115,6 +1155,155 @@ fn paste(ed: &mut Editor, ctx: &Ctx, after: bool) {
     put(ed, ctx.view, ctx.count.max(1), after, None);
 }
 
+/// The case `op` turns `t` to: `case lower`, `case upper`, `case toggle`.
+fn case_turned(t: &str, op: &str) -> String {
+    match op {
+        "case lower" => t.to_lowercase(),
+        "case upper" => t.to_uppercase(),
+        _ => {
+            let mut out = String::with_capacity(t.len());
+            for c in t.chars() {
+                if c.is_uppercase() {
+                    out.extend(c.to_lowercase());
+                } else {
+                    out.extend(c.to_uppercase());
+                }
+            }
+            out
+        }
+    }
+}
+
+/// `p` / `P` on a visual selection: every selection replaced with the
+/// register, COUNT times, and normal mode. `p` puts what it replaced in
+/// the register, as vim's does, so the next `p` swaps it back; `P`
+/// (`keep`) leaves the register as it was, for one text put over many.
+/// Lines put over characters go on lines of their own; characters over
+/// lines are a line.
+fn paste_over(ed: &mut Editor, ctx: &Ctx, keep: bool) {
+    let Some(head) = ed.memory.head() else {
+        ed.message = "nothing to paste".into();
+        return;
+    };
+    let mut text = head.text.repeat(ctx.count.max(1));
+    let from_lines = head.linewise;
+    let id = view(ed, ctx).buffer;
+    let once = head.secret || ed.buffers[id].private;
+    let buf = &ed.buffers[id];
+    let lines = ed.views[ctx.view].visual_linewise;
+    let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
+        .sels
+        .iter()
+        .map(|s| {
+            if lines {
+                (line_range_of_sel(buf, s, 0), true)
+            } else {
+                op_range(buf, s, MotionKind::Inclusive, 1)
+            }
+        })
+        .collect();
+    let body = text.trim_end_matches('\n').to_string();
+    let edits: Vec<(usize, Range<usize>, String)> = ranges
+        .iter()
+        .enumerate()
+        .map(|(i, (r, _))| {
+            // A linewise range on the last line is the newline before
+            // it and the line (`line_range_of_sel`).
+            let last = lines && buf.char_at(r.start) == Some('\n') && r.end == buf.len();
+            let put = match (lines, from_lines) {
+                (true, _) if last => format!("\n{body}"),
+                (true, _) => format!("{body}\n"),
+                (false, true) => format!("\n{body}\n"),
+                (false, false) => text.clone(),
+            };
+            (i, r.clone(), put)
+        })
+        .collect();
+    let texts: Vec<String> = ranges.iter().map(|(r, _)| buf.slice(r.clone())).collect();
+    if once {
+        let n = ed.memory.len() - 1;
+        ed.memory.forget(n);
+    }
+    if !keep {
+        set_register(ed, id, &ranges, &texts, lines, crate::Took::Delete);
+    }
+    ed.set_mode(ctx.view, Mode::Normal);
+    let linewise_put = lines || from_lines;
+    ed.edit_each(ctx.view, edits, move |start, len| {
+        if linewise_put {
+            Selection::point(start)
+        } else {
+            Selection::point(start + len.saturating_sub(1))
+        }
+    });
+    if linewise_put {
+        let buf = &ed.buffers[id];
+        ed.views[ctx.view].sels.map(|s| {
+            // Past the newline a put over characters starts with, or the
+            // one before the last line: onto the first line put.
+            let at = if buf.byte_at(s.head) == Some(b'\n') {
+                buf.next_char(s.head)
+            } else {
+                s.head
+            };
+            Selection::point(m::first_nonblank(buf, buf.line_of(at.min(buf.len()))))
+        });
+    }
+    ed.last_put = None;
+    text_buffer::wipe_string(&mut text);
+    clamp_sels(ed, ctx.view);
+}
+
+/// `[<Space>` / `]<Space>`: COUNT empty lines above or below each
+/// caret's line — once a line, however many carets are on it — and every
+/// selection kept where it was in the text.
+fn blank_lines(ed: &mut Editor, ctx: &Ctx, below: bool) {
+    let id = view(ed, ctx).buffer;
+    let buf = &ed.buffers[id];
+    let n = ctx.count.max(1);
+    let mut inserts: Vec<usize> = ed.views[ctx.view]
+        .sels
+        .iter()
+        .map(|s| {
+            let ln = buf.line_of(s.head);
+            if below {
+                buf.line_range(ln).end
+            } else {
+                buf.line_start(ln)
+            }
+        })
+        .collect();
+    inserts.sort_unstable();
+    inserts.dedup();
+    let blank = "\n".repeat(n);
+    // A caret moves by the lines put before it: above, one at its own
+    // line's start moves down with it; below, the insert at its line's
+    // end is after it even where the line is empty.
+    let carry = |pos: usize| -> usize {
+        let before = inserts
+            .iter()
+            .filter(|&&at| if below { at < pos } else { at <= pos })
+            .count();
+        pos + before * n
+    };
+    let items: Vec<Selection> = ed.views[ctx.view]
+        .sels
+        .iter()
+        .map(|s| Selection::new(carry(s.anchor), carry(s.head)))
+        .collect();
+    let primary = ed.views[ctx.view].sels.primary;
+    let edits = inserts
+        .iter()
+        .enumerate()
+        .map(|(i, &at)| (i, at..at, blank.clone()))
+        .collect();
+    ed.edit_each(ctx.view, edits, |start, _| Selection::point(start));
+    let v = &mut ed.views[ctx.view];
+    v.sels.items = items;
+    v.sels.primary = primary;
+    v.sels.normalize();
+}
+
 /// Puts the register `count` times at every selection, after it or
 /// before; `walk` is a `[p` `]p` walk under way (its order and place),
 /// kept on the put it makes — none starts one at the register.
@@ -1351,6 +1540,68 @@ pub fn install(ed: &mut Editor) {
     ed.motion("word end", Inclusive, |b, o, n| {
         (0..n).fold(o, |o, _| m::next_word_end(b, o))
     });
+    ed.motion("word end back", Inclusive, |b, o, n| {
+        (0..n).fold(o, |o, _| m::prev_word_end(b, o))
+    });
+    // vim's WORDs: what whitespace alone ends — a path, `a.b(c)`.
+    ed.register_kind("bigword next", Kind::Motion(Exclusive), |ed, ctx| {
+        let op = ed.pending_op.is_some();
+        motion(ed, ctx, |b, o, n| {
+            let target = (0..n).fold(o, |o, _| m::next_bigword_start(b, o));
+            let le = b.line_range(b.line_of(o)).end;
+            if op && target > le { le } else { target }
+        });
+    });
+    ed.motion("bigword prev", Exclusive, |b, o, n| {
+        (0..n).fold(o, |o, _| m::prev_bigword_start(b, o))
+    });
+    ed.motion("bigword end", Inclusive, |b, o, n| {
+        (0..n).fold(o, |o, _| m::next_bigword_end(b, o))
+    });
+    ed.motion("bigword end back", Inclusive, |b, o, n| {
+        (0..n).fold(o, |o, _| m::prev_bigword_end(b, o))
+    });
+    ed.motion("paragraph next", Exclusive, |b, o, n| {
+        (0..n).fold(o, |o, _| m::paragraph_next(b, o))
+    });
+    ed.motion("paragraph prev", Exclusive, |b, o, n| {
+        (0..n).fold(o, |o, _| m::paragraph_prev(b, o))
+    });
+    // `H` `M` `L`: the pane's top, middle and bottom line, COUNT lines
+    // in from the top or the bottom — inside `scrolloff`'s margin, as
+    // vim's, so the pane holds still, but for the buffer's own ends.
+    for (name, at) in [
+        ("screen top", 0u8),
+        ("screen middle", 1),
+        ("screen bottom", 2),
+    ] {
+        ed.register_kind(name, Kind::Motion(Linewise), move |ed, ctx| {
+            let v = &ed.views[ctx.view];
+            let rows = v.rows.max(1);
+            let last = ed.buffers[v.buffer].line_count().saturating_sub(1);
+            let top = v.top.min(last);
+            let bottom = (top + rows - 1).min(last);
+            let margin = ed
+                .settings
+                .int("scrolloff")
+                .map(|n| n.max(0) as usize)
+                .unwrap_or(3)
+                .min((rows - 1) / 2);
+            let first = if top == 0 { 0 } else { top + margin };
+            let end = if bottom == last {
+                bottom
+            } else {
+                bottom - margin
+            };
+            let n = if ctx.has_count { ctx.count - 1 } else { 0 };
+            let ln = match at {
+                0 => (first + n).min(end),
+                1 => top + (bottom - top) / 2,
+                _ => end.saturating_sub(n).max(first),
+            };
+            goto_line(ed, ctx.view, ln + 1);
+        });
+    }
     ed.register_kind("goto file start", Kind::Motion(Linewise), |ed, ctx| {
         let n = if ctx.has_count { ctx.count } else { 1 };
         goto_line(ed, ctx.view, n);
@@ -1511,8 +1762,58 @@ pub fn install(ed: &mut Editor) {
     });
 
     // ---- operators
-    for op in ["delete", "change", "yank", "indent", "dedent"] {
+    for op in [
+        "delete",
+        "change",
+        "yank",
+        "indent",
+        "dedent",
+        "case lower",
+        "case upper",
+        "case toggle",
+    ] {
         ed.register_kind(op, Kind::Operator, move |ed, ctx| operator(ed, ctx, op));
+    }
+    // `~`: COUNT characters from the caret their case turned, the caret
+    // past them, as vim's (`notildeop`).
+    ed.register("case toggle char", |ed, ctx| {
+        let id = view(ed, ctx).buffer;
+        let buf = &ed.buffers[id];
+        let ranges: Vec<(Range<usize>, bool)> = ed.views[ctx.view]
+            .sels
+            .iter()
+            .map(|s| {
+                let le = buf.line_range(buf.line_of(s.head)).end;
+                let mut e = s.head;
+                for _ in 0..ctx.count.max(1) {
+                    if e < le {
+                        e = buf.next_char(e);
+                    }
+                }
+                (s.head..e, false)
+            })
+            .collect();
+        apply_operator(ed, ctx.view, "case toggle", ranges.clone());
+        // Onto the character after the last turned, or the line's last.
+        let id = view(ed, ctx).buffer;
+        let buf = &ed.buffers[id];
+        let mut i = 0;
+        ed.views[ctx.view].sels.map(|s| {
+            let (r, _) = &ranges[i.min(ranges.len() - 1)];
+            i += 1;
+            let e = s.head + (r.end - r.start);
+            let range = buf.line_range(buf.line_of(s.head));
+            if e < range.end {
+                Selection::point(e)
+            } else {
+                Selection::point(buf.prev_char(range.end).max(range.start))
+            }
+        });
+    });
+    // `[<Space>` `]<Space>`: COUNT blank lines above or below each
+    // caret's line, the carets staying where they are (unimpaired's).
+    for (name, below) in [("line blank above", false), ("line blank below", true)] {
+        ed.register(name, move |ed, ctx| blank_lines(ed, ctx, below));
     }
     ed.register("join", |ed, ctx| {
         let n = ctx.count.max(2) - 1;
@@ -1543,6 +1844,10 @@ pub fn install(ed: &mut Editor) {
             .sels
             .iter()
             .map(|s| {
+                // `Vx` `Vs` take the lines, as `d` and `c` do there.
+                if ed.mode(ctx.view) == Mode::Visual && ed.views[ctx.view].visual_linewise {
+                    return (line_range_of_sel(buf, s, 0), true);
+                }
                 if ed.mode(ctx.view) == Mode::Visual && !s.is_empty() {
                     return op_range(buf, s, MotionKind::Inclusive, 1);
                 }
@@ -1594,6 +1899,10 @@ pub fn install(ed: &mut Editor) {
             .sels
             .iter()
             .map(|s| {
+                // `Vx` `Vs` take the lines, as `d` and `c` do there.
+                if ed.mode(ctx.view) == Mode::Visual && ed.views[ctx.view].visual_linewise {
+                    return (line_range_of_sel(buf, s, 0), true);
+                }
                 if ed.mode(ctx.view) == Mode::Visual && !s.is_empty() {
                     return op_range(buf, s, MotionKind::Inclusive, 1);
                 }
@@ -1771,6 +2080,8 @@ pub fn install(ed: &mut Editor) {
         apply_operator(ed, ctx.view, "delete", ranges);
     });
     ed.register("paste after", |ed, ctx| paste(ed, ctx, true));
+    ed.register("paste over", |ed, ctx| paste_over(ed, ctx, false));
+    ed.register("paste over keep", |ed, ctx| paste_over(ed, ctx, true));
     ed.register("paste before", |ed, ctx| paste(ed, ctx, false));
     ed.register("put older", |ed, ctx| put_step(ed, ctx, true));
     ed.register("put newer", |ed, ctx| put_step(ed, ctx, false));
@@ -2206,6 +2517,28 @@ const DOCS: &[(&str, &str)] = &[
     ("word next", "the start of the next word"),
     ("word prev", "the start of the previous word"),
     ("word end", "the end of the word"),
+    ("word end back", "the end of the previous word (`ge`)"),
+    (
+        "bigword next",
+        "the start of the next WORD — only whitespace ends one (`W`)",
+    ),
+    ("bigword prev", "the start of the previous WORD (`B`)"),
+    ("bigword end", "the end of the WORD (`E`)"),
+    ("bigword end back", "the end of the previous WORD (`gE`)"),
+    ("paragraph next", "the blank line after the paragraph (`}`)"),
+    (
+        "paragraph prev",
+        "the blank line before the paragraph (`{`)",
+    ),
+    (
+        "screen top",
+        "the pane's top line, or COUNT lines below it (`H`)",
+    ),
+    ("screen middle", "the pane's middle line (`M`)"),
+    (
+        "screen bottom",
+        "the pane's bottom line, or COUNT lines above it (`L`)",
+    ),
     ("goto file start", "the first line, or line COUNT"),
     ("goto file end", "the last line, or line COUNT"),
     ("goto line", "line COUNT (`:42` too)"),
@@ -2257,6 +2590,30 @@ const DOCS: &[(&str, &str)] = &[
         "indent the lines a tabstop (spaces under `expandtab`)",
     ),
     ("dedent", "dedent the lines a tabstop"),
+    (
+        "case lower",
+        "lower-case the selection, or what a motion covers (`gu`; `u` on a selection)",
+    ),
+    (
+        "case upper",
+        "upper-case the selection, or what a motion covers (`gU`; `U` on a selection)",
+    ),
+    (
+        "case toggle",
+        "turn the case of the selection, or what a motion covers (`g~`; `~` on a selection)",
+    ),
+    (
+        "case toggle char",
+        "turn the case of COUNT characters from the caret and step past them (`~`)",
+    ),
+    (
+        "line blank above",
+        "COUNT empty lines above the caret's line, the caret staying (`[<Space>`)",
+    ),
+    (
+        "line blank below",
+        "COUNT empty lines below the caret's line, the caret staying (`]<Space>`)",
+    ),
     (
         "join",
         "join COUNT lines (the selection's, in visual) with a space between",
@@ -2349,6 +2706,14 @@ const DOCS: &[(&str, &str)] = &[
         "put the register before the caret, or above a linewise one",
     ),
     ("paste clipboard", "put the system clipboard at the caret"),
+    (
+        "paste over",
+        "replace the selection with the register, COUNT times; what it replaced is the register's next (`p` on a selection)",
+    ),
+    (
+        "paste over keep",
+        "replace the selection with the register, which stays as it was (`P` on a selection)",
+    ),
     (
         "put older",
         "the last put replaced with the text before it in the memory (`[p`), COUNT back; `p` puts it next",
@@ -3218,6 +3583,16 @@ pub fn default_keymap(km: &mut Keymap) {
         ("w", "word next"),
         ("b", "word prev"),
         ("e", "word end"),
+        ("ge", "word end back"),
+        ("W", "bigword next"),
+        ("B", "bigword prev"),
+        ("E", "bigword end"),
+        ("gE", "bigword end back"),
+        ("}", "paragraph next"),
+        ("{", "paragraph prev"),
+        ("H", "screen top"),
+        ("M", "screen middle"),
+        ("L", "screen bottom"),
         ("gg", "goto file start"),
         ("G", "goto file end"),
         ("<C-d>", "page half down"),
@@ -3243,6 +3618,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("y", "yank"),
         (">", "indent"),
         ("<", "dedent"),
+        ("gu", "case lower"),
+        ("gU", "case upper"),
+        ("g~", "case toggle"),
+        ("~", "case toggle char"),
         ("J", "join"),
         ("x", "delete char"),
         ("<Del>", "delete char"),
@@ -3403,6 +3782,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("[b", "buffer prev"),
         ("]t", "tab next"),
         ("[t", "tab prev"),
+        ("]<Space>", "line blank below"),
+        ("[<Space>", "line blank above"),
         // The tab itself moved along the strip: the shifted letter,
         // as `gT` is `gt` the other way.
         ("]T", "tab move right"),
@@ -3556,6 +3937,11 @@ pub fn default_keymap(km: &mut Keymap) {
         ("x", "delete char"),
         ("i", "textobject inner"),
         ("a", "textobject around"),
+        ("p", "paste over"),
+        ("P", "paste over keep"),
+        ("u", "case lower"),
+        ("U", "case upper"),
+        ("~", "case toggle"),
         ("<D-c>", "yank"),
         ("<Esc>", "normal"),
         ("<C-c>", "normal"),
@@ -3563,7 +3949,16 @@ pub fn default_keymap(km: &mut Keymap) {
     for (k, c) in v {
         km.bind(Visual, k, c);
     }
-    let op = [("i", "textobject inner"), ("a", "textobject around")];
+    // The case operators doubled on their last letter, vim's `guu`
+    // `gUU` `g~~`, a line each; after any other operator the letter
+    // is no operator of its, and nothing runs.
+    let op = [
+        ("i", "textobject inner"),
+        ("a", "textobject around"),
+        ("u", "case lower"),
+        ("U", "case upper"),
+        ("~", "case toggle"),
+    ];
     for (k, c) in op {
         km.bind(OperatorPending, k, c);
     }

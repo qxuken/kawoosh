@@ -2294,11 +2294,17 @@ then breadth.
     2026-09-27: the ask closed by its answer whichever pane takes it;
     `has_deeper` asked of normal mode too where a sequence falls
     through (`editor/src/lib.rs`).
-45. **The vim gaps**: visual `p` replacing (the register kept for `P`),
+45. ~~**The vim gaps**: visual `p` replacing (the register kept for `P`),
     a failed object cancelling its operator, `Vs` on lines, the case
     operators and visual `u` `U` `~`, `W` `B` `E` `ge` and `iW` `aW`,
     `[<Space>` `]<Space>`, `{` `}`, `H` `M` `L`. One round: each is an
-    hour and they share `normal_mode.rs`'s shape.
+    hour and they share `normal_mode.rs`'s shape.~~ Landed 2026-09-27:
+    `paste over` / `paste over keep`, `case lower` `upper` `toggle` as
+    operators with `~` (`case toggle char`), `bigword *`, `word end
+    back`, `paragraph next` / `prev`, `screen top` `middle` `bottom`
+    inside `scrolloff`, `line blank above` / `below`; `Vx` took one
+    character as `Vs` did. Five tests in `normal_mode.rs`, the bundled
+    plugins loaded.
 46. **Secrets' put-once, again** ([secrets.md](secrets.md)): a secret is
     put once, but a yank that was never one is not forgotten for being
     put into a private buffer, and a spent entry says so rather than

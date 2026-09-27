@@ -42,13 +42,38 @@ fn class(c: char) -> Class {
     }
 }
 
+/// vim's WORD: anything but whitespace is one class.
+fn big_class(c: char) -> Class {
+    if c.is_whitespace() {
+        Class::Space
+    } else {
+        Class::Word
+    }
+}
+
+/// Which words a motion walks: vim's `w`, or `W`'s WORDs, which only
+/// whitespace ends.
+fn classifier(big: bool) -> fn(char) -> Class {
+    if big { big_class } else { class }
+}
+
 fn char_at(buf: &Buffer, o: usize) -> Option<char> {
     buf.char_at(o)
 }
 
 /// vim `w`: the start of the next word (a newline counts as a boundary,
 /// an empty line as a word).
-pub fn next_word_start(buf: &Buffer, mut o: usize) -> usize {
+pub fn next_word_start(buf: &Buffer, o: usize) -> usize {
+    next_start(buf, o, false)
+}
+
+/// vim `W`: the start of the next WORD.
+pub fn next_bigword_start(buf: &Buffer, o: usize) -> usize {
+    next_start(buf, o, true)
+}
+
+fn next_start(buf: &Buffer, mut o: usize, big: bool) -> usize {
+    let class = classifier(big);
     let len = buf.len();
     let Some(c) = char_at(buf, o) else {
         return len;
@@ -83,7 +108,17 @@ pub fn next_word_start(buf: &Buffer, mut o: usize) -> usize {
 }
 
 /// vim `b`: the start of the previous word.
-pub fn prev_word_start(buf: &Buffer, mut o: usize) -> usize {
+pub fn prev_word_start(buf: &Buffer, o: usize) -> usize {
+    prev_start(buf, o, false)
+}
+
+/// vim `B`: the start of the previous WORD.
+pub fn prev_bigword_start(buf: &Buffer, o: usize) -> usize {
+    prev_start(buf, o, true)
+}
+
+fn prev_start(buf: &Buffer, mut o: usize, big: bool) -> usize {
+    let class = classifier(big);
     if o == 0 {
         return 0;
     }
@@ -119,7 +154,17 @@ pub fn prev_word_start(buf: &Buffer, mut o: usize) -> usize {
 
 /// vim `e`: the last char of the current or next word (offset *of* that
 /// char, so the caret sits on it).
-pub fn next_word_end(buf: &Buffer, mut o: usize) -> usize {
+pub fn next_word_end(buf: &Buffer, o: usize) -> usize {
+    next_end(buf, o, false)
+}
+
+/// vim `E`: the last char of the current or next WORD.
+pub fn next_bigword_end(buf: &Buffer, o: usize) -> usize {
+    next_end(buf, o, true)
+}
+
+fn next_end(buf: &Buffer, mut o: usize, big: bool) -> usize {
+    let class = classifier(big);
     let len = buf.len();
     if o >= len {
         return len;
@@ -147,6 +192,16 @@ pub fn next_word_end(buf: &Buffer, mut o: usize) -> usize {
 
 /// The word under `o`: `(start, end)`, or an empty range at `o`.
 pub fn word_at(buf: &Buffer, o: usize) -> (usize, usize) {
+    thing_at(buf, o, false)
+}
+
+/// The WORD under `o` — a run of anything but whitespace.
+pub fn bigword_at(buf: &Buffer, o: usize) -> (usize, usize) {
+    thing_at(buf, o, true)
+}
+
+fn thing_at(buf: &Buffer, o: usize, big: bool) -> (usize, usize) {
+    let class = classifier(big);
     let Some(c) = char_at(buf, o) else {
         return (o, o);
     };
@@ -171,6 +226,80 @@ pub fn word_at(buf: &Buffer, o: usize) -> (usize, usize) {
         }
     }
     (s, e)
+}
+
+/// vim `ge`: the last char of the previous word — an empty line is
+/// one, as `w` has it.
+pub fn prev_word_end(buf: &Buffer, o: usize) -> usize {
+    prev_end(buf, o, false)
+}
+
+/// vim `gE`: the last char of the previous WORD.
+pub fn prev_bigword_end(buf: &Buffer, o: usize) -> usize {
+    prev_end(buf, o, true)
+}
+
+fn prev_end(buf: &Buffer, mut o: usize, big: bool) -> usize {
+    let class = classifier(big);
+    // Off the word the caret is in, to its first char.
+    if let Some(c) = char_at(buf, o)
+        && class(c) != Class::Space
+    {
+        while o > 0 {
+            let p = buf.prev_char(o);
+            match char_at(buf, p) {
+                Some(pc) if class(pc) == class(c) && pc != '\n' => o = p,
+                _ => break,
+            }
+        }
+    }
+    // Back over the space between, stopping on an empty line.
+    while o > 0 {
+        o = buf.prev_char(o);
+        match char_at(buf, o) {
+            Some('\n') if buf.line_start(buf.line_of(o)) == o => return o,
+            Some(c) if c.is_whitespace() => {}
+            _ => return o,
+        }
+    }
+    0
+}
+
+/// Whether line `ln` is blank — nothing but whitespace — which is what
+/// ends a paragraph, as the `ip` object reads it.
+fn blank_line(buf: &Buffer, ln: usize) -> bool {
+    buf.slice(buf.line_range(ln)).trim().is_empty()
+}
+
+/// vim `}`: the start of the first blank line past the paragraph at or
+/// after `o`'s line, or the buffer's end.
+pub fn paragraph_next(buf: &Buffer, o: usize) -> usize {
+    let last = buf.line_count().saturating_sub(1);
+    let mut ln = buf.line_of(o);
+    while ln < last && blank_line(buf, ln) {
+        ln += 1;
+    }
+    while ln < last && !blank_line(buf, ln) {
+        ln += 1;
+    }
+    if blank_line(buf, ln) {
+        buf.line_start(ln)
+    } else {
+        buf.len()
+    }
+}
+
+/// vim `{`: the start of the first blank line before the paragraph at
+/// or before `o`'s line, or the buffer's start.
+pub fn paragraph_prev(buf: &Buffer, o: usize) -> usize {
+    let mut ln = buf.line_of(o);
+    while ln > 0 && blank_line(buf, ln) {
+        ln -= 1;
+    }
+    while ln > 0 && !blank_line(buf, ln) {
+        ln -= 1;
+    }
+    buf.line_start(ln)
 }
 
 /// The first non-blank of line `ln`.

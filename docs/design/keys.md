@@ -185,6 +185,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `]h` `[h` | *reserved*: hunk |
 | `]e` `[e` | *reserved*: the next, previous pin |
 | `]'` `['` | the next, previous marked line of the file, COUNT marks ([marks.md](marks.md)) |
+| `]<Space>` `[<Space>` | COUNT empty lines below / above the caret's line — once a line, whatever carets are on it — the carets staying on their text (unimpaired's) |
 
 ### Going somewhere: `g`
 
@@ -194,6 +195,8 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `m{a-z}` `m{A-Z}` | mark the caret's place: a letter this file's, a capital the workspace's (not in a `dir` listing, whose `m` sorts); `:delmarks x`, `:delmarks!` this file's ([marks.md](marks.md)) |
 | `'{x}` `` `{x} `` | the mark's line (its first non-blank), its line and column — its file opened for a capital; found again when the file changed, and said how; adrift, said so, at its symbol when that is known |
 | `gh` `gl` | the line's ends (helix; `^` and `$` stay) |
+| `ge` `gE` | the end of the previous word, WORD |
+| `gu` `gU` `g~` + motion | lower-case, upper-case, turn the case of what it covers; `guu` `gUU` `g~~` the line |
 | `gsa` `gsd` `gsr` | surrounds: add, delete, replace (mini.surround's letters) |
 | `gd` | definition; in the hover, the symbol it names — looked up in the workspace, opened in the pane the hover came from |
 | `gx` | open the link under the caret: a path here (a `.md` beside, a directory listed), a URL in the OS (`open link`) |
@@ -266,6 +269,12 @@ the panes table.
 | keys | what |
 |---|---|
 | `S` | change the line, keeping its indent (`cc`) |
+| `W` `B` `E` `gE`, `iW` `aW` | vim's WORDs: a run that only whitespace ends — a path, `a.b(c)`. An object not found under the caret leaves its operator off: nothing is yanked, deleted or changed |
+| `}` `{` | the blank line after, before the paragraph — a motion for an operator too (`d}`) |
+| `H` `M` `L` | the pane's top, middle, bottom line — COUNT lines in from the top or the bottom — inside `scrolloff`'s margin, so the pane holds still |
+| `~` | turn the case of COUNT characters and step past them; on a selection, `u` `U` `~` lower, upper and turn its case (`u` is no undo there) |
+| `p` `P` (visual mode) | the selection replaced with the register, COUNT times: `p` puts what it replaced in the register, as vim's (so a second `p` swaps it back); `P` keeps the register, for one text over many. Lines over characters go on lines of their own |
+| `x` `s` (`V` mode) | the lines, as `d` and `c` take them there |
 | `<C-a>` `<C-x>` | add, subtract COUNT to the number under or after the caret, per selection — a column of numbers under a multicursor is the point; a `-` before it is its sign, leading zeros keep their width |
 | `<Esc>` (normal mode) | a ladder, the top rung that has something to do: a pending operator, the extra cursors (what `,` does), the search highlight (the pattern stays for `n`), nothing — so one key backs out of whatever is open |
 | `ip` `ap` | a paragraph: its lines, or with the blank lines after it — linewise in visual mode |
