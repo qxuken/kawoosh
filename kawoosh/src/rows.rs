@@ -1417,7 +1417,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                             .height(Sizing::Fit)
                             .min_height(Min::FIT),
                         |ui| {
-                            text_key.set(Some(ui.child_key_index(0)));
+                            text_key.set(Some(ui.child_key_indexed(0)));
                             ui.rich_text(&spans, base)
                         },
                     );
