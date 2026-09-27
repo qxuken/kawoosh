@@ -61,7 +61,24 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
         "{shown}"
     );
     assert!(shown.len() < deep.display().to_string().len());
+    // Hovered, it floats the whole path (the spec's `tooltip`).
     let (x, y, w, h) = d.rect_of("cwd").unwrap();
+    let full = kawoosh_systems::fs::canonicalize(&deep)
+        .unwrap()
+        .display()
+        .to_string();
+    // (The snapshot cuts a long text short.)
+    let hints = |d: &Drive| {
+        texts(d)
+            .iter()
+            .filter(|t| full.starts_with(t.trim_end_matches('…')))
+            .count()
+    };
+    // (The status line carries it too.)
+    let before = hints(&d);
+    d.hover(&mut app, x + w / 2.0, y + h / 2.0);
+    d.frame(&mut app);
+    assert_eq!(hints(&d), before + 1, "the hint: {:?}", texts(&d));
     d.click(&mut app, x + w / 2.0, y + h / 2.0);
     for _ in 0..40 {
         if app

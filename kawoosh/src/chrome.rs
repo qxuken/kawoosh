@@ -73,8 +73,6 @@ impl Kawoosh {
                 .label("titlebar"),
             |ui| {
                 widgets::titlebar_with(ui, |ui| {
-                    let cwd = ui.child_key("cwd");
-                    let hovered = ui.is_hovered(cwd);
                     let (dim, fg) = if focused {
                         (pal.dim, pal.fg)
                     } else {
@@ -90,13 +88,10 @@ impl Kawoosh {
                             .cursor(CursorShape::Pointer)
                             .on_click(Value::map([("kind", "cwd".into())]))
                             .label("cwd")
-                            .description(full.as_str()),
+                            .tooltip(&full),
                         |ui| {
                             let spans = [Span::new(&head).color(dim), Span::new(&last).color(fg)];
                             ui.rich_text(&spans, rows::mono(font, &pal));
-                            if hovered {
-                                widgets::tooltip(ui, &full);
-                            }
                         },
                     );
                     ui.leaf(NodeSpec::row().grow_width());

@@ -719,7 +719,7 @@ impl Kawoosh {
                             ("what", "reload".into()),
                         ]))
                         .label("reload settings")
-                        .apply_tooltip("every layer from its files again, init.lua included"),
+                        .tooltip("every layer from its files again, init.lua included"),
                     "reload",
                     TextStyle::new(tm.small_text).color(pal.fg),
                 );
