@@ -402,3 +402,10 @@ departed from the text above, and what day one found:
   the tab index so a tab moved along the tab strip (`]T`, a new key)
   reveals its column again. To get the fade back: a kui prop that
   scopes `exit` to a surviving parent — an ask, not yet asked.
+  *Tried again 2026-09-27:* kui took it as the rule (DX19: a node whose
+  parent left the frame too goes at once), so a tab switch would no
+  longer cross-fade — but a column is a whole pane, and the fonts or
+  themes pane is 1,500 to 1,800 nodes, past the 512 kui's exit store
+  holds: closing one fades nothing and warns `exit-budget`. The close
+  fade stays off; a fade that does not copy the pane's subtree would
+  bring it back.

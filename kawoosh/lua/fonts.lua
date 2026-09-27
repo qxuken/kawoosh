@@ -272,12 +272,12 @@ kawoosh.view(VIEW, function(ctx)
     local y = (index() - 1) * stride
     if g then
       if y < g.offset.y then
-        pcall(ctx.env.set_scroll, "list", 0, y)
+        ctx.env.set_scroll("list", 0, y)
       elseif y + stride > g.offset.y + g.h then
-        pcall(ctx.env.set_scroll, "list", 0, y + stride - g.h)
+        ctx.env.set_scroll("list", 0, y + stride - g.h)
       end
     else
-      pcall(ctx.env.set_scroll, "list", 0, y)
+      ctx.env.set_scroll("list", 0, y)
     end
   end
   local g = ctx.env.scroll_geometry("list")
