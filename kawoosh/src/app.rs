@@ -1353,12 +1353,8 @@ impl Kawoosh {
                 b
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                let mut b = Buffer::new(
-                    path.file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
-                    "",
-                );
+                let mut b =
+                    Buffer::new(kawoosh_systems::fs::basename(path).unwrap_or_default(), "");
                 b.path = Some(path.to_path_buf());
                 b.language = self.languages.detect(path, "").into();
                 self.ed.message = format!("\"{}\" [new file]", path.display());
@@ -1606,10 +1602,8 @@ impl Kawoosh {
     /// A file opening on the io thread, as a corner line under `io`:
     /// `Opening NAME 42%`, then `Completed Opening NAME`.
     fn open_progress(&mut self, path: &Path, at: Option<(usize, usize)>, done: bool) {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+        let name =
+            kawoosh_systems::fs::basename(path).unwrap_or_else(|| path.display().to_string());
         let pct = at.map(|(d, t)| ((d as f64 / t.max(1) as f64) * 100.0) as u32);
         self.notes.progress(
             "io",
@@ -2073,7 +2067,9 @@ impl Kawoosh {
 /// it on the PATH. Not where `cargo run` built the one binary; then it
 /// is [`editor_link`].
 fn shipped_editor(exe: &Path) -> Option<PathBuf> {
-    let real = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
+    // Without Windows' `\\?\` prefix, which a shell or git reading
+    // `$EDITOR` would not take.
+    let real = kawoosh_systems::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
     let beside = real.with_file_name(format!(
         "{}{}",
         crate::EDITOR_SHIM,

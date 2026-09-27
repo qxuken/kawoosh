@@ -612,14 +612,12 @@ impl Kawoosh {
                     let Some(p) = &b.path else { continue };
                     let moved = if p == &from {
                         to.clone()
-                    } else if let Ok(rest) = p.strip_prefix(&from) {
-                        kawoosh_systems::fs::join(&to, rest)
+                    } else if let Some(rest) = kawoosh_systems::fs::relative(p, &from) {
+                        kawoosh_systems::fs::join(&to, &rest)
                     } else {
                         continue;
                     };
-                    b.name = moved
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
+                    b.name = kawoosh_systems::fs::basename(&moved)
                         .unwrap_or_else(|| moved.display().to_string());
                     b.path = Some(moved);
                 }

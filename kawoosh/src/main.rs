@@ -19,14 +19,26 @@ use kui_native::Core;
 /// — a `cargo run`.
 fn fonts_dir() -> std::path::PathBuf {
     // Resolved: `kawoosh` on the PATH is a link into the app.
-    let exe = std::env::current_exe().and_then(std::fs::canonicalize);
+    let exe = std::env::current_exe().and_then(|e| kawoosh_systems::fs::canonicalize(&e));
     let shipped = exe.ok().and_then(|exe| {
         let dir = exe.parent()?;
-        [dir.join("fonts"), dir.join("../Resources/fonts")]
-            .into_iter()
-            .find(|d| d.is_dir())
+        [
+            dir.join("fonts"),
+            dir.join("..").join("Resources").join("fonts"),
+        ]
+        .into_iter()
+        .find(|d| d.is_dir())
     });
-    shipped.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/fonts"))
+    // Joined a part at a time, so the path is written in the platform's
+    // separators rather than `kawoosh\../assets/fonts`.
+    shipped.unwrap_or_else(|| {
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        crate_dir
+            .parent()
+            .unwrap_or(crate_dir)
+            .join("assets")
+            .join("fonts")
+    })
 }
 
 /// The bundled faces — every file in `fonts/` — loaded onto a core

@@ -4,8 +4,8 @@
 local dir = os.tmpname()
 os.remove(dir)
 dir = dir .. "-search"
-local function write(p, s) kawoosh.fs.write(dir .. "/" .. p, s) end
-kawoosh.fs.create(dir .. "/.git", true)
+local function write(p, s) kawoosh.fs.write(kawoosh.fs.join(dir, p), s) end
+kawoosh.fs.create(kawoosh.fs.join(dir, ".git"), true)
 write("src/a.ts", "const needle = 1\nfoo\nbar\n")
 write("src/b.tsx", "needle()\n")
 write("src/c.js", "needle\n")
@@ -13,6 +13,9 @@ write("src/a__test__.ts", "needle\n")
 write("tests/t.ts", "needle and more\n")
 write("target/x.ts", "needle\n")
 write(".gitignore", "target/\n")
+-- A path as the platform writes it: `src/x`, with a backslash on Windows.
+local sep = kawoosh.fs.join("a", "b"):sub(2, 2)
+local function native(p) return (p:gsub("/", sep)) end
 
 kawoosh.cmd("cd " .. dir)
 kawoosh.cmd("e src/c.js")
@@ -42,7 +45,7 @@ kawoosh.test.eq(st.stages[1].files, 5, "every file git sees: " .. tostring(st.st
 local h = assert(results(), "the results are a buffer")
 kawoosh.test.eq(kawoosh.buf.language(h), "multibuffer")
 local text = kawoosh.buf.text(h)
-contains(text, "src/b.tsx  1", "a file's header with its count")
+contains(text, native("src/b.tsx") .. "  1", "a file's header with its count")
 contains(text, "needle()", "its matched line")
 
 -- The comma lists: brackets as a list, an exclude with no `/` at any depth.
@@ -86,7 +89,7 @@ st = state()
 kawoosh.test.eq(st.stages[1].files, 3, "the first stage kept its answer")
 kawoosh.test.eq(st.stages[2].files, 2, "t.ts dropped")
 text = kawoosh.buf.text(results())
-kawoosh.test.eq(text:find("tests/t.ts", 1, true), nil, "dropped from the results")
+kawoosh.test.eq(text:find(native("tests/t.ts"), 1, true), nil, "dropped from the results")
 -- `in`: search in what the stage before found.
 kawoosh.cmd("search stage kind")
 kawoosh.frame()
@@ -137,14 +140,14 @@ kawoosh.frame()
 local a
 for _, b in ipairs({ table.unpack(kawoosh.buf.list()) }) do
   local p = kawoosh.buf.path(b) or ""
-  if p:sub(-#"src/a.ts") == "src/a.ts" then a = b end
+  if p:sub(-#"src/a.ts") == native("src/a.ts") then a = b end
 end
 -- Borrowed until edited: now listed, its text the edit.
 assert(a, "a.ts is a listed buffer once edited")
 kawoosh.test.eq(kawoosh.buf.line(1, a), "let needle = 1", "the file's buffer has the edit")
 kawoosh.press(":w<CR>")
 kawoosh.frame()
-local disk = io.open(dir .. "/src/a.ts"):read("a")
+local disk = io.open(kawoosh.fs.join(dir, "src/a.ts")):read("a")
 kawoosh.test.eq(disk, "let needle = 1\nfoo\nbar\n", "written through the results")
 -- `u` in the results: the file steps back.
 kawoosh.press("u")
@@ -156,7 +159,7 @@ kawoosh.press("j")
 kawoosh.press("<CR>")
 kawoosh.frame()
 local path = kawoosh.buf.path() or ""
-kawoosh.test.eq(path:sub(-#"src/a.ts"), "src/a.ts", "the file opened: " .. path)
+kawoosh.test.eq(path:sub(-#"src/a.ts"), native("src/a.ts"), "the file opened: " .. path)
 -- From visual mode the selection seeds the pattern, not run yet, and
 -- visual mode is left.
 kawoosh.press("gg0ve")
@@ -181,4 +184,6 @@ kawoosh.frame()
 kawoosh.cmd("search project")
 kawoosh.frame(2)
 kawoosh.test.eq(state().root, kawoosh.fs.cwd(), "from the workspace's root")
-kawoosh.fs.remove(dir)
+-- `pcall`: a language server started on a file holds the directory as
+-- its cwd, and Windows will not remove it then.
+pcall(kawoosh.fs.remove, dir)

@@ -960,11 +960,12 @@ pub fn edit(sock: &std::path::Path, args: &[String], mut wait: bool) -> anyhow::
 /// An image file read and decoded to RGBA8 — PNG, JPEG, GIF's first
 /// frame — refused past `max` bytes on disk.
 pub fn decode_image(path: &std::path::Path, max: u64) -> Result<(u32, u32, Vec<u8>), String> {
-    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
-    if meta.len() > max {
-        return Err(format!("{} MB, past the cap", meta.len() >> 20));
+    // A host's too, through the file system layer.
+    let size = crate::fs::stat(path).map_err(|e| e.to_string())?.size;
+    if size > max {
+        return Err(format!("{} MB, past the cap", size >> 20));
     }
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let bytes = crate::fs::read_bytes(path).map_err(|e| e.to_string())?;
     decode_image_bytes(&bytes)
 }
 

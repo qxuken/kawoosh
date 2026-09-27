@@ -216,10 +216,7 @@ impl Kawoosh {
 
 /// A workspace's name for the eye: its directory's.
 fn project_name(ws: &str) -> String {
-    Path::new(ws)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| ws.to_string())
+    kawoosh_systems::fs::basename(Path::new(ws)).unwrap_or_else(|| ws.to_string())
 }
 
 pub(crate) fn commands() -> Vec<ShellCommand> {

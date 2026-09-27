@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 
 pub use kawoosh_doc::fs::{Entry, Stat};
 use kawoosh_doc::fs::{Fs, remote};
-pub use kawoosh_doc::paths::{domain_of, expand, home, is_absolute, normalize, on_domain};
+pub use kawoosh_doc::paths::{
+    domain_of, expand, file_name, home, is_absolute, native, normalize, on_domain, relative,
+};
 use kawoosh_doc::paths::{host_join, host_parent};
 use std::sync::Arc;
 
@@ -52,8 +54,7 @@ pub fn parent(path: &Path) -> Option<PathBuf> {
 /// The last component, as text: `c.txt` of `a/b/c.txt`, `b` of `a/b/`;
 /// `None` at a root.
 pub fn basename(path: &Path) -> Option<String> {
-    let path = domain_of(path).map_or(path, |(_, rest)| rest);
-    path.file_name().map(|n| n.to_string_lossy().into_owned())
+    file_name(path).map(|n| n.to_string_lossy().into_owned())
 }
 
 /// The path as text, for a message or a buffer name.

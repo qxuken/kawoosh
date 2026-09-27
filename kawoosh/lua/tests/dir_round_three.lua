@@ -1,9 +1,12 @@
 -- `dir`, round three: `g.` hides and shows the dot files; a listing is
 -- read again when its directory changes on disk, unless it has edits;
 -- the preview draws a picture as one.
-local tmp = os.getenv("TMPDIR") or "/tmp"
-local root = kawoosh.fs.join(tmp, "kawoosh-dir3-" .. tostring(os.time()) .. "-" .. tostring(math.random(1e6)))
-kawoosh.fs.create(root .. "/", true)
+-- The platform's temp directory, as the other scripts find it: no
+-- `$TMPDIR` on Windows, where `/tmp` is the drive's root.
+local root = os.tmpname()
+os.remove(root)
+root = root .. "-dir3"
+kawoosh.fs.create(root, true)
 kawoosh.fs.write(kawoosh.fs.join(root, "a.txt"), "a")
 kawoosh.fs.write(kawoosh.fs.join(root, ".hidden"), "h")
 local function listed()

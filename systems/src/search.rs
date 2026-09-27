@@ -429,10 +429,10 @@ pub fn search(
                     let Some(rel) = files.get(i) else {
                         return;
                     };
-                    let abs = root.join(rel);
+                    let abs = crate::fs::join(root, rel);
                     let bytes: Vec<u8> = match open.get(&abs) {
                         Some(b) => b.collect(),
-                        None => match std::fs::read(&abs) {
+                        None => match crate::fs::read_bytes(&abs) {
                             Ok(b) => b,
                             Err(_) => continue,
                         },

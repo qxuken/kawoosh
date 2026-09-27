@@ -201,7 +201,12 @@ fn size_of(s: &str) -> Option<u64> {
 }
 
 fn default_path(kind: &str, arg: &str, ext: &str) -> PathBuf {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/gen");
+    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = crate_dir
+        .parent()
+        .unwrap_or(&crate_dir)
+        .join("target")
+        .join("gen");
     std::fs::create_dir_all(&root).ok();
     root.join(format!("{kind}-{arg}.{ext}"))
 }

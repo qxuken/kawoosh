@@ -1120,7 +1120,7 @@ impl Kawoosh {
             let lines = lines_of.entry(it.path.clone()).or_insert_with(|| {
                 match self.ed.buffer_at(&it.path) {
                     Some(id) => self.ed.buffers[id].text(),
-                    None => std::fs::read_to_string(&it.path).unwrap_or_default(),
+                    None => kawoosh_systems::fs::read(&it.path).unwrap_or_default(),
                 }
                 .lines()
                 .map(str::to_string)
@@ -1191,16 +1191,15 @@ impl Kawoosh {
         for (path, list) in action.edit.iter().flatten() {
             let old = match self.ed.buffer_at(path) {
                 Some(id) => self.ed.buffers[id].text(),
-                None => std::fs::read_to_string(path).unwrap_or_default(),
+                None => kawoosh_systems::fs::read(path).unwrap_or_default(),
             };
             let resolved = resolve_edits_in(&old, list);
             if resolved.is_empty() {
                 continue;
             }
-            let name = path
-                .strip_prefix(&self.cwd)
+            let name = kawoosh_systems::fs::relative(path, &self.cwd)
                 .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| kawoosh_systems::fs::abbreviate_home(path));
+                .unwrap_or_else(|| kawoosh_systems::fs::abbreviate_home(path));
             out.push(format!("--- {name}"));
             out.push(format!("+++ {name}"));
             out.extend(edit_diff(&old, &resolved));
@@ -1540,9 +1539,7 @@ impl Kawoosh {
             .map(|(root, cmd, n, loaded)| {
                 format!(
                     "{cmd} @ {} ({n} docs{})",
-                    root.file_name()
-                        .map(|f| f.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
+                    kawoosh_systems::fs::basename(root).unwrap_or_default(),
                     if *loaded > 0 {
                         format!(", {loaded} loaded")
                     } else {
@@ -1588,10 +1585,7 @@ impl Kawoosh {
                 .values()
                 .filter(|b| languages.contains(&&*b.language))
                 .filter_map(|b| {
-                    b.path
-                        .as_ref()?
-                        .strip_prefix(root)
-                        .ok()
+                    kawoosh_systems::fs::relative(b.path.as_ref()?, root)
                         .map(|p| p.display().to_string())
                 })
                 .collect();
