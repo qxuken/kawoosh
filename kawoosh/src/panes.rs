@@ -1287,8 +1287,24 @@ impl Kawoosh {
             let style = self.markdown_style(ui.theme().is_dark());
             let v = &self.ed.views[view];
             let buf = &self.ed.buffers[buf_id];
-            let raw: std::collections::HashSet<usize> =
-                v.sels.iter().map(|s| buf.line_of(s.head)).collect();
+            // The source is drawn where the caret is: each selection's
+            // head's line, and in visual mode every line a selection
+            // covers — so a selection grown line by line turns each line
+            // raw once, as it reaches it, rather than the one it left
+            // turning back and reflowing under it (2026-09-27).
+            let visual = self.ed.mode(view) == kawoosh_editor::Mode::Visual;
+            let raw: std::collections::HashSet<usize> = v
+                .sels
+                .iter()
+                .flat_map(|s| {
+                    if visual {
+                        buf.line_of(s.start())..=buf.line_of(s.end())
+                    } else {
+                        let ln = buf.line_of(s.head);
+                        ln..=ln
+                    }
+                })
+                .collect();
             let mut tables = crate::markdown::Tables::default();
             for ln in v.top..last {
                 let r =

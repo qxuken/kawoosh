@@ -618,3 +618,33 @@ fn a_code_blocks_rows_meet_without_a_line_at_any_scale() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// In visual mode every line a selection covers is its source, so a
+/// selection grown by `j` turns each line raw once, as it reaches it —
+/// where only the head's line was, and the line it left turned back and
+/// reflowed under the selection; out of visual mode, the caret's line.
+#[test]
+fn a_visual_selection_draws_every_line_it_covers_raw() {
+    let dir = fixture("visual-raw");
+    let (mut d, mut app) = launch(&dir, 700.0);
+    let has = |d: &Drive, s: &str| d.line_rows().iter().any(|r| r == s);
+    d.keys(&mut app, "7G");
+    settle(&mut d, &mut app);
+    assert!(has(&d, "- item one"), "{:#?}", d.line_rows());
+    assert!(has(&d, "• item two with bold"));
+    d.keys(&mut app, "Vj");
+    settle(&mut d, &mut app);
+    assert!(has(&d, "- item one"), "the line it left stays raw");
+    assert!(has(&d, "- item two with **bold**"));
+    assert!(!has(&d, "- [ ] a task"), "the rest rendered");
+    d.keys(&mut app, "j");
+    settle(&mut d, &mut app);
+    assert!(has(&d, "- item one") && has(&d, "- item two with **bold**"));
+    assert!(has(&d, "- [ ] a task"));
+    d.key(&mut app, "escape", KeyMods::default());
+    settle(&mut d, &mut app);
+    assert!(has(&d, "• item one"), "out of visual mode, rendered again");
+    assert!(has(&d, "- [ ] a task"), "but the caret's line");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

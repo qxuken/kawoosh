@@ -108,6 +108,14 @@ where it would in the source. Known from nvim, lived with.
 object reading the fold table to skip hidden bytes — the whole engine
 learning about drawing.
 
+*Amended 2026-09-27, from use:* in visual mode every line a selection
+covers is raw, not only its head's. With the head's alone, a selection
+grown by `j` turned each line it reached raw and the one it left
+rendered again, so the text reflowed under the selection at every
+step; now a line turns raw once, as the selection reaches it, and
+stays so until visual mode ends. The selection is on the source it
+takes.
+
 ### 4. Rendered rows wrap, and this is where soft wrap enters
 
 A rendered row's text gets `wrap = word` at the pane's text width, and
