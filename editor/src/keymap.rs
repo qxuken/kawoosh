@@ -515,17 +515,25 @@ impl Keymap {
 
     /// Whether longer bindings lie beneath `keys` in `mode` — a key
     /// that is a prefix as well as a binding.
+    /// A pressed key that is the leader's follows the `<leader>` branch
+    /// too, as [`Keymap::lookup`] does: a plugin's key on Space, gated
+    /// off where it is pressed, left `<leader>f` open behind it.
     pub fn has_deeper(&self, mode: Mode, keys: &[String]) -> bool {
-        let Some(mut node) = self.modes.get(&mode) else {
-            return false;
+        self.modes
+            .get(&mode)
+            .is_some_and(|root| self.deeper(root, keys))
+    }
+
+    fn deeper(&self, node: &Node, keys: &[String]) -> bool {
+        let Some((k, rest)) = keys.split_first() else {
+            return !node.children.is_empty();
         };
-        for k in keys {
-            match node.children.get(k) {
-                Some(n) => node = n,
-                None => return false,
-            }
-        }
-        !node.children.is_empty()
+        node.children.get(k).is_some_and(|n| self.deeper(n, rest))
+            || (*k == self.leader
+                && node
+                    .children
+                    .get(LEADER)
+                    .is_some_and(|n| self.deeper(n, rest)))
     }
 
     pub fn lookup(&self, mode: Mode, keys: &[String]) -> Lookup<'_> {
@@ -766,6 +774,20 @@ mod tests {
     /// `<leader>` is resolved when a key is looked up, not when the map
     /// is made: the leader changes and every map follows; an explicit
     /// map on the leader's key lives beside the leader maps.
+    /// The leader's key has longer bindings beneath it through the
+    /// `<leader>` branch, as `lookup` walks it: a plugin's pane-mode key
+    /// on Space, gated off in another pane, must leave `<leader>f` open
+    /// there, which reads `has_deeper` (roadmap step 52 met it).
+    #[test]
+    fn the_leader_key_is_deeper_through_the_leader_branch() {
+        let mut km = Keymap::new();
+        km.bind(Mode::Normal, "<leader>f", "files");
+        let space = parse_notation(" ");
+        assert!(km.has_deeper(Mode::Normal, &space));
+        assert!(!km.has_deeper(Mode::Normal, &parse_notation(" f")));
+        assert!(!km.has_deeper(Mode::Normal, &parse_notation("x")));
+    }
+
     #[test]
     fn the_leader_is_resolved_at_lookup() {
         let mut km = Keymap::new();
