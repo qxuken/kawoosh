@@ -125,9 +125,10 @@ terminal, the oldest without a placement on screen dropped first
 
 The pty is given the grid's size in pixels (the cell's width and
 height times the columns and rows) at spawn and on every resize and
-font change, so `TIOCGWINSZ` answers; `CSI 14 t` is answered from
-the same numbers (alacritty's `TextAreaSizeRequest`) and `CSI 16 t`
-with the cell's size. That is what icat, chafa and yazi size by.
+font change, so `TIOCGWINSZ` answers, and `CSI 14 t` is answered from
+the same numbers (alacritty's `TextAreaSizeRequest`). That is what
+icat, chafa, timg and yazi size by. (`CSI 16 t`, the cell's size
+alone, `vte` does not hand on; nothing seen asks for it first.)
 
 ### 6. Drawing
 
@@ -151,4 +152,29 @@ closes.
 
 ## Built
 
-Not yet: step 56, after 55.
+2026-09-28, as decided but for `CSI 16 t` (Decision 5).
+`term/src/graphics.rs` is the protocol (`Graphics`, `Keys`, the
+decoders); `lib.rs`'s scan finds the APCs beside the OSCs
+(`Seq::Apc`), `Terminal::on_graphics` runs one and moves the cursor
+through the parser so the line count holds, and `Hooked` notes `ED 2`,
+`ED 3` and `RIS` for the images to go with; `images()`,
+`poll_graphics()`, `graphics_busy()`, `set_cell_pixels()` are what
+kawoosh asks. `kawoosh/src/term_images.rs` tells each terminal its
+cell in the window's pixels, takes in finished decodes, uploads an
+image once per source rect (a crop when it is a part) and frees what
+no pane drew last frame; `panes.rs` floats them over the grid.
+
+Checked against real programs: `chafa -f kitty` (keys in a first chunk
+with no payload, RGBA in chunks after it) and `timg -pk` (one PNG)
+place where they asked and move the cursor as kitty does; in a window,
+both images and a `z=-1` one under its line of text draw as they
+should. Tests: `term`'s `a_query_is_answered_and_stores_nothing`,
+`an_image_is_placed_at_the_cursor_and_moves_it`,
+`a_transmission_in_chunks_and_a_png`,
+`a_placement_scrolls_with_its_line_and_goes_with_it`,
+`a_clear_a_delete_and_the_alternate_screen`,
+`a_file_is_read_here_and_not_from_a_domain`, `the_pixel_size_is_told`,
+`what_is_not_supported_says_so` and `graphics.rs`'s own three;
+`kawoosh/tests/term_images.rs` for the drawing (at its cell, over or
+under the grid, gone with a clear and with its lines) and the pixel
+size told.

@@ -1768,7 +1768,7 @@ follow the theme every frame (`panes.rs`).
   kui's after all); the buttons open, step 55. What it said before: kui routes
   only the primary button; the middle button and hyperlinks are kui's
   wish list, not kawoosh's.
-- **Kitty graphics** — open [req §9]; step 56 (asked 2026-09-28). A `term` APC hook before it is
+- **Kitty graphics** — done 2026-09-28 [req §9]; step 56, kitty-graphics.md. A `term` APC hook before it is
   a kui matter.
 - **Terminals in sessions** — done 2026-09-23 [mvp.md notes, use
   2026-09-22]; step 15. The directory is `Terminal::cwd()`: what the
@@ -2473,14 +2473,18 @@ think on a kitty keyboard"), the terminal's third round, in that order:
     middle buttons reach a program that asked for mouse reports (tmux,
     htop, a TUI's menus). kui routes the primary button to a widget
     and the secondary to a context menu, so this starts as a kui round.
-56. **Kitty graphics**: images in the grid (`kitty +kitten icat`,
+56. ~~**Kitty graphics**: images in the grid (`kitty +kitten icat`,
     yazi's previews, plots) — the protocol in `term` (APC, the
     transmit/put/delete actions, placements that scroll with their
     cells) and a texture drawn over the grid in kui. A note first:
     [kitty-graphics.md](kitty-graphics.md), decided 2026-09-28 — no
     kui round after all (an image node floated at its cell), the
     decode on a worker, animation, shared memory and unicode
-    placeholders answered "not supported" until asked.
+    placeholders answered "not supported" until asked.~~ Landed
+    2026-09-28 as the note decided (its "Built" says where): kitty's
+    commands in `term/src/graphics.rs`, the images drawn by
+    `kawoosh/src/term_images.rs` over the grid, under it for a
+    negative z; checked with `chafa`, `timg` and in a window.
 57. **The terminal's keys, a note** (not built until decided): the
     kitty keyboard protocol, so a program can tell `<C-Tab>` from
     `<Tab>` and `<S-CR>` from `<CR>` — which asks what kawoosh keeps

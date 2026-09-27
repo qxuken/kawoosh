@@ -53,6 +53,8 @@ pub struct Kawoosh {
     /// The editor's scrolling probe, when `KAWOOSH_PROBE_SCROLL` asks for
     /// one (`scroll_probe::ScrollProbe`).
     pub(crate) scroll_probe: Option<crate::scroll_probe::ScrollProbe>,
+    /// Kitty's images, as kui has them (`term_images.rs`).
+    pub(crate) term_images: crate::term_images::TermImages,
     /// The disk-usage pane's walks (`du.rs`, roadmap step 52).
     pub(crate) du: crate::du::SharedDu,
     pub ed: Editor,
@@ -303,6 +305,7 @@ impl Kawoosh {
             du: Default::default(),
             fonts_probe: crate::fonts::Probe::from_env(),
             scroll_probe: crate::scroll_probe::ScrollProbe::from_env(),
+            term_images: Default::default(),
             ed,
             layout: Layout::new(Content::Editor(view)),
             terms: Terminals::default(),
@@ -2190,6 +2193,7 @@ impl kui_native::App for Kawoosh {
         }
         self.dark = ui.theme().is_dark();
         self.sync_term_palettes();
+        self.sync_term_graphics(ui);
         self.sync_term_settings();
         self.ring_bells(ui);
         self.sync_dock();

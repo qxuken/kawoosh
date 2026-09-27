@@ -1712,6 +1712,7 @@ name = "kawoosh"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "base64",
  "blake3",
  "criterion",
  "crossbeam-channel",
@@ -1837,6 +1838,9 @@ version = "0.0.1"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
+ "base64",
+ "flate2",
+ "image",
  "kui-core",
  "libc",
  "log",

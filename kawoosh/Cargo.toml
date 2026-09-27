@@ -42,6 +42,7 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_
 # Windows passes the linked resource and macOS has no window icon.
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 png = "0.18"
+base64 = "0.22"
 
 # A terminal's `$EDITOR` (src/bin/edit.rs), shipped beside `kawoosh`.
 [[bin]]
@@ -54,6 +55,7 @@ path = "src/bin/gen.rs"
 
 [dev-dependencies]
 png = "0.18"
+base64 = "0.22"
 criterion.workspace = true
 rusqlite.workspace = true
 

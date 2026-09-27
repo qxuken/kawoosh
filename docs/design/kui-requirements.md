@@ -136,7 +136,9 @@ kawoosh's account — these are on the road, in roughly this order:
   graphics, so this is a `term` change (an APC hook feeding registered
   images placed over `cells`) before it is a kui one. kui's side — an
   image placed at a cell rect, clipped to the grid — is `image` + a
-  float, which exists.
+  float, which exists. Built 2026-09-28 (roadmap step 56,
+  kitty-graphics.md) with nothing new from kui: an image under the text
+  is opened before the grid, which is then a float of its own.
 - **Multi-window** (`ui.window`) — a detached pane on a second monitor.
 - **`enter` / `exit` / keyframes** — beyond the split-ratio transition,
   once the chrome is settled enough to animate. *Built by alpha.16*
@@ -152,8 +154,8 @@ kawoosh's account — these are on the road, in roughly this order:
 
 K1–K4 shipped in alpha.13 (2026-09-15). What is left is kui's own wish
 list, unchanged in priority: window position (M8's session restore), the
-middle button — OSC 8 turned out kawoosh's own (R4.6) — and, from §9, the kitty graphics path once `term`
-can feed it.
+middle button — OSC 8 turned out kawoosh's own (R4.6), and so did §9's
+kitty graphics, `image` and a float being enough.
 
 Everything else kawoosh needs, alpha.13 has, and the doors are named
 above so that a bump that moves one is a search in this file.

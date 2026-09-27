@@ -902,6 +902,8 @@ impl Kawoosh {
             })
             .unwrap_or((800.0, self.body_h - self.chrome.pane_title_h));
         self.fit_terminal(id, w, h);
+        // Kitty's images on its screen (`term_images.rs`).
+        let shown = self.term_image_boxes(ui, id);
         let Some(term) = self.terms.map.get(&id) else {
             return;
         };
@@ -997,6 +999,24 @@ impl Kawoosh {
                 // hovered, at the grid's foot, as a browser's status
                 // does: its text need not be its address.
                 let target = hover.as_ref().and_then(|(_, _, uri)| uri.clone());
+                // Kitty's images: a float is a layer over the in-flow
+                // tree and the floats before it, so an image under the
+                // text (`z < 0`) opens before the grid, and the grid is
+                // then a float itself, at its place, to paint over it.
+                let image = |ui: &mut Ui<'_>, s: &crate::term_images::Shown| {
+                    ui.image(
+                        s.id,
+                        NodeSpec::column()
+                            .float(FloatConfig::parent().offset(pad + s.x, pad + s.y).clipped())
+                            .size(s.w, s.h),
+                    );
+                };
+                if shown.iter().any(|s| s.under) {
+                    for s in shown.iter().filter(|s| s.under) {
+                        image(ui, s);
+                    }
+                    spec = spec.float(FloatConfig::parent().offset(pad, pad).clipped());
+                }
                 match hover {
                     Some((row, cols, _)) => {
                         let mut cells = screen.cells.clone();
@@ -1015,6 +1035,9 @@ impl Kawoosh {
                         );
                     }
                     None => ui.cells_keyed("cells", &grid, spec),
+                }
+                for s in shown.iter().filter(|s| !s.under) {
+                    image(ui, s);
                 }
                 if let Some(uri) = target {
                     ui.text_in_keyed(

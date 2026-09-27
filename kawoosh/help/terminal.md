@@ -64,6 +64,10 @@ Hold `⌘` (Ctrl where there is no ⌘) over the terminal: a URL, or a path that
 
 Some programs print links on purpose, with text that need not be the address: `ls --hyperlink`, `gcc`, `delta`, `gh`, `rg --hyperlink-format`. Those come first. While one is under the pointer with `⌘` held, its address shows at the bottom left of the terminal, so you see where a click goes before you click. A `file://` link opens in an editor pane, at the line its `#12` or `#L12` names; over ssh, a link names a file on that host. A link to a file on another machine says so and opens nothing.
 
+## Images
+
+Programs that speak kitty's graphics protocol draw images in a terminal pane: `timg -pk`, `chafa -f kitty`, yazi's previews, `viu`, plotting libraries with a kitty backend. An image sits at the cells it was drawn at and scrolls with them into the scrollback; clearing the screen or scrolling far enough takes it away. Over ssh an image travels in the output, so it works there too; a program that sends a file's name instead falls back to sending the image. Animation and tmux's way of passing images through are not supported yet.
+
 ## Shell integration
 
 Two escape codes let the shell tell kawoosh more: OSC 7 says which directory it is in, and OSC 133 marks where each prompt, command and output begins. `:terminal integration` opens the lines to add for zsh, bash and nushell (nushell has both built in, behind two settings).
