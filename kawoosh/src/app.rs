@@ -2219,6 +2219,12 @@ impl kui_native::App for Kawoosh {
         if let Some(hit) = self.look.hit {
             self.pal.hit = hit;
         }
+        // The views' fields draw a rounded selection from the same
+        // fragment and radius as the panes.
+        if let Some(rt) = self.scripting.rt.clone() {
+            let round = self.selection_rounding(ui).map(|(f, r)| (f.to_ffi(), r));
+            rt.set_selection_round(round);
+        }
         self.dark = ui.theme().is_dark();
         self.sync_term_palettes();
         self.sync_term_settings();

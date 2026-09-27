@@ -527,6 +527,10 @@ local function field_node(view_name, env, opts)
     block_lo = st.caret
     block_hi = st.caret + math.max(char_len(line, st.caret + 1), 1)
   end
+  -- A rounded selection (`editor.selection_radius`) is the row's to
+  -- draw, as a pane's row draws its part: the shell's fragment under the
+  -- text, told where the selection starts and ends; the spans carry none.
+  local round = sel_lo and kawoosh._selection_round()
   -- The text as spans, cut at every edge, each styled by what it is in.
   local cuts = { 0, #line }
   local function cut(b) if b and b > 0 and b < #line then cuts[#cuts + 1] = b end end
@@ -540,7 +544,7 @@ local function field_node(view_name, env, opts)
       if a >= from and b <= to and b > a then
         local piece = line:sub(a + 1, b)
         local span = { piece }
-        if sel_lo and a >= sel_lo and b <= sel_hi then span.bg = t.selection end
+        if sel_lo and not round and a >= sel_lo and b <= sel_hi then span.bg = t.selection end
         if block_lo and a >= block_lo and b <= block_hi then span.bg = t.accent; span.color = t.bg end
         out[#out + 1] = span
       end
@@ -568,7 +572,7 @@ local function field_node(view_name, env, opts)
   if #line == 0 and not focused and opts.placeholder then
     push(text(opts.placeholder, { family = "mono", size = size, color = t.muted }))
   end
-  local node = row {
+  local props = {
     key = "field:" .. full,
     height = row_h,
     cross_align = "center",
@@ -577,8 +581,35 @@ local function field_node(view_name, env, opts)
     caret = focused and st.caret or nil,
     label = opts.label or opts.name,
   }
+  local node = row(props)
   for _, c in ipairs(children) do node[#node + 1] = c end
-  return node
+  if not round then return node end
+  -- Where the selection starts and ends along the line, and past its end
+  -- the cell a block caret takes there. A field's line has no neighbours,
+  -- so every corner is round. The fragment is the field — its key, its
+  -- click, its line and caret — and lays out as a column, so the row of
+  -- the text sits inside it.
+  local function width(s) return env.measure_text(s, style).width end
+  local a = width(line:sub(1, sel_lo))
+  local b = sel_hi > #line and width(line) + width(" ") or width(line:sub(1, sel_hi))
+  -- In the field's own selection colour, as its spans painted it.
+  local v = t.selection
+  if type(v) == "string" then v = tonumber((v:gsub("#", "")), 16) end
+  local function ch(shift) return math.floor(v / 2 ^ shift) % 256 / 255 end
+  local c = { ch(24), ch(16), ch(8), ch(0) }
+  local inner = row { height = row_h, cross_align = "center" }
+  for _, child in ipairs(children) do inner[#inner + 1] = child end
+  return fragment {
+    key = props.key,
+    on_click = props.on_click,
+    role = props.role,
+    caret = props.caret,
+    label = props.label,
+    id = round.id,
+    params = { a, b, 0, 0, 0, 0, round.radius, 0, c[1], c[2], c[3], c[4] },
+    pixel_snap = true,
+    inner,
+  }
 end
 
 -- kawoosh.field_text(view, name): a view's field's line, "" before it

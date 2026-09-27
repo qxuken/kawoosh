@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use kawoosh_doc::{BufferId, Version};
-use kui_native::{Align, Color, FloatConfig, Min, NodeSpec, Role, Sizing, Span, TextStyle, Ui};
+use kui_native::{
+    Align, Color, FloatConfig, FragmentId, Min, NodeSpec, Role, Sizing, Span, TextStyle, Ui,
+};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
@@ -18,11 +20,8 @@ use crate::look::Face;
 
 pub const FONT: f32 = 13.0;
 pub const LH: f32 = 20.0;
-/// The box a block caret past a line's end, or a selection past its
-/// newline, takes in the row.
-const PAST_END_W: f32 = 8.0;
 /// The gap before a row's trailing text (an annotation, a diagnostic's
-/// message); the past-end boxes are taken out of it.
+/// message); the past-end cell is taken out of it.
 const TRAILING_GAP: f32 = 12.0;
 /// The gutter's padding either side of its numbers.
 const GUTTER_PAD: f32 = 12.0;
@@ -707,7 +706,138 @@ pub struct LineDraw<'a> {
     pub form: Option<&'a RowForm>,
     /// A background across the whole row: a multibuffer's file header.
     pub band: Option<Color>,
+    /// The row's part of a rounded selection (`editor.selection_radius`),
+    /// drawn by the row itself; `selected` then holds only what is washed
+    /// over it (a search's previewed hit).
+    pub rounded: Option<RoundedSel>,
 }
+
+/// A selection with rounded corners, as one editor row draws its part:
+/// its own extent and its neighbours', logical px from the row's left
+/// edge, each a line's one selected range with its newline's cell when it
+/// takes it. The row is a `pixel_snap` fragment ([`SELECTION_WGSL`])
+/// under its text, so the rows' parts meet on one pixel line and each
+/// corner is decided from both sides of it the same way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoundedSel {
+    pub fragment: FragmentId,
+    pub own: (f32, f32),
+    pub prev: Option<(f32, f32)>,
+    pub next: Option<(f32, f32)>,
+    pub radius: f32,
+    pub color: Color,
+}
+
+impl RoundedSel {
+    /// The fragment's sixteen params, as [`SELECTION_WGSL`] reads them.
+    pub fn params(&self) -> [f32; 12] {
+        let (pa, pb) = self.prev.unwrap_or((0.0, 0.0));
+        let (na, nb) = self.next.unwrap_or((0.0, 0.0));
+        let flags = u8::from(self.prev.is_some()) | (u8::from(self.next.is_some()) << 1);
+        let c = self.color;
+        [
+            self.own.0,
+            self.own.1,
+            pa,
+            pb,
+            na,
+            nb,
+            self.radius,
+            f32::from(flags),
+            c.r,
+            c.g,
+            c.b,
+            c.a,
+        ]
+    }
+}
+
+/// One row's part of a rounded selection, a kui fragment (ADR 0015 in
+/// kui). `params[0]` is this row's selection `[a, b]` and the row above's,
+/// `params[1]` the row below's, the radius and which neighbours there
+/// are (1 above, 2 below), `params[2]` the colour — logical px from the
+/// row's left. A corner is convex where this row reaches past its
+/// neighbour on that side, a fillet in this row past its end where the
+/// neighbour reaches past it (concave), square where the two end together,
+/// and round where there is no neighbour or it does not overlap. At a
+/// join the radius is half the step at most, and both rows work it out
+/// from the same two ends, so the convex half above and the fillet below
+/// meet. The row is on whole pixels and a square node is covered by area,
+/// so the rows' parts meet without a seam; the ends and the arcs are
+/// sampled sixteen times a pixel, and only near them.
+pub const SELECTION_WGSL: &str = r#"
+fn kw_radii(cx: f32, e: f32, has: bool, sx: f32, r: f32, lone: f32) -> vec2<f32> {
+    // A corner's (convex, concave) radii: `e` the neighbour's end on this
+    // side, `sx` outward.
+    if !has {
+        return vec2<f32>(lone, 0.0);
+    }
+    let d = (e - cx) * sx;
+    return vec2<f32>(min(r, max(-d, 0.0) * 0.5), min(r, max(d, 0.0) * 0.5));
+}
+
+fn kw_cut(p: vec2<f32>, cx: f32, cy: f32, sx: f32, sy: f32, rc: f32) -> bool {
+    // Inside the row's box, but outside a convex corner's arc.
+    let near = (cx - p.x) * sx < rc && (cy - p.y) * sy < rc;
+    let c = vec2<f32>(cx - sx * rc, cy - sy * rc);
+    return rc > 0.0 && near && distance(p, c) > rc;
+}
+
+fn kw_fillet(p: vec2<f32>, cx: f32, cy: f32, sx: f32, sy: f32, rf: f32) -> bool {
+    // Past the row's end, inside a concave corner's fillet.
+    let dx = (p.x - cx) * sx;
+    let dy = (cy - p.y) * sy;
+    let c = vec2<f32>(cx + sx * rf, cy - sy * rf);
+    return rf > 0.0 && dx >= 0.0 && dx < rf && dy >= 0.0 && dy < rf && distance(p, c) >= rf;
+}
+
+fn kw_inside(p: vec2<f32>, h: f32, a: f32, b: f32, pv: vec2<f32>, hp: bool, nx: vec2<f32>, hn: bool, r: f32) -> bool {
+    let lone = min(r, (b - a) * 0.5);
+    let tl = kw_radii(a, pv.x, hp, -1.0, r, lone);
+    let tr = kw_radii(b, pv.y, hp, 1.0, r, lone);
+    let bl = kw_radii(a, nx.x, hn, -1.0, r, lone);
+    let br = kw_radii(b, nx.y, hn, 1.0, r, lone);
+    let in_box = p.x >= a && p.x < b && p.y >= 0.0 && p.y < h;
+    let cut = kw_cut(p, a, 0.0, -1.0, -1.0, tl.x) || kw_cut(p, b, 0.0, 1.0, -1.0, tr.x)
+        || kw_cut(p, a, h, -1.0, 1.0, bl.x) || kw_cut(p, b, h, 1.0, 1.0, br.x);
+    let fill = kw_fillet(p, a, 0.0, -1.0, -1.0, tl.y) || kw_fillet(p, b, 0.0, 1.0, -1.0, tr.y)
+        || kw_fillet(p, a, h, -1.0, 1.0, bl.y) || kw_fillet(p, b, h, 1.0, 1.0, br.y);
+    return (in_box && !cut) || fill;
+}
+
+fn fragment(in: FragmentIn, params: array<vec4<f32>, 4>) -> vec4<f32> {
+    let s = in.scale;
+    let a = params[0].x * s;
+    let b = params[0].y * s;
+    let pv = params[0].zw * s;
+    let nx = params[1].xy * s;
+    let h = in.size.y;
+    let r = min(params[1].z * s, h * 0.5);
+    let flags = u32(params[1].w + 0.5);
+    // A neighbour shapes the corners only where it overlaps this row.
+    let hp = (flags & 1u) != 0u && pv.x < b && pv.y > a;
+    let hn = (flags & 2u) != 0u && nx.x < b && nx.y > a;
+    let color = params[2];
+    let x = in.local.x;
+    // Past the fillets nothing; away from both ends every pixel.
+    if x < a - r - 1.0 || x > b + r + 1.0 {
+        return vec4<f32>(0.0);
+    }
+    if x > a + r + 1.0 && x < b - r - 1.0 {
+        return color;
+    }
+    var n = 0.0;
+    for (var i = 0; i < 4; i++) {
+        for (var j = 0; j < 4; j++) {
+            let o = vec2<f32>((f32(i) + 0.5) * 0.25 - 0.5, (f32(j) + 0.5) * 0.25 - 0.5);
+            if kw_inside(in.local + o, h, a, b, pv, hp, nx, hn, r) {
+                n += 1.0;
+            }
+        }
+    }
+    return vec4<f32>(color.rgb, color.a * n / 16.0);
+}
+"#;
 
 /// What a rendered row adds to a span's look, over the syntax's.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -982,7 +1112,8 @@ pub fn gutter_row(
     });
     let mut spec = NodeSpec::row();
     if header {
-        spec = spec.bg(pal.strip);
+        // On whole pixels, as the header's band beside it is.
+        spec = spec.bg(pal.strip).pixel_snap();
     }
     ui.with(
         spec.width(Sizing::Grow(1.0))
@@ -1040,8 +1171,9 @@ struct Look {
 /// needs a span, split only where the completion ghost sits, since that
 /// is not the document's text and the access tree and a click's byte
 /// must not count it. The bar caret is a float measured to its byte;
-/// what follows the text (a block caret past the end, a selection over
-/// the newline, a trailing message) is a sibling node. A long line's
+/// what follows the text (a block caret past the end or a selection over
+/// the newline, one cell of its own; a trailing message) is a sibling
+/// node. A long line's
 /// text is its window's slice (`Drawn::for_line`) between two spacers
 /// sized by column — a monospace grid's placement (a fallback glyph can
 /// drift it a pixel or two), the tolerance kui's own chunked long line
@@ -1226,8 +1358,11 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 })
                 .role(Role::Line)
                 .on_layout(kui_native::Value::map([("kind", "mdrow".into())]));
+            // On whole pixels, so a code block's rows, stacked at a
+            // pitch that is not whole pixels, meet without a line
+            // between them.
             if let Some(bg) = f.bg {
-                r = r.bg(bg);
+                r = r.bg(bg).pixel_snap();
             }
             r
         }
@@ -1238,8 +1373,10 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             .cross_align(Align::Center)
             .role(Role::Line),
     };
+    // On whole pixels, where the band's neighbours — the gutter's strip,
+    // the rows around it and their selection — are.
     if let Some(bg) = line.band {
-        row = row.bg(bg);
+        row = row.bg(bg).pixel_snap();
     }
     if let Some(c) = line.access.0 {
         row = row.caret(c);
@@ -1477,46 +1614,45 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 .sum::<f32>();
             caret_bar(ui, pal.accent, line.caret_on, x, lh);
         }
-        // A block caret past the end of the line, and a selection
-        // running past the newline: boxes in the row's flow, so the
-        // trailing text's gap gives way to them and keeps its place. A
-        // wrapped row's text grows to the row's width, where in its flow
-        // they sat at the far edge (a heading's, 2026-09-25): there they
-        // hang where its last visual line ends, the caret over the
-        // selection.
-        let end = wraps.then(|| wrapped_at(ui, len));
-        let mut boxes = 0.0;
-        let mut past_end = |ui: &mut Ui<'_>, h: f32, dy: f32, bg: Color| {
-            let mut b = NodeSpec::column()
-                .width(Sizing::Fixed(PAST_END_W))
-                .height(Sizing::Fixed(h))
-                .bg(bg);
-            match end {
-                Some((x, y)) => b = b.float(FloatConfig::parent().offset(x, y + dy)),
-                None => boxes += PAST_END_W,
-            }
-            ui.with(b, |_| {});
-        };
+        // A block caret past the end of the line, or a selection
+        // running past the newline: one cell after the text, in the
+        // caret's colour or the selection's — the caret's where it sits on
+        // the newline, as vim draws it — full height, as a block caret on
+        // a char is. Painted on whole pixels (`pixel_snap`), where kui
+        // draws a text's backgrounds, so it meets the line's selection and
+        // the rows' above and below on one pixel line: drawn where layout
+        // put it, the pixel it shared with them was drawn twice or not at
+        // all (2026-09-27). In the row's flow the trailing text's gap
+        // gives way to it; a wrapped row's text grows to the row's width,
+        // where in its flow it sat at the far edge (a heading's,
+        // 2026-09-25), so there it hangs where the last visual line ends.
         let caret = line
             .carets
             .iter()
             .find(|(r, k)| r.start >= len && *k != Caret::Bar)
             .map(|(_, k)| caret_bg(pal, *k));
         let selected = line.selected.iter().any(|r| r.end > len);
-        if let Some(bg) = caret.filter(|_| !wraps) {
-            past_end(ui, lh - 4.0, 2.0, bg);
-        }
-        if selected {
-            past_end(ui, lh, 0.0, pal.select);
-        }
-        if let Some(bg) = caret.filter(|_| wraps) {
-            past_end(ui, lh - 4.0, 2.0, bg);
+        let mut cell_w = 0.0;
+        if let Some(bg) = caret.or(selected.then_some(pal.select)) {
+            let w = ui.measure_text(" ", &base, None).width;
+            let mut cell = NodeSpec::column()
+                .width(Sizing::Fixed(w))
+                .height(Sizing::Fixed(lh))
+                .bg(bg)
+                .pixel_snap();
+            if wraps {
+                let (x, y) = wrapped_at(ui, len);
+                cell = cell.float(FloatConfig::parent().offset(x, y));
+            } else {
+                cell_w = w;
+            }
+            ui.with(cell, |_| {});
         }
         if let Some((t, color)) = line.trailing {
             ui.with(
                 NodeSpec::row()
                     .padding(kui_native::Edges {
-                        l: (TRAILING_GAP - boxes).max(0.0),
+                        l: (TRAILING_GAP - cell_w).max(0.0),
                         r: TRAILING_GAP,
                         t: 0.0,
                         b: 0.0,
@@ -1528,11 +1664,16 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
         }
         spacer(ui, after);
     };
-    match form {
-        Some(f) => {
+    match (form, line.rounded) {
+        (Some(f), _) => {
             ui.with_keyed(&f.key, row, body);
         }
-        None => {
+        // Its selection drawn by the row, under the text, on whole
+        // pixels so the next row's part meets it.
+        (None, Some(sel)) => {
+            ui.fragment_with(sel.fragment, &sel.params(), row.pixel_snap(), body);
+        }
+        (None, None) => {
             ui.with(row, body);
         }
     }

@@ -749,3 +749,273 @@ fn a_join_reaching_the_last_line_starts_on_its_own_line() {
     assert_eq!(text(&app), "one\ntwo three four", "`3J`");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// How much of the selection's alpha the quads leave at the pixel centred
+/// on (`x`, `y`): kui's shader coverage for a square quad (the area of
+/// the pixel inside it, drawn only where the pixel's centre is), through
+/// the clip it names, composited as the blend does.
+fn alpha_at(quads: &[(kui_native::Quad, kui_native::Clip)], x: f32, y: f32) -> f32 {
+    let clear = quads.iter().fold(1.0, |left, (q, clip)| {
+        let r = q.rect;
+        let c = clip.rect;
+        let hit = x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+        let clipped = x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h;
+        if !hit || !clipped {
+            return left;
+        }
+        let span = |p: f32, lo: f32, len: f32| {
+            let l = p - lo;
+            ((l + 0.5).min(len) - (l - 0.5).max(0.0)).clamp(0.0, 1.0)
+        };
+        left * (1.0 - q.color.a * span(x, r.x, r.w) * span(y, r.y, r.h))
+    });
+    1.0 - clear
+}
+
+/// A selection over lines, an empty one among them, is one surface: its
+/// rows meet, each line's newline cell meets its text, and the empty
+/// line's cell the rows above and below — at scales where a line is not
+/// whole physical pixels. The newline's cell was a box, drawn where
+/// layout put it, while kui draws a text's backgrounds on whole pixels,
+/// and where the two met the pixel between them was drawn twice (a
+/// bright line) or not at all (a dark one) (2026-09-27).
+#[test]
+fn a_selection_over_lines_has_no_seam_at_any_scale() {
+    for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 2.175] {
+        let mut app = Kawoosh::new("t", "fn a() {\n    x,\n\n}\nend\n");
+        let mut d = Drive::new(600.0, 300.0);
+        d.scale = scale;
+        d.frame(&mut app);
+        // From the fourth line up to the first's end, so the caret is on
+        // `{` and not in the column below.
+        d.keys(&mut app, "ggjjjVkkk$");
+        let sel = app.pal.select;
+        let quads: Vec<(kui_native::Quad, kui_native::Clip)> = {
+            let dl = d.core.output().0;
+            dl.quads
+                .iter()
+                .filter(|q| q.kind == kui_native::QuadKind::Solid && q.color == sel)
+                .map(|q| (*q, dl.clip_of(q)))
+                .collect()
+        };
+        assert!(quads.len() >= 5, "four lines and their newlines, {scale}×");
+        let (x0, y0, x1, y1) = quads.iter().fold(
+            (f32::MAX, f32::MAX, f32::MIN, f32::MIN),
+            |(a, b, c, e), (q, _)| {
+                let r = q.rect;
+                (a.min(r.x), b.min(r.y), c.max(r.x + r.w), e.max(r.y + r.h))
+            },
+        );
+        for px in x0.floor() as i32..x1.ceil() as i32 {
+            for py in y0.floor() as i32..y1.ceil() as i32 {
+                let (cx, cy) = (px as f32 + 0.5, py as f32 + 0.5);
+                let a = alpha_at(&quads, cx, cy);
+                assert!(
+                    a < sel.a + 1e-4,
+                    "drawn twice at ({cx}, {cy}), {scale}×: {a}"
+                );
+            }
+        }
+        // The first cell's column, which every line covers (the empty
+        // one with its newline), is one surface from top to bottom.
+        let cx = x0.ceil() + 1.5;
+        for py in y0.ceil() as i32..y1.floor() as i32 {
+            let cy = py as f32 + 0.5;
+            let a = alpha_at(&quads, cx, cy);
+            assert!(
+                (a - sel.a).abs() < 1e-4,
+                "the selection's own alpha at ({cx}, {cy}), {scale}×: {a}"
+            );
+        }
+    }
+}
+
+/// `rows::SELECTION_WGSL`'s shape, line for line on the CPU: whether the
+/// point `p` (physical px from the row's top-left) is inside the row's
+/// part of the selection. The shader cannot be run here; this is what the
+/// test reads its numbers through, and it changes when the shader does.
+mod shape {
+    fn radii(cx: f32, e: f32, has: bool, sx: f32, r: f32, lone: f32) -> (f32, f32) {
+        if !has {
+            return (lone, 0.0);
+        }
+        let d = (e - cx) * sx;
+        (r.min((-d).max(0.0) * 0.5), r.min(d.max(0.0) * 0.5))
+    }
+    fn dist(p: (f32, f32), c: (f32, f32)) -> f32 {
+        ((p.0 - c.0).powi(2) + (p.1 - c.1).powi(2)).sqrt()
+    }
+    fn cut(p: (f32, f32), cx: f32, cy: f32, sx: f32, sy: f32, rc: f32) -> bool {
+        let near = (cx - p.0) * sx < rc && (cy - p.1) * sy < rc;
+        rc > 0.0 && near && dist(p, (cx - sx * rc, cy - sy * rc)) > rc
+    }
+    fn fillet(p: (f32, f32), cx: f32, cy: f32, sx: f32, sy: f32, rf: f32) -> bool {
+        let dx = (p.0 - cx) * sx;
+        let dy = (cy - p.1) * sy;
+        rf > 0.0
+            && (0.0..rf).contains(&dx)
+            && (0.0..rf).contains(&dy)
+            && dist(p, (cx + sx * rf, cy - sy * rf)) >= rf
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn inside(
+        p: (f32, f32),
+        h: f32,
+        a: f32,
+        b: f32,
+        pv: (f32, f32),
+        hp: bool,
+        nx: (f32, f32),
+        hn: bool,
+        r: f32,
+    ) -> bool {
+        let lone = r.min((b - a) * 0.5);
+        let tl = radii(a, pv.0, hp, -1.0, r, lone);
+        let tr = radii(b, pv.1, hp, 1.0, r, lone);
+        let bl = radii(a, nx.0, hn, -1.0, r, lone);
+        let br = radii(b, nx.1, hn, 1.0, r, lone);
+        let in_box = p.0 >= a && p.0 < b && p.1 >= 0.0 && p.1 < h;
+        let c = cut(p, a, 0.0, -1.0, -1.0, tl.0)
+            || cut(p, b, 0.0, 1.0, -1.0, tr.0)
+            || cut(p, a, h, -1.0, 1.0, bl.0)
+            || cut(p, b, h, 1.0, 1.0, br.0);
+        let f = fillet(p, a, 0.0, -1.0, -1.0, tl.1)
+            || fillet(p, b, 0.0, 1.0, -1.0, tr.1)
+            || fillet(p, a, h, -1.0, 1.0, bl.1)
+            || fillet(p, b, h, 1.0, 1.0, br.1);
+        (in_box && !c) || f
+    }
+    /// The fragment's alpha at the pixel centred on `local` of a quad
+    /// `size` tall, at `scale`, from its sixteen params.
+    pub fn alpha(local: (f32, f32), size: (f32, f32), scale: f32, p: &[f32; 16]) -> f32 {
+        let (a, b) = (p[0] * scale, p[1] * scale);
+        let pv = (p[2] * scale, p[3] * scale);
+        let nx = (p[4] * scale, p[5] * scale);
+        let h = size.1;
+        let r = (p[6] * scale).min(h * 0.5);
+        let flags = (p[7] + 0.5) as u32;
+        let hp = flags & 1 != 0 && pv.0 < b && pv.1 > a;
+        let hn = flags & 2 != 0 && nx.0 < b && nx.1 > a;
+        let x = local.0;
+        if x < a - r - 1.0 || x > b + r + 1.0 {
+            return 0.0;
+        }
+        if x > a + r + 1.0 && x < b - r - 1.0 {
+            return p[11];
+        }
+        let mut n = 0.0;
+        for i in 0..4 {
+            for j in 0..4 {
+                let o = ((i as f32 + 0.5) * 0.25 - 0.5, (j as f32 + 0.5) * 0.25 - 0.5);
+                if inside((local.0 + o.0, local.1 + o.1), h, a, b, pv, hp, nx, hn, r) {
+                    n += 1.0;
+                }
+            }
+        }
+        p[11] * n / 16.0
+    }
+}
+
+/// `editor.selection_radius` rounds the selection as one shape: each
+/// selected row draws its part as a fragment under its text, told its
+/// neighbours' extents, and the text's spans carry none. The rows' parts
+/// meet on one pixel line with nothing drawn twice, the column every line
+/// covers is one surface, and a corner with no neighbour is round — at
+/// scales where a line is not whole physical pixels.
+#[test]
+fn a_rounded_selection_is_one_shape_across_its_lines() {
+    use kawoosh_editor::{Layer, Setting};
+    for scale in [1.0f32, 1.25, 1.5, 1.75, 2.0, 2.175] {
+        let mut app = Kawoosh::new("t", "fn a() {\n    let x = 1;\n\n    y\n}\nend\n");
+        app.ed.settings.set(
+            Layer::Session,
+            "editor.selection_radius",
+            Setting::Float(4.0),
+        );
+        let mut d = Drive::new(600.0, 300.0);
+        d.scale = scale;
+        d.frame(&mut app);
+        d.keys(&mut app, "ggVjjjj");
+        assert_eq!(d.warnings(), Vec::<String>::new(), "the shader compiled");
+        let sel = app.pal.select;
+        let dl = d.core.output().0;
+        assert!(
+            !dl.quads
+                .iter()
+                .any(|q| q.kind == kui_native::QuadKind::Solid && q.color == sel),
+            "no span paints the selection, {scale}×"
+        );
+        let mut rows: Vec<(kui_native::Rect, [f32; 16])> = dl
+            .quads
+            .iter()
+            .filter(|q| q.kind == kui_native::QuadKind::Fragment)
+            .map(|q| (q.rect, dl.fragments[q.uv[0] as usize].params))
+            .collect();
+        rows.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
+        assert_eq!(rows.len(), 5, "one fragment a selected line, {scale}×");
+        for w in rows.windows(2) {
+            let ((_, up), (_, down)) = (&w[0], &w[1]);
+            assert_eq!((up[4], up[5]), (down[0], down[1]), "the row below's own");
+            assert_eq!((down[2], down[3]), (up[0], up[1]), "the row above's own");
+            assert_eq!(up[7] as u32 & 2, 2, "a row below");
+            assert_eq!(down[7] as u32 & 1, 1, "a row above");
+            // Their parts meet on one pixel line.
+            assert_eq!(w[0].0.y + w[0].0.h, w[1].0.y, "{scale}×");
+            assert_eq!(w[1].0.y.fract(), 0.0, "{scale}×");
+        }
+        assert_eq!(
+            rows[0].1[0], 0.0,
+            "a linewise selection from the row's left"
+        );
+        let alpha = |x: f32, y: f32| -> f32 {
+            let clear = rows.iter().fold(1.0, |left, (r, p)| {
+                let inside = x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+                if !inside {
+                    return left;
+                }
+                left * (1.0 - shape::alpha((x - r.x, y - r.y), (r.w, r.h), scale, p))
+            });
+            1.0 - clear
+        };
+        let top = rows[0].0.y;
+        let bottom = rows[4].0.y + rows[4].0.h;
+        let right = rows.iter().map(|(_, p)| p[1] + 4.0).fold(0.0, f32::max) * scale;
+        let x0 = rows[0].0.x;
+        for py in top as i32..bottom as i32 {
+            for px in x0 as i32..(x0 + right) as i32 + 2 {
+                let a = alpha(px as f32 + 0.5, py as f32 + 0.5);
+                assert!(
+                    a < sel.a + 1e-4,
+                    "drawn twice at ({px}, {py}), {scale}×: {a}"
+                );
+            }
+        }
+        // The first cell's column: past the top row's round corner, one
+        // surface down to the bottom row's.
+        let cx = x0 + (4.0 * scale).ceil() + 2.5;
+        for py in (top + 4.0 * scale).ceil() as i32..(bottom - 4.0 * scale).floor() as i32 {
+            let a = alpha(cx, py as f32 + 0.5);
+            assert!(
+                (a - sel.a).abs() < 1e-4,
+                "the selection's own alpha at ({cx}, {py}), {scale}×: {a}"
+            );
+        }
+        // The top-left corner, with no row above, is round.
+        assert!(alpha(x0 + 0.5, top + 0.5) < sel.a * 0.5, "{scale}×");
+        // `fn a() {` over `    let x = 1;`: the shorter line's bottom-
+        // right corner is concave, a fillet past its end that fills the
+        // pixel beside the join; the longer one's bottom-right, over the
+        // empty line, is convex, its corner pixel cut.
+        let join = |i: usize| rows[i].0.y + rows[i].0.h;
+        let end = |i: usize| x0 + rows[i].1[1] * scale;
+        let fill = alpha(end(0) + 0.5, join(0) - 0.5);
+        assert!(fill > sel.a * 0.5, "the fillet, {scale}×: {fill}");
+        let corner = alpha(end(1) - 0.5, join(1) - 0.5);
+        assert!(
+            corner < sel.a * 0.5,
+            "the convex corner, {scale}×: {corner}"
+        );
+        // Past the fillet's reach, nothing.
+        assert_eq!(alpha(end(0) + 4.0 * scale + 1.5, join(0) - 0.5), 0.0);
+    }
+}
