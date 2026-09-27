@@ -37,7 +37,7 @@ Almost every key goes to the program in the terminal, `<C-l>`, `<C-r>` and `<Esc
 
 Any Ctrl+Shift or Alt+Shift chord, and any ⌘ chord, runs its normal-mode binding instead of reaching the shell; a terminal cannot tell `<C-S-l>` from `<C-l>` anyway. A ⌘ chord bound to nothing does nothing. Your own normal-mode maps on such chords work from terminals too.
 
-Mouse: the wheel scrolls through history. Dragging selects text (a double click a word, a triple click a line), and `⌘c` copies it. When a full-screen program asks for the mouse it gets the clicks and drags; hold Shift to select anyway.
+Mouse: the wheel scrolls through history. Dragging selects text (a double click a word, a triple click a line), and `⌘c` copies it. The middle button pastes the clipboard, as `⌘v` does. When a full-screen program asks for the mouse it gets the clicks and drags of every button, the right one included (tmux's and htop's menus, a file manager's); hold Shift to select anyway.
 
 ## Scrollback
 

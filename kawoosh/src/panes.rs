@@ -995,6 +995,19 @@ impl Kawoosh {
                 } else {
                     spec.selectable()
                 };
+                // The other buttons: the middle one pastes, and while a
+                // program reports the mouse every button is its — the
+                // secondary one too, which is a context menu otherwise.
+                spec = spec
+                    .on_button(Value::map([
+                        ("kind", "termbutton".into()),
+                        ("pane", Value::Int(pane as i64)),
+                    ]))
+                    .buttons(if reporting {
+                        kui_native::Buttons::ALL
+                    } else {
+                        kui_native::Buttons::MIDDLE
+                    });
                 // A program's link (OSC 8) says where it goes while
                 // hovered, at the grid's foot, as a browser's status
                 // does: its text need not be its address.

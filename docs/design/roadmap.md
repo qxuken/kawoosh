@@ -1764,8 +1764,8 @@ follow the theme every frame (`panes.rs`).
   own beep (a motion that fails, a search with no match) is the same
   setting's second half, `editor.bell`, off by default — vim users
   turn it off first.
-- **Mouse buttons and OSC 8** — OSC 8 done 2026-09-28 (step 54, not
-  kui's after all); the buttons open, step 55. What it said before: kui routes
+- **Mouse buttons and OSC 8** — done 2026-09-28: OSC 8 in step 54,
+  not kui's after all; the buttons in step 55 over kui F104. What it said before: kui routes
   only the primary button; the middle button and hyperlinks are kui's
   wish list, not kawoosh's.
 - **Kitty graphics** — done 2026-09-28 [req §9]; step 56, kitty-graphics.md. A `term` APC hook before it is
@@ -2469,10 +2469,19 @@ think on a kitty keyboard"), the terminal's third round, in that order:
     the address at the grid's foot; another machine's file is
     `Target::Elsewhere`, said and not opened. Tests: `term`'s two,
     `kawoosh/tests/links.rs`'s `a_programs_link_in_a_terminal_opens_its_address`.
-55. **Mouse buttons**: the middle button pastes, and the secondary and
+55. ~~**Mouse buttons**: the middle button pastes, and the secondary and
     middle buttons reach a program that asked for mouse reports (tmux,
     htop, a TUI's menus). kui routes the primary button to a widget
-    and the secondary to a context menu, so this starts as a kui round.
+    and the secondary to a context menu, so this starts as a kui round.~~
+    Landed 2026-09-28 with kui F104 (branch `claude/kawoosh-mouse-buttons`,
+    e66939d and 01f0b49): `on_button` claims the non-primary buttons
+    for a node, `buttons` which, each captured from press to release
+    with `cell` on a grid. The grid claims the middle button always —
+    it pastes the clipboard, as ⌘V — and every button while a program
+    reports the mouse (shift keeps them the terminal's), reported in
+    xterm's numbering with motion while held for a program that asked
+    for drags. `kawoosh/tests/terminal.rs`'s
+    `the_other_buttons_paste_and_reach_a_reporting_program`.
 56. ~~**Kitty graphics**: images in the grid (`kitty +kitten icat`,
     yazi's previews, plots) — the protocol in `term` (APC, the
     transmit/put/delete actions, placements that scroll with their

@@ -1157,3 +1157,71 @@ fn the_window_back_in_front_looks_at_the_clipboard() {
     let v = app.focused_view().unwrap();
     assert_eq!(app.ed.buffer_of(v).text(), "abc", "a look is not a paste");
 }
+
+/// The other mouse buttons (roadmap step 55, kui's `on_button`): the
+/// middle one pastes the clipboard into a terminal, and a program that
+/// asked for mouse reports gets the middle and secondary buttons — the
+/// press, the motion while held when it asked for drags, the release —
+/// where the secondary one is otherwise the context menu's.
+#[test]
+fn the_other_buttons_paste_and_reach_a_reporting_program() {
+    use kui_native::MouseButton;
+    let mut app = Kawoosh::new("t", "");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let sent = |app: &mut Kawoosh| app.terms.map.get_mut(&t).unwrap().take_sent();
+    sent(&mut app);
+    let cells = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.kind == kui_native::NodeKind::Cells)
+        .unwrap()
+        .rect;
+    let (cw, ch) = app.cell_metrics();
+    let at = |row: f32, col: f32| Vec2::new(cells.x + (col + 0.5) * cw, cells.y + (row + 0.5) * ch);
+    let press = |d: &mut Drive, app: &mut Kawoosh, button: MouseButton| {
+        d.input(app, InputEvent::MouseDown { button, clicks: 1 });
+        d.frame(app);
+    };
+    let release = |d: &mut Drive, app: &mut Kawoosh, button: MouseButton| {
+        d.input(app, InputEvent::MouseUp { button });
+        d.frame(app);
+    };
+    // No reports asked for: the middle button pastes.
+    d.input(&mut app, InputEvent::CursorMoved(at(2.0, 4.0)));
+    d.frame(&mut app);
+    press(&mut d, &mut app, MouseButton::Middle);
+    release(&mut d, &mut app, MouseButton::Middle);
+    assert!(sent(&mut app).is_empty(), "nothing reported");
+    d.input(&mut app, InputEvent::Commit("from the clipboard".into()));
+    d.frame(&mut app);
+    assert_eq!(sent(&mut app), b"from the clipboard");
+    // Reports asked for, in SGR with drags: every button is the
+    // program's.
+    app.feed_terminal(t, b"\x1b[?1002h\x1b[?1006h");
+    d.frame(&mut app);
+    press(&mut d, &mut app, MouseButton::Middle);
+    d.input(&mut app, InputEvent::CursorMoved(at(2.0, 6.0)));
+    d.frame(&mut app);
+    release(&mut d, &mut app, MouseButton::Middle);
+    assert_eq!(
+        String::from_utf8(sent(&mut app)).unwrap(),
+        "\x1b[<1;5;3M\x1b[<33;7;3M\x1b[<1;7;3m"
+    );
+    press(&mut d, &mut app, MouseButton::Secondary);
+    release(&mut d, &mut app, MouseButton::Secondary);
+    assert_eq!(
+        String::from_utf8(sent(&mut app)).unwrap(),
+        "\x1b[<2;7;3M\x1b[<2;7;3m",
+        "the secondary button, not a context menu"
+    );
+    assert!(
+        !d.core.awaiting_paste(),
+        "a reporting program's middle is no paste"
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
