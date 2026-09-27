@@ -1200,14 +1200,7 @@ fn diagnostics_whole_and_of_files_no_buffer_holds() {
     );
     // `<C-e>` on it: the whole, headed.
     d.keys(&mut app, "j");
-    d.key(
-        &mut app,
-        "e",
-        KeyMods {
-            ctrl: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "e", KeyMods::NONE.with_ctrl());
     let shown = app
         .ed
         .buffers

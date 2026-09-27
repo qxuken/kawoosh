@@ -253,10 +253,10 @@ impl Kawoosh {
     /// A click on a row: the pane takes the keyboard and the row's
     /// state goes back in the buffer.
     pub(crate) fn on_undo_click(&mut self, p: &Value) {
-        if let Some(pane) = p.get("pane").and_then(Value::as_int) {
+        if let Some(pane) = p.get_int("pane") {
             self.layout.focus(pane as PaneId);
         }
-        if let Some(i) = p.get("state").and_then(Value::as_int) {
+        if let Some(i) = p.get_int("state") {
             self.sync_undo_rows();
             let i = (i.max(0) as usize).min(self.undo.rows.len().saturating_sub(1));
             self.undo.cursor = i;
@@ -300,8 +300,7 @@ impl Kawoosh {
         let sink = ui.with_keyed(
             "undo",
             NodeSpec::column()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Grow(1.0))
+                .fill()
                 .clip()
                 .on_key(tag.clone())
                 // A click under the rows focuses the pane.
@@ -337,15 +336,10 @@ impl Kawoosh {
                 );
                 // The columns named, over the numbers they hold.
                 ui.with(tm.line(&pal, 0).hover_bg(Color::TRANSPARENT), |ui| {
-                    ui.with(
-                        NodeSpec::row()
-                            .width(Sizing::Fixed(graph_w))
-                            .height(Sizing::Fixed(tm.line_h)),
-                        |_| {},
-                    );
-                    ui.with(col(4.0), |ui| ui.text("#", small(pal.faint)));
-                    ui.with(col(7.0), |ui| ui.text("when", small(pal.faint)));
-                    ui.with(col(5.0), |ui| ui.text("line", small(pal.faint)));
+                    ui.leaf(NodeSpec::row().size(graph_w, tm.line_h));
+                    ui.text_in(col(4.0), "#", small(pal.faint));
+                    ui.text_in(col(7.0), "when", small(pal.faint));
+                    ui.text_in(col(5.0), "line", small(pal.faint));
                     ui.with(col(9.0).main_align(Align::Start), |ui| {
                         ui.text("change", small(pal.faint))
                     });
@@ -369,9 +363,7 @@ impl Kawoosh {
                 kui_native::widgets::uniform_list(
                     ui,
                     "rows",
-                    NodeSpec::column()
-                        .width(Sizing::Grow(1.0))
-                        .height(Sizing::Grow(3.0)),
+                    NodeSpec::column().grow_width().height(Sizing::Grow(3.0)),
                     n,
                     tm.line_h,
                     |ui, d| {
@@ -409,12 +401,11 @@ impl Kawoosh {
                                     (pal.dim, None)
                                 };
                                 graph.row(ui, i, &graph_geometry, pal.dim, color, size);
-                                ui.with(col(4.0), |ui| {
-                                    ui.text(
-                                        &r.seq.to_string(),
-                                        style().color(if r.current { pal.fg } else { pal.dim }),
-                                    );
-                                });
+                                ui.text_in(
+                                    col(4.0),
+                                    &r.seq.to_string(),
+                                    style().color(if r.current { pal.fg } else { pal.dim }),
+                                );
                                 ui.with(col(7.0), |ui| {
                                     if let Some(at) = r.at {
                                         ui.text(
@@ -425,9 +416,7 @@ impl Kawoosh {
                                 });
                                 match &r.change {
                                     Some(c) => {
-                                        ui.with(col(5.0), |ui| {
-                                            ui.text(&c.line.to_string(), dim());
-                                        });
+                                        ui.text_in(col(5.0), &c.line.to_string(), dim());
                                         ui.with(
                                             col(9.0).main_align(Align::Start).gap(cell_w),
                                             |ui| {
@@ -455,9 +444,9 @@ impl Kawoosh {
                                         });
                                     }
                                     None => {
-                                        ui.with(col(5.0), |_| {});
-                                        ui.with(col(9.0), |_| {});
-                                        ui.with(tm.rest(), |ui| ui.text("opened", dim()));
+                                        ui.leaf(col(5.0));
+                                        ui.leaf(col(9.0));
+                                        ui.text_in(tm.rest(), "opened", dim());
                                     }
                                 }
                                 if r.pending {
@@ -485,7 +474,7 @@ impl Kawoosh {
                 ui.with_keyed(
                     "hunk",
                     NodeSpec::column()
-                        .width(Sizing::Grow(1.0))
+                        .grow_width()
                         .height(Sizing::Grow(2.0))
                         .scroll_y()
                         .clip(),

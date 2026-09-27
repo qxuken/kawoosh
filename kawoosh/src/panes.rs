@@ -74,8 +74,8 @@ impl Kawoosh {
         let pal = self.pal;
         ui.with(
             NodeSpec::row()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(self.chrome.strip_h))
+                .grow_width()
+                .height(self.chrome.strip_h)
                 .bg(pal.strip)
                 .pad_xy(8.0, 0.0)
                 .gap(8.0)
@@ -86,7 +86,7 @@ impl Kawoosh {
                         ui.text(t, rows::mono(self.chrome.face, &pal).color(*c));
                     }
                 }
-                ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
+                ui.leaf(NodeSpec::row().grow_width());
                 ui.text(right, rows::mono(self.chrome.face, &pal).color(pal.dim));
             },
         );
@@ -327,8 +327,8 @@ impl Kawoosh {
         let strip_h = self.chrome.strip_h;
         ui.with(
             NodeSpec::row()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(strip_h))
+                .grow_width()
+                .height(strip_h)
                 .bg(pal.bg)
                 .pad_xy(8.0, 0.0)
                 .cross_align(Align::Center),
@@ -358,8 +358,8 @@ impl Kawoosh {
                         ui.with_keyed(
                             "candidates",
                             NodeSpec::row()
-                                .width(Sizing::Grow(1.0))
-                                .height(Sizing::Fixed(strip_h))
+                                .grow_width()
+                                .height(strip_h)
                                 .pad_xy(16.0, 0.0)
                                 .gap(12.0)
                                 .cross_align(Align::Center)
@@ -369,12 +369,11 @@ impl Kawoosh {
                                 for (i, c) in cands.iter().enumerate().take(CANDIDATES_SHOWN) {
                                     let on = i == index;
                                     let color = if on { pal.fg } else { pal.dim };
-                                    let key = ui.with_indexed(
+                                    let key = ui.text_in_indexed(
                                         i as u64,
                                         NodeSpec::row().min_width(kui_native::Min::FIT),
-                                        |ui| {
-                                            ui.text(c, TextStyle::new(small).color(color).nowrap());
-                                        },
+                                        c,
+                                        TextStyle::new(small).color(color).nowrap(),
                                     );
                                     if on {
                                         current = Some(key);
@@ -415,13 +414,7 @@ impl Kawoosh {
         if !self.culled.contains(&pane) {
             return false;
         }
-        ui.with(
-            NodeSpec::column()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Grow(1.0))
-                .bg(self.pal.panel),
-            |_| {},
-        );
+        ui.leaf(NodeSpec::column().fill().bg(self.pal.panel));
         true
     }
 
@@ -607,29 +600,22 @@ impl Kawoosh {
                 .cross_align(Align::Start)
                 .label("strip"),
             |ui| {
-                let room = |px: f32| {
-                    NodeSpec::column()
-                        .width(Sizing::Fixed(px))
-                        .height(Sizing::Grow(1.0))
-                };
+                let room = |px: f32| NodeSpec::column().width(px).grow_height();
                 if lead > 0.0 {
-                    ui.with_keyed("lead", room(lead), |_| {});
+                    ui.leaf_keyed("lead", room(lead));
                 }
                 for (i, col) in strip.columns.iter().enumerate() {
                     let px = widths[i];
-                    let mut wrap = NodeSpec::column().height(Sizing::Grow(1.0));
+                    let mut wrap = NodeSpec::column().grow_height();
                     if arriving && !self.strip_known.contains(&col.id) {
                         wrap = wrap
                             .transition(RIBBON_MS)
                             .enter(Enter::from((px / 3.0).min(200.0), 0.0).opacity(0.0));
                     }
                     let key = ui.with_keyed(&format!("col{}", col.id), wrap, |ui| {
-                        ui.with(
-                            NodeSpec::column()
-                                .width(Sizing::Fixed(px))
-                                .height(Sizing::Grow(1.0)),
-                            |ui| self.render_node(ui, &col.node, &format!("{i}/")),
-                        );
+                        ui.with(NodeSpec::column().width(px).grow_height(), |ui| {
+                            self.render_node(ui, &col.node, &format!("{i}/"))
+                        });
                     });
                     if Some(i) == fi {
                         focus_key = Some(key);
@@ -641,8 +627,8 @@ impl Kawoosh {
                             || ui.is_pressed(divider)
                             || self.dragging.as_deref() == Some(path.as_str());
                         let bar = NodeSpec::column()
-                            .width(Sizing::Fixed(gap))
-                            .height(Sizing::Grow(1.0))
+                            .width(gap)
+                            .grow_height()
                             .bg(if active { pal.accent } else { pal.border })
                             .cursor(kui_native::CursorShape::EwResize)
                             .on_drag(Value::map([
@@ -650,11 +636,11 @@ impl Kawoosh {
                                 ("path", Value::str(&path)),
                                 ("dir", "h".into()),
                             ]));
-                        ui.with_keyed(&format!("gap{}", col.id), bar, |_| {});
+                        ui.leaf_keyed(&format!("gap{}", col.id), bar);
                     }
                 }
                 if trail > 0.0 {
-                    ui.with_keyed("trail", room(trail), |_| {});
+                    ui.leaf_keyed("trail", room(trail));
                 }
             },
         );
@@ -713,12 +699,8 @@ impl Kawoosh {
                 let ratio = ratio.clamp(0.1, 0.9);
                 let dragging = self.dragging.as_deref() == Some(path);
                 let grow = |f: f32| match dir {
-                    SplitDir::H => NodeSpec::column()
-                        .width(Sizing::Grow(f))
-                        .height(Sizing::Grow(1.0)),
-                    SplitDir::V => NodeSpec::column()
-                        .width(Sizing::Grow(1.0))
-                        .height(Sizing::Grow(f)),
+                    SplitDir::H => NodeSpec::column().width(Sizing::Grow(f)).grow_height(),
+                    SplitDir::V => NodeSpec::column().grow_width().height(Sizing::Grow(f)),
                 };
                 ui.with(spec.fill(), |ui| {
                     ui.with_keyed("a", grow(ratio), |ui| {
@@ -728,15 +710,15 @@ impl Kawoosh {
                     let active = ui.is_hovered(divider) || ui.is_pressed(divider) || dragging;
                     let bar = match dir {
                         SplitDir::H => NodeSpec::column()
-                            .width(Sizing::Fixed(DIVIDER))
-                            .height(Sizing::Grow(1.0))
+                            .width(DIVIDER)
+                            .grow_height()
                             .cursor(kui_native::CursorShape::EwResize),
                         SplitDir::V => NodeSpec::column()
-                            .width(Sizing::Grow(1.0))
-                            .height(Sizing::Fixed(DIVIDER))
+                            .grow_width()
+                            .height(DIVIDER)
                             .cursor(kui_native::CursorShape::NsResize),
                     };
-                    ui.with_keyed(
+                    ui.leaf_keyed(
                         "divider",
                         bar.bg(if active { pal.accent } else { pal.border })
                             .on_drag(Value::map([
@@ -750,7 +732,6 @@ impl Kawoosh {
                                     }),
                                 ),
                             ])),
-                        |_| {},
                     );
                     ui.with_keyed("b", grow(1.0 - ratio), |ui| {
                         self.render_node(ui, b, &format!("{path}b"))
@@ -830,8 +811,8 @@ impl Kawoosh {
             |ui| {
                 // The title bar: a click focuses, a drag moves the pane.
                 let mut title = NodeSpec::row()
-                    .width(Sizing::Grow(1.0))
-                    .height(Sizing::Fixed(self.chrome.pane_title_h))
+                    .grow_width()
+                    .height(self.chrome.pane_title_h)
                     .bg(if dragged {
                         pal.accent.with_alpha(0.3)
                     } else if focused {
@@ -883,16 +864,15 @@ impl Kawoosh {
                         Drop::Up => (Align::Start, Align::Start, 1.0, 0.5),
                         Drop::Down => (Align::Start, Align::End, 1.0, 0.5),
                     };
-                    ui.with_keyed(
+                    ui.leaf_keyed(
                         "drop",
                         NodeSpec::column()
-                            .float(FloatConfig::parent().at(x, y).self_at(x, y))
+                            .float(FloatConfig::parent().inside(x, y))
                             .width(Sizing::Percent(w))
                             .height(Sizing::Percent(h))
                             .bg(pal.accent.with_alpha(0.25))
                             .border(2.0, pal.accent)
                             .label("drop"),
-                        |_| {},
                     );
                 }
                 match &content {
@@ -973,8 +953,7 @@ impl Kawoosh {
         let sink = ui.with_keyed(
             "term",
             NodeSpec::column()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Grow(1.0))
+                .fill()
                 .pad(pad)
                 .clip()
                 .on_key(tag.clone())
@@ -1045,12 +1024,8 @@ impl Kawoosh {
                     ui.with_keyed(
                         "scrollbar",
                         NodeSpec::column()
-                            .float(
-                                FloatConfig::parent()
-                                    .at(Align::End, Align::Start)
-                                    .self_at(Align::End, Align::Start),
-                            )
-                            .width(Sizing::Fixed(8.0))
+                            .float(FloatConfig::parent().inside(Align::End, Align::Start))
+                            .width(8.0)
                             .height(Sizing::Percent(1.0))
                             .cursor(kui_native::CursorShape::Default)
                             .on_drag(Value::map([
@@ -1059,25 +1034,22 @@ impl Kawoosh {
                             ]))
                             .label("scrollbar"),
                         |ui| {
-                            ui.with(NodeSpec::column().height(Sizing::Fixed(above)), |_| {});
-                            ui.with(
+                            ui.leaf(NodeSpec::column().height(above));
+                            ui.leaf(
                                 NodeSpec::column()
-                                    .width(Sizing::Fixed(6.0))
-                                    .height(Sizing::Fixed(thumb))
+                                    .size(6.0, thumb)
                                     .radius(3.0)
                                     .bg(pal.dim.with_alpha(0.6)),
-                                |_| {},
                             );
                         },
                     );
                     let below = offset;
-                    ui.with_keyed(
+                    ui.text_in_keyed(
                         "lines below",
                         NodeSpec::row()
                             .float(
                                 FloatConfig::parent()
-                                    .at(Align::End, Align::End)
-                                    .self_at(Align::End, Align::End)
+                                    .inside(Align::End, Align::End)
                                     .offset(-14.0, -6.0),
                             )
                             .pad_xy(8.0, 3.0)
@@ -1090,15 +1062,11 @@ impl Kawoosh {
                                 ("pane", Value::Int(pane as i64)),
                             ]))
                             .label("lines below"),
-                        |ui| {
-                            ui.text(
-                                &format!(
-                                    "↓ {below} line{} below · ⇧End",
-                                    if below == 1 { "" } else { "s" }
-                                ),
-                                TextStyle::new(self.chrome.small).color(pal.dim).nowrap(),
-                            );
-                        },
+                        &format!(
+                            "↓ {below} line{} below · ⇧End",
+                            if below == 1 { "" } else { "s" }
+                        ),
+                        TextStyle::new(self.chrome.small).color(pal.dim).nowrap(),
                     );
                 }
             },
@@ -1586,8 +1554,7 @@ impl Kawoosh {
         let sink = ui.with_keyed(
             "editor",
             NodeSpec::row()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Grow(1.0))
+                .fill()
                 .clip()
                 .on_key(tag.clone())
                 .on_drag(tag.clone())
@@ -1604,8 +1571,8 @@ impl Kawoosh {
                         // The padding is each row's, so a header's band
                         // runs across the gutter into the text's.
                         NodeSpec::column()
-                            .width(Sizing::Fixed(gutter))
-                            .height(Sizing::Grow(1.0))
+                            .width(gutter)
+                            .grow_height()
                             .role(Role::None),
                         |ui| {
                             for ln in top..last {
@@ -1628,10 +1595,7 @@ impl Kawoosh {
                 // the notch itself, both axes, and `top` would never
                 // hear it — and the app hands the offset back each frame.
                 let sel_radius = self.selection_radius();
-                let lines_spec = NodeSpec::column()
-                    .width(Sizing::Grow(1.0))
-                    .height(Sizing::Grow(1.0))
-                    .on_scroll(tag.clone());
+                let lines_spec = NodeSpec::column().fill().on_scroll(tag.clone());
                 let lines = ui.with_keyed(
                     "lines",
                     if md {
@@ -2028,17 +1992,17 @@ impl Kawoosh {
                                 .map(|l| md_cell_h.get(&l).copied().unwrap_or(lh))
                                 .collect();
                             let edge = |ui: &mut Ui<'_>| {
-                                ui.with(NodeSpec::row().height(Sizing::Fixed(1.0)), |_| {});
+                                ui.leaf(NodeSpec::row().height(1.0));
                             };
                             ui.with(
                                 NodeSpec::row()
-                                    .width(Sizing::Grow(1.0))
+                                    .grow_width()
                                     .height(Sizing::Fit)
                                     .min_height(kui_native::Min::FIT),
                                 |ui| {
                                     ui.with(
                                         NodeSpec::column()
-                                            .width(Sizing::Fixed(gutter))
+                                            .width(gutter)
                                             .height(Sizing::Fit)
                                             .role(Role::None),
                                         |ui| {
@@ -2048,8 +2012,8 @@ impl Kawoosh {
                                             for (l, h) in (first..ln).zip(&heights) {
                                                 ui.with(
                                                     NodeSpec::row()
-                                                        .width(Sizing::Grow(1.0))
-                                                        .height(Sizing::Fixed(*h))
+                                                        .grow_width()
+                                                        .height(*h)
                                                         .pad_xy(12.0, 0.0)
                                                         .main_align(Align::End)
                                                         .cross_align(Align::Start),
@@ -2074,7 +2038,7 @@ impl Kawoosh {
                                     let block = ui.with_keyed(
                                         &format!("tbl{table}"),
                                         NodeSpec::column()
-                                            .width(Sizing::Grow(1.0))
+                                            .grow_width()
                                             .height(Sizing::Fit)
                                             .min_height(kui_native::Min::FIT)
                                             .scroll_x()
@@ -2121,7 +2085,7 @@ impl Kawoosh {
                                                             // still its number's height.
                                                             ui.with(
                                                                 NodeSpec::column()
-                                                                    .height(Sizing::Fixed(lh))
+                                                                    .height(lh)
                                                                     .min_height(
                                                                         kui_native::Min::FIT,
                                                                     ),

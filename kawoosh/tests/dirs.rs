@@ -64,11 +64,7 @@ fn rows(d: &mut Drive, app: &mut Kawoosh, n: usize) -> String {
 
 #[cfg(unix)]
 fn ctrl_shift() -> KeyMods {
-    KeyMods {
-        ctrl: true,
-        shift: true,
-        ..Default::default()
-    }
+    KeyMods::NONE.with_shift().with_ctrl()
 }
 
 /// Without zoxide the rows are the memory's: every `:cd` a visit, the

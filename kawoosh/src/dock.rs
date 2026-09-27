@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use kawoosh_editor::{ArgKind, Args, Spec};
-use kui_native::{NodeSpec, Sizing, Ui};
+use kui_native::{NodeSpec, Ui};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -185,21 +185,18 @@ impl Kawoosh {
                     let px = (col.width.fraction() * vw).round().max(160.0);
                     let key = ui.with_keyed(
                         &format!("dockcol{}", col.id),
-                        NodeSpec::column()
-                            .width(Sizing::Fixed(px))
-                            .height(Sizing::Grow(1.0)),
+                        NodeSpec::column().width(px).grow_height(),
                         |ui| self.render_node(ui, &col.node, &format!("d:{i}/")),
                     );
                     if Some(i) == fi {
                         focus_key = Some(key);
                     }
                     if i + 1 < strip.columns.len() {
-                        ui.with(
+                        ui.leaf(
                             NodeSpec::column()
-                                .width(Sizing::Fixed(crate::app::DIVIDER))
-                                .height(Sizing::Grow(1.0))
+                                .width(crate::app::DIVIDER)
+                                .grow_height()
                                 .bg(pal.border),
-                            |_| {},
                         );
                     }
                 }

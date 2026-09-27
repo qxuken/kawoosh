@@ -677,10 +677,7 @@ fn a_cyrillic_layout_drives_the_motions_and_types_itself() {
     assert_eq!(text(&app), "one\nпwo\nthree");
     d.key(&mut app, "escape", KeyMods::default());
     // A chord too: ctrl with `ц` on W, then `м` on V, is `<C-w>v`.
-    let ctrl = KeyMods {
-        ctrl: true,
-        ..Default::default()
-    };
+    let ctrl = KeyMods::NONE.with_ctrl();
     ru(&mut d, &mut app, 'ц', 'w', ctrl);
     ru(&mut d, &mut app, 'м', 'v', KeyMods::default());
     assert_eq!(
@@ -691,10 +688,7 @@ fn a_cyrillic_layout_drives_the_motions_and_types_itself() {
     // Shift: `О` on J is `J`, which joins; `Ж` on `;` is `:`, which opens
     // the command line; and insert mode still types the layout's own
     // upper-case letter.
-    let shift = KeyMods {
-        shift: true,
-        ..Default::default()
-    };
+    let shift = KeyMods::NONE.with_shift();
     ru(&mut d, &mut app, 'О', 'j', shift);
     assert_eq!(
         text(&app),
@@ -722,10 +716,7 @@ fn a_cyrillic_layout_drives_the_motions_and_types_itself() {
 /// a line up, and `jJ` on three lines joined all three.
 #[test]
 fn a_join_reaching_the_last_line_starts_on_its_own_line() {
-    let shift = KeyMods {
-        shift: true,
-        ..Default::default()
-    };
+    let shift = KeyMods::NONE.with_shift();
     let mut app = Kawoosh::new("t", "one\ntwo\nthree");
     let mut d = Drive::new(800.0, 400.0);
     d.frame(&mut app);

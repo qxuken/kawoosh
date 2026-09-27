@@ -91,14 +91,7 @@ fn the_command_line_completes_commands_paths_and_buffers() {
         last.strip_prefix('v'),
         "wraps"
     );
-    d.key(
-        &mut app,
-        "tab",
-        KeyMods {
-            shift: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "tab", KeyMods::NONE.with_shift());
     assert_eq!(app.ed.prompt_text().unwrap_or_default(), "v");
     assert_eq!(app.cmdline_ghost().as_deref(), last.strip_prefix('v'));
     tab(&mut d, &mut app);

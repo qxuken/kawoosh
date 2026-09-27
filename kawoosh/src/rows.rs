@@ -803,16 +803,10 @@ pub fn table_cells(
     mut text: impl FnMut(&mut Ui<'_>, Range<usize>),
 ) {
     let rule = |ui: &mut Ui<'_>| {
-        ui.with(
-            NodeSpec::row()
-                .width(Sizing::Fixed(1.0))
-                .height(Sizing::Fixed(t.height))
-                .bg(t.rule),
-            |_| {},
-        );
+        ui.leaf(NodeSpec::row().size(1.0, t.height).bg(t.rule));
     };
     let cell = NodeSpec::row()
-        .height(Sizing::Fixed(t.height))
+        .height(t.height)
         .pad_xy(t.pad, 0.0)
         .cross_align(Align::Center);
     for j in 0..t.columns.max(t.cells.len()) {
@@ -820,13 +814,7 @@ pub fn table_cells(
         if t.delimiter {
             // Across the cell to the rules, no pad.
             ui.with(cell.clone().pad_xy(0.0, 0.0), |ui| {
-                ui.with(
-                    NodeSpec::row()
-                        .width(Sizing::Grow(1.0))
-                        .height(Sizing::Fixed(1.0))
-                        .bg(t.rule),
-                    |_| {},
-                );
+                ui.leaf(NodeSpec::row().grow_width().height(1.0).bg(t.rule));
             });
             continue;
         }
@@ -836,23 +824,20 @@ pub fn table_cells(
             }
             Some(TableCell::Image(Ok((id, w, h)))) => {
                 ui.with(cell.clone().pad_xy(t.pad, TABLE_IMAGE_PAD), |ui| {
-                    ui.image(
-                        *id,
-                        NodeSpec::column()
-                            .width(Sizing::Fixed(*w))
-                            .height(Sizing::Fixed(*h)),
-                    );
+                    ui.image(*id, NodeSpec::column().size(*w, *h));
                 });
             }
             Some(TableCell::Image(Err(alt))) => {
                 ui.with(cell.clone(), |ui| {
-                    ui.with(NodeSpec::row().role(Role::None), |ui| {
-                        ui.text(&format!("🖼 {alt}"), mono(face, pal).color(pal.dim));
-                    });
+                    ui.text_in(
+                        NodeSpec::row().role(Role::None),
+                        &format!("🖼 {alt}"),
+                        mono(face, pal).color(pal.dim),
+                    );
                 });
             }
             None => {
-                ui.with(cell.clone(), |_| {});
+                ui.leaf(cell.clone());
             }
         }
     }
@@ -865,38 +850,26 @@ pub fn table_cells(
 /// and `k` through a table moved every column its widest cell was on.
 pub fn table_ghost(ui: &mut Ui<'_>, face: Face, pal: &Pal, t: &TableRow, drawn: &str) {
     let style = mono(face, pal);
-    ui.with(
-        NodeSpec::row()
-            .height(Sizing::Fixed(0.0))
-            .clip()
-            .role(Role::None),
-        |ui| {
-            table_cells(ui, face, pal, t, |ui, r| {
-                ui.text(&drawn[r], style);
-            })
-        },
-    );
+    ui.with(NodeSpec::row().height(0.0).clip().role(Role::None), |ui| {
+        table_cells(ui, face, pal, t, |ui, r| {
+            ui.text(&drawn[r], style);
+        })
+    });
 }
 
 /// A table's rule 1px tall across it, above its first row or below its
 /// last: a row of the table, so it is as wide as its columns.
 pub fn table_edge(ui: &mut Ui<'_>, columns: usize, rule: Color) {
-    ui.with(
-        NodeSpec::row().height(Sizing::Fixed(1.0)).role(Role::None),
-        |ui| {
-            for j in 0..columns * 2 + 1 {
-                let w = if j % 2 == 0 {
-                    Sizing::Fixed(1.0)
-                } else {
-                    Sizing::Fit
-                };
-                ui.with(
-                    NodeSpec::row().width(w).height(Sizing::Fixed(1.0)).bg(rule),
-                    |_| {},
-                );
-            }
-        },
-    );
+    ui.with(NodeSpec::row().height(1.0).role(Role::None), |ui| {
+        for j in 0..columns * 2 + 1 {
+            let w = if j % 2 == 0 {
+                Sizing::Fixed(1.0)
+            } else {
+                Sizing::Fit
+            };
+            ui.leaf(NodeSpec::row().size(w, 1.0).bg(rule));
+        }
+    });
 }
 
 /// How a pane's gutter numbers its lines this frame: from 1, or by
@@ -987,19 +960,20 @@ pub fn gutter_row(
         spec = spec.bg(pal.strip).pixel_snap();
     }
     ui.with(
-        spec.width(Sizing::Grow(1.0))
-            .height(Sizing::Fixed(face.line_height))
+        spec.grow_width()
+            .height(face.line_height)
             .pad_xy(GUTTER_ROW_PAD, 0.0)
             .main_align(Align::End)
             .cross_align(Align::Center),
         |ui| {
             if let Some(c) = mark {
-                ui.with(
+                ui.text_in(
                     NodeSpec::row()
-                        .height(Sizing::Fixed(face.line_height))
+                        .height(face.line_height)
                         .cross_align(Align::Center)
                         .float(FloatConfig::parent().offset(GUTTER_ROW_PAD, 0.0)),
-                    |ui| ui.text(&c.to_string(), mono(face, pal).color(pal.accent)),
+                    &c.to_string(),
+                    mono(face, pal).color(pal.accent),
                 );
             }
             ui.text(&numbers.label(ln), mono(face, pal).color(color));
@@ -1020,10 +994,9 @@ fn caret_bar(ui: &mut Ui<'_>, color: Color, on: bool, x: f32, lh: f32) {
 /// row's.
 fn caret_bar_at(ui: &mut Ui<'_>, color: Color, on: bool, x: f32, y: f32, lh: f32) {
     let bar = NodeSpec::column()
-        .width(Sizing::Fixed(2.0))
-        .height(Sizing::Fixed(lh - 4.0))
+        .size(2.0, lh - 4.0)
         .float(FloatConfig::parent().offset(x - 1.0, y + 2.0));
-    ui.with(if on { bar.bg(color) } else { bar }, |_| {});
+    ui.leaf(if on { bar.bg(color) } else { bar });
 }
 
 /// One span's resolved look, so neighbours that agree merge.
@@ -1221,11 +1194,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
     let mut row = match form {
         Some(f) => {
             let mut r = NodeSpec::row()
-                .width(if f.fit {
-                    Sizing::Fit
-                } else {
-                    Sizing::Grow(1.0)
-                })
+                .width(if f.fit { Sizing::Fit } else { Sizing::GROW })
                 .min_width(if f.wrap.is_some() {
                     Min::px(0.0)
                 } else {
@@ -1253,9 +1222,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             r
         }
         None => NodeSpec::row()
-            .width(Sizing::Grow(1.0))
+            .grow_width()
             .min_width(Min::FIT)
-            .height(Sizing::Fixed(lh))
+            .height(lh)
             .cross_align(Align::Center)
             .role(Role::Line),
     };
@@ -1275,7 +1244,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
     }
     let spacer = |ui: &mut Ui<'_>, w: f32| {
         if w > 0.0 {
-            ui.with(NodeSpec::row().width(Sizing::Fixed(w)), |_| {});
+            ui.leaf(NodeSpec::row().width(w));
         }
     };
     let body = |ui: &mut Ui<'_>| {
@@ -1295,7 +1264,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 // On a baseline the box is its text's height, so that
                 // lowering it does not reach below the line.
                 let spec = NodeSpec::row()
-                    .width(Sizing::Fixed(*w))
+                    .width(*w)
                     .pad_xy(GUTTER_PAD, 0.0)
                     .main_align(Align::End)
                     .role(Role::None);
@@ -1303,7 +1272,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     if on_baseline {
                         spec
                     } else {
-                        spec.height(Sizing::Fixed(lh)).cross_align(Align::Center)
+                        spec.height(lh).cross_align(Align::Center)
                     },
                     |ui| {
                         let color = if *current { pal.dim } else { pal.faint };
@@ -1315,12 +1284,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                 ui.with(NodeSpec::row().gap(8.0).role(Role::None), |ui| {
                     for img in &f.images {
                         match img {
-                            Ok((id, w, h)) => ui.image(
-                                *id,
-                                NodeSpec::column()
-                                    .width(Sizing::Fixed(*w))
-                                    .height(Sizing::Fixed(*h)),
-                            ),
+                            Ok((id, w, h)) => ui.image(*id, NodeSpec::column().size(*w, *h)),
                             Err(alt) => {
                                 ui.text(&format!("🖼 {alt}"), mono(face, pal).color(pal.dim))
                             }
@@ -1332,18 +1296,12 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             if f.rule {
                 ui.with(
                     NodeSpec::row()
-                        .width(Sizing::Grow(1.0))
-                        .height(Sizing::Fixed(lh))
+                        .grow_width()
+                        .height(lh)
                         .cross_align(Align::Center)
                         .role(Role::None),
                     |ui| {
-                        ui.with(
-                            NodeSpec::row()
-                                .width(Sizing::Grow(1.0))
-                                .height(Sizing::Fixed(1.0))
-                                .bg(pal.border),
-                            |_| {},
-                        );
+                        ui.leaf(NodeSpec::row().grow_width().height(1.0).bg(pal.border));
                     },
                 );
                 return;
@@ -1413,7 +1371,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     ui.with_keyed(
                         "text",
                         NodeSpec::row()
-                            .width(Sizing::Grow(1.0))
+                            .grow_width()
                             .height(Sizing::Fit)
                             .min_height(Min::FIT),
                         |ui| {
@@ -1587,21 +1545,17 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             }
         } else if let Some(bg) = caret.or(selected.then_some(pal.select)) {
             let w = ui.measure_text(" ", &base, None).width;
-            let mut cell = NodeSpec::column()
-                .width(Sizing::Fixed(w))
-                .height(Sizing::Fixed(lh))
-                .bg(bg)
-                .pixel_snap();
+            let mut cell = NodeSpec::column().size(w, lh).bg(bg).pixel_snap();
             if wraps {
                 let (x, y) = wrapped_at(ui, len);
                 cell = cell.float(FloatConfig::parent().offset(x, y));
             } else {
                 cell_w = w;
             }
-            ui.with(cell, |_| {});
+            ui.leaf(cell);
         }
         if let Some((t, color)) = line.trailing {
-            ui.with(
+            ui.text_in(
                 NodeSpec::row()
                     .padding(kui_native::Edges {
                         l: (TRAILING_GAP - cell_w).max(0.0),
@@ -1611,7 +1565,8 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                     })
                     .cross_align(Align::Center)
                     .role(Role::None),
-                |ui| ui.text(t, base.color(color)),
+                t,
+                base.color(color),
             );
         }
         spacer(ui, after);

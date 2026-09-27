@@ -114,26 +114,10 @@ fn the_dock_splits_in_itself() {
     // Wider: the dock's split moves; taller: nothing above or below in
     // the dock, so the dock itself grows.
     let share = app.layout.dock.as_ref().unwrap().share_of(second).unwrap();
-    d.key(
-        &mut app,
-        "l",
-        KeyMods {
-            alt: true,
-            shift: true,
-            ..KeyMods::default()
-        },
-    );
+    d.key(&mut app, "l", KeyMods::NONE.with_shift().with_alt());
     assert!(app.layout.dock.as_ref().unwrap().share_of(second).unwrap() > share);
     let ratio = app.layout.dock_ratio;
-    d.key(
-        &mut app,
-        "k",
-        KeyMods {
-            alt: true,
-            shift: true,
-            ..KeyMods::default()
-        },
-    );
+    d.key(&mut app, "k", KeyMods::NONE.with_shift().with_alt());
     assert!(app.layout.dock_ratio != ratio, "the dock's height moved");
     ctrl_w(&mut d, &mut app, "c");
     assert_eq!(app.layout.focused(), first);
@@ -454,15 +438,7 @@ fn the_panes_resize_from_the_keyboard() {
     // rects and drags.
     ex(&mut d, &mut app, "layout tree");
     let alt = |d: &mut Drive, app: &mut Kawoosh, name: &str| {
-        d.key(
-            app,
-            name,
-            KeyMods {
-                alt: true,
-                shift: true,
-                ..Default::default()
-            },
-        );
+        d.key(app, name, KeyMods::NONE.with_shift().with_alt());
         d.frame(app);
     };
     alt(&mut d, &mut app, "l");
@@ -592,11 +568,7 @@ fn a_pane_is_dragged_by_its_title_bar() {
 /// the shell's; the plain one is nobody's in normal mode either.
 #[test]
 fn pane_moves_are_one_chord_everywhere() {
-    let shifted = KeyMods {
-        ctrl: true,
-        shift: true,
-        ..Default::default()
-    };
+    let shifted = KeyMods::NONE.with_shift().with_ctrl();
     let mut app = Kawoosh::new("t", "alpha\nbeta");
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
@@ -1091,11 +1063,7 @@ fn the_dock_is_a_strip_under_layout_dock_scroll() {
             .len()
     };
     assert_eq!(cols(&app), 3, "each split beside a column");
-    let ctrl_shift = KeyMods {
-        ctrl: true,
-        shift: true,
-        ..KeyMods::default()
-    };
+    let ctrl_shift = KeyMods::NONE.with_shift().with_ctrl();
     d.key(&mut app, "h", ctrl_shift);
     let second = app.layout.focused();
     assert!(app.layout.in_dock(second) && second != third && second != first);

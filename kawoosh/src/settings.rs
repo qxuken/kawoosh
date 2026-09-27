@@ -51,7 +51,7 @@ use std::time::Instant;
 use kawoosh_editor::{Layer, Setting};
 use kawoosh_systems::WakeHandle;
 use kawoosh_systems::watch::Watcher;
-use kui_native::{Align, NodeSpec, Sizing, TextStyle, Ui, Value, Vec2};
+use kui_native::{Align, NodeSpec, TextStyle, Ui, Value, Vec2};
 
 use crate::devtab::Tab;
 
@@ -624,12 +624,9 @@ impl Kawoosh {
                             Vec2::new(e / 6.0, e * 11.0 / 12.0),
                         ]
                     };
-                    ui.with(
-                        NodeSpec::row()
-                            .width(Sizing::Fixed(e))
-                            .height(Sizing::Fixed(e)),
-                        |ui| ui.polygon(&points, NodeSpec::row().bg(pal.dim)),
-                    );
+                    ui.with(NodeSpec::row().size(e, e), |ui| {
+                        ui.polygon(&points, NodeSpec::row().bg(pal.dim))
+                    });
                 }
                 ui.text(title, dim());
                 if let Some(n) = fold.filter(|_| !default_open) {
@@ -666,9 +663,7 @@ impl Kawoosh {
                 path.to_string()
             };
             ui.with_keyed(&key, spec, |ui| {
-                ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |ui| {
-                    ui.text(path, wrapping());
-                });
+                ui.text_in(NodeSpec::row().grow_width(), path, wrapping());
                 if switch {
                     let on = value == "true";
                     ui.with(
@@ -698,9 +693,7 @@ impl Kawoosh {
         // The header row of a leaves table, naming its columns.
         let head = move |ui: &mut Ui<'_>, from: bool| {
             ui.with(tm.row(&pal, 0), |ui| {
-                ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |ui| {
-                    ui.text("path", dim());
-                });
+                ui.text_in(NodeSpec::row().grow_width(), "path", dim());
                 ui.text("value", dim());
                 if from {
                     ui.text("from", dim());
@@ -718,7 +711,7 @@ impl Kawoosh {
                     head.push_str(r);
                 }
                 ui.text(&head, TextStyle::new(tm.small_text).color(pal.dim).nowrap());
-                ui.with_keyed(
+                ui.text_in_keyed(
                     "reload",
                     tm.button(&theme)
                         .on_click(Value::map([
@@ -727,14 +720,15 @@ impl Kawoosh {
                         ]))
                         .label("reload settings")
                         .apply_tooltip("every layer from its files again, init.lua included"),
-                    |ui| ui.text("reload", TextStyle::new(tm.small_text).color(pal.fg)),
+                    "reload",
+                    TextStyle::new(tm.small_text).color(pal.fg),
                 );
             });
             // Each layer is a block of its own — the caption its strip,
             // then its rows, nothing between — with room between the
             // blocks, so where one layer ends and the next begins is
             // seen before it is read.
-            let block = move || NodeSpec::column().width(Sizing::Grow(1.0));
+            let block = move || NodeSpec::column().grow_width();
             ui.with(
                 NodeSpec::column().fill().scroll_y().gap(tm.section_gap),
                 |ui| {
@@ -775,7 +769,7 @@ impl Kawoosh {
                                     },
                                 );
                             } else if sources.is_empty() {
-                                ui.with(NodeSpec::table().width(Sizing::Grow(1.0)), |ui| {
+                                ui.with(NodeSpec::table().grow_width(), |ui| {
                                     leaf(ui, 0, "—", "", None);
                                 });
                             }
@@ -803,7 +797,7 @@ impl Kawoosh {
                                 // A source's leaves are one table: its paths line
                                 // up at the longest of them, under a header.
                                 if !leaves.is_empty() && (fold.is_none() || default_open) {
-                                    ui.with(NodeSpec::table().width(Sizing::Grow(1.0)), |ui| {
+                                    ui.with(NodeSpec::table().grow_width(), |ui| {
                                         head(ui, false);
                                         for (i, (p, v)) in leaves.iter().enumerate() {
                                             leaf(ui, i + 1, p, v, None);
@@ -815,7 +809,7 @@ impl Kawoosh {
                     }
                     ui.with(block(), |ui| {
                         section(ui, "effective — every layer merged", None);
-                        ui.with(NodeSpec::table().width(Sizing::Grow(1.0)), |ui| {
+                        ui.with(NodeSpec::table().grow_width(), |ui| {
                             head(ui, true);
                             for (i, (p, v, from)) in effective.iter().enumerate() {
                                 leaf(ui, i + 1, p, v, Some(from));
@@ -834,8 +828,8 @@ impl Kawoosh {
     /// it from there; `reload` reloads every layer. The keyboard goes
     /// to what opened.
     pub(crate) fn on_settings_click(&mut self, p: &Value) {
-        let path = p.get("path").and_then(Value::as_str).map(PathBuf::from);
-        match (p.get("what").and_then(Value::as_str), path) {
+        let path = p.get_str("path").map(PathBuf::from);
+        match (p.get_str("what"), path) {
             (Some("open"), Some(path)) => {
                 self.open_in_editor(&path, None, None);
                 self.reclaim_focus = true;

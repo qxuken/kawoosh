@@ -317,14 +317,7 @@ fn keystroke_cost() {
     d.keys(&mut app, ":syntax_tree off");
     d.key(&mut app, "enter", KeyMods::default());
     for _ in 0..4 {
-        d.key(
-            &mut app,
-            "j",
-            KeyMods {
-                alt: true,
-                ..Default::default()
-            },
-        );
+        d.key(&mut app, "j", KeyMods::NONE.with_alt());
     }
     time(&mut d, &mut app, "edit, five cursors (x)", "x", 10);
     d.keys(&mut app, "i");

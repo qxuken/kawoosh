@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use kui_native::{Align, Min, NodeSpec, Sizing, Ui};
+use kui_native::{Align, Min, NodeSpec, Ui};
 
 use crate::devtab::Tab;
 
@@ -442,11 +442,10 @@ impl Kawoosh {
         // The name column grows, but never below its longest name: a
         // long value beside it takes the room, not the name.
         let name_cell = move |ui: &mut Ui<'_>, name: &str| {
-            ui.with(
-                NodeSpec::row().width(Sizing::Grow(1.0)).min_width(Min::FIT),
-                |ui| {
-                    ui.text(name, dim());
-                },
+            ui.text_in(
+                NodeSpec::row().grow_width().min_width(Min::FIT),
+                name,
+                dim(),
             );
         };
         // On the panel's own surface: each section a block of its own —
@@ -456,9 +455,9 @@ impl Kawoosh {
             NodeSpec::column().fill().scroll_y().gap(tm.section_gap),
             |ui| {
                 for (title, header, rows) in &sections {
-                    ui.with(NodeSpec::column().width(Sizing::Grow(1.0)), |ui| {
-                        ui.with(tm.caption(&pal), |ui| ui.text(title, dim()));
-                        ui.with(NodeSpec::table().width(Sizing::Grow(1.0)), |ui| {
+                    ui.with(NodeSpec::column().grow_width(), |ui| {
+                        ui.text_in(tm.caption(&pal), title, dim());
+                        ui.with(NodeSpec::table().grow_width(), |ui| {
                             // The header names the numeric columns and sits at
                             // their right edge, where the numbers do.
                             if let Some(header) = header {

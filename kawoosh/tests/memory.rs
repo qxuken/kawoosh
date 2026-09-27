@@ -1290,10 +1290,7 @@ fn shift_tab_walks_the_views_back() {
     ex(&mut d, &mut app, "memory texts");
     d.frame(&mut app);
     assert_eq!(app.memory_pane.view, View::Texts);
-    let shift = KeyMods {
-        shift: true,
-        ..KeyMods::default()
-    };
+    let shift = KeyMods::NONE.with_shift();
     d.key(&mut app, "tab", KeyMods::default());
     assert_eq!(app.memory_pane.view, View::Files);
     d.key(&mut app, "tab", shift);

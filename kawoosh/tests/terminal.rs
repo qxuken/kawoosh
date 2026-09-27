@@ -82,11 +82,7 @@ fn copy_mode_is_a_mode_in_colour_and_esc_leaves_it() {
     let t = app.add_headless_terminal();
     app.feed_terminal(t, b"plain \x1b[31mred\x1b[0m plain\r\n$ ");
     d.frame(&mut app);
-    let shifted = KeyMods {
-        ctrl: true,
-        shift: true,
-        ..Default::default()
-    };
+    let shifted = KeyMods::NONE.with_shift().with_ctrl();
     d.key(&mut app, "X", shifted);
     d.frame(&mut app);
     let v = app.focused_view().expect("copy mode");
@@ -132,11 +128,7 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     let t = app.add_headless_terminal();
     app.feed_terminal(t, b"$ ls\r\nCargo.toml\r\n$ ");
     d.frame(&mut app);
-    let shifted = KeyMods {
-        ctrl: true,
-        shift: true,
-        ..Default::default()
-    };
+    let shifted = KeyMods::NONE.with_shift().with_ctrl();
     let pane = app.layout.focused();
     d.key(&mut app, "X", shifted);
     let v = app
@@ -310,13 +302,7 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
         .find(|n| n.kind == kui_native::NodeKind::Cells)
         .unwrap();
     let (cw, ch) = app.cell_metrics();
-    d.input(
-        &mut app,
-        InputEvent::Modifiers(KeyMods {
-            ctrl: true,
-            ..Default::default()
-        }),
-    );
+    d.input(&mut app, InputEvent::Modifiers(KeyMods::NONE.with_ctrl()));
     // The frame after the modifier, as the runner draws one: the grid
     // takes clicks while ctrl is held.
     d.frame(&mut app);
@@ -349,13 +335,7 @@ fn ctrl_click_on_a_path_in_the_terminal_opens_it() {
         kui_native::CursorShape::Pointer,
         "without ctrl, text"
     );
-    d.input(
-        &mut app,
-        InputEvent::Modifiers(KeyMods {
-            ctrl: true,
-            ..Default::default()
-        }),
-    );
+    d.input(&mut app, InputEvent::Modifiers(KeyMods::NONE.with_ctrl()));
     d.frame(&mut app);
     d.click(&mut app, cells.rect.x + 8.5 * cw, cells.rect.y + 1.5 * ch);
     let v = app

@@ -198,14 +198,7 @@ impl Harness {
     }
 
     pub fn ctrl(&mut self, app: &mut impl App, name: &str) {
-        self.key(
-            app,
-            name,
-            KeyMods {
-                ctrl: true,
-                ..Default::default()
-            },
-        );
+        self.key(app, name, KeyMods::NONE.with_ctrl());
     }
 
     /// An IME commit or the clipboard's answer: text that did not come

@@ -653,25 +653,11 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     d.frame(&mut app);
     let one = d.rect_of("row buffer delete others!").expect("the row").3;
     assert!((one - ROW_H).abs() < 1.0, "one line, cut: {one}");
-    d.key(
-        &mut app,
-        "w",
-        KeyMods {
-            alt: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "w", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     let two = d.rect_of("row buffer delete others!").expect("the row").3;
     assert!(two > ROW_H * 1.5, "the name folded, the row taller: {two}");
-    d.key(
-        &mut app,
-        "w",
-        KeyMods {
-            alt: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "w", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     // A query the names do not match is looked for in the rest of the
     // row: an alias, a key, the doc.
@@ -974,14 +960,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     // The preview off and on again, a setting for the session (the
     // cursor is on the second row, the long file).
     assert!(texts(&d).iter().any(|s| s == "long"), "the preview");
-    d.key(
-        &mut app,
-        "p",
-        KeyMods {
-            alt: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     assert!(!texts(&d).iter().any(|s| s == "long"), "hidden");
     lua(
@@ -993,28 +972,14 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         .unwrap()
         .2;
     assert!(wide > w * 1.5, "the list takes the room: {wide} vs {w}");
-    d.key(
-        &mut app,
-        "p",
-        KeyMods {
-            alt: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "p", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     assert!(texts(&d).iter().any(|s| s == "long"), "shown again");
     // Wrap: the long row folds and the window holds fewer rows.
     let before = rows(&d).len();
     let tall = d.rect_of(&format!("row {long}")).expect("the long row").3;
     assert!((tall - ROW_H).abs() < 1.0, "one line, cut: {tall}");
-    d.key(
-        &mut app,
-        "w",
-        KeyMods {
-            alt: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "w", KeyMods::NONE.with_alt());
     d.frame(&mut app);
     lua(&mut app, r#"assert(kawoosh.opt("picker.wrap") == true)"#);
     let (_, ly, _, tall) = d.rect_of(&format!("row {long}")).expect("the long row");
@@ -1039,14 +1004,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
         (nh - ROW_H).abs() < 1.0,
         "a short row keeps its height: {nh}"
     );
-    d.key(
-        &mut app,
-        "w",
-        KeyMods {
-            alt: true,
-            ..Default::default()
-        },
-    );
+    d.key(&mut app, "w", KeyMods::NONE.with_alt());
     // The pane's height and the list's width beside the preview:
     // `<A-K>` (the editor's pane key) makes the pane taller, the
     // height kept as the setting, and `<A-L>` the list wider, a
@@ -1054,15 +1012,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     // ⌥⇧ with a letter: kui reports the letter with `shift` set, the
     // binding's `<A-K>`.
     let alt = |name: &str, app: &mut Kawoosh, d: &mut Drive| {
-        d.key(
-            app,
-            name,
-            KeyMods {
-                alt: true,
-                shift: true,
-                ..Default::default()
-            },
-        );
+        d.key(app, name, KeyMods::NONE.with_shift().with_alt());
         d.frame(app);
     };
     let (_, y0, w0, _) = d.rect_of("row README.md").unwrap();

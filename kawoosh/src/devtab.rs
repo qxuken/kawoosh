@@ -9,7 +9,7 @@
 //! buffer text ([`Tab::line_h`]): a pane that shows what a buffer holds
 //! — a change's text, a diff's lines — shows it as the buffer does.
 
-use kui_native::{Align, Color, Metrics, NodeSpec, Sizing, TextStyle};
+use kui_native::{Align, Color, Metrics, NodeSpec, TextStyle};
 
 use crate::palette::Pal;
 
@@ -68,8 +68,8 @@ impl Tab {
     /// tabs' rows have, every other row washed and a hovered one lit.
     pub(crate) fn line(&self, pal: &Pal, i: usize) -> NodeSpec {
         NodeSpec::row()
-            .width(Sizing::Grow(1.0))
-            .height(Sizing::Fixed(self.line_h))
+            .grow_width()
+            .height(self.line_h)
             .pad_xy(self.pad_x, 0.0)
             .gap(self.cell_gap)
             .cross_align(Align::Center)
@@ -85,8 +85,7 @@ impl Tab {
     /// at its right edge — numbers under each other row to row.
     pub(crate) fn cell(&self, cells: f32, cell_w: f32) -> NodeSpec {
         NodeSpec::row()
-            .width(Sizing::Fixed(cells * cell_w))
-            .height(Sizing::Fixed(self.line_h))
+            .size(cells * cell_w, self.line_h)
             .cross_align(Align::Center)
             .main_align(Align::End)
     }
@@ -94,8 +93,8 @@ impl Tab {
     /// The cell that takes the rest of the line, clipped.
     pub(crate) fn rest(&self) -> NodeSpec {
         NodeSpec::row()
-            .width(Sizing::Grow(1.0))
-            .height(Sizing::Fixed(self.line_h))
+            .grow_width()
+            .height(self.line_h)
             .gap(self.cell_gap)
             .clip()
             .cross_align(Align::Center)
@@ -130,7 +129,7 @@ impl Tab {
     /// washed and a hovered one lit.
     pub(crate) fn row(&self, pal: &Pal, i: usize) -> NodeSpec {
         NodeSpec::row()
-            .width(Sizing::Grow(1.0))
+            .grow_width()
             .min_height(self.row_h)
             .pad_xy(self.pad_x, 0.0)
             .gap(self.cell_gap)
@@ -146,8 +145,8 @@ impl Tab {
     /// A section's caption: a strip the tab's width, its text centred.
     pub(crate) fn caption(&self, pal: &Pal) -> NodeSpec {
         NodeSpec::row()
-            .width(Sizing::Grow(1.0))
-            .height(Sizing::Fixed(self.caption_h))
+            .grow_width()
+            .height(self.caption_h)
             .pad_xy(self.pad_x, 0.0)
             .gap(self.gap)
             .cross_align(Align::Center)
@@ -158,7 +157,7 @@ impl Tab {
     /// it, as tall as what it holds.
     pub(crate) fn toolbar(&self) -> NodeSpec {
         NodeSpec::row()
-            .width(Sizing::Grow(1.0))
+            .grow_width()
             .min_height(kui_native::Min::FIT)
             .pad_xy(self.pad_x, 0.0)
             .gap(self.gap)

@@ -19,7 +19,7 @@
 //! close button, when there is another tab to go to. When the tabs are
 //! in more than one directory each label leads with its own.
 
-use kui_native::{Align, CursorShape, NodeSpec, Role, Sizing, Span, Ui, Value, widgets};
+use kui_native::{Align, CursorShape, NodeSpec, Role, Span, Ui, Value, widgets};
 
 use crate::app::Kawoosh;
 use crate::layout::Content;
@@ -68,7 +68,7 @@ impl Kawoosh {
         }
         ui.with(
             NodeSpec::column()
-                .width(Sizing::Grow(1.0))
+                .grow_width()
                 .bg(pal.strip)
                 .label("titlebar"),
             |ui| {
@@ -83,7 +83,7 @@ impl Kawoosh {
                     ui.with_keyed(
                         "cwd",
                         NodeSpec::row()
-                            .height(Sizing::Grow(1.0))
+                            .grow_height()
                             .pad_xy(8.0, 0.0)
                             .cross_align(Align::Center)
                             .hover_bg(pal.panel)
@@ -99,20 +99,16 @@ impl Kawoosh {
                             }
                         },
                     );
-                    ui.with(NodeSpec::row().width(Sizing::Grow(1.0)), |_| {});
+                    ui.leaf(NodeSpec::row().grow_width());
                     for (i, (text, color, run)) in blocks.iter().enumerate() {
                         if i > 0 {
-                            ui.with_indexed(
+                            ui.leaf_indexed(
                                 2000 + i as u64,
-                                NodeSpec::column()
-                                    .width(Sizing::Fixed(1.0))
-                                    .height(Sizing::Fixed(tab_h - 10.0))
-                                    .bg(pal.border),
-                                |_| {},
+                                NodeSpec::column().size(1.0, tab_h - 10.0).bg(pal.border),
                             );
                         }
                         let mut spec = NodeSpec::row()
-                            .height(Sizing::Grow(1.0))
+                            .grow_height()
                             .pad_xy(10.0, 0.0)
                             .cross_align(Align::Center);
                         if let Some(run) = run {
@@ -132,13 +128,7 @@ impl Kawoosh {
                 });
             },
         );
-        ui.with(
-            NodeSpec::column()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(1.0))
-                .bg(pal.border),
-            |_| {},
-        );
+        ui.leaf(NodeSpec::column().grow_width().height(1.0).bg(pal.border));
     }
 
     /// The tabs, each an even share of the row down to [`TAB_MIN_W`],
@@ -209,8 +199,8 @@ impl Kawoosh {
         ui.with_keyed(
             "tabs",
             NodeSpec::row()
-                .width(Sizing::Grow(1.0))
-                .height(Sizing::Fixed(self.chrome.tab_h))
+                .grow_width()
+                .height(self.chrome.tab_h)
                 .bg(pal.strip)
                 .scroll_x()
                 // No bar: at the strip's height it would lie over the
@@ -246,9 +236,9 @@ impl Kawoosh {
                     let key = ui.with_keyed(
                         &format!("tab{i}"),
                         NodeSpec::column()
-                            .width(Sizing::Grow(1.0))
+                            .grow_width()
                             .min_width(TAB_MIN_W)
-                            .height(Sizing::Grow(1.0))
+                            .grow_height()
                             .bg(bg)
                             .hover_bg(if is_active {
                                 theme.accent_hover
@@ -259,25 +249,14 @@ impl Kawoosh {
                             .hover_group(&group),
                         |ui| {
                             // i3's coloured top edge on the block.
+                            ui.leaf(NodeSpec::row().grow_width().height(2.0).bg(edge));
                             ui.with(
-                                NodeSpec::row()
-                                    .width(Sizing::Grow(1.0))
-                                    .height(Sizing::Fixed(2.0))
-                                    .bg(edge),
-                                |_| {},
-                            );
-                            ui.with(
-                                NodeSpec::row()
-                                    .width(Sizing::Grow(1.0))
-                                    .height(Sizing::Grow(1.0))
-                                    .gap(0.0)
-                                    .cross_align(Align::Center),
+                                NodeSpec::row().fill().gap(0.0).cross_align(Align::Center),
                                 |ui| {
                                     ui.with_keyed(
                                         "item",
                                         NodeSpec::row()
-                                            .width(Sizing::Grow(1.0))
-                                            .height(Sizing::Grow(1.0))
+                                            .fill()
                                             .pad_xy(10.0, 0.0)
                                             .cross_align(Align::Center)
                                             .clip()
@@ -312,7 +291,7 @@ impl Kawoosh {
                                                 pal.border
                                             });
                                         }
-                                        ui.with_keyed(
+                                        ui.text_in_keyed(
                                             "close",
                                             close
                                                 .on_click(Value::map([
@@ -320,9 +299,10 @@ impl Kawoosh {
                                                     ("index", Value::Int(i as i64)),
                                                 ]))
                                                 .label("close tab"),
-                                            |ui| ui.text("×", rows::mono(font, &pal).color(fg)),
+                                            "×",
+                                            rows::mono(font, &pal).color(fg),
                                         );
-                                        ui.with(NodeSpec::row().width(Sizing::Fixed(6.0)), |_| {});
+                                        ui.leaf(NodeSpec::row().width(6.0));
                                     }
                                 },
                             );
@@ -333,13 +313,9 @@ impl Kawoosh {
                     }
                     // A hairline between blocks, as i3 draws.
                     if i + 1 < n {
-                        ui.with_indexed(
+                        ui.leaf_indexed(
                             1000 + i as u64,
-                            NodeSpec::column()
-                                .width(Sizing::Fixed(1.0))
-                                .height(Sizing::Grow(1.0))
-                                .bg(pal.border),
-                            |_| {},
+                            NodeSpec::column().width(1.0).grow_height().bg(pal.border),
                         );
                     }
                 }

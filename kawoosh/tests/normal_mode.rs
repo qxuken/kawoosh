@@ -29,24 +29,15 @@ fn primary(app: &Kawoosh) -> usize {
 }
 
 fn ctrl() -> KeyMods {
-    KeyMods {
-        ctrl: true,
-        ..Default::default()
-    }
+    KeyMods::NONE.with_ctrl()
 }
 
 fn alt() -> KeyMods {
-    KeyMods {
-        alt: true,
-        ..Default::default()
-    }
+    KeyMods::NONE.with_alt()
 }
 
 fn shift() -> KeyMods {
-    KeyMods {
-        shift: true,
-        ..Default::default()
-    }
+    KeyMods::NONE.with_shift()
 }
 
 fn esc(d: &mut Drive, app: &mut Kawoosh) {
@@ -477,15 +468,7 @@ fn ctrl_shift_u_deletes_the_line_in_insert_mode() {
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     d.keys(&mut app, "jA");
-    d.key(
-        &mut app,
-        "u",
-        KeyMods {
-            ctrl: true,
-            shift: true,
-            ..KeyMods::default()
-        },
-    );
+    d.key(&mut app, "u", KeyMods::NONE.with_shift().with_ctrl());
     assert_eq!(text(&app), "one\nthree\n");
     assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Insert);
     assert_eq!(app.ed.memory.head().map(|m| m.text.as_str()), Some("two\n"));
