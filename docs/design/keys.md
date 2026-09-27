@@ -223,6 +223,10 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `<A-o>` `<A-i>` | `select node`: the syntax node under the caret, then the one around it; back in |
 | `<A-n>` `<A-p>` | the next, the previous sibling node |
 | `<D-a>` | select all |
+| `<leader>vs` `<leader>vS` (visual) | helix's `s` `S`: the matches of a pattern inside every selection become the selections, or every selection is split on them — a prompt previewed as it is typed, `<Esc>` putting the selections back (`select within`, `select split`; [selections.md](selections.md)); `<D-a><leader>vs` is helix's `%s` |
+| `<leader>vk` (visual) | helix's `K` and `<A-K>`: keep the selections that match, or with `!pattern` those that do not (`select keep`) |
+| `<leader>vl` (visual) | helix's `<A-s>`: every line of every selection its own selection (`select lines`) |
+| `<leader>v,` | helix's `<A-,>`: the primary selection gone (`select drop primary`), from normal mode's carets too |
 | `o` (visual) | swap the selection's ends |
 | `<D-c>` (visual) | yank — the register and the clipboard |
 

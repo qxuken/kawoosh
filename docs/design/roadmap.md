@@ -2385,9 +2385,14 @@ then breadth.
     label or nil, taken off and said once when it fails. Tests:
     `a_tabs_directory_is_in_its_label_as_the_setting_says`,
     `a_plugin_writes_the_tabs_labels` (chrome.rs).
-51. **Selections, helix's** (a note first): which of `s` `S` `K` `<A-K>`
+51. ~~**Selections, helix's** (a note first): which of `s` `S` `K` `<A-K>`
     `<A-s>` `C` `<A-,>` come, on which keys, and selecting within a
-    selection.
+    selection.~~ Landed 2026-09-27 ([selections.md](selections.md)):
+    `select within`, `split`, `keep` (`!` drops), `lines`, `drop
+    primary` on a `<leader>v` group from visual mode — the user's pick
+    over helix's letters, which are vim's `s` `S` `K` there — each
+    pattern a prompt previewed as it is typed; helix's `C` is `<C-j>`
+    already.
 52. **A disk-usage pane**: a sizing walk on the io thread, unfiltered,
     streaming each directory's total as it is known, and a pane over it
     that sorts, descends and deletes through `dir`'s plan.

@@ -2206,6 +2206,17 @@ pub fn install(ed: &mut Editor) {
     });
     ed.register("select next", select_next);
     ed.register("select all matches", select_all_matches);
+    for (name, how) in [
+        ("select within", crate::Select::Within),
+        ("select split", crate::Select::Split),
+        ("select keep", crate::Select::Keep),
+    ] {
+        ed.register_with_args(name, Args::rest(&[ArgKind::Text]), move |ed, ctx| {
+            select_command(ed, ctx, how)
+        });
+    }
+    ed.register("select lines", select_lines);
+    ed.register("select drop primary", select_drop_primary);
     // `S`: `cc` in one key.
     ed.register("change line", |ed, ctx| {
         let id = view(ed, ctx).buffer;
@@ -2806,6 +2817,26 @@ const DOCS: &[(&str, &str)] = &[
     (
         "select all matches",
         "select every match of the selection, or of the word under the caret (<A-l>, <D-L>)",
+    ),
+    (
+        "select within",
+        "the matches of PATTERN inside every selection become the selections; bare, a prompt previewed as it is typed (<leader>vs, helix's s)",
+    ),
+    (
+        "select split",
+        "every selection split on PATTERN, the pieces between its matches; bare, a prompt (<leader>vS, helix's S)",
+    ),
+    (
+        "select keep",
+        "keep the selections that match PATTERN, or with !PATTERN those that do not; bare, a prompt (<leader>vk, helix's K and <A-K>)",
+    ),
+    (
+        "select lines",
+        "every line of every selection its own selection (<leader>vl, helix's <A-s>)",
+    ),
+    (
+        "select drop primary",
+        "the primary selection gone, the one before it primary (<leader>v,, helix's <A-,>)",
     ),
     (
         "change line",
@@ -3587,6 +3618,178 @@ fn select_all_matches(ed: &mut Editor, ctx: &Ctx) {
     ed.set_mode(ctx.view, Mode::Visual);
 }
 
+/// What each selection of `view` covers: its lines under `V` (the last
+/// one's newline off, so a piece does not end on it), else its
+/// characters, the head's included — as an operator in visual mode
+/// takes them.
+fn sel_ranges(ed: &Editor, view_id: ViewId) -> Vec<Range<usize>> {
+    let v = &ed.views[view_id];
+    let buf = &ed.buffers[v.buffer];
+    let lines = ed.mode(view_id) == Mode::Visual && v.visual_linewise;
+    v.sels
+        .iter()
+        .map(|s| {
+            if lines {
+                let r = line_range_of_sel(buf, s, 0);
+                let nl = r.end > r.start && buf.slice(r.end - 1..r.end) == "\n";
+                r.start..r.end - usize::from(nl)
+            } else {
+                op_range(buf, s, MotionKind::Inclusive, 1).0
+            }
+        })
+        .collect()
+}
+
+/// The pattern of a `select` command, read as `/` reads one, or the
+/// message saying what is wrong with it.
+fn select_regex(pattern: &str) -> Result<regex::bytes::Regex, String> {
+    crate::search::Search::new(pattern, true).map(|s| s.re)
+}
+
+/// The new selection set `pieces` make, per old selection, over `view`:
+/// visual selections as a match lies (the head on its last character),
+/// the primary the first inside the old primary. None when there are
+/// none.
+fn set_pieces(ed: &mut Editor, view_id: ViewId, pieces: Vec<Vec<Range<usize>>>) -> bool {
+    let old = ed.views[view_id].sels.primary;
+    let buf = &ed.buffers[ed.views[view_id].buffer];
+    let mut items = Vec::new();
+    let mut primary = 0;
+    for (i, rs) in pieces.into_iter().enumerate() {
+        if i == old && !rs.is_empty() {
+            primary = items.len();
+        }
+        items.extend(
+            rs.into_iter()
+                .filter(|r| r.end > r.start)
+                .map(|r| over(buf, r)),
+        );
+    }
+    if items.is_empty() {
+        return false;
+    }
+    let primary = primary.min(items.len() - 1);
+    let mut sels = crate::Selections { items, primary };
+    sels.normalize();
+    let v = &mut ed.views[view_id];
+    v.sels = sels;
+    v.visual_linewise = false;
+    v.goal_col = None;
+    ed.set_mode(view_id, Mode::Visual);
+    true
+}
+
+/// The matches of `re` inside `range` of `buf`, read in that text alone
+/// (so `^` is its start), empty ones left out.
+fn matches_in(buf: &Buffer, re: &regex::bytes::Regex, range: Range<usize>) -> Vec<Range<usize>> {
+    let text = buf.slice(range.clone());
+    re.find_iter(text.as_bytes())
+        .filter(|m| m.end() > m.start())
+        .map(|m| range.start + m.start()..range.start + m.end())
+        .collect()
+}
+
+/// The three that read a pattern, run with it: the matches inside every
+/// selection become the selections (`within`), every selection split on
+/// them (`split`), or the selections that match kept — those that do
+/// not, for a pattern after `!` (`keep`). A pattern that makes no
+/// selection says so and changes nothing.
+pub(crate) fn select_by(ed: &mut Editor, view_id: ViewId, how: crate::Select, pattern: &str) {
+    use crate::Select;
+    let (negate, pat) = match (how, pattern.strip_prefix('!')) {
+        (Select::Keep, Some(rest)) => (true, rest),
+        _ => (false, pattern),
+    };
+    let re = match select_regex(pat) {
+        Ok(re) => re,
+        Err(e) => {
+            ed.message = e;
+            return;
+        }
+    };
+    let ranges = sel_ranges(ed, view_id);
+    let buf = &ed.buffers[ed.views[view_id].buffer];
+    let pieces: Vec<Vec<Range<usize>>> = ranges
+        .into_iter()
+        .map(|r| match how {
+            Select::Within => matches_in(buf, &re, r),
+            Select::Split => {
+                let mut out = Vec::new();
+                let mut at = r.start;
+                for m in matches_in(buf, &re, r.clone()) {
+                    out.push(at..m.start);
+                    at = m.end;
+                }
+                out.push(at..r.end);
+                out
+            }
+            Select::Keep => {
+                let hit = re.is_match(buf.slice(r.clone()).as_bytes());
+                if hit != negate { vec![r] } else { Vec::new() }
+            }
+        })
+        .collect();
+    if !set_pieces(ed, view_id, pieces) {
+        ed.message = match how {
+            Select::Keep => "no selection is left".into(),
+            _ => "no match in the selections".into(),
+        };
+    }
+}
+
+/// `select within` / `split` / `keep`: with a pattern, run; bare, a
+/// prompt that previews what `<CR>` will make.
+fn select_command(ed: &mut Editor, ctx: &Ctx, how: crate::Select) {
+    if ctx.args.is_empty() {
+        ed.open_prompt(ctx.view, Prompt::Select { how });
+        return;
+    }
+    select_by(ed, ctx.view, how, &ctx.args.join(" "));
+}
+
+/// `select lines`, helix's `<A-s>`: every line of every selection its
+/// own selection, its newline off; an empty line is none.
+fn select_lines(ed: &mut Editor, ctx: &Ctx) {
+    let ranges = sel_ranges(ed, ctx.view);
+    let buf = &ed.buffers[ed.views[ctx.view].buffer];
+    let pieces: Vec<Vec<Range<usize>>> = ranges
+        .into_iter()
+        .map(|r| {
+            let (a, b) = (
+                buf.line_of(r.start),
+                buf.line_of(r.end.saturating_sub(1).max(r.start)),
+            );
+            (a..=b)
+                .map(|ln| {
+                    let lr = buf.line_range(ln);
+                    let end = if buf.slice(lr.clone()).ends_with('\n') {
+                        lr.end - 1
+                    } else {
+                        lr.end
+                    };
+                    lr.start.max(r.start)..end.min(r.end)
+                })
+                .collect()
+        })
+        .collect();
+    if !set_pieces(ed, ctx.view, pieces) {
+        ed.message = "no line with text in the selections".into();
+    }
+}
+
+/// `select drop primary`, helix's `<A-,>`: the primary selection gone,
+/// the one before it primary.
+fn select_drop_primary(ed: &mut Editor, ctx: &Ctx) {
+    let sels = &mut ed.views[ctx.view].sels;
+    if sels.len() < 2 {
+        ed.message = "one selection".into();
+        return;
+    }
+    let p = sels.primary;
+    sels.items.remove(p);
+    sels.primary = p.saturating_sub(1).min(sels.items.len() - 1);
+}
+
 /// The keymap the engine ships: vim's letters where vim has them, and
 /// beside them the clusters docs/design/keys.md lays out — a prefix or
 /// a modifier per family, so a hand that knows one member of a family
@@ -3952,6 +4155,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>c", "code"),
         ("<leader>y", "copy the path"),
         ("<leader>o", "look"),
+        ("<leader>v", "selections"),
         ("g", "goto"),
         ("gs", "surround"),
         ("<C-w>", "panes, tabs, dock"),
@@ -3980,10 +4184,19 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<D-c>", "yank"),
         ("<Esc>", "normal"),
         ("<C-c>", "normal"),
+        // helix's selections by a pattern (docs/design/selections.md):
+        // a leader group, so no vim letter is shadowed.
+        ("<leader>vs", "select within"),
+        ("<leader>vS", "select split"),
+        ("<leader>vk", "select keep"),
+        ("<leader>vl", "select lines"),
+        ("<leader>v,", "select drop primary"),
     ];
     for (k, c) in v {
         km.bind(Visual, k, c);
     }
+    // The carets `<C-j>` makes are normal mode's.
+    km.bind(Normal, "<leader>v,", "select drop primary");
     // The case operators doubled on their last letter, vim's `guu`
     // `gUU` `g~~`, a line each; after any other operator the letter
     // is no operator of its, and nothing runs.

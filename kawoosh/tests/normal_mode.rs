@@ -758,3 +758,63 @@ fn blank_lines_around_and_whole_lines_in_line_visual() {
     assert_eq!(text(&app), "one\nX\nthree");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// helix's selections by a pattern (docs/design/selections.md), on the
+/// `<leader>v` group from visual mode: `vs` the matches inside, previewed
+/// as the pattern is typed and put back by `<Esc>`; `vS` split; `vl`
+/// lines; `vk` keep, `!` to drop; `v,` the primary gone.
+#[test]
+fn selections_within_split_keep_lines_drop() {
+    let doc = "let a = foo(1);\nlet b = bar(foo, 2);\nfoo\n\nend foo\n";
+    let mut app = Kawoosh::new("t", doc);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let texts = |app: &Kawoosh| -> Vec<String> {
+        let v = app.focused_view().unwrap();
+        let buf = app.ed.buffer_of(v);
+        app.ed.views[v]
+            .sels
+            .iter()
+            .map(|s| buf.slice(s.start()..buf.next_char(s.end())))
+            .collect()
+    };
+    // Within the first two lines, live.
+    d.press(&mut app, "Vj<leader>vs");
+    d.keys(&mut app, "foo");
+    assert_eq!(texts(&app), ["foo", "foo"], "previewed as it is typed");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(texts(&app), ["foo", "foo"]);
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Visual);
+    // An abandoned prompt puts the selections back.
+    esc(&mut d, &mut app);
+    d.press(&mut app, "ggVj<leader>vs");
+    d.keys(&mut app, "let");
+    assert_eq!(texts(&app), ["let", "let"]);
+    esc(&mut d, &mut app);
+    esc(&mut d, &mut app);
+    assert_eq!(sels(&app).len(), 1, "back to the one line selection");
+    assert!(app.ed.views[app.focused_view().unwrap()].visual_linewise);
+    // Split the second line on `, `.
+    esc(&mut d, &mut app);
+    d.press(&mut app, "ggjV<leader>vS");
+    d.keys(&mut app, ", ");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(texts(&app), ["let b = bar(foo", "2);"]);
+    // Every line with text its own selection, then keep and drop.
+    esc(&mut d, &mut app);
+    d.press(&mut app, "ggVG<leader>vl");
+    assert_eq!(texts(&app).len(), 4, "the empty line is none");
+    d.press(&mut app, "<leader>vk");
+    d.keys(&mut app, "!^let");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(texts(&app), ["foo", "end foo"]);
+    d.press(&mut app, "<leader>v,");
+    assert_eq!(texts(&app).len(), 1, "the primary gone");
+    // A pattern that makes nothing says so and changes nothing.
+    d.press(&mut app, "<leader>vs");
+    d.keys(&mut app, "zzz");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(texts(&app).len(), 1);
+    assert_eq!(app.ed.message, "no match in the selections");
+    assert_eq!(text(&app), doc, "nothing edited");
+}
