@@ -17,7 +17,8 @@ Amended 2026-09-25 with the todo reconciled against it: every item it
 held that the list had built is checked there, and the ten it held
 that the list never took are filed below ("From the todo, 2026-09-25")
 and ordered as steps 28–35, with the asks of the same day; steps 36–38
-the evening's (marks.md).
+the evening's (marks.md). Amended 2026-09-27 with the todo's quirks
+from use ("From the todo, 2026-09-27"), ordered as steps 44–53.
 
 ## Where it stands
 
@@ -385,6 +386,74 @@ Two lines of the todo, and an ask on top of them, decided in
 - **The symbol search interactive, and a tree with more symbols**: the
   pane follows the picker's cursor, and a buffer without a server gets
   its grammar's outline. Step 36, built the same evening.
+
+## From the todo, 2026-09-27
+
+A few days of use filled the todo's tail; read against this list and
+the code, with each quirk reproduced through `kawoosh test` where it
+could be. Seven are bugs, and two of them explain most of the rest:
+
+- **A paste into a terminal repeats forever**, and a new terminal
+  gets the repeats: `paste clipboard` sets `awaiting_paste`, every
+  frame asks kui for the clipboard while it is set, and only the
+  editor's branch of the answer takes it (`app.rs`'s text handler) —
+  the terminal's pastes and leaves it on. Global, so it follows focus.
+- **`g` and `z` dropped in visual and operator-pending mode**, so
+  `vgg`, `vgh`, `vgl`, `dgg`, `ygg`, `vgsa)` all fail — the todo's
+  "systemic bug", and its "`s` in visual" too (`vgsa` loses its `g`
+  and is `s`). The launcher binds bare letters in normal mode, gated
+  on an empty query (`launcher.lua`); visual's lookup falls through
+  to normal and finds that one-key binding, and the check for longer
+  ones asks the mode it started in (`has_deeper(lookup_mode, …)`,
+  `editor/src/lib.rs`) rather than normal, where they are. The engine
+  tests never load the launcher, so they pass.
+- **Visual `p`** puts after the selection's end, a character early,
+  without replacing it, and stays in visual mode; `Vs` changes a
+  character, not the lines.
+- **Visual `u` `U`** fall through to undo and redo; and a text object
+  that does not exist still runs its operator — `yiW` yanks `""` over
+  the register and the clipboard.
+- **Yanks in a secret buffer**: `y` works; a private buffer's put is
+  once, so the second `p` puts the memory's next-older entry — where
+  the todo's stray indented line came from — and a yank from outside
+  put there is forgotten too, though it was never a secret.
+- **The window after ⌘-Tab / Alt-Tab** comes up late: kui drops a frame
+  the surface skips as occluded and retries only a new window's first,
+  and nothing asks for one when the window is uncovered. kui's.
+- **Markdown's task boxes** are `☐` `☑` at the text's size, dimmed, in
+  whatever face has them — a thin, small box.
+
+And the rest, filed:
+
+- **The vim gaps**: `W` `B` `E` `ge` `{` `}` `H` `M` `L`, `iW` `aW`,
+  `~` `gu` `gU` `g~` and visual `u` `U` `~`, `[<Space>` `]<Space>`
+  (engine).
+- **Selections, helix's**: `<C-S-n>` is every match in the buffer and
+  never within the selection; `s` `S` `K` `<A-K>` `<A-s>` `C` `<A-,>`
+  have no counterpart, and several of their letters are vim's here —
+  a note before keys (engine).
+- **Links in code**: `gx` already opens a bare URL anywhere; a path
+  (`src/foo.rs:42`) does not, nor does a ⌘-click in an editor pane, and
+  a terminal's ⌘-click opens paths but not URLs (panes).
+- **The directory in a tab's title**: shown today only when the tabs
+  span more than one; no setting and no Lua hook, and a terminal's
+  OSC 7 directory is not read (panes).
+- **`<C-Tab>` `<C-S-Tab>`** as the next and the previous tab — built
+  the same day, no step: from every mode and pane, a terminal's too,
+  since its pty cannot tell `<C-Tab>` from `<Tab>`.
+- **A disk-usage pane**, the storage, async io and kui tried at once:
+  `dir` sizes files but not directories, and `kawoosh.fs.walk` is
+  gitignore-filtered, hidden-skipping, sizeless and answers once — the
+  pane wants a sizing walk that streams per-directory totals (buffers).
+- **Docs**: this file's "Where it stands" stops at step 35; there is
+  no README, no `:help` and no tutorial — the last two before a
+  release (the app).
+
+Stand as decided: the press-and-hold toggle (later, kui's), packages
+(the plugin manager is out of the MVP on purpose; `qd` as its backbone
+would be the question that reopens it), an OS daemon (mvp.md's
+non-goal), folds (step 38). The Nerd Font symbols were done already
+(fonts.md Decision 6). The order is steps 44–53.
 
 ## The list, by track
 
@@ -2214,6 +2283,42 @@ then breadth.
     look's — every sample in the editor's face, a font scene of
     look-alikes, operators, the four styles and fallbacks — so a theme
     and a face are tried together.~~ Built 2026-09-26.
+
+44. **The two bugs that explain most of the todo**: `awaiting_paste`
+    taken before the answer branches, so a terminal's paste is one; and
+    a key sequence that fell through to normal mode asking normal mode
+    for longer bindings. Each with a test that would have caught it —
+    a second frame after a terminal's paste, and `vgg` `dgg` `vgsa`
+    with the launcher loaded. First because one floods a shell and the
+    other breaks every `g` and `z` outside normal mode.
+45. **The vim gaps**: visual `p` replacing (the register kept for `P`),
+    a failed object cancelling its operator, `Vs` on lines, the case
+    operators and visual `u` `U` `~`, `W` `B` `E` `ge` and `iW` `aW`,
+    `[<Space>` `]<Space>`, `{` `}`, `H` `M` `L`. One round: each is an
+    hour and they share `normal_mode.rs`'s shape.
+46. **Secrets' put-once, again** ([secrets.md](secrets.md)): a secret is
+    put once, but a yank that was never one is not forgotten for being
+    put into a private buffer, and a spent entry says so rather than
+    putting the older one.
+47. **The window uncovered** (kui): a redraw on `Occluded(false)` and a
+    bounded retry after a skipped frame, the way a new window's first
+    frame already has — an F-round, then kawoosh on it.
+48. **Task boxes** in the markdown buffer drawn at the font's size and
+    legible, checked or not.
+49. **Links**: `gx` on a path with its line, ⌘-click in an editor pane
+    as `gx`, and URLs in a terminal's ⌘-click — one finder for a link
+    under a point, the markdown's and the terminal's merged.
+50. **Tab titles**: the directory on every tab behind a setting, a
+    terminal's own from OSC 7, and a Lua hook that writes the label,
+    wezterm's way.
+51. **Selections, helix's** (a note first): which of `s` `S` `K` `<A-K>`
+    `<A-s>` `C` `<A-,>` come, on which keys, and selecting within a
+    selection.
+52. **A disk-usage pane**: a sizing walk on the io thread, unfiltered,
+    streaming each directory's total as it is known, and a pane over it
+    that sorts, descends and deletes through `dir`'s plan.
+53. **Docs**: "Where it stands" brought up to the list; then a README,
+    `:help` pages and a tutorial, before a release.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),
