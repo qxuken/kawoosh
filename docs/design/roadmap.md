@@ -2323,7 +2323,7 @@ then breadth.
 47. ~~**The window uncovered** (kui): a redraw on `Occluded(false)` and a
     bounded retry after a skipped frame, the way a new window's first
     frame already has — an F-round, then kawoosh on it.~~ Landed
-    2026-09-27 as kui F102 (branch `claude/uncovered-window-f102`):
+    2026-09-27 as kui F102 (kui main 1e49f19):
     a skipped frame is asked for again 16 ms apart, up to 60 times,
     until one lands, and `Occluded(false)` asks for one at once.
     Probed on macOS with kui's `counter` hidden and shown: before, the
