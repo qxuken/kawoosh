@@ -293,12 +293,12 @@ impl Kawoosh {
             Mode::OperatorPending,
             Mode::Pane,
         ] {
-            for (keys, b) in self.ed.keymap.bindings(mode) {
+            for (strokes, b) in self.ed.keymap.binding_strokes(mode) {
                 let inv = self.ed.commands.resolve(&b.command, &b.args);
                 bindings.push(json!({
                     "mode": mode.short(),
-                    "keys": keys,
-                    "strokes": kawoosh_editor::keymap::parse_notation(&keys),
+                    "keys": strokes.concat(),
+                    "strokes": strokes,
                     "line": b.line(),
                     "command": self.ed.commands.contains(&inv.name).then_some(inv.name),
                     "args": inv.args,

@@ -43,6 +43,13 @@ fn the_keymap_and_the_commands_export_as_json() {
     let name = split["command"].as_str().unwrap();
     assert!(commands.iter().any(|c| c["name"] == name), "{name} is a command");
     assert!(bindings.iter().any(|b| b["mode"] == "p"), "pane mode's too");
+    // A shifted chord's stroke as it is pressed, not as its notation
+    // would be parsed back (`<C-H>` read from a map is `<C-h>`).
+    let left = bindings
+        .iter()
+        .find(|b| b["mode"] == "n" && b["keys"] == "<C-H>")
+        .expect("<C-S-h> is bound");
+    assert_eq!(left["strokes"], serde_json::json!(["<C-H>"]));
 
     // Bare, it is shown in a pane.
     ex(&mut d, &mut app, "map export");
