@@ -47,7 +47,7 @@ still there until `:w` applies them or `<C-l>` drops them.
 | `ma` `ms` `mm` `me` | sort by name, size, modification time, or type (extension) |
 | `mA` `mS` `mM` `mE` | the same, reversed |
 | `g.` | show or hide dot files (`:dir hidden`, the `dir.hidden` setting) |
-| `~`, `<leader>cd` | make the listed directory the working directory (`:dir cd`) |
+| `~` | make the listed directory the working directory (`:dir cd`) |
 
 Directories are always listed before files, and the sort is remembered
 per directory. Because `m` sorts in a listing, it does not set a
@@ -76,19 +76,19 @@ recently rank higher.
 | keys | picker |
 |---|---|
 | `<leader>f` | files under the working directory (those git does not ignore) |
-| `<leader>sf` | files under the current file's directory, or the listing's (`:picker files here`) |
+| `<leader>F` | files under the current file's directory, or the listing's (`:picker files here`) |
 | `<leader>g` | grep the project as you type (needs `rg`) |
-| `<leader>sg` | grep from the current file's directory (`:picker grep here`) |
-| `<leader><leader>` `<leader>bb` | open buffers, the current one last, so `<CR>` at once goes to the previous one |
+| `<leader>G` | grep from the current file's directory (`:picker grep here`) |
+| `<leader><leader>` | open buffers, the current one last, so `<CR>` at once goes to the previous one |
 | `<leader>/` | lines of the current buffer |
 | `<leader>.` | buffers, then files opened before, then all files |
 | `<leader>so` | files opened before in this workspace |
-| `<leader>sw` | workspaces worked in before |
+| `<leader>ww` | workspaces worked in before |
 | `<leader>sd` | directory jumps (below) |
-| `<leader>sp` | every command |
-| `<leader>tt` | tools to run in a terminal: lazygit, top, a shell, and those your settings add |
-| `<leader>bs` `<leader>cs` `<leader>m` | symbols, workspace symbols, marks ([search](search.md#marks)) |
-| `<leader>cC` `<leader>ca` | compile commands, code actions ([code](code.md)) |
+| `<leader>ic` | every command |
+| `<leader>t` | tools to run in a terminal: lazygit, top, a shell, and those your settings add |
+| `grs` `grS` `<leader>'` | symbols, workspace symbols, marks ([search](search.md#marks)) |
+| `<leader>cC` `gra` | compile commands, code actions ([code](code.md)) |
 | `<leader>sr` | the last picker again, its query and cursor as you left them |
 
 `:picker NAME` opens any of them by name.

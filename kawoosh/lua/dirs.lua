@@ -11,7 +11,7 @@
 -- adds a backend to `kawoosh.dirs.backends` and names it there.
 --
 -- A visit is fed back: the working directory moving (`:cd`,
--- `<leader>cd`, a pick — `kawoosh.on_cwd`), and a `dir` listing
+-- `~`, a pick — `kawoosh.on_cwd`), and a `dir` listing
 -- opened (`kawoosh.dirs.visit`). A terminal's own `cd` is not: the
 -- shell's zoxide hook counts that.
 --

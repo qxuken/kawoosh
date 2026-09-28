@@ -43,7 +43,7 @@ If the connection drops, the next thing that uses the host connects again. Quitt
 
 - **Files.** `:e`, `:w` and the rest work as they do locally. A file changed on the host is noticed on the next check and read again if you have no unsaved changes.
 - **The file manager.** `-` and `:dir` list a host's folders, and renaming, creating and deleting work there. Press `<C-l>` in a listing to read it again.
-- **Terminals.** With the working directory on a host (`:cd box:~/proj`), a new terminal is a shell on the host in that folder. Tools (`:tool`, `<leader>tt`), `:compile` and processes a plugin starts run on the host in the same way.
+- **Terminals.** With the working directory on a host (`:cd box:~/proj`), a new terminal is a shell on the host in that folder. Tools (`:tool`, `<leader>t`), `:compile` and processes a plugin starts run on the host in the same way.
 - **Language servers.** A host's file gets its language server on the host, started in the project's root there. The server must be installed on the host.
 - **Finding files.** The file picker (`<leader>f`) walks the host's folder over SFTP. The walk stops at 5000 files, skips hidden files, `target` and `node_modules`, and is kept for the rest of the session; kawoosh says so the first time.
 - **Sessions.** A session brings back a host's files and terminals without connecting at startup. They wait, titled with `:domain connect`, until you connect or use the host.

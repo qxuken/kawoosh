@@ -28,15 +28,15 @@ Text that a password manager marks as concealed or transient is not picked up th
 
 ## The memory pane
 
-`:memory` (`<leader>p`) opens the memory in a pane beside the buffer. It has views; `<Tab>` and `<S-Tab>` move between them, and `:memory VIEW` opens on one.
+`:memory` (`<leader>mm`) opens the memory in a pane beside the buffer. It has views; `<Tab>` and `<S-Tab>` move between them, and `:memory VIEW` opens on one.
 
 | view | rows |
 |---|---|
 | `texts` | what was yanked, deleted or pasted in, with the text under the rows |
 | `files` | files and scratches attended, with visits, time spent, edits, and any unsaved draft (`:oldfiles` and `:browse` open this view) |
-| `recent` | everything attended, in order, newest first: "where was I" (`<leader>sl`) |
+| `recent` | everything attended, in order, newest first: "where was I" (`<leader>ml`) |
 | `commands`, `searches` | command lines and searches |
-| `pins` | pinned files (`<leader>ee`) |
+| `pins` | pinned files (`<leader>mp`) |
 | `marks` | marks |
 | `all` | every row, from every workspace |
 
@@ -53,7 +53,7 @@ Every view but `all` shows the current workspace only.
 | `j` `k` `gg` `G` `<C-d>` `<C-u>` | move |
 | `q` | close; `<Esc>` hands the keys back to the editor pane |
 
-From the command line: `:memory forget SUBJECT`, `:memory filter QUERY`, and `:memory clear` to forget everything (`:memory clear!` reverts the buffers holding drafts too). Pins: `<leader>ea` pins the buffer's file, `<leader>e1`…`<leader>e9` or `<A-1>`…`<A-9>` open a pin.
+From the command line: `:memory forget SUBJECT`, `:memory filter QUERY`, and `:memory clear` to forget everything (`:memory clear!` reverts the buffers holding drafts too). Pins: `<leader>ma` pins the buffer's file, `<A-1>`…`<A-9>` open a pin. `<leader>mf` lists the files attended, with their drafts.
 
 How long the memory keeps things: `memory.keep_days` (90) for files and their histories, `memory.max_mb` (64) for the whole store, `memory.idle_secs` (60) for when time spent stops counting. `.` and macros are not part of the memory.
 

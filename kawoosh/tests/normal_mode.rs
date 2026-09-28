@@ -808,7 +808,7 @@ fn selections_within_split_keep_lines_drop() {
     d.keys(&mut app, "!^let");
     d.key(&mut app, "enter", KeyMods::default());
     assert_eq!(texts(&app), ["foo", "end foo"]);
-    d.press(&mut app, "<leader>v,");
+    d.press(&mut app, "<A-,>");
     assert_eq!(texts(&app).len(), 1, "the primary gone");
     // A pattern that makes nothing says so and changes nothing.
     d.press(&mut app, "<leader>vs");

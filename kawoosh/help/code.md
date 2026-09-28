@@ -83,13 +83,17 @@ return {
 | `K` | hover: what the server says about the symbol, in a pane |
 | `gd` | go to the definition (`:lsp definition`) |
 | `gD` | go to the declaration; several are a list |
-| `gI` | go to the implementation; several are a list |
-| `<leader>D` | go to the type definition |
-| `gr` | references, as a list ([search](search.md#lists)) |
-| `<leader>r` | rename: the prompt opens with `lsp rename NAME`; edit the name, `<CR>` |
-| `<leader>ca` | code actions at the caret or over the selection, in a picker |
-| `<leader>cF` | format the buffer (`:lsp format`) |
-| `<leader>cI` | inlay hints on or off for the session (`:lsp hints`) |
+| `grr` | references, as a list ([search](search.md#lists)) |
+| `grn` | rename: the prompt opens with `lsp rename NAME`; edit the name, `<CR>` |
+| `gra` | code actions at the caret or over the selection, in a picker |
+| `gri` | go to the implementation; several are a list |
+| `grt` | go to the type definition |
+| `grf` | format the buffer (`:lsp format`) |
+| `grs` `grS` | the buffer's symbols, the workspace's, in a picker ([search](search.md#symbols-and-the-outline)) |
+| `<leader>oh` | inlay hints on or off for the session (`:lsp hints`) |
+
+The server's own keys sit under `gr`, as in neovim 0.11: press `gr` and
+the which-key lists them.
 
 In the hover pane, `gd` goes to a symbol the text names, `K` shows
 that symbol's hover, and `q` closes it.
@@ -108,7 +112,7 @@ the message at the end of the row.
 |---|---|
 | `]d` `[d` | the next, previous diagnostic |
 | `<C-e>` | every diagnostic under the caret, in full, with its source and code (`ts(2322)`) |
-| `<leader>ce` `<leader>cE` | the workspace's, the file's diagnostics as a list ([search](search.md#lists)) |
+| `<leader>d` `<leader>D` | the workspace's, the file's diagnostics as a list ([search](search.md#lists)) |
 
 A server may report on files you have not opened. rust-analyzer does
 for its whole crate; for TypeScript, turn on `load_all`.

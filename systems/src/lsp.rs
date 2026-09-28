@@ -382,7 +382,7 @@ pub enum Cmd {
         buffer: BufferId,
         offset: usize,
     },
-    /// Where the thing at `offset` is implemented (`gI`): one place is
+    /// Where the thing at `offset` is implemented (`gri`): one place is
     /// gone to, several are a list.
     Implementation {
         buffer: BufferId,

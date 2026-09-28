@@ -36,7 +36,7 @@ kawoosh.buf.set_cursor(kawoosh.buf.offset(11, 9))
 kawoosh.frame()
 eq(kawoosh.buf.cursor(h).line, 11, "the caret inside `get`")
 
-kawoosh.press("<leader>bs")
+kawoosh.press("grs")
 kawoosh.wait(function()
   local st = kawoosh.picker.state()
   return st and st.count > 0
@@ -62,7 +62,7 @@ local c = kawoosh.buf.cursor(h)
 eq(c.line, 11, "closed untaken: the caret back where it was")
 eq(c.col, 9)
 
-kawoosh.press("<leader>bs")
+kawoosh.press("grs")
 kawoosh.wait(function()
   local s = kawoosh.picker.state()
   return s and s.count > 0

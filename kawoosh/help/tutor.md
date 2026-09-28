@@ -89,7 +89,7 @@ straw hay straw hay straw
 
 ## Lesson 9: the command line
 
-`:` opens the command line at the bottom of the window. Type a command and press `<CR>` to run it, or `<Esc>` to back out. `:help` opens the help, `:help editing` opens one page of it, and `<leader>sp` (Space, then `s`, then `p`) lists every command in a picker you can search.
+`:` opens the command line at the bottom of the window. Type a command and press `<CR>` to run it, or `<Esc>` to back out. `:help` opens the help, `:help editing` opens one page of it, and `<leader>ic` (Space, then `i`, then `c`) lists every command in a picker you can search.
 
 Try `:help` now. The help opens in the same pane; come back with `:b tutor`, or with `<leader><leader>`, which lists your buffers.
 
@@ -103,6 +103,6 @@ Close the new pane with `<C-w>q`.
 
 ## Where to go next
 
-- `:help` (or `<leader>sh`) lists every help page; `gx` on a link follows it. [start](start.md) is a good next read, then [editing](editing.md), [panes](panes.md), [files](files.md) and [search](search.md).
+- `:help` (or `<leader>ih`) lists every help page; `gx` on a link follows it. [start](start.md) is a good next read, then [editing](editing.md), [panes](panes.md), [files](files.md) and [search](search.md).
 - `<leader>?` shows every key you can press first, and the card at the bottom right shows what can follow a key like `<leader>`, `g` or `<C-w>`.
 - `<leader>f` finds a file, and `-` lists the folder of the file you are in.

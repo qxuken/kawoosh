@@ -11,11 +11,11 @@
 //! a server with nothing to say); `<C-x>` in insert mode puts the
 //! candidates in a picker to browse — kind, signature, documentation
 //! as the preview (`picker.lua`'s `candidates` source) — `<CR>` there taking
-//! one. `<leader>r` renames (the prompt filled with `lsp rename WORD`),
-//! `gr` lists references as a live multibuffer `]q` walks (`lists.lua`), `<leader>ca`
+//! one. `grn` renames (the prompt filled with `lsp rename WORD`),
+//! `grr` lists references as a live multibuffer `]q` walks (`lists.lua`), `gra`
 //! puts the code actions in a picker — searched by title, each one's
 //! edit as a diff in the preview (`picker.lua`'s `actions` source) —
-//! `<leader>cF` formats, `<leader>D`
+//! `grf` formats, `grt`
 //! is the type definition, `<C-e>` the diagnostic under the caret in a
 //! pane and `]d` `[d` the next and previous one. A server's edits — a
 //! rename's, an action's, its own `workspace/applyEdit` — land through
@@ -1419,7 +1419,7 @@ impl Kawoosh {
         }
     }
 
-    /// `<leader>r` bare: the prompt filled with `lsp rename WORD`, the
+    /// `grn` bare: the prompt filled with `lsp rename WORD`, the
     /// word under the caret, so the new name is typed over it.
     fn rename_prompt(&mut self) {
         let Some((v, buffer, caret)) = self.lsp_at_caret() else {

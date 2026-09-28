@@ -70,7 +70,7 @@ fn the_memory_keeps_what_passed_and_the_pane_puts_it_again() {
     // the editor pane, which takes the keyboard, and the moment is the
     // register from then on.
     d.keys(&mut app, "gg");
-    d.keys(&mut app, " p");
+    d.keys(&mut app, " mm");
     d.frame(&mut app);
     assert_eq!(app.layout.focused_content(), Some(Content::Memory));
     let t = texts(&d);
@@ -94,7 +94,7 @@ fn the_memory_keeps_what_passed_and_the_pane_puts_it_again() {
     // the edits since — `three` was yanked on line 3 and is on line 3
     // still.
     d.keys(&mut app, "jyy");
-    d.keys(&mut app, " p");
+    d.keys(&mut app, " mm");
     d.frame(&mut app);
     d.keys(&mut app, "G");
     d.keys(&mut app, "y");
@@ -131,7 +131,7 @@ fn the_memory_keeps_what_passed_and_the_pane_puts_it_again() {
     let buf = app.ed.buffer_of(v);
     assert_eq!(buf.line_of(head), 2, "on `three`");
     // `q` closes the pane.
-    d.keys(&mut app, " p");
+    d.keys(&mut app, " mm");
     d.frame(&mut app);
     d.keys(&mut app, "q");
     d.frame(&mut app);
@@ -153,7 +153,7 @@ fn the_memory_is_capped_and_an_origin_can_be_gone() {
     // says so.
     d.keys(&mut app, "yy");
     d.keys(&mut app, "dd");
-    d.keys(&mut app, " p");
+    d.keys(&mut app, " mm");
     d.frame(&mut app);
     d.keys(&mut app, "o");
     assert!(
@@ -574,7 +574,7 @@ fn pins_the_picker_and_the_lua_side() {
         &format!("kawoosh.pin('file', '{}')", lua_path(&c)),
     );
     d.frame(&mut app);
-    d.keys(&mut app, " ea");
+    d.keys(&mut app, " ma");
     d.frame(&mut app);
     assert!(app.ed.message.contains("pinned #2"), "{}", app.ed.message);
     let pins = store.moments(&kawoosh_systems::store::MomentQuery {
@@ -607,7 +607,7 @@ fn pins_the_picker_and_the_lua_side() {
     d.key(&mut app, "escape", KeyMods::default());
     d.frame(&mut app);
     // `<leader>e1` opens the first pin.
-    d.keys(&mut app, " e1");
+    d.press(&mut app, "<A-1>");
     d.frame(&mut app);
     assert_eq!(
         app.ed
@@ -813,11 +813,11 @@ fn a_workspace_scopes_the_memory_and_a_history_is_the_paths() {
     d.frame(&mut app);
     // `<leader>ea` pins a here; `<leader>e1` is a, not the other root's
     // first pin; Lua sees the same.
-    d.keys(&mut app, " ea");
+    d.keys(&mut app, " ma");
     d.frame(&mut app);
     assert!(app.ed.message.contains("pinned #2"), "{}", app.ed.message);
     ex(&mut d, &mut app, &format!("e {}", b.display()));
-    d.keys(&mut app, " e1");
+    d.press(&mut app, "<A-1>");
     d.frame(&mut app);
     assert_eq!(
         app.ed
@@ -916,7 +916,7 @@ fn a_round_trip_is_no_visit_and_a_recall_no_yank() {
     let store = app.store.clone().unwrap();
     for _ in 0..2 {
         std::thread::sleep(std::time::Duration::from_millis(1100));
-        d.keys(&mut app, " p");
+        d.keys(&mut app, " mm");
         d.frame(&mut app);
         assert_eq!(app.layout.focused_content(), Some(Content::Memory));
         d.keys(&mut app, "q");
@@ -949,7 +949,7 @@ fn a_round_trip_is_no_visit_and_a_recall_no_yank() {
     assert_eq!(store.moment(&file_key(&a)).unwrap().yanks, 2);
     let one = kawoosh::moments::text_key("one\n");
     assert_eq!(store.moment(&one).unwrap().visits, 1);
-    d.keys(&mut app, " p");
+    d.keys(&mut app, " mm");
     d.frame(&mut app);
     d.keys(&mut app, "x");
     d.frame(&mut app);
@@ -1131,7 +1131,7 @@ fn the_pane_filters_its_rows_from_a_field() {
         d.keys(&mut app, "yyj");
     }
     d.keys(&mut app, "G");
-    d.keys(&mut app, " p");
+    d.keys(&mut app, " mm");
     d.frame(&mut app);
     assert_eq!(app.memory_pane.rows().len(), 30);
     // `/` opens the field with the keys; the line narrows the rows.
@@ -1202,7 +1202,7 @@ fn the_pane_filters_its_rows_from_a_field() {
     assert_eq!(app.ed.memory.head().unwrap().text, "row 17\n");
     assert!(text_of(&app).ends_with("row 17"), "{}", text_of(&app));
     // Closing the pane clears the filter with it.
-    d.keys(&mut app, " p");
+    d.keys(&mut app, " mm");
     d.frame(&mut app);
     assert!(
         app.memory_pane.filter.is_some(),

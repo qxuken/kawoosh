@@ -2846,7 +2846,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "select drop primary",
-        "the primary selection gone, the one before it primary (<leader>v,, helix's <A-,>)",
+        "the primary selection gone, the one before it primary (<A-,>, helix's)",
     ),
     (
         "change line",
@@ -4049,9 +4049,19 @@ pub fn default_keymap(km: &mut Keymap) {
         // The yank-pop: the last put walked through the memory.
         ("[p", "put older"),
         ("]p", "put newer"),
-        // `g`: going somewhere.
+        // `g`: going somewhere. The language server's own under `gr`,
+        // as neovim 0.11 has them (keymap-regroup.md): `grr` `grn`
+        // `gra` `gri` `grt`, and kawoosh's `grf` `grs` `grS`.
         ("gd", "lsp definition"),
-        ("gr", "lsp references"),
+        ("gD", "lsp declaration"),
+        ("grr", "lsp references"),
+        ("grn", "lsp rename"),
+        ("gra", "lsp action"),
+        ("gri", "lsp implementation"),
+        ("grt", "lsp type definition"),
+        ("grf", "lsp format"),
+        ("grs", "picker symbols"),
+        ("grS", "picker workspace_symbols"),
         ("K", "lsp hover"),
         ("<C-e>", "lsp diagnostic"),
         ("<CR>", "goto location"),
@@ -4064,52 +4074,38 @@ pub fn default_keymap(km: &mut Keymap) {
         ("ga", "align"),
         ("gsd", "surround delete"),
         ("gsr", "surround replace"),
-        // `<leader>` groups: b buffers, t tabs, s search and lists, w
-        // the workspace, c code, and single letters for the daily few.
+        ("gx", "open link"),
+        // `<C-w>`: the tabs and the layout beside the panes — `c`
+        // closes the pane, `C` the tab; `m` the layout's mode.
+        ("<C-w>C", "tab close"),
+        ("<C-w>m", "layout"),
+        // `Z`: write and quit, all of them too.
+        ("ZA", "quit all"),
+        // `<leader>` groups, one module each (keymap-regroup.md): b
+        // buffers, c compile, i help, m memory, o the look, s search,
+        // w the workspace, y the path; single letters for the daily
+        // few. A key reachable without the leader is not on it again,
+        // and keys.md's reserved spellings stay free (`<leader>h` the
+        // hunks', `<leader>wd` `<leader>wc` git's).
         ("<leader><leader>", "buffer list"),
         ("<leader>bd", "buffer delete"),
         ("<leader>bD", "buffer delete!"),
         ("<leader>bo", "buffer delete others"),
-        ("<leader>bn", "buffer next"),
-        ("<leader>bp", "buffer prev"),
-        ("<leader>tn", "tab new"),
-        ("<leader>tl", "layout"),
-        ("<leader>tq", "tab close"),
-        ("<leader>sp", "commands"),
-        ("<leader>so", "memory files"),
-        ("<leader>sm", "messages"),
-        ("<leader>sh", "help"),
+        ("<leader>ih", "help"),
+        ("<leader>im", "messages"),
+        ("<leader>ic", "commands"),
         ("<leader>ws", "session save"),
         ("<leader>wr", "session restore"),
         ("<leader>cc", "compile"),
         ("<leader>cC", "compile pick"),
-        ("<leader>ca", "lsp action"),
-        ("<leader>cF", "lsp format"),
-        ("<leader>cr", "markdown toggle"),
-        ("gx", "open link"),
-        ("<leader>r", "lsp rename"),
-        ("<leader>D", "lsp type definition"),
-        ("gI", "lsp implementation"),
-        ("gD", "lsp declaration"),
-        ("<leader>cI", "lsp hints"),
-        ("<leader>cs", "picker workspace_symbols"),
-        ("<leader>bs", "picker symbols"),
-        ("<leader>m", "picker marks"),
+        ("<leader>'", "picker marks"),
         ("<leader>u", "undo history"),
         ("<leader>x", "lua eval"),
-        ("<leader>p", "memory"),
-        ("<leader>sl", "memory recent"),
-        ("<leader>ee", "memory pins"),
-        ("<leader>ea", "memory pin"),
-        ("<leader>e1", "memory pin 1"),
-        ("<leader>e2", "memory pin 2"),
-        ("<leader>e3", "memory pin 3"),
-        ("<leader>e4", "memory pin 4"),
-        ("<leader>e5", "memory pin 5"),
-        ("<leader>e6", "memory pin 6"),
-        ("<leader>e7", "memory pin 7"),
-        ("<leader>e8", "memory pin 8"),
-        ("<leader>e9", "memory pin 9"),
+        ("<leader>mm", "memory"),
+        ("<leader>mp", "memory pins"),
+        ("<leader>ma", "memory pin"),
+        ("<leader>ml", "memory recent"),
+        ("<leader>mf", "memory files"),
         ("<A-1>", "memory pin 1"),
         ("<A-2>", "memory pin 2"),
         ("<A-3>", "memory pin 3"),
@@ -4125,7 +4121,6 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>yD", "path copy dir absolute"),
         ("<leader>yn", "path copy name"),
         ("<leader>yN", "path copy stem"),
-        ("<leader>Q", "quit all"),
         ("<leader>?", "keys"),
         // `o`: the look (docs/design/themes.md Decision 3) — the base
         // flipped, the OS's again, the themes' pane, the fonts' (fonts.md
@@ -4135,6 +4130,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>oo", "themes"),
         ("<leader>of", "fonts"),
         ("<leader>ol", "theme lab"),
+        // The language server's hints and the markdown buffer rendered:
+        // how the text looks, so the look's.
+        ("<leader>oh", "lsp hints"),
+        ("<leader>om", "markdown toggle"),
         // Soft wrap (wrap.md): the focused pane wrapped or not, and the
         // caret a row on screen — `j` `k` stay a line each, as vim's.
         ("<leader>ow", "wrap"),
@@ -4167,15 +4166,16 @@ pub fn default_keymap(km: &mut Keymap) {
     for (keys, name) in [
         ("<leader>", "leader"),
         ("<leader>b", "buffers"),
-        ("<leader>t", "tabs"),
-        ("<leader>s", "search, lists"),
+        ("<leader>c", "compile"),
+        ("<leader>i", "help"),
+        ("<leader>m", "memory"),
+        ("<leader>s", "search"),
         ("<leader>w", "workspace"),
-        ("<leader>c", "code"),
         ("<leader>y", "copy the path"),
         ("<leader>o", "look"),
-        ("<leader>e", "pins"),
         ("<leader>v", "selections"),
         ("g", "goto"),
+        ("gr", "language server"),
         ("gs", "surround"),
         ("<C-w>", "panes, tabs, dock"),
         ("]", "next"),
@@ -4209,13 +4209,13 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>vS", "select split"),
         ("<leader>vk", "select keep"),
         ("<leader>vl", "select lines"),
-        ("<leader>v,", "select drop primary"),
+        ("<A-,>", "select drop primary"),
     ];
     for (k, c) in v {
         km.bind(Visual, k, c);
     }
     // The carets `<C-j>` makes are normal mode's.
-    km.bind(Normal, "<leader>v,", "select drop primary");
+    km.bind(Normal, "<A-,>", "select drop primary");
     // The case operators doubled on their last letter, vim's `guu`
     // `gUU` `g~~`, a line each; after any other operator the letter
     // is no operator of its, and nothing runs.

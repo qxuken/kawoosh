@@ -55,8 +55,8 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `⌘1`…`⌘9`, `<C-S-1>`…`<C-S-9>` | the Nth column of a strip (the Nth pane of a tree), the last when there are fewer — `:pane goto N`. Both are spellings no pty can use, so they reach a column from a terminal pane too; a plain `<C-1>` is the shell's and is bound to nothing |
 | `<C-w>e` `<C-w>i` | the pane out of its column's stack into a column of its own after it, and the next column's top pane into the stack under it — `e` out, `i` in, as `<A-o>` and `<A-i>` are the syntax node's. The first is what dragging a title bar onto a pane's left or right edge does |
 | `zs` `ze` `zz` | the focused column against the viewport's left edge, its right edge, or in the middle (`:strip left` / `right` / `center`) — vim's horizontal scrolling, read on the ribbon; the ribbon makes room past its ends for it, so a lone column centres too |
-| `<C-w>t` `<leader>tn` | a new tab, of the kind `layout.default` names (the strip) |
-| `:layout` `<leader>tl` | the tab flipped between a tree of splits and a strip of columns ([scrolling-tab.md](scrolling-tab.md)); `:layout scroll` / `:layout tree` name the kind |
+| `<C-w>t` | a new tab, of the kind `layout.default` names (the strip) |
+| `<C-w>m` `:layout` | the tab flipped between a tree of splits and a strip of columns ([scrolling-tab.md](scrolling-tab.md)); `:layout scroll` / `:layout tree` name the kind |
 | `<C-w>d` | the dock — a tree of its own, or a strip under `layout.dock = "scroll"`: a split from a dock pane stays in the dock; its panes are the window's, each titled with its project when another is in front, and a project's idle tasks end with its last tab (workspaces.md Decisions 9–12) |
 | `<C-w>D` | the pane into the dock or out of it from wherever it stands, landing as `<C-w>J` / `<C-w>K` would carry it across (a dock of it alone where there was none) — `pane dock`, the keyboard going with it; the tab's last pane stays. A title bar dragged onto a pane across does the same, on the side it is let go |
 | `<D-=>` `<D-+>` / `<D-->` `<D-_>` / `<D-0>` (Ctrl where there is no ⌘) | `font bigger` / `smaller` by a pixel for the session, `font reset` back to the settings' size; from every mode and pane |
@@ -72,7 +72,7 @@ selection-first multicursor), and Zed (`⌘d`, `⌘⇧l`).
 | `gt` `gT` `]t` `[t` | next and previous tab |
 | `<C-Tab>` `<C-S-Tab>` | the same, as a browser has them — from **every** pane and mode, a terminal's too: a pty reads `<C-Tab>` as a plain `<Tab>`, since the terminal speaks no extended key protocol (kitty's, xterm's `modifyOtherKeys`); if it ever does, whether a program gets these back is decided then |
 | `]T` `[T` `:tabmove` | move the tab along the strip |
-| `<leader>tq` | close the tab |
+| `<C-w>C` | close the tab (`c` the pane, `C` the tab) |
 
 A tab is a strip of columns by default (`layout.default`, the window's
 own tab included), and the same keys are read on its axis
@@ -179,7 +179,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `]b` `[b` | buffer (an editor pane's) |
 | `]t` `[t` | tab |
 | `]T` `[T` | *move* the tab a place right / left, COUNT places (`:tabmove +N` `-N` `N`, bare to the end) — the shifted letter, as `gT` is `gt` the other way |
-| `]q` `[q` | location in the compile output, or the next place of the last list — `gr`'s references, `:diagnostics` — opened beside it ([lists.md](lists.md)) |
+| `]q` `[q` | location in the compile output, or the next place of the last list — `grr`'s references, `:diagnostics` — opened beside it ([lists.md](lists.md)) |
 | `]d` `[d` | diagnostic (the message on the status line); in a multibuffer, the ones its excerpts show |
 | `]p` `[p` | right after a put: the text put replaced with the next newer / older one in the memory (the yank-pop), COUNT steps; the one chosen is the register from then on, and one `u` takes the put back whole |
 | `]h` `[h` | *reserved*: hunk |
@@ -199,14 +199,21 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `gu` `gU` `g~` + motion | lower-case, upper-case, turn the case of what it covers; `guu` `gUU` `g~~` the line |
 | `gsa` `gsd` `gsr` | surrounds: add, delete, replace (mini.surround's letters) |
 | `gd` | definition; in the hover, the symbol it names — looked up in the workspace, opened in the pane the hover came from |
+| `gD` | declaration: one is gone to, several are a list as `grr`'s |
 | `gx` | open the link under the caret (`open link`): a markdown link's destination, a URL in the OS, or a path as the tools print one at its line and column (`src/app.rs:42:7`, `a.ts(3,5)`) — looked for beside the buffer's file, then under the working directory; a directory is listed. A ⌘-click (ctrl where there is no ⌘) in an editor pane is `gx` where it lands, and in a terminal it opens a URL as well as a path (`links.rs`) |
-| `gr` | references, as `*references*` beside the code: a live multibuffer of the lines around each, washed (`<CR>` opens one, `]q` walks them, `q` closes it; [lists.md](lists.md)) |
+| `gr…` | the language server's, neovim 0.11's letters under `gr` ([keymap-regroup.md](keymap-regroup.md)), each below |
+| `grr` | references, as `*references*` beside the code: a live multibuffer of the lines around each, washed (`<CR>` opens one, `]q` walks them, `q` closes it; [lists.md](lists.md)) |
+| `grn` | rename the symbol: the prompt filled with `lsp rename WORD`, the name edited, `<CR>` |
+| `gra` | the code actions at the caret (or over the selection) in a picker: searched by title, the kind beside it, what taking one does as the preview — its edit as a diff, a command it runs; `<CR>` takes it (`:lsp action N` runs the Nth, `kawoosh.lsp.actions()`) |
+| `gri` | implementation: one is gone to, several are a list as `grr`'s (vim's `gI` stays vim's) |
+| `grt` | the type definition |
+| `grf` | format the buffer through its server |
+| `grs` | the buffer's symbols in the picker: its server's with what its grammar's outline adds — locals, headings — (`symbols.source`), a tree in the file's order while nothing is typed and the matches with the symbols they are inside after; the cursor starts on the one the caret is in, and the pane follows the cursor, or the pointer over a row, the place washed — closed untaken, the caret goes back ([marks.md](marks.md)) |
+| `grS` | the workspace's symbols matching the query, in the picker, asked as it is typed |
 | `K` | hover (vim's, not `g`, but the same family); in the hover, the hover of a symbol it names, from where that is defined |
 | `<C-e>` | every diagnostic under the caret, whole — every line of it — headed by where it came from (`error  ts(2322)`), in a pane; in a multibuffer, the excerpt's file's |
 | `gt` `gT` | tabs |
 | `g-` `g+` | undo by time |
-| `gI` | implementation: one is gone to, several are a list as `gr`'s |
-| `gD` | declaration: one is gone to, several are a list as `gr`'s |
 
 ### Selections: Ctrl counts them, Alt moves one
 
@@ -226,7 +233,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `<leader>vs` `<leader>vS` (visual) | helix's `s` `S`: the matches of a pattern inside every selection become the selections, or every selection is split on them — a prompt previewed as it is typed, `<Esc>` putting the selections back (`select within`, `select split`; [selections.md](selections.md)); `<D-a><leader>vs` is helix's `%s` |
 | `<leader>vk` (visual) | helix's `K` and `<A-K>`: keep the selections that match, or with `!pattern` those that do not (`select keep`) |
 | `<leader>vl` (visual) | helix's `<A-s>`: every line of every selection its own selection (`select lines`) |
-| `<leader>v,` | helix's `<A-,>`: the primary selection gone (`select drop primary`), from normal mode's carets too |
+| `<A-,>` | helix's: the primary selection gone (`select drop primary`), from normal mode's carets too |
 | `o` (visual) | swap the selection's ends |
 | `<D-c>` (visual) | yank — the register and the clipboard |
 
@@ -351,69 +358,65 @@ objects, or any other character on both sides.
 | `<C-s>` `<D-s>` | write, from normal, visual and insert mode alike; the mode stays |
 | `ZZ` | write and quit |
 | `ZQ` | quit, discarding |
+| `ZA` | quit all |
 
 ### `<leader>` groups (Space)
 
 | keys | what |
 |---|---|
-| `<leader><leader>` `<leader>bb` | the buffers, as a picker — the current one last, so `<CR>` at once is the one before; `<C-x>` closes the row's |
-| `<leader>bd` `<leader>bo` | delete the buffer, every other buffer |
-| `<leader>bD` | delete the buffer, discarding its unsaved changes (`:bd!`) |
-| `<leader>bn` `<leader>bp` | next, previous buffer |
-| `<leader>tn` `<leader>tq` | a new tab, close the tab |
-| `<leader>tt` | the tools (`kawoosh.tool`, and `settings.lua`'s `tools` table), as a picker: `git` (lazygit), `top`, `shell`, `compile` and `run` from `compile.default` and `run.command` |
+| `<leader><leader>` | the buffers, as a picker — the current one last, so `<CR>` at once is the one before; `<C-x>` closes the row's |
 | `<leader>f` | the files git sees under the working directory, as a picker |
 | `<leader>g` | grep the project: `rg` run on the query as it is typed |
-| `<leader>sf` `<leader>sg` | the same two from the file's directory — a listing's own in `dir` (`:picker files here`, `:picker grep here`) |
-| `<leader>ss` `<D-S-f>` `<leader>sS` | the project search ([search.md](search.md)), from visual mode the selection as its pattern: a bar below the pane — find, include and exclude as comma lists (`src/*.[ts,tsx], tests/`), `<A-r>` `<A-c>` `<A-w>` `<A-g>` regex, case, whole word, ignored files — whose `<CR>` fills `*search*`, a live multibuffer of the matches; `<A-a>` adds a stage searching what the one before found (`<A-k>`: `in`, `keep`, `drop`), `<A-x>` (or its `×`) takes one out, `<A-h>` `<A-l>` move between them, `<Up>` `<Down>` the searches made here before, `<C-j>` to the results, where `<CR>` or `g<Space>` (Zed's) opens the file at the caret — with carets on several files, the rest opened too; `<leader>ss` from the workspace's root every time, `<leader>sS` from the file's directory (`:search project`, `:grep`, `:search here`) |
-| `<leader>/` | the buffer's lines, the pane following the cursor as `<leader>bs` does |
+| `<leader>F` `<leader>G` | the same two from the file's directory — a listing's own in `dir` (`:picker files here`, `:picker grep here`) |
+| `<leader>/` | the buffer's lines, the pane following the cursor as `grs` does |
 | `<leader>.` | the smart picker: the buffers, then the files opened before, then the walk |
-| `<leader>ce` `<leader>cE` | the diagnostics as `*diagnostics*` beside the code ([lists.md](lists.md)): the workspace's — a file never opened among them when its server spoke of it — or the file's (`:diagnostics`, `:diagnostics buffer`); each message whole under its line in its severity's colour, errors' files first, made again as they move but not while the keyboard is in it; `]q` walks them |
-| `<leader>sp` | the commands (the palette): every spec, what it needs where the keyboard came from, `<CR>` runs it |
+| `<leader>d` `<leader>D` | the diagnostics as `*diagnostics*` beside the code ([lists.md](lists.md)): the workspace's — a file never opened among them when its server spoke of it — or the file's (`:diagnostics`, `:diagnostics buffer`); each message whole under its line in its severity's colour, errors' files first, made again as they move but not while the keyboard is in it; `]q` walks them |
+| `<leader>'` | the marks in the picker (`:marks`): this file's, the capitals, every other file's; the pane follows the cursor over this file's, `<C-x>` deletes the row's |
+| `<leader>t` | the tools (`kawoosh.tool`, and `settings.lua`'s `tools` table), as a picker: `git` (lazygit), `top`, `shell`, `compile` and `run` from `compile.default` and `run.command` |
+| `<leader>bd` `<leader>bo` | delete the buffer, every other buffer |
+| `<leader>bD` | delete the buffer, discarding its unsaved changes (`:bd!`) |
+| `<leader>ss` `<D-S-f>` `<leader>sS` | the project search ([search.md](search.md)), from visual mode the selection as its pattern: a bar below the pane — find, include and exclude as comma lists (`src/*.[ts,tsx], tests/`), `<A-r>` `<A-c>` `<A-w>` `<A-g>` regex, case, whole word, ignored files — whose `<CR>` fills `*search*`, a live multibuffer of the matches; `<A-a>` adds a stage searching what the one before found (`<A-k>`: `in`, `keep`, `drop`), `<A-x>` (or its `×`) takes one out, `<A-h>` `<A-l>` move between them, `<Up>` `<Down>` the searches made here before, `<C-j>` to the results, where `<CR>` or `g<Space>` (Zed's) opens the file at the caret — with carets on several files, the rest opened too; `<leader>ss` from the workspace's root every time, `<leader>sS` from the file's directory (`:search project`, `:grep`, `:search here`) |
 | `<leader>so` | the workspace's files attended before, ranked by the memory (the picker's `recent`) |
 | `<leader>sr` | the last picker again, its query and cursor as they were |
-| `<leader>sm` | the messages |
-| `<leader>sh` | the help (`:help [TOPIC]`: a page, a command, a key), read-only, `gx` following its links; `:tutor` a tutorial to try the keys on |
-| `<leader>sw` | the workspaces worked in before (`picker workspaces`, a launcher section too): a pick moves the tab there and opens the file last attended (workspaces.md Decision 11) |
 | `<leader>sd` `<C-S-z>` | the directory jumps (`picker dirs`): zoxide's directories by frecency (the memory's without it); `<CR>` makes one the working directory, `<C-o>` lists it in `dir` and leaves the working directory, `<C-v>` `<C-s>` `<C-t>` list it in a split or a tab; a shell asks the same picker with `kawoosh pick dirs` |
-| `<leader>sl` | the memory's ring (`:memory recent`): where was I — every subject attended in this workspace, in order, newest first |
+| `<leader>mm` | the memory pane (`:memory`): texts — what was yanked, deleted or pasted in, to put again — and `<Tab>` through files (with their drafts), recent, commands, searches, pins (each the workspace's), all (every workspace's); `/` filters the view |
+| `<leader>mp` `<leader>ma` | the workspace's pinned files (`:memory pins`), pin or unpin the buffer's file |
+| `<A-1>`…`<A-9>` | open the workspace's Nth pin |
+| `<leader>ml` | the memory's ring (`:memory recent`): where was I — every subject attended in this workspace, in order, newest first |
+| `<leader>mf` | the files and scratches attended, with their drafts (`:memory files`) |
+| `<leader>ww` | the workspaces worked in before (`picker workspaces`, a launcher section too): a pick moves the tab there and opens the file last attended (workspaces.md Decision 11) |
 | `<leader>ws` `<leader>wr` | save, restore the session |
+| `<leader>wu` | the disk usage of the working directory (`:du [PATH]`), a column of its own: every directory under it sized on the io thread, hidden and ignored files too, each total filling in as it is known, one directory at a time the largest first — a bar and a share each; `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `l` `<CR>` in (a file opens), `h` `-` out, `s` sorts by size, name, files, `m` marks, `d` deletes the marked (or the cursor's) through the file manager's confirm, `o` lists the directory, `r` walks again, `q` `<Esc>` close; the arrows walk too, `<Right>` in and `<Left>` out |
 | `<leader>cc` | compile: `compile.default` (a name of `compile.commands`, or a command; `%` the file), else the command last compiled here (the memory's, across launches), else the first the project's files offer — `Cargo.toml`, `package.json`, a justfile, a `build.nu`, a Makefile, ranked by the file's language server ([compile.md](compile.md)); in `*compile*` while it runs, `<C-c>` stops it, and what it started (`:compile kill`) — done, the key is `normal`'s again |
 | `<leader>cC` | what the project can compile in a picker: `compile.default`, the named `compile.commands`, the lines run here, every script, recipe and target its files offer, what said so beside each; `<CR>` runs it (`:compile pick`), or — when it wants arguments, as a `build.nu` def or a recipe with a parameter without a default — puts it in the prompt with the caret where they go; `<C-e>` does that for any row (`:compile edit N`) |
-| `<leader>ca` | the code actions at the caret (or over the selection) in a picker: searched by title, the kind beside it, what taking one does as the preview — its edit as a diff, a command it runs; `<CR>` takes it (`:lsp action N` runs the Nth, `kawoosh.lsp.actions()`) |
-| `<leader>cF` | format the buffer through its server |
-| `<leader>cI` | inlay hints on or off for the session (`lsp.inlay_hints`), drawn in the line, faint |
-| `<leader>cs` | the workspace's symbols matching the query, in the picker, asked as it is typed |
-| `<leader>m` | the marks in the picker (`:marks`): this file's, the capitals, every other file's; the pane follows the cursor over this file's, `<C-x>` deletes the row's |
-| `<leader>bs` | the buffer's symbols in the picker: its server's with what its grammar's outline adds — locals, headings — (`symbols.source`), a tree in the file's order while nothing is typed and the matches with the symbols they are inside after; the cursor starts on the one the caret is in, and the pane follows the cursor, or the pointer over a row, the place washed — closed untaken, the caret goes back ([marks.md](marks.md)) |
-| `<leader>cr` | markdown drawn rendered or as its source (`markdown toggle`, the `markdown.render` setting for the session; [markdown.md](markdown.md)) |
-| `<leader>r` | rename the symbol: the prompt filled with `lsp rename WORD`, the name edited, `<CR>` |
-| `<leader>D` | the type definition |
-| `<leader>x` | evaluate the line (the selection, in visual mode) as Lua; the result on the status line, or in a pane when it has lines |
-| `<leader>cd` `~` | the listed directory as the working one (oil's; `~` in a listing only) |
+| `<leader>ih` | the help (`:help [TOPIC]`: a page, a command, a key), read-only, `gx` following its links; `:tutor` a tutorial to try the keys on |
+| `<leader>im` | the messages |
+| `<leader>ic` | the commands (the palette): every spec, what it needs where the keyboard came from, `<CR>` runs it |
+| `<leader>?` | the which-key for every first key (`:keys`) |
+| `<leader>ot` `<leader>os` | the other base, dark for light and light for dark (`theme toggle`); the base the OS's again (`theme system`) — the session's `theme.appearance` ([themes.md](themes.md)) |
+| `<leader>ol` | the look's lab (`:theme lab`, `:font lab`): the selected theme in the editor's face through every situation the editor draws — code with the caret, a hit, a selection and a diagnostic; each token on the page, under a selection, under a hit; the surfaces, the chrome, the terminal — each pair's contrast and floor, `✓` or `✗`; the face's own scene — look-alikes, operators, its four styles, box drawing, fallbacks; `f` only what falls short, `r` the report (`:theme check`), `j` `k` `<C-d>` `<C-u>` `gg` `G` scroll, `q` closes |
+| `<leader>of` | the fonts' pane (`:fonts`), a column of its own: every family a card drawn in itself — its name, mono or not, its weights, two lines of code at the editor's size in the theme on show — the monospaced ones (`m` all); `⏎` or a click takes the cursor's family (`font.family`, the session's), `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `/` searches by name as in a buffer (`⏎` ends it, `n` `N` the next and previous match), `+` `-` the size, `y` copies the line that keeps the pick, `q` closes ([fonts.md](fonts.md)) |
+| `<leader>oo` | the themes' pane (`:themes`), a column of its own: every theme a card in its own colours, the dark ones and the light ones apart; `⏎` or a click puts the cursor's card in its half (`theme.dark`, `theme.light`), `h` `j` `k` `l` walk (the card scrolled into view), `t` `s` as above, `y` copies the line that keeps the pick, `q` closes |
+| `<leader>oh` | inlay hints on or off for the session (`lsp.inlay_hints`), drawn in the line, faint |
+| `<leader>om` | markdown drawn rendered or as its source (`markdown toggle`, the `markdown.render` setting for the session; [markdown.md](markdown.md)) |
 | `<leader>yp` `<leader>yP` | copy the file's path from the working directory (whole when outside it), its absolute path — onto the clipboard and into the register (`path copy relative`, `absolute`); in a `dir` listing the entry's under the caret, the listed directory's on `../` |
 | `<leader>yd` `<leader>yD` | copy its directory, from the working directory (`.` for the working one) and absolute (`path copy dir`, `dir absolute`) |
 | `<leader>yn` `<leader>yN` | copy its name, and its name without the extension (`path copy name`, `stem`) |
 | `<leader>u` | the undo history |
-| `<leader>p` | the memory pane (`:memory`): texts — what was yanked, deleted or pasted in, to put again — and `<Tab>` through files (with their drafts), recent, commands, searches, pins (each the workspace's), all (every workspace's); `/` filters the view |
-| `<leader>ee` `<leader>ea` | the workspace's pinned files (`:memory pins`), pin or unpin the buffer's file |
-| `<leader>e1`…`9` `<A-1>`…`9` | open the workspace's Nth pin |
-| `<leader>?` | the which-key for every first key (`:keys`) |
-| `<leader>ot` `<leader>os` | the other base, dark for light and light for dark (`theme toggle`); the base the OS's again (`theme system`) — the session's `theme.appearance` ([themes.md](themes.md)) |
-| `<leader>ol` | the look's lab (`:theme lab`, `:font lab`): the selected theme in the editor's face through every situation the editor draws — code with the caret, a hit, a selection and a diagnostic; each token on the page, under a selection, under a hit; the surfaces, the chrome, the terminal — each pair's contrast and floor, `✓` or `✗`; the face's own scene — look-alikes, operators, its four styles, box drawing, fallbacks; `f` only what falls short, `r` the report (`:theme check`), `j` `k` `<C-d>` `<C-u>` `gg` `G` scroll, `q` closes |
-| `<leader>wu` | the disk usage of the working directory (`:du [PATH]`), a column of its own: every directory under it sized on the io thread, hidden and ignored files too, each total filling in as it is known, one directory at a time the largest first — a bar and a share each; `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `l` `<CR>` in (a file opens), `h` `-` out, `s` sorts by size, name, files, `m` marks, `d` deletes the marked (or the cursor's) through the file manager's confirm, `o` lists the directory, `r` walks again, `q` `<Esc>` close; the arrows walk too, `<Right>` in and `<Left>` out |
-| `<leader>of` | the fonts' pane (`:fonts`), a column of its own: every family a card drawn in itself — its name, mono or not, its weights, two lines of code at the editor's size in the theme on show — the monospaced ones (`m` all); `⏎` or a click takes the cursor's family (`font.family`, the session's), `j` `k` `gg` `G` `<C-d>` `<C-u>` walk, `/` searches by name as in a buffer (`⏎` ends it, `n` `N` the next and previous match), `+` `-` the size, `y` copies the line that keeps the pick, `q` closes ([fonts.md](fonts.md)) |
-| `<leader>oo` | the themes' pane (`:themes`), a column of its own: every theme a card in its own colours, the dark ones and the light ones apart; `⏎` or a click puts the cursor's card in its half (`theme.dark`, `theme.light`), `h` `j` `k` `l` walk (the card scrolled into view), `t` `s` as above, `y` copies the line that keeps the pick, `q` closes |
-| `<leader>Q` | quit all |
+| `<leader>x` | evaluate the line (the selection, in visual mode) as Lua; the result on the status line, or in a pane when it has lines |
+| `~` | the listed directory as the working one (oil's; in a listing only) |
 | `-` | oil: the file's directory |
 | `_` | oil: the working directory's listing, from anywhere (`:dir .`) |
 | `<C-c>` | oil: in a listing, back to the buffer it was opened from, the listing gone unless its edits hold it (`dir close`) |
 
-The groups are the which-key ones from the neovim config: `b` buffers,
-`t` tabs, `s` search and lists, `w` the workspace, `c` code, `y` the
-path copies (the neovim config's six, `unnamedplus` and all), `o` the
-look (`<leader>u` being the undo history, LazyVim's toggles are here), single
-letters for the daily few. A picker that does not exist yet has its
+The groups are one module each ([keymap-regroup.md](keymap-regroup.md),
+2026-09-28): `b` buffers, `c` compile, `i` help (`<leader>h` is kept for
+the hunks), `m` the memory, `o` the look (`<leader>u` being the undo
+history, LazyVim's toggles are here), `s` search, `w` the workspace, `y`
+the path copies (the neovim config's six, `unnamedplus` and all); single
+letters for the daily few, a directory's twin in upper case. The
+language server is not on the leader at all but under `gr`, and a key
+reachable without the leader is not on it again. A picker that does not exist yet has its
 spelling kept for it below rather than given to something else.
 
 **In a picker** (roadmap.md step 4, `picker.lua`), the query is a
@@ -513,12 +516,12 @@ so that nothing else takes the key meanwhile.
   clipboard back (`clipboard.system`, on): what another program or a
   terminal's selection put there is read when the window, or an editor
   pane, gets the keys back, and is the register's newest, so `p` puts
-  it (helix's `<leader>p` is the memory pane here). The look is a paste
+  it (helix's `<leader>p` is the memory pane's `<leader>mm` here). The look is a paste
   asked of kui whose answer goes to the register: it is asked only when
   kui holds no other ask — kui drops a second, and the look would take
   the other paste's answer (a menu's Paste row) into the register — and
   one kui no longer awaits is let go, so text after it is typing. The register is the
-  head of the *memory*'s texts (`:memory`, `<leader>p`): every yank,
+  head of the *memory*'s texts (`:memory`, `<leader>mm`): every yank,
   delete, change and clipboard paste is a moment it keeps, newest
   first, with where it came from, on disk before the next key and back
   after a restart (memory.md); a moment put from the pane (`⏎`) or

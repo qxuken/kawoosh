@@ -629,7 +629,7 @@ pub struct Published {
     /// Every command's spec, copied when the registry's version moved.
     pub commands: Vec<Spec>,
     pub commands_version: u64,
-    /// Every key bound to each command, `n <leader>cd`, rebuilt when
+    /// Every key bound to each command, `n <leader>ww`, rebuilt when
     /// the registry or the keymap moved (`kawoosh.commands()`'s `keys`).
     pub keys: HashMap<String, Vec<String>>,
     pub keys_version: (u64, u64),

@@ -128,10 +128,10 @@ code with the caret in them.
 
 | keys | what |
 |---|---|
-| `<leader>ce` | the workspace's diagnostics (`:diagnostics`) |
-| `<leader>cE` | the current file's diagnostics (`:diagnostics buffer`) |
-| `gr` | references to the symbol under the caret (`*references*`) |
-| `gI` `gD` | implementations, declarations: one is jumped to, several are a list |
+| `<leader>d` | the workspace's diagnostics (`:diagnostics`) |
+| `<leader>D` | the current file's diagnostics (`:diagnostics buffer`) |
+| `grr` | references to the symbol under the caret (`*references*`) |
+| `gri` `gD` | implementations, declarations: one is jumped to, several are a list |
 | `]q` `[q` | the next, previous place of the last list (`:cnext`, `:cprev`) |
 | `<CR>` | open the place in the pane the list came from |
 | `q` | close the list |
@@ -157,7 +157,7 @@ lines down") or when the line is gone.
 | `'{x}` | go to the mark's line, at its first non-blank |
 | `` `{x} `` | go to the mark's line and column |
 | `]'` `['` | the next, previous marked line in this file |
-| `<leader>m` | the marks in a picker (`:marks`); `<C-x>` deletes the row's |
+| `<leader>'` | the marks in a picker (`:marks`); `<C-x>` deletes the row's |
 
 `:delmarks x` deletes a mark, `:delmarks!` every mark in this file. A
 mark's letter is drawn in the gutter. Marks are kept in the
@@ -166,7 +166,7 @@ mark's letter is drawn in the gutter. Marks are kept in the
 
 ## Symbols and the outline
 
-`<leader>bs` lists the buffer's symbols. With an empty query it is a
+`grs` lists the buffer's symbols. With an empty query it is a
 tree in the file's order; type to filter, and each match shows the
 symbols it is inside. The cursor starts on the symbol the caret is in,
 and the pane follows the cursor as you move, so the file itself is
@@ -178,5 +178,5 @@ adds locals and markdown headings. Files with no server still have an
 outline. The `symbols.source` setting chooses: `auto`, `lsp`, or
 `syntax`.
 
-`<leader>cs` searches the workspace's symbols through the language
+`grS` searches the workspace's symbols through the language
 server, and `<leader>/` does the same following for the buffer's lines.

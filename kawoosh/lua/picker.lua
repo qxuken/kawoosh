@@ -7,9 +7,9 @@
 -- `grep` (`rg` run as the query is typed, its locations the rows),
 -- `lines` (the buffer's), `symbols` (the buffer's, a server's or its
 -- grammar's outline, as a tree) and `workspace_symbols` (a server's),
--- `<leader>bs` `<leader>cs`, `commands` (the registry, what
--- `:commands` was) and `tools`; `dirs.lua` adds `dirs`. `<leader>f` `<leader>bb` `<leader>so` `<leader>.`
--- `<leader>g` `<leader>/` `<leader>sp` `<leader>tt` open them,
+-- `grs` `grS`, `commands` (the registry, what
+-- `:commands` was) and `tools`; `dirs.lua` adds `dirs`. `<leader>f` `<leader><leader>` `<leader>so` `<leader>.`
+-- `<leader>g` `<leader>/` `<leader>ic` `<leader>t` open them,
 -- `<leader>sr` the last one again where it was left.
 --
 -- Compositional (mvp.md D8: hackable by design): `kawoosh.picker` is
@@ -1357,7 +1357,7 @@ picker.source("candidates", {
   empty = "no candidate matches",
 })
 
--- The code actions a server offered (`<leader>ca`, `lsp action`): a
+-- The code actions a server offered (`gra`, `lsp action`): a
 -- row per action — its title, its kind — searched by title, the preview
 -- what taking it does (its edit as a diff, a command it runs), `⏎`
 -- taking one (`lsp action N`). The rows are what `kawoosh.lsp.actions()`
@@ -1437,7 +1437,7 @@ kawoosh.command("picker resume", function() picker.resume() end, { doc = "the la
 
 -- picker.here(): the directory "here" is — a `dir` listing's own, the
 -- buffer's file's, else the working one — what `:picker files here`
--- (`<leader>sf`) and `:picker grep here` (`<leader>sg`) start from.
+-- (`<leader>F`) and `:picker grep here` (`<leader>G`) start from.
 function picker.here()
   local h = kawoosh.buf.current()
   local ok, name = pcall(kawoosh.buf.name, h)
@@ -1466,7 +1466,7 @@ picker.source("files", {
   empty = "no files under " .. fs.cwd(),
 })
 
--- The listed buffers, the current one last: `<leader>bb<CR>` is the
+-- The listed buffers, the current one last: `<leader><leader><CR>` is the
 -- one before it. The focused tab's (`buffers.scope = "tab"`, roadmap
 -- step 30) or every one; `<C-a>` in the picker flips it.
 local function buffer_items(ctx)
@@ -1584,7 +1584,7 @@ picker.source("workspaces", {
   empty = "no other workspace in the memory",
 })
 
--- The workspace's pinned files, in pin order (`<leader>ee` is the
+-- The workspace's pinned files, in pin order (`<leader>mp` is the
 -- pane).
 picker.source("pins", {
   title = "pins", placeholder = "a pinned file",
@@ -1600,7 +1600,7 @@ picker.source("pins", {
     end
     return items
   end,
-  empty = "nothing pinned (<leader>ea pins the buffer's file)",
+  empty = "nothing pinned (<leader>ma pins the buffer's file)",
 })
 
 picker.source("recent", {
@@ -1804,7 +1804,7 @@ local function buffer_symbols(buffer, done)
   kawoosh.lsp.symbols({ buffer = buffer, source = "syntax" }, back("syntax"))
 end
 
--- The buffer's symbols (`<leader>bs`): a tree in the file's order, the
+-- The buffer's symbols (`grs`): a tree in the file's order, the
 -- cursor on the one the caret is in, the pane following the cursor.
 picker.source("symbols", {
   title = "symbols", placeholder = "a symbol in this buffer",
@@ -1825,7 +1825,7 @@ picker.source("symbols", {
   empty = "no symbols",
 })
 
--- The marks (`<leader>m`, `:marks`; docs/design/marks.md): the
+-- The marks (`<leader>'`, `:marks`; docs/design/marks.md): the
 -- memory's `mark` rows of the workspace — this file's first, then the
 -- capitals, then every other file's — each its letter, its line's
 -- text, where it is; an adrift one says so. The pane follows the
@@ -1865,7 +1865,7 @@ picker.source("marks", {
 })
 kawoosh.command("marks", function() picker.open("marks") end, { doc = "the marks, in the picker" })
 
--- The workspace's symbols matching the query (`<leader>cs`), asked of
+-- The workspace's symbols matching the query (`grS`), asked of
 -- the server of the buffer the picker was opened from as it is typed.
 picker.source("workspace_symbols", {
   title = "workspace symbols", placeholder = "a symbol anywhere",
@@ -1988,7 +1988,7 @@ picker.source("commands", {
   empty = "no command matches",
 })
 
--- `:commands [QUERY]`, `<leader>sp`: the registry as a picker.
+-- `:commands [QUERY]`, `<leader>ic`: the registry as a picker.
 kawoosh.command("commands", function(ctx)
   picker.open("commands", { query = ctx.args[1] })
 end, {
@@ -2011,17 +2011,17 @@ picker.source("tools", {
   empty = "no tools registered (kawoosh.tool in init.lua)",
 })
 
--- The keys keys.md kept for these.
+-- The keys keys.md keeps for these (keymap-regroup.md): the daily
+-- finders one stroke each, their directory's twins in upper case.
 kawoosh.map("n", "<leader>f", "picker files")
 kawoosh.map("n", "<leader>g", "picker grep")
 -- The same two from the file's directory (a listing's own in `dir`).
-kawoosh.map("n", "<leader>sf", "picker files here")
-kawoosh.map("n", "<leader>sg", "picker grep here")
+kawoosh.map("n", "<leader>F", "picker files here")
+kawoosh.map("n", "<leader>G", "picker grep here")
 kawoosh.map("n", "<leader>/", "picker lines")
 kawoosh.map("n", "<leader>.", "picker smart")
-kawoosh.map("n", "<leader>bb", "picker buffers")
 kawoosh.map("n", "<leader><leader>", "picker buffers")
 kawoosh.map("n", "<leader>so", "picker recent")
-kawoosh.map("n", "<leader>sw", "picker workspaces")
 kawoosh.map("n", "<leader>sr", "picker resume")
-kawoosh.map("n", "<leader>tt", "picker tools")
+kawoosh.map("n", "<leader>ww", "picker workspaces")
+kawoosh.map("n", "<leader>t", "picker tools")

@@ -23,8 +23,8 @@ kawoosh.test.eq(kawoosh.buf.name(), "*maps*", "the keys went to the list")
 kawoosh.test.eq(kawoosh.buf.line(1):match("^── normal"), "── normal")
 local found = false
 for _, l in ipairs(kawoosh.buf.lines()) do
-  if l:match("^<leader>cF%s+lsp format") then found = true end
+  if l:match("^<leader>cc%s+compile") then found = true end
 end
-kawoosh.test.ok(found, "the format key under the prefix")
+kawoosh.test.ok(found, "the compile key under the prefix")
 kawoosh.press("q")
 kawoosh.test.eq(kawoosh.buf.name(), "*scratch*", "q gave the keys back")
