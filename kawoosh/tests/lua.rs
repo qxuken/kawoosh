@@ -1209,7 +1209,8 @@ fn a_listing_previews_the_entry_under_the_caret() {
     // This one reads its directories on the io thread, as the app does.
     app.jobs_inline = false;
     ex(&mut d, &mut app, &format!("dir {}", dir.display()));
-    assert_eq!(d.line_rows(), [""], "the scratch, not read yet");
+    // Read on the io thread: a fast one may be back before this looks,
+    // so the unread scratch is not asserted.
     app.wait_for_jobs();
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);

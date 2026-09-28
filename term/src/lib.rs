@@ -2037,7 +2037,8 @@ mod tests {
         // image's last row.
         t.feed(&apc("a=T,f=32,s=20,v=40,i=1", &[200; 20 * 40 * 4]));
         assert_eq!(cursor(&t), (1, 4));
-        assert!(t.images().is_empty(), "drawn once decoded");
+        // Drawn once decoded — which a worker may already have done by
+        // the time `feed` looked, so no look before the wait.
         t.settle_graphics();
         assert_eq!(t.take_sent(), b"\x1b_Gi=1;OK\x1b\\");
         let placed = t.images();
