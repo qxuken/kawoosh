@@ -858,6 +858,20 @@ impl Terminal {
         false
     }
 
+    /// The pty's foreground process group — the program in front, a
+    /// shell at its prompt or what it ran — and its name, asked of the
+    /// system (terminal-keys.md Decision 2's `terminal.raw`).
+    #[cfg(unix)]
+    pub fn foreground(&self) -> Option<(i32, String)> {
+        let pgid = self.pty.as_ref()?.process_group_leader()?;
+        Some((pgid, pid_name(pgid as u32)?))
+    }
+
+    #[cfg(not(unix))]
+    pub fn foreground(&self) -> Option<(i32, String)> {
+        None
+    }
+
     /// The shell process's working directory, asked of the system.
     pub fn process_cwd(&self) -> Option<std::path::PathBuf> {
         let pid = self.child.as_ref()?.process_id()?;
@@ -1482,6 +1496,27 @@ fn is_this_host(host: &str) -> bool {
     }
 }
 
+/// A process's name: its executable's file name, as `ps -o comm` has it.
+#[cfg(target_os = "macos")]
+fn pid_name(pid: u32) -> Option<String> {
+    let mut buf = [0u8; 256];
+    // SAFETY: `proc_name` writes at most `buf.len()` bytes of the name and
+    // returns how many; any pid is sound to ask about.
+    let n = unsafe { libc::proc_name(pid as i32, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    (n > 0).then(|| String::from_utf8_lossy(&buf[..n as usize]).into_owned())
+}
+
+#[cfg(target_os = "linux")]
+fn pid_name(pid: u32) -> Option<String> {
+    let s = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    Some(s.trim_end().to_string())
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+fn pid_name(_pid: u32) -> Option<String> {
+    None
+}
+
 #[cfg(target_os = "macos")]
 fn pid_cwd(pid: u32) -> Option<std::path::PathBuf> {
     use std::os::unix::ffi::OsStrExt;
@@ -1541,10 +1576,23 @@ pub fn encode_key(
         "escape" => b"\x1b".to_vec(),
         "space" if ctrl => b"\0".to_vec(),
         "space" => b" ".to_vec(),
-        "delete" => b"\x1b[3~".to_vec(),
-        "insert" => b"\x1b[2~".to_vec(),
-        "pageup" => b"\x1b[5~".to_vec(),
-        "pagedown" => b"\x1b[6~".to_vec(),
+        // The `~` keys carry a modifier as xterm spells it, `CSI 5 ; 2 ~`
+        // for Shift+PageUp — reached once raw hands them to the program.
+        "delete" | "insert" | "pageup" | "pagedown" => {
+            let n = match code {
+                "delete" => 3,
+                "insert" => 2,
+                "pageup" => 5,
+                _ => 6,
+            };
+            let modifier = 1 + shift as u8 + (alt as u8) * 2 + (ctrl as u8) * 4;
+            if modifier > 1 {
+                out.clear();
+                format!("\x1b[{n};{modifier}~").into_bytes()
+            } else {
+                format!("\x1b[{n}~").into_bytes()
+            }
+        }
         "up" | "down" | "right" | "left" | "home" | "end" => {
             let ch = match code {
                 "up" => b'A',
@@ -1566,19 +1614,25 @@ pub fn encode_key(
         }
         f if f.len() >= 2 && f.starts_with('f') && f[1..].chars().all(|c| c.is_ascii_digit()) => {
             let n: u8 = f[1..].parse().ok()?;
-            match n {
-                1 => b"\x1bOP".to_vec(),
-                2 => b"\x1bOQ".to_vec(),
-                3 => b"\x1bOR".to_vec(),
-                4 => b"\x1bOS".to_vec(),
-                5 => b"\x1b[15~".to_vec(),
-                6 => b"\x1b[17~".to_vec(),
-                7 => b"\x1b[18~".to_vec(),
-                8 => b"\x1b[19~".to_vec(),
-                9 => b"\x1b[20~".to_vec(),
-                10 => b"\x1b[21~".to_vec(),
-                11 => b"\x1b[23~".to_vec(),
-                12 => b"\x1b[24~".to_vec(),
+            // Under a modifier as xterm spells them: `CSI 1 ; m P` for
+            // F1–F4, `CSI 15 ; m ~` from F5 on.
+            let modifier = 1 + shift as u8 + (alt as u8) * 2 + (ctrl as u8) * 4;
+            if modifier > 1 {
+                out.clear();
+            }
+            match (n, modifier > 1) {
+                (1..=4, false) => vec![0x1b, b'O', b"PQRS"[n as usize - 1]],
+                (1..=4, true) => {
+                    format!("\x1b[1;{modifier}{}", b"PQRS"[n as usize - 1] as char).into_bytes()
+                }
+                (5..=12, _) => {
+                    let code = [15, 17, 18, 19, 20, 21, 23, 24][n as usize - 5];
+                    if modifier > 1 {
+                        format!("\x1b[{code};{modifier}~").into_bytes()
+                    } else {
+                        format!("\x1b[{code}~").into_bytes()
+                    }
+                }
                 _ => return None,
             }
         }
@@ -2524,6 +2578,21 @@ mod tests {
             encode_key("f5", None, false, false, false, false),
             Some(b"\x1b[15~".to_vec())
         );
+        // The `~` keys and the function keys under a modifier, as xterm
+        // spells them (raw hands them to the program).
+        let enc = |code: &str, ctrl: bool, alt: bool, shift: bool| {
+            String::from_utf8(encode_key(code, None, ctrl, alt, shift, false).unwrap()).unwrap()
+        };
+        assert_eq!(enc("pageup", false, false, true), "\x1b[5;2~");
+        assert_eq!(enc("delete", true, false, false), "\x1b[3;5~");
+        assert_eq!(
+            enc("pagedown", false, true, false),
+            "\x1b[6;3~",
+            "no second ESC"
+        );
+        assert_eq!(enc("f1", false, false, false), "\x1bOP");
+        assert_eq!(enc("f1", false, false, true), "\x1b[1;2P");
+        assert_eq!(enc("f12", true, false, true), "\x1b[24;6~");
     }
 
     /// kitty's keyboard protocol's flags (terminal-keys.md Decision 5):
