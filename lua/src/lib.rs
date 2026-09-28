@@ -79,6 +79,13 @@ pub struct TabTitle<'a> {
     pub panes: usize,
 }
 
+/// A change to the disk made on a thread of its own ([`Msg::FsJob`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum FsOp {
+    Remove(PathBuf),
+    Copy(PathBuf, PathBuf),
+}
+
 /// What Lua asked for. Editor-level messages are applied inside the
 /// command that ran the script; the rest reach the shell.
 #[derive(Clone, Debug, PartialEq)]
@@ -154,6 +161,14 @@ pub enum Msg {
     ListDir {
         token: u64,
         path: PathBuf,
+    },
+    /// `kawoosh.fs.remove(path, fn)` and `fs.copy(a, b, fn)`: the
+    /// change made on a thread of its own, the answer to
+    /// `Runtime::fs_done` under `token` (`IoMsg::FsDone`) — a tree of
+    /// fifty gigabytes removed without the frame waiting for it.
+    FsJob {
+        token: u64,
+        op: FsOp,
     },
     /// `kawoosh.fs.walk(root, fn)`: every file under the root as git
     /// sees it, walked on a thread of its own, the answer to
@@ -1909,6 +1924,25 @@ impl Runtime {
                 .map_err(|e| e.to_string())
         });
         self.answer(token, result, "fs.walk");
+    }
+
+    /// A change `fs.remove` or `fs.copy` made on a thread of its own:
+    /// its callback called with `true`, or `nil` and why not.
+    pub fn fs_done(&self, token: u64, result: Result<(), String>) {
+        let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
+            return;
+        };
+        let Ok(f) = self.lua.registry_value::<mlua::Function>(&key) else {
+            return;
+        };
+        let _ = self.lua.remove_registry_value(key);
+        let args = match result {
+            Ok(()) => (LV::Boolean(true), LV::Nil),
+            Err(e) => (LV::Nil, LV::String(self.lua.create_string(e).unwrap())),
+        };
+        if let Err(e) = f.call::<()>(args) {
+            self.queue.borrow_mut().push(Msg::Echo(format!("fs: {e}")));
+        }
     }
 
     fn answer(&self, token: u64, result: Result<Table, String>, what: &str) {
@@ -4517,15 +4551,53 @@ fn seed(
             kfs::rename(&expand(&a), &expand(&b)).map_err(io_err)
         })?,
     )?;
+    // `fs.copy(a, b)` and `fs.remove(path)` answer now; with a last
+    // argument `fn`, the change is made on a thread of its own and
+    // `fn(true)` — or `fn(nil, why)` — is called when it is done, so a
+    // tree of fifty gigabytes holds up nothing (`dir`'s writes).
+    let qq = q(queue);
+    let jj = jobs.clone();
     fs.set(
         "copy",
-        lua.create_function(|_, (a, b): (String, String)| {
-            kfs::copy(&expand(&a), &expand(&b)).map_err(io_err)
-        })?,
+        lua.create_function(
+            move |lua, (a, b, cb): (String, String, Option<mlua::Function>)| {
+                let Some(cb) = cb else {
+                    return kfs::copy(&expand(&a), &expand(&b)).map_err(io_err);
+                };
+                let token = {
+                    let mut j = jj.borrow_mut();
+                    let token = j.token();
+                    j.waiting.insert(token, lua.create_registry_value(cb)?);
+                    token
+                };
+                qq.borrow_mut().push(Msg::FsJob {
+                    token,
+                    op: FsOp::Copy(expand(&a), expand(&b)),
+                });
+                Ok(())
+            },
+        )?,
     )?;
+    let qq = q(queue);
+    let jj = jobs.clone();
     fs.set(
         "remove",
-        lua.create_function(|_, p: String| kfs::remove(&expand(&p)).map_err(io_err))?,
+        lua.create_function(move |lua, (p, cb): (String, Option<mlua::Function>)| {
+            let Some(cb) = cb else {
+                return kfs::remove(&expand(&p)).map_err(io_err);
+            };
+            let token = {
+                let mut j = jj.borrow_mut();
+                let token = j.token();
+                j.waiting.insert(token, lua.create_registry_value(cb)?);
+                token
+            };
+            qq.borrow_mut().push(Msg::FsJob {
+                token,
+                op: FsOp::Remove(expand(&p)),
+            });
+            Ok(())
+        })?,
     )?;
     fs.set(
         "create",

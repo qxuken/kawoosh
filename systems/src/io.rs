@@ -36,6 +36,12 @@ pub enum IoMsg {
         id: u64,
         code: Option<i32>,
     },
+    /// A change `kawoosh.fs.remove(path, fn)` or `fs.copy(a, b, fn)`
+    /// made on a thread of its own: the job's token, and why not.
+    FsDone {
+        token: u64,
+        result: Result<(), String>,
+    },
     /// A directory listed on a thread of its own for a plugin
     /// (`kawoosh.fs.list(path, fn)`): the job's token, and the entries
     /// or why not.

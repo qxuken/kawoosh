@@ -720,6 +720,13 @@ impl Kawoosh {
                     self.terms.map.remove(&id);
                 }
                 IoMsg::Request(incoming) => self.on_request(incoming),
+                IoMsg::FsDone { token, result } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    if let Some(rt) = self.scripting.rt.clone() {
+                        rt.fs_done(token, result);
+                        self.drain_lua();
+                    }
+                }
                 IoMsg::Listed { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     if let Some(rt) = self.scripting.rt.clone() {

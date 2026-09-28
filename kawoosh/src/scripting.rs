@@ -560,6 +560,25 @@ impl Kawoosh {
                     });
                 }
             }
+            Msg::FsJob { token, op } => {
+                let job = move || {
+                    let r = match op {
+                        kawoosh_lua::FsOp::Remove(p) => kawoosh_systems::fs::remove(&p),
+                        kawoosh_lua::FsOp::Copy(a, b) => kawoosh_systems::fs::copy(&a, &b),
+                    };
+                    r.map_err(|e| e.to_string())
+                };
+                if self.jobs_inline {
+                    let result = job();
+                    rt.fs_done(token, result);
+                } else {
+                    self.pending_jobs += 1;
+                    self.io.run("fs", move || IoMsg::FsDone {
+                        token,
+                        result: job(),
+                    });
+                }
+            }
             Msg::Recall(i) => {
                 let n = self.ed.memory.len();
                 if i == 0 || i > n || !self.ed.memory.recall(n - i) {
