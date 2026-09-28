@@ -85,10 +85,40 @@ key (28 `theme …`, 9 `lsp …`, 6 `launcher …`). Families spread wide:
 `memory` over `<leader>e`, `<leader>p`, `<leader>s` and `<A-1…9>`;
 `buffer` over `<leader>b` and `<leader><`.
 
+### 5. The encoder: all five flags, on a fuller key from kui
+
+Reviewed with the user 2026-09-28, before the encoder was written.
+All five of the protocol's flags: 1 the ambiguous keys told apart, 2
+presses, repeats and releases, 4 the shifted and the base-layout keys,
+8 every key as an escape code, 16 the text a key types. The program's
+flags are `alacritty_terminal`'s to keep (push, pop, set, the query's
+answer), forwarded by `Hooked` from then on; the bytes are
+`encode_key`'s. A key kawoosh takes — the escape, a chord of Decision
+2's kept level — never reaches the program, its release neither; a
+program that pushed nothing gets the legacy encoding as today.
+
+What kui's key did not carry — the keypad as keys of its own, the
+modifier keys as keys with their side, the lock keys' state, the media
+keys and F25 onwards — is a kui round first, so the encoder speaks the
+protocol whole rather than with gaps written down (the user's call).
+
+### 6. ⌘ with the protocol on
+
+A ⌘ chord kawoosh binds stays kawoosh's; one it does not, which today
+reaches nothing, goes to a program that pushed the protocol as a
+super-modified key (nvim's `<D-j>`), and still reaches nothing without
+it. The way back to kawoosh's own is the escape (`<C-\>` then the
+chord). **A ⌘-click is always kawoosh's** — the link under it opened
+whether or not the program reports the mouse, the mouse reports having
+no bit for ⌘ to give it (a program saw a plain click); ctrl-click, which
+they can report, stays the program's then, and Shift keeps the
+selection kawoosh's as before.
+
 ### 4. In order
 
 The map; the regrouping, what sits behind the escape included; the
-escape and `<C-w>` given back; the kitty encoder and raw.
+escape and `<C-w>` given back; the kui round for the fuller key; the
+kitty encoder; raw.
 
 ## Built
 
