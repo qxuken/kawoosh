@@ -108,6 +108,9 @@ impl Kawoosh {
                     lua_name = n.to_uppercase();
                     lua_name.as_str()
                 }
+                // A raw terminal says so: the keys are its program's
+                // but the escape and ⌘ (terminal-keys.md Decision 2).
+                Some(Content::Terminal(t)) if self.term_raw(t) => "RAW",
                 _ => "TERM",
             };
             // A pane with a field, or the prompt over it: the field's

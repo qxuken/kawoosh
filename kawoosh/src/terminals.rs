@@ -56,6 +56,11 @@ pub struct Terminals {
     /// press was (terminal-keys.md Decision 5) — the escape's, a kept
     /// chord's, never.
     pub held: Vec<KeyPress>,
+    /// Raw set by hand (`terminal raw`, `<C-\>r`), for the foreground
+    /// process group in front when it was set: it holds while that
+    /// program is in front — the shell's through an `ls` — and the next
+    /// program is `terminal.raw`'s to say (terminal-keys.md Decision 2).
+    pub raw: HashMap<TermId, (Option<i32>, bool)>,
     /// The keys typed since `terminal.escape` in a terminal pane
     /// (terminal-keys.md Decision 1): normal mode's, looked up as they
     /// come, the which-key open on them. None while the pty has them.
@@ -475,6 +480,58 @@ impl Kawoosh {
         }
     }
 
+    /// Whether terminal `id` is raw (terminal-keys.md Decision 2): every
+    /// key but the escape and a bound ⌘ chord the program's. Set by hand
+    /// for the program in front, else while one `terminal.raw` names is.
+    pub(crate) fn term_raw(&self, id: TermId) -> bool {
+        let Some(t) = self.terms.map.get(&id) else {
+            return false;
+        };
+        let front = t.foreground();
+        let pgid = front.as_ref().map(|(g, _)| *g);
+        if let Some((set_for, on)) = self.terms.raw.get(&id)
+            && *set_for == pgid
+        {
+            return *on;
+        }
+        let Some((_, name)) = front else {
+            return false;
+        };
+        match self.ed.settings.get("terminal.raw") {
+            Some(kawoosh_editor::Setting::List(l)) => {
+                l.iter().any(|x| x.as_str() == Some(name.as_str()))
+            }
+            _ => false,
+        }
+    }
+
+    /// `terminal raw`: raw flipped for the focused terminal, for the
+    /// program in front; `on` / `off` say which.
+    fn toggle_raw(&mut self, arg: Option<&str>) {
+        let Some(t) = self.focused_term() else {
+            self.ed.message = "terminal raw: not a terminal pane".into();
+            return;
+        };
+        let on = match arg {
+            Some("on") => true,
+            Some("off") => false,
+            _ => !self.term_raw(t),
+        };
+        let pgid = self
+            .terms
+            .map
+            .get(&t)
+            .and_then(|t| t.foreground())
+            .map(|(g, _)| g);
+        self.terms.raw.insert(t, (pgid, on));
+        let escape = self.term_escape_key().unwrap_or_default();
+        self.ed.message = if on {
+            format!("raw: every key the program's but {escape} and ⌘")
+        } else {
+            "raw off".into()
+        };
+    }
+
     /// The terminal's escape (`terminal.escape`, `<C-\>` by default)
     /// as a stroke's notation; none when the setting is empty or not
     /// one key.
@@ -499,8 +556,10 @@ impl Kawoosh {
             return;
         }
         // The view's own keys, where a program on the whole screen
-        // keeps them: shift with the page keys moves through history.
-        let alt_screen = self.terms.map.get(&id).is_some_and(|t| t.is_alt_screen());
+        // keeps them: shift with the page keys moves through history —
+        // and not in raw, where they are the program's too.
+        let alt_screen =
+            self.terms.map.get(&id).is_some_and(|t| t.is_alt_screen()) || self.term_raw(id);
         let scroll = match note.as_str() {
             "<S-PageUp>" => Some(TermScroll::Page(1)),
             "<S-PageDown>" => Some(TermScroll::Page(-1)),
@@ -938,6 +997,13 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     k.ed.message = "scrollback: only in a terminal pane".into();
                 }
             },
+        ),
+        cmd(
+            Spec::new("terminal raw")
+                .when(&["terminal"])
+                .args(Args::new(&[ArgKind::Text]))
+                .doc("every key but the escape and ⌘ to the terminal's program, or back; `on` / `off`, bare flips it (`<C-\\>r`)"),
+            |k, ctx| k.toggle_raw(ctx.args.first().map(String::as_str)),
         ),
         cmd(
             Spec::new("terminal page up")
