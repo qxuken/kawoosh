@@ -489,6 +489,10 @@ impl Settings {
         // `<C-w>l`, `<Space>f`, `:`; `<C-n>` copy mode; itself again
         // the key to the pty. Empty for none.
         defaults.set("terminal.escape", Setting::Str("<C-\\>".into()));
+        // The programs a terminal pane is raw for while one is in front
+        // (terminal-keys.md Decision 2): every key but the escape and ⌘
+        // theirs — `{ "nvim", "hx" }`. `<C-\>r` toggles raw by hand.
+        defaults.set("terminal.raw", Setting::List(Vec::new()));
         defaults.set("editor.bell", Setting::Bool(false));
         // The directory in a tab's label (roadmap step 50): `auto` while
         // the tabs are in more than one (workspaces.md Decision 6),
@@ -1010,6 +1014,7 @@ mod tests {
                 "tabstop",
                 "terminal.bell",
                 "terminal.escape",
+                "terminal.raw",
                 "terminal.scrollback",
                 "terminal.shell",
                 "theme.appearance",
