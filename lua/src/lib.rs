@@ -79,6 +79,15 @@ pub struct TabTitle<'a> {
     pub panes: usize,
 }
 
+/// A segment `kawoosh.status` drew ([`Runtime::status`]): its name,
+/// its parts with their colours' words, and the command a click runs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StatusSegment {
+    pub name: String,
+    pub parts: Vec<(String, String)>,
+    pub run: Option<String>,
+}
+
 /// A change to the disk made on a thread of its own ([`Msg::FsJob`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum FsOp {
@@ -1614,6 +1623,93 @@ impl Runtime {
         }
     }
 
+    /// The segments `kawoosh.status` added at `place` (`title`, `tabs`),
+    /// each asked what it shows now, in their order: the parts, each
+    /// with its colour's word, and what a click runs. A segment whose
+    /// `fn` fails is taken away and says why once.
+    pub fn status(&self, place: &str) -> Vec<StatusSegment> {
+        let Ok(kawoosh) = self.lua.globals().get::<Table>("kawoosh") else {
+            return Vec::new();
+        };
+        let Ok(all) = kawoosh.get::<Table>("_status") else {
+            return Vec::new();
+        };
+        let mut found: Vec<(f64, String, Table)> = all
+            .pairs::<String, Table>()
+            .flatten()
+            .filter(|(_, t)| t.get::<String>("place").is_ok_and(|p| p == place))
+            .map(|(name, t)| (t.get::<f64>("order").unwrap_or(0.0), name, t))
+            .collect();
+        found.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        let mut out = Vec::new();
+        for (_, name, t) in found {
+            let Ok(f) = t.get::<mlua::Function>("fn") else {
+                continue;
+            };
+            let ctx = self.lua.create_table().unwrap();
+            let _ = ctx.set("place", place);
+            let got = match f.call::<LV>(ctx) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = all.set(name.as_str(), LV::Nil);
+                    self.queue
+                        .borrow_mut()
+                        .push(Msg::Echo(format!("status `{name}`: {e} (taken away)")));
+                    continue;
+                }
+            };
+            let part = |v: &LV| -> Option<(String, String)> {
+                match v {
+                    LV::String(s) => Some((s.to_string_lossy(), "fg".into())),
+                    LV::Table(p) => Some((
+                        p.get::<String>("text").ok()?,
+                        p.get::<String>("color").unwrap_or_else(|_| "fg".into()),
+                    )),
+                    _ => None,
+                }
+            };
+            let parts: Vec<(String, String)> = match &got {
+                LV::Nil => continue,
+                LV::Table(tt) if tt.contains_key("text").unwrap_or(false) => {
+                    part(&got).into_iter().collect()
+                }
+                LV::Table(tt) => tt
+                    .sequence_values::<LV>()
+                    .flatten()
+                    .filter_map(|v| part(&v))
+                    .collect(),
+                other => part(other).into_iter().collect(),
+            };
+            if parts.iter().all(|(t, _)| t.is_empty()) {
+                continue;
+            }
+            out.push(StatusSegment {
+                name,
+                parts,
+                run: t.get::<String>("run").ok(),
+            });
+        }
+        out
+    }
+
+    /// The shortest `every` a segment asked to be drawn at, seconds.
+    pub fn status_every(&self) -> Option<f64> {
+        let kawoosh = self.lua.globals().get::<Table>("kawoosh").ok()?;
+        let all = kawoosh.get::<Table>("_status").ok()?;
+        // A number, or a function answering one now — nil for none: a
+        // clock that is off asks for no wake.
+        all.pairs::<String, Table>()
+            .flatten()
+            .filter_map(|(_, t)| match t.get::<LV>("every").ok()? {
+                LV::Integer(n) => Some(n as f64),
+                LV::Number(n) => Some(n),
+                LV::Function(f) => f.call::<Option<f64>>(()).ok().flatten(),
+                _ => None,
+            })
+            .filter(|s| *s > 0.0)
+            .min_by(f64::total_cmp)
+    }
+
     /// Tells the plugins a scratch buffer came back with a session,
     /// empty, by name and handle (`kawoosh.on_restore`).
     pub fn restore_hook(&self, name: &str, handle: u64) {
@@ -3007,6 +3103,28 @@ fn seed(
                 t.set(i + 1, e)?;
             }
             Ok(LV::Table(t))
+        })?,
+    )?;
+    // ---- kawoosh.lsp.counts(): the diagnostics published, counted by
+    // severity — `{ errors =, warnings =, infos =, hints = }` — without
+    // building the list `diagnostics()` does: what a status segment asks
+    // every frame (docs/design/status.md).
+    let pp = published.clone();
+    lsp.set(
+        "counts",
+        lua.create_function(move |lua, ()| {
+            let p = pp.borrow();
+            let mut n = [0usize; 4];
+            for l in p.diagnostics.iter() {
+                let s = (l.diagnostic.severity as usize).clamp(1, 4);
+                n[s - 1] += 1;
+            }
+            let t = lua.create_table()?;
+            t.set("errors", n[0])?;
+            t.set("warnings", n[1])?;
+            t.set("infos", n[2])?;
+            t.set("hints", n[3])?;
+            Ok(t)
         })?,
     )?;
     // ---- kawoosh.lsp.diagnostics({ buffer =, root =, severity = })

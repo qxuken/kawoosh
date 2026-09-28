@@ -63,6 +63,9 @@ pub struct Kawoosh {
     pub(crate) wrap_views: HashMap<ViewId, bool>,
     pub(crate) row_move: Option<(ViewId, i32)>,
     pub(crate) row_goal: Option<(f32, usize)>,
+    /// When the window was last asked to wake for a status segment's
+    /// `every` (status.md): one tick out at a time, the sooner kept.
+    pub status_due: Option<std::time::SystemTime>,
     /// The disk-usage pane's walks (`du.rs`, roadmap step 52).
     pub(crate) du: crate::du::SharedDu,
     pub ed: Editor,
@@ -318,6 +321,7 @@ impl Kawoosh {
             wrap_views: HashMap::new(),
             row_move: None,
             row_goal: None,
+            status_due: None,
             ed,
             layout: Layout::new(Content::Editor(view)),
             terms: Terminals::default(),
@@ -732,6 +736,8 @@ impl Kawoosh {
                     self.terms.map.remove(&id);
                 }
                 IoMsg::Request(incoming) => self.on_request(incoming),
+                // A status segment's time came: the wake drew the frame.
+                IoMsg::Tick => self.status_due = None,
                 IoMsg::FsDone { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     if let Some(rt) = self.scripting.rt.clone() {
@@ -2253,6 +2259,7 @@ impl kui_native::App for Kawoosh {
         self.dark = ui.theme().is_dark();
         self.sync_term_palettes();
         self.sync_term_graphics(ui);
+        self.sync_status_tick();
         self.sync_term_settings();
         self.ring_bells(ui);
         self.sync_dock();

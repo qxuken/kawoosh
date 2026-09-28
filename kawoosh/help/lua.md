@@ -96,6 +96,8 @@ return {
 - Path helpers: `join`, `parent`, `basename`, `relative`, `expand`, `short`, `home`, `cwd`, `chdir`.
 - `watch(name, paths, fn)` calls `fn(changed)` when the files or folders change; `watch(name, nil)` stops it.
 
+`kawoosh.status(name, fn, { place = "title" | "tabs", order = n, every = seconds, run = "command" })` adds a segment to the right of the title bar or the tab strip: `fn(ctx)` returns what it shows now — `nil` to hide, a string, `{ text = ..., color = "dim" }`, or a list of those — and is asked each time the window draws; `every` redraws it on the clock (a clock of your own); `run` is what a click runs. `kawoosh.status(name, nil)` removes it. `kawoosh.lsp.counts()` gives the diagnostics' `errors`, `warnings`, `infos` and `hints` cheaply, for such a segment.
+
 `kawoosh.spawn(cmd, { cwd = ..., on_lines = fn, on_exit = fn })` runs a shell command and hands you its output as it comes; `kawoosh.kill(token)` stops it. `kawoosh.store(name)` is a small store kept between runs: `get(key)`, `set(key, value)`, `del(key)`, `keys()`. `kawoosh.tool(name, { cmd = ... })` adds a launch target for `:tool` and the tools picker (`<leader>tt`). `:tool NAME` goes to the tool's terminal in this tab, or starts one here: each tab runs its own. With `dock = true` the tool lives in the dock, one for every tab, and `:tool NAME` shows or hides it.
 
 ## Talking to the user

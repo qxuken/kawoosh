@@ -61,22 +61,29 @@ impl Kawoosh {
             None => shorten_path(&kawoosh_systems::fs::abbreviate_home(&self.cwd)),
         };
         let full = kawoosh_systems::fs::abbreviate_home(&self.cwd);
-        // Each block with what a click on it runs, if anything.
-        let mut blocks: Vec<(String, kui_native::Color, Option<&str>)> = Vec::new();
+        // Each block — its parts in their colours — with what a click on
+        // it runs, if anything: the plugins' segments first
+        // (`kawoosh.status`, status.md), then kawoosh's own.
+        let mut blocks: Vec<Block> = self.status_blocks(ui, "title");
         if !self.lsp.status.is_empty() {
             let n: usize = self.lsp.status.iter().map(|s| s.2).sum();
             let servers = self.lsp.status.len();
-            blocks.push((
-                format!(
-                    "{servers} server{} · {n} docs",
-                    if servers == 1 { "" } else { "s" }
-                ),
-                pal.dim,
-                Some("lsp info"),
-            ));
+            blocks.push(Block {
+                parts: vec![(
+                    format!(
+                        "{servers} server{} · {n} docs",
+                        if servers == 1 { "" } else { "s" }
+                    ),
+                    pal.dim,
+                )],
+                run: Some("lsp info".into()),
+            });
         }
         if self.compile.running {
-            blocks.push(("compiling…".into(), pal.command, None));
+            blocks.push(Block {
+                parts: vec![("compiling…".into(), pal.command)],
+                run: None,
+            });
         }
         ui.with(
             // Its clicks run a command or list the cwd: the keyboard
@@ -110,32 +117,7 @@ impl Kawoosh {
                         },
                     );
                     ui.leaf(NodeSpec::row().grow_width());
-                    for (i, (text, color, run)) in blocks.iter().enumerate() {
-                        if i > 0 {
-                            let sep = ui.child_key("sep").index(i as u64);
-                            ui.leaf_key(
-                                sep,
-                                NodeSpec::column().size(1.0, tab_h - 10.0).bg(pal.border),
-                            );
-                        }
-                        let mut spec = NodeSpec::row()
-                            .grow_height()
-                            .pad_xy(10.0, 0.0)
-                            .cross_align(Align::Center);
-                        if let Some(run) = run {
-                            spec = spec
-                                .hover_bg(pal.panel)
-                                .cursor(CursorShape::Pointer)
-                                .on_click(Value::map([
-                                    ("kind", "chrome".into()),
-                                    ("run", Value::str(*run)),
-                                ]))
-                                .label(*run);
-                        }
-                        ui.with_keyed(&format!("block{i}"), spec, |ui| {
-                            ui.text(text, rows::mono(font, &pal).color(*color))
-                        });
-                    }
+                    draw_blocks(ui, &blocks, font, &pal, tab_h);
                 });
             },
         );
@@ -243,135 +225,263 @@ impl Kawoosh {
             })
             .collect();
         let mut active_key = None;
-        ui.with_keyed(
-            "tabs",
-            NodeSpec::row()
-                .grow_width()
-                .height(self.chrome.tab_h)
-                .bg(pal.strip)
-                .scroll_x()
-                // No bar: at the strip's height it would lie over the
-                // labels and take their clicks; the wheel and the
-                // reveal move it.
-                .scrollbar(kui_native::ScrollbarMode::Hidden)
-                .transition(TABS_MS)
-                .keep_focus()
-                .role(Role::TabList),
-            |ui| {
-                for (i, (label, bell)) in labels.iter().enumerate() {
-                    let is_active = i == active;
-                    // The block, its item and its close button are one
-                    // hover group: the pointer is on the item or the
-                    // button, never on the block itself, and the button
-                    // must stay while the pointer goes to it.
-                    let group = format!("tab-hover{i}");
-                    let hovered = ui.is_group_hovered(NodeSpec::hover_group_id(&group));
-                    // A terminal in it rang unseen (`terminal.bell`): i3's
-                    // urgent workspace, the edge and the label in the
-                    // warning's colour until the tab is visited.
-                    let (bg, fg, edge) = if is_active {
-                        (theme.accent, theme.on_accent, theme.accent_hover)
-                    } else if *bell {
-                        (pal.strip, theme.warning, theme.warning)
-                    } else {
-                        (pal.strip, pal.dim, pal.border)
-                    };
-                    // The block holds the tab item and its close button
-                    // side by side: a button inside the item would sit
-                    // inside one roving Tab stop, where the ring never
-                    // reaches it.
-                    let key = ui.with_keyed(
-                        &format!("tab{i}"),
-                        NodeSpec::column()
-                            .grow_width()
-                            .min_width(TAB_MIN_W)
-                            .grow_height()
-                            .bg(bg)
-                            .hover_bg(if is_active {
-                                theme.accent_hover
-                            } else {
-                                pal.panel
-                            })
-                            .hoverable()
-                            .hover_group(&group),
-                        |ui| {
-                            // i3's coloured top edge on the block.
-                            ui.leaf(NodeSpec::row().grow_width().height(2.0).bg(edge));
-                            ui.with(
-                                NodeSpec::row().fill().gap(0.0).cross_align(Align::Center),
-                                |ui| {
-                                    ui.with_keyed(
-                                        "item",
-                                        NodeSpec::row()
-                                            .fill()
-                                            .pad_xy(10.0, 0.0)
-                                            .cross_align(Align::Center)
-                                            .clip()
-                                            .hover_group(&group)
-                                            .on_click(Value::map([
-                                                ("kind", "tab".into()),
-                                                ("index", Value::Int(i as i64)),
-                                            ]))
-                                            .role(Role::Tab)
-                                            .selected(is_active)
-                                            .label(label.as_str()),
-                                        |ui| {
-                                            ui.text(
-                                                label,
-                                                rows::mono(font, &pal).color(fg).ellipsis(),
-                                            )
-                                        },
-                                    );
-                                    if n > 1 && (is_active || hovered) {
-                                        // Its own colour under the pointer
-                                        // alone: a group's hover lights
-                                        // every member.
-                                        let on = ui.is_hovered(ui.child_key("close"));
-                                        let mut close = NodeSpec::row()
-                                            .pad_xy(4.0, 0.0)
-                                            .radius(3.0)
-                                            .hover_group(&group);
-                                        if on {
-                                            close = close.bg(if is_active {
-                                                theme.accent_hover
-                                            } else {
-                                                pal.border
-                                            });
-                                        }
-                                        ui.text_in_keyed(
-                                            "close",
-                                            close
+        // The plugins' segments at the strip's right end (status.md):
+        // the tabs in a row beside them when there are any.
+        let segs = self.status_blocks(ui, "tabs");
+        let tab_h = self.chrome.tab_h;
+        let mut tabs = |ui: &mut Ui<'_>| {
+            ui.with_keyed(
+                "tabs",
+                NodeSpec::row()
+                    .grow_width()
+                    .height(self.chrome.tab_h)
+                    .bg(pal.strip)
+                    .scroll_x()
+                    // No bar: at the strip's height it would lie over the
+                    // labels and take their clicks; the wheel and the
+                    // reveal move it.
+                    .scrollbar(kui_native::ScrollbarMode::Hidden)
+                    .transition(TABS_MS)
+                    .keep_focus()
+                    .role(Role::TabList),
+                |ui| {
+                    for (i, (label, bell)) in labels.iter().enumerate() {
+                        let is_active = i == active;
+                        // The block, its item and its close button are one
+                        // hover group: the pointer is on the item or the
+                        // button, never on the block itself, and the button
+                        // must stay while the pointer goes to it.
+                        let group = format!("tab-hover{i}");
+                        let hovered = ui.is_group_hovered(NodeSpec::hover_group_id(&group));
+                        // A terminal in it rang unseen (`terminal.bell`): i3's
+                        // urgent workspace, the edge and the label in the
+                        // warning's colour until the tab is visited.
+                        let (bg, fg, edge) = if is_active {
+                            (theme.accent, theme.on_accent, theme.accent_hover)
+                        } else if *bell {
+                            (pal.strip, theme.warning, theme.warning)
+                        } else {
+                            (pal.strip, pal.dim, pal.border)
+                        };
+                        // The block holds the tab item and its close button
+                        // side by side: a button inside the item would sit
+                        // inside one roving Tab stop, where the ring never
+                        // reaches it.
+                        let key = ui.with_keyed(
+                            &format!("tab{i}"),
+                            NodeSpec::column()
+                                .grow_width()
+                                .min_width(TAB_MIN_W)
+                                .grow_height()
+                                .bg(bg)
+                                .hover_bg(if is_active {
+                                    theme.accent_hover
+                                } else {
+                                    pal.panel
+                                })
+                                .hoverable()
+                                .hover_group(&group),
+                            |ui| {
+                                // i3's coloured top edge on the block.
+                                ui.leaf(NodeSpec::row().grow_width().height(2.0).bg(edge));
+                                ui.with(
+                                    NodeSpec::row().fill().gap(0.0).cross_align(Align::Center),
+                                    |ui| {
+                                        ui.with_keyed(
+                                            "item",
+                                            NodeSpec::row()
+                                                .fill()
+                                                .pad_xy(10.0, 0.0)
+                                                .cross_align(Align::Center)
+                                                .clip()
+                                                .hover_group(&group)
                                                 .on_click(Value::map([
-                                                    ("kind", "tab close".into()),
+                                                    ("kind", "tab".into()),
                                                     ("index", Value::Int(i as i64)),
                                                 ]))
-                                                .label("close tab"),
-                                            "×",
-                                            rows::mono(font, &pal).color(fg),
+                                                .role(Role::Tab)
+                                                .selected(is_active)
+                                                .label(label.as_str()),
+                                            |ui| {
+                                                ui.text(
+                                                    label,
+                                                    rows::mono(font, &pal).color(fg).ellipsis(),
+                                                )
+                                            },
                                         );
-                                        ui.leaf(NodeSpec::row().width(6.0));
-                                    }
-                                },
-                            );
-                        },
-                    );
-                    if is_active {
-                        active_key = Some(key);
-                    }
-                    // A hairline between blocks, as i3 draws.
-                    if i + 1 < n {
-                        let sep = ui.child_key("sep").index(i as u64);
-                        ui.leaf_key(
-                            sep,
-                            NodeSpec::column().width(1.0).grow_height().bg(pal.border),
+                                        if n > 1 && (is_active || hovered) {
+                                            // Its own colour under the pointer
+                                            // alone: a group's hover lights
+                                            // every member.
+                                            let on = ui.is_hovered(ui.child_key("close"));
+                                            let mut close = NodeSpec::row()
+                                                .pad_xy(4.0, 0.0)
+                                                .radius(3.0)
+                                                .hover_group(&group);
+                                            if on {
+                                                close = close.bg(if is_active {
+                                                    theme.accent_hover
+                                                } else {
+                                                    pal.border
+                                                });
+                                            }
+                                            ui.text_in_keyed(
+                                                "close",
+                                                close
+                                                    .on_click(Value::map([
+                                                        ("kind", "tab close".into()),
+                                                        ("index", Value::Int(i as i64)),
+                                                    ]))
+                                                    .label("close tab"),
+                                                "×",
+                                                rows::mono(font, &pal).color(fg),
+                                            );
+                                            ui.leaf(NodeSpec::row().width(6.0));
+                                        }
+                                    },
+                                );
+                            },
                         );
+                        if is_active {
+                            active_key = Some(key);
+                        }
+                        // A hairline between blocks, as i3 draws.
+                        if i + 1 < n {
+                            let sep = ui.child_key("sep").index(i as u64);
+                            ui.leaf_key(
+                                sep,
+                                NodeSpec::column().width(1.0).grow_height().bg(pal.border),
+                            );
+                        }
                     }
-                }
-            },
-        );
+                },
+            )
+        };
+        if segs.is_empty() {
+            tabs(ui);
+        } else {
+            ui.with(
+                NodeSpec::row()
+                    .grow_width()
+                    .height(tab_h)
+                    .bg(pal.strip)
+                    .keep_focus(),
+                |ui| {
+                    tabs(ui);
+                    ui.leaf(NodeSpec::column().width(1.0).grow_height().bg(pal.border));
+                    draw_blocks(ui, &segs, font, &pal, tab_h);
+                },
+            );
+        }
         if reveal && let Some(key) = active_key {
             ui.reveal(key);
         }
+    }
+}
+
+/// A block on the chrome's right: its parts in their colours, and the
+/// command line a click on it runs.
+pub(crate) struct Block {
+    pub parts: Vec<(String, kui_native::Color)>,
+    pub run: Option<String>,
+}
+
+/// Blocks side by side, a hairline between them, each running its
+/// command on a click.
+fn draw_blocks(
+    ui: &mut Ui<'_>,
+    blocks: &[Block],
+    font: crate::look::Face,
+    pal: &crate::palette::Pal,
+    tab_h: f32,
+) {
+    for (i, b) in blocks.iter().enumerate() {
+        if i > 0 {
+            let sep = ui.child_key("sep").index(i as u64);
+            ui.leaf_key(
+                sep,
+                NodeSpec::column().size(1.0, tab_h - 10.0).bg(pal.border),
+            );
+        }
+        let mut spec = NodeSpec::row()
+            .grow_height()
+            .pad_xy(10.0, 0.0)
+            .cross_align(Align::Center);
+        if let Some(run) = &b.run {
+            spec = spec
+                .hover_bg(pal.panel)
+                .cursor(CursorShape::Pointer)
+                .on_click(Value::map([
+                    ("kind", "chrome".into()),
+                    ("run", Value::str(run.as_str())),
+                ]))
+                .label(run.as_str());
+        }
+        ui.with_keyed(&format!("block{i}"), spec, |ui| {
+            let spans: Vec<Span<'_>> = b
+                .parts
+                .iter()
+                .map(|(t, c)| Span::new(t).color(*c))
+                .collect();
+            ui.rich_text(&spans, rows::mono(font, pal));
+        });
+    }
+}
+
+impl Kawoosh {
+    /// A wake asked for the next beat of the shortest `every` a status
+    /// segment has, on the wall clock — a minute's clock turns over on
+    /// the minute — unless one is out already by then.
+    pub(crate) fn sync_status_tick(&mut self) {
+        let Some(every) = self.scripting.rt.as_ref().and_then(|rt| rt.status_every()) else {
+            return;
+        };
+        let now = std::time::SystemTime::now();
+        let secs = now
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64());
+        let next = ((secs / every).floor() + 1.0) * every;
+        let due = std::time::UNIX_EPOCH + std::time::Duration::from_secs_f64(next);
+        if self.status_due.is_some_and(|d| d <= due && d > now) {
+            return;
+        }
+        self.status_due = Some(due);
+        let wait = due.duration_since(now).unwrap_or_default();
+        self.io.run("status tick", move || {
+            std::thread::sleep(wait);
+            kawoosh_systems::io::IoMsg::Tick
+        });
+    }
+
+    /// The segments `kawoosh.status` put at `place`, as blocks: each
+    /// part's colour word the theme's.
+    fn status_blocks(&self, ui: &mut Ui<'_>, place: &str) -> Vec<Block> {
+        let Some(rt) = &self.scripting.rt else {
+            return Vec::new();
+        };
+        let theme = ui.theme();
+        let pal = self.pal;
+        rt.status(place)
+            .into_iter()
+            .map(|s| Block {
+                parts: s
+                    .parts
+                    .into_iter()
+                    .map(|(t, c)| {
+                        let color = match c.as_str() {
+                            "dim" => pal.dim,
+                            "accent" => pal.accent,
+                            "ok" => theme.success,
+                            "warning" => theme.warning,
+                            "danger" => pal.danger,
+                            _ => pal.fg,
+                        };
+                        (t, color)
+                    })
+                    .collect(),
+                run: s.run,
+            })
+            .collect()
     }
 }
 

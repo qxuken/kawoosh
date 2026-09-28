@@ -140,6 +140,28 @@ function kawoosh.tab_title(fn)
   kawoosh._tab_title = fn
 end
 
+-- kawoosh.status(name, fn[, opts]): a segment on the right of the title
+-- bar (`place = "title"`, the default) or of the tab strip (`"tabs"`),
+-- in `order` then by name (docs/design/status.md). `fn(ctx)` answers
+-- what it shows now — nil for nothing, a string, a part `{ text =,
+-- color = }` or a list of parts, `color` one of `fg`, `dim`, `accent`,
+-- `ok`, `warning`, `danger` — and is asked each frame the window draws.
+-- `opts.every = SECONDS` wakes the window to draw it that often, on the
+-- wall clock's beat (a clock) — or a function answering how often now,
+-- nil for not at all; `opts.run` is a command line a click
+-- runs. The same name replaces it; `kawoosh.status(name, nil)` takes it
+-- away.
+kawoosh._status = {}
+function kawoosh.status(name, fn, opts)
+  if fn == nil then
+    kawoosh._status[name] = nil
+    return
+  end
+  opts = opts or {}
+  kawoosh._status[name] = { fn = fn, place = opts.place or "title", order = opts.order or 0,
+                            every = opts.every, run = opts.run }
+end
+
 -- kawoosh.on_memory_open(kind, fn): how a moment of a plugin's own
 -- kind (`<plugin>.<kind>`, memory.md Decision 9) is opened from the
 -- memory pane — `fn(row)`, `row` its `kind`, `subject` and `meta` (a
