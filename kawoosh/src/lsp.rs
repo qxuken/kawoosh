@@ -31,7 +31,7 @@ use kawoosh_editor::{ArgKind, Args, KeyStroke, Mode, Prompt, Selection, Spec, Vi
 use kawoosh_lua::{ActionSnap, CandidateSnap};
 use kawoosh_systems::lsp::{
     Caps, Cmd, CodeAction, CompletionItem, DIAG_LAYER, Event, Location, Lsp, ServerDef, TextEdit,
-    WorkspaceEdit, completion_kind_name, offset_of_position,
+    WorkspaceEdit, completion_kind_name, offsets_of_positions,
 };
 use kawoosh_systems::{Alarm, WakeHandle};
 use std::rc::Rc;
@@ -416,14 +416,17 @@ impl Kawoosh {
                         continue;
                     };
                     let text = b.text();
+                    let offsets = offsets_of_positions(
+                        &text,
+                        &hints
+                            .iter()
+                            .map(|h| (h.line, h.character))
+                            .collect::<Vec<_>>(),
+                    );
                     let placed = hints
                         .into_iter()
-                        .map(|h| {
-                            let at = kawoosh_systems::lsp::offset_of_position(
-                                &text,
-                                h.line,
-                                h.character,
-                            );
+                        .zip(offsets)
+                        .map(|(h, at)| {
                             let label = format!(
                                 "{}{}{}",
                                 if h.pad_left { " " } else { "" },
@@ -1977,13 +1980,17 @@ fn resolve_edits(buf: &Buffer, edits: &[TextEdit]) -> Vec<(Range<usize>, String)
 
 /// [`resolve_edits`] against `text`.
 fn resolve_edits_in(text: &str, edits: &[TextEdit]) -> Vec<(Range<usize>, String)> {
+    let at = offsets_of_positions(
+        text,
+        &edits
+            .iter()
+            .flat_map(|e| [e.start, e.end])
+            .collect::<Vec<_>>(),
+    );
     let mut out: Vec<(Range<usize>, String)> = edits
         .iter()
-        .map(|e| {
-            let start = offset_of_position(text, e.start.0, e.start.1);
-            let end = offset_of_position(text, e.end.0, e.end.1).max(start);
-            (start..end, e.text.clone())
-        })
+        .zip(at.chunks(2))
+        .map(|(e, at)| (at[0]..at[1].max(at[0]), e.text.clone()))
         .collect();
     out.sort_by_key(|(r, _)| (r.start, r.end));
     let mut last_end = 0;

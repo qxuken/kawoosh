@@ -743,28 +743,58 @@ impl Lsp {
 
 // ---------------------------------------------------------------- positions
 
-/// LSP positions count UTF-16 units; ours are bytes.
+/// LSP positions count UTF-16 units; ours are bytes. A character past
+/// its line's end is the line's end, a line past the text's the text's.
 pub fn offset_of_position(text: &str, line: u32, character: u32) -> usize {
+    offsets_of_positions(text, &[(line, character)])[0]
+}
+
+/// Many positions at once, each as [`offset_of_position`] reads it, in
+/// one pass over the text in position order: a formatter's answer to a
+/// minified bundle is tens of thousands of positions on its one line,
+/// and reading each from the line's start walked a megabyte apiece.
+pub fn offsets_of_positions(text: &str, positions: &[(u32, u32)]) -> Vec<usize> {
     let bytes = text.as_bytes();
-    let mut offset = 0;
-    for _ in 0..line {
-        match bytes[offset..].iter().position(|&b| b == b'\n') {
-            Some(nl) => offset += nl + 1,
-            None => return bytes.len(),
+    let line_end = |from: usize| {
+        bytes[from..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(bytes.len(), |nl| from + nl)
+    };
+    let mut order: Vec<usize> = (0..positions.len()).collect();
+    order.sort_by_key(|&i| positions[i]);
+    let mut out = vec![0; positions.len()];
+    // The line reached and where it ends; how far into it the last
+    // position read, in bytes and in UTF-16 units; whether the text
+    // ended before the line asked for.
+    let (mut line, mut end) = (0u32, line_end(0));
+    let (mut at, mut units) = (0usize, 0u32);
+    let mut past = false;
+    for i in order {
+        let (l, character) = positions[i];
+        while !past && line < l {
+            if end == bytes.len() {
+                past = true;
+            } else {
+                line += 1;
+                at = end + 1;
+                end = line_end(at);
+                units = 0;
+            }
         }
-    }
-    let line_end = bytes[offset..]
-        .iter()
-        .position(|&b| b == b'\n')
-        .map_or(bytes.len(), |nl| offset + nl);
-    let mut units = 0u32;
-    for (i, c) in text[offset..line_end].char_indices() {
-        if units >= character {
-            return offset + i;
+        if past {
+            out[i] = bytes.len();
+            continue;
         }
-        units += c.len_utf16() as u32;
+        let mut chars = text[at..end].chars();
+        while units < character {
+            let Some(c) = chars.next() else { break };
+            units += c.len_utf16() as u32;
+            at += c.len_utf8();
+        }
+        out[i] = at;
     }
-    line_end
+    out
 }
 
 pub fn position_of_offset(text: &str, offset: usize) -> (u32, u32) {
@@ -2651,12 +2681,20 @@ fn diagnostics_update(params: &Value, doc: &Document) -> (Update, Vec<Diagnostic
     let mut runs = Vec::new();
     let mut diagnostics = Vec::new();
     if let Some(list) = params.get("diagnostics").and_then(Value::as_array) {
-        for d in list {
-            let Some((sl, sc, el, ec)) = range_of(d) else {
-                continue;
-            };
-            let start = offset_of_position(&doc.text, sl, sc);
-            let mut end = offset_of_position(&doc.text, el, ec);
+        let ranged: Vec<_> = list
+            .iter()
+            .filter_map(|d| Some((d, range_of(d)?)))
+            .collect();
+        let offsets = offsets_of_positions(
+            &doc.text,
+            &ranged
+                .iter()
+                .flat_map(|(_, (sl, sc, el, ec))| [(*sl, *sc), (*el, *ec)])
+                .collect::<Vec<_>>(),
+        );
+        for ((d, _), at) in ranged.into_iter().zip(offsets.chunks(2)) {
+            let start = at[0];
+            let mut end = at[1];
             if end <= start {
                 end = (start + 1).min(doc.text.len());
             }
@@ -2722,6 +2760,45 @@ mod tests {
         }
         assert_eq!(offset_of_position("short\n", 0, 99), 5);
         assert_eq!(offset_of_position("short\n", 9, 0), 6);
+    }
+
+    /// Positions read together, in any order, are each what it reads
+    /// alone from the text's start: in a surrogate pair, past a line's
+    /// end, on the last line without a newline, past the last line.
+    #[test]
+    fn positions_read_together_read_as_each_alone() {
+        fn alone(text: &str, line: u32, character: u32) -> usize {
+            let mut offset = 0;
+            for _ in 0..line {
+                match text[offset..].find('\n') {
+                    Some(nl) => offset += nl + 1,
+                    None => return text.len(),
+                }
+            }
+            let end = text[offset..]
+                .find('\n')
+                .map_or(text.len(), |nl| offset + nl);
+            let mut units = 0;
+            for (i, c) in text[offset..end].char_indices() {
+                if units >= character {
+                    return offset + i;
+                }
+                units += c.len_utf16() as u32;
+            }
+            end
+        }
+        for text in ["a🦀é\n\nxy🦀z", "one\ntwo\n", "", "\n"] {
+            let mut positions = Vec::new();
+            for line in (0..5).rev() {
+                for character in [7, 0, 3, 1, 2, 4, 99] {
+                    positions.push((line, character));
+                }
+            }
+            positions.push((1, 2));
+            positions.push((0, 2));
+            let want: Vec<usize> = positions.iter().map(|&(l, c)| alone(text, l, c)).collect();
+            assert_eq!(offsets_of_positions(text, &positions), want, "{text:?}");
+        }
     }
 
     #[test]

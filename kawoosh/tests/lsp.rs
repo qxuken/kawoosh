@@ -705,6 +705,51 @@ fn rename_references_actions_format_and_diagnostics() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A format of a minified bundle — tens of thousands of edits on its one
+/// line — lands at once: its positions are read in one pass over the
+/// text, where each read from the line's start froze the editor for
+/// minutes (this one's thirty thousand: minutes in a debug build, where
+/// it now takes two seconds beside the other tests).
+#[test]
+fn formatting_a_minified_bundle_lands_at_once() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-minified-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    let n = 30_000;
+    let line: String = (0..n).map(|i| format!("let é{i}=\"𝄞\";")).collect();
+    std::fs::write(&file, format!("// @minified\n{line}\n")).unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    assert!(
+        until(&mut d, &mut app, |a| !msgs(a, buf_id).is_empty()),
+        "the server has the text"
+    );
+    let started = std::time::Instant::now();
+    d.keys(&mut app, " cF");
+    assert!(
+        until(&mut d, &mut app, |a| a.ed.message.starts_with("formatted")),
+        "formatted: {:?}",
+        app.ed.message
+    );
+    assert_eq!(app.ed.message, format!("formatted ({n} edits)"));
+    let want: String = (0..n).map(|i| format!("let é{i}=\"𝄞\"; ")).collect();
+    assert_eq!(
+        app.ed.buffers[buf_id].text(),
+        format!("// @minified\n{want}\n")
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// No server for the language: the buffer's own identifiers complete
 /// the word, nearest first; `<C-x>` puts the candidates in a picker
 /// with the word as its query and the cursor's detail as the preview,
