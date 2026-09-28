@@ -1576,3 +1576,14 @@ fn macros_record_and_replay_the_stream() {
     );
     assert!(t.ed.message.contains("deep"), "{}", t.ed.message);
 }
+
+/// A server's edits land where it says, to the character: inside a
+/// grapheme cluster too (a combining mark given its own edit), and an
+/// offset inside a character steps back to its start.
+#[test]
+fn edits_from_outside_land_on_characters_not_graphemes() {
+    let mut t = T::new("e\u{301}🦀z");
+    let b = t.ed.views[t.v].buffer;
+    assert!(t.ed.apply_edits(b, &[(1..3, "\u{300}".into()), (5..5, "!".into())]));
+    assert_eq!(t.text(), "e\u{300}!🦀z");
+}

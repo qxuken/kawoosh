@@ -688,8 +688,8 @@ impl Buffer {
         self.slice(self.line_range(ln))
     }
 
-    /// Steps `offset` back to a char boundary.
-    fn floor_byte(&self, mut offset: usize) -> usize {
+    /// Steps `offset` (clamped to the text) back to a char boundary.
+    pub fn floor_byte(&self, mut offset: usize) -> usize {
         offset = offset.min(self.len());
         while offset > 0 && matches!(self.byte_at(offset), Some(b) if (b & 0xC0) == 0x80) {
             offset -= 1;
