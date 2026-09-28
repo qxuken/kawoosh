@@ -447,6 +447,18 @@ impl Keymap {
         self.groups.get(&as_leader).map(String::as_str)
     }
 
+    /// Every name [`Keymap::describe`] gave, by its prefix as bound
+    /// (`<leader>b`), sorted — for a map of the keys whole.
+    pub fn groups(&self) -> Vec<(&str, &str)> {
+        let mut v: Vec<(&str, &str)> = self
+            .groups
+            .iter()
+            .map(|(k, n)| (k.as_str(), n.as_str()))
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
     /// The key `<leader>` stands for.
     pub fn leader(&self) -> &str {
         &self.leader
@@ -714,6 +726,24 @@ mod tests {
         let mut k = KeyStroke::plain("!");
         k.ctrl = true;
         assert_eq!(k.notation(), "<C-!>");
+    }
+
+    /// The groups' names come back whole, by the prefix they were
+    /// given under, sorted.
+    #[test]
+    fn the_group_names_are_listed() {
+        let mut km = Keymap::new();
+        km.describe("<leader>t", "tabs");
+        km.describe("<leader>b", "buffers");
+        km.describe("<C-w>", "panes");
+        assert_eq!(
+            km.groups(),
+            [
+                ("<C-w>", "panes"),
+                ("<leader>b", "buffers"),
+                ("<leader>t", "tabs")
+            ]
+        );
     }
 
     /// The minus key under a chord and vim's mouse gestures spell the
