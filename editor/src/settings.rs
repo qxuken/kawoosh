@@ -495,6 +495,12 @@ impl Settings {
         // across its lines, the corners where a line reaches past its
         // neighbour convex and where it falls short concave (rows.rs).
         defaults.set("editor.selection_radius", Setting::Float(0.0));
+        // Soft wrap (docs/design/wrap.md): `off`, or every editor pane
+        // wrapped at its width — `word` between words, `glyph`
+        // anywhere — and the languages whose buffers wrap whatever it
+        // says (`{ "text", "gitcommit" }`). `:wrap` flips one pane.
+        defaults.set("editor.wrap", Setting::Str("off".into()));
+        defaults.set("editor.wrap_languages", Setting::List(Vec::new()));
         // The shell whose PATH the window's children get when it was
         // opened outside a terminal — from Finder, the Dock (kawoosh's
         // `shell_env`): a path to it, since a bare name is looked up on
@@ -574,6 +580,7 @@ impl Settings {
             ("launcher.start", words(&["normal", "insert"])),
             ("buffers.scope", words(&["tab", "all"])),
             ("tabs.directory", words(&["auto", "always", "never"])),
+            ("editor.wrap", words(&["off", "word", "glyph"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
         ] {
             s.declare(path, kind, "");
@@ -944,6 +951,8 @@ mod tests {
                 "clipboard.system",
                 "editor.bell",
                 "editor.selection_radius",
+                "editor.wrap",
+                "editor.wrap_languages",
                 "env.shell",
                 "expandtab",
                 "font.chrome_size",
