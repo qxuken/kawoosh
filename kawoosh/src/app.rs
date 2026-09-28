@@ -1537,8 +1537,12 @@ impl Kawoosh {
         };
         // The root which-key (`:keys`) stays until a key is pressed.
         self.keys_help = None;
-        // F12 is the shell's everywhere: kui's devtools.
-        if stroke.code == "f12" {
+        // F12 is the shell's everywhere, kui's devtools — but a raw
+        // terminal's program's (terminal-keys.md Decision 2).
+        let raw_term = self
+            .term_of(self.layout.focused())
+            .is_some_and(|t| self.term_raw(t));
+        if stroke.code == "f12" && !raw_term {
             self.devtools = !self.devtools;
             return;
         }
@@ -1578,12 +1582,18 @@ impl Kawoosh {
         let escaping = on_term
             && (self.terms.escape.is_some()
                 || self.term_escape_key().as_deref() == Some(stroke.notation().as_str()));
-        let ctrl_tab = stroke.ctrl && stroke.code == "tab";
-        let chord = ((stroke.ctrl || stroke.alt) && stroke.shift || stroke.sup || ctrl_tab)
-            && self.ed.prompt_view().is_none()
-            && on_term
-            && !escaping
-            && self.pane_chord(&stroke);
+        // Raw keeps only the escape and ⌘ (terminal-keys.md Decision 2).
+        let raw = on_term
+            && self
+                .term_of(self.layout.focused())
+                .is_some_and(|t| self.term_raw(t));
+        let ctrl_tab = stroke.ctrl && stroke.code == "tab" && !raw;
+        let chord =
+            (((stroke.ctrl || stroke.alt) && stroke.shift && !raw) || stroke.sup || ctrl_tab)
+                && self.ed.prompt_view().is_none()
+                && on_term
+                && !escaping
+                && self.pane_chord(&stroke);
         // The prompt takes the keys while it is open, from any pane —
         // the engine sends a key on any view to its field — so one
         // opened from a terminal or Lua pane (`<C-w>:`) works too.

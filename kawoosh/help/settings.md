@@ -117,6 +117,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `terminal.scrollback` | `10000` | lines of terminal history |
 | `terminal.bell` | `"sound"` | `sound`, `visual` or `off` |
 | `terminal.escape` | `"<C-\\>"` | the key before normal mode's keys in a terminal; `""` for none ([terminal](terminal.md)) |
+| `terminal.raw` | `{}` | programs a terminal pane is raw for while one is in front: every key but the escape and ⌘ theirs ([terminal](terminal.md)) |
 | `lsp.inlay_hints` | `false` | types and parameter names drawn in the line |
 | `lsp` | | language servers and their rules ([code](code.md)) |
 | `compile.default`, `compile.commands` | | what `<leader>cc` and `:compile NAME` run ([code](code.md)) |

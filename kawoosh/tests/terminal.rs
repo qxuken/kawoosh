@@ -1450,3 +1450,103 @@ fn a_program_that_pushed_kittys_flags_hears_the_key_whole() {
     assert_eq!(sent(&mut app), "\x03");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// Whether the status bar names the pane `RAW`.
+fn shows_raw(d: &Drive) -> bool {
+    d.core
+        .nodes()
+        .iter()
+        .any(|n| n.text.as_deref() == Some("RAW"))
+}
+
+/// Raw (terminal-keys.md Decision 2): `<C-\>r` gives the program every
+/// key but the escape and a bound ⌘ chord — the pane cluster's chords,
+/// `<C-Tab>`, the history's page keys and F12 go to it — the status
+/// says `RAW`, and `<C-\>r` again takes them back.
+#[test]
+fn raw_gives_the_program_every_key_but_the_escape_and_cmd() {
+    let mut app = Kawoosh::new("t", "editor text");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    let sent = |app: &mut Kawoosh| {
+        String::from_utf8(app.terms.map.get_mut(&t).unwrap().take_sent()).unwrap()
+    };
+    let on_term = |app: &Kawoosh| matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t);
+    let shifted = KeyMods::NONE.with_shift().with_ctrl();
+    sent(&mut app);
+    assert!(!shows_raw(&d));
+    d.press(&mut app, "<C-\\>");
+    d.keys(&mut app, "r");
+    d.frame(&mut app);
+    assert!(shows_raw(&d), "the status says RAW");
+    assert!(app.ed.message.starts_with("raw: "), "{}", app.ed.message);
+    // The pane cluster's chord is the program's: ctrl+K, as a pty reads
+    // ctrl-shift-k.
+    d.key(&mut app, "K", shifted);
+    assert!(on_term(&app), "no pane move");
+    assert_eq!(sent(&mut app), "\x0b");
+    d.key(&mut app, "tab", KeyMods::NONE.with_ctrl());
+    assert_eq!(sent(&mut app), "\t", "<C-Tab> no tab switch");
+    d.key(&mut app, "pageup", KeyMods::NONE.with_shift());
+    assert_eq!(sent(&mut app), "\x1b[5;2~", "the page keys the program's");
+    assert!(!app.devtools);
+    d.key(&mut app, "f12", KeyMods::default());
+    assert!(!app.devtools, "F12 the program's");
+    assert_eq!(sent(&mut app), "\x1b[24~");
+    // Kept: a bound ⌘ chord, and the escape.
+    d.press(&mut app, "<D-=>");
+    assert!(
+        app.ed.message.starts_with("font "),
+        "⌘= kawoosh's: {}",
+        app.ed.message
+    );
+    assert_eq!(sent(&mut app), "");
+    d.press(&mut app, "<C-\\>");
+    d.keys(&mut app, "r");
+    d.frame(&mut app);
+    assert!(!shows_raw(&d));
+    assert_eq!(app.ed.message, "raw off");
+    d.key(&mut app, "K", shifted);
+    assert!(!on_term(&app), "kept again: <C-S-k> moves up");
+    assert_eq!(sent(&mut app), "");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// `terminal.raw` names the programs a pane is raw for while one is in
+/// front; `<C-\>r` overrides it for that program.
+#[cfg(unix)]
+#[test]
+fn terminal_raw_names_the_programs_that_make_a_pane_raw() {
+    let mut app = Kawoosh::new("t", "editor text");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.raw",
+        kawoosh_editor::Setting::List(vec![kawoosh_editor::Setting::Str("sleep".into())]),
+    );
+    let t = app
+        .spawn_terminal(Some("sleep 30"), None)
+        .expect("a process");
+    let pane = app
+        .layout
+        .split(kawoosh::layout::SplitDir::V, Content::Terminal(t));
+    app.layout.focus(pane);
+    let mut raw = false;
+    for _ in 0..100 {
+        d.frame(&mut app);
+        if shows_raw(&d) {
+            raw = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(raw, "raw while `sleep` is in front");
+    d.press(&mut app, "<C-\\>");
+    d.keys(&mut app, "r");
+    d.frame(&mut app);
+    assert!(!shows_raw(&d), "turned off by hand for it");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

@@ -4157,6 +4157,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<C-S-Up>", "terminal prompt prev"),
         ("<C-S-Down>", "terminal prompt next"),
         ("<C-S-o>", "terminal output"),
+        // After the terminal's escape, `r` is raw (terminal-keys.md
+        // Decision 2): vim's `r` everywhere else.
+        ("r", "terminal raw"),
         ("<D-v>", "paste clipboard"),
         ("<C-S-v>", "paste clipboard"),
     ] {

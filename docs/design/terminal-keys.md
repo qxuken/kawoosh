@@ -1,7 +1,8 @@
 # The terminal's keys
 
-Status: decided with the user 2026-09-28 (roadmap step 57); Decision 1
-built the same day, the escape a setting. Asked in
+Status: decided with the user 2026-09-28 (roadmap step 57), and built
+the same day: Decision 1 (the escape a setting), 3 (the map and the
+regrouping), 5–6 (the kitty encoder, on kui F108) and 2 (raw). Asked in
 the todo: the kitty keyboard protocol, "but we need to enable maybe
 special mode when this is enabled and build a special leader to escape
 from terminal. or optimize commands and keybinds, maybe build a graph of
@@ -166,3 +167,23 @@ Tests: `kitty.rs`'s five (each flag against the protocol's forms),
 `the_keyboard_flags_are_the_programs_a_stack_a_screen`,
 `a_program_that_pushed_kittys_flags_hears_the_key_whole`,
 `a_cmd_click_opens_a_link_while_the_program_reports_the_mouse`.
+
+**Decision 2**, 2026-09-28. `terminal raw` (`on`, `off`, bare flips),
+`when = terminal`, bound to `r` in normal mode for a terminal alone —
+so `<C-\>r` after the escape, shown in its which-key, and vim's `r`
+everywhere else. `Terminals::raw` keeps a hand-set state with the
+foreground process group in front when it was set (`Terminal::foreground`:
+the pty's `tcgetpgrp` and the process's name, `proc_name` on macOS,
+`/proc/PID/comm` on Linux, nothing on Windows); `Kawoosh::term_raw` reads
+it while that group is in front, else whether `terminal.raw` names the
+program in front. So raw set at the shell's prompt holds through an
+`ls` and comes back after a full-screen program, whose own state is the
+list's. Raw hands the program the pane cluster's ctrl-shift and
+alt-shift chords, `<C-Tab>`, the history's shift-page keys and F12;
+the escape and the ⌘ chords stay kawoosh's; the status says `RAW`.
+Found on the way: the legacy encoding dropped the modifiers of the `~`
+keys and the function keys (Shift+PageUp was a plain PageUp), which no
+program had heard until raw sent them; they are xterm's `CSI 5 ; 2 ~`,
+`CSI 1 ; 2 P` now. Tests: `raw_gives_the_program_every_key_but_the_escape_and_cmd`,
+`terminal_raw_names_the_programs_that_make_a_pane_raw` (a real `sleep`
+in front), and the legacy modifiers in `term`'s encoding test.
