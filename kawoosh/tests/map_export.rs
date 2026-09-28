@@ -22,14 +22,20 @@ fn the_keymap_and_the_commands_export_as_json() {
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     ex(&mut d, &mut app, &format!("map export {}", path.display()));
-    assert!(app.ed.message.starts_with("map export: "), "{}", app.ed.message);
+    assert!(
+        app.ed.message.starts_with("map export: "),
+        "{}",
+        app.ed.message
+    );
     let v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(v["leader"], "<Space>");
     assert!(v["groups"]["<leader>b"].is_string(), "{}", v["groups"]);
     let commands = v["commands"].as_array().unwrap();
     assert!(
-        commands.iter().any(|c| c["name"] == "map export" && c["args"][0] == "path"),
+        commands
+            .iter()
+            .any(|c| c["name"] == "map export" && c["args"][0] == "path"),
         "the command lists itself with its argument"
     );
     let bindings = v["bindings"].as_array().unwrap();
@@ -41,7 +47,10 @@ fn the_keymap_and_the_commands_export_as_json() {
         .expect("<C-w>v is bound");
     assert_eq!(split["strokes"], serde_json::json!(["<C-w>", "v"]));
     let name = split["command"].as_str().unwrap();
-    assert!(commands.iter().any(|c| c["name"] == name), "{name} is a command");
+    assert!(
+        commands.iter().any(|c| c["name"] == name),
+        "{name} is a command"
+    );
     assert!(bindings.iter().any(|b| b["mode"] == "p"), "pane mode's too");
     // A shifted chord's stroke as it is pressed, not as its notation
     // would be parsed back (`<C-H>` read from a map is `<C-h>`).
