@@ -129,7 +129,7 @@ impl Kawoosh {
     }
 
     fn close_undo_panel(&mut self, pane: PaneId) {
-        if self.layout.close(pane).is_none() {
+        if !self.close_pane_at(pane) {
             self.ed.message = "cannot close the last pane".into();
         }
     }

@@ -306,11 +306,8 @@ impl Kawoosh {
             if msgs.is_empty() {
                 break;
             }
-            let view = self.focused_view().or_else(|| self.ed.any_view());
-            let rest = match view {
-                Some(v) => Runtime::apply_editor_msgs(&mut self.ed, v, msgs),
-                None => msgs,
-            };
+            let view = self.command_view();
+            let rest = Runtime::apply_editor_msgs(&mut self.ed, view, msgs);
             for m in rest {
                 self.apply_lua_msg(&rt, m);
             }
@@ -376,10 +373,9 @@ impl Kawoosh {
                 }
             }
             Msg::Run(line) => {
-                if let Some(v) = self.focused_view().or_else(|| self.ed.any_view()) {
-                    self.ed.execute(v, &line);
-                    self.drain_effects();
-                }
+                let v = self.command_view();
+                self.ed.execute(v, &line);
+                self.drain_effects();
             }
             Msg::Cmdline(text) => {
                 self.open_cmdline();
@@ -1057,8 +1053,7 @@ impl Kawoosh {
             | Msg::Echo(_)
             | Msg::Copy(_)
             | Msg::Ex(_) => {
-                // Editor messages already applied; here only when there
-                // was no view at all.
+                // Editor messages, already applied on a view.
             }
         }
     }
@@ -1355,10 +1350,10 @@ impl Kawoosh {
 
     /// Closes the pane showing Lua view `name`, if one does; the
     /// keyboard, if it had it, goes back to the pane the view was
-    /// opened from (`Layout::close`).
+    /// opened from (`Layout::close`). As the last pane, the launcher.
     pub fn close_lua_view(&mut self, name: &str) {
         if let Some(p) = self.lua_view_pane(name) {
-            self.layout.close(p);
+            self.close_pane_at(p);
             if let Some(rt) = &self.scripting.rt {
                 rt.set_field_focus(name, None);
             }

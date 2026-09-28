@@ -2625,6 +2625,13 @@ In order — the bugs first, then what needs deciding:
     counts (`status.diagnostics`, over the new `kawoosh.lsp.counts()`),
     both off by default. The OS window's title stays kawoosh's (kui
     sets it once).
+65. ~~**No panes is a launcher**: a terminal alone whose shell exited
+    left a pane showing nothing.~~ Landed 2026-09-28:
+    [launcher.md](launcher.md) Decision 7 — the last pane closed, by
+    any door (`<C-w>c`, a process exiting, a Lua view, a panel), is
+    the launcher, made from what it showed; without one, a gone
+    terminal is a scratch. Commands with no editor pane open run on
+    the resident pane view.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

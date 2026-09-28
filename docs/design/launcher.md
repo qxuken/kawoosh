@@ -182,6 +182,35 @@ question from yesterday is not one to come back to.
 
 *Beat:* restoring it as *same* or as a scratch — neither was asked for.
 
+### 7. No panes is a launcher
+
+*Added 2026-09-28, asked in use.* A terminal alone in the window whose
+shell exited was a dead end: the last pane of the last tab stays
+(`Layout::close`), so it went on showing a terminal that was gone. Now
+the last pane closed — whatever closed it: `<C-w>c`, `:close`, its
+process exiting, a Lua view or a panel closed — is not refused but
+asked anew: the launcher in it, made from what it showed, so `<CR>`
+brings back the buffer with its caret where it was. Decision 2 still
+holds in its sense: the pane is emptied first, and an empty pane is
+the one the launcher asks about.
+
+`Kawoosh::close_pane_at` is the one door, every close site through it.
+The launcher itself as the last pane is not closed (`cannot close the
+last pane`), and `launcher close` (`q`, `<C-c>`) still answers it with
+a scratch — the way out of the question. Without the launcher (no
+runtime, no view) a close keeps the old refusal, and a pane whose
+content went — a terminal exited, one a session could not respawn —
+becomes a scratch: never a pane showing nothing. `:q` on the last pane
+still quits.
+
+With no editor pane at all, a command — `kawoosh.run`, an echo, a
+toast's action, `kawoosh ex` — runs on the resident pane view
+(`Kawoosh::command_view`), which a terminal alone lacked as well.
+
+*Beat:* a launcher only for a terminal that exited — the user asked
+for the general rule; and quitting when the last pane's process exits,
+as wezterm does — a shell exited is seldom a wish to leave the editor.
+
 ### Deliberately not
 
 - **A preview.** The launcher is the whole new pane; a preview beside

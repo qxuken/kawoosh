@@ -405,7 +405,7 @@ impl Kawoosh {
                         .into_iter()
                         .find(|q| self.term_of(*q) == Some(id));
                     if let Some(pane) = pane {
-                        self.layout.close(pane);
+                        self.close_gone(pane);
                     }
                 }
             }

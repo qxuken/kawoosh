@@ -106,31 +106,9 @@ impl Kawoosh {
         };
         match answer {
             Answer::Launcher => {
-                // One at a time: the one open elsewhere is answered as
-                // `<Esc>` would answer it.
-                if self.launcher_pane().is_some() {
-                    let content = self.scratch_content();
-                    self.fill_launcher(content);
-                }
+                self.answer_elsewhere();
                 let pane = self.place(at, Content::Lua(VIEW.into()));
-                self.launcher = Some(Launcher { pane, from });
-                // The query empty and keyed from the first frame: in
-                // normal mode, where a letter launches (roadmap step 29),
-                // or in insert mode, where typing filters at once, as
-                // `launcher.start` says.
-                let f = match self.ed.find_field(FIELD) {
-                    Some(f) => {
-                        self.ed.set_field_text(f, "");
-                        f
-                    }
-                    None => self.ed.open_field(FIELD, ""),
-                };
-                let insert = self.ed.settings.str("launcher.start") == Some("insert");
-                self.ed
-                    .set_mode(f, if insert { Mode::Insert } else { Mode::Normal });
-                if let Some(rt) = &self.scripting.rt {
-                    rt.set_field_focus(VIEW, Some(FIELD.into()));
-                }
+                self.key_launcher(pane, from);
             }
             Answer::Same => {
                 let v = self.same_view(from);
@@ -149,6 +127,74 @@ impl Kawoosh {
                 let v = self.same_view(from);
                 self.place(at, Content::Editor(v));
                 self.list_here(v);
+            }
+        }
+    }
+
+    /// One launcher at a time: the one open elsewhere is answered as
+    /// `<Esc>` would answer it.
+    fn answer_elsewhere(&mut self) {
+        if self.launcher_pane().is_some() {
+            let content = self.scratch_content();
+            self.fill_launcher(content);
+        }
+    }
+
+    /// `pane`, showing the view, made the launcher: what it was made
+    /// from kept, and the query empty and keyed from the first frame —
+    /// in normal mode, where a letter launches (roadmap step 29), or in
+    /// insert mode, where typing filters at once, as `launcher.start`
+    /// says.
+    fn key_launcher(&mut self, pane: PaneId, from: Option<View>) {
+        self.launcher = Some(Launcher { pane, from });
+        let f = match self.ed.find_field(FIELD) {
+            Some(f) => {
+                self.ed.set_field_text(f, "");
+                f
+            }
+            None => self.ed.open_field(FIELD, ""),
+        };
+        let insert = self.ed.settings.str("launcher.start") == Some("insert");
+        self.ed
+            .set_mode(f, if insert { Mode::Insert } else { Mode::Normal });
+        if let Some(rt) = &self.scripting.rt {
+            rt.set_field_focus(VIEW, Some(FIELD.into()));
+        }
+    }
+
+    /// Closes `pane` and drops what it showed. The last pane of the
+    /// last tab is not closed but asked anew — no panes is a launcher
+    /// (Decision 7): the launcher in it, made from what it showed —
+    /// unless it is the launcher already, or there is none to draw,
+    /// when it stays as it is. False when it stayed.
+    pub(crate) fn close_pane_at(&mut self, pane: PaneId) -> bool {
+        if let Some(c) = self.layout.close(pane) {
+            self.drop_content(c);
+            return true;
+        }
+        if self.launcher_pane() == Some(pane) || !self.launcher_available() {
+            return false;
+        }
+        let from = match self.layout.content(pane) {
+            Some(Content::Editor(v)) => self.ed.views.get(v).cloned(),
+            _ => None,
+        };
+        self.answer_elsewhere();
+        if let Some(c) = self.layout.panes.insert(pane, Content::Lua(VIEW.into())) {
+            self.drop_content(c);
+        }
+        self.key_launcher(pane, from);
+        true
+    }
+
+    /// `pane`, whose content went — its process exited, its terminal
+    /// could not be spawned — closed; as the last pane the launcher,
+    /// else a scratch, never a pane showing nothing.
+    pub(crate) fn close_gone(&mut self, pane: PaneId) {
+        if !self.close_pane_at(pane) {
+            let content = self.scratch_content();
+            if let Some(c) = self.layout.panes.insert(pane, content) {
+                self.drop_content(c);
             }
         }
     }

@@ -731,7 +731,7 @@ impl Kawoosh {
                         .filter(|p| self.term_of(*p) == Some(id))
                         .collect();
                     for p in panes {
-                        self.layout.close(p);
+                        self.close_gone(p);
                     }
                     self.terms.map.remove(&id);
                 }
@@ -977,12 +977,10 @@ impl Kawoosh {
             Request::Pick { source, query } => self.pick_request(&source, &query, reply),
             Request::Ex { line } => {
                 // Any view will do for a command that needs one.
-                let view = self.focused_view().or_else(|| self.ed.any_view());
-                if let Some(v) = view {
-                    self.ed.message.clear();
-                    self.ed.execute(v, &line);
-                    self.drain_effects();
-                }
+                let v = self.command_view();
+                self.ed.message.clear();
+                self.ed.execute(v, &line);
+                self.drain_effects();
                 let _ = reply.send(self.ed.message.clone());
             }
         }
