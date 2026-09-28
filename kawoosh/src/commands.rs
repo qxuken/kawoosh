@@ -675,7 +675,7 @@ fn panes() -> Vec<ShellCommand> {
         ),
         // The scrolling tab (scrolling-tab.md): `:layout scroll` and
         // `:layout tree` convert the tab both ways, a bare `:layout`
-        // (`<leader>tl`) flips it, and the message says what the tab
+        // (`<C-w>m`) flips it, and the message says what the tab
         // is now. Three specs so the command line completes the words.
         cmd(
             Spec::new("layout").doc("flip the tab between a strip of columns and a tree of splits"),

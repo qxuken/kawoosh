@@ -306,7 +306,7 @@ fn buffers_lines_recent_and_smart() {
         &mut app,
         &format!("e {}", dir.join("src/main.rs").display()),
     );
-    d.keys(&mut app, " bb");
+    d.keys(&mut app, "  ");
     d.frame(&mut app);
     let r = rows(&d);
     assert_eq!(r, ["README.md", "main.rs"], "the current one last: {r:?}");
@@ -360,7 +360,7 @@ fn buffers_lines_recent_and_smart() {
     // `<C-x>` in the buffers picker closes the row's buffer and the
     // list is read again; one with unsaved changes is asked about —
     // `<Esc>` keeps it, `<CR>` (Discard) drops the changes.
-    d.keys(&mut app, " bb");
+    d.keys(&mut app, "  ");
     d.frame(&mut app);
     assert_eq!(rows(&d), ["main.rs", "README.md"]);
     d.press(&mut app, "<C-x>");
@@ -374,7 +374,7 @@ fn buffers_lines_recent_and_smart() {
     d.press(&mut app, "<C-c>");
     d.keys(&mut app, "ihello");
     d.key(&mut app, "escape", KeyMods::default());
-    d.keys(&mut app, " bb");
+    d.keys(&mut app, "  ");
     d.frame(&mut app);
     assert_eq!(rows(&d), ["README.md"]);
     d.press(&mut app, "<C-x>");
@@ -536,7 +536,7 @@ fn grep_runs_rg_as_the_query_is_typed() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// `:commands` (`<leader>sp`), the registry as a picker: every spec a
+/// `:commands` (`<leader>ic`), the registry as a picker: every spec a
 /// row — the shell's and a plugin's among them, a subcommand as its
 /// two-word name — with what it needs where the keyboard came from
 /// said in the row; typing narrows, the name's start first; the
@@ -574,7 +574,7 @@ fn the_commands_source_is_the_registry_as_a_picker() {
         "what a command needs, from the pane the keyboard came from: {t:?}"
     );
     assert!(
-        t.iter().any(|s| s == "n <leader>cd"),
+        t.iter().any(|s| s == "n ~"),
         "the key bound to dir cd, a cell of its own: {t:?}"
     );
     // The cells line up: every key cell at one x, every doc cell at
@@ -587,7 +587,7 @@ fn the_commands_source_is_the_registry_as_a_picker() {
             .unwrap_or_else(|| panic!("no cell {text}"));
         nodes[at].rect.x
     };
-    let key_x = cell_x(&d, "n <leader>cd");
+    let key_x = cell_x(&d, "n ~");
     assert_eq!(key_x, cell_x(&d, "n J"), "the key column");
     let name_x = cell_x(&d, "dir cd");
     assert!(key_x > name_x + 100.0, "{key_x} past the names at {name_x}");
@@ -716,8 +716,8 @@ fn the_commands_source_is_the_registry_as_a_picker() {
     d.frame(&mut app);
     assert!(!picker_open(&app));
     assert_eq!(app.ed.message, app.cwd.display().to_string());
-    // `<leader>sp` is the same picker.
-    d.keys(&mut app, " sp");
+    // `<leader>ic` is the same picker.
+    d.keys(&mut app, " ic");
     d.frame(&mut app);
     assert!(picker_open(&app));
     assert!(texts(&d).iter().any(|s| s == "commands"));
@@ -1099,7 +1099,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     app.run_lua_source("t", r#"kawoosh.opt("picker.share", 0.5)"#);
     d.press(&mut app, "<C-c>");
     // The tools: the bundled ones, and `compile` once the setting names it.
-    d.keys(&mut app, " tt");
+    d.keys(&mut app, " t");
     d.frame(&mut app);
     let r = rows(&d);
     assert!(
@@ -1112,7 +1112,7 @@ fn scrolling_wrapping_the_preview_and_the_tools() {
     d.press(&mut app, "<C-c>");
     app.run_lua_source("t", r#"kawoosh.opt("compile.default", "cargo test")"#);
     d.frame(&mut app);
-    d.keys(&mut app, " tt");
+    d.keys(&mut app, " t");
     d.frame(&mut app);
     let r = rows(&d);
     assert!(r.contains(&"compile".to_string()), "{r:?}");

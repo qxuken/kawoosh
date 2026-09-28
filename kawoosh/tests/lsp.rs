@@ -385,13 +385,13 @@ fn progress_and_messages_land_in_the_corner() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Round two (roadmap step 7), against the fake server: `<leader>r`
+/// Round two (roadmap step 7), against the fake server: `grn`
 /// fills the prompt with the word and the rename's edits land as one
-/// undo node; `gr` lists the references as a locations buffer `]q`
-/// walks; `<leader>ca` puts the actions in a picker, searched by
+/// undo node; `grr` lists the references as a locations buffer `]q`
+/// walks; `gra` puts the actions in a picker, searched by
 /// title with each one's edit as a diff in the preview — an edit
 /// applied, a command run on the server and its `applyEdit` taken;
-/// `<leader>cF` formats; `<leader>D` goes to the type; `<C-e>` shows
+/// `grf` formats; `grt` goes to the type; `<C-e>` shows
 /// the diagnostic in a pane and `]d` walks to one; and the server's
 /// trigger character asks, `:` no longer being one.
 #[test]
@@ -457,7 +457,7 @@ fn rename_references_actions_format_and_diagnostics() {
 
     // The rename: the prompt filled with the word, edited, submitted.
     d.keys(&mut app, "jw");
-    d.keys(&mut app, " r");
+    d.keys(&mut app, "grn");
     assert!(app.ed.prompt_view().is_some(), "the prompt is open");
     d.commit(&mut app, "_again");
     d.key(&mut app, "enter", KeyMods::default());
@@ -491,7 +491,7 @@ fn rename_references_actions_format_and_diagnostics() {
 
     // References: a locations pane beside, with the keys; `]q` walks,
     // opening each in the pane the list came from.
-    d.keys(&mut app, "gr");
+    d.keys(&mut app, "grr");
     assert!(
         until(&mut d, &mut app, |a| a
             .ed
@@ -567,7 +567,7 @@ fn rename_references_actions_format_and_diagnostics() {
     // A code action on the call's line: the picker lists both, with
     // their kinds; the preview of the first is its edit as a diff.
     d.keys(&mut app, "j");
-    d.keys(&mut app, " ca");
+    d.keys(&mut app, "gra");
     let picker_up =
         |a: &Kawoosh| matches!(a.layout.focused_content(), Some(Content::Lua(n)) if n == "picker");
     assert!(until(&mut d, &mut app, picker_up), "the actions picker");
@@ -611,7 +611,7 @@ fn rename_references_actions_format_and_diagnostics() {
     d.key(&mut app, "escape", KeyMods::default());
     assert!(!picker_up(&app), "closed");
     // Taken, the first's edit lands.
-    d.keys(&mut app, " ca");
+    d.keys(&mut app, "gra");
     assert!(until(&mut d, &mut app, picker_up));
     d.key(&mut app, "enter", KeyMods::default());
     assert!(!picker_up(&app));
@@ -630,7 +630,7 @@ fn rename_references_actions_format_and_diagnostics() {
     assert_eq!(app.ed.buffers[buf_id].text(), text);
     // One taken after the text moved is refused: its edits are
     // positions in the text it was offered for.
-    d.keys(&mut app, " ca");
+    d.keys(&mut app, "gra");
     assert!(until(&mut d, &mut app, picker_up));
     d.key(&mut app, "escape", KeyMods::default());
     d.key(&mut app, "escape", KeyMods::default());
@@ -644,7 +644,7 @@ fn rename_references_actions_format_and_diagnostics() {
     d.keys(&mut app, "u");
     assert_eq!(app.ed.buffers[buf_id].text(), text);
     // The second is a command: run on the server, whose applyEdit lands.
-    d.keys(&mut app, " ca");
+    d.keys(&mut app, "gra");
     assert!(until(&mut d, &mut app, picker_up));
     d.press(&mut app, "<C-n>");
     d.key(&mut app, "enter", KeyMods::default());
@@ -662,7 +662,7 @@ fn rename_references_actions_format_and_diagnostics() {
     );
 
     // Formatting: one edit over the whole text.
-    d.keys(&mut app, " cF");
+    d.keys(&mut app, "grf");
     assert!(
         until(&mut d, &mut app, |a| a.ed.buffers[buf_id]
             .text()
@@ -674,7 +674,7 @@ fn rename_references_actions_format_and_diagnostics() {
 
     // The type definition: line 0, character 3.
     d.keys(&mut app, "G");
-    d.keys(&mut app, " D");
+    d.keys(&mut app, "grt");
     assert!(
         until(&mut d, &mut app, |a| {
             let v = a.focused_view().unwrap();
@@ -840,9 +840,9 @@ fn lua(app: &mut Kawoosh, src: &str) {
 }
 
 /// Round three (roadmap step 20), against the fake server: `gD` goes to
-/// the declaration and `gI` lists two implementations; `<leader>bs` is
+/// the declaration and `gri` lists two implementations; `grs` is
 /// the buffer's symbols in the picker, flattened with their container,
-/// and `<leader>cs` the workspace's as the query is typed; inlay hints,
+/// and `grS` the workspace's as the query is typed; inlay hints,
 /// once on, are drawn in their lines, faint, the text unmoved; in the
 /// hover, `gd` on a type it names goes there in the pane the hover came
 /// from.
@@ -880,8 +880,8 @@ fn symbols_implementations_hints_and_acting_from_the_hover() {
         until(&mut d, &mut app, |a| caret(a) == (0, 3)),
         "declared at 0:3"
     );
-    // `gI`: two implementations, a list with the keys; `q` back.
-    d.keys(&mut app, "gI");
+    // `gri`: two implementations, a list with the keys; `q` back.
+    d.keys(&mut app, "gri");
     assert!(
         until(&mut d, &mut app, |a| a
             .ed
@@ -893,8 +893,8 @@ fn symbols_implementations_hints_and_acting_from_the_hover() {
     d.keys(&mut app, "q");
     d.frame(&mut app);
 
-    // `<leader>bs`: the buffer's symbols, `inner` inside `main`.
-    d.keys(&mut app, " bs");
+    // `grs`: the buffer's symbols, `inner` inside `main`.
+    d.keys(&mut app, "grs");
     d.frame(&mut app);
     for _ in 0..200 {
         app.run_lua_source(
@@ -917,8 +917,8 @@ fn symbols_implementations_hints_and_acting_from_the_hover() {
     d.key(&mut app, "escape", KeyMods::default());
     d.frame(&mut app);
 
-    // `<leader>cs`: the workspace's, by the query.
-    d.keys(&mut app, " cs");
+    // `grS`: the workspace's, by the query.
+    d.keys(&mut app, "grS");
     d.frame(&mut app);
     d.keys(&mut app, "widg");
     for _ in 0..200 {
@@ -950,7 +950,7 @@ fn symbols_implementations_hints_and_acting_from_the_hover() {
     };
     d.frame(&mut app);
     assert!(!hinted(&d));
-    d.keys(&mut app, " cI");
+    d.keys(&mut app, " oh");
     assert_eq!(app.ed.message, "inlay hints on");
     let mut seen = false;
     for _ in 0..200 {
@@ -1276,7 +1276,7 @@ fn the_diagnostics_list() {
     );
     // The workspace's: the tab's working directory's.
     ex(&mut d, &mut app, &format!("cd {}", dir.display()));
-    d.keys(&mut app, " ce");
+    d.keys(&mut app, " d");
     let list_text = |a: &Kawoosh| {
         a.ed.buffers
             .values()

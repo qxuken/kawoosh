@@ -560,8 +560,8 @@ fn dash_opens_the_files_directory_and_can_move_the_cwd() {
     assert_eq!(d.line_rows(), ["../", "f.txt"]);
     d.keys(&mut app, "-");
     assert!(d.line_rows().contains(&"inner/".to_string()));
-    // <leader>cd moves the working directory to the listing.
-    d.keys(&mut app, " cd");
+    // `~` moves the working directory to the listing.
+    d.keys(&mut app, "~");
     assert_eq!(app.cwd, dir);
     // And a terminal opened now starts there (by the directory's own
     // name: an MSYS shell on Windows spells the temp directory `/tmp`).
@@ -663,7 +663,7 @@ fn dash_lands_on_the_entry_it_came_from_and_reuses_the_listing() {
 }
 
 /// The design check for `kawoosh.command`'s spec: dir's `dir cd` says
-/// `when = { "language:dir" }`, so off a listing `<leader>cd` runs
+/// `when = { "language:dir" }`, so off a listing `:dir cd` runs
 /// nothing and the message is the engine's reason, `kawoosh.can` is
 /// that reason, and in a listing both are clear; `:dir?` is the query
 /// form; `kawoosh.commands()` lists the spec as it was given; a
@@ -686,10 +686,8 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
     let cwd = app.cwd.clone();
 
     // Off a listing: refused with the reason, nothing moved.
-    d.keys(&mut app, " cd");
-    assert_eq!(app.ed.message, "dir cd: only in a dir buffer");
-    assert_eq!(app.cwd, cwd);
     ex(&mut d, &mut app, "dir cd");
+    assert_eq!(app.cwd, cwd);
     assert_eq!(app.ed.message, "dir cd: only in a dir buffer");
     ex(&mut d, &mut app, "dir?");
     assert_eq!(app.ed.message, "no listing here");
@@ -741,7 +739,7 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
     );
 
     // In a listing: clear, `<CR>` opens the entry, and the working
-    // directory follows `<leader>cd`.
+    // directory follows `~`.
     d.keys(&mut app, "-");
     ex(&mut d, &mut app, "dir?");
     assert_eq!(
@@ -760,7 +758,7 @@ fn a_lua_command_is_gated_questioned_and_banged_by_its_spec() {
         Some(file.as_path())
     );
     d.keys(&mut app, "-");
-    d.keys(&mut app, " cd");
+    d.keys(&mut app, "~");
     assert_eq!(app.cwd, dir.join("inner"));
 
     // A plugin's own fact, and the forms.
@@ -2649,7 +2647,7 @@ fn a_moment_recalled_keeps_its_entry() {
     );
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "a1.txt", "a2.txt", "../"]);
-    d.keys(&mut app, " p");
+    d.keys(&mut app, " mm");
     d.frame(&mut app);
     d.keys(&mut app, "j");
     d.key(&mut app, "enter", KeyMods::default());

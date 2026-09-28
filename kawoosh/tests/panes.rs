@@ -622,7 +622,7 @@ fn buffers_step_on_brackets_and_the_leader() {
     assert_eq!(d.line_rows()[0], "aaa");
     d.keys(&mut app, "[b");
     assert_eq!(d.line_rows()[0], "bbb");
-    d.keys(&mut app, " bn");
+    d.keys(&mut app, "]b");
     assert_eq!(d.line_rows()[0], "aaa");
     d.keys(&mut app, "  ");
     assert!(
@@ -633,9 +633,9 @@ fn buffers_step_on_brackets_and_the_leader() {
     d.keys(&mut app, " bd");
     assert_eq!(d.line_rows()[0], "bbb");
     assert_eq!(app.ed.listed_buffers().len(), 1);
-    d.keys(&mut app, " tn");
+    d.press(&mut app, "<C-w>t");
     assert_eq!(app.layout.tabs.len(), 2);
-    d.keys(&mut app, " tq");
+    d.press(&mut app, "<C-w>C");
     assert_eq!(app.layout.tabs.len(), 1);
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -665,7 +665,7 @@ fn a_pane_without_a_view_has_the_pane_keys() {
     for _ in 0..40 {
         d.keys(&mut app, "yyj");
     }
-    d.keys(&mut app, " p");
+    d.keys(&mut app, " mm");
     d.frame(&mut app);
     assert_eq!(app.layout.focused_content(), Some(Content::Memory));
     // Close the editor pane from the memory pane: the cluster's keys.
@@ -839,7 +839,7 @@ fn tabs_move_along_the_strip_and_switch_from_a_pane() {
     assert_eq!(ids(&app), before);
     assert_eq!(app.ed.message, "tab 3 of 3");
     // From the memory pane: the cluster is shared.
-    d.keys(&mut app, "yy p");
+    d.keys(&mut app, "yy mm");
     d.frame(&mut app);
     assert_eq!(app.layout.focused_content(), Some(Content::Memory));
     d.keys(&mut app, "[t");

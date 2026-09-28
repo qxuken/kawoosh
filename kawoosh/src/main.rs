@@ -376,7 +376,7 @@ Terminals: :term, ctrl-w d for the dock. In a terminal ctrl-w is the
 pane prefix (ctrl-w . sends a literal ^W), ctrl-\\ ctrl-n opens the
 scrollback as a buffer, and ctrl/cmd-click on src/main.rs:42 opens it.
 $EDITOR inside a terminal opens a pane here and waits.
-LSP: gd K gr, <leader>r rename, <leader>ca actions, <leader>cF format,
+LSP: gd K, and gr then: r references, n rename, a actions, f format,
 <C-e> and ]d for diagnostics; completion is a ghost as you type — the
 buffer's words when no server answers — and <C-x> lists it in a pane.
 Lua: :lua CODE, <leader>x evaluates the line, :map list shows the keymap;

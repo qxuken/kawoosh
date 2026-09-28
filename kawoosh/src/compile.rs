@@ -732,7 +732,7 @@ impl Kawoosh {
         let from = from.map(|(b, _)| b);
         let editor_elsewhere = |k: &Self, p: PaneId| matches!(k.view_of(p), Some(v) if Some(k.ed.views[v].buffer) != from);
         // The pane the list was opened from, when the list has the keys
-        // (`gr`, then `<CR>`); else the first other editor pane.
+        // (`grr`, then `<CR>`); else the first other editor pane.
         let visible = self.layout.visible_panes();
         let other = self
             .layout

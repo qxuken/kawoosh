@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use drive::Drive;
 use kawoosh::Kawoosh;
+use kawoosh::layout::Content;
 use kawoosh::settings::{PROJECT_DIR, SETTINGS_FILE};
 use kui_native::KeyMods;
 
@@ -443,11 +444,14 @@ fn the_leader_is_a_setting() {
     });
     d.keys(&mut app, ";k");
     assert_eq!(app.ed.settings.int("hit"), Some(4));
-    // The bundled plugin's `<leader>cd` followed too: a listing, then
-    // the map that moves the cwd to it.
-    ex(&mut d, &mut app, &format!("dir {}", t.root.display()));
-    d.keys(&mut app, ";cd");
-    assert_eq!(app.cwd, t.root);
+    // The bundled plugins' maps followed too: `<leader>F`, the files
+    // from here, opens the picker on `;F`.
+    d.keys(&mut app, ";F");
+    d.frame(&mut app);
+    assert!(
+        matches!(app.layout.focused_content(), Some(Content::Lua(_))),
+        "the picker opened"
+    );
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&t.dir).ok();
 }

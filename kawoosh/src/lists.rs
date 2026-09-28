@@ -200,7 +200,7 @@ impl Kawoosh {
         }
     }
 
-    /// A server's list of places (`gr`, `gI` and `gD` with several): to
+    /// A server's list of places (`grr`, `gri` and `gD` with several): to
     /// the plugins that make lists (`kawoosh.on_places`); whether one
     /// made it.
     pub(crate) fn places_to_lua(&mut self, title: &str, items: &[Location]) -> bool {

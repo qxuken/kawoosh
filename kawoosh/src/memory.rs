@@ -1,4 +1,4 @@
-//! The memory as a pane of its own (`:memory`, `<leader>p`), beside
+//! The memory as a pane of its own (`:memory`, `<leader>mm`), beside
 //! the buffer the way the undo tree is, with kinds (memory.md Decision
 //! 10): **texts** — every moment the engine remembers
 //! (`Editor::memory`: what was yanked, deleted, changed away, or pasted
