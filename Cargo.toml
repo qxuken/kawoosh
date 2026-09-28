@@ -23,13 +23,9 @@ kawoosh-lua = { path = "./lua" }
 # while a release is in CI, these three lines become
 #   kui-native = { path = "../kui/crates/kui-native" }  (and the same for -core, -lua).
 # The runner crate is `kui-native` (`kui` on crates.io is another crate's).
-# By path while kui's alpha.22 is unreleased: F101 (rounded span
-# backgrounds, roadmap step 48) and the DX round kawoosh moved onto (typed
-# events, `testing::Drive`, `splitter`, `on_event_with`, `family` by name),
-# and F106's `TextWrap::BreakSpaces` for markdown prose.
-kui-native = { path = "../kui/crates/kui-native" }
-kui-core = { path = "../kui/crates/kui-core" }
-kui-lua = { path = "../kui/crates/kui-lua" }
+kui-native = { version = "=0.1.0-alpha.23", registry = "forgejo" }
+kui-core = { version = "=0.1.0-alpha.23", registry = "forgejo" }
+kui-lua = { version = "=0.1.0-alpha.23", registry = "forgejo" }
 # The one Lua in the binary is kui-lua's (kui.md D6).
 mlua = { version = "0.12", features = ["lua55", "vendored"] }
 
