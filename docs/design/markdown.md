@@ -118,7 +118,8 @@ takes.
 
 ### 4. Rendered rows wrap, and this is where soft wrap enters
 
-A rendered row's text gets `wrap = word` at the pane's text width, and
+A rendered row's text gets `wrap = break-spaces` (a word wrap whose
+spaces take their cells; see the notes) at the pane's text width, and
 its box is `Sizing::Fit`: the pane is a column of rows of the height
 kui gives them. Scrolling stays by row — `top` is a line — and the
 pane emits from `top` as many rows as the viewport holds at the body
@@ -345,6 +346,16 @@ After a day's use (2026-09-23), five more:
   line. The text now grows to its row and kui wraps it there, in the
   frame it is drawn; an image's share of the width, which still needs a
   number, takes the window's when the pane has no rect yet.
+- **Every space of a wrapped row has a cell** (2026-09-28, kui F106). A
+  space typed after a full row's last word put the caret past the pane,
+  the next back on the full stop, the next on the following row, and
+  normal mode's block on those spaces drew past the pane or not at all:
+  kui's `word` wrap hung one trailing space over the edge and dropped
+  the ones a break fell at. Prose wraps `break-spaces` now — a space
+  that does not fit starts the next row, as a letter would — so the
+  caret has a place on every byte, inside the pane
+  (`every_space_of_a_wrapped_row_has_a_cell_in_the_pane`). A code
+  block's rows still wrap by glyph, where one trailing space can hang.
 - **`gx` on an anchor goes to its heading**: `#seed-data`, or
   `file.md#top` after opening the file, by GitHub's slug (lower-cased,
   punctuation dropped, spaces as `-`, a repeat numbered); it had opened

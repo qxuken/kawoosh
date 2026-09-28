@@ -117,7 +117,10 @@ pub fn render(
         } else if table {
             TextWrap::None
         } else {
-            TextWrap::Word
+            // A space takes its cell like a letter: one that does not fit
+            // starts the next row, where under `Word` it hung past the
+            // pane or went with the break, and the caret with it (kui F106).
+            TextWrap::BreakSpaces
         },
     };
     let mut folds: Vec<(Range<usize>, String)> = Vec::new();
