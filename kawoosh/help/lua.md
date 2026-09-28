@@ -28,7 +28,7 @@ Everything a key does is a named command. `kawoosh.command(name, fn, opts)` adds
 
 A key can be bound more than once: the newest binding whose `opts.when` holds, and whose command can run, is the one that runs. That is how one key does the right thing in different places. `kawoosh.unmap(mode, keys)` removes a key's bindings. Inside a command a key ran, `kawoosh.pass()` hands the key on to the binding under it.
 
-`:map list` shows every binding in a pane (`:map list n`, or `:map list <leader>c` for the keys under a prefix), and `:map group <leader>i insert` names a group for the which-key card.
+`:map list` shows every binding in a pane (`:map list n`, or `:map list <leader>c` for the keys under a prefix), and `:map group <leader>i insert` names a group for the which-key card. `:map export PATH` writes the keymap and every command as JSON — each binding with the command it runs, the groups' names, the leader (bare, it opens in a pane).
 
 ## Example: a command with a key
 
