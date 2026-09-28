@@ -1,5 +1,5 @@
-//! Milestone 4: terminal panes as `cells`, the pane prefix, the
-//! scrollback buffer, and `gf` from terminal output.
+//! Milestone 4: terminal panes as `cells`, the escape to normal mode's
+//! keys, the scrollback buffer, and `gf` from terminal output.
 
 mod drive;
 
@@ -9,7 +9,7 @@ use kawoosh::layout::Content;
 use kui_native::{InputEvent, KeyMods, Rect, Vec2};
 
 #[test]
-fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
+fn a_terminal_pane_draws_cells_and_takes_the_escape() {
     let mut app = Kawoosh::new("t", "editor text");
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
@@ -31,17 +31,20 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
         "sized to the pane: {:?}",
         term.size()
     );
-    // <C-w> then k: the pane command runs, nothing reaches the shell.
+    // The escape, then `<C-w>k`: normal mode's pane command runs,
+    // nothing reaches the shell.
+    d.press(&mut app, "<C-\\>");
+    assert_eq!(app.terms.escape, Some(Vec::new()));
     d.press(&mut app, "<C-w>");
-    assert!(app.terms.prefix);
     d.keys(&mut app, "k");
-    assert!(!app.terms.prefix);
+    assert!(app.terms.escape.is_none());
     assert!(matches!(
         app.layout.focused_content(),
         Some(Content::Editor(_))
     ));
-    // Back down; ctrl-\ ctrl-n materialises the scrollback in the
-    // terminal's own pane, and `q` gives the pane back.
+    // Back down; the escape and ctrl-n (vim's `<C-\><C-n>`)
+    // materialise the scrollback in the terminal's own pane, and `q`
+    // gives the pane back.
     d.press(&mut app, "<C-w>");
     d.keys(&mut app, "j");
     assert!(matches!(
@@ -61,12 +64,93 @@ fn a_terminal_pane_draws_cells_and_takes_the_prefix() {
     assert_eq!(app.layout.visible_panes().len(), 2);
     // `:scrollback` is the terminal pane's (`when = terminal`): from the
     // editor pane above, the engine says so and nothing opens.
+    d.press(&mut app, "<C-\\>");
     d.press(&mut app, "<C-w>");
     d.keys(&mut app, "k");
     d.keys(&mut app, ":scrollback");
     d.key(&mut app, "enter", KeyMods::default());
     assert_eq!(app.ed.message, "scrollback: only in a terminal pane");
     assert_eq!(app.layout.visible_panes().len(), 2);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// The terminal's escape (terminal-keys.md Decision 1): `<C-w>` is the
+/// shell's; after `<C-\>` the keys are normal mode's — the which-key
+/// open on them, the leader's groups, `:` — `<C-\>` again is the key
+/// to the pty, `<Esc>` lets it go, a key bound to nothing says so; and
+/// `terminal.escape` names another key, or none.
+#[test]
+fn the_escape_takes_normal_modes_keys_and_is_a_setting() {
+    let mut app = Kawoosh::new("t", "editor text");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    let sent = |app: &mut Kawoosh| app.terms.map.get_mut(&t).unwrap().take_sent();
+    let on_term = |app: &Kawoosh| matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t);
+    sent(&mut app);
+    // `<C-w>` reaches the shell: its delete-word.
+    d.press(&mut app, "<C-w>");
+    assert_eq!(sent(&mut app), b"\x17");
+    assert!(on_term(&app));
+    // The escape opens the which-key on normal mode's first keys.
+    d.press(&mut app, "<C-\\>");
+    d.frame(&mut app);
+    assert!(
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.label.as_deref() == Some("whichkey")),
+        "the which-key after the escape"
+    );
+    assert!(sent(&mut app).is_empty(), "the escape is not the pty's");
+    // The leader's groups: the memory pane, from a terminal.
+    d.keys(&mut app, " mm");
+    assert!(app.terms.escape.is_none());
+    assert_eq!(app.layout.focused_content(), Some(Content::Memory));
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    assert!(on_term(&app), "back on the terminal");
+    // Twice: the key itself to the pty.
+    d.press(&mut app, "<C-\\>");
+    d.press(&mut app, "<C-\\>");
+    assert_eq!(sent(&mut app), b"\x1c");
+    // `<Esc>` lets it go, and the next key is the shell's again.
+    d.press(&mut app, "<C-\\>");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert!(app.terms.escape.is_none());
+    d.keys(&mut app, "j");
+    assert_eq!(sent(&mut app), b"j");
+    // A key bound to nothing says so.
+    d.press(&mut app, "<C-\\>");
+    d.press(&mut app, "<F9>");
+    assert_eq!(app.ed.message, "<F9>: not bound");
+    assert!(sent(&mut app).is_empty());
+    // `:` the command line: `terminal.escape` set to `<C-a>`.
+    d.press(&mut app, "<C-\\>");
+    d.keys(&mut app, ":");
+    assert!(app.ed.prompt_view().is_some());
+    d.keys(&mut app, "set terminal.escape=<C-a>");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert!(on_term(&app));
+    d.press(&mut app, "<C-\\>");
+    assert_eq!(sent(&mut app), b"\x1c", "the old escape is the shell's");
+    d.press(&mut app, "<C-a>");
+    assert!(sent(&mut app).is_empty(), "the new one is the escape");
+    d.press(&mut app, "<C-w>");
+    d.keys(&mut app, "k");
+    assert!(!on_term(&app), "`<C-a><C-w>k` moved up");
+    // Empty: no escape; every key is the pty's.
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.escape",
+        kawoosh_editor::Setting::Str(String::new()),
+    );
+    d.press(&mut app, "<C-w>");
+    d.keys(&mut app, "j");
+    assert!(on_term(&app));
+    d.press(&mut app, "<C-a>");
+    assert_eq!(sent(&mut app), b"\x01");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
@@ -183,6 +267,7 @@ fn ctrl_shift_x_is_copy_mode_and_q_comes_back() {
     assert_eq!(head, buf.line_start(top), "{:?}", buf.line_text(top));
     d.key(&mut app, "X", shifted);
     // From the editor pane the chord is refused with its reason.
+    d.press(&mut app, "<C-\\>");
     d.press(&mut app, "<C-w>");
     d.keys(&mut app, "k");
     assert!(matches!(
@@ -555,6 +640,7 @@ fn ctrl_w_ctrl_w_is_ctrl_w_w_and_f12_toggles_devtools() {
     // From a terminal pane too.
     let t = app.add_headless_terminal();
     assert!(matches!(app.layout.focused_content(), Some(Content::Terminal(id)) if id == t));
+    d.press(&mut app, "<C-\\>");
     d.press(&mut app, "<C-w>");
     d.press(&mut app, "<C-k>");
     assert!(matches!(
@@ -604,6 +690,7 @@ fn the_pane_answers_colour_questions_and_reports_a_flip() {
     // A light base from the settings (typed in the editor pane above —
     // the terminal has the keys): the report, the light sixteen, and
     // the question answered with the light panel.
+    d.press(&mut app, "<C-\\>");
     d.press(&mut app, "<C-w>");
     d.keys(&mut app, "k");
     assert!(matches!(
@@ -823,6 +910,7 @@ fn a_drag_selects_in_the_live_pane() {
         .rect;
     // The editor pane has the keys; a plain click on the terminal takes
     // them back.
+    d.press(&mut app, "<C-\\>");
     d.press(&mut app, "<C-w>");
     d.keys(&mut app, "k");
     assert_ne!(app.layout.focused(), term_pane);
@@ -857,6 +945,7 @@ fn the_register_follows_the_system_clipboard() {
     d.frame(&mut app);
     app.add_headless_terminal();
     d.frame(&mut app);
+    d.press(&mut app, "<C-\\>");
     d.press(&mut app, "<C-w>");
     d.keys(&mut app, "k");
     d.frame(&mut app);
@@ -882,6 +971,7 @@ fn a_clipboard_look_claims_only_its_own_ask() {
     d.frame(&mut app);
     app.add_headless_terminal();
     d.frame(&mut app);
+    d.press(&mut app, "<C-\\>");
     d.press(&mut app, "<C-w>");
     d.core.request_paste();
     d.keys(&mut app, "k");
@@ -916,6 +1006,7 @@ fn focus_leaves_a_terminal_drawn_first() {
     d.frame(&mut app);
     app.add_headless_terminal();
     d.frame(&mut app);
+    d.press(&mut app, "<C-\\>");
     d.press(&mut app, "<C-w>");
     d.keys(&mut app, "x");
     d.frame(&mut app);

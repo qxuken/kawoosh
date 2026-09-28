@@ -1,5 +1,5 @@
 //! Terminal panes (milestone 4): the `term` facade behind each pane, keys
-//! encoded to bytes, the pane prefix chord, scrollback into a buffer, and
+//! encoded to bytes, the escape to normal mode's keys, scrollback into a buffer, and
 //! the locations pattern table that turns `src/main.rs:42` under the
 //! pointer into an open file (mvp.md Decisions 3, 3b, 5c).
 
@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use kawoosh_doc::Buffer;
+use kawoosh_editor::keymap::{LEADER, parse_notation};
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Selection, Spec, motions};
 use kawoosh_term::{TermSize, Terminal, encode_key};
 
@@ -49,11 +50,10 @@ pub struct Terminals {
     /// When the bell was last heard: at most one in [`BELL_GAP`].
     bell_at: Option<std::time::Instant>,
     next: TermId,
-    /// `<C-w>` was pressed in a terminal pane: the next key is a pane
-    /// command (`<C-w>.` sends a literal ^W).
-    pub prefix: bool,
-    /// `<C-\>` was pressed: `<C-n>` next materialises the scrollback.
-    pub backslash: bool,
+    /// The keys typed since `terminal.escape` in a terminal pane
+    /// (terminal-keys.md Decision 1): normal mode's, looked up as they
+    /// come, the which-key open on them. None while the pty has them.
+    pub escape: Option<Vec<String>>,
     /// The wheel's fraction of a line carried per terminal.
     pub carry: HashMap<TermId, f32>,
     /// The scrollback buffers open, each with the terminal it stands in
@@ -469,34 +469,26 @@ impl Kawoosh {
         }
     }
 
+    /// The terminal's escape (`terminal.escape`, `<C-\>` by default)
+    /// as a stroke's notation; none when the setting is empty or not
+    /// one key.
+    pub(crate) fn term_escape_key(&self) -> Option<String> {
+        let s = self.ed.settings.str("terminal.escape").unwrap_or("<C-\\>");
+        match parse_notation(s).as_slice() {
+            [one] if one != LEADER => Some(one.clone()),
+            _ => None,
+        }
+    }
+
     /// A key in a focused terminal pane.
     pub(crate) fn term_key(&mut self, id: TermId, stroke: KeyStroke) {
         let note = stroke.notation();
-        if self.terms.backslash {
-            self.terms.backslash = false;
-            if note == "<C-n>" {
-                self.scrollback_to_buffer(id);
-                return;
-            }
+        if let Some(keys) = self.terms.escape.take() {
+            self.term_escaped(id, &stroke, keys);
+            return;
         }
-        if self.terms.prefix {
-            self.terms.prefix = false;
-            if note == "." {
-                if let Some(t) = self.terms.map.get_mut(&id) {
-                    t.input(&[0x17]);
-                }
-                return;
-            }
-            if note == ":" {
-                self.open_cmdline();
-                return;
-            }
-            let keys = ["<C-w>".to_string(), note.clone()];
-            self.ed.sync_settings();
-            if let Lookup::Exact(bs) = self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
-                let bs = bs.to_vec();
-                self.run_bindings(&bs);
-            }
+        if self.term_escape_key().as_deref() == Some(note.as_str()) {
+            self.terms.escape = Some(Vec::new());
             return;
         }
         // The view's own keys, where a program on the whole screen
@@ -512,17 +504,6 @@ impl Kawoosh {
         if let Some(how) = scroll.filter(|_| !alt_screen) {
             self.term_scroll(id, how);
             return;
-        }
-        match note.as_str() {
-            "<C-w>" => {
-                self.terms.prefix = true;
-                return;
-            }
-            "<C-\\>" => {
-                self.terms.backslash = true;
-                return;
-            }
-            _ => {}
         }
         // A ⌘ chord bound to nothing is nothing to the shell, not its
         // letter: a pty has no use for ⌘ (`Kawoosh::pane_chord`).
@@ -542,6 +523,52 @@ impl Kawoosh {
         ) {
             t.scroll_to_bottom();
             t.input(&bytes);
+        }
+    }
+
+    /// A key after the terminal's escape (terminal-keys.md Decision 1):
+    /// normal mode's keys, the sequence looked up as it grows — a
+    /// binding runs, a prefix waits with the which-key open on it,
+    /// anything else is said to be unbound. First after the escape,
+    /// `<C-n>` is copy mode (vim's `<C-\><C-n>`), `:` the command line,
+    /// the escape again the key itself to the pty, `<Esc>` nothing.
+    fn term_escaped(&mut self, id: TermId, stroke: &KeyStroke, mut keys: Vec<String>) {
+        let note = stroke.notation();
+        if note == "<Esc>" {
+            return;
+        }
+        if keys.is_empty() {
+            match note.as_str() {
+                "<C-n>" => return self.scrollback_to_buffer(id),
+                ":" => return self.open_cmdline(),
+                _ if self.term_escape_key().as_deref() == Some(note.as_str()) => {
+                    if let Some(t) = self.terms.map.get_mut(&id)
+                        && let Some(bytes) = encode_key(
+                            &stroke.code,
+                            stroke.text.as_deref(),
+                            stroke.ctrl,
+                            stroke.alt,
+                            stroke.shift,
+                            t.app_cursor_keys(),
+                        )
+                    {
+                        t.scroll_to_bottom();
+                        t.input(&bytes);
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+        keys.push(note);
+        self.ed.sync_settings();
+        match self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
+            Lookup::Exact(bs) => {
+                let bs = bs.to_vec();
+                self.run_bindings(&bs);
+            }
+            Lookup::Prefix => self.terms.escape = Some(keys),
+            Lookup::None => self.ed.message = format!("{}: not bound", keys.concat()),
         }
     }
 

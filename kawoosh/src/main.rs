@@ -372,9 +372,10 @@ fresh scratch here, :new / :vnew one in a split; - is the file manager
 on the current file's directory.
 
 Panes: ctrl-w v / s split, ctrl-w h j k l move, ctrl-w q close, :tabnew.
-Terminals: :term, ctrl-w d for the dock. In a terminal ctrl-w is the
-pane prefix (ctrl-w . sends a literal ^W), ctrl-\\ ctrl-n opens the
-scrollback as a buffer, and ctrl/cmd-click on src/main.rs:42 opens it.
+Terminals: :term, ctrl-w d for the dock. In a terminal every key is the
+program's but ctrl-\\ (terminal.escape): normal mode's keys after it,
+ctrl-\\ ctrl-w k a pane up, ctrl-\\ ctrl-n the scrollback as a buffer;
+and ctrl/cmd-click on src/main.rs:42 opens it.
 $EDITOR inside a terminal opens a pane here and waits.
 LSP: gd K, and gr then: r references, n rename, a actions, f format,
 <C-e> and ]d for diagnostics; completion is a ghost as you type — the

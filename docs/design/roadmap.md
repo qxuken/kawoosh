@@ -2505,6 +2505,8 @@ think on a kitty keyboard"), the terminal's third round, in that order:
     given back to the pty), two levels (kept, and raw: the escape and ⌘
     alone, by a toggle or a program named in `terminal.raw`), and first
     a map of the keys: `:map export` (JSON) and a page to regroup on.
+    The regrouping built ([keymap-regroup.md](keymap-regroup.md)); the
+    escape built, as `terminal.escape`; the kitty encoder and raw left.
 
 From the todo, 2026-09-28 — nine items added the same night, each read
 against the code:

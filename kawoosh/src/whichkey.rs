@@ -62,8 +62,12 @@ impl Kawoosh {
             };
             return Some((self.ed.pending.clone(), mode));
         }
-        if self.terms.prefix {
-            return Some((vec!["<C-w>".into()], Mode::Normal));
+        // After the terminal's escape: normal mode's keys, from the
+        // first (terminal-keys.md Decision 1).
+        if let Some(keys) = &self.terms.escape
+            && self.term_of(self.layout.focused()).is_some()
+        {
+            return Some((keys.clone(), Mode::Normal));
         }
         if let Some(mode) = self.keys_help {
             return Some((Vec::new(), mode));

@@ -1061,8 +1061,8 @@ fn runs_are_remembered_as_tools_and_locations() {
     assert!(tool.dwell_ms > 0, "dwell in the terminal: {tool:?}");
     assert!(tool.meta.contains("\"cmd\":\"cat\""), "{}", tool.meta);
     // `:memory all` lists both (from the terminal the command line is
-    // `<C-w>:`); `⏎` on the location opens the file at its line.
-    d.press(&mut app, "<C-w>");
+    // `<C-\>:`); `⏎` on the location opens the file at its line.
+    d.press(&mut app, "<C-\\>");
     d.keys(&mut app, ":memory all");
     d.key(&mut app, "enter", KeyMods::default());
     d.frame(&mut app);

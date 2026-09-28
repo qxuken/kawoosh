@@ -72,8 +72,8 @@ after the caret.
 
 The first word completes to a command, and what follows to what the
 command takes: a path for `:e` and `:cd`, a buffer for `:b`, a setting
-and its values for `:set`. From a terminal or another pane that has no
-`:` of its own, `<C-w>:` opens it. `<leader>ic` lists every command in a
+and its values for `:set`. From a pane that has no `:` of its own,
+`<C-w>:` opens it, and from a terminal `<C-\>:`. `<leader>ic` lists every command in a
 picker with its key and what it does; [commands](commands.md) is the same
 list as a page.
 

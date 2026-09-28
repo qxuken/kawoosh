@@ -40,8 +40,8 @@ fn a_session_saves_and_restores_panes_files_and_carets() {
     d.key(&mut app, "escape", KeyMods::default());
     d.key(&mut app, "escape", KeyMods::default());
     ex(&mut d, &mut app, "term");
-    // From a terminal pane the command line opens with <C-w>:.
-    d.press(&mut app, "<C-w>");
+    // From a terminal pane the command line opens with <C-\>:.
+    d.press(&mut app, "<C-\\>");
     d.keys(&mut app, ":view counter");
     d.key(&mut app, "enter", KeyMods::default());
     app.run_lua_source("t", r#"local s = kawoosh.store("plug"); s.set("k", "v")"#);

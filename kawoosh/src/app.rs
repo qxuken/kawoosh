@@ -1567,10 +1567,21 @@ impl Kawoosh {
         // through pane mode (`listing.rs`). So is `<C-Tab>`, which a pty
         // reads as a plain `<Tab>` — the next tab, as `<C-S-Tab>` is the
         // previous.
+        // The terminal's escape and the keys after it are the
+        // terminal's to read (`term_key`), a chord among them too; an
+        // escape left open by a pane that lost the keys is let go.
+        let on_term = self.term_of(self.layout.focused()).is_some();
+        if !on_term {
+            self.terms.escape = None;
+        }
+        let escaping = on_term
+            && (self.terms.escape.is_some()
+                || self.term_escape_key().as_deref() == Some(stroke.notation().as_str()));
         let ctrl_tab = stroke.ctrl && stroke.code == "tab";
         let chord = ((stroke.ctrl || stroke.alt) && stroke.shift || stroke.sup || ctrl_tab)
             && self.ed.prompt_view().is_none()
-            && self.term_of(self.layout.focused()).is_some()
+            && on_term
+            && !escaping
             && self.pane_chord(&stroke);
         // The prompt takes the keys while it is open, from any pane —
         // the engine sends a key on any view to its field — so one

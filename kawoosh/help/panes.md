@@ -23,7 +23,7 @@ hides what it showed: buffers and terminals live on and come back with
 | `<A-S-h>` `<A-S-l>` | the pane narrower, wider (also `<C-w><` `<C-w>>`) |
 | `<A-S-j>` `<A-S-k>` | the pane shorter, taller (also `<C-w>-` `<C-w>+`) |
 | `⌘1` … `⌘9`, `<C-S-1>` … `<C-S-9>` | the Nth pane, or the Nth column of a strip (`:pane goto N`) |
-| `<C-w>:` | the command line, from a pane without one (a terminal) |
+| `<C-w>:` | the command line, from a pane without one (a view of a plugin's); from a terminal, `<C-\>:` |
 
 Sizes take a count: `3<A-S-l>` is three steps wider. The dividers between
 panes drag with the mouse.
