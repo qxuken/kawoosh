@@ -263,10 +263,13 @@ unchanged.
   cannot sit beside rows of their own heights; each rendered row
   carries its number in a `Role::None` cell, which kui's line bytes
   do not count.
-- **No horizontal scroll, and code wraps by glyph.** A rendered pane's
-  rows are the pane's width; prose wraps by word, a code block's lines
-  by glyph (cut, a line would be lost off the edge), and a table not at
-  all (its rows are clipped: the alignment is the point).
+- **No horizontal scroll; prose and code wrap by word.** A rendered
+  pane's rows are the pane's width; prose and a code block's lines wrap
+  by word with their spaces taking cells (`break-spaces`, kui F106; cut,
+  a line would be lost off the edge), a word wider than the row by
+  glyph, and a table not at all (its rows are clipped: the alignment is
+  the point). Code wrapped by glyph until 2026-09-28, where a trailing
+  space could hang past the pane.
 - **The bar caret by `caret_rect`, as planned; no ghost.** The
   completion's ghost is a node beside the text, and a wrapped row's
   text is one paragraph; a rendered row draws none (`<C-x>` still lists
@@ -337,7 +340,7 @@ After a day's use (2026-09-23), five more:
   ghost, the pane keeps it (`Kawoosh::ghost_shown`), and the keys accept
   only then — in a paragraph `<CR>` is a newline; on a table's source
   row, where the ghost is drawn, it completes as before. A code block's
-  rows wrap by glyph and draw none either, so a fence in the rendered
+  rows wrap too and draw none either, so a fence in the rendered
   buffer does not complete in place (`<C-x>` lists the candidates).
 - **Prose wraps at the width of this frame.** A wrapped row's text was a
   box fixed at the pane's width as last frame's layout recorded it, and
@@ -355,7 +358,8 @@ After a day's use (2026-09-23), five more:
   that does not fit starts the next row, as a letter would — so the
   caret has a place on every byte, inside the pane
   (`every_space_of_a_wrapped_row_has_a_cell_in_the_pane`). A code
-  block's rows still wrap by glyph, where one trailing space can hang.
+  block's rows wrap `break-spaces` too, since the same day: by glyph,
+  one trailing space hung there as well.
 - **`gx` on an anchor goes to its heading**: `#seed-data`, or
   `file.md#top` after opening the file, by GitHub's slug (lower-cased,
   punctuation dropped, spaces as `-`, a repeat numbered); it had opened
