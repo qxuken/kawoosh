@@ -484,6 +484,11 @@ impl Settings {
         // when it is not in front, no sound) or `off`; and whether the
         // editor rings for its own failures — a search with no match.
         defaults.set("terminal.bell", Setting::Str("sound".into()));
+        // The key that takes a terminal pane's keys back from its pty
+        // for normal mode's (terminal-keys.md Decision 1): after it,
+        // `<C-w>l`, `<Space>f`, `:`; `<C-n>` copy mode; itself again
+        // the key to the pty. Empty for none.
+        defaults.set("terminal.escape", Setting::Str("<C-\\>".into()));
         defaults.set("editor.bell", Setting::Bool(false));
         // The directory in a tab's label (roadmap step 50): `auto` while
         // the tabs are in more than one (workspaces.md Decision 6),
@@ -1004,6 +1009,7 @@ mod tests {
                 "tabs.directory",
                 "tabstop",
                 "terminal.bell",
+                "terminal.escape",
                 "terminal.scrollback",
                 "terminal.shell",
                 "theme.appearance",
