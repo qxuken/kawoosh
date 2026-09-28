@@ -1,7 +1,7 @@
 -- Lists of places as multibuffers (docs/design/lists.md): the
--- diagnostics — the workspace's (`:diagnostics`, `<leader>ce`) or the
--- file's (`:diagnostics buffer`, `<leader>cE`) — and a server's
--- references, implementations and declarations (`gr`, `gI`, `gD`) as
+-- diagnostics — the workspace's (`:diagnostics`, `<leader>d`) or the
+-- file's (`:diagnostics buffer`, `<leader>D`) — and a server's
+-- references, implementations and declarations (`grr`, `gri`, `gD`) as
 -- live multibuffers beside the code: each file under a header with its
 -- count, `places.context` lines around each place, a diagnostic's
 -- message written whole under its line in its severity's colour.
@@ -220,7 +220,7 @@ kawoosh.command("diagnostics buffer", function() M.diagnostics("buffer") end,
 
 -- ------------------------------------------------------------ a server's places
 
--- `gr` `gI` `gD`: the places a server listed, by file, each run of lines
+-- `grr` `gri` `gD`: the places a server listed, by file, each run of lines
 -- around them.
 kawoosh.on_places(function(title, items)
   local by, order = {}, {}
@@ -246,8 +246,8 @@ kawoosh.on_places(function(title, items)
 end)
 
 for _, mode in ipairs { "n", "v" } do
-  kawoosh.map(mode, "<leader>ce", "diagnostics")
-  kawoosh.map(mode, "<leader>cE", "diagnostics buffer")
+  kawoosh.map(mode, "<leader>d", "diagnostics")
+  kawoosh.map(mode, "<leader>D", "diagnostics buffer")
 end
 for _, name in ipairs(LISTS) do
   kawoosh.map("n", "q", "close", { when = { "buffer:" .. name } })

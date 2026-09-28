@@ -1,5 +1,5 @@
 -- The bundled tools: launch targets for `:tool NAME` and the tools
--- picker (`<leader>tt`), a few that most projects want and whatever
+-- picker (`<leader>t`), a few that most projects want and whatever
 -- `settings.lua` adds. A tool is `kawoosh.tool(name, { cmd =, cwd =,
 -- dock =, restore = })`: `cmd` runs in a terminal pane, `cwd` is
 -- `"root"` (the working directory) or a path — nothing said is the

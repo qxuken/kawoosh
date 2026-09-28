@@ -1070,7 +1070,7 @@ for _, c in ipairs(COPIES) do
   })
 end
 
--- `:dir cd`, or <leader>cd: the working directory follows the listing,
+-- `:dir cd`, or `~`: the working directory follows the listing,
 -- so a terminal opened next starts here. A subcommand of `:dir`, so it
 -- completes there; `when` names the listing, so anywhere else the
 -- engine answers `dir cd needs language:dir` and nothing runs.
@@ -1444,10 +1444,10 @@ kawoosh.map("n", "<CR>", "goto location", { when = { "!language:dir" } })
 kawoosh.map("n", "<CR>", "dir enter")
 -- A double click on a line is `<CR>` on it.
 kawoosh.map("n", "<2-LeftMouse>", "dir enter", { when = { "language:dir" } })
-kawoosh.map("n", "<leader>cd", "dir cd")
--- oil's `~`: the listed directory as the working one, the same as
--- `<leader>cd` (`_`, the working directory's listing, is the engine's
--- beside `-`).
+-- oil's `~`: the listed directory as the working one — its one key,
+-- since it runs in a listing only (keymap-regroup.md: no leader where
+-- a key without one does it; `_`, the working directory's listing, is
+-- the engine's beside `-`).
 kawoosh.map("n", "~", "dir cd", { when = { "language:dir" } })
 for _, c in ipairs(COPIES) do
   kawoosh.map("n", "<leader>y" .. c[1], "dir copy " .. c[2], { when = { "language:dir" } })
