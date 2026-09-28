@@ -691,7 +691,7 @@ impl Keymap {
         if let Some(root) = self.modes.get(&mode) {
             walk(root, &mut Vec::new(), &mut out);
         }
-        out.sort_by(|a, b| a.0.concat().cmp(&b.0.concat()));
+        out.sort_by_key(|a| a.0.concat());
         out
     }
 }
