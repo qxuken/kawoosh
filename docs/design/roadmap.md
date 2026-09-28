@@ -2536,11 +2536,22 @@ against the code:
 
 In order — the bugs first, then what needs deciding:
 
-58. **`dir`'s writes off the frame**: a plan's deletes renamed aside at
+58. ~~**`dir`'s writes off the frame**: a plan's deletes renamed aside at
     once (the step already done for a delete that something takes the
     place of) and removed on the io thread, a copy likewise, the
     listing marked busy and read again when they land; a notification
-    with progress for one that takes a while.
+    with progress for one that takes a while.~~ Landed 2026-09-28:
+    `fs.remove(path, fn)` and `fs.copy(a, b, fn)` make the change on a
+    thread of their own (`Msg::FsJob`, `IoMsg::FsDone`) and call back;
+    `dir.lua`'s `apply` puts every delete aside by a rename beside it
+    (`.~goneN~`, which no listing shows), runs the copies in the
+    background with the renames and creates waiting for them, reads the
+    listings again once those are done, and removes what it put aside in
+    the background — "removing N in the background" in the log when a
+    directory is among them — the summary when the last is back. No
+    busy mark: the entry is already gone from the listing. `du`'s
+    `done()` runs as the listings are read again.
+    `kawoosh/tests/lua.rs`'s `a_write_deletes_and_copies_off_the_frame`.
 59. **A tool per tab**: `:tool NAME` opens the tool in this tab when its
     terminal is another tab's — keyed by tab, a docked tool staying the
     workspace's as the dock is (step 32).

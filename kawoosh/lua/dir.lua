@@ -148,14 +148,17 @@ end
 -- The listing's lines and, by line, what each entry is: a file's size
 -- right-aligned past the longest name, then the mtime.
 local function shape(d, entries)
-  -- Dot files left out while `dir.hidden` is false (`g.` flips it).
-  if kawoosh.opt("dir.hidden") == false then
-    local shown = {}
-    for _, e in ipairs(entries) do
-      if e.name:sub(1, 1) ~= "." then shown[#shown + 1] = e end
+  -- Dot files left out while `dir.hidden` is false (`g.` flips it); a
+  -- delete's entry put aside (`.~gone3~`) always, since it is gone the
+  -- moment the write is applied and is only still being removed.
+  local dots = kawoosh.opt("dir.hidden") ~= false
+  local shown = {}
+  for _, e in ipairs(entries) do
+    if (dots or e.name:sub(1, 1) ~= ".") and not e.name:match("%.~gone%d+~$") then
+      shown[#shown + 1] = e
     end
-    entries = shown
   end
+  entries = shown
   entries = sorted(entries, sort_of(d))
   local lines, meta, width = { "../" }, {}, 3
   for _, e in ipairs(entries) do
@@ -649,15 +652,29 @@ local function relist_all(touched, here, from)
   if here then dir.open(here, from, false, true) end
 end
 
+-- A name to put a deleted entry aside under, beside it, that no entry
+-- has: `.~goneN~` after its name, which a listing never shows.
+local gone = 0
+local function aside_name(path)
+  repeat
+    gone = gone + 1
+  until not fs.exists(path .. ".~gone" .. gone .. "~")
+  return path .. ".~gone" .. gone .. "~"
+end
+
 -- Applies every group's ops and the ops between listings. The order is
--- what keeps a file from being lost: a delete whose name another op
--- writes to (a file replaced by one copied or moved in) vacates first,
--- its file put aside under a temporary name; then the copies (their
--- sources may be renamed or moved by the rest), the renames and moves
--- as two steps, the creates; then what was put aside goes — or, when
--- nothing arrived in its place, comes back; and the other deletes go
--- last.
-local function apply(groups, between, edited, here, from)
+-- what keeps a file from being lost: every delete vacates first, its
+-- entry put aside under a temporary name beside it (a rename, so a tree
+-- of fifty gigabytes goes at once); then the copies (their sources may
+-- be renamed or moved by the rest), the renames and moves as two steps,
+-- the creates; then a delete that made way for a copy or a move comes
+-- back when nothing arrived in its place, and what was put aside is
+-- removed. The copies and the removal run on threads of their own
+-- (`fs.copy(a, b, fn)`, `fs.remove(path, fn)`), so the window never
+-- waits on the disk: the listings are read again once the renames are
+-- done, the summary said when the last removal is. `applied()`, when
+-- given, runs as the listings are read again.
+local function apply(groups, between, edited, here, from, applied)
   -- An error's first line, without the runtime's prefix and traceback.
   local function reason(err)
     return (tostring(err):gsub("^runtime error: ", ""):match("^[^\n]*"))
@@ -672,7 +689,7 @@ local function apply(groups, between, edited, here, from)
     outcome(op, ok, err)
   end
   -- What the plan writes to, and the deletes that make way for it.
-  local targets, steps, aside = {}, {}, {}
+  local targets, steps, aside, gone_now = {}, {}, {}, {}
   for _, d in ipairs(edited) do touched[d] = true end
   for _, g in ipairs(groups) do
     touched[g.dir] = true
@@ -693,57 +710,97 @@ local function apply(groups, between, edited, here, from)
       steps[#steps + 1] = { op = op, from = at(op.from, op.name), to = at(op.dir, op.to) }
     end
   end
+  -- Every delete put aside now. One that cannot be (the rename refused)
+  -- is removed where it is, on a thread of its own all the same.
   for _, g in ipairs(groups) do
     for _, op in ipairs(g.ops) do
-      if op.kind == "delete" and targets[at(g.dir, op.name)] then
+      if op.kind == "delete" then
         local path = at(g.dir, op.name)
-        local tmp = path .. ".~gone" .. (#aside + 1) .. "~"
-        local ok, err = pcall(fs.rename, path, tmp)
-        if ok then
-          aside[#aside + 1] = { op = op, path = path, tmp = tmp }
+        local tmp = aside_name(path)
+        if pcall(fs.rename, path, tmp) then
+          aside[#aside + 1] = { op = op, path = path, tmp = tmp, makes_way = targets[path] }
         else
-          outcome(op, false, err)
+          gone_now[#gone_now + 1] = { op = op, path = path }
         end
-        op.aside = true
       end
     end
   end
+
+  local function finish()
+    relist_all(touched, nil, nil)
+    if #failed > 0 then
+      for _, f in ipairs(failed) do
+        kawoosh.notify(f, { level = "error", source = "dir", show = "log" })
+      end
+      kawoosh.notify(#failed .. " of " .. total .. " failed: " .. failed[1],
+        { level = "error", source = "dir" })
+    else
+      kawoosh.notify(done .. " change(s) applied", { source = "dir" })
+    end
+  end
+
+  -- The last: what was put aside removed, off the frame; the summary
+  -- when the last removal is back.
+  local function remove_all()
+    local removals = {}
+    for _, a in ipairs(aside) do
+      if a.makes_way and not fs.exists(a.path) then
+        local back, err = pcall(fs.rename, a.tmp, a.path)
+        outcome(a.op, false, back and "kept, nothing came in its place" or err)
+      else
+        removals[#removals + 1] = { op = a.op, path = a.tmp, dir = a.op.name:sub(-1) == "/" }
+      end
+    end
+    for _, g in ipairs(gone_now) do
+      removals[#removals + 1] = { op = g.op, path = g.path, dir = g.op.name:sub(-1) == "/" }
+    end
+    relist_all(touched, here, from)
+    if applied then applied() end
+    local left = #removals
+    if left == 0 then return finish() end
+    local dirs = 0
+    for _, r in ipairs(removals) do if r.dir then dirs = dirs + 1 end end
+    if dirs > 0 then
+      kawoosh.notify("removing " .. left .. " in the background", { source = "dir", show = "log" })
+    end
+    for _, r in ipairs(removals) do
+      fs.remove(r.path, function(ok, err)
+        outcome(r.op, ok, err)
+        left = left - 1
+        if left == 0 then finish() end
+      end)
+    end
+  end
+
+  -- The renames and the creates, once every copy is back.
+  local function rest()
+    rename_all(steps, outcome)
+    for _, g in ipairs(groups) do
+      for _, op in ipairs(g.ops) do
+        if op.kind == "create" then try(op, fs.create, at(g.dir, op.name), op.name:sub(-1) == "/") end
+      end
+    end
+    remove_all()
+  end
+
+  -- The copies, each on a thread of its own; the rest when all are in.
+  local copies = {}
   for _, g in ipairs(groups) do
     for _, op in ipairs(g.ops) do
-      if op.kind == "copy" then try(op, fs.copy, at(g.dir, op.name), at(g.dir, op.to)) end
+      if op.kind == "copy" then copies[#copies + 1] = { op, at(g.dir, op.name), at(g.dir, op.to) } end
     end
   end
   for _, op in ipairs(between) do
-    if op.kind == "copy" then try(op, fs.copy, at(op.from, op.name), at(op.dir, op.to)) end
+    if op.kind == "copy" then copies[#copies + 1] = { op, at(op.from, op.name), at(op.dir, op.to) } end
   end
-  rename_all(steps, outcome)
-  for _, g in ipairs(groups) do
-    for _, op in ipairs(g.ops) do
-      if op.kind == "create" then try(op, fs.create, at(g.dir, op.name), op.name:sub(-1) == "/") end
-    end
-  end
-  for _, a in ipairs(aside) do
-    if fs.exists(a.path) then
-      try(a.op, fs.remove, a.tmp)
-    else
-      local back, err = pcall(fs.rename, a.tmp, a.path)
-      outcome(a.op, false, back and "kept, nothing came in its place" or err)
-    end
-  end
-  for _, g in ipairs(groups) do
-    for _, op in ipairs(g.ops) do
-      if op.kind == "delete" and not op.aside then try(op, fs.remove, at(g.dir, op.name)) end
-    end
-  end
-  relist_all(touched, here, from)
-  if #failed > 0 then
-    for _, f in ipairs(failed) do
-      kawoosh.notify(f, { level = "error", source = "dir", show = "log" })
-    end
-    kawoosh.notify(#failed .. " of " .. total .. " failed: " .. failed[1],
-      { level = "error", source = "dir" })
-  else
-    kawoosh.notify(done .. " change(s) applied", { source = "dir" })
+  local waiting = #copies
+  if waiting == 0 then return rest() end
+  for _, c in ipairs(copies) do
+    fs.copy(c[2], c[3], function(ok, err)
+      outcome(c[1], ok, err)
+      waiting = waiting - 1
+      if waiting == 0 then rest() end
+    end)
   end
 end
 
@@ -845,8 +902,7 @@ function dir.remove(paths, done)
     lines = desc,
     actions = {
       { label = "Delete", run = function()
-          apply(groups, {}, {}, nil, nil)
-          if done then done() end
+          apply(groups, {}, {}, nil, nil, done)
         end },
       { label = "Cancel" },
     },

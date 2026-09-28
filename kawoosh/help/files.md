@@ -26,7 +26,11 @@ past the names and are not part of the text.
 
 `:w` shows every change in a confirm before anything happens. `y` or
 `<CR>` on **Apply** applies them, `n` or `<Esc>` cancels. Deleted files
-are removed, so read the list first. If two lines claim the same name,
+are removed, so read the list first. A deleted entry leaves the listing
+at once, even a folder of many gigabytes: it is renamed aside and
+removed in the background, and copies are made in the background too,
+so the window never waits on the disk. The count of changes appears
+when the last of it is done. If two lines claim the same name,
 the write refuses and says why rather than guessing.
 
 Edits in a listing are kept if you leave it: come back and they are
