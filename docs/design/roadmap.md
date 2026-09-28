@@ -2605,10 +2605,15 @@ In order — the bugs first, then what needs deciding:
     cannot move, so a terminal at the top of its history still takes a
     vertical swipe over it. `kawoosh/tests/layout.rs`'s
     `a_sideways_swipe_over_a_terminal_moves_the_strip`.
-63. **Soft wrap in the editor, a note first**: what is asked — a
+63. ~~**Soft wrap in the editor, a note first**: what is asked — a
     setting per language or buffer, where the caret moves by screen
     line (`gj` `gk`), and what the gutter and the selections do on a
-    wrapped line.
+    wrapped line.~~ Landed 2026-09-28: [wrap.md](wrap.md), decided and
+    built — `editor.wrap` (`off`, `word`, `glyph`),
+    `editor.wrap_languages`, `:wrap` (`<leader>ow`) for one pane; the
+    markdown buffer's rendered-row path lifted for any pane that wraps;
+    `j` `k` a line, `gj` `gk` a row on screen, resolved against kui's
+    layout; a line past 4096 bytes left unwrapped.
 64. **The tab bar and the title as Lua's, a note first**: segments a
     plugin or `init.lua` fills (the diagnostics counts, a clock), on the
     strip's right and in the window's title, redrawn when their data

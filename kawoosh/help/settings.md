@@ -109,6 +109,8 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `theme.appearance` | `"system"` | `system`, `dark` or `light` |
 | `markdown.render` | `true` | draw markdown rendered |
 | `editor.selection_radius` | `0` | round the selection's corners, in pixels |
+| `editor.wrap` | `"off"` | wrap long lines at the pane's width: `"word"` between words, `"glyph"` anywhere ([look](look.md#soft-wrap)) |
+| `editor.wrap_languages` | `{}` | languages that wrap whatever `editor.wrap` says, such as `{ "text", "gitcommit" }` |
 | `terminal.shell` | `""` | the terminal's program; empty for `$SHELL` ([terminal](terminal.md)) |
 | `terminal.scrollback` | `10000` | lines of terminal history |
 | `terminal.bell` | `"sound"` | `sound`, `visual` or `off` |

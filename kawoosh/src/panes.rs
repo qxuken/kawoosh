@@ -318,6 +318,7 @@ impl Kawoosh {
                 form: None,
                 band: None,
                 sel_radius: self.selection_radius(),
+                text_key: None,
             },
         );
     }
@@ -1185,6 +1186,15 @@ impl Kawoosh {
         // The markdown buffer drawn rendered (markdown.md): its rows are
         // as tall as they wrap to, so it scrolls by what they measured.
         let md = self.markdown_rendered(buf_id);
+        // Soft wrap (wrap.md): a code or prose pane wrapped at its width,
+        // on the rendered rows' own path — rows as tall as they wrap to,
+        // numbers inside them, the pane scrolling by what they
+        // measured, no sideways scroll. `tall` is either.
+        let wrap = if md { None } else { self.soft_wrap(view) };
+        let tall = md || wrap.is_some();
+        if wrap.is_some() {
+            self.ed.views[view].left = 0.0;
+        }
         // Whether the view scrolls to its caret this frame: when its
         // caret moved since it was last drawn — a jump sent to it — and
         // in the pane the keys are in, after a key typed there unless
@@ -1195,12 +1205,12 @@ impl Kawoosh {
         let follow = self.ed.views[view].drawn_caret != Some(caret) || focused && self.follow_caret;
         self.ed.views[view].drawn_caret = Some(caret);
         let mut md_last = None;
-        if md {
+        if tall {
             md_last = Some(self.md_follow(view, height, follow));
         }
 
         // Scroll the caret into view — a few lines, in the app.
-        if !md {
+        if !tall {
             let line_count = self.ed.buffers[buf_id].line_count();
             let head_line =
                 self.ed.buffers[buf_id].line_of(self.ed.views[view].sels.primary().head);
@@ -1260,7 +1270,9 @@ impl Kawoosh {
             )
             - 2.0)
             .max(0.0);
-        if let Some(last) = md_last {
+        // The markdown buffer's own rows only: a wrapped code pane has
+        // `md_last` too, for the scroll by measured heights.
+        if let Some(last) = md_last.filter(|_| md) {
             let style = self.markdown_style(ui.theme().is_dark());
             let v = &self.ed.views[view];
             let buf = &self.ed.buffers[buf_id];
@@ -1442,7 +1454,7 @@ impl Kawoosh {
             )
             && self.ed.prompt_from() == Some(view);
         let top = v.top;
-        let mut left = if md { 0.0 } else { v.left };
+        let mut left = if tall { 0.0 } else { v.left };
         let last = md_last.unwrap_or((top + rows_n).min(buf.line_count()));
         let sels = &v.sels;
         let primary = sels.primary();
@@ -1554,7 +1566,7 @@ impl Kawoosh {
         // the way `top` follows it down — before the rows, which are
         // sliced to the window this lands on. A long line's caret is
         // placed by column, as its slice is.
-        if follow && !md {
+        if follow && !tall {
             let range = buf.line_range(cur_line);
             let head_rel = primary.head.clamp(range.start, range.end) - range.start;
             let window = Window {
@@ -1605,6 +1617,9 @@ impl Kawoosh {
         }
 
         let mut md_seen: Vec<(usize, f32)> = Vec::new();
+        // A wrapped row's line, its text node's key and its drawn text:
+        // what `gj` `gk` ask kui about next frame (wrap.rs).
+        let mut wrap_seen: Vec<(usize, kui_native::Key, rows::Drawn)> = Vec::new();
         let sink = ui.with_keyed(
             "editor",
             NodeSpec::row()
@@ -1618,8 +1633,8 @@ impl Kawoosh {
                 .label(title.as_str()),
             |ui| {
                 // A rendered pane's numbers are in its rows, each as tall
-                // as its row.
-                if !md {
+                // as its row; a wrapped one's too.
+                if !tall {
                     ui.with_keyed(
                         "gutter",
                         // The padding is each row's, so a header's band
@@ -1652,7 +1667,7 @@ impl Kawoosh {
                 let lines_spec = NodeSpec::column().fill().on_scroll(tag.clone());
                 let lines = ui.with_keyed(
                     "lines",
-                    if md {
+                    if tall {
                         lines_spec.clip()
                     } else {
                         lines_spec.scroll_x()
@@ -1971,8 +1986,39 @@ impl Kawoosh {
                                     };
                                     (marks.as_slice(), Some(form))
                                 }
-                                None => (&[][..], None),
+                                // A code row wrapped (wrap.md): the
+                                // plain row's text at the face's size,
+                                // wrapped at the column's width less its
+                                // number — but a line too long to draw
+                                // whole, drawn in its window as before.
+                                None => {
+                                    match wrap.filter(|_| range.len() < rows::LONG_LINE_BYTES) {
+                                        Some(w) => {
+                                            if let Some(r) = ui.layout_of(ui.child_key(&label)) {
+                                                md_seen.push((ln, r.h));
+                                            }
+                                            let form = rows::RowForm {
+                                                key: label.clone(),
+                                                scale: 1.0,
+                                                wrap: Some(w),
+                                                bg: None,
+                                                gutter: Some((
+                                                    gutter,
+                                                    numbers.label(ln),
+                                                    ln == cur_line,
+                                                )),
+                                                rule: false,
+                                                images: Vec::new(),
+                                                fit: false,
+                                                table: None,
+                                            };
+                                            (&[][..], Some(form))
+                                        }
+                                        None => (&[][..], None),
+                                    }
+                                }
                             };
+                            let text_key = std::cell::Cell::new(None);
                             // A rendered row's marks and the syntax's, both.
                             let marks = if syntax_marks.is_empty() {
                                 marks
@@ -2016,8 +2062,12 @@ impl Kawoosh {
                                     )
                                     .then_some(pal.strip),
                                     sel_radius,
+                                    text_key: wrap.is_some().then_some(&text_key),
                                 },
                             );
+                            if let Some(k) = text_key.get() {
+                                wrap_seen.push((ln, k, drawn.clone()));
+                            }
                         };
                         let mut ln = top;
                         while ln < last {
@@ -2170,7 +2220,7 @@ impl Kawoosh {
                 // The offset lands in this frame's positions; the clamp
                 // is against last frame's content (a resize is one frame
                 // late), and what the wheel pushed past it comes back.
-                if !md {
+                if !tall {
                     if let Some(geo) = ui.scroll_geometry(lines) {
                         left = left.min(geo.max_offset.x);
                     }
@@ -2186,7 +2236,12 @@ impl Kawoosh {
         // The rendered rows' heights as kui laid them out last frame: a
         // row that measured otherwise than the pane scrolled by asks
         // for a frame more, which scrolls by what it measured.
-        if md {
+        if wrap.is_some() {
+            self.wrap_rows.insert(view, wrap_seen);
+        } else {
+            self.wrap_rows.remove(&view);
+        }
+        if tall {
             let known = self.md_heights.entry(view).or_default();
             let mut moved = false;
             for (ln, h) in md_seen {

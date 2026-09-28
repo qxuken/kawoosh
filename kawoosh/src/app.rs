@@ -55,6 +55,14 @@ pub struct Kawoosh {
     pub(crate) scroll_probe: Option<crate::scroll_probe::ScrollProbe>,
     /// Kitty's images, as kui has them (`term_images.rs`).
     pub(crate) term_images: crate::term_images::TermImages,
+    /// Soft wrap (`wrap.rs`): each wrapping view's rows as last drawn —
+    /// line, text node, drawn text — for `gj` `gk`; `:wrap`'s word for a
+    /// view; a row move asked for and not yet resolved; the x a run of
+    /// them keeps, with the caret it was kept for.
+    pub(crate) wrap_rows: HashMap<ViewId, Vec<(usize, kui_native::Key, crate::rows::Drawn)>>,
+    pub(crate) wrap_views: HashMap<ViewId, bool>,
+    pub(crate) row_move: Option<(ViewId, i32)>,
+    pub(crate) row_goal: Option<(f32, usize)>,
     /// The disk-usage pane's walks (`du.rs`, roadmap step 52).
     pub(crate) du: crate::du::SharedDu,
     pub ed: Editor,
@@ -306,6 +314,10 @@ impl Kawoosh {
             fonts_probe: crate::fonts::Probe::from_env(),
             scroll_probe: crate::scroll_probe::ScrollProbe::from_env(),
             term_images: Default::default(),
+            wrap_rows: HashMap::new(),
+            wrap_views: HashMap::new(),
+            row_move: None,
+            row_goal: None,
             ed,
             layout: Layout::new(Content::Editor(view)),
             terms: Terminals::default(),
@@ -2387,7 +2399,11 @@ impl Kawoosh {
         }
         self.note_input();
         if let Some((_, k)) = ev.key_press() {
-            return self.on_key(k);
+            self.on_key(k);
+            // A `gj` / `gk` is resolved against the rows kui laid out
+            // (`wrap.rs`), which only the event's core can answer.
+            self.resolve_row_move(core);
+            return;
         }
         if let Some(b) = ev.button() {
             if let (Some("termbutton"), Some(pane)) = (tag_kind, pane) {

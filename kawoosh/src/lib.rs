@@ -65,6 +65,7 @@ pub mod trust;
 pub mod types;
 pub mod undo;
 pub mod whichkey;
+pub mod wrap;
 
 pub use app::Kawoosh;
 pub use palette::Pal;

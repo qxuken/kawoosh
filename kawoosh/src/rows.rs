@@ -77,6 +77,7 @@ pub fn mono(face: Face, pal: &Pal) -> TextStyle {
 /// overscan, `src_offset` where it starts in the line, and the cells
 /// before and after it are what two spacers stand in for. The rest of
 /// the line is scanned for its cells, never copied.
+#[derive(Clone)]
 pub struct Drawn {
     pub text: String,
     /// `to_src[drawn_byte] + src_offset` is the source byte,
@@ -711,6 +712,9 @@ pub struct LineDraw<'a> {
     /// square: its span backgrounds rounded, which kui joins with the
     /// rows' above and below into one shape (its F101).
     pub sel_radius: f32,
+    /// Where to leave the key of a wrapped row's text node, for what
+    /// asks kui about its layout next frame (`gj` `gk`, wrap.md).
+    pub text_key: Option<&'a std::cell::Cell<Option<kui_native::Key>>>,
 }
 
 /// What a rendered row adds to a span's look, over the syntax's.
@@ -1573,6 +1577,9 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             );
         }
         spacer(ui, after);
+        if let Some(out) = line.text_key {
+            out.set(text_key.get());
+        }
     };
     match form {
         Some(f) => {
