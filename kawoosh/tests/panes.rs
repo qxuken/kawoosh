@@ -13,7 +13,12 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
     d.key(app, "enter", KeyMods::default());
 }
 
+/// A `<C-w>` command, from any pane: a terminal's `<C-w>` is its
+/// shell's, so the terminal's escape comes first there.
 fn ctrl_w(d: &mut Drive, app: &mut Kawoosh, then: &str) {
+    if matches!(app.layout.focused_content(), Some(Content::Terminal(_))) {
+        d.press(app, "<C-\\>");
+    }
     d.press(app, "<C-w>");
     d.keys(app, then);
 }
@@ -601,7 +606,7 @@ fn pane_moves_are_one_chord_everywhere() {
         matches!(app.layout.focused_content(), Some(Content::Terminal(_))),
         "<C-k> is the shell's"
     );
-    assert!(!app.terms.prefix);
+    assert!(app.terms.escape.is_none());
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
