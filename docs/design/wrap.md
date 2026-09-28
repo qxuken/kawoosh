@@ -80,7 +80,8 @@ kui's `Word` breaks between words and lets the spaces at a break
 collapse, so a caret on a run of spaces at the end of a row can sit a
 little off. kui F106 (`wrap="break-spaces"`, on kui main the same
 day) keeps every space its room; once kawoosh builds on it, `word` is
-drawn with it — not yet: this was built on a kui without it.
+drawn with it — done the same night, once F106 and F107 were both on
+kui main.
 
 ## Built
 

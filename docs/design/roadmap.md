@@ -2588,8 +2588,8 @@ In order — the bugs first, then what needs deciding:
     (a new gesture at a scroller's limit goes on to its parent, with an
     opt-out), and what "in its direction" asks of a hovered scroller —
     decided with the user, and with the trackpad session's F104 in mind.~~
-    Landed 2026-09-28 as kui F107 (branch `claude/kawoosh-scroll-gestures`,
-    04d47fc and e87b212; its note is kui's ADR 0038): the browser model,
+    Landed 2026-09-28 as kui F107 (merged to kui main 52c274b; branch
+    `claude/kawoosh-scroll-gestures`, 04d47fc and e87b212; its note is kui's ADR 0038): the browser model,
     taken for the user when "do all in order" left the question open —
     a gesture (a swipe and its momentum, a wheel spun without a pause,
     as the runner delimits them) picks its target per axis when it first

@@ -17,10 +17,13 @@ impl Kawoosh {
     pub(crate) fn soft_wrap(&self, view: ViewId) -> Option<TextWrap> {
         let s = &self.ed.settings;
         let mode = s.str("editor.wrap").unwrap_or("off");
+        // `word` as kui F106's `break-spaces`: between words, every
+        // space its room, so a caret on a space at a row's end stays in
+        // the pane (wrap.md Decision 5).
         let how = if mode == "glyph" {
             TextWrap::Glyph
         } else {
-            TextWrap::Word
+            TextWrap::BreakSpaces
         };
         if let Some(&on) = self.wrap_views.get(&view) {
             return on.then_some(how);
