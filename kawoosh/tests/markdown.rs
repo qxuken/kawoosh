@@ -706,20 +706,30 @@ fn a_rounded_selection_joins_across_wrapped_rows() {
 
 /// A wrapped row's spaces each take a cell: the block caret walked over a
 /// line with a long run of trailing spaces is drawn on every byte, inside
-/// the pane, in reading order. Under kui's `Word` the first space past a
-/// row's end hung past the pane and the next two had no place at all —
-/// the caret past the edge, then on the dot, then on the next row
+/// the pane, in reading order — a paragraph's and a code block's. Under
+/// kui's `Word` the first space past a row's end hung past the pane and
+/// the next two had no place at all — the caret past the edge, then on
+/// the dot, then on the next row — and under `Glyph` a code row hung one
 /// (2026-09-28, kui F106's `BreakSpaces`).
 #[test]
 fn every_space_of_a_wrapped_row_has_a_cell_in_the_pane() {
-    let dir = fixture("spaces");
     let line = format!(
         "launching du from another tab affects first one.{}",
         " ".repeat(160)
     );
-    std::fs::write(dir.join("doc.md"), format!("{line}\n\nnext\n")).unwrap();
+    for (tag, doc, row) in [
+        ("spaces", format!("{line}\n\nnext\n"), 1),
+        ("code", format!("```\n{line}\n```\n"), 2),
+    ] {
+        walk_the_spaces(tag, &doc, row, &line);
+    }
+}
+
+fn walk_the_spaces(tag: &str, doc: &str, row: usize, line: &str) {
+    let dir = fixture(tag);
+    std::fs::write(dir.join("doc.md"), doc).unwrap();
     let (mut d, mut app) = launch(&dir, 700.0);
-    d.press(&mut app, "gg0");
+    d.press(&mut app, &format!("{row}G0"));
     settle(&mut d, &mut app);
     let accent = app.pal.accent;
     let mut at: Vec<(f32, f32)> = Vec::new();
@@ -735,15 +745,22 @@ fn every_space_of_a_wrapped_row_has_a_cell_in_the_pane() {
             .filter(|q| q.kind == kui_native::QuadKind::Solid && q.color == accent)
             .map(|q| q.rect)
             .collect();
-        assert_eq!(block.len(), 1, "byte {b}: the block, once: {block:?}");
+        assert_eq!(
+            block.len(),
+            1,
+            "{tag}, byte {b}: the block, once: {block:?}"
+        );
         let r = block[0];
-        assert!(r.x >= 0.0 && r.x + r.w <= 700.0, "byte {b} inside: {r:?}");
+        assert!(
+            r.x >= 0.0 && r.x + r.w <= 700.0,
+            "{tag}, byte {b} inside: {r:?}"
+        );
         at.push((r.y, r.x));
     }
     for (b, w) in at.windows(2).enumerate() {
         assert!(
             w[0].0 < w[1].0 || w[0].0 == w[1].0 && w[0].1 < w[1].1,
-            "byte {} after byte {b}: {w:?}",
+            "{tag}: byte {} after byte {b}: {w:?}",
             b + 1
         );
     }
@@ -753,7 +770,7 @@ fn every_space_of_a_wrapped_row_has_a_cell_in_the_pane() {
         .collect::<std::collections::BTreeSet<_>>();
     assert!(
         rows.len() >= 3,
-        "the spaces run on over rows: {}",
+        "{tag}: the spaces run on over rows: {}",
         rows.len()
     );
 }

@@ -112,14 +112,14 @@ pub fn render(
         columns: if table { columns } else { 0 },
         cells: Vec::new(),
         delimiter: false,
-        wrap: if code {
-            TextWrap::Glyph
-        } else if table {
+        // Prose and code alike: a space takes its cell like a letter,
+        // one that does not fit starting the next row, where under
+        // `Word` it hung past the pane or went with the break, and the
+        // caret with it (kui F106); a word wider than the row — a long
+        // path, a hash — still breaks by glyph.
+        wrap: if table {
             TextWrap::None
         } else {
-            // A space takes its cell like a letter: one that does not fit
-            // starts the next row, where under `Word` it hung past the
-            // pane or went with the break, and the caret with it (kui F106).
             TextWrap::BreakSpaces
         },
     };
