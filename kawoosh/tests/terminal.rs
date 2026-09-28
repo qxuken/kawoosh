@@ -1384,3 +1384,69 @@ fn a_split_tool_is_each_tabs_and_a_docked_one_the_windows() {
     d.frame(&mut app);
     assert_eq!(tools(&app, "docked").len(), 1);
 }
+
+/// kitty's keyboard protocol (terminal-keys.md Decisions 5 and 6): once
+/// the program pushes its flags a key reaches it whole — a chord the
+/// legacy encoding had no room for, an unbound ⌘ chord as super, the
+/// keypad as keys of its own, a release when asked, a modifier key alone
+/// when every key is asked for — while the keys kawoosh keeps (the
+/// escape, a bound chord) and their releases never do.
+#[test]
+fn a_program_that_pushed_kittys_flags_hears_the_key_whole() {
+    use kui_native::{KeyCode, KeyLocation, KeyPress};
+    let mut app = Kawoosh::new("t", "editor text");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    let sent = |app: &mut Kawoosh| {
+        String::from_utf8(app.terms.map.get_mut(&t).unwrap().take_sent()).unwrap()
+    };
+    // Before any flags: the legacy bytes.
+    d.key(&mut app, "c", KeyMods::NONE.with_ctrl());
+    assert_eq!(sent(&mut app), "\x03");
+    app.feed_terminal(t, b"\x1b[>1u");
+    sent(&mut app);
+    d.key(&mut app, "c", KeyMods::NONE.with_ctrl());
+    assert_eq!(sent(&mut app), "\x1b[99;5u", "ctrl+c told apart");
+    d.keys(&mut app, "a");
+    assert_eq!(sent(&mut app), "a", "a key that types, types");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(sent(&mut app), "\x1b[27u");
+    // An unbound ⌘ chord reaches the program as super.
+    d.key(&mut app, "j", KeyMods::NONE.with_super());
+    assert_eq!(sent(&mut app), "\x1b[106;9u");
+    // The keypad's Enter is a key of its own.
+    let kp_enter = KeyPress::new(KeyCode::Enter, KeyMods::NONE).with_location(KeyLocation::Numpad);
+    d.input(&mut app, InputEvent::KeyDown(kp_enter.clone()));
+    d.input(&mut app, InputEvent::KeyUp(kp_enter.released()));
+    assert_eq!(sent(&mut app), "\x1b[57414u");
+    // Kept: the escape and what follows it, and a bound chord.
+    d.press(&mut app, "<C-\\>");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(sent(&mut app), "", "the escape is kawoosh's");
+    // Event types: a release, only of what the program was pressed.
+    app.feed_terminal(t, b"\x1b[>3u");
+    sent(&mut app);
+    d.keys(&mut app, "a");
+    assert_eq!(sent(&mut app), "a\x1b[97;1:3u");
+    d.press(&mut app, "<C-\\>");
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(sent(&mut app), "", "no release of the escape's keys");
+    // Every key: the modifier keys alone, with their side.
+    app.feed_terminal(t, b"\x1b[>11u");
+    sent(&mut app);
+    let shift =
+        KeyPress::new(KeyCode::Shift, KeyMods::NONE.with_shift()).with_location(KeyLocation::Left);
+    d.input(&mut app, InputEvent::KeyDown(shift.clone()));
+    assert_eq!(sent(&mut app), "\x1b[57441;2u");
+    d.input(&mut app, InputEvent::KeyUp(shift.released()));
+    assert_eq!(sent(&mut app), "\x1b[57441;2:3u");
+    // Popped, all three: legacy again.
+    app.feed_terminal(t, b"\x1b[<3u");
+    sent(&mut app);
+    assert_eq!(app.terms.map[&t].keyboard_flags(), 0);
+    d.key(&mut app, "c", KeyMods::NONE.with_ctrl());
+    assert_eq!(sent(&mut app), "\x03");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

@@ -934,7 +934,10 @@ impl Kawoosh {
         // A program reporting the mouse gets drags as reports and no cell
         // selection — unless shift is held, the terminal convention for
         // "my selection, not yours".
-        let reporting = term.wants_mouse() && !self.mods.shift;
+        // ⌘ is kawoosh's on the mouse whatever the program asked
+        // (terminal-keys.md Decision 6): a report has no bit for it, so a
+        // ⌘-click was a plain click to the program and never a link.
+        let reporting = term.wants_mouse() && !self.mods.shift && !self.mods.super_key;
         let drag_tag = Value::map([
             ("kind", "termmouse".into()),
             ("pane", Value::Int(pane as i64)),
@@ -950,6 +953,11 @@ impl Kawoosh {
                 .pad(pad)
                 .clip()
                 .on_key(tag.clone())
+                // Releases and the modifier keys alone too, for kitty's
+                // keyboard protocol (terminal-keys.md Decision 5): a
+                // program that pushed no flags hears neither.
+                .key_up()
+                .modifier_keys()
                 // A press in the grid starts a selection, not a click,
                 // and takes kui's keyboard here: the pane follows it
                 // (`on_event_with`'s `focus`).
