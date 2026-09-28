@@ -1526,6 +1526,7 @@ impl Kawoosh {
     // ------------------------------------------------------------ events
 
     fn on_key(&mut self, k: KeyPress) {
+        let press = k.clone();
         let stroke = KeyStroke {
             code: k.code.name(),
             ctrl: k.mods.ctrl,
@@ -1599,7 +1600,7 @@ impl Kawoosh {
             self.completion_after_key(&stroke, was_insert);
             self.cmdline_refresh();
         } else if let Some(t) = self.term_of(self.layout.focused()) {
-            self.term_key(t, stroke);
+            self.term_key(t, stroke, &press);
         } else if let Some(name) = self.lua_name_of(self.layout.focused()) {
             // The view's field, or its handler, first; a key neither
             // took is pane mode's.
@@ -2414,7 +2415,16 @@ impl Kawoosh {
             return;
         }
         self.note_input();
-        if let Some((_, k)) = ev.key_press() {
+        if let Some((phase, k)) = ev.key_press() {
+            // A release, and a modifier key alone, are a terminal's alone
+            // to hear — its sink asks for them for kitty's keyboard
+            // protocol (terminal-keys.md Decision 5); no keymap reads one.
+            if phase == kui_native::KeyPhase::Up || k.code.is_modifier() {
+                if let Some(t) = self.term_of(pane.unwrap_or(self.layout.focused())) {
+                    self.term_key_aside(t, &k, phase == kui_native::KeyPhase::Up);
+                }
+                return;
+            }
             self.on_key(k);
             // A `gj` / `gk` is resolved against the rows kui laid out
             // (`wrap.rs`), which only the event's core can answer.
@@ -2615,11 +2625,12 @@ impl Kawoosh {
                         cell.and_then(|c| c.get_int("row")),
                         cell.and_then(|c| c.get_int("col")),
                     ) {
-                        let reporting = self
-                            .terms
-                            .map
-                            .get(&t)
-                            .is_some_and(|term| term.wants_mouse() && !self.mods.shift);
+                        // ⌘ is kawoosh's on the mouse whatever the
+                        // program asked (terminal-keys.md Decision 6):
+                        // its reports have no bit for it.
+                        let reporting = self.terms.map.get(&t).is_some_and(|term| {
+                            term.wants_mouse() && !self.mods.shift && !self.mods.super_key
+                        });
                         // Reporting: the drag events (start = press, end =
                         // release) carried it; the click only focused.
                         if !reporting && (self.mods.ctrl || self.mods.super_key) {

@@ -10,6 +10,7 @@ use kawoosh_doc::Buffer;
 use kawoosh_editor::keymap::{LEADER, parse_notation};
 use kawoosh_editor::{ArgKind, Args, KeyStroke, Lookup, Mode, Selection, Spec, motions};
 use kawoosh_term::{TermSize, Terminal, encode_key};
+use kui_native::KeyPress;
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
@@ -50,6 +51,11 @@ pub struct Terminals {
     /// When the bell was last heard: at most one in [`BELL_GAP`].
     bell_at: Option<std::time::Instant>,
     next: TermId,
+    /// The presses the ptys were sent under kitty's keyboard protocol and
+    /// have not seen come up: a release is the program's only when its
+    /// press was (terminal-keys.md Decision 5) — the escape's, a kept
+    /// chord's, never.
+    pub held: Vec<KeyPress>,
     /// The keys typed since `terminal.escape` in a terminal pane
     /// (terminal-keys.md Decision 1): normal mode's, looked up as they
     /// come, the which-key open on them. None while the pty has them.
@@ -480,8 +486,9 @@ impl Kawoosh {
         }
     }
 
-    /// A key in a focused terminal pane.
-    pub(crate) fn term_key(&mut self, id: TermId, stroke: KeyStroke) {
+    /// A key in a focused terminal pane: `stroke` as the keymap reads it,
+    /// `press` as kui delivered it, for kitty's keyboard protocol.
+    pub(crate) fn term_key(&mut self, id: TermId, stroke: KeyStroke, press: &KeyPress) {
         let note = stroke.notation();
         if let Some(keys) = self.terms.escape.take() {
             self.term_escaped(id, &stroke, keys);
@@ -505,6 +512,17 @@ impl Kawoosh {
             self.term_scroll(id, how);
             return;
         }
+        // A program that pushed kitty's keyboard protocol hears the key
+        // whole — an unbound ⌘ chord as super-modified (Decision 6).
+        if self
+            .terms
+            .map
+            .get(&id)
+            .is_some_and(|t| t.keyboard_flags() != 0)
+        {
+            self.term_kitty(id, press, false);
+            return;
+        }
         // A ⌘ chord bound to nothing is nothing to the shell, not its
         // letter: a pty has no use for ⌘ (`Kawoosh::pane_chord`).
         if stroke.sup {
@@ -523,6 +541,66 @@ impl Kawoosh {
         ) {
             t.scroll_to_bottom();
             t.input(&bytes);
+        }
+    }
+
+    /// A release, or a modifier key pressed alone, on terminal `id`'s
+    /// pane: the program's under kitty's keyboard protocol — a release
+    /// when it asked for event types and its press was sent, a modifier
+    /// key when it asked for every key — and nothing's otherwise. Never
+    /// while the escape is open, whose keys are kawoosh's.
+    pub(crate) fn term_key_aside(&mut self, id: TermId, k: &KeyPress, up: bool) {
+        if up {
+            let Some(i) = self.terms.held.iter().position(|h| h.same_key(k)) else {
+                return;
+            };
+            self.terms.held.remove(i);
+        } else if self.terms.escape.is_some() {
+            return;
+        }
+        self.term_kitty(id, k, up);
+    }
+
+    /// `k` to terminal `id`'s program in kitty's encoding, for the flags
+    /// it pushed; a press sent is held until its release comes.
+    fn term_kitty(&mut self, id: TermId, k: &KeyPress, up: bool) {
+        use kawoosh_term::kitty;
+        let Some(t) = self.terms.map.get_mut(&id) else {
+            return;
+        };
+        let (code, physical) = (k.code.name(), k.physical.name());
+        let input = kitty::KeyInput {
+            code: &code,
+            physical: &physical,
+            location: match k.location {
+                kui_native::KeyLocation::Standard => kitty::Location::Standard,
+                kui_native::KeyLocation::Left => kitty::Location::Left,
+                kui_native::KeyLocation::Right => kitty::Location::Right,
+                kui_native::KeyLocation::Numpad => kitty::Location::Numpad,
+            },
+            text: k.text.as_deref(),
+            shift: k.mods.shift,
+            alt: k.mods.alt,
+            ctrl: k.mods.ctrl,
+            sup: k.mods.super_key,
+            caps_lock: k.locks.caps,
+            num_lock: k.locks.num,
+            action: if up {
+                kitty::Action::Release
+            } else if k.repeat {
+                kitty::Action::Repeat
+            } else {
+                kitty::Action::Press
+            },
+        };
+        if let Some(bytes) = kitty::encode(&input, t.keyboard_flags(), t.app_cursor_keys()) {
+            if !up {
+                t.scroll_to_bottom();
+            }
+            t.input(&bytes);
+        }
+        if !up && !self.terms.held.iter().any(|h| h.same_key(k)) {
+            self.terms.held.push(k.clone());
         }
     }
 

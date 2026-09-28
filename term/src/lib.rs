@@ -4,6 +4,7 @@
 //! as text for the materialise-into-a-buffer command.
 
 mod graphics;
+pub mod kitty;
 
 pub use graphics::Placed;
 
@@ -120,7 +121,16 @@ struct Modes {
     /// (`ED 2`), 2 with its history (`ED 3`), 3 reset (`RIS`) — what the
     /// images on it go with (`graphics.rs`).
     cleared: u8,
+    /// How deep the kitty keyboard mode stack is on the primary screen
+    /// and on the alternate (alacritty keeps one each, swapped with the
+    /// screens): past `KEYBOARD_STACK_MAX` alacritty's push evicts from
+    /// its *title* stack — a panic when that is empty — so the push there
+    /// is made a set instead (`Hooked::push_keyboard_mode`).
+    keyboard_depth: [usize; 2],
 }
+
+/// alacritty's keyboard mode stack's cap (`KEYBOARD_MODE_STACK_MAX_DEPTH`).
+const KEYBOARD_STACK_MAX: usize = 4096;
 
 /// Mode 2031, and the report a program under it gets on a flip, in
 /// contour's spelling. (Its `CSI ? 996 n` query is not answered: vte
@@ -1020,6 +1030,19 @@ impl Terminal {
         self.term.mode().contains(TermMode::APP_CURSOR)
     }
 
+    /// The kitty keyboard protocol's flags the program has pushed on this
+    /// screen, as `kitty::DISAMBIGUATE` … `kitty::ASSOCIATED_TEXT`; 0 for
+    /// none, the legacy encoding.
+    pub fn keyboard_flags(&self) -> u8 {
+        let m = self.term.mode();
+        let bit = |f: TermMode, v: u8| if m.contains(f) { v } else { 0 };
+        bit(TermMode::DISAMBIGUATE_ESC_CODES, kitty::DISAMBIGUATE)
+            | bit(TermMode::REPORT_EVENT_TYPES, kitty::EVENT_TYPES)
+            | bit(TermMode::REPORT_ALTERNATE_KEYS, kitty::ALTERNATE_KEYS)
+            | bit(TermMode::REPORT_ALL_KEYS_AS_ESC, kitty::ALL_KEYS)
+            | bit(TermMode::REPORT_ASSOCIATED_TEXT, kitty::ASSOCIATED_TEXT)
+    }
+
     /// Whether the program asked for mouse reports (any of the click,
     /// drag or motion modes).
     pub fn wants_mouse(&self) -> bool {
@@ -1357,6 +1380,10 @@ pub const HISTORY: usize = 10_000;
 fn config(history: usize) -> Config {
     Config {
         scrolling_history: history,
+        // kitty's keyboard protocol (terminal-keys.md Decision 5): the
+        // program's flags kept, pushed and popped by alacritty, the bytes
+        // `kitty::encode`'s.
+        kitty_keyboard: true,
         ..Config::default()
     }
 }
@@ -1845,7 +1872,36 @@ impl Handler for Hooked<'_> {
     }
     fn reset_state(&mut self) {
         self.modes.cleared = 3;
+        self.modes.keyboard_depth = [0, 0];
         self.term.reset_state()
+    }
+
+    // kitty's keyboard protocol: alacritty keeps the program's flags, a
+    // stack a screen, and answers `CSI ? u`; the depth is mirrored here
+    // so a push past the cap does not reach alacritty's (see
+    // `Modes::keyboard_depth`) — there it replaces the top instead.
+    fn push_keyboard_mode(&mut self, mode: KeyboardModes) {
+        let screen = self.term.mode().contains(TermMode::ALT_SCREEN) as usize;
+        let depth = &mut self.modes.keyboard_depth[screen];
+        if *depth >= KEYBOARD_STACK_MAX {
+            self.term
+                .set_keyboard_mode(mode, KeyboardModesApplyBehavior::Replace);
+            return;
+        }
+        *depth += 1;
+        self.term.push_keyboard_mode(mode)
+    }
+    fn pop_keyboard_modes(&mut self, to_pop: u16) {
+        let screen = self.term.mode().contains(TermMode::ALT_SCREEN) as usize;
+        let depth = &mut self.modes.keyboard_depth[screen];
+        *depth = depth.saturating_sub(to_pop as usize);
+        self.term.pop_keyboard_modes(to_pop)
+    }
+    fn set_keyboard_mode(&mut self, mode: KeyboardModes, how: KeyboardModesApplyBehavior) {
+        self.term.set_keyboard_mode(mode, how)
+    }
+    fn report_keyboard_mode(&mut self) {
+        self.term.report_keyboard_mode()
     }
     fn reverse_index(&mut self) {
         self.term.reverse_index()
@@ -1887,10 +1943,10 @@ impl Handler for Hooked<'_> {
         self.term.reset_color(a0)
     }
     // OSC 8: the cells printed after it carry the link
-    // (`Terminal::hyperlink_at`). The kitty keyboard protocol's and
-    // `modifyOtherKeys`' sequences stay unforwarded: `encode_key` speaks
-    // neither, and a program told they are on would wait for keys it
-    // never gets (roadmap step 57).
+    // (`Terminal::hyperlink_at`). xterm's `modifyOtherKeys` stays
+    // unforwarded: nothing here speaks it, and a program told it is on
+    // would wait for keys it never gets — kitty's protocol is the one
+    // spoken (above).
     fn set_hyperlink(&mut self, link: Option<alacritty_terminal::vte::ansi::Hyperlink>) {
         self.term.set_hyperlink(link);
     }
@@ -2468,5 +2524,44 @@ mod tests {
             encode_key("f5", None, false, false, false, false),
             Some(b"\x1b[15~".to_vec())
         );
+    }
+
+    /// kitty's keyboard protocol's flags (terminal-keys.md Decision 5):
+    /// pushed and popped a stack a screen, the query answered, and a
+    /// push past alacritty's cap no crash — its push there evicts from
+    /// the title stack, which panics when that is empty.
+    #[test]
+    fn the_keyboard_flags_are_the_programs_a_stack_a_screen() {
+        let mut t = Terminal::headless(TermSize { rows: 5, cols: 20 });
+        assert_eq!(t.keyboard_flags(), 0);
+        t.feed(b"\x1b[>1u");
+        assert_eq!(t.keyboard_flags(), kitty::DISAMBIGUATE);
+        t.feed(b"\x1b[?u");
+        assert_eq!(t.take_sent(), b"\x1b[?1u");
+        t.feed(b"\x1b[>11u");
+        assert_eq!(t.keyboard_flags(), 11);
+        // The alternate screen has its own stack, empty; leaving it
+        // brings the primary's back.
+        t.feed(b"\x1b[?1049h");
+        assert_eq!(t.keyboard_flags(), 0);
+        t.feed(b"\x1b[>31u");
+        assert_eq!(t.keyboard_flags(), 31);
+        t.feed(b"\x1b[?1049l");
+        assert_eq!(t.keyboard_flags(), 11);
+        t.feed(b"\x1b[<u");
+        assert_eq!(t.keyboard_flags(), 1);
+        t.feed(b"\x1b[<u");
+        assert_eq!(t.keyboard_flags(), 0);
+        // Past the cap: set in place, no panic, and still popped.
+        for _ in 0..KEYBOARD_STACK_MAX + 5 {
+            t.feed(b"\x1b[>1u");
+        }
+        t.feed(b"\x1b[>9u");
+        assert_eq!(t.keyboard_flags(), 9);
+        t.feed(b"\x1b[<1u");
+        assert_eq!(t.keyboard_flags(), 1);
+        // A reset forgets it all.
+        t.feed(b"\x1bc");
+        assert_eq!(t.keyboard_flags(), 0);
     }
 }

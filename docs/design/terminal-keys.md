@@ -85,10 +85,40 @@ key (28 `theme …`, 9 `lsp …`, 6 `launcher …`). Families spread wide:
 `memory` over `<leader>e`, `<leader>p`, `<leader>s` and `<A-1…9>`;
 `buffer` over `<leader>b` and `<leader><`.
 
+### 5. The encoder: all five flags, on a fuller key from kui
+
+Reviewed with the user 2026-09-28, before the encoder was written.
+All five of the protocol's flags: 1 the ambiguous keys told apart, 2
+presses, repeats and releases, 4 the shifted and the base-layout keys,
+8 every key as an escape code, 16 the text a key types. The program's
+flags are `alacritty_terminal`'s to keep (push, pop, set, the query's
+answer), forwarded by `Hooked` from then on; the bytes are
+`encode_key`'s. A key kawoosh takes — the escape, a chord of Decision
+2's kept level — never reaches the program, its release neither; a
+program that pushed nothing gets the legacy encoding as today.
+
+What kui's key did not carry — the keypad as keys of its own, the
+modifier keys as keys with their side, the lock keys' state, the media
+keys and F25 onwards — is a kui round first, so the encoder speaks the
+protocol whole rather than with gaps written down (the user's call).
+
+### 6. ⌘ with the protocol on
+
+A ⌘ chord kawoosh binds stays kawoosh's; one it does not, which today
+reaches nothing, goes to a program that pushed the protocol as a
+super-modified key (nvim's `<D-j>`), and still reaches nothing without
+it. The way back to kawoosh's own is the escape (`<C-\>` then the
+chord). **A ⌘-click is always kawoosh's** — the link under it opened
+whether or not the program reports the mouse, the mouse reports having
+no bit for ⌘ to give it (a program saw a plain click); ctrl-click, which
+they can report, stays the program's then, and Shift keeps the
+selection kawoosh's as before.
+
 ### 4. In order
 
 The map; the regrouping, what sits behind the escape included; the
-escape and `<C-w>` given back; the kitty encoder and raw.
+escape and `<C-w>` given back; the kui round for the fuller key; the
+kitty encoder; raw.
 
 ## Built
 
@@ -107,3 +137,32 @@ pty; the `<C-w>` prefix and `<C-w>.` are gone. The direct chords
 (Decision 2's kept level) are as they were. Tests:
 `kawoosh/tests/terminal.rs`'s `the_escape_takes_normal_modes_keys_and_is_a_setting`;
 the tests that left a terminal by `<C-w>` press the escape first.
+
+**Decisions 5 and 6**, 2026-09-28, on kui F108 (branch
+`claude/key-model-f108`: a key's `location`, the modifier keys to a sink
+that asks, the lock state, F13–F35 and the media keys; checked on a
+keyboard). `term/src/kitty.rs`: `encode` — the key identified from kui's
+code, position and place (a letter's lower case, a shifted symbol's key
+at its position, the keypad and the sided modifiers by the protocol's
+numbers), the five flags as the protocol's reference terminal applies
+them: text that types while not every key is asked for, Enter/Tab/
+Backspace kept and without a release, the legacy forms under modifiers,
+`CSI key:shifted:base ; mods:event ; text u`. `Hooked` forwards push,
+pop, set and the query, with `kitty_keyboard` on in alacritty's config,
+and mirrors the stack's depth a screen: at alacritty's cap (4096) its
+push evicts from the *title* stack — a panic when that is empty, found
+here — so a push there is a set instead. `Terminal::keyboard_flags`.
+The terminal's sink asks for releases and the modifier keys
+(`key_up`, `modifier_keys`); `term_key` sends a press through `encode`
+when the program pushed flags, an unbound ⌘ chord included, and holds
+it (`Terminals::held`) so only a release of what the program was
+pressed reaches it (`term_key_aside`) — never the escape's or a kept
+chord's. A ⌘-click opens the link under it though the program reports
+the mouse. Checked on a keyboard through a program logging its bytes:
+both Shifts and ⌘ with their sides, the keypad's 1, F13, ⌘J, `a` press
+and release — which found kui's modifier key carrying the state before
+it and a Mac's Num Lock on, both fixed in kui (F108's second commit).
+Tests: `kitty.rs`'s five (each flag against the protocol's forms),
+`the_keyboard_flags_are_the_programs_a_stack_a_screen`,
+`a_program_that_pushed_kittys_flags_hears_the_key_whole`,
+`a_cmd_click_opens_a_link_while_the_program_reports_the_mouse`.

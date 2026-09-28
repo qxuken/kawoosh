@@ -227,3 +227,57 @@ fn a_programs_link_in_a_terminal_opens_its_address() {
     assert_eq!(app.urls_opened.as_ref().map(Vec::len), Some(1));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A ⌘-click is kawoosh's even while the program reports the mouse
+/// (terminal-keys.md Decision 6): a report has no bit for ⌘, so it was a
+/// plain click to the program and never the link. A ctrl-click, which a
+/// report can carry, stays the program's then.
+#[test]
+fn a_cmd_click_opens_a_link_while_the_program_reports_the_mouse() {
+    let mut app = Kawoosh::new("t", "");
+    app.urls_opened = Some(Vec::new());
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    // Click reports, SGR, as a full-screen program asks.
+    app.feed_terminal(
+        t,
+        b"\x1b[?1000h\x1b[?1006hsee https://kawoosh.dev/x for more\r\n",
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let cells = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.kind == kui_native::NodeKind::Cells)
+        .unwrap();
+    let (cw, ch) = app.cell_metrics();
+    let at = |col: f32| Vec2::new(cells.rect.x + col * cw, cells.rect.y + 0.5 * ch);
+    let sent = |app: &mut Kawoosh| app.terms.map.get_mut(&t).unwrap().take_sent();
+    sent(&mut app);
+    d.input(&mut app, InputEvent::Modifiers(KeyMods::NONE.with_ctrl()));
+    d.frame(&mut app);
+    d.click(&mut app, at(10.5).x, at(10.5).y);
+    assert_eq!(
+        app.urls_opened.as_deref(),
+        Some(&[][..]),
+        "ctrl: the program's"
+    );
+    assert!(
+        String::from_utf8_lossy(&sent(&mut app)).contains("\x1b[<"),
+        "the click reported"
+    );
+    d.input(&mut app, InputEvent::Modifiers(KeyMods::NONE.with_super()));
+    d.frame(&mut app);
+    d.input(&mut app, InputEvent::CursorMoved(at(10.5)));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    d.click(&mut app, at(10.5).x, at(10.5).y);
+    assert_eq!(
+        app.urls_opened.as_deref(),
+        Some(&["https://kawoosh.dev/x".to_string()][..]),
+        "⌘: kawoosh's"
+    );
+    assert!(sent(&mut app).is_empty(), "nothing reported under ⌘");
+}
