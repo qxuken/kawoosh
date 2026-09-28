@@ -240,8 +240,27 @@ plugin or `init.lua` adds shows up without asking and what is bundled
 only when placed. The default is Decision 5's order:
 `{ "prompt", "here", "buffers", "plugins", "recent", "...", "files" }`.
 A name no module has is drawn as a line saying so, not dropped — a
-typo in an experiment is seen. `launcher.width` is the widest the
-layout is drawn (720; `0` the pane's width).
+typo in an experiment is seen. `launcher.width` is how wide the layout
+is drawn, and a column's `width` in a row how wide it is of that — each
+a size (below).
+
+*Amended the same day, asked: "a foundation for calculable sizes, to
+express something like clamp(400px min, 80% target, 1000px max)".* A
+size is CSS's spelling, parsed once by `kawoosh_editor::Size` and
+worked out against the room each frame: pixels (`720`, `"720px"`), a
+share (`"80%"`), and `min(…)`, `max(…)`, `clamp(MIN, TARGET, MAX)`
+over those, nested. A setting declared `type = "size"` (`SettingKind::
+Size`) is checked on every change, a value that is not one named in a
+warning as an undeclared key is, the setting keeping its default; Lua
+has `kawoosh.size(spec, room)`. `launcher.width` is the first (720 by
+default, so nothing moved). *Beat:* a table (`{ min =, target =, max
+= }`) — longer to write and to read than the CSS the user named, and
+no way to nest; and handing the spelling to kui as `width = "80%"`
+with `min_width`/`max_width` — right for one clamp, but a size a
+plugin computes with (a column's share of it) needs the pixels. Not
+yet a size: `layout.column_width`, whose presets step as fractions of
+the strip (`<A-S-l>`); a size there needs the strip's arithmetic to
+take a viewport width.
 
 What comes after the prompt scrolls and what comes before it stays —
 a block above the field is a banner; with the prompt last, what is

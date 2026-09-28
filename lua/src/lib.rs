@@ -2682,7 +2682,7 @@ fn seed(
         })?,
     )?;
     // kawoosh.setting(path, { type = "string" | "boolean" | "integer" |
-    // "number" | "list" | "table" | { "a", "b" }, doc = "…" }): declares
+    // "number" | "list" | "table" | "size" | { "a", "b" }, doc = "…" }): declares
     // a setting a plugin reads — `table` one whose keys are the user's.
     let qq = q(queue);
     k.set(
@@ -2703,6 +2703,7 @@ fn seed(
                             "number" => Kind::Float,
                             "list" => Kind::List,
                             "table" => Kind::Open,
+                            "size" => Kind::Size,
                             _ => Kind::Str,
                         },
                         _ => Kind::Str,
@@ -2713,6 +2714,23 @@ fn seed(
             };
             qq.borrow_mut().push(Msg::Declare { path, kind, doc });
             Ok(())
+        })?,
+    )?;
+    // kawoosh.size(spec, room): a size (`720`, `"80%"`, `"clamp(400px,
+    // 80%, 1000px)"`) in pixels of `room`; nil and why for a bad one.
+    k.set(
+        "size",
+        lua.create_function(|_, (spec, room): (mlua::Value, f32)| {
+            let size = match &spec {
+                mlua::Value::Integer(n) => Ok(kawoosh_editor::Size::Px(*n as f32)),
+                mlua::Value::Number(n) => Ok(kawoosh_editor::Size::Px(*n as f32)),
+                mlua::Value::String(s) => kawoosh_editor::Size::parse(&s.to_str()?),
+                _ => Err("a size: a number or a string expected".to_string()),
+            };
+            Ok(match size {
+                Ok(s) => (Some(s.resolve(room)), None),
+                Err(e) => (None, Some(e)),
+            })
         })?,
     )?;
     let qq = q(queue);

@@ -15,6 +15,7 @@ pub mod repeat;
 pub mod search;
 pub mod selection;
 pub mod settings;
+pub mod size;
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -33,6 +34,7 @@ pub use multi::{Excerpt, Multi, MultiLine, Part};
 pub use repeat::Step;
 pub use selection::{Selection, Selections};
 pub use settings::{Decl, Layer, Setting, SettingKind, Settings};
+pub use size::Size;
 use slotmap::{SlotMap, new_key_type};
 
 new_key_type! {

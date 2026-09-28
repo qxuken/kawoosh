@@ -382,6 +382,18 @@ impl Kawoosh {
             };
             self.notify_with(Note::new(Level::Warn, text).source("settings"));
         }
+        for (source, path, why) in self.ed.settings.bad_sizes() {
+            if !self
+                .config
+                .undeclared_said
+                .insert((source.clone(), format!("{path}={why}")))
+            {
+                continue;
+            }
+            let file = self.short_name(Path::new(&source));
+            let text = format!("`{path}`: {why} ({file})");
+            self.notify_with(Note::new(Level::Warn, text).source("settings"));
+        }
     }
 
     /// Reloads what the watch saw saved since the last frame.

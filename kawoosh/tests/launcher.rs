@@ -633,3 +633,41 @@ fn a_row_of_columns_and_tiles() {
     assert_eq!(app.ed.message, "z");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// `launcher.width` is a size: `clamp(400px, 80%, 1000px)` is 80% of
+/// the pane between the two; a spelling that is not a size is named by
+/// the settings' check and the launcher keeps its 720.
+#[test]
+fn the_width_is_a_size() {
+    let _g = serial();
+    let dir = project("width");
+    let (mut d, mut app) = launch(&dir);
+    lua(
+        &mut app,
+        r#"kawoosh.opt("launcher.width", "clamp(400px, 80%, 1000px)")"#,
+    );
+    d.frame(&mut app);
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
+    lua(
+        &mut app,
+        r#"local s = kawoosh.launcher.state()
+           local want = math.min(math.max(s.room * 0.8, 400), 1000, s.room)
+           assert(math.abs(s.width - want) < 0.01, s.width .. " of " .. s.room)
+           assert(kawoosh.size("min(10%, 5px)", 1000) == 5)
+           local none, why = kawoosh.size("wide", 1000)
+           assert(none == nil and why:find("at `wide`"), why)"#,
+    );
+    lua(&mut app, r#"kawoosh.opt("launcher.width", "clamp(1, 2)")"#);
+    d.frame(&mut app);
+    let bad = app.ed.settings.bad_sizes();
+    assert_eq!(bad.len(), 1, "{bad:?}");
+    assert_eq!(bad[0].1, "launcher.width");
+    assert!(bad[0].2.contains("three"), "{bad:?}");
+    lua(
+        &mut app,
+        r#"local s = kawoosh.launcher.state()
+           assert(s.width == math.min(720, s.room), tostring(s.width))"#,
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

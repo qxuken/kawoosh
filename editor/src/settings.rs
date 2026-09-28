@@ -26,6 +26,17 @@ pub enum Setting {
 }
 
 impl Setting {
+    /// The value as a [`Size`](crate::Size): a number is pixels, a
+    /// string its spelling.
+    pub fn size(&self) -> Result<crate::Size, String> {
+        match self {
+            Setting::Int(n) => Ok(crate::Size::Px(*n as f32)),
+            Setting::Float(n) => Ok(crate::Size::Px(*n as f32)),
+            Setting::Str(s) => crate::Size::parse(s),
+            _ => Err("a size: a number or a string expected".into()),
+        }
+    }
+
     pub fn table() -> Self {
         Setting::Table(BTreeMap::new())
     }
@@ -298,6 +309,9 @@ pub enum SettingKind {
     OneOf(Vec<String>),
     List,
     Open,
+    /// A number of pixels or a [`Size`](crate::Size)'s spelling
+    /// (`"clamp(400px, 80%, 1000px)"`).
+    Size,
 }
 
 impl SettingKind {
@@ -715,6 +729,26 @@ impl Settings {
                 for path in tree.paths() {
                     if !self.is_declared(&path) {
                         out.push((name.clone(), path));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The values of a `Size` setting that are not a size — a file's,
+    /// `:set`'s, `kawoosh.opt`'s — each with its source and why: a typo
+    /// in a size is silence otherwise, the setting at its default.
+    pub fn bad_sizes(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for layer in [Layer::User, Layer::Project, Layer::Session] {
+            for (name, tree) in &self.layers[layer as usize] {
+                for (path, d) in &self.decls {
+                    if d.kind != SettingKind::Size {
+                        continue;
+                    }
+                    if let Some(Err(e)) = tree.get(path).map(Setting::size) {
+                        out.push((name.clone(), path.clone(), e));
                     }
                 }
             }
