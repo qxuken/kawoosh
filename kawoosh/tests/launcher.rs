@@ -634,40 +634,68 @@ fn a_row_of_columns_and_tiles() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
-/// `launcher.width` is a size: `clamp(400px, 80%, 1000px)` is 80% of
-/// the pane between the two; a spelling that is not a size is named by
-/// the settings' check and the launcher keeps its 720.
+/// `launcher.width` is a kui size, handed to kui as it is and resolved
+/// by its layout against the pane: `clamp(400px, 80%, 1000px)` is 80%
+/// of the pane between the two, the same as data, and never past the
+/// pane; a spelling that is not a size is named by the settings' check
+/// (kui's grammar) and the launcher draws its default.
 #[test]
 fn the_width_is_a_size() {
     let _g = serial();
     let dir = project("width");
     let (mut d, mut app) = launch(&dir);
+    let laid_out = |d: &mut Drive, app: &mut Kawoosh| -> (f64, f64) {
+        d.frame(app);
+        d.frame(app);
+        app.run_lua_source(
+            "t",
+            r#"local s = kawoosh.launcher.state()
+               kawoosh.echo(tostring(s.width) .. " " .. tostring(s.room))"#,
+        );
+        let mut it = app
+            .ed
+            .message
+            .split(' ')
+            .map(|x| x.parse::<f64>().unwrap_or(-1.0));
+        (it.next().unwrap(), it.next().unwrap())
+    };
     lua(
         &mut app,
         r#"kawoosh.opt("launcher.width", "clamp(400px, 80%, 1000px)")"#,
     );
     d.frame(&mut app);
     d.press(&mut app, "<C-w>v");
-    d.frame(&mut app);
+    let (w, room) = laid_out(&mut d, &mut app);
+    assert!(room > 0.0, "the layout reported the pane: {w} of {room}");
+    let want = (room * 0.8).clamp(400.0, 1000.0).min(room);
+    assert!((w - want).abs() < 0.5, "{w} of {room}, want {want}");
+    // The same as data.
     lua(
         &mut app,
-        r#"local s = kawoosh.launcher.state()
-           local want = math.min(math.max(s.room * 0.8, 400), 1000, s.room)
-           assert(math.abs(s.width - want) < 0.01, s.width .. " of " .. s.room)
-           assert(kawoosh.size("min(10%, 5px)", 1000) == 5)
-           local none, why = kawoosh.size("wide", 1000)
-           assert(none == nil and why:find("at `wide`"), why)"#,
+        r#"kawoosh.opt("launcher.width", { clamp = { 400, { pct = 80 }, 1000 } })"#,
     );
+    let (w2, _) = laid_out(&mut d, &mut app);
+    assert!((w2 - w).abs() < 0.5, "data {w2}, spelled {w}");
+    // Never past the pane.
+    lua(&mut app, r#"kawoosh.opt("launcher.width", 5000)"#);
+    let (w3, room3) = laid_out(&mut d, &mut app);
+    assert!((w3 - room3).abs() < 0.5, "{w3} of {room3}");
+    // Not a size: named, in kui's words, and the default drawn.
     lua(&mut app, r#"kawoosh.opt("launcher.width", "clamp(1, 2)")"#);
     d.frame(&mut app);
-    let bad = app.ed.settings.bad_sizes();
+    let sizes = app
+        .ed
+        .settings
+        .values_of(&kawoosh_editor::SettingKind::Size);
+    let bad: Vec<_> = sizes
+        .iter()
+        .filter_map(|(_, p, v)| kawoosh::settings::size_problem(v).map(|why| (p.clone(), why)))
+        .collect();
     assert_eq!(bad.len(), 1, "{bad:?}");
-    assert_eq!(bad[0].1, "launcher.width");
-    assert!(bad[0].2.contains("three"), "{bad:?}");
-    lua(
-        &mut app,
-        r#"local s = kawoosh.launcher.state()
-           assert(s.width == math.min(720, s.room), tostring(s.width))"#,
+    assert_eq!(bad[0].0, "launcher.width");
+    assert!(bad[0].1.contains("three"), "{bad:?}");
+    assert!(
+        kawoosh::settings::size_problem(&kawoosh_editor::Setting::Str("grow".into())).is_none()
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }

@@ -31,9 +31,10 @@
 -- `launcher.layout` places them — names, `{ module = "name", field = … }`,
 -- `{ row = { … } }` of columns, `{ column = { … } }`, and `"..."` for
 -- every module not placed that kawoosh did not bundle — and
--- `launcher.width` is how wide it is drawn, a size (`kawoosh.size`:
--- `720`, `"80%"`, `"clamp(400px, 80%, 1000px)"`), as a column's
--- `width` in a row is, of the launcher's. `kawoosh.launcher.entry {
+-- `launcher.width` is how wide it is drawn and a column's `width` in a
+-- row how wide it is — kui sizes (`720`, `"80%"`, `"clamp(400px, 80%,
+-- 1000px)"`, `{ clamp = { 400, { pct = 80 }, 1000 } }`) handed to kui
+-- as they are, which resolves them against the room it laid out. `kawoosh.launcher.entry {
 -- text =, sub =, run = "cmd" | pick = fn, module = "here", key = "x" }`
 -- adds a row to a module (*plugins* unless said), `key` its letter;
 -- and a picker source registered with `launcher = true` is a module of
@@ -50,7 +51,7 @@ kawoosh.setting("launcher.layout", {
 })
 kawoosh.setting("launcher.width", {
   type = "size",
-  doc = "how wide the launcher is drawn, a size: `720` by default, `\"100%\"` the pane, `\"clamp(400px, 80%, 1000px)\"`",
+  doc = "how wide the launcher is drawn, a size: `720` by default, `\"100%\"` the pane, `\"clamp(400px, 80%, 1000px)\"`; never wider than the pane",
 })
 
 local VIEW = "launcher"
@@ -75,15 +76,6 @@ local LIMIT = 50
 -- How wide the layout is by default: a column down the middle of a
 -- wide pane reads as a list, where rows the pane's width do not.
 local WIDTH = 720
-
--- A size (`720`, `"80%"`, `"clamp(…)"`) in pixels of `room`, never
--- over it; `fallback` for none, or for a bad one — which the settings'
--- check has named already.
-local function px(spec, room, fallback)
-  local got = spec ~= nil and kawoosh.size(spec, room) or nil
-  if got == nil then got = fallback end
-  return got and math.min(got, room)
-end
 -- The pane's title bar, which the height counts (`app::TITLE_H`).
 local TITLE_H = 22
 -- The scroller's label, for `set_scroll`.
@@ -565,7 +557,7 @@ end
 -- cursor's row's text), `sections` (the titles shown), `modules` (the
 -- modules placed, in reading order), `blocks` (the blocks drawn),
 -- `missing` (the names the layout gave that no module has), and
--- `width` (px, drawn) of `room` (the pane's) — or nil.
+-- `width` (px, as kui laid it out) of `room` (the pane's) — or nil.
 function launcher.state()
   if not L then return nil end
   local rows, titles = {}, {}
@@ -726,12 +718,12 @@ local function draw_nodes(nodes, R, out)
     elseif n.kind == "row" then
       d = row { width = "grow", gap = n.gap or 16, cross_align = "start" }
       for _, c in ipairs(n.children) do
-        local col = column { width = px(c.width, R.width) or "grow", gap = 0 }
+        local col = column { width = c.width or "grow", gap = 0 }
         draw_nodes(c.children, R, col)
         d[#d + 1] = col
       end
     elseif n.kind == "column" then
-      d = column { width = px(n.width, R.width) or "grow", gap = 0 }
+      d = column { width = n.width or "grow", gap = 0 }
       draw_nodes(n.children, R, d)
     end
     if d then out[#out + 1] = d end
@@ -776,16 +768,12 @@ kawoosh.view(VIEW, function(ctx)
     if keep and takes(keep) then L.cursor = keep end
   end
   local h = (ctx.height or 0) > 0 and ctx.height or 400
-  local w = (ctx.width or 0) > 0 and ctx.width or 800
   L.budget = math.max(math.floor((h - TITLE_H - ROW_H - 10) / ROW_H), 1)
-  local width = px(kawoosh.opt("launcher.width"), w, WIDTH)
 
   L.blocks = {}
   local R = { t = t, ctx = ctx, focused = ctx.focused,
               bctx = { origin = L.origin, cwd = fs.cwd(), query = L.query or "", theme = t, size = SIZE,
-                       width = width, env = ctx.env } }
-  R.width = width
-  L.width, L.room = width, w
+                       env = ctx.env } }
 
   -- What comes after the prompt scrolls and what comes before stays;
   -- with the prompt last, what is above it scrolls.
@@ -811,8 +799,10 @@ kawoosh.view(VIEW, function(ctx)
   if #L.rows == 0 and #L.blocks == 0 then
     list[#list + 1] = note(L.query ~= "" and "no matches" or "nothing here", nil, R)
   end
-  local body = column { width = "grow", height = "grow", gap = 0, pad = { y = 4 } }
-  body.width = width
+  -- The width as the setting has it, a kui size, and never past the
+  -- pane; where it came out is read back from the layout.
+  local body = column { key = "body", width = kawoosh.opt("launcher.width") or WIDTH, max_width = "100%",
+                        height = "grow", gap = 0, pad = { y = 4 }, on_layout = { kind = "layout" } }
   if scrolled == above then
     body[#body + 1] = list
     draw_nodes(below, R, body)
@@ -830,7 +820,9 @@ kawoosh.view(VIEW, function(ctx)
   return row { width = "grow", height = "grow", main_align = "center", clip = true, bg = t.bg, body }
 end, function(ev)
   if not L then return end
-  if ev.kind == "row" then
+  if ev.kind == "layout" then
+    L.width, L.room = ev.w, ev.parent and ev.parent.w
+  elseif ev.kind == "row" then
     kawoosh.field_focus(VIEW, FIELD)
     if ev.i == L.cursor then pick(ev.i) elseif takes(ev.i) then L.cursor = ev.i end
   end

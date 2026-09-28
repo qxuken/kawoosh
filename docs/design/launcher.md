@@ -206,7 +206,8 @@ kawoosh.launcher.module("todo", {
 A module with rows is matched by the query; a block (`draw`) is not
 matched and shows while the query is empty (`show = "blank"`, its
 default). `ctx` is the pane's: `origin`, `cwd`, `query`, `theme`,
-`size`, `width`. The bundled ones: `prompt` (the query's field and its
+`size` (the chrome's text size); a block sizes itself with kui sizes.
+The bundled ones: `prompt` (the query's field and its
 label), `here`, `buffers`, `plugins`, `recent`, `pins` (the pinned
 files alone), `files` (`show = "query"`); a picker source registered
 with `launcher = true` is a module of its name (`workspaces`).
@@ -245,22 +246,36 @@ is drawn, and a column's `width` in a row how wide it is of that — each
 a size (below).
 
 *Amended the same day, asked: "a foundation for calculable sizes, to
-express something like clamp(400px min, 80% target, 1000px max)".* A
-size is CSS's spelling, parsed once by `kawoosh_editor::Size` and
-worked out against the room each frame: pixels (`720`, `"720px"`), a
-share (`"80%"`), and `min(…)`, `max(…)`, `clamp(MIN, TARGET, MAX)`
-over those, nested. A setting declared `type = "size"` (`SettingKind::
-Size`) is checked on every change, a value that is not one named in a
-warning as an undeclared key is, the setting keeping its default; Lua
-has `kawoosh.size(spec, room)`. `launcher.width` is the first (720 by
-default, so nothing moved). *Beat:* a table (`{ min =, target =, max
-= }`) — longer to write and to read than the CSS the user named, and
-no way to nest; and handing the spelling to kui as `width = "80%"`
-with `min_width`/`max_width` — right for one clamp, but a size a
-plugin computes with (a column's share of it) needs the pixels. Not
-yet a size: `layout.column_width`, whose presets step as fractions of
-the strip (`<A-S-l>`); a size there needs the strip's arithmetic to
-take a viewport width.
+express something like clamp(400px min, 80% target, 1000px max)", and
+revised the same day: "whoever owns the room resolves the size".* A size
+is kui's (backlog F109): pixels (`720`, `"720px"`), a share (`"80%"`),
+and `min(…)`, `max(…)`, `clamp(MIN, TARGET, MAX)` over those, nested —
+or the same as data, never parsed (`{ clamp = { 400, { pct = 80 },
+1000 } }`). The launcher hands `launcher.width` and a row column's
+`width` to kui as they are, and kui's layout resolves them against the
+box it laid out, the parent's content box; `launcher.state()`'s `width`
+and `room` are what the layout reported (`on_layout`). A setting
+declared `type = "size"` (`SettingKind::Size`) is checked on every change
+with kui's grammar (`kawoosh_lua::size_problem`), one grammar for what
+is checked and what is drawn; a value that is not one is named in a
+warning as an undeclared key is, and reads as unset, so a view draws its
+default rather than failing to build. `launcher.width` is the first
+(720, never past the pane).
+
+*Beat:* resolving in kawoosh — the first cut, `kawoosh_editor::Size` and
+`kawoosh.size(spec, room)` returning px to the view: the plugin cannot
+know its room (a column in a row was resolved against the launcher's
+width), it duplicated layout kui already does, and every plugin with a
+bounded size would repeat it; and a table `{ min =, target =, max = }`
+— longer than the CSS the user named, and no way to nest. Measured
+(kui's F109 entry): in Lua a spelled clamp costs a node what `"80%"`
+does, about 0.09 µs over a number, once seen; the same as a table built
+in the view about 0.9 µs, the conversion of a Lua table allocating each
+frame — so spell it in a view, and keep the table for composing one.
+Not yet a size: `layout.column_width`, whose presets step as fractions
+of the strip (`<A-S-l>`) — the strip's arithmetic is kawoosh's, not
+kui's, so a size there is worked out by the engine against the strip's
+viewport, later.
 
 What comes after the prompt scrolls and what comes before it stays —
 a block above the field is a banner; with the prompt last, what is

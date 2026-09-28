@@ -38,7 +38,7 @@ A key no one declared is named in a warning (`no setting …`), once per file, s
 
 ### Sizes
 
-A setting that is a size takes pixels or a spelling in CSS's terms, worked out against the room it is drawn in:
+A setting that is a size takes pixels or a spelling in CSS's terms, worked out by the layout against the room it is drawn in:
 
 | spelling | means |
 |---|---|
@@ -47,7 +47,7 @@ A setting that is a size takes pixels or a spelling in CSS's terms, worked out a
 | `"min(720px, 100%)"`, `"max(50%, 300)"` | the smaller, the larger |
 | `"clamp(400px, 80%, 1000px)"` | 80% of the room, never under 400 nor over 1000 |
 
-They nest (`"min(clamp(300, 50%, 900), 90%)"`). One that is not a size is named in a warning, and the setting keeps its default. From Lua, `kawoosh.size(spec, room)` gives the pixels, and `kawoosh.setting(path, { type = "size" })` declares one.
+They nest (`"min(clamp(300, 50%, 900), 90%)"`), and the same can be written as data: `{ clamp = { 400, { pct = 80 }, 1000 } }`, `{ min = { "50%", 300 } }`, `{ pct = 80 }`. One that is not a size is named in a warning, and the setting reads as unset, so what uses it draws its default. `kawoosh.setting(path, { type = "size" })` declares one of your own; hand its value to a view's `width` as it is.
 
 `init.lua` is code: maps, commands, plugins. It sets values with `kawoosh.opt`:
 
