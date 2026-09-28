@@ -123,7 +123,9 @@ A chord's letter under Shift is spelled upper-case, so a map writes
 rest of normal mode is behind `terminal.escape`, `<C-\>` by default
 (`<C-\><C-w>l`, `<C-\><Space>f`; [terminal-keys.md](terminal-keys.md)
 Decision 1), and `<C-w>` is the pty's — the shell's delete-word, a vim's
-windows.
+windows. `<C-\>r` makes the pane raw, where only the escape and the ⌘
+chords stay kawoosh's (Decision 2, `terminal.raw` for the programs that
+turn it on).
 
 ### Panes without a view: pane mode
 

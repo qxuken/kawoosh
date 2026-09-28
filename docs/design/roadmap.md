@@ -2494,20 +2494,19 @@ think on a kitty keyboard"), the terminal's third round, in that order:
     commands in `term/src/graphics.rs`, the images drawn by
     `kawoosh/src/term_images.rs` over the grid, under it for a
     negative z; checked with `chafa`, `timg` and in a window.
-57. **The terminal's keys, a note** (not built until decided): the
+57. ~~**The terminal's keys, a note** (not built until decided): the
     kitty keyboard protocol, so a program can tell `<C-Tab>` from
     `<Tab>` and `<S-CR>` from `<CR>` — which asks what kawoosh keeps
     while a terminal has the keys: a mode for it, a leader to escape
     it, and before that a map of the commands and keys as they connect
-    (a graph over the registry and the keymap) to regroup them on.
-    Decided 2026-09-28: [terminal-keys.md](terminal-keys.md) — `<C-\>`
-    the terminal's one escape (normal mode's keys after it, `<C-w>`
-    given back to the pty), two levels (kept, and raw: the escape and ⌘
-    alone, by a toggle or a program named in `terminal.raw`), and first
-    a map of the keys: `:map export` (JSON) and a page to regroup on.
-    The regrouping built ([keymap-regroup.md](keymap-regroup.md)); the
-    escape built, as `terminal.escape`; the kitty encoder built on kui
-    F108 (terminal-keys.md Decisions 5–6); raw left.
+    (a graph over the registry and the keymap) to regroup them on.~~
+    Landed 2026-09-28: [terminal-keys.md](terminal-keys.md), decided
+    with the user and built — `:map export` and a page to regroup on,
+    the keys regrouped ([keymap-regroup.md](keymap-regroup.md)); `<C-\>`
+    the terminal's one escape (`terminal.escape`), `<C-w>` given back to
+    the pty; kitty's keyboard protocol on kui F108 (a key's place, the
+    modifier keys, the locks); raw (`<C-\>r`, `terminal.raw`), where only
+    the escape and ⌘ stay kawoosh's.
 
 From the todo, 2026-09-28 — nine items added the same night, each read
 against the code:

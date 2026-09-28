@@ -28,6 +28,7 @@ Almost every key goes to the program in the terminal, `<C-w>`, `<C-l>`, `<C-r>` 
 | `<C-\><C-n>` | copy mode (below), as in vim |
 | `<C-\><C-\>` | sends `<C-\>` itself to the program |
 | `<C-\><Esc>` | nothing: the keys are the program's again |
+| `<C-\>r` | raw on or off for the program in front (`:terminal raw`): every key but `<C-\>` and ⌘ goes to it |
 | `<C-S-h>` `<C-S-j>` `<C-S-k>` `<C-S-l>` | focus the pane left, below, above, right |
 | `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>` | the pane narrower, wider, shorter, taller |
 | `⌘1`…`⌘9`, `<C-S-1>`…`<C-S-9>` | the Nth column (or pane) |
@@ -39,6 +40,8 @@ Almost every key goes to the program in the terminal, `<C-w>`, `<C-l>`, `<C-r>` 
 Any Ctrl+Shift or Alt+Shift chord, and any ⌘ chord, runs its normal-mode binding instead of reaching the shell. A ⌘ chord bound to nothing does nothing — unless the program speaks kitty's keyboard protocol (below). Your own normal-mode maps on such chords work from terminals too.
 
 Programs that speak kitty's keyboard protocol — neovim, helix, kakoune, fish 4, nushell, yazi — are sent every key as it is: `<C-i>` apart from Tab, `<C-S-l>` apart from `<C-l>`, Esc on its own, the keypad apart from the main keys, and, when they ask, key releases and a lone Shift. A ⌘ chord kawoosh does not bind reaches them as a Super chord (`<D-j>` in neovim). The keys kawoosh keeps above are still its own, and so is ⌘-click on a link, even in a program that reads the mouse.
+
+**Raw.** In a raw pane kawoosh keeps only `<C-\>` and the ⌘ chords it binds; everything else — `<C-S-h>`, `<C-Tab>`, `<S-PageUp>`, F12 — goes to the program, and the status line says `RAW`. `<C-\>r` turns it on or off for the program in front: raw set at the shell's prompt stays through the commands you run from it, and the next full-screen program starts as `terminal.raw` says. `terminal.raw = { "nvim", "hx" }` makes a pane raw whenever one of those programs is in front. (On Windows only `<C-\>r` does it: the program in front is not known there.)
 
 Mouse: the wheel scrolls through history. Dragging selects text (a double click a word, a triple click a line), and `⌘c` copies it. The middle button pastes the clipboard, as `⌘v` does. When a full-screen program asks for the mouse it gets the clicks and drags of every button, the right one included (tmux's and htop's menus, a file manager's); hold Shift to select anyway.
 
@@ -118,6 +121,7 @@ When a program in the terminal turns echo off to ask for a password (`sudo`, `ss
 | `terminal.scrollback` | `10000` | lines of history each terminal keeps |
 | `terminal.bell` | `"sound"` | `sound`, `visual` or `off` |
 | `terminal.escape` | `"<C-\\>"` | the key before normal mode's keys in a terminal; `""` for none, every key the program's |
+| `terminal.raw` | `{}` | programs a pane is raw for while one is in front, such as `{ "nvim", "hx" }` |
 | `editor.bell` | `false` | whether the editor rings for its own failures |
 | `env.shell` | `""` | the shell whose `PATH` kawoosh borrows when started outside a terminal (from the Dock, Finder); read at startup |
 
