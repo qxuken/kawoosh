@@ -10,9 +10,9 @@
 //! chunk by chunk from its pieces, and the query reads a node's text the
 //! same way, only where a predicate asks. tree-sitter reuses every node
 //! the edit did not touch, and the answer covers only the span whose
-//! syntax changed (the edit and `changed_ranges`, over whole lines),
-//! the query run over that span alone; the journal carries the runs
-//! outside it. A first sight of a buffer, edits the journal no longer
+//! syntax changed (the edit and `changed_ranges`, each widened to the
+//! edited node's parent on its lines), the query run over that span
+//! alone; the journal carries the runs outside it. A first sight of a buffer, edits the journal no longer
 //! has, or a change of language parse and answer for the whole.
 //!
 //! The languages are a `kawoosh_languages::Registry`'s (kui.md Decision
@@ -503,22 +503,26 @@ fn highlight(
                 Some(tree) => {
                     if let Some((old_tree, edited)) = &old {
                         // The edits themselves, and every range whose
-                        // syntax the reparse changed, each over the
-                        // whole lines it touches; the runs elsewhere
-                        // stand. Lines, since tree-sitter's changed
-                        // ranges leave out what a capture reads off an
-                        // edited node's neighbourhood: `tru` typed on
-                        // to `true` is no change to them, the node's
-                        // kind notwithstanding, and `x = ,` given its
-                        // value turns `x` from an error's into the
-                        // field's `name:` unreported.
+                        // syntax the reparse changed, each over its
+                        // neighbourhood (`neighbourhood`); the runs
+                        // elsewhere stand. tree-sitter's changed ranges
+                        // leave out what a capture reads off an edited
+                        // node's neighbourhood: `tru` typed on to
+                        // `true` is no change to them, the node's kind
+                        // notwithstanding, and `x = ,` given its value
+                        // turns `x` from an error's into the field's
+                        // `name:` unreported.
                         let mut all = edited.clone();
                         all.extend(
                             tree.changed_ranges(old_tree)
                                 .map(|r| r.start_byte.min(len)..r.end_byte.min(len)),
                         );
-                        spans =
-                            merge_spans(all.into_iter().map(|s| whole_lines(text, s)).collect());
+                        let root = tree.root_node();
+                        spans = merge_spans(
+                            all.into_iter()
+                                .map(|s| neighbourhood(root, text, s))
+                                .collect(),
+                        );
                     }
                     let runs = spans
                         .iter()
@@ -767,6 +771,32 @@ fn enclosing_block(st: &Structure, root: Node, span: Range<usize>) -> Range<usiz
 }
 
 /// `span` widened to the lines it touches, the last one's newline in.
+/// What an incremental answer covers for `span`: the parent of the
+/// smallest node spanning it — the edited node whole, and its siblings,
+/// whose kind and field an edit can change unreported — on the lines
+/// `span` touches. The lines alone were once the cover, which on a
+/// minified bundle, a megabyte on one line, is the whole file queried
+/// again at every keystroke; the parent alone can be a function body
+/// many lines long. Each bounds the other, and neither is scanned past.
+fn neighbourhood(root: Node, text: &text_buffer::Buffer, span: Range<usize>) -> Range<usize> {
+    let len = text.len();
+    let span = span.start.min(len)..span.end.min(len);
+    let Some(node) = root.descendant_for_byte_range(span.start, span.end) else {
+        return span;
+    };
+    let near = node.parent().unwrap_or(node).byte_range();
+    let (lo, hi) = (near.start.min(span.start), near.end.max(span.end).min(len));
+    let mut start = span.start;
+    while start > lo && text.byte_at(start - 1) != Some(b'\n') {
+        start -= 1;
+    }
+    let mut end = span.end;
+    while end < hi && text.byte_at(end) != Some(b'\n') {
+        end += 1;
+    }
+    start..end
+}
+
 fn whole_lines(text: &text_buffer::Buffer, span: Range<usize>) -> Range<usize> {
     let len = text.len();
     let mut start = span.start.min(len);
@@ -2115,6 +2145,84 @@ mod tests {
         assert!((at..at + 4).all(|o| tok(o) == tok(at + 3)));
         let name = buf.text().find("relativenumber").unwrap();
         assert_eq!(tok(name), Some(Token::Property));
+    }
+
+    /// A keystroke in a minified bundle — a megabyte on one line —
+    /// answers for the edit's neighbourhood, not the line: the spans
+    /// widen to the edited node's parent within its line, so typing
+    /// stays as quick as on a short line and reads as a whole parse.
+    #[test]
+    fn a_keystroke_in_one_long_line_answers_for_its_neighbourhood() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let src: String = (0..20_000)
+            .map(|i| format!("function a{i}(b,c){{return b+c*{i}}}var x{i}=\"s{i}\";"))
+            .collect();
+        let mut buf = Buffer::new("t", &src);
+        buf.language = "javascript".into();
+        let mut sent: Option<kawoosh_doc::Version> = None;
+        let mut job = |buf: &Buffer| {
+            let edits = sent
+                .and_then(|v| buf.journal().edits_since(v).ok())
+                .map(|it| it.cloned().collect());
+            sent = Some(buf.version());
+            Job {
+                buffer: BufferId::default(),
+                language: "javascript".into(),
+                snapshot: buf.snapshot(),
+                edits,
+            }
+        };
+        let first = highlight(&mut parser, &mut g, &mut parsed, &job(&buf)).update();
+        buf.apply(first).unwrap();
+        let at = buf.text().find("var x10000=").unwrap() + "var x10000=".len();
+        // `true||` typed before a value and taken back again, a letter
+        // at a time.
+        let mut steps: Vec<(Range<usize>, &str)> = ["t", "r", "u", "e", "|", "|"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, l)| (at + i..at + i, l))
+            .collect();
+        steps.extend((0..6).rev().map(|i| (at + i..at + i + 1, "")));
+        for (range, letter) in steps {
+            buf.replace(range.clone(), letter);
+            let inc = highlight(&mut parser, &mut g, &mut parsed, &job(&buf));
+            for u in &inc.updates {
+                assert!(
+                    u.span.len() < 256,
+                    "{range:?} {letter:?}: span {:?}",
+                    u.span
+                );
+            }
+            for u in inc.updates {
+                buf.apply(u).unwrap();
+            }
+            let whole = highlight(
+                &mut parser,
+                &mut g,
+                &mut Parsed::default(),
+                &Job {
+                    buffer: BufferId::default(),
+                    language: "javascript".into(),
+                    snapshot: buf.snapshot(),
+                    edits: None,
+                },
+            )
+            .update();
+            let near = at - 200..at + 200;
+            let clip = |runs: Vec<(Range<usize>, u32)>| -> Vec<(Range<usize>, u32)> {
+                runs.into_iter()
+                    .filter(|(r, _)| r.start < near.end && r.end > near.start)
+                    .map(|(r, s)| (r.start.max(near.start)..r.end.min(near.end), s))
+                    .collect()
+            };
+            assert_eq!(
+                clip(joined(&buf.runs(SYNTAX_LAYER, 0..buf.len()))),
+                clip(joined(&whole.runs)),
+                "after {range:?} {letter:?}"
+            );
+        }
     }
 
     /// The cover of a sequence of edits is the one edit that replaces
