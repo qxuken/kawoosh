@@ -444,3 +444,72 @@ fn a_session_keeps_no_launcher() {
     let json = serde_json::to_string(&app.session_data()).unwrap();
     assert!(!json.contains("\"lua\""), "no Lua pane kept: {json}");
 }
+
+/// No panes is a launcher: the last pane closed — `<C-w>c` on it — is
+/// not refused but asked anew, `<CR>` bringing back what it showed; the
+/// launcher as the last pane is not closed by `<C-w>c`, and `<C-c>`
+/// answers it with a scratch.
+#[test]
+fn the_last_pane_closed_is_a_launcher() {
+    let _g = serial();
+    let dir = project("last");
+    let (mut d, mut app) = launch(&dir);
+    d.press(&mut app, "jj");
+    d.press(&mut app, "<C-w>c");
+    d.frame(&mut app);
+    assert!(on_launcher(&app), "the last pane asks");
+    assert_eq!(pane_count(&app), 1);
+    let r = rows(&mut app);
+    assert_eq!(
+        r[..2],
+        ["# here", "a.txt"],
+        "made from what it showed: {r:?}"
+    );
+    d.press(&mut app, "<C-w>c");
+    d.frame(&mut app);
+    assert!(on_launcher(&app), "the launcher itself stays");
+    assert_eq!(app.ed.message, "cannot close the last pane");
+    d.press(&mut app, "<CR>");
+    d.frame(&mut app);
+    assert_eq!(focused_name(&app), "a.txt");
+    assert_eq!(caret_line(&app), 2, "the caret where it was");
+    ex(&mut d, &mut app, "close");
+    assert!(on_launcher(&app));
+    d.press(&mut app, "<C-c>");
+    d.frame(&mut app);
+    assert_eq!(focused_name(&app), "*scratch*");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A terminal that is the last pane, its process gone, leaves a
+/// launcher rather than a pane showing nothing.
+#[test]
+fn a_last_terminal_exiting_leaves_a_launcher() {
+    let _g = serial();
+    let dir = project("exit");
+    let (mut d, mut app) = launch(&dir);
+    ex(&mut d, &mut app, "term");
+    assert!(matches!(
+        app.layout.focused_content(),
+        Some(Content::Terminal(_))
+    ));
+    // The terminal has the keys: from here, not typed to it.
+    app.shell_command("only", &[], None);
+    assert_eq!(pane_count(&app), 1);
+    d.keys(&mut app, "exit");
+    d.key(&mut app, "enter", KeyMods::default());
+    for _ in 0..500 {
+        d.frame(&mut app);
+        if on_launcher(&app) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(on_launcher(&app), "the exited terminal's pane asks");
+    // Drawn, so its letters are keys.
+    d.frame(&mut app);
+    assert!(app.terms.map.is_empty(), "nothing of the terminal kept");
+    d.press(&mut app, "s");
+    d.frame(&mut app);
+    assert_eq!(focused_name(&app), "*scratch*", "and answers as any does");
+}

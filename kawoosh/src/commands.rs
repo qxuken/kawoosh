@@ -201,11 +201,19 @@ impl Kawoosh {
     /// run as well as the shell's.
     pub fn shell_command(&mut self, name: &str, args: &[String], count: Option<usize>) {
         self.sync_facts();
-        let Some(v) = self.focused_view().or_else(|| self.ed.any_view()) else {
-            return;
-        };
+        let v = self.command_view();
         self.ed.run(v, name, args, count);
         self.drain_effects();
+    }
+
+    /// A view for a command to run on: the focused one, else any, else
+    /// — no editor pane open at all, the launcher or a terminal alone —
+    /// the resident pane view.
+    pub(crate) fn command_view(&mut self) -> ViewId {
+        match self.focused_view().or_else(|| self.ed.any_view()) {
+            Some(v) => v,
+            None => self.ed.pane_view(),
+        }
     }
 
     /// Runs the binding of `bs` that can run now, from a pane without a
@@ -332,10 +340,8 @@ impl Kawoosh {
     }
 
     fn close_pane(&mut self) {
-        let pane = self.layout.focused();
-        match self.layout.close(pane) {
-            Some(c) => self.drop_content(c),
-            None => self.ed.message = "cannot close the last pane".into(),
+        if !self.close_pane_at(self.layout.focused()) {
+            self.ed.message = "cannot close the last pane".into();
         }
     }
 

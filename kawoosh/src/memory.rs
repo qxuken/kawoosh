@@ -413,11 +413,9 @@ impl Kawoosh {
     }
 
     fn close_memory_panel(&mut self, pane: PaneId) {
-        if self.layout.close(pane).is_none() {
+        if !self.close_pane_at(pane) {
             self.ed.message = "cannot close the last pane".into();
-            return;
         }
-        self.memory_filter_clear();
     }
 
     /// The filter's line as typed, empty for none.
