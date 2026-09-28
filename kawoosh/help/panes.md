@@ -46,13 +46,13 @@ window. A click on a tab goes to it; its `×` closes it.
 
 | keys | what |
 |---|---|
-| `<C-w>t` `<leader>tn` | a new tab (`:tabnew`, or `:tabnew PATH`) |
+| `<C-w>t` | a new tab (`:tabnew`, or `:tabnew PATH`) |
 | `gt` `gT`, `]t` `[t` | the next, previous tab |
 | `<C-Tab>` `<C-S-Tab>` | the same, from every mode and pane, terminals included |
 | `]T` `[T` | move the tab a place right, left (`:tabmove +N`, `-N`, `N`) |
-| `<leader>tq` | close the tab and its panes (`:tabclose`) |
-| `<leader>tl` | flip the tab between a strip and a tree (`:layout`) |
-| `<leader>tt` | the tools — lazygit, top, a shell, your compile and run commands — in a picker |
+| `<C-w>C` | close the tab and its panes (`:tabclose`) |
+| `<C-w>m` | flip the tab between a strip and a tree (`:layout`) |
+| `<leader>t` | the tools — lazygit, top, a shell, your compile and run commands — in a picker |
 
 A tab's label is its number and the name of what its focused pane shows,
 with `●` when something in it is unsaved. When your tabs are in more
@@ -147,9 +147,9 @@ picker shows every tab's.
 
 | keys | what |
 |---|---|
-| `<leader>sw` | workspaces you worked in before: a pick moves the tab there and opens the file you had last |
+| `<leader>ww` | workspaces you worked in before: a pick moves the tab there and opens the file you had last |
 | `<leader>sd` `<C-S-z>` | directory jumps (zoxide's, when installed): `<CR>` makes one the working directory, `<C-t>` opens a new tab on it |
-| `<leader>cd` | in a directory listing, make the listed directory the working one |
+| `~` | in a directory listing, make the listed directory the working one |
 | `<leader>ws` `<leader>wr` | save, restore the session (it is also saved on quit and restored by a bare `kawoosh`) |
 
 A dock pane belongs to the project that was in front when it opened, and

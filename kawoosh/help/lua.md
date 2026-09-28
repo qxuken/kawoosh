@@ -18,7 +18,7 @@ Everything a key does is a named command. `kawoosh.command(name, fn, opts)` adds
 - `fn(ctx)` gets `ctx.args` (the words after the name), `ctx.count`, and `ctx.bang` / `ctx.query` for `:name!` and `:name?`.
 - `opts.args` says what the arguments are, one kind per position: `"path"`, `"buffer"`, `"command"`, `"option"`, `"tool"`, `"view"` or `"text"`, the last one written with `"..."` for the rest. The command line completes each kind, and a `"path"` reaches `fn` already made absolute.
 - `opts.when` lists facts that must hold for the command to run, such as `"editor"` (an editor pane has the keys), `"!readonly"`, `"visual"`, `"language:rust"` or `"terminal"`. The command line refuses with the reason when one does not hold. `kawoosh.fact(name, on)` publishes a fact of your own.
-- `opts.doc` is one line on what it does, shown in the command palette (`<leader>sp`); `opts.aliases` gives other spellings, and `opts.bang` / `opts.query` describe what `!` and `?` mean.
+- `opts.doc` is one line on what it does, shown in the command palette (`<leader>ic`); `opts.aliases` gives other spellings, and `opts.bang` / `opts.query` describe what `!` and `?` mean.
 
 `kawoosh.cmd(line)` runs a command line right away; `kawoosh.run(line)` runs it after what was already asked for. `kawoosh.commands()` lists every command, and `kawoosh.can(name)` says whether one can run now, or why not.
 
@@ -98,7 +98,7 @@ return {
 
 `kawoosh.status(name, fn, { place = "title" | "tabs", order = n, every = seconds, run = "command" })` adds a segment to the right of the title bar or the tab strip: `fn(ctx)` returns what it shows now — `nil` to hide, a string, `{ text = ..., color = "dim" }`, or a list of those — and is asked each time the window draws; `every` redraws it on the clock (a clock of your own); `run` is what a click runs. `kawoosh.status(name, nil)` removes it. `kawoosh.lsp.counts()` gives the diagnostics' `errors`, `warnings`, `infos` and `hints` cheaply, for such a segment.
 
-`kawoosh.spawn(cmd, { cwd = ..., on_lines = fn, on_exit = fn })` runs a shell command and hands you its output as it comes; `kawoosh.kill(token)` stops it. `kawoosh.store(name)` is a small store kept between runs: `get(key)`, `set(key, value)`, `del(key)`, `keys()`. `kawoosh.tool(name, { cmd = ... })` adds a launch target for `:tool` and the tools picker (`<leader>tt`). `:tool NAME` goes to the tool's terminal in this tab, or starts one here: each tab runs its own. With `dock = true` the tool lives in the dock, one for every tab, and `:tool NAME` shows or hides it.
+`kawoosh.spawn(cmd, { cwd = ..., on_lines = fn, on_exit = fn })` runs a shell command and hands you its output as it comes; `kawoosh.kill(token)` stops it. `kawoosh.store(name)` is a small store kept between runs: `get(key)`, `set(key, value)`, `del(key)`, `keys()`. `kawoosh.tool(name, { cmd = ... })` adds a launch target for `:tool` and the tools picker (`<leader>t`). `:tool NAME` goes to the tool's terminal in this tab, or starts one here: each tab runs its own. With `dock = true` the tool lives in the dock, one for every tab, and `:tool NAME` shows or hides it.
 
 ## Talking to the user
 

@@ -100,7 +100,7 @@ A wrapped line keeps its number on its first row only. `j` and `k` still move a 
 
 A markdown buffer is drawn rendered: the marks hidden, headings larger, prose wrapped to the pane, lists with bullets and check boxes, tables aligned, block quotes with a bar, code blocks on their own background, and local images drawn in place. It is still the file: motions, search, undo and `:w` work on the source, and the line with the caret on it (every line of a visual selection) shows its source so you can edit the marks.
 
-`:markdown toggle` (`<leader>cr`) switches between rendered and source for the session. `gx` on a link opens it: a URL in the browser, a path here, an `#anchor` at its heading.
+`:markdown toggle` (`<leader>om`) switches between rendered and source for the session. `gx` on a link opens it: a URL in the browser, a path here, an `#anchor` at its heading.
 
 | setting | default | what |
 |---|---|---|

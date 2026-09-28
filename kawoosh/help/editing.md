@@ -33,7 +33,7 @@ Most of vim's letters mean what they always did. The exceptions:
 | `zz` `zs` `ze` | place the focused column of a [strip](panes.md#the-scrolling-strip), not the cursor line |
 | `-` `_` | open the file's directory, the working directory, as a listing ([files](files.md)) |
 | `<CR>` | on a `path:line` in the text, opens it |
-| `m` `'` `` ` `` | marks as vim's, but a capital letter is the workspace's, across files; `]'` `['` walk the marked lines, `<leader>m` lists them |
+| `m` `'` `` ` `` | marks as vim's, but a capital letter is the workspace's, across files; `]'` `['` walk the marked lines, `<leader>'` lists them |
 
 Missing on purpose: named registers (`"a`) — the [memory](memory.md) is
 what they were for — and visual block `<C-v>`, whose job `<C-j>` in
@@ -113,7 +113,7 @@ back.
 | `<leader>vS` | split every selection on a pattern (`:select split`) |
 | `<leader>vk` | keep the selections that match; `!pattern` keeps those that do not (`:select keep`) |
 | `<leader>vl` | every line of every selection its own selection (`:select lines`) |
-| `<leader>v,` | drop the primary selection, from normal mode too (`:select drop primary`) |
+| `<A-,>` | drop the primary selection, from normal mode too (`:select drop primary`) |
 
 `⌘a<leader>vs` then a pattern selects every match in the file;
 `vip<leader>vs` every match in the paragraph.
@@ -174,6 +174,6 @@ Every yank and delete is also kept in the **memory**, newest first:
 | keys | what |
 |---|---|
 | `[p` `]p` | right after a put: swap it for the older, newer text in the memory |
-| `<leader>p` | the memory pane: every text, to put again (`:memory`) |
+| `<leader>mm` | the memory pane: every text, to put again (`:memory`) |
 
 Texts survive a restart for a few days. See [memory](memory.md).

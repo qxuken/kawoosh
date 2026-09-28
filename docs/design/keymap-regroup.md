@@ -1,7 +1,8 @@
 # Regrouping the keys
 
-Status: proposed 2026-09-28, not built — roadmap step 57's second
-piece (terminal-keys.md Decision 3), drawn from `:map export` with the
+Status: proposed and built 2026-09-28, the four calls taken as
+proposed ("sounds reasonable, let's implement it") and two keys changed
+on the way (see Built) — roadmap step 57's second piece (terminal-keys.md Decision 3), drawn from `:map export` with the
 bundled plugins loaded. Asked by the user: "reduce spread and move
 together modules or movements. also if something can be called without
 leader, let's do it."
@@ -30,7 +31,8 @@ keys.md's "one family, one prefix or one modifier", made exact:
 
 With the bundled plugins: 904 bindings (518 normal, 177 pane, 167
 insert, 35 visual, 7 operator-pending) over 517 commands. Normal mode
-has 81 leader bindings: nine groups and thirteen single keys. The
+has 81 leader bindings on 72 keys (a key can hold a listing's own
+binding beside the editor's): nine groups and thirteen single keys. The
 modules spread over the most places:
 
 | Module | Where its keys are today |
@@ -168,7 +170,7 @@ mode's keys (each view's own, 177 of them).
 
 ## After
 
-Normal mode's leader: 51 bindings, down from 81. Single keys
+Normal mode's leader: 51 keys, down from 72. Single keys
 `<leader><leader>` `f` `F` `g` `G` `/` `.` `t` `d` `D` `'` `?` `u`
 `x`. Groups, one module each: `b` buffers (3), `c` compile (2), `h`
 help (3), `m` memory (5), `o` look (8), `s` search (5), `w` workspace
@@ -209,3 +211,28 @@ unchanged by this.
    Proposed: removed.
 4. **`<C-w>C` and `<C-w>m`** for closing the tab and the layout, or
    keep a small `<leader>t` group for the tabs.
+
+## Built
+
+2026-09-28, as proposed, with two departures found against keys.md's
+reserved spellings (neovim habits kept for commands not written yet):
+
+- **Help is `<leader>i`**, not `<leader>h`: `<leader>h*` is kept for
+  the hunks. `<leader>ih` help, `<leader>im` messages, `<leader>ic`
+  the command palette.
+- **`dir cd` has no leader key**, not `<leader>wd`: that is kept for
+  git's diff, and the command runs in a listing only, where `~` (oil's)
+  already does it — rule 3.
+
+So normal mode's leader has 50 keys, not 51 — 57 bindings, down
+from 81. The engine's keymap
+(`default_keymap`) and the bundled plugins' (`picker.lua`, `lists.lua`,
+`dir.lua`) moved; `<leader>so` is `picker recent` alone and `memory
+files` is `<leader>mf`. `kawoosh/tests/map_export.rs`'s
+`the_keys_are_grouped_by_module` exports the keymap with the plugins
+loaded and pins each moved key to its command, every old spelling to
+nothing, the reserved ones free, and each leader group to its module's
+commands. keys.md's tables and the help pages say the new keys; the
+design notes written before (lists.md, memory.md, marks.md,
+markdown.md, workspaces.md, scrolling-tab.md, lsp-rules.md, kui.md)
+keep the keys of their day.

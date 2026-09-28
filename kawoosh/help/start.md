@@ -73,7 +73,7 @@ after the caret.
 The first word completes to a command, and what follows to what the
 command takes: a path for `:e` and `:cd`, a buffer for `:b`, a setting
 and its values for `:set`. From a terminal or another pane that has no
-`:` of its own, `<C-w>:` opens it. `<leader>sp` lists every command in a
+`:` of its own, `<C-w>:` opens it. `<leader>ic` lists every command in a
 picker with its key and what it does; [commands](commands.md) is the same
 list as a page.
 
@@ -111,7 +111,7 @@ your settings turns the card off, and `leader = ","` moves the leader.
 | `ZZ` | write and close (`:wq`, `:x`) |
 | `ZQ` | close, discarding changes (`:q!`) |
 | `:q` | close the pane, or the app from the last one |
-| `<leader>Q` | quit everything (`:qa`) |
+| `ZA` | quit everything (`:qa`) |
 
 Quitting never loses work. `:q` keeps what is unsaved — scratch buffers
 too — and the next bare `kawoosh` brings it back with the session; only
