@@ -24,7 +24,8 @@ kawoosh._nonce = 0
 -- keymap, the command line, or Rust. A name of two words is a
 -- subcommand (`"dir cd"` runs as `:dir cd`, completes under `:dir`).
 -- `fn(ctx)` gets { count = n, args = {...}, form = "run" | "bang" |
--- "query", bang = bool, query = bool }. `opts`:
+-- "query", bang = bool, query = bool, pane = the id of the pane the
+-- keyboard is in — a view's `ctx.pane` when it is one }. `opts`:
 --   args    what the arguments are, one kind per position — "path",
 --           "buffer", "command", "option", "tool", "view", "text" — the
 --           last with "..." for the rest: a "path" reaches `fn` absolute

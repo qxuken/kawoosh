@@ -886,6 +886,10 @@ pub struct Runtime {
     /// A test script under way (`kawoosh test`): the coroutine its
     /// chunk runs as.
     test: RefCell<Option<mlua::Thread>>,
+    /// The pane the keyboard is in, as the shell last said it: a
+    /// command's `ctx.pane`, so a view shown in several panes knows
+    /// which one a key was for (`du.lua`, roadmap step 60).
+    pane: std::cell::Cell<u64>,
 }
 
 type DiagKey = (u64, Vec<(BufferId, kawoosh_doc::Version)>);
@@ -933,6 +937,7 @@ impl Runtime {
                 memory_snap: RefCell::new(None),
                 diag_snap: RefCell::new(None),
                 test: RefCell::new(None),
+                pane: std::cell::Cell::new(0),
             },
             ext,
         ))
@@ -1492,6 +1497,11 @@ impl Runtime {
     }
 
     /// Runs the Lua command `name`.
+    /// The pane the keyboard is in now: what a command's `ctx.pane` says.
+    pub fn set_pane(&self, pane: u64) {
+        self.pane.set(pane);
+    }
+
     pub fn run_command(&self, name: &str, ctx: &Ctx) {
         let f: mlua::Function = match self
             .lua
@@ -1511,6 +1521,7 @@ impl Runtime {
         let _ = t.set("form", ctx.form.name());
         let _ = t.set("bang", ctx.bang());
         let _ = t.set("query", ctx.query());
+        let _ = t.set("pane", self.pane.get());
         if let Err(e) = f.call::<()>((name, t)) {
             self.queue
                 .borrow_mut()

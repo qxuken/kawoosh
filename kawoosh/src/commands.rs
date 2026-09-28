@@ -263,6 +263,9 @@ impl Kawoosh {
         self.note_tab_buffers();
         self.ed.tab_buffers = self.tab_buffers();
         let focused = self.layout.focused();
+        if let Some(rt) = &self.scripting.rt {
+            rt.set_pane(focused);
+        }
         let content = self.layout.content(focused);
         let dock = self.layout.dock_focused && self.layout.dock_open;
         let facts = [
