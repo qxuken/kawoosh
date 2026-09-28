@@ -22,4 +22,6 @@ pub const BUNDLED: &[(&str, &str)] = &[
     // After pairs: its keys are newer, and pass to pairs' where a buffer
     // is not timed.
     ("kawoosh:timed", include_str!("../lua/timed.lua")),
+    // After lists: its diagnostics segment opens `:diagnostics`.
+    ("kawoosh:status", include_str!("../lua/status.lua")),
 ];

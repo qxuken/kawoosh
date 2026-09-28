@@ -2614,10 +2614,17 @@ In order — the bugs first, then what needs deciding:
     markdown buffer's rendered-row path lifted for any pane that wraps;
     `j` `k` a line, `gj` `gk` a row on screen, resolved against kui's
     layout; a line past 4096 bytes left unwrapped.
-64. **The tab bar and the title as Lua's, a note first**: segments a
+64. ~~**The tab bar and the title as Lua's, a note first**: segments a
     plugin or `init.lua` fills (the diagnostics counts, a clock), on the
     strip's right and in the window's title, redrawn when their data
-    moves or on a timer — wezterm's `update-status` as the model.
+    moves or on a timer — wezterm's `update-status` as the model.~~
+    Landed 2026-09-28: [status.md](status.md), decided and built —
+    `kawoosh.status(name, fn, opts)` on the title bar's right or the tab
+    strip's, asked each frame, woken on the wall clock for `every`; the
+    bundled `status.lua` a clock (`status.clock`) and the diagnostics'
+    counts (`status.diagnostics`, over the new `kawoosh.lsp.counts()`),
+    both off by default. The OS window's title stays kawoosh's (kui
+    sets it once).
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
