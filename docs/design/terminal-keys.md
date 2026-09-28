@@ -137,3 +137,32 @@ pty; the `<C-w>` prefix and `<C-w>.` are gone. The direct chords
 (Decision 2's kept level) are as they were. Tests:
 `kawoosh/tests/terminal.rs`'s `the_escape_takes_normal_modes_keys_and_is_a_setting`;
 the tests that left a terminal by `<C-w>` press the escape first.
+
+**Decisions 5 and 6**, 2026-09-28, on kui F108 (branch
+`claude/key-model-f108`: a key's `location`, the modifier keys to a sink
+that asks, the lock state, F13–F35 and the media keys; checked on a
+keyboard). `term/src/kitty.rs`: `encode` — the key identified from kui's
+code, position and place (a letter's lower case, a shifted symbol's key
+at its position, the keypad and the sided modifiers by the protocol's
+numbers), the five flags as the protocol's reference terminal applies
+them: text that types while not every key is asked for, Enter/Tab/
+Backspace kept and without a release, the legacy forms under modifiers,
+`CSI key:shifted:base ; mods:event ; text u`. `Hooked` forwards push,
+pop, set and the query, with `kitty_keyboard` on in alacritty's config,
+and mirrors the stack's depth a screen: at alacritty's cap (4096) its
+push evicts from the *title* stack — a panic when that is empty, found
+here — so a push there is a set instead. `Terminal::keyboard_flags`.
+The terminal's sink asks for releases and the modifier keys
+(`key_up`, `modifier_keys`); `term_key` sends a press through `encode`
+when the program pushed flags, an unbound ⌘ chord included, and holds
+it (`Terminals::held`) so only a release of what the program was
+pressed reaches it (`term_key_aside`) — never the escape's or a kept
+chord's. A ⌘-click opens the link under it though the program reports
+the mouse. Checked on a keyboard through a program logging its bytes:
+both Shifts and ⌘ with their sides, the keypad's 1, F13, ⌘J, `a` press
+and release — which found kui's modifier key carrying the state before
+it and a Mac's Num Lock on, both fixed in kui (F108's second commit).
+Tests: `kitty.rs`'s five (each flag against the protocol's forms),
+`the_keyboard_flags_are_the_programs_a_stack_a_screen`,
+`a_program_that_pushed_kittys_flags_hears_the_key_whole`,
+`a_cmd_click_opens_a_link_while_the_program_reports_the_mouse`.

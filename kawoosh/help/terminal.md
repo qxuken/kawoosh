@@ -36,7 +36,9 @@ Almost every key goes to the program in the terminal, `<C-w>`, `<C-l>`, `<C-r>` 
 | `⌘v`, `<C-S-v>` | paste the clipboard, bracketed when the program asks for it |
 | `F12` | the devtools |
 
-Any Ctrl+Shift or Alt+Shift chord, and any ⌘ chord, runs its normal-mode binding instead of reaching the shell; a terminal cannot tell `<C-S-l>` from `<C-l>` anyway. A ⌘ chord bound to nothing does nothing. Your own normal-mode maps on such chords work from terminals too.
+Any Ctrl+Shift or Alt+Shift chord, and any ⌘ chord, runs its normal-mode binding instead of reaching the shell. A ⌘ chord bound to nothing does nothing — unless the program speaks kitty's keyboard protocol (below). Your own normal-mode maps on such chords work from terminals too.
+
+Programs that speak kitty's keyboard protocol — neovim, helix, kakoune, fish 4, nushell, yazi — are sent every key as it is: `<C-i>` apart from Tab, `<C-S-l>` apart from `<C-l>`, Esc on its own, the keypad apart from the main keys, and, when they ask, key releases and a lone Shift. A ⌘ chord kawoosh does not bind reaches them as a Super chord (`<D-j>` in neovim). The keys kawoosh keeps above are still its own, and so is ⌘-click on a link, even in a program that reads the mouse.
 
 Mouse: the wheel scrolls through history. Dragging selects text (a double click a word, a triple click a line), and `⌘c` copies it. The middle button pastes the clipboard, as `⌘v` does. When a full-screen program asks for the mouse it gets the clicks and drags of every button, the right one included (tmux's and htop's menus, a file manager's); hold Shift to select anyway.
 
