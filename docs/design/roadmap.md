@@ -2500,6 +2500,11 @@ think on a kitty keyboard"), the terminal's third round, in that order:
     while a terminal has the keys: a mode for it, a leader to escape
     it, and before that a map of the commands and keys as they connect
     (a graph over the registry and the keymap) to regroup them on.
+    Decided 2026-09-28: [terminal-keys.md](terminal-keys.md) — `<C-\>`
+    the terminal's one escape (normal mode's keys after it, `<C-w>`
+    given back to the pty), two levels (kept, and raw: the escape and ⌘
+    alone, by a toggle or a program named in `terminal.raw`), and first
+    a map of the keys: `:map export` (JSON) and a page to regroup on.
 
 From the todo, 2026-09-28 — nine items added the same night, each read
 against the code:

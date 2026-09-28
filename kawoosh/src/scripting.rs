@@ -256,6 +256,85 @@ impl Kawoosh {
         self.show_in_pane("*maps*", out.trim_end());
     }
 
+    /// The keymap and the registry as JSON (terminal-keys.md Decision
+    /// 3): every command, every binding with the command it resolves
+    /// to, the groups' names and the leader — the data a map of how
+    /// the keys reach the commands is drawn from. Written to `path`, or
+    /// shown in a pane.
+    pub(crate) fn map_export(&mut self, path: Option<&str>) {
+        use serde_json::json;
+        let words = |w: &[Cond]| w.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+        let commands: Vec<_> = self
+            .ed
+            .commands
+            .specs()
+            .into_iter()
+            .map(|s| {
+                json!({
+                    "name": s.name,
+                    "aliases": s.aliases,
+                    "args": s.args.names(),
+                    "kind": match s.kind {
+                        kawoosh_editor::Kind::Motion(_) => "motion",
+                        kawoosh_editor::Kind::Operator => "operator",
+                        kawoosh_editor::Kind::TextObject => "textobject",
+                        kawoosh_editor::Kind::Other => "command",
+                    },
+                    "when": words(&s.when),
+                    "doc": s.doc,
+                })
+            })
+            .collect();
+        let mut bindings = Vec::new();
+        for mode in [
+            Mode::Normal,
+            Mode::Visual,
+            Mode::Insert,
+            Mode::OperatorPending,
+            Mode::Pane,
+        ] {
+            for (strokes, b) in self.ed.keymap.binding_strokes(mode) {
+                let inv = self.ed.commands.resolve(&b.command, &b.args);
+                bindings.push(json!({
+                    "mode": mode.short(),
+                    "keys": strokes.concat(),
+                    "strokes": strokes,
+                    "line": b.line(),
+                    "command": self.ed.commands.contains(&inv.name).then_some(inv.name),
+                    "args": inv.args,
+                    "when": words(&b.when),
+                }));
+            }
+        }
+        let groups: serde_json::Map<String, serde_json::Value> = self
+            .ed
+            .keymap
+            .groups()
+            .into_iter()
+            .map(|(k, n)| (k.to_string(), n.into()))
+            .collect();
+        let counts = (commands.len(), bindings.len());
+        let out = json!({
+            "leader": self.ed.keymap.leader(),
+            "groups": groups,
+            "commands": commands,
+            "bindings": bindings,
+        });
+        let text = serde_json::to_string_pretty(&out).unwrap_or_default();
+        match path {
+            Some(p) => {
+                self.ed.message = match std::fs::write(p, &text) {
+                    Ok(()) => format!(
+                        "map export: {} commands, {} bindings to {p}",
+                        counts.0, counts.1
+                    ),
+                    Err(e) => format!("map export: {p}: {e}"),
+                };
+            }
+            None => self.show_in_pane_as("*keymap.json*", &text, Some("json"), true),
+        }
+    }
+
     pub fn run_lua_source(&mut self, name: &str, src: &str) {
         let Some(rt) = self.scripting.rt.clone() else {
             self.ed.message = "lua is not available".into();
@@ -1680,6 +1759,12 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 .args(Args::new(&[ArgKind::Text]))
                 .doc("the keymap in a pane: every mode's bindings, or MODE's (n v i o p), or the keys under a prefix"),
             |k, ctx| k.show_maps(ctx.args.first().map(String::as_str)),
+        ),
+        cmd(
+            Spec::new("map export")
+                .args(Args::new(&[ArgKind::Path]))
+                .doc("the keymap and the commands as JSON — to PATH, or in a pane: every binding with the command it runs, for a map of the keys whole"),
+            |k, ctx| k.map_export(ctx.args.first().map(String::as_str)),
         ),
         cmd(
             Spec::new("view")
