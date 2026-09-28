@@ -343,16 +343,17 @@ fn normalize_chord(inner: &str) -> String {
     if s && (base_named.is_some() || shifted_digit) {
         m.push_str("S-");
     }
+    // A letter's case is its Shift, as a press spells it
+    // ([`KeyStroke::notation`]): `<C-S-h>` and `<C-H>` are ctrl-shift-h,
+    // `<C-h>` is not — so a key `:map list` shows binds that key again.
+    let base_s = match digit_of(&base_s) {
+        Some(d) if shifted_digit => d.to_string(),
+        _ if base_named.is_none() && base_s.len() == 1 && s => base_s.to_ascii_uppercase(),
+        _ => base_s,
+    };
     if m.is_empty() && base_named.is_none() && base_s.len() == 1 {
         return base_s;
     }
-    // A chord's letter is written lower-case so `<C-D>` and `<C-d>` agree.
-    let base_s = match digit_of(&base_s) {
-        Some(d) if shifted_digit => d.to_string(),
-        _ if base_named.is_none() && base_s.len() == 1 && !s => base_s.to_ascii_lowercase(),
-        _ if base_named.is_none() && base_s.len() == 1 => base_s.to_ascii_uppercase(),
-        _ => base_s,
-    };
     format!("<{m}{base_s}>")
 }
 
@@ -683,9 +684,8 @@ impl Keymap {
     }
 
     /// [`Keymap::bindings`] with each key sequence as its strokes, as
-    /// they are stored and pressed — `["<C-H>"]` for ctrl-shift-h,
-    /// which the joined notation cannot be parsed back into (a map's
-    /// `<C-H>` is `<C-h>`).
+    /// they are stored and pressed — `["<C-H>"]` for ctrl-shift-h — so
+    /// a reader need not split the joined notation again.
     pub fn binding_strokes(&self, mode: Mode) -> Vec<(Vec<String>, Binding)> {
         let mut out = Vec::new();
         if let Some(root) = self.modes.get(&mode) {
@@ -759,6 +759,51 @@ mod tests {
         );
     }
 
+    /// A chord's upper-case letter is its Shift, read from a map as a
+    /// press spells it: `<C-H>` is ctrl-shift-h, the key `:map list`
+    /// shows for `<C-S-h>`, and not the shell's `<C-h>` — until
+    /// 2026-09-28 a map's `<C-H>` was lower-cased into it, so a key
+    /// copied from the listing bound another.
+    #[test]
+    fn a_chords_upper_case_letter_is_its_shift() {
+        for (map, press) in [
+            ("<C-H>", ("h", true, false, false)),
+            ("<A-J>", ("j", false, true, false)),
+            ("<D-L>", ("l", false, false, true)),
+        ] {
+            let mut k = KeyStroke::plain(press.0);
+            k.ctrl = press.1;
+            k.alt = press.2;
+            k.sup = press.3;
+            k.shift = true;
+            assert_eq!(parse_notation(map), [k.notation()], "{map}");
+            // And the notation parses back to itself.
+            assert_eq!(parse_notation(&k.notation()), [k.notation()]);
+        }
+        assert_eq!(parse_notation("<C-S-h>"), ["<C-H>"]);
+        assert_eq!(parse_notation("<C-h>"), ["<C-h>"]);
+        assert_eq!(
+            parse_notation("<S-j>"),
+            ["J"],
+            "a shifted letter is the letter"
+        );
+        let mut km = Keymap::new();
+        km.bind(Mode::Normal, "<C-H>", "pane left");
+        km.bind(Mode::Normal, "<C-h>", "move left");
+        let got: Vec<(Vec<String>, String)> = km
+            .binding_strokes(Mode::Normal)
+            .into_iter()
+            .map(|(k, b)| (k, b.command))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (vec!["<C-H>".to_string()], "pane".to_string()),
+                (vec!["<C-h>".to_string()], "move".to_string())
+            ]
+        );
+    }
+
     /// The minus key under a chord and vim's mouse gestures spell the
     /// same from a map as from a press (2026-09-23: ⌘- for the font,
     /// a double click in a listing).
@@ -807,7 +852,7 @@ mod tests {
         assert_eq!(k.notation(), "<A-j>");
         assert_eq!(parse_notation("gg"), ["g", "g"]);
         assert_eq!(parse_notation("<C-w>v"), ["<C-w>", "v"]);
-        assert_eq!(parse_notation("<c-D>"), ["<C-d>"]);
+        assert_eq!(parse_notation("<c-d>"), ["<C-d>"]);
         assert_eq!(parse_notation("<C-S-v>"), ["<C-V>"]);
         assert_eq!(parse_notation("<leader>t"), [LEADER, "t"]);
         assert_eq!(parse_notation("<Esc>"), ["<Esc>"]);

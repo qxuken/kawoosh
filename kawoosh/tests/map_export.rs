@@ -52,8 +52,8 @@ fn the_keymap_and_the_commands_export_as_json() {
         "{name} is a command"
     );
     assert!(bindings.iter().any(|b| b["mode"] == "p"), "pane mode's too");
-    // A shifted chord's stroke as it is pressed, not as its notation
-    // would be parsed back (`<C-H>` read from a map is `<C-h>`).
+    // A shifted chord's stroke as it is pressed: `<C-S-h>` is `<C-H>`,
+    // not the shell's `<C-h>`.
     let left = bindings
         .iter()
         .find(|b| b["mode"] == "n" && b["keys"] == "<C-H>")

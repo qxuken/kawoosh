@@ -24,7 +24,7 @@ Everything a key does is a named command. `kawoosh.command(name, fn, opts)` adds
 
 ## Keys
 
-`kawoosh.map(mode, keys, cmd, opts)` binds keys. `mode` is `"n"`, `"i"`, `"v"`, `"o"` (operator pending) or `"p"` (pane mode: panes that are not editors, such as your own views). `keys` is written in vim notation (`<leader>`, `<C-w>`, `<A-S-l>`). `cmd` is a command line, as you would type it after `:`, or a function.
+`kawoosh.map(mode, keys, cmd, opts)` binds keys. `mode` is `"n"`, `"i"`, `"v"`, `"o"` (operator pending) or `"p"` (pane mode: panes that are not editors, such as your own views). `keys` is written in vim notation (`<leader>`, `<C-w>`, `<A-S-l>`). A chord's upper-case letter means Shift, so `<A-L>` is `<A-S-l>` and not `<A-l>`, which is how `:map list` shows it. `cmd` is a command line, as you would type it after `:`, or a function.
 
 A key can be bound more than once: the newest binding whose `opts.when` holds, and whose command can run, is the one that runs. That is how one key does the right thing in different places. `kawoosh.unmap(mode, keys)` removes a key's bindings. Inside a command a key ran, `kawoosh.pass()` hands the key on to the binding under it.
 
