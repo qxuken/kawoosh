@@ -1,6 +1,7 @@
 # The terminal's keys
 
-Status: decided with the user 2026-09-28 (roadmap step 57). Asked in
+Status: decided with the user 2026-09-28 (roadmap step 57); Decision 1
+built the same day, the escape a setting. Asked in
 the todo: the kitty keyboard protocol, "but we need to enable maybe
 special mode when this is enabled and build a special leader to escape
 from terminal. or optimize commands and keybinds, maybe build a graph of
@@ -88,3 +89,21 @@ key (28 `theme …`, 9 `lsp …`, 6 `launcher …`). Families spread wide:
 
 The map; the regrouping, what sits behind the escape included; the
 escape and `<C-w>` given back; the kitty encoder and raw.
+
+## Built
+
+**Decision 1**, 2026-09-28, the escape a setting at the user's word:
+`terminal.escape` (`<C-\>` by default; any one key, `""` for none, every
+key the pty's). `Kawoosh::term_key`: the escape opens
+`Terminals::escape`, the keys after it are looked up in normal mode as
+they come (`term_escaped`) — a binding runs through `run_bindings`, a
+prefix waits with the which-key open on it (from the first key, as
+`:keys` shows), anything else is said to be unbound; first after the
+escape `<C-n>` is copy mode, `:` the command line, the escape again the
+key itself to the pty, `<Esc>` nothing. A chord after the escape is
+read there too rather than by `pane_chord`, and an escape left open
+when a pane without a pty takes the keys is let go. `<C-w>` reaches the
+pty; the `<C-w>` prefix and `<C-w>.` are gone. The direct chords
+(Decision 2's kept level) are as they were. Tests:
+`kawoosh/tests/terminal.rs`'s `the_escape_takes_normal_modes_keys_and_is_a_setting`;
+the tests that left a terminal by `<C-w>` press the escape first.

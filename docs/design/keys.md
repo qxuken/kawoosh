@@ -119,8 +119,11 @@ hand reaches for oftenest — no prefix in the way. Vim's `<C-w><` `>`
 `-` `+` are the same commands for the hand that tries those first
 (2026-09-22), and carrying a pane is `<C-w>HJKL`, where vim puts it.
 A chord's letter under Shift is spelled upper-case, so a map writes
-`<A-S-l>` or `<A-L>`, never `<A-L>` meaning `<A-l>`. (The parser lower-cased a map's `<A-L>` into `<A-l>` until 2026-09-28, so a key copied from `:map list` bound another; it keeps the case now.) `<C-w>` as a prefix stays the tmux-shaped way from those
-panes (`<C-w>.` sends a literal `<C-w>` to the pty).
+`<A-S-l>` or `<A-L>`, never `<A-L>` meaning `<A-l>`. (The parser lower-cased a map's `<A-L>` into `<A-l>` until 2026-09-28, so a key copied from `:map list` bound another; it keeps the case now.) From a terminal the
+rest of normal mode is behind `terminal.escape`, `<C-\>` by default
+(`<C-\><C-w>l`, `<C-\><Space>f`; [terminal-keys.md](terminal-keys.md)
+Decision 1), and `<C-w>` is the pty's — the shell's delete-word, a vim's
+windows.
 
 ### Panes without a view: pane mode
 

@@ -20,13 +20,14 @@ A terminal whose directory is on a remote host runs its shell there over ssh, wi
 
 ## Which keys are the shell's
 
-Almost every key goes to the program in the terminal, `<C-l>`, `<C-r>` and `<Esc>` included. What kawoosh keeps:
+Almost every key goes to the program in the terminal, `<C-w>`, `<C-l>`, `<C-r>` and `<Esc>` included. What kawoosh keeps:
 
 | keys | what |
 |---|---|
-| `<C-w>` then a key | a pane command, as in an editor pane: `<C-w>h` `<C-w>l`, `<C-w>q`, `<C-w>v`… |
-| `<C-w>.` | sends a literal `<C-w>` to the shell (word delete) |
-| `<C-w>:` | the command line |
+| `<C-\>` then keys | normal mode's keys, the which-key showing what can follow: `<C-\><C-w>l` a pane move, `<C-\><Space>f` the files, `<C-\>:` the command line, `<C-\><Space>mm` the memory |
+| `<C-\><C-n>` | copy mode (below), as in vim |
+| `<C-\><C-\>` | sends `<C-\>` itself to the program |
+| `<C-\><Esc>` | nothing: the keys are the program's again |
 | `<C-S-h>` `<C-S-j>` `<C-S-k>` `<C-S-l>` | focus the pane left, below, above, right |
 | `<A-S-h>` `<A-S-l>` `<A-S-j>` `<A-S-k>` | the pane narrower, wider, shorter, taller |
 | `⌘1`…`⌘9`, `<C-S-1>`…`<C-S-9>` | the Nth column (or pane) |
@@ -114,6 +115,7 @@ When a program in the terminal turns echo off to ask for a password (`sudo`, `ss
 | `terminal.shell` | `""` | the program a terminal runs (`nu`, `pwsh`, a path); empty for `$SHELL` |
 | `terminal.scrollback` | `10000` | lines of history each terminal keeps |
 | `terminal.bell` | `"sound"` | `sound`, `visual` or `off` |
+| `terminal.escape` | `"<C-\\>"` | the key before normal mode's keys in a terminal; `""` for none, every key the program's |
 | `editor.bell` | `false` | whether the editor rings for its own failures |
 | `env.shell` | `""` | the shell whose `PATH` kawoosh borrows when started outside a terminal (from the Dock, Finder); read at startup |
 
