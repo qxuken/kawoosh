@@ -676,21 +676,34 @@ impl Keymap {
     /// Every binding in `mode`, for `:map` listings and the Lua API — a
     /// key with several listed once per binding, newest first.
     pub fn bindings(&self, mode: Mode) -> Vec<(String, Binding)> {
+        self.binding_strokes(mode)
+            .into_iter()
+            .map(|(keys, b)| (keys.concat(), b))
+            .collect()
+    }
+
+    /// [`Keymap::bindings`] with each key sequence as its strokes, as
+    /// they are stored and pressed — `["<C-H>"]` for ctrl-shift-h,
+    /// which the joined notation cannot be parsed back into (a map's
+    /// `<C-H>` is `<C-h>`).
+    pub fn binding_strokes(&self, mode: Mode) -> Vec<(Vec<String>, Binding)> {
         let mut out = Vec::new();
         if let Some(root) = self.modes.get(&mode) {
-            walk(root, String::new(), &mut out);
+            walk(root, &mut Vec::new(), &mut out);
         }
-        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out.sort_by(|a, b| a.0.concat().cmp(&b.0.concat()));
         out
     }
 }
 
-fn walk(node: &Node, prefix: String, out: &mut Vec<(String, Binding)>) {
+fn walk(node: &Node, prefix: &mut Vec<String>, out: &mut Vec<(Vec<String>, Binding)>) {
     for b in &node.bindings {
         out.push((prefix.clone(), b.clone()));
     }
     for (k, n) in &node.children {
-        walk(n, format!("{prefix}{k}"), out);
+        prefix.push(k.clone());
+        walk(n, prefix, out);
+        prefix.pop();
     }
 }
 
