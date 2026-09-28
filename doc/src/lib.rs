@@ -917,15 +917,10 @@ impl Buffer {
     /// span's old runs are replaced.
     pub fn apply(&mut self, update: Update) -> Result<(), Stale> {
         let span = self.journal.clamp_range(update.span, update.version)?;
-        let mut fresh: Vec<Run> = update
-            .runs
-            .into_iter()
-            .filter_map(|r| {
-                let range = self.journal.carry_range(r.range, update.version).ok()?;
-                (!range.is_empty()).then_some(Run { range, ..r })
-            })
-            .collect();
+        let edits: Vec<Edit> = self.journal.edits_since(update.version)?.cloned().collect();
+        let mut fresh = update.runs;
         fresh.sort_by_key(|r| r.range.start);
+        carry_runs(&mut fresh, &edits);
         self.layer_mut(update.layer).splice(&span, fresh);
         Ok(())
     }
@@ -1230,6 +1225,39 @@ fn shift_runs_many_from(runs: &mut Vec<Run>, edits: &[Edit], ei: &mut usize, del
         }
     }
     runs.truncate(write);
+}
+
+/// A late answer's `runs` (sorted) carried across the edits made since
+/// it was asked for, as [`Journal::carry_range`] carries each, and those
+/// an edit swallowed dropped. Edits that descend, disjoint — one
+/// `replace_many`, journaled back to front, every one in the same text —
+/// are one walk over the runs ([`shift_runs_many_from`]): a format of a
+/// minified bundle is a hundred thousand edits, and a whole answer to
+/// the text before it carried half a million runs across each in turn.
+/// Runs that overlap (a diagnostic inside another) go one by one.
+fn carry_runs(runs: &mut Vec<Run>, edits: &[Edit]) {
+    if runs.windows(2).any(|w| w[0].range.end > w[1].range.start) {
+        for r in runs.iter_mut() {
+            for e in edits {
+                let start = e.transform_offset(r.range.start, Bias::Right);
+                let end = e.transform_offset(r.range.end, Bias::Left);
+                r.range = start..end.max(start);
+            }
+        }
+        runs.retain(|r| !r.range.is_empty());
+        return;
+    }
+    runs.retain(|r| !r.range.is_empty());
+    let mut i = 0;
+    while i < edits.len() {
+        let mut j = i + 1;
+        while j < edits.len() && edits[j].range.end <= edits[j - 1].range.start {
+            j += 1;
+        }
+        let ascending: Vec<Edit> = edits[i..j].iter().rev().cloned().collect();
+        shift_runs_many_from(runs, &ascending, &mut 0, &mut 0);
+        i = j;
+    }
 }
 
 #[cfg(test)]
@@ -1612,6 +1640,26 @@ mod tests {
                 b.journal().transform_range(20..24, v0),
                 "{edits:?}"
             );
+            // A late answer to the text before them, a letter typed at
+            // the start and one at the end since: carried across the
+            // lot as each run is alone.
+            b.replace(0..0, "t");
+            b.replace(b.len()..b.len(), "t");
+            let want: Vec<Run> = runs()
+                .into_iter()
+                .filter_map(|r| {
+                    let range = b.journal().carry_range(r.range.clone(), v0).ok()?;
+                    (!range.is_empty()).then_some(Run { range, ..r })
+                })
+                .collect();
+            b.apply(Update {
+                layer: "late",
+                version: v0,
+                span: 0..text.len(),
+                runs: runs(),
+            })
+            .unwrap();
+            assert_eq!(b.runs("late", 0..b.len()), want, "{edits:?}");
         }
     }
 
