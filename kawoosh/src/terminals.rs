@@ -701,7 +701,23 @@ impl Kawoosh {
         self.ed.sync_settings();
         match self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
             Lookup::Exact(bs) => {
+                // As in an editor pane: a binding that cannot run here
+                // does not shadow the longer ones under it (the
+                // launcher's bare `z` hid `zz`), and one gated off
+                // here by its own `when` is as good as unbound.
                 let bs = bs.to_vec();
+                self.sync_facts();
+                let v = self.focused_view().unwrap_or_else(|| self.ed.pane_view());
+                if self.ed.pick_binding(v, &bs).is_err() {
+                    if self.ed.keymap.has_deeper(Mode::Normal, &keys) {
+                        self.terms.escape = Some(keys);
+                        return;
+                    }
+                    if self.ed.gated_off(v, &bs) {
+                        self.ed.message = format!("{}: not bound", keys.concat());
+                        return;
+                    }
+                }
                 self.run_bindings(&bs);
             }
             Lookup::Prefix => self.terms.escape = Some(keys),
