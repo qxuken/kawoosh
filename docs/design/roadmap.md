@@ -2560,8 +2560,16 @@ In order — the bugs first, then what needs deciding:
     the dock for a docked tool, in the tab in front for the rest.
     `kawoosh/tests/terminal.rs`'s
     `a_split_tool_is_each_tabs_and_a_docked_one_the_windows`.
-60. **`:du` panes each their own**: the pane's state per pane, as a
-    view instance, and a second `:du` a second pane.
+60. ~~**`:du` panes each their own**: the pane's state per pane, as a
+    view instance, and a second `:du` a second pane.~~ Landed
+    2026-09-28: a Lua command's `ctx` says the pane the keyboard is in
+    (`ctx.pane`, the view's own `ctx.pane` when it is one — the shell
+    tells the runtime as it syncs its facts), and `du.lua` keeps a
+    state per pane, the view, its events and its commands each taking
+    their pane's; `:du` starts its walk at once and the pane with the
+    keyboard adopts it on its next draw — the one it opened, or this
+    tab's it focused. `du.state([pane])`, `du.panes()`.
+    `kawoosh/tests/du.rs`'s `a_du_pane_in_another_tab_is_its_own`.
 61. **The which-key shows what works here**: a row only for a binding
     whose `when` holds and whose command's does, a group only when a
     key under it does; `:keys` (the root) the same.

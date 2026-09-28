@@ -177,7 +177,8 @@ listing they copy the entry under the caret (the listed directory's on
 that sizes every directory under PATH, hidden and ignored files
 included, staying on PATH's disk. Totals fill in as they are counted;
 one not ready yet shows `…`. It lists one directory at a time, largest
-first, each entry with its size, a bar and its share.
+first, each entry with its size, a bar and its share. Each tab's pane is
+its own: `:du` in another tab walks there without touching the first.
 
 | keys | what |
 |---|---|

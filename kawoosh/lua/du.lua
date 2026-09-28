@@ -17,8 +17,11 @@
 -- them; `o` lists the directory in the file manager; `r` walks again;
 -- `q` closes, the walk stopped with it.
 --
+-- Each pane is its own: a `:du` in another tab opens a pane there with
+-- a walk of its own, and the first goes on as it was (roadmap step 60).
+--
 -- Hackable: `kawoosh.du` — `walk`, `size`, `state`, `removed`, `forget`
--- — and `du.state()`, what the pane shows, for a test.
+-- — and `du.state([pane])`, what a pane shows, for a test.
 
 local fs = kawoosh.fs
 local door = kawoosh.du
@@ -34,10 +37,20 @@ local SORTS = { "size", "name", "files" }
 local du = {}
 kawoosh.du_pane = du
 
--- The pane's state: the walk's number and its root, the directory on
+-- A pane's state: the walk's number and its root, the directory on
 -- show, the cursor's entry by name, the sort, the marked paths, and the
--- listings read (by directory, re-read after a delete).
+-- listings read (by directory, re-read after a delete). One a pane, by
+-- the pane's id; `S` is the one whose pane the view, the event or the
+-- command at hand is for, set as each comes in.
+local states = {}
 local S = nil
+-- The pane last drawn with the keyboard, for `du.state()`.
+local last = nil
+-- A walk `:du` started, `{ root =, walk = }`, taken by the next draw
+-- of the pane with the keyboard: the pane it opened, or the one of
+-- this tab it focused. Started at once, so it is under way as the pane
+-- opens.
+local pending = nil
 
 local function human(n)
   if not n then return "…" end
@@ -53,12 +66,21 @@ local function count(n)
   return (s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
 end
 
-local function start(root)
-  if S and S.walk then door.forget(S.walk) end
-  local keep = S
+-- Pane `pane` over a walk of `root` — `walk` when one was started for
+-- it, else a new one; the directory, cursor and sort kept when the root
+-- is the one it had.
+local function start(pane, root, walk)
+  local keep = states[pane]
+  if keep and keep.walk then door.forget(keep.walk) end
   S = { root = root, dir = root, sort = "size", marked = {}, listed = {} }
   if keep and keep.root == root then S.dir, S.cursor, S.sort = keep.dir, keep.cursor, keep.sort end
-  S.walk = door.walk(root)
+  S.walk = walk or door.walk(root)
+  states[pane] = S
+end
+
+-- The pane an event's slot names (`lua/du@3`).
+local function pane_of(slot)
+  return tonumber(tostring(slot or ""):match("@(%d+)$"))
 end
 
 -- The directory's entries with their sizes, sorted: a file's own, a
@@ -146,20 +168,20 @@ local function delete()
   if #gone == 0 then return end
   local paths = {}
   for _, e in ipairs(gone) do paths[#paths + 1] = e.path end
-  local walk_id, dir_on = S.walk, S.dir
+  local st, walk_id, dir_on = S, S.walk, S.dir
   kawoosh.dir.remove(paths, function()
     for _, e in ipairs(gone) do
       if not fs.exists(e.path) then door.removed(walk_id, e.path, e.bytes or 0, e.files or 1) end
     end
-    if S and S.walk == walk_id then
-      S.listed[dir_on], S.marked = nil, {}
+    if st.walk == walk_id then
+      st.listed[dir_on], st.marked = nil, {}
     end
   end)
 end
 
-local function close()
+local function close(pane)
   if S and S.walk then door.forget(S.walk) end
-  S = nil
+  states[pane], S = nil, nil
   kawoosh.view_close(VIEW)
 end
 
@@ -167,6 +189,12 @@ kawoosh.view(VIEW, function(ctx)
   local t = ctx.env.theme
   local l = ctx.env.tokens and ctx.env.tokens.lengths or {}
   SIZE = l.chrome or 13
+  if pending and ctx.focused then
+    start(ctx.pane, pending.root, pending.walk)
+    pending = nil
+  end
+  S = states[ctx.pane]
+  if ctx.focused then last = ctx.pane end
   if not S then return column { width = "grow", height = "grow", bg = t.bg } end
   local st = door.state(S.walk) or { files = 0, bytes = 0, dirs = 0, errors = 0, done = true, secs = 0 }
   local list = entries()
@@ -223,6 +251,7 @@ kawoosh.view(VIEW, function(ctx)
   -- the totals fill in as they come.
   return column { width = "grow", height = "grow", bg = t.bg, gap = 8, clip = true, head, rows }
 end, function(ev)
+  S = states[pane_of(ev.slot)]
   if not S then return end
   if ev.kind == "row" then
     local list = entries()
@@ -232,10 +261,20 @@ end, function(ev)
   end
 end, { session = false })
 
--- du.state(): what the pane shows — `root`, `dir`, `cursor`, `sort`,
--- `marked` (paths), `entries` (`{ name, bytes, files, dir }` in order)
--- and the walk's `state` — or nil when it is not open.
-function du.state()
+-- du.state([pane]): what a pane shows — `root`, `dir`, `cursor`,
+-- `sort`, `marked` (paths), `entries` (`{ name, bytes, files, dir }` in
+-- order) and the walk's `state` — or nil when it is not open. The pane
+-- last drawn with the keyboard when none is named; `du.panes()` the
+-- panes that have one.
+function du.panes()
+  local out = {}
+  for p in pairs(states) do out[#out + 1] = p end
+  table.sort(out)
+  return out
+end
+
+function du.state(pane)
+  S = states[pane or last]
   if not S then return nil end
   local marked = {}
   for p in pairs(S.marked) do marked[#marked + 1] = p end
@@ -251,15 +290,20 @@ end
 kawoosh.command("du", function(ctx)
   local root = fs.expand(ctx.args[1] or fs.cwd())
   if not fs.is_dir(root) then return kawoosh.echo("not a directory: " .. root) end
-  start(root)
+  if pending then door.forget(pending.walk) end
+  pending = { root = root, walk = door.walk(root) }
   kawoosh.view_open(VIEW, { share = SHARE })
 end, {
   args = { "path" },
   doc = "the disk usage under PATH (the working directory): every directory sized, the largest first, to clean up",
 })
 
+-- A command of the pane with the keyboard: `S` its state, `fn(pane)`.
 local function on(name, fn, doc)
-  kawoosh.command("du " .. name, fn, { when = { PANE_FACT }, doc = doc })
+  kawoosh.command("du " .. name, function(ctx)
+    S = states[ctx.pane]
+    fn(ctx.pane)
+  end, { when = { PANE_FACT }, doc = doc })
 end
 on("down", function() walk(1) end, "the cursor an entry down")
 on("up", function() walk(-1) end, "the cursor an entry up")
@@ -279,7 +323,7 @@ end, "sort by size, name, or files")
 on("mark", mark, "mark the cursor's entry to delete, or unmark it")
 on("delete", delete, "delete the marked entries, or the cursor's, through the file manager's plan")
 on("list", function() if S then kawoosh.dir.open(S.dir) end end, "list the directory in the file manager")
-on("again", function() if S then start(S.root) end end, "walk again from the root")
+on("again", function(pane) if S then start(pane, S.root) end end, "walk again from the root")
 on("close", close, "close the pane, the walk stopped")
 
 for k, c in pairs {
