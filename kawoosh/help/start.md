@@ -95,7 +95,9 @@ The leader is Space. Most daily commands live under it, grouped by noun:
 
 Press any prefix — `<leader>`, `g`, `]`, `<C-w>` — and a small card in the
 bottom-right corner lists what can follow, gone the moment the key
-sequence ends. `<leader>?` (`:keys`) shows every first key of the current
+sequence ends. It lists only what works where you are: a key that does
+nothing in this pane is left out, and so is a group with nothing under
+it that does. `<leader>?` (`:keys`) shows every first key of the current
 mode; `:keys i`, `:keys v` show another mode's. `whichkey = false` in
 your settings turns the card off, and `leader = ","` moves the leader.
 [keys](keys.md) lists every binding by mode.

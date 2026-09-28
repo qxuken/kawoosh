@@ -2570,9 +2570,19 @@ In order — the bugs first, then what needs deciding:
     keyboard adopts it on its next draw — the one it opened, or this
     tab's it focused. `du.state([pane])`, `du.panes()`.
     `kawoosh/tests/du.rs`'s `a_du_pane_in_another_tab_is_its_own`.
-61. **The which-key shows what works here**: a row only for a binding
+61. ~~**The which-key shows what works here**: a row only for a binding
     whose `when` holds and whose command's does, a group only when a
-    key under it does; `:keys` (the root) the same.
+    key under it does; `:keys` (the root) the same.~~ Landed 2026-09-28.
+    The single keys were filtered already (`pick_binding`); what showed
+    was the groups — listed whatever was under them, counted by every
+    key, and a key with a binding off here but live keys under it
+    dropped whole. `live_next` counts the keys under a prefix that work
+    here, four levels down, with the same fall-through the rows have
+    (visual and operator-pending to normal, a pane's shared prefixes);
+    a row stays when its binding runs or something under it does, a
+    group's `+N` is the live count, and a card with nothing left is not
+    drawn. `kawoosh/tests/whichkey.rs`'s
+    `a_which_key_lists_only_what_works_here`.
 62. **Scrolling, a note first** (kui's wheel routing): latching (a
     gesture keeps to the scroller it began on until it ends), chaining
     (a new gesture at a scroller's limit goes on to its parent, with an

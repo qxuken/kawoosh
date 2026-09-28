@@ -71,6 +71,43 @@ impl Kawoosh {
         None
     }
 
+    /// How many of the keys that can follow `keys` in `mode` do
+    /// something here: a key whose binding `pick` finds runnable, or
+    /// one with such a key under it, `depth` levels down at most.
+    fn live_next(
+        &self,
+        mode: Mode,
+        keys: &[String],
+        pick: &dyn Fn(&[Binding]) -> Option<Binding>,
+        depth: usize,
+    ) -> usize {
+        let km = &self.ed.keymap;
+        let mut next = km.next_keys(mode, keys);
+        // As the rows are gathered: visual and operator-pending fall
+        // through to normal mode's keys, and a pane to what every pane
+        // shares (`<C-w>`, the leader).
+        if matches!(mode, Mode::Visual | Mode::OperatorPending)
+            || (mode == Mode::Pane && (keys.is_empty() || km.shared_from_pane(keys)))
+        {
+            for (k, b) in km.next_keys(Mode::Normal, keys) {
+                if !next.iter().any(|(o, _)| *o == k) {
+                    next.push((k, b));
+                }
+            }
+        }
+        next.iter()
+            .filter(|(k, bs)| {
+                pick(bs).is_some() || {
+                    depth > 0 && {
+                        let mut deeper = keys.to_vec();
+                        deeper.push(k.clone());
+                        self.live_next(mode, &deeper, pick, depth - 1) > 0
+                    }
+                }
+            })
+            .count()
+    }
+
     /// The which-key's rows for the open sequence: each next key with
     /// its binding, sorted; none when nothing is open or the setting
     /// is off.
@@ -140,15 +177,26 @@ impl Kawoosh {
         let km = &self.ed.keymap;
         // The binding a key would run now: a `j` is `commands next`
         // in the commands pane's field and `move down` elsewhere. A
-        // key none of whose bindings can run here is left out.
+        // key none of whose bindings can run here, and under which no
+        // key can either, is left out (roadmap step 61): a group whose
+        // every key is gated off here is no group here.
         let view = self.keyed_view().or_else(|| self.ed.any_view());
         let pick = |bs: &[Binding]| -> Option<Binding> {
             view.and_then(|v| self.ed.pick_binding(v, bs).ok().cloned())
         };
-        let rows: Vec<&(String, Vec<Binding>)> = rows
+        let live_under = |k: &str| -> usize {
+            let mut deeper = keys.to_vec();
+            deeper.push(k.to_string());
+            self.live_next(mode, &deeper, &pick, 4)
+        };
+        let rows: Vec<(&String, Option<Binding>, usize)> = rows
             .iter()
-            .filter(|(_, bs)| bs.is_empty() || pick(bs).is_some())
+            .map(|(k, bs)| (k, pick(bs), live_under(k)))
+            .filter(|(_, b, under)| b.is_some() || *under > 0)
             .collect();
+        if rows.is_empty() {
+            return;
+        }
         // `<leader><leader>` lists as the leader's key, not the word.
         let show = |k: &str| {
             if k == kawoosh_editor::keymap::LEADER {
@@ -191,22 +239,18 @@ impl Kawoosh {
                 }
                 ui.with_keyed("cols", NodeSpec::row().gap(18.0), |ui| {
                     for (ci, chunk) in rows.chunks(per_column).enumerate() {
-                        let chunk: Vec<&(String, Vec<Binding>)> = chunk.to_vec();
                         ui.with_indexed(ci as u64, NodeSpec::column().gap(2.0), |ui| {
-                            for (ri, (k, b)) in chunk.iter().enumerate() {
+                            for (ri, (k, b, under)) in chunk.iter().enumerate() {
                                 ui.with_indexed(ri as u64, NodeSpec::row().gap(8.0), |ui| {
                                     ui.text(&show(k), key_style);
-                                    match if b.is_empty() { None } else { pick(b) } {
+                                    match b {
                                         Some(b) => ui.text(&b.line(), what_style),
                                         None => {
                                             let mut deeper = keys.to_vec();
-                                            deeper.push(k.clone());
+                                            deeper.push((*k).clone());
                                             let what = match km.group_name(&deeper) {
                                                 Some(name) => format!("+{name}"),
-                                                None => format!(
-                                                    "+{}",
-                                                    km.next_keys(mode, &deeper).len()
-                                                ),
+                                                None => format!("+{under}"),
                                             };
                                             ui.text(&what, group_style);
                                         }
