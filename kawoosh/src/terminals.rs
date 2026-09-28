@@ -395,7 +395,6 @@ impl Kawoosh {
             match spawned {
                 Some(id) => {
                     if let Some(name) = p.tool {
-                        self.scripting.tool_terms.insert(name.clone(), id);
                         self.terms.spawned.entry(id).or_default().tool = Some(name);
                     }
                 }

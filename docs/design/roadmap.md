@@ -2552,9 +2552,14 @@ In order — the bugs first, then what needs deciding:
     busy mark: the entry is already gone from the listing. `du`'s
     `done()` runs as the listings are read again.
     `kawoosh/tests/lua.rs`'s `a_write_deletes_and_copies_off_the_frame`.
-59. **A tool per tab**: `:tool NAME` opens the tool in this tab when its
+59. ~~**A tool per tab**: `:tool NAME` opens the tool in this tab when its
     terminal is another tab's — keyed by tab, a docked tool staying the
-    workspace's as the dock is (step 32).
+    workspace's as the dock is (step 32).~~ Landed 2026-09-28: the
+    name-keyed `tool_terms` is gone — each terminal already says what
+    tool it runs (`terms.spawned`) — and `tool_pane` looks for one in
+    the dock for a docked tool, in the tab in front for the rest.
+    `kawoosh/tests/terminal.rs`'s
+    `a_split_tool_is_each_tabs_and_a_docked_one_the_windows`.
 60. **`:du` panes each their own**: the pane's state per pane, as a
     view instance, and a second `:du` a second pane.
 61. **The which-key shows what works here**: a row only for a binding

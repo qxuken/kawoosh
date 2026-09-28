@@ -48,8 +48,6 @@ pub struct Proc {
 pub struct Scripting {
     pub rt: Option<Rc<Runtime>>,
     pub tools: HashMap<String, ToolDef>,
-    /// A tool's running terminal, by tool name.
-    pub tool_terms: HashMap<String, u64>,
     /// The processes plugins spawned, by the io thread's process id —
     /// numbered from a high mark so compile mode's never coincide.
     pub procs: HashMap<u64, Proc>,
@@ -1400,6 +1398,32 @@ impl Kawoosh {
         true
     }
 
+    /// The pane of a running terminal of tool `name` where `:tool NAME`
+    /// finds it: in the dock for a docked tool — the dock is every tab's
+    /// — else in the tab in front, since each tab runs a split tool of
+    /// its own (roadmap step 59: `:tool git` in a second tab jumped to
+    /// the first's).
+    fn tool_pane(&self, name: &str, dock: bool) -> Option<PaneId> {
+        let mut panes = Vec::new();
+        if dock {
+            if let Some(d) = &self.layout.dock {
+                d.panes(&mut panes);
+            }
+        } else {
+            self.layout.tabs[self.layout.tab].panes(&mut panes);
+        }
+        panes.into_iter().find(|p| {
+            self.term_of(*p).is_some_and(|t| {
+                self.terms.map.contains_key(&t)
+                    && self
+                        .terms
+                        .spawned
+                        .get(&t)
+                        .is_some_and(|s| s.tool.as_deref() == Some(name))
+            })
+        })
+    }
+
     /// `:tool NAME`: opens the tool's terminal (dock or split), or
     /// focuses it, or toggles the dock away when it is already focused.
     pub(crate) fn tool(&mut self, name: &str) {
@@ -1411,26 +1435,17 @@ impl Kawoosh {
             name,
             serde_json::json!({ "cmd": def.cmd, "dock": def.dock, "cwd": def.cwd }),
         );
-        if let Some(&t) = self.scripting.tool_terms.get(name)
-            && self.terms.map.contains_key(&t)
-        {
-            let pane = self
-                .layout
-                .all_panes()
-                .into_iter()
-                .find(|p| self.term_of(*p) == Some(t));
-            match pane {
-                Some(p) if self.layout.in_dock(p) => {
-                    if self.layout.dock_open && self.layout.focused() == p {
-                        self.layout.dock_open = false;
-                        self.layout.dock_focused = false;
-                    } else {
-                        self.layout.dock_open = true;
-                        self.layout.focus(p);
-                    }
+        if let Some(p) = self.tool_pane(name, def.dock) {
+            if def.dock {
+                if self.layout.dock_open && self.layout.focused() == p {
+                    self.layout.dock_open = false;
+                    self.layout.dock_focused = false;
+                } else {
+                    self.layout.dock_open = true;
+                    self.layout.focus(p);
                 }
-                Some(p) => self.layout.focus(p),
-                None => {}
+            } else {
+                self.layout.focus(p);
             }
             return;
         }
@@ -1455,7 +1470,6 @@ impl Kawoosh {
         let Some(t) = self.spawn_terminal(Some(&def.cmd), cwd.as_deref()) else {
             return;
         };
-        self.scripting.tool_terms.insert(name.to_string(), t);
         self.terms.spawned.entry(t).or_default().tool = Some(name.to_string());
         if def.dock {
             // Beside what the dock holds, or the dock's first pane.

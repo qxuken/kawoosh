@@ -791,7 +791,12 @@ fn a_session_starts_the_shells_again_where_they_were() {
         terms.iter().all(|t| app.terms.map.contains_key(t)),
         "started"
     );
-    assert!(app.scripting.tool_terms.contains_key("sleeper"));
+    assert!(
+        app.terms
+            .spawned
+            .values()
+            .any(|s| s.tool.as_deref() == Some("sleeper"))
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -1224,4 +1229,67 @@ fn the_other_buttons_paste_and_reach_a_reporting_program() {
         "a reporting program's middle is no paste"
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A tool in a split is each tab's own (roadmap step 59, the todo's
+/// "cant launch `:tool git` in a multiple tabs"): `:tool NAME` in a
+/// second tab opens it there, where it jumped back to the first tab's;
+/// again in either tab it goes to that tab's. A docked tool stays one,
+/// the dock being every tab's.
+#[test]
+fn a_split_tool_is_each_tabs_and_a_docked_one_the_windows() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.tool("sleeper", { cmd = "sleep 30" })
+           kawoosh.tool("docked", { cmd = "sleep 30", dock = true })"#,
+    );
+    let tools = |app: &Kawoosh, name: &str| -> Vec<u64> {
+        let mut t: Vec<u64> = app
+            .terms
+            .spawned
+            .iter()
+            .filter(|(id, s)| s.tool.as_deref() == Some(name) && app.terms.map.contains_key(id))
+            .map(|(id, _)| *id)
+            .collect();
+        t.sort();
+        t
+    };
+    app.shell_command("tool", &["sleeper".into()], None);
+    d.frame(&mut app);
+    let first = tools(&app, "sleeper");
+    assert_eq!(first.len(), 1);
+    app.shell_command("tool", &["sleeper".into()], None);
+    d.frame(&mut app);
+    assert_eq!(tools(&app, "sleeper"), first, "the same tab's, focused");
+    app.shell_command("tab new", &[], None);
+    d.frame(&mut app);
+    assert_eq!(app.layout.tab, 1);
+    app.shell_command("tool", &["sleeper".into()], None);
+    d.frame(&mut app);
+    assert_eq!(app.layout.tab, 1, "not back to the first tab");
+    let both = tools(&app, "sleeper");
+    assert_eq!(both.len(), 2, "a second, this tab's");
+    assert_eq!(
+        app.term_of_focused(),
+        both.iter().copied().find(|t| !first.contains(t))
+    );
+    app.shell_command("tab prev", &[], None);
+    app.shell_command("tool", &["sleeper".into()], None);
+    d.frame(&mut app);
+    assert_eq!(app.layout.tab, 0);
+    assert_eq!(app.term_of_focused(), Some(first[0]), "the first tab's own");
+    assert_eq!(tools(&app, "sleeper").len(), 2);
+    // Docked: one, from any tab.
+    app.shell_command("tool", &["docked".into()], None);
+    d.frame(&mut app);
+    app.shell_command("tab next", &[], None);
+    app.shell_command("tool", &["docked".into()], None);
+    d.frame(&mut app);
+    assert_eq!(tools(&app, "docked").len(), 1);
 }
