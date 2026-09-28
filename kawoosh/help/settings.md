@@ -100,6 +100,8 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `layout.new_pane`, `layout.new_tab` | `"launcher"` | what a bare split or tab is: `launcher`, `same`, `scratch`, `terminal` or `dir` |
 | `layout.dock` | `"tree"` | the dock's layout, `tree` or `scroll` |
 | `launcher.start` | `"normal"` | the launcher opens in `normal` (letters launch) or `insert` (typing filters) |
+| `launcher.layout` | | the launcher's modules, their order and shape ([its layout](panes.md#its-layout)) |
+| `launcher.width` | `720` | the widest the launcher is drawn; `0` the pane's width |
 | `buffers.scope` | `"tab"` | buffer lists show the tab's buffers or `all` |
 | `tabs.directory` | `"auto"` | the directory in tab labels: `auto`, `always`, `never` |
 | `dir.hidden` | | whether directory listings show dot files |

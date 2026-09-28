@@ -513,3 +513,123 @@ fn a_last_terminal_exiting_leaves_a_launcher() {
     d.frame(&mut app);
     assert_eq!(focused_name(&app), "*scratch*", "and answers as any does");
 }
+
+/// A list the launcher's state says — `modules`, `missing`, `blocks` —
+/// joined by `|`.
+fn said(app: &mut Kawoosh, field: &str) -> String {
+    app.run_lua_source(
+        "t",
+        &format!(
+            r#"local s = kawoosh.launcher.state()
+               kawoosh.echo(s and table.concat(s.{field}, "|") or "<none>")"#
+        ),
+    );
+    app.ed.message.clone()
+}
+
+/// Modules in a layout (Decision 8): `launcher.layout` orders them and
+/// overrides a field at a place (`title`, `limit`), a name no module
+/// has is said, not dropped, the prompt goes to the top when it is not
+/// placed, `"..."` is what a plugin registered — not what is bundled —
+/// and a block is drawn on an empty query and not with one. The
+/// setting changed under an open launcher builds it again.
+#[test]
+fn the_layout_orders_the_modules() {
+    let _g = serial();
+    let dir = project("layout");
+    let (mut d, mut app) = launch(&dir);
+    lua(
+        &mut app,
+        r#"kawoosh.launcher.module("hello", {
+             draw = function(ctx) return text("hello " .. ctx.cwd) end })
+           kawoosh.launcher.module("todo", {
+             items = { { text = "write the note", run = "echo noted" } } })
+           kawoosh.opt("launcher.layout", {
+             "hello", { module = "here", title = "start", limit = 2 }, "nope", "..." })"#,
+    );
+    d.frame(&mut app);
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
+    assert!(on_launcher(&app));
+    assert_eq!(
+        said(&mut app, "modules"),
+        "prompt|hello|here|todo|workspaces"
+    );
+    assert_eq!(said(&mut app, "missing"), "nope");
+    assert_eq!(said(&mut app, "blocks"), "hello");
+    let r = rows(&mut app);
+    assert_eq!(
+        r,
+        ["# start", "a.txt", "scratch", "# todo", "write the note"]
+    );
+    // With a query the block goes and the rows are matched.
+    d.keys(&mut app, "/note");
+    d.frame(&mut app);
+    assert_eq!(said(&mut app, "blocks"), "");
+    assert_eq!(rows(&mut app), ["# todo", "write the note"]);
+    // The setting changed under it: built again, the query kept.
+    lua(
+        &mut app,
+        r#"kawoosh.opt("launcher.layout", { "todo", "prompt", "files" })"#,
+    );
+    d.frame(&mut app);
+    assert_eq!(said(&mut app, "modules"), "todo|prompt|files");
+    assert_eq!(rows(&mut app)[..2], ["# todo", "write the note"]);
+    d.press(&mut app, "<CR>");
+    d.frame(&mut app);
+    assert_eq!(app.ed.message, "noted");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// Structure: a row of columns walks a column to its end, then the
+/// next; a module as tiles keeps its letters; `pins` placed before
+/// `recent` takes the pin out of it; an entry goes to the module it
+/// names.
+#[test]
+fn a_row_of_columns_and_tiles() {
+    let _g = serial();
+    let dir = project("columns");
+    let db = dir.join("state.db");
+    let (mut d, mut app) = launch(&dir);
+    app.open_store(Some(&db));
+    lua(
+        &mut app,
+        &format!("kawoosh.pin('file', '{}')", lua_path(&dir.join("notes.md"))),
+    );
+    lua(
+        &mut app,
+        r#"kawoosh.launcher.entry { text = "zebra", run = "echo z", module = "here" }
+           kawoosh.opt("launcher.layout", {
+             "prompt",
+             { row = { { module = "here", style = "tiles" }, { column = { "pins", "recent" } } } },
+           })"#,
+    );
+    d.frame(&mut app);
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
+    let r = rows(&mut app);
+    assert_eq!(
+        r,
+        [
+            "# here",
+            "a.txt",
+            "scratch",
+            "terminal",
+            "directory",
+            "zebra",
+            "# pins",
+            "notes.md"
+        ],
+        "the pin is not a recent file too"
+    );
+    // The walk: down the tiles, then into the next column.
+    d.press(&mut app, "jjjjj");
+    d.frame(&mut app);
+    app.run_lua_source("t", "kawoosh.echo(kawoosh.launcher.state().cursor)");
+    assert_eq!(app.ed.message, "notes.md");
+    // The tiles' letters: `z` the entry's first free one.
+    d.press(&mut app, "z");
+    d.frame(&mut app);
+    assert_eq!(app.ed.message, "z");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
