@@ -33,7 +33,9 @@ hover's second paragraph names `Widget`. Lists (docs/design/lists.md): a
 document opened with `@long` in it gets a second, TypeScript-shaped
 error on that line — two lines of message, source `ts`, code 2322 — and
 one with `@workspace` in it a warning published for `other.rs` beside
-it, a file never sent (1:4–1:7, `rustc` `E0425`)."""
+it, a file never sent (1:4–1:7, `rustc` `E0425`). A document with
+`@minified` in it formats as a formatter answers a minified bundle: a
+space after every `;`, an edit each, in UTF-16 columns."""
 import json
 import re, sys
 
@@ -236,6 +238,17 @@ while True:
         uri = m["params"]["textDocument"]["uri"]
         text = docs.get(uri, "")
         lines = text.split("\n")
+        if "@minified" in text:
+            edits = []
+            for row, line in enumerate(lines):
+                col = 0
+                for ch in line:
+                    col += len(ch.encode("utf-16-le")) // 2
+                    if ch == ";":
+                        at = {"line": row, "character": col}
+                        edits.append({"range": {"start": at, "end": at}, "newText": " "})
+            send({"jsonrpc": "2.0", "id": mid, "result": edits})
+            continue
         send({"jsonrpc": "2.0", "id": mid, "result": [
             {"range": {"start": {"line": 0, "character": 0},
                        "end": {"line": len(lines) - 1, "character": len(lines[-1])}},

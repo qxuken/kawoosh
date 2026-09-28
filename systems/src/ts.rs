@@ -137,6 +137,12 @@ pub const OUTLINE_MAX: usize = 20_000;
 /// since each is a query of its own.
 const SPANS_MAX: usize = 64;
 
+/// The most edits the tree is told one at a time (`tell_each`); past it,
+/// the one edit that covers them. Each is a walk down the tree — 11µs
+/// on a minified bundle, where a format's hundred thousand told took a
+/// second, and the cover's reparse of the lot a fifth of one.
+const TELL_EACH_MAX: usize = 4096;
+
 /// What the thread is told.
 enum Cmd {
     Job(Job),
@@ -379,14 +385,18 @@ fn cover(edits: &[Edit]) -> Option<(Range<usize>, usize)> {
 /// has moved when it lands), its new end the start advanced over the
 /// inserted text, read off the new text where the edit finally sits.
 /// Answers the span each edit occupies in the new text, or `None` for a
-/// sequence that is not of that shape (the cover is the fallback).
+/// sequence that is not of that shape, or longer than [`TELL_EACH_MAX`]
+/// (the cover is the fallback).
 fn tell_each(
     tree: &mut Tree,
     edits: &[Edit],
     old_text: &text_buffer::Buffer,
     text: &text_buffer::Buffer,
 ) -> Option<Vec<Range<usize>>> {
-    if edits.is_empty() || edits.windows(2).any(|w| w[1].range.end > w[0].range.start) {
+    if edits.is_empty()
+        || edits.len() > TELL_EACH_MAX
+        || edits.windows(2).any(|w| w[1].range.end > w[0].range.start)
+    {
         return None;
     }
     // Where each edit's start lands in the new text: shifted by the
@@ -421,7 +431,10 @@ fn tell_each(
 }
 
 /// Sorted, overlapping and touching ones joined, and no more than
-/// [`SPANS_MAX`]: past that the smallest gaps close first.
+/// [`SPANS_MAX`]: past that the smallest gaps close first. Closing a gap
+/// leaves the others as they were, so the ones to close are chosen at
+/// once — a format's hundred thousand spans closed one at a time, each
+/// a walk over the rest.
 fn merge_spans(mut spans: Vec<Range<usize>>) -> Vec<Range<usize>> {
     spans.sort_by_key(|r| r.start);
     let mut out: Vec<Range<usize>> = Vec::with_capacity(spans.len());
@@ -431,18 +444,31 @@ fn merge_spans(mut spans: Vec<Range<usize>>) -> Vec<Range<usize>> {
             _ => out.push(r),
         }
     }
-    while out.len() > SPANS_MAX {
-        let (i, _) = out
-            .windows(2)
-            .enumerate()
-            .map(|(i, w)| (i, w[1].start - w[0].end))
-            .min_by_key(|(_, gap)| *gap)
-            .expect("more than one span");
-        let end = out[i + 1].end;
-        out[i].end = end;
-        out.remove(i + 1);
+    if out.len() <= SPANS_MAX {
+        return out;
     }
-    out
+    // The gaps after each span, smallest (then leftmost) first.
+    let mut gaps: Vec<(usize, usize)> = out
+        .windows(2)
+        .enumerate()
+        .map(|(i, w)| (w[1].start - w[0].end, i))
+        .collect();
+    gaps.sort_unstable();
+    let mut closed = vec![false; out.len()];
+    for &(_, i) in &gaps[..out.len() - SPANS_MAX] {
+        closed[i] = true;
+    }
+    let mut joined: Vec<Range<usize>> = Vec::with_capacity(SPANS_MAX);
+    let mut open = true;
+    for (r, closed) in out.into_iter().zip(closed) {
+        if open {
+            joined.push(r);
+        } else {
+            joined.last_mut().expect("a span before").end = r.end;
+        }
+        open = !closed;
+    }
+    joined
 }
 
 fn highlight(
@@ -517,6 +543,12 @@ fn highlight(
                             tree.changed_ranges(old_tree)
                                 .map(|r| r.start_byte.min(len)..r.end_byte.min(len)),
                         );
+                        // A format's thousands joined first: each is a
+                        // descent and a scan of its own, and the joined
+                        // span's neighbourhood holds each one's.
+                        if all.len() > SPANS_MAX {
+                            all = merge_spans(all);
+                        }
                         let root = tree.root_node();
                         spans = merge_spans(
                             all.into_iter()
@@ -2223,6 +2255,81 @@ mod tests {
                 "after {range:?} {letter:?}"
             );
         }
+    }
+
+    /// A format of a minified bundle — thousands of edits on its one
+    /// line — is told the tree as their cover, not one at a time (a
+    /// second on a megabyte), and answers as a whole parse does.
+    #[test]
+    fn a_format_of_one_long_line_answers_as_a_whole_parse() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let src: String = (0..3_000)
+            .map(|i| format!("function a{i}(b,c){{return b+c*{i}}}var x{i}=\"s{i}\";"))
+            .collect();
+        let mut buf = Buffer::new("t", &src);
+        buf.language = "javascript".into();
+        let job = |buf: &Buffer, from: Option<kawoosh_doc::Version>| Job {
+            buffer: BufferId::default(),
+            language: "javascript".into(),
+            snapshot: buf.snapshot(),
+            edits: from.map(|v| buf.journal().edits_since(v).unwrap().cloned().collect()),
+        };
+        let first = highlight(&mut parser, &mut g, &mut parsed, &job(&buf, None)).update();
+        buf.apply(first).unwrap();
+        let v0 = buf.version();
+        let edits: Vec<(Range<usize>, &str)> = src
+            .match_indices([',', ';', '{', '}'])
+            .map(|(i, _)| (i + 1..i + 1, " "))
+            .collect();
+        assert!(edits.len() > TELL_EACH_MAX);
+        buf.replace_many(&edits);
+        let inc = highlight(&mut parser, &mut g, &mut parsed, &job(&buf, Some(v0)));
+        for u in inc.updates {
+            buf.apply(u).unwrap();
+        }
+        let whole = highlight(
+            &mut parser,
+            &mut g,
+            &mut Parsed::default(),
+            &job(&buf, None),
+        )
+        .update();
+        assert_eq!(
+            joined(&buf.runs(SYNTAX_LAYER, 0..buf.len())),
+            joined(&whole.runs)
+        );
+    }
+
+    /// Past [`SPANS_MAX`], the smallest gaps close — chosen at once, the
+    /// same spans as closing them one at a time, the leftmost of equal
+    /// gaps first.
+    #[test]
+    fn spans_past_the_most_close_their_smallest_gaps() {
+        fn one_at_a_time(mut out: Vec<Range<usize>>) -> Vec<Range<usize>> {
+            while out.len() > SPANS_MAX {
+                let (i, _) = out
+                    .windows(2)
+                    .enumerate()
+                    .map(|(i, w)| (i, w[1].start - w[0].end))
+                    .min_by_key(|(_, gap)| *gap)
+                    .unwrap();
+                out[i].end = out[i + 1].end;
+                out.remove(i + 1);
+            }
+            out
+        }
+        // Gaps of 1 to 7 bytes, repeating, so many are equal.
+        let mut spans = Vec::new();
+        let mut at = 0;
+        for i in 0..500 {
+            spans.push(at..at + 3);
+            at += 3 + 1 + (i * 5) % 7;
+        }
+        let merged = merge_spans(spans.clone());
+        assert_eq!(merged.len(), SPANS_MAX);
+        assert_eq!(merged, one_at_a_time(spans));
     }
 
     /// The cover of a sequence of edits is the one edit that replaces

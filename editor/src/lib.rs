@@ -2118,12 +2118,15 @@ impl Editor {
             self.open_checkpoint(v);
         }
         let buf = &mut self.buffers[id];
-        let len = buf.len();
+        // On char boundaries, not graphemes: a server's edit is where it
+        // says to the character — a grapheme is a caret's unit — and
+        // finding a cluster's start reads its line's window, which for a
+        // format's quarter of a million edits was seven seconds.
         let mut sorted: Vec<(Range<usize>, String)> = edits
             .iter()
             .map(|(r, t)| {
-                let start = buf.floor_char(r.start.min(len));
-                let end = buf.floor_char(r.end.min(len)).max(start);
+                let start = buf.floor_byte(r.start);
+                let end = buf.floor_byte(r.end).max(start);
                 (start..end, t.clone())
             })
             .collect();
