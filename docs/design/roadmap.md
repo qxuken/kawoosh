@@ -2583,11 +2583,28 @@ In order — the bugs first, then what needs deciding:
     group's `+N` is the live count, and a card with nothing left is not
     drawn. `kawoosh/tests/whichkey.rs`'s
     `a_which_key_lists_only_what_works_here`.
-62. **Scrolling, a note first** (kui's wheel routing): latching (a
+62. ~~**Scrolling, a note first** (kui's wheel routing): latching (a
     gesture keeps to the scroller it began on until it ends), chaining
     (a new gesture at a scroller's limit goes on to its parent, with an
     opt-out), and what "in its direction" asks of a hovered scroller —
-    decided with the user, and with the trackpad session's F104 in mind.
+    decided with the user, and with the trackpad session's F104 in mind.~~
+    Landed 2026-09-28 as kui F107 (branch `claude/kawoosh-scroll-gestures`,
+    04d47fc and e87b212; its note is kui's ADR 0038): the browser model,
+    taken for the user when "do all in order" left the question open —
+    a gesture (a swipe and its momentum, a wheel spun without a pause,
+    as the runner delimits them) picks its target per axis when it first
+    moves on it, the innermost scroller under the pointer that can move
+    that way, and keeps it to the end; a container at its limit is
+    passed for the one around it unless it says `overscroll:
+    "contain"`; an `onScroll` node takes the axes its `scrollAxes` says.
+    "In its direction" is F104's axis lock with that: a swipe locked to
+    a list's axis is the list's, one locked to the other goes on to the
+    strip. kawoosh's half: the terminal's grid takes `y` only
+    (`scroll_axes`), so a sideways swipe starting over it moves the
+    strip. Not built (kui's reason): a handler that says per gesture it
+    cannot move, so a terminal at the top of its history still takes a
+    vertical swipe over it. `kawoosh/tests/layout.rs`'s
+    `a_sideways_swipe_over_a_terminal_moves_the_strip`.
 63. **Soft wrap in the editor, a note first**: what is asked — a
     setting per language or buffer, where the caret moves by screen
     line (`gj` `gk`), and what the gutter and the selections do on a

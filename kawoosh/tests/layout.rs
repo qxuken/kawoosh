@@ -897,3 +897,63 @@ fn a_closed_column_fades_and_a_tab_switch_does_not() {
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// A sideways swipe that starts over a terminal moves the strip (roadmap
+/// step 62, the todo's "scroll hard stopped by terminal"): the grid
+/// takes the wheel on its history's axis only (kui F107's
+/// `scroll_axes`), and a gesture keeps the target it began on, so one
+/// that began on the strip goes on over the terminal too.
+#[test]
+fn a_sideways_swipe_over_a_terminal_moves_the_strip() {
+    use kui_native::InputEvent;
+    let vw = 900.0;
+    let mut app = Kawoosh::new("t", "alpha\nbeta\ngamma");
+    let mut d = Drive::new(vw, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "layout scroll");
+    ctrl_w(&mut d, &mut app, "v");
+    ctrl_w(&mut d, &mut app, "v");
+    ctrl_w(&mut d, &mut app, "v");
+    settle(&mut d, &mut app);
+    // The focused column (the fourth, on screen) becomes a terminal.
+    let t = app
+        .terms
+        .add(kawoosh_term::Terminal::headless(kawoosh_term::TermSize {
+            rows: 24,
+            cols: 80,
+        }));
+    let pane = app.layout.focused();
+    app.layout.panes.insert(pane, Content::Terminal(t));
+    settle(&mut d, &mut app);
+    let before = app.layout.rects[&pane];
+    let over = Vec2::new(before.x + before.w / 2.0, before.y + before.h / 2.0);
+    d.input(&mut app, InputEvent::CursorMoved(over));
+    // Toward the strip's start: the columns move right.
+    for (i, dx) in [30.0, 60.0, 60.0].into_iter().enumerate() {
+        d.input(
+            &mut app,
+            InputEvent::ScrollGesture {
+                delta: Vec2::new(dx, 0.0),
+                begins: i == 0,
+            },
+        );
+        d.frame(&mut app);
+    }
+    settle(&mut d, &mut app);
+    let after = app.layout.rects[&pane];
+    assert!(
+        after.x > before.x + 50.0,
+        "the strip moved: {before:?} → {after:?}"
+    );
+    // Up and down over it is still the terminal's: no column moves.
+    let at = app.layout.rects[&pane];
+    d.input(
+        &mut app,
+        InputEvent::ScrollGesture {
+            delta: Vec2::new(0.0, 60.0),
+            begins: true,
+        },
+    );
+    settle(&mut d, &mut app);
+    assert_eq!(app.layout.rects[&pane].x, at.x);
+}

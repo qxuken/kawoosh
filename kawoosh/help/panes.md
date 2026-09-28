@@ -100,8 +100,13 @@ The pane keys mean the same thing on the strip's axis:
 `:layout scroll` and `:layout tree` turn the tab into one kind or the
 other, keeping its panes; a bare `:layout` flips it. The status line
 shows the columns as `▯▮▯`, the focused one filled. Dragging the gap
-between two columns sets a width of your own. A trackpad swipe over the
-title bars or the gaps, or a drag of the scrollbar, moves the ribbon.
+between two columns sets a width of your own. A sideways trackpad swipe
+moves the ribbon — over a list, a terminal or the gaps, anywhere but text
+wider than its pane, which scrolls itself — and a drag of the scrollbar
+does too. A swipe keeps to what it started on: one that began on the
+ribbon goes on moving it as a terminal passes under the pointer, and
+one that starts where a list is already at its end moves what holds
+the list instead.
 
 | setting | what |
 |---|---|

@@ -963,8 +963,12 @@ impl Kawoosh {
                 // takes clicks only while ⌘ or ctrl is held, for the
                 // path under the pointer — a plain click reaches the
                 // column around it, which focuses the pane.
+                // The wheel is the history's, up and down only: a
+                // sideways swipe over the grid goes on to the strip
+                // (kui F107's `scroll_axes`, roadmap step 62).
                 let mut spec = NodeSpec::column()
                     .on_scroll(tag.clone())
+                    .scroll_axes(kui_native::ScrollAxes::Y)
                     .on_layout(Value::map([("kind", "termgrid".into())]));
                 if self.mods.ctrl || self.mods.super_key {
                     spec = spec.on_click(tag.clone());
