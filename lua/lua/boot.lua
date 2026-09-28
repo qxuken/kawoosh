@@ -24,7 +24,8 @@ kawoosh._nonce = 0
 -- keymap, the command line, or Rust. A name of two words is a
 -- subcommand (`"dir cd"` runs as `:dir cd`, completes under `:dir`).
 -- `fn(ctx)` gets { count = n, args = {...}, form = "run" | "bang" |
--- "query", bang = bool, query = bool }. `opts`:
+-- "query", bang = bool, query = bool, pane = the id of the pane the
+-- keyboard is in — a view's `ctx.pane` when it is one }. `opts`:
 --   args    what the arguments are, one kind per position — "path",
 --           "buffer", "command", "option", "tool", "view", "text" — the
 --           last with "..." for the rest: a "path" reaches `fn` absolute
@@ -137,6 +138,28 @@ end
 -- frame the strip is drawn: keep it to strings.
 function kawoosh.tab_title(fn)
   kawoosh._tab_title = fn
+end
+
+-- kawoosh.status(name, fn[, opts]): a segment on the right of the title
+-- bar (`place = "title"`, the default) or of the tab strip (`"tabs"`),
+-- in `order` then by name (docs/design/status.md). `fn(ctx)` answers
+-- what it shows now — nil for nothing, a string, a part `{ text =,
+-- color = }` or a list of parts, `color` one of `fg`, `dim`, `accent`,
+-- `ok`, `warning`, `danger` — and is asked each frame the window draws.
+-- `opts.every = SECONDS` wakes the window to draw it that often, on the
+-- wall clock's beat (a clock) — or a function answering how often now,
+-- nil for not at all; `opts.run` is a command line a click
+-- runs. The same name replaces it; `kawoosh.status(name, nil)` takes it
+-- away.
+kawoosh._status = {}
+function kawoosh.status(name, fn, opts)
+  if fn == nil then
+    kawoosh._status[name] = nil
+    return
+  end
+  opts = opts or {}
+  kawoosh._status[name] = { fn = fn, place = opts.place or "title", order = opts.order or 0,
+                            every = opts.every, run = opts.run }
 end
 
 -- kawoosh.on_memory_open(kind, fn): how a moment of a plugin's own

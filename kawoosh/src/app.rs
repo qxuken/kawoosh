@@ -53,6 +53,19 @@ pub struct Kawoosh {
     /// The editor's scrolling probe, when `KAWOOSH_PROBE_SCROLL` asks for
     /// one (`scroll_probe::ScrollProbe`).
     pub(crate) scroll_probe: Option<crate::scroll_probe::ScrollProbe>,
+    /// Kitty's images, as kui has them (`term_images.rs`).
+    pub(crate) term_images: crate::term_images::TermImages,
+    /// Soft wrap (`wrap.rs`): each wrapping view's rows as last drawn —
+    /// line, text node, drawn text — for `gj` `gk`; `:wrap`'s word for a
+    /// view; a row move asked for and not yet resolved; the x a run of
+    /// them keeps, with the caret it was kept for.
+    pub(crate) wrap_rows: HashMap<ViewId, Vec<(usize, kui_native::Key, crate::rows::Drawn)>>,
+    pub(crate) wrap_views: HashMap<ViewId, bool>,
+    pub(crate) row_move: Option<(ViewId, i32)>,
+    pub(crate) row_goal: Option<(f32, usize)>,
+    /// When the window was last asked to wake for a status segment's
+    /// `every` (status.md): one tick out at a time, the sooner kept.
+    pub status_due: Option<std::time::SystemTime>,
     /// The disk-usage pane's walks (`du.rs`, roadmap step 52).
     pub(crate) du: crate::du::SharedDu,
     pub ed: Editor,
@@ -303,6 +316,12 @@ impl Kawoosh {
             du: Default::default(),
             fonts_probe: crate::fonts::Probe::from_env(),
             scroll_probe: crate::scroll_probe::ScrollProbe::from_env(),
+            term_images: Default::default(),
+            wrap_rows: HashMap::new(),
+            wrap_views: HashMap::new(),
+            row_move: None,
+            row_goal: None,
+            status_due: None,
             ed,
             layout: Layout::new(Content::Editor(view)),
             terms: Terminals::default(),
@@ -717,6 +736,15 @@ impl Kawoosh {
                     self.terms.map.remove(&id);
                 }
                 IoMsg::Request(incoming) => self.on_request(incoming),
+                // A status segment's time came: the wake drew the frame.
+                IoMsg::Tick => self.status_due = None,
+                IoMsg::FsDone { token, result } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    if let Some(rt) = self.scripting.rt.clone() {
+                        rt.fs_done(token, result);
+                        self.drain_lua();
+                    }
+                }
                 IoMsg::Listed { token, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     if let Some(rt) = self.scripting.rt.clone() {
@@ -1937,6 +1965,46 @@ impl Kawoosh {
         term.mouse(0, action, col as usize, row as usize, mods);
     }
 
+    /// A button other than the primary one on a terminal's grid (kui's
+    /// `on_button`, roadmap step 55). A program that asked for mouse
+    /// reports gets it — press, motion while held when it asked for
+    /// drags, release — in xterm's numbering (middle 1, secondary 2, back
+    /// and forward 128 and 129); shift keeps it the terminal's. Otherwise
+    /// the middle button pastes the clipboard there, as ⌘V does.
+    fn on_term_button(&mut self, pane: PaneId, b: kui_native::ButtonEvent) {
+        use kui_native::{ButtonPhase, MouseButton};
+        let Some(t) = self.term_of(pane) else {
+            return;
+        };
+        let Some(term) = self.terms.map.get_mut(&t) else {
+            return;
+        };
+        if term.wants_mouse() && !self.mods.shift {
+            let Some((row, col)) = b.cell else {
+                return;
+            };
+            let code = match b.button {
+                MouseButton::Middle => 1,
+                MouseButton::Secondary => 2,
+                MouseButton::Other(n @ 0..=3) => 128 + n,
+                _ => return,
+            };
+            let action = match b.phase {
+                ButtonPhase::Press => kawoosh_term::MouseAction::Press,
+                ButtonPhase::Move if term.wants_drag() => kawoosh_term::MouseAction::Motion,
+                ButtonPhase::Release => kawoosh_term::MouseAction::Release,
+                ButtonPhase::Move => return,
+            };
+            let mods = (false, self.mods.alt, self.mods.ctrl);
+            term.mouse(code, action, col as usize, row as usize, mods);
+            return;
+        }
+        if b.button == MouseButton::Middle && b.phase == ButtonPhase::Press {
+            self.layout.focus(pane);
+            self.awaiting_paste = true;
+        }
+    }
+
     /// The scrollbar on a terminal scrolled away, dragged: the pointer's
     /// height down the pane is where the view is in its history, the
     /// top the oldest line, the bottom the prompt.
@@ -2190,6 +2258,8 @@ impl kui_native::App for Kawoosh {
         }
         self.dark = ui.theme().is_dark();
         self.sync_term_palettes();
+        self.sync_term_graphics(ui);
+        self.sync_status_tick();
         self.sync_term_settings();
         self.ring_bells(ui);
         self.sync_dock();
@@ -2336,7 +2406,17 @@ impl Kawoosh {
         }
         self.note_input();
         if let Some((_, k)) = ev.key_press() {
-            return self.on_key(k);
+            self.on_key(k);
+            // A `gj` / `gk` is resolved against the rows kui laid out
+            // (`wrap.rs`), which only the event's core can answer.
+            self.resolve_row_move(core);
+            return;
+        }
+        if let Some(b) = ev.button() {
+            if let (Some("termbutton"), Some(pane)) = (tag_kind, pane) {
+                self.on_term_button(pane, b);
+            }
+            return;
         }
         if let Some(d) = ev.drag() {
             match (tag_kind, pane) {

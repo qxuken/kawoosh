@@ -14,6 +14,10 @@ alacritty_terminal.workspace = true
 portable-pty.workspace = true
 anyhow.workspace = true
 log.workspace = true
+# Kitty's graphics protocol (`graphics.rs`): base64 payloads, zlib, PNG.
+base64 = "0.22"
+flate2 = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

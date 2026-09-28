@@ -37,7 +37,7 @@ Almost every key goes to the program in the terminal, `<C-l>`, `<C-r>` and `<Esc
 
 Any Ctrl+Shift or Alt+Shift chord, and any ⌘ chord, runs its normal-mode binding instead of reaching the shell; a terminal cannot tell `<C-S-l>` from `<C-l>` anyway. A ⌘ chord bound to nothing does nothing. Your own normal-mode maps on such chords work from terminals too.
 
-Mouse: the wheel scrolls through history. Dragging selects text (a double click a word, a triple click a line), and `⌘c` copies it. When a full-screen program asks for the mouse it gets the clicks and drags; hold Shift to select anyway.
+Mouse: the wheel scrolls through history. Dragging selects text (a double click a word, a triple click a line), and `⌘c` copies it. The middle button pastes the clipboard, as `⌘v` does. When a full-screen program asks for the mouse it gets the clicks and drags of every button, the right one included (tmux's and htop's menus, a file manager's); hold Shift to select anyway.
 
 ## Scrollback
 
@@ -61,6 +61,12 @@ To go back to the terminal: `q`, `<C-S-x>` again, or `<Esc>` once there is nothi
 ## Opening paths and links
 
 Hold `⌘` (Ctrl where there is no ⌘) over the terminal: a URL, or a path that exists, is underlined under the pointer. Click it to open it: a URL in the browser, a file in an editor pane at the line and column it names (`src/main.rs:42:7`, `a.ts(3,5)`), a directory as a listing. A relative path is looked for in the terminal's directory first, then in the working directory. `gx` does the same in an editor pane.
+
+Some programs print links on purpose, with text that need not be the address: `ls --hyperlink`, `gcc`, `delta`, `gh`, `rg --hyperlink-format`. Those come first. While one is under the pointer with `⌘` held, its address shows at the bottom left of the terminal, so you see where a click goes before you click. A `file://` link opens in an editor pane, at the line its `#12` or `#L12` names; over ssh, a link names a file on that host. A link to a file on another machine says so and opens nothing.
+
+## Images
+
+Programs that speak kitty's graphics protocol draw images in a terminal pane: `timg -pk`, `chafa -f kitty`, yazi's previews, `viu`, plotting libraries with a kitty backend. An image sits at the cells it was drawn at and scrolls with them into the scrollback; clearing the screen or scrolling far enough takes it away. Over ssh an image travels in the output, so it works there too; a program that sends a file's name instead falls back to sending the image. Animation and tmux's way of passing images through are not supported yet.
 
 ## Shell integration
 

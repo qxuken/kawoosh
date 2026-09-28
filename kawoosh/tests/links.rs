@@ -150,3 +150,80 @@ fn a_cmd_click_on_a_url_in_a_terminal_opens_it() {
         app.ed.message
     );
 }
+
+/// A link a program prints on purpose (OSC 8, roadmap step 54) is the
+/// one ⌘-hover underlines and ⌘-click opens: its address, not its text,
+/// shown at the grid's foot while hovered; a `file://` one opens in an
+/// editor at its fragment's line, and one on another machine is said
+/// to be, not opened.
+#[test]
+fn a_programs_link_in_a_terminal_opens_its_address() {
+    let dir = tree("osc8");
+    let mut app = Kawoosh::new("t", "");
+    app.set_cwd(&dir);
+    app.urls_opened = Some(Vec::new());
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    let lib = dir.join("src/lib.rs");
+    app.feed_terminal(
+        t,
+        format!(
+            "see \x1b]8;;https://kawoosh.dev/docs\x1b\\the docs\x1b]8;;\x1b\\ now\r\n\
+             \x1b]8;;file://{}#L4\x1b\\lib\x1b]8;;\x1b\\\r\n\
+             \x1b]8;;file://far.example/etc/x\x1b\\far\x1b]8;;\x1b\\\r\n",
+            lib.display()
+        )
+        .as_bytes(),
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let cells = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.kind == kui_native::NodeKind::Cells)
+        .unwrap();
+    let (cw, ch) = app.cell_metrics();
+    let at =
+        |row: f32, col: f32| Vec2::new(cells.rect.x + col * cw, cells.rect.y + (row + 0.5) * ch);
+    let shown = |d: &Drive| {
+        d.core
+            .nodes()
+            .into_iter()
+            .filter_map(|n| n.text)
+            .any(|t| t == "https://kawoosh.dev/docs")
+    };
+    d.input(&mut app, InputEvent::Modifiers(KeyMods::NONE.with_ctrl()));
+    d.frame(&mut app);
+    d.input(&mut app, InputEvent::CursorMoved(at(0.0, 5.5)));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(d.core.cursor_shape(), kui_native::CursorShape::Pointer);
+    assert!(shown(&d), "the address, where the text says `the docs`");
+    d.click(&mut app, at(0.0, 5.5).x, at(0.0, 5.5).y);
+    assert_eq!(
+        app.urls_opened.as_deref(),
+        Some(&["https://kawoosh.dev/docs".to_string()][..]),
+        "{}",
+        app.ed.message
+    );
+    // Off the link, nothing is shown.
+    d.input(&mut app, InputEvent::CursorMoved(at(0.0, 14.5)));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(!shown(&d));
+    // Another machine's file: said, not opened.
+    d.click(&mut app, at(2.0, 1.5).x, at(2.0, 1.5).y);
+    assert_eq!(
+        app.ed.message,
+        "file://far.example/etc/x: a file on another machine"
+    );
+    // This machine's: in an editor, at the fragment's line.
+    d.click(&mut app, at(1.0, 1.5).x, at(1.0, 1.5).y);
+    app.wait_for_open();
+    d.frame(&mut app);
+    assert_eq!(focused(&app), ("lib.rs".into(), 3), "{}", app.ed.message);
+    assert_eq!(app.urls_opened.as_ref().map(Vec::len), Some(1));
+    std::fs::remove_dir_all(&dir).ok();
+}

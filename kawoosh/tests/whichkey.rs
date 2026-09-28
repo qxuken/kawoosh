@@ -137,3 +137,43 @@ fn a_which_key_lists_what_can_follow_and_a_setting_hides_it() {
     d.key(&mut app, "escape", KeyMods::default());
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// Only what works here (roadmap step 61, the todo's "whichkey should
+/// hide inactive binds or binds to commands that inactive"): a group
+/// every key of which is gated off here is not listed, a group's count
+/// is of the keys that work, and a key whose own binding is off but
+/// under which a key works lists as the group it is here.
+#[test]
+fn a_which_key_lists_only_what_works_here() {
+    let mut app = Kawoosh::new("t", "a\nb");
+    let ext = app.attach_lua().unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.map("n", "<leader>zq", "help", { when = { "terminal" } })
+           kawoosh.map("n", "<leader>zw", "help", { when = { "terminal" } })
+           kawoosh.map("n", "<leader>na", "help")
+           kawoosh.map("n", "<leader>nb", "help", { when = { "terminal" } })
+           kawoosh.map("n", "<leader>nc", "tutor", { when = { "terminal" } })
+           kawoosh.map("n", "<leader>k", "help", { when = { "terminal" } })
+           kawoosh.map("n", "<leader>kk", "tutor")"#,
+    );
+    d.frame(&mut app);
+    d.keys(&mut app, " ");
+    let t = texts(&d);
+    assert!(has(&t, "SPC · leader"), "{t:?}");
+    assert!(!has(&t, "z"), "every key under it is a terminal's: {t:?}");
+    let at = t.iter().position(|x| x == "n").expect("n is listed");
+    assert_eq!(t[at + 1], "+1", "one of its three works here: {t:?}");
+    let at = t.iter().position(|x| x == "k").expect("k is listed");
+    assert_eq!(
+        t[at + 1],
+        "+1",
+        "its own binding is off, the one under it is not: {t:?}"
+    );
+    d.keys(&mut app, "n");
+    let t = texts(&d);
+    assert!(has(&t, "a") && !has(&t, "b") && !has(&t, "c"), "{t:?}");
+}

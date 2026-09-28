@@ -138,3 +138,74 @@ fn the_walk_streams_from_the_io_thread() {
     );
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// Each `:du` pane is its own (roadmap step 60, the todo's "launching du
+/// from another tab affects first one"): a second tab's walks another
+/// root, its keys move its own cursor, and closing it leaves the first
+/// as it was.
+#[test]
+fn a_du_pane_in_another_tab_is_its_own() {
+    let root = std::env::temp_dir().join(format!("kawoosh-du-tabs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (d, n) in [
+        ("one/a", 300usize),
+        ("one/b", 200),
+        ("two/x", 50),
+        ("two/y", 40),
+    ] {
+        std::fs::create_dir_all(root.join(d)).unwrap();
+        std::fs::write(root.join(d).join("f"), vec![0u8; n]).unwrap();
+    }
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let mut app = Kawoosh::new("t", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    let mut d = Drive::new(1000.0, 700.0);
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("du {}", root.join("one").display()),
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(shown(&mut app), "one > a size | a 300 | b 200");
+    d.keys(&mut app, "j");
+    d.frame(&mut app);
+    assert_eq!(shown(&mut app), "one > b size | a 300 | b 200");
+    app.shell_command("tab new", &[], None);
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("du {}", root.join("two").display()),
+    );
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(
+        shown(&mut app),
+        "two > x size | x 50 | y 40",
+        "a walk of its own"
+    );
+    d.keys(&mut app, "js");
+    d.frame(&mut app);
+    assert_eq!(shown(&mut app), "two > y name | x 50 | y 40");
+    let panes = lua(&mut app, "kawoosh.echo(#kawoosh.du_pane.panes())");
+    assert_eq!(panes, "2");
+    // The first tab's pane is as it was left, and still after the
+    // second's closes.
+    let first = lua(
+        &mut app,
+        "local s = kawoosh.du_pane.state(kawoosh.du_pane.panes()[1]) \
+         kawoosh.echo(s.dir:match('[^/]+$') .. ' ' .. s.cursor .. ' ' .. s.sort)",
+    );
+    assert_eq!(first, "one b size");
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    app.shell_command("tab prev", &[], None);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(shown(&mut app), "one > b size | a 300 | b 200");
+    std::fs::remove_dir_all(&root).ok();
+}

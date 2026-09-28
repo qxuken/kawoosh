@@ -57,6 +57,7 @@ pub mod scroll_probe;
 pub mod secrets;
 pub mod session;
 pub mod settings;
+pub mod term_images;
 pub mod terminals;
 pub mod theme_check;
 pub mod themes;
@@ -64,6 +65,7 @@ pub mod trust;
 pub mod types;
 pub mod undo;
 pub mod whichkey;
+pub mod wrap;
 
 pub use app::Kawoosh;
 pub use palette::Pal;

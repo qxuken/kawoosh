@@ -79,6 +79,22 @@ pub struct TabTitle<'a> {
     pub panes: usize,
 }
 
+/// A segment `kawoosh.status` drew ([`Runtime::status`]): its name,
+/// its parts with their colours' words, and the command a click runs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StatusSegment {
+    pub name: String,
+    pub parts: Vec<(String, String)>,
+    pub run: Option<String>,
+}
+
+/// A change to the disk made on a thread of its own ([`Msg::FsJob`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum FsOp {
+    Remove(PathBuf),
+    Copy(PathBuf, PathBuf),
+}
+
 /// What Lua asked for. Editor-level messages are applied inside the
 /// command that ran the script; the rest reach the shell.
 #[derive(Clone, Debug, PartialEq)]
@@ -154,6 +170,14 @@ pub enum Msg {
     ListDir {
         token: u64,
         path: PathBuf,
+    },
+    /// `kawoosh.fs.remove(path, fn)` and `fs.copy(a, b, fn)`: the
+    /// change made on a thread of its own, the answer to
+    /// `Runtime::fs_done` under `token` (`IoMsg::FsDone`) — a tree of
+    /// fifty gigabytes removed without the frame waiting for it.
+    FsJob {
+        token: u64,
+        op: FsOp,
     },
     /// `kawoosh.fs.walk(root, fn)`: every file under the root as git
     /// sees it, walked on a thread of its own, the answer to
@@ -871,6 +895,10 @@ pub struct Runtime {
     /// A test script under way (`kawoosh test`): the coroutine its
     /// chunk runs as.
     test: RefCell<Option<mlua::Thread>>,
+    /// The pane the keyboard is in, as the shell last said it: a
+    /// command's `ctx.pane`, so a view shown in several panes knows
+    /// which one a key was for (`du.lua`, roadmap step 60).
+    pane: std::cell::Cell<u64>,
 }
 
 type DiagKey = (u64, Vec<(BufferId, kawoosh_doc::Version)>);
@@ -918,6 +946,7 @@ impl Runtime {
                 memory_snap: RefCell::new(None),
                 diag_snap: RefCell::new(None),
                 test: RefCell::new(None),
+                pane: std::cell::Cell::new(0),
             },
             ext,
         ))
@@ -1477,6 +1506,11 @@ impl Runtime {
     }
 
     /// Runs the Lua command `name`.
+    /// The pane the keyboard is in now: what a command's `ctx.pane` says.
+    pub fn set_pane(&self, pane: u64) {
+        self.pane.set(pane);
+    }
+
     pub fn run_command(&self, name: &str, ctx: &Ctx) {
         let f: mlua::Function = match self
             .lua
@@ -1496,6 +1530,7 @@ impl Runtime {
         let _ = t.set("form", ctx.form.name());
         let _ = t.set("bang", ctx.bang());
         let _ = t.set("query", ctx.query());
+        let _ = t.set("pane", self.pane.get());
         if let Err(e) = f.call::<()>((name, t)) {
             self.queue
                 .borrow_mut()
@@ -1586,6 +1621,93 @@ impl Runtime {
                 None
             }
         }
+    }
+
+    /// The segments `kawoosh.status` added at `place` (`title`, `tabs`),
+    /// each asked what it shows now, in their order: the parts, each
+    /// with its colour's word, and what a click runs. A segment whose
+    /// `fn` fails is taken away and says why once.
+    pub fn status(&self, place: &str) -> Vec<StatusSegment> {
+        let Ok(kawoosh) = self.lua.globals().get::<Table>("kawoosh") else {
+            return Vec::new();
+        };
+        let Ok(all) = kawoosh.get::<Table>("_status") else {
+            return Vec::new();
+        };
+        let mut found: Vec<(f64, String, Table)> = all
+            .pairs::<String, Table>()
+            .flatten()
+            .filter(|(_, t)| t.get::<String>("place").is_ok_and(|p| p == place))
+            .map(|(name, t)| (t.get::<f64>("order").unwrap_or(0.0), name, t))
+            .collect();
+        found.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        let mut out = Vec::new();
+        for (_, name, t) in found {
+            let Ok(f) = t.get::<mlua::Function>("fn") else {
+                continue;
+            };
+            let ctx = self.lua.create_table().unwrap();
+            let _ = ctx.set("place", place);
+            let got = match f.call::<LV>(ctx) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = all.set(name.as_str(), LV::Nil);
+                    self.queue
+                        .borrow_mut()
+                        .push(Msg::Echo(format!("status `{name}`: {e} (taken away)")));
+                    continue;
+                }
+            };
+            let part = |v: &LV| -> Option<(String, String)> {
+                match v {
+                    LV::String(s) => Some((s.to_string_lossy(), "fg".into())),
+                    LV::Table(p) => Some((
+                        p.get::<String>("text").ok()?,
+                        p.get::<String>("color").unwrap_or_else(|_| "fg".into()),
+                    )),
+                    _ => None,
+                }
+            };
+            let parts: Vec<(String, String)> = match &got {
+                LV::Nil => continue,
+                LV::Table(tt) if tt.contains_key("text").unwrap_or(false) => {
+                    part(&got).into_iter().collect()
+                }
+                LV::Table(tt) => tt
+                    .sequence_values::<LV>()
+                    .flatten()
+                    .filter_map(|v| part(&v))
+                    .collect(),
+                other => part(other).into_iter().collect(),
+            };
+            if parts.iter().all(|(t, _)| t.is_empty()) {
+                continue;
+            }
+            out.push(StatusSegment {
+                name,
+                parts,
+                run: t.get::<String>("run").ok(),
+            });
+        }
+        out
+    }
+
+    /// The shortest `every` a segment asked to be drawn at, seconds.
+    pub fn status_every(&self) -> Option<f64> {
+        let kawoosh = self.lua.globals().get::<Table>("kawoosh").ok()?;
+        let all = kawoosh.get::<Table>("_status").ok()?;
+        // A number, or a function answering one now — nil for none: a
+        // clock that is off asks for no wake.
+        all.pairs::<String, Table>()
+            .flatten()
+            .filter_map(|(_, t)| match t.get::<LV>("every").ok()? {
+                LV::Integer(n) => Some(n as f64),
+                LV::Number(n) => Some(n),
+                LV::Function(f) => f.call::<Option<f64>>(()).ok().flatten(),
+                _ => None,
+            })
+            .filter(|s| *s > 0.0)
+            .min_by(f64::total_cmp)
     }
 
     /// Tells the plugins a scratch buffer came back with a session,
@@ -1909,6 +2031,25 @@ impl Runtime {
                 .map_err(|e| e.to_string())
         });
         self.answer(token, result, "fs.walk");
+    }
+
+    /// A change `fs.remove` or `fs.copy` made on a thread of its own:
+    /// its callback called with `true`, or `nil` and why not.
+    pub fn fs_done(&self, token: u64, result: Result<(), String>) {
+        let Some(key) = self.jobs.borrow_mut().waiting.remove(&token) else {
+            return;
+        };
+        let Ok(f) = self.lua.registry_value::<mlua::Function>(&key) else {
+            return;
+        };
+        let _ = self.lua.remove_registry_value(key);
+        let args = match result {
+            Ok(()) => (LV::Boolean(true), LV::Nil),
+            Err(e) => (LV::Nil, LV::String(self.lua.create_string(e).unwrap())),
+        };
+        if let Err(e) = f.call::<()>(args) {
+            self.queue.borrow_mut().push(Msg::Echo(format!("fs: {e}")));
+        }
     }
 
     fn answer(&self, token: u64, result: Result<Table, String>, what: &str) {
@@ -2962,6 +3103,28 @@ fn seed(
                 t.set(i + 1, e)?;
             }
             Ok(LV::Table(t))
+        })?,
+    )?;
+    // ---- kawoosh.lsp.counts(): the diagnostics published, counted by
+    // severity — `{ errors =, warnings =, infos =, hints = }` — without
+    // building the list `diagnostics()` does: what a status segment asks
+    // every frame (docs/design/status.md).
+    let pp = published.clone();
+    lsp.set(
+        "counts",
+        lua.create_function(move |lua, ()| {
+            let p = pp.borrow();
+            let mut n = [0usize; 4];
+            for l in p.diagnostics.iter() {
+                let s = (l.diagnostic.severity as usize).clamp(1, 4);
+                n[s - 1] += 1;
+            }
+            let t = lua.create_table()?;
+            t.set("errors", n[0])?;
+            t.set("warnings", n[1])?;
+            t.set("infos", n[2])?;
+            t.set("hints", n[3])?;
+            Ok(t)
         })?,
     )?;
     // ---- kawoosh.lsp.diagnostics({ buffer =, root =, severity = })
@@ -4517,15 +4680,53 @@ fn seed(
             kfs::rename(&expand(&a), &expand(&b)).map_err(io_err)
         })?,
     )?;
+    // `fs.copy(a, b)` and `fs.remove(path)` answer now; with a last
+    // argument `fn`, the change is made on a thread of its own and
+    // `fn(true)` — or `fn(nil, why)` — is called when it is done, so a
+    // tree of fifty gigabytes holds up nothing (`dir`'s writes).
+    let qq = q(queue);
+    let jj = jobs.clone();
     fs.set(
         "copy",
-        lua.create_function(|_, (a, b): (String, String)| {
-            kfs::copy(&expand(&a), &expand(&b)).map_err(io_err)
-        })?,
+        lua.create_function(
+            move |lua, (a, b, cb): (String, String, Option<mlua::Function>)| {
+                let Some(cb) = cb else {
+                    return kfs::copy(&expand(&a), &expand(&b)).map_err(io_err);
+                };
+                let token = {
+                    let mut j = jj.borrow_mut();
+                    let token = j.token();
+                    j.waiting.insert(token, lua.create_registry_value(cb)?);
+                    token
+                };
+                qq.borrow_mut().push(Msg::FsJob {
+                    token,
+                    op: FsOp::Copy(expand(&a), expand(&b)),
+                });
+                Ok(())
+            },
+        )?,
     )?;
+    let qq = q(queue);
+    let jj = jobs.clone();
     fs.set(
         "remove",
-        lua.create_function(|_, p: String| kfs::remove(&expand(&p)).map_err(io_err))?,
+        lua.create_function(move |lua, (p, cb): (String, Option<mlua::Function>)| {
+            let Some(cb) = cb else {
+                return kfs::remove(&expand(&p)).map_err(io_err);
+            };
+            let token = {
+                let mut j = jj.borrow_mut();
+                let token = j.token();
+                j.waiting.insert(token, lua.create_registry_value(cb)?);
+                token
+            };
+            qq.borrow_mut().push(Msg::FsJob {
+                token,
+                op: FsOp::Remove(expand(&p)),
+            });
+            Ok(())
+        })?,
     )?;
     fs.set(
         "create",

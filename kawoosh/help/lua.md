@@ -92,11 +92,13 @@ return {
 `kawoosh.fs` works on paths as you would write them (`~/x`, `../y`), relative to the working directory, and on a remote host's paths too (see [remote](remote.md)). A failed operation raises an error naming the path.
 
 - `read(path)`, `write(path, text)`, `exists`, `is_file`, `is_dir`, `stat`, `create(path, is_dir)`, `rename(a, b)`, `copy(a, b)`, `remove(path)`.
-- `list(path)` lists a folder now; `list(path, fn)` reads it in the background and calls `fn(entries)`. `walk(root, fn)` lists every file under a folder as git sees it, in the background.
+- `list(path)` lists a folder now; `list(path, fn)` reads it in the background and calls `fn(entries)`. `copy(a, b, fn)` and `remove(path, fn)` do the same for a change: made in the background, then `fn(true)`, or `fn(nil, why)`. `walk(root, fn)` lists every file under a folder as git sees it, in the background.
 - Path helpers: `join`, `parent`, `basename`, `relative`, `expand`, `short`, `home`, `cwd`, `chdir`.
 - `watch(name, paths, fn)` calls `fn(changed)` when the files or folders change; `watch(name, nil)` stops it.
 
-`kawoosh.spawn(cmd, { cwd = ..., on_lines = fn, on_exit = fn })` runs a shell command and hands you its output as it comes; `kawoosh.kill(token)` stops it. `kawoosh.store(name)` is a small store kept between runs: `get(key)`, `set(key, value)`, `del(key)`, `keys()`. `kawoosh.tool(name, { cmd = ... })` adds a launch target for `:tool` and the tools picker (`<leader>tt`).
+`kawoosh.status(name, fn, { place = "title" | "tabs", order = n, every = seconds, run = "command" })` adds a segment to the right of the title bar or the tab strip: `fn(ctx)` returns what it shows now — `nil` to hide, a string, `{ text = ..., color = "dim" }`, or a list of those — and is asked each time the window draws; `every` redraws it on the clock (a clock of your own); `run` is what a click runs. `kawoosh.status(name, nil)` removes it. `kawoosh.lsp.counts()` gives the diagnostics' `errors`, `warnings`, `infos` and `hints` cheaply, for such a segment.
+
+`kawoosh.spawn(cmd, { cwd = ..., on_lines = fn, on_exit = fn })` runs a shell command and hands you its output as it comes; `kawoosh.kill(token)` stops it. `kawoosh.store(name)` is a small store kept between runs: `get(key)`, `set(key, value)`, `del(key)`, `keys()`. `kawoosh.tool(name, { cmd = ... })` adds a launch target for `:tool` and the tools picker (`<leader>tt`). `:tool NAME` goes to the tool's terminal in this tab, or starts one here: each tab runs its own. With `dock = true` the tool lives in the dock, one for every tab, and `:tool NAME` shows or hides it.
 
 ## Talking to the user
 

@@ -4135,6 +4135,13 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>oo", "themes"),
         ("<leader>of", "fonts"),
         ("<leader>ol", "theme lab"),
+        // Soft wrap (wrap.md): the focused pane wrapped or not, and the
+        // caret a row on screen — `j` `k` stay a line each, as vim's.
+        ("<leader>ow", "wrap"),
+        ("gj", "move down row"),
+        ("gk", "move up row"),
+        ("g<Down>", "move down row"),
+        ("g<Up>", "move up row"),
     ];
     for (k, c) in n {
         km.bind(Normal, k, c);
@@ -4220,6 +4227,12 @@ pub fn default_keymap(km: &mut Keymap) {
         ("~", "case toggle"),
     ];
     for (k, c) in op {
+        km.bind(OperatorPending, k, c);
+    }
+    // After an operator `gj` `gk` are the line moves: a screen row is
+    // the shell's, resolved after the key, and no motion an operator
+    // can wait for (wrap.md Decision 2).
+    for (k, c) in [("gj", "move down"), ("gk", "move up")] {
         km.bind(OperatorPending, k, c);
     }
     // Pane mode (docs/design/keys.md "Panes without a view"): the

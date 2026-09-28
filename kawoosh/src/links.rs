@@ -25,6 +25,10 @@ pub enum Target {
         col: Option<usize>,
         anchor: Option<String>,
     },
+    /// A file on another machine: a `file://` link a program printed on
+    /// purpose (OSC 8) naming a host that is neither this one nor the
+    /// terminal's domain. Shown, not opened.
+    Elsewhere(String),
 }
 
 /// A link and the bytes of the text it is drawn in.
@@ -234,6 +238,10 @@ impl Kawoosh {
                     false
                 }
             },
+            Target::Elsewhere(uri) => {
+                self.ed.message = format!("{uri}: a file on another machine");
+                false
+            }
             Target::Path {
                 path,
                 line,

@@ -73,8 +73,8 @@ inline node, virtual text a run in a `role="none"` wrapper.
 | R4.3 | The wheel and a drag past the edge arrive as whole lines the app adds to its own `top` | ✓ | `on_scroll` → `{kind="scroll", lines}` (ADR 0029). M4 |
 | R4.4 | A click says which cell, for `gf` from terminal output | ✓ | pointer payload `cell: {row, col}` (C20). M4 |
 | R4.5 | Underline color and undercurl per cell (SGR 58 / 4:3) | ✓ | **K4, alpha.13**: `Cell::ul`, `cells::flags::WAVY` / `DOTTED`. M4 |
-| R4.6 | Hyperlinks per cell (OSC 8) | ○ | not MVP; the path-pattern table covers the common case. A `Cell` link id + a `link` field on the pointer payload is the shape when asked. |
-| R4.7 | The middle button, for the Linux primary-selection paste | ○ | kui's own wish (C2). |
+| R4.6 | Hyperlinks per cell (OSC 8) | ✓ | not kui's after all (roadmap step 54, 2026-09-28): `term` keeps each cell's link (alacritty's) and kawoosh finds the run under the pointer's `cell: {row, col}` (R4.4), so the grid needs no link field. |
+| R4.7 | The middle button, for the Linux primary-selection paste | ✓ | kui F105 (2026-09-28, roadmap step 55): `on_button` + `buttons` — a node claims the non-primary buttons, captured from press to release, with `cell` on a grid; a claimed secondary press is the node's instead of a context menu. kawoosh's middle button pastes the clipboard (macOS has no primary selection). |
 | R4.8 | Blink, dim, inverse, hidden, and the cursor's own color | ✓ | app-side attributes resolved into `fg`/`bg` before the grid; cursor takes a `Color`. |
 
 ## 5. Input
@@ -136,7 +136,9 @@ kawoosh's account — these are on the road, in roughly this order:
   graphics, so this is a `term` change (an APC hook feeding registered
   images placed over `cells`) before it is a kui one. kui's side — an
   image placed at a cell rect, clipped to the grid — is `image` + a
-  float, which exists.
+  float, which exists. Built 2026-09-28 (roadmap step 56,
+  kitty-graphics.md) with nothing new from kui: an image under the text
+  is opened before the grid, which is then a float of its own.
 - **Multi-window** (`ui.window`) — a detached pane on a second monitor.
 - **`enter` / `exit` / keyframes** — beyond the split-ratio transition,
   once the chrome is settled enough to animate. *Built by alpha.16*
@@ -152,8 +154,8 @@ kawoosh's account — these are on the road, in roughly this order:
 
 K1–K4 shipped in alpha.13 (2026-09-15). What is left is kui's own wish
 list, unchanged in priority: window position (M8's session restore), the
-middle button, OSC 8 — and, from §9, the kitty graphics path once `term`
-can feed it.
+middle button — OSC 8 turned out kawoosh's own (R4.6), and so did §9's
+kitty graphics, `image` and a float being enough.
 
 Everything else kawoosh needs, alpha.13 has, and the doors are named
 above so that a bump that moves one is a search in this file.

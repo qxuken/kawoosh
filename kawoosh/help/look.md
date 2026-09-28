@@ -90,6 +90,12 @@ The fonts pane lists every family as a card drawn in that font, with two lines o
 | `font.features` | `""` | OpenType features, such as `-liga` or `tnum` |
 | `font.chrome_size` | `0` | the tabs' and strips' text size; 0 follows `font.size` |
 
+## Soft wrap
+
+Long lines run past the pane's edge unless you wrap them. `editor.wrap = "word"` wraps every editor pane at its width, breaking between words; `"glyph"` breaks anywhere. `editor.wrap_languages = { "text", "gitcommit" }` wraps those languages' buffers only. `:wrap` (`<leader>ow`) turns wrapping on or off for the pane you are in, until you quit.
+
+A wrapped line keeps its number on its first row only. `j` and `k` still move a whole line at a time, as in vim; `gj` and `gk` (or `g` with an arrow) move one row on screen, keeping the caret's position across. A line longer than 4096 bytes is not wrapped, so a minified file stays fast.
+
 ## Markdown
 
 A markdown buffer is drawn rendered: the marks hidden, headings larger, prose wrapped to the pane, lists with bullets and check boxes, tables aligned, block quotes with a bar, code blocks on their own background, and local images drawn in place. It is still the file: motions, search, undo and `:w` work on the source, and the line with the caret on it (every line of a visual selection) shows its source so you can edit the marks.

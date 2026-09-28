@@ -1211,12 +1211,7 @@ impl Kawoosh {
     /// The tool a terminal pane runs, as a moment key, if it is one's.
     fn tool_of_pane(&self, pane: crate::layout::PaneId) -> Option<MomentKey> {
         let t = self.term_of(pane)?;
-        let name = self
-            .scripting
-            .tool_terms
-            .iter()
-            .find(|(_, id)| **id == t)
-            .map(|(n, _)| n.clone())?;
+        let name = self.terms.spawned.get(&t)?.tool.clone()?;
         Some(MomentKey::new("tool", &name, self.moments.workspace()))
     }
 

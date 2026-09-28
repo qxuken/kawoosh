@@ -1209,7 +1209,8 @@ fn a_listing_previews_the_entry_under_the_caret() {
     // This one reads its directories on the io thread, as the app does.
     app.jobs_inline = false;
     ex(&mut d, &mut app, &format!("dir {}", dir.display()));
-    assert_eq!(d.line_rows(), [""], "the scratch, not read yet");
+    // Read on the io thread: a fast one may be back before this looks,
+    // so the unread scratch is not asserted.
     app.wait_for_jobs();
     d.frame(&mut app);
     assert_eq!(d.line_rows(), ["../", "sub/", "a.txt", "b.txt"]);
@@ -2930,4 +2931,96 @@ fn the_bundled_plugins_take_no_engine_command_name() {
     let v = app.focused_view().unwrap();
     let head = app.ed.views[v].sels.primary().head;
     assert_eq!(head, 12, "`*` on the next foo: {}", app.ed.message);
+}
+
+/// A write's slow half off the frame (roadmap step 58): a directory
+/// deleted is gone from its listing as the write is applied — put aside
+/// by a rename and removed on a thread of its own — and a copy is made
+/// on one too, the rename after it waiting for it, so a file copied and
+/// renamed in one write is copied from before it moves. The summary
+/// comes when the last removal is back, and nothing put aside is left.
+#[test]
+fn a_write_deletes_and_copies_off_the_frame() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-dir-bg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dir1/big/deep")).unwrap();
+    std::fs::create_dir_all(dir.join("dir2")).unwrap();
+    for i in 0..200 {
+        std::fs::write(dir.join(format!("dir1/big/deep/f{i}")), "x".repeat(4096)).unwrap();
+    }
+    std::fs::write(dir.join("dir1/file.txt"), "text").unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("dir2").display()),
+    );
+    ex(&mut d, &mut app, "vsplit");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("dir1").display()),
+    );
+    assert_eq!(d.line_rows(), ["../", "../", "big/", "file.txt"]);
+    // In dir1: `big/` deleted, `file.txt` yanked and renamed; pasted in
+    // dir2.
+    d.keys(&mut app, "jdd");
+    d.keys(&mut app, "yy");
+    d.keys(&mut app, "ccmoved.txt");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.press(&mut app, "<C-w>");
+    d.keys(&mut app, "h");
+    d.keys(&mut app, "p");
+    d.frame(&mut app);
+    app.jobs_inline = false;
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert!(
+        d.confirm_texts()[0].starts_with("3 change(s) in 2 directories"),
+        "{:?}",
+        d.confirm_texts()
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    // At once: `big` is no longer where it was, and no listing shows
+    // what it was put aside as.
+    assert!(
+        !dir.join("dir1/big").exists(),
+        "put aside by the write itself"
+    );
+    for _ in 0..40 {
+        app.wait_for_jobs();
+        d.frame(&mut app);
+        if app
+            .notes
+            .shown
+            .iter()
+            .any(|s| s.text == "3 change(s) applied")
+        {
+            break;
+        }
+    }
+    assert!(
+        app.notes
+            .shown
+            .iter()
+            .any(|s| s.text == "3 change(s) applied"),
+        "{:?}",
+        app.notes.shown.iter().map(|s| &s.text).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("dir2/file.txt")).unwrap(),
+        "text",
+        "copied before the rename"
+    );
+    assert!(dir.join("dir1/moved.txt").is_file() && !dir.join("dir1/file.txt").exists());
+    let left: Vec<String> = std::fs::read_dir(dir.join("dir1"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, ["moved.txt"], "nothing put aside is left");
+    assert!(d.line_rows().iter().all(|r| !r.contains("~gone")));
+    std::fs::remove_dir_all(&dir).ok();
 }

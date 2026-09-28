@@ -1228,7 +1228,9 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   `:cd` out. `:trust` allows the cwd's untrusted files, `:trust
   revoke` forgets, `:trust?` says where each stands. Without a store
   the grant holds for the run.
-- **A theme that holds still** — open [todo]; step 28. Seen on
+- **A theme that holds still** — done 2026-09-25 [todo]; step 28
+  (`themes.rs`: Rosé Pine pinned, the selection held legible; the
+  registry of step 41 after it). What the entry said before: seen on
   Windows: the derived theme took the system's accent, and the
   selection it derived from it made the text under it unreadable.
   What is there: with no `theme.*` set, kui derives every role from the
@@ -1762,10 +1764,11 @@ follow the theme every frame (`panes.rs`).
   own beep (a motion that fails, a search with no match) is the same
   setting's second half, `editor.bell`, off by default — vim users
   turn it off first.
-- **Mouse buttons and OSC 8** — later [kui.md, req §10]. kui routes
+- **Mouse buttons and OSC 8** — done 2026-09-28: OSC 8 in step 54,
+  not kui's after all; the buttons in step 55 over kui F105. What it said before: kui routes
   only the primary button; the middle button and hyperlinks are kui's
   wish list, not kawoosh's.
-- **Kitty graphics** — deferred [req §9]. A `term` APC hook before it is
+- **Kitty graphics** — done 2026-09-28 [req §9]; step 56, kitty-graphics.md. A `term` APC hook before it is
   a kui matter.
 - **Terminals in sessions** — done 2026-09-23 [mvp.md notes, use
   2026-09-22]; step 15. The directory is `Terminal::cwd()`: what the
@@ -2446,13 +2449,185 @@ then breadth.
     the commands picker as an alias, and a dozen doc strings behind the
     code, each fixed.
 
+Asked 2026-09-28 ("osc 8, mouse and kitty graphics, than we will
+think on a kitty keyboard"), the terminal's third round, in that order:
+
+54. ~~**OSC 8 hyperlinks**: a link a program prints on purpose (`ls
+    --hyperlink`, `gcc`, `cargo`, `delta`, `gh`) is what ⌘-hover
+    underlines and ⌘-click opens, before the text is searched for one;
+    its target shown while hovered, since the text need not be the
+    link; a `file://` URL a path on the terminal's own host or domain,
+    with a line when its fragment gives one.~~ Landed 2026-09-28, and
+    not kui's: alacritty keeps a link per cell, but `term`'s handler
+    wrapper never passed OSC 8 on, so every link was dropped as it
+    came. Forwarded now (the kitty keyboard's and `modifyOtherKeys`'
+    sequences still are not, on purpose: `encode_key` speaks neither —
+    step 57); `Terminal::hyperlink_at` is the run of cells with the link
+    under a cell, `Terminal::file_link` a `file://` URL's path here or
+    on the domain, with `#12` / `#L12` a line. `terminals.rs`'s
+    `term_link` asks for it before searching the text; the hover draws
+    the address at the grid's foot; another machine's file is
+    `Target::Elsewhere`, said and not opened. Tests: `term`'s two,
+    `kawoosh/tests/links.rs`'s `a_programs_link_in_a_terminal_opens_its_address`.
+55. ~~**Mouse buttons**: the middle button pastes, and the secondary and
+    middle buttons reach a program that asked for mouse reports (tmux,
+    htop, a TUI's menus). kui routes the primary button to a widget
+    and the secondary to a context menu, so this starts as a kui round.~~
+    Landed 2026-09-28 with kui F105 (merged to kui main 9a8c852; branch `claude/kawoosh-mouse-buttons`,
+    e66939d and 01f0b49): `on_button` claims the non-primary buttons
+    for a node, `buttons` which, each captured from press to release
+    with `cell` on a grid. The grid claims the middle button always —
+    it pastes the clipboard, as ⌘V — and every button while a program
+    reports the mouse (shift keeps them the terminal's), reported in
+    xterm's numbering with motion while held for a program that asked
+    for drags. `kawoosh/tests/terminal.rs`'s
+    `the_other_buttons_paste_and_reach_a_reporting_program`.
+56. ~~**Kitty graphics**: images in the grid (`kitty +kitten icat`,
+    yazi's previews, plots) — the protocol in `term` (APC, the
+    transmit/put/delete actions, placements that scroll with their
+    cells) and a texture drawn over the grid in kui. A note first:
+    [kitty-graphics.md](kitty-graphics.md), decided 2026-09-28 — no
+    kui round after all (an image node floated at its cell), the
+    decode on a worker, animation, shared memory and unicode
+    placeholders answered "not supported" until asked.~~ Landed
+    2026-09-28 as the note decided (its "Built" says where): kitty's
+    commands in `term/src/graphics.rs`, the images drawn by
+    `kawoosh/src/term_images.rs` over the grid, under it for a
+    negative z; checked with `chafa`, `timg` and in a window.
+57. **The terminal's keys, a note** (not built until decided): the
+    kitty keyboard protocol, so a program can tell `<C-Tab>` from
+    `<Tab>` and `<S-CR>` from `<CR>` — which asks what kawoosh keeps
+    while a terminal has the keys: a mode for it, a leader to escape
+    it, and before that a map of the commands and keys as they connect
+    (a graph over the registry and the keymap) to regroup them on.
+
+From the todo, 2026-09-28 — nine items added the same night, each read
+against the code:
+
+- **`dir` freezes the app on a long delete** (a 50 GB `target`): a
+  write's plan runs on the frame's thread — `dir.lua`'s apply calls
+  `fs.remove` and `fs.copy` one after another, and `fs.remove` is
+  `remove_dir_all`, so nothing draws until the last file is gone.
+- **`:tool git` in a second tab does nothing**: `tool_terms` is keyed by
+  the tool's name alone; when its terminal lives in another tab,
+  `Kawoosh::tool` finds the terminal, finds no pane for it among this
+  tab's, and returns.
+- **`:du` in another tab takes over the first**: `du.lua` keeps one
+  module-level state (`S`) under one view name, so a second pane is the
+  first's walk, cursor and marks.
+- **The which-key shows what does nothing here**: `whichkey_rows` lists
+  every next key, with no look at its binding's `when` or its command's,
+  so a pane's keys show in an editor and a group whose every key is off
+  still opens.
+- **Scrolling** (three items, one question): a new swipe inside a
+  scroller already at its limit should go on to what holds it, unless
+  told otherwise (chaining); a swipe that started elsewhere is stopped
+  dead by a terminal it passes over, where it should go on scrolling
+  what it started on (latching — and a terminal that wants no scroll
+  events should not take them); and a hovered scroller should be
+  scrolled in its own direction. kui's wheel routing, the same ground
+  as F104 (the trackpad's axis lock, built today by another session).
+- **Wrap settings for the editor**: no soft wrap in an editor pane
+  today, only the markdown buffer's rendered rows; nothing in settings.
+- **A configurable tab bar and title**: diagnostics counts, a clock (for
+  a Windows taskbar kept hidden). What is there: `kawoosh.tab_title(fn)`
+  for each tab's label (step 50); nothing for the strip's own space or
+  the window's title.
+
+In order — the bugs first, then what needs deciding:
+
+58. ~~**`dir`'s writes off the frame**: a plan's deletes renamed aside at
+    once (the step already done for a delete that something takes the
+    place of) and removed on the io thread, a copy likewise, the
+    listing marked busy and read again when they land; a notification
+    with progress for one that takes a while.~~ Landed 2026-09-28:
+    `fs.remove(path, fn)` and `fs.copy(a, b, fn)` make the change on a
+    thread of their own (`Msg::FsJob`, `IoMsg::FsDone`) and call back;
+    `dir.lua`'s `apply` puts every delete aside by a rename beside it
+    (`.~goneN~`, which no listing shows), runs the copies in the
+    background with the renames and creates waiting for them, reads the
+    listings again once those are done, and removes what it put aside in
+    the background — "removing N in the background" in the log when a
+    directory is among them — the summary when the last is back. No
+    busy mark: the entry is already gone from the listing. `du`'s
+    `done()` runs as the listings are read again.
+    `kawoosh/tests/lua.rs`'s `a_write_deletes_and_copies_off_the_frame`.
+59. ~~**A tool per tab**: `:tool NAME` opens the tool in this tab when its
+    terminal is another tab's — keyed by tab, a docked tool staying the
+    workspace's as the dock is (step 32).~~ Landed 2026-09-28: the
+    name-keyed `tool_terms` is gone — each terminal already says what
+    tool it runs (`terms.spawned`) — and `tool_pane` looks for one in
+    the dock for a docked tool, in the tab in front for the rest.
+    `kawoosh/tests/terminal.rs`'s
+    `a_split_tool_is_each_tabs_and_a_docked_one_the_windows`.
+60. ~~**`:du` panes each their own**: the pane's state per pane, as a
+    view instance, and a second `:du` a second pane.~~ Landed
+    2026-09-28: a Lua command's `ctx` says the pane the keyboard is in
+    (`ctx.pane`, the view's own `ctx.pane` when it is one — the shell
+    tells the runtime as it syncs its facts), and `du.lua` keeps a
+    state per pane, the view, its events and its commands each taking
+    their pane's; `:du` starts its walk at once and the pane with the
+    keyboard adopts it on its next draw — the one it opened, or this
+    tab's it focused. `du.state([pane])`, `du.panes()`.
+    `kawoosh/tests/du.rs`'s `a_du_pane_in_another_tab_is_its_own`.
+61. ~~**The which-key shows what works here**: a row only for a binding
+    whose `when` holds and whose command's does, a group only when a
+    key under it does; `:keys` (the root) the same.~~ Landed 2026-09-28.
+    The single keys were filtered already (`pick_binding`); what showed
+    was the groups — listed whatever was under them, counted by every
+    key, and a key with a binding off here but live keys under it
+    dropped whole. `live_next` counts the keys under a prefix that work
+    here, four levels down, with the same fall-through the rows have
+    (visual and operator-pending to normal, a pane's shared prefixes);
+    a row stays when its binding runs or something under it does, a
+    group's `+N` is the live count, and a card with nothing left is not
+    drawn. `kawoosh/tests/whichkey.rs`'s
+    `a_which_key_lists_only_what_works_here`.
+62. ~~**Scrolling, a note first** (kui's wheel routing): latching (a
+    gesture keeps to the scroller it began on until it ends), chaining
+    (a new gesture at a scroller's limit goes on to its parent, with an
+    opt-out), and what "in its direction" asks of a hovered scroller —
+    decided with the user, and with the trackpad session's F104 in mind.~~
+    Landed 2026-09-28 as kui F107 (merged to kui main 52c274b; branch
+    `claude/kawoosh-scroll-gestures`, 04d47fc and e87b212; its note is kui's ADR 0038): the browser model,
+    taken for the user when "do all in order" left the question open —
+    a gesture (a swipe and its momentum, a wheel spun without a pause,
+    as the runner delimits them) picks its target per axis when it first
+    moves on it, the innermost scroller under the pointer that can move
+    that way, and keeps it to the end; a container at its limit is
+    passed for the one around it unless it says `overscroll:
+    "contain"`; an `onScroll` node takes the axes its `scrollAxes` says.
+    "In its direction" is F104's axis lock with that: a swipe locked to
+    a list's axis is the list's, one locked to the other goes on to the
+    strip. kawoosh's half: the terminal's grid takes `y` only
+    (`scroll_axes`), so a sideways swipe starting over it moves the
+    strip. Not built (kui's reason): a handler that says per gesture it
+    cannot move, so a terminal at the top of its history still takes a
+    vertical swipe over it. `kawoosh/tests/layout.rs`'s
+    `a_sideways_swipe_over_a_terminal_moves_the_strip`.
+63. ~~**Soft wrap in the editor, a note first**: what is asked — a
+    setting per language or buffer, where the caret moves by screen
+    line (`gj` `gk`), and what the gutter and the selections do on a
+    wrapped line.~~ Landed 2026-09-28: [wrap.md](wrap.md), decided and
+    built — `editor.wrap` (`off`, `word`, `glyph`),
+    `editor.wrap_languages`, `:wrap` (`<leader>ow`) for one pane; the
+    markdown buffer's rendered-row path lifted for any pane that wraps;
+    `j` `k` a line, `gj` `gk` a row on screen, resolved against kui's
+    layout; a line past 4096 bytes left unwrapped.
+64. ~~**The tab bar and the title as Lua's, a note first**: segments a
+    plugin or `init.lua` fills (the diagnostics counts, a clock), on the
+    strip's right and in the window's title, redrawn when their data
+    moves or on a timer — wezterm's `update-status` as the model.~~
+    Landed 2026-09-28: [status.md](status.md), decided and built —
+    `kawoosh.status(name, fn, opts)` on the title bar's right or the tab
+    strip's, asked each frame, woken on the wall clock for `every`; the
+    bundled `status.lua` a clock (`status.clock`) and the diagnostics'
+    counts (`status.diagnostics`, over the new `kawoosh.lsp.counts()`),
+    both off by default. The OS window's title stays kawoosh's (kui
+    sets it once).
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
-the press-and-hold toggle (kui's), mouse buttons and OSC 8 (kui's),
-an extended key protocol in the terminal (kitty's, or xterm's
-`modifyOtherKeys` — until then a pty cannot tell `<C-Tab>` from
-`<Tab>`, so `<C-Tab>` `<C-S-Tab>` are the tabs' from every pane,
-2026-09-27; whether a program gets them back is decided with it),
-kitty graphics and native extensions (deferred), WSL (domains.md's
+the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision
 3's after — when the walk's cap or the poll hurt).
 

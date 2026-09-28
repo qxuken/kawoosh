@@ -13,8 +13,21 @@ use kawoosh_term::{TermSize, Terminal, encode_key};
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
 use crate::layout::{Content, SplitDir};
+use crate::links::Target;
 
 pub type TermId = u64;
+
+/// A link on a terminal's screen ([`Kawoosh::term_link`]).
+struct TermLink {
+    target: Target,
+    /// The columns of its row it covers.
+    cols: std::ops::Range<usize>,
+    /// The address a program printed with it (OSC 8), where the text
+    /// need not be it.
+    uri: Option<String>,
+    /// Where a relative path is looked for.
+    bases: Vec<PathBuf>,
+}
 
 /// A port on a host's loopback for one terminal's way back to this
 /// window (`-R`): from the high range, different for each terminal —
@@ -382,7 +395,6 @@ impl Kawoosh {
             match spawned {
                 Some(id) => {
                     if let Some(name) = p.tool {
-                        self.scripting.tool_terms.insert(name.clone(), id);
                         self.terms.spawned.entry(id).or_default().tool = Some(name);
                     }
                 }
@@ -636,17 +648,38 @@ impl Kawoosh {
         }
     }
 
-    /// The link at `(row, col)` of terminal `id`'s screen, the columns it
-    /// covers, and where a path in it is looked for: the terminal's
-    /// directory, then the working directory. A column is a character
-    /// of the row's text.
-    fn term_link(
-        &self,
-        id: TermId,
-        row: usize,
-        col: usize,
-    ) -> Option<(crate::links::Link, std::ops::Range<usize>, Vec<PathBuf>)> {
+    /// The link at `(row, col)` of terminal `id`'s screen: the one a
+    /// program printed there on purpose (OSC 8) first, else one found in
+    /// the row's text. A path in the text is looked for in the
+    /// terminal's directory, then the working directory.
+    fn term_link(&self, id: TermId, row: usize, col: usize) -> Option<TermLink> {
         let t = self.terms.map.get(&id)?;
+        let mut bases = vec![t.cwd().unwrap_or_else(|| self.cwd.clone())];
+        if !bases.contains(&self.cwd) {
+            bases.push(self.cwd.clone());
+        }
+        if let Some(h) = t.hyperlink_at(row, col) {
+            let target = if h.uri.starts_with("file:") {
+                match t.file_link(&h.uri) {
+                    Some((path, line)) => Target::Path {
+                        path: path.display().to_string(),
+                        line,
+                        col: None,
+                        anchor: None,
+                    },
+                    None => Target::Elsewhere(h.uri.clone()),
+                }
+            } else {
+                Target::Url(h.uri.clone())
+            };
+            return Some(TermLink {
+                target,
+                cols: h.cols,
+                uri: Some(h.uri),
+                bases,
+            });
+        }
+        // A column of the text is a character of the row's.
         let text = t.row_text(row);
         let at = text
             .char_indices()
@@ -656,28 +689,31 @@ impl Kawoosh {
         let link = crate::links::link_at(&text, at)?;
         let first = text[..link.span.start].chars().count();
         let cols = first..first + text[link.span.clone()].chars().count();
-        let mut bases = vec![t.cwd().unwrap_or_else(|| self.cwd.clone())];
-        if !bases.contains(&self.cwd) {
-            bases.push(self.cwd.clone());
-        }
-        Some((link, cols, bases))
+        Some(TermLink {
+            target: link.target,
+            cols,
+            uri: None,
+            bases,
+        })
     }
 
-    /// The columns of terminal `id`'s screen row `row` a ⌘-click at `col`
-    /// would open: a URL's, or a path's when it names a file or a
-    /// directory there — so the hover underlines only what a click will
-    /// open.
+    /// What a ⌘-click at `(row, col)` of terminal `id`'s screen would
+    /// open, for the hover to underline: the columns of a program's link
+    /// (OSC 8) and its address, since its text need not be it; or of a
+    /// URL, or a path that names a file or a directory there, in the
+    /// text.
     pub(crate) fn location_cols(
         &self,
         id: TermId,
         row: usize,
         col: usize,
-    ) -> Option<std::ops::Range<usize>> {
-        let (link, cols, bases) = self.term_link(id, row, col)?;
-        match link.target {
-            crate::links::Target::Url(_) => Some(cols),
-            crate::links::Target::Path { path, .. } => {
-                crate::links::resolve(&path, &bases).map(|_| cols)
+    ) -> Option<(std::ops::Range<usize>, Option<String>)> {
+        let link = self.term_link(id, row, col)?;
+        match &link.target {
+            _ if link.uri.is_some() => Some((link.cols, link.uri)),
+            Target::Url(_) | Target::Elsewhere(_) => Some((link.cols, None)),
+            Target::Path { path, .. } => {
+                crate::links::resolve(path, &link.bases).map(|_| (link.cols, None))
             }
         }
     }
@@ -686,11 +722,11 @@ impl Kawoosh {
     /// in the OS, a path in an editor pane at its line: `gx` across the
     /// terminal/editor boundary (Decision 5c).
     pub fn open_location_at(&mut self, id: TermId, row: usize, col: usize) -> bool {
-        let Some((link, _, bases)) = self.term_link(id, row, col) else {
+        let Some(link) = self.term_link(id, row, col) else {
             self.ed.message = "no link under the pointer".into();
             return false;
         };
-        self.follow_link(link.target, &bases)
+        self.follow_link(link.target, &link.bases)
     }
 
     /// Opens `path` in an editor pane — the focused one, or a split

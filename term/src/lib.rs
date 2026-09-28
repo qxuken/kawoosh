@@ -3,6 +3,10 @@
 //! key bytes out to the pty, a screenful of cells per frame; scrollback
 //! as text for the materialise-into-a-buffer command.
 
+mod graphics;
+
+pub use graphics::Placed;
+
 use std::io::{Read, Write};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -49,6 +53,15 @@ pub enum MouseAction {
     Press,
     Release,
     Motion,
+}
+
+/// A link a program printed on purpose (OSC 8,
+/// [`Terminal::hyperlink_at`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hyperlink {
+    pub uri: String,
+    /// The columns of its row it covers.
+    pub cols: std::ops::Range<usize>,
 }
 
 /// The screen, ready for `ui.cells`: the app owns the `Vec` for a frame.
@@ -103,6 +116,10 @@ struct Modes {
     scrolled: u64,
     /// The scrollback's cap, what `scrolled` counts past at the cap.
     history_max: usize,
+    /// The screen was cleared since the last look: 1 the screen
+    /// (`ED 2`), 2 with its history (`ED 3`), 3 reset (`RIS`) — what the
+    /// images on it go with (`graphics.rs`).
+    cleared: u8,
 }
 
 /// Mode 2031, and the report a program under it gets on a flip, in
@@ -146,15 +163,24 @@ enum Scan {
     Esc,
     Osc,
     OscEsc,
+    /// `ESC _`: an APC, kitty's graphics commands' envelope.
+    Apc,
+    ApcEsc,
+}
+
+/// A sequence the scan found whole.
+enum Seq {
+    Osc(Vec<u8>),
+    Apc(Vec<u8>),
 }
 
 impl OscScan {
     /// The longest payload kept: a path, a mark with its options.
     const MAX: usize = 4096;
 
-    /// One byte on; the payload of an OSC that ended on it, when one
-    /// did.
-    fn step(&mut self, b: u8) -> Option<Vec<u8>> {
+    /// One byte on; the payload of an OSC or an APC that ended on it,
+    /// when one did.
+    fn step(&mut self, b: u8) -> Option<Seq> {
         match (self.state, b) {
             (Scan::Ground, 0x1b) => self.state = Scan::Esc,
             (Scan::Ground, _) => {}
@@ -162,11 +188,27 @@ impl OscScan {
                 self.state = Scan::Osc;
                 self.buf.clear();
             }
+            (Scan::Esc, b'_') => {
+                self.state = Scan::Apc;
+                self.buf.clear();
+            }
+            (Scan::Apc, 0x1b) => self.state = Scan::ApcEsc,
+            (Scan::Apc, 0x18 | 0x1a) => self.state = Scan::Ground,
+            (Scan::Apc, _) => {
+                if self.buf.len() < graphics::APC_MAX {
+                    self.buf.push(b);
+                }
+            }
+            (Scan::ApcEsc, b'\\') => {
+                self.state = Scan::Ground;
+                return Some(Seq::Apc(std::mem::take(&mut self.buf)));
+            }
+            (Scan::ApcEsc, _) => self.state = Scan::Ground,
             (Scan::Esc, 0x1b) => {}
             (Scan::Esc, _) => self.state = Scan::Ground,
             (Scan::Osc, 0x07) => {
                 self.state = Scan::Ground;
-                return Some(std::mem::take(&mut self.buf));
+                return Some(Seq::Osc(std::mem::take(&mut self.buf)));
             }
             (Scan::Osc, 0x1b) => self.state = Scan::OscEsc,
             // CAN and SUB abandon a sequence.
@@ -178,7 +220,7 @@ impl OscScan {
             }
             (Scan::OscEsc, b'\\') => {
                 self.state = Scan::Ground;
-                return Some(std::mem::take(&mut self.buf));
+                return Some(Seq::Osc(std::mem::take(&mut self.buf)));
             }
             // An escape that starts something else ends the OSC unread.
             (Scan::OscEsc, b']') => {
@@ -226,6 +268,11 @@ pub struct Terminal {
     /// Bytes a headless terminal would have sent to its process, for
     /// tests (`Terminal::take_sent`).
     sent: Vec<u8>,
+    /// Kitty's images and where they are placed (`graphics.rs`).
+    graphics: graphics::Graphics,
+    /// A cell's size in pixels, as the pty is told it
+    /// ([`Terminal::set_cell_pixels`]): what a program sizes an image by.
+    cell_px: (u16, u16),
 }
 
 impl Terminal {
@@ -330,6 +377,8 @@ impl Terminal {
                 bell: false,
                 exited: false,
                 sent: Vec::new(),
+                graphics: graphics::Graphics::default(),
+                cell_px: (0, 0),
             },
             reader,
         ))
@@ -361,6 +410,8 @@ impl Terminal {
             bell: false,
             exited: false,
             sent: Vec::new(),
+            graphics: graphics::Graphics::default(),
+            cell_px: (0, 0),
         }
     }
 
@@ -424,13 +475,28 @@ impl Terminal {
     pub fn feed(&mut self, bytes: &[u8]) {
         let mut from = 0;
         for (i, &b) in bytes.iter().enumerate() {
-            if let Some(osc) = self.scan.step(b) {
-                self.advance(&bytes[from..=i]);
-                from = i + 1;
-                self.on_osc(&osc);
+            match self.scan.step(b) {
+                Some(Seq::Osc(osc)) => {
+                    self.advance(&bytes[from..=i]);
+                    from = i + 1;
+                    self.on_osc(&osc);
+                }
+                Some(Seq::Apc(apc)) => {
+                    self.advance(&bytes[from..=i]);
+                    from = i + 1;
+                    if let Some(cmd) = apc.strip_prefix(b"G") {
+                        self.on_graphics(cmd);
+                    }
+                }
+                None => {}
             }
         }
         self.advance(&bytes[from..]);
+        self.graphics.poll(false);
+        let replies = std::mem::take(&mut self.graphics.replies);
+        if !replies.is_empty() {
+            self.send(&replies);
+        }
         let replies = std::mem::take(&mut self.modes.replies);
         if !replies.is_empty() {
             self.send(&replies);
@@ -442,6 +508,7 @@ impl Terminal {
         if bytes.is_empty() {
             return;
         }
+        let alt = self.is_alt_screen();
         self.parser.advance(
             &mut Hooked {
                 term: &mut self.term,
@@ -449,6 +516,113 @@ impl Terminal {
             },
             bytes,
         );
+        // What the images on screen go with: a clear, a reset, the
+        // alternate screen left, history's far end (`graphics.rs`).
+        match std::mem::take(&mut self.modes.cleared) {
+            0 => {}
+            3 => self.graphics.reset(),
+            n => {
+                let mut here = self.here();
+                here.top = self.line_of(0);
+                self.graphics.cleared(&here, n == 2);
+            }
+        }
+        if alt && !self.is_alt_screen() {
+            self.graphics.left_alt();
+        }
+        self.graphics.trimmed(self.oldest_line());
+    }
+
+    /// What a graphics command is told about the terminal.
+    fn here(&self) -> graphics::Here {
+        let grid = self.term.grid();
+        let point = grid.cursor.point;
+        graphics::Here {
+            line: self.cursor_line(),
+            col: point.column.0 as u16,
+            top: self.line_of(-(grid.display_offset() as i32)),
+            rows: self.size.rows,
+            cols: self.size.cols,
+            cell: (self.cell_px.0 as u32, self.cell_px.1 as u32),
+            local: self.domain.is_none(),
+            alt: self.is_alt_screen(),
+        }
+    }
+
+    /// A kitty graphics command (an APC's payload after its `G`): run,
+    /// and the cursor moved past the image it placed — right by its
+    /// columns and down by its rows less one, a column past the edge
+    /// the next line's first, as kitty moves it.
+    fn on_graphics(&mut self, cmd: &[u8]) {
+        let mut here = self.here();
+        // A command is about the live screen, not a scrolled view.
+        here.top = self.line_of(0);
+        let effect = self.graphics.command(cmd, &here);
+        if let Some((cols, rows)) = effect.cursor {
+            let mut seq = vec![b'\n'; rows.saturating_sub(1) as usize];
+            let col = here.col as usize + cols as usize;
+            if col >= here.cols as usize {
+                seq.extend_from_slice(b"\r\n");
+            } else {
+                seq.extend_from_slice(format!("\x1b[{}G", col + 1).as_bytes());
+            }
+            self.advance(&seq);
+        }
+    }
+
+    /// What is on the screen as it shows now (scrolled or not) of the
+    /// images kitty's protocol placed, lowest `z` first, those still
+    /// decoding left out ([`Terminal::poll_graphics`]).
+    pub fn images(&self) -> Vec<Placed> {
+        self.graphics.on_screen(&self.here())
+    }
+
+    /// Takes in the images whose decoding finished, and writes their
+    /// replies: true when one did, and the screen has an image to draw
+    /// it did not have.
+    pub fn poll_graphics(&mut self) -> bool {
+        let changed = self.graphics.poll(false);
+        let replies = std::mem::take(&mut self.graphics.replies);
+        if !replies.is_empty() {
+            self.send(&replies);
+        }
+        changed
+    }
+
+    /// Whether an image is still decoding: a frame to come back for.
+    pub fn graphics_busy(&self) -> bool {
+        self.graphics.busy()
+    }
+
+    /// Waits for every image still decoding (for tests).
+    pub fn settle_graphics(&mut self) {
+        self.graphics.poll(true);
+        let replies = std::mem::take(&mut self.graphics.replies);
+        if !replies.is_empty() {
+            self.send(&replies);
+        }
+    }
+
+    /// A cell's size in pixels — the window's pixels, what a program
+    /// sizes an image by: the pty is told the grid's size in them
+    /// (`TIOCGWINSZ`), and `CSI 14 t` is answered from them.
+    pub fn set_cell_pixels(&mut self, w: u16, h: u16) {
+        if (w, h) == self.cell_px {
+            return;
+        }
+        self.cell_px = (w, h);
+        self.tell_pty_size();
+    }
+
+    fn tell_pty_size(&self) {
+        if let Some(pty) = &self.pty {
+            let _ = pty.resize(PtySize {
+                rows: self.size.rows,
+                cols: self.size.cols,
+                pixel_width: self.size.cols.saturating_mul(self.cell_px.0),
+                pixel_height: self.size.rows.saturating_mul(self.cell_px.1),
+            });
+        }
     }
 
     /// An OSC the parser does not read: `7;file://host/path`, the
@@ -748,6 +922,16 @@ impl Terminal {
                     let reply = format(self.query_color(index));
                     self.send(reply.as_bytes());
                 }
+                // `CSI 14 t`: the text area in pixels.
+                Event::TextAreaSizeRequest(format) => {
+                    let reply = format(alacritty_terminal::event::WindowSize {
+                        num_lines: self.size.rows,
+                        num_cols: self.size.cols,
+                        cell_width: self.cell_px.0,
+                        cell_height: self.cell_px.1,
+                    });
+                    self.send(reply.as_bytes());
+                }
                 Event::Title(t) => self.title = t,
                 Event::ResetTitle => self.title.clear(),
                 Event::Bell => self.bell = true,
@@ -805,14 +989,7 @@ impl Terminal {
             return;
         }
         self.size = size;
-        if let Some(pty) = &self.pty {
-            let _ = pty.resize(PtySize {
-                rows: size.rows,
-                cols: size.cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            });
-        }
+        self.tell_pty_size();
         // Shrunk, the screen's top lines go into history; grown, lines
         // come back out of it: a line keeps its number (`scrolled + l`)
         // through either. (Past the cap, lines dropped off history's
@@ -1100,6 +1277,51 @@ impl Terminal {
             })
             .count();
         (grid.history_size() + point.line.0 as usize, col)
+    }
+
+    /// The link a program printed on purpose (OSC 8) at `(row, col)` of
+    /// the screen: its URI and the columns of the row it covers — the
+    /// run of cells around `col` with the same link.
+    pub fn hyperlink_at(&self, row: usize, col: usize) -> Option<Hyperlink> {
+        let grid = self.term.grid();
+        if row >= grid.screen_lines() || col >= grid.columns() {
+            return None;
+        }
+        let line = Line(row as i32 - grid.display_offset() as i32);
+        let at = grid[line][Column(col)].hyperlink()?;
+        let same = |c: usize| grid[line][Column(c)].hyperlink().as_ref() == Some(&at);
+        let mut start = col;
+        while start > 0 && same(start - 1) {
+            start -= 1;
+        }
+        let mut end = col + 1;
+        while end < grid.columns() && same(end) {
+            end += 1;
+        }
+        Some(Hyperlink {
+            uri: at.uri().to_string(),
+            cols: start..end,
+        })
+    }
+
+    /// A `file://` link's path as this terminal's, and the line its
+    /// fragment names (`#12`, `#L12`): on its domain whatever host the
+    /// URL names (`box:/…`), else here when the host is this machine.
+    /// None for another host's file, or a URL that is not a file's.
+    pub fn file_link(&self, uri: &str) -> Option<(std::path::PathBuf, Option<usize>)> {
+        let (url, fragment) = uri.split_once('#').unwrap_or((uri, ""));
+        let path = file_url_path(url, self.domain.is_some())?;
+        let path = match &self.domain {
+            Some(d) => format!("{d}:{}", path.display()).into(),
+            None => path,
+        };
+        let line = fragment
+            .trim_start_matches(['L', 'l'])
+            .split(|c: char| !c.is_ascii_digit())
+            .next()
+            .and_then(|n| n.parse().ok())
+            .filter(|n| *n > 0);
+        Some((path, line))
     }
 
     /// The text of screen row `row` (0-based on the displayed screen).
@@ -1608,6 +1830,11 @@ impl Handler for Hooked<'_> {
         self.term.clear_line(mode)
     }
     fn clear_screen(&mut self, mode: ClearMode) {
+        self.modes.cleared = self.modes.cleared.max(match mode {
+            ClearMode::All => 1,
+            ClearMode::Saved => 2,
+            _ => 0,
+        });
         self.counted(false, |t| t.clear_screen(mode))
     }
     fn clear_tabs(&mut self, mode: TabulationClearMode) {
@@ -1617,6 +1844,7 @@ impl Handler for Hooked<'_> {
         self.term.set_tabs(interval)
     }
     fn reset_state(&mut self) {
+        self.modes.cleared = 3;
         self.term.reset_state()
     }
     fn reverse_index(&mut self) {
@@ -1657,6 +1885,14 @@ impl Handler for Hooked<'_> {
     }
     fn reset_color(&mut self, a0: usize) {
         self.term.reset_color(a0)
+    }
+    // OSC 8: the cells printed after it carry the link
+    // (`Terminal::hyperlink_at`). The kitty keyboard protocol's and
+    // `modifyOtherKeys`' sequences stay unforwarded: `encode_key` speaks
+    // neither, and a program told they are on would wait for keys it
+    // never gets (roadmap step 57).
+    fn set_hyperlink(&mut self, link: Option<alacritty_terminal::vte::ansi::Hyperlink>) {
+        self.term.set_hyperlink(link);
     }
     fn clipboard_store(&mut self, a0: u8, a1: &[u8]) {
         self.term.clipboard_store(a0, a1)
@@ -1755,6 +1991,248 @@ mod tests {
         assert_eq!(rows(&t)[..2], ["hello", "world"]);
         assert_eq!(s.cursor.map(|(r, c, _)| (r, c)), Some((1, 5)));
         assert_eq!(s.cells[s.cols].fg, ANSI[1]);
+    }
+
+    /// A terminal with 10×20-pixel cells, for kitty's graphics.
+    fn graphic_term(rows: u16, cols: u16) -> Terminal {
+        let mut t = Terminal::headless(TermSize { rows, cols });
+        t.set_cell_pixels(10, 20);
+        t
+    }
+
+    fn b64(bytes: &[u8]) -> String {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    fn apc(keys: &str, data: &[u8]) -> Vec<u8> {
+        format!("\x1b_G{keys};{}\x1b\\", b64(data)).into_bytes()
+    }
+
+    fn cursor(t: &Terminal) -> (i32, usize) {
+        let p = t.term.grid().cursor.point;
+        (p.line.0, p.column.0)
+    }
+
+    #[test]
+    fn a_query_is_answered_and_stores_nothing() {
+        let mut t = graphic_term(5, 20);
+        t.feed(b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\");
+        assert_eq!(t.take_sent(), b"\x1b_Gi=31;OK\x1b\\");
+        t.feed(b"\x1b_Gi=32,s=2,v=2,a=q,f=24;AAAA\x1b\\");
+        let sent = String::from_utf8(t.take_sent()).unwrap();
+        assert!(sent.starts_with("\x1b_Gi=32;ENODATA"), "{sent:?}");
+        t.feed(b"\x1b_Ga=p,i=31\x1b\\");
+        assert!(
+            String::from_utf8(t.take_sent()).unwrap().contains("ENOENT"),
+            "a query keeps nothing to put"
+        );
+    }
+
+    #[test]
+    fn an_image_is_placed_at_the_cursor_and_moves_it() {
+        let mut t = graphic_term(6, 20);
+        t.feed(b"ab");
+        // 20×40 pixels: two cells by two, the cursor past them on the
+        // image's last row.
+        t.feed(&apc("a=T,f=32,s=20,v=40,i=1", &[200; 20 * 40 * 4]));
+        assert_eq!(cursor(&t), (1, 4));
+        // Drawn once decoded — which a worker may already have done by
+        // the time `feed` looked, so no look before the wait.
+        t.settle_graphics();
+        assert_eq!(t.take_sent(), b"\x1b_Gi=1;OK\x1b\\");
+        let placed = t.images();
+        assert_eq!(placed.len(), 1);
+        let p = &placed[0];
+        assert_eq!(
+            (p.row, p.col, p.size, p.src),
+            (0, 2, (20, 40), (0, 0, 20, 40))
+        );
+        assert_eq!(p.rgba.len(), 20 * 40 * 4);
+        // Put again at cells asked for, the cursor left where it is.
+        t.feed(b"\r\n");
+        t.feed(b"\x1b_Ga=p,i=1,c=4,r=1,C=1,q=1\x1b\\");
+        assert_eq!(cursor(&t), (2, 0));
+        assert!(t.take_sent().is_empty(), "q=1: no OK");
+        let placed = t.images();
+        assert_eq!(placed.len(), 2);
+        assert_eq!((placed[1].row, placed[1].size), (2, (40, 20)));
+    }
+
+    #[test]
+    fn a_transmission_in_chunks_and_a_png() {
+        let mut t = graphic_term(6, 20);
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(30, 20, image::Rgba([1, 2, 3, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let data = b64(&png);
+        let (first, rest) = data.split_at(data.len() / 2);
+        t.feed(format!("\x1b_Ga=T,f=100,I=5,m=1;{first}\x1b\\").as_bytes());
+        assert!(
+            t.images().is_empty() && cursor(&t) == (0, 0),
+            "not whole yet"
+        );
+        t.feed(format!("\x1b_Gm=0;{rest}\x1b\\").as_bytes());
+        // Its size from the header: three cells by one.
+        assert_eq!(cursor(&t), (0, 3));
+        t.settle_graphics();
+        let sent = String::from_utf8(t.take_sent()).unwrap();
+        assert!(
+            sent.starts_with("\x1b_Gi=") && sent.ends_with(",I=5;OK\x1b\\"),
+            "{sent:?}"
+        );
+        assert_eq!(t.images()[0].rgba[..4], [1, 2, 3, 255]);
+        // Neither an id nor a number: stored, never answered.
+        t.feed(&apc("a=T,f=24,s=1,v=1", &[0, 0, 0]));
+        t.settle_graphics();
+        assert!(t.take_sent().is_empty());
+        assert_eq!(t.images().len(), 2);
+    }
+
+    #[test]
+    fn a_placement_scrolls_with_its_line_and_goes_with_it() {
+        let mut t = graphic_term(4, 20);
+        t.set_scrollback(3);
+        t.feed(&apc("a=T,f=24,s=10,v=20,i=2,C=1", &[5; 10 * 20 * 3]));
+        t.settle_graphics();
+        t.feed(b"\r\n\r\n");
+        assert_eq!(t.images()[0].row, 0);
+        t.feed(b"\r\n\r\n");
+        assert_eq!(t.images().len(), 0, "scrolled off the screen");
+        t.scroll(1);
+        assert_eq!(t.images()[0].row, 0, "and into history");
+        t.scroll_to_bottom();
+        for _ in 0..5 {
+            t.feed(b"\r\n");
+        }
+        t.scroll(3);
+        assert!(t.images().is_empty(), "history let its line go");
+        assert!(t.graphics.placements.is_empty());
+    }
+
+    #[test]
+    fn a_clear_a_delete_and_the_alternate_screen() {
+        let mut t = graphic_term(6, 20);
+        let img = |id: u32| apc(&format!("a=T,f=24,s=10,v=20,i={id},q=2"), &[5; 10 * 20 * 3]);
+        t.feed(&img(1));
+        t.settle_graphics();
+        t.feed(b"\x1b[2J");
+        assert!(t.images().is_empty(), "ED 2 clears the images on screen");
+        t.feed(b"\x1b_Ga=p,i=1,q=2\x1b\\");
+        assert_eq!(t.images().len(), 1, "the image itself is kept");
+        // `d=i` drops the placements, `d=I` the image too.
+        t.feed(b"\x1b_Ga=d,d=i,i=1\x1b\\");
+        assert!(t.images().is_empty());
+        t.feed(b"\x1b_Ga=p,i=1,q=2\x1b\\\x1b_Ga=d,d=I,i=1\x1b\\\x1b_Ga=p,i=1\x1b\\");
+        assert!(String::from_utf8(t.take_sent()).unwrap().contains("ENOENT"));
+        // The alternate screen's images go when it is left; the main
+        // screen's are back.
+        t.feed(&img(2));
+        t.settle_graphics();
+        t.feed(b"\x1b[?1049h");
+        assert!(t.images().is_empty(), "the main screen's are not the alt's");
+        t.feed(&img(3));
+        t.settle_graphics();
+        assert_eq!(t.images().len(), 1);
+        t.feed(b"\x1b[?1049l");
+        let placed = t.images();
+        assert_eq!(placed.len(), 1);
+        assert_eq!(placed[0].image, 2);
+        // A reset takes everything.
+        t.feed(b"\x1bc");
+        assert!(t.images().is_empty() && t.graphics.images.is_empty());
+    }
+
+    #[test]
+    fn a_file_is_read_here_and_not_from_a_domain() {
+        let path = std::env::temp_dir().join(format!("kawoosh-g-{}.rgb", std::process::id()));
+        std::fs::write(&path, [7u8; 3 * 4]).unwrap();
+        let mut t = graphic_term(6, 20);
+        let keys = "a=T,f=24,s=2,v=2,t=f,i=9";
+        t.feed(&apc(keys, path.to_string_lossy().as_bytes()));
+        t.settle_graphics();
+        assert_eq!(t.take_sent(), b"\x1b_Gi=9;OK\x1b\\");
+        assert_eq!(t.images()[0].rgba[..4], [7, 7, 7, 255]);
+        // A temporary file must say so in its name.
+        t.feed(&apc(
+            "a=t,f=24,s=2,v=2,t=t,i=10",
+            path.to_string_lossy().as_bytes(),
+        ));
+        assert!(String::from_utf8(t.take_sent()).unwrap().contains("EPERM"));
+        let mut far = graphic_term(6, 20);
+        far.set_domain("box", "box:/".into());
+        far.feed(&apc(keys, path.to_string_lossy().as_bytes()));
+        assert!(
+            String::from_utf8(far.take_sent())
+                .unwrap()
+                .contains("EBADF")
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn the_pixel_size_is_told() {
+        let mut t = graphic_term(6, 20);
+        t.feed(b"\x1b[14t");
+        assert_eq!(t.take_sent(), b"\x1b[4;120;200t");
+    }
+
+    #[test]
+    fn what_is_not_supported_says_so() {
+        let mut t = graphic_term(6, 20);
+        t.feed(&apc("a=T,f=24,s=1,v=1,i=4,U=1", &[0, 0, 0]));
+        t.feed(&apc("a=T,f=24,s=1,v=1,i=5,t=s", b"/kitty-shm"));
+        t.feed(b"\x1b_Ga=f,i=4\x1b\\");
+        let sent = String::from_utf8(t.take_sent()).unwrap();
+        assert_eq!(sent.matches("ENOTSUP").count(), 3, "{sent:?}");
+    }
+
+    #[test]
+    fn a_hyperlink_is_found_across_its_cells() {
+        let mut t = Terminal::headless(TermSize { rows: 3, cols: 30 });
+        t.feed(b"see \x1b]8;;https://kawoosh.dev/x\x1b\\the docs\x1b]8;;\x1b\\ now");
+        let h = t.hyperlink_at(0, 6).unwrap();
+        assert_eq!(h.uri, "https://kawoosh.dev/x");
+        assert_eq!(h.cols, 4..12, "`the docs`, not the text around it");
+        assert_eq!(t.hyperlink_at(0, 2), None);
+        assert_eq!(t.hyperlink_at(0, 13), None);
+        // Two links side by side with the same text stay two.
+        t.feed(b"\r\n\x1b]8;id=a;https://a\x1b\\ab\x1b]8;id=b;https://b\x1b\\cd\x1b]8;;\x1b\\");
+        assert_eq!(t.hyperlink_at(1, 1).unwrap().cols, 0..2);
+        assert_eq!(t.hyperlink_at(1, 2).unwrap().uri, "https://b");
+        // Scrolled back, the rows are the screen's.
+        for _ in 0..4 {
+            t.feed(b"\r\n");
+        }
+        assert_eq!(t.hyperlink_at(0, 6), None, "off the screen");
+        t.scroll(t.history_size() as i32);
+        assert_eq!(t.hyperlink_at(0, 6).unwrap().uri, "https://kawoosh.dev/x");
+    }
+
+    #[test]
+    fn a_file_link_is_a_path_here_or_on_the_domain() {
+        let mut t = Terminal::headless(TermSize { rows: 3, cols: 30 });
+        assert_eq!(
+            t.file_link("file:///tmp/a%20b.rs#L12"),
+            Some(("/tmp/a b.rs".into(), Some(12)))
+        );
+        assert_eq!(
+            t.file_link("file://localhost/tmp/x#7"),
+            Some(("/tmp/x".into(), Some(7)))
+        );
+        assert_eq!(
+            t.file_link("file:///tmp/x#top"),
+            Some(("/tmp/x".into(), None))
+        );
+        assert_eq!(t.file_link("file://elsewhere.example/tmp/x"), None);
+        assert_eq!(t.file_link("https://kawoosh.dev"), None);
+        t.set_domain("box", "box:/home".into());
+        assert_eq!(
+            t.file_link("file://elsewhere.example/tmp/x"),
+            Some(("box:/tmp/x".into(), None)),
+            "a host's shell names its own files"
+        );
     }
 
     #[test]
