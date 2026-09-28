@@ -404,7 +404,7 @@ impl Settings {
         // since 2026-09-23; `pairs.rules` is the plugin's, per language.
         defaults.set("pairs.enabled", Setting::Bool(true));
         // Inlay hints from the language server — types, parameter names —
-        // drawn in the line, faint (`<leader>cI` flips it).
+        // drawn in the line, faint (`<leader>oh` flips it).
         defaults.set("lsp.inlay_hints", Setting::Bool(false));
         // Secrets (docs/design/secrets.md): the masks, named rules a
         // user adds to or switches off (`secrets.masks.env = false`);
