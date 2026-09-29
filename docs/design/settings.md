@@ -1,6 +1,8 @@
 # Settings: a panel to find a setting, see it and change it
 
-Status: proposed 2026-09-29 (roadmap step 72). Asked: "i think it's
+Status: decided and built 2026-09-29 (roadmap step 72), in the four
+rounds of the build order; "Built" at the end says where the build
+departed from the text. Asked: "i think it's
 time to make settings into user-facing panel with search good ux,
 etc". Two calls were the user's, asked before this note: a change
 made in the panel goes **into the file** (the user's `settings.lua` or
@@ -304,3 +306,35 @@ For the pane, and for any pane of a user's own:
    removed. `kawoosh/lua/tests/settings.lua`.
 4. **The words.** `help/settings.md`'s "The Settings tab" becomes the
    pane's section, the roadmap's step 72.
+
+## Built
+
+2026-09-29, the four rounds in order. Where the build departed from the text:
+
+- **Sections.** Files became "Files & tools", since `tools` and
+  `run.command` sit there. The Look section names the font's
+  settings one by one, so the family and size come first rather than
+  `font.chrome_size` by the alphabet. There is one Other section, not
+  one per plugin prefix.
+- **Ranking.** Within a section, a row scores more for a word in its
+  path than in its doc. Words that run together in the path
+  (`font size` in `font.size`) score more again, and a shorter path
+  wins a tie.
+- **The scope keys.** `u` and `p` run `settings scope user` and
+  `settings scope project`. `settings user` and `settings project`
+  are the commands that open the files, and the pane's own must not
+  shadow them.
+- **Not built:** `R` (reset every row the search shows) and a click on
+  a row's origin to open its layers. `<Tab>` opens them. Both wait for
+  use to ask.
+- **Found on the way:** a Lua view opened from `init.lua` crashes
+  kawoosh at startup (a stale view in the tab strip), `:themes` as well
+  as `:settings`. That is not this note's, and was filed on its own.
+- **The door** is documented in `help/settings.md`, as `kawoosh.fonts`
+  and `kawoosh.themes` are in theirs, and not in the types file.
+
+Tests: `settings_edit.rs`'s seventeen; `kawoosh/tests/settings.rs`
+(the door writing, resetting, refusing, through a buffer, into a new
+project file, listing with layers; the pane driven by its keys);
+`kawoosh/lua/tests/settings.lua` (search, filters, walking, sections, a
+project write, the layers).
