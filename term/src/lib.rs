@@ -21,6 +21,37 @@ use anyhow::{Context as _, Result};
 use kui_core::cells::{Cell, CursorShape as CellCursor, flags};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
+/// How a terminal's process ended ([`Terminal::exit`]), said as
+/// `*compile*` says it: `finished`, `exited with 2`, `killed by SIGTERM`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Exit {
+    Code(u32),
+    Signal(String),
+}
+
+impl Exit {
+    fn of(status: &portable_pty::ExitStatus) -> Self {
+        match status.signal() {
+            Some(s) => Self::Signal(s.to_string()),
+            None => Self::Code(status.exit_code()),
+        }
+    }
+
+    pub fn success(&self) -> bool {
+        *self == Self::Code(0)
+    }
+}
+
+impl std::fmt::Display for Exit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Code(0) => f.write_str("finished"),
+            Self::Code(c) => write!(f, "exited with {c}"),
+            Self::Signal(s) => write!(f, "killed by {s}"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TermSize {
     pub rows: u16,
@@ -323,6 +354,8 @@ pub struct Terminal {
     reported_cwd: Option<std::path::PathBuf>,
     pub bell: bool,
     exited: bool,
+    /// How the process ended, once it was reaped ([`Terminal::exit`]).
+    exit: Option<Exit>,
     /// Bytes a headless terminal would have sent to its process, for
     /// tests (`Terminal::take_sent`).
     sent: Vec<u8>,
@@ -434,6 +467,7 @@ impl Terminal {
                 reported_cwd: None,
                 bell: false,
                 exited: false,
+                exit: None,
                 sent: Vec::new(),
                 graphics: graphics::Graphics::default(),
                 cell_px: (0, 0),
@@ -467,6 +501,7 @@ impl Terminal {
             reported_cwd: None,
             bell: false,
             exited: false,
+            exit: None,
             sent: Vec::new(),
             graphics: graphics::Graphics::default(),
             cell_px: (0, 0),
@@ -488,15 +523,34 @@ impl Terminal {
             return false;
         }
         match &mut self.child {
-            Some(child) => {
-                let running = matches!(child.try_wait(), Ok(None));
-                if !running {
+            Some(child) => match child.try_wait() {
+                Ok(None) => true,
+                Ok(Some(status)) => {
                     self.exited = true;
+                    self.exit = Some(Exit::of(&status));
+                    false
                 }
-                running
-            }
+                Err(_) => {
+                    self.exited = true;
+                    false
+                }
+            },
             None => false,
         }
+    }
+
+    /// How the process ended; None while it runs, or for a headless
+    /// terminal. Asked as its pty closes, the child is waited for a
+    /// moment: the reader ends as the last holder of the pty lets go,
+    /// a hair before the process is there to reap.
+    pub fn exit(&mut self) -> Option<Exit> {
+        if self.exit.is_none() && self.child.is_some() {
+            let until = std::time::Instant::now() + std::time::Duration::from_millis(200);
+            while self.is_running() && std::time::Instant::now() < until {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+        self.exit.clone()
     }
 
     /// Something that blocks until the process exits, for a thread to

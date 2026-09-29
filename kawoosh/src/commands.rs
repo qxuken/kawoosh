@@ -114,6 +114,26 @@ impl Kawoosh {
             "close",
             &[Cond::parse("readonly"), Cond::parse("!file")],
         );
+        // A finished `:!` pane (`exited`): its keys are normal mode's,
+        // `r` its line again and `q` the pane closed.
+        let exited = [Cond::parse("exited")];
+        self.ed
+            .keymap
+            .bind_when(Mode::Normal, "r", "terminal again", &exited);
+        self.ed
+            .keymap
+            .bind_when(Mode::Normal, "q", "close", &exited);
+        // `r` in the compile's output runs its command again, where it
+        // ran — emacs's `g` in `*compilation*`.
+        self.ed.keymap.bind_when(
+            Mode::Normal,
+            "r",
+            "compile again",
+            &[Cond::parse(&format!(
+                "buffer:{}",
+                crate::compile::COMPILE_BUFFER
+            ))],
+        );
         // `<C-c>` in the compile's output stops it while it runs
         // (`compile kill`'s own `when`); done, the key is `normal`.
         self.ed.keymap.bind_when(
@@ -291,6 +311,10 @@ impl Kawoosh {
             ),
             ("dock", dock),
             ("compiling", self.compile.running),
+            (
+                "exited",
+                matches!(content, Some(Content::Terminal(t)) if self.terms.done.contains_key(&t)),
+            ),
         ];
         for (name, on) in facts {
             self.ed.fact(name, on);
