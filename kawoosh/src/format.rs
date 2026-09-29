@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kawoosh_doc::{BufferId, Version};
-use kawoosh_editor::{ArgKind, Args, Setting, Spec};
+use kawoosh_editor::{AfterWrite, ArgKind, Args, Effect, Setting, Spec};
 use kawoosh_systems::filter::Failure;
 use kawoosh_systems::io::IoMsg;
 
@@ -148,6 +148,26 @@ impl Picked {
 pub(crate) enum Then {
     /// Put in the buffer, and said.
     Apply,
+    /// Put in, then the buffer written (formatters.md Decision 4).
+    Write(PendingWrite),
+}
+
+/// A save waiting on its format (Decision 4): the buffer, and the
+/// batch — one `:w`, `:wa`, `:wqa` — it is part of.
+#[derive(Clone, Copy, Debug)]
+pub struct PendingWrite {
+    pub buffer: BufferId,
+    batch: u64,
+}
+
+/// One save's buffers still formatting, and what follows once every
+/// one is written.
+struct Batch {
+    remaining: std::collections::HashSet<BufferId>,
+    after: AfterWrite,
+    /// Every write so far landed.
+    ok: bool,
+    written: usize,
 }
 
 struct Job {
@@ -162,6 +182,10 @@ struct Job {
 pub struct FormatState {
     next: u64,
     jobs: HashMap<u64, Job>,
+    batches: HashMap<u64, Batch>,
+    /// Saves waiting on a server's format, which has no timeout of its
+    /// own: written as they are at the deadline.
+    lsp_writes: HashMap<BufferId, (PendingWrite, std::time::Instant)>,
 }
 
 /// The formatters the settings define, by name.
@@ -408,8 +432,11 @@ impl Kawoosh {
                 }
                 match self.lsp_format_buffer(id) {
                     Ok(()) => {
-                        let _ = then;
                         self.ed.message = format!("formatting with {who}…");
+                        if let Then::Write(w) = then {
+                            let deadline = std::time::Instant::now() + TIMEOUT;
+                            self.format.lsp_writes.insert(id, (w, deadline));
+                        }
                         true
                     }
                     Err(e) => {
@@ -502,6 +529,109 @@ impl Kawoosh {
         };
         match job.then {
             Then::Apply => self.ed.message = said,
+            Then::Write(w) => self.write_formatted(w, &said),
+        }
+    }
+
+    /// `Effect::FormatThenWrite`: each buffer formatted, then written —
+    /// one with no formatter, or whose format could not start, written
+    /// at once — and `after` done once every write has landed.
+    pub(crate) fn format_then_write(&mut self, buffers: Vec<BufferId>, after: AfterWrite) {
+        let batch = self.format.next;
+        self.format.next += 1;
+        self.format.batches.insert(
+            batch,
+            Batch {
+                remaining: buffers.iter().copied().collect(),
+                after,
+                ok: true,
+                written: 0,
+            },
+        );
+        for id in buffers {
+            let w = PendingWrite { buffer: id, batch };
+            if !self.format_buffer(id, None, None, Then::Write(w)) {
+                let why = std::mem::take(&mut self.ed.message);
+                self.write_formatted(w, &format!("not formatted: {why}"));
+            }
+        }
+    }
+
+    /// A save's format landed — or failed, or ran out of time: the
+    /// buffer written as it is now, said with what the format did, and
+    /// the save's quit done once its last write has landed well.
+    pub(crate) fn write_formatted(&mut self, w: PendingWrite, said: &str) {
+        let wrote = self.ed.write_now(w.buffer);
+        let line = std::mem::take(&mut self.ed.message);
+        self.ed.message = if said == "already formatted" || !wrote {
+            line
+        } else {
+            format!("{line}; {said}")
+        };
+        let Some(b) = self.format.batches.get_mut(&w.batch) else {
+            return;
+        };
+        b.remaining.remove(&w.buffer);
+        b.ok &= wrote;
+        b.written += usize::from(wrote);
+        if b.remaining.is_empty() {
+            let b = self.format.batches.remove(&w.batch).unwrap();
+            if b.written > 1 {
+                self.ed.message = format!("{} files written", b.written);
+            }
+            if b.ok {
+                match b.after {
+                    AfterWrite::Nothing => {}
+                    AfterWrite::Quit => self.ed.effects.push(Effect::Quit { force: false }),
+                    AfterWrite::QuitAll => self.ed.effects.push(Effect::QuitAll { force: false }),
+                }
+            }
+        }
+        // Not only from a command: a format that landed on the io thread
+        // has no command after it to take the effects.
+        self.drain_effects();
+    }
+
+    /// A server's format landed on buffer `id` (`Event::Formatted`, the
+    /// message line saying what it did): a save waiting on it goes on.
+    pub(crate) fn lsp_formatted(&mut self, id: BufferId) {
+        if let Some((w, _)) = self.format.lsp_writes.remove(&id) {
+            let said = self.ed.message.clone();
+            self.write_formatted(w, &said);
+        }
+    }
+
+    /// A server's format failed: every save waiting on one is written.
+    pub(crate) fn lsp_format_failed(&mut self, why: &str) {
+        let waiting: Vec<PendingWrite> = self
+            .format
+            .lsp_writes
+            .drain()
+            .map(|(_, (w, _))| w)
+            .collect();
+        for w in waiting {
+            self.write_formatted(w, &format!("not formatted: {why}"));
+        }
+    }
+
+    /// Each frame: a save whose server has not answered by its deadline
+    /// is written as it is.
+    pub(crate) fn sync_format(&mut self) {
+        if self.format.lsp_writes.is_empty() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let late: Vec<BufferId> = self
+            .format
+            .lsp_writes
+            .iter()
+            .filter(|(_, (_, at))| *at <= now)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in late {
+            if let Some((w, _)) = self.format.lsp_writes.remove(&id) {
+                self.write_formatted(w, "not formatted: the server did not answer");
+            }
         }
     }
 

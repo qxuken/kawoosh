@@ -33,6 +33,9 @@ pub enum Disk {
 #[derive(Debug, Default)]
 pub struct Written {
     pub written: usize,
+    /// Left to the shell to format first (`format_on_save`), then write
+    /// (`Effect::FormatThenWrite`).
+    pub deferred: Vec<BufferId>,
     /// Left as they are: changed on disk since they were read.
     pub changed: Vec<String>,
     pub failed: Vec<String>,
@@ -42,10 +45,17 @@ impl Written {
     /// The message line's account: `3 files written`, and what was not.
     pub fn message(&self) -> String {
         let mut s = match self.written {
+            0 if !self.deferred.is_empty() => String::new(),
             0 => "nothing written".to_string(),
             1 => "1 file written".to_string(),
             n => format!("{n} files written"),
         };
+        if !self.deferred.is_empty() {
+            if !s.is_empty() {
+                s += "; ";
+            }
+            s += &format!("formatting {} before writing", self.deferred.len());
+        }
         if !self.changed.is_empty() {
             s += &format!(
                 "; changed on disk, not written: {} (:w! in it writes over)",
@@ -240,6 +250,46 @@ impl Editor {
         !edits.is_empty() && self.apply_edits(id, &edits)
     }
 
+    /// Whether a save of buffer `id` formats it first: its
+    /// `format_on_save`, read through its scope (formatters.md
+    /// Decision 4).
+    pub fn formats_on_save(&self, id: BufferId) -> bool {
+        self.buffers
+            .get(id)
+            .is_some_and(|b| b.path.is_some() && b.hook.is_none())
+            && self
+                .setting_in(id, "format_on_save")
+                .and_then(crate::Setting::as_bool)
+                == Some(true)
+    }
+
+    /// Writes buffer `id` now and says so — the message line's
+    /// `"path" 3L, 20B written`, `Effect::Wrote` — or why not: `:w`'s
+    /// last step, and the shell's once a format on save has landed.
+    pub fn write_now(&mut self, id: BufferId) -> bool {
+        let Some(path) = self.buffers.get(id).and_then(|b| b.path.clone()) else {
+            self.message = "no file name (use :w <path>)".into();
+            return false;
+        };
+        match self.save(id) {
+            Ok(()) => {
+                let b = &self.buffers[id];
+                self.message = format!(
+                    "\"{}\" {}L, {}B written",
+                    path.display(),
+                    b.line_count(),
+                    b.len()
+                );
+                self.effects.push(crate::Effect::Wrote(id));
+                true
+            }
+            Err(e) => {
+                self.message = format!("write failed: {e}");
+                false
+            }
+        }
+    }
+
     /// `:wa`, and `:wqa` before it quits: every modified buffer with a
     /// file written, except one whose file changed on disk since it was
     /// read — that one is named, not written over.
@@ -255,6 +305,10 @@ impl Editor {
             let name = self.buffers[id].name.clone();
             if self.disk_state(id) == Disk::Changed {
                 out.changed.push(name);
+                continue;
+            }
+            if self.formats_on_save(id) {
+                out.deferred.push(id);
                 continue;
             }
             match self.save(id) {

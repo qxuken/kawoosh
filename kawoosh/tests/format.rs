@@ -72,6 +72,12 @@ fn def(app: &mut Kawoosh, name: &str, script: &str, languages: &[&str], when: Se
     set(app, "when", when);
 }
 
+/// `keys`, then `<Esc>`: the drive types a `<…>` as its letters.
+fn type_esc(d: &mut Drive, app: &mut Kawoosh, keys: &str) {
+    d.keys(app, keys);
+    d.key(app, "escape", KeyMods::default());
+}
+
 fn files(f: &[&str]) -> Setting {
     Setting::List(f.iter().map(|x| Setting::Str(x.to_string())).collect())
 }
@@ -217,4 +223,95 @@ fn always_named_and_a_range() {
     assert_eq!(app2.ed.message, "shfmt is off (format.shfmt.enabled)");
     std::fs::remove_dir_all(&dir).ok();
     std::fs::remove_dir_all(&sh).ok();
+}
+
+/// With `format_on_save`, a save formats first and writes what the
+/// formatter made; a formatter that fails still lets the file be
+/// written; `:w!` writes at once; `:wqa` formats each, and quits once
+/// every write has landed.
+#[test]
+fn a_save_formats_first() {
+    let dir = project(
+        "save",
+        &[
+            (".indentrc", ""),
+            ("a.ts", "if (a) {\nb;\n}\n"),
+            ("b.ts", "if (b) {\nb;\n}\n"),
+            ("c.go", "package c\n"),
+        ],
+    );
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_in(&mut d, &dir);
+    let indent = "sed 's/^b;/  b;/'";
+    def(
+        &mut app,
+        "indent",
+        indent,
+        &["typescript"],
+        files(&[".indentrc"]),
+    );
+    app.ed.settings.set(
+        Layer::User,
+        "language.typescript.format_on_save",
+        Setting::Bool(true),
+    );
+    let disk = |n: &str| std::fs::read_to_string(dir.join(n)).unwrap();
+
+    let a = open(&mut d, &mut app, &dir, "a.ts");
+    ex(&mut d, &mut app, "w");
+    assert_eq!(disk("a.ts"), "if (a) {\n  b;\n}\n");
+    assert!(!app.ed.buffers[a].modified);
+    assert!(
+        app.ed
+            .message
+            .ends_with("written; formatted with indent (1 edit)"),
+        "{}",
+        app.ed.message
+    );
+
+    // `:w!` writes as it is.
+    d.keys(&mut app, "ggdd");
+    ex(&mut d, &mut app, "w!");
+    assert_eq!(disk("a.ts"), "  b;\n}\n");
+
+    // A formatter that fails: written all the same, and said.
+    let fail = "echo 'nope' >&2; exit 1";
+    def(
+        &mut app,
+        "indent",
+        fail,
+        &["typescript"],
+        files(&[".indentrc"]),
+    );
+    type_esc(&mut d, &mut app, "0ix");
+    ex(&mut d, &mut app, "w");
+    assert_eq!(disk("a.ts"), "x  b;\n}\n");
+    assert!(
+        app.ed.message.ends_with("written; not formatted: sh: nope"),
+        "{}",
+        app.ed.message
+    );
+
+    // Go's `format_on_save` is off.
+    let go = open(&mut d, &mut app, &dir, "c.go");
+    assert!(!app.ed.formats_on_save(go));
+
+    // `:wqa`: both typescript buffers formatted and written, then the quit.
+    def(
+        &mut app,
+        "indent",
+        indent,
+        &["typescript"],
+        files(&[".indentrc"]),
+    );
+    let b = open(&mut d, &mut app, &dir, "b.ts");
+    type_esc(&mut d, &mut app, "Ax");
+    open(&mut d, &mut app, &dir, "a.ts");
+    type_esc(&mut d, &mut app, "ggOb;");
+    ex(&mut d, &mut app, "wqa");
+    assert_eq!(disk("b.ts"), "if (b) {x\n  b;\n}\n");
+    assert_eq!(disk("a.ts"), "  b;\nx  b;\n}\n");
+    assert!(!app.ed.buffers[b].modified);
+    assert!(app.quit, "{}", app.ed.message);
+    std::fs::remove_dir_all(&dir).ok();
 }

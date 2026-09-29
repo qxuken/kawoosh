@@ -448,6 +448,7 @@ impl Kawoosh {
                     };
                     if b.version() != version {
                         self.ed.message = "the text moved since; format again".into();
+                        self.lsp_formatted(buffer);
                         continue;
                     }
                     let resolved = resolve_edits(b, &edits);
@@ -457,10 +458,14 @@ impl Kawoosh {
                     } else {
                         self.ed.message = format!("formatted ({n} edit{})", plural(n));
                     }
+                    self.lsp_formatted(buffer);
                 }
                 Event::Failed { what, message } => {
                     let what = what.rsplit('/').next().unwrap_or(what);
                     self.ed.message = format!("{what}: {message}");
+                    if what == "formatting" {
+                        self.lsp_format_failed(&message);
+                    }
                 }
                 Event::Unavailable { language, command } => {
                     if self.lsp.said_unavailable.insert(command.clone()) {

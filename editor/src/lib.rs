@@ -34,6 +34,7 @@ pub use multi::{Excerpt, Multi, MultiLine, Part};
 pub use repeat::Step;
 pub use selection::{Selection, Selections};
 pub use settings::{Decl, Layer, Scope, Setting, SettingKind, Settings};
+
 use slotmap::{SlotMap, new_key_type};
 
 new_key_type! {
@@ -371,6 +372,16 @@ pub fn path_form(cwd: &Path, path: &Path, form: &str) -> Result<String, String> 
     Ok(out.display().to_string())
 }
 
+/// What a save that waits on its format does once written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AfterWrite {
+    Nothing,
+    /// `:wq`.
+    Quit,
+    /// `:wqa`.
+    QuitAll,
+}
+
 /// What the engine asks the shell to do — things only the shell can.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
@@ -423,6 +434,14 @@ pub enum Effect {
     /// A hooked buffer (`Buffer::hook`) was `:w`ritten: the shell hands
     /// its text to the handler.
     Write(BufferId),
+    /// A save of buffers whose `format_on_save` is on
+    /// (docs/design/formatters.md Decision 4): the shell formats each,
+    /// writes it with [`Editor::write_now`] — formatted or, on a failure,
+    /// as it is — and then does `after` once every write has landed.
+    FormatThenWrite {
+        buffers: Vec<BufferId>,
+        after: AfterWrite,
+    },
     /// A command the engine has no body for — declared by the shell
     /// (splits, tabs, terminals, Lua), or unknown — with everything it
     /// would run with.

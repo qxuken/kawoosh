@@ -1778,6 +1778,9 @@ impl Kawoosh {
                     }
                 }
                 Effect::Shell { name, ctx } => self.shell_run(&name, &ctx),
+                Effect::FormatThenWrite { buffers, after } => {
+                    self.format_then_write(buffers, after)
+                }
             }
         }
         // A command that switched or made a tab: the cwd is the new
@@ -2230,6 +2233,7 @@ impl kui_native::App for Kawoosh {
         self.fire_settings();
         self.sync_cwd();
         self.sync_editorconfig();
+        self.sync_format();
         self.fire_cwd();
         self.fire_watches();
         self.sync_histories(false);
