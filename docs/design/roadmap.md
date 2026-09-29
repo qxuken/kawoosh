@@ -2718,7 +2718,7 @@ In order — the bugs first, then what needs deciding:
     `:editorconfig init` writes a template from the settings and the
     project's languages; `:set KEY?` names the tier;
     `kawoosh.buf.indent()`. `kawoosh/tests/editorconfig.rs`.
-70. **Formatters, and what they say of indentation**, asked 2026-09-29
+70. ~~**Formatters, and what they say of indentation**, asked 2026-09-29
     after step 69: "there is also tools like prettier and eslint that
     can dictate the rules. they probably offer some protocol to get
     it?", then "we probably should be able to format using them".
@@ -2733,7 +2733,16 @@ In order — the bugs first, then what needs deciding:
     tool allowed once before it runs unasked; and its indentation read
     by formatting a probe — no protocol exists, and a config in
     JavaScript can only be read by running it — as a source of the
-    buffer's own over `.editorconfig`. Not eslint. Six rounds.
+    buffer's own over `.editorconfig`. Not eslint. Six rounds.~~
+    Built 2026-09-29, "build it, all six rounds" — and "some formats
+    are slow, so add async version or make run be asyncable", so a Lua
+    `run` answers through `done` whenever it has: the line diff
+    (`line_diff`, `replace_diffed`); `format.NAME` and `:format`,
+    `:format selection`, `:format?`, `grf`; format on save with the
+    write waiting (`Effect::FormatThenWrite`, `write_now`); `:format
+    allow`; the probe as the buffer's source; `kawoosh.formatter`,
+    `kawoosh.format`. formatters.md's "Built" says where it departed.
+    `kawoosh/tests/format.rs`, `kawoosh/lua/tests/formatter.lua`.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

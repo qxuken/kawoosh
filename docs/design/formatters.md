@@ -1,7 +1,9 @@
 # Formatters: prettier and the rest, and what they say of indentation
 
-Status: decided 2026-09-29 (roadmap step 70), not built. The calls are
-taken here, each the user's to overturn. Asked, after
+Status: decided and built 2026-09-29 (roadmap step 70), in the six
+rounds of the build order; "Built" at the end says where the build
+departed from the text. The calls are taken here, each the user's to
+overturn. Asked, after
 [editorconfig.md](editorconfig.md): "there is also tools like prettier
 and eslint that can dictate the rules. they probably offer some
 protocol to get it?", then "we probably should be able to format using
@@ -143,9 +145,9 @@ web/.prettierrc`).
 ### 3. `:format`, and the result applied as a line diff
 
 `:format` formats the buffer with its formatter, `:format NAME` with
-that one; in visual mode, the selection, where the formatter has a
-`range` (prettier, stylua, clang-format) or its server answers
-`rangeFormatting`. `grf` becomes `:format`; `:lsp format` stays.
+that one; `:format selection` (`grf` in visual mode) the selection,
+where the formatter has a `range` (prettier, stylua, clang-format).
+`grf` becomes `:format`; `:lsp format` stays.
 
 The text is sent with its version, off the frame, and the answer
 applies only while the buffer is still at that version, as LSP's does.
@@ -156,8 +158,8 @@ as one undo node. A caret on a line the formatter did not touch stays
 where it was, and a mark stays on its line.
 
 A failure — a syntax error, a missing binary, a tool past
-`format.timeout_ms` (default 5000) — is a message with the tool's first
-line of stderr, the whole of it in `:messages`, and the buffer left as
+its `timeout_ms` (default 5000) — is a message with the tool's first
+line of stderr, the whole of it in the log, and the buffer left as
 it was. A private buffer (secrets.md) is never sent to a formatter, as
 it is never sent to a server. A host's buffer (domains.md) formats
 through its server only: a local tool would resolve its config against
@@ -278,3 +280,72 @@ and a def with `run` can do it (Decision 1).
   never a toast.
 - **Windows**: `node_modules/.bin/prettier.cmd`; the lookup tries the
   `.cmd` there.
+
+## Built
+
+Six commits, one a round, on `claude/formatters-note`. Where the build
+departed from the text above, and what it found:
+
+- **The timeout is a def's**, `format.NAME.timeout_ms`: a bare
+  `format.timeout_ms` would have been read as a formatter named
+  `timeout_ms`.
+- **A range is `:format selection`**, bound to `grf` in visual mode,
+  not `:format` from visual mode — whether a selection survives the
+  `:` prompt is not a thing to lean on. The selection is taken as a
+  visual operator takes it (`Editor::selection_ranges`). A server's
+  `rangeFormatting` is not asked: `lsp` formats the whole buffer and
+  says so for a selection. prettier counts its range in UTF-16 units,
+  so the placeholders are `{start}` `{end}` `{length}` in bytes and
+  `{start_utf16}` `{end_utf16}`.
+- **The line diff pairs lines.** imara-diff gives adjacent changed
+  lines as one hunk; a hunk with as many lines each side (a reindent)
+  is an edit per line, each narrowed to the bytes that differ, so an
+  indent put in is an insert before the line's text and every caret on
+  those lines keeps its character.
+- **A Lua `run` is asynchronous**, asked mid-build: "some formats are
+  slow, so add async version or make run be asyncable".
+  `run(ctx, text, done)` answers through `done` whenever it has — from
+  a `kawoosh.spawn`'s `on_exit` — or returns the text at once; the
+  def's timeout holds for both, and an error before an answer is the
+  answer. A Lua formatter's data goes into the engine's layer, so a
+  user's `format.NAME` overrides it key by key; `run = "lua"` marks it
+  in the tree.
+- **A save's quit waits in the shell.** The engine hands the buffers
+  that format on save to the shell as one
+  `Effect::FormatThenWrite { buffers, after }` — after the
+  changed-on-disk check, so a conflict is asked before anything runs —
+  and the shell writes each through `Editor::write_now` and quits once
+  every write of that save has landed well. A server's format has no
+  timeout of its own, so its save waits for its answer, a failed
+  `formatting`, or a deadline checked each frame. `:w!` writes at once,
+  unformatted — the bang already meant "write it as it is".
+- **Local sources name their kind.** A buffer's own sources are named
+  `editorconfig: /repo/.editorconfig [*.ts]` and `prettier:
+  /repo/.prettierrc`, so `:set KEY?` says which. With
+  `editorconfig.enabled` off a buffer still has its own (empty)
+  sources, so a formatter's word applies.
+- **A probe is asked again** when its config is saved (on the config
+  watch) and when the `format` table changes — new args may indent
+  otherwise.
+
+Tests: `kawoosh/tests/format.rs` (the nearest config's formatter, a
+caret on an untouched line kept, one undo, a failure's line, named, off
+and `lsp`, gofmt always, a range; a save formatted, `:w!`, a failing
+formatter's file still written, `:wqa` formatting two buffers then
+quitting; a project's own binary allowed; the probe over an
+`.editorconfig`, a saved config read again, a probe with no indent),
+`kawoosh/lua/tests/formatter.lua` (at once, later, a failure, a Lua
+formatter's probe), the line diff's and `replace_diffed`'s, and
+`systems/src/filter.rs`'s run, failure, timeout and missing program.
+None runs a real prettier: the formatters in the tests are `/bin/sh`
+one-liners defined as a user would.
+
+Left:
+
+- A config file made after a buffer was opened is seen by `:format`
+  and by a save, which choose afresh, but the buffer's indent is not
+  probed again until its path or the settings move.
+- A server's `rangeFormatting`.
+- The shipped defs' args are checked against the tools' documentation,
+  not run here; the first real prettier, biome or stylua on a project
+  is the check.

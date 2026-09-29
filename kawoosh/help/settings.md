@@ -161,6 +161,9 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `end_of_line` | `""` | a save makes every line end `lf`, `crlf` or `cr`; empty leaves them |
 | `language` | | a language's own settings ([languages](#languages-and-editorconfig)) |
 | `editorconfig.enabled` | `true` | read `.editorconfig` files |
+| `formatter` | `"auto"` | what `:format` uses: a name, a list tried in order, `lsp`, or `auto` ([code](code.md#formatting)) |
+| `format_on_save` | `false` | a save formats first |
+| `format` | | the formatters by name ([code](code.md#your-own-formatters)) |
 | `scrolloff` | `3` | lines kept above and below the caret |
 | `relativenumber` | `false` | number lines by distance from the caret |
 | `leader` | `" "` | the `<leader>` key |
