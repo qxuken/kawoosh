@@ -86,6 +86,20 @@ impl Kawoosh {
         }
     }
 
+    /// How many tasks the dock holds: its panes, but a domain's master,
+    /// which is the window's connection rather than a task. The title
+    /// bar counts them, the dock open or not.
+    pub(crate) fn dock_tasks(&self) -> usize {
+        let mut panes = Vec::new();
+        if let Some(d) = &self.layout.dock {
+            d.panes(&mut panes);
+        }
+        panes
+            .into_iter()
+            .filter(|p| !self.is_domain_master(*p))
+            .count()
+    }
+
     /// Whether pane `p` shows a domain's master terminal.
     fn is_domain_master(&self, p: PaneId) -> bool {
         let Some(Content::Terminal(t)) = self.layout.content(p) else {
