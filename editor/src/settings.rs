@@ -465,6 +465,231 @@ fn formatter_defaults(defaults: &mut Setting) {
     }
 }
 
+/// What each of the engine's defaults does, a line each
+/// (docs/design/settings.md Decision 2). A word setting's choices
+/// follow a colon, each with its meaning, as the help's table spells
+/// them.
+const DOCS: &[(&str, &str)] = &[
+    ("tabstop", "columns a tab takes"),
+    ("expandtab", "`<Tab>` inserts spaces rather than a tab"),
+    ("shiftwidth", "columns an indent takes; `0` for `tabstop`'s"),
+    (
+        "trim_trailing_whitespace",
+        "a save takes spaces off line ends",
+    ),
+    (
+        "insert_final_newline",
+        "a save ends the file with a newline",
+    ),
+    (
+        "end_of_line",
+        "a save makes every line end the same: `lf`, `crlf`, `cr`, or empty to leave them",
+    ),
+    (
+        "editorconfig.enabled",
+        "read the `.editorconfig` files above a buffer",
+    ),
+    (
+        "formatter",
+        "what `:format` uses: a formatter's name, a list tried in order, `lsp`, or `auto` for the one whose config is nearest",
+    ),
+    ("format_on_save", "a save formats the buffer first"),
+    ("scrolloff", "lines kept above and below the caret"),
+    (
+        "relativenumber",
+        "number lines by their distance from the caret's",
+    ),
+    ("leader", "the `<leader>` key"),
+    ("whichkey", "show the keys that can follow a prefix"),
+    (
+        "keys.option_as_alt",
+        "macOS: which ⌥ is Alt for key chords (`<A-u>`) rather than typing accents (`ü`): `left`, `right`, `both`, `none`",
+    ),
+    (
+        "layout.default",
+        "what a new tab is: `scroll` a strip of columns, `tree` a tree of splits",
+    ),
+    (
+        "layout.column_width",
+        "a new column's width: `third`, `half`, `two-thirds`, `full`, or a fraction",
+    ),
+    ("layout.gap", "the gap between columns, in pixels"),
+    (
+        "layout.scroll.center",
+        "the focused column: `always` centred, `never` only brought into view",
+    ),
+    (
+        "layout.new_pane",
+        "what a bare split is: `launcher`, `same` (the buffer split from), `scratch`, `terminal` or `dir`",
+    ),
+    (
+        "layout.new_tab",
+        "what a bare tab is: `launcher`, `same`, `scratch`, `terminal` or `dir`",
+    ),
+    ("layout.dock", "the dock's layout: `tree` or `scroll`"),
+    (
+        "launcher.start",
+        "the launcher opens in `normal` (a letter launches) or `insert` (typing filters)",
+    ),
+    (
+        "buffers.scope",
+        "which buffers the lists show: `tab` the focused tab's, `all` every one",
+    ),
+    (
+        "markdown.render",
+        "draw markdown rendered: marks folded, headings at their sizes",
+    ),
+    (
+        "markdown.heading",
+        "the headings' sizes from h1 down, each a ratio of the body's",
+    ),
+    (
+        "markdown.image_max_mb",
+        "an image past this many MB is left as its text",
+    ),
+    (
+        "clipboard.system",
+        "`p` puts what other programs copied too",
+    ),
+    ("pairs.enabled", "close brackets and quotes as you type"),
+    (
+        "lsp.inlay_hints",
+        "types and parameter names from the language server, drawn in the line",
+    ),
+    (
+        "secrets.forget_secs",
+        "seconds before a secret in the register is forgotten",
+    ),
+    (
+        "secrets.reveal_secs",
+        "seconds `zv` shows what a mask hides",
+    ),
+    (
+        "secrets.private_temp",
+        "a file opened with `--wait` under the temp directory is private",
+    ),
+    (
+        "secrets.scan_max_kb",
+        "a buffer past this many KB is not scanned for secrets",
+    ),
+    ("terminal.scrollback", "lines of history a terminal keeps"),
+    (
+        "terminal.shell",
+        "the terminal's program (`nu`, a path); empty for `$SHELL`",
+    ),
+    (
+        "terminal.bell",
+        "what a terminal's bell does: `sound`, `visual` (its tab marked) or `off`",
+    ),
+    (
+        "terminal.escape",
+        "the key before normal mode's keys in a terminal; empty for none",
+    ),
+    (
+        "terminal.raw",
+        "programs a terminal pane is raw for while one is in front: every key but the escape and ⌘ theirs",
+    ),
+    (
+        "editor.bell",
+        "ring for the editor's own failures, such as a search with no match",
+    ),
+    (
+        "tabs.directory",
+        "the directory in tab labels: `auto` when the tabs are in more than one, `always`, `never`",
+    ),
+    (
+        "editor.selection_radius",
+        "round the selection's corners, in pixels",
+    ),
+    (
+        "editor.wrap",
+        "wrap long lines at the pane's width: `off`, `word` between words, `glyph` anywhere",
+    ),
+    (
+        "editor.wrap_languages",
+        "languages whose buffers wrap whatever `editor.wrap` says, such as `{ \"text\", \"gitcommit\" }`",
+    ),
+    (
+        "editor.breadcrumbs",
+        "the symbols the caret is inside, on the pane's title bar",
+    ),
+    (
+        "statusline.layout",
+        "the status line's modules left to right, `\"gap\"` a spring, `\"...\"` the rest",
+    ),
+    (
+        "statusline.path",
+        "the file on the status line: `relative` to the working directory, `absolute`, or its `name`",
+    ),
+    (
+        "env.shell",
+        "the shell whose PATH programs get when kawoosh opens outside a terminal; empty for `$SHELL`",
+    ),
+    (
+        "memory.keep_days",
+        "days a file's history is kept unvisited; `0` keeps every one",
+    ),
+    (
+        "memory.max_mb",
+        "the most the memory and histories take, in MB; `0` for no cap",
+    ),
+    (
+        "memory.text.keep_days",
+        "days copied text is kept across restarts",
+    ),
+    (
+        "memory.text.max_mb",
+        "how much copied text is kept across restarts, in MB; `0` for none",
+    ),
+    (
+        "memory.idle_secs",
+        "seconds without a key or a click before time in a file stops counting",
+    ),
+    ("picker.preview", "a preview beside the picker's list"),
+    (
+        "picker.wrap",
+        "the picker's rows wrap to show a long path whole",
+    ),
+    (
+        "picker.share",
+        "the picker's height, a fraction of the pane it splits",
+    ),
+    (
+        "picker.split",
+        "the list's share of the picker's width beside the preview",
+    ),
+    (
+        "font.family",
+        "the editor's font family; empty for the face kawoosh ships",
+    ),
+    ("font.size", "the font's size, in pixels"),
+    (
+        "font.line_height",
+        "a line's height, a ratio of the font's size",
+    ),
+    ("font.features", "OpenType features, such as `-liga tnum`"),
+    (
+        "font.chrome_size",
+        "the size of the tabs', title bars' and strips' text; `0` follows `font.size`",
+    ),
+    (
+        "theme.appearance",
+        "light or dark: `system` follows the OS, or `dark`, `light`",
+    ),
+    (
+        "theme.name",
+        "the theme family, or `system` for the OS's colours",
+    ),
+    (
+        "theme.dark",
+        "a dark theme apart from the family's; empty for the family's",
+    ),
+    (
+        "theme.light",
+        "a light theme apart from the family's; empty for the family's",
+    ),
+];
+
 /// Where a buffer's settings are read beside the tree
 /// ([`Settings::scoped`]): its language, whose `language.NAME` table lays
 /// over the bare keys, and its own sources — what the `.editorconfig`
@@ -603,6 +828,11 @@ impl Settings {
         defaults.set("leader", Setting::Str(" ".into()));
         // The which-key float while a key sequence is open.
         defaults.set("whichkey", Setting::Bool(true));
+        // Which Option key on a Mac is Alt for the keymap (kui F113):
+        // one that is types what the layout composes with it no more —
+        // ⌥u a chord, not the start of `ü` — so the left by default,
+        // and the right left for accents.
+        defaults.set("keys.option_as_alt", Setting::Str("left".into()));
         // The scrolling tab (docs/design/scrolling-tab.md): what a new
         // tab is (`tree` | `scroll`; the strip since 2026-09-22), a
         // new column's width (`third`,
@@ -875,8 +1105,18 @@ impl Settings {
             ("editor.wrap", words(&["off", "word", "glyph"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
             ("end_of_line", words(&["", "lf", "crlf", "cr"])),
+            (
+                "keys.option_as_alt",
+                words(&["left", "right", "both", "none"]),
+            ),
         ] {
             s.declare(path, kind, "");
+        }
+        // What each default does, in the words `help/settings.md` uses:
+        // the settings pane's line under a row, and the doc the language
+        // server's types show (docs/design/settings.md Decision 2).
+        for (path, doc) in DOCS {
+            s.describe(path, doc);
         }
         s.declare(
             "format",
@@ -966,6 +1206,21 @@ impl Settings {
                 doc: doc.to_string(),
             },
         );
+    }
+
+    /// Gives `path` its doc, keeping what it holds: its declaration's
+    /// kind, else its default's. A path neither declared nor with a
+    /// default is left alone — a doc says what a setting does, not that
+    /// there is one.
+    pub fn describe(&mut self, path: &str, doc: &str) {
+        let Some(kind) = self.kind(path) else { return };
+        self.decls
+            .entry(path.to_string())
+            .and_modify(|d| d.doc = doc.to_string())
+            .or_insert(Decl {
+                kind,
+                doc: doc.to_string(),
+            });
     }
 
     /// What `path` holds: its declaration's kind, else its default's.
@@ -1098,6 +1353,11 @@ impl Settings {
         &self.layers[layer as usize]
     }
 
+    /// What `layer` alone says at `path`, its sources merged.
+    pub fn layer_value(&self, layer: Layer, path: &str) -> Option<&Setting> {
+        self.merged[layer as usize].get(path)
+    }
+
     /// Where the effective value at `path` comes from: the layer and
     /// the source in it that set it last.
     pub fn source_of(&self, path: &str) -> Option<(Layer, &str)> {
@@ -1210,6 +1470,31 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every default says what it does (docs/design/settings.md
+    /// Decision 2) — but an open table's entries, which are the table's
+    /// row — and a doc names no setting that is not there.
+    #[test]
+    fn every_default_has_a_doc() {
+        let s = Settings::new();
+        let schema = s.schema();
+        let entries = ["format.", "language.", "secrets.masks."];
+        let bare: Vec<&str> = schema
+            .iter()
+            .filter(|(p, d)| {
+                d.doc.is_empty()
+                    && d.kind != SettingKind::Open
+                    && !entries.iter().any(|e| p.starts_with(e))
+            })
+            .map(|(p, _)| p.as_str())
+            .collect();
+        assert!(bare.is_empty(), "no doc: {bare:?}");
+        for (path, _) in DOCS {
+            assert!(schema.contains_key(*path), "a doc for no setting: {path}");
+        }
+        // A word setting keeps its words under its doc.
+        assert!(matches!(s.kind("editor.wrap"), Some(SettingKind::OneOf(_))));
+    }
 
     fn tbl(pairs: &[(&str, Setting)]) -> Setting {
         let mut t = Setting::table();
@@ -1383,6 +1668,7 @@ mod tests {
                 "format_on_save",
                 "formatter",
                 "insert_final_newline",
+                "keys.option_as_alt",
                 "language.css.tabstop",
                 "language.diff.trim_trailing_whitespace",
                 "language.gitcommit.trim_trailing_whitespace",

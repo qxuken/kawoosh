@@ -2758,6 +2758,18 @@ In order — the bugs first, then what needs deciding:
     `kawoosh.format`. formatters.md's "Built" says where it departed.
     `kawoosh/tests/format.rs`, `kawoosh/lua/tests/formatter.lua`.
 
+72. ~~**Settings, a panel** ([settings.md](settings.md)), asked 2026-09-29:
+    "make settings into user-facing panel with search good ux". The
+    devtools tab replaced by a pane (`:settings`, `<D-,>`): search
+    first over path, doc, section and value, `@modified` and the other
+    filters; a row per setting with its doc and a control by its kind;
+    its layers under it; a scope, user or project, whose file a change
+    is written into through the Lua syntax tree, comments kept; reset
+    takes the key out. A doc for every default, sections as data,
+    `kawoosh.settings` the door. Four rounds.~~ Built 2026-09-29:
+    `settings_edit.rs`, `settings_pane.rs`, `lua/settings.lua`; the
+    devtools tab gone. settings.md's "Built" says where it departed.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision

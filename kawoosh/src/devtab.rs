@@ -32,12 +32,6 @@ pub(crate) struct Tab {
     /// Between the pieces of a caption or a toolbar — a fold's triangle
     /// and its title, a note and a button.
     pub gap: f32,
-    /// A small button's corner: the inner radius, a row's inside a menu.
-    pub radius: f32,
-    /// A small button's padding: a menu row's across, and a hairline of
-    /// air above and below, as the panel's own small buttons have — a
-    /// control that small has no metric of its own.
-    pub button_pad: (f32, f32),
     /// A small button's text, and a toolbar's note: a step under the
     /// row's, as the panel's are.
     pub small_text: f32,
@@ -56,8 +50,6 @@ impl Tab {
             cell_gap: m.hint_pad_x,
             section_gap: m.menu_pad_x,
             gap: m.menu_pad_y,
-            radius: m.radius_inner,
-            button_pad: (m.menu_pad_x, 1.0),
             small_text: m.hint_text - 1.0,
             line_h,
         }
@@ -151,30 +143,6 @@ impl Tab {
             .gap(self.gap)
             .cross_align(Align::Center)
             .bg(pal.strip)
-    }
-
-    /// A toolbar over a tab's content: the same inset as the rows under
-    /// it, as tall as what it holds.
-    pub(crate) fn toolbar(&self) -> NodeSpec {
-        NodeSpec::row()
-            .grow_width()
-            .min_height(kui_native::Min::FIT)
-            .pad_xy(self.pad_x, 0.0)
-            .gap(self.gap)
-            .cross_align(Align::Center)
-    }
-
-    /// A small button of the panel's kind, for a toolbar: raised, with a
-    /// hairline border, lit on hover, pressed darker.
-    pub(crate) fn button(&self, theme: &kui_native::Theme) -> NodeSpec {
-        NodeSpec::row()
-            .pad_xy(self.button_pad.0, self.button_pad.1)
-            .radius(self.radius)
-            .bg(theme.raised)
-            .hover_bg(theme.hover)
-            .pressed_bg(theme.pressed)
-            .border(1.0, theme.border)
-            .cursor(kui_native::CursorShape::Pointer)
     }
 
     /// The tabs' text: the app's mono face at the row size, one line.

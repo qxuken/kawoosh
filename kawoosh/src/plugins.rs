@@ -29,4 +29,6 @@ pub const BUNDLED: &[(&str, &str)] = &[
     ("kawoosh:timed", include_str!("../lua/timed.lua")),
     // After lists: its diagnostics segment opens `:diagnostics`.
     ("kawoosh:status", include_str!("../lua/status.lua")),
+    // Last: its sections name every plugin's settings.
+    ("kawoosh:settings", include_str!("../lua/settings.lua")),
 ];
