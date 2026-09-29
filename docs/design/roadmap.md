@@ -2686,6 +2686,21 @@ In order — the bugs first, then what needs deciding:
     pane. javascript's, typescript's and tsx's outline learn the test
     runners' `describe` and `it` by their titles, go's `t.Run`, so `grs`
     lists a spec's blocks too.
+68. ~~**`.editorconfig`, a helper to start one, the languages' ways**,
+    asked 2026-09-29: "Let's implement .editorconfig support and
+    helpers to init it. also some default profiles per langs."~~ Landed
+    2026-09-29: [editorconfig.md](editorconfig.md), decided and built —
+    a buffer's settings read through its scope: the session's word,
+    then the `.editorconfig` files above it (editorconfig.org's rules,
+    the globs whole), then its language's `language.NAME` table in any
+    layer, then the bare keys; the profiles ship as the defaults'
+    tables (two spaces for the web's and lua, gofmt's tabs, markdown's
+    trailing spaces kept). `shiftwidth`, `trim_trailing_whitespace`,
+    `insert_final_newline`, `end_of_line` new, a save tidying as they
+    say in one undoable edit; `:editorconfig` says what applies,
+    `:editorconfig init` writes a template from the settings and the
+    project's languages; `:set KEY?` names the tier;
+    `kawoosh.buf.indent()`. `kawoosh/tests/editorconfig.rs`.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
