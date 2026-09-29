@@ -20,8 +20,8 @@
 -- Each pane is its own: a `:du` in another tab opens a pane there with
 -- a walk of its own, and the first goes on as it was (roadmap step 60).
 --
--- Hackable: `kawoosh.du` — `walk`, `size`, `state`, `removed`, `forget`
--- — and `du.state([pane])`, what a pane shows, for a test.
+-- Hackable: `kawoosh.du` — `walk`, `size`, `stamp`, `state`, `removed`,
+-- `forget` — and `du.state([pane])`, what a pane shows, for a test.
 
 local fs = kawoosh.fs
 local door = kawoosh.du
@@ -38,8 +38,9 @@ local du = {}
 kawoosh.du_pane = du
 
 -- A pane's state: the walk's number and its root, the directory on
--- show, the cursor's entry by name, the sort, the marked paths, and the
--- listings read (by directory, re-read after a delete). One a pane, by
+-- show, the cursor's entry by name, the sort, the marked paths, the
+-- listings read (by directory, re-read after a delete; `false` while
+-- the io thread reads one) and the one on show sorted (`shown`). One a pane, by
 -- the pane's id; `S` is the one whose pane the view, the event or the
 -- command at hand is for, set as each comes in.
 local states = {}
@@ -83,59 +84,100 @@ local function pane_of(slot)
   return tonumber(tostring(slot or ""):match("@(%d+)$"))
 end
 
--- The directory's entries with their sizes, sorted: a file's own, a
--- directory's once the walk has done it.
-local function entries()
-  local d = S.dir
-  local list = S.listed[d]
-  if not list then
-    local ok, got = pcall(fs.list, d)
-    list = ok and got or {}
-    S.listed[d] = list
-  end
-  local out = {}
-  for _, e in ipairs(list) do
-    local path = fs.join(d, e.name)
-    local r = { name = e.name, path = path, dir = e.is_dir and not e.is_symlink }
-    if r.dir then
-      r.bytes, r.files = door.size(S.walk, path)
-    else
-      r.bytes, r.files = e.size or 0, 1
+-- The directory's listing as rows, read once on the io thread — forty
+-- thousand entries hold up no frame — and kept: `name`, `path`, `dir`,
+-- a file's size. Nil while it is read; a directory `into` is going to
+-- (`S.going`) is gone into once it is.
+local function listing(d)
+  local rows = S.listed[d]
+  if rows ~= nil then return rows or nil end
+  S.listed[d] = false
+  local st = S
+  fs.list(d, function(got)
+    if st.listed[d] ~= false then return end
+    rows = {}
+    for i, e in ipairs(got or {}) do
+      local dir = e.is_dir and not e.is_symlink
+      rows[i] = { name = e.name, lower = e.name:lower(), path = fs.join(d, e.name), dir = dir,
+                  bytes = not dir and (e.size or 0) or nil, files = not dir and 1 or nil }
     end
-    out[#out + 1] = r
-  end
-  local by = S.sort
-  table.sort(out, function(a, b)
-    if by == "name" then return a.name:lower() < b.name:lower() end
-    local x, y
-    if by == "files" then x, y = a.files, b.files else x, y = a.bytes, b.bytes end
-    if (x == nil) ~= (y == nil) then return x ~= nil end
-    if x ~= y then return x > y end
-    return a.name < b.name
+    st.listed[d] = rows
+    if st.going and st.going.dir == d then
+      st.dir, st.cursor, st.reveal, st.going = d, nil, true, nil
+    end
   end)
-  return out
+  return S.listed[d] or nil
 end
 
-local function index_of(list, name)
-  for i, e in ipairs(list) do if e.name == name then return i end end
-  return 1
+local function by_size(a, b)
+  local x, y = a.bytes, b.bytes
+  if (x == nil) ~= (y == nil) then return x ~= nil end
+  if x ~= y then return x > y end
+  return a.name < b.name
 end
+local function by_files(a, b)
+  local x, y = a.files, b.files
+  if (x == nil) ~= (y == nil) then return x ~= nil end
+  if x ~= y then return x > y end
+  return a.name < b.name
+end
+local function by_name(a, b) return a.lower < b.lower end
+local ORDER = { size = by_size, files = by_files, name = by_name }
+
+-- The directory on show, sorted: `rows`, `at` (a row's index by name),
+-- the `largest` and the `whole`. Sorted again only when the listing,
+-- the sort, or a size in it (the walk's stamp for the directory)
+-- changed — not every frame, which for a directory of sixteen thousand
+-- entries was the frame.
+local function shown()
+  local d = S.dir
+  local rows = listing(d)
+  local stamp = door.stamp(S.walk, d)
+  local sh = S.shown
+  if sh and sh.dir == d and sh.sort == S.sort and sh.stamp == stamp and sh.list == rows then
+    return sh
+  end
+  sh = { dir = d, sort = S.sort, stamp = stamp, list = rows, rows = {}, at = {}, largest = 0, whole = 0 }
+  S.shown = sh
+  if not rows then sh.reading = true return sh end
+  local out = sh.rows
+  for i, r in ipairs(rows) do
+    if r.dir then r.bytes, r.files = door.size(S.walk, r.path) end
+    out[i] = r
+  end
+  table.sort(out, ORDER[S.sort])
+  for i, r in ipairs(out) do
+    sh.at[r.name] = i
+    local b = r.bytes or 0
+    if b > sh.largest then sh.largest = b end
+    sh.whole = sh.whole + b
+  end
+  return sh
+end
+
+local function entries() return shown().rows end
+
+local function index_of(sh, name) return sh.at[name] or 1 end
 
 local function walk(by)
   if not S then return end
-  local list = entries()
+  local sh = shown()
+  local list = sh.rows
   if #list == 0 then return end
-  local i = math.max(1, math.min(#list, index_of(list, S.cursor) + by))
+  local i = math.max(1, math.min(#list, index_of(sh, S.cursor) + by))
   S.cursor, S.reveal = list[i].name, true
 end
 
 local function into()
   if not S then return end
-  local list = entries()
-  local e = list[index_of(list, S.cursor)]
+  local sh = shown()
+  local e = sh.rows[index_of(sh, S.cursor)]
   if not e then return end
   if e.dir then
-    S.dir, S.cursor, S.reveal = e.path, nil, true
+    -- Into it once it is read: the listing on show till then, rather
+    -- than a frame of nothing.
+    S.going = { dir = e.path }
+    if listing(e.path) then S.dir, S.cursor, S.reveal, S.going = e.path, nil, true, nil end
   else
     kawoosh.open(e.path)
   end
@@ -144,14 +186,15 @@ end
 local function up()
   if not S or S.dir == S.root then return end
   local left = S.dir
+  S.going = nil
   S.dir = fs.parent(left) or S.root
   S.cursor, S.reveal = fs.basename(left), true
 end
 
 local function mark()
   if not S then return end
-  local list = entries()
-  local e = list[index_of(list, S.cursor)]
+  local sh = shown()
+  local e = sh.rows[index_of(sh, S.cursor)]
   if not e then return end
   S.marked[e.path] = not S.marked[e.path] or nil
   walk(1)
@@ -159,12 +202,12 @@ end
 
 local function delete()
   if not S then return end
-  local list = entries()
+  local sh = shown()
   local gone = {}
-  for _, e in ipairs(list) do
+  for _, e in ipairs(sh.rows) do
     if S.marked[e.path] then gone[#gone + 1] = e end
   end
-  if #gone == 0 then gone[1] = list[index_of(list, S.cursor)] end
+  if #gone == 0 then gone[1] = sh.rows[index_of(sh, S.cursor)] end
   if #gone == 0 then return end
   local paths = {}
   for _, e in ipairs(gone) do paths[#paths + 1] = e.path end
@@ -197,18 +240,15 @@ kawoosh.view(VIEW, function(ctx)
   if ctx.focused then last = ctx.pane end
   if not S then return column { width = "grow", height = "grow", bg = t.bg } end
   local st = door.state(S.walk) or { files = 0, bytes = 0, dirs = 0, errors = 0, done = true, secs = 0 }
-  local list = entries()
-  local cur = index_of(list, S.cursor)
+  local sh = shown()
+  local list = sh.rows
+  local cur = index_of(sh, S.cursor)
   if list[cur] then S.cursor = list[cur].name end
-  if S.reveal then
+  if S.reveal and not sh.reading then
     S.reveal = nil
     reveal_row(ctx.env, "list", cur - 1, ROW_H)
   end
-  local largest, whole = 0, 0
-  for _, e in ipairs(list) do
-    largest = math.max(largest, e.bytes or 0)
-    whole = whole + (e.bytes or 0)
-  end
+  local largest, whole = sh.largest, sh.whole
 
   local where = S.dir == S.root and S.root or (fs.relative(S.dir, S.root) or S.dir)
   local said = st.done
@@ -245,7 +285,8 @@ kawoosh.view(VIEW, function(ctx)
       text(e.dir and e.files and (count(e.files) .. " files") or "", { size = SIZE - 2, color = t.faint, wrap = "none" }) }
   end)
   if #list == 0 then
-    rows[#rows + 1] = row { pad = { x = 8, y = 4 }, text("empty", { size = SIZE, color = t.muted }) }
+    rows[#rows + 1] = row { pad = { x = 8, y = 4 },
+      text(sh.reading and "reading…" or "empty", { size = SIZE, color = t.muted }) }
   end
   -- While the walk runs its batches wake the loop, a frame each, so
   -- the totals fill in as they come.

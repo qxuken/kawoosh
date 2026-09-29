@@ -2686,6 +2686,19 @@ In order — the bugs first, then what needs deciding:
     pane. javascript's, typescript's and tsx's outline learn the test
     runners' `describe` and `it` by their titles, go's `t.Run`, so `grs`
     lists a spec's blocks too.
+68. ~~**`:du` in a directory of 16k entries**, reported 2026-09-29: a
+    `node_modules` cache — 55 ms a frame in `:kui hud`, 161 at worst,
+    `:perf`'s rows 28.~~ Landed 2026-09-29: the pane built, sorted
+    and summed the whole directory each time it was asked — each frame,
+    and again for each key (27 ms for 16k). It keeps the directory on
+    show sorted now, sorted again only when the listing, the sort or a
+    size in it changes: `kawoosh.du.stamp(n, dir)`, a number the walk
+    moves when a directory in `dir` is sized or a delete changes one.
+    A listing is read on the io thread (`fs.list`'s callback, 40 ms
+    for 16k on the frame before), and `l` goes in once it is read. A
+    `j` there 52 ms → 0.9, a still frame 26 → 0.8; a re-sort (`s`, or
+    the walk sizing something in it) is still 12
+    (`many_entries_cost` in `kawoosh/tests/du.rs`).
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

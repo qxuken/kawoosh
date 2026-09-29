@@ -23,6 +23,11 @@ pub struct Walk {
     pub root: PathBuf,
     /// Each directory done: its subtree's bytes and files.
     sizes: HashMap<PathBuf, (u64, u64)>,
+    /// Each directory's stamp, bumped when a directory in it is sized
+    /// or its size changes: the pane sorts a listing again only when
+    /// what it shows has moved, not every frame.
+    stamps: HashMap<PathBuf, u64>,
+    tick: u64,
     files: u64,
     bytes: u64,
     errors: u64,
@@ -37,6 +42,8 @@ impl Walk {
         Self {
             root,
             sizes: HashMap::new(),
+            stamps: HashMap::new(),
+            tick: 0,
             files: 0,
             bytes: 0,
             errors: 0,
@@ -49,7 +56,11 @@ impl Walk {
 
     /// A batch the walk sent, taken in.
     pub fn take(&mut self, batch: Sized) {
+        self.tick += 1;
         for d in batch.dirs {
+            if let Some(parent) = d.path.parent() {
+                self.stamp(parent);
+            }
             self.sizes.insert(d.path, (d.bytes, d.files));
         }
         self.files = batch.files;
@@ -61,16 +72,29 @@ impl Walk {
         }
     }
 
+    /// `dir`'s listing changed.
+    fn stamp(&mut self, dir: &Path) {
+        match self.stamps.get_mut(dir) {
+            Some(s) => *s = self.tick,
+            None => {
+                self.stamps.insert(dir.to_path_buf(), self.tick);
+            }
+        }
+    }
+
     /// `path` gone from the disk: its size out of every directory above
     /// it, and what was under it forgotten.
     fn removed(&mut self, path: &Path, bytes: u64, files: u64) {
         self.sizes.retain(|p, _| !p.starts_with(path));
+        self.stamps.retain(|p, _| !p.starts_with(path));
+        self.tick += 1;
         let mut at = path.parent();
         while let Some(dir) = at {
             if let Some(s) = self.sizes.get_mut(dir) {
                 s.0 = s.0.saturating_sub(bytes);
                 s.1 = s.1.saturating_sub(files);
             }
+            self.stamp(dir);
             if dir == self.root {
                 break;
             }
@@ -139,6 +163,8 @@ impl Kawoosh {
 /// `kawoosh.du`: `walk(root)`, a sizing walk of `root` started (an
 /// absolute path) and its number; `size(n, path)`, a directory's
 /// subtree `bytes, files` once the walk has done it, else nil;
+/// `stamp(n, dir)`, a number that changes whenever a size in `dir`'s
+/// listing does — what the pane keys its sorted listing on;
 /// `state(n)`, `{ root, files, bytes, errors, dirs, done, secs }` — the
 /// counts so far, `dirs` the directories done, `secs` the time taken or
 /// taken so far; `removed(n, path, bytes, files)`, a path deleted, its
@@ -165,6 +191,16 @@ pub(crate) fn lua_door(lua: &mlua::Lua, du: SharedDu) -> mlua::Result<()> {
             let d = at.borrow();
             let size = d.walks.get(&id).and_then(|w| w.sizes.get(Path::new(&path)));
             Ok((size.map(|s| s.0), size.map(|s| s.1)))
+        })?,
+    )?;
+    let at = du.clone();
+    door.set(
+        "stamp",
+        lua.create_function(move |_, (id, dir): (u64, String)| {
+            let d = at.borrow();
+            let w = d.walks.get(&id);
+            Ok(w.and_then(|w| w.stamps.get(Path::new(&dir)).copied())
+                .unwrap_or(0))
         })?,
     )?;
     let at = du.clone();
@@ -249,5 +285,41 @@ mod tests {
         assert_eq!(w.sizes[Path::new("/r/a")], (50, 1));
         assert_eq!(w.sizes[Path::new("/r")], (100, 2));
         assert_eq!((w.bytes, w.files), (100, 2));
+    }
+
+    /// A directory's stamp moves when a size in its listing does, and
+    /// only then.
+    #[test]
+    fn a_stamp_moves_with_its_listing() {
+        let mut w = Walk::new(PathBuf::from("/r"));
+        let dir = |p: &str, bytes| DirSize {
+            path: p.into(),
+            bytes,
+            files: 1,
+        };
+        let batch = |dirs| Sized {
+            dirs,
+            files: 0,
+            bytes: 0,
+            errors: 0,
+            done: false,
+        };
+        w.take(batch(vec![dir("/r/a/x", 1)]));
+        let (a, r) = (
+            w.stamps[Path::new("/r/a")],
+            w.stamps.get(Path::new("/r")).copied(),
+        );
+        assert_eq!(r, None, "nothing in /r sized yet");
+        w.take(batch(vec![dir("/r/b/y", 1)]));
+        assert_eq!(
+            w.stamps[Path::new("/r/a")],
+            a,
+            "/r/a's listing is as it was"
+        );
+        w.take(batch(vec![dir("/r/a", 1)]));
+        let r = w.stamps[Path::new("/r")];
+        w.removed(Path::new("/r/a/x"), 1, 1);
+        assert_ne!(w.stamps[Path::new("/r/a")], a, "x gone from /r/a");
+        assert_ne!(w.stamps[Path::new("/r")], r, "/r/a smaller in /r");
     }
 }
