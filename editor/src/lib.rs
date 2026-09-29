@@ -2268,6 +2268,39 @@ impl Editor {
         self.edited = true;
     }
 
+    /// Buffer `id`'s text made `text` by the edits that change only the
+    /// lines that differ (`kawoosh_doc::line_diff`), applied as
+    /// [`Editor::apply_edits`] applies — one undo node, every caret
+    /// carried — so a caret on a line left alone stays: a formatter's
+    /// answer (docs/design/formatters.md Decision 3). With `version`,
+    /// only while the buffer is still at it. The edits made, or why not.
+    pub fn replace_diffed(
+        &mut self,
+        id: BufferId,
+        text: &str,
+        version: Option<Version>,
+    ) -> Result<usize, String> {
+        let Some(b) = self.buffers.get(id) else {
+            return Err("no such buffer".into());
+        };
+        if version.is_some_and(|v| v != b.version()) {
+            return Err("the text moved since".into());
+        }
+        if b.read_only {
+            return Err("read-only".into());
+        }
+        let edits = kawoosh_doc::line_diff::line_edits(&b.text(), text);
+        if edits.is_empty() {
+            return Ok(0);
+        }
+        let n = edits.len();
+        if self.apply_edits(id, &edits) {
+            Ok(n)
+        } else {
+            Err(std::mem::take(&mut self.message))
+        }
+    }
+
     /// Edits made outside any command — a server's rename, a format, a
     /// code action's — applied to `id` at once, ascending and disjoint
     /// in the text as it is, as one undo node when no checkpoint is
