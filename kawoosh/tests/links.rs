@@ -151,6 +151,51 @@ fn a_cmd_click_on_a_url_in_a_terminal_opens_it() {
     );
 }
 
+/// A URL a long line wrapped across the terminal's edge is one link: a
+/// ⌘-click on either of its rows opens all of it, and the hover
+/// underlines both.
+#[test]
+fn a_cmd_click_on_a_wrapped_url_in_a_terminal_opens_all_of_it() {
+    let mut app = Kawoosh::new("t", "");
+    app.urls_opened = Some(Vec::new());
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let t = app.add_headless_terminal();
+    d.frame(&mut app);
+    let cols = app.terms.map[&t].size().cols as usize;
+    let url = format!("https://kawoosh.dev/{}", "x".repeat(cols));
+    app.feed_terminal(t, format!("see {url} for more\r\n").as_bytes());
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let cells = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.kind == kui_native::NodeKind::Cells)
+        .unwrap();
+    let (cw, ch) = app.cell_metrics();
+    let at =
+        |row: f32, col: f32| Vec2::new(cells.rect.x + col * cw, cells.rect.y + (row + 0.5) * ch);
+    d.input(&mut app, InputEvent::Modifiers(KeyMods::NONE.with_ctrl()));
+    d.frame(&mut app);
+    d.input(&mut app, InputEvent::CursorMoved(at(1.0, 3.5)));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(
+        d.core.cursor_shape(),
+        kui_native::CursorShape::Pointer,
+        "the URL's second row is the link too"
+    );
+    d.click(&mut app, at(1.0, 3.5).x, at(1.0, 3.5).y);
+    d.click(&mut app, at(0.0, 10.5).x, at(0.0, 10.5).y);
+    assert_eq!(
+        app.urls_opened.as_deref(),
+        Some(&[url.clone(), url][..]),
+        "{}",
+        app.ed.message
+    );
+}
+
 /// A link a program prints on purpose (OSC 8, roadmap step 54) is the
 /// one ⌘-hover underlines and ⌘-click opens: its address, not its text,
 /// shown at the grid's foot while hovered; a `file://` one opens in an

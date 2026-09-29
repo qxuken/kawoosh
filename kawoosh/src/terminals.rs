@@ -19,11 +19,16 @@ use crate::links::Target;
 
 pub type TermId = u64;
 
+/// A link's cells on a terminal's screen: a row and its columns, for
+/// each row it is on.
+pub(crate) type LinkCells = Vec<(usize, std::ops::Range<usize>)>;
+
 /// A link on a terminal's screen ([`Kawoosh::term_link`]).
 struct TermLink {
     target: Target,
-    /// The columns of its row it covers.
-    cols: std::ops::Range<usize>,
+    /// The screen rows it covers and their columns: more than one when
+    /// a long line wrapped it.
+    rows: LinkCells,
     /// The address a program printed with it (OSC 8), where the text
     /// need not be it.
     uri: Option<String>,
@@ -830,7 +835,8 @@ impl Kawoosh {
 
     /// The link at `(row, col)` of terminal `id`'s screen: the one a
     /// program printed there on purpose (OSC 8) first, else one found in
-    /// the row's text. A path in the text is looked for in the
+    /// the text of the line the row is part of — the rows a long line
+    /// wrapped onto joined, so a URL across the edge is whole. A path in the text is looked for in the
     /// terminal's directory, then the working directory.
     fn term_link(&self, id: TermId, row: usize, col: usize) -> Option<TermLink> {
         let t = self.terms.map.get(&id)?;
@@ -854,46 +860,45 @@ impl Kawoosh {
             };
             return Some(TermLink {
                 target,
-                cols: h.cols,
+                rows: h.rows,
                 uri: Some(h.uri),
                 bases,
             });
         }
-        // A column of the text is a character of the row's.
-        let text = t.row_text(row);
-        let at = text
-            .char_indices()
-            .nth(col)
-            .map(|(i, _)| i)
-            .unwrap_or(text.len());
-        let link = crate::links::link_at(&text, at)?;
+        let line = t.wrapped_line(row);
+        let text = &line.text;
+        let at = line
+            .char_at(row, col)
+            .and_then(|n| text.char_indices().nth(n))
+            .map_or(text.len(), |(i, _)| i);
+        let link = crate::links::link_at(text, at)?;
         let first = text[..link.span.start].chars().count();
-        let cols = first..first + text[link.span.clone()].chars().count();
+        let chars = first..first + text[link.span.clone()].chars().count();
         Some(TermLink {
             target: link.target,
-            cols,
+            rows: line.rows_of(chars, t.size().rows as usize),
             uri: None,
             bases,
         })
     }
 
     /// What a ⌘-click at `(row, col)` of terminal `id`'s screen would
-    /// open, for the hover to underline: the columns of a program's link
+    /// open, for the hover to underline: the cells of a program's link
     /// (OSC 8) and its address, since its text need not be it; or of a
     /// URL, or a path that names a file or a directory there, in the
     /// text.
-    pub(crate) fn location_cols(
+    pub(crate) fn location_cells(
         &self,
         id: TermId,
         row: usize,
         col: usize,
-    ) -> Option<(std::ops::Range<usize>, Option<String>)> {
+    ) -> Option<(LinkCells, Option<String>)> {
         let link = self.term_link(id, row, col)?;
         match &link.target {
-            _ if link.uri.is_some() => Some((link.cols, link.uri)),
-            Target::Url(_) | Target::Elsewhere(_) => Some((link.cols, None)),
+            _ if link.uri.is_some() => Some((link.rows, link.uri)),
+            Target::Url(_) | Target::Elsewhere(_) => Some((link.rows, None)),
             Target::Path { path, .. } => {
-                crate::links::resolve(path, &link.bases).map(|_| (link.cols, None))
+                crate::links::resolve(path, &link.bases).map(|_| (link.rows, None))
             }
         }
     }
