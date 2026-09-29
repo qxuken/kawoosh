@@ -405,3 +405,90 @@ fn a_projects_own_formatter_is_allowed_before_it_runs_unasked() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// What a formatter says of the indent is read by formatting its probe
+/// (formatters.md Decision 6) — its config read as the tool reads it,
+/// whatever it is written in — and is the buffer's over its
+/// `.editorconfig`; a saved config is read again, and a def changed
+/// asks again.
+#[test]
+fn a_formatters_indent_is_read_by_formatting_a_probe() {
+    let dir = project(
+        "probe",
+        &[
+            // The tool's indent, as its config says it: three spaces.
+            (".padrc", "   "),
+            (
+                ".editorconfig",
+                "root = true\n[*]\nindent_style = space\nindent_size = 8\n",
+            ),
+            ("a.ts", "x\n"),
+        ],
+    );
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_in(&mut d, &dir);
+    // Indents a line starting `b` by what `.padrc` holds.
+    let pad = r#"pre=$(cat .padrc); sed "s/^b/${pre}b/""#;
+    def(&mut app, "pad", pad, &["typescript"], files(&[".padrc"]));
+    app.ed.settings.set(
+        Layer::User,
+        "format.pad.probe.typescript",
+        Setting::Str("if (a) {\nb;\n}\n".into()),
+    );
+    let a = open(&mut d, &mut app, &dir, "a.ts");
+    d.frame(&mut app);
+    assert_eq!(app.ed.shiftwidth_in(a), 3);
+    assert!(app.ed.expandtab_in(a));
+    ex(&mut d, &mut app, "set shiftwidth?");
+    assert!(
+        app.ed
+            .message
+            .ends_with(&format!("(pad: {})", dir.join(".padrc").display())),
+        "over the .editorconfig's 8: {}",
+        app.ed.message
+    );
+    ex(&mut d, &mut app, "format?");
+    assert!(
+        app.ed.message.ends_with("indent: 3 spaces"),
+        "{}",
+        app.ed.message
+    );
+    // `<Tab>` in insert mode is the tool's.
+    d.keys(&mut app, "O");
+    d.key(&mut app, "tab", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    assert_eq!(app.ed.buffers[a].line_text(0), "   ");
+    d.keys(&mut app, "u");
+
+    // The config saved: read again.
+    std::fs::write(dir.join(".padrc"), "\t").unwrap();
+    let started = std::time::Instant::now();
+    while app.ed.expandtab_in(a) {
+        assert!(
+            started.elapsed().as_secs() < 10,
+            "the saved config read again"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        d.frame(&mut app);
+    }
+    ex(&mut d, &mut app, "format?");
+    assert!(
+        app.ed.message.ends_with("indent: tabs"),
+        "{}",
+        app.ed.message
+    );
+
+    // A def whose probe answers nothing indented leaves the lower tiers.
+    def(&mut app, "pad", "cat", &["typescript"], files(&[".padrc"]));
+    d.frame(&mut app);
+    assert_eq!(app.ed.shiftwidth_in(a), 8, "the .editorconfig's again");
+    ex(&mut d, &mut app, "format?");
+    assert!(
+        app.ed
+            .message
+            .ends_with("no indent read: its answer has no indented line"),
+        "{}",
+        app.ed.message
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

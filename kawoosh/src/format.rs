@@ -150,6 +150,43 @@ pub(crate) enum Then {
     Apply,
     /// Put in, then the buffer written (formatters.md Decision 4).
     Write(PendingWrite),
+    /// Its indent read (Decision 6), kept under the key.
+    Probe(ProbeKey),
+}
+
+/// A probe's answer is kept per formatter, the directory it runs in,
+/// the config that chose it and the language (Decision 6).
+pub type ProbeKey = (String, PathBuf, Option<PathBuf>, String);
+
+/// What a probe said.
+#[derive(Clone, Debug, PartialEq)]
+enum Probe {
+    Running,
+    /// The settings its answer makes: `expandtab`, and for spaces
+    /// `shiftwidth` and `tabstop`.
+    Indent(Setting),
+    /// Why it said nothing.
+    Nothing(String),
+}
+
+/// The indent a formatted probe shows: its first indented line's.
+fn indent_of(text: &str) -> Probe {
+    for line in text.lines() {
+        if line.starts_with('\t') {
+            let mut t = Setting::table();
+            t.set("expandtab", Setting::Bool(false));
+            return Probe::Indent(t);
+        }
+        let n = line.len() - line.trim_start_matches(' ').len();
+        if n > 0 && n < line.len() {
+            let mut t = Setting::table();
+            t.set("expandtab", Setting::Bool(true));
+            t.set("shiftwidth", Setting::Int(n as i64));
+            t.set("tabstop", Setting::Int(n as i64));
+            return Probe::Indent(t);
+        }
+    }
+    Probe::Nothing("its answer has no indented line".into())
 }
 
 /// A save waiting on its format (Decision 4): the buffer, and the
@@ -188,6 +225,17 @@ pub struct FormatState {
     /// Saves waiting on a server's format, which has no timeout of its
     /// own: written as they are at the deadline.
     lsp_writes: HashMap<BufferId, (PendingWrite, std::time::Instant)>,
+    /// The probes' answers (Decision 6).
+    probes: HashMap<ProbeKey, Probe>,
+    /// Each buffer's probe, for the path and settings version it was
+    /// worked out at.
+    probed: HashMap<BufferId, (PathBuf, u64, Option<ProbeKey>)>,
+    /// The configs the probes' answers came from, on the config watch:
+    /// one saved asks again.
+    pub watched: Vec<PathBuf>,
+    /// The `format` table the answers were had under: a def changed
+    /// (its args) asks again.
+    defs_seen: Option<Setting>,
 }
 
 /// The formatters the settings define, by name.
@@ -512,6 +560,15 @@ impl Kawoosh {
         let Some(job) = self.format.jobs.remove(&token) else {
             return;
         };
+        if let Then::Probe(key) = job.then {
+            let answer = match result {
+                Ok(text) => indent_of(&text),
+                Err(f) => Probe::Nothing(f.short),
+            };
+            log::debug!("format: {} probed for {}: {answer:?}", key.0, key.3);
+            self.format.probes.insert(key, answer);
+            return;
+        }
         let said = match result {
             Ok(text) => match self.ed.replace_diffed(job.buffer, &text, Some(job.version)) {
                 Ok(0) => "already formatted".to_string(),
@@ -532,6 +589,7 @@ impl Kawoosh {
         match job.then {
             Then::Apply => self.ed.message = said,
             Then::Write(w) => self.write_formatted(w, &said),
+            Then::Probe(_) => unreachable!("answered above"),
         }
     }
 
@@ -717,6 +775,141 @@ impl Kawoosh {
         }
     }
 
+    /// Each frame: every resolved buffer's formatter asked what its
+    /// indent is — once per formatter, directory, config and language,
+    /// off the frame — and the answer made the buffer's own source over
+    /// its `.editorconfig` (Decision 6). Worked out again when the
+    /// buffer's path or the settings move.
+    pub(crate) fn sync_probes(&mut self) {
+        let version = self.ed.settings.version();
+        let defs_now = self.ed.settings.get("format").cloned();
+        if self.format.defs_seen != defs_now {
+            self.format.defs_seen = defs_now;
+            self.format.probes.clear();
+        }
+        let ids: Vec<(BufferId, PathBuf)> = self
+            .ed
+            .locals
+            .iter()
+            .map(|(id, l)| (*id, l.path.clone()))
+            .collect();
+        self.format
+            .probed
+            .retain(|id, _| ids.iter().any(|(i, _)| i == id));
+        for (id, path) in ids {
+            let key = match self.format.probed.get(&id) {
+                Some((p, v, k)) if *p == path && *v == version => k.clone(),
+                _ => {
+                    let k = self.probe_key(id);
+                    self.format
+                        .probed
+                        .insert(id, (path.clone(), version, k.clone()));
+                    k
+                }
+            };
+            let tool = key.and_then(|k| {
+                if !self.format.probes.contains_key(&k) {
+                    self.start_probe(id, k.clone());
+                }
+                match self.format.probes.get(&k) {
+                    Some(Probe::Indent(t)) => {
+                        let from = k.2.as_deref().unwrap_or(&k.1);
+                        Some((format!("{}: {}", k.0, from.display()), t.clone()))
+                    }
+                    _ => None,
+                }
+            });
+            if let Some(l) = self.ed.locals.get_mut(&id) {
+                l.set_tool(tool);
+            }
+        }
+    }
+
+    /// The probe buffer `id` would be read by: its formatter's, when it
+    /// has a snippet for the language and may run unasked.
+    fn probe_key(&self, id: BufferId) -> Option<ProbeKey> {
+        let Choice::Tool(p) = self.formatter_for(id, None) else {
+            return None;
+        };
+        let language = self.ed.buffers.get(id)?.language.to_string();
+        p.def.probe.contains_key(&language).then_some(())?;
+        self.may_run_unasked(&p).then_some(())?;
+        Some((
+            p.def.name.clone(),
+            p.cwd.clone(),
+            p.config.clone(),
+            language,
+        ))
+    }
+
+    /// Runs the probe for `key` from buffer `id`: the snippet sent with
+    /// the buffer's path, so the tool finds its config as for the file.
+    fn start_probe(&mut self, id: BufferId, key: ProbeKey) {
+        self.format.probes.insert(key.clone(), Probe::Running);
+        let Choice::Tool(p) = self.formatter_for(id, None) else {
+            return;
+        };
+        let Some(snippet) = p.def.probe.get(&key.3).cloned() else {
+            return;
+        };
+        let Some(path) = self.ed.buffers[id]
+            .path
+            .as_deref()
+            .map(|p| crate::editorconfig::absolute(p, &self.cwd))
+        else {
+            return;
+        };
+        if let Some(c) = &p.config
+            && !self.format.watched.contains(c)
+        {
+            self.format.watched.push(c.clone());
+            self.rewatch_config();
+        }
+        let args = fill(&p.def.args, &path, &snippet, None);
+        let job = Job {
+            buffer: id,
+            version: self.ed.buffers[id].version(),
+            name: p.def.name.clone(),
+            then: Then::Probe(key),
+        };
+        self.run_formatter(&p, args, snippet, job);
+    }
+
+    /// A probed config was saved: every answer asked again.
+    pub(crate) fn reload_probes(&mut self) {
+        self.format.probes.clear();
+        self.format.probed.clear();
+        for l in self.ed.locals.values_mut() {
+            l.set_tool(None);
+        }
+    }
+
+    /// What `:format?` says of the buffer's indent from its formatter.
+    fn probe_note(&self, id: BufferId, p: &Picked) -> Option<String> {
+        let language = self.ed.buffers.get(id)?.language.to_string();
+        if !p.def.probe.contains_key(&language) {
+            return None;
+        }
+        let key = (
+            p.def.name.clone(),
+            p.cwd.clone(),
+            p.config.clone(),
+            language,
+        );
+        Some(match self.format.probes.get(&key) {
+            Some(Probe::Indent(t)) => match t.get("expandtab").and_then(Setting::as_bool) {
+                Some(false) => "indent: tabs".into(),
+                _ => format!(
+                    "indent: {} spaces",
+                    t.get("shiftwidth").and_then(Setting::as_int).unwrap_or(0)
+                ),
+            },
+            Some(Probe::Running) => "reading its indent…".into(),
+            Some(Probe::Nothing(why)) => format!("no indent read: {why}"),
+            None => return None,
+        })
+    }
+
     /// `:format?`: what formats the focused buffer, and why.
     fn say_formatter(&mut self) {
         let Some(v) = self.focused_view() else { return };
@@ -724,6 +917,10 @@ impl Kawoosh {
         self.ed.message = match self.formatter_for(id, None) {
             Choice::Tool(p) => {
                 let mut s = format!("{} ({})", p.why, p.program);
+                if let Some(note) = self.probe_note(id, &p) {
+                    s.push_str("; ");
+                    s.push_str(&note);
+                }
                 if p.is_projects_code() {
                     s.push_str(if self.format_allowed(&p.def.name, &p.cwd) {
                         "; the project's own, allowed"

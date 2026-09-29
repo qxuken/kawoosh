@@ -824,12 +824,41 @@ impl Memory {
 
 /// What a buffer's own files say of it (docs/design/editorconfig.md):
 /// the `.editorconfig` resolved for the path it had when the shell
-/// looked, and the settings that makes, a source per section.
+/// looked, and its formatter's word on its indent (formatters.md
+/// Decision 6) — the settings they make, a source each, the
+/// formatter's last so over the file's.
 #[derive(Clone, Debug, Default)]
 pub struct Local {
     pub path: PathBuf,
     pub editorconfig: editorconfig::Resolved,
+    pub tool: Option<(String, Setting)>,
     pub sources: Vec<(String, Setting)>,
+}
+
+impl Local {
+    pub fn new(path: PathBuf, editorconfig: editorconfig::Resolved) -> Self {
+        let mut l = Self {
+            path,
+            editorconfig,
+            tool: None,
+            sources: Vec::new(),
+        };
+        l.rebuild();
+        l
+    }
+
+    /// The formatter's word, and the sources again.
+    pub fn set_tool(&mut self, tool: Option<(String, Setting)>) {
+        if self.tool != tool {
+            self.tool = tool;
+            self.rebuild();
+        }
+    }
+
+    fn rebuild(&mut self) {
+        self.sources = self.editorconfig.settings();
+        self.sources.extend(self.tool.clone());
+    }
 }
 
 pub struct Editor {

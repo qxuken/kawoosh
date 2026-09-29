@@ -2233,6 +2233,7 @@ impl kui_native::App for Kawoosh {
         self.fire_settings();
         self.sync_cwd();
         self.sync_editorconfig();
+        self.sync_probes();
         self.sync_format();
         self.fire_cwd();
         self.fire_watches();

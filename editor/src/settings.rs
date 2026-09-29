@@ -1120,7 +1120,9 @@ impl Settings {
     ///
     /// 1. the session's `language.LANG.PATH`, then its bare `PATH` —
     ///    what was typed is meant now;
-    /// 2. the buffer's own sources, its `.editorconfig` sections;
+    /// 2. the buffer's own sources, its `.editorconfig` sections then
+    ///    its formatter's word (formatters.md Decision 6), each named by
+    ///    its kind (`editorconfig: …`, `prettier: …`);
     /// 3. `language.LANG.PATH` in the project's, the user's, then the
     ///    default layer — a language's way over a general preference,
     ///    as a filetype plugin's `setlocal` is over a vimrc's `set`;
@@ -1159,7 +1161,7 @@ impl Settings {
                     .local
                     .iter()
                     .rev()
-                    .find_map(|(name, t)| t.get(path).map(|v| (v, format!("editorconfig: {name}"))))
+                    .find_map(|(name, t)| t.get(path).map(|v| (v, name.clone())))
             })
             .or_else(|| {
                 lang.as_deref()
@@ -1429,7 +1431,7 @@ mod tests {
     fn a_buffers_read_is_its_languages_then_its_files() {
         let mut s = Settings::new();
         let local = vec![(
-            "/r/.editorconfig [*.go]".to_string(),
+            "editorconfig: /r/.editorconfig [*.go]".to_string(),
             tbl(&[("tabstop", Setting::Int(8))]),
         )];
         let go = Scope {
