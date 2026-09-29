@@ -1,7 +1,8 @@
 # Node actions
 
-Status: decided 2026-09-29; the calls taken here, each the user's to
-overturn, and three settled with the user (below). Asked: ckolkey/ts-node-action's node actions — one key that
+Status: decided and built 2026-09-29; the calls taken here, each the
+user's to overturn, and three settled with the user (below). Where the
+build moved a call, the section says so, and "Built" at the end. Asked: ckolkey/ts-node-action's node actions — one key that
 does what the node under the caret means, "fliping a boolean or change
 block indentation" — on [nodes.md](nodes.md)'s `kawoosh.node`.
 
@@ -12,9 +13,8 @@ block indentation" — on [nodes.md](nodes.md)'s `kawoosh.node`.
 `gra` lists the language server's code actions in the picker
 (`lsp action`); a server's refactors are there, when it has any.
 `kawoosh.buf.edits` is one undo step. `.` replays the engine's commands
-only: a command whose body is the shell's or Lua's is not recorded
-(`Editor::step_end`: "what the shell runs is not one"), so a plugin's edit
-cannot be repeated. The picker takes a source from Lua
+and Lua's, but not the shell's (`Editor::step_end`: "what the shell
+runs is not one"). The picker takes a source from Lua
 (`picker.open(def)`).
 
 ts-node-action: a table per filetype, from a node's type to a function
@@ -83,8 +83,9 @@ an item. **The outermost**: the file's first list.
 ### 3. What the caret does
 
 It keeps its distance from the node's start, held to the new text's last
-character: a flip leaves it where it was, a split leaves it on the
-opener. `cursor` in the answer says otherwise. From visual mode the
+character: a flip leaves it where it was. `cursor` in the answer says
+otherwise — `split` answers `cursor = 0`, the opener, since a kept
+distance lands in the new indentation. From visual mode the
 selection's bytes pick the node (as `<A-o>` reads them) and the action
 leaves normal mode.
 
@@ -105,7 +106,13 @@ before a shipped one, as the newest binding of a key wins. The message
 names it: `split · arguments`. `:node actions` opens the picker on every
 action that would take a node from the caret up to the body, innermost
 first (`flip · true`, `split · arguments`, `split · array_expression`),
-and runs the one picked; `:node action NAME` runs one by name.
+and runs the one picked; `:node action NAME` runs one by name, and
+`:node action NAME N` on the Nth node up that it takes.
+
+Built: the picker lists from the primary caret and acts there alone,
+on the buffer and the selections it was opened from — a pick runs
+while the picker's own field still has the keys, so it cannot read
+"the current buffer".
 
 `g.` because keymap-regroup.md's rule 3 wants a key without a leader
 where one is free and vim does not own it, and vim has no `g.`; the file
@@ -113,13 +120,13 @@ manager's `g.` (hidden files) is local to a listing, which has no nodes.
 
 ### 6. `.` repeats it
 
-`kawoosh.command(name, fn, { repeat = true })`: a command of the shell
-or of Lua that says so is recorded as a change when it edits the
-buffer, and `.` runs it again by name at the carets as they are then —
-flip one boolean, `.` on the next. Asked for by the command, not for
-every one: a `:w`, a picker opened, a pane moved are not changes, and
-the engine cannot tell a plugin's edit from its bookkeeping. `g.`'s
-command says it; so can any plugin's.
+Flip one boolean, `.` on the next. Built: this needed nothing. The
+note had it that `.` skips a Lua command, reading `step_end`'s "what
+the shell runs is not one"; but a Lua command is registered with the
+engine with a body (`register_spec`) and its edits are applied inside
+that body, so it is recorded and replayed like any engine command —
+only the shell's own Rust commands are not. The `repeat = true` flag
+the note proposed was not built.
 
 ### 7. What ships
 
@@ -160,6 +167,9 @@ change:
   (`1000000u64`) kept, a hex, octal or binary literal declined.
 
 `node_actions.NAME = false` in the settings turns a shipped one off.
+`kawoosh.node_actions.lists` is `split`'s table, and a list added to it
+is split — `split`'s `types` is a function reading it (`types` may be
+a list or a function).
 
 Not shipped: **cycling an identifier's case** (ts-node-action's
 `cycle_case`). It changes one occurrence of a name and leaves the others,
@@ -174,23 +184,20 @@ round, if missed.
 does, not negated; node actions kept apart from `gra` — the server's
 menu stays the server's.
 
-## Build
+## Built
 
-1. The engine: `Spec` learns `repeat`, `kawoosh.command`'s opts set it,
-   and the recorder records such a command when the edits it queued
-   landed (a Lua edit is applied after the command returns, so the
-   shell says the command edited).
-2. `kawoosh/lua/node_actions.lua`: `kawoosh.node.action`, the dispatch
-   (§2–§4), `g.`, `:node action NAME`, `:node actions`, the
-   `node_actions.NAME` settings.
-3. The five actions and their tables.
-4. `help/editing.md` (`g.`), `help/lua.md` (`kawoosh.node.action`),
-   keys.md.
-5. Tests, in `kawoosh/lua/tests/node_actions.lua`: each action in each
-   language of its table, a decline and the dispatch going on past it,
-   the climb stopping at a body, the operator's guard on a type's `<`,
-   a join declined over a comment, several carets with one inside
-   another, `.` after `g.`, one `u` for a many-caret action.
+`kawoosh/lua/node_actions.lua`, loaded after the picker: the registry
+(`kawoosh.node.action`, `kawoosh.node_actions.list`), the dispatch
+(`M.answers` from a place, `M.run` over the carets), `g.` in normal and
+visual mode, `:node action [NAME [N]]`, `:node actions`, the
+`node_actions` setting, and the five actions with their tables. No
+engine change (§6). `help/editing.md` "Node actions", `help/lua.md`,
+keys.md. `kawoosh/lua/tests/node_actions.lua`: each action in the
+languages above, a decline falling through, the climb stopping at a
+closure's body, the type's `<`, a join refused over a comment, a
+one-item tuple and a padded struct literal, two carets and a node
+inside another's, `.`, one `u`, visual mode, the setting, a plugin's
+action first, the picker's second pick, a list added to the table.
 
 ## Left
 
