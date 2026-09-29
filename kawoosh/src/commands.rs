@@ -68,6 +68,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::help::commands());
     v.extend(crate::wrap::commands());
     v.extend(crate::breadcrumbs::commands());
+    v.extend(crate::editorconfig::commands());
     v
 }
 
@@ -1141,6 +1142,17 @@ fn instruments() -> Vec<ShellCommand> {
         cmd(
             Spec::new("settings reload").doc("read every settings file again"),
             |k, _| k.reload_all_settings(),
+        ),
+        cmd(
+            Spec::new("settings user")
+                .alias(&["settings global"])
+                .doc("open your settings.lua, a template when there is none"),
+            |k, _| k.open_user_settings(),
+        ),
+        cmd(
+            Spec::new("settings project")
+                .doc("open the project's .kawoosh/settings.lua nearest the working directory, a template in it when there is none"),
+            |k, _| k.open_project_settings(),
         ),
     ]
 }

@@ -9,7 +9,8 @@
 //! (docs/design/workspaces.md), shortened the
 //! way fish's prompt does (every component but the last to its first
 //! letter) so a deep one fits, the full path on hover and a click
-//! listing it; the language servers and a running compile on the right.
+//! listing it; the language servers, the dock's tasks and a running
+//! compile on the right.
 //!
 //! **The tab strip** gives every tab an even share of the width, down to
 //! a floor; a label longer than its share is cut with an ellipsis. Past
@@ -77,6 +78,22 @@ impl Kawoosh {
                     pal.dim,
                 )],
                 run: Some("lsp info".into()),
+            });
+        }
+        // The dock's tasks, counted: bright while the dock is hidden,
+        // where they run unseen; a click shows or hides it.
+        let tasks = self.dock_tasks();
+        if tasks > 0 {
+            blocks.push(Block {
+                parts: vec![(
+                    format!("{tasks} docked"),
+                    if self.layout.dock_open {
+                        pal.dim
+                    } else {
+                        pal.fg
+                    },
+                )],
+                run: Some("dock".into()),
             });
         }
         if self.compile.running {

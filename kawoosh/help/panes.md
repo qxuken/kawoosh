@@ -130,6 +130,10 @@ in front — the place for a dev server, a watcher, a long build.
 pane stays in the dock. The dock is a tree of
 splits; `layout.dock = "scroll"` makes it a strip of columns instead.
 
+The title bar counts the dock's tasks (`2 docked`), brighter while the
+dock is hidden and they run out of sight; a click on it shows or hides
+the dock.
+
 ## Workspaces
 
 Each tab has its own working directory. The focused tab's is the one

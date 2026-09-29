@@ -60,7 +60,7 @@ first two users:
   new: the four severities' counts from what is published, without
   building the list `kawoosh.lsp.diagnostics()` builds.
 
-*Amended 2026-09-29 (roadmap step 69):* a third place, `"statusline"`
+*Amended 2026-09-29 (roadmap step 70):* a third place, `"statusline"`
 — the line under the panes as modules, [statusline.md](statusline.md).
 
 ### 4. Not the window's title

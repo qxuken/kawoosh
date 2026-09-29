@@ -1,4 +1,4 @@
-//! The status line under the panes as modules (roadmap step 69,
+//! The status line under the panes as modules (roadmap step 70,
 //! docs/design/statusline.md): kawoosh's own — the mode, a recording,
 //! the path, the keys typed, the strip's marks, the selections, the
 //! position, the percent — and the Lua ones `kawoosh.status` put at

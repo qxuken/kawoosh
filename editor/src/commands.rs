@@ -321,12 +321,8 @@ pub(crate) fn apply_operator(
             ed.await_char("align on");
         }
         "indent" | "dedent" => {
-            let ts = ed.tabstop();
-            let unit = if ed.expandtab() {
-                " ".repeat(ts)
-            } else {
-                "\t".into()
-            };
+            let ts = ed.shiftwidth_in(id);
+            let unit = ed.indent_unit_in(id);
             let buf = &ed.buffers[id];
             let mut edits = Vec::new();
             let mut seen = std::collections::HashSet::new();
@@ -2499,12 +2495,23 @@ pub fn install(ed: &mut Editor) {
                 Some((k, v)) => (k.to_string(), Setting::parse_like(v, ed.settings.get(k))),
                 None => {
                     if let Some(path) = a.strip_suffix('?') {
-                        ed.message = match ed.settings.get(path) {
-                            Some(v) => match ed.settings.origin(path) {
+                        // A value as the buffer the keys are in reads it —
+                        // its language's, its `.editorconfig`'s; a table
+                        // as the tree has it, every layer merged.
+                        let id = ed.views[ctx.view].buffer;
+                        let scoped = ed
+                            .settings
+                            .get(path)
+                            .is_none_or(|v| !v.is_table())
+                            .then(|| ed.settings.scoped_origin(path, ed.scope_of(id)))
+                            .flatten();
+                        ed.message = match (scoped, ed.settings.get(path)) {
+                            (Some((v, from)), _) => format!("{path} = {v}  ({from})"),
+                            (None, Some(v)) => match ed.settings.origin(path) {
                                 Some(from) => format!("{path} = {v}  ({from})"),
                                 None => format!("{path} = {v}"),
                             },
-                            None => format!("{path} is not set"),
+                            (None, None) => format!("{path} is not set"),
                         };
                         return;
                     }
@@ -3184,13 +3191,9 @@ fn nudge(ed: &mut Editor, ctx: &Ctx, right: bool) {
 }
 
 fn shift_lines(ed: &mut Editor, ctx: &Ctx, right: bool) {
-    let ts = ed.tabstop();
-    let unit = if ed.expandtab() {
-        " ".repeat(ts)
-    } else {
-        "\t".into()
-    };
     let id = view(ed, ctx).buffer;
+    let ts = ed.shiftwidth_in(id);
+    let unit = ed.indent_unit_in(id);
     let buf = &ed.buffers[id];
     let mut lines: Vec<usize> = ed.views[ctx.view]
         .sels

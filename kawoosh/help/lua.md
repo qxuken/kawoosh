@@ -81,7 +81,7 @@ return {
 
 `kawoosh.buf` reads and changes buffers. A buffer is named by a handle; leave it out to mean the current buffer. Lines count from 1; offsets are bytes from 0, with the end not included.
 
-- Reading: `current()`, `list()`, `name()`, `path()`, `language()`, `modified()`, `text()`, `lines()`, `line(n)`, `line_count()`, `lines_in(from, to)`, `cursor()` (the caret's `offset`, `line`, `col`), `selections()`.
+- Reading: `current()`, `list()`, `name()`, `path()`, `language()`, `indent()` (`tabstop`, `shiftwidth`, `expandtab` and `unit`, one indent's text, as the buffer's language and `.editorconfig` say), `modified()`, `text()`, `lines()`, `line(n)`, `line_count()`, `lines_in(from, to)`, `cursor()` (the caret's `offset`, `line`, `col`), `selections()`.
 - Changing: `insert(offset, text)`, `replace(from, to, text)`, `set_text(text)`, `edits({ { from, to, text }, ... })` (several edits as one undo step), `type(text)` (typed at every caret), `set_cursor(offset)`, `set_selections(...)`.
 - Showing: `show(buffer)` puts a buffer in the focused pane, `close(buffer)` closes it as `:bd` does.
 - `open_scratch { name = ..., text = ..., on_write = fn, read_only = ..., language = ... }` makes a buffer that is not a file. With `on_write(lines)`, `:w` hands you its lines.

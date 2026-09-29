@@ -1791,7 +1791,7 @@ impl Kawoosh {
             return;
         };
         let clicks = d.clicks.unwrap_or(1);
-        let tabstop = self.ed.tabstop();
+        let tabstop = self.ed.tabstop_in(self.ed.views[view].buffer);
         let top = self.ed.views[view].top;
         let marked = self.marks.any(self.ed.views[view].buffer);
         let buf = self.ed.buffer_of(view);
@@ -2222,6 +2222,7 @@ impl kui_native::App for Kawoosh {
         self.sync_settings();
         self.fire_settings();
         self.sync_cwd();
+        self.sync_editorconfig();
         self.fire_cwd();
         self.fire_watches();
         self.sync_histories(false);

@@ -179,6 +179,8 @@ pub struct Config {
     /// The undeclared keys already named, by file (roadmap step 34), so
     /// a toast is said once and not every reload.
     pub undeclared_said: std::collections::HashSet<(String, String)>,
+    /// The `.editorconfig` files read and watched (`editorconfig.rs`).
+    pub editorconfig: crate::editorconfig::Files,
 }
 
 impl Config {
@@ -194,6 +196,7 @@ impl Config {
             reloaded: None,
             loading: None,
             undeclared_said: Default::default(),
+            editorconfig: Default::default(),
         }
     }
 }
@@ -354,6 +357,7 @@ impl Kawoosh {
         paths.extend(self.config.user.clone());
         paths.extend(self.config.init.clone());
         paths.extend(crate::fonts::user_fonts_watch(self.config.fonts.as_deref()));
+        paths.extend(self.config.editorconfig.watched.iter().cloned());
         self.config.watch.watch(paths);
     }
 
@@ -431,6 +435,7 @@ impl Kawoosh {
     pub(crate) fn reload_changed(&mut self, paths: &[PathBuf]) {
         let mut project = false;
         let mut project_init = false;
+        let mut editorconfig = false;
         let mut names = Vec::new();
         for p in paths {
             if Some(p) == self.config.user.as_ref() {
@@ -443,6 +448,8 @@ impl Kawoosh {
                 project = true;
             } else if self.config.project_init.contains(p) {
                 project_init = true;
+            } else if self.config.editorconfig.watched.contains(p) {
+                editorconfig = true;
             } else {
                 continue;
             }
@@ -453,6 +460,9 @@ impl Kawoosh {
         }
         if project_init {
             self.reload_project_init();
+        }
+        if editorconfig {
+            self.reload_editorconfig();
         }
         if names.is_empty() {
             return;
@@ -856,23 +866,7 @@ impl Kawoosh {
                 true
             }
             (Some("new"), Some(path)) => {
-                self.open_in_editor(&path, None, None);
-                if let Some(v) = self.focused_view()
-                    && !path.exists()
-                    && self.ed.buffer_of(v).path.as_deref() == Some(path.as_path())
-                    && self.ed.buffer_of(v).is_empty()
-                {
-                    // An edit, not a reload: the buffer is modified, so
-                    // `:q` asks and `:w` writes.
-                    self.ed.buffer_of_mut(v).replace(0..0, SETTINGS_STUB);
-                    // The caret inside the table, where the first key goes:
-                    // the `}` line, under `return {`.
-                    let off = self.ed.buffer_of(v).line_start(3);
-                    self.ed.views[v].sels =
-                        kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(off));
-                    self.ed.message =
-                        format!("{} — a template; :w keeps it", self.short_name(&path));
-                }
+                self.open_settings_file(&path);
                 true
             }
             (Some("reload"), _) => {
@@ -899,6 +893,52 @@ impl Kawoosh {
         }
     }
 
+    /// A settings file in the focused pane; one not on disk yet is a
+    /// buffer at its path with the template as its text — modified, so
+    /// `:q` asks and `:w` writes (the `.kawoosh` directory with it).
+    pub(crate) fn open_settings_file(&mut self, path: &Path) {
+        self.open_in_editor(path, None, None);
+        if let Some(v) = self.focused_view()
+            && !path.exists()
+            && self.ed.buffer_of(v).path.as_deref() == Some(path)
+            && self.ed.buffer_of(v).is_empty()
+        {
+            // An edit, not a reload: the buffer is modified, so `:q`
+            // asks and `:w` writes.
+            self.ed.buffer_of_mut(v).replace(0..0, SETTINGS_STUB);
+            // The caret inside the table, where the first key goes: the
+            // `}` line, under `return {`.
+            let off = self.ed.buffer_of(v).line_start(3);
+            self.ed.views[v].sels =
+                kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(off));
+            self.ed.message = format!("{} — a template; :w keeps it", self.short_name(path));
+        }
+    }
+
+    /// `:settings user` (`:settings global`): the user's settings file,
+    /// a template when there is none yet.
+    pub(crate) fn open_user_settings(&mut self) {
+        match self.config.user.clone().or_else(user_settings_path) {
+            Some(path) => self.open_settings_file(&path),
+            None => self.ed.message = "no config dir: neither $XDG_CONFIG_HOME nor a home".into(),
+        }
+    }
+
+    /// `:settings project`: the project's settings file nearest the
+    /// working directory — the innermost `.kawoosh/settings.lua` above
+    /// it — else a template for one in the working directory, as the
+    /// tab offers. None on a host, where it would never be read.
+    pub(crate) fn open_project_settings(&mut self) {
+        if kawoosh_systems::fs::domain_of(&self.cwd).is_some() {
+            self.ed.message = "a project's settings stay local: none on a host".into();
+            return;
+        }
+        let path = project_settings_files(&self.cwd)
+            .pop()
+            .unwrap_or_else(|| self.cwd.join(PROJECT_DIR).join(SETTINGS_FILE));
+        self.open_settings_file(&path);
+    }
+
     /// `:settings reload` and the tab's button: every layer from its
     /// files again, `init.lua` included.
     pub(crate) fn reload_all_settings(&mut self) {
@@ -906,6 +946,7 @@ impl Kawoosh {
         paths.extend(self.config.project_init.clone());
         paths.extend(self.config.user.clone());
         paths.extend(self.config.init.clone());
+        paths.extend(self.config.editorconfig.watched.iter().cloned());
         if paths.is_empty() {
             self.reload_project_settings();
             self.ed.message = "settings reloaded".into();

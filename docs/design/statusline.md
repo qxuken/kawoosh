@@ -1,6 +1,6 @@
 # The status line as modules
 
-Status: decided and built 2026-09-29 (roadmap step 69). Asked: "i need
+Status: decided and built 2026-09-29 (roadmap step 70). Asked: "i need
 a relative full path at the bottom. or better let's also modularize
 statusline like neovim does. but by default i want a relative path
 inside. because i have lots of index.ts?x and i don't know where am i

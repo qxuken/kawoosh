@@ -591,6 +591,10 @@ pub struct BufSnap {
     /// The focused tab's under `buffers.scope = "tab"` (every buffer
     /// is, under `all`): `kawoosh.buf.list { tab = true }` keeps these.
     pub in_tab: bool,
+    /// Its indentation as its settings say — its language's, its
+    /// `.editorconfig`'s (docs/design/editorconfig.md): the tab's
+    /// columns, an indent's, and whether an indent is spaces.
+    pub indent: (usize, usize, bool),
 }
 
 thread_local! {
@@ -1356,6 +1360,7 @@ impl Runtime {
                     field: ed.is_field_buffer(id),
                     borrowed: ed.borrowed.contains(&id),
                     in_tab: ed.tab_buffers.as_ref().is_none_or(|s| s.contains(&id)),
+                    indent: (ed.tabstop_in(id), ed.shiftwidth_in(id), ed.expandtab_in(id)),
                 },
             );
         }
@@ -3475,6 +3480,29 @@ fn seed(
     buf.set(
         "modified",
         lua.create_function(move |_, h: Option<u64>| with_buf(&pp, h, |b| b.modified))?,
+    )?;
+    // `kawoosh.buf.indent(buffer)`: its indentation as its settings say
+    // — its language's, its `.editorconfig`'s — `{ tabstop, shiftwidth,
+    // expandtab, unit }`, `unit` one indent's text.
+    let pp = published.clone();
+    buf.set(
+        "indent",
+        lua.create_function(move |lua, h: Option<u64>| {
+            let (tabstop, shiftwidth, expandtab) = with_buf(&pp, h, |b| b.indent)?;
+            let t = lua.create_table()?;
+            t.set("tabstop", tabstop)?;
+            t.set("shiftwidth", shiftwidth)?;
+            t.set("expandtab", expandtab)?;
+            t.set(
+                "unit",
+                if expandtab {
+                    " ".repeat(shiftwidth)
+                } else {
+                    "\t".into()
+                },
+            )?;
+            Ok(t)
+        })?,
     )?;
     let pp = published.clone();
     buf.set(

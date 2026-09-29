@@ -107,7 +107,7 @@ impl Kawoosh {
         };
         let buf = &self.ed.buffers[v.buffer];
         let text = buf.text();
-        let drawn = Drawn::new(&text, self.ed.tabstop());
+        let drawn = Drawn::new(&text, self.ed.tabstop_in(v.buffer));
         let clip = |o: usize| drawn.to_drawn(o.min(text.len()));
         let caret_kind = if v.mode == Mode::Insert {
             Caret::Bar
@@ -1089,7 +1089,7 @@ impl Kawoosh {
             .map(|n| n.max(0) as usize)
             .unwrap_or(3)
             .min(rows_n / 2);
-        let tabstop = self.ed.tabstop();
+        let tabstop = self.ed.tabstop_in(self.ed.views[view].buffer);
         // The long lines' cell indexes, out of `self` for the rows below
         // (which borrow the buffer) and back at the end.
         let mut cells = std::mem::take(&mut self.line_cells);
