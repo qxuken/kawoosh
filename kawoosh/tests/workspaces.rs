@@ -292,7 +292,8 @@ fn a_tab_lists_its_own_buffers_and_a_picker_starts_here() {
 /// not one a tab in another project has shown, even when this tab
 /// showed it too, nor one under the tab's directory in a repository
 /// nested in it that a tab of its own is in — which the tab's lists
-/// leave out too — and not under `buffers.scope = "all"` either.
+/// leave out too — and not under `buffers.scope = "all"` either. Only
+/// while that workspace is open: its tabs closed, they are the tab's.
 #[test]
 fn bdo_leaves_other_workspaces_buffers_even_nested_ones() {
     let root = tmp("bdo");
@@ -350,6 +351,20 @@ fn bdo_leaves_other_workspaces_buffers_even_nested_ones() {
     ex(&mut d, &mut app, "set buffers.scope=all");
     ex(&mut d, &mut app, "bdo");
     assert_eq!(names(&app), ["a.txt", "in.txt", "two.txt"]);
+    // With their tabs closed the workspaces are too, and theirs is
+    // anybody's: in.txt under the tab's directory, two.txt shown here.
+    ex(&mut d, &mut app, "set buffers.scope!");
+    while app.layout.tabs.len() > 1 {
+        let here = app.layout.tabs[app.layout.tab].cwd.as_deref() == Some(outer.as_path());
+        ex(&mut d, &mut app, if here { "tabn" } else { "tabc" });
+    }
+    assert_eq!(
+        names(&app),
+        ["a.txt", "in.txt", "two.txt"],
+        "closing a tab keeps its buffers"
+    );
+    ex(&mut d, &mut app, "bdo");
+    assert_eq!(names(&app), ["a.txt"], "{}", app.ed.message);
     std::fs::remove_dir_all(&root).ok();
 }
 

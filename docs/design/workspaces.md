@@ -161,10 +161,12 @@ the tab's when it is in another open workspace nested there — a
 repository inside the project with a tab of its own, a project under
 a tab at `~` — so the outer tab's lists leave the inner's files out.
 And `:bdo` closes the tab's list (`buffers.scope`) less anything
-another workspace has: what a tab in another workspace counts as its
-own, even a file this tab showed too, and what a dock pane of one
+another open workspace has: what a tab in another workspace counts as
+its own, even a file this tab showed too, and what a dock pane of one
 shows. That holds under `buffers.scope = "all"` too: there it closes
-every buffer but those.
+every buffer but those. A closed workspace's buffers are nobody's in
+particular — closing a tab lets its panes go, not its buffers — so
+they are the tab's again wherever the lists say so.
 
 ## Round two: a lifecycle, and the dock
 
