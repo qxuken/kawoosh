@@ -355,3 +355,10 @@ project write, the layers).
 - **Filters by key**: `<A-m>` `<A-u>` `<A-p>` `<A-s>` from the search
   and the rows, the key on each chip. Room and a hairline between the
   chips and the list; a note's value cut at 48 characters.
+- **`⌥u` never arrived.** On a Mac a dead key held with Option (⌥u,
+  ⌥e, ⌥i, ⌥n, ⌥`) was a composition — kui allows IME on every window
+  — so the keymap never heard `<A-u>`, the editor's `<A-i>` `<A-n>`
+  included. kui F113 (the Option keys as Alt, winit's
+  `set_option_as_alt`) and `keys.option_as_alt`, `left` by default, so
+  the right ⌥ still types `ü`; declared every frame. kawoosh builds
+  against kui by path (`../kui-f113`) until a release carries F113.

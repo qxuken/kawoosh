@@ -209,6 +209,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `relativenumber` | `false` | number lines by distance from the caret |
 | `leader` | `" "` | the `<leader>` key |
 | `whichkey` | `true` | show the keys that can follow a prefix |
+| `keys.option_as_alt` | `"left"` | macOS: which ⌥ key is Alt for chords such as `<A-u>`: `left`, `right`, `both` or `none`; the other one types accents (`ü`) |
 | `pairs.enabled` | `true` | close brackets and quotes as you type; `pairs.rules` per language |
 | `clipboard.system` | `true` | `p` puts what other programs copied ([memory](memory.md)) |
 | `layout.default` | `"scroll"` | a new tab is a strip of columns (`scroll`) or a tree of splits (`tree`) |

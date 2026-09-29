@@ -2333,6 +2333,16 @@ impl kui_native::App for Kawoosh {
         {
             ui.secure_input(true);
         }
+        // Which Option key is Alt for the keymap on a Mac (kui F113; per
+        // frame too): one that is makes ⌥u a chord rather than the start
+        // of `ü`, which a dead key otherwise swallows.
+        let option = self
+            .ed
+            .settings
+            .str("keys.option_as_alt")
+            .and_then(kui_native::OptionAsAlt::from_name)
+            .unwrap_or(kui_native::OptionAsAlt::Left);
+        ui.option_as_alt(option);
         if self.awaiting_paste {
             ui.request_paste();
         }

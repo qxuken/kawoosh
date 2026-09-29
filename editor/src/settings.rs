@@ -502,6 +502,10 @@ const DOCS: &[(&str, &str)] = &[
     ("leader", "the `<leader>` key"),
     ("whichkey", "show the keys that can follow a prefix"),
     (
+        "keys.option_as_alt",
+        "macOS: which ⌥ is Alt for key chords (`<A-u>`) rather than typing accents (`ü`): `left`, `right`, `both`, `none`",
+    ),
+    (
         "layout.default",
         "what a new tab is: `scroll` a strip of columns, `tree` a tree of splits",
     ),
@@ -824,6 +828,11 @@ impl Settings {
         defaults.set("leader", Setting::Str(" ".into()));
         // The which-key float while a key sequence is open.
         defaults.set("whichkey", Setting::Bool(true));
+        // Which Option key on a Mac is Alt for the keymap (kui F113):
+        // one that is types what the layout composes with it no more —
+        // ⌥u a chord, not the start of `ü` — so the left by default,
+        // and the right left for accents.
+        defaults.set("keys.option_as_alt", Setting::Str("left".into()));
         // The scrolling tab (docs/design/scrolling-tab.md): what a new
         // tab is (`tree` | `scroll`; the strip since 2026-09-22), a
         // new column's width (`third`,
@@ -1096,6 +1105,10 @@ impl Settings {
             ("editor.wrap", words(&["off", "word", "glyph"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
             ("end_of_line", words(&["", "lf", "crlf", "cr"])),
+            (
+                "keys.option_as_alt",
+                words(&["left", "right", "both", "none"]),
+            ),
         ] {
             s.declare(path, kind, "");
         }
@@ -1655,6 +1668,7 @@ mod tests {
                 "format_on_save",
                 "formatter",
                 "insert_final_newline",
+                "keys.option_as_alt",
                 "language.css.tabstop",
                 "language.diff.trim_trailing_whitespace",
                 "language.gitcommit.trim_trailing_whitespace",

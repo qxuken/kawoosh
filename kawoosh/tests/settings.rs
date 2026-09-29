@@ -1356,3 +1356,21 @@ return {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `keys.option_as_alt` reaches kui every frame (kui F113): the left ⌥
+/// is Alt unless the settings say otherwise, so a dead key such as ⌥u
+/// is a chord rather than the start of `ü`.
+#[test]
+fn the_option_key_is_alt_as_the_settings_say() {
+    use kui_native::OptionAsAlt;
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d);
+    d.frame(&mut app);
+    assert_eq!(d.core.option_as_alt(), OptionAsAlt::Left);
+    ex(&mut d, &mut app, "set keys.option_as_alt=both");
+    d.frame(&mut app);
+    assert_eq!(d.core.option_as_alt(), OptionAsAlt::Both);
+    ex(&mut d, &mut app, "set keys.option_as_alt=none");
+    d.frame(&mut app);
+    assert_eq!(d.core.option_as_alt(), OptionAsAlt::None);
+}
