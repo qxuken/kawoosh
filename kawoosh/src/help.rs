@@ -208,9 +208,9 @@ impl Kawoosh {
             Some(v) => self.show_buffer(v, id),
             None => {
                 let v = self.ed.add_view(id);
-                self.layout.split(
-                    crate::layout::SplitDir::H,
+                self.layout.open(
                     crate::layout::Content::Editor(v),
+                    crate::layout::Place::Column,
                 );
             }
         }

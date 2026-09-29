@@ -58,7 +58,7 @@ pub const REFERENCES_BUFFER: &str = "*references*";
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
-use crate::layout::{Content, SplitDir};
+use crate::layout::{Content, Place};
 
 pub struct Completion {
     pub buffer: BufferId,
@@ -347,7 +347,13 @@ impl Kawoosh {
                     } else {
                         // Read in, as markdown: the fences are the
                         // language's, highlighted; `q` goes back.
-                        self.show_in_pane_as("*hover*", &text, Some("markdown"), true);
+                        self.show_in_pane_as(
+                            "*hover*",
+                            &text,
+                            Some("markdown"),
+                            true,
+                            Place::Under,
+                        );
                     }
                 }
                 Event::Completion {
@@ -934,18 +940,28 @@ impl Kawoosh {
     /// already showing it), with the keys: a pane made is focused, and
     /// `q` there closes it back to where they came from.
     pub fn show_in_pane(&mut self, name: &str, text: &str) {
-        self.show_in_pane_as(name, text, None, true);
+        self.show_in_pane_as(name, text, None, true, Place::Column);
     }
 
     /// `show_in_pane` with the keys left where they are: a pane watched
     /// while typing goes on — the compile's output.
     pub fn glance_in_pane(&mut self, name: &str, text: &str) {
-        self.show_in_pane_as(name, text, None, false);
+        self.show_in_pane_as(name, text, None, false, Place::Column);
     }
 
     /// `show_in_pane`, with the buffer read as `language` and, with
-    /// `focus`, the keyboard in the pane.
-    pub fn show_in_pane_as(&mut self, name: &str, text: &str, language: Option<&str>, focus: bool) {
+    /// `focus`, the keyboard in the pane; at `place` when it is not on
+    /// show — a column of its own for a text that is a subject of its
+    /// own (`*messages*`, `*compile*`), under the focused pane for the
+    /// caret's (`*hover*`, `*diagnostic*`; pane-placement.md).
+    pub fn show_in_pane_as(
+        &mut self,
+        name: &str,
+        text: &str,
+        language: Option<&str>,
+        focus: bool,
+        place: Place,
+    ) {
         let existing = self
             .ed
             .buffers
@@ -985,7 +1001,7 @@ impl Kawoosh {
             None => {
                 let v = self.ed.add_view(id);
                 let from = self.layout.focused();
-                self.layout.split(SplitDir::V, Content::Editor(v));
+                self.layout.open(Content::Editor(v), place);
                 // The keyboard goes to the pane unless it is only to be
                 // glanced at.
                 if !focus {
@@ -1376,7 +1392,13 @@ impl Kawoosh {
             })
             .collect::<Vec<_>>()
             .join("\n\n");
-        self.show_in_pane("*diagnostic*", &format!("{text}\n"));
+        self.show_in_pane_as(
+            "*diagnostic*",
+            &format!("{text}\n"),
+            None,
+            true,
+            Place::Under,
+        );
     }
 
     /// `]d` / `[d`: the caret to the next or previous diagnostic's start.

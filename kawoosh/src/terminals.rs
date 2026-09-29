@@ -14,7 +14,7 @@ use kui_native::KeyPress;
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
-use crate::layout::{Content, PaneId, SplitDir};
+use crate::layout::{Content, PaneId, Place};
 use crate::links::Target;
 
 pub type TermId = u64;
@@ -538,8 +538,21 @@ impl Kawoosh {
     pub fn add_headless_terminal(&mut self) -> TermId {
         let t = Terminal::headless(TermSize { rows: 24, cols: 80 });
         let id = self.terms.add(t);
-        self.layout.split(SplitDir::V, Content::Terminal(id));
+        self.layout.open(Content::Terminal(id), Place::Under);
         id
+    }
+
+    /// Where a bare `:terminal` and `:!` open (pane-placement.md
+    /// Decision 3): a column of its own, or under the focused pane when
+    /// `terminal.place` is `under`; the launcher's `<C-w>s t` is the
+    /// per-pane way.
+    pub(crate) fn terminal_place(&self) -> Place {
+        self.ed
+            .settings
+            .str("terminal.place")
+            .and_then(Place::parse)
+            .filter(|p| *p != Place::Dock)
+            .unwrap_or(Place::Column)
     }
 
     /// The frame's palette into every terminal, shown or not: the
@@ -897,7 +910,7 @@ impl Kawoosh {
                 self.layout.focus(p);
             }
             None => {
-                self.layout.split(SplitDir::V, Content::Editor(v));
+                self.layout.open(Content::Editor(v), Place::Under);
             }
         }
     }
@@ -1032,7 +1045,7 @@ impl Kawoosh {
                         return;
                     };
                     let v = self.ed.add_view(id);
-                    self.layout.split(SplitDir::H, Content::Editor(v));
+                    self.layout.open(Content::Editor(v), Place::Column);
                 }
             }
         }
@@ -1055,7 +1068,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             Spec::new("terminal")
                 .alias(&["term"])
                 .args(Args::rest(&[ArgKind::Text]))
-                .doc("a terminal in a split below, running CMD or the shell"),
+                .doc("a terminal in a column of its own (`terminal.place`), running CMD or the shell"),
             |k, ctx| {
                 let cmd = if ctx.args.is_empty() {
                     None
@@ -1069,14 +1082,14 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     .and_then(|t| t.cwd())
                     .unwrap_or_else(|| k.cwd.clone());
                 if let Some(t) = k.spawn_terminal(cmd.as_deref(), Some(&cwd)) {
-                    k.fill_or_split(SplitDir::V, Content::Terminal(t));
+                    k.fill_or_open(k.terminal_place(), Content::Terminal(t));
                 }
             },
         ),
         cmd(
             Spec::new("shell")
                 .args(Args::rest(&[ArgKind::Text]))
-                .doc("`:!CMD`: CMD in a terminal below, `%` the file (`%:h` its directory, `%:t` its name), quoted — a prompt it asks is answered there"),
+                .doc("`:!CMD`: CMD in a terminal of its own (`terminal.place`), `%` the file (`%:h` its directory, `%:t` its name), quoted — a prompt it asks is answered there"),
             |k, ctx| {
                 let line = ctx.args.join(" ");
                 if line.trim().is_empty() {
@@ -1092,7 +1105,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 };
                 let cwd = k.cwd.clone();
                 if let Some(t) = k.spawn_bang(&cmd, &cwd) {
-                    k.fill_or_split(SplitDir::V, Content::Terminal(t));
+                    k.fill_or_open(k.terminal_place(), Content::Terminal(t));
                 }
             },
         ),

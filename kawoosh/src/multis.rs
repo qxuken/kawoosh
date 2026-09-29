@@ -19,7 +19,7 @@ use kawoosh_systems::search::{Cancel, Compiled, Query};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
-use crate::layout::{Content, SplitDir};
+use crate::layout::{Content, Place, SplitDir};
 
 #[derive(Default)]
 pub struct Multis {
@@ -120,8 +120,10 @@ impl Kawoosh {
         let visible = self.layout.visible_panes();
         let shown = visible.iter().copied().find(|p| on(self, *p));
         if beside && shown.is_none() {
+            // A list is of the pane it was asked from: under it, in its
+            // column (pane-placement.md Decision 2).
             let v = self.ed.add_view(id);
-            self.layout.split(SplitDir::V, Content::Editor(v));
+            self.layout.open(Content::Editor(v), Place::Under);
             if !focus {
                 self.layout.focus(focused);
             }
@@ -146,7 +148,7 @@ impl Kawoosh {
             }
             None => {
                 let v = self.ed.add_view(id);
-                self.layout.split(SplitDir::H, Content::Editor(v));
+                self.layout.open(Content::Editor(v), Place::Column);
                 if !focus {
                     self.layout.focus(focused);
                 }

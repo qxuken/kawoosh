@@ -69,13 +69,13 @@ fn a_which_key_lists_what_can_follow_and_a_setting_hides_it() {
     assert!(texts(&d).is_empty());
     // A group without a name shows how many keys it holds; `:map
     // group` names one.
-    ex(&mut d, &mut app, "map n ]xa echo a");
-    ex(&mut d, &mut app, "map n ]xb echo b");
+    ex(&mut d, &mut app, "map n ]ya echo a");
+    ex(&mut d, &mut app, "map n ]yb echo b");
     d.keys(&mut app, "]");
     let t = texts(&d);
-    assert!(has(&t, "x") && has(&t, "+2"), "{t:?}");
+    assert!(has(&t, "y") && has(&t, "+2"), "{t:?}");
     d.key(&mut app, "escape", KeyMods::default());
-    ex(&mut d, &mut app, "map group ]x echoes");
+    ex(&mut d, &mut app, "map group ]y echoes");
     ex(&mut d, &mut app, "map group g going");
     d.keys(&mut app, "]");
     let t = texts(&d);

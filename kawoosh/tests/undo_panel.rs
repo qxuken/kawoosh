@@ -1,4 +1,4 @@
-//! The undo history pane (`:undo_history`): a pane beside the buffer
+//! The undo history pane (`:undo_history`): a pane under the buffer
 //! listing every state it has been through, newest first; a row put
 //! back with `⏎` or a click; the panel following the keyboard.
 
@@ -53,14 +53,17 @@ fn the_panel_lists_the_states_and_restores_one() {
         "bc\none twodef\n"
     );
 
-    // A pane of its own, the keyboard on it, the buffer keeping most of
-    // the width.
+    // A pane of its own under the buffer (pane-placement.md), the
+    // keyboard on it.
     ex(&mut d, &mut app, "undo history");
     assert_eq!(app.layout.focused_content(), Some(Content::Undo));
     assert_eq!(app.layout.visible_panes().len(), 2);
     d.frame(&mut app);
     let rects = &app.layout.rects;
-    assert!(rects[&1].w > rects[&2].w * 1.5, "{rects:?}");
+    assert!(
+        rects[&2].y > rects[&1].y && (rects[&2].x - rects[&1].x).abs() < 1.0,
+        "under the buffer: {rects:?}"
+    );
     let ts = texts(&d);
     let has = |s: &str| ts.iter().any(|t| t.contains(s));
     assert!(has("undo · t"), "the title names the buffer: {ts:?}");

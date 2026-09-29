@@ -1,9 +1,11 @@
 -- The bundled tools: launch targets for `:tool NAME` and the tools
 -- picker (`<leader>t`), a few that most projects want and whatever
 -- `settings.lua` adds. A tool is `kawoosh.tool(name, { cmd =, cwd =,
--- dock =, restore = })`: `cmd` runs in a terminal pane, `cwd` is
--- `"root"` (the working directory) or a path — nothing said is the
--- file's directory — `dock` puts it in the dock instead of a split, and
+-- place =, dock =, restore = })`: `cmd` runs in a terminal pane, `cwd`
+-- is `"root"` (the working directory) or a path — nothing said is the
+-- file's directory — `place` is where it opens: `"column"`, a column
+-- of its own (the default; pane-placement.md), `"under"` the focused
+-- pane in its column, or `"dock"` (`dock = true` says the same), and
 -- `restore` has a session start it again where it was left (the three
 -- defaults do; a build's `compile` and `run` do not).
 --
@@ -30,7 +32,7 @@ local DEFAULTS = {
   shell = { cmd = os.getenv("SHELL") or "sh", cwd = "root", restore = true },
 }
 
-kawoosh.setting("tools", { type = "table", doc = "launch targets by name: a command, or `{ cmd, cwd, dock, restore, key }`" })
+kawoosh.setting("tools", { type = "table", doc = "launch targets by name: a command, or `{ cmd, cwd, place, dock, restore, key }` — `place` a `column` of its own, `under` the pane, or the `dock`" })
 kawoosh.setting("run.command", { type = "string", doc = "what the `run` tool runs" })
 
 -- A tool's letter in the launcher (`key = "g"`), by name.
@@ -40,7 +42,7 @@ local function register(name, def)
   if type(def) == "string" then def = { cmd = def } end
   if type(def) ~= "table" or type(def.cmd) ~= "string" then return end
   kawoosh.tool_keys[name] = type(def.key) == "string" and def.key or nil
-  kawoosh.tool(name, { cmd = def.cmd, cwd = def.cwd, dock = def.dock, restore = def.restore })
+  kawoosh.tool(name, { cmd = def.cmd, cwd = def.cwd, place = def.place, dock = def.dock, restore = def.restore })
 end
 
 -- kawoosh.compile_default(): `compile.default` as a command line — a

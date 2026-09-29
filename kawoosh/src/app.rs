@@ -27,7 +27,7 @@ use crate::Pal;
 use crate::commands::ShellCommands;
 use crate::compile::Compile;
 use crate::inspector::Inspector;
-use crate::layout::{Content, Layout, PaneId, SplitDir};
+use crate::layout::{Content, Layout, PaneId, Place, SplitDir};
 use crate::lsp::LspState;
 use crate::notify::Notifications;
 use crate::rows::{self, Drawn};
@@ -1490,7 +1490,7 @@ impl Kawoosh {
             Some(v) => self.show_buffer(v, id),
             None => {
                 let v = self.ed.add_view(id);
-                self.layout.split(SplitDir::H, Content::Editor(v));
+                self.layout.open(Content::Editor(v), Place::Column);
             }
         }
     }

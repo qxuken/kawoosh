@@ -99,7 +99,8 @@ after the line and goes on after the message, as Zed's blocks sit — so
 a long TypeScript error is read where it happens. The files are in
 path order, those with an error first; the places in a file by line.
 
-The list opens in a split beside the pane it was asked from, the
+The list opens under the pane it was asked from, in its column — it
+is that pane's ([pane-placement.md](pane-placement.md)) — the
 keyboard in it, as `*references*` did; `<CR>` (and `g<Space>`) opens
 the place in the pane it came from, the list staying; `q` closes it.
 The list writes its own notes under the lines, so its rows draw no

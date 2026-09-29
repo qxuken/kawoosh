@@ -318,7 +318,9 @@ impl Kawoosh {
             base.label,
             self.ed.unified_hunk(src, &h, PREVIEW_CONTEXT)
         );
-        self.show_in_pane_as("*hunk*", &text, Some("diff"), false);
+        // The caret's hunk: under the buffer, in its column
+        // (pane-placement.md Decision 2).
+        self.show_in_pane_as("*hunk*", &text, Some("diff"), false, crate::layout::Place::Under);
     }
 
     // ------------------------------------------------------------ conflicts

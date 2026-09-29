@@ -368,21 +368,29 @@ function kawoosh.view(name, fn, on_event, opts)
   kawoosh._transient[name] = (opts and opts.session == false) or nil
 end
 
--- kawoosh.tool(name, { cmd =, cwd =, dock =, restore = }): a launch
--- target for `:tool NAME` and the tools picker — `restore` has a
--- session start it again in the directory it was left in (a shell, a
--- git UI; not a build); `kawoosh.tools()` lists them, by name, each
--- with what was registered.
+-- kawoosh.tool(name, { cmd =, cwd =, place =, dock =, restore = }): a
+-- launch target for `:tool NAME` and the tools picker — `place` is
+-- where it opens, `"column"` (a column of its own, the default),
+-- `"under"` (under the focused pane, in its column) or `"dock"`, and
+-- `dock = true` spells the last; `restore` has a session start it
+-- again in the directory it was left in (a shell, a git UI; not a
+-- build); `kawoosh.tools()` lists them, by name, each with what was
+-- registered.
 local register_tool = kawoosh.tool
 function kawoosh.tool(name, t)
-  kawoosh._tools[name] = { cmd = t.cmd, cwd = t.cwd, dock = t.dock or false, restore = t.restore or false }
+  local place = t.place
+  if place ~= "under" and place ~= "column" and place ~= "dock" then
+    place = t.dock and "dock" or "column"
+  end
+  kawoosh._tools[name] = { cmd = t.cmd, cwd = t.cwd, place = place, dock = place == "dock",
+                           restore = t.restore or false }
   register_tool(name, t)
 end
 
 function kawoosh.tools()
   local out = {}
   for name, t in pairs(kawoosh._tools) do
-    out[#out + 1] = { name = name, cmd = t.cmd, cwd = t.cwd, dock = t.dock, restore = t.restore }
+    out[#out + 1] = { name = name, cmd = t.cmd, cwd = t.cwd, place = t.place, dock = t.dock, restore = t.restore }
   end
   table.sort(out, function(a, b) return a.name < b.name end)
   return out

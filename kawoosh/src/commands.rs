@@ -23,7 +23,7 @@ use kawoosh_editor::{
 };
 
 use crate::app::Kawoosh;
-use crate::layout::{Content, Drop, SplitDir};
+use crate::layout::{Content, Drop, Place, SplitDir};
 
 /// A shell command out of a spec and a closure.
 pub type ShellCommand = FnCommand<Kawoosh>;
@@ -700,7 +700,7 @@ fn panes() -> Vec<ShellCommand> {
                     Some(v) => k.show_buffer(v, id),
                     None => {
                         let v = k.ed.add_view(id);
-                        k.layout.split(SplitDir::H, Content::Editor(v));
+                        k.layout.open(Content::Editor(v), Place::Column);
                     }
                 }
             },

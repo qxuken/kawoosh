@@ -258,6 +258,37 @@ pub enum Content {
     /// The working memory: the register's past (`memory.rs`).
     Memory,
 }
+
+/// Where a new pane opens (pane-placement.md): under the focused pane
+/// in its column — a tree's split below — for what is made from the
+/// buffer and acts back on it; a column of its own — a tree's split
+/// beside — for a subject of its own; or the dock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    Under,
+    Column,
+    Dock,
+}
+
+impl Place {
+    /// `under`, `column`, `dock` — a tool's `place`, `terminal.place`.
+    pub fn parse(s: &str) -> Option<Place> {
+        match s {
+            "under" | "below" => Some(Place::Under),
+            "column" | "beside" => Some(Place::Column),
+            "dock" => Some(Place::Dock),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Place::Under => "under",
+            Place::Column => "column",
+            Place::Dock => "dock",
+        }
+    }
+}
 /// A column's width in a scrolling tab, as a fraction of the viewport
 /// (scrolling-tab.md Decision 1): niri's presets, or the fraction a
 /// drag left it at.
@@ -873,6 +904,29 @@ impl Layout {
         }
         self.tab_mut().focused = new;
         new
+    }
+
+    /// Opens `content` at `place` (pane-placement.md Decision 1), the
+    /// new pane focused: under the focused pane in its column, a column
+    /// of its own after it (a split beside in a tree), or in the dock —
+    /// beside what the dock holds, or the dock's first pane, the dock
+    /// shown. From inside the dock, `Under` and `Column` are the dock's.
+    pub fn open(&mut self, content: Content, place: Place) -> PaneId {
+        match place {
+            Place::Under => self.split(SplitDir::V, content),
+            Place::Column => self.split(SplitDir::H, content),
+            Place::Dock => {
+                self.dock_open = true;
+                self.dock_focused = true;
+                if self.dock.is_some() {
+                    self.split(SplitDir::H, content)
+                } else {
+                    let p = self.new_pane(content);
+                    self.set_dock(p);
+                    p
+                }
+            }
+        }
     }
 
     /// The pane `pane` was split from, if it is still there.

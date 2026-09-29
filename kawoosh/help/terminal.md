@@ -6,7 +6,7 @@ A terminal pane runs your shell, or any program, inside kawoosh, beside your buf
 
 | how | what |
 |---|---|
-| `:terminal`, `:term` | a terminal running your shell, in a new split |
+| `:terminal`, `:term` | a terminal running your shell, in a column of its own (`terminal.place`) |
 | `:terminal CMD` | a terminal running CMD |
 | `<C-w>!` | a terminal below |
 | `t` in the launcher | a new split (`<C-w>v`, `<C-w>s`) or tab opens on the launcher; `t` there makes it a terminal |
@@ -123,6 +123,7 @@ When a program in the terminal turns echo off to ask for a password (`sudo`, `ss
 | `terminal.scrollback` | `10000` | lines of history each terminal keeps |
 | `terminal.bell` | `"sound"` | `sound`, `visual` or `off` |
 | `terminal.escape` | `"<C-\\>"` | the key before normal mode's keys in a terminal; `""` for none, every key the program's |
+| `terminal.place` | `"column"` | where `:terminal` and `:!` open: `column`, a column of its own, or `under` the focused pane in its column; `<C-w>s` then `t` is under either way |
 | `terminal.raw` | `{}` | programs a pane is raw for while one is in front, such as `{ "nvim", "hx" }` |
 | `editor.bell` | `false` | whether the editor rings for its own failures |
 | `env.shell` | `""` | the shell whose `PATH` kawoosh borrows when started outside a terminal (from the Dock, Finder); read at startup |
