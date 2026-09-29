@@ -2718,6 +2718,22 @@ In order — the bugs first, then what needs deciding:
     `:editorconfig init` writes a template from the settings and the
     project's languages; `:set KEY?` names the tier;
     `kawoosh.buf.indent()`. `kawoosh/tests/editorconfig.rs`.
+70. **Formatters, and what they say of indentation**, asked 2026-09-29
+    after step 69: "there is also tools like prettier and eslint that
+    can dictate the rules. they probably offer some protocol to get
+    it?", then "we probably should be able to format using them".
+    Decided, not built: [formatters.md](formatters.md) — a formatter is
+    data (`format.NAME`, as `lsp.NAME`: stdin to stdout, the files that
+    say a project uses it, the project's own `node_modules/.bin` first),
+    shipped for prettier, biome, stylua, clang-format, ruff, gofmt,
+    taplo, shfmt and rustfmt; the buffer's `formatter` through its
+    scope, `auto` the one whose config is nearest, else `lsp`;
+    `:format`, `:format?`, `grf`, the result applied as a line diff;
+    `format_on_save` with the write waiting for it; a project's own
+    tool allowed once before it runs unasked; and its indentation read
+    by formatting a probe — no protocol exists, and a config in
+    JavaScript can only be read by running it — as a source of the
+    buffer's own over `.editorconfig`. Not eslint. Six rounds.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

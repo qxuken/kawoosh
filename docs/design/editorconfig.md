@@ -159,6 +159,9 @@ what is not applied.
 
 ## Left
 
+- A formatter's word (prettier's, biome's, …) as a source over the
+  `.editorconfig`, and formatting through them: step 70,
+  [formatters.md](formatters.md).
 - `:setlocal`: a value for one buffer, typed. The scope has room for it
   (a source in the buffer's tier), nothing asks yet.
 - `max_line_length` as a ruler, when there is a ruler.
