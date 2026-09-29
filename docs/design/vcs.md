@@ -221,11 +221,34 @@ Settings: `vcs.enabled` (on), `vcs.backends` (the order), `vcs.signs`
 +3 ~1 −2`, the branch and the buffer's hunk counts, placed by
 `statusline.layout` (statusline.md), at `...` unless named.
 
+### 11. A merge is resolved in the buffer
+
+Asked 2026-09-30: "merge ui would be cool, just in buffer
+highlighting." A conflict is a fact of the text — `<<<<<<< HEAD`, the
+lines, `=======`, the lines, `>>>>>>> feature`, diff3's `|||||||
+base` between — so it needs no backend and no pane: the shell reads
+the markers (`editor/src/conflicts.rs`, once per version of a buffer,
+kept in `Vcs::conflicts`) and the pane washes each region in its
+side's colour — ours in `added`, theirs in the accent, a base faint,
+the marker lines stronger. `]x` `[x` walk them; `conflict ours` /
+`theirs` / `both` / `none` (`<leader>hxo` `hxt` `hxb` `hxn`) make the
+conflict under the caret that side, the markers gone, one undo node;
+with `!` (`<leader>hxO` `hxT`) every conflict in the buffer;
+`:conflict` counts them and says whose the caret's is. The gutter's
+signs go on working underneath: a merge in progress has a base too.
+
+Beaten: a three-pane merge tool (ours, base, theirs, the result
+below). That is a window's worth of layout for something a merge
+leaves in one file already, and vim users resolve conflicts in the
+buffer today with `dp` and `do` or a plugin's `co` `ct`; the washes
+and the four commands are that, without a mode.
+
 ## Keys
 
 All under `<leader>h`, keys.md's reserved group; `]h` `[h` as
-reserved. `<leader>bg` `<leader>bl` `<leader>wd` `<leader>wc` stay
-reserved — a commit UI is lazygit's still.
+reserved; `]x` `[x` and `<leader>hx*` the conflicts'. `<leader>bg`
+`<leader>bl` `<leader>wd` `<leader>wc` stay reserved — a commit UI is
+lazygit's still.
 
 ## Built
 
@@ -275,7 +298,9 @@ Departed from the note as written:
 - **jj**: the table is a morning's work; not testable here.
 - **A blame's commit message in a popup**: `vcs show` opens the commit
   whole instead.
-- **Conflicts**: the markers are the grammar's to colour (a `conflict`
-  language); `]x` to walk them, `hunk take ours/theirs`, later.
+- **Conflicts in a multibuffer**: the washes are a plain buffer's; a
+  review's excerpts show a conflict's lines unwashed. (Decision 11
+  built 2026-09-30: `kawoosh/tests/conflicts.rs`, the editor's
+  `conflicts::tests`.)
 - **The three walks for a root** (`moments.rs`, `deduce.rs`, `lsp.rs`)
   are not unified onto `probe`: they need a root before Lua is up.

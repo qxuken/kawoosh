@@ -1107,6 +1107,12 @@ impl Kawoosh {
         let inlay = self.inlay_hints_of(buf_id);
         // What plugins painted (`kawoosh.buf.paint`): over the syntax.
         let (painted, mut washes) = self.paints_of(buf_id);
+        // A merge's conflicts, each side washed in its colour
+        // (docs/design/vcs.md Decision 11): every one, wherever it is —
+        // they are few, and the rows clip.
+        if !self.ed.is_multi(buf_id) {
+            washes.extend(self.conflict_washes(buf_id, 0..usize::MAX));
+        }
         // The markdown buffer drawn rendered (markdown.md): its rows are
         // as tall as they wrap to, so it scrolls by what they measured.
         let md = self.markdown_rendered(buf_id);

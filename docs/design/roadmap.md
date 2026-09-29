@@ -2783,7 +2783,11 @@ In order — the bugs first, then what needs deciding:
     worktree add` as a tab, the `vcs` status-line module. `<leader>h*`
     taken. `kawoosh/tests/vcs.rs`, `vcs_git.rs`, `vcs_fossil.rs`;
     `kawoosh/lua/tests/hunks.lua`, `spawn.lua`, `vcs_layout.lua`;
-    `kawoosh/help/vcs.md`.
+    `kawoosh/help/vcs.md`. Then, asked 2026-09-30 "merge ui would be
+    cool, just in buffer highlighting": vcs.md Decision 11 — the
+    markers read from the text, each side washed in its colour, `]x`
+    `[x`, `conflict ours/theirs/both/none` (`<leader>hx*`, `!` for
+    all); `kawoosh/tests/conflicts.rs`.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

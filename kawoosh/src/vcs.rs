@@ -10,7 +10,9 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use kawoosh_doc::{BufferId, Version};
-use kawoosh_editor::{LineHunk, Mode, MultiLine, Selection, Selections, Sign, Spec, motions};
+use kawoosh_editor::{
+    Conflict, LineHunk, Mode, MultiLine, Selection, Selections, Sign, Spec, Take, motions,
+};
 use kawoosh_systems::io::IoMsg;
 use kawoosh_systems::{Alarm, WakeHandle};
 use kui_native::Color;
@@ -27,6 +29,9 @@ pub const QUIET: Duration = Duration::from_millis(100);
 const PREVIEW_CONTEXT: usize = 3;
 
 pub struct Vcs {
+    /// Each buffer's conflicts as last read, and the version they are
+    /// of (docs/design/vcs.md Decision 11): read again when it moves.
+    conflicts: HashMap<BufferId, (Version, Vec<Conflict>)>,
     /// The diffs in flight: the buffer and the version it was diffed at.
     asks: HashMap<u64, (BufferId, Version)>,
     next_ask: u64,
@@ -40,6 +45,7 @@ pub struct Vcs {
 impl Vcs {
     pub fn new(wake: WakeHandle) -> Self {
         Self {
+            conflicts: HashMap::new(),
             asks: HashMap::new(),
             next_ask: 0,
             moved: HashMap::new(),
@@ -315,6 +321,184 @@ impl Kawoosh {
         self.show_in_pane_as("*hunk*", &text, Some("diff"), false);
     }
 
+    // ------------------------------------------------------------ conflicts
+
+    /// Buffer `id`'s conflicts, read from the text when its version
+    /// moved since they were last read; a buffer with no marker costs
+    /// the scan once per version.
+    pub fn conflicts_of(&mut self, id: BufferId) -> Vec<Conflict> {
+        let Some(b) = self.ed.buffers.get(id) else {
+            self.vcs.conflicts.remove(&id);
+            return Vec::new();
+        };
+        let version = b.version();
+        if let Some((v, cs)) = self.vcs.conflicts.get(&id)
+            && *v == version
+        {
+            return cs.clone();
+        }
+        let cs = self.ed.conflicts_in(id);
+        self.vcs.conflicts.insert(id, (version, cs.clone()));
+        cs
+    }
+
+    /// The washes a conflict's lines are drawn with (docs/design/vcs.md
+    /// Decision 11): our side in the added colour, theirs in the
+    /// accent, a diff3 base faint, each marker line stronger in its
+    /// side's colour — for buffer `id`'s lines `lines`.
+    pub fn conflict_washes(
+        &mut self,
+        id: BufferId,
+        lines: std::ops::Range<usize>,
+    ) -> Vec<(std::ops::Range<usize>, Color)> {
+        let cs = self.conflicts_of(id);
+        let mut out = Vec::new();
+        if cs.is_empty() {
+            return out;
+        }
+        let Some(b) = self.ed.buffers.get(id) else {
+            return out;
+        };
+        let (ours, theirs, base) = (self.pal.insert, self.pal.accent, self.pal.faint);
+        let count = b.line_count();
+        let mut wash = |ln: usize, c: Color, alpha: f32| {
+            if lines.contains(&ln) && ln < count {
+                let r = b.line_range(ln);
+                // A whole line, its newline in, so an empty line shows.
+                out.push((
+                    r.start..(r.end + 1).min(b.len()).max(r.start),
+                    c.with_alpha(alpha),
+                ));
+            }
+        };
+        for c in &cs {
+            if c.end < lines.start || c.start >= lines.end {
+                continue;
+            }
+            wash(c.start, ours, 0.35);
+            for ln in c.ours() {
+                wash(ln, ours, 0.12);
+            }
+            if let Some(bl) = c.base {
+                wash(bl, base, 0.35);
+                for ln in c.base_lines() {
+                    wash(ln, base, 0.12);
+                }
+            }
+            wash(c.mid, base, 0.35);
+            for ln in c.theirs() {
+                wash(ln, theirs, 0.12);
+            }
+            wash(c.end, theirs, 0.35);
+        }
+        out
+    }
+
+    /// The focused buffer, its conflicts, and the caret's line.
+    fn conflict_place(&mut self) -> Option<(BufferId, Vec<Conflict>, usize)> {
+        let v = self.focused_view()?;
+        let id = self.ed.views[v].buffer;
+        let cs = self.conflicts_of(id);
+        let b = &self.ed.buffers[id];
+        let line = b.line_of(self.ed.views[v].sels.primary().head.min(b.len()));
+        Some((id, cs, line))
+    }
+
+    /// `conflict next` / `conflict prev`: the caret to the next,
+    /// previous conflict's `<<<<<<<` line, COUNT conflicts.
+    pub(crate) fn conflict_step(&mut self, forward: bool, count: usize) {
+        let Some((_, cs, here)) = self.conflict_place() else {
+            return;
+        };
+        if cs.is_empty() {
+            self.ed.message = "no conflicts".into();
+            return;
+        }
+        let mut at = here;
+        for _ in 0..count.max(1) {
+            let next = if forward {
+                cs.iter().map(|c| c.start).find(|&l| l > at)
+            } else {
+                cs.iter().rev().map(|c| c.start).find(|&l| l < at)
+            };
+            match next {
+                Some(l) => at = l,
+                None => break,
+            }
+        }
+        if at == here {
+            self.ed.message = format!("no {} conflict", if forward { "next" } else { "previous" });
+            return;
+        }
+        let v = self.focused_view().unwrap();
+        let b = self.ed.buffer_of(v);
+        let off = b.line_start(at);
+        self.ed.views[v].sels = Selections::single(Selection::point(off));
+        self.follow_caret = true;
+    }
+
+    /// `conflict ours|theirs|both|none`: the conflict under the caret
+    /// made that side; with `!`, every conflict in the buffer.
+    pub(crate) fn conflict_take(&mut self, take: Take, all: bool) {
+        let Some((id, cs, here)) = self.conflict_place() else {
+            return;
+        };
+        let chosen: Vec<Conflict> = if all {
+            cs
+        } else {
+            cs.into_iter().filter(|c| c.holds(here)).collect()
+        };
+        if chosen.is_empty() {
+            self.ed.message = if all {
+                "no conflicts".into()
+            } else {
+                "not in a conflict (]x finds one)".into()
+            };
+            return;
+        }
+        let n = chosen.len();
+        if self.ed.take_conflicts(id, &chosen, take) {
+            let left = self.conflicts_of(id).len();
+            self.ed.message = format!(
+                "{n} conflict{} resolved as {}{}",
+                if n == 1 { "" } else { "s" },
+                take.word(),
+                if left > 0 {
+                    format!(", {left} left")
+                } else {
+                    String::new()
+                }
+            );
+            self.sync_multis();
+        }
+    }
+
+    /// `conflict`: how many, and where the caret stands.
+    pub(crate) fn conflict_status(&mut self) {
+        let Some((_, cs, here)) = self.conflict_place() else {
+            return;
+        };
+        if cs.is_empty() {
+            self.ed.message = "no conflicts".into();
+            return;
+        }
+        let at = cs.iter().position(|c| c.holds(here));
+        self.ed.message = match at {
+            Some(i) => format!(
+                "conflict {} of {}: {} against {}",
+                i + 1,
+                cs.len(),
+                cs[i].ours_label,
+                cs[i].theirs_label
+            ),
+            None => format!(
+                "{} conflict{} (]x)",
+                cs.len(),
+                if cs.len() == 1 { "" } else { "s" }
+            ),
+        };
+    }
+
     /// `hunk`: what the buffer is read against, and how many hunks.
     pub(crate) fn hunk_status(&mut self) {
         let Some((src, _)) = self.hunk_place() else {
@@ -366,6 +550,42 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("hunk preview").doc("the hunk under the caret as a diff in a `*hunk*` pane"),
             |k, _| k.hunk_preview(),
+        ),
+        cmd(
+            Spec::new("conflict").doc("the merge conflicts counted, and which the caret is in"),
+            |k, _| k.conflict_status(),
+        ),
+        cmd(
+            Spec::new("conflict next").doc("the caret to the next conflict, COUNT conflicts"),
+            |k, ctx| k.conflict_step(true, ctx.count),
+        ),
+        cmd(
+            Spec::new("conflict prev").doc("the caret to the previous conflict, COUNT conflicts"),
+            |k, ctx| k.conflict_step(false, ctx.count),
+        ),
+        cmd(
+            Spec::new("conflict ours")
+                .bang("every conflict in the buffer")
+                .doc("the conflict under the caret resolved as our side"),
+            |k, ctx| k.conflict_take(Take::Ours, ctx.form == kawoosh_editor::Form::Bang),
+        ),
+        cmd(
+            Spec::new("conflict theirs")
+                .bang("every conflict in the buffer")
+                .doc("the conflict under the caret resolved as their side"),
+            |k, ctx| k.conflict_take(Take::Theirs, ctx.form == kawoosh_editor::Form::Bang),
+        ),
+        cmd(
+            Spec::new("conflict both")
+                .bang("every conflict in the buffer")
+                .doc("the conflict under the caret resolved as both sides, ours first"),
+            |k, ctx| k.conflict_take(Take::Both, ctx.form == kawoosh_editor::Form::Bang),
+        ),
+        cmd(
+            Spec::new("conflict none")
+                .bang("every conflict in the buffer")
+                .doc("the conflict under the caret taken out whole, neither side kept"),
+            |k, ctx| k.conflict_take(Take::None, ctx.form == kawoosh_editor::Form::Bang),
         ),
     ]
 }

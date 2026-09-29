@@ -57,6 +57,28 @@ coloured as the file would be.
 
 `vcs.main` names the branch `<leader>hm` reads against (`main`).
 
+## Merge conflicts
+
+A file a merge left conflict markers in is coloured as soon as it is
+open, with no repository needed: our side (after `<<<<<<<`) washed
+green, their side (after `=======`) in the accent colour, a diff3 base
+(after `|||||||`) grey, and the marker lines stronger in the same
+colours.
+
+| keys | what |
+|---|---|
+| `]x` `[x` | the next, previous conflict |
+| `<leader>hxo` | resolve the conflict under the caret as ours: our lines stay, the markers and their lines go |
+| `<leader>hxt` | resolve it as theirs |
+| `<leader>hxb` | keep both, ours first |
+| `<leader>hxn` | take the whole conflict out |
+| `<leader>hxO` `<leader>hxT` | every conflict in the buffer as ours, as theirs (`:conflict ours!`, `:conflict theirs!`) |
+
+Each resolve is one `u` to undo. `:conflict` counts what is left and
+says whose the caret's is (`conflict 1 of 2: HEAD against feature`).
+For anything the four cannot say, edit the lines and delete the
+markers by hand: the colours follow the text as you type.
+
 ## Blame
 
 `<leader>hb` (`:vcs blame`) puts a column left of the line numbers:

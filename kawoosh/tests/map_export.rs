@@ -195,7 +195,7 @@ fn the_keys_are_grouped_by_module() {
     for (group, words) in [
         ("<leader>b", &["buffer"][..]),
         ("<leader>c", &["compile"]),
-        ("<leader>h", &["hunk", "vcs"]),
+        ("<leader>h", &["hunk", "vcs", "conflict"]),
         ("<leader>i", &["help", "messages", "commands"]),
         ("<leader>m", &["memory"]),
         (

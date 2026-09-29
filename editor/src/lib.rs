@@ -5,6 +5,7 @@
 
 pub mod command;
 pub mod commands;
+pub mod conflicts;
 pub mod diagnostics;
 pub mod disk;
 pub mod editorconfig;
@@ -28,6 +29,7 @@ pub use command::{
     ArgKind, Args, BufFacts, Command, Cond, Ctx, Facts, FnCommand, Form, Invocation, Kind,
     MotionKind, Registry, Spec, fact_words,
 };
+pub use conflicts::{Conflict, Take};
 pub use hunks::{Base, Blame, BlameRow, LineHunk, Sign};
 pub use kawoosh_doc::Hunk;
 use kawoosh_doc::{Buffer, BufferId, Version};

@@ -189,6 +189,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `]d` `[d` | diagnostic (the message on the status line); in a multibuffer, the ones its excerpts show |
 | `]p` `[p` | right after a put: the text put replaced with the next newer / older one in the memory (the yank-pop), COUNT steps; the one chosen is the register from then on, and one `u` takes the put back whole |
 | `]h` `[h` | hunk — the next, previous change against the buffer's base, COUNT hunks; in a multibuffer, the excerpts' ([vcs.md](vcs.md)) |
+| `]x` `[x` | the next, previous merge conflict, COUNT conflicts; `<leader>hxo` `hxt` `hxb` `hxn` resolve the one under the caret as ours, theirs, both, neither ([vcs.md](vcs.md) Decision 11) |
 | `]e` `[e` | *reserved*: the next, previous pin |
 | `]'` `['` | the next, previous marked line of the file, COUNT marks ([marks.md](marks.md)) |
 | `]<Space>` `[<Space>` | COUNT empty lines below / above the caret's line — once a line, whatever carets are on it — the carets staying on their text (unimpaired's) |
