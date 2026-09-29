@@ -68,6 +68,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::help::commands());
     v.extend(crate::wrap::commands());
     v.extend(crate::breadcrumbs::commands());
+    v.extend(crate::editorconfig::commands());
     v
 }
 
