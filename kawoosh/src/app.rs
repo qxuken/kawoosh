@@ -1345,8 +1345,10 @@ impl Kawoosh {
 
     /// Opens the command line's path in the app as it starts — after
     /// the config, so the plugins' openers see it: `kawoosh DIR` lists
-    /// the directory. The scratch buffer the app began with goes when
-    /// the pane left it.
+    /// the directory. The scratch buffer the app began with stands in
+    /// for the path: it opens in the scratch's pane — `init.lua` may
+    /// have opened a view beside it and focused that — and the scratch
+    /// goes when no pane shows it.
     pub fn open_first(&mut self, path: &Path) {
         let scratch = self
             .ed
@@ -1354,11 +1356,18 @@ impl Kawoosh {
             .iter()
             .find(|(_, b)| b.name == "*scratch*" && b.path.is_none())
             .map(|(id, _)| id);
+        let pane = scratch.and_then(|s| {
+            self.layout
+                .all_panes()
+                .into_iter()
+                .find(|p| matches!(self.view_of(*p), Some(v) if self.ed.views[v].buffer == s))
+        });
+        if let Some(p) = pane {
+            self.layout.focus(p);
+        }
         self.open(path);
         if let Some(scratch) = scratch
-            && self
-                .focused_view()
-                .is_some_and(|v| self.ed.views[v].buffer != scratch)
+            && !self.buffer_shown(scratch)
         {
             self.ed.remove_buffer(scratch);
         }
