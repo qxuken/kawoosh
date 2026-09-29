@@ -21,11 +21,11 @@ kawoosh-lua = { path = "./lua" }
 # kui at one exact pre-release from the forgejo registry
 # (docs/design/kui-requirements.md R1.1). To work against a local checkout
 # while a release is in CI, these three lines become
-#   kui-native = { path = "../kui/crates/kui-native" }  (and the same for -core, -lua).
+#   kui-native = { version = "=0.1.0-alpha.26", registry = "forgejo" }  (and the same for -core, -lua).
 # The runner crate is `kui-native` (`kui` on crates.io is another crate's).
-kui-native = { version = "=0.1.0-alpha.25", registry = "forgejo" }
-kui-core = { version = "=0.1.0-alpha.25", registry = "forgejo" }
-kui-lua = { version = "=0.1.0-alpha.25", registry = "forgejo" }
+kui-native = { version = "=0.1.0-alpha.26", registry = "forgejo" }
+kui-core = { version = "=0.1.0-alpha.26", registry = "forgejo" }
+kui-lua = { version = "=0.1.0-alpha.26", registry = "forgejo" }
 # The one Lua in the binary is kui-lua's (kui.md D6).
 mlua = { version = "0.12", features = ["lua55", "vendored"] }
 

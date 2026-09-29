@@ -214,6 +214,58 @@ fn lua(app: &mut Kawoosh, src: &str) {
     );
 }
 
+/// Dwell is time, not a happening: once an edit is flushed, the frames
+/// that count dwell arm no flush, so nothing wakes the window a second
+/// later to count more (a frame a second for a minute after every key,
+/// which the frame ledger showed). And the time an idle window drew no
+/// frame in is dwell all the same, counted by the next count.
+#[test]
+fn dwell_wakes_nothing_and_needs_no_frames() {
+    let dir = tmp("dwell");
+    let db = dir.join("state.db");
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "one\ntwo\n").unwrap();
+    let (mut d, mut app) = launch(&db, &a);
+    app.moments.quiet = std::time::Duration::from_millis(30);
+    d.frame(&mut app);
+    // An edit, flushed (the text it took with it at once); what an
+    // alarm armed before it would bring has come by the reset.
+    d.keys(&mut app, "x");
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    d.frame(&mut app);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    let wake = app.wake_handle();
+    let _ = wake.take_counts();
+    // Frames with dwell only, then still.
+    for _ in 0..3 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        d.frame(&mut app);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let woke = wake.take_counts();
+    assert!(
+        !woke.iter().any(|(n, _)| *n == "moments"),
+        "dwell armed a flush: {woke:?}"
+    );
+    // The still 200 ms is dwell, counted by the flush.
+    let before = app
+        .store
+        .as_ref()
+        .unwrap()
+        .moment(&file_key(&a))
+        .unwrap()
+        .dwell_ms;
+    app.flush_moments();
+    let after = app
+        .store
+        .as_ref()
+        .unwrap()
+        .moment(&file_key(&a))
+        .unwrap()
+        .dwell_ms;
+    assert!(after - before >= 250, "{before} → {after}");
+}
+
 /// A file focused is a visit and a ring row; edits and yanks count to
 /// it; the flush writes increments, so two windows on one db each
 /// adding a visit are both counted; a flush that meets the lock keeps
