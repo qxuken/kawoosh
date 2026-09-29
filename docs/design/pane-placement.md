@@ -193,4 +193,7 @@ the height the panel's header, rows and hunk did not fit, and a click
 on a row past the fold did nothing; and `Place::parse` also reads
 `below` and `beside`, since `view_open` and `multi open` say them
 already, so a `tools` table written with either word still lands.
-`kawoosh/tests/placement.rs` is the round's test.
+`kawoosh/tests/placement.rs` is the round's test. Step 73 (version
+control) merged to main meanwhile: its `*hunk*` is the caret's and
+goes under the buffer; its review multibuffer is a list (`beside`,
+under); the blame is a gutter, not a pane.

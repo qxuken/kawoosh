@@ -4131,6 +4131,22 @@ pub fn default_keymap(km: &mut Keymap) {
         ("[q", "error prev"),
         ("]d", "lsp diagnostic next"),
         ("[d", "lsp diagnostic prev"),
+        // Hunks (docs/design/vcs.md): the changes against the buffer's
+        // base, walked, taken back, shown.
+        ("]h", "hunk next"),
+        ("[h", "hunk prev"),
+        ("<leader>hr", "hunk reset"),
+        ("<leader>hR", "hunk reset!"),
+        ("<leader>hp", "hunk preview"),
+        // Merge conflicts: walked, and resolved a side at a time.
+        ("]x", "conflict next"),
+        ("[x", "conflict prev"),
+        ("<leader>hxo", "conflict ours"),
+        ("<leader>hxt", "conflict theirs"),
+        ("<leader>hxb", "conflict both"),
+        ("<leader>hxn", "conflict none"),
+        ("<leader>hxO", "conflict ours!"),
+        ("<leader>hxT", "conflict theirs!"),
         // Marks (docs/design/marks.md): vim's letters; `]'` `['` the
         // marked lines of the file.
         ("'", "mark line"),
@@ -4266,6 +4282,8 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>", "leader"),
         ("<leader>b", "buffers"),
         ("<leader>c", "compile"),
+        ("<leader>h", "hunks, version control"),
+        ("<leader>hx", "conflicts"),
         ("<leader>i", "help"),
         ("<leader>m", "memory"),
         ("<leader>s", "search"),

@@ -44,6 +44,10 @@ pub struct Proc {
     pub token: u64,
     pub handle: kawoosh_systems::io::ProcHandle,
     pub lines: Vec<String>,
+    /// stderr's lines kept apart, when asked (`on_stderr`).
+    pub err: Vec<String>,
+    /// stdout whole, once it closed, when asked (`on_done`).
+    pub out: Option<String>,
 }
 
 #[derive(Default)]
@@ -401,19 +405,30 @@ impl Kawoosh {
         let Some(rt) = self.scripting.rt.clone() else {
             return;
         };
-        let batches: Vec<(u64, Vec<String>)> = self
+        let batches: Vec<(u64, Vec<String>, Vec<String>)> = self
             .scripting
             .procs
             .values_mut()
-            .filter(|p| !p.lines.is_empty())
-            .map(|p| (p.token, std::mem::take(&mut p.lines)))
+            .filter(|p| !p.lines.is_empty() || !p.err.is_empty())
+            .map(|p| {
+                (
+                    p.token,
+                    std::mem::take(&mut p.lines),
+                    std::mem::take(&mut p.err),
+                )
+            })
             .collect();
         if batches.is_empty() {
             return;
         }
         rt.publish(&self.ed, self.focused_view());
-        for (token, lines) in batches {
-            rt.proc_lines(token, lines);
+        for (token, lines, err) in batches {
+            if !lines.is_empty() {
+                rt.proc_lines(token, lines);
+            }
+            if !err.is_empty() {
+                rt.proc_err(token, err);
+            }
         }
         self.drain_lua();
     }
@@ -571,8 +586,8 @@ impl Kawoosh {
                         if hooked {
                             b.hook = Some(name.clone());
                         }
-                        if let Some(l) = language {
-                            b.language = l.into();
+                        if let Some(l) = &language {
+                            b.language = l.as_str().into();
                         }
                         self.ed.add_buffer(b)
                     }
@@ -580,8 +595,20 @@ impl Kawoosh {
                 if private {
                     self.set_private(id, true);
                 }
-                if about.is_some() {
-                    self.ed.buffers[id].about = about;
+                if let Some(p) = about {
+                    // A scratch standing for a file reads as the file
+                    // would, unless told otherwise: a revision's text
+                    // has its file's colours (docs/design/vcs.md
+                    // Decision 6).
+                    if language.is_none() {
+                        let b = &self.ed.buffers[id];
+                        let l = self
+                            .languages
+                            .detect(&p, &crate::app::first_line(b))
+                            .to_string();
+                        self.ed.buffers[id].language = l.into();
+                    }
+                    self.ed.buffers[id].about = Some(p);
                 }
                 if hooked {
                     rt.track_lines(&self.ed, id);
@@ -862,11 +889,24 @@ impl Kawoosh {
                 cmd,
                 cwd,
                 stdin,
+                whole,
+                split_err,
             } => {
+                use kawoosh_systems::io::{ProcCmd, ProcSpec};
                 self.scripting.next_proc += 1;
                 let id = LUA_PROC_BASE + self.scripting.next_proc;
                 let cwd = cwd.or_else(|| Some(self.cwd.clone()));
-                match self.io.run_process_with(id, &cmd, cwd.as_deref(), stdin) {
+                let spec = ProcSpec {
+                    cmd: match cmd {
+                        kawoosh_lua::SpawnCmd::Shell(c) => ProcCmd::Shell(c),
+                        kawoosh_lua::SpawnCmd::Argv(a) => ProcCmd::Argv(a),
+                    },
+                    cwd,
+                    stdin,
+                    whole,
+                    split_err,
+                };
+                match self.io.run_command(id, spec) {
                     Ok(handle) => {
                         self.pending_jobs += 1;
                         self.scripting.procs.insert(
@@ -875,12 +915,14 @@ impl Kawoosh {
                                 token,
                                 handle,
                                 lines: Vec::new(),
+                                err: Vec::new(),
+                                out: None,
                             },
                         );
                     }
                     Err(e) => {
                         self.ed.message = format!("spawn: {e}");
-                        rt.proc_exit(token, None);
+                        rt.proc_exit(token, None, None);
                     }
                 }
             }
@@ -975,6 +1017,29 @@ impl Kawoosh {
                     }
                 }
                 None => self.ed.message = "paint: no such buffer".into(),
+            },
+            Msg::Base {
+                buffer,
+                name,
+                text,
+                label,
+            } => match self.lua_buffer(buffer, name) {
+                Some(id) => match text {
+                    Some(t) => self.ed.set_base(id, std::sync::Arc::from(t), label),
+                    None => {
+                        self.ed.clear_base(id);
+                    }
+                },
+                None => self.ed.message = "base: no such buffer".into(),
+            },
+            Msg::Blame { buffer, name, rows } => match self.lua_buffer(buffer, name) {
+                Some(id) => match rows {
+                    Some(rows) => self.ed.set_blame(id, rows),
+                    None => {
+                        self.ed.clear_blame(id);
+                    }
+                },
+                None => self.ed.message = "blame: no such buffer".into(),
             },
             Msg::Mask {
                 buffer,

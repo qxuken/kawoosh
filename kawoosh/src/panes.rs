@@ -1106,7 +1106,13 @@ impl Kawoosh {
         // The server's inlay hints, while `lsp.inlay_hints` is on.
         let inlay = self.inlay_hints_of(buf_id);
         // What plugins painted (`kawoosh.buf.paint`): over the syntax.
-        let (painted, washes) = self.paints_of(buf_id);
+        let (painted, mut washes) = self.paints_of(buf_id);
+        // A merge's conflicts, each side washed in its colour
+        // (docs/design/vcs.md Decision 11): every one, wherever it is —
+        // they are few, and the rows clip.
+        if !self.ed.is_multi(buf_id) {
+            washes.extend(self.conflict_washes(buf_id, 0..usize::MAX));
+        }
         // The markdown buffer drawn rendered (markdown.md): its rows are
         // as tall as they wrap to, so it scrolls by what they measured.
         let md = self.markdown_rendered(buf_id);
@@ -1191,6 +1197,7 @@ impl Kawoosh {
                 self.cell.0,
                 self.ed.buffers[buf_id].line_count(),
                 self.marks.any(buf_id),
+                self.ed.blame_width(buf_id),
             )
             - 2.0)
             .max(0.0);
@@ -1410,6 +1417,23 @@ impl Kawoosh {
                     _ => None,
                 }));
         }
+        // The hunks' signs beside their lines (docs/design/vcs.md
+        // Decision 2) — a multibuffer's excerpt lines their sources' —
+        // and, in a multibuffer, an added or changed line washed in its
+        // sign's colour, so a review reads as a diff.
+        let signs: HashMap<usize, (kawoosh_editor::Sign, kui_native::Color)> = self
+            .signs_of(buf_id, top, &from_files)
+            .into_iter()
+            .map(|(ln, s)| (ln, (s, self.sign_color(s))))
+            .collect();
+        if !from_files.is_empty() {
+            use kawoosh_editor::Sign;
+            for (ln, (s, c)) in &signs {
+                if matches!(s, Sign::Added | Sign::Modified) && *ln < buf.line_count() {
+                    washes.push((buf.line_range(*ln), c.with_alpha(0.12)));
+                }
+            }
+        }
         // The places a list marked on its files, drawn in that list
         // alone: another multibuffer on the same lines is not the list.
         let places_here =
@@ -1474,7 +1498,22 @@ impl Kawoosh {
         let any_styled = token_marks.iter().any(Option::is_some);
         let tag = Value::map([("kind", "pane".into()), ("pane", Value::Int(pane as i64))]);
         let cell_w = self.cell.0;
-        let gutter = rows::gutter_w(cell_w, buf.line_count(), self.marks.any(buf_id));
+        let marked = self.marks.any(buf_id);
+        let gutter = rows::gutter_w(
+            cell_w,
+            buf.line_count(),
+            marked,
+            self.ed.blame_width(buf_id),
+        );
+        // The blame column's rows (docs/design/vcs.md Decision 7): a
+        // run's label on its first line, past a mark's cell.
+        let blames: HashMap<usize, (String, f32)> = self
+            .ed
+            .blame_labels(buf_id, top..last)
+            .into_iter()
+            .filter(|(_, (_, first))| *first)
+            .map(|(ln, (s, _))| (ln, (s, if marked { cell_w } else { 0.0 })))
+            .collect();
         // The lines column's width, for the sideways follow and the
         // window a long line is sliced to: the pane's less the gutter
         // and its border (the window's, for a pane not drawn before).
@@ -1576,6 +1615,8 @@ impl Kawoosh {
                                     &numbers,
                                     ln,
                                     letters.get(&ln).copied(),
+                                    signs.get(&ln).copied(),
+                                    blames.get(&ln).map(|(s, x)| (s.as_str(), *x)),
                                 );
                             }
                         },
@@ -1894,6 +1935,8 @@ impl Kawoosh {
                                         bg: code.then_some(pal.strip),
                                         gutter: (!in_table)
                                             .then(|| (gutter, numbers.label(ln), ln == cur_line)),
+                                        sign: signs.get(&ln).copied(),
+                                        blame: blames.get(&ln).cloned(),
                                         rule: *rule,
                                         images: img
                                             .iter()
@@ -1931,6 +1974,8 @@ impl Kawoosh {
                                                     numbers.label(ln),
                                                     ln == cur_line,
                                                 )),
+                                                sign: signs.get(&ln).copied(),
+                                                blame: blames.get(&ln).cloned(),
                                                 rule: false,
                                                 images: Vec::new(),
                                                 fit: false,

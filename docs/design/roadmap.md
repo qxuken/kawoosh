@@ -2757,7 +2757,6 @@ In order — the bugs first, then what needs deciding:
     allow`; the probe as the buffer's source; `kawoosh.formatter`,
     `kawoosh.format`. formatters.md's "Built" says where it departed.
     `kawoosh/tests/format.rs`, `kawoosh/lua/tests/formatter.lua`.
-
 72. ~~**Settings, a panel** ([settings.md](settings.md)), asked 2026-09-29:
     "make settings into user-facing panel with search good ux". The
     devtools tab replaced by a pane (`:settings`, `<D-,>`): search
@@ -2769,6 +2768,39 @@ In order — the bugs first, then what needs deciding:
     `kawoosh.settings` the door. Four rounds.~~ Built 2026-09-29:
     `settings_edit.rs`, `settings_pane.rs`, `lua/settings.lua`; the
     devtools tab gone. settings.md's "Built" says where it departed.
+73. ~~**Version control**, asked 2026-09-29: "let's introduce our first
+    vcs integration … gutters, hunks navigations, hunks resets and
+    diffs between branches. i like to review diff from feature to main
+    … Also blame and history. Ideally it should be abstract so we can
+    using same api have fast integration with fossil, jj or any other
+    thing. probably with feature probing. fast worktrees creation and
+    tabs from it would be cool."~~ Landed 2026-09-29 (72 the settings
+    pane's, merged first): [vcs.md](vcs.md), decided and
+    built in three rounds — the editor owns the diff, a backend the
+    base: `kawoosh.buf.base` given, the hunks diffed on the io thread
+    once the text is still (`editor/src/hunks.rs`, `kawoosh/src/vcs.rs`),
+    signs as bars in the gutter's padding (no column added), `]h` `[h`,
+    `hunk reset` (`<leader>hr`, the selection's; `!` the buffer),
+    `hunk preview`; `kawoosh.spawn` with a list (no shell — the `dir`
+    provider's `&&` never ran under nushell), `on_done` whole,
+    `on_stderr`, `kawoosh.on_write`, a multibuffer's `{ buffer = }` /
+    `{ name = }` part, a scratch's language from its `about`; and
+    `vcs.lua` — backends as tables of functions asked in order, a
+    capability a key (`fossil here has no merge_base`), git whole and
+    fossil in part, the review as a multibuffer beside (`vcs diff`,
+    `vcs main` = the working tree against the merge base, `vcs diff A
+    B` on read-only scratches), blame as a gutter column carried by
+    its runs, `vcs show`, `vcs log` and `vcs status` pickers, `vcs
+    worktree add` as a tab, the `vcs` status-line module. `<leader>h*`
+    taken. `kawoosh/tests/vcs.rs`, `vcs_git.rs`, `vcs_fossil.rs`;
+    `kawoosh/lua/tests/hunks.lua`, `spawn.lua`, `vcs_layout.lua`;
+    `kawoosh/help/vcs.md`. Then, asked 2026-09-30 "merge ui would be
+    cool, just in buffer highlighting": vcs.md Decision 11 — the
+    markers read from the text, each side washed in its colour, `]x`
+    `[x`, `conflict ours/theirs/both/none` (`<leader>hx*`, `!` for
+    all); `kawoosh/tests/conflicts.rs`. And "I think `dir` plugin
+    should also be integrated through this api": the listings' colours
+    through `kawoosh.vcs`'s `status` (`opts.under`), `dir.vcs` gone.
 
 74. ~~**Where a pane opens** ([pane-placement.md](pane-placement.md)),
     asked 2026-09-30: "everything that affects the buffer opens as
@@ -2783,9 +2815,9 @@ In order — the bugs first, then what needs deciding:
     (Decision 2); `place` on a tool (`dock = true` kept as its
     spelling) and `terminal.place` the overrides, the launcher's
     `<C-w>s t` the per-pane one.~~ Built 2026-09-30:
-    `layout.rs`'s `Place` and `open`, `kawoosh/tests/placement.rs`.
-    *73 is the VCS branch's
-    (`claude/vcs-integration-diffs-blame-59b439`), unmerged.*
+    `layout.rs`'s `Place` and `open`, `kawoosh/tests/placement.rs`;
+    step 73's `*hunk*`, merged meanwhile, under the buffer as the
+    caret's.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

@@ -571,7 +571,13 @@ fn dash_opens_the_files_directory_and_can_move_the_cwd() {
     let mut seen = String::new();
     for _ in 0..300 {
         d.frame(&mut app);
-        seen = app.terms.map[&t].row_text(0);
+        // The terminal is a column of its own (pane-placement.md), half
+        // the window: a long path wraps, so the first rows are read
+        // together; a command that ended took its pane and its entry.
+        let Some(term) = app.terms.map.get(&t) else {
+            break;
+        };
+        seen = (0..4).map(|r| term.row_text(r)).collect::<Vec<_>>().join("");
         if seen.contains(&there) {
             break;
         }
