@@ -512,6 +512,58 @@ impl Kawoosh {
         set
     }
 
+    /// The buffers of the tabs closed since last frame that no tab has
+    /// now — none claims it ([`Self::tab_claims`]) and no pane shows it —
+    /// closed with them; an unsaved one is kept, the tab in front's so
+    /// its lists reach it, and said.
+    pub(crate) fn sweep_closed_tabs(&mut self) {
+        let closed = std::mem::take(&mut self.layout.closed_tabs);
+        if closed.is_empty() {
+            return;
+        }
+        let listed = self.ed.listed_buffers();
+        let mut had = std::collections::HashSet::new();
+        for t in &closed {
+            had.extend(t.seen.iter().copied());
+            if let Some(cwd) = &t.cwd {
+                had.extend(listed.iter().copied().filter(|id| {
+                    self.ed.buffers[*id]
+                        .path
+                        .as_deref()
+                        .is_some_and(|p| p.starts_with(cwd))
+                }));
+            }
+        }
+        let mut kept: std::collections::HashSet<BufferId> = (0..self.layout.tabs.len())
+            .flat_map(|i| self.tab_claims(i))
+            .collect();
+        kept.extend(
+            self.layout
+                .all_panes()
+                .into_iter()
+                .filter_map(|p| self.view_of(p))
+                .map(|v| self.ed.views[v].buffer),
+        );
+        let (mut gone, mut unsaved) = (0, 0);
+        for id in listed {
+            if !had.contains(&id) || kept.contains(&id) {
+                continue;
+            }
+            if self.ed.buffers[id].modified {
+                self.layout.tab_mut().seen.insert(id);
+                unsaved += 1;
+                continue;
+            }
+            self.delete_buffer(id, id);
+            gone += 1;
+        }
+        log::debug!("tab closed: {gone} buffer(s) closed with it");
+        if unsaved > 0 {
+            self.ed.message =
+                format!("{gone} buffer(s) closed with the tab, {unsaved} unsaved kept here");
+        }
+    }
+
     /// The buffers another open workspace has — one a tab is in
     /// (workspaces.md Decision 8): what a tab in it claims, and what a
     /// dock pane of it shows — which `:bdo` leaves be. A closed one's
@@ -947,6 +999,8 @@ fn panes() -> Vec<ShellCommand> {
                     k.ed.message = "cannot close the last tab".into();
                     return;
                 }
+                // What it shows now is its, for the sweep after.
+                k.note_tab_buffers();
                 let mut ps = Vec::new();
                 k.layout.tab().panes(&mut ps);
                 for p in ps {

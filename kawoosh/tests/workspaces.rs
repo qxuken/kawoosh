@@ -361,10 +361,71 @@ fn bdo_leaves_other_workspaces_buffers_even_nested_ones() {
     assert_eq!(
         names(&app),
         ["a.txt", "in.txt", "two.txt"],
-        "closing a tab keeps its buffers"
+        "the outer tab's now, so its tabs' closing kept them"
     );
     ex(&mut d, &mut app, "bdo");
     assert_eq!(names(&app), ["a.txt"], "{}", app.ed.message);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// Closing a tab closes the buffers no tab has now: not one under
+/// another tab's directory, nor one another tab has shown; an unsaved
+/// one is kept, the tab in front's, and said.
+#[test]
+fn closing_a_tab_closes_its_buffers_but_unsaved() {
+    let root = tmp("tabc");
+    let (a, b) = projects(&root);
+    std::fs::write(a.join("one.txt"), "one\n").unwrap();
+    std::fs::write(a.join("sub/deep.txt"), "deep\n").unwrap();
+    std::fs::write(b.join("two.txt"), "two\n").unwrap();
+    std::fs::write(b.join("three.txt"), "three\n").unwrap();
+    std::fs::write(b.join("both.txt"), "both\n").unwrap();
+    let (mut d, mut app) = launch();
+    ex(&mut d, &mut app, &format!("cd {}", a.display()));
+    ex(&mut d, &mut app, "e one.txt");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", b.join("both.txt").display()),
+    );
+    ex(&mut d, &mut app, "e one.txt");
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", b.display()));
+    ex(&mut d, &mut app, "e both.txt");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", a.join("sub/deep.txt").display()),
+    );
+    ex(&mut d, &mut app, "e three.txt");
+    d.keys(&mut app, "ix");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "e two.txt");
+    let names = |app: &Kawoosh| {
+        let mut n: Vec<String> = app
+            .ed
+            .listed_buffers()
+            .into_iter()
+            .map(|id| app.ed.buffers[id].name.clone())
+            .collect();
+        n.sort();
+        n
+    };
+    ex(&mut d, &mut app, "tabc");
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 1);
+    assert_eq!(
+        names(&app),
+        ["both.txt", "deep.txt", "one.txt", "three.txt"],
+        "two.txt goes; deep.txt is alpha's by its directory, both.txt shown there"
+    );
+    assert!(
+        app.ed.message.contains("1 unsaved kept here"),
+        "{}",
+        app.ed.message
+    );
+    ex(&mut d, &mut app, "ls");
+    assert!(app.ed.message.contains("three.txt"), "{}", app.ed.message);
     std::fs::remove_dir_all(&root).ok();
 }
 

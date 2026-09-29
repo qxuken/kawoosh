@@ -655,6 +655,9 @@ pub struct Layout {
     /// Decision 9): the dock is the window's, its tasks are a
     /// project's. Stamped by the shell.
     pub dock_owner: HashMap<PaneId, String>,
+    /// The tabs closed since the shell last looked, for the buffers
+    /// they had: those no tab has now go with them.
+    pub closed_tabs: Vec<Tab>,
     pub dock_open: bool,
     /// The dock's share of the height.
     pub dock_ratio: f32,
@@ -687,6 +690,7 @@ impl Layout {
             panes,
             dock: None,
             dock_owner: HashMap::new(),
+            closed_tabs: Vec::new(),
             dock_open: false,
             dock_ratio: 0.3,
             dock_focused: false,
@@ -935,10 +939,7 @@ impl Layout {
                     .unwrap_or(ps[0]);
             }
         } else if self.tabs.len() > 1 {
-            self.tabs.remove(ti);
-            if self.tab >= self.tabs.len() {
-                self.tab = self.tabs.len() - 1;
-            }
+            self.drop_tab(ti);
         } else {
             // The last pane of the last tab: keep it.
             let width = self.column_width;
@@ -1053,6 +1054,14 @@ impl Layout {
             t.to_tree();
         }
         self.next_column = next;
+    }
+
+    /// Tab `i` gone, into `closed_tabs`; the keyboard on the tab that
+    /// was after it, else the one before.
+    fn drop_tab(&mut self, i: usize) {
+        let t = self.tabs.remove(i);
+        self.closed_tabs.push(t);
+        self.tab = self.tab.min(self.tabs.len() - 1);
     }
 
     pub fn next_tab(&mut self, by: i64) {
@@ -1364,10 +1373,7 @@ impl Layout {
                             self.dock_open = false;
                         }
                         // `to` is the dock, which every tab shows.
-                        Home::Tab => {
-                            self.tabs.remove(self.tab);
-                            self.tab = self.tab.min(self.tabs.len() - 1);
-                        }
+                        Home::Tab => self.drop_tab(self.tab),
                     }
                 }
             }
@@ -1483,8 +1489,7 @@ impl Layout {
         let t = self.tab_mut();
         let (empty, next) = t.remove(pane);
         if empty {
-            self.tabs.remove(self.tab);
-            self.tab = self.tab.min(self.tabs.len() - 1);
+            self.drop_tab(self.tab);
         } else if t.focused == pane {
             ps.retain(|p| *p != pane);
             t.focused = next.unwrap_or(ps[0]);
