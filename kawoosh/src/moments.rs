@@ -1153,9 +1153,9 @@ impl Kawoosh {
         }
         let kind = match kind {
             kawoosh_editor::Prompt::Command => "command",
-            kawoosh_editor::Prompt::Search { .. } | kawoosh_editor::Prompt::Select { .. } => {
-                "search"
-            }
+            kawoosh_editor::Prompt::Search { .. }
+            | kawoosh_editor::Prompt::Select { .. }
+            | kawoosh_editor::Prompt::Align => "search",
         };
         let ws = self.moments.workspace.1.clone();
         self.moments.visit(MomentKey::new(kind, line, &ws));

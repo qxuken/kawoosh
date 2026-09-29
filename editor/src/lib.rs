@@ -447,6 +447,9 @@ pub enum Prompt {
     Select {
         how: Select,
     },
+    /// The pattern `ga`'s lines line up on, asked for by `<CR>` where
+    /// its character would be (`align ask`).
+    Align,
 }
 
 /// What a `select` prompt's pattern does to the selections
@@ -468,6 +471,7 @@ impl Prompt {
             Prompt::Command => "cmdline",
             Prompt::Search { .. } => "search",
             Prompt::Select { .. } => "select",
+            Prompt::Align => "align",
         }
     }
 
@@ -482,6 +486,7 @@ impl Prompt {
             } => "select ",
             Prompt::Select { how: Select::Split } => "split ",
             Prompt::Select { how: Select::Keep } => "keep ",
+            Prompt::Align => "align on ",
         }
     }
 }
@@ -1123,7 +1128,7 @@ impl Editor {
                     linewise: v.visual_linewise,
                 })
             }
-            Prompt::Command => None,
+            Prompt::Command | Prompt::Align => None,
         };
         let field = self.open_field(kind.field_name(), "");
         let seen = self.buffers[self.fields[&field].buffer].version();
@@ -1220,6 +1225,15 @@ impl Editor {
                     commands::select_by(self, view, how, &line);
                 }
             }
+            // On the lines `align` collected; an empty line aligns
+            // nothing and lets them go.
+            Prompt::Align => {
+                if !self.views.contains_key(view) || line.is_empty() {
+                    self.surround.align = None;
+                    return;
+                }
+                self.run(view, "align on", &[line], None);
+            }
         }
     }
 
@@ -1231,6 +1245,9 @@ impl Editor {
             return;
         };
         self.close_field(p.field);
+        if p.kind == Prompt::Align {
+            self.surround.align = None;
+        }
         if let Some(origin) = p.origin {
             self.restore_origin(&origin);
             self.search = origin.search;
@@ -1251,7 +1268,9 @@ impl Editor {
     fn history_mut(&mut self, kind: Prompt) -> &mut Vec<String> {
         match kind {
             Prompt::Command => &mut self.cmd_history,
-            Prompt::Search { .. } | Prompt::Select { .. } => &mut self.search_history,
+            Prompt::Search { .. } | Prompt::Select { .. } | Prompt::Align => {
+                &mut self.search_history
+            }
         }
     }
 
@@ -2595,6 +2614,24 @@ impl Editor {
         if let Some((binding, count)) = self.awaiting_char.take() {
             if stroke.code == "escape" {
                 self.pending_op = None;
+                self.surround = Default::default();
+                return true;
+            }
+            // `<CR>` where `align` waits for its character asks for a
+            // pattern instead: a step of the change, so `.` asks again
+            // with the same line.
+            if stroke.code == "enter" && binding.command == "align on" {
+                self.step_begin();
+                self.run(view, "align ask", &[], None);
+                self.step_end(
+                    view,
+                    Step::Command {
+                        name: "align ask".into(),
+                        args: Vec::new(),
+                        count: None,
+                        arg_char: None,
+                    },
+                );
                 return true;
             }
             let c = stroke

@@ -459,6 +459,50 @@ fn ga_aligns_lines_on_a_character() {
     );
 }
 
+/// `ga` on a pattern: `<CR>` where the character would be asks for
+/// one (`align on `), and the lines line up on its first match, as on a
+/// character; `.` asks again with the same line; `:align PAT` lines up
+/// the selection's lines; `<Esc>` at the prompt leaves them be.
+#[test]
+fn ga_aligns_lines_on_a_pattern() {
+    let src = "res1 = call1() or_else\nres2 = different_call_2() or_else\n";
+    let mut app = Kawoosh::new("t.odin", src);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    d.press(&mut app, "gaip<CR>");
+    assert_eq!(app.ed.prompt_kind(), Some(kawoosh_editor::Prompt::Align));
+    d.press(&mut app, "or_else<CR>");
+    assert_eq!(
+        text(&app),
+        "res1 = call1()            or_else\nres2 = different_call_2() or_else\n"
+    );
+    assert_eq!(app.ed.message, "aligned on or_else");
+    d.keys(&mut app, "u");
+    assert_eq!(text(&app), src, "one undo step");
+    d.keys(&mut app, "gg.");
+    assert_eq!(
+        text(&app),
+        "res1 = call1()            or_else\nres2 = different_call_2() or_else\n",
+        "`.` asks with the same pattern"
+    );
+    d.keys(&mut app, "u");
+    assert_eq!(text(&app), src, "`u` after `.` is undo, not a character");
+    d.keys(&mut app, "gg");
+    // A regex, on a selection, from the command line.
+    d.press(&mut app, "Vj:align \\bor_\\w+<CR>");
+    assert_eq!(
+        text(&app),
+        "res1 = call1()            or_else\nres2 = different_call_2() or_else\n"
+    );
+    assert_eq!(app.ed.mode(app.focused_view().unwrap()), Mode::Normal);
+    d.keys(&mut app, "ugg");
+    // `<Esc>` at the prompt, and nothing is aligned or left waiting.
+    d.press(&mut app, "gaip<CR>or_else<Esc><Esc>");
+    assert_eq!(app.ed.prompt_kind(), None);
+    assert_eq!(text(&app), src);
+    assert!(d.warnings().is_empty());
+}
+
 /// `<C-S-u>` in insert mode deletes the caret's whole line — `dd`
 /// without leaving insert mode, the line in the register (roadmap step
 /// 21; `<C-u>` still kills to the line's start).

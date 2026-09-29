@@ -568,8 +568,12 @@ brackets: todo, kui.md, keys.md, req (kui-requirements).
   has its first one moved to one column — the text before trimmed of
   trailing space and padded, one space kept where any line had one —
   so aligning again changes nothing; one undo step; a line without it
-  stays; `.` repeats it. A pattern rather than a character was not
-  built. Vim's `ga` shows a character's code, which nobody missed.
+  stays; `.` repeats it. Vim's `ga` shows a character's code, which
+  nobody missed. A pattern — done 2026-09-29: `<CR>` where the
+  character would be asks for one (`align ask`, an `align on ` prompt,
+  a regex, case as typed), matched first on each line as the character
+  is; `.` asks again with the same line; `:align PATTERN` lines up the
+  selection's lines (`align` with arguments, or `align on`).
 - **Delete the line in insert mode** — done 2026-09-23 [todo]; step 21.
   `<C-S-u>` (`delete line`): the caret's whole line, into the register
   as `dd` puts it, staying in insert mode — a stronger `<C-u>`, which
