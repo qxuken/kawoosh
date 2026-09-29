@@ -28,6 +28,19 @@ hides what it showed: buffers and terminals live on and come back with
 Sizes take a count: `3<A-S-l>` is three steps wider. The dividers between
 panes drag with the mouse.
 
+### Where a pane opens
+
+A pane that opens on its own goes where its kind says. What is made
+from the buffer and acts back on it — a list of references or
+diagnostics, `*hover*`, `:undo history`, the picker — opens under the
+pane, in its column, so it scrolls, moves and closes with it. Everything
+that is a subject of its own — a terminal, a tool, `*compile*`,
+`*messages*`, `:settings`, `:fonts`, a plugin's view — takes a column
+of its own (in a tree, a split beside). `terminal.place` and a tool's
+`place` (`column`, `under` or `dock`) say otherwise, and the launcher
+puts a pane anywhere by hand: `<C-w>s` then `t` is a terminal under the
+pane, `<C-w>v` then `t` one beside, whatever the settings say.
+
 `:split PATH` and `:vsplit PATH` open PATH straight away; `:new` and
 `:vnew` a fresh scratch buffer below, beside.
 

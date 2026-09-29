@@ -586,6 +586,10 @@ const DOCS: &[(&str, &str)] = &[
         "the key before normal mode's keys in a terminal; empty for none",
     ),
     (
+        "terminal.place",
+        "where `:terminal` and `:!` open: `column`, a column of its own, or `under` the focused pane in its column",
+    ),
+    (
         "terminal.raw",
         "programs a terminal pane is raw for while one is in front: every key but the escape and ⌘ theirs",
     ),
@@ -971,6 +975,9 @@ impl Settings {
         // (terminal-keys.md Decision 2): every key but the escape and ⌘
         // theirs — `{ "nvim", "hx" }`. `<C-\>r` toggles raw by hand.
         defaults.set("terminal.raw", Setting::List(Vec::new()));
+        // Where a bare `:terminal` and `:!` open (pane-placement.md
+        // Decision 3): a column of its own, or `under` the focused pane.
+        defaults.set("terminal.place", Setting::Str("column".into()));
         defaults.set("editor.bell", Setting::Bool(false));
         // The directory in a tab's label (roadmap step 50): `auto` while
         // the tabs are in more than one (workspaces.md Decision 6),
@@ -1734,6 +1741,7 @@ mod tests {
                 "tabstop",
                 "terminal.bell",
                 "terminal.escape",
+                "terminal.place",
                 "terminal.raw",
                 "terminal.scrollback",
                 "terminal.shell",

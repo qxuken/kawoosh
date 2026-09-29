@@ -2770,7 +2770,7 @@ In order — the bugs first, then what needs deciding:
     `settings_edit.rs`, `settings_pane.rs`, `lua/settings.lua`; the
     devtools tab gone. settings.md's "Built" says where it departed.
 
-74. **Where a pane opens** ([pane-placement.md](pane-placement.md)),
+74. ~~**Where a pane opens** ([pane-placement.md](pane-placement.md)),
     asked 2026-09-30: "everything that affects the buffer opens as
     vertical split and everything that doesn't is not — tools by
     default in their own column, but can be overridden; the terminal
@@ -2782,7 +2782,9 @@ In order — the bugs first, then what needs deciding:
     `Layout::open` the one door, the kind's place a table
     (Decision 2); `place` on a tool (`dock = true` kept as its
     spelling) and `terminal.place` the overrides, the launcher's
-    `<C-w>s t` the per-pane one. *73 is the VCS branch's
+    `<C-w>s t` the per-pane one.~~ Built 2026-09-30:
+    `layout.rs`'s `Place` and `open`, `kawoosh/tests/placement.rs`.
+    *73 is the VCS branch's
     (`claude/vcs-integration-diffs-blame-59b439`), unmerged.*
 
 Scheduled nowhere, on purpose: incremental sync (measure first),

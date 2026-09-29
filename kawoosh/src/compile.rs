@@ -751,9 +751,9 @@ impl Kawoosh {
                 return;
             };
             let v = self.ed.add_view(id);
-            self.layout.split(
-                crate::layout::SplitDir::H,
+            self.layout.open(
                 crate::layout::Content::Editor(v),
+                crate::layout::Place::Column,
             );
             self.open_in_editor(path, line, col);
         }

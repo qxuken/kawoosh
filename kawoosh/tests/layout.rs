@@ -765,6 +765,9 @@ fn the_digits_reach_a_column_from_a_terminal_pane() {
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     ctrl_w(&mut d, &mut app, "v");
+    // Under the column's pane (pane-placement.md: a bare `:term` is a
+    // column of its own), so the column has a stack to walk.
+    ex(&mut d, &mut app, "set terminal.place=under");
     ex(&mut d, &mut app, "term");
     settle(&mut d, &mut app);
     let term = app.layout.focused();

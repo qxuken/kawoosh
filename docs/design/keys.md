@@ -93,6 +93,15 @@ and the scrollbar's thumb and a swipe are followed one to one. A key
 reaches its pane wherever the frame has drawn it, mid-motion included
 (kui's F79).
 
+Where a pane opens on its own is a rule of what it is
+([pane-placement.md](pane-placement.md)): a pane made from the buffer
+and acting back on it — a list of places, `*hover*`, `:undo history`,
+the picker — opens under it in its column; a terminal, a tool,
+`*compile*`, `*messages*`, `:settings` and its kind take a column of
+their own (a split beside in a tree). A tool's `place` (`column`,
+`under`, `dock`; `dock = true` the last) and `terminal.place` say
+otherwise; `<C-w>s` then `t` is a terminal under, whatever they say.
+
 The shifted chord is the wezterm habit and the reason it works
 everywhere; `Kawoosh::pane_chord` forwards a ⌘ chord from a terminal
 pane for the same reason, a pty having no use for ⌘ at all. That is

@@ -25,7 +25,7 @@ Four verbs, all in `boot.lua` over the Rust half:
 | verb | what |
 |---|---|
 | `kawoosh.view(name, fn, on_event, opts)` | declares the view: `fn(ctx)` returns the tree, `on_event(ev)` takes its clicks and keys |
-| `kawoosh.view_open(name, { focus, below, share })` / `view_close` / `view_toggle` | puts it in a pane — a split of the focused pane, below when asked, at `share` of it — and takes it out |
+| `kawoosh.view_open(name, { focus, below, share })` / `view_close` / `view_toggle` | puts it in a pane — a column of its own, or under the focused pane when `below` ([pane-placement.md](pane-placement.md)), at `share` of it — and takes it out |
 | `ctx.field { name, placeholder, size }` and `kawoosh.field_focus`, `field_text`, `field_set` | a one-line input drawn through the editor (Decision 12) |
 | `kawoosh.map(mode, keys, cmd, { when = { "field:lua:NAME/FIELD" } })` | keys while the field has them |
 

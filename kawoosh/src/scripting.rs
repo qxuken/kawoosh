@@ -18,7 +18,7 @@ use kui_native::{Color, NodeSpec, Ui, Value};
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
-use crate::layout::{Content, PaneId, SplitDir};
+use crate::layout::{Content, PaneId, Place, SplitDir};
 use crate::notify::{Level, Note, Show, Ttl};
 
 /// The most paths a walk lists (`kawoosh.fs.walk`).
@@ -30,7 +30,9 @@ const LUA_PROC_BASE: u64 = 1 << 32;
 pub struct ToolDef {
     pub cmd: String,
     pub cwd: Option<String>,
-    pub dock: bool,
+    /// Where it opens (pane-placement.md Decision 3): a column of its
+    /// own unless it says `under` or `dock` (`dock = true`).
+    pub place: Place,
     /// A session starts it again (`kawoosh.tool`'s `restore`).
     pub restore: bool,
 }
@@ -376,7 +378,7 @@ impl Kawoosh {
                     Err(e) => format!("map export: {p}: {e}"),
                 };
             }
-            None => self.show_in_pane_as("*keymap.json*", &text, Some("json"), true),
+            None => self.show_in_pane_as("*keymap.json*", &text, Some("json"), true, Place::Column),
         }
     }
 
@@ -617,7 +619,7 @@ impl Kawoosh {
                     Some(v) => self.show_buffer(v, id),
                     None => {
                         let v = self.ed.add_view(id);
-                        self.layout.split(SplitDir::H, Content::Editor(v));
+                        self.layout.open(Content::Editor(v), Place::Column);
                     }
                 }
                 // The caret on the line asked for, else at the top: a
@@ -664,7 +666,7 @@ impl Kawoosh {
                             }
                             None => {
                                 let v = self.ed.add_view(id);
-                                self.layout.split(SplitDir::H, Content::Editor(v));
+                                self.layout.open(Content::Editor(v), Place::Column);
                             }
                         }
                     }
@@ -1007,15 +1009,21 @@ impl Kawoosh {
                 name,
                 cmd,
                 cwd,
+                place,
                 dock,
                 restore,
             } => {
+                let place = place.as_deref().and_then(Place::parse).unwrap_or(if dock {
+                    Place::Dock
+                } else {
+                    Place::Column
+                });
                 self.scripting.tools.insert(
                     name,
                     ToolDef {
                         cmd,
                         cwd,
-                        dock,
+                        place,
                         restore,
                     },
                 );
@@ -1374,8 +1382,10 @@ impl Kawoosh {
             }
             None => {
                 let was = self.layout.focused();
-                let dir = if below { SplitDir::V } else { SplitDir::H };
-                let pane = self.layout.split(dir, Content::Lua(name.to_string()));
+                // A subject of its own unless it says `below`
+                // (pane-placement.md Decision 3).
+                let place = if below { Place::Under } else { Place::Column };
+                let pane = self.layout.open(Content::Lua(name.to_string()), place);
                 if let Some(share) = share {
                     self.layout.set_share(pane, share);
                 }
@@ -1551,19 +1561,21 @@ impl Kawoosh {
         })
     }
 
-    /// `:tool NAME`: opens the tool's terminal (dock or split), or
-    /// focuses it, or toggles the dock away when it is already focused.
+    /// `:tool NAME`: opens the tool's terminal where its `place` says
+    /// (pane-placement.md Decision 3), or focuses it, or toggles the
+    /// dock away when it is already focused.
     pub(crate) fn tool(&mut self, name: &str) {
         let Some(def) = self.scripting.tools.get(name).cloned() else {
             self.ed.message = format!("no tool named {name}");
             return;
         };
+        let dock = def.place == Place::Dock;
         self.note_tool(
             name,
-            serde_json::json!({ "cmd": def.cmd, "dock": def.dock, "cwd": def.cwd }),
+            serde_json::json!({ "cmd": def.cmd, "dock": dock, "place": def.place.name(), "cwd": def.cwd }),
         );
-        if let Some(p) = self.tool_pane(name, def.dock) {
-            if def.dock {
+        if let Some(p) = self.tool_pane(name, dock) {
+            if dock {
                 if self.layout.dock_open && self.layout.focused() == p {
                     self.layout.dock_open = false;
                     self.layout.dock_focused = false;
@@ -1598,19 +1610,7 @@ impl Kawoosh {
             return;
         };
         self.terms.spawned.entry(t).or_default().tool = Some(name.to_string());
-        if def.dock {
-            // Beside what the dock holds, or the dock's first pane.
-            self.layout.dock_open = true;
-            self.layout.dock_focused = true;
-            if self.layout.dock.is_some() {
-                self.layout.split(SplitDir::H, Content::Terminal(t));
-            } else {
-                let p = self.layout.new_pane(Content::Terminal(t));
-                self.layout.set_dock(p);
-            }
-        } else {
-            self.fill_or_split(SplitDir::V, Content::Terminal(t));
-        }
+        self.fill_or_open(def.place, Content::Terminal(t));
     }
 
     /// A key in a focused Lua pane: the field's, else the view's

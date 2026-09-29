@@ -55,7 +55,7 @@ use crate::commands::{ShellCommand, cmd};
 use crate::devtab::Tab;
 use crate::diff;
 use crate::history::{Base, History, MAX_TEXT, fingerprint};
-use crate::layout::{Content, PaneId, SplitDir};
+use crate::layout::{Content, PaneId, Place};
 use crate::rows;
 use crate::undo::PANEL_SHARE;
 
@@ -384,7 +384,9 @@ impl Kawoosh {
                 }
             }
             None => {
-                let pane = self.layout.split(SplitDir::H, Content::Memory);
+                // The register's past is the session's: a column of its
+                // own (pane-placement.md Decision 2).
+                let pane = self.layout.open(Content::Memory, Place::Column);
                 self.layout.set_share(pane, PANEL_SHARE);
                 self.set_view(view.unwrap_or(self.memory_pane.view));
             }
@@ -965,7 +967,7 @@ impl Kawoosh {
                     }
                     None => {
                         let v = self.ed.add_view(id);
-                        self.layout.split(SplitDir::H, Content::Editor(v));
+                        self.layout.open(Content::Editor(v), Place::Column);
                     }
                 }
                 self.follow_caret = true;

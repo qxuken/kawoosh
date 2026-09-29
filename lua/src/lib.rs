@@ -441,6 +441,9 @@ pub enum Msg {
         name: String,
         cmd: String,
         cwd: Option<String>,
+        /// `under`, `column` or `dock`; nothing said is a column, or
+        /// the dock under `dock = true`.
+        place: Option<String>,
         dock: bool,
         /// Started again by a session, in the directory it was left in.
         restore: bool,
@@ -3176,6 +3179,7 @@ fn seed(
                 name,
                 cmd: t.get("cmd")?,
                 cwd: t.get("cwd")?,
+                place: t.get::<Option<String>>("place")?,
                 dock: t.get::<Option<bool>>("dock")?.unwrap_or(false),
                 restore: t.get::<Option<bool>>("restore")?.unwrap_or(false),
             });

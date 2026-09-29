@@ -28,7 +28,7 @@ use kawoosh_systems::io::Transport;
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
-use crate::layout::{Content, SplitDir};
+use crate::layout::{Content, Place};
 use crate::terminals::TermId;
 
 /// How long a master may take to come up: a password typed, a key
@@ -160,14 +160,7 @@ impl Kawoosh {
         let term = self.spawn_terminal_argv(&transport.master_argv(), &home);
         if let Some(t) = term {
             self.terms.spawned.entry(t).or_default().tool = Some(format!("ssh {name}"));
-            self.layout.dock_open = true;
-            self.layout.dock_focused = true;
-            if self.layout.dock.is_some() {
-                self.layout.split(SplitDir::H, Content::Terminal(t));
-            } else {
-                let p = self.layout.new_pane(Content::Terminal(t));
-                self.layout.set_dock(p);
-            }
+            self.layout.open(Content::Terminal(t), Place::Dock);
         }
         let cancel = Arc::new(AtomicBool::new(false));
         self.io.connect_domain(

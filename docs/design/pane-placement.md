@@ -1,6 +1,7 @@
 # Where a pane opens: under the buffer, or a column of its own
 
-Status: decided 2026-09-30 (roadmap step 74), not yet built. Asked as
+Status: decided 2026-09-30 (roadmap step 74) and built the same day, as
+designed, with the one departure under "Built" at the end. Asked as
 "everything that affects the buffer opens as vertical split and
 everything that doesn't is not — tools by default in their own column,
 but can be overridden; the terminal its own column". Companion to
@@ -111,7 +112,7 @@ length. `*hover*` goes left even though it is a read-only text like
 
 What flips against today: the terminal, `:!` and the undocked tools
 (under → column); `*compile*` and the named text panes (under →
-column); `:undo` (column → under, at `PANEL_SHARE` of the height). The
+column); `:undo` (column → under, at the stack's half). The
 lists, the picker, the search bar, the Lua panes and the docked tools
 stay where they are. `show_in_pane` takes a `Place` and its callers
 say which; `show_multi`'s `beside` means `Under` as it does.
@@ -177,3 +178,19 @@ keyboard staying; `*references*` under the file it was asked from;
 `:undo` under the buffer at its share; a tool's `place` each way and
 `dock = true` still the dock; `add_headless_terminal` unchanged for the
 tests that feed it.
+
+## Built
+
+2026-09-30, as designed. `Place { Under, Column, Dock }` and
+`Layout::open` in `layout.rs`; `fill_or_split` became `fill_or_open`,
+which takes a `Place` and never fills the launcher with the dock's;
+`show_in_pane_as` takes a `Place`, `*hover*` and `*diagnostic*` under,
+the rest a column; `ToolDef.place` from `kawoosh.tool`'s `place` or
+`dock = true`, reported both ways by `kawoosh.tools()`;
+`terminal.place` with a doc. Two departures: `:undo history` under
+the buffer takes the stack's half, not `PANEL_SHARE` — at a third of
+the height the panel's header, rows and hunk did not fit, and a click
+on a row past the fold did nothing; and `Place::parse` also reads
+`below` and `beside`, since `view_open` and `multi open` say them
+already, so a `tools` table written with either word still lands.
+`kawoosh/tests/placement.rs` is the round's test.

@@ -28,11 +28,12 @@ use crate::commands::{ShellCommand, cmd};
 use crate::devtab::Tab;
 use crate::diff;
 use crate::graph::{Geometry, Graph};
-use crate::layout::{Content, PaneId, SplitDir};
+use crate::layout::{Content, PaneId, Place};
 use crate::rows;
 
-/// The panel's share of the split it opens in: the buffer keeps most
-/// of the width, a change's row needs less.
+/// A panel's share of the column it opens beside — `:memory`'s: the
+/// buffer keeps most of the width, a row needs less. The undo panel
+/// opens under the buffer at the stack's half (pane-placement.md).
 pub(crate) const PANEL_SHARE: f32 = 0.35;
 /// The graph's lane: room for a dot and the line beside it. A dot this
 /// small has no metric of its own; the row is the pane's line.
@@ -107,8 +108,9 @@ impl UndoPanel {
 }
 
 impl Kawoosh {
-    /// `:undo history`: opens the panel in a split beside the focused
-    /// pane, or focuses it when it is on show, or — focused already —
+    /// `:undo history`: opens the panel under the focused pane, in its
+    /// column — the history is the buffer's (pane-placement.md Decision
+    /// 2) — or focuses it when it is on show, or — focused already —
     /// closes it: a toggle, as `:tool` is for the dock.
     pub(crate) fn toggle_undo_panel(&mut self) {
         let shown = self
@@ -120,9 +122,9 @@ impl Kawoosh {
             Some(p) if self.layout.focused() == p => self.close_undo_panel(p),
             Some(p) => self.layout.focus(p),
             None => {
-                let pane = self.layout.split(SplitDir::H, Content::Undo);
-                // The buffer keeps most of the width.
-                self.layout.set_share(pane, PANEL_SHARE);
+                // At the stack's half: a third of the height did not
+                // hold the header, the rows and the hunk.
+                self.layout.open(Content::Undo, Place::Under);
                 self.undo.reveal = true;
             }
         }

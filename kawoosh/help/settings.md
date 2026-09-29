@@ -239,11 +239,12 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `terminal.scrollback` | `10000` | lines of terminal history |
 | `terminal.bell` | `"sound"` | `sound`, `visual` or `off` |
 | `terminal.escape` | `"<C-\\>"` | the key before normal mode's keys in a terminal; `""` for none ([terminal](terminal.md)) |
+| `terminal.place` | `"column"` | where `:terminal` and `:!` open: `column` (its own) or `under` the focused pane ([panes](panes.md#where-a-pane-opens)) |
 | `terminal.raw` | `{}` | programs a terminal pane is raw for while one is in front: every key but the escape and ⌘ theirs ([terminal](terminal.md)) |
 | `lsp.inlay_hints` | `false` | types and parameter names drawn in the line |
 | `lsp` | | language servers and their rules ([code](code.md)) |
 | `compile.default`, `compile.commands` | | what `<leader>cc` and `:compile NAME` run ([code](code.md)) |
-| `tools` | | named programs to launch in terminal panes |
+| `tools` | | named programs to launch in terminal panes; each a `place`: `column`, `under` or `dock` |
 | `memory.text.max_mb` | `8` | how much copied text is kept across restarts; `0` for none |
 | `secrets.masks` | | which text is masked ([memory](memory.md#secrets)) |
 

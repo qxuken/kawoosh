@@ -276,16 +276,16 @@ impl Kawoosh {
         Some(v)
     }
 
-    /// `content` into the launcher when it has the keyboard, else a
-    /// split `dir` of the focused pane — where a terminal, a tool, a
-    /// panel goes.
-    pub(crate) fn fill_or_split(&mut self, dir: SplitDir, content: Content) -> PaneId {
-        if self.launcher_focused() {
+    /// `content` into the launcher when it has the keyboard, else opened
+    /// at `place` (pane-placement.md) — where a terminal, a tool goes.
+    /// The dock is never the launcher's fill.
+    pub(crate) fn fill_or_open(&mut self, place: crate::layout::Place, content: Content) -> PaneId {
+        if place != crate::layout::Place::Dock && self.launcher_focused() {
             let pane = self.layout.focused();
             self.fill_launcher(content);
             return pane;
         }
-        self.layout.split(dir, content)
+        self.layout.open(content, place)
     }
 
     /// The buffer the launcher on `pane` was made from, for its `same`
