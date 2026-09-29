@@ -393,6 +393,7 @@ impl Settings {
                 "yaml",
                 "markdown",
                 "lua",
+                "scheme",
             ];
             for lang in two {
                 defaults.set(&format!("language.{lang}.tabstop"), Setting::Int(2));
@@ -1189,6 +1190,7 @@ mod tests {
                 "language.lua.tabstop",
                 "language.markdown.tabstop",
                 "language.markdown.trim_trailing_whitespace",
+                "language.scheme.tabstop",
                 "language.tsx.tabstop",
                 "language.typescript.tabstop",
                 "language.yaml.tabstop",

@@ -38,6 +38,7 @@ mod nu;
 mod python;
 mod regex;
 mod rust;
+mod scheme;
 mod sql;
 mod text;
 mod toml;
@@ -67,6 +68,7 @@ pub static LANGUAGES: &[&Language] = &[
     &c::LANGUAGE,
     &cpp::LANGUAGE,
     &python::LANGUAGE,
+    &scheme::LANGUAGE,
     &json::LANGUAGE,
     &jsonc::LANGUAGE,
     &yaml::LANGUAGE,
@@ -1230,9 +1232,11 @@ mod tests {
         assert_eq!(d("a.tsx", ""), "tsx");
         assert_eq!(d("README.MD", ""), "markdown");
         assert_eq!(d("x.patch", ""), "diff");
+        assert_eq!(d("lib/list.sld", ""), "scheme");
         assert_eq!(d("run", "#!/usr/bin/env nu"), "nu");
         assert_eq!(d("run", "#!/usr/bin/env -S python3 -u"), "python");
         assert_eq!(d("run", "#!/bin/sh"), "bash");
+        assert_eq!(d("run", "#!/usr/bin/env guile"), "scheme");
         assert_eq!(d("run", "#!/bin/zsh -f"), "bash");
         assert_eq!(d("run", "# not a shebang"), "text");
         // The name wins over the extension, the extension over the line.
