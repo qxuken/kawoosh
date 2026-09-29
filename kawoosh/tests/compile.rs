@@ -176,3 +176,40 @@ kawoosh.opt("compile.commands.here", { cmd = "pwd", cwd = kawoosh.fs.join(root, 
     assert_eq!(app.ed.message, "nil");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `r` in `*compile*` runs what it shows again, where it ran (emacs's
+/// `g` in `*compilation*`).
+#[cfg(unix)]
+#[test]
+fn r_in_the_compile_buffer_runs_it_again() {
+    let dir = project("again", "return {}");
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = open(&mut d, &dir);
+    ex(
+        &mut d,
+        &mut app,
+        "compile echo x >> runs; echo RUN $(wc -l < runs)",
+    );
+    let out = finished(&mut d, &mut app);
+    assert!(out.contains("RUN 1"), "{out}");
+    let buffer = app.compile.buffer.unwrap();
+    let pane = app
+        .layout
+        .all_panes()
+        .into_iter()
+        .find(|p| {
+            matches!(app.layout.content(*p), Some(kawoosh::layout::Content::Editor(v))
+                if app.ed.views[v].buffer == buffer)
+        })
+        .expect("*compile* in a pane");
+    app.layout.focus(pane);
+    d.frame(&mut app);
+    d.keys(&mut app, "r");
+    assert!(
+        app.compile.running || app.compile.proc_id > 1,
+        "started again"
+    );
+    let out = finished(&mut d, &mut app);
+    assert!(out.contains("RUN 2") && !out.contains("RUN 1"), "{out}");
+    std::fs::remove_dir_all(&dir).ok();
+}

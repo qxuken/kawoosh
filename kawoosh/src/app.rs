@@ -718,23 +718,7 @@ impl Kawoosh {
                 }
                 IoMsg::DomainUp { name } => self.domain_up(&name),
                 IoMsg::DomainFailed { name, error } => self.domain_failed(&name, &error),
-                IoMsg::PtyClosed { id } => {
-                    self.domain_term_closed(id);
-                    // The process is gone: close its pane, keep nothing.
-                    if let Some(t) = self.terms.map.get_mut(&id) {
-                        t.is_running();
-                    }
-                    let panes: Vec<PaneId> = self
-                        .layout
-                        .all_panes()
-                        .into_iter()
-                        .filter(|p| self.term_of(*p) == Some(id))
-                        .collect();
-                    for p in panes {
-                        self.close_gone(p);
-                    }
-                    self.terms.map.remove(&id);
-                }
+                IoMsg::PtyClosed { id } => self.term_closed(id),
                 IoMsg::Request(incoming) => self.on_request(incoming),
                 // A status segment's time came: the wake drew the frame.
                 IoMsg::Tick => self.status_due = None,
@@ -1180,6 +1164,8 @@ impl Kawoosh {
             Content::Editor(v) => self.drop_view(v),
             Content::Terminal(t) => {
                 self.terms.map.remove(&t);
+                self.terms.spawned.remove(&t);
+                self.terms.done.remove(&t);
             }
             Content::Memory => self.memory_filter_clear(),
             Content::Lua(_) | Content::Undo => {}
