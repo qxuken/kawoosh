@@ -286,6 +286,185 @@ impl Layer {
     }
 }
 
+/// The formatters shipped (formatters.md Decision 1), as `format.NAME`
+/// tables: `cmd` and `args` (`{path}` the buffer's; a range's
+/// `{start}` `{end}` `{length}` in bytes, `{start_utf16}` `{end_utf16}`
+/// in UTF-16 units), its `languages`, `when` — the files that say a
+/// project uses it (`FILE:KEY` for a key in it), `"always"` or
+/// `"never"` — `node` for `node_modules/.bin` first, `range` the args
+/// that format a range, `probe` a snippet per language its indentation
+/// is read from, `timeout_ms`, `enabled`.
+fn formatter_defaults(defaults: &mut Setting) {
+    let s = |v: &str| Setting::Str(v.into());
+    let list = |v: &[&str]| Setting::List(v.iter().map(|x| s(x)).collect());
+    let probes = |pairs: &[(&str, &str)]| {
+        Setting::Table(pairs.iter().map(|(k, v)| (k.to_string(), s(v))).collect())
+    };
+    let js = "if (a) {\nb;\n}\n";
+    let json = "{\n\"a\": 1\n}\n";
+    let css = "a {\nb: c;\n}\n";
+    let web_probes = probes(&[
+        ("javascript", js),
+        ("typescript", js),
+        ("tsx", js),
+        ("json", json),
+        ("jsonc", json),
+        ("css", css),
+    ]);
+    let web = ["javascript", "typescript", "tsx", "json", "jsonc", "css"];
+    let defs: Vec<(&str, Vec<(&str, Setting)>)> = vec![
+        (
+            "prettier",
+            vec![
+                ("cmd", s("prettier")),
+                ("args", list(&["--stdin-filepath", "{path}"])),
+                (
+                    "languages",
+                    list(&[
+                        "javascript",
+                        "typescript",
+                        "tsx",
+                        "json",
+                        "jsonc",
+                        "css",
+                        "yaml",
+                        "markdown",
+                    ]),
+                ),
+                (
+                    "when",
+                    list(&[
+                        ".prettierrc",
+                        ".prettierrc.json",
+                        ".prettierrc.json5",
+                        ".prettierrc.yaml",
+                        ".prettierrc.yml",
+                        ".prettierrc.toml",
+                        ".prettierrc.js",
+                        ".prettierrc.cjs",
+                        ".prettierrc.mjs",
+                        ".prettierrc.ts",
+                        "prettier.config.js",
+                        "prettier.config.cjs",
+                        "prettier.config.mjs",
+                        "prettier.config.ts",
+                        "package.json:prettier",
+                    ]),
+                ),
+                ("node", Setting::Bool(true)),
+                (
+                    "range",
+                    list(&[
+                        "--range-start",
+                        "{start_utf16}",
+                        "--range-end",
+                        "{end_utf16}",
+                    ]),
+                ),
+                ("probe", web_probes.clone()),
+            ],
+        ),
+        (
+            "biome",
+            vec![
+                ("cmd", s("biome")),
+                ("args", list(&["format", "--stdin-file-path={path}"])),
+                ("languages", list(&web)),
+                ("when", list(&["biome.json", "biome.jsonc"])),
+                ("node", Setting::Bool(true)),
+                ("probe", web_probes),
+            ],
+        ),
+        (
+            "stylua",
+            vec![
+                ("cmd", s("stylua")),
+                ("args", list(&["--stdin-filepath", "{path}", "-"])),
+                ("languages", list(&["lua"])),
+                ("when", list(&["stylua.toml", ".stylua.toml"])),
+                (
+                    "range",
+                    list(&["--range-start", "{start}", "--range-end", "{end}"]),
+                ),
+                ("probe", probes(&[("lua", "if a then\nb()\nend\n")])),
+            ],
+        ),
+        (
+            "clang-format",
+            vec![
+                ("cmd", s("clang-format")),
+                ("args", list(&["--assume-filename={path}"])),
+                ("languages", list(&["c", "cpp"])),
+                ("when", list(&[".clang-format", "_clang-format"])),
+                ("range", list(&["--offset={start}", "--length={length}"])),
+                (
+                    "probe",
+                    probes(&[
+                        ("c", "int f() {\nreturn 0;\n}\n"),
+                        ("cpp", "int f() {\nreturn 0;\n}\n"),
+                    ]),
+                ),
+            ],
+        ),
+        (
+            "ruff",
+            vec![
+                ("cmd", s("ruff")),
+                ("args", list(&["format", "--stdin-filename", "{path}", "-"])),
+                ("languages", list(&["python"])),
+                (
+                    "when",
+                    list(&["ruff.toml", ".ruff.toml", "pyproject.toml:tool.ruff"]),
+                ),
+                ("probe", probes(&[("python", "if a:\n  b\n")])),
+            ],
+        ),
+        (
+            "gofmt",
+            vec![
+                ("cmd", s("gofmt")),
+                ("args", Setting::List(Vec::new())),
+                ("languages", list(&["go"])),
+                ("when", s("always")),
+            ],
+        ),
+        (
+            "taplo",
+            vec![
+                ("cmd", s("taplo")),
+                ("args", list(&["fmt", "-"])),
+                ("languages", list(&["toml"])),
+                ("when", list(&[".taplo.toml", "taplo.toml"])),
+            ],
+        ),
+        (
+            "shfmt",
+            vec![
+                ("cmd", s("shfmt")),
+                ("args", list(&["--filename", "{path}"])),
+                ("languages", list(&["bash"])),
+                ("when", s("never")),
+                ("probe", probes(&[("bash", "if a; then\nb\nfi\n")])),
+            ],
+        ),
+        (
+            "rustfmt",
+            vec![
+                ("cmd", s("rustfmt")),
+                ("args", list(&["--edition", "2021"])),
+                ("languages", list(&["rust"])),
+                ("when", s("never")),
+                ("probe", probes(&[("rust", "fn f() {\nlet a = 1;\n}\n")])),
+            ],
+        ),
+    ];
+    for (name, keys) in defs {
+        for (k, v) in keys {
+            defaults.set(&format!("format.{name}.{k}"), v);
+        }
+    }
+}
+
 /// Where a buffer's settings are read beside the tree
 /// ([`Settings::scoped`]): its language, whose `language.NAME` table lays
 /// over the bare keys, and its own sources — what the `.editorconfig`
@@ -378,6 +557,14 @@ impl Settings {
         defaults.set("end_of_line", Setting::Str(String::new()));
         // Whether a buffer reads the `.editorconfig` files above it.
         defaults.set("editorconfig.enabled", Setting::Bool(true));
+        // Formatters (docs/design/formatters.md): which one formats a
+        // buffer — a name, a list tried in order, `auto` for the one
+        // whose config is nearest, then one that always runs, then
+        // `lsp` — read through the buffer's scope, and whether a save
+        // formats first.
+        defaults.set("formatter", Setting::Str("auto".into()));
+        defaults.set("format_on_save", Setting::Bool(false));
+        formatter_defaults(&mut defaults);
         // The languages' own ways (Decision 2): a language's table lays
         // over the bare keys of every layer for its buffers. What the
         // communities' formatters write — gofmt's tabs, prettier's two
@@ -660,6 +847,11 @@ impl Settings {
         ] {
             s.declare(path, kind, "");
         }
+        s.declare(
+            "format",
+            SettingKind::Open,
+            "formatters by name: `cmd`, `args`, `languages`, `when`, `node`, `range`, `probe`, `timeout_ms`, `enabled` (formatters.md)",
+        );
         s.declare(
             "language",
             SettingKind::Open,
@@ -1126,8 +1318,18 @@ mod tests {
         s.retain_sources(Layer::User, |n| n != "user");
         assert_eq!(s.get("x"), None);
         assert_eq!(s.int("tabstop"), Some(2));
+        // The formatters' tables are their own list (formatters.md).
+        assert!(
+            s.effective()
+                .paths()
+                .contains(&"format.prettier.cmd".to_string())
+        );
         assert_eq!(
-            s.effective().paths(),
+            s.effective()
+                .paths()
+                .into_iter()
+                .filter(|p| !p.starts_with("format."))
+                .collect::<Vec<_>>(),
             [
                 "buffers.scope",
                 "clipboard.system",
@@ -1145,6 +1347,8 @@ mod tests {
                 "font.features",
                 "font.line_height",
                 "font.size",
+                "format_on_save",
+                "formatter",
                 "insert_final_newline",
                 "language.css.tabstop",
                 "language.diff.trim_trailing_whitespace",

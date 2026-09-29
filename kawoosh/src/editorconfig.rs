@@ -365,7 +365,7 @@ type Way = (Vec<(&'static str, String)>, Vec<String>, Vec<String>);
 
 /// `path` made whole against `cwd`, for a buffer opened by a relative
 /// name.
-fn absolute(path: &Path, cwd: &Path) -> PathBuf {
+pub(crate) fn absolute(path: &Path, cwd: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {

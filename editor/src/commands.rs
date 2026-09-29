@@ -3714,7 +3714,7 @@ fn select_all_matches(ed: &mut Editor, ctx: &Ctx) {
 /// one's newline off, so a piece does not end on it), else its
 /// characters, the head's included — as an operator in visual mode
 /// takes them.
-fn sel_ranges(ed: &Editor, view_id: ViewId) -> Vec<Range<usize>> {
+pub(crate) fn sel_ranges(ed: &Editor, view_id: ViewId) -> Vec<Range<usize>> {
     let v = &ed.views[view_id];
     let buf = &ed.buffers[v.buffer];
     let lines = ed.mode(view_id) == Mode::Visual && v.visual_linewise;
@@ -4141,7 +4141,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("gra", "lsp action"),
         ("gri", "lsp implementation"),
         ("grt", "lsp type definition"),
-        ("grf", "lsp format"),
+        // `grf` formats with the buffer's formatter, its server one
+        // of them (formatters.md).
+        ("grf", "format"),
         ("grs", "picker symbols"),
         ("grS", "picker workspace_symbols"),
         ("K", "lsp hover"),
@@ -4298,6 +4300,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>vk", "select keep"),
         ("<leader>vl", "select lines"),
         ("<A-,>", "select drop primary"),
+        ("grf", "format selection"),
     ];
     for (k, c) in v {
         km.bind(Visual, k, c);

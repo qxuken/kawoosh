@@ -2268,6 +2268,13 @@ impl Editor {
         self.edited = true;
     }
 
+    /// What each selection of `view` covers, as an operator in visual
+    /// mode takes it: the head's character included, whole lines under
+    /// `V`.
+    pub fn selection_ranges(&self, view: ViewId) -> Vec<Range<usize>> {
+        commands::sel_ranges(self, view)
+    }
+
     /// Buffer `id`'s text made `text` by the edits that change only the
     /// lines that differ (`kawoosh_doc::line_diff`), applied as
     /// [`Editor::apply_edits`] applies — one undo node, every caret

@@ -1,0 +1,589 @@
+//! Formatters (docs/design/formatters.md): a program that reads a
+//! buffer's text on stdin and writes it formatted — prettier, biome,
+//! stylua, gofmt, … — defined as data under `format.NAME`, chosen for a
+//! buffer by its `formatter` setting (`auto`: the one whose config is
+//! nearest, then one that always runs, then its language server), run
+//! off the frame with a timeout, its answer put in as a line diff at
+//! the version sent (`Editor::replace_diffed`).
+//!
+//! `:format` formats the focused buffer, `:format NAME` with that one,
+//! `:format selection` the selection (a formatter's `range`), `:format?`
+//! says which one and why.
+
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use kawoosh_doc::{BufferId, Version};
+use kawoosh_editor::{ArgKind, Args, Setting, Spec};
+use kawoosh_systems::filter::Failure;
+use kawoosh_systems::io::IoMsg;
+
+use crate::Kawoosh;
+use crate::commands::{ShellCommand, cmd};
+
+/// A formatter's timeout when its def says none.
+pub const TIMEOUT: Duration = Duration::from_millis(5000);
+
+/// When a formatter formats a buffer it was not named for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum When {
+    Always,
+    Never,
+    /// The files that say a project uses it, found from the buffer's
+    /// directory up: a name, or `FILE:KEY` for a key in it.
+    Files(Vec<String>),
+}
+
+/// One `format.NAME`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Formatter {
+    pub name: String,
+    pub cmd: String,
+    pub args: Vec<String>,
+    pub languages: Vec<String>,
+    pub when: When,
+    /// `node_modules/.bin/CMD` from the buffer up, before the `PATH`.
+    pub node: bool,
+    /// The args that format a range, added to `args`.
+    pub range: Option<Vec<String>>,
+    /// A snippet per language whose formatting says the indent.
+    pub probe: BTreeMap<String, String>,
+    pub timeout: Duration,
+    pub enabled: bool,
+}
+
+impl Formatter {
+    /// The def at `format.NAME`, or `None` for one with no `cmd`.
+    pub fn from_setting(name: &str, t: &Setting) -> Option<Self> {
+        let strs = |k: &str| -> Vec<String> {
+            match t.get(k) {
+                Some(Setting::List(l)) => l
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect(),
+                Some(Setting::Str(s)) => vec![s.clone()],
+                _ => Vec::new(),
+            }
+        };
+        let cmd = t.get("cmd")?.as_str()?.to_string();
+        let when = match t.get("when") {
+            Some(Setting::Str(s)) if s == "always" => When::Always,
+            Some(Setting::Str(s)) if s == "never" => When::Never,
+            Some(_) => When::Files(strs("when")),
+            None => When::Never,
+        };
+        let probe = match t.get("probe") {
+            Some(Setting::Table(p)) => p
+                .iter()
+                .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+                .collect(),
+            _ => BTreeMap::new(),
+        };
+        Some(Self {
+            name: name.to_string(),
+            cmd,
+            args: strs("args"),
+            languages: strs("languages"),
+            when,
+            node: t.get("node").and_then(Setting::as_bool).unwrap_or(false),
+            range: t.get("range").is_some().then(|| strs("range")),
+            probe,
+            timeout: t
+                .get("timeout_ms")
+                .and_then(Setting::as_int)
+                .filter(|n| *n > 0)
+                .map(|n| Duration::from_millis(n as u64))
+                .unwrap_or(TIMEOUT),
+            enabled: t.get("enabled").and_then(Setting::as_bool).unwrap_or(true),
+        })
+    }
+
+    fn formats(&self, language: &str) -> bool {
+        self.languages.iter().any(|l| l == language)
+    }
+}
+
+/// What formats a buffer, and why.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Choice {
+    Tool(Box<Picked>),
+    Lsp(String),
+    None(String),
+}
+
+/// A formatter picked for a buffer: the program found, where it runs,
+/// the config that chose it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Picked {
+    pub def: Formatter,
+    /// The `when` file found, if one was.
+    pub config: Option<PathBuf>,
+    /// The program: the project's own (`node_modules/.bin`) or the name
+    /// for the `PATH`.
+    pub program: String,
+    /// Whether the program is the project's own.
+    pub own: bool,
+    /// Where it runs: the config's directory, else the buffer's.
+    pub cwd: PathBuf,
+    pub why: String,
+}
+
+impl Picked {
+    /// Whether what runs is code from the repository — its own binary,
+    /// or a config that is code (formatters.md Decision 5).
+    pub fn is_projects_code(&self) -> bool {
+        self.own
+            || self.config.as_deref().is_some_and(|c| {
+                matches!(
+                    c.extension().and_then(|e| e.to_str()),
+                    Some("js" | "cjs" | "mjs" | "ts" | "cts" | "mts")
+                )
+            })
+    }
+}
+
+/// What a run is for, once its answer lands.
+#[derive(Clone, Debug)]
+pub(crate) enum Then {
+    /// Put in the buffer, and said.
+    Apply,
+}
+
+struct Job {
+    buffer: BufferId,
+    version: Version,
+    name: String,
+    then: Then,
+}
+
+/// The formatter runs in flight.
+#[derive(Default)]
+pub struct FormatState {
+    next: u64,
+    jobs: HashMap<u64, Job>,
+}
+
+/// The formatters the settings define, by name.
+pub fn defs(settings: &kawoosh_editor::Settings) -> Vec<Formatter> {
+    match settings.get("format") {
+        Some(Setting::Table(t)) => t
+            .iter()
+            .filter_map(|(name, def)| Formatter::from_setting(name, def))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The nearest `when` file for `def` from `dir` up, and how deep its
+/// directory is.
+fn find_config(def: &Formatter, dir: &Path) -> Option<PathBuf> {
+    let When::Files(files) = &def.when else {
+        return None;
+    };
+    for d in dir.ancestors() {
+        for f in files {
+            let (name, key) = match f.split_once(':') {
+                Some((n, k)) => (n, Some(k)),
+                None => (f.as_str(), None),
+            };
+            let p = d.join(name);
+            if !p.is_file() {
+                continue;
+            }
+            match key {
+                None => return Some(p),
+                Some(k) if has_key(&p, k) => return Some(p),
+                Some(_) => {}
+            }
+        }
+    }
+    None
+}
+
+/// Whether the file at `path` has `key`: a JSON file's dotted key, a
+/// TOML file's table (`tool.ruff`).
+fn has_key(path: &Path, key: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    if path.extension().is_some_and(|e| e == "toml") {
+        return text.lines().any(|l| {
+            let l = l.trim();
+            l.starts_with(&format!("[{key}]")) || l.starts_with(&format!("[{key}."))
+        });
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return false;
+    };
+    let mut cur = &v;
+    for k in key.split('.') {
+        match cur.get(k) {
+            Some(n) => cur = n,
+            None => return false,
+        }
+    }
+    true
+}
+
+/// The project's own `node_modules/.bin/CMD` from `dir` up.
+fn node_bin(cmd: &str, dir: &Path) -> Option<PathBuf> {
+    dir.ancestors().find_map(|d| {
+        let bin = d.join("node_modules").join(".bin");
+        let names: &[String] = if cfg!(windows) {
+            &[format!("{cmd}.cmd"), cmd.to_string()]
+        } else {
+            &[cmd.to_string()]
+        };
+        names.iter().map(|n| bin.join(n)).find(|p| p.is_file())
+    })
+}
+
+/// `def` made ready for a buffer at `path` in `dir`.
+fn pick(def: &Formatter, dir: &Path, config: Option<PathBuf>, why: String) -> Picked {
+    let own = def.node.then(|| node_bin(&def.cmd, dir)).flatten();
+    let cwd = config
+        .as_deref()
+        .and_then(Path::parent)
+        .unwrap_or(dir)
+        .to_path_buf();
+    Picked {
+        def: def.clone(),
+        program: own
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| def.cmd.clone()),
+        own: own.is_some(),
+        cwd,
+        config,
+        why,
+    }
+}
+
+/// `args` with the placeholders filled: `{path}`, and a range's
+/// `{start}` `{end}` `{length}` (bytes) and `{start_utf16}`
+/// `{end_utf16}`.
+fn fill(
+    args: &[String],
+    path: &Path,
+    text: &str,
+    range: Option<&std::ops::Range<usize>>,
+) -> Vec<String> {
+    let utf16 = |at: usize| text[..at.min(text.len())].encode_utf16().count();
+    args.iter()
+        .map(|a| {
+            let mut a = a.replace("{path}", &path.display().to_string());
+            if let Some(r) = range {
+                a = a
+                    .replace("{start_utf16}", &utf16(r.start).to_string())
+                    .replace("{end_utf16}", &utf16(r.end).to_string())
+                    .replace("{start}", &r.start.to_string())
+                    .replace("{end}", &r.end.to_string())
+                    .replace("{length}", &(r.end - r.start).to_string());
+            }
+            a
+        })
+        .collect()
+}
+
+impl Kawoosh {
+    /// What formats buffer `id`: `named`, else its `formatter` setting
+    /// (formatters.md Decision 2).
+    pub fn formatter_for(&self, id: BufferId, named: Option<&str>) -> Choice {
+        let Some(b) = self.ed.buffers.get(id) else {
+            return Choice::None("no buffer".into());
+        };
+        let language = b.language.to_string();
+        if b.private {
+            return Choice::None("a private buffer is not sent to a formatter".into());
+        }
+        let wanted: Vec<String> = match named {
+            Some(n) => vec![n.to_string()],
+            None => match self.ed.setting_in(id, "formatter") {
+                Some(Setting::List(l)) => l
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect(),
+                Some(Setting::Str(s)) => vec![s.clone()],
+                _ => vec!["auto".into()],
+            },
+        };
+        let remote = b
+            .path
+            .as_deref()
+            .is_some_and(|p| kawoosh_systems::fs::domain_of(p).is_some());
+        let dir = b
+            .path
+            .as_deref()
+            .map(|p| crate::editorconfig::absolute(p, &self.cwd))
+            .and_then(|p| p.parent().map(Path::to_path_buf));
+        let all = defs(&self.ed.settings);
+        let lsp =
+            || (self.lsp_serves(&language)).then(|| Choice::Lsp(format!("the {language} server")));
+        for w in &wanted {
+            match w.as_str() {
+                "lsp" => {
+                    if let Some(c) = lsp() {
+                        return c;
+                    }
+                }
+                "auto" => {
+                    let Some(dir) = dir.as_deref().filter(|_| !remote) else {
+                        if let Some(c) = lsp() {
+                            return c;
+                        }
+                        continue;
+                    };
+                    // The nearest config's formatter; a tie to the
+                    // first by name.
+                    let mut best: Option<(usize, &Formatter, PathBuf)> = None;
+                    for def in all.iter().filter(|d| d.enabled && d.formats(&language)) {
+                        if let Some(c) = find_config(def, dir) {
+                            let depth = c.components().count();
+                            if best.as_ref().is_none_or(|(d, _, _)| depth > *d) {
+                                best = Some((depth, def, c));
+                            }
+                        }
+                    }
+                    if let Some((_, def, c)) = best {
+                        let why = format!("{}: {}", def.name, self.short_name(&c));
+                        return Choice::Tool(Box::new(pick(def, dir, Some(c), why)));
+                    }
+                    if let Some(def) = all
+                        .iter()
+                        .find(|d| d.enabled && d.formats(&language) && d.when == When::Always)
+                    {
+                        let why = format!("{}: always for {language}", def.name);
+                        return Choice::Tool(Box::new(pick(def, dir, None, why)));
+                    }
+                    if let Some(c) = lsp() {
+                        return c;
+                    }
+                }
+                name => {
+                    let Some(def) = all.iter().find(|d| d.name == name) else {
+                        return Choice::None(format!("no formatter {name} (format.{name})"));
+                    };
+                    if !def.enabled {
+                        return Choice::None(format!("{name} is off (format.{name}.enabled)"));
+                    }
+                    let Some(dir) = dir.as_deref().filter(|_| !remote) else {
+                        return Choice::None(if remote {
+                            format!("{name} runs here, the file is on a host")
+                        } else {
+                            format!("{name} needs a file to format")
+                        });
+                    };
+                    let config = find_config(def, dir);
+                    let why = match &config {
+                        Some(c) => format!("{name}: {}", self.short_name(c)),
+                        None => format!("{name}: named"),
+                    };
+                    return Choice::Tool(Box::new(pick(def, dir, config, why)));
+                }
+            }
+        }
+        Choice::None(format!("no formatter for {language}"))
+    }
+
+    /// Formats buffer `id` — `named` or its own — the selection's
+    /// `range` when there is one; `then` once it lands. Whether a
+    /// format started; the message line says either way.
+    pub(crate) fn format_buffer(
+        &mut self,
+        id: BufferId,
+        named: Option<&str>,
+        range: Option<std::ops::Range<usize>>,
+        then: Then,
+    ) -> bool {
+        match self.formatter_for(id, named) {
+            Choice::None(why) => {
+                self.ed.message = why;
+                false
+            }
+            Choice::Lsp(who) => {
+                if range.is_some() {
+                    self.ed.message = "the language server formats the whole buffer here; :format without a selection".into();
+                    return false;
+                }
+                match self.lsp_format_buffer(id) {
+                    Ok(()) => {
+                        let _ = then;
+                        self.ed.message = format!("formatting with {who}…");
+                        true
+                    }
+                    Err(e) => {
+                        self.ed.message = e;
+                        false
+                    }
+                }
+            }
+            Choice::Tool(p) => {
+                let b = &self.ed.buffers[id];
+                let Some(path) = b
+                    .path
+                    .as_deref()
+                    .map(|p| crate::editorconfig::absolute(p, &self.cwd))
+                else {
+                    self.ed.message = format!("{} needs a file to format", p.def.name);
+                    return false;
+                };
+                let text = b.text();
+                let mut args = fill(&p.def.args, &path, &text, None);
+                if let Some(r) = &range {
+                    let Some(extra) = &p.def.range else {
+                        self.ed.message = format!("{} does not format a range", p.def.name);
+                        return false;
+                    };
+                    args.extend(fill(extra, &path, &text, Some(r)));
+                }
+                let version = b.version();
+                let name = p.def.name.clone();
+                // Said first: a run inline (a test) says its end at once.
+                self.ed.message = format!("formatting with {name}…");
+                self.run_formatter(
+                    &p,
+                    args,
+                    text,
+                    Job {
+                        buffer: id,
+                        version,
+                        name,
+                        then,
+                    },
+                );
+                true
+            }
+        }
+    }
+
+    /// Runs `p` over `text` off the frame — at once in a test
+    /// (`jobs_inline`) — its answer to [`Kawoosh::filtered`].
+    fn run_formatter(&mut self, p: &Picked, args: Vec<String>, text: String, job: Job) {
+        let token = self.format.next;
+        self.format.next += 1;
+        self.format.jobs.insert(token, job);
+        let (program, cwd, timeout) = (p.program.clone(), p.cwd.clone(), p.def.timeout);
+        let run = move || kawoosh_systems::filter::run(&program, &args, Some(&cwd), &text, timeout);
+        if self.jobs_inline {
+            let result = run();
+            self.filtered(token, result);
+        } else {
+            self.pending_jobs += 1;
+            self.io.run("format", move || IoMsg::Filtered {
+                token,
+                result: run(),
+            });
+        }
+    }
+
+    /// A formatter's answer: put in at the version it was given, or why
+    /// not; then what it was for.
+    pub(crate) fn filtered(&mut self, token: u64, result: Result<String, Failure>) {
+        let Some(job) = self.format.jobs.remove(&token) else {
+            return;
+        };
+        let said = match result {
+            Ok(text) => match self.ed.replace_diffed(job.buffer, &text, Some(job.version)) {
+                Ok(0) => "already formatted".to_string(),
+                Ok(n) => format!(
+                    "formatted with {} ({n} edit{})",
+                    job.name,
+                    if n == 1 { "" } else { "s" }
+                ),
+                Err(e) => format!("not formatted: {e}"),
+            },
+            Err(f) => {
+                if !f.stderr.is_empty() {
+                    log::warn!("{}: {}", job.name, f.stderr.trim_end());
+                }
+                format!("not formatted: {}", f.short)
+            }
+        };
+        match job.then {
+            Then::Apply => self.ed.message = said,
+        }
+    }
+
+    /// `:format?`: what formats the focused buffer, and why.
+    fn say_formatter(&mut self) {
+        let Some(v) = self.focused_view() else { return };
+        let id = self.ed.views[v].buffer;
+        self.ed.message = match self.formatter_for(id, None) {
+            Choice::Tool(p) => format!("{} ({})", p.why, p.program),
+            Choice::Lsp(why) => format!("lsp: {why}"),
+            Choice::None(why) => why,
+        };
+    }
+
+    fn format_focused(&mut self, named: Option<&str>, selection: bool) {
+        let Some(v) = self.focused_view() else { return };
+        let id = self.ed.views[v].buffer;
+        let range = selection
+            .then(|| {
+                let primary = self.ed.views[v].sels.primary;
+                self.ed.selection_ranges(v).get(primary).cloned()
+            })
+            .flatten();
+        if selection && range.as_ref().is_none_or(|r| r.is_empty()) {
+            self.ed.message = "format selection: nothing selected".into();
+            return;
+        }
+        self.format_buffer(id, named, range, Then::Apply);
+    }
+}
+
+pub(crate) fn commands() -> Vec<ShellCommand> {
+    vec![
+        cmd(
+            Spec::new("format")
+                .args(Args::new(&[ArgKind::Text]))
+                .query("say what formats the buffer, and why")
+                .doc("format the buffer with its formatter, or with NAME (`format.NAME`)"),
+            |k, ctx| {
+                if ctx.query() {
+                    return k.say_formatter();
+                }
+                k.format_focused(ctx.args.first().map(String::as_str), false)
+            },
+        ),
+        cmd(
+            Spec::new("format selection")
+                .doc("format the selection, with a formatter that formats a range"),
+            |k, _| k.format_focused(None, true),
+        ),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholders_are_filled_and_a_key_is_found() {
+        let args = vec![
+            "--stdin-filepath".to_string(),
+            "{path}".into(),
+            "--r={start_utf16}-{end_utf16}".into(),
+            "{length}".into(),
+        ];
+        let text = "é\nabc";
+        let got = fill(&args, Path::new("/p/a.ts"), text, Some(&(3..5)));
+        assert_eq!(got, ["--stdin-filepath", "/p/a.ts", "--r=2-4", "2"]);
+        let dir = std::env::temp_dir().join(format!("kawoosh-fmt-key-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pkg = dir.join("package.json");
+        std::fs::write(&pkg, r#"{ "name": "x", "prettier": { "useTabs": true } }"#).unwrap();
+        assert!(has_key(&pkg, "prettier"));
+        assert!(!has_key(&pkg, "biome"));
+        let py = dir.join("pyproject.toml");
+        std::fs::write(
+            &py,
+            "[project]\nname = \"x\"\n\n[tool.ruff.format]\nquote-style = \"single\"\n",
+        )
+        .unwrap();
+        assert!(has_key(&py, "tool.ruff"));
+        assert!(!has_key(&py, "tool.black"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

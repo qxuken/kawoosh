@@ -290,6 +290,8 @@ pub struct Kawoosh {
     /// Jobs a plugin asked for (`kawoosh.fs.list(path, fn)`) whose
     /// answer is still out on the io thread.
     pub(crate) pending_jobs: usize,
+    /// The formatter runs in flight (`format.rs`).
+    pub(crate) format: crate::format::FormatState,
     /// For tests: a job runs where it is asked for and its answer lands
     /// in the same frame, so a listing is there when the key returns.
     pub jobs_inline: bool,
@@ -419,6 +421,7 @@ impl Kawoosh {
             mods: KeyMods::NONE,
             confirm: None,
             pending_jobs: 0,
+            format: Default::default(),
             jobs_inline: false,
             urls_opened: None,
         };
@@ -746,6 +749,10 @@ impl Kawoosh {
                         rt.listed(token, result);
                         self.drain_lua();
                     }
+                }
+                IoMsg::Filtered { token, result } => {
+                    self.pending_jobs = self.pending_jobs.saturating_sub(1);
+                    self.filtered(token, result);
                 }
                 IoMsg::Image { path, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);

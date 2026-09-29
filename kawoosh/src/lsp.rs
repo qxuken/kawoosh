@@ -997,7 +997,7 @@ impl Kawoosh {
 
     /// Whether anyone serves `language`: a definition, its command not
     /// found missing and not being restarted.
-    fn lsp_serves(&self, language: &str) -> bool {
+    pub(crate) fn lsp_serves(&self, language: &str) -> bool {
         self.lsp.defs.iter().any(|d| {
             d.serves(language)
                 && !self.lsp.said_unavailable.contains(&d.command)
@@ -1030,6 +1030,27 @@ impl Kawoosh {
 
     /// A request that needs a server that does `what`: sent, or the
     /// message says which is missing.
+    /// Buffer `id` formatted by its server, with its own indent — its
+    /// language's, its `.editorconfig`'s — as the options; or why not.
+    /// The answer comes as `Event::Formatted`.
+    pub(crate) fn lsp_format_buffer(&mut self, id: BufferId) -> Result<(), String> {
+        let language = self.ed.buffers[id].language.to_string();
+        if !self.lsp_serves(&language) {
+            return Err(format!("no language server for {language}"));
+        }
+        if !self.caps_of(id).format {
+            return Err(format!("the {language} server does not do formatting"));
+        }
+        let cmd = Cmd::Format {
+            buffer: id,
+            version: self.ed.buffers[id].version(),
+            tab_size: self.ed.shiftwidth_in(id),
+            insert_spaces: self.ed.expandtab_in(id),
+        };
+        self.positional_cmd(cmd);
+        Ok(())
+    }
+
     fn lsp_request(
         &mut self,
         what: &str,

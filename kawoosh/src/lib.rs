@@ -26,6 +26,7 @@ pub mod domains;
 pub mod du;
 pub mod editorconfig;
 pub mod fonts;
+pub mod format;
 pub mod graph;
 pub mod harness;
 pub mod help;
