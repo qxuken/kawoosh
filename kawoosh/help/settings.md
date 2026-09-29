@@ -1,6 +1,6 @@
 # Settings
 
-Kawoosh's settings are one tree of values, such as `tabstop` or `font.size`, built from several layers. This page covers where settings come from, how to write them, `:set`, the Settings tab, and the settings you are most likely to change.
+Kawoosh's settings are one tree of values, such as `tabstop` or `font.size`, built from several layers. This page covers where settings come from, how to write them, `:set`, the settings pane, and the settings you are most likely to change.
 
 ## Layers
 
@@ -141,9 +141,50 @@ Every settings file and `init.lua`, yours and the project's (including ones not 
 
 Paths complete as you type, and so do the choices of a setting that takes a few words.
 
-## The Settings tab
+## The settings pane
 
-`:settings` opens the Settings tab of the devtools (`F12` shows and hides the devtools). It lists the layers from the one that wins down, each file with the values it sets; click a file's name to open it, or to start one that does not exist yet. At the bottom is the effective tree, each value with where it came from; click a switch there to flip it for the session. The *reload* button does what `:settings reload` does.
+`:settings` (or `⌘,`) opens every setting in a column beside the one you are in, so a change shows on the code at once. `:settings QUERY` opens it already searched: `:settings font`.
+
+Each setting is a row: its path as a settings file spells it, what it does, and a control for its kind. A switch flips, a word is one of a few chips, a number steps with `−` and `+` or takes a typed value, and a text is typed in place. A list or a table has **edit in file**, which opens the file at the key and adds the key first when the file does not have it. The rows are grouped into sections (Editing, Look, Layout, …), and a wide pane lists the sections down the left.
+
+**A change goes into a file.** At the top, **user**, **project** and **session** say where: your `settings.lua`, the project's `.kawoosh/settings.lua` nearest the working directory (made on the first change), or this session only, as `:set` does, gone at the next launch. Kawoosh edits the file where the key is and keeps your comments and layout. When the file is open in a buffer, the change is made there, one `u` undoes it, and the buffer is saved unless it already had unsaved changes of yours. A change also takes out a `:set` of the same setting, so what you chose is what you see. A file that builds its table in code (more than `return { … }` or a `local` returned by name) is not edited: kawoosh says so and opens it.
+
+A row names every layer that sets it (`user`, `project`, `session`), the scope's in the accent. A row the scope sets has an accent bar on its left and **↺ reset**, which takes the key out of the file so the value falls back to the layer below; a row only another layer sets has a muted bar. After a reset, the row stays in the list, even under `@modified`, until you change the search. When a layer above the scope wins, the row says so: "the project sets 4, over yours", or ":set made it 2 for this session" with **clear**.
+
+The search is at the top and has the keys when the pane opens. Every word you type must appear in the row's path, its description, its section or its value. A word that matches a path by its letters in order also counts, so `fsz` finds `font.size`. Words starting with `@` filter, and `⌥m` `⌥u` `⌥p` `⌥s` (`<A-m>` …) turn the first four on and off from the search or the rows:
+
+| filter | keeps |
+|---|---|
+| `@modified` (`⌥m`) | what a file or `:set` sets |
+| `@user`, `@project`, `@session` (`⌥u` `⌥p` `⌥s`) | what that layer sets |
+| `@bool`, `@number`, `@text` | settings of that kind |
+
+| key | what |
+|---|---|
+| `⏎`, `<Esc>` in the search | go to the rows; the arrows and `<C-n>` `<C-p>` walk them from the search |
+| `j` `k`, `gg` `G`, `<C-d>` `<C-u>` | walk the rows |
+| `]]` `[[` | the next section, this one's first row or the one before |
+| `⏎`, `<Space>` | flip, edit in place (`⏎` keeps, `<Esc>` drops), next word, or open the file |
+| `h` `l`, `-` `+` | step a number or a word |
+| `r` | reset: take the key out of the scope's file |
+| `x` | clear the `:set` value |
+| `<Tab>` | the row's value in every layer, each file's line a click away |
+| `gf` | the scope's file at the key |
+| `u`, `p`, `s` | changes go to your file, the project's, or the session |
+| `m` | `@modified` on and off |
+| `y` | copy the line that sets the row's value, such as `font = { size = 14 }` |
+| `/`, `i`, `a` | back to the search |
+| `q`; `<Esc>` | close; `<Esc>` empties the search first |
+
+At the bottom are the files every layer reads, each a click to open, and **reload**, which does what `:settings reload` does.
+
+The pane is a Lua plugin over `kawoosh.settings`, which a pane of your own can read too:
+
+- `kawoosh.settings.list()`: every setting, each `{ path, kind, choices, doc, default, value, origin, set, entries }`. `kind` is `boolean`, `integer`, `number`, `string`, `size`, `choice`, `list` or `table`; `set` holds the `user`, `project` and `session` values that exist; `entries` holds a table's names.
+- `kawoosh.settings.layers(path)`: the value in each layer, the winning one first, with its `file` and `line`.
+- `kawoosh.settings.files()`: the `user`, `init` and `project` files, and `project_all`.
+- `kawoosh.settings.write(path, value, { scope = "user" | "project" | "session" })`, `kawoosh.settings.reset(path, { scope })` and `kawoosh.settings.open(path, { scope, add })` do what the pane does. `kawoosh.settings.check(path, value)` says why a value would be refused, or nil.
+- `kawoosh.settings.sections` is the list of sections, `{ name, paths }`, a path either a setting's or a prefix ending in `.`. Change it in `init.lua` to reorder the pane or add a section of your own.
 
 ## Types for the Lua language server
 
@@ -168,6 +209,7 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `relativenumber` | `false` | number lines by distance from the caret |
 | `leader` | `" "` | the `<leader>` key |
 | `whichkey` | `true` | show the keys that can follow a prefix |
+| `keys.option_as_alt` | `"left"` | macOS: which ⌥ key is Alt for chords such as `<A-u>`: `left`, `right`, `both` or `none`; the other one types accents (`ü`) |
 | `pairs.enabled` | `true` | close brackets and quotes as you type; `pairs.rules` per language |
 | `clipboard.system` | `true` | `p` puts what other programs copied ([memory](memory.md)) |
 | `layout.default` | `"scroll"` | a new tab is a strip of columns (`scroll`) or a tree of splits (`tree`) |
@@ -205,4 +247,4 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `memory.text.max_mb` | `8` | how much copied text is kept across restarts; `0` for none |
 | `secrets.masks` | | which text is masked ([memory](memory.md#secrets)) |
 
-`:set PATH?` or the Settings tab shows the rest, each with its value.
+`:set PATH?` or the settings pane shows the rest, each with what it does.

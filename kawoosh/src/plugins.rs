@@ -31,4 +31,6 @@ pub const BUNDLED: &[(&str, &str)] = &[
     ("kawoosh:status", include_str!("../lua/status.lua")),
     // After picker: its pickers are sources.
     ("kawoosh:vcs", include_str!("../lua/vcs.lua")),
+    // Last: its sections name every plugin's settings.
+    ("kawoosh:settings", include_str!("../lua/settings.lua")),
 ];

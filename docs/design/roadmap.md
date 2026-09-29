@@ -2757,14 +2757,25 @@ In order — the bugs first, then what needs deciding:
     allow`; the probe as the buffer's source; `kawoosh.formatter`,
     `kawoosh.format`. formatters.md's "Built" says where it departed.
     `kawoosh/tests/format.rs`, `kawoosh/lua/tests/formatter.lua`.
+72. ~~**Settings, a panel** ([settings.md](settings.md)), asked 2026-09-29:
+    "make settings into user-facing panel with search good ux". The
+    devtools tab replaced by a pane (`:settings`, `<D-,>`): search
+    first over path, doc, section and value, `@modified` and the other
+    filters; a row per setting with its doc and a control by its kind;
+    its layers under it; a scope, user or project, whose file a change
+    is written into through the Lua syntax tree, comments kept; reset
+    takes the key out. A doc for every default, sections as data,
+    `kawoosh.settings` the door. Four rounds.~~ Built 2026-09-29:
+    `settings_edit.rs`, `settings_pane.rs`, `lua/settings.lua`; the
+    devtools tab gone. settings.md's "Built" says where it departed.
 73. ~~**Version control**, asked 2026-09-29: "let's introduce our first
     vcs integration … gutters, hunks navigations, hunks resets and
     diffs between branches. i like to review diff from feature to main
     … Also blame and history. Ideally it should be abstract so we can
     using same api have fast integration with fossil, jj or any other
     thing. probably with feature probing. fast worktrees creation and
-    tabs from it would be cool."~~ Landed 2026-09-29 (72 being the
-    settings pane's, on its own branch): [vcs.md](vcs.md), decided and
+    tabs from it would be cool."~~ Landed 2026-09-29 (72 the settings
+    pane's, merged first): [vcs.md](vcs.md), decided and
     built in three rounds — the editor owns the diff, a backend the
     base: `kawoosh.buf.base` given, the hunks diffed on the io thread
     once the text is still (`editor/src/hunks.rs`, `kawoosh/src/vcs.rs`),
