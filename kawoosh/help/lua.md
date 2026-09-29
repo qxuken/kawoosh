@@ -111,6 +111,8 @@ kawoosh.command("flip", function()
 end, { when = { "editor", "!readonly" }, doc = "flip the boolean under every caret" })
 ```
 
+`g.` does this for you, from actions you can add to. `kawoosh.node.action(name, { types = { … }, languages = "*" | { … }, run = fn(n, ctx) })` adds one: `types` are the node types it takes (a token such as `==` is a type too), or a function of a type saying whether it takes it, and `run` answers the node's new text, `{ text = …, cursor = i }` to put the caret `i` bytes into it, or `nil` when this node is not one it changes, and then the next action, or the next node up, is asked. `run` only reads; `g.` makes the edits, at every caret. `ctx` has `language`, `caret`, `indent` (the node's line's leading whitespace) and `unit` (one indent). The same name again replaces an action — the shipped ones are `flip`, `operator`, `split`, `quotes` and `digits` — and `nil` removes it. The newest action is asked first. `kawoosh.node_actions.lists` holds `split`'s lists by language, to add to.
+
 ## Formatters
 
 `kawoosh.formatter(name, def)` adds a formatter ([code](code.md#formatting)): `def` has the keys of `format.NAME` (`cmd`, `args`, `languages`, `when`, …), and your settings file still overrides them. For a tool that does not read stdin and write stdout, or one that is slow, give `run` instead of `cmd`:
