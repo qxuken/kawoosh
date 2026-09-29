@@ -288,6 +288,147 @@ fn a_tab_lists_its_own_buffers_and_a_picker_starts_here() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// `:bdo` closes the tab's other buffers and never another workspace's:
+/// not one a tab in another project has shown, even when this tab
+/// showed it too, nor one under the tab's directory in a repository
+/// nested in it that a tab of its own is in — which the tab's lists
+/// leave out too — and not under `buffers.scope = "all"` either. Only
+/// while that workspace is open: its tabs closed, they are the tab's.
+#[test]
+fn bdo_leaves_other_workspaces_buffers_even_nested_ones() {
+    let root = tmp("bdo");
+    let (outer, inner) = (root.join("outer"), root.join("outer/inner"));
+    let beta = root.join("beta");
+    for dir in [&outer, &inner, &beta] {
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+    }
+    for (dir, f) in [
+        (&outer, "a.txt"),
+        (&outer, "b.txt"),
+        (&inner, "in.txt"),
+        (&beta, "two.txt"),
+    ] {
+        std::fs::write(dir.join(f), format!("{f}\n")).unwrap();
+    }
+    let (mut d, mut app) = launch();
+    ex(&mut d, &mut app, &format!("cd {}", inner.display()));
+    ex(&mut d, &mut app, "e in.txt");
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", beta.display()));
+    ex(&mut d, &mut app, "e two.txt");
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", outer.display()));
+    // two.txt shown here too: still beta's.
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", beta.join("two.txt").display()),
+    );
+    ex(&mut d, &mut app, "e b.txt");
+    ex(&mut d, &mut app, "e a.txt");
+    // in.txt is under the tab's directory, but the nested repository's.
+    ex(&mut d, &mut app, "ls");
+    let ls = app.ed.message.clone();
+    assert!(ls.contains("b.txt") && !ls.contains("in.txt"), "{ls}");
+    let names = |app: &Kawoosh| {
+        let mut n: Vec<String> = app
+            .ed
+            .listed_buffers()
+            .into_iter()
+            .map(|id| app.ed.buffers[id].name.clone())
+            .collect();
+        n.sort();
+        n
+    };
+    ex(&mut d, &mut app, "bdo");
+    assert_eq!(
+        names(&app),
+        ["a.txt", "in.txt", "two.txt"],
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(app.ed.message, "1 buffer(s) deleted");
+    ex(&mut d, &mut app, "set buffers.scope=all");
+    ex(&mut d, &mut app, "bdo");
+    assert_eq!(names(&app), ["a.txt", "in.txt", "two.txt"]);
+    // With their tabs closed the workspaces are too, and theirs is
+    // anybody's: in.txt under the tab's directory, two.txt shown here.
+    ex(&mut d, &mut app, "set buffers.scope!");
+    while app.layout.tabs.len() > 1 {
+        let here = app.layout.tabs[app.layout.tab].cwd.as_deref() == Some(outer.as_path());
+        ex(&mut d, &mut app, if here { "tabn" } else { "tabc" });
+    }
+    assert_eq!(
+        names(&app),
+        ["a.txt", "in.txt", "two.txt"],
+        "the outer tab's now, so its tabs' closing kept them"
+    );
+    ex(&mut d, &mut app, "bdo");
+    assert_eq!(names(&app), ["a.txt"], "{}", app.ed.message);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// Closing a tab closes the buffers no tab has now: not one under
+/// another tab's directory, nor one another tab has shown; an unsaved
+/// one is kept, the tab in front's, and said.
+#[test]
+fn closing_a_tab_closes_its_buffers_but_unsaved() {
+    let root = tmp("tabc");
+    let (a, b) = projects(&root);
+    std::fs::write(a.join("one.txt"), "one\n").unwrap();
+    std::fs::write(a.join("sub/deep.txt"), "deep\n").unwrap();
+    std::fs::write(b.join("two.txt"), "two\n").unwrap();
+    std::fs::write(b.join("three.txt"), "three\n").unwrap();
+    std::fs::write(b.join("both.txt"), "both\n").unwrap();
+    let (mut d, mut app) = launch();
+    ex(&mut d, &mut app, &format!("cd {}", a.display()));
+    ex(&mut d, &mut app, "e one.txt");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", b.join("both.txt").display()),
+    );
+    ex(&mut d, &mut app, "e one.txt");
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", b.display()));
+    ex(&mut d, &mut app, "e both.txt");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", a.join("sub/deep.txt").display()),
+    );
+    ex(&mut d, &mut app, "e three.txt");
+    d.keys(&mut app, "ix");
+    d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "e two.txt");
+    let names = |app: &Kawoosh| {
+        let mut n: Vec<String> = app
+            .ed
+            .listed_buffers()
+            .into_iter()
+            .map(|id| app.ed.buffers[id].name.clone())
+            .collect();
+        n.sort();
+        n
+    };
+    ex(&mut d, &mut app, "tabc");
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 1);
+    assert_eq!(
+        names(&app),
+        ["both.txt", "deep.txt", "one.txt", "three.txt"],
+        "two.txt goes; deep.txt is alpha's by its directory, both.txt shown there"
+    );
+    assert!(
+        app.ed.message.contains("1 unsaved kept here"),
+        "{}",
+        app.ed.message
+    );
+    ex(&mut d, &mut app, "ls");
+    assert!(app.ed.message.contains("three.txt"), "{}", app.ed.message);
+    std::fs::remove_dir_all(&root).ok();
+}
+
 /// A workspace's lifecycle and the dock (roadmap step 32): the dock is
 /// the window's, each of its panes the workspace's it was made in — its
 /// title leads with the project when another is in front — and when the

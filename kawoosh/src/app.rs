@@ -2282,6 +2282,7 @@ impl kui_native::App for Kawoosh {
         self.ring_bells(ui);
         self.sync_dock();
         self.spawn_pending();
+        self.sweep_closed_tabs();
         self.sweep_scratches();
         self.tick_secrets();
         self.register_images(ui);

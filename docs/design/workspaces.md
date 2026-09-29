@@ -156,6 +156,26 @@ a session.
 a file open in two tabs is both tabs', and `:b NAME` still reaches
 any buffer, since hiding is a list's business, not the buffer's.
 
+*Amended 2026-09-29:* a listed file under the tab's directory is not
+the tab's when it is in another open workspace nested there — a
+repository inside the project with a tab of its own, a project under
+a tab at `~` — so the outer tab's lists leave the inner's files out.
+And `:bdo` closes the tab's list (`buffers.scope`) less anything
+another open workspace has: what a tab in another workspace counts as
+its own, even a file this tab showed too, and what a dock pane of one
+shows. That holds under `buffers.scope = "all"` too: there it closes
+every buffer but those. A closed workspace's buffers are nobody's in
+particular, so they are the tab's again wherever the lists say so.
+
+*Amended 2026-09-29, the same day:* closing a tab — `:tabclose`, its
+button, its last pane closed or moved to the dock — closes the
+buffers it had (what it showed, a listed file under its directory)
+that no tab has now: none claims it and no pane shows it. An unsaved
+one is kept and becomes the tab in front's, so its lists reach it, and
+the message says so (`1 buffer(s) closed with the tab, 1 unsaved kept
+here`). Before, a closed tab's buffers stayed loaded and in no tab's
+list.
+
 ## Round two: a lifecycle, and the dock
 
 *Decided and built 2026-09-25 (roadmap step 32), from three asks the
