@@ -116,6 +116,15 @@ when there is one; the review from `changed` and `base`. No manifest,
 no version to declare — a table with `probe` and `base` alone is a
 backend that colours the gutter.
 
+The `dir` listings' colours go through the same registry (asked
+2026-09-30, "I think `dir` plugin should also be integrated through
+this api"): whichever backend owns the listed directory answers
+`status` for what is under it (`opts.under`, `opts.untracked =
+"normal"` so an untracked directory is one entry), and the listing
+turns the files into its entries' states — `dir.vcs`'s own provider
+list is gone. One place to add a system, and a listing in a fossil
+checkout is coloured for nothing.
+
 Git is bundled whole. A fossil backend is bundled for what fossil
 answers plainly (`probe`, `head`, `base`, `status`, `blame`, `log`,
 `show`) — the second backend is what makes the first honest. jj is

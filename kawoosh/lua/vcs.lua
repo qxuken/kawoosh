@@ -12,7 +12,7 @@
 --     probe = function(dir, done) … end,            -- done(root) or done(nil)
 --     head = function(root, done) … end,            -- done{ branch =, rev = }
 --     base = function(root, path, rev, done) … end, -- done(text) or done(nil, why); rev nil = the index
---     status = function(root, done) … end,          -- done{ { path =, state = }, … }
+--     status = function(root, done, opts) … end,    -- done{ { path =, state = }, … }; opts.under, opts.untracked
 --     changed = function(root, from, to, done) … end,
 --     merge_base = function(root, a, b, done) … end,
 --     refs = function(root, done) … end,
@@ -869,8 +869,19 @@ function git.base(root, path, rev, done)
   end)
 end
 
-function git.status(root, done)
-  run({ "git", "-c", "core.quotePath=false", "status", "--porcelain=v1", "--untracked-files=all", "--no-renames" }, root,
+-- `opts.under`: only what is under that directory (a listing's);
+-- `opts.untracked`: `normal` (an untracked directory as one entry) or
+-- `all` (every file, the default). Ignored files come too, as
+-- `ignored`, for a listing to paint faint.
+function git.status(root, done, opts)
+  opts = opts or {}
+  local argv = { "git", "-c", "core.quotePath=false", "status", "--porcelain=v1", "--ignored=matching",
+                 "--untracked-files=" .. (opts.untracked or "all"), "--no-renames" }
+  if opts.under then
+    argv[#argv + 1] = "--"
+    argv[#argv + 1] = opts.under
+  end
+  run(argv, root,
     function(text, code)
       if code ~= 0 then return done(nil) end
       local files = {}

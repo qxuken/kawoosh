@@ -2787,7 +2787,9 @@ In order — the bugs first, then what needs deciding:
     cool, just in buffer highlighting": vcs.md Decision 11 — the
     markers read from the text, each side washed in its colour, `]x`
     `[x`, `conflict ours/theirs/both/none` (`<leader>hx*`, `!` for
-    all); `kawoosh/tests/conflicts.rs`.
+    all); `kawoosh/tests/conflicts.rs`. And "I think `dir` plugin
+    should also be integrated through this api": the listings' colours
+    through `kawoosh.vcs`'s `status` (`opts.under`), `dir.vcs` gone.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
