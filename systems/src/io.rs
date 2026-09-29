@@ -36,6 +36,19 @@ pub enum IoMsg {
         id: u64,
         code: Option<i32>,
     },
+    /// Process `id`'s stdout whole, as it closed — asked for by
+    /// [`ProcSpec::whole`] instead of lines: a base text, newline at
+    /// the end and all.
+    ProcOut {
+        id: u64,
+        text: String,
+    },
+    /// A line of process `id`'s stderr, when [`ProcSpec::split_err`]
+    /// keeps it apart from stdout's.
+    ProcErr {
+        id: u64,
+        line: String,
+    },
     /// A wake the app asked for at a time (`Io::tick_at`): a status
     /// segment that changes with the clock (docs/design/status.md).
     Tick,
@@ -147,6 +160,30 @@ pub enum IoMsg {
         name: String,
         error: String,
     },
+}
+
+/// What [`Io::run_command`] runs, and how its output comes back.
+#[derive(Clone, Debug)]
+pub struct ProcSpec {
+    pub cmd: ProcCmd,
+    pub cwd: Option<PathBuf>,
+    /// Written to the process and closed, then zeroed.
+    pub stdin: Option<String>,
+    /// stdout gathered whole and handed over as [`IoMsg::ProcOut`] when
+    /// it closes, instead of a [`IoMsg::ProcLine`] a line.
+    pub whole: bool,
+    /// stderr's lines as [`IoMsg::ProcErr`], apart from stdout's;
+    /// else merged in as lines.
+    pub split_err: bool,
+}
+
+/// A command line for the shell, or a program and its arguments with
+/// no shell between (docs/design/vcs.md Decision 5) — no quoting, and
+/// nothing for a shell that is not POSIX to refuse.
+#[derive(Clone, Debug)]
+pub enum ProcCmd {
+    Shell(String),
+    Argv(Vec<String>),
 }
 
 /// A child process for `program`, spawned outside a pty: a language
@@ -661,11 +698,45 @@ impl Io {
         cwd: Option<&std::path::Path>,
         stdin: Option<String>,
     ) -> std::io::Result<ProcHandle> {
+        self.run_command(
+            id,
+            ProcSpec {
+                cmd: ProcCmd::Shell(cmd.to_string()),
+                cwd: cwd.map(|p| p.to_path_buf()),
+                stdin,
+                whole: false,
+                split_err: false,
+            },
+        )
+    }
+
+    /// A process as `spec` says (docs/design/vcs.md Decision 5): through
+    /// the shell, or a program with its arguments and no shell between;
+    /// its stdout in lines ([`IoMsg::ProcLine`]) or whole when it closes
+    /// ([`IoMsg::ProcOut`]); its stderr's lines with stdout's or apart
+    /// ([`IoMsg::ProcErr`]); then [`IoMsg::ProcExit`]. Bytes that are
+    /// not UTF-8 are replaced, never a stop.
+    pub fn run_command(&self, id: u64, spec: ProcSpec) -> std::io::Result<ProcHandle> {
         use std::io::{BufRead, BufReader, Write};
         use std::process::Stdio;
+        let ProcSpec {
+            cmd,
+            cwd,
+            stdin,
+            whole,
+            split_err,
+        } = spec;
+        if let ProcCmd::Argv(argv) = &cmd
+            && argv.is_empty()
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "nothing to run",
+            ));
+        }
         // On a host: through its domain, run by the host's own shell in
         // the directory there (docs/design/domains.md Decision 7).
-        let host = cwd.and_then(|d| {
+        let host = cwd.as_deref().and_then(|d| {
             let (name, dir) = crate::fs::domain_of(d)?;
             Some((name.to_string(), dir.to_path_buf()))
         });
@@ -677,20 +748,31 @@ impl Io {
                         format!("{name}: not connected (:domain connect {name})"),
                     )
                 })?;
-                let script = remote_script(
-                    dir,
-                    &[],
-                    &format!("exec \"${{SHELL:-/bin/sh}}\" -c {}", shell_quote(cmd)),
-                    false,
-                );
+                let exec = match &cmd {
+                    ProcCmd::Shell(c) => {
+                        format!("exec \"${{SHELL:-/bin/sh}}\" -c {}", shell_quote(c))
+                    }
+                    ProcCmd::Argv(argv) => {
+                        let quoted: Vec<String> = argv.iter().map(|a| shell_quote(a)).collect();
+                        format!("exec {}", quoted.join(" "))
+                    }
+                };
+                let script = remote_script(dir, &[], &exec, false);
                 t.remote_command(&script)
             }
-            None => {
-                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-                let mut c = command(shell);
-                c.arg("-c").arg(cmd);
-                c
-            }
+            None => match &cmd {
+                ProcCmd::Shell(c) => {
+                    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+                    let mut cm = command(shell);
+                    cm.arg("-c").arg(c);
+                    cm
+                }
+                ProcCmd::Argv(argv) => {
+                    let mut cm = command(&argv[0]);
+                    cm.args(&argv[1..]);
+                    cm
+                }
+            },
         };
         command
             .stdin(if stdin.is_some() {
@@ -700,7 +782,7 @@ impl Io {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(d) = cwd
+        if let Some(d) = &cwd
             && host.is_none()
         {
             command.current_dir(d);
@@ -734,18 +816,54 @@ impl Io {
         let stderr = child.stderr.take().unwrap();
         let child = Arc::new(Mutex::new(Some(child)));
         let (tx, wake) = (self.tx.clone(), self.wake.named("process"));
-        let pump = |reader: Box<dyn Read + Send>, tx: Sender<IoMsg>, wake: WakeHandle| {
-            thread::spawn(move || {
-                for line in BufReader::new(reader).lines().map_while(Result::ok) {
-                    if tx.send(IoMsg::ProcLine { id, line }).is_err() {
-                        return;
+        // Lines as they come, each made a string whatever its bytes —
+        // a stop at the first that was not UTF-8 left a `git show` of a
+        // Latin-1 file hanging on a full pipe.
+        let pump =
+            |reader: Box<dyn Read + Send>, tx: Sender<IoMsg>, wake: WakeHandle, err: bool| {
+                thread::spawn(move || {
+                    let mut reader = BufReader::new(reader);
+                    let mut bytes = Vec::new();
+                    loop {
+                        bytes.clear();
+                        match reader.read_until(b'\n', &mut bytes) {
+                            Ok(0) | Err(_) => return,
+                            Ok(_) => {}
+                        }
+                        if bytes.last() == Some(&b'\n') {
+                            bytes.pop();
+                            if bytes.last() == Some(&b'\r') {
+                                bytes.pop();
+                            }
+                        }
+                        let line = String::from_utf8_lossy(&bytes).into_owned();
+                        let msg = if err {
+                            IoMsg::ProcErr { id, line }
+                        } else {
+                            IoMsg::ProcLine { id, line }
+                        };
+                        if tx.send(msg).is_err() {
+                            return;
+                        }
+                        wake.wake();
                     }
+                })
+            };
+        let a = if whole {
+            let (tx, wake) = (tx.clone(), wake.clone());
+            thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let mut reader = stdout;
+                let _ = reader.read_to_end(&mut bytes);
+                let text = String::from_utf8_lossy(&bytes).into_owned();
+                if tx.send(IoMsg::ProcOut { id, text }).is_ok() {
                     wake.wake();
                 }
             })
+        } else {
+            pump(Box::new(stdout), tx.clone(), wake.clone(), false)
         };
-        let a = pump(Box::new(stdout), tx.clone(), wake.clone());
-        let b = pump(Box::new(stderr), tx.clone(), wake.clone());
+        let b = pump(Box::new(stderr), tx.clone(), wake.clone(), split_err);
         let handle = ProcHandle {
             child: child.clone(),
         };

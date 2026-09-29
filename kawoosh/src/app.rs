@@ -793,6 +793,16 @@ impl Kawoosh {
                         p.lines.push(line);
                     }
                 }
+                IoMsg::ProcErr { id, line } if self.scripting.procs.contains_key(&id) => {
+                    if let Some(p) = self.scripting.procs.get_mut(&id) {
+                        p.err.push(line);
+                    }
+                }
+                IoMsg::ProcOut { id, text } if self.scripting.procs.contains_key(&id) => {
+                    if let Some(p) = self.scripting.procs.get_mut(&id) {
+                        p.out = Some(text);
+                    }
+                }
                 IoMsg::ProcExit { id, code } if self.scripting.procs.contains_key(&id) => {
                     self.flush_proc_lines();
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
@@ -800,13 +810,14 @@ impl Kawoosh {
                         && let Some(rt) = self.scripting.rt.clone()
                     {
                         rt.publish(&self.ed, self.focused_view());
-                        rt.proc_exit(p.token, code);
+                        rt.proc_exit(p.token, code, p.out);
                         self.drain_lua();
                     }
                 }
-                other @ (IoMsg::ProcLine { .. } | IoMsg::ProcExit { .. }) => {
-                    self.on_proc_msg(other)
-                }
+                other @ (IoMsg::ProcLine { .. }
+                | IoMsg::ProcExit { .. }
+                | IoMsg::ProcErr { .. }
+                | IoMsg::ProcOut { .. }) => self.on_proc_msg(other),
                 IoMsg::Opening { path, done, total } => {
                     if let Some(id) = self.ed.buffer_at(&path)
                         && let Some(b) = self.ed.buffers.get_mut(id)
@@ -1782,7 +1793,18 @@ impl Kawoosh {
                 Effect::Recalled => self.note_recall(),
                 Effect::PromptLine { kind, line } => self.remember_prompt_line(kind, &line),
                 Effect::Open(p) => self.open(&p),
-                Effect::Wrote(id) => self.disk_settled(id),
+                Effect::Wrote(id) => {
+                    self.disk_settled(id);
+                    // The plugins told (`kawoosh.on_write`): a backend
+                    // reads the file's state again.
+                    if let Some(rt) = self.scripting.rt.clone()
+                        && let Some(path) = self.ed.buffers.get(id).and_then(|b| b.path.clone())
+                    {
+                        rt.publish(&self.ed, self.focused_view());
+                        rt.wrote_hook(id, &path);
+                        self.drain_lua();
+                    }
+                }
                 Effect::DiskConflict(id) => self.confirm_disk_write(id),
                 Effect::CountMatches(b) => self.count_matches(b),
                 Effect::SearchContinue {

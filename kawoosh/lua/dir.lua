@@ -1323,42 +1323,59 @@ local RANK = { conflict = 5, modified = 4, added = 3, untracked = 2, ignored = 1
 
 -- The bundled git provider: one `git status` per listing, its paths
 -- (relative to the repository's root) taken back to the entries of the
--- listed directory — a directory with anything in it modified is.
+-- listed directory — a directory with anything in it modified is. The
+-- commands are lists, run with no shell between (docs/design/vcs.md
+-- Decision 5): the `&&` this once joined them with is nothing to
+-- nushell.
 table.insert(dir.vcs, {
   name = "git",
   status = function(d, done)
     local out = {}
-    kawoosh.spawn("git rev-parse --show-prefix && git status --porcelain=v1 --ignored=matching --untracked-files=normal -- .", {
+    kawoosh.spawn({ "git", "rev-parse", "--show-prefix" }, {
       cwd = d,
       on_lines = function(ls) for _, l in ipairs(ls) do out[#out + 1] = l end end,
       on_exit = function(code)
         if code ~= 0 or #out == 0 then return done(nil) end
         local prefix = out[1]
-        local states = {}
-        for i = 2, #out do
-          local xy, path = out[i]:match("^(..) (.+)$")
-          if xy then
-            path = path:match(" %-> (.+)$") or path
-            path = path:gsub('^"(.*)"$', "%1")
-            if path:sub(1, #prefix) == prefix then path = path:sub(#prefix + 1) end
-            local entry = path:match("^([^/]+)")
-            local state
-            if xy == "!!" then state = "ignored"
-            elseif xy == "??" then state = "untracked"
-            elseif xy:find("U") or xy == "AA" or xy == "DD" then state = "conflict"
-            elseif xy:find("A") then state = "added"
-            else state = "modified" end
-            if entry then
-              local was = states[entry]
-              if not was or RANK[state] > RANK[was] then states[entry] = state end
-            end
-          end
-        end
-        done(states)
+        kawoosh.spawn({ "git", "status", "--porcelain=v1", "--ignored=matching", "--untracked-files=normal", "--", "." }, {
+          cwd = d,
+          on_lines = function(ls) for _, l in ipairs(ls) do out[#out + 1] = l end end,
+          on_exit = function(code2)
+            if code2 ~= 0 then return done(nil) end
+            done(dir.git_states(out, 2, prefix))
+          end,
+        })
       end,
     })
   end,
 })
+
+-- The states by entry name from `git status --porcelain=v1`'s lines
+-- (`out[from..]`), paths relative to the repository root, `prefix` the
+-- listed directory's path from there.
+function dir.git_states(out, from, prefix)
+  local states = {}
+  for i = from, #out do
+    local xy, path = out[i]:match("^(..) (.+)$")
+    if xy then
+      path = path:match(" %-> (.+)$") or path
+      path = path:gsub('^"(.*)"$', "%1")
+      if path:sub(1, #prefix) == prefix then path = path:sub(#prefix + 1) end
+      local entry = path:match("^([^/]+)")
+      local state
+      if xy == "!!" then state = "ignored"
+      elseif xy == "??" then state = "untracked"
+      elseif xy:find("U") or xy == "AA" or xy == "DD" then state = "conflict"
+      elseif xy:find("A") then state = "added"
+      else state = "modified" end
+      if entry then
+        local was = states[entry]
+        if not was or RANK[state] > RANK[was] then states[entry] = state end
+      end
+    end
+  end
+  return states
+end
 
 -- Asks the providers about listing `name` of `d` and paints its lines,
 -- read as they are when the answer comes (edited meanwhile or not).

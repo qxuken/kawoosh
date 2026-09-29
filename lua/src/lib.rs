@@ -33,6 +33,17 @@ pub enum MultiPart {
     Gap(String),
     Painted(String, String),
     Lines(PathBuf, std::ops::Range<usize>),
+    /// A buffer's lines by its handle — a scratch holding a revision's
+    /// text, which no path names (docs/design/vcs.md Decision 6).
+    Buffer(u64, std::ops::Range<usize>),
+}
+
+/// What `kawoosh.spawn` runs: a line through the shell, or a program
+/// and its arguments.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SpawnCmd {
+    Shell(String),
+    Argv(Vec<String>),
 }
 
 /// What a list multibuffer lists (docs/design/lists.md Decision 4):
@@ -242,11 +253,17 @@ pub enum Msg {
     /// under `token` as they come, its exit to `Runtime::proc_exit`.
     Spawn {
         token: u64,
-        cmd: String,
+        /// A line for the shell, or a program and its arguments with no
+        /// shell between (docs/design/vcs.md Decision 5).
+        cmd: SpawnCmd,
         cwd: Option<PathBuf>,
         /// Written to the process, then closed (`kawoosh.spawn`'s
         /// `stdin`).
         stdin: Option<String>,
+        /// stdout wanted whole at the end (`on_done`), not in lines.
+        whole: bool,
+        /// stderr wanted apart (`on_stderr`), not with stdout's lines.
+        split_err: bool,
     },
     /// `kawoosh.kill(token)`: the process stopped early.
     Kill(u64),
@@ -952,8 +969,17 @@ struct Jobs {
     waiting: HashMap<u64, mlua::RegistryKey>,
     /// The `run` functions of `kawoosh.formatter`, by name.
     formatters: HashMap<String, mlua::RegistryKey>,
-    procs: HashMap<u64, (Option<mlua::RegistryKey>, Option<mlua::RegistryKey>)>,
+    procs: HashMap<u64, ProcKeys>,
     next: u64,
+}
+
+/// A spawned process's callbacks, each as given.
+#[derive(Default)]
+struct ProcKeys {
+    lines: Option<mlua::RegistryKey>,
+    err: Option<mlua::RegistryKey>,
+    exit: Option<mlua::RegistryKey>,
+    done: Option<mlua::RegistryKey>,
 }
 
 impl Jobs {
@@ -2291,9 +2317,24 @@ impl Runtime {
     /// Lines a process `kawoosh.spawn` started wrote since the last
     /// frame, handed to its `on_lines` at once.
     pub fn proc_lines(&self, token: u64, lines: Vec<String>) {
+        self.proc_call(token, lines, |k| k.lines.as_ref());
+    }
+
+    /// The lines of stderr a process wrote since the last frame, to its
+    /// `on_stderr`.
+    pub fn proc_err(&self, token: u64, lines: Vec<String>) {
+        self.proc_call(token, lines, |k| k.err.as_ref());
+    }
+
+    fn proc_call(
+        &self,
+        token: u64,
+        lines: Vec<String>,
+        which: impl Fn(&ProcKeys) -> Option<&mlua::RegistryKey>,
+    ) {
         let f = {
             let jobs = self.jobs.borrow();
-            let Some((Some(key), _)) = jobs.procs.get(&token) else {
+            let Some(key) = jobs.procs.get(&token).and_then(which) else {
                 return;
             };
             self.lua.registry_value::<mlua::Function>(key).ok()
@@ -2307,16 +2348,27 @@ impl Runtime {
         }
     }
 
-    /// The process exited (or was killed: no code): its `on_exit`, and
-    /// its callbacks let go.
-    pub fn proc_exit(&self, token: u64, code: Option<i32>) {
-        let Some((lines, exit)) = self.jobs.borrow_mut().procs.remove(&token) else {
+    /// The process exited (or was killed: no code): its `on_done` with
+    /// stdout whole when it asked for that, then its `on_exit`, and its
+    /// callbacks let go.
+    pub fn proc_exit(&self, token: u64, code: Option<i32>, out: Option<String>) {
+        let Some(keys) = self.jobs.borrow_mut().procs.remove(&token) else {
             return;
         };
-        if let Some(k) = lines {
+        for k in [keys.lines, keys.err].into_iter().flatten() {
             let _ = self.lua.remove_registry_value(k);
         }
-        if let Some(k) = exit {
+        if let Some(k) = keys.done {
+            if let Ok(f) = self.lua.registry_value::<mlua::Function>(&k)
+                && let Err(e) = f.call::<()>((out.unwrap_or_default(), code))
+            {
+                self.queue
+                    .borrow_mut()
+                    .push(Msg::Echo(format!("spawn: {e}")));
+            }
+            let _ = self.lua.remove_registry_value(k);
+        }
+        if let Some(k) = keys.exit {
             if let Ok(f) = self.lua.registry_value::<mlua::Function>(&k)
                 && let Err(e) = f.call::<()>(code)
             {
@@ -2326,6 +2378,15 @@ impl Runtime {
             }
             let _ = self.lua.remove_registry_value(k);
         }
+    }
+
+    /// A file written (`kawoosh.on_write`): its path and buffer.
+    pub fn wrote_hook(&self, id: BufferId, path: &std::path::Path) {
+        self.hook(
+            "_wrote",
+            (path.display().to_string(), handle_of(id)),
+            "on_write",
+        );
     }
 
     pub fn take_msgs(&self) -> Vec<Msg> {
@@ -2705,15 +2766,37 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // ---- `kawoosh.spawn(cmd, { cwd =, on_lines = fn(lines), on_exit =
-    // fn(code) })`: a process through the shell, its output in lines
-    // as they come, once a frame; the token it answers to, for
-    // `kawoosh.kill(token)`.
+    // ---- `kawoosh.spawn(cmd, { cwd =, stdin =, on_lines = fn(lines),
+    // on_stderr = fn(lines), on_done = fn(text, code), on_exit = fn(code)
+    // })`: a process — `cmd` a line through the shell, or a list, the
+    // program and its arguments with no shell between (docs/design/vcs.md
+    // Decision 5) — its output in lines as they come, once a frame, or
+    // whole at the end through `on_done` (a trailing newline kept);
+    // stderr with the lines, or apart through `on_stderr`; the token it
+    // answers to, for `kawoosh.kill(token)`.
     let qq = q(queue);
     let jj = jobs.clone();
     k.set(
         "spawn",
-        lua.create_function(move |lua, (cmd, opts): (String, Option<Table>)| {
+        lua.create_function(move |lua, (cmd, opts): (LV, Option<Table>)| {
+            let cmd = match cmd {
+                LV::String(s) => SpawnCmd::Shell(s.to_str()?.to_string()),
+                LV::Table(t) => {
+                    let mut argv = Vec::new();
+                    for a in t.sequence_values::<String>() {
+                        argv.push(a?);
+                    }
+                    if argv.is_empty() {
+                        return Err(mlua::Error::runtime("spawn: an empty command"));
+                    }
+                    SpawnCmd::Argv(argv)
+                }
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "spawn: a command line, or a list of the program and its arguments",
+                    ));
+                }
+            };
             let mut j = jj.borrow_mut();
             let token = j.token();
             let key = |name: &str| -> mlua::Result<Option<mlua::RegistryKey>> {
@@ -2723,9 +2806,14 @@ fn seed(
                     _ => Ok(None),
                 }
             };
-            let lines = key("on_lines")?;
-            let exit = key("on_exit")?;
-            j.procs.insert(token, (lines, exit));
+            let keys = ProcKeys {
+                lines: key("on_lines")?,
+                err: key("on_stderr")?,
+                exit: key("on_exit")?,
+                done: key("on_done")?,
+            };
+            let (whole, split_err) = (keys.done.is_some(), keys.err.is_some());
+            j.procs.insert(token, keys);
             let cwd = opts
                 .as_ref()
                 .and_then(|t| t.get::<Option<String>>("cwd").ok().flatten())
@@ -2738,6 +2826,8 @@ fn seed(
                 cmd,
                 cwd,
                 stdin,
+                whole,
+                split_err,
             });
             Ok(token)
         })?,
@@ -4995,14 +5085,19 @@ fn seed(
                             }
                         }
                         LV::Table(t) => {
-                            let path: String = t.get("path")?;
                             let from: usize = t.get::<Option<usize>>("from")?.unwrap_or(1).max(1);
                             let to: usize = t.get::<Option<usize>>("to")?.unwrap_or(from).max(from);
-                            out.push(MultiPart::Lines(expand(&path), from - 1..to));
+                            match t.get::<Option<u64>>("buffer")? {
+                                Some(h) => out.push(MultiPart::Buffer(h, from - 1..to)),
+                                None => {
+                                    let path: String = t.get("path")?;
+                                    out.push(MultiPart::Lines(expand(&path), from - 1..to));
+                                }
+                            }
                         }
                         _ => {
                             return Err(mlua::Error::runtime(
-                                "multibuffer: a part is a string, { text =, color = } or { path =, from =, to = }",
+                                "multibuffer: a part is a string, { text =, color = }, { path =, from =, to = } or { buffer =, from =, to = }",
                             ));
                         }
                     }
