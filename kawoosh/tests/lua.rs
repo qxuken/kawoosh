@@ -2617,6 +2617,54 @@ fn a_directory_opens_as_a_listing() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// An `init.lua` that opens a view at startup, then the command line's
+/// file (`Kawoosh::open_first`): the file opens beside the view, and
+/// the scratch buffer goes only with every view that showed it — a
+/// pane left on a buffer that is gone took the first frame down.
+#[test]
+fn a_view_opened_by_init_lua_then_the_file_argument() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-initview-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    std::fs::write(dir.join("notes.txt"), "a note").unwrap();
+    std::fs::write(dir.join("init.lua"), "kawoosh.run(\"themes\")\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("*scratch*", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.run_init(&dir.join("init.lua"));
+    app.open_first(&dir.join("notes.txt"));
+    for _ in 0..3 {
+        d.frame(&mut app);
+    }
+    let mut panes = Vec::new();
+    app.layout.tabs[app.layout.tab].panes(&mut panes);
+    for p in &panes {
+        if let Some(Content::Editor(v)) = app.layout.content(*p) {
+            assert!(
+                app.ed.buffers.contains_key(app.ed.views[v].buffer),
+                "every editor pane shows a buffer that is there"
+            );
+        }
+    }
+    assert!(
+        panes
+            .iter()
+            .any(|p| matches!(app.layout.content(*p), Some(Content::Lua(_)))),
+        "the view init.lua opened is still there"
+    );
+    assert_eq!(
+        app.ed.buffer_of(app.focused_view().unwrap()).name,
+        "notes.txt"
+    );
+    assert!(
+        app.ed.buffers.values().all(|b| b.name != "*scratch*"),
+        "the file took the scratch's pane, and the scratch is gone"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A moment recalled from the memory is the register, origin and all:
 /// two lines yanked in one listing, the older put in another from the
 /// pane, and the plugin reads it as the entry it was — a copy from

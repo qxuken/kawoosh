@@ -466,7 +466,7 @@ impl Io {
         let closed = Arc::new(AtomicBool::new(false));
         let close = {
             let tx = self.tx.clone();
-            let wake = self.wake.clone();
+            let wake = self.wake.named("pty");
             move |closed: &AtomicBool| {
                 if !closed.swap(true, Ordering::AcqRel) {
                     let _ = tx.send(IoMsg::PtyClosed { id });
@@ -486,7 +486,7 @@ impl Io {
                 .expect("spawning a pty exit thread");
         }
         let tx = self.tx.clone();
-        let wake = self.wake.clone();
+        let wake = self.wake.named("pty");
         thread::Builder::new()
             .name(format!("pty-{id}"))
             .spawn(move || {
@@ -518,9 +518,9 @@ impl Io {
     /// Runs `job` on a thread of its own and delivers what it returns,
     /// waking the loop for it — a count over a snapshot, anything that
     /// is one answer the frame should not wait for.
-    pub fn run(&self, name: &str, job: impl FnOnce() -> IoMsg + Send + 'static) {
+    pub fn run(&self, name: &'static str, job: impl FnOnce() -> IoMsg + Send + 'static) {
         let tx = self.tx.clone();
-        let wake = self.wake.clone();
+        let wake = self.wake.named(name);
         thread::Builder::new()
             .name(name.into())
             .spawn(move || {
@@ -535,9 +535,13 @@ impl Io {
     /// it sends is delivered as it goes, the loop woken for each — a job
     /// that has something to say before it is done (the sizing walk).
     /// `send` is false once the loop has gone.
-    pub fn stream(&self, name: &str, job: impl FnOnce(&dyn Fn(IoMsg) -> bool) + Send + 'static) {
+    pub fn stream(
+        &self,
+        name: &'static str,
+        job: impl FnOnce(&dyn Fn(IoMsg) -> bool) + Send + 'static,
+    ) {
         let tx = self.tx.clone();
-        let wake = self.wake.clone();
+        let wake = self.wake.named(name);
         thread::Builder::new()
             .name(name.into())
             .spawn(move || {
@@ -560,7 +564,7 @@ impl Io {
     /// a small one is.
     pub fn open_file(&self, path: PathBuf) {
         let tx = self.tx.clone();
-        let wake = self.wake.clone();
+        let wake = self.wake.named("open");
         thread::Builder::new()
             .name("open".into())
             .spawn(move || {
@@ -722,7 +726,7 @@ impl Io {
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let child = Arc::new(Mutex::new(Some(child)));
-        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        let (tx, wake) = (self.tx.clone(), self.wake.named("process"));
         let pump = |reader: Box<dyn Read + Send>, tx: Sender<IoMsg>, wake: WakeHandle| {
             thread::spawn(move || {
                 for line in BufReader::new(reader).lines().map_while(Result::ok) {
@@ -843,7 +847,7 @@ impl Io {
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) {
         let tx = self.tx.clone();
-        let wake = self.wake.clone();
+        let wake = self.wake.named("domain");
         thread::Builder::new()
             .name(format!("domain-{name}"))
             .spawn(move || {
@@ -887,7 +891,7 @@ impl Io {
     pub fn listen(&self, path: &std::path::Path) -> std::io::Result<()> {
         let _ = std::fs::remove_file(path);
         let tx = self.tx.clone();
-        let wake = self.wake.clone();
+        let wake = self.wake.named("socket");
         #[cfg(unix)]
         let listener = std::os::unix::net::UnixListener::bind(path)?;
         #[cfg(not(unix))]

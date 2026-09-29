@@ -171,11 +171,11 @@ const ENGINE_TOKENS: u64 = u64::MAX / 2;
 impl LspState {
     pub fn new(wake: WakeHandle) -> Self {
         Self {
-            lsp: Lsp::spawn(wake.clone()),
+            lsp: Lsp::spawn(wake.named("lsp")),
             sent: HashMap::new(),
             moved: HashMap::new(),
             held: HashMap::new(),
-            alarm: Alarm::spawn(wake),
+            alarm: Alarm::spawn(wake.named("lsp alarm")),
             completion: None,
             requested: None,
             said_unavailable: HashSet::new(),
@@ -305,6 +305,7 @@ impl Kawoosh {
     pub(crate) fn sync_lsp(&mut self) {
         self.sync_lsp_rules();
         for ev in self.lsp.lsp.drain() {
+            self.frames.drained(ev.kind());
             match ev {
                 Event::Diagnostics {
                     buffer,

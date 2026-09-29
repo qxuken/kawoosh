@@ -167,6 +167,8 @@ pub struct Kawoosh {
     pub(crate) line_cells: rows::LineCellsCache,
     /// The Perf tab's readings: the frame's phases, the systems' reports.
     pub perf: crate::perf::Perf,
+    /// Why each frame was drawn (`frames.rs`).
+    pub frames: crate::frames::Frames,
     /// The undo history pane (`:undo history`): which buffer it follows,
     /// its rows and its cursor.
     pub undo: crate::undo::UndoPanel,
@@ -198,7 +200,7 @@ pub struct Kawoosh {
     flash_alarm: kawoosh_systems::Alarm,
     /// Wake handles made before the app was — the logger's — set with
     /// the app's own in `setup`.
-    shared_wakes: Vec<WakeHandle>,
+    pub(crate) shared_wakes: Vec<WakeHandle>,
     /// The version each buffer was last sent to `ts`, so a frame submits
     /// only what changed.
     pub(crate) ts_sent: HashMap<BufferId, Version>,
@@ -308,7 +310,7 @@ impl Kawoosh {
         let b = ed.add_buffer(Buffer::new(title, text));
         let view = ed.add_view(b);
         let wake = WakeHandle::new();
-        let secrets_wake = wake.clone();
+        let secrets_wake = wake.named("secrets");
         let beat = kawoosh_systems::watch::Beat::default();
         let mut app = Self {
             pal: Pal::default(),
@@ -328,8 +330,8 @@ impl Kawoosh {
             ed,
             layout: Layout::new(Content::Editor(view)),
             terms: Terminals::default(),
-            io: Io::new(wake.clone()),
-            ts: Ts::spawn(wake.clone()),
+            io: Io::new(wake.named("io")),
+            ts: Ts::spawn(wake.named("parser")),
             languages: kawoosh_languages::Registry::builtin(),
             lsp: LspState::new(wake.clone()),
             scripting: Scripting {
@@ -337,20 +339,20 @@ impl Kawoosh {
                 ..Default::default()
             },
             domains: Default::default(),
-            config: Config::new(wake.clone(), beat.clone()),
-            disk: crate::disk::DiskWatch::new(wake.clone(), beat.clone()),
+            config: Config::new(wake.named("settings"), beat.clone()),
+            disk: crate::disk::DiskWatch::new(wake.named("disk"), beat.clone()),
             trust: Default::default(),
             compile: Compile::default(),
             multis: Default::default(),
             locations: Default::default(),
             lists: Default::default(),
-            notes: Notifications::new(wake.clone()),
+            notes: Notifications::new(wake.named("toasts")),
             messages_shown: 0,
             log_sink: None,
             store: None,
             launch: Some(b),
             commands: ShellCommands::default(),
-            histories: crate::history::Histories::new(wake.clone()),
+            histories: crate::history::Histories::new(wake.named("histories")),
             session_saved: false,
             last_pos: HashMap::new(),
             alternate: HashMap::new(),
@@ -360,7 +362,7 @@ impl Kawoosh {
             dark: true,
             devtools: false,
             devtools_synced: None,
-            inspector: Inspector::new(wake.clone()),
+            inspector: Inspector::new(wake.named("inspector")),
             nodes: Default::default(),
             keys_help: None,
             lua_fact: None,
@@ -374,14 +376,15 @@ impl Kawoosh {
             settings_door: Default::default(),
             line_cells: Default::default(),
             perf: Default::default(),
+            frames: crate::frames::Frames::with_wake(&wake),
             undo: Default::default(),
-            moments: crate::moments::Moments::new(wake.clone()),
+            moments: crate::moments::Moments::new(wake.named("moments")),
             marks: Default::default(),
-            crumbs: crate::breadcrumbs::Breadcrumbs::new(wake.clone()),
+            crumbs: crate::breadcrumbs::Breadcrumbs::new(wake.named("breadcrumbs")),
             memory_pane: Default::default(),
             bound_names: Default::default(),
             hud: false,
-            flash_alarm: kawoosh_systems::Alarm::spawn(wake.clone()),
+            flash_alarm: kawoosh_systems::Alarm::spawn(wake.named("flash")),
             wake,
             beat,
             shared_wakes: Vec::new(),
@@ -1341,8 +1344,10 @@ impl Kawoosh {
 
     /// Opens the command line's path in the app as it starts — after
     /// the config, so the plugins' openers see it: `kawoosh DIR` lists
-    /// the directory. The scratch buffer the app began with goes when
-    /// the pane left it.
+    /// the directory. The scratch buffer the app began with stands in
+    /// for the path: it opens in the scratch's pane — `init.lua` may
+    /// have opened a view beside it and focused that — and the scratch
+    /// goes when no pane shows it.
     pub fn open_first(&mut self, path: &Path) {
         let scratch = self
             .ed
@@ -1350,11 +1355,18 @@ impl Kawoosh {
             .iter()
             .find(|(_, b)| b.name == "*scratch*" && b.path.is_none())
             .map(|(id, _)| id);
+        let pane = scratch.and_then(|s| {
+            self.layout
+                .all_panes()
+                .into_iter()
+                .find(|p| matches!(self.view_of(*p), Some(v) if self.ed.views[v].buffer == s))
+        });
+        if let Some(p) = pane {
+            self.layout.focus(p);
+        }
         self.open(path);
         if let Some(scratch) = scratch
-            && self
-                .focused_view()
-                .is_some_and(|v| self.ed.views[v].buffer != scratch)
+            && !self.buffer_shown(scratch)
         {
             self.ed.remove_buffer(scratch);
         }
@@ -2227,6 +2239,7 @@ impl kui_native::App for Kawoosh {
 
     fn view(&mut self, ui: &mut Ui<'_>) {
         use crate::perf::ms;
+        self.frames_begin(ui);
         let frame_started = Instant::now();
         let t = Instant::now();
         self.drain_io();
@@ -2315,6 +2328,7 @@ impl kui_native::App for Kawoosh {
         // show, as a layer over the panel's tab body (kui ADR 0032).
         self.syntax_tab(ui);
         self.perf_tab(ui);
+        self.frames_tab(ui);
         self.sync_undo_view();
         let m = ui.measure_text("M", &rows::mono(self.face, &pal), None);
         self.cell = (m.width.max(1.0), self.face.line_height);
@@ -2403,6 +2417,7 @@ impl kui_native::App for Kawoosh {
         });
         self.line_cells.sweep();
         self.perf.end_frame(ms(frame_started));
+        self.frames.end();
         if self.hud {
             kui_native::widgets::latency_hud(ui);
         }
@@ -2413,6 +2428,7 @@ impl kui_native::App for Kawoosh {
     /// looked at — is done here, in the event's turn.
     fn on_event_with(&mut self, ev: UiEvent, core: &mut Core) {
         let asking = self.confirm.is_some();
+        self.frames.input(ev.kind().unwrap_or("event"));
         self.on_ui_event(ev, core);
         // A confirm answered: the keyboard was its, and goes back to the
         // pane.

@@ -51,7 +51,7 @@ impl Kawoosh {
         for t in self.terms.map.values_mut() {
             t.set_cell_pixels(cw, ch);
             if t.poll_graphics() || t.graphics_busy() {
-                ui.request_frame();
+                crate::frames::request(ui, "terminal graphics");
             }
         }
         let images = &mut self.term_images;

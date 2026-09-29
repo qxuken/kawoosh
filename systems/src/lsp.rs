@@ -716,6 +716,34 @@ pub enum Event {
     },
 }
 
+impl Event {
+    /// What kind of news it is, for a count of them (the frame ledger).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Event::Diagnostics { .. } => "lsp diagnostics",
+            Event::FileDiagnostics { .. } => "lsp file diagnostics",
+            Event::Definition { .. } => "lsp definition",
+            Event::Hover { .. } => "lsp hover",
+            Event::Completion { .. } => "lsp completion",
+            Event::Capabilities { .. } => "lsp capabilities",
+            Event::WorkspaceEdit { .. } => "lsp workspace edit",
+            Event::Locations { .. } => "lsp locations",
+            Event::CodeActions { .. } => "lsp code actions",
+            Event::Symbols { .. } => "lsp symbols",
+            Event::InlayHints { .. } => "lsp inlay hints",
+            Event::Formatted { .. } => "lsp formatted",
+            Event::Failed { .. } => "lsp failed",
+            Event::Unavailable { .. } => "lsp unavailable",
+            Event::Restarted { .. } => "lsp restarted",
+            Event::Status(_) => "lsp status",
+            Event::Message { kind: 5, .. } => "lsp stderr",
+            Event::Message { log: true, .. } => "lsp log message",
+            Event::Message { .. } => "lsp show message",
+            Event::Progress { .. } => "lsp progress",
+        }
+    }
+}
+
 pub struct Lsp {
     cmds: Sender<Cmd>,
     pub events: Receiver<Event>,
@@ -1143,6 +1171,56 @@ impl Drop for Server {
     }
 }
 
+/// How often a server's progress reports may wake the loop. A report
+/// changes a corner line, and a server reports as fast as it works —
+/// rust-analyzer's indexing sent a thousand in under a second, each a
+/// frame drawn at the display's rate; eight a second reads as moving.
+/// A token's begin and end are not held: a line appearing or going is
+/// news.
+const PROGRESS_PACE: std::time::Duration = std::time::Duration::from_millis(125);
+
+/// When a paced wake is due, at most one every `every`.
+#[derive(Debug)]
+struct Pace {
+    every: std::time::Duration,
+    /// The last paced wake, or the one scheduled.
+    next: std::cell::Cell<Option<std::time::Instant>>,
+}
+
+/// What [`Pace::ask`] says of a wake asked for now.
+#[derive(Debug, PartialEq)]
+enum Paced {
+    /// Wake now.
+    Now,
+    /// Wake at this time.
+    At(std::time::Instant),
+    /// A wake is already due, and will bring this too.
+    Due,
+}
+
+impl Pace {
+    fn new(every: std::time::Duration) -> Self {
+        Self {
+            every,
+            next: std::cell::Cell::new(None),
+        }
+    }
+
+    fn ask(&self, now: std::time::Instant) -> Paced {
+        match self.next.get() {
+            Some(n) if n > now => Paced::Due,
+            Some(n) if now < n + self.every => {
+                self.next.set(Some(n + self.every));
+                Paced::At(n + self.every)
+            }
+            _ => {
+                self.next.set(Some(now));
+                Paced::Now
+            }
+        }
+    }
+}
+
 struct Pool {
     defs: Vec<ServerDef>,
     keys: HashMap<(PathBuf, String), usize>,
@@ -1151,6 +1229,11 @@ struct Pool {
     from_tx: Sender<(usize, FromServer)>,
     event_tx: Sender<Event>,
     wake: WakeHandle,
+    /// Progress reports' wakes, paced ([`PROGRESS_PACE`]); `progress_at`
+    /// wakes for one held.
+    progress_pace: Pace,
+    progress_wake: WakeHandle,
+    progress_at: crate::Alarm,
     /// The commands that did not start, by the domain they were tried
     /// on (None: here) — not tried again until a restart.
     failed: std::collections::HashSet<(Option<String>, String)>,
@@ -1185,6 +1268,9 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
         homes: HashMap::new(),
         from_tx,
         event_tx,
+        progress_pace: Pace::new(PROGRESS_PACE),
+        progress_wake: wake.named("lsp progress"),
+        progress_at: crate::Alarm::spawn_soonest(wake.named("lsp progress")),
         wake,
         failed: Default::default(),
         refreshed_tx,
@@ -1214,8 +1300,24 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
 
 impl Pool {
     fn emit(&self, ev: Event) {
+        let report = matches!(
+            ev,
+            Event::Progress {
+                title: None,
+                done: false,
+                ..
+            }
+        );
         let _ = self.event_tx.send(ev);
-        self.wake.wake();
+        if !report {
+            self.wake.wake();
+            return;
+        }
+        match self.progress_pace.ask(std::time::Instant::now()) {
+            Paced::Now => self.progress_wake.wake(),
+            Paced::At(t) => self.progress_at.set(t),
+            Paced::Due => {}
+        }
     }
 
     /// What server `key` said, its paths spelled on its domain when it
@@ -2746,6 +2848,27 @@ fn placed_diagnostics(params: &Value) -> Vec<Placed> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A paced wake comes at most once an interval: at once after a
+    /// quiet spell, else at the interval's end, which brings every
+    /// report asked for before it.
+    #[test]
+    fn progress_wakes_are_paced() {
+        use std::time::{Duration, Instant};
+        let every = Duration::from_millis(125);
+        let pace = Pace::new(every);
+        let t0 = Instant::now();
+        assert_eq!(pace.ask(t0), Paced::Now);
+        let ms = |n| t0 + Duration::from_millis(n);
+        assert_eq!(pace.ask(ms(10)), Paced::At(ms(125)));
+        assert_eq!(pace.ask(ms(20)), Paced::Due);
+        assert_eq!(pace.ask(ms(124)), Paced::Due);
+        // The held wake came; one asked right after waits a whole
+        // interval again.
+        assert_eq!(pace.ask(ms(130)), Paced::At(ms(250)));
+        // After a quiet spell, at once.
+        assert_eq!(pace.ask(ms(1000)), Paced::Now);
+    }
 
     #[test]
     fn position_mapping_roundtrips() {

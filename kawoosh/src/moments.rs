@@ -133,13 +133,21 @@ pub struct Moments {
     head_seen: Option<(String, Instant)>,
     /// The workspace the moments are made under, by the cwd.
     workspace: (std::path::PathBuf, String),
+    /// When dwell was last counted to, and whether the window had the
+    /// keyboard then: dwell is the time between two counts the window
+    /// had it at both, so it needs no frames in between.
     last_tick: Instant,
+    focused_at_tick: bool,
     /// When a key or a click last came: the idle guard.
     pub last_input: Instant,
     /// When the deltas first changed since the last flush.
     dirty_since: Option<Instant>,
-    /// When they last changed.
+    /// When something happened to them last — dwell, which is time
+    /// passing, is no happening.
     changed_at: Instant,
+    /// Something happened since the last flush: a flush is due once it
+    /// has been [`QUIET`]. Dwell alone waits for one, or for [`LAG`].
+    eventful: bool,
     /// Bumped when the store's rows moved (a flush, a forget, an
     /// eviction): the pane and the Lua cache read again only then.
     pub changed: u64,
@@ -166,9 +174,11 @@ impl Moments {
             head_seen: None,
             workspace: (std::path::PathBuf::new(), String::new()),
             last_tick: now,
+            focused_at_tick: true,
             last_input: now,
             dirty_since: None,
             changed_at: now,
+            eventful: false,
             changed: 0,
             evicted: 0,
             swept: false,
@@ -210,10 +220,23 @@ impl Moments {
 
     /// Something happened to a subject: its delta, changed in place.
     fn delta(&mut self, key: MomentKey) -> std::cell::RefMut<'_, MomentDelta> {
+        self.changed_at = Instant::now();
+        self.eventful = true;
+        self.pending_delta(key)
+    }
+
+    /// Time spent on a subject: its delta grows, and no flush is asked
+    /// for. Were dwell a happening, the frame a flush's alarm brings
+    /// would add dwell, which would arm the alarm again — a frame a
+    /// second for as long as the idle guard allows.
+    fn dwell(&mut self, key: MomentKey, ms: i64) {
+        self.pending_delta(key).dwell_ms += ms;
+    }
+
+    /// A subject's delta, the deltas marked unflushed.
+    fn pending_delta(&mut self, key: MomentKey) -> std::cell::RefMut<'_, MomentDelta> {
         let at = now();
-        let now = Instant::now();
-        self.dirty_since.get_or_insert(now);
-        self.changed_at = now;
+        self.dirty_since.get_or_insert(Instant::now());
         std::cell::RefMut::map(self.pending.borrow_mut(), |p| {
             let d = p.deltas.entry(key).or_insert_with(|| MomentDelta {
                 first_at: at,
@@ -403,11 +426,6 @@ impl Kawoosh {
     /// and a flush when the memory has been still for [`QUIET`].
     pub fn sync_moments(&mut self, force: bool) {
         let now = Instant::now();
-        let frame_ms = now
-            .duration_since(self.moments.last_tick)
-            .as_millis()
-            .min(1000) as i64;
-        self.moments.last_tick = now;
         if self.moments.workspace.0 != self.cwd {
             self.moments.workspace = (self.cwd.clone(), workspace_of(&self.cwd));
         }
@@ -492,25 +510,7 @@ impl Kawoosh {
                 }
             }
         }
-        // Dwell: while the window has the keyboard and it was used
-        // within `memory.idle_secs` — to the focused buffer's subject,
-        // or to a terminal pane's tool when it is a tool's.
-        let idle = self
-            .ed
-            .settings
-            .int(IDLE_SECS)
-            .filter(|s| *s > 0)
-            .map(|s| Duration::from_secs(s as u64))
-            .unwrap_or(Duration::from_secs(60));
-        if self.moments.window_focused
-            && now.duration_since(self.moments.last_input) < idle
-            && frame_ms > 0
-            && let Some(key) = current
-                .and_then(|b| self.subject_of(b))
-                .or_else(|| self.tool_of_pane(focused))
-        {
-            self.moments.delta(key).dwell_ms += frame_ms;
-        }
+        self.count_dwell();
         if self.store.is_none() {
             return;
         }
@@ -528,14 +528,54 @@ impl Kawoosh {
             .deltas
             .values()
             .any(|d| d.text.is_some());
-        let quiet = now.duration_since(self.moments.changed_at) >= self.moments.quiet;
+        let eventful = self.moments.eventful;
+        let quiet = eventful && now.duration_since(self.moments.changed_at) >= self.moments.quiet;
         let lagging = now.duration_since(since) >= LAG;
         if force || quiet || lagging || text_pending {
             self.flush_moments();
-        } else {
+        } else if eventful {
             self.moments
                 .alarm
                 .set(self.moments.changed_at + self.moments.quiet);
+        }
+    }
+
+    /// Dwell since it was last counted: while the window has the
+    /// keyboard and it was used within `memory.idle_secs` — to the
+    /// focused buffer's subject, or to a terminal pane's tool when it
+    /// is a tool's. Counted from the time, not the frames: an idle
+    /// window draws none, and the interval up to the idle guard's end
+    /// is counted whenever the next count comes (a frame, a flush).
+    /// Losing or gaining the keyboard brings a frame, so an interval
+    /// the window had it at both ends had it throughout.
+    fn count_dwell(&mut self) {
+        let now = Instant::now();
+        let since = std::mem::replace(&mut self.moments.last_tick, now);
+        let focused_now = self.moments.window_focused;
+        let was = std::mem::replace(&mut self.moments.focused_at_tick, focused_now);
+        if !(was && focused_now) {
+            return;
+        }
+        let idle = self
+            .ed
+            .settings
+            .int(IDLE_SECS)
+            .filter(|s| *s > 0)
+            .map(|s| Duration::from_secs(s as u64))
+            .unwrap_or(Duration::from_secs(60));
+        let until = now.min(self.moments.last_input + idle);
+        let ms = until.saturating_duration_since(since).as_millis() as i64;
+        if ms == 0 {
+            return;
+        }
+        let pane = self.layout.focused();
+        let key = self
+            .view_of(pane)
+            .map(|v| self.ed.views[v].buffer)
+            .and_then(|b| self.subject_of(b))
+            .or_else(|| self.tool_of_pane(pane));
+        if let Some(key) = key {
+            self.moments.dwell(key, ms);
         }
     }
 
@@ -559,10 +599,13 @@ impl Kawoosh {
         let Some(store) = self.store.clone() else {
             return;
         };
+        // The dwell up to now, which no frame may have counted.
+        self.count_dwell();
         if self.moments.pending.borrow().deltas.is_empty()
             && self.moments.pending.borrow().ring.is_empty()
         {
             self.moments.dirty_since = None;
+            self.moments.eventful = false;
             return;
         }
         // A file row's meta is its caret line as of now, for the open
@@ -602,6 +645,7 @@ impl Kawoosh {
                 p.ring.clear();
                 drop(p);
                 self.moments.dirty_since = None;
+                self.moments.eventful = false;
                 self.moments.changed += 1;
                 self.evict_moments();
             }

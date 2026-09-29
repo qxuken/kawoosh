@@ -249,7 +249,7 @@ fn main() -> anyhow::Result<()> {
     // until the app's first frame drains them.
     let wake = WakeHandle::new();
     let (keep, stderr) = log_levels();
-    let log_sink = Logger::install(wake.clone(), keep);
+    let log_sink = Logger::install(wake.named("log"), keep);
     let mut core = Core::new();
     let (font, shipped) = load_fonts(&mut core);
     let mut app = Kawoosh::new("*scratch*", if path.is_some() { "" } else { SCRATCH });
@@ -390,7 +390,9 @@ font.family / font.size / theme.appearance / tokens.colors are settings
 too. A project's .kawoosh/init.lua runs once :trust says so.
 kui's instruments: :kui_debugger (F12) and :kui_framerate_hud;
 :syntax_tree opens it on the buffer's tree-sitter tree, :perf on what
-a frame and the systems cost and what the process holds.
+a frame and the systems cost and what the process holds, :frames on why
+each frame was drawn and the runs of them no input asked for
+(KAWOOSH_FRAME_LOG=PATH keeps every frame of those).
 
 Every visible line is a row holding one rich text of spans; the row is the layout.
 ";
