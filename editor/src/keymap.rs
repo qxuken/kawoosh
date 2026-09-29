@@ -359,16 +359,20 @@ fn normalize_chord(inner: &str) -> String {
 
 /// What a key sequence runs. A key can carry several, newest first:
 /// the engine takes the first whose `when` holds and whose command can
-/// run ([`crate::Editor::pick_binding`]), so `<CR>` bound to
-/// `dir enter` (`when` the listing) and, older, to `goto location`
-/// (`when` not) is one key doing the right thing in each — and a bare
-/// binding on a bare command still shadows everything under it.
+/// run ([`crate::Editor::pick_binding`]), so `r` bound to `terminal
+/// again` (`when` the pane's line has ended) and, older, to `terminal
+/// raw` is one key doing the right thing in each — and a bare binding
+/// on a bare command still shadows everything under it.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Binding {
     pub command: String,
     pub args: Vec<String>,
     /// The binding's own conditions, beside its command's.
     pub when: Vec<Cond>,
+    /// The place the binding is local to — a fact, `language:dir`,
+    /// `lua:picker`, `buffer#ID` ([`Keymap::bind_local`]) — or none
+    /// for a global one.
+    pub scope: Option<String>,
 }
 
 impl Binding {
@@ -390,17 +394,67 @@ struct Node {
     bindings: Vec<Binding>,
 }
 
+/// What a key sequence is in the places asked: bound (the bindings
+/// that can take it, the innermost place's first), the start of longer
+/// ones, or nothing.
 #[derive(Debug)]
-pub enum Lookup<'a> {
-    /// The bindings on the sequence, newest first.
+pub enum Lookup {
+    /// The bindings on the sequence, newest first — a local place's
+    /// before the global ones under it, for a binding that cannot run
+    /// or passes to hand the key down.
+    Exact(Vec<Binding>),
+    Prefix,
+    None,
+}
+
+impl Lookup {
+    pub fn is_none(&self) -> bool {
+        matches!(self, Lookup::None)
+    }
+}
+
+/// One trie's answer, before the places are merged.
+enum Hit<'a> {
     Exact(&'a [Binding]),
     Prefix,
     None,
 }
 
+/// The maps local to one place (docs/design/local-maps.md).
+#[derive(Default, Debug)]
+struct Local {
+    modes: HashMap<Mode, Node>,
+    /// When the place got its first map: among places of one rank the
+    /// newest is asked first.
+    made: u64,
+}
+
+/// A place's rank, the innermost first: a field's own, the prompt, one
+/// buffer, a buffer by name, a language, a Lua view, and every other
+/// fact (local-maps.md Decision 3).
+fn rank(scope: &str) -> u8 {
+    if scope.starts_with("field:") {
+        0
+    } else if scope == "prompt" {
+        1
+    } else if scope.starts_with("buffer#") {
+        2
+    } else if scope.starts_with("buffer:") {
+        3
+    } else if scope.starts_with("language:") {
+        4
+    } else if scope.starts_with("lua:") {
+        5
+    } else {
+        6
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct Keymap {
     modes: HashMap<Mode, Node>,
+    /// The maps local to a place, by its fact ([`Keymap::bind_local`]).
+    locals: HashMap<String, Local>,
     /// The key `<leader>` stands for, in notation (`<Space>`, `,`).
     leader: String,
     /// Bumped on every bind and unbind, for a reader that lists the
@@ -415,6 +469,7 @@ impl Keymap {
     pub fn new() -> Self {
         Self {
             modes: HashMap::new(),
+            locals: HashMap::new(),
             leader: "<Space>".into(),
             version: 0,
             groups: HashMap::new(),
@@ -489,11 +544,52 @@ impl Keymap {
     /// negates). The new binding goes in front of the key's others;
     /// one equal to it moves to the front.
     pub fn bind_when(&mut self, mode: Mode, keys: &str, command: &str, when: &[Cond]) {
+        self.bind_in(None, mode, keys, command, when);
+    }
+
+    /// [`Keymap::bind_when`] local to a place: `scope` is a fact —
+    /// `lua:picker`, `field:lua:picker/q`, `language:dir`,
+    /// `buffer:*compile*`, `buffer#ID`, `terminal` — and the binding is
+    /// found only where it holds, before the global ones, which it
+    /// shadows there (docs/design/local-maps.md).
+    pub fn bind_local(
+        &mut self,
+        scope: &str,
+        mode: Mode,
+        keys: &str,
+        command: &str,
+        when: &[Cond],
+    ) {
+        self.bind_in(Some(scope), mode, keys, command, when);
+    }
+
+    fn bind_in(
+        &mut self,
+        scope: Option<&str>,
+        mode: Mode,
+        keys: &str,
+        command: &str,
+        when: &[Cond],
+    ) {
         let seq = parse_notation(keys);
         let mut parts = command.split_whitespace();
         let name = parts.next().unwrap_or_default().to_string();
         let args = parts.map(str::to_string).collect();
-        let mut node = self.modes.entry(mode).or_default();
+        let made = self.version;
+        let modes = match scope {
+            Some(s) => {
+                &mut self
+                    .locals
+                    .entry(s.to_string())
+                    .or_insert_with(|| Local {
+                        modes: HashMap::new(),
+                        made,
+                    })
+                    .modes
+            }
+            None => &mut self.modes,
+        };
+        let mut node = modes.entry(mode).or_default();
         for k in seq {
             node = node.children.entry(k).or_default();
         }
@@ -501,6 +597,7 @@ impl Keymap {
             command: name,
             args,
             when: when.to_vec(),
+            scope: scope.map(str::to_string),
         };
         node.bindings.retain(|o| *o != b);
         node.bindings.insert(0, b);
@@ -512,8 +609,25 @@ impl Keymap {
     }
 
     pub fn unbind(&mut self, mode: Mode, keys: &str) {
+        self.unbind_in(None, mode, keys);
+    }
+
+    /// The bindings of `keys` local to `scope` gone; the global ones and
+    /// the longer ones beneath stay.
+    pub fn unbind_local(&mut self, scope: &str, mode: Mode, keys: &str) {
+        self.unbind_in(Some(scope), mode, keys);
+    }
+
+    fn unbind_in(&mut self, scope: Option<&str>, mode: Mode, keys: &str) {
         let seq = parse_notation(keys);
-        let Some(mut node) = self.modes.get_mut(&mode) else {
+        let modes = match scope {
+            Some(s) => match self.locals.get_mut(s) {
+                Some(l) => &mut l.modes,
+                None => return,
+            },
+            None => &mut self.modes,
+        };
+        let Some(mut node) = modes.get_mut(&mode) else {
             return;
         };
         for k in seq {
@@ -526,15 +640,54 @@ impl Keymap {
         self.version += 1;
     }
 
+    /// Every map local to `scope` gone — a buffer's `buffer#ID` with
+    /// the buffer.
+    pub fn drop_scope(&mut self, scope: &str) {
+        if self.locals.remove(scope).is_some() {
+            self.version += 1;
+        }
+    }
+
+    /// The places with maps of their own for which `holds` says yes,
+    /// the innermost first: by rank ([`rank`]), then the newest place.
+    /// What a lookup on a view asks ([`crate::Editor::key_scopes`]).
+    pub fn scopes_holding(&self, holds: impl Fn(&str) -> bool) -> Vec<String> {
+        let mut v: Vec<(&String, &Local)> = self.locals.iter().filter(|(s, _)| holds(s)).collect();
+        v.sort_by(|a, b| {
+            rank(a.0)
+                .cmp(&rank(b.0))
+                .then(b.1.made.cmp(&a.1.made))
+                .then(a.0.cmp(b.0))
+        });
+        v.into_iter().map(|(s, _)| s.clone()).collect()
+    }
+
+    /// The tries a lookup in `mode` walks, in order: each place's of
+    /// `scopes` (innermost first), then the global one.
+    fn tries<'a>(
+        &'a self,
+        scopes: &'a [String],
+        mode: Mode,
+    ) -> impl Iterator<Item = &'a Node> + 'a {
+        scopes
+            .iter()
+            .filter_map(move |s| self.locals.get(s).and_then(|l| l.modes.get(&mode)))
+            .chain(self.modes.get(&mode))
+    }
+
     /// Whether longer bindings lie beneath `keys` in `mode` — a key
     /// that is a prefix as well as a binding.
     /// A pressed key that is the leader's follows the `<leader>` branch
     /// too, as [`Keymap::lookup`] does: a plugin's key on Space, gated
     /// off where it is pressed, left `<leader>f` open behind it.
     pub fn has_deeper(&self, mode: Mode, keys: &[String]) -> bool {
-        self.modes
-            .get(&mode)
-            .is_some_and(|root| self.deeper(root, keys))
+        self.deeper_in(&[], mode, keys)
+    }
+
+    /// [`Keymap::has_deeper`] in the places of `scopes` as well as the
+    /// global map.
+    pub fn deeper_in(&self, scopes: &[String], mode: Mode, keys: &[String]) -> bool {
+        self.tries(scopes, mode).any(|root| self.deeper(root, keys))
     }
 
     fn deeper(&self, node: &Node, keys: &[String]) -> bool {
@@ -549,11 +702,38 @@ impl Keymap {
                     .is_some_and(|n| self.deeper(n, rest)))
     }
 
-    pub fn lookup(&self, mode: Mode, keys: &[String]) -> Lookup<'_> {
-        match self.modes.get(&mode) {
-            Some(root) => self.walk(root, keys),
-            None => Lookup::None,
+    /// `keys` in the global map of `mode`.
+    pub fn lookup(&self, mode: Mode, keys: &[String]) -> Lookup {
+        self.lookup_in(&[], mode, keys)
+    }
+
+    /// `keys` in the places of `scopes`, innermost first, then the
+    /// global map (local-maps.md Decision 3): the first that knows the
+    /// keys decides — bound, a local binding shadowing the global one
+    /// and every longer one under it; a prefix, a local prefix
+    /// shadowing a shorter global binding. A bound sequence carries the
+    /// bindings of the places under it too, so one that cannot run
+    /// here, or passes, hands the key down.
+    pub fn lookup_in(&self, scopes: &[String], mode: Mode, keys: &[String]) -> Lookup {
+        let mut out = Lookup::None;
+        for root in self.tries(scopes, mode) {
+            match self.walk(root, keys) {
+                Hit::None => {}
+                Hit::Prefix => {
+                    if matches!(out, Lookup::None) {
+                        out = Lookup::Prefix;
+                    }
+                }
+                Hit::Exact(bs) => {
+                    if let Lookup::Exact(v) = &mut out {
+                        v.extend_from_slice(bs);
+                    } else if matches!(out, Lookup::None) {
+                        out = Lookup::Exact(bs.to_vec());
+                    }
+                }
+            }
         }
+        out
     }
 
     /// The trie from `node` down `keys`. A pressed key that is the
@@ -563,39 +743,36 @@ impl Keymap {
     /// the leader's, but a leader map open past the key keeps the
     /// sequence open rather than firing the bare key: a `,` bound and
     /// chosen as leader waits for what follows, as vim's would.
-    fn walk<'a>(&'a self, node: &'a Node, keys: &[String]) -> Lookup<'a> {
+    fn walk<'a>(&'a self, node: &'a Node, keys: &[String]) -> Hit<'a> {
         let Some((k, rest)) = keys.split_first() else {
             // A binding with longer bindings beneath it: the shorter
             // wins at once, like neovim without `timeoutlen`.
             return if !node.bindings.is_empty() {
-                Lookup::Exact(&node.bindings)
+                Hit::Exact(&node.bindings)
             } else if node.children.is_empty() {
-                Lookup::None
+                Hit::None
             } else {
-                Lookup::Prefix
+                Hit::Prefix
             };
         };
         let own = match node.children.get(k) {
             Some(n) => self.walk(n, rest),
-            None => Lookup::None,
+            None => Hit::None,
         };
         let leader = match node.children.get(LEADER) {
             Some(n) if *k == self.leader => self.walk(n, rest),
-            _ => Lookup::None,
+            _ => Hit::None,
         };
         match (own, leader) {
-            (Lookup::Exact(b), Lookup::None) => Lookup::Exact(b),
-            (Lookup::Exact(_), Lookup::Prefix) => Lookup::Prefix,
-            (Lookup::Exact(b), Lookup::Exact(_)) => Lookup::Exact(b),
-            (Lookup::Prefix, Lookup::Exact(b)) => Lookup::Exact(b),
-            (Lookup::Prefix, _) | (Lookup::None, Lookup::Prefix) => Lookup::Prefix,
-            (Lookup::None, l) => l,
+            (Hit::Exact(b), Hit::None) => Hit::Exact(b),
+            (Hit::Exact(_), Hit::Prefix) => Hit::Prefix,
+            (Hit::Exact(b), Hit::Exact(_)) => Hit::Exact(b),
+            (Hit::Prefix, Hit::Exact(b)) => Hit::Exact(b),
+            (Hit::Prefix, _) | (Hit::None, Hit::Prefix) => Hit::Prefix,
+            (Hit::None, l) => l,
         }
     }
 
-    /// [`Keymap::lookup`], then — when nothing matched and the last key is
-    /// a ctrl chord — the same sequence with the chord's letter bare, so
-    /// `<C-w><C-w>` is `<C-w>w` and `<C-w><C-v>` is `<C-w>v`, as in vim.
     /// Whether a sequence begun in pane mode is one every pane shares
     /// with normal mode — the `<C-w>` cluster, the leader's groups,
     /// `:`, the next-and-previous cluster (`]t` `[t` `]q` `[q`), and a
@@ -615,8 +792,16 @@ impl Keymap {
         is_shift_chord(first)
     }
 
-    pub fn lookup_lenient(&self, mode: Mode, keys: &[String]) -> Lookup<'_> {
-        match self.lookup(mode, keys) {
+    /// [`Keymap::lookup`], then — when nothing matched and the last key is
+    /// a ctrl chord — the same sequence with the chord's letter bare, so
+    /// `<C-w><C-w>` is `<C-w>w` and `<C-w><C-v>` is `<C-w>v`, as in vim.
+    pub fn lookup_lenient(&self, mode: Mode, keys: &[String]) -> Lookup {
+        self.lookup_lenient_in(&[], mode, keys)
+    }
+
+    /// [`Keymap::lookup_lenient`] in the places of `scopes` as well.
+    pub fn lookup_lenient_in(&self, scopes: &[String], mode: Mode, keys: &[String]) -> Lookup {
+        match self.lookup_in(scopes, mode, keys) {
             Lookup::None if keys.len() > 1 => {
                 let Some(last) = keys.last() else {
                     return Lookup::None;
@@ -630,7 +815,7 @@ impl Keymap {
                 };
                 let mut alt = keys[..keys.len() - 1].to_vec();
                 alt.push(bare.to_string());
-                self.lookup(mode, &alt)
+                self.lookup_in(scopes, mode, &alt)
             }
             l => l,
         }
@@ -643,31 +828,48 @@ impl Keymap {
     /// leader's follows the `<leader>` branch as well as its own, as
     /// lookup does.
     pub fn next_keys(&self, mode: Mode, prefix: &[String]) -> Vec<(String, Vec<Binding>)> {
-        let Some(root) = self.modes.get(&mode) else {
-            return Vec::new();
-        };
-        let mut nodes = vec![root];
-        for k in prefix {
-            let mut next = Vec::new();
-            for n in nodes {
-                if let Some(c) = n.children.get(k) {
-                    next.push(c);
-                }
-                if *k == self.leader
-                    && let Some(c) = n.children.get(LEADER)
-                {
-                    next.push(c);
-                }
-            }
-            nodes = next;
-        }
+        self.next_keys_in(&[], mode, prefix)
+    }
+
+    /// [`Keymap::next_keys`] in the places of `scopes` as well: a key's
+    /// bindings the innermost place's first, then the global ones.
+    pub fn next_keys_in(
+        &self,
+        scopes: &[String],
+        mode: Mode,
+        prefix: &[String],
+    ) -> Vec<(String, Vec<Binding>)> {
         let mut out: Vec<(String, Vec<Binding>)> = Vec::new();
-        for n in nodes {
-            for (k, c) in &n.children {
-                if out.iter().any(|(o, _)| o == k) {
-                    continue;
+        for root in self.tries(scopes, mode) {
+            let mut nodes = vec![root];
+            for k in prefix {
+                let mut next = Vec::new();
+                for n in nodes {
+                    if let Some(c) = n.children.get(k) {
+                        next.push(c);
+                    }
+                    if *k == self.leader
+                        && let Some(c) = n.children.get(LEADER)
+                    {
+                        next.push(c);
+                    }
                 }
-                out.push((k.clone(), c.bindings.clone()));
+                nodes = next;
+            }
+            // Within one trie a key's own branch wins over the leader's,
+            // as lookup has it; across places they add up.
+            let mut seen: Vec<&String> = Vec::new();
+            for n in nodes {
+                for (k, c) in &n.children {
+                    if seen.contains(&k) {
+                        continue;
+                    }
+                    seen.push(k);
+                    match out.iter_mut().find(|(o, _)| o == k) {
+                        Some((_, bs)) => bs.extend(c.bindings.iter().cloned()),
+                        None => out.push((k.clone(), c.bindings.clone())),
+                    }
+                }
             }
         }
         out.sort_by(|a, b| a.0.cmp(&b.0));
@@ -675,7 +877,8 @@ impl Keymap {
     }
 
     /// Every binding in `mode`, for `:map` listings and the Lua API — a
-    /// key with several listed once per binding, newest first.
+    /// key with several listed once per binding, newest first, a local
+    /// one saying its place ([`Binding::scope`]).
     pub fn bindings(&self, mode: Mode) -> Vec<(String, Binding)> {
         self.binding_strokes(mode)
             .into_iter()
@@ -690,6 +893,13 @@ impl Keymap {
         let mut out = Vec::new();
         if let Some(root) = self.modes.get(&mode) {
             walk(root, &mut Vec::new(), &mut out);
+        }
+        let mut scopes: Vec<&String> = self.locals.keys().collect();
+        scopes.sort();
+        for s in scopes {
+            if let Some(root) = self.locals[s].modes.get(&mode) {
+                walk(root, &mut Vec::new(), &mut out);
+            }
         }
         out.sort_by_key(|a| a.0.concat());
         out
@@ -884,17 +1094,17 @@ mod tests {
         km.bind(Mode::Normal, "<Space>x", "explicit");
         let keys = |s: &str| parse_notation(s);
         assert!(
-            matches!(km.lookup(Mode::Normal, &keys(" t")), Lookup::Exact([b, ..]) if b.command == "todo")
+            matches!(km.lookup(Mode::Normal, &keys(" t")), Lookup::Exact(bs) if bs[0].command == "todo")
         );
         assert!(matches!(
             km.lookup(Mode::Normal, &keys(" c")),
             Lookup::Prefix
         ));
         assert!(
-            matches!(km.lookup(Mode::Normal, &keys(" cd")), Lookup::Exact([b, ..]) if b.command == "chdir")
+            matches!(km.lookup(Mode::Normal, &keys(" cd")), Lookup::Exact(bs) if bs[0].command == "chdir")
         );
         assert!(
-            matches!(km.lookup(Mode::Normal, &keys(" x")), Lookup::Exact([b, ..]) if b.command == "explicit")
+            matches!(km.lookup(Mode::Normal, &keys(" x")), Lookup::Exact(bs) if bs[0].command == "explicit")
         );
         assert!(matches!(
             km.lookup(Mode::Normal, &keys(" ")),
@@ -911,7 +1121,7 @@ mod tests {
         ));
         assert!(matches!(km.lookup(Mode::Normal, &keys(",q")), Lookup::None));
         assert!(
-            matches!(km.lookup(Mode::Normal, &keys(",t")), Lookup::Exact([b, ..]) if b.command == "todo")
+            matches!(km.lookup(Mode::Normal, &keys(",t")), Lookup::Exact(bs) if bs[0].command == "todo")
         );
         assert!(
             matches!(km.lookup(Mode::Normal, &keys(" t")), Lookup::None),
@@ -936,6 +1146,136 @@ mod tests {
         assert!(listed.contains(&"<leader>t".to_string()), "{listed:?}");
     }
 
+    /// A map local to a place is found only where the place holds, and
+    /// there before the global one of its keys, which it hands the key
+    /// to (local-maps.md Decision 3).
+    #[test]
+    fn a_local_map_is_found_only_where_it_holds() {
+        let mut km = Keymap::new();
+        km.bind(Mode::Normal, "<CR>", "goto location");
+        km.bind_local("language:dir", Mode::Normal, "<CR>", "dir enter", &[]);
+        let cr = parse_notation("<CR>");
+        let got = |l: Lookup| match l {
+            Lookup::Exact(bs) => bs.iter().map(|b| b.line()).collect::<Vec<_>>(),
+            Lookup::Prefix => vec!["prefix".to_string()],
+            Lookup::None => vec![],
+        };
+        assert_eq!(got(km.lookup(Mode::Normal, &cr)), ["goto location"]);
+        let dir = ["language:dir".to_string()];
+        assert_eq!(
+            got(km.lookup_in(&dir, Mode::Normal, &cr)),
+            ["dir enter", "goto location"],
+            "the place's first, the global one under it"
+        );
+        // A key only the place has is nothing anywhere else.
+        km.bind_local("lua:launcher", Mode::Normal, "z", "launcher key z", &[]);
+        assert!(matches!(
+            km.lookup(Mode::Normal, &parse_notation("z")),
+            Lookup::None
+        ));
+        // Its binding says where it lives.
+        let listed: Vec<(String, Option<String>)> = km
+            .bindings(Mode::Normal)
+            .into_iter()
+            .map(|(k, b)| (k, b.scope))
+            .collect();
+        assert!(
+            listed.contains(&("z".into(), Some("lua:launcher".into()))),
+            "{listed:?}"
+        );
+        km.unbind_local("language:dir", Mode::Normal, "<CR>");
+        assert_eq!(
+            got(km.lookup_in(&dir, Mode::Normal, &cr)),
+            ["goto location"]
+        );
+        km.drop_scope("lua:launcher");
+        let launcher = ["lua:launcher".to_string()];
+        assert!(
+            km.lookup_in(&launcher, Mode::Normal, &parse_notation("z"))
+                .is_none()
+        );
+    }
+
+    /// A local binding shadows the longer global ones under its keys (the
+    /// launcher's `g` over `gg`), and a local prefix a shorter global
+    /// binding (the listing's `ma` over `m`).
+    #[test]
+    fn a_local_map_shadows_both_ways() {
+        let mut km = Keymap::new();
+        km.bind(Mode::Normal, "gg", "goto start");
+        km.bind(Mode::Normal, "m", "mark");
+        km.bind_local(
+            "field:lua:launcher/q",
+            Mode::Normal,
+            "g",
+            "launcher key g",
+            &[],
+        );
+        km.bind_local("language:dir", Mode::Normal, "ma", "dir sort name", &[]);
+        let g = parse_notation("g");
+        let m = parse_notation("m");
+        assert!(matches!(km.lookup(Mode::Normal, &g), Lookup::Prefix));
+        let field = ["field:lua:launcher/q".to_string()];
+        assert!(
+            matches!(km.lookup_in(&field, Mode::Normal, &g), Lookup::Exact(bs) if bs.len() == 1 && bs[0].line() == "launcher key g")
+        );
+        assert!(
+            km.deeper_in(&field, Mode::Normal, &g),
+            "`gg` is still under it"
+        );
+        assert!(matches!(km.lookup(Mode::Normal, &m), Lookup::Exact(_)));
+        let dir = ["language:dir".to_string()];
+        assert!(matches!(
+            km.lookup_in(&dir, Mode::Normal, &m),
+            Lookup::Prefix
+        ));
+        assert!(
+            matches!(km.lookup_in(&dir, Mode::Normal, &parse_notation("ma")), Lookup::Exact(bs) if bs[0].line() == "dir sort name")
+        );
+        // The which-key's rows: the place's keys beside the global ones.
+        let rows: Vec<String> = km
+            .next_keys_in(&dir, Mode::Normal, &m)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(rows, ["a"]);
+        assert!(km.next_keys(Mode::Normal, &m).is_empty());
+    }
+
+    /// The places a view is in, the innermost first: a field's own, the
+    /// prompt, one buffer, a buffer by name, a language, a Lua view,
+    /// then every other fact, the newest place first.
+    #[test]
+    fn the_places_are_asked_innermost_first() {
+        let mut km = Keymap::new();
+        for s in [
+            "terminal",
+            "lua:picker",
+            "language:dir",
+            "exited",
+            "buffer:*compile*",
+            "buffer#7",
+            "prompt",
+            "field:cmdline",
+            "memory",
+        ] {
+            km.bind_local(s, Mode::Normal, "x", "x", &[]);
+        }
+        assert_eq!(
+            km.scopes_holding(|s| s != "memory"),
+            [
+                "field:cmdline",
+                "prompt",
+                "buffer#7",
+                "buffer:*compile*",
+                "language:dir",
+                "lua:picker",
+                "exited",
+                "terminal"
+            ]
+        );
+    }
+
     #[test]
     fn trie_lookup() {
         let mut km = Keymap::new();
@@ -946,7 +1286,7 @@ mod tests {
         assert!(matches!(km.lookup(Mode::Normal, &g), Lookup::Prefix));
         let gg = ["g".to_string(), "g".to_string()];
         assert!(
-            matches!(km.lookup(Mode::Normal, &gg), Lookup::Exact([b, ..]) if b.command == "goto_start")
+            matches!(km.lookup(Mode::Normal, &gg), Lookup::Exact(bs) if bs[0].command == "goto_start")
         );
         let cd = ["<C-d>".to_string()];
         assert!(matches!(km.lookup(Mode::Normal, &cd), Lookup::Exact(_)));
@@ -954,7 +1294,7 @@ mod tests {
         let cw_cw = ["<C-w>".to_string(), "<C-w>".to_string()];
         assert!(matches!(km.lookup(Mode::Normal, &cw_cw), Lookup::None));
         assert!(
-            matches!(km.lookup_lenient(Mode::Normal, &cw_cw), Lookup::Exact([b, ..]) if b.line() == "pane next")
+            matches!(km.lookup_lenient(Mode::Normal, &cw_cw), Lookup::Exact(bs) if bs[0].line() == "pane next")
         );
         let x = ["x".to_string()];
         assert!(matches!(km.lookup(Mode::Normal, &x), Lookup::None));

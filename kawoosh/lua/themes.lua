@@ -357,5 +357,5 @@ for k, c in pairs {
   ["<Left>"] = "left", ["<Right>"] = "right", ["<Up>"] = "up", ["<Down>"] = "down",
   t = "toggle", s = "system", y = "copy", q = "close", ["<Esc>"] = "close",
 } do
-  kawoosh.map("p", k, "themes " .. c, { when = { PANE_FACT } })
+  kawoosh.map("p", k, "themes " .. c, { view = VIEW })
 end

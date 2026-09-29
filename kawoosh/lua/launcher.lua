@@ -56,7 +56,6 @@ kawoosh.setting("launcher.width", {
 
 local VIEW = "launcher"
 local FIELD = "q"
-local FIELD_FACT = "field:lua:" .. VIEW .. "/" .. FIELD
 local PANE_FACT = "lua:" .. VIEW
 -- Published while the query is empty: the letters launch then, and
 -- edit the query otherwise.
@@ -848,8 +847,10 @@ kawoosh.command("launcher key", function(ctx)
   take(w.item, w.sec)
 end, { args = { "text" }, when = { PANE_FACT }, doc = "take the entry on letter KEY (its hint)" })
 
-local at = { when = { FIELD_FACT } }
-local on_pane = { when = { PANE_FACT } }
+-- The keys are the launcher's own (docs/design/local-maps.md): its
+-- query's, and its pane's with the query blurred — found nowhere else.
+local at = { view = VIEW, field = FIELD }
+local on_pane = { view = VIEW }
 for _, mode in ipairs { "i", "n" } do
   kawoosh.map(mode, "<CR>", "launcher pick", at)
   kawoosh.map(mode, "<C-c>", "launcher close", at)
@@ -872,7 +873,7 @@ kawoosh.map("n", "k", "launcher prev", at)
 kawoosh.map("i", ":", "launcher colon", at)
 -- The pins, as from any pane: the Nth into this one — and in normal
 -- mode on an empty query the digit alone, as its hint says.
-local blank = { when = { FIELD_FACT, BLANK } }
+local blank = { view = VIEW, field = FIELD, when = { BLANK } }
 for n = 1, 9 do
   kawoosh.map("i", "<A-" .. n .. ">", "memory pin " .. n, at)
   kawoosh.map("n", "<A-" .. n .. ">", "memory pin " .. n, at)

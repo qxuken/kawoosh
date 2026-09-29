@@ -571,8 +571,10 @@ end
 -- ------------------------------------------------------------ commands
 
 local at = {}
-for _, f in ipairs(FIELDS) do at[#at + 1] = { when = { fact(f) } } end
-local on_pane = { when = { PANE_FACT } }
+-- The bar's keys are its own (docs/design/local-maps.md): each field's,
+-- and the pane's with no field under the keys.
+for _, f in ipairs(FIELDS) do at[#at + 1] = { view = VIEW, field = f } end
+local on_pane = { view = VIEW }
 local function on(name, fn, doc)
   kawoosh.command("search " .. name, fn, { when = { PANE_FACT }, doc = doc })
 end
@@ -674,7 +676,7 @@ for _, mode in ipairs { "n", "v" } do
   kawoosh.map(mode, "<D-S-f>", "search project")
 end
 -- In the results: the file at the caret.
-local results = { when = { "language:multibuffer" } }
+local results = { language = "multibuffer" }
 kawoosh.map("n", "<CR>", "multi open", results)
 -- Zed's: the file under each caret — the primary's shown, the rest opened.
 kawoosh.map("n", "g<Space>", "multi open", results)

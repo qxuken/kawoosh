@@ -23,7 +23,7 @@ use std::collections::HashSet;
 use std::path::{MAIN_SEPARATOR, Path};
 
 use kawoosh_editor::commands::set_value;
-use kawoosh_editor::{ArgKind, Cond, Mode, Prompt, Spec};
+use kawoosh_editor::{ArgKind, Mode, Prompt, Spec};
 
 use crate::commands::{ShellCommand, cmd};
 
@@ -484,9 +484,9 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
 /// The completion's keys at the `:` prompt, over the engine's on the
 /// same keys.
 pub(crate) fn bind(km: &mut kawoosh_editor::Keymap) {
-    let at = [Cond::parse("field:cmdline")];
-    km.bind_when(Mode::Insert, "<Tab>", "prompt complete", &at);
-    km.bind_when(Mode::Insert, "<C-y>", "prompt complete", &at);
-    km.bind_when(Mode::Insert, "<C-n>", "prompt cycle next", &at);
-    km.bind_when(Mode::Insert, "<C-p>", "prompt cycle prev", &at);
+    let at = "field:cmdline";
+    km.bind_local(at, Mode::Insert, "<Tab>", "prompt complete", &[]);
+    km.bind_local(at, Mode::Insert, "<C-y>", "prompt complete", &[]);
+    km.bind_local(at, Mode::Insert, "<C-n>", "prompt cycle next", &[]);
+    km.bind_local(at, Mode::Insert, "<C-p>", "prompt cycle prev", &[]);
 }

@@ -333,6 +333,6 @@ for k, c in pairs {
   s = "sort", m = "mark", d = "delete", o = "list", r = "again",
   q = "close", ["<Esc>"] = "close",
 } do
-  kawoosh.map("p", k, "du " .. c, { when = { PANE_FACT } })
+  kawoosh.map("p", k, "du " .. c, { view = VIEW })
 end
 kawoosh.map("n", "<leader>wu", "du", { doc = "the disk usage of the working directory" })

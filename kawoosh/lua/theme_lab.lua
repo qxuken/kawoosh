@@ -348,7 +348,7 @@ on("bottom", function() scroll("end") end, "to the end")
 for k, c in pairs { f = "short", r = "report", q = "close", ["<Esc>"] = "close",
                     j = "down", k = "up", ["<Down>"] = "down", ["<Up>"] = "up",
                     ["<C-d>"] = "page down", ["<C-u>"] = "page up", gg = "top", G = "bottom" } do
-  kawoosh.map("p", k, "theme lab " .. c, { when = { PANE_FACT } })
+  kawoosh.map("p", k, "theme lab " .. c, { view = VIEW })
 end
 
 -- themes.lab(): what the lab shows — `title`, `short` (how many pairs

@@ -289,10 +289,12 @@ impl fmt::Display for Cond {
     }
 }
 
-/// What a buffer answers facts with: `buffer:NAME`, `language:NAME`,
-/// `modified`, `file`, `readonly`.
+/// What a buffer answers facts with: `buffer:NAME`, `buffer#ID`,
+/// `language:NAME`, `modified`, `file`, `readonly`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BufFacts<'a> {
+    /// The buffer's handle, as Lua has it (`buffer#ID`).
+    pub id: u64,
     pub name: &'a str,
     pub language: &'a str,
     pub modified: bool,
@@ -336,6 +338,9 @@ impl Facts<'_> {
         let Some(b) = self.buffer else {
             return false;
         };
+        if let Some(id) = fact.strip_prefix("buffer#") {
+            return id.parse() == Ok(b.id);
+        }
         match fact.split_once(':') {
             Some(("buffer", n)) => b.name == n,
             Some(("language", l)) => b.language == l,
@@ -384,6 +389,7 @@ pub fn fact_words(fact: &str) -> Option<String> {
         "modified" => "a buffer with unsaved changes",
         "file" => "a buffer with a file",
         "readonly" => "a read-only buffer",
+        "exited" => "a finished command's pane",
         _ => "",
     };
     if !words.is_empty() {
@@ -396,6 +402,9 @@ pub fn fact_words(fact: &str) -> Option<String> {
                 None => format!("the {field} field"),
             },
         );
+    }
+    if fact.starts_with("buffer#") {
+        return Some("one buffer".into());
     }
     Some(match fact.split_once(':') {
         Some(("lua", view)) => format!("the {view} pane"),

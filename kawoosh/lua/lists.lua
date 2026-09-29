@@ -250,5 +250,5 @@ for _, mode in ipairs { "n", "v" } do
   kawoosh.map(mode, "<leader>D", "diagnostics buffer")
 end
 for _, name in ipairs(LISTS) do
-  kawoosh.map("n", "q", "close", { when = { "buffer:" .. name } })
+  kawoosh.map("n", "q", "close", { buffer = name })
 end

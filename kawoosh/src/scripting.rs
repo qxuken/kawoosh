@@ -198,10 +198,14 @@ impl Kawoosh {
         }
     }
 
-    /// `:map list [MODE | PREFIX]` (`:maps`): the keymap as a `*maps*` pane — each
-    /// mode's bindings, keys then command and its conditions; one mode
-    /// by its letter, or the keys under a prefix in every mode.
-    pub(crate) fn show_maps(&mut self, arg: Option<&str>) {
+    /// `:map list [here] [MODE | PREFIX]` (`:maps`): the keymap as a
+    /// `*maps*` pane — each mode's bindings, keys then command, the
+    /// place a local one lives in and its conditions; one mode by its
+    /// letter, or the keys under a prefix in every mode. `here` keeps
+    /// what applies where the keys are (docs/design/local-maps.md): the
+    /// global map and that view's places, a key's bindings in the order
+    /// they are asked — the innermost place's first, the global last.
+    pub(crate) fn show_maps(&mut self, args: &[String]) {
         let modes = [
             Mode::Normal,
             Mode::Visual,
@@ -209,27 +213,63 @@ impl Kawoosh {
             Mode::OperatorPending,
             Mode::Pane,
         ];
-        let (only, prefix) = match arg.map(str::trim).filter(|a| !a.is_empty()) {
+        let here_asked = args.first().is_some_and(|a| a == "here");
+        let arg = args
+            .get(usize::from(here_asked))
+            .map(|a| a.trim())
+            .filter(|a| !a.is_empty());
+        let (only, prefix) = match arg {
             Some(a) => match Mode::from_short(a) {
                 Some(m) => (Some(m), None),
                 None => (None, Some(a.to_string())),
             },
             None => (None, None),
         };
+        // The places where the keys are, innermost first: the view the
+        // keyboard is on, else the resident pane view a pane without one
+        // reads its keys on.
+        let here: Option<Vec<String>> = here_asked.then(|| {
+            let view = self.keyed_view().unwrap_or_else(|| self.ed.pane_view());
+            self.ed.key_scopes(view)
+        });
         let leader = self.ed.keymap.leader().to_string();
         let mut out = String::new();
+        if let Some(places) = &here {
+            let named: Vec<String> = places.iter().map(|p| self.ed.place_name(p)).collect();
+            out.push_str(&match named.is_empty() {
+                true => "here: the global map alone\n\n".to_string(),
+                false => format!(
+                    "here, innermost first: {}, then the global map\n\n",
+                    named.join(" · ")
+                ),
+            });
+        }
         for mode in modes {
             if only.is_some_and(|m| m != mode) {
                 continue;
             }
-            let rows: Vec<String> = self
+            let mut bindings: Vec<(String, kawoosh_editor::Binding)> = self
                 .ed
                 .keymap
                 .bindings(mode)
                 .into_iter()
                 .filter(|(keys, _)| prefix.as_ref().is_none_or(|p| keys.starts_with(p.as_str())))
+                .collect();
+            if let Some(places) = &here {
+                let rank = |b: &kawoosh_editor::Binding| match &b.scope {
+                    Some(s) => places.iter().position(|p| p == s),
+                    None => Some(places.len()),
+                };
+                bindings.retain(|(_, b)| rank(b).is_some());
+                bindings.sort_by_key(|(keys, b)| (keys.clone(), rank(b)));
+            }
+            let rows: Vec<String> = bindings
+                .into_iter()
                 .map(|(keys, b)| {
                     let mut line = format!("{keys:<20} {}", b.line());
+                    if let Some(scope) = &b.scope {
+                        line.push_str(&format!("   in {}", self.ed.place_name(scope)));
+                    }
                     if !b.when.is_empty() {
                         let when: Vec<String> = b.when.iter().map(|c| c.to_string()).collect();
                         line.push_str(&format!("   when {}", when.join(" ")));
@@ -303,6 +343,8 @@ impl Kawoosh {
                     "command": self.ed.commands.contains(&inv.name).then_some(inv.name),
                     "args": inv.args,
                     "when": words(&b.when),
+                    "scope": b.scope,
+                    "place": b.scope.as_deref().map(|s| self.ed.place_name(s)),
                 }));
             }
         }
@@ -414,10 +456,14 @@ impl Kawoosh {
                 keys,
                 command,
                 when,
+                scope,
             } => match Mode::from_short(&mode) {
                 Some(m) => {
                     let when: Vec<Cond> = when.iter().map(|c| Cond::parse(c)).collect();
-                    self.ed.keymap.bind_when(m, &keys, &command, &when);
+                    match scope {
+                        Some(s) => self.ed.keymap.bind_local(&s, m, &keys, &command, &when),
+                        None => self.ed.keymap.bind_when(m, &keys, &command, &when),
+                    }
                 }
                 None => self.ed.message = format!("map: unknown mode {mode}"),
             },
@@ -583,9 +629,10 @@ impl Kawoosh {
                     self.ed.views[v].goal_col = None;
                 }
             }
-            Msg::Unmap { mode, keys } => match Mode::from_short(&mode) {
-                Some(m) => self.ed.keymap.unbind(m, &keys),
-                None => self.ed.message = format!("unmap: unknown mode {mode}"),
+            Msg::Unmap { mode, keys, scope } => match (Mode::from_short(&mode), scope) {
+                (Some(m), Some(s)) => self.ed.keymap.unbind_local(&s, m, &keys),
+                (Some(m), None) => self.ed.keymap.unbind(m, &keys),
+                (None, _) => self.ed.message = format!("unmap: unknown mode {mode}"),
             },
             Msg::ShowBuffer { buffer, split } => {
                 let id = kawoosh_lua::id_of(buffer);
@@ -1756,9 +1803,9 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("map list")
                 .alias(&["maps"])
-                .args(Args::new(&[ArgKind::Text]))
-                .doc("the keymap in a pane: every mode's bindings, or MODE's (n v i o p), or the keys under a prefix"),
-            |k, ctx| k.show_maps(ctx.args.first().map(String::as_str)),
+                .args(Args::new(&[ArgKind::Text, ArgKind::Text]))
+                .doc("the keymap in a pane: every mode's bindings, or MODE's (n v i o p), or the keys under a prefix; `here` first, only what applies where the keys are"),
+            |k, ctx| k.show_maps(&ctx.args),
         ),
         cmd(
             Spec::new("map export")

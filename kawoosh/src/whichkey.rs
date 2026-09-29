@@ -12,7 +12,7 @@
 //! corner: the corner's lines above, the which-key below, so the two
 //! never cover each other.
 
-use kawoosh_editor::{ArgKind, Args, Binding, Mode, Spec};
+use kawoosh_editor::{ArgKind, Args, Binding, Mode, Spec, ViewId};
 use kui_native::{Align, FloatConfig, NodeSpec, TextStyle, Ui};
 
 use crate::app::Kawoosh;
@@ -75,25 +75,43 @@ impl Kawoosh {
         None
     }
 
+    /// The view the keys are resolved on: the one the keyboard is on,
+    /// else the resident pane view a terminal's escape and a pane
+    /// without one read their keys on.
+    fn keys_view(&self) -> Option<ViewId> {
+        self.keyed_view()
+            .or_else(|| self.ed.find_field(kawoosh_editor::PANE_FIELD))
+            .or_else(|| self.ed.any_view())
+    }
+
+    /// The places of the view the keys are resolved on, innermost
+    /// first (local-maps.md): asked once for a card, not per row.
+    fn keys_scopes(&self) -> Vec<String> {
+        self.keys_view()
+            .map(|v| self.ed.key_scopes(v))
+            .unwrap_or_default()
+    }
+
     /// How many of the keys that can follow `keys` in `mode` do
     /// something here: a key whose binding `pick` finds runnable, or
     /// one with such a key under it, `depth` levels down at most.
     fn live_next(
         &self,
+        scopes: &[String],
         mode: Mode,
         keys: &[String],
         pick: &dyn Fn(&[Binding]) -> Option<Binding>,
         depth: usize,
     ) -> usize {
         let km = &self.ed.keymap;
-        let mut next = km.next_keys(mode, keys);
+        let mut next = km.next_keys_in(scopes, mode, keys);
         // As the rows are gathered: visual and operator-pending fall
         // through to normal mode's keys, and a pane to what every pane
         // shares (`<C-w>`, the leader).
         if matches!(mode, Mode::Visual | Mode::OperatorPending)
             || (mode == Mode::Pane && (keys.is_empty() || km.shared_from_pane(keys)))
         {
-            for (k, b) in km.next_keys(Mode::Normal, keys) {
+            for (k, b) in km.next_keys_in(scopes, Mode::Normal, keys) {
                 if !next.iter().any(|(o, _)| *o == k) {
                     next.push((k, b));
                 }
@@ -105,7 +123,7 @@ impl Kawoosh {
                     depth > 0 && {
                         let mut deeper = keys.to_vec();
                         deeper.push(k.clone());
-                        self.live_next(mode, &deeper, pick, depth - 1) > 0
+                        self.live_next(scopes, mode, &deeper, pick, depth - 1) > 0
                     }
                 }
             })
@@ -122,7 +140,8 @@ impl Kawoosh {
         }
         let (keys, mode) = self.open_sequence()?;
         let km = &self.ed.keymap;
-        let mut rows = km.next_keys(mode, &keys);
+        let scopes = self.keys_scopes();
+        let mut rows = km.next_keys_in(&scopes, mode, &keys);
         // Visual and operator-pending lookups fall through to normal
         // mode's, so its sequences are open there too; a pane's for
         // what every pane shares (`<C-w>`, the leader); insert mode's
@@ -130,7 +149,7 @@ impl Kawoosh {
         if matches!(mode, Mode::Visual | Mode::OperatorPending)
             || (mode == Mode::Pane && (keys.is_empty() || km.shared_from_pane(&keys)))
         {
-            for (k, b) in km.next_keys(Mode::Normal, &keys) {
+            for (k, b) in km.next_keys_in(&scopes, Mode::Normal, &keys) {
                 if !rows.iter().any(|(o, _)| *o == k) {
                     rows.push((k, b));
                 }
@@ -184,14 +203,15 @@ impl Kawoosh {
         // key none of whose bindings can run here, and under which no
         // key can either, is left out (roadmap step 61): a group whose
         // every key is gated off here is no group here.
-        let view = self.keyed_view().or_else(|| self.ed.any_view());
+        let view = self.keys_view();
+        let scopes = self.keys_scopes();
         let pick = |bs: &[Binding]| -> Option<Binding> {
             view.and_then(|v| self.ed.pick_binding(v, bs).ok().cloned())
         };
         let live_under = |k: &str| -> usize {
             let mut deeper = keys.to_vec();
             deeper.push(k.to_string());
-            self.live_next(mode, &deeper, &pick, 4)
+            self.live_next(&scopes, mode, &deeper, &pick, 4)
         };
         let rows: Vec<(&String, Option<Binding>, usize)> = rows
             .iter()

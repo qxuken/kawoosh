@@ -157,8 +157,9 @@ and `:e` reachable when the memory pane is the only pane there is.
 | `:` | the command line |
 | `]t` `[t` `gt` `gT` `]q` `[q` | the next-and-previous cluster is shared too (`]b` needs an editor pane and says so; `<C-Tab>` `<C-S-Tab>` are bound in pane mode too) |
 
-A pane's own keys are commands gated by its fact, so one key can
-mean each pane's thing: the memory pane's `y` `o` `x` `m` `p` `/` are
+A pane's own keys are its own maps, local to its place
+([local-maps.md](local-maps.md)), so one key can mean each pane's
+thing and is nothing in the others: the memory pane's `y` `o` `x` `m` `p` `/` are
 `memory recall`, `memory origin`, `memory forget`, `memory pin` (bare
 in the pane: the cursor's row), `list open`, `memory filter` (a field
 in the pane — `field:memory/q` — whose line narrows the view's rows
@@ -166,13 +167,13 @@ as it is typed, fzy-ranked, `<C-n>` `<C-p>` `<C-d>` `<C-u>` moving
 the cursor from the line — and `j` `k` `gg` `G` too in normal mode
 over it, since a one-line field has no line to move to — `<CR>` taking the row, `<Esc>` twice
 handing the keys back with the filter kept, `<Esc>` in the pane
-clearing it), under `memory`; the undo
+clearing it), local to `memory`; the undo
 pane's `u` `<C-r>` `g-` `g+` are `undo pane undo` / `redo` / `older` /
-`newer` under `undo`. A Lua view binds its own under the fact
+`newer`, local to `undo`. A Lua view binds its own local to
 `lua:NAME`, which holds while that view's pane has the keys, field or
 not — the picker's `j` `k` `<C-d>` `<C-u>` `gg` `G` `<CR>` `q` `i`
-with the list blurred are `kawoosh.map("p", …, { when = { "lua:picker"
-} })` — and its `on_event` keeps a key by returning `true`. A pane
+with the list blurred are `kawoosh.map("p", …, { view = "picker" })`
+— and its `on_event` keeps a key by returning `true`. A pane
 that is a list implements `Listing` (its cursor, its length, the rows
 on show) and the `list …` commands move that cursor; a terminal pane
 stays the pty's, with the chords and `<C-w>…` as before.

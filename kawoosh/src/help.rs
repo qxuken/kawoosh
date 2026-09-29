@@ -93,7 +93,8 @@ impl Kawoosh {
         let mut s = String::from(
             "# Keys\n\nEvery key bound as kawoosh runs now, by mode, a plugin's and your \
              `init.lua`'s among them. `<leader>` is the leader key (Space unless `leader` \
-             says otherwise); a key marked *where* runs only there. `:help KEY` comes to a \
+             says otherwise); a key marked *in* belongs to that place and is nothing \
+             elsewhere, one marked *where* runs only there. `:help KEY` comes to a \
              key here; the [commands](commands.md) say more.\n",
         );
         for (mode, title) in [
@@ -111,6 +112,9 @@ impl Kawoosh {
                     && !doc.is_empty()
                 {
                     let _ = write!(s, ": {doc}");
+                }
+                if let Some(scope) = &b.scope {
+                    let _ = write!(s, " *in {}*", self.ed.place_words(scope));
                 }
                 if !b.when.is_empty() {
                     let facts: Vec<String> = b

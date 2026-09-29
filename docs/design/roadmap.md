@@ -2639,8 +2639,8 @@ In order — the bugs first, then what needs deciding:
     the launcher, made from what it showed; without one, a gone
     terminal is a scratch. Commands with no editor pane open run on
     the resident pane view.
-66. **Maps local to a view**, vim's `<buffer>` maps. Filed 2026-09-29,
-    not built: the launcher's `a`–`z` are global normal-mode bindings
+66. ~~**Maps local to a view**, vim's `<buffer>` maps. Filed 2026-09-29:
+    the launcher's `a`–`z` are global normal-mode bindings
     gated by facts (`field:lua:launcher/q`, `launcher:blank`), and a
     gated binding is still found by every lookup — which is what leaked
     into `<C-\>z` from a terminal (`launcher key z: only in the
@@ -2652,7 +2652,30 @@ In order — the bugs first, then what needs deciding:
     keys, so nothing global carries them and no lookup has to know to
     look past them. The note decides what a local map shadows (the
     global one of the same keys, as in vim) and whether a picker's and
-    a listing's gated keys move too.
+    a listing's gated keys move too.~~ Landed 2026-09-29, asked "all
+    panels and plugins should be refactored with this in mind so we
+    would not collide again": [local-maps.md](local-maps.md), decided
+    and built — a binding global or local to a place, a fact (`lua:VIEW`,
+    `field:NAME`, `buffer#ID`, `buffer:NAME`, `language:LANG`,
+    `prompt`, `terminal`, …); every lookup asks the view's places,
+    innermost first, then the global map, so another place's keys are
+    never found; a local key shadows the global one and every longer
+    one under it, a local prefix a shorter global one, and a local
+    binding that cannot run or passes hands the key down; on a field
+    only the field's and its buffer's places count. Every map that
+    named a place moved — the engine's prompt, terminal, memory and
+    undo keys, the shell's copy mode, `*compile*`, the hover, a
+    finished `:!`, the fields', and the picker, launcher, search, du,
+    fonts, themes, theme lab, listing, lists and timed plugins' (a
+    timed buffer's keys its own, by handle). `kawoosh.map(…, { view,
+    field, buffer, language, scope })`, `kawoosh.unmap(…, opts)`,
+    `:map <buffer>`; `:map list`, `:help`'s keys and `:map export` say
+    a binding's place (a buffer's by its name), `:map list here` what
+    applies where the keys are, and the which-key lists a place's keys
+    only there. `editor/tests/modal.rs`'s
+    `a_local_map_is_the_places_alone`,
+    `a_panes_places_are_not_its_fields`; `kawoosh/tests/whichkey.rs`'s
+    `a_which_key_lists_a_places_own_keys_only_there`.
 67. ~~**Breadcrumbs**, asked 2026-09-29: "I miss breadcrumbs navigating
     huge test files, let's add toggleable breadcrumbs."~~ Landed
     2026-09-29: [breadcrumbs.md](breadcrumbs.md), decided and built —

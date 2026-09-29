@@ -1439,26 +1439,30 @@ kawoosh.command("dir hidden", function()
   kawoosh.echo(show and "hidden files shown" or "hidden files hidden")
 end, { doc = "show or hide the dot files in the listings (`dir.hidden`, `g.`)" })
 
-kawoosh.map("n", "g.", "dir hidden", { when = { "language:dir" } })
-kawoosh.map("n", "<CR>", "goto location", { when = { "!language:dir" } })
-kawoosh.map("n", "<CR>", "dir enter")
+-- The listing's keys are its own (docs/design/local-maps.md): found in a
+-- `dir` buffer and nowhere else, over the editor's on the same keys —
+-- `<CR>` is `goto location` everywhere but here, `m` marks everywhere
+-- but here, where `ma` `ms` `mm` `me` sort.
+local LISTING = { language = "dir" }
+kawoosh.map("n", "g.", "dir hidden", LISTING)
+kawoosh.map("n", "<CR>", "dir enter", LISTING)
 -- A double click on a line is `<CR>` on it.
-kawoosh.map("n", "<2-LeftMouse>", "dir enter", { when = { "language:dir" } })
+kawoosh.map("n", "<2-LeftMouse>", "dir enter", LISTING)
 -- oil's `~`: the listed directory as the working one — its one key,
 -- since it runs in a listing only (keymap-regroup.md: no leader where
 -- a key without one does it; `_`, the working directory's listing, is
 -- the engine's beside `-`).
-kawoosh.map("n", "~", "dir cd", { when = { "language:dir" } })
+kawoosh.map("n", "~", "dir cd", LISTING)
 for _, c in ipairs(COPIES) do
-  kawoosh.map("n", "<leader>y" .. c[1], "dir copy " .. c[2], { when = { "language:dir" } })
+  kawoosh.map("n", "<leader>y" .. c[1], "dir copy " .. c[2], LISTING)
 end
-kawoosh.map("n", "<C-l>", "dir refresh", { when = { "language:dir" } })
-kawoosh.map("n", "<C-c>", "dir close", { when = { "language:dir" } })
-kawoosh.map("n", "<C-p>", "dir preview", { when = { "language:dir" } })
-kawoosh.map("n", "J", "dir join", { when = { "language:dir" } })
-kawoosh.map("v", "J", "dir join", { when = { "language:dir" } })
--- `m` is nothing elsewhere, and the sort prefix in a listing.
+kawoosh.map("n", "<C-l>", "dir refresh", LISTING)
+kawoosh.map("n", "<C-c>", "dir close", LISTING)
+kawoosh.map("n", "<C-p>", "dir preview", LISTING)
+kawoosh.map("n", "J", "dir join", LISTING)
+kawoosh.map("v", "J", "dir join", LISTING)
+-- `m` marks elsewhere, and is the sort prefix in a listing.
 for key, letter in pairs { name = "a", size = "s", mtime = "m", type = "e" } do
-  kawoosh.map("n", "m" .. letter, "dir sort " .. key, { when = { "language:dir" } })
-  kawoosh.map("n", "m" .. letter:upper(), "dir sort " .. key .. "!", { when = { "language:dir" } })
+  kawoosh.map("n", "m" .. letter, "dir sort " .. key, LISTING)
+  kawoosh.map("n", "m" .. letter:upper(), "dir sort " .. key .. "!", LISTING)
 end

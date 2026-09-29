@@ -6,6 +6,7 @@ mod drive;
 use drive::Drive;
 use kawoosh::Kawoosh;
 use kawoosh::layout::Content;
+use kawoosh_editor::{Lookup, Mode};
 use kui_native::{InputEvent, KeyMods, Rect, Vec2};
 
 #[test]
@@ -1551,10 +1552,11 @@ fn terminal_raw_names_the_programs_that_make_a_pane_raw() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
-/// After the escape a binding gated off by its own `when` does not
-/// shadow the longer ones under it, as in an editor pane: the
-/// launcher's bare `z` (only in its query) left `<C-\>zz` saying
-/// `launcher key z: only in the launcher pane's q field`.
+/// After the escape another place's keys are not looked at: the
+/// launcher's bare `z` (its query's own) left `<C-\>zz` saying
+/// `launcher key z: only in the launcher pane's q field` while it was a
+/// global binding gated off here; since local-maps.md the terminal's
+/// lookup does not find it at all.
 #[test]
 fn the_escape_looks_past_a_binding_gated_off_here() {
     let mut app = Kawoosh::new("t", "editor text");
@@ -1564,6 +1566,14 @@ fn the_escape_looks_past_a_binding_gated_off_here() {
     d.frame(&mut app);
     app.add_headless_terminal();
     d.frame(&mut app);
+    let pane = app.ed.pane_view();
+    assert!(
+        matches!(
+            app.ed.lookup_keys(pane, Mode::Normal, &["z".to_string()]),
+            Lookup::Prefix
+        ),
+        "the launcher's `z` is not found from a terminal"
+    );
     d.press(&mut app, "<C-\\>");
     d.keys(&mut app, "z");
     assert_eq!(
