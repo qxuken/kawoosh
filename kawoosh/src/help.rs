@@ -25,6 +25,7 @@ pub const PAGES: &[(&str, &str)] = &[
     ("files", include_str!("../help/files.md")),
     ("search", include_str!("../help/search.md")),
     ("code", include_str!("../help/code.md")),
+    ("vcs", include_str!("../help/vcs.md")),
     ("terminal", include_str!("../help/terminal.md")),
     ("memory", include_str!("../help/memory.md")),
     ("look", include_str!("../help/look.md")),

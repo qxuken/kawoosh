@@ -23,6 +23,7 @@ buffers you have open, the pages among them.
 | [files](files.md) | the file manager, the pickers, directory jumps, links, disk usage |
 | [search](search.md) | `/` and `*`, the project search, multibuffers, lists, marks |
 | [code](code.md) | syntax, language servers, diagnostics, compile commands |
+| [vcs](vcs.md) | hunks in the gutter, reviewing a branch, blame, history, worktrees |
 | [terminal](terminal.md) | terminal panes, scrollback, copy mode, `$EDITOR` |
 | [memory](memory.md) | everything yanked and deleted, the undo tree, secrets |
 | [look](look.md) | themes, fonts, the markdown buffer |

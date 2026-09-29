@@ -30,9 +30,9 @@ const GUTTER_PAD: f32 = 12.0;
 /// 13 px default; a bigger font widens it, where a fixed 56 cut `58` to
 /// `5` (2026-09-23). A buffer with marks gets a cell more, the column
 /// their letters are drawn in (docs/design/marks.md).
-pub fn gutter_w(cell_w: f32, lines: usize, marked: bool) -> f32 {
+pub fn gutter_w(cell_w: f32, lines: usize, marked: bool, blame: usize) -> f32 {
     let digits = lines.max(1).ilog10() as usize + 1;
-    let cells = digits.max(4) + usize::from(marked);
+    let cells = digits.max(4) + usize::from(marked) + if blame > 0 { blame + 1 } else { 0 };
     (2.0 * GUTTER_PAD + cell_w * cells as f32).ceil()
 }
 /// How many escapes a line may have and still draw them dim; see
@@ -759,6 +759,11 @@ pub struct RowForm {
     /// The gutter's width, and what it shows beside the row and
     /// whether it is the caret's line.
     pub gutter: Option<(f32, String, bool)>,
+    /// The line's hunk sign and its colour (docs/design/vcs.md).
+    pub sign: Option<(kawoosh_editor::Sign, Color)>,
+    /// The blame column's text on this row, and how far in it starts
+    /// (past a mark's cell).
+    pub blame: Option<(String, f32)>,
     /// A rule across the row instead of text (`---`).
     pub rule: bool,
     /// Images instead of text, side by side, each at its size in px;
@@ -942,6 +947,44 @@ impl Numbers {
 /// column's, so a multibuffer header's band fills the gutter.
 const GUTTER_ROW_PAD: f32 = 12.0;
 
+/// A hunk's sign at the row's left edge (docs/design/vcs.md Decision
+/// 2): a bar the row's height for a line added or changed, a short
+/// one across the top (the bottom) for lines taken out before (after)
+/// it — a float in the gutter's padding, so the gutter is no wider for
+/// it.
+fn sign_bar(ui: &mut Ui<'_>, sign: Option<(kawoosh_editor::Sign, Color)>, lh: f32) {
+    use kawoosh_editor::Sign;
+    let Some((sign, color)) = sign else {
+        return;
+    };
+    let (w, h, y) = match sign {
+        Sign::Added | Sign::Modified => (3.0, lh, 0.0),
+        Sign::Deleted => (8.0, 2.0, 0.0),
+        Sign::DeletedBelow => (8.0, 2.0, lh - 2.0),
+    };
+    ui.leaf(
+        NodeSpec::column()
+            .size(w, h)
+            .bg(color)
+            .float(FloatConfig::parent().offset(0.0, y)),
+    );
+}
+
+/// The blame column's text on a row (docs/design/vcs.md Decision 7):
+/// dim, at the gutter's left past the padding and `x` more (a mark's
+/// cell), a float so the number keeps its place at the right.
+fn blame_text(ui: &mut Ui<'_>, face: Face, pal: &Pal, text: &str, x: f32, lh: f32) {
+    ui.text_in(
+        NodeSpec::row()
+            .height(lh)
+            .cross_align(Align::Center)
+            .float(FloatConfig::parent().offset(GUTTER_ROW_PAD + x, 0.0)),
+        text,
+        mono(face, pal).color(pal.faint),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn gutter_row(
     ui: &mut Ui<'_>,
     face: Face,
@@ -949,6 +992,8 @@ pub fn gutter_row(
     numbers: &Numbers,
     ln: usize,
     mark: Option<char>,
+    sign: Option<(kawoosh_editor::Sign, Color)>,
+    blame: Option<(&str, f32)>,
 ) {
     let color = if ln == numbers.current {
         pal.dim
@@ -973,6 +1018,10 @@ pub fn gutter_row(
             .main_align(Align::End)
             .cross_align(Align::Center),
         |ui| {
+            sign_bar(ui, sign, face.line_height);
+            if let Some((text, x)) = blame {
+                blame_text(ui, face, pal, text, x, face.line_height);
+            }
             if let Some(c) = mark {
                 ui.text_in(
                     NodeSpec::row()
@@ -1282,6 +1331,10 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                         spec.height(lh).cross_align(Align::Center)
                     },
                     |ui| {
+                        sign_bar(ui, f.sign, lh);
+                        if let Some((text, x)) = &f.blame {
+                            blame_text(ui, face, pal, text, *x, lh);
+                        }
                         let color = if *current { pal.dim } else { pal.faint };
                         ui.text(label, mono(face, pal).color(color));
                     },

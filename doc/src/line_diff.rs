@@ -41,6 +41,28 @@ pub fn line_edits(old: &str, new: &str) -> Vec<(Range<usize>, String)> {
     out
 }
 
+/// The differences between `old` and `new` as lines (docs/design/vcs.md
+/// Decision 1): each the lines of `old` (from 0, end exclusive) and the
+/// lines of `new` standing in their place — one side empty for a pure
+/// addition or deletion. Ascending, disjoint; none when they are the
+/// same. The histogram over the lines, as [`line_edits`] uses it.
+pub fn line_hunks(old: &str, new: &str) -> Vec<(Range<usize>, Range<usize>)> {
+    if old == new {
+        return Vec::new();
+    }
+    let input = InternedInput::new(old, new);
+    let mut diff = Diff::compute(Algorithm::Histogram, &input);
+    diff.postprocess_lines(&input);
+    diff.hunks()
+        .map(|h| {
+            (
+                h.before.start as usize..h.before.end as usize,
+                h.after.start as usize..h.after.end as usize,
+            )
+        })
+        .collect()
+}
+
 /// `old[a]` becoming `to`, as the one edit of the bytes that differ
 /// (on char boundaries); none when they are the same.
 fn narrowed(old: &str, a: Range<usize>, to: &str, out: &mut Vec<(Range<usize>, String)>) {
@@ -121,6 +143,14 @@ mod tests {
         let last = e.last().unwrap().0.end;
         assert!(last <= old.find("}\nkeep").unwrap());
         assert!(line_edits("same\n", "same\n").is_empty());
+        // The same difference as lines: the reindent is two lines
+        // changed, in place.
+        assert_eq!(line_hunks(old, new), vec![(1..3, 1..3)]);
+        assert_eq!(
+            line_hunks("one\ntwo\nthree\n", "zero\none\nthree\nfour"),
+            vec![(0..0, 0..1), (1..2, 2..2), (3..3, 3..4)]
+        );
+        assert!(line_hunks("same\n", "same\n").is_empty());
         for (a, b) in [
             ("", "x\n"),
             ("x\n", ""),

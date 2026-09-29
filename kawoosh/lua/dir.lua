@@ -18,8 +18,8 @@
 -- listing, and `ms` `mm` `ma` `me` (`mS` `mM` `mA` `mE` for the reverse)
 -- list it again by size, mtime, name or type, yazi's keys under `m`;
 -- `g.` shows or hides the dot files (`dir.hidden`); version control's
--- word on each entry colours its name (`dir.vcs_enabled`; the providers
--- are `kawoosh.dir.vcs`, git bundled). A listing's
+-- word on each entry colours its name (`dir.vcs_enabled`; the backends
+-- are `kawoosh.vcs`'s, docs/design/vcs.md). A listing's
 -- directory is on a watch: made, removed or renamed by anything, it is
 -- read again where it is unless it has edits of its own. The preview
 -- draws a picture as one (`kawoosh.image`). A
@@ -87,7 +87,7 @@ local fs = kawoosh.fs
 -- wherever it came from), `NEW` for a line typed in; the `../` line is
 -- `{ up = true }`. See `state_of`.
 local dir = { state = {}, followed = nil, sorts = {} }
--- The module, for a config to reach (`kawoosh.dir.vcs`).
+-- The module, for a config to reach (`kawoosh.dir`).
 kawoosh.dir = dir
 
 -- The entry behind a line no entry is: a file to create.
@@ -1308,69 +1308,46 @@ end)
 
 -- What version control says of a listing's entries, painted on their
 -- names: ignored faint, untracked and added green, modified in the
--- command colour, a conflict red (`kawoosh.buf.paint`, set "vcs").
--- Hackable: `dir.vcs` is a list of providers, each `{ name =,
--- status = fn(dir, done) }` — `done(states)` with a state by entry name
--- (`"ignored"`, `"untracked"`, `"added"`, `"modified"`, `"conflict"`),
--- or `done(nil)` when the directory is not theirs — asked in order, the
--- first that answers painting. Git is bundled; a `jj` or `fossil` one
--- is `table.insert(kawoosh.dir.vcs, 1, { … })` in `init.lua`.
--- `dir.vcs_enabled = false` in the settings leaves the listings plain.
-dir.vcs = {}
+-- command colour, a conflict red (`kawoosh.buf.paint`, set "vcs"). The
+-- backend is `kawoosh.vcs`'s (docs/design/vcs.md Decision 4): whichever
+-- owns the listed directory answers `status` for what is under it, and
+-- another system is `kawoosh.vcs.register`'s to add — the listing has
+-- no providers of its own. `dir.vcs_enabled = false` in the settings
+-- leaves the listings plain.
 
 -- Which state wins where a directory holds several.
 local RANK = { conflict = 5, modified = 4, added = 3, untracked = 2, ignored = 1 }
 
--- The bundled git provider: one `git status` per listing, its paths
--- (relative to the repository's root) taken back to the entries of the
--- listed directory — a directory with anything in it modified is.
-table.insert(dir.vcs, {
-  name = "git",
-  status = function(d, done)
-    local out = {}
-    kawoosh.spawn("git rev-parse --show-prefix && git status --porcelain=v1 --ignored=matching --untracked-files=normal -- .", {
-      cwd = d,
-      on_lines = function(ls) for _, l in ipairs(ls) do out[#out + 1] = l end end,
-      on_exit = function(code)
-        if code ~= 0 or #out == 0 then return done(nil) end
-        local prefix = out[1]
-        local states = {}
-        for i = 2, #out do
-          local xy, path = out[i]:match("^(..) (.+)$")
-          if xy then
-            path = path:match(" %-> (.+)$") or path
-            path = path:gsub('^"(.*)"$', "%1")
-            if path:sub(1, #prefix) == prefix then path = path:sub(#prefix + 1) end
-            local entry = path:match("^([^/]+)")
-            local state
-            if xy == "!!" then state = "ignored"
-            elseif xy == "??" then state = "untracked"
-            elseif xy:find("U") or xy == "AA" or xy == "DD" then state = "conflict"
-            elseif xy:find("A") then state = "added"
-            else state = "modified" end
-            if entry then
-              local was = states[entry]
-              if not was or RANK[state] > RANK[was] then states[entry] = state end
-            end
-          end
-        end
-        done(states)
-      end,
-    })
-  end,
-})
+-- The states by entry name of directory `d`, from a backend's files
+-- (`{ path =, state = }`, absolute): a file under an entry's directory
+-- gives the entry its state, the strongest winning; a file deleted
+-- makes its directory modified.
+function dir.states_of(d, files)
+  local states = {}
+  local prefix = d:gsub("/$", "") .. "/"
+  for _, f in ipairs(files) do
+    if f.path:sub(1, #prefix) == prefix then
+      local entry = f.path:sub(#prefix + 1):match("^([^/]+)")
+      local state = f.state == "deleted" and "modified" or f.state
+      if entry and RANK[state] then
+        local was = states[entry]
+        if not was or RANK[state] > RANK[was] then states[entry] = state end
+      end
+    end
+  end
+  return states
+end
 
--- Asks the providers about listing `name` of `d` and paints its lines,
--- read as they are when the answer comes (edited meanwhile or not).
+-- Asks the backend that owns `d` about listing `name` and paints its
+-- lines, read as they are when the answer comes (edited meanwhile or
+-- not).
 function dir.decorate(name, d)
-  if kawoosh.opt("dir.vcs_enabled") == false then return end
-  local i = 0
-  local function ask()
-    i = i + 1
-    local p = dir.vcs[i]
-    if not p then return end
-    local ok, err = pcall(p.status, d, function(states)
-      if not states then return ask() end
+  if kawoosh.opt("dir.vcs_enabled") == false or not kawoosh.vcs then return end
+  kawoosh.vcs.root(d, function(r)
+    if not r or not r.backend.status then return end
+    r.backend.status(r.root, function(files)
+      if not files then return end
+      local states = dir.states_of(d, files)
       local h
       for _, x in ipairs(kawoosh.buf.list()) do
         if kawoosh.buf.name(x) == name then h = x end
@@ -1384,10 +1361,8 @@ function dir.decorate(name, d)
         at = at + #line + 1
       end
       kawoosh.buf.paint("vcs", spans, h)
-    end)
-    if not ok then kawoosh.echo("dir vcs " .. tostring(p.name) .. ": " .. tostring(err)) end
-  end
-  ask()
+    end, { under = d, untracked = "normal" })
+  end)
 end
 
 -- ------------------------------------------------ hidden files, watch

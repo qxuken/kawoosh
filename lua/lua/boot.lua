@@ -279,6 +279,20 @@ function kawoosh._focus(buffer)
     if not ok then kawoosh.echo("on_focus: " .. tostring(err)) end
   end
 end
+-- kawoosh.on_write(fn): `fn(path, buffer)` after a file buffer is
+-- written — what a version control backend reads the file's state
+-- again on (docs/design/vcs.md).
+kawoosh._write_hooks = {}
+function kawoosh.on_write(fn)
+  kawoosh._write_hooks[#kawoosh._write_hooks + 1] = fn
+end
+function kawoosh._wrote(path, buffer)
+  for _, fn in ipairs(kawoosh._write_hooks) do
+    local ok, err = pcall(fn, path, buffer)
+    if not ok then kawoosh.echo("on_write: " .. tostring(err)) end
+  end
+end
+
 kawoosh._places_hooks = {}
 function kawoosh.on_places(fn)
   kawoosh._places_hooks[#kawoosh._places_hooks + 1] = fn
@@ -530,11 +544,17 @@ end
 -- kawoosh.fs.form(path, form): the path as `path copy` copies it —
 -- "relative" (to the working directory, whole when outside it),
 -- "absolute", "dir", "dir absolute", "name", "stem".
--- kawoosh.spawn(cmd, { cwd =, stdin =, on_lines = fn(lines), on_exit =
--- fn(code) }) runs `cmd` through the shell — `stdin` written to it
--- and closed, for text that must not be on a command line — and hands
--- its output over in lines as they come, once a frame; it returns a token `kawoosh.kill(token)`
--- stops the process with (its `on_exit` then gets no code).
+-- kawoosh.spawn(cmd, { cwd =, stdin =, on_lines = fn(lines), on_stderr =
+-- fn(lines), on_done = fn(text, code), on_exit = fn(code) }) runs `cmd`
+-- — a line through the shell, or a list `{ "git", "status" }`, the
+-- program and its arguments with no shell between (nothing quoted,
+-- nothing for nushell to refuse) — `stdin` written to it and closed,
+-- for text that must not be on a command line — and hands its output
+-- over in lines as they come, once a frame, or whole when it ends
+-- through `on_done` (a trailing newline kept, as a base text needs);
+-- stderr comes with the lines unless `on_stderr` takes it apart. It
+-- returns a token `kawoosh.kill(token)` stops the process with (its
+-- `on_exit` then gets no code).
 -- kawoosh.fuzzy(needle, list[, limit]) scores a small list;
 -- kawoosh.matcher(list) holds a big one — `m:query(needle, limit)`
 -- answers `{ index =, score =, positions = }` best first, positions

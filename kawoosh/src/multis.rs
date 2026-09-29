@@ -77,6 +77,20 @@ impl Kawoosh {
                     }
                     out.push(Part::Lines(id, lines));
                 }
+                // A buffer by its handle: a scratch holding a revision's
+                // text (docs/design/vcs.md Decision 6); one gone is left
+                // out.
+                MultiPart::Buffer(h, lines) => {
+                    let id = kawoosh_lua::id_of(h);
+                    if self.ed.buffers.contains_key(id) {
+                        out.push(Part::Lines(id, lines));
+                    }
+                }
+                MultiPart::Named(n, lines) => {
+                    if let Some((id, _)) = self.ed.buffers.iter().find(|(_, b)| b.name == n) {
+                        out.push(Part::Lines(id, lines));
+                    }
+                }
             }
         }
         let id = match open {
