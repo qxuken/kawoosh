@@ -1,7 +1,7 @@
 # The syntax tree in Lua
 
-Status: proposed 2026-09-29, not built; the calls taken here, each the
-user's to overturn. Asked, after `<A-u>` (`node parent`): "design the
+Status: decided and built 2026-09-29, the calls taken here, each the
+user's to overturn; where the build moved a call, the section says so. Asked, after `<A-u>` (`node parent`): "design the
 Lua node API", with ckolkey/ts-node-action as what it should make
 possible — a boolean flipped, an argument list split onto its lines
 and joined back.
@@ -55,9 +55,16 @@ Its functions sit on one shared metatable, so `n:parent()` reads as a
 method while `pairs(n)`, `kawoosh.test.eq(n.type, …)` and `:lua
 =kawoosh.node.at()` see data; each is `kawoosh.node.NAME(n, …)` too.
 `tostring(n)` is `call_expression 120..164`. To walk from a table, Rust
-finds its node again at the table's version: the smallest node over
-`from..to`, then up through the nodes of the same range to the one with
-its `id` — as deep as the tree, a few dozen steps.
+finds its node again at the table's version: down through the nodes
+over `from..to` to the one with its `id` — as deep as the tree, times
+the siblings on the way.
+
+Built: the `id` alone did not hold. The ts thread may answer one
+version twice, the second a whole parse whose nodes have new ids, so a
+node read before it was not found. The same version is the same text,
+so the node of the table's `type` over exactly `from..to` (the
+innermost, if several) is the same node, and is taken when the id is
+not there; `==` compares buffer, version, range and type, not the id.
 
 Beaten: **a userdata handle**, neovim's `TSNode`. Each step is a pointer
 move rather than a re-find, but a handle is not data — it prints as an
@@ -67,9 +74,11 @@ file is several hundred thousand tables for one question.
 
 ### 2. The tree of the text Lua reads, or none
 
-`BufSnap` carries the buffer's tree only when its version is the
-snapshot's, so the tree a plugin walks is always the text
-`kawoosh.buf.slice` reads — offsets from one are good in the other.
+The shell hands the runtime each tree as the ts thread answers it
+(`Runtime::set_tree`, beside `inspector.trees`), and `kawoosh.node`
+reads it only when its version is the published snapshot's, so the
+tree a plugin walks is always the text `kawoosh.buf.slice` reads —
+offsets from one are good in the other.
 When the tree is behind the text (a frame or two after a keystroke) or
 the language has no grammar, `kawoosh.node.at()` returns `nil` and the
 reason, in `<A-o>`'s words: `the syntax tree is behind the text: again
@@ -110,15 +119,18 @@ as in `kawoosh.buf`. Several carets are the caller's loop over
 | `n:parent()` | the node around it, nil at the root |
 | `n:children(opts)` | its children, in order |
 | `n:child(i, opts)` | the `i`th, from 1; `-1` the last |
-| `n:field(name)` | the child filling `name` — `condition`, `body`, `operator` |
+| `n:get(name)` | the child filling the field `name` — `condition`, `body`, `operator` |
 | `n:next(opts)` `n:prev(opts)` | the sibling after, before |
 | `n:closest(types)` | itself or the nearest node around it whose type is one of `types` (a string, or a list) — the DOM's `closest` |
 | `n:text()` | its text, read from the snapshot when asked |
 | `n:select()` | the selection over it, visual, the head on its last character, as `<A-o>` leaves it |
 
 `opts.anonymous = true` counts tokens too; without it they are skipped,
-as `<A-o>` and the inspector's default view skip them. `field` finds a
-token as well — a binary expression's `operator` is `==` — since a field
+as `<A-o>` and the inspector's default view skip them. Built: the
+note had `n:field(name)`, but a table's `field` is its own field name,
+and a key cannot be both the data and the method — `n.field` would be
+the function whenever the node fills none — so the method is `get`.
+`get` finds a token as well — a binary expression's `operator` is `==` — since a field
 names it. `closest` is most of what an action or a textobject asks: the
 function around the caret, the list the caret is in. `text()` is a call
 rather than a field so that the root of a 5 MB file costs nothing until
@@ -141,7 +153,9 @@ end
 Each match is `{ pattern = i, captures = { NAME = node }, all = {
 NAME = { node, … } } }` — `captures` the first node of each capture,
 which is every capture but a quantified one (`@arg+`), whose nodes
-are all in `all`. The query compiles against the tree's own grammar
+are all in `all`. (A quantifier repeats over adjacent siblings: an
+argument list's `(_)+` is a match per argument, the `,` between them
+breaking the run, as tree-sitter has it.) The query compiles against the tree's own grammar
 (`Tree::language`), so a grammar added with `kawoosh.language` works
 the same; compiled queries are kept by language and source, and one
 that does not compile raises its row and column. The crate evaluates
@@ -166,7 +180,13 @@ when a plugin wants it.
 
 `kawoosh.lua`, the types file written for lua-language-server, gains
 `---@class kawoosh.Node` with its fields and methods, so `n:` completes
-in a plugin. The names a grammar gives — `boolean_literal`, the field
+in a plugin, and `at`, `leaf`, `root` and `query` say they return one.
+Built with it: the types file reads a function's doc from `nodes.rs`
+as well as `lib.rs`, from a `//` block too (the Rust half's functions
+are set in `let`s, where rustc warns of a `///`), and a `[, buffer]`
+in a doc's spelling is an optional parameter rather than the end of
+the list — so twenty-odd functions documented that way got their docs
+and their trailing parameters. The names a grammar gives — `boolean_literal`, the field
 `consequence` — are read off `:syntax_tree`, which shows each node's
 type and field under the caret; `help/lua.md` says so.
 
@@ -225,9 +245,9 @@ actions ship for which languages, where the caret lands after one.
 
 ## Build
 
-1. `kawoosh-lua` depends on `tree-sitter` itself; `BufSnap` gains
-   `tree: Option<Tree>`, and `publish` takes the shell's trees and
-   hands a buffer its own when the versions match.
+1. `kawoosh-lua` depends on `tree-sitter` itself; `Published` gains
+   the trees, which the shell sets as they come (`Runtime::set_tree`)
+   and `publish` prunes to the open buffers.
 2. `lua/src/nodes.rs`: the table ↔ node round trip (§1), `at`, `leaf`,
    `root`, the walking functions, the metatable, the version check.
 3. `kawoosh.node.query` with its cache.

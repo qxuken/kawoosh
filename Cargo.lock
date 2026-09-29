@@ -1808,6 +1808,7 @@ dependencies = [
  "mlua",
  "serde_json",
  "slotmap",
+ "tree-sitter",
 ]
 
 [[package]]
