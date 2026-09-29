@@ -28,7 +28,7 @@ pub use command::{
     ArgKind, Args, BufFacts, Command, Cond, Ctx, Facts, FnCommand, Form, Invocation, Kind,
     MotionKind, Registry, Spec, fact_words,
 };
-pub use hunks::{Base, LineHunk, Sign};
+pub use hunks::{Base, Blame, BlameRow, LineHunk, Sign};
 pub use kawoosh_doc::Hunk;
 use kawoosh_doc::{Buffer, BufferId, Version};
 pub use keymap::{Binding, KeyStroke, Keymap, Lookup, Mode};
@@ -950,6 +950,9 @@ pub struct Editor {
     /// ([`hunks`], docs/design/vcs.md): the file as the index has it,
     /// a revision's, whatever was given.
     pub bases: HashMap<BufferId, Base>,
+    /// The blame column of each buffer that has one on
+    /// ([`hunks::Blame`]), shared so a publish copies nothing.
+    pub blames: HashMap<BufferId, Rc<Blame>>,
     /// The multibuffers, by their buffer ([`multi`]).
     pub multis: HashMap<BufferId, Multi>,
     /// Buffers opened only for a multibuffer: not listed while nothing
@@ -1002,6 +1005,7 @@ impl Editor {
             edited: false,
             diagnostics: Default::default(),
             bases: HashMap::new(),
+            blames: HashMap::new(),
             multis: HashMap::new(),
             borrowed: Default::default(),
             released: Vec::new(),
@@ -1025,6 +1029,7 @@ impl Editor {
         self.history.remove(&id);
         self.locals.remove(&id);
         self.bases.remove(&id);
+        self.blames.remove(&id);
         self.forget_multi(id);
         // Its own maps go with it, as vim's `<buffer>` maps do.
         self.keymap.drop_scope(&buffer_scope(id));

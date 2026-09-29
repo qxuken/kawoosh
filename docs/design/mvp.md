@@ -193,7 +193,11 @@ That replaces copy-mode with machinery that already exists.
 ### 3b. Existing TUIs are the tool ecosystem
 
 Kawoosh does not grow a git UI or a process monitor. **A terminal pane
-running lazygit is the git UI**; htop and friends follow the same rule. This
+running lazygit is the git UI**; htop and friends follow the same rule. (Read
+narrower since 2026-09-29, [vcs.md](vcs.md): committing, rebasing and the
+reflog are lazygit's still; what an editor does *while editing* — the hunks
+in the gutter, a change taken back, a branch read against main, blame,
+history — is built in, over any backend.) This
 is the multiplexer half of the thesis earning its keep: the ecosystem of
 mature TUIs is the plugin ecosystem for tools, for free. The file manager is
 the deliberate exception — it is built in (Decision 5b): navigating files is

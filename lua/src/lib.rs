@@ -36,7 +36,14 @@ pub enum MultiPart {
     /// A buffer's lines by its handle — a scratch holding a revision's
     /// text, which no path names (docs/design/vcs.md Decision 6).
     Buffer(u64, std::ops::Range<usize>),
+    /// The same by the buffer's name: a scratch just asked for, not in
+    /// the snapshot yet.
+    Named(String, std::ops::Range<usize>),
 }
+
+/// A blame column's runs as `kawoosh.buf.blame` gives them: `(line
+/// from 0, count, label, rev, summary)`.
+pub type BlameRows = Vec<(usize, usize, String, String, String)>;
 
 /// What `kawoosh.spawn` runs: a line through the shell, or a program
 /// and its arguments.
@@ -464,6 +471,14 @@ pub enum Msg {
         text: Option<String>,
         label: String,
     },
+    /// `kawoosh.buf.blame(rows[, buffer])`: the blame column's runs —
+    /// `(line from 0, count, label, rev, summary)` — for the text as
+    /// it is; none takes the column off (docs/design/vcs.md Decision 7).
+    Blame {
+        buffer: Option<u64>,
+        name: Option<String>,
+        rows: Option<BlameRows>,
+    },
     Tool {
         name: String,
         cmd: String,
@@ -648,6 +663,8 @@ pub struct BufSnap {
     /// What it is read against, and the hunks as last diffed
     /// (docs/design/vcs.md): shared, so a publish copies nothing.
     pub base: Option<kawoosh_editor::Base>,
+    /// Its blame column, while one is on: shared likewise.
+    pub blame: Option<std::rc::Rc<kawoosh_editor::Blame>>,
 }
 
 thread_local! {
@@ -1453,6 +1470,7 @@ impl Runtime {
                     in_tab: ed.tab_buffers.as_ref().is_none_or(|s| s.contains(&id)),
                     indent: (ed.tabstop_in(id), ed.shiftwidth_in(id), ed.expandtab_in(id)),
                     base: ed.base(id).cloned(),
+                    blame: ed.blame(id).cloned(),
                 },
             );
         }
@@ -2832,6 +2850,58 @@ fn seed(
             Ok(token)
         })?,
     )?;
+    // ---- `kawoosh.diff(old, new)`: the hunks between two texts, at
+    // once, as `kawoosh.buf.hunks` shapes them (docs/design/vcs.md
+    // Decision 6): `{ kind =, line =, end_line =, old_line =, old_end =,
+    // old = { … } }` each, lines from 1, ends exclusive — what a review
+    // of two revisions is laid out from, no buffer needed.
+    k.set(
+        "diff",
+        lua.create_function(|lua, (old, new): (String, String)| {
+            let hunks = kawoosh_doc::line_diff::line_hunks(&old, &new);
+            let starts = {
+                let mut v = vec![0];
+                v.extend(
+                    old.bytes()
+                        .enumerate()
+                        .filter(|(_, b)| *b == b'\n')
+                        .map(|(i, _)| i + 1),
+                );
+                if *v.last().unwrap() != old.len() {
+                    v.push(old.len());
+                }
+                v
+            };
+            let out = lua.create_table()?;
+            for (o, n) in hunks {
+                let t = lua.create_table()?;
+                t.set(
+                    "kind",
+                    if n.is_empty() {
+                        "deleted"
+                    } else if o.is_empty() {
+                        "added"
+                    } else {
+                        "modified"
+                    },
+                )?;
+                t.set("line", n.start + 1)?;
+                t.set("end_line", n.end + 1)?;
+                t.set("old_line", o.start + 1)?;
+                t.set("old_end", o.end + 1)?;
+                let lines = lua.create_table()?;
+                for ln in o {
+                    let (Some(&a), Some(&b)) = (starts.get(ln), starts.get(ln + 1)) else {
+                        break;
+                    };
+                    lines.push(old[a..b].trim_end_matches('\n').trim_end_matches('\r'))?;
+                }
+                t.set("old", lines)?;
+                out.push(t)?;
+            }
+            Ok(out)
+        })?,
+    )?;
     // `kawoosh.image(path)`: the image file at `path` for a view's
     // `image { id = }` — `{ id, width, height }` once it is read and
     // registered, `nil` while it is on its way (asked for the first
@@ -3783,6 +3853,70 @@ fn seed(
                 Ok(())
             },
         )?,
+    )?;
+    // ---- `kawoosh.buf.blame(rows[, buffer])`: the blame column on
+    // (docs/design/vcs.md Decision 7) — `rows` a list of `{ line =,
+    // count =, label =, rev =, summary = }`, `line` from 1, for the
+    // text as it is now; carried through edits after by each run's
+    // first line — or off, with `rows` nil or false.
+    let (qq, pp) = (q(queue), published.clone());
+    buf.set(
+        "blame",
+        lua.create_function(move |_, (rows, which): (Option<LV>, Option<LV>)| {
+            let (buffer, name) = which_buffer(&pp, which)?;
+            let rows = match rows {
+                Some(LV::Table(t)) => {
+                    let mut out = Vec::new();
+                    for r in t.sequence_values::<Table>() {
+                        let r = r?;
+                        let line: usize = r.get::<Option<usize>>("line")?.unwrap_or(1).max(1);
+                        let count: usize = r.get::<Option<usize>>("count")?.unwrap_or(1);
+                        out.push((
+                            line - 1,
+                            count,
+                            r.get::<Option<String>>("label")?.unwrap_or_default(),
+                            r.get::<Option<String>>("rev")?.unwrap_or_default(),
+                            r.get::<Option<String>>("summary")?.unwrap_or_default(),
+                        ));
+                    }
+                    Some(out)
+                }
+                Some(LV::Nil) | Some(LV::Boolean(false)) | None => None,
+                _ => return Err(mlua::Error::runtime("blame: a list of rows, or nil")),
+            };
+            qq.borrow_mut().push(Msg::Blame { buffer, name, rows });
+            Ok(())
+        })?,
+    )?;
+    // `kawoosh.buf.blame_at(line[, buffer])`: the blame run line `line`
+    // (from 1) is in — `{ line, count, label, rev, summary }`, as the
+    // rows were placed when the column was set — or nil: with no
+    // column on, or a line outside every run.
+    let pp = published.clone();
+    buf.set(
+        "blame_at",
+        lua.create_function(move |lua, (line, h): (usize, Option<u64>)| {
+            with_buf(&pp, h, |b| -> mlua::Result<LV> {
+                let Some(blame) = &b.blame else {
+                    return Ok(LV::Nil);
+                };
+                let ln = line.max(1) - 1;
+                let Some(r) = blame
+                    .rows
+                    .iter()
+                    .find(|r| (r.line..r.line + r.count).contains(&ln))
+                else {
+                    return Ok(LV::Nil);
+                };
+                let t = lua.create_table()?;
+                t.set("line", r.line + 1)?;
+                t.set("count", r.count)?;
+                t.set("label", r.label.clone())?;
+                t.set("rev", r.rev.clone())?;
+                t.set("summary", r.summary.clone())?;
+                Ok(LV::Table(t))
+            })?
+        })?,
     )?;
     // `kawoosh.buf.base_label([buffer])`: what the buffer is read
     // against, by the label it was given; nil for no base.
@@ -5087,9 +5221,10 @@ fn seed(
                         LV::Table(t) => {
                             let from: usize = t.get::<Option<usize>>("from")?.unwrap_or(1).max(1);
                             let to: usize = t.get::<Option<usize>>("to")?.unwrap_or(from).max(from);
-                            match t.get::<Option<u64>>("buffer")? {
-                                Some(h) => out.push(MultiPart::Buffer(h, from - 1..to)),
-                                None => {
+                            match (t.get::<Option<u64>>("buffer")?, t.get::<Option<String>>("name")?) {
+                                (Some(h), _) => out.push(MultiPart::Buffer(h, from - 1..to)),
+                                (None, Some(n)) => out.push(MultiPart::Named(n, from - 1..to)),
+                                (None, None) => {
                                     let path: String = t.get("path")?;
                                     out.push(MultiPart::Lines(expand(&path), from - 1..to));
                                 }

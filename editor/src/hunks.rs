@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use kawoosh_doc::{BufferId, Version};
@@ -122,7 +123,137 @@ impl Base {
     }
 }
 
+/// One run of lines a blame ascribes to one commit (docs/design/vcs.md
+/// Decision 7): where it started when the blame was asked, how many
+/// lines, and what the column says of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlameRow {
+    /// The run's first line (from 0) at [`Blame::version`], and that
+    /// line's start offset then — what the journal carries.
+    pub line: usize,
+    pub start: usize,
+    pub count: usize,
+    /// The column's text: `author · 3d`.
+    pub label: String,
+    pub rev: String,
+    pub summary: String,
+}
+
+/// A buffer's blame as a backend answered it, for the text at
+/// `version`; carried through edits after by each run's first line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Blame {
+    pub rows: Vec<BlameRow>,
+    pub version: Version,
+    /// The widest label, in characters: the column's width.
+    pub width: usize,
+}
+
 impl Editor {
+    /// Buffer `id`'s blame column set to `rows` — `(line from 0, count,
+    /// label, rev, summary)`, for the text as it is now.
+    pub fn set_blame(&mut self, id: BufferId, rows: Vec<(usize, usize, String, String, String)>) {
+        let Some(b) = self.buffers.get(id) else {
+            return;
+        };
+        let count = b.line_count();
+        let rows: Vec<BlameRow> = rows
+            .into_iter()
+            .filter(|(line, ..)| *line < count)
+            .map(|(line, n, label, rev, summary)| BlameRow {
+                line,
+                start: b.line_start(line),
+                count: n.max(1),
+                label,
+                rev,
+                summary,
+            })
+            .collect();
+        let width = rows
+            .iter()
+            .map(|r| r.label.chars().count())
+            .max()
+            .unwrap_or(0);
+        self.blames.insert(
+            id,
+            Rc::new(Blame {
+                rows,
+                version: b.version(),
+                width,
+            }),
+        );
+    }
+
+    pub fn clear_blame(&mut self, id: BufferId) -> bool {
+        self.blames.remove(&id).is_some()
+    }
+
+    pub fn blame(&self, id: BufferId) -> Option<&Rc<Blame>> {
+        self.blames.get(&id)
+    }
+
+    /// The blame column's width for buffer `id`, in characters; 0 when
+    /// it is off.
+    pub fn blame_width(&self, id: BufferId) -> usize {
+        self.blames.get(&id).map_or(0, |b| b.width)
+    }
+
+    /// What the blame column says beside each of buffer `id`'s lines in
+    /// `lines`, as of the text now: each run's label on its first line
+    /// (`true`) and blank on the rest, the runs carried from the version
+    /// they were asked at by their first line.
+    pub fn blame_labels(
+        &self,
+        id: BufferId,
+        lines: Range<usize>,
+    ) -> HashMap<usize, (String, bool)> {
+        let mut out = HashMap::new();
+        let (Some(blame), Some(b)) = (self.blames.get(&id), self.buffers.get(id)) else {
+            return out;
+        };
+        let count = b.line_count();
+        let journal = b.journal();
+        let moved = blame.version != b.version();
+        for r in &blame.rows {
+            let first = if moved {
+                match journal.transform_offset(r.start, blame.version, kawoosh_doc::Bias::Right) {
+                    Ok(off) => b.line_of(off.min(b.len())),
+                    Err(_) => continue,
+                }
+            } else {
+                r.line
+            };
+            for k in 0..r.count {
+                let ln = first + k;
+                if ln >= count {
+                    break;
+                }
+                if lines.contains(&ln) {
+                    out.entry(ln).or_insert_with(|| (r.label.clone(), k == 0));
+                }
+            }
+        }
+        out
+    }
+
+    /// The blame run buffer `id`'s line `line` is in, as of the text
+    /// now.
+    pub fn blame_at(&self, id: BufferId, line: usize) -> Option<&BlameRow> {
+        let (blame, b) = (self.blames.get(&id)?, self.buffers.get(id)?);
+        let journal = b.journal();
+        blame.rows.iter().find(|r| {
+            let first = if blame.version != b.version() {
+                match journal.transform_offset(r.start, blame.version, kawoosh_doc::Bias::Right) {
+                    Ok(off) => b.line_of(off.min(b.len())),
+                    Err(_) => return false,
+                }
+            } else {
+                r.line
+            };
+            (first..first + r.count).contains(&line)
+        })
+    }
+
     /// Buffer `id` read against `text` from now on, called `label`. A
     /// base the same as the one it has keeps its hunks — a backend
     /// asked again after a commit elsewhere; another starts them over.
@@ -396,6 +527,36 @@ mod tests {
         assert!(ed.hunks(id).is_empty());
         assert!(ed.clear_base(id));
         assert!(ed.signs_in(id, 0..10).is_empty());
+    }
+
+    #[test]
+    fn a_blame_column_is_carried_by_its_runs_first_lines() {
+        let mut ed = Editor::new();
+        let id = ed.add_buffer(Buffer::new("a", "one\ntwo\nthree\nfour\n"));
+        let v = ed.add_view(id);
+        ed.set_blame(
+            id,
+            vec![
+                (0, 2, "ann · 3d".into(), "aaa".into(), "first".into()),
+                (2, 2, "bob · now".into(), "bbb".into(), "second".into()),
+            ],
+        );
+        assert_eq!(ed.blame_width(id), 9);
+        let labels = ed.blame_labels(id, 0..10);
+        assert_eq!(labels.get(&0), Some(&("ann · 3d".to_string(), true)));
+        assert_eq!(labels.get(&1), Some(&("ann · 3d".to_string(), false)));
+        assert_eq!(labels.get(&2), Some(&("bob · now".to_string(), true)));
+        assert_eq!(ed.blame_at(id, 3).map(|r| r.rev.as_str()), Some("bbb"));
+        // A line put in above moves the runs down with the text.
+        ed.apply_edits(id, &[(0..0, "zero\n".into())]);
+        let labels = ed.blame_labels(id, 0..10);
+        assert_eq!(labels.get(&0), None);
+        assert_eq!(labels.get(&1), Some(&("ann · 3d".to_string(), true)));
+        assert_eq!(labels.get(&3), Some(&("bob · now".to_string(), true)));
+        assert_eq!(ed.blame_at(id, 4).map(|r| r.rev.as_str()), Some("bbb"));
+        assert!(ed.undo(v));
+        assert!(ed.clear_blame(id));
+        assert!(ed.blame_labels(id, 0..10).is_empty());
     }
 
     #[test]

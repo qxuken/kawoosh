@@ -1855,7 +1855,15 @@ impl Kawoosh {
             .layout
             .rects
             .get(&pane)
-            .map(|r| (r.w - rows::gutter_w(self.cell.0, buf.line_count(), marked) - 2.0).max(0.0))
+            .map(|r| {
+                let gutter = rows::gutter_w(
+                    self.cell.0,
+                    buf.line_count(),
+                    marked,
+                    self.ed.blame_width(self.ed.views[view].buffer),
+                );
+                (r.w - gutter - 2.0).max(0.0)
+            })
             .unwrap_or(0.0);
         let window = rows::Window {
             left: self.ed.views[view].left,

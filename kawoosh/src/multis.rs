@@ -86,6 +86,11 @@ impl Kawoosh {
                         out.push(Part::Lines(id, lines));
                     }
                 }
+                MultiPart::Named(n, lines) => {
+                    if let Some((id, _)) = self.ed.buffers.iter().find(|(_, b)| b.name == n) {
+                        out.push(Part::Lines(id, lines));
+                    }
+                }
             }
         }
         let id = match open {

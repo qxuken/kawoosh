@@ -1191,6 +1191,7 @@ impl Kawoosh {
                 self.cell.0,
                 self.ed.buffers[buf_id].line_count(),
                 self.marks.any(buf_id),
+                self.ed.blame_width(buf_id),
             )
             - 2.0)
             .max(0.0);
@@ -1491,7 +1492,22 @@ impl Kawoosh {
         let any_styled = token_marks.iter().any(Option::is_some);
         let tag = Value::map([("kind", "pane".into()), ("pane", Value::Int(pane as i64))]);
         let cell_w = self.cell.0;
-        let gutter = rows::gutter_w(cell_w, buf.line_count(), self.marks.any(buf_id));
+        let marked = self.marks.any(buf_id);
+        let gutter = rows::gutter_w(
+            cell_w,
+            buf.line_count(),
+            marked,
+            self.ed.blame_width(buf_id),
+        );
+        // The blame column's rows (docs/design/vcs.md Decision 7): a
+        // run's label on its first line, past a mark's cell.
+        let blames: HashMap<usize, (String, f32)> = self
+            .ed
+            .blame_labels(buf_id, top..last)
+            .into_iter()
+            .filter(|(_, (_, first))| *first)
+            .map(|(ln, (s, _))| (ln, (s, if marked { cell_w } else { 0.0 })))
+            .collect();
         // The lines column's width, for the sideways follow and the
         // window a long line is sliced to: the pane's less the gutter
         // and its border (the window's, for a pane not drawn before).
@@ -1594,6 +1610,7 @@ impl Kawoosh {
                                     ln,
                                     letters.get(&ln).copied(),
                                     signs.get(&ln).copied(),
+                                    blames.get(&ln).map(|(s, x)| (s.as_str(), *x)),
                                 );
                             }
                         },
@@ -1913,6 +1930,7 @@ impl Kawoosh {
                                         gutter: (!in_table)
                                             .then(|| (gutter, numbers.label(ln), ln == cur_line)),
                                         sign: signs.get(&ln).copied(),
+                                        blame: blames.get(&ln).cloned(),
                                         rule: *rule,
                                         images: img
                                             .iter()
@@ -1951,6 +1969,7 @@ impl Kawoosh {
                                                     ln == cur_line,
                                                 )),
                                                 sign: signs.get(&ln).copied(),
+                                                blame: blames.get(&ln).cloned(),
                                                 rule: false,
                                                 images: Vec::new(),
                                                 fit: false,

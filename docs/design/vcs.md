@@ -227,6 +227,47 @@ All under `<leader>h`, keys.md's reserved group; `]h` `[h` as
 reserved. `<leader>bg` `<leader>bl` `<leader>wd` `<leader>wc` stay
 reserved — a commit UI is lazygit's still.
 
+## Built
+
+2026-09-29, three rounds on `claude/vcs-integration-diffs-blame-59b439`:
+the engine's base and hunks (`editor/src/hunks.rs`, `doc`'s
+`line_hunks`, `kawoosh/src/vcs.rs`, the gutter's bars and the
+multibuffer's washes in `rows.rs`/`panes.rs`, the `hunk` commands);
+the process doors (`Io::run_command`, `ProcSpec`, the `dir` provider
+moved onto lists — it had never run under nushell), `kawoosh.on_write`,
+the multibuffer's `{ buffer = }` and `{ name = }` parts, a scratch's
+language read from its `about`; and `vcs.lua` with git whole and
+fossil in part, the blame column (`Editor::blames`, carried by each
+run's first line), `kawoosh.diff`, the pickers, worktrees, the status
+module. Tests: `editor`'s `hunks::tests`; `kawoosh/tests/vcs.rs`
+(the engine by hand), `vcs_git.rs` (a repository, a branch, two
+revisions, blame, `show`, a worktree), `vcs_fossil.rs` (the second
+backend, and a refusal); `kawoosh/lua/tests/hunks.lua`, `spawn.lua`,
+`vcs_layout.lua`.
+
+Departed from the note as written:
+
+- **`vcs main`, not `vcs diff main`**: a three-word command name takes
+  `vcs diff main feature` whole and drops `feature`. `<leader>hm` runs
+  it.
+- **The review opens beside**, as a list does, not in the pane it was
+  asked from — so `q` closes it back to the file instead of closing the
+  file's pane. `*show REV*` opens in a split beside for the same
+  reason (through `kawoosh.run("vsplit")`: a shell command through
+  `kawoosh.cmd` lands after the scratch is shown).
+- **Blame is asked again on save**, not after a second of stillness:
+  there is no hook for a file buffer's edits yet, and the column
+  follows the text meanwhile by the journal.
+- **`vcs status`'s preview** is built from `kawoosh.diff` of the base
+  and the file, coloured as a `.diff`; `vcs log`'s preview is the
+  commit's author, time and subject — the patch is `<CR>`'s
+  `*show*`, since a picker's preview cannot wait on a process.
+- **Excerpts are cut only where a gap goes**: an addition's lines are
+  in the run already, so the file's part is not split at them.
+- **fossil's `status`** is `changes --differ --classify` (`--extra`
+  alone is `fossil extras`), and its base is labelled `index` like
+  git's, though it is the checkout's text.
+
 ## Not built
 
 - **Staging** (`hunk stage`, `hunk unstage`): the backend door is

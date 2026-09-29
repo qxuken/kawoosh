@@ -581,8 +581,8 @@ impl Kawoosh {
                         if hooked {
                             b.hook = Some(name.clone());
                         }
-                        if let Some(l) = language {
-                            b.language = l.into();
+                        if let Some(l) = &language {
+                            b.language = l.as_str().into();
                         }
                         self.ed.add_buffer(b)
                     }
@@ -590,8 +590,20 @@ impl Kawoosh {
                 if private {
                     self.set_private(id, true);
                 }
-                if about.is_some() {
-                    self.ed.buffers[id].about = about;
+                if let Some(p) = about {
+                    // A scratch standing for a file reads as the file
+                    // would, unless told otherwise: a revision's text
+                    // has its file's colours (docs/design/vcs.md
+                    // Decision 6).
+                    if language.is_none() {
+                        let b = &self.ed.buffers[id];
+                        let l = self
+                            .languages
+                            .detect(&p, &crate::app::first_line(b))
+                            .to_string();
+                        self.ed.buffers[id].language = l.into();
+                    }
+                    self.ed.buffers[id].about = Some(p);
                 }
                 if hooked {
                     rt.track_lines(&self.ed, id);
@@ -1014,6 +1026,15 @@ impl Kawoosh {
                     }
                 },
                 None => self.ed.message = "base: no such buffer".into(),
+            },
+            Msg::Blame { buffer, name, rows } => match self.lua_buffer(buffer, name) {
+                Some(id) => match rows {
+                    Some(rows) => self.ed.set_blame(id, rows),
+                    None => {
+                        self.ed.clear_blame(id);
+                    }
+                },
+                None => self.ed.message = "blame: no such buffer".into(),
             },
             Msg::Mask {
                 buffer,

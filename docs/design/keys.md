@@ -188,7 +188,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `]q` `[q` | location in the compile output, or the next place of the last list — `grr`'s references, `:diagnostics` — opened beside it ([lists.md](lists.md)) |
 | `]d` `[d` | diagnostic (the message on the status line); in a multibuffer, the ones its excerpts show |
 | `]p` `[p` | right after a put: the text put replaced with the next newer / older one in the memory (the yank-pop), COUNT steps; the one chosen is the register from then on, and one `u` takes the put back whole |
-| `]h` `[h` | *reserved*: hunk |
+| `]h` `[h` | hunk — the next, previous change against the buffer's base, COUNT hunks; in a multibuffer, the excerpts' ([vcs.md](vcs.md)) |
 | `]e` `[e` | *reserved*: the next, previous pin |
 | `]'` `['` | the next, previous marked line of the file, COUNT marks ([marks.md](marks.md)) |
 | `]<Space>` `[<Space>` | COUNT empty lines below / above the caret's line — once a line, whatever carets are on it — the carets staying on their text (unimpaired's) |
@@ -504,7 +504,7 @@ so that nothing else takes the key meanwhile.
 | `gsf` `gsh` | find, highlight a surrounding pair |
 | `<leader>E` | an explorer |
 | `<leader>R` | rename the file |
-| `<leader>h*` `<leader>bg` `<leader>bl` `<leader>wd` `<leader>wc` | hunks, git, log, diff, commit |
+| `<leader>bg` `<leader>bl` `<leader>wd` `<leader>wc` | git, log, diff, commit — a commit UI, still lazygit's; `<leader>h*` is the hunks' and version control's now ([vcs.md](vcs.md)) |
 | `<leader>G*` | the debugger |
 
 ## Not done, deliberately

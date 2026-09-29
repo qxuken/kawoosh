@@ -139,6 +139,27 @@ kawoosh.formatter("pg_format", {
 
 `kawoosh.format(buffer, { with = "name" })` formats a buffer (the current one when `buffer` is nil) with its formatter or the one named.
 
+## Version control
+
+A buffer's hunks ([vcs](vcs.md)) are the difference between its text and a *base* — the editor diffs them; a backend only says what the base is. `kawoosh.buf.base(text, label[, buffer])` gives a buffer its base (`kawoosh.buf.base(nil)` takes it away), `kawoosh.buf.hunks([buffer])` reads the hunks back once diffed — each `{ kind = "added" | "modified" | "deleted", line, end_line, old_line, old_end, old = { … } }`, lines from 1, ends exclusive — and `kawoosh.diff(old, new)` diffs two texts at once, the same shape. `kawoosh.buf.blame(rows[, buffer])` puts the blame column on from rows `{ line, count, label, rev, summary }`; `kawoosh.buf.blame_at(line)` reads one back.
+
+Another version control system is a table of functions, and what it lacks it does not have:
+
+```lua
+kawoosh.vcs.register("jj", {
+  probe = function(dir, done) … end,            -- done(root) or done(nil)
+  head = function(root, done) … end,            -- done{ branch =, rev = }
+  base = function(root, path, rev, done) … end, -- done(text) or done(nil, why); rev nil = the index
+  status = function(root, done) … end,          -- done{ { path =, state = }, … }
+  blame = function(root, path, text, done) … end,
+  log = function(root, path, done) … end,
+  show = function(root, rev, done) … end,
+  -- changed, merge_base, refs, worktrees, worktree_add, watch: the rest
+})
+```
+
+`probe` and `base` alone colour the gutter. The bundled `vcs.lua` has git whole and fossil in part, as the worked examples. `kawoosh.vcs.of(dir)` says which backend owns a directory; `kawoosh.on_write(fn(path, buffer))` runs after a file is written, where a backend reads it again.
+
 ## Files and processes
 
 `kawoosh.fs` works on paths as you would write them (`~/x`, `../y`), relative to the working directory, and on a remote host's paths too (see [remote](remote.md)). A failed operation raises an error naming the path.
@@ -165,7 +186,7 @@ That is the default. kawoosh's modules are `mode`, `recording` (`REC @a`), `path
 
 `kawoosh.launcher.module(name, def)` adds a module to [the launcher](panes.md#its-layout), the same name replacing one: rows — `items = fn(ctx)` returning `{ text =, sub =, run = "command" | pick = fn(item) | path = | buffer = }`, `load = fn(ctx, done)`, or `source = "<picker source>"` — or a block, `draw = fn(ctx)` returning a node (`text(...)`, `row { ... }`), shown while the query is empty. `ctx` has `origin` (the buffer split from), `cwd`, `query`, `theme` and `size`; a block sizes itself with kui sizes (`width = "50%"`). Fields: `title`, `limit`, `show`, `style`, `keys`, as in the layout. A module you add appears where the layout says `"..."` until you place it. `kawoosh.launcher.entry { text =, run =, module = "here", key = "x" }` adds one row to a module (`plugins` by default).
 
-`kawoosh.spawn(cmd, { cwd = ..., on_lines = fn, on_exit = fn })` runs a shell command and hands you its output as it comes; `kawoosh.kill(token)` stops it. `kawoosh.store(name)` is a small store kept between runs: `get(key)`, `set(key, value)`, `del(key)`, `keys()`. `kawoosh.tool(name, { cmd = ... })` adds a launch target for `:tool` and the tools picker (`<leader>t`). `:tool NAME` goes to the tool's terminal in this tab, or starts one here: each tab runs its own. With `dock = true` the tool lives in the dock, one for every tab, and `:tool NAME` shows or hides it.
+`kawoosh.spawn(cmd, { cwd = ..., on_lines = fn, on_exit = fn })` runs a shell command and hands you its output as it comes; `kawoosh.kill(token)` stops it. `cmd` as a list — `{ "git", "status" }` — runs the program with those arguments and no shell between, so nothing needs quoting; `on_done = fn(text, code)` gets the output whole when it ends, and `on_stderr = fn(lines)` takes stderr apart. `kawoosh.store(name)` is a small store kept between runs: `get(key)`, `set(key, value)`, `del(key)`, `keys()`. `kawoosh.tool(name, { cmd = ... })` adds a launch target for `:tool` and the tools picker (`<leader>t`). `:tool NAME` goes to the tool's terminal in this tab, or starts one here: each tab runs its own. With `dock = true` the tool lives in the dock, one for every tab, and `:tool NAME` shows or hides it.
 
 ## Talking to the user
 

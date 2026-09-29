@@ -2757,6 +2757,33 @@ In order — the bugs first, then what needs deciding:
     allow`; the probe as the buffer's source; `kawoosh.formatter`,
     `kawoosh.format`. formatters.md's "Built" says where it departed.
     `kawoosh/tests/format.rs`, `kawoosh/lua/tests/formatter.lua`.
+73. ~~**Version control**, asked 2026-09-29: "let's introduce our first
+    vcs integration … gutters, hunks navigations, hunks resets and
+    diffs between branches. i like to review diff from feature to main
+    … Also blame and history. Ideally it should be abstract so we can
+    using same api have fast integration with fossil, jj or any other
+    thing. probably with feature probing. fast worktrees creation and
+    tabs from it would be cool."~~ Landed 2026-09-29 (72 being the
+    settings pane's, on its own branch): [vcs.md](vcs.md), decided and
+    built in three rounds — the editor owns the diff, a backend the
+    base: `kawoosh.buf.base` given, the hunks diffed on the io thread
+    once the text is still (`editor/src/hunks.rs`, `kawoosh/src/vcs.rs`),
+    signs as bars in the gutter's padding (no column added), `]h` `[h`,
+    `hunk reset` (`<leader>hr`, the selection's; `!` the buffer),
+    `hunk preview`; `kawoosh.spawn` with a list (no shell — the `dir`
+    provider's `&&` never ran under nushell), `on_done` whole,
+    `on_stderr`, `kawoosh.on_write`, a multibuffer's `{ buffer = }` /
+    `{ name = }` part, a scratch's language from its `about`; and
+    `vcs.lua` — backends as tables of functions asked in order, a
+    capability a key (`fossil here has no merge_base`), git whole and
+    fossil in part, the review as a multibuffer beside (`vcs diff`,
+    `vcs main` = the working tree against the merge base, `vcs diff A
+    B` on read-only scratches), blame as a gutter column carried by
+    its runs, `vcs show`, `vcs log` and `vcs status` pickers, `vcs
+    worktree add` as a tab, the `vcs` status-line module. `<leader>h*`
+    taken. `kawoosh/tests/vcs.rs`, `vcs_git.rs`, `vcs_fossil.rs`;
+    `kawoosh/lua/tests/hunks.lua`, `spawn.lua`, `vcs_layout.lua`;
+    `kawoosh/help/vcs.md`.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
