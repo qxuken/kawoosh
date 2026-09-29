@@ -61,6 +61,52 @@ fn selections_walk_the_syntax_tree() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `<A-u>` takes the caret up to the start of the node around it, one
+/// more each press; from a blank line inside a block, that block.
+#[test]
+fn caret_goes_up_to_the_enclosing_node() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-up-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("u.rs");
+    let src = "fn main() {\n    let x = f(1, 2);\n\n}\n";
+    std::fs::write(&file, src).unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    let alt = KeyMods::NONE.with_alt();
+    let head = |app: &Kawoosh| {
+        let v = app.focused_view().unwrap();
+        app.ed.views[v].sels.primary().head
+    };
+    let at = |s: &str| src.find(s).unwrap();
+    // On `2`: the arguments, the call, the declaration, the block,
+    // the function; then nothing starts before it.
+    d.keys(&mut app, "j");
+    d.keys(&mut app, "f2");
+    assert_eq!(head(&app), at("2)"));
+    for want in ["(1, 2)", "f(1", "let x", "{\n", "fn main"] {
+        d.key(&mut app, "u", alt);
+        assert_eq!(head(&app), at(want), "up to `{want}`");
+    }
+    d.key(&mut app, "u", alt);
+    assert_eq!(head(&app), 0);
+    assert!(app.ed.message.contains("no node"), "{}", app.ed.message);
+    // A blank line in the block is inside it: the block's `{` first.
+    d.keys(&mut app, "jj");
+    assert_eq!(head(&app), at("\n\n}") + 1);
+    d.key(&mut app, "u", alt);
+    assert_eq!(head(&app), at("{\n"));
+    // In visual mode the head goes and the anchor stays.
+    d.keys(&mut app, "j^wv");
+    d.key(&mut app, "u", alt);
+    let v = app.focused_view().unwrap();
+    let s = app.ed.views[v].sels.primary();
+    assert_eq!((s.anchor, s.head), (at("x ="), at("let x")));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn rust_is_highlighted_and_stays_so_across_edits() {
     let dir = std::env::temp_dir().join(format!("kawoosh-syntax-{}", std::process::id()));

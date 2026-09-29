@@ -4017,6 +4017,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<A-i>", "select node child"),
         ("<A-n>", "select node next"),
         ("<A-p>", "select node prev"),
+        ("<A-u>", "node parent"),
         ("<Esc>", "normal"),
         ("<C-c>", "normal"),
         // The file: `<C-s>` from any mode, and vim's `ZZ` / `ZQ`.
