@@ -400,8 +400,8 @@ fn formatter_defaults(defaults: &mut Setting) {
                 (
                     "probe",
                     probes(&[
-                        ("c", "int f() {\nreturn 0;\n}\n"),
-                        ("cpp", "int f() {\nreturn 0;\n}\n"),
+                        ("c", "int f() {\nint a = 1;\nreturn a;\n}\n"),
+                        ("cpp", "int f() {\nint a = 1;\nreturn a;\n}\n"),
                     ]),
                 ),
             ],

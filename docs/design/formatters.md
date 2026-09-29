@@ -337,8 +337,8 @@ quitting; a project's own binary allowed; the probe over an
 `kawoosh/lua/tests/formatter.lua` (at once, later, a failure, a Lua
 formatter's probe), the line diff's and `replace_diffed`'s, and
 `systems/src/filter.rs`'s run, failure, timeout and missing program.
-None runs a real prettier: the formatters in the tests are `/bin/sh`
-one-liners defined as a user would.
+The formatters in the tests are `/bin/sh` one-liners defined as a user
+would, and the real clang-format where it is installed.
 
 Left:
 
@@ -346,6 +346,11 @@ Left:
   and by a save, which choose afresh, but the buffer's indent is not
   probed again until its path or the settings move.
 - A server's `rangeFormatting`.
-- The shipped defs' args are checked against the tools' documentation,
-  not run here; the first real prettier, biome or stylua on a project
-  is the check.
+- Of the shipped defs, clang-format runs for real in a test where it is
+  installed (`the_shipped_clang_format_runs_for_real`: chosen by its
+  config, its `IndentWidth` probed, the file formatted), and gofmt's
+  and rustfmt's command lines were run by hand. Its first run showed
+  the C probe `int f() { return 0; }` folded onto one line by LLVM's
+  style, so the C and C++ probes have two statements. prettier, biome,
+  stylua, ruff, taplo and shfmt are checked against their
+  documentation only: the first real run on a project is the check.

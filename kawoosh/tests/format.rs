@@ -492,3 +492,36 @@ fn a_formatters_indent_is_read_by_formatting_a_probe() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The shipped clang-format, run for real where it is installed: chosen
+/// by `.clang-format`, its indent probed from it, the file formatted.
+#[test]
+fn the_shipped_clang_format_runs_for_real() {
+    let found = std::process::Command::new("clang-format")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !found {
+        eprintln!("clang-format is not installed: skipped");
+        return;
+    }
+    let dir = project(
+        "clang",
+        &[
+            (".clang-format", "BasedOnStyle: LLVM\nIndentWidth: 3\n"),
+            ("a.c", "int f() {\nint a = 1;\nreturn a;\n}\n"),
+        ],
+    );
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_in(&mut d, &dir);
+    let a = open(&mut d, &mut app, &dir, "a.c");
+    d.frame(&mut app);
+    assert_eq!(
+        app.ed.shiftwidth_in(a),
+        3,
+        "read from .clang-format by the probe"
+    );
+    ex(&mut d, &mut app, "format");
+    assert_eq!(text(&app, a), "int f() {\n   int a = 1;\n   return a;\n}\n");
+    std::fs::remove_dir_all(&dir).ok();
+}
