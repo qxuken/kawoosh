@@ -14,6 +14,7 @@ pub mod store;
 pub mod ts;
 pub mod watch;
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -28,8 +29,24 @@ pub fn no_wake() -> Wake {
 /// shell learns its `kui_native::Waker` in `App::setup`, after the app — and
 /// its systems — exist. Until then a wake is a no-op, which is also what
 /// a headless test wants.
+///
+/// Each handle wakes under a name ([`WakeHandle::named`]) and counts its
+/// wakes, so a frame nothing on screen asked for can say which thread
+/// brought it: every name made from one handle shares its wake and its
+/// tally, and [`WakeHandle::take_counts`] reads the tally since the last
+/// read (the frame ledger, `kawoosh::frames`).
 #[derive(Clone)]
-pub struct WakeHandle(Arc<Mutex<Wake>>);
+pub struct WakeHandle {
+    shared: Arc<Shared>,
+    count: Arc<AtomicU32>,
+}
+
+struct Shared {
+    wake: Mutex<Wake>,
+    /// Every name a handle was made under, with its wakes since the
+    /// last [`WakeHandle::take_counts`].
+    names: Mutex<Vec<(&'static str, Arc<AtomicU32>)>>,
+}
 
 impl Default for WakeHandle {
     fn default() -> Self {
@@ -38,17 +55,60 @@ impl Default for WakeHandle {
 }
 
 impl WakeHandle {
+    /// A handle whose own wakes count as `wake`: name what it is handed
+    /// to with [`named`](Self::named).
     pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(no_wake())))
+        let count = Arc::new(AtomicU32::new(0));
+        Self {
+            shared: Arc::new(Shared {
+                wake: Mutex::new(no_wake()),
+                names: Mutex::new(vec![("wake", count.clone())]),
+            }),
+            count,
+        }
+    }
+
+    /// The same wake, its calls counted under `name` — one tally per
+    /// name, however many handles carry it.
+    pub fn named(&self, name: &'static str) -> Self {
+        let mut names = self.shared.names.lock().unwrap();
+        let count = match names.iter().find(|(n, _)| *n == name) {
+            Some((_, c)) => c.clone(),
+            None => {
+                let c = Arc::new(AtomicU32::new(0));
+                names.push((name, c.clone()));
+                c
+            }
+        };
+        Self {
+            shared: self.shared.clone(),
+            count,
+        }
     }
 
     pub fn set(&self, wake: Wake) {
-        *self.0.lock().unwrap() = wake;
+        *self.shared.wake.lock().unwrap() = wake;
     }
 
     pub fn wake(&self) {
-        let w = self.0.lock().unwrap().clone();
+        self.count.fetch_add(1, Ordering::Relaxed);
+        let w = self.shared.wake.lock().unwrap().clone();
         w();
+    }
+
+    /// The wakes each name made since the last call, the names that made
+    /// none left out; the tally starts again from nothing.
+    pub fn take_counts(&self) -> Vec<(&'static str, u32)> {
+        self.shared
+            .names
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(n, c)| {
+                let k = c.swap(0, Ordering::Relaxed);
+                (k > 0).then_some((*n, k))
+            })
+            .collect()
     }
 }
 
@@ -155,5 +215,29 @@ mod tests {
             woke < t0 + Duration::from_millis(400),
             "the later time did not push it out"
         );
+    }
+
+    /// Every name made from one handle shares its wake and counts apart;
+    /// a read empties the tally.
+    #[test]
+    fn named_wakes_are_counted_by_name() {
+        let woke = Arc::new(AtomicU32::new(0));
+        let root = WakeHandle::new();
+        let w = woke.clone();
+        root.set(Arc::new(move || {
+            w.fetch_add(1, Ordering::Relaxed);
+        }));
+        let pty = root.named("pty");
+        let lsp = root.named("lsp");
+        let pty_again = lsp.named("pty");
+        pty.wake();
+        pty_again.wake();
+        lsp.wake();
+        root.wake();
+        assert_eq!(woke.load(Ordering::Relaxed), 4, "one wake under every name");
+        let mut counts = root.take_counts();
+        counts.sort();
+        assert_eq!(counts, [("lsp", 1), ("pty", 2), ("wake", 1)]);
+        assert!(pty.take_counts().is_empty(), "read once");
     }
 }

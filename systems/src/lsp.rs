@@ -716,6 +716,34 @@ pub enum Event {
     },
 }
 
+impl Event {
+    /// What kind of news it is, for a count of them (the frame ledger).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Event::Diagnostics { .. } => "lsp diagnostics",
+            Event::FileDiagnostics { .. } => "lsp file diagnostics",
+            Event::Definition { .. } => "lsp definition",
+            Event::Hover { .. } => "lsp hover",
+            Event::Completion { .. } => "lsp completion",
+            Event::Capabilities { .. } => "lsp capabilities",
+            Event::WorkspaceEdit { .. } => "lsp workspace edit",
+            Event::Locations { .. } => "lsp locations",
+            Event::CodeActions { .. } => "lsp code actions",
+            Event::Symbols { .. } => "lsp symbols",
+            Event::InlayHints { .. } => "lsp inlay hints",
+            Event::Formatted { .. } => "lsp formatted",
+            Event::Failed { .. } => "lsp failed",
+            Event::Unavailable { .. } => "lsp unavailable",
+            Event::Restarted { .. } => "lsp restarted",
+            Event::Status(_) => "lsp status",
+            Event::Message { kind: 5, .. } => "lsp stderr",
+            Event::Message { log: true, .. } => "lsp log message",
+            Event::Message { .. } => "lsp show message",
+            Event::Progress { .. } => "lsp progress",
+        }
+    }
+}
+
 pub struct Lsp {
     cmds: Sender<Cmd>,
     pub events: Receiver<Event>,
