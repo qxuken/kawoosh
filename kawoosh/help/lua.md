@@ -102,16 +102,16 @@ return {
 
 ## The status line
 
-The line under the panes is modules, placed by two lists:
+The line under the panes is modules, placed left to right by one list:
 
 ```lua
 statusline = {
-  left  = { "mode", "recording", "path", "keys" },
-  right = { "...", "strip", "selections", "position", "percent" },
+  layout = { "mode", "recording", "path", "keys", "gap",
+             "...", "strip", "selections", "position", "percent" },
 }
 ```
 
-Those are the defaults. kawoosh's modules are `mode`, `recording` (`REC @a`), `path` (the file, as `statusline.path` says, `[+]` when modified), `keys` (typed so far), `strip` (a scrolling tab's columns), `selections`, `position` (`line:col`) and `percent`. A `kawoosh.status(name, fn, { place = "statusline" })` segment is a module too: named in a list it is drawn there, otherwise where `...` is — leave `...` out to draw only what the lists name. A segment named like a built-in module replaces it. The path is cut from the left, a directory at a time, until it fits what the other modules leave.
+That is the default. kawoosh's modules are `mode`, `recording` (`REC @a`), `path` (the file, as `statusline.path` says, `[+]` when modified), `keys` (typed so far), `strip` (a scrolling tab's columns), `selections`, `position` (`line:col`) and `percent`. `"gap"` is a spring that pushes what follows it right; several share the room evenly, so `{ "mode", "gap", "...", "gap", "percent" }` centres the middle. A `kawoosh.status(name, fn, { place = "statusline" })` segment is a module too: named in the layout it is drawn there, otherwise where `"..."` is — leave `"..."` out to draw only what the layout names. Quote it: a bare `...` is Lua's varargs and disappears. A segment named like a built-in module replaces it. The path is cut from the left, a directory at a time, until it fits what the other modules leave.
 
 `kawoosh.launcher.module(name, def)` adds a module to [the launcher](panes.md#its-layout), the same name replacing one: rows — `items = fn(ctx)` returning `{ text =, sub =, run = "command" | pick = fn(item) | path = | buffer = }`, `load = fn(ctx, done)`, or `source = "<picker source>"` — or a block, `draw = fn(ctx)` returning a node (`text(...)`, `row { ... }`), shown while the query is empty. `ctx` has `origin` (the buffer split from), `cwd`, `query`, `theme` and `size`; a block sizes itself with kui sizes (`width = "50%"`). Fields: `title`, `limit`, `show`, `style`, `keys`, as in the layout. A module you add appears where the layout says `"..."` until you place it. `kawoosh.launcher.entry { text =, run =, module = "here", key = "x" }` adds one row to a module (`plugins` by default).
 

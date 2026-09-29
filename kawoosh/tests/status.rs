@@ -234,7 +234,7 @@ fn a_long_path_is_cut_to_fit_the_line() {
     // The directories nearest the name are the last to go.
     assert_eq!(
         path,
-        ["p", "a", "s", "c", "navigation", "index.tsx"].join(&sep.to_string())
+        ["p", "a", "s", "components", "navigation", "index.tsx"].join(&sep.to_string())
     );
     let (_, pos) = l
         .iter()
@@ -266,8 +266,7 @@ fn the_lists_place_the_modules() {
     assert!(at(&t, "main").is_some(), "{t:?}");
     app.run_lua_source(
         "t",
-        r#"kawoosh.opt("statusline.left", { "branch", "mode" })
-           kawoosh.opt("statusline.right", { "position", "path" })"#,
+        r#"kawoosh.opt("statusline.layout", { "branch", "mode", "gap", "position", "path" })"#,
     );
     d.frame(&mut app);
     let t = line_texts(&mut d);
@@ -296,7 +295,7 @@ fn the_lists_place_the_modules() {
     // A Lua module by a built-in's name is the Lua one, nothing or not.
     app.run_lua_source(
         "t",
-        r#"kawoosh.opt("statusline.right", nil)
+        r#"kawoosh.opt("statusline.layout", nil)
            kawoosh.status("position", function() return nil end, { place = "statusline" })"#,
     );
     d.frame(&mut app);
@@ -307,4 +306,38 @@ fn the_lists_place_the_modules() {
         "{t:?}"
     );
     assert!(t.iter().any(|x| x.ends_with('%')), "the rest back: {t:?}");
+}
+
+/// statusline.md Decision 1: `gap` is a spring, the springs sharing the
+/// room evenly — two around `...` centre what is between them.
+#[test]
+fn gaps_share_the_room() {
+    let mut d = Drive::new(900.0, 500.0);
+    let (mut app, _) = project_file(&mut d, "gaps", "a.ts");
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.status("mid", function() return "middle" end, { place = "statusline" })
+           kawoosh.opt("statusline.layout", { "mode", "gap", "...", "gap", "percent" })"#,
+    );
+    d.frame(&mut app);
+    let l = line(&mut d);
+    let t: Vec<&str> = l.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(t, ["NOR", "middle", "0%"]);
+    let strip = d.rect("statusline").unwrap();
+    let mid = &l[1].1;
+    let centre = mid.x + mid.w / 2.0;
+    assert!(
+        (centre - (strip.x + strip.w / 2.0)).abs() < 12.0,
+        "centred: {centre} in {strip:?}"
+    );
+    // One spring: everything after it at the right end.
+    app.run_lua_source(
+        "t",
+        r#"kawoosh.opt("statusline.layout", { "mode", "...", "gap", "percent" })"#,
+    );
+    d.frame(&mut app);
+    let l = line(&mut d);
+    let pct = &l[2].1;
+    assert!(l[1].1.x < strip.x + strip.w / 2.0, "{l:?}");
+    assert!(pct.x + pct.w > strip.x + strip.w - 12.0, "{l:?}");
 }

@@ -2709,11 +2709,13 @@ In order — the bugs first, then what needs deciding:
     index.ts?x and i don't know where am i."~~ Landed 2026-09-29:
     [statusline.md](statusline.md), decided and built — the line under
     the panes is modules (`mode`, `recording`, `path`, `keys`, `strip`,
-    `selections`, `position`, `percent`) placed by `statusline.left`
-    and `statusline.right`, a `kawoosh.status` segment at `place =
-    "statusline"` one more by its name or where `...` stands; the path
-    relative to the working directory (`statusline.path`: `relative`,
-    `absolute`, `name`), cut from the left a directory at a time, fish's
+    `selections`, `position`, `percent`) placed left to right by
+    `statusline.layout`, `gap` a spring (the user's shape: two lists
+    first, one list with springs after), a `kawoosh.status` segment at
+    `place = "statusline"` one more by its name or where `"..."`
+    stands; the path relative to the working directory
+    (`statusline.path`: `relative`, `absolute`, `name`), cut from the
+    left a directory at a time, fish's
     way, only as far as the room the others leave needs.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),

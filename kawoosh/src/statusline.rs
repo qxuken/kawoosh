@@ -2,9 +2,9 @@
 //! docs/design/statusline.md): kawoosh's own — the mode, a recording,
 //! the path, the keys typed, the strip's marks, the selections, the
 //! position, the percent — and the Lua ones `kawoosh.status` put at
-//! `place = "statusline"`, placed by two lists, `statusline.left` and
-//! `statusline.right`, `...` standing for the Lua ones no list names.
-//! The path is relative to the working directory by default, and cut
+//! `place = "statusline"`, placed by one list, `statusline.layout`,
+//! left to right: `gap` a spring taking an even share of the room left,
+//! `...` the Lua ones the list does not name. The path is relative to the working directory by default, and cut
 //! from the left, a directory at a time, until it fits the room the
 //! other modules leave it.
 
@@ -18,15 +18,28 @@ use crate::chrome::{Block, cut_component};
 use crate::layout::Content;
 use crate::rows;
 
-/// The lists when the settings say nothing, or not a list.
-pub const LEFT: &[&str] = &["mode", "recording", "path", "keys"];
-pub const RIGHT: &[&str] = &["...", "strip", "selections", "position", "percent"];
+/// The layout when the setting says nothing, or not a list.
+pub const LAYOUT: &[&str] = &[
+    "mode",
+    "recording",
+    "path",
+    "keys",
+    GAP,
+    REST,
+    "strip",
+    "selections",
+    "position",
+    "percent",
+];
 
-/// Where the Lua modules no list names are drawn.
+/// Where the Lua modules the layout does not name are drawn.
 const REST: &str = "...";
+/// A spring: the room the modules leave, shared evenly by the springs.
+const GAP: &str = "gap";
 
-/// Between two left modules, px; the right ones are two cells apart.
-const LEFT_GAP: f32 = 8.0;
+/// Between two things on the line, px — a spring too, so the sides of
+/// one stand twice that apart at the least.
+const SPACING: f32 = 8.0;
 /// The strip's padding at either end, px.
 const PAD: f32 = 8.0;
 
@@ -123,27 +136,26 @@ pub fn fit_path(prefix: &str, path: &str, mut fits: impl FnMut(&str) -> bool) ->
 }
 
 impl Kawoosh {
-    /// A list of module names from `statusline.<side>`, or its default.
-    fn statusline_list(&self, side: &str, default: &[&str]) -> Vec<String> {
-        match self.ed.settings.get(&format!("statusline.{side}")) {
+    /// The names `statusline.layout` lists, or its default.
+    fn statusline_layout(&self) -> Vec<String> {
+        match self.ed.settings.get("statusline.layout") {
             Some(Setting::List(l)) => l
                 .iter()
                 .filter_map(|s| s.as_str().map(str::to_string))
                 .collect(),
-            _ => default.iter().map(|s| s.to_string()).collect(),
+            _ => LAYOUT.iter().map(|s| s.to_string()).collect(),
         }
     }
 
-    /// The line: the left modules a cell apart, the right ones two, the
-    /// path fitted to what the others leave of the window's width.
+    /// The line: the layout's modules left to right, its springs
+    /// sharing what they leave, the path fitted to what the others
+    /// leave of the window's width.
     pub(crate) fn status(&self, ui: &mut Ui<'_>) {
         let pal = self.pal;
         let style = rows::mono(self.chrome.face, &pal);
-        let left = self.statusline_list("left", LEFT);
-        let right = self.statusline_list("right", RIGHT);
-        let mut lua: Vec<(String, Block)> = self.status_segments(ui, "statusline");
-        let named = |n: &String| left.contains(n) || right.contains(n);
-        // A Lua module named in a list is its own there, even while it
+        let layout = self.statusline_layout();
+        let lua: Vec<(String, Block)> = self.status_segments(ui, "statusline");
+        // A Lua module the layout names is its own there, even while it
         // shows nothing: `position` taken by Lua is not `line:col`.
         let lua_names: Vec<String> = self
             .scripting
@@ -151,46 +163,37 @@ impl Kawoosh {
             .as_ref()
             .map(|rt| rt.status_names("statusline"))
             .unwrap_or_default();
-        let resolve = |names: &[String], lua: &mut Vec<(String, Block)>| -> Vec<Module> {
-            let mut out = Vec::new();
-            for n in names {
-                if n == REST {
-                    for (name, b) in lua.iter() {
-                        if !named(name) {
-                            let mut m = Module::of(b.parts.clone());
-                            m.run = b.run.clone();
-                            out.push(m);
-                        }
-                    }
-                } else if lua_names.contains(n) {
-                    if let Some(i) = lua.iter().position(|(name, _)| name == n) {
-                        let (_, b) = lua.remove(i);
-                        let mut m = Module::of(b.parts);
-                        m.run = b.run;
-                        out.push(m);
-                    }
-                } else if let Some(m) = self.module(n) {
-                    out.push(m);
-                }
-            }
-            out.retain(|m| !m.is_empty());
-            out
+        let lua_module = |b: &Block| {
+            let mut m = Module::of(b.parts.clone());
+            m.run = b.run.clone();
+            Some(m)
         };
-        let mut l = resolve(&left, &mut lua);
-        let mut r = resolve(&right, &mut lua);
-        let two = ui.measure_text("  ", &style, None).width;
+        // `None` a spring.
+        let mut items: Vec<Option<Module>> = Vec::new();
+        for n in &layout {
+            if n == GAP {
+                items.push(None);
+            } else if n == REST {
+                let rest = lua.iter().filter(|(name, _)| !layout.contains(name));
+                items.extend(rest.map(|(_, b)| lua_module(b)));
+            } else if lua_names.contains(n) {
+                let found = lua.iter().find(|(name, _)| name == n);
+                items.extend(found.map(|(_, b)| lua_module(b)));
+            } else if let Some(m) = self.module(n) {
+                items.push(Some(m));
+            }
+        }
+        items.retain(|m| m.as_ref().is_none_or(|m| !m.is_empty()));
         // The path's room: the width less the padding, every other
-        // module, the gaps between them and a cell between the sides.
-        if l.iter().chain(&r).any(|m| m.path) {
-            let mut used = 2.0 * PAD + two / 2.0;
-            for m in l.iter().chain(&r).filter(|m| !m.path) {
+        // module and the spacing between them all.
+        if items.iter().flatten().any(|m| m.path) {
+            let mut used = 2.0 * PAD + SPACING * items.len().saturating_sub(1) as f32;
+            for m in items.iter().flatten().filter(|m| !m.path) {
                 used += ui.measure_text(&m.joined(), &style, None).width;
                 used += m.apart.unwrap_or(0.0) * m.parts.len().saturating_sub(1) as f32;
             }
-            used += LEFT_GAP * l.len().saturating_sub(1) as f32;
-            used += two * r.len().saturating_sub(1) as f32;
             let room = ui.viewport().w - used;
-            for m in l.iter_mut().chain(r.iter_mut()).filter(|m| m.path) {
+            for m in items.iter_mut().flatten().filter(|m| m.path) {
                 self.fit_path_module(ui, m, room, style);
             }
         }
@@ -201,20 +204,18 @@ impl Kawoosh {
                 .height(self.chrome.strip_h)
                 .bg(pal.strip)
                 .pad_xy(PAD, 0.0)
+                .gap(SPACING)
                 .cross_align(Align::Center)
                 .label("statusline"),
             |ui| {
-                ui.with_keyed(
-                    "left",
-                    NodeSpec::row().gap(LEFT_GAP).cross_align(Align::Center),
-                    |ui| draw_modules(ui, &l, style, &pal),
-                );
-                ui.leaf(NodeSpec::row().grow_width());
-                ui.with_keyed(
-                    "right",
-                    NodeSpec::row().gap(two).cross_align(Align::Center),
-                    |ui| draw_modules(ui, &r, style, &pal),
-                );
+                for (i, item) in items.iter().enumerate() {
+                    match item {
+                        Some(m) => draw_module(ui, i, m, style, &pal),
+                        None => {
+                            ui.leaf_keyed(&format!("g{i}"), NodeSpec::row().grow_width());
+                        }
+                    }
+                }
             },
         );
     }
@@ -341,7 +342,7 @@ impl Kawoosh {
             }
             parts.push((what.to_string(), pal.accent));
             let mut m = Module::of(parts);
-            m.apart = Some(LEFT_GAP);
+            m.apart = Some(SPACING);
             return m;
         };
         let buf = self.ed.buffer_of(view);
@@ -427,52 +428,50 @@ impl Kawoosh {
     }
 }
 
-/// Modules side by side in the row they are drawn in: one part a text,
-/// more a rich text, a module with a command a button for it.
-fn draw_modules(
+/// A module, the `i`th thing on the line: one part a text, more a rich
+/// text, a module with a command a button for it.
+fn draw_module(
     ui: &mut Ui<'_>,
-    modules: &[Module],
+    i: usize,
+    m: &Module,
     style: kui_native::TextStyle,
     pal: &crate::palette::Pal,
 ) {
-    for (i, m) in modules.iter().enumerate() {
-        let draw = |ui: &mut Ui<'_>| {
-            let parts: Vec<&(String, Color)> =
-                m.parts.iter().filter(|(t, _)| !t.is_empty()).collect();
-            match (parts.as_slice(), m.apart) {
-                ([(t, c)], _) => ui.text(t, style.color(*c)),
-                (_, Some(gap)) => {
-                    ui.with(NodeSpec::row().gap(gap), |ui| {
-                        for (t, c) in &parts {
-                            ui.text(t, style.color(*c));
-                        }
-                    });
-                }
-                _ => {
-                    let spans: Vec<Span<'_>> =
-                        parts.iter().map(|(t, c)| Span::new(t).color(*c)).collect();
-                    ui.rich_text(&spans, style);
-                }
+    let draw = |ui: &mut Ui<'_>| {
+        let parts: Vec<&(String, Color)> = m.parts.iter().filter(|(t, _)| !t.is_empty()).collect();
+        match (parts.as_slice(), m.apart) {
+            ([(t, c)], _) => ui.text(t, style.color(*c)),
+            (_, Some(gap)) => {
+                ui.with(NodeSpec::row().gap(gap), |ui| {
+                    for (t, c) in &parts {
+                        ui.text(t, style.color(*c));
+                    }
+                });
             }
-        };
-        match &m.run {
-            Some(run) => ui.with_keyed(
-                &format!("m{i}"),
-                NodeSpec::row()
-                    .grow_height()
-                    .cross_align(Align::Center)
-                    .hover_bg(pal.panel)
-                    .cursor(CursorShape::Pointer)
-                    .on_click(Value::map([
-                        ("kind", "chrome".into()),
-                        ("run", Value::str(run.as_str())),
-                    ]))
-                    .label(run.as_str()),
-                draw,
-            ),
-            None => ui.with_keyed(&format!("m{i}"), NodeSpec::row(), draw),
-        };
-    }
+            _ => {
+                let spans: Vec<Span<'_>> =
+                    parts.iter().map(|(t, c)| Span::new(t).color(*c)).collect();
+                ui.rich_text(&spans, style);
+            }
+        }
+    };
+    match &m.run {
+        Some(run) => ui.with_keyed(
+            &format!("m{i}"),
+            NodeSpec::row()
+                .grow_height()
+                .cross_align(Align::Center)
+                .hover_bg(pal.panel)
+                .cursor(CursorShape::Pointer)
+                .on_click(Value::map([
+                    ("kind", "chrome".into()),
+                    ("run", Value::str(run.as_str())),
+                ]))
+                .label(run.as_str()),
+            draw,
+        ),
+        None => ui.with_keyed(&format!("m{i}"), NodeSpec::row(), draw),
+    };
 }
 
 #[cfg(test)]
