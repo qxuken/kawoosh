@@ -315,3 +315,93 @@ fn a_save_formats_first() {
     assert!(app.quit, "{}", app.ed.message);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A project's own formatter — `node_modules/.bin`, or a config that is
+/// code — runs when asked for, but not on a save until allowed: the
+/// save writes as it is and a confirm offers the allow; `:format allow`
+/// lets it, `:format revoke` takes it back.
+#[test]
+fn a_projects_own_formatter_is_allowed_before_it_runs_unasked() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = project(
+        "own",
+        &[
+            (".ownrc", ""),
+            ("node_modules/.bin/ownfmt", "#!/bin/sh\nsed 's/^b;/  b;/'\n"),
+            ("a.ts", "if (a) {\nb;\n}\n"),
+        ],
+    );
+    let bin = dir.join("node_modules/.bin/ownfmt");
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_in(&mut d, &dir);
+    let s = |v: &str| Setting::Str(v.into());
+    for (k, v) in [
+        ("cmd", s("ownfmt")),
+        ("languages", files(&["typescript"])),
+        ("when", files(&[".ownrc"])),
+        ("node", Setting::Bool(true)),
+    ] {
+        app.ed
+            .settings
+            .set(Layer::User, &format!("format.own.{k}"), v);
+    }
+    app.ed
+        .settings
+        .set(Layer::User, "format_on_save", Setting::Bool(true));
+    let disk = || std::fs::read_to_string(dir.join("a.ts")).unwrap();
+
+    open(&mut d, &mut app, &dir, "a.ts");
+    ex(&mut d, &mut app, "format?");
+    assert!(
+        app.ed.message.contains("node_modules/.bin/ownfmt")
+            && app.ed.message.ends_with(":format allow to run it on save"),
+        "{}",
+        app.ed.message
+    );
+    ex(&mut d, &mut app, "w");
+    assert_eq!(disk(), "if (a) {\nb;\n}\n", "written as it is");
+    assert!(
+        app.ed.message.contains(":format allow"),
+        "{}",
+        app.ed.message
+    );
+    assert!(app.confirm.is_some(), "the allow offered");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert!(app.confirm.is_none(), "not now");
+
+    // Asked for, it runs.
+    ex(&mut d, &mut app, "format");
+    assert_eq!(app.ed.message, "formatted with own (1 edit)");
+    d.keys(&mut app, "u");
+
+    ex(&mut d, &mut app, "format allow");
+    assert!(
+        app.ed.message.starts_with("own allowed in"),
+        "{}",
+        app.ed.message
+    );
+    ex(&mut d, &mut app, "w");
+    assert_eq!(disk(), "if (a) {\n  b;\n}\n");
+    ex(&mut d, &mut app, "trust?");
+    assert!(
+        app.ed.message.contains("1 formatter allowed"),
+        "{}",
+        app.ed.message
+    );
+
+    ex(&mut d, &mut app, "format revoke");
+    assert!(
+        app.ed.message.starts_with("own no longer allowed"),
+        "{}",
+        app.ed.message
+    );
+    ex(&mut d, &mut app, "format?");
+    assert!(
+        app.ed.message.ends_with("to run it on save"),
+        "{}",
+        app.ed.message
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

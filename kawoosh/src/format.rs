@@ -180,6 +180,8 @@ struct Job {
 /// The formatter runs in flight.
 #[derive(Default)]
 pub struct FormatState {
+    /// The allows asked for this run, so a save does not ask again.
+    asked: std::collections::HashSet<String>,
     next: u64,
     jobs: HashMap<u64, Job>,
     batches: HashMap<u64, Batch>,
@@ -550,10 +552,90 @@ impl Kawoosh {
         );
         for id in buffers {
             let w = PendingWrite { buffer: id, batch };
+            // Unasked: a project's own tool waits to be allowed.
+            if let Choice::Tool(p) = self.formatter_for(id, None)
+                && !self.may_run_unasked(&p)
+            {
+                self.ask_allow(&p);
+                let why = format!(
+                    "{} here is the project's own; :format allow lets it run on save",
+                    p.def.name
+                );
+                self.write_formatted(w, &format!("not formatted: {why}"));
+                continue;
+            }
             if !self.format_buffer(id, None, None, Then::Write(w)) {
                 let why = std::mem::take(&mut self.ed.message);
                 self.write_formatted(w, &format!("not formatted: {why}"));
             }
+        }
+    }
+
+    /// Whether `p` may run without being asked for — on a save, for a
+    /// probe: a tool on the `PATH` with a config that is data may; the
+    /// project's own binary, or a config that is code, once allowed
+    /// (formatters.md Decision 5).
+    pub(crate) fn may_run_unasked(&self, p: &Picked) -> bool {
+        !p.is_projects_code() || self.format_allowed(&p.def.name, &p.cwd)
+    }
+
+    /// The confirm that allows `p` here — once a run.
+    fn ask_allow(&mut self, p: &Picked) {
+        let key = crate::trust::format_key(&p.def.name, &p.cwd);
+        if !self.format.asked.insert(key) || self.confirm.is_some() {
+            return;
+        }
+        let dir = self.short_name(&p.cwd);
+        let mut lines = vec![format!("runs: {}", p.program)];
+        if let Some(c) = &p.config {
+            lines.push(format!("config: {}", self.short_name(c)));
+        }
+        lines.push("Allowed, it runs on save and to read the indent, without asking.".into());
+        self.confirm_with(crate::confirm::Confirm {
+            title: format!("{dir} formats with its own {}. Allow it?", p.def.name),
+            lines,
+            actions: vec![
+                (
+                    "allow".to_string(),
+                    format!("format allow {} {}", p.def.name, p.cwd.display()),
+                ),
+                ("not now".to_string(), String::new()),
+            ],
+            chosen: 0,
+        });
+    }
+
+    /// `:format allow [TOOL DIR]`: the focused buffer's formatter, or the
+    /// one named, allowed to run unasked; `:format revoke` forgets it.
+    fn format_allow(&mut self, args: &[String], allow: bool) {
+        let (tool, dir) = match args.split_first() {
+            Some((tool, rest)) if !rest.is_empty() => (tool.clone(), PathBuf::from(rest.join(" "))),
+            _ => {
+                let Some(v) = self.focused_view() else { return };
+                let id = self.ed.views[v].buffer;
+                match self.formatter_for(id, None) {
+                    Choice::Tool(p) => (p.def.name.clone(), p.cwd.clone()),
+                    Choice::Lsp(_) => {
+                        self.ed.message = "the language server needs no allowing".into();
+                        return;
+                    }
+                    Choice::None(why) => {
+                        self.ed.message = why;
+                        return;
+                    }
+                }
+            }
+        };
+        let short = self.short_name(&dir);
+        if allow {
+            self.allow_format(&tool, &dir);
+            self.ed.message = format!("{tool} allowed in {short}");
+        } else {
+            let n = self.revoke_formats(&dir, Some(&tool));
+            self.ed.message = match n {
+                0 => format!("{tool} was not allowed in {short}"),
+                _ => format!("{tool} no longer allowed in {short}"),
+            };
         }
     }
 
@@ -640,7 +722,17 @@ impl Kawoosh {
         let Some(v) = self.focused_view() else { return };
         let id = self.ed.views[v].buffer;
         self.ed.message = match self.formatter_for(id, None) {
-            Choice::Tool(p) => format!("{} ({})", p.why, p.program),
+            Choice::Tool(p) => {
+                let mut s = format!("{} ({})", p.why, p.program);
+                if p.is_projects_code() {
+                    s.push_str(if self.format_allowed(&p.def.name, &p.cwd) {
+                        "; the project's own, allowed"
+                    } else {
+                        "; the project's own: :format allow to run it on save"
+                    });
+                }
+                s
+            }
             Choice::Lsp(why) => format!("lsp: {why}"),
             Choice::None(why) => why,
         };
@@ -676,6 +768,18 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                 }
                 k.format_focused(ctx.args.first().map(String::as_str), false)
             },
+        ),
+        cmd(
+            Spec::new("format allow")
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("let the buffer's formatter — the project's own — run on save and read the indent without asking; or TOOL DIR"),
+            |k, ctx| k.format_allow(&ctx.args, true),
+        ),
+        cmd(
+            Spec::new("format revoke")
+                .args(Args::rest(&[ArgKind::Text]))
+                .doc("take back `:format allow` for the buffer's formatter, or TOOL DIR"),
+            |k, ctx| k.format_allow(&ctx.args, false),
         ),
         cmd(
             Spec::new("format selection")
