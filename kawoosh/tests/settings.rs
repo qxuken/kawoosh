@@ -661,6 +661,159 @@ fn the_door_lists_the_settings_and_their_layers() {
     std::fs::remove_dir_all(&t.dir).ok();
 }
 
+/// A Lua expression's value, as `tostring` spells it, read through the
+/// echo line.
+fn eval(d: &mut Drive, app: &mut Kawoosh, expr: &str) -> String {
+    app.run_lua_source("eval", &format!("kawoosh.echo(tostring({expr}))"));
+    d.frame(app);
+    std::mem::take(&mut app.ed.message)
+}
+
+/// The pane's search, its first row and its query.
+fn pane(d: &mut Drive, app: &mut Kawoosh) -> (String, String) {
+    let first = eval(d, app, "(kawoosh.settings.state() or {shown={}}).shown[1]");
+    let q = eval(d, app, "(kawoosh.settings.state() or {}).query");
+    (q, first)
+}
+
+/// The settings pane (docs/design/settings.md): `:settings` opens it
+/// with the keys in its search; typing filters; `<Esc>` hands the keys
+/// to the rows, where a number steps, a switch flips, a word cycles
+/// and a text is typed in place — each written into the scope's file;
+/// a project that sets the key says so on the row; `p` makes the
+/// project's file the scope and `r` takes the key out of it; `<Esc>`
+/// empties the search, then closes.
+#[test]
+fn the_pane_searches_and_changes_settings_in_their_files() {
+    let t = tree("pane");
+    let mut d = Drive::new(1100.0, 800.0);
+    let mut app = app_with_lua(&mut d);
+    app.load_user_settings(&t.user);
+    app.set_cwd(&t.sub);
+    d.frame(&mut app);
+    let editor = app.focused_view().unwrap();
+
+    d.press(&mut app, "<D-,>");
+    d.frame(&mut app);
+    assert!(texts(&d).iter().any(|x| x == "Settings"), "{:?}", texts(&d));
+    d.press(&mut app, "tabstop");
+    d.frame(&mut app);
+    assert_eq!(pane(&mut d, &mut app), ("tabstop".into(), "tabstop".into()));
+    assert_eq!(
+        app.ed.mode(editor),
+        kawoosh_editor::Mode::Normal,
+        "the editor was not typed into"
+    );
+    let has = |d: &Drive, s: &str| texts(d).iter().any(|x| x.contains(s));
+    assert!(has(&d, "columns a tab takes"), "{:?}", texts(&d));
+    // The project's file wins over the user's: the row says so.
+    assert!(has(&d, "the project sets 3, over yours"), "{:?}", texts(&d));
+
+    // To the rows: `l` steps the user's 2 to 3, in the user's file.
+    d.press(&mut app, "<Esc>");
+    d.press(&mut app, "l");
+    d.frame(&mut app);
+    assert!(read(&t.user).contains("tabstop = 3"), "{}", read(&t.user));
+    // The project's scope: its value, 3, down a step, in the inner file.
+    let inner = t.sub.join(PROJECT_DIR).join(SETTINGS_FILE);
+    d.press(&mut app, "p");
+    d.press(&mut app, "h");
+    d.frame(&mut app);
+    assert!(read(&inner).contains("tabstop = 2"), "{}", read(&inner));
+    assert_eq!(app.ed.tabstop(), 2);
+    // `r` takes it out: the root project file's 8 again.
+    d.press(&mut app, "r");
+    d.frame(&mut app);
+    assert!(!read(&inner).contains("tabstop"), "{}", read(&inner));
+    assert_eq!(app.ed.tabstop(), 8);
+    d.press(&mut app, "u");
+
+    // A switch: `⏎` flips it, the user's file says so.
+    d.press(&mut app, "/");
+    d.press(&mut app, "<C-u>");
+    d.press(&mut app, "whichkey<Esc><CR>");
+    d.frame(&mut app);
+    assert_eq!(app.ed.settings.bool("whichkey"), Some(false));
+    assert!(
+        read(&t.user).contains("whichkey = false"),
+        "{}",
+        read(&t.user)
+    );
+
+    // A word: `l` the next, a chip's click the one it names.
+    d.press(&mut app, "/<C-u>editor.wrap<Esc>l");
+    d.frame(&mut app);
+    assert_eq!(app.ed.settings.str("editor.wrap"), Some("word"));
+    let chip = d.rect("pick editor.wrap=glyph").expect("the glyph chip");
+    d.click(&mut app, chip.x + 4.0, chip.y + chip.h / 2.0);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(app.ed.settings.str("editor.wrap"), Some("glyph"));
+    assert!(
+        read(&t.user).contains("editor = { wrap = \"glyph\" }"),
+        "{}",
+        read(&t.user)
+    );
+
+    // A text, typed in place: `⏎` edits, `⏎` keeps.
+    d.press(&mut app, "/<C-u>terminal.shell<Esc><CR>");
+    d.frame(&mut app);
+    assert_eq!(
+        eval(&mut d, &mut app, "kawoosh.settings.state().editing"),
+        "terminal.shell"
+    );
+    d.press(&mut app, "nu<CR>");
+    d.frame(&mut app);
+    assert_eq!(app.ed.settings.str("terminal.shell"), Some("nu"));
+    assert!(
+        read(&t.user).contains("terminal = { shell = \"nu\" }"),
+        "{}",
+        read(&t.user)
+    );
+    assert_eq!(
+        eval(&mut d, &mut app, "kawoosh.settings.state().editing"),
+        "nil"
+    );
+
+    // `@modified`: what a file or the session sets.
+    d.press(&mut app, "/<C-u>@modified");
+    d.frame(&mut app);
+    let shown = eval(
+        &mut d,
+        &mut app,
+        "table.concat(kawoosh.settings.state().shown, ' ')",
+    );
+    for p in [
+        "tabstop",
+        "scrolloff",
+        "whichkey",
+        "editor.wrap",
+        "terminal.shell",
+    ] {
+        assert!(shown.split(' ').any(|x| x == p), "{p}: {shown}");
+    }
+    assert!(!shown.split(' ').any(|x| x == "leader"), "{shown}");
+
+    // `<Esc>` to the rows, empties the search, then closes.
+    d.press(&mut app, "<Esc><Esc>");
+    d.frame(&mut app);
+    assert_eq!(pane(&mut d, &mut app).0, "");
+    d.press(&mut app, "<Esc>");
+    d.frame(&mut app);
+    assert_eq!(eval(&mut d, &mut app, "kawoosh.settings.state()"), "nil");
+    assert!(!has(&d, "Settings"));
+
+    // `:settings QUERY` opens it searched.
+    ex(&mut d, &mut app, "settings font size");
+    d.frame(&mut app);
+    assert_eq!(
+        pane(&mut d, &mut app),
+        ("font size".into(), "font.size".into())
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&t.dir).ok();
+}
+
 /// `:settings user` (`:settings global`) and `:settings project` open
 /// the file from the command line: the project's nearest the working
 /// directory, and where a layer has none, a template at its path as the
