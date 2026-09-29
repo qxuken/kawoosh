@@ -15,6 +15,8 @@ kawoosh-term.workspace = true
 kawoosh-systems.workspace = true
 kawoosh-languages.workspace = true
 tree-sitter.workspace = true
+# A settings file edited where a key is (settings_edit.rs).
+tree-sitter-lua.workspace = true
 crossbeam-channel.workspace = true
 kawoosh-lua.workspace = true
 kui-lua.workspace = true

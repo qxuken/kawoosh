@@ -1249,7 +1249,6 @@ fn instruments() -> Vec<ShellCommand> {
             "syntax tree",
         ),
         tab("perf", &["kui_perf"], crate::perf::TAB, "perf"),
-        tab("settings", &[], crate::settings::TAB, "settings"),
         cmd(
             Spec::new("settings reload").doc("read every settings file again"),
             |k, _| k.reload_all_settings(),

@@ -1,7 +1,7 @@
 //! Settings (kui.md D10): data in layers — the user's `settings.lua`,
 //! `init.lua`, every `.kawoosh/settings.lua` above the working
 //! directory, `:set` — merged in that order; a save reloads its layer;
-//! the devtools' Settings tab shows the layers and the merge.
+//! the settings pane's door lists them and writes a change into a file.
 
 mod drive;
 
@@ -456,236 +456,208 @@ fn the_leader_is_a_setting() {
     std::fs::remove_dir_all(&t.dir).ok();
 }
 
-/// The Settings tab: `:settings` shows it on the panel; it lists the
-/// layers from the one that wins down, each source's leaves, the
-/// effective values with where each is from; a file's row opens it.
+/// Lua through the app, as the pane runs it, then the frame that does
+/// what it asked.
+fn lua(d: &mut Drive, app: &mut Kawoosh, src: &str) {
+    app.run_lua_source("test", src);
+    d.frame(app);
+}
+
+fn read(p: &Path) -> String {
+    std::fs::read_to_string(p).unwrap()
+}
+
+/// The pane's door writes a change into the scope's file
+/// (docs/design/settings.md Decisions 5–7): the value where the key is,
+/// a field where it is not, the layer read again at once and the
+/// session's value at the key taken out; a project change goes to the
+/// innermost project file; a reset takes the key out and the value
+/// falls to the layer below; a value the setting does not take is
+/// refused and nothing is written. The watch seeing the writes reloads
+/// nothing again.
 #[test]
-fn the_settings_tab_shows_the_layers_and_opens_a_file() {
-    let t = tree("tab");
+fn the_door_writes_into_the_scopes_file() {
+    let t = tree("write");
     let mut d = Drive::new(1100.0, 700.0);
     let mut app = app_with_lua(&mut d);
     app.load_user_settings(&t.user);
     app.set_cwd(&t.sub);
-    ex(&mut d, &mut app, "set tabstop=1");
-    assert!(!app.devtools);
-    ex(&mut d, &mut app, "settings");
-    assert!(app.devtools && d.core.devtools());
-    assert_eq!(d.core.devtools_current_tab(), "settings");
-    assert_eq!(app.ed.message, "settings on");
-    let texts = texts(&d);
-    let has = |s: &str| texts.iter().any(|t| t.contains(s));
-    assert!(has("session — :set"), "{texts:?}");
-    assert!(has("project — .kawoosh"), "{texts:?}");
-    assert!(has("user — settings.lua"), "{texts:?}");
-    assert!(has("default — "), "{texts:?}");
-    assert!(has("effective — "), "{texts:?}");
-    assert!(
-        texts.iter().any(|x| *x == rel(".kawoosh/settings.lua")),
-        "the file under the cwd is a row, relative: {texts:?}"
-    );
-    assert!(
-        texts
-            .iter()
-            .any(|x| *x == rel("repo/.kawoosh/settings.lua")),
-        "the file above by its directory: {texts:?}"
-    );
-    assert!(
-        has(&rel("project: repo/.kawoosh/settings.lua")),
-        "{texts:?}"
-    );
-    assert!(has("compile.default") && has(r#""make""#), "{texts:?}");
-    assert!(has("session"), "the effective tabstop names its layer");
-    let top = texts.iter().position(|t| t.contains("session — ")).unwrap();
-    let bottom = texts.iter().position(|t| t.contains("default — ")).unwrap();
-    assert!(top < bottom, "what wins is on top");
-    // Which value the session set: the caption, the table's header and
-    // its one leaf — the layer's own source has no row of its own.
-    let session_rows: Vec<&String> = texts[top..].iter().take(5).collect();
-    assert!(
-        !session_rows.iter().any(|t| t.as_str() == "session"),
-        "{session_rows:?}"
-    );
-    assert!(
-        session_rows.iter().any(|t| t.as_str() == "tabstop")
-            && session_rows.iter().any(|t| t.as_str() == "1"),
-        "{session_rows:?}"
-    );
-    // The header counts.
-    assert!(has("sources · watching"), "{texts:?}");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "set scrolloff=9");
+    assert_eq!(app.ed.settings.int("scrolloff"), Some(9));
 
-    // Clicking the inner project file's row opens it.
-    let key = d.core.key_of(
-        &t.sub
-            .join(PROJECT_DIR)
-            .join(SETTINGS_FILE)
-            .display()
-            .to_string(),
+    lua(&mut d, &mut app, "kawoosh.settings.write('scrolloff', 4)");
+    assert_eq!(
+        read(&t.user),
+        "return { tabstop = 2, expandtab = false, scrolloff = 4 }"
     );
-    let key = key.expect("the file's row is keyed by its path");
-    let rect = d.core.nodes().iter().find(|n| n.key == key).unwrap().rect;
-    d.click(&mut app, rect.x + 20.0, rect.y + rect.h / 2.0);
-    d.frame(&mut app);
-    let opened = app
-        .focused_view()
-        .and_then(|v| app.ed.buffer_of(v).path.clone());
-    assert_eq!(opened, Some(t.sub.join(PROJECT_DIR).join(SETTINGS_FILE)));
-    // The default layer's caption is its fold, not a file: its click
-    // opens nothing — it unfolds what the editor ships, folded until then (`leader` is
-    // the default layer's alone, so it is drawn once, in the effective
-    // table, and twice once the layer is open).
-    let leaders = |d: &Drive| {
-        self::texts(d)
-            .iter()
-            .filter(|x| x.as_str() == "leader")
-            .count()
-    };
-    assert_eq!(leaders(&d), 1, "folded: {:?}", self::texts(&d));
-    let default = d
-        .core
-        .key_of("default — what the editor ships")
-        .expect("the caption is the fold");
-    let rect = d
-        .core
-        .nodes()
-        .iter()
-        .find(|n| n.key == default)
-        .unwrap()
-        .rect;
-    d.click(&mut app, rect.x + 20.0, rect.y + rect.h / 2.0);
-    d.frame(&mut app);
+    assert_eq!(
+        app.ed.settings.int("scrolloff"),
+        Some(4),
+        "the session's is gone"
+    );
     assert!(
-        !app.ed.buffers.values().any(|b| b.name == "default"),
-        "{:?}",
-        app.ed
-            .buffers
-            .values()
-            .map(|b| b.name.clone())
-            .collect::<Vec<_>>()
+        app.ed.message.starts_with("scrolloff = 4 · "),
+        "{}",
+        app.ed.message
     );
-    assert_eq!(leaders(&d), 2, "unfolded: {:?}", self::texts(&d));
-    d.click(&mut app, rect.x + 20.0, rect.y + rect.h / 2.0);
-    d.frame(&mut app);
-    assert_eq!(leaders(&d), 1, "folded again");
+    lua(&mut d, &mut app, "kawoosh.settings.write('font.size', 15)");
+    assert_eq!(
+        read(&t.user),
+        "return { tabstop = 2, expandtab = false, scrolloff = 4, font = { size = 15 } }"
+    );
+    assert_eq!(app.ed.settings.int("font.size"), Some(15));
 
-    // The keyboard is on the opened file, not on the panel the clicks
-    // were in (a press on a plain row blurs kui's focus; the pane takes
-    // it back): the panel toggles off from there.
-    ex(&mut d, &mut app, "settings");
-    assert!(!app.devtools);
-    assert_eq!(app.ed.message, "settings off");
+    // The project's: the innermost file, over the root's.
+    let inner = t.sub.join(PROJECT_DIR).join(SETTINGS_FILE);
+    lua(
+        &mut d,
+        &mut app,
+        "kawoosh.settings.write('tabstop', 6, { scope = 'project' })",
+    );
+    assert!(
+        read(&inner).starts_with("return { tabstop = 6, lsp"),
+        "{}",
+        read(&inner)
+    );
+    assert_eq!(app.ed.tabstop(), 6);
+    lua(
+        &mut d,
+        &mut app,
+        "kawoosh.settings.reset('tabstop', { scope = 'project' })",
+    );
+    assert_eq!(
+        read(&inner),
+        "return { lsp = { rust = { args = { '-v' } } } }"
+    );
+    assert_eq!(app.ed.tabstop(), 8, "the root's file below it");
+    lua(
+        &mut d,
+        &mut app,
+        "kawoosh.settings.reset('tabstop', { scope = 'project' })",
+    );
+    assert!(
+        app.ed.message.contains("does not set tabstop"),
+        "{}",
+        app.ed.message
+    );
+
+    // Refused: the setting's words, and the file as it was.
+    let before = read(&t.user);
+    lua(
+        &mut d,
+        &mut app,
+        "kawoosh.settings.write('editor.wrap', 'sideways')",
+    );
+    assert_eq!(app.ed.message, "editor.wrap: one of off, word, glyph");
+    lua(
+        &mut d,
+        &mut app,
+        "kawoosh.settings.write('nobody.reads', 1)",
+    );
+    assert_eq!(app.ed.message, "no setting `nobody.reads`");
+    assert_eq!(read(&t.user), before);
+
+    // The watch sees every write, and none is news.
+    std::thread::sleep(Duration::from_millis(1300));
+    for _ in 0..5 {
+        d.frame(&mut app);
+    }
+    assert!(app.config.reloaded.is_none(), "{:?}", app.config.reloaded);
+    assert!(app.config.written.is_empty(), "{:?}", app.config.written);
+    assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(&t.dir).ok();
 }
 
-/// A layer with no file offers to make one: `:set x!` leaves no empty
-/// session behind, and the project's `· create` row writes the stub,
-/// opens it, and the watch lists it as a source.
-/// A boolean in the effective table is a switch: a click flips it for
-/// the session, as `:set` would, and the row says so.
+/// A file open in a buffer is edited there, one undo step: written when
+/// it had nothing unsaved, left unsaved and said so when it had; a new
+/// project file is made from the template with the key in it.
 #[test]
-fn a_boolean_setting_is_a_switch_in_the_tab() {
-    // The `whichkey` switch is the effective table's last row, below
-    // the fold of any window as the defaults grow: the list is scrolled
-    // to its end before each click, as a user would, since a row past
-    // the list's edge is clipped and takes no click. Scrolled again
-    // for the second: the first adds a row to the session layer above.
-    fn click_whichkey(d: &mut Drive, app: &mut Kawoosh) {
-        let list = d.rect("devtools-tab:settings").expect("the tab");
-        d.wheel(app, list.x + 20.0, list.y + list.h / 2.0, 0.0, -100_000.0);
-        let rect = d.rect("toggle whichkey").expect("the switch row");
-        assert!(
-            rect.y + rect.h <= list.y + list.h,
-            "the switch row is on screen"
-        );
-        d.click(app, rect.x + 20.0, rect.y + rect.h / 2.0);
-        d.frame(app);
-    }
+fn an_open_settings_file_is_edited_in_its_buffer() {
+    let t = tree("buffer");
     let mut d = Drive::new(1100.0, 700.0);
     let mut app = app_with_lua(&mut d);
-    ex(&mut d, &mut app, "settings");
-    assert_eq!(app.ed.settings.bool("whichkey"), Some(true));
-    click_whichkey(&mut d, &mut app);
-    assert_eq!(app.ed.settings.bool("whichkey"), Some(false));
-    assert_eq!(app.ed.message, "whichkey = false");
-    assert_eq!(
-        app.ed.settings.origin("whichkey").as_deref(),
-        Some("session")
-    );
-    // Off means off: the leader opens nothing on screen.
-    d.keys(&mut app, " ");
-    assert!(
-        !d.core
-            .nodes()
-            .iter()
-            .any(|n| n.text.as_deref() == Some("SPC · leader")),
-        "the which-key is off"
-    );
-    d.key(&mut app, "escape", KeyMods::default());
-    click_whichkey(&mut d, &mut app);
-    assert_eq!(app.ed.settings.bool("whichkey"), Some(true));
-    // A number is not a switch.
-    assert!(d.rect("toggle tabstop").is_none());
-}
-
-#[test]
-fn an_empty_layer_offers_a_file_to_create() {
-    let t = tree("create");
-    let mut d = Drive::new(1100.0, 700.0);
-    let mut app = app_with_lua(&mut d);
+    app.load_user_settings(&t.user);
     app.set_cwd(&t.other);
     d.frame(&mut app);
-    ex(&mut d, &mut app, "set tabstop=1");
-    ex(&mut d, &mut app, "set tabstop!");
-    ex(&mut d, &mut app, "settings");
-    let now = texts(&d);
-    assert!(
-        !now.iter().any(|x| x == "{}") && !now.iter().any(|x| x == "session"),
-        "an unset session is not a source: {now:?}"
-    );
-    assert!(
-        now.iter().any(|x| *x == rel(".kawoosh/settings.lua")),
-        "{now:?}"
-    );
-    assert!(now.iter().any(|x| x == "· new"), "{now:?}");
-    let file = t.other.join(PROJECT_DIR).join(SETTINGS_FILE);
-    let key = d
-        .core
-        .key_of(&format!("new {}", file.display()))
-        .expect("the new row");
-    let rect = d.core.nodes().iter().find(|n| n.key == key).unwrap().rect;
-    d.click(&mut app, rect.x + 20.0, rect.y + rect.h / 2.0);
+    app.open_in_editor(&t.user, Some(1), None);
     d.frame(&mut app);
-    // Nothing on disk: a buffer at the path, the template in it, unsaved.
-    assert!(!file.exists());
     let v = app.focused_view().unwrap();
-    assert_eq!(app.ed.buffer_of(v).path.as_deref(), Some(file.as_path()));
-    assert_eq!(app.ed.buffer_of(v).text(), kawoosh::settings::SETTINGS_STUB);
+    lua(&mut d, &mut app, "kawoosh.settings.write('tabstop', 5)");
+    assert!(!app.ed.buffer_of(v).modified, "written");
+    assert_eq!(read(&t.user), app.ed.buffer_of(v).text());
+    assert!(read(&t.user).contains("tabstop = 5"));
+    assert_eq!(app.ed.tabstop(), 5);
+    // One `u` takes the change back, in the buffer.
+    d.keys(&mut app, "u");
+    assert!(app.ed.buffer_of(v).text().contains("tabstop = 2"));
+    // With that unsaved: the change joins it, and nothing is written.
+    lua(&mut d, &mut app, "kawoosh.settings.write('scrolloff', 2)");
     assert!(app.ed.buffer_of(v).modified);
-    assert_eq!(app.ed.buffer_of(v).language.to_string(), "lua");
-    // And the keyboard is in it, on the table's line: typing edits it.
-    d.keys(&mut app, "O");
-    d.commit(&mut app, "  tabstop = 7,");
-    d.key(&mut app, "escape", KeyMods::default());
     assert!(
-        app.ed
-            .buffer_of(v)
-            .text()
-            .contains("return {\n  tabstop = 7,\n}"),
+        app.ed.buffer_of(v).text().contains("tabstop = 2")
+            && app.ed.buffer_of(v).text().contains("scrolloff = 2")
+    );
+    assert!(read(&t.user).contains("tabstop = 5, expandtab = false, scrolloff = 1"));
+    assert!(
+        app.ed.message.contains("unsaved changes"),
         "{}",
-        app.ed.buffer_of(v).text()
+        app.ed.message
     );
-    // `:w` makes the directory and the file.
-    ex(&mut d, &mut app, "w");
-    assert!(file.is_file(), "{:?}", app.ed.message);
-    // The watch sees the new file: a source now, the offer gone.
-    until(&mut d, &mut app, "the saved file", |a| a.ed.tabstop() == 7);
+
+    // No project file yet: the template, the key in it, `.kawoosh/`
+    // made.
+    let file = t.other.join(PROJECT_DIR).join(SETTINGS_FILE);
+    assert!(!file.exists());
+    lua(
+        &mut d,
+        &mut app,
+        "kawoosh.settings.write('editor.wrap', 'word', { scope = 'project' })",
+    );
+    assert_eq!(
+        read(&file),
+        kawoosh::settings::SETTINGS_STUB
+            .replace("return {\n", "return {\n  editor = { wrap = \"word\" },\n")
+    );
+    assert_eq!(app.ed.settings.str("editor.wrap"), Some("word"));
+    std::fs::remove_dir_all(&t.dir).ok();
+}
+
+/// The door lists every setting with its doc, kind and where its value
+/// came from; a row's layers say each file's line.
+#[test]
+fn the_door_lists_the_settings_and_their_layers() {
+    let t = tree("list");
+    let mut d = Drive::new(1100.0, 700.0);
+    let mut app = app_with_lua(&mut d);
+    app.load_user_settings(&t.user);
+    app.set_cwd(&t.sub);
     d.frame(&mut app);
-    let now = texts(&d);
-    assert!(!now.iter().any(|x| x == "· new"), "{now:?}");
-    assert!(
-        now.iter().any(|x| *x == rel(".kawoosh/settings.lua")),
-        "{now:?}"
+    ex(&mut d, &mut app, "set tabstop=1");
+    lua(
+        &mut d,
+        &mut app,
+        r#"
+        local by = {}
+        for _, r in ipairs(kawoosh.settings.list()) do by[r.path] = r end
+        local ts = by.tabstop
+        assert(ts.kind == "integer" and ts.doc == "columns a tab takes", ts.doc)
+        assert(ts.value == 1 and ts.default == 4 and ts.origin.layer == "session")
+        assert(ts.set.user == 2 and ts.set.project == 3 and ts.set.session == 1)
+        assert(by["editor.wrap"].kind == "choice" and #by["editor.wrap"].choices == 3)
+        assert(by.format.kind == "table" and by["format.prettier.cmd"] == nil)
+        assert(by.scrolloff.origin.layer == "user" and by.scrolloff.origin.short)
+        local ls = kawoosh.settings.layers("tabstop")
+        assert(#ls == 5, #ls)
+        assert(ls[1].layer == "session" and ls[1].value == 1 and ls[1].line == nil)
+        assert(ls[2].layer == "project" and ls[2].value == 3 and ls[2].line == 1)
+        assert(ls[5].layer == "default" and ls[5].value == 4)
+        local f = kawoosh.settings.files()
+        assert(f.user.exists and #f.project_all == 2 and f.project.exists)
+        kawoosh.echo("ok")
+        "#,
     );
-    assert_eq!(d.warnings(), Vec::<String>::new());
+    assert_eq!(app.ed.message, "ok");
     std::fs::remove_dir_all(&t.dir).ok();
 }
 

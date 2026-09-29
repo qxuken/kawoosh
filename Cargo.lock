@@ -1762,6 +1762,7 @@ dependencies = [
  "smallvec",
  "text-buffer",
  "tree-sitter",
+ "tree-sitter-lua",
  "unicode-segmentation",
  "unicode-width",
  "windows-sys 0.59.0",

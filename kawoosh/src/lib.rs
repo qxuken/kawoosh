@@ -60,6 +60,8 @@ pub mod scroll_probe;
 pub mod secrets;
 pub mod session;
 pub mod settings;
+pub mod settings_edit;
+pub mod settings_pane;
 pub mod statusline;
 pub mod term_images;
 pub mod terminals;

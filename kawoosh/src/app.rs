@@ -185,10 +185,9 @@ pub struct Kawoosh {
     /// and the strip on it — which is what `:syntax_tree` and `:perf`
     /// toggle against.
     pub(crate) tab_shown: Option<&'static str>,
-    /// Whether the Settings tab shows the default layer's leaves: what
-    /// the editor ships is the longest list and the least often read,
-    /// so it opens folded and a click on its row unfolds it.
-    pub(crate) settings_default_open: bool,
+    /// `kawoosh.settings`, the settings pane's door
+    /// (`settings_pane.rs`).
+    pub(crate) settings_door: crate::settings_pane::SharedDoor,
     /// kui's latency HUD — frame times as a graph in the corner —
     /// toggled with `:kui_framerate_hud`.
     pub hud: bool,
@@ -372,7 +371,7 @@ impl Kawoosh {
             md_table_left: HashMap::new(),
             show_tab: None,
             tab_shown: None,
-            settings_default_open: false,
+            settings_door: Default::default(),
             line_cells: Default::default(),
             perf: Default::default(),
             undo: Default::default(),
@@ -2276,6 +2275,7 @@ impl kui_native::App for Kawoosh {
             }
             ui.window_command(WindowCommand::Close(ui.env().window.id));
         }
+        self.sync_settings_door();
         self.sync_look(ui);
         self.sync_du();
         self.probe_fonts(ui);
@@ -2315,7 +2315,6 @@ impl kui_native::App for Kawoosh {
         // show, as a layer over the panel's tab body (kui ADR 0032).
         self.syntax_tab(ui);
         self.perf_tab(ui);
-        self.settings_tab(ui);
         self.sync_undo_view();
         let m = ui.measure_text("M", &rows::mono(self.face, &pal), None);
         self.cell = (m.width.max(1.0), self.face.line_height);
@@ -2549,16 +2548,6 @@ impl Kawoosh {
         }
         match ev.kind() {
             Some("syntax") => self.on_syntax_click(p),
-            // A click in the Settings tab that opened a file or turned a
-            // row: the keyboard to the pane, from wherever kui had it —
-            // the devtools strip's tab, say.
-            Some("settings") => {
-                if self.on_settings_click(p)
-                    && let Some(sink) = self.sink
-                {
-                    core.set_focus(Some(sink));
-                }
-            }
             Some("undo") => self.on_undo_click(p),
             Some("memory") => self.on_memory_click(p),
             // A click's payload is the `on_click` value itself, with the
