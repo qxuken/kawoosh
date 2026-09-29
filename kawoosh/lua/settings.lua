@@ -22,7 +22,8 @@
 -- number in place, opens a list's or a table's file; `h` `l` (`-` `+`)
 -- step a number or a word; `r` resets, `x` clears the session's value,
 -- `<Tab>` shows a row's layers, `gf` the scope's file at the key, `u`
--- `p` the scope, `m` `@modified`, `y` copies the line that sets the
+-- `p` `s` the scope (the session's is `:set`'s), `m` `@modified` and
+-- `<A-m>` `<A-u>` `<A-p>` `<A-s>` each filter, here and in the search, `y` copies the line that sets the
 -- row's value; `/` `i` `a` the search, `q` closes, `<Esc>` empties the
 -- search and then closes. In the search, `⏎` and `<Esc>` go to the
 -- list, and the arrows walk it.
@@ -44,6 +45,8 @@ local SHARE = 0.5
 local PAD = 14
 -- The width past which the sections are listed down the left.
 local INDEX_MIN = 680
+-- The most of a value a row's note spells before an ellipsis.
+local NOTE_MAX = 48
 local SIZE = 13
 local function sizes(env)
   local l = env and env.tokens and env.tokens.lengths or {}
@@ -157,10 +160,12 @@ local function keep_line(path, v)
   return parts[1] .. " = " .. s
 end
 
--- The value the scope's file gives: its own, else the layers' below
--- it — what a change in this scope would be seen over.
+-- The value the scope gives: its own, else the layers' below it — what
+-- a change in this scope would be seen over. The session's is the
+-- value in effect.
 local function scoped(r)
-  if S.scope == "project" and r.set.project ~= nil then return r.set.project end
+  if S.scope == "session" and r.set.session ~= nil then return r.set.session end
+  if S.scope ~= "user" and r.set.project ~= nil then return r.set.project end
   if r.set.user ~= nil then return r.set.user end
   return r.default
 end
@@ -171,7 +176,7 @@ end
 local function above(r)
   local out = {}
   if S.scope == "user" and r.set.project ~= nil then out[#out + 1] = { "project", r.set.project } end
-  if r.set.session ~= nil then out[#out + 1] = { "session", r.set.session } end
+  if S.scope ~= "session" and r.set.session ~= nil then out[#out + 1] = { "session", r.set.session } end
   return out
 end
 
@@ -257,11 +262,15 @@ local function score(r, words, filters)
   return s
 end
 
-local function refilter()
+-- The rows the query keeps. With `sticky`, the paths shown before a
+-- change the pane made stay shown, and the list does not move: a row
+-- reset under `@modified` stays where it was until the query changes.
+local function refilter(sticky)
   local words, filters = parse_query(S.query)
   local out = {}
   for _, r in ipairs(S.rows) do
     local s = score(r, words, filters)
+    if not s and sticky and sticky[r.path] then s = 0 end
     if s then
       r.score = s
       out[#out + 1] = r
@@ -283,7 +292,7 @@ local function refilter()
   local keep = false
   for _, r in ipairs(out) do keep = keep or r.path == S.cursor end
   if not keep then S.cursor = out[1] and out[1].path or nil end
-  S.reveal = true
+  if not sticky or not keep then S.reveal = true end
 end
 
 local function index_of(path)
@@ -399,6 +408,19 @@ local function copy(r)
   local line = keep_line(r.path, scoped(r))
   kawoosh.copy(line)
   kawoosh.echo("copied " .. line)
+end
+
+-- A filter word into the search, or out of it when it is there.
+local function toggle_filter(word)
+  local q = " " .. (S.query or "") .. " "
+  local has = q:lower():find(" " .. word .. " ", 1, true)
+  if has then
+    q = q:sub(1, has) .. q:sub(has + #word + 2)
+  else
+    q = q .. word
+  end
+  q = q:gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
+  kawoosh.field_set(VIEW, FIELD, q)
 end
 
 local function set_scope(scope)
@@ -568,12 +590,20 @@ end
 local function row_node(r, ctx, is_cursor, t)
   local v = scoped(r)
   local mine = r.set[S.scope] ~= nil
+  local elsewhere = false
   local head = row { width = "grow", gap = 8, cross_align = "center",
     row { width = "grow", clip = true,
       text(path_spans(r.path, S.words or {}, t), { family = "mono", size = SIZE, wrap = "none" }) } }
+  -- Every layer that sets it, by name: the scope's in the accent, the
+  -- others muted, so what `@modified` keeps is marked whoever set it.
+  for _, layer in ipairs { "user", "project", "session" } do
+    if r.set[layer] ~= nil then
+      elsewhere = elsewhere or layer ~= S.scope
+      head[#head + 1] = text(layer, { size = SIZE - 2, color = layer == S.scope and t.accent or t.muted,
+                                      wrap = "none" })
+    end
+  end
   if mine then
-    -- The scope's word: its file is in the head.
-    head[#head + 1] = text(S.scope, { size = SIZE - 2, color = t.accent, wrap = "none" })
     head[#head + 1] = button("reset " .. r.path, "↺ reset", { kind = "reset", path = r.path }, t)
   end
   if r.kind == "boolean" and S.editing ~= r.path then head[#head + 1] = switch(r, v == true, t) end
@@ -586,9 +616,13 @@ local function row_node(r, ctx, is_cursor, t)
   if c then body[#body + 1] = c end
   for _, a in ipairs(above(r)) do
     local layer, value = a[1], a[2]
+    local shown = spell(value, r.kind)
+    if utf8.len(shown) and utf8.len(shown) > NOTE_MAX then
+      shown = shown:sub(1, utf8.offset(shown, NOTE_MAX) - 1) .. "…"
+    end
     local words = layer == "project"
-      and ("the project sets " .. spell(value, r.kind) .. ", over yours")
-      or (":set made it " .. spell(value, r.kind) .. " for this session")
+      and ("the project sets " .. shown .. ", over yours")
+      or (":set made it " .. shown .. " for this session")
     local line = row { width = "grow", gap = 8, cross_align = "center",
       row { width = "grow",
         text(words, { size = SIZE - 2, color = t.warning or t.accent, wrap = "word" }) } }
@@ -606,7 +640,8 @@ local function row_node(r, ctx, is_cursor, t)
     bg = is_cursor and t.surface or nil, hover_bg = not is_cursor and t.sunken or nil,
     border = is_cursor and { w = 1, color = t.border } or nil,
     on_click = { kind = "cursor", path = r.path },
-    row { width = 3, height = "grow", radius = 2, bg = mine and t.accent or nil },
+    row { width = 3, height = "grow", radius = 2,
+          bg = mine and t.accent or (elsewhere and (t.border_strong or t.muted)) or nil },
     body,
   }
 end
@@ -639,15 +674,25 @@ local function scope_chips(t, files)
   if files.project then
     line[#line + 1] = chip("scope project", "project", S.scope == "project", { kind = "scope", scope = "project" }, t)
   end
+  line[#line + 1] = chip("scope session", "session", S.scope == "session", { kind = "scope", scope = "session" }, t)
   return line
 end
+
+-- The filters a key turns on and off, `<A-KEY>` in the search and the
+-- rows alike.
+local FILTER_KEYS = { { "@modified", "m" }, { "@user", "u" }, { "@project", "p" }, { "@session", "s" } }
 
 local function filter_chips(t)
   local line = row { width = "grow", gap = 4, cross_gap = 4, wrap_children = true }
   local q = " " .. (S.query or ""):lower() .. " "
-  for _, f in ipairs { "@modified", "@user", "@project", "@session" } do
-    local on = q:find(" " .. f .. " ", 1, true) ~= nil
-    line[#line + 1] = chip("filter " .. f, f, on, { kind = "filter", word = f }, t)
+  for _, f in ipairs(FILTER_KEYS) do
+    local on = q:find(" " .. f[1] .. " ", 1, true) ~= nil
+    line[#line + 1] = row {
+      key = "filter " .. f[1], pad = { x = 8 }, height = SIZE + 8, radius = 4, gap = 6, cross_align = "center",
+      bg = on and t.accent or t.sunken, hover_bg = not on and t.surface or nil,
+      on_click = { kind = "filter", word = f[1] },
+      text(f[1], { size = SIZE - 1, color = on and t.on_accent or t.muted, wrap = "none" }),
+      text("⌥" .. f[2], { size = SIZE - 3, color = on and t.on_accent or t.faint, wrap = "none" }) }
   end
   return line
 end
@@ -669,7 +714,7 @@ local function foot(t, files)
   line[#line + 1] = row { width = "grow" }
   line[#line + 1] = button("reload", "reload", { kind = "reload" }, t)
   col[#col + 1] = line
-  local keys = "jk walk · ⏎ change · hl step · r reset · x clear :set · tab layers · gf file · u p scope · / search · q close"
+  local keys = "jk walk · ⏎ change · hl step · r reset · x clear :set · tab layers · gf file · u p s scope · ⌥m ⌥u ⌥p ⌥s filters · / search · q close"
   if files.reloaded then keys = files.reloaded .. " · " .. keys end
   col[#col + 1] = text(keys, { size = SIZE - 2, color = t.faint, wrap = "word" })
   return col
@@ -681,35 +726,42 @@ kawoosh.view(VIEW, function(ctx)
   if not S then S = { query = "", scope = "user", open = {}, layers = {} } end
   local q = ctx.field_text(FIELD) or ""
   if not S.rows or S.version ~= door.version() then
+    local sticky
+    if S.rows and S.shown and q == S.query then
+      sticky = {}
+      for _, r in ipairs(S.shown) do sticky[r.path] = true end
+    end
     take_rows()
     S.query = q
-    refilter()
+    refilter(sticky)
   elseif q ~= S.query then
     S.query = q
     refilter()
   end
   local files = door.files()
   S.files = files
-  local target = files[S.scope]
+  local target = S.scope ~= "session" and files[S.scope] or nil
 
   local search = ctx.field { name = FIELD, placeholder = "search settings, or @modified", size = SIZE }
   search.width = "grow"
   local count = (#S.shown == #S.rows) and (#S.rows .. " settings")
     or (#S.shown .. " of " .. #S.rows)
-  local head = column { width = "grow", gap = 8, pad = { x = PAD, top = PAD, bottom = 6 },
+  local head = column { width = "grow", gap = 8, pad = { x = PAD, top = PAD, bottom = 12 },
     row { width = "grow", gap = 10, cross_align = "center",
       text({ { "Settings", bold = true } }, { size = SIZE + 3, color = t.fg, wrap = "none" }),
       row { width = "grow" },
       text("changes go to", { size = SIZE - 2, color = t.faint, wrap = "none" }),
       scope_chips(t, files) },
-    text(target and (target.short .. (target.exists and "" or " · made on the first change")) or "",
+    text(S.scope == "session" and "this session only, as :set: gone at the next launch"
+         or target and (target.short .. (target.exists and "" or " · made on the first change")) or "",
       { size = SIZE - 2, color = t.muted, wrap = "word" }),
     row { width = "grow", height = SIZE + 14, pad = { x = 8 }, gap = 8, radius = 5, cross_align = "center",
           bg = t.sunken, border = { w = 1, color = t.border },
       text("/", { family = "mono", size = SIZE, color = t.accent, wrap = "none" }),
       search,
       text(count, { size = SIZE - 2, color = #S.shown == 0 and t.danger or t.faint, wrap = "none" }) },
-    filter_chips(t) }
+    filter_chips(t),
+    row { width = "grow", height = 1, bg = t.border } }
 
   local groups = grouped()
   local list = column { key = "list", width = "grow", height = "grow", scroll_y = true, gap = 0,
@@ -791,15 +843,7 @@ end, function(ev)
   elseif k == "scope" then
     set_scope(ev.scope)
   elseif k == "filter" then
-    local q = " " .. (S.query or "") .. " "
-    local has = q:lower():find(" " .. ev.word .. " ", 1, true)
-    if has then
-      q = q:sub(1, has) .. q:sub(has + #ev.word + 2)
-    else
-      q = q .. ev.word
-    end
-    q = q:gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
-    kawoosh.field_set(VIEW, FIELD, q)
+    toggle_filter(ev.word)
   elseif k == "section" then
     for _, r in ipairs(S.shown) do
       if r.section == ev.name then
@@ -925,16 +969,12 @@ on("file", with_row(function(r)
 end), "the scope's file at the key")
 on("scope user", function() if S then set_scope("user") end end, "changes to your settings.lua")
 on("scope project", function() if S then set_scope("project") end end, "changes to the project's settings.lua")
-on("modified", function()
-  if not S then return end
-  local q = S.query or ""
-  if q:find("@modified", 1, true) then
-    q = q:gsub("%s*@modified", ""):gsub("^%s+", "")
-  else
-    q = (q == "" and "" or (q .. " ")) .. "@modified"
-  end
-  kawoosh.field_set(VIEW, FIELD, q)
-end, "the rows a file or the session sets, or all")
+on("scope session", function() if S then set_scope("session") end end, "changes for this session only, as `:set`")
+for _, f in ipairs(FILTER_KEYS) do
+  local word = f[1]
+  on("filter " .. word:sub(2), function() if S then toggle_filter(word) end end,
+    "`" .. word .. "` in the search, or out of it")
+end
 on("copy", with_row(copy), "the line that sets the row's value, on the clipboard")
 on("search", to_search, "the keys to the search")
 on("list", to_list, "the keys to the rows")
@@ -958,10 +998,18 @@ for k, c in pairs {
   ["<CR>"] = "act", ["<Space>"] = "act", h = "less", l = "more", ["-"] = "less", ["+"] = "more",
   ["="] = "more", ["<Left>"] = "less", ["<Right>"] = "more",
   r = "reset", x = "clear", ["<Tab>"] = "layers", gf = "file", u = "scope user", p = "scope project",
-  m = "modified", y = "copy", ["/"] = "search", i = "search", a = "search",
+  s = "scope session", m = "filter modified", y = "copy", ["/"] = "search", i = "search", a = "search",
   q = "close", ["<Esc>"] = "escape",
 } do
   kawoosh.map("p", k, "settings " .. c, pane)
+end
+-- The filters by `<A-KEY>`, from the rows and the search alike.
+for _, f in ipairs(FILTER_KEYS) do
+  local c = "settings filter " .. f[1]:sub(2)
+  kawoosh.map("p", "<A-" .. f[2] .. ">", c, pane)
+  for _, mode in ipairs { "i", "n" } do
+    kawoosh.map(mode, "<A-" .. f[2] .. ">", c, { view = VIEW, field = FIELD })
+  end
 end
 local search = { view = VIEW, field = FIELD }
 for _, mode in ipairs { "i", "n" } do

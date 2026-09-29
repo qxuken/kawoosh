@@ -338,3 +338,20 @@ Tests: `settings_edit.rs`'s seventeen; `kawoosh/tests/settings.rs`
 project file, listing with layers; the pane driven by its keys);
 `kawoosh/lua/tests/settings.lua` (search, filters, walking, sections, a
 project write, the layers).
+
+### From use, 2026-09-29
+
+- **A session scope**, the third chip and `s`, overturning Decision
+  5's *beat*: a change there is `:set`'s (checked against the kind as a
+  file's is), a reset `:set PATH!`, and the row shows the value in
+  effect.
+- **A reset keeps its place.** Under `@modified` a reset row stopped
+  matching, left the list, and the cursor fell to the first row. Now a
+  change the pane made keeps every row it showed, and the list does not
+  move, until the query changes.
+- **Every layer that sets a row marks it**: the layers named on the
+  row, the scope's in the accent, and a muted bar where only another
+  layer sets it, so what `@modified` keeps is always marked.
+- **Filters by key**: `<A-m>` `<A-u>` `<A-p>` `<A-s>` from the search
+  and the rows, the key on each chip. Room and a hairline between the
+  chips and the list; a note's value cut at 48 characters.

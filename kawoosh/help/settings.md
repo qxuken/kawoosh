@@ -147,16 +147,16 @@ Paths complete as you type, and so do the choices of a setting that takes a few 
 
 Each setting is a row: its path as a settings file spells it, what it does, and a control for its kind. A switch flips, a word is one of a few chips, a number steps with `−` and `+` or takes a typed value, and a text is typed in place. A list or a table has **edit in file**, which opens the file at the key and adds the key first when the file does not have it. The rows are grouped into sections (Editing, Look, Layout, …), and a wide pane lists the sections down the left.
 
-**A change goes into a file.** At the top, **user** and **project** say which: your `settings.lua`, or the project's `.kawoosh/settings.lua` nearest the working directory (made on the first change). Kawoosh edits the file where the key is and keeps your comments and layout. When the file is open in a buffer, the change is made there, one `u` undoes it, and the buffer is saved unless it already had unsaved changes of yours. A change also takes out a `:set` of the same setting, so what you chose is what you see. A file that builds its table in code (more than `return { … }` or a `local` returned by name) is not edited: kawoosh says so and opens it.
+**A change goes into a file.** At the top, **user**, **project** and **session** say where: your `settings.lua`, the project's `.kawoosh/settings.lua` nearest the working directory (made on the first change), or this session only, as `:set` does, gone at the next launch. Kawoosh edits the file where the key is and keeps your comments and layout. When the file is open in a buffer, the change is made there, one `u` undoes it, and the buffer is saved unless it already had unsaved changes of yours. A change also takes out a `:set` of the same setting, so what you chose is what you see. A file that builds its table in code (more than `return { … }` or a `local` returned by name) is not edited: kawoosh says so and opens it.
 
-A row your file sets has a bar on its left and **↺ reset**, which takes the key out of the file so the value falls back to the layer below. When a layer above the scope wins, the row says so: "the project sets 4, over yours", or ":set made it 2 for this session" with **clear**.
+A row names every layer that sets it (`user`, `project`, `session`), the scope's in the accent. A row the scope sets has an accent bar on its left and **↺ reset**, which takes the key out of the file so the value falls back to the layer below; a row only another layer sets has a muted bar. After a reset, the row stays in the list, even under `@modified`, until you change the search. When a layer above the scope wins, the row says so: "the project sets 4, over yours", or ":set made it 2 for this session" with **clear**.
 
-The search is at the top and has the keys when the pane opens. Every word you type must appear in the row's path, its description, its section or its value. A word that matches a path by its letters in order also counts, so `fsz` finds `font.size`. Words starting with `@` filter:
+The search is at the top and has the keys when the pane opens. Every word you type must appear in the row's path, its description, its section or its value. A word that matches a path by its letters in order also counts, so `fsz` finds `font.size`. Words starting with `@` filter, and `⌥m` `⌥u` `⌥p` `⌥s` (`<A-m>` …) turn the first four on and off from the search or the rows:
 
 | filter | keeps |
 |---|---|
-| `@modified` | what a file or `:set` sets |
-| `@user`, `@project`, `@session` | what that layer sets |
+| `@modified` (`⌥m`) | what a file or `:set` sets |
+| `@user`, `@project`, `@session` (`⌥u` `⌥p` `⌥s`) | what that layer sets |
 | `@bool`, `@number`, `@text` | settings of that kind |
 
 | key | what |
@@ -170,7 +170,7 @@ The search is at the top and has the keys when the pane opens. Every word you ty
 | `x` | clear the `:set` value |
 | `<Tab>` | the row's value in every layer, each file's line a click away |
 | `gf` | the scope's file at the key |
-| `u`, `p` | changes go to your file, or the project's |
+| `u`, `p`, `s` | changes go to your file, the project's, or the session |
 | `m` | `@modified` on and off |
 | `y` | copy the line that sets the row's value, such as `font = { size = 14 }` |
 | `/`, `i`, `a` | back to the search |
@@ -183,7 +183,7 @@ The pane is a Lua plugin over `kawoosh.settings`, which a pane of your own can r
 - `kawoosh.settings.list()`: every setting, each `{ path, kind, choices, doc, default, value, origin, set, entries }`. `kind` is `boolean`, `integer`, `number`, `string`, `size`, `choice`, `list` or `table`; `set` holds the `user`, `project` and `session` values that exist; `entries` holds a table's names.
 - `kawoosh.settings.layers(path)`: the value in each layer, the winning one first, with its `file` and `line`.
 - `kawoosh.settings.files()`: the `user`, `init` and `project` files, and `project_all`.
-- `kawoosh.settings.write(path, value, { scope = "user" | "project" })`, `kawoosh.settings.reset(path, { scope })` and `kawoosh.settings.open(path, { scope, add })` do what the pane does. `kawoosh.settings.check(path, value)` says why a value would be refused, or nil.
+- `kawoosh.settings.write(path, value, { scope = "user" | "project" | "session" })`, `kawoosh.settings.reset(path, { scope })` and `kawoosh.settings.open(path, { scope, add })` do what the pane does. `kawoosh.settings.check(path, value)` says why a value would be refused, or nil.
 - `kawoosh.settings.sections` is the list of sections, `{ name, paths }`, a path either a setting's or a prefix ending in `.`. Change it in `init.lua` to reorder the pane or add a section of your own.
 
 ## Types for the Lua language server

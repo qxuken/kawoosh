@@ -814,6 +814,78 @@ fn the_pane_searches_and_changes_settings_in_their_files() {
     std::fs::remove_dir_all(&t.dir).ok();
 }
 
+/// From use (2026-09-29): `<A-m>` filters from the search; a reset
+/// under `@modified` keeps the row and the cursor where they were, the
+/// list unmoved, until the query changes; every layer that sets a row
+/// marks it; the session's scope is `:set`'s and writes no file.
+#[test]
+fn the_pane_keeps_its_place_and_sets_the_session() {
+    let t = tree("sticky");
+    let mut d = Drive::new(1100.0, 800.0);
+    let mut app = app_with_lua(&mut d);
+    app.load_user_settings(&t.user);
+    app.set_cwd(&t.sub);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "settings");
+    d.press(&mut app, "<A-m>");
+    d.frame(&mut app);
+    assert_eq!(pane(&mut d, &mut app).0, "@modified");
+    let shown = |d: &mut Drive, app: &mut Kawoosh| {
+        eval(d, app, "table.concat(kawoosh.settings.state().shown, ' ')")
+    };
+    let before = shown(&mut d, &mut app);
+    // The project's tabstop: marked though the scope is the user's.
+    assert!(
+        before.split(' ').any(|p| p == "compile.default"),
+        "{before}"
+    );
+    assert!(texts(&d).iter().any(|x| x == "project"), "{:?}", texts(&d));
+
+    // To `scrolloff`, the user's: reset keeps it shown, the cursor on it.
+    d.press(&mut app, "<Esc>");
+    for _ in 0..before.split(' ').position(|p| p == "scrolloff").unwrap() {
+        d.press(&mut app, "j");
+    }
+    d.frame(&mut app);
+    assert_eq!(
+        eval(&mut d, &mut app, "kawoosh.settings.state().cursor"),
+        "scrolloff"
+    );
+    d.press(&mut app, "r");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert!(!read(&t.user).contains("scrolloff"), "{}", read(&t.user));
+    assert_eq!(shown(&mut d, &mut app), before, "nothing moved");
+    assert_eq!(
+        eval(&mut d, &mut app, "kawoosh.settings.state().cursor"),
+        "scrolloff"
+    );
+    // The query changed: gone now that no one sets it.
+    d.press(&mut app, "<A-m><A-m>");
+    d.frame(&mut app);
+    assert!(!shown(&mut d, &mut app).split(' ').any(|p| p == "scrolloff"));
+
+    // The session: `s`, a step, no file written.
+    d.press(&mut app, "<A-m>");
+    let file = read(&t.user);
+    d.press(&mut app, "/<C-u>scrolloff<Esc>sl");
+    d.frame(&mut app);
+    assert_eq!(app.ed.settings.int("scrolloff"), Some(4));
+    assert_eq!(
+        app.ed.settings.origin("scrolloff").as_deref(),
+        Some("session")
+    );
+    assert_eq!(read(&t.user), file);
+    d.press(&mut app, "r");
+    d.frame(&mut app);
+    assert_eq!(
+        app.ed.settings.int("scrolloff"),
+        Some(3),
+        "the default again"
+    );
+    std::fs::remove_dir_all(&t.dir).ok();
+}
+
 /// `:settings user` (`:settings global`) and `:settings project` open
 /// the file from the command line: the project's nearest the working
 /// directory, and where a layer has none, a template at its path as the

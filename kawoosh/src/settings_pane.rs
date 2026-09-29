@@ -20,17 +20,20 @@ use crate::app::Kawoosh;
 use crate::settings::{PROJECT_DIR, SETTINGS_FILE, SETTINGS_STUB, project_settings_files};
 use crate::settings_edit;
 
-/// Which file a change goes to (Decision 5).
+/// Where a change goes (Decision 5): a file, or the session as `:set`
+/// puts it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
     User,
     Project,
+    Session,
 }
 
 impl Scope {
     fn parse(s: Option<&str>) -> Scope {
         match s {
             Some("project") => Scope::Project,
+            Some("session") => Scope::Session,
             _ => Scope::User,
         }
     }
@@ -295,11 +298,12 @@ impl Kawoosh {
         }
     }
 
-    /// The file a change in `scope` goes to, or why there is none.
+    /// The file a change in `scope` goes to, or why there is none; the
+    /// session's file is the user's, what `gf` opens there.
     fn scope_file(&self, scope: Scope) -> Result<PathBuf, String> {
         let f = self.settings_files();
         match scope {
-            Scope::User => f
+            Scope::User | Scope::Session => f
                 .user
                 .ok_or_else(|| "no config dir: neither $XDG_CONFIG_HOME nor a home".into()),
             Scope::Project => f
@@ -330,6 +334,24 @@ impl Kawoosh {
                 return false;
             }
         };
+        if scope == Scope::Session {
+            // `:set` and `:set PATH!`, the value checked as a file's is.
+            self.ed.message = match value {
+                Some(v) => {
+                    let said = format!("{path} = {} · session", settings_edit::spell(&v));
+                    self.ed.settings.set(Layer::Session, path, v);
+                    said
+                }
+                None if self.ed.settings.layer_value(Layer::Session, path).is_none() => {
+                    format!("the session does not set {path}")
+                }
+                None => {
+                    self.ed.settings.unset(Layer::Session, path);
+                    format!("{path} reset · session")
+                }
+            };
+            return true;
+        }
         let file = match self.scope_file(scope) {
             Ok(f) => f,
             Err(why) => {
@@ -410,6 +432,7 @@ impl Kawoosh {
                 }
             }
             Scope::Project => self.reload_project_settings(),
+            Scope::Session => {}
         }
         self.ed.settings.unset(Layer::Session, path);
         self.ed.message = said;
