@@ -9,10 +9,15 @@
 //! causes brought them — in the log, in the Frames tab, and, under
 //! `KAWOOSH_FRAME_LOG=PATH`, appended to PATH with every frame of it.
 //!
-//! What it cannot see yet is kui's side: a transition still easing, a
-//! scroller still moving, the caret's blink, an OS event the app was
-//! never handed. A frame with none of the causes above is counted as
-//! `unexplained`, which is itself the answer that it was kui's.
+//! kui's side comes from its frame trace (kui F111), on for as long as
+//! the app runs: why the runner drew — `kui:caret`, `kui:resize`, an OS
+//! event the app was never handed, `kui:pointerMove` — and, for a frame
+//! the one before left owed, who held it: a transition still easing
+//! (`transition panel/bar[width]`), a keyframe cycle, a departure, a
+//! scroller, a kui widget's own `request_frame`. And whether a frame
+//! drew anything new: one that drew what the frame before it drew is
+//! `same`, a frame nobody needed. A frame with no cause at all is
+//! `unexplained`: the platform asked (an expose, a live resize).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
@@ -22,7 +27,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use kawoosh_systems::{Alarm, WakeHandle};
-use kui_native::{Align, Min, NodeSpec, Ui};
+use kui_native::{Align, Core, FrameCause, Min, NodeSpec, OwedBy, Ui};
 
 use crate::app::Kawoosh;
 use crate::devtab::Tab;
@@ -74,12 +79,125 @@ pub struct Frame {
     /// What the frame drained from the systems, by kind — what the
     /// wakes brought (`lsp progress`).
     pub drained: Vec<(&'static str, u32)>,
+    /// Why kui's runner drew it, by name, less what the fields above
+    /// say already (a wake, a frame owed).
+    pub kui: Vec<&'static str>,
+    /// Who held the frame the one before left owed: `transition
+    /// panel/bar[width]`, `scroll list`, `req:scrollbar fade`.
+    pub holders: Vec<String>,
+    /// It drew what the frame before it drew: known a frame later.
+    pub unchanged: Option<bool>,
+}
+
+/// What kui says of a frame about to be built ([`Frames::begin_with`]).
+#[derive(Clone, Debug, Default)]
+pub struct KuiReading {
+    /// Why the runner drew, by name.
+    pub cause: Vec<&'static str>,
+    /// Among them, something the person did: an input the app may never
+    /// have been handed, or a window being resized.
+    pub user: bool,
+    /// Who held the frame owed, as [`Frame::holders`].
+    pub holders: Vec<String>,
+    /// Whether the frame before this one drew what the one before it did.
+    pub prev_unchanged: Option<bool>,
+}
+
+impl KuiReading {
+    /// The core's trace, read at the start of `view`.
+    pub fn of(core: &Core) -> Self {
+        let cause = core.frame_cause();
+        let user = cause.intersects(user_input());
+        let holders = holders(core.owed_by());
+        Self {
+            cause: cause.names().collect(),
+            user,
+            holders,
+            prev_unchanged: core.frame_unchanged(),
+        }
+    }
+}
+
+/// The causes that are something the person did.
+fn user_input() -> FrameCause {
+    [
+        FrameCause::POINTER_MOVE,
+        FrameCause::POINTER_LEAVE,
+        FrameCause::BUTTON,
+        FrameCause::WHEEL,
+        FrameCause::KEY,
+        FrameCause::MODIFIERS,
+        FrameCause::TEXT,
+        FrameCause::PREEDIT,
+        FrameCause::ACCESS,
+        FrameCause::FILE_DRAG,
+        FrameCause::FILES,
+        FrameCause::RESIZE,
+    ]
+    .into_iter()
+    .fold(FrameCause::NONE, FrameCause::union)
+}
+
+/// Who held an owed frame, one line each. The app's own asks are
+/// named by [`request`] already, and left out.
+fn holders(by: &OwedBy) -> Vec<String> {
+    if by.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for h in &by.transitions {
+        out.push(format!("transition {}[{}]", h.name, h.slots.join(",")));
+    }
+    for (what, list) in [
+        ("cycle", &by.cycles),
+        ("departure", &by.departures),
+        ("scroll", &by.scrolls),
+        ("animate", &by.animate),
+    ] {
+        for h in list {
+            out.push(format!("{what} {}", h.name));
+        }
+    }
+    if let Some(h) = &by.autoscroll {
+        out.push(format!("autoscroll {}", h.name));
+    }
+    for r in &by.requests {
+        let file = r.at.file();
+        if file.ends_with("frames.rs") && file.contains("kawoosh") {
+            continue;
+        }
+        let base = file.rsplit(['/', '\\']).next().unwrap_or(file);
+        if r.why == "request_frame" {
+            out.push(format!("req@{base}:{}", r.at.line()));
+        } else {
+            out.push(format!("req:{}", r.why));
+        }
+    }
+    out
 }
 
 impl Frame {
-    /// Nothing the app knows of brought it.
+    /// Nothing the app or kui knows of brought it.
     pub fn unexplained(&self) -> bool {
-        self.inputs.is_empty() && self.wakes.is_empty() && self.requests.is_empty()
+        self.inputs.is_empty()
+            && self.wakes.is_empty()
+            && self.requests.is_empty()
+            && self.kui.is_empty()
+            && self.holders.is_empty()
+    }
+
+    /// Its causes, one key each: `in:key`, a wake's name, `req:NAME`, a
+    /// holder, `kui:NAME` — or `unexplained`.
+    pub fn cause_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self.inputs.iter().map(|i| format!("in:{i}")).collect();
+        keys.extend(self.wakes.iter().map(|(n, _)| n.to_string()));
+        keys.extend(self.requests.iter().map(|r| format!("req:{r}")));
+        keys.extend(self.holders.iter().cloned());
+        keys.extend(self.kui.iter().map(|k| format!("kui:{k}")));
+        if keys.is_empty() {
+            keys.push("unexplained".into());
+        }
+        keys
     }
 
     /// Its causes, as one line: `pty×3 lsp req:md-heights`.
@@ -98,6 +216,12 @@ impl Frame {
         for r in &self.requests {
             let _ = write!(s, "req:{r} ");
         }
+        for h in &self.holders {
+            let _ = write!(s, "{h} ");
+        }
+        for k in &self.kui {
+            let _ = write!(s, "kui:{k} ");
+        }
         if s.is_empty() {
             s.push_str("unexplained ");
         }
@@ -106,6 +230,10 @@ impl Frame {
             for (n, k) in &self.drained {
                 let _ = write!(s, " {n}×{k}");
             }
+            s.push(' ');
+        }
+        if self.unchanged == Some(true) {
+            s.push_str("· same");
         }
         s.trim_end().to_string()
     }
@@ -126,6 +254,8 @@ pub struct Burn {
     pub wakes: BTreeMap<&'static str, u32>,
     /// What the run drained from the systems, by kind, summed.
     pub drained: BTreeMap<&'static str, u32>,
+    /// Frames that drew what the frame before them drew.
+    pub same: usize,
     /// `view`'s time, summed, ms.
     pub work_ms: f32,
     /// Still under way when last looked at.
@@ -142,6 +272,9 @@ impl Burn {
             self.frames as f32 / self.duration.as_secs_f32().max(1e-3),
             self.work_ms,
         );
+        if self.same > 0 {
+            let _ = write!(s, " · {} drew nothing new", self.same);
+        }
         match &self.after {
             Some((what, before)) => {
                 let _ = write!(s, " · after {what} {} ms before", before.as_millis());
@@ -243,10 +376,27 @@ impl Frames {
         }
     }
 
-    /// A frame begins: its causes are read, from `wake`'s tally and the
-    /// frames asked for by name.
+    /// A frame begins with no word from kui (a test's).
     pub fn begin(&mut self, wakes: Vec<(&'static str, u32)>) {
+        self.begin_with(wakes, KuiReading::default());
+    }
+
+    /// A frame begins: its causes are read, from `wake`'s tally, the
+    /// frames asked for by name, and kui's trace.
+    pub fn begin_with(&mut self, wakes: Vec<(&'static str, u32)>, kui: KuiReading) {
         let now = Instant::now();
+        // The frame before, now that kui has compared it.
+        if let Some(same) = kui.prev_unchanged {
+            let prev = self.ring.back().and_then(|f| f.at);
+            if let Some(f) = self.ring.back_mut() {
+                f.unchanged = Some(same);
+            }
+            if let Some(f) = self.run.last_mut()
+                && f.at == prev
+            {
+                f.unchanged = Some(same);
+            }
+        }
         let gap = self.last_at.map_or(Duration::MAX, |t| now - t);
         let requests = REQUESTED.with(|r| std::mem::take(&mut *r.borrow_mut()));
         let frame = Frame {
@@ -258,6 +408,16 @@ impl Frames {
             },
             work_ms: 0.0,
             inputs: std::mem::take(&mut self.inputs),
+            // A wake and an owed frame are said already, by name.
+            kui: kui
+                .cause
+                .iter()
+                .copied()
+                .filter(|k| !(*k == "wake" && !wakes.is_empty()))
+                .filter(|k| !(*k == "owed" && (!kui.holders.is_empty() || !requests.is_empty())))
+                .collect(),
+            holders: kui.holders,
+            unchanged: None,
             wakes,
             requests,
             drained: Vec::new(),
@@ -267,7 +427,7 @@ impl Frames {
             && frame.requests.is_empty()
             && !frame.wakes.is_empty()
             && frame.wakes.iter().all(|(n, _)| *n == OWN_WAKE);
-        let quiet = frame.inputs.is_empty();
+        let quiet = frame.inputs.is_empty() && !kui.user;
         if !quiet || gap > RUN_GAP || own {
             self.close_run();
         }
@@ -282,7 +442,11 @@ impl Frames {
             if self.run.len() < KEEP_RUN {
                 self.run.push(frame.clone());
             }
-            if let Some(a) = &self.alarm {
+            // Only a burn is closed by the ledger's own wake: armed for
+            // every quiet frame, it was a frame after each of them.
+            if self.run_len >= BURN_FRAMES
+                && let Some(a) = &self.alarm
+            {
                 a.set(now + RUN_GAP * 2);
             }
         }
@@ -323,17 +487,15 @@ impl Frames {
         let mut wakes: BTreeMap<&'static str, u32> = BTreeMap::new();
         let mut drained: BTreeMap<&'static str, u32> = BTreeMap::new();
         let mut work = 0.0;
+        let mut same = 0;
         for f in &self.run {
             work += f.work_ms;
-            if f.unexplained() {
-                *causes.entry("unexplained".to_string()).or_default() += 1;
+            same += usize::from(f.unchanged == Some(true));
+            for c in f.cause_keys() {
+                *causes.entry(c).or_default() += 1;
             }
             for (n, k) in &f.wakes {
-                *causes.entry(n.to_string()).or_default() += 1;
                 *wakes.entry(n).or_default() += k;
-            }
-            for r in &f.requests {
-                *causes.entry(format!("req:{r}")).or_default() += 1;
             }
             for (n, k) in &f.drained {
                 *drained.entry(n).or_default() += k;
@@ -352,6 +514,7 @@ impl Frames {
             causes,
             wakes,
             drained,
+            same,
             work_ms: work,
             ongoing,
         }
@@ -429,7 +592,12 @@ fn chrono_now() -> String {
 
 impl Kawoosh {
     /// The frame's causes read, before anything else in `view`.
-    pub(crate) fn frames_begin(&mut self) {
+    pub(crate) fn frames_begin(&mut self, ui: &mut Ui<'_>) {
+        let core = ui.core();
+        if !core.frame_trace() {
+            core.set_frame_trace(true);
+        }
+        let kui = KuiReading::of(core);
         let mut wakes = self.wake.take_counts();
         for w in &self.shared_wakes {
             for (n, k) in w.take_counts() {
@@ -439,7 +607,7 @@ impl Kawoosh {
                 }
             }
         }
-        self.frames.begin(wakes);
+        self.frames.begin_with(wakes, kui);
     }
 
     /// Declares the tab every frame and draws it while it is on show.
@@ -469,11 +637,8 @@ impl Kawoosh {
             .collect();
         let mut by_cause: BTreeMap<String, usize> = BTreeMap::new();
         for f in &recent {
-            let causes = f.causes();
-            let causes = causes.split(" · drained").next().unwrap_or_default();
-            for c in causes.split(' ') {
-                let c = c.split('×').next().unwrap_or(c);
-                *by_cause.entry(c.to_string()).or_default() += 1;
+            for c in f.cause_keys() {
+                *by_cause.entry(c).or_default() += 1;
             }
         }
         let mut by_cause: Vec<_> = by_cause.into_iter().collect();
@@ -626,6 +791,66 @@ mod tests {
             f.ring[0].causes(),
             "lsp×3 · drained lsp progress×2 lsp log message×1"
         );
+    }
+
+    /// kui's word joins the causes: who held an owed frame, why the
+    /// runner drew, and whether the frame drew anything new — the last
+    /// said of the frame before, a frame later.
+    #[test]
+    fn kuis_causes_join_the_ledger() {
+        let mut f = Frames::default();
+        for _ in 0..32 {
+            f.last_at = f
+                .last_at
+                .map(|_| Instant::now() - Duration::from_millis(16));
+            f.begin_with(
+                vec![],
+                KuiReading {
+                    cause: vec!["owed"],
+                    user: false,
+                    holders: vec!["transition panel/bar[width]".into()],
+                    prev_unchanged: Some(true),
+                },
+            );
+            f.end();
+        }
+        let frame = &f.ring[1];
+        assert_eq!(frame.holders, ["transition panel/bar[width]"]);
+        assert!(frame.kui.is_empty(), "`owed` is said by the holder");
+        assert_eq!(frame.unchanged, Some(true), "told by the frame after");
+        assert_eq!(f.ring.back().unwrap().unchanged, None, "not yet known");
+        assert_eq!(frame.causes(), "transition panel/bar[width] · same");
+        f.input("key");
+        at(&mut f, vec![]);
+        let b = &f.burns[0];
+        assert_eq!(b.causes["transition panel/bar[width]"], 32);
+        // The last is told by the frame after it, which here has no word
+        // from kui.
+        assert_eq!(b.same, 31);
+        assert!(b.summary().contains("31 drew nothing new"));
+    }
+
+    /// An input kui saw and the app was never handed — a pointer moving
+    /// over the window — is input: no burn.
+    #[test]
+    fn an_input_only_kui_saw_is_no_burn() {
+        let mut f = Frames::default();
+        for _ in 0..40 {
+            f.last_at = f
+                .last_at
+                .map(|_| Instant::now() - Duration::from_millis(16));
+            f.begin_with(
+                vec![],
+                KuiReading {
+                    cause: vec!["pointerMove"],
+                    user: true,
+                    ..Default::default()
+                },
+            );
+            f.end();
+        }
+        assert!(f.burns.is_empty());
+        assert_eq!(f.ring[0].causes(), "kui:pointerMove");
     }
 
     /// A short run is no burn.

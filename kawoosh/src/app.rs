@@ -2228,7 +2228,7 @@ impl kui_native::App for Kawoosh {
 
     fn view(&mut self, ui: &mut Ui<'_>) {
         use crate::perf::ms;
-        self.frames_begin();
+        self.frames_begin(ui);
         let frame_started = Instant::now();
         let t = Instant::now();
         self.drain_io();
