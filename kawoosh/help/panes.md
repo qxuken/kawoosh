@@ -209,8 +209,9 @@ place can override a module's `title` (`false` for none), `limit`,
 `query`), `style` (`list`, or `tiles` that wrap) and `keys` (whether
 its rows take letters). `{ column = { … } }` stacks modules inside a
 row, and a `width` sets a column's — a [size](settings.md#sizes), of
-the row it is in (`"40%"`, `"clamp(200, 30%, 400)"`); a percentage keeps
-its share even where the row's gap would need it to give (unlike CSS). What comes after `prompt` scrolls
+the row it is in (`"40%"`, `"clamp(200, 30%, 400)"`); columns side by side
+share what the row has, a percentage giving back what the gap between
+them needs, as in CSS (two `"50%"` columns fit). What comes after `prompt` scrolls
 and what comes before it stays; with `prompt` last, the field sits at
 the bottom. A file is listed once, in the first module that has it, so
 `pins` before `recent` takes the pins out of recent. A name that is no
