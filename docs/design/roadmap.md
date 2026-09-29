@@ -2718,6 +2718,20 @@ In order — the bugs first, then what needs deciding:
     `:editorconfig init` writes a template from the settings and the
     project's languages; `:set KEY?` names the tier;
     `kawoosh.buf.indent()`. `kawoosh/tests/editorconfig.rs`.
+70. ~~**The status line as modules, the path relative**, asked
+    2026-09-29: "i need a relative full path at the bottom. or better
+    let's also modularize statusline like neovim does … i have lots of
+    index.ts?x and i don't know where am i."~~ Landed 2026-09-29:
+    [statusline.md](statusline.md), decided and built — the line under
+    the panes is modules (`mode`, `recording`, `path`, `keys`, `strip`,
+    `selections`, `position`, `percent`) placed left to right by
+    `statusline.layout`, `gap` a spring (the user's shape: two lists
+    first, one list with springs after), a `kawoosh.status` segment at
+    `place = "statusline"` one more by its name or where `"..."`
+    stands; the path relative to the working directory
+    (`statusline.path`: `relative`, `absolute`, `name`), cut from the
+    left a directory at a time, fish's
+    way, only as far as the room the others leave needs.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

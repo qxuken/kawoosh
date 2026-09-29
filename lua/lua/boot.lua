@@ -165,6 +165,8 @@ end
 
 -- kawoosh.status(name, fn[, opts]): a segment on the right of the title
 -- bar (`place = "title"`, the default) or of the tab strip (`"tabs"`),
+-- or a module of the status line (`"statusline"`, placed by
+-- `statusline.layout`, else where `"..."` is — statusline.md),
 -- in `order` then by name (docs/design/status.md). `fn(ctx)` answers
 -- what it shows now — nil for nothing, a string, a part `{ text =,
 -- color = }` or a list of parts, `color` one of `fg`, `dim`, `accent`,

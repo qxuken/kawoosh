@@ -98,7 +98,20 @@ return {
 - Path helpers: `join`, `parent`, `basename`, `relative`, `expand`, `short`, `home`, `cwd`, `chdir`.
 - `watch(name, paths, fn)` calls `fn(changed)` when the files or folders change; `watch(name, nil)` stops it.
 
-`kawoosh.status(name, fn, { place = "title" | "tabs", order = n, every = seconds, run = "command" })` adds a segment to the right of the title bar or the tab strip: `fn(ctx)` returns what it shows now — `nil` to hide, a string, `{ text = ..., color = "dim" }`, or a list of those — and is asked each time the window draws; `every` redraws it on the clock (a clock of your own); `run` is what a click runs. `kawoosh.status(name, nil)` removes it. `kawoosh.lsp.counts()` gives the diagnostics' `errors`, `warnings`, `infos` and `hints` cheaply, for such a segment.
+`kawoosh.status(name, fn, { place = "title" | "tabs" | "statusline", order = n, every = seconds, run = "command" })` adds a segment to the right of the title bar or the tab strip, or a module to [the status line](#the-status-line): `fn(ctx)` returns what it shows now — `nil` to hide, a string, `{ text = ..., color = "dim" }`, or a list of those — and is asked each time the window draws; `every` redraws it on the clock (a clock of your own); `run` is what a click runs. `kawoosh.status(name, nil)` removes it. `kawoosh.lsp.counts()` gives the diagnostics' `errors`, `warnings`, `infos` and `hints` cheaply, for such a segment.
+
+## The status line
+
+The line under the panes is modules, placed left to right by one list:
+
+```lua
+statusline = {
+  layout = { "mode", "recording", "path", "keys", "gap",
+             "...", "strip", "selections", "position", "percent" },
+}
+```
+
+That is the default. kawoosh's modules are `mode`, `recording` (`REC @a`), `path` (the file, as `statusline.path` says, `[+]` when modified), `keys` (typed so far), `strip` (a scrolling tab's columns), `selections`, `position` (`line:col`) and `percent`. `"gap"` is a spring that pushes what follows it right; several share the room evenly, so `{ "mode", "gap", "...", "gap", "percent" }` centres the middle. A `kawoosh.status(name, fn, { place = "statusline" })` segment is a module too: named in the layout it is drawn there, otherwise where `"..."` is — leave `"..."` out to draw only what the layout names. Quote it: a bare `...` is Lua's varargs and disappears. A segment named like a built-in module replaces it. The path is cut from the left, a directory at a time, until it fits what the other modules leave.
 
 `kawoosh.launcher.module(name, def)` adds a module to [the launcher](panes.md#its-layout), the same name replacing one: rows — `items = fn(ctx)` returning `{ text =, sub =, run = "command" | pick = fn(item) | path = | buffer = }`, `load = fn(ctx, done)`, or `source = "<picker source>"` — or a block, `draw = fn(ctx)` returning a node (`text(...)`, `row { ... }`), shown while the query is empty. `ctx` has `origin` (the buffer split from), `cwd`, `query`, `theme` and `size`; a block sizes itself with kui sizes (`width = "50%"`). Fields: `title`, `limit`, `show`, `style`, `keys`, as in the layout. A module you add appears where the layout says `"..."` until you place it. `kawoosh.launcher.entry { text =, run =, module = "here", key = "x" }` adds one row to a module (`plugins` by default).
 

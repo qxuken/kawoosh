@@ -59,6 +59,7 @@ pub mod scroll_probe;
 pub mod secrets;
 pub mod session;
 pub mod settings;
+pub mod statusline;
 pub mod term_images;
 pub mod terminals;
 pub mod theme_check;

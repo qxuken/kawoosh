@@ -574,6 +574,35 @@ impl Settings {
         // after the file's name (docs/design/breadcrumbs.md);
         // `:breadcrumbs` flips one pane.
         defaults.set("editor.breadcrumbs", Setting::Bool(true));
+        // The status line's modules (docs/design/statusline.md), left
+        // to right: kawoosh's own (`mode`, `recording`, `path`, `keys`,
+        // `strip`, `selections`, `position`, `percent`), a
+        // `kawoosh.status` segment at `place = "statusline"` by its
+        // name, `...` for those it does not name, `gap` a spring; and
+        // the path `relative` to the working directory, `absolute` (the
+        // home as `~`) or the file's `name`, cut from the left to the
+        // room the line leaves it.
+        defaults.set(
+            "statusline.layout",
+            Setting::List(
+                [
+                    "mode",
+                    "recording",
+                    "path",
+                    "keys",
+                    "gap",
+                    "...",
+                    "strip",
+                    "selections",
+                    "position",
+                    "percent",
+                ]
+                .iter()
+                .map(|s| Setting::Str(s.to_string()))
+                .collect(),
+            ),
+        );
+        defaults.set("statusline.path", Setting::Str("relative".into()));
         // The shell whose PATH the window's children get when it was
         // opened outside a terminal — from Finder, the Dock (kawoosh's
         // `shell_env`): a path to it, since a bare name is looked up on
@@ -654,6 +683,7 @@ impl Settings {
             ("launcher.start", words(&["normal", "insert"])),
             ("buffers.scope", words(&["tab", "all"])),
             ("tabs.directory", words(&["auto", "always", "never"])),
+            ("statusline.path", words(&["relative", "absolute", "name"])),
             ("editor.wrap", words(&["off", "word", "glyph"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
             ("end_of_line", words(&["", "lf", "crlf", "cr"])),
@@ -1204,6 +1234,8 @@ mod tests {
                 "secrets.reveal_secs",
                 "secrets.scan_max_kb",
                 "shiftwidth",
+                "statusline.layout",
+                "statusline.path",
                 "tabs.directory",
                 "tabstop",
                 "terminal.bell",
