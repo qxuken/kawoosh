@@ -444,3 +444,68 @@ fn the_candidates_scroll_and_keep_their_width() {
     assert!(r.x >= 0.0 && r.x + r.w <= 900.5, "in view: {r:?}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A line wider than the window scrolls sideways in the command line,
+/// under the caret (reported 2026-09-29): the line was as wide as its
+/// text and spilled past both of the window's edges, the strip centred
+/// on it and the `:` gone off the left. The sigil stays where it is,
+/// the caret in the window: at the end while typing, the start on `0`.
+#[test]
+fn a_long_command_line_scrolls_sideways_under_the_caret() {
+    // Unframed: keys go in with no frame between them, as keys faster
+    // than frames — a paste, a script's keystrokes — do.
+    let mut d = Drive(kui_native::testing::Drive::new(
+        kui_native::Core::new(),
+        400.0,
+        300.0,
+    ));
+    let mut app = Kawoosh::new("*scratch*", "hello\n");
+    d.frame(&mut app);
+    let long =
+        "echo kawoosh/src/some/deeply/nested/directory/with/a/rather/long/name/in/it/file.rs";
+    // The line typed before the field's first frame, then frames only
+    // while one is asked for, as the driver paces them: the scroll
+    // lands without another key.
+    d.keys(&mut app, ":");
+    d.keys(&mut app, long);
+    d.frame(&mut app);
+    for _ in 0..4 {
+        if !d.core.animating() {
+            break;
+        }
+        d.frame(&mut app);
+    }
+    let nodes = d.core.nodes();
+    let sigil = nodes
+        .iter()
+        .find(|n| n.text.as_deref() == Some(":"))
+        .expect("the sigil");
+    assert_eq!(sigil.rect.x, 8.0, "the sigil where it is: {:?}", sigil.rect);
+    let bar = nodes
+        .iter()
+        .find(|n| n.float && n.rect.w == 2.0)
+        .expect("the bar caret");
+    assert!(
+        bar.rect.x >= sigil.rect.x + sigil.rect.w && bar.rect.x + bar.rect.w <= 400.0,
+        "the caret in the window: {:?}",
+        bar.rect
+    );
+    let line = |d: &Drive| {
+        d.core
+            .nodes()
+            .into_iter()
+            .find(|n| n.text.as_deref().is_some_and(|t| t.starts_with("echo")))
+            .expect("the line's text")
+            .rect
+    };
+    assert!(line(&d).x < sigil.rect.x, "scrolled left: {:?}", line(&d));
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "0");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let x = line(&d).x;
+    assert!(
+        x > sigil.rect.x && x < sigil.rect.x + 40.0,
+        "back at the start, after the sigil: {x}"
+    );
+}

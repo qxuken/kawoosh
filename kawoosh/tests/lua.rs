@@ -2896,6 +2896,112 @@ fn a_lua_fields_selection_is_rounded_as_the_panes_is() {
     );
 }
 
+/// A field is one line whatever its line's length (a long path in
+/// `<leader>f`, reported 2026-09-29): a line wider than the field is
+/// never wrapped — its second row was drawn over the rows under the
+/// field — but scrolls sideways under it, as little as keeps the caret
+/// in view: the end while typing, the start again on `0`.
+#[test]
+fn a_lua_fields_long_line_scrolls_sideways_under_the_caret() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "hello\n");
+    app.run_lua_source(
+        "init",
+        r#"
+        kawoosh.view("finder", function(ctx)
+          local f = ctx.field { name = "q", size = 13 }
+          f.width = "grow"
+          return column { pad = 8, gap = 4, width = 240, f, text("under") }
+        end, function(ev)
+          if ev.kind == "key" and ev.key == "i" then kawoosh.field_focus("finder", "q") end
+        end)
+        "#,
+    );
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "view finder");
+    settle(&mut d, &mut app);
+    d.keys(&mut app, "i");
+    d.frame(&mut app);
+    let long = "kawoosh/src/some/deeply/nested/directory/with/a/long/name/and/more/of/it/file.rs";
+    d.keys(&mut app, long);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let field = |d: &Drive| {
+        d.core
+            .nodes()
+            .into_iter()
+            .find(|n| n.label.as_deref() == Some("field:lua:finder/q"))
+            .expect("the field is drawn")
+    };
+    let f = field(&d);
+    assert_eq!(f.rect.h, 19.0, "one row high: {:?}", f.rect);
+    // The pieces of the line — its texts, the bar — in the row the
+    // field scrolls.
+    let inside = |d: &Drive| -> Vec<kui_native::Rect> {
+        let f = field(d);
+        let nodes = d.core.nodes();
+        let line = nodes
+            .iter()
+            .find(|n| n.parent == Some(f.key))
+            .expect("the line")
+            .key;
+        nodes
+            .iter()
+            .filter(|n| n.parent == Some(line))
+            .map(|n| n.rect)
+            .collect()
+    };
+    for r in inside(&d) {
+        assert!(
+            r.h <= f.rect.h,
+            "a child one line high: {r:?} in {:?}",
+            f.rect
+        );
+    }
+    let under = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.text.as_deref() == Some("under"))
+        .unwrap();
+    assert!(
+        under.rect.y >= f.rect.y + f.rect.h,
+        "what is under the field stays under it"
+    );
+    // The bar caret at the line's end, inside the field.
+    let bar = inside(&d)
+        .into_iter()
+        .find(|r| r.w == 2.0)
+        .expect("the bar caret");
+    assert!(
+        bar.x >= f.rect.x && bar.x + bar.w <= f.rect.x + f.rect.w + 0.5,
+        "the caret in view: {bar:?} in {:?}",
+        f.rect
+    );
+    let first = inside(&d)[0];
+    assert!(first.x < f.rect.x, "the line scrolled left: {first:?}");
+    // `<Esc>0`: the block on the first character, the line back at its start.
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "0");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let first = inside(&d)[0];
+    assert_eq!(first.x, field(&d).rect.x, "back at the start");
+    // `$`: at the end again, the block's character in view.
+    d.keys(&mut app, "$");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let f = field(&d);
+    let first = inside(&d)[0];
+    let style = kui_native::TextStyle::new(13.0).mono();
+    let w = d.core.measure_text(long, &style, None).width;
+    assert!(
+        (first.x + w - (f.rect.x + f.rect.w)).abs() < 1.0,
+        "the line's end at the field's: {first:?}, {w} in {:?}",
+        f.rect
+    );
+}
+
 /// No bundled plugin takes an engine command's name: `search.lua`'s
 /// whole-word switch was `search word`, gated to its pane, and so `*` —
 /// the engine's `search word` — ran only in the search pane (reported
