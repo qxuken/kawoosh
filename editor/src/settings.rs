@@ -515,6 +515,10 @@ impl Settings {
         // says (`{ "text", "gitcommit" }`). `:wrap` flips one pane.
         defaults.set("editor.wrap", Setting::Str("off".into()));
         defaults.set("editor.wrap_languages", Setting::List(Vec::new()));
+        // The symbols the caret is inside, on an editor pane's title bar
+        // after the file's name (docs/design/breadcrumbs.md);
+        // `:breadcrumbs` flips one pane.
+        defaults.set("editor.breadcrumbs", Setting::Bool(true));
         // The shell whose PATH the window's children get when it was
         // opened outside a terminal — from Finder, the Dock (kawoosh's
         // `shell_env`): a path to it, since a bare name is looked up on
@@ -993,6 +997,7 @@ mod tests {
                 "buffers.scope",
                 "clipboard.system",
                 "editor.bell",
+                "editor.breadcrumbs",
                 "editor.selection_radius",
                 "editor.wrap",
                 "editor.wrap_languages",

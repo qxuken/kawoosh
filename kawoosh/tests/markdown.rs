@@ -50,9 +50,16 @@ fn settle(d: &mut Drive, app: &mut Kawoosh) {
 
 /// The text node drawn with exactly `text`, its rect.
 fn rect_of_text(d: &Drive, text: &str) -> Option<(f32, f32, f32, f32)> {
-    d.core
-        .nodes()
+    let nodes = d.core.nodes();
+    // A row's, not a breadcrumb's on the title bar: a heading is one.
+    let crumbs: Vec<_> = nodes
         .iter()
+        .filter(|n| n.label.as_deref().is_some_and(|l| l.starts_with("crumb ")))
+        .map(|n| n.key)
+        .collect();
+    nodes
+        .iter()
+        .filter(|n| !n.parent.is_some_and(|p| crumbs.contains(&p)))
         .find(|n| n.text.as_deref() == Some(text))
         .map(|n| (n.rect.x, n.rect.y, n.rect.w, n.rect.h))
 }

@@ -178,5 +178,19 @@ adds locals and markdown headings. Files with no server still have an
 outline. The `symbols.source` setting chooses: `auto`, `lsp`, or
 `syntax`.
 
+In a test file the outline has the test runner's blocks — `describe`,
+`it`, `test` and their kin by their titles, go's `t.Run` — so `grs`
+lists a spec's tests.
+
 `grS` searches the workspace's symbols through the language
 server, and `<leader>/` does the same following for the buffer's lines.
+
+### Breadcrumbs
+
+An editor pane's title bar shows the symbols the caret is inside after
+the file's name: `parser.test.ts › parser › with a table › skips`.
+Click one to go to it. A narrow pane keeps the innermost and shows `…`
+for the rest. `:breadcrumbs` (`<leader>ob`) turns them off or on for
+the pane you are in, until you quit; `editor.breadcrumbs = false` turns
+them off everywhere. They come from the syntax tree, so a file with no
+grammar has none.

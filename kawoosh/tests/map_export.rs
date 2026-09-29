@@ -198,7 +198,15 @@ fn the_keys_are_grouped_by_module() {
         ("<leader>m", &["memory"]),
         (
             "<leader>o",
-            &["theme", "themes", "fonts", "wrap", "lsp", "markdown"],
+            &[
+                "theme",
+                "themes",
+                "fonts",
+                "wrap",
+                "lsp",
+                "markdown",
+                "breadcrumbs",
+            ],
         ),
         ("<leader>s", &["search", "picker"]),
         ("<leader>w", &["session", "du", "picker"]),

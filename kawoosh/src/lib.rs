@@ -11,6 +11,7 @@
 pub const EDITOR_SHIM: &str = "kawoosh-edit";
 
 pub mod app;
+pub mod breadcrumbs;
 pub mod chrome;
 pub mod cmdline;
 pub mod commands;

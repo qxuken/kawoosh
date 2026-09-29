@@ -1166,6 +1166,50 @@ mod tests {
         );
     }
 
+    /// A test file's blocks are its outline, named by their titles and
+    /// nested as they are written (docs/design/breadcrumbs.md): `describe`
+    /// and `it` with a modifier or an `.each` table, a template title; a
+    /// call that is no test runner's, or has no callback, is none. Go's
+    /// subtests under their test.
+    #[test]
+    fn a_test_files_blocks_are_its_outline() {
+        let src = r#"describe("parser", () => {
+  const input = 1;
+  beforeEach(() => {});
+  it("reads a number", () => {
+    expect(parse("1")).toBe(1);
+  });
+  describe.only(`with ${input}`, function () {
+    test.skip("skips", async () => {});
+    it.each([1, 2])("each %d", (n) => {});
+  });
+  foo("not a test", () => {});
+  it("no callback");
+});
+"#;
+        let want = [
+            "0 test parser",
+            "1 variable input",
+            "1 test reads a number",
+            "1 test `with ${input}`",
+            "2 test skips",
+            "2 test each %d",
+        ];
+        for language in ["javascript", "typescript", "tsx"] {
+            assert_eq!(outline_lines(language, src), want, "{language}");
+        }
+        let go = "package p\nfunc TestParse(t *testing.T) {\n\tt.Run(\"empty\", func(t *testing.T) {\n\t\tt.Run(\"nested\", func(t *testing.T) {})\n\t})\n}\n";
+        assert_eq!(
+            outline_lines("go", go),
+            [
+                "0 package p",
+                "0 function TestParse",
+                "1 test empty",
+                "2 test nested"
+            ]
+        );
+    }
+
     /// Every language with an outline answers one for a small file.
     #[test]
     fn the_other_outlines() {

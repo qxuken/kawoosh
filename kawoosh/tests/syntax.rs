@@ -88,7 +88,18 @@ fn rust_is_highlighted_and_stays_so_across_edits() {
         })
         .count();
     assert_eq!(line_nodes, 2, "one text node per line");
-    assert!(nodes.iter().all(|n| n.text.as_deref() != Some("main")));
+    // The title bar's breadcrumb is `main`, whole; a row's is not.
+    let crumbs: Vec<_> = nodes
+        .iter()
+        .filter(|n| n.label.as_deref().is_some_and(|l| l.starts_with("crumb ")))
+        .map(|n| n.key)
+        .collect();
+    assert!(
+        nodes
+            .iter()
+            .filter(|n| !n.parent.is_some_and(|p| crumbs.contains(&p)))
+            .all(|n| n.text.as_deref() != Some("main"))
+    );
     // Edit a line above; the runs below shift with it.
     let string_run = runs
         .iter()
