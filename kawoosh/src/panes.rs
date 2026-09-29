@@ -782,6 +782,12 @@ impl Kawoosh {
             Some(p) => format!("{p} · {name}"),
             None => name,
         };
+        // The symbols the caret is in, after the name (breadcrumbs.md).
+        let crumbs = match &content {
+            Some(Content::Editor(v)) => self.crumbs_of(*v),
+            _ => Vec::new(),
+        };
+        let width = self.layout.rects.get(&pane).map_or(0.0, |r| r.w - 2.0);
         // A pane goes where its title bar is dragged: in the tab, in
         // the dock, or from one into the other (`Layout::move_pane`).
         let dragged = self.pane_drag.is_some_and(|(p, _, _)| p == pane);
@@ -833,19 +839,24 @@ impl Kawoosh {
                         kui_native::CursorShape::Grab
                     });
                 ui.with(title, |ui| {
-                    ui.text(
-                        &name,
-                        TextStyle::new(self.chrome.small).color(if focused {
-                            pal.fg
-                        } else {
-                            pal.dim
-                        }),
-                    );
+                    let style = TextStyle::new(self.chrome.small).color(if focused {
+                        pal.fg
+                    } else {
+                        pal.dim
+                    });
+                    ui.text(&name, style);
                     if modified {
                         ui.text(
                             "●",
                             TextStyle::new(self.chrome.small - 2.0).color(pal.command),
                         );
+                    }
+                    if !crumbs.is_empty() {
+                        let room = width
+                            - 16.0
+                            - ui.measure_text(&name, &style, None).width
+                            - if modified { 18.0 } else { 0.0 };
+                        self.breadcrumbs(ui, pane, &crumbs, room, focused);
                     }
                 });
                 // Where the dragged pane would land here: the whole pane

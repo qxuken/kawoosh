@@ -4137,6 +4137,9 @@ pub fn default_keymap(km: &mut Keymap) {
         // Soft wrap (wrap.md): the focused pane wrapped or not, and the
         // caret a row on screen — `j` `k` stay a line each, as vim's.
         ("<leader>ow", "wrap"),
+        // The symbols the caret is in, on the pane's title bar
+        // (breadcrumbs.md).
+        ("<leader>ob", "breadcrumbs"),
         ("gj", "move down row"),
         ("gk", "move up row"),
         ("g<Down>", "move down row"),

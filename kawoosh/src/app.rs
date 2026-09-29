@@ -174,6 +174,8 @@ pub struct Kawoosh {
     pub moments: crate::moments::Moments,
     /// The live marks of the open files (docs/design/marks.md).
     pub(crate) marks: crate::marks::Marks,
+    /// The breadcrumbs' outlines and their asks (docs/design/breadcrumbs.md).
+    pub(crate) crumbs: crate::breadcrumbs::Breadcrumbs,
     /// The working memory pane (`:memory`): the register's past.
     pub memory_pane: crate::memory::MemoryPanel,
     /// The keymap version and, at it, the first words of the commands
@@ -374,6 +376,7 @@ impl Kawoosh {
             undo: Default::default(),
             moments: crate::moments::Moments::new(wake.clone()),
             marks: Default::default(),
+            crumbs: crate::breadcrumbs::Breadcrumbs::new(wake.clone()),
             memory_pane: Default::default(),
             bound_names: Default::default(),
             hud: false,
@@ -583,6 +586,12 @@ impl Kawoosh {
         for a in marks {
             self.mark_outline(a);
         }
+        let (crumbs, outlines): (Vec<_>, Vec<_>) = outlines
+            .into_iter()
+            .partition(|a| self.crumbs.asked(a.token));
+        for a in crumbs {
+            self.crumbs_outline(a);
+        }
         if !outlines.is_empty()
             && let Some(rt) = self.scripting.rt.clone()
         {
@@ -678,6 +687,7 @@ impl Kawoosh {
                 edits,
             });
         }
+        self.ask_crumbs();
     }
 
     /// Blocks until `ts` has answered for every buffer sent — for tests,
@@ -2570,6 +2580,8 @@ impl Kawoosh {
                     self.layout.focus(pane);
                 }
             }
+            // A breadcrumb in an editor pane's title bar: its symbol.
+            Some("crumb") => self.on_crumb_click(p),
             Some("title" | "luapane") => {
                 if let Some(pane) = p.get_int("pane") {
                     self.layout.focus(pane as PaneId);

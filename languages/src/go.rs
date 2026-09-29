@@ -34,6 +34,11 @@ const OUTLINE: &str = r#"(package_clause (package_identifier) @name) @definition
 (source_file (const_declaration (const_spec name: (identifier) @name) @definition.constant))
 (source_file (var_declaration (var_spec name: (identifier) @name) @definition.variable))
 (source_file (var_declaration (var_spec_list (var_spec name: (identifier) @name) @definition.variable)))
+; A subtest, named by its title (docs/design/breadcrumbs.md).
+(call_expression
+  function: (selector_expression field: (field_identifier) @_run)
+  arguments: (argument_list . (interpreted_string_literal (interpreted_string_literal_content) @name) (func_literal))
+  (#eq? @_run "Run")) @definition.test
 ; Variables, after every pattern that names a definition better.
 (short_var_declaration left: (expression_list . (identifier) @name)) @definition.variable
 (var_spec name: (identifier) @name) @definition.variable

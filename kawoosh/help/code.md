@@ -91,6 +91,7 @@ return {
 | `grf` | format the buffer (`:lsp format`) |
 | `grs` `grS` | the buffer's symbols, the workspace's, in a picker ([search](search.md#symbols-and-the-outline)) |
 | `<leader>oh` | inlay hints on or off for the session (`:lsp hints`) |
+| `<leader>ob` | breadcrumbs on or off for the pane (`:breadcrumbs`, [search](search.md#breadcrumbs)) |
 
 The server's own keys sit under `gr`, as in neovim 0.11: press `gr` and
 the which-key lists them.

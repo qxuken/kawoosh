@@ -53,6 +53,18 @@ pub(crate) const OUTLINE: &str = r#"(class_declaration name: (_) @name) @definit
 (abstract_method_signature name: (_) @name) @definition.method
 (property_signature name: (_) @name) @definition.field
 (function_signature name: (_) @name) @definition.function
+; A test runner's blocks, named by their title: `describe`, `it`, `test`
+; and their kin, with `.only` or `.skip` after the name, or `.each(…)`
+; before the call (docs/design/breadcrumbs.md).
+(call_expression
+  function: [(identifier) @_test (member_expression object: (identifier) @_test)]
+  arguments: (arguments . [(string (string_fragment) @name) (template_string) @name] [(arrow_function) (function_expression)])
+  (#any-of? @_test "describe" "context" "suite" "it" "test" "specify" "bench")) @definition.test
+(call_expression
+  function: (call_expression function: (member_expression object: (identifier) @_test property: (property_identifier) @_each))
+  arguments: (arguments . [(string (string_fragment) @name) (template_string) @name] [(arrow_function) (function_expression)])
+  (#any-of? @_test "describe" "context" "suite" "it" "test" "bench")
+  (#eq? @_each "each")) @definition.test
 ; Variables, after every pattern that names a definition better.
 (variable_declarator name: (identifier) @name) @definition.variable
 "#;

@@ -2653,6 +2653,16 @@ In order — the bugs first, then what needs deciding:
     look past them. The note decides what a local map shadows (the
     global one of the same keys, as in vim) and whether a picker's and
     a listing's gated keys move too.
+67. ~~**Breadcrumbs**, asked 2026-09-29: "I miss breadcrumbs navigating
+    huge test files, let's add toggleable breadcrumbs."~~ Landed
+    2026-09-29: [breadcrumbs.md](breadcrumbs.md), decided and built —
+    the symbols the caret is inside after the file's name on the pane's
+    title bar, from the grammar's outline, asked again once an edit has
+    been still for 200 ms; a crumb clicked goes to its symbol;
+    `editor.breadcrumbs` (on) and `:breadcrumbs` (`<leader>ob`) for one
+    pane. javascript's, typescript's and tsx's outline learn the test
+    runners' `describe` and `it` by their titles, go's `t.Run`, so `grs`
+    lists a spec's blocks too.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
