@@ -1923,10 +1923,14 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("lsp format").doc("format the buffer through its server"),
             |k, _| {
-                let (tab_size, insert_spaces) = (k.ed.tabstop(), k.ed.expandtab());
-                let version = k
-                    .lsp_at_caret()
-                    .map(|(_, b, _)| k.ed.buffers[b].version());
+                // The buffer's own indent — its language's, its
+                // `.editorconfig`'s — as the server's options.
+                let at = k.lsp_at_caret().map(|(_, b, _)| b);
+                let (tab_size, insert_spaces) = match at {
+                    Some(b) => (k.ed.shiftwidth_in(b), k.ed.expandtab_in(b)),
+                    None => (k.ed.tabstop(), k.ed.expandtab()),
+                };
+                let version = at.map(|b| k.ed.buffers[b].version());
                 k.lsp_request("formatting", |c| c.format, move |buffer, _| Cmd::Format {
                     buffer,
                     version: version.unwrap_or(Version::INITIAL),

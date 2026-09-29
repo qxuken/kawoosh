@@ -286,6 +286,16 @@ impl Layer {
     }
 }
 
+/// Where a buffer's settings are read beside the tree
+/// ([`Settings::scoped`]): its language, whose `language.NAME` table lays
+/// over the bare keys, and its own sources — what the `.editorconfig`
+/// files above it say, each section a source by its name.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Scope<'a> {
+    pub language: &'a str,
+    pub local: &'a [(String, Setting)],
+}
+
 /// What a setting holds, as a declaration says it (roadmap step 34):
 /// the scalar kinds, a word of a few, a list, or a table whose keys are
 /// the user's own (`tools`, `tokens.colors`, a theme's roles).
@@ -336,6 +346,9 @@ pub struct Settings {
     /// (`declare`): a plugin's with no default, an open table, a doc.
     decls: BTreeMap<String, Decl>,
     effective: Setting,
+    /// Each layer's sources merged, for a read through a buffer's
+    /// scope, which asks a layer at a time ([`Settings::scoped`]).
+    merged: [Setting; 4],
     /// Bumped on every change, so a reader that derives something from
     /// the tree (the keymap's leader) knows when to look again.
     version: u64,
@@ -351,8 +364,50 @@ impl Settings {
     /// The engine's defaults, and nothing over them.
     pub fn new() -> Self {
         let mut defaults = Setting::table();
+        // A buffer's indentation and what its save tidies
+        // (docs/design/editorconfig.md): read through the buffer's
+        // scope — its language's table, its `.editorconfig` — not the
+        // tree alone (`Settings::scoped`). `shiftwidth` is an indent's
+        // columns, 0 for `tabstop`'s; `end_of_line` is `lf`, `crlf`,
+        // `cr`, or empty to leave the lines as they are.
         defaults.set("tabstop", Setting::Int(4));
         defaults.set("expandtab", Setting::Bool(true));
+        defaults.set("shiftwidth", Setting::Int(0));
+        defaults.set("trim_trailing_whitespace", Setting::Bool(false));
+        defaults.set("insert_final_newline", Setting::Bool(false));
+        defaults.set("end_of_line", Setting::Str(String::new()));
+        // Whether a buffer reads the `.editorconfig` files above it.
+        defaults.set("editorconfig.enabled", Setting::Bool(true));
+        // The languages' own ways (Decision 2): a language's table lays
+        // over the bare keys of every layer for its buffers. What the
+        // communities' formatters write — gofmt's tabs, prettier's two
+        // spaces — and markdown's trailing spaces, which are a break.
+        {
+            let two = [
+                "javascript",
+                "typescript",
+                "tsx",
+                "json",
+                "jsonc",
+                "css",
+                "yaml",
+                "markdown",
+                "lua",
+            ];
+            for lang in two {
+                defaults.set(&format!("language.{lang}.tabstop"), Setting::Int(2));
+            }
+            for lang in ["go", "gomod"] {
+                defaults.set(&format!("language.{lang}.expandtab"), Setting::Bool(false));
+                defaults.set(&format!("language.{lang}.tabstop"), Setting::Int(4));
+            }
+            for lang in ["markdown", "diff", "gitcommit"] {
+                defaults.set(
+                    &format!("language.{lang}.trim_trailing_whitespace"),
+                    Setting::Bool(false),
+                );
+            }
+        }
         defaults.set("scrolloff", Setting::Int(3));
         // The gutter numbers each line by its distance from the caret's,
         // which keeps its own number (vim's `number relativenumber`).
@@ -579,6 +634,7 @@ impl Settings {
             layers: Default::default(),
             decls: BTreeMap::new(),
             effective: Setting::table(),
+            merged: std::array::from_fn(|_| Setting::table()),
             version: 0,
         };
         s.replace(
@@ -600,9 +656,15 @@ impl Settings {
             ("tabs.directory", words(&["auto", "always", "never"])),
             ("editor.wrap", words(&["off", "word", "glyph"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
+            ("end_of_line", words(&["", "lf", "crlf", "cr"])),
         ] {
             s.declare(path, kind, "");
         }
+        s.declare(
+            "language",
+            SettingKind::Open,
+            "a language's own settings, over the bare ones for its buffers: `language.go = { expandtab = false }`",
+        );
         s
     }
 
@@ -722,7 +784,16 @@ impl Settings {
         for layer in [Layer::User, Layer::Project] {
             for (name, tree) in &self.layers[layer as usize] {
                 for path in tree.paths() {
-                    if !self.is_declared(&path) {
+                    // A language's key is one of the bare ones, under it.
+                    let bare = path
+                        .strip_prefix("language.")
+                        .and_then(|rest| rest.split_once('.'))
+                        .map(|(_, tail)| tail);
+                    let known = match bare {
+                        Some(tail) => self.is_declared(tail),
+                        None => self.is_declared(&path),
+                    };
+                    if !known {
                         out.push((name.clone(), path));
                     }
                 }
@@ -837,13 +908,77 @@ impl Settings {
 
     fn rebuild(&mut self) {
         let mut eff = Setting::table();
-        for layer in &self.layers {
+        for (i, layer) in self.layers.iter().enumerate() {
+            let mut merged = Setting::table();
             for (_, s) in layer {
-                eff.merge(s.clone());
+                merged.merge(s.clone());
             }
+            eff.merge(merged.clone());
+            self.merged[i] = merged;
         }
         self.effective = eff;
         self.version += 1;
+    }
+
+    // ------------------------------------------------------ a buffer's read
+
+    /// The value at `path` for a buffer in `scope` (docs/design/
+    /// editorconfig.md Decision 1), and where it came from — the tiers,
+    /// the first that has it winning:
+    ///
+    /// 1. the session's `language.LANG.PATH`, then its bare `PATH` —
+    ///    what was typed is meant now;
+    /// 2. the buffer's own sources, its `.editorconfig` sections;
+    /// 3. `language.LANG.PATH` in the project's, the user's, then the
+    ///    default layer — a language's way over a general preference,
+    ///    as a filetype plugin's `setlocal` is over a vimrc's `set`;
+    /// 4. the bare `PATH` in the project's, the user's, the default.
+    pub fn scoped_origin<'a>(
+        &'a self,
+        path: &str,
+        scope: Scope<'a>,
+    ) -> Option<(&'a Setting, String)> {
+        let lang =
+            (!scope.language.is_empty()).then(|| format!("language.{}.{path}", scope.language));
+        let from = |layer: Layer, key: &str| -> Option<(&'a Setting, String)> {
+            let v = self.merged[layer as usize].get(key)?;
+            let src = self.layers[layer as usize]
+                .iter()
+                .rev()
+                .find(|(_, s)| s.get(key).is_some())
+                .map(|(n, _)| n.as_str())
+                .unwrap_or(layer.name());
+            let mut origin = if src == layer.name() {
+                layer.name().to_string()
+            } else {
+                format!("{}: {src}", layer.name())
+            };
+            if key != path {
+                origin.push_str(&format!(" (language.{})", scope.language));
+            }
+            Some((v, origin))
+        };
+        let lower = [Layer::Project, Layer::User, Layer::Default];
+        lang.as_deref()
+            .and_then(|k| from(Layer::Session, k))
+            .or_else(|| from(Layer::Session, path))
+            .or_else(|| {
+                scope
+                    .local
+                    .iter()
+                    .rev()
+                    .find_map(|(name, t)| t.get(path).map(|v| (v, format!("editorconfig: {name}"))))
+            })
+            .or_else(|| {
+                lang.as_deref()
+                    .and_then(|k| lower.iter().find_map(|l| from(*l, k)))
+            })
+            .or_else(|| lower.iter().find_map(|l| from(*l, path)))
+    }
+
+    /// The value at `path` for a buffer in `scope` ([`Settings::scoped_origin`]).
+    pub fn scoped<'a>(&'a self, path: &str, scope: Scope<'a>) -> Option<&'a Setting> {
+        self.scoped_origin(path, scope).map(|(v, _)| v)
     }
 }
 
@@ -1001,6 +1136,8 @@ mod tests {
                 "editor.selection_radius",
                 "editor.wrap",
                 "editor.wrap_languages",
+                "editorconfig.enabled",
+                "end_of_line",
                 "env.shell",
                 "expandtab",
                 "font.chrome_size",
@@ -1008,6 +1145,23 @@ mod tests {
                 "font.features",
                 "font.line_height",
                 "font.size",
+                "insert_final_newline",
+                "language.css.tabstop",
+                "language.diff.trim_trailing_whitespace",
+                "language.gitcommit.trim_trailing_whitespace",
+                "language.go.expandtab",
+                "language.go.tabstop",
+                "language.gomod.expandtab",
+                "language.gomod.tabstop",
+                "language.javascript.tabstop",
+                "language.json.tabstop",
+                "language.jsonc.tabstop",
+                "language.lua.tabstop",
+                "language.markdown.tabstop",
+                "language.markdown.trim_trailing_whitespace",
+                "language.tsx.tabstop",
+                "language.typescript.tabstop",
+                "language.yaml.tabstop",
                 "launcher.start",
                 "layout.column_width",
                 "layout.default",
@@ -1049,6 +1203,7 @@ mod tests {
                 "secrets.private_temp",
                 "secrets.reveal_secs",
                 "secrets.scan_max_kb",
+                "shiftwidth",
                 "tabs.directory",
                 "tabstop",
                 "terminal.bell",
@@ -1060,8 +1215,81 @@ mod tests {
                 "theme.dark",
                 "theme.light",
                 "theme.name",
+                "trim_trailing_whitespace",
                 "whichkey"
             ]
+        );
+    }
+
+    #[test]
+    fn a_buffers_read_is_its_languages_then_its_files() {
+        let mut s = Settings::new();
+        let local = vec![(
+            "/r/.editorconfig [*.go]".to_string(),
+            tbl(&[("tabstop", Setting::Int(8))]),
+        )];
+        let go = Scope {
+            language: "go",
+            local: &[],
+        };
+        let rust = Scope {
+            language: "rust",
+            local: &[],
+        };
+        // The defaults' language table over the bare key.
+        assert_eq!(s.scoped("expandtab", go), Some(&Setting::Bool(false)));
+        assert_eq!(s.scoped("expandtab", rust), Some(&Setting::Bool(true)));
+        assert_eq!(
+            s.scoped_origin("expandtab", go).map(|(_, o)| o).as_deref(),
+            Some("default (language.go)")
+        );
+        // A user's bare key does not reach past a language's way…
+        s.replace(
+            Layer::User,
+            vec![(
+                "u.lua".into(),
+                tbl(&[
+                    ("expandtab", Setting::Bool(false)),
+                    ("tabstop", Setting::Int(3)),
+                ]),
+            )],
+        );
+        assert_eq!(s.scoped("tabstop", go), Some(&Setting::Int(4)));
+        assert_eq!(s.scoped("tabstop", rust), Some(&Setting::Int(3)));
+        // …its language key does, and a project's over it.
+        s.set(Layer::User, "language.go.tabstop", Setting::Int(2));
+        assert_eq!(s.scoped("tabstop", go), Some(&Setting::Int(2)));
+        s.set(Layer::Project, "language.go.tabstop", Setting::Int(6));
+        assert_eq!(s.scoped("tabstop", go), Some(&Setting::Int(6)));
+        // The file's own word over every layer's but the session's.
+        let go_file = Scope {
+            language: "go",
+            local: &local,
+        };
+        assert_eq!(s.scoped("tabstop", go_file), Some(&Setting::Int(8)));
+        assert_eq!(
+            s.scoped_origin("tabstop", go_file)
+                .map(|(_, o)| o)
+                .as_deref(),
+            Some("editorconfig: /r/.editorconfig [*.go]")
+        );
+        s.set(Layer::Session, "tabstop", Setting::Int(5));
+        assert_eq!(s.scoped("tabstop", go_file), Some(&Setting::Int(5)));
+        assert_eq!(s.scoped_origin("tabstop", go_file).unwrap().1, "session");
+        // A language's key is checked as the bare one it names.
+        s.replace(
+            Layer::Project,
+            vec![(
+                "p.lua".into(),
+                tbl(&[
+                    ("language.go.tabstop", Setting::Int(2)),
+                    ("language.go.tabstp", Setting::Int(2)),
+                ]),
+            )],
+        );
+        assert_eq!(
+            s.undeclared(),
+            [("p.lua".to_string(), "language.go.tabstp".to_string())]
         );
     }
 

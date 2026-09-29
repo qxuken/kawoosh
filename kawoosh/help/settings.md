@@ -77,6 +77,52 @@ A project's `.kawoosh/settings.lua` applies as soon as you work under it. A proj
 | `:trust allow PATH` | trust one file |
 | `:trust revoke [PATH]` | forget the trust given |
 
+## Languages and .editorconfig
+
+Some settings are a buffer's: its indentation, and what a save tidies. A buffer reads them through its language and the `.editorconfig` files above it, so a Go file gets tabs and a TypeScript file two spaces without you switching.
+
+A language's own settings go in a `language` table, over the plain ones for its buffers:
+
+```lua
+return {
+  tabstop = 4,                              -- where a language says nothing
+  language = {
+    go = { tabstop = 8 },
+    python = { tabstop = 4, trim_trailing_whitespace = true },
+  },
+}
+```
+
+Kawoosh ships these, and yours override them a key at a time:
+
+| languages | ships |
+|---|---|
+| javascript, typescript, tsx, json, jsonc, css, yaml, markdown, lua | `tabstop = 2` |
+| go, gomod | tabs (`expandtab = false`), 4 wide |
+| markdown, diff, gitcommit | keep trailing spaces |
+
+A language's key wins over a plain one from any file, so your `tabstop = 2` does not make Go's tabs two wide; `language.go.tabstop` does.
+
+An `.editorconfig` ([editorconfig.org](https://editorconfig.org)) in the file's directory or any above it applies over both, the nearest file's word first, until one with `root = true`. What kawoosh applies:
+
+| property | setting |
+|---|---|
+| `indent_style` | `expandtab` |
+| `indent_size` | `shiftwidth` |
+| `tab_width` | `tabstop` (else `indent_size`) |
+| `end_of_line` | `end_of_line` |
+| `trim_trailing_whitespace`, `insert_final_newline` | the same |
+
+Kawoosh reads and writes UTF-8, so `charset` is not applied, nor `max_line_length` or other tools' properties. Only `:set` wins over an `.editorconfig`. `editorconfig.enabled = false` turns them off. Saving an `.editorconfig` applies it at once.
+
+| command | what |
+|---|---|
+| `:editorconfig` | say what the files set for this buffer, and from where |
+| `:editorconfig init` | start an `.editorconfig` in the working directory: `[*]` with UTF-8, `lf`, a final newline, trimmed lines and your indentation, and a section for each language in the project whose way differs. It opens unsaved; `:w` keeps it |
+| `:set tabstop?` | the buffer's value and where it came from: `editorconfig: …/.editorconfig [*.ts]`, `default (language.go)` |
+
+When saving, `trim_trailing_whitespace` takes spaces off line ends, `end_of_line` makes every line end the same way, and `insert_final_newline` ends the file with a newline. All three are off unless a file or you turn them on, and one `u` brings back what the save changed.
+
 ## Reloading
 
 Every settings file and `init.lua`, yours and the project's (including ones not created yet), is watched. Save one and it is applied at once, with a short note saying which; values a file no longer sets are gone. `:settings reload` reads everything again.
@@ -109,6 +155,12 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 |---|---|---|
 | `tabstop` | `4` | columns a tab takes |
 | `expandtab` | `true` | `<Tab>` inserts spaces |
+| `shiftwidth` | `0` | columns an indent takes; `0` for `tabstop`'s |
+| `trim_trailing_whitespace` | `false` | a save takes spaces off line ends |
+| `insert_final_newline` | `false` | a save ends the file with a newline |
+| `end_of_line` | `""` | a save makes every line end `lf`, `crlf` or `cr`; empty leaves them |
+| `language` | | a language's own settings ([languages](#languages-and-editorconfig)) |
+| `editorconfig.enabled` | `true` | read `.editorconfig` files |
 | `scrolloff` | `3` | lines kept above and below the caret |
 | `relativenumber` | `false` | number lines by distance from the caret |
 | `leader` | `" "` | the `<leader>` key |

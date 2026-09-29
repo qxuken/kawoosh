@@ -7,6 +7,7 @@ pub mod command;
 pub mod commands;
 pub mod diagnostics;
 pub mod disk;
+pub mod editorconfig;
 pub mod keymap;
 pub mod masks;
 pub mod motions;
@@ -32,7 +33,7 @@ pub use keymap::{Binding, KeyStroke, Keymap, Lookup, Mode};
 pub use multi::{Excerpt, Multi, MultiLine, Part};
 pub use repeat::Step;
 pub use selection::{Selection, Selections};
-pub use settings::{Decl, Layer, Setting, SettingKind, Settings};
+pub use settings::{Decl, Layer, Scope, Setting, SettingKind, Settings};
 use slotmap::{SlotMap, new_key_type};
 
 new_key_type! {
@@ -802,6 +803,16 @@ impl Memory {
     }
 }
 
+/// What a buffer's own files say of it (docs/design/editorconfig.md):
+/// the `.editorconfig` resolved for the path it had when the shell
+/// looked, and the settings that makes, a source per section.
+#[derive(Clone, Debug, Default)]
+pub struct Local {
+    pub path: PathBuf,
+    pub editorconfig: editorconfig::Resolved,
+    pub sources: Vec<(String, Setting)>,
+}
+
 pub struct Editor {
     pub buffers: SlotMap<BufferId, Buffer>,
     pub views: SlotMap<ViewId, View>,
@@ -871,6 +882,11 @@ pub struct Editor {
     pub settings: Settings,
     /// The settings version the keymap last took its leader from.
     settings_applied: u64,
+    /// What a buffer's own files say of it, by buffer — its
+    /// `.editorconfig` resolved — kept by the shell, which reads the
+    /// files (docs/design/editorconfig.md); read through
+    /// [`Editor::scope_of`].
+    pub locals: HashMap<BufferId, Local>,
     /// The command stream: the last change for `.`, and the macros
     /// ([`repeat`]).
     pub repeat: repeat::Recorder,
@@ -927,6 +943,7 @@ impl Editor {
             effects: Vec::new(),
             settings: Settings::new(),
             settings_applied: 0,
+            locals: HashMap::new(),
             repeat: Default::default(),
             edited: false,
             diagnostics: Default::default(),
@@ -951,6 +968,7 @@ impl Editor {
         self.release_diagnostics(id);
         self.buffers.remove(id);
         self.history.remove(&id);
+        self.locals.remove(&id);
         self.forget_multi(id);
         // Its own maps go with it, as vim's `<buffer>` maps do.
         self.keymap.drop_scope(&buffer_scope(id));
@@ -1355,6 +1373,8 @@ impl Editor {
             .map(|(id, _)| id)
     }
 
+    /// The tree's `tabstop`, no buffer's: a buffer's is
+    /// [`Editor::tabstop_in`].
     pub fn tabstop(&self) -> usize {
         self.settings
             .int("tabstop")
@@ -1363,8 +1383,67 @@ impl Editor {
             .unwrap_or(4)
     }
 
+    /// The tree's `expandtab`; a buffer's is [`Editor::expandtab_in`].
     pub fn expandtab(&self) -> bool {
         self.settings.bool("expandtab").unwrap_or(true)
+    }
+
+    /// Where buffer `id`'s settings are read: its language and its own
+    /// sources — the `.editorconfig`'s, while they are for the path it
+    /// has (a `:w other` has moved it until the shell looks again).
+    pub fn scope_of(&self, id: BufferId) -> Scope<'_> {
+        let Some(b) = self.buffers.get(id) else {
+            return Scope::default();
+        };
+        let local = self
+            .locals
+            .get(&id)
+            .filter(|l| b.path.as_deref() == Some(l.path.as_path()))
+            .map(|l| l.sources.as_slice())
+            .unwrap_or(&[]);
+        Scope {
+            language: &b.language,
+            local,
+        }
+    }
+
+    /// The value at `path` for buffer `id` (`Settings::scoped`).
+    pub fn setting_in(&self, id: BufferId, path: &str) -> Option<&Setting> {
+        self.settings.scoped(path, self.scope_of(id))
+    }
+
+    /// The columns a tab takes in buffer `id`.
+    pub fn tabstop_in(&self, id: BufferId) -> usize {
+        self.setting_in(id, "tabstop")
+            .and_then(Setting::as_int)
+            .filter(|n| *n > 0)
+            .map(|n| n as usize)
+            .unwrap_or(4)
+    }
+
+    /// Whether an indent in buffer `id` is spaces.
+    pub fn expandtab_in(&self, id: BufferId) -> bool {
+        self.setting_in(id, "expandtab")
+            .and_then(Setting::as_bool)
+            .unwrap_or(true)
+    }
+
+    /// The columns an indent takes in buffer `id`: `shiftwidth`, or the
+    /// tab's width when it is 0.
+    pub fn shiftwidth_in(&self, id: BufferId) -> usize {
+        match self.setting_in(id, "shiftwidth").and_then(Setting::as_int) {
+            Some(n) if n > 0 => n as usize,
+            _ => self.tabstop_in(id),
+        }
+    }
+
+    /// One indent in buffer `id`: a tab, or `shiftwidth` spaces.
+    pub fn indent_unit_in(&self, id: BufferId) -> String {
+        if self.expandtab_in(id) {
+            " ".repeat(self.shiftwidth_in(id))
+        } else {
+            "\t".into()
+        }
     }
 
     /// What the keymap derives from the settings — the leader — applied
@@ -3249,8 +3328,8 @@ impl Editor {
             return;
         }
         let mut text = text.to_string();
-        if text == "\t" && self.expandtab() {
-            text = " ".repeat(self.tabstop());
+        if text == "\t" {
+            text = self.indent_unit_in(self.views[view].buffer);
         }
         if self.is_field(view) {
             text = text.replace('\n', " ");

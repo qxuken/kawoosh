@@ -24,6 +24,7 @@ pub mod disk;
 pub mod dock;
 pub mod domains;
 pub mod du;
+pub mod editorconfig;
 pub mod fonts;
 pub mod graph;
 pub mod harness;

@@ -13,6 +13,10 @@ use crate::{Editor, Selection};
 /// to compare: a file this big is not read on the frame for a question.
 pub const COMPARE_MAX: u64 = 64 << 20;
 
+/// Past this a save writes the text untidied: a pass over every line of
+/// a file this big is not made on a keystroke.
+pub const TIDY_MAX: usize = 16 << 20;
+
 /// Where a buffer stands against its file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Disk {
@@ -57,6 +61,48 @@ impl Written {
     pub fn complete(&self) -> bool {
         self.changed.is_empty() && self.failed.is_empty()
     }
+}
+
+/// The edits [`Editor::tidy`] makes to `text`, ascending.
+pub fn tidy_edits(
+    text: &str,
+    trim: bool,
+    final_newline: bool,
+    eol: Option<&str>,
+) -> Vec<(std::ops::Range<usize>, String)> {
+    let mut edits = Vec::new();
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    // The first line's ending: what a final newline is when
+    // `end_of_line` does not say.
+    let mut first_eol: Option<&str> = None;
+    loop {
+        let nl = memchr::memchr(b'\n', &bytes[start..]).map(|i| start + i);
+        let end = nl.unwrap_or(bytes.len());
+        let cr = nl.is_some() && end > start && bytes[end - 1] == b'\r';
+        let content_end = if cr { end - 1 } else { end };
+        if trim {
+            let kept = text[start..content_end].trim_end_matches([' ', '\t']).len();
+            if start + kept < content_end {
+                edits.push((start + kept..content_end, String::new()));
+            }
+        }
+        let Some(nl) = nl else { break };
+        let ending = if cr { "\r\n" } else { "\n" };
+        first_eol.get_or_insert(ending);
+        if let Some(want) = eol
+            && want != ending
+        {
+            edits.push((content_end..nl + 1, want.to_string()));
+        }
+        start = nl + 1;
+    }
+    if final_newline && !text.is_empty() && !text.ends_with(['\n', '\r']) {
+        let at = text.len();
+        let want = eol.or(first_eol).unwrap_or("\n");
+        edits.push((at..at, want.to_string()));
+    }
+    edits
 }
 
 impl Editor {
@@ -150,11 +196,48 @@ impl Editor {
         let Some(path) = b.path.clone() else {
             return Err(std::io::Error::other("no file name"));
         };
+        self.tidy(id);
+        let b = &self.buffers[id];
         crate::commands::save_beside(b, &path)?;
         let b = &mut self.buffers[id];
         b.mark_saved();
         b.disk = Stamp::of(&path);
         Ok(())
+    }
+
+    /// What the buffer's settings ask of a save
+    /// (docs/design/editorconfig.md Decision 4), made as one undoable
+    /// edit before it is written: `trim_trailing_whitespace` takes the
+    /// spaces and tabs off every line's end, `end_of_line` makes every
+    /// line end the one way (`lf`, `crlf`, `cr`), and
+    /// `insert_final_newline` ends the text with one — the file's own
+    /// kind when `end_of_line` says none. Nothing for a buffer read-only
+    /// or past [`TIDY_MAX`]. Whether it changed anything.
+    pub fn tidy(&mut self, id: BufferId) -> bool {
+        let Some(b) = self.buffers.get(id) else {
+            return false;
+        };
+        if b.read_only || b.len() > TIDY_MAX {
+            return false;
+        }
+        let flag = |k: &str| self.setting_in(id, k).and_then(crate::Setting::as_bool) == Some(true);
+        let trim = flag("trim_trailing_whitespace");
+        let final_newline = flag("insert_final_newline");
+        let eol = match self
+            .setting_in(id, "end_of_line")
+            .and_then(crate::Setting::as_str)
+        {
+            Some("lf") => Some("\n"),
+            Some("crlf") => Some("\r\n"),
+            Some("cr") => Some("\r"),
+            _ => None,
+        };
+        if !trim && !final_newline && eol.is_none() {
+            return false;
+        }
+        let text = b.text();
+        let edits = tidy_edits(&text, trim, final_newline, eol);
+        !edits.is_empty() && self.apply_edits(id, &edits)
     }
 
     /// `:wa`, and `:wqa` before it quits: every modified buffer with a
@@ -183,5 +266,37 @@ impl Editor {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tidy_edits;
+
+    fn tidied(text: &str, trim: bool, nl: bool, eol: Option<&str>) -> String {
+        let mut out = text.to_string();
+        for (r, t) in tidy_edits(text, trim, nl, eol).into_iter().rev() {
+            out.replace_range(r, &t);
+        }
+        out
+    }
+
+    #[test]
+    fn a_save_tidies_as_the_settings_say() {
+        assert_eq!(tidied("a  \nb\t\n  \nc ", true, false, None), "a\nb\n\nc");
+        assert_eq!(
+            tidied("a \r\nb", true, true, None),
+            "a\r\nb\r\n",
+            "the file's own ending"
+        );
+        assert_eq!(tidied("a\r\nb\n", false, false, Some("\n")), "a\nb\n");
+        assert_eq!(tidied("a\nb", false, true, Some("\r\n")), "a\r\nb\r\n");
+        assert_eq!(
+            tidied("", true, true, None),
+            "",
+            "an empty file stays empty"
+        );
+        assert_eq!(tidied("x\n", true, true, None), "x\n");
+        assert!(tidy_edits("a\nb\n", true, true, Some("\n")).is_empty());
     }
 }

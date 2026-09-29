@@ -179,6 +179,8 @@ pub struct Config {
     /// The undeclared keys already named, by file (roadmap step 34), so
     /// a toast is said once and not every reload.
     pub undeclared_said: std::collections::HashSet<(String, String)>,
+    /// The `.editorconfig` files read and watched (`editorconfig.rs`).
+    pub editorconfig: crate::editorconfig::Files,
 }
 
 impl Config {
@@ -194,6 +196,7 @@ impl Config {
             reloaded: None,
             loading: None,
             undeclared_said: Default::default(),
+            editorconfig: Default::default(),
         }
     }
 }
@@ -354,6 +357,7 @@ impl Kawoosh {
         paths.extend(self.config.user.clone());
         paths.extend(self.config.init.clone());
         paths.extend(crate::fonts::user_fonts_watch(self.config.fonts.as_deref()));
+        paths.extend(self.config.editorconfig.watched.iter().cloned());
         self.config.watch.watch(paths);
     }
 
@@ -431,6 +435,7 @@ impl Kawoosh {
     pub(crate) fn reload_changed(&mut self, paths: &[PathBuf]) {
         let mut project = false;
         let mut project_init = false;
+        let mut editorconfig = false;
         let mut names = Vec::new();
         for p in paths {
             if Some(p) == self.config.user.as_ref() {
@@ -443,6 +448,8 @@ impl Kawoosh {
                 project = true;
             } else if self.config.project_init.contains(p) {
                 project_init = true;
+            } else if self.config.editorconfig.watched.contains(p) {
+                editorconfig = true;
             } else {
                 continue;
             }
@@ -453,6 +460,9 @@ impl Kawoosh {
         }
         if project_init {
             self.reload_project_init();
+        }
+        if editorconfig {
+            self.reload_editorconfig();
         }
         if names.is_empty() {
             return;
@@ -936,6 +946,7 @@ impl Kawoosh {
         paths.extend(self.config.project_init.clone());
         paths.extend(self.config.user.clone());
         paths.extend(self.config.init.clone());
+        paths.extend(self.config.editorconfig.watched.iter().cloned());
         if paths.is_empty() {
             self.reload_project_settings();
             self.ed.message = "settings reloaded".into();
