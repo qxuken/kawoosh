@@ -2246,11 +2246,32 @@ pub fn install(ed: &mut Editor) {
     });
     ed.register_with_char("surround wrap", surround_wrap);
     // Align (`ga`, easy-align's): an operator over lines that then
-    // takes the character to line them up on.
-    ed.register_kind("align", Kind::Operator, |ed, ctx| {
-        operator(ed, ctx, "align")
+    // takes the character to line them up on, or `<CR>` and a pattern.
+    // With a pattern (`:align PAT`) the selections' lines, at once.
+    ed.register_spec(
+        Spec::new("align")
+            .kind(Kind::Operator)
+            .args(Args::rest(&[ArgKind::Text])),
+        |ed, ctx| {
+            if ctx.args.is_empty() {
+                operator(ed, ctx, "align")
+            } else {
+                align_on(ed, ctx)
+            }
+        },
+    );
+    ed.register_spec(
+        Spec::new("align on")
+            .takes_char()
+            .args(Args::rest(&[ArgKind::Text])),
+        align_on,
+    );
+    // The prompt is the character's answer: a replay, which runs this
+    // step rather than pressing `<CR>`, is left waiting on no key.
+    ed.register("align ask", |ed, ctx| {
+        ed.awaiting_char = None;
+        ed.open_prompt(ctx.view, Prompt::Align);
     });
-    ed.register_with_char("align on", align_on);
     ed.register_with_char("surround delete", surround_delete);
     ed.register_with_char("surround replace", surround_replace);
     ed.register_with_char("surround replace with", surround_replace_with);
@@ -2887,9 +2908,16 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "align",
-        "line up what a motion or object covers, or the selection, on the character CHAR names (`ga`)",
+        "line up what a motion or object covers, or the selection, on the character CHAR names (`ga`), or on a pattern: `<CR>` for CHAR, or `:align PATTERN` over the selection",
     ),
-    ("align on", "the character `align` lines the lines up on"),
+    (
+        "align on",
+        "the character, or the pattern, `align` lines the lines up on",
+    ),
+    (
+        "align ask",
+        "the prompt for the pattern `align` lines up on",
+    ),
     (
         "surround delete",
         "take the pair CHAR names off from around the caret (`gsd`)",
@@ -3363,29 +3391,49 @@ pub struct Surround {
     pub align: Option<Vec<usize>>,
 }
 
-/// The character after `ga` and its motion: every collected line that
-/// holds it has its first one moved to the same column — the text
-/// before it trimmed of trailing space, then padded — with one space
-/// before it when any of them had space there, so `a = 1` and `bbb =
-/// 2` line up as `a   = 1`, and aligning again changes nothing. One
-/// edit per line, one undo step; the lines without it stay.
+/// The character after `ga` and its motion, or the pattern its
+/// prompt asked for (`ga` + motion + `<CR>`, `:align PAT`): every
+/// collected line that holds it has its first one moved to the same
+/// column — the text before it trimmed of trailing space, then padded
+/// — with one space before it when any of them had space there, so `a
+/// = 1` and `bbb = 2` line up as `a   = 1`, and aligning again changes
+/// nothing. One edit per line, one undo step; the lines without it
+/// stay. Without lines collected, the lines the selections touch.
 fn align_on(ed: &mut Editor, ctx: &Ctx) {
-    let (Some(c), Some(lines)) = (ctx.arg_char, ed.surround.align.take()) else {
-        return;
+    let lines = match ed.surround.align.take() {
+        Some(lines) => lines,
+        None => sel_lines(ed, ctx),
+    };
+    let pattern = ctx.args.join(" ");
+    let (label, re) = match ctx.arg_char {
+        Some(c) => (c.to_string(), None),
+        None if pattern.is_empty() => return,
+        None => match regex::Regex::new(&pattern) {
+            Ok(re) => (pattern, Some(re)),
+            Err(e) => {
+                ed.message = format!("bad pattern: {e}");
+                return;
+            }
+        },
+    };
+    let find = |text: &str| match (&re, ctx.arg_char) {
+        (Some(re), _) => re.find(text).map(|m| m.start()),
+        (None, Some(c)) => text.find(c),
+        (None, None) => None,
     };
     let id = view(ed, ctx).buffer;
     // The caret goes to the first line's first non-blank, as after any
     // operator over lines.
     let first = lines.first().copied().unwrap_or(0);
     let buf = &ed.buffers[id];
-    // Each line with `c`: where its text before `c` ends, where `c` is,
-    // and how wide the text before it is.
+    // Each line with a match: where its text before it ends, where the
+    // match is, and how wide the text before it is.
     let mut found: Vec<(Range<usize>, String, usize)> = Vec::new();
     let mut spaced = false;
     for ln in lines {
         let range = buf.line_range(ln);
         let text = buf.slice(range.clone());
-        let Some(at) = text.find(c) else { continue };
+        let Some(at) = find(&text) else { continue };
         let before = text[..at].trim_end();
         spaced |= before.len() < at;
         let width = before.chars().count();
@@ -3396,7 +3444,7 @@ fn align_on(ed: &mut Editor, ctx: &Ctx) {
         ));
     }
     if found.is_empty() {
-        ed.message = format!("no {c} in the lines");
+        ed.message = format!("no {label} in the lines");
         return;
     }
     let target = found.iter().map(|f| f.2).max().unwrap_or(0) + usize::from(spaced);
@@ -3406,12 +3454,26 @@ fn align_on(ed: &mut Editor, ctx: &Ctx) {
         .filter(|(gap, pad)| buf.slice(gap.clone()) != *pad)
         .collect();
     if edits.is_empty() || ed.apply_edits(id, &edits) {
-        ed.message = format!("aligned on {c}");
+        ed.message = format!("aligned on {label}");
     }
     let buf = &ed.buffers[id];
     ed.views[ctx.view].sels =
         crate::Selections::single(Selection::point(m::first_nonblank(buf, first)));
     ed.set_mode(ctx.view, Mode::Normal);
+}
+
+/// The lines the selections of `ctx`'s view touch — as visual mode
+/// shows them, the head's character in — in order, once each.
+fn sel_lines(ed: &Editor, ctx: &Ctx) -> Vec<usize> {
+    let buf = &ed.buffers[view(ed, ctx).buffer];
+    let mut lines: Vec<usize> = Vec::new();
+    for r in sel_ranges(ed, ctx.view) {
+        let last = buf.line_of(r.end.saturating_sub(1).max(r.start));
+        lines.extend(buf.line_of(r.start)..=last);
+    }
+    lines.sort_unstable();
+    lines.dedup();
+    lines
 }
 
 /// The pair a surround character stands for: a bracket either way
