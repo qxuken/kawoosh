@@ -236,7 +236,9 @@ impl Kawoosh {
     /// block otherwise, with `ghost` after the primary one. The line
     /// declares the caret, so kui's blink clock runs while the field
     /// has the keyboard; a field without it shows no caret, so one
-    /// caret is on the screen at a time.
+    /// caret is on the screen at a time. A line wider than the field
+    /// scrolls sideways under it, as little as keeps the primary caret
+    /// in view, from where the last frame left it.
     pub(crate) fn field_line(
         &self,
         ui: &mut Ui<'_>,
@@ -298,34 +300,77 @@ impl Kawoosh {
                 }
             }
         }
-        let _ = rows::emit_line(
-            ui,
-            font,
-            &pal,
-            &LineDraw {
-                text: &drawn.text,
-                selected: &selected,
-                hits: &[],
-                flashed: &[],
-                washed: &[],
-                styled: &[],
-                carets: &carets,
-                escapes: &drawn.escapes,
-                caret_on: ui.caret_visible() || v.mode != Mode::Insert,
-                access,
-                underlined: &[],
-                trailing: None,
-                ghost: ghost.map(|g| (clip(primary.head), g)),
-                hints: &[],
-                before: 0.0,
-                after: 0.0,
-                marks: &[],
-                form: None,
-                band: None,
-                sel_radius: self.selection_radius(),
-                text_key: None,
+        let scroller = ui.child_key("field");
+        let geometry = ui.scroll_geometry(scroller);
+        // A field's first frame has no geometry to follow the caret by:
+        // one more frame, or a line typed before it (a paste, keys
+        // faster than frames) waits for the next key to scroll.
+        if keyed && geometry.is_none() {
+            ui.request_frame();
+        }
+        let want = geometry.filter(|_| keyed).map(|g| {
+            let style = rows::mono(font, &pal);
+            let head = clip(primary.head);
+            let x0 = ui.measure_text(&drawn.text[..head], &style, None).width;
+            // The bar, or the block's character — a cell past the end.
+            let x1 = if caret_kind == Caret::Bar {
+                x0 + 2.0
+            } else if head < drawn.text.len() {
+                let next = rows::next_char(&drawn.text, head);
+                ui.measure_text(&drawn.text[..next], &style, None).width
+            } else {
+                x0 + ui.measure_text(" ", &style, None).width
+            };
+            let off = g.offset.x;
+            if x0 < off {
+                x0
+            } else if x1 > off + g.rect.w {
+                x1 - g.rect.w
+            } else {
+                off
+            }
+        });
+        ui.with_keyed(
+            "field",
+            NodeSpec::row()
+                .grow_width()
+                .cross_align(Align::Center)
+                .scroll_x()
+                .scrollbar(kui_native::ScrollbarMode::Hidden),
+            |ui| {
+                let _ = rows::emit_line(
+                    ui,
+                    font,
+                    &pal,
+                    &LineDraw {
+                        text: &drawn.text,
+                        selected: &selected,
+                        hits: &[],
+                        flashed: &[],
+                        washed: &[],
+                        styled: &[],
+                        carets: &carets,
+                        escapes: &drawn.escapes,
+                        caret_on: ui.caret_visible() || v.mode != Mode::Insert,
+                        access,
+                        underlined: &[],
+                        trailing: None,
+                        ghost: ghost.map(|g| (clip(primary.head), g)),
+                        hints: &[],
+                        before: 0.0,
+                        after: 0.0,
+                        marks: &[],
+                        form: None,
+                        band: None,
+                        sel_radius: self.selection_radius(),
+                        text_key: None,
+                    },
+                );
             },
         );
+        if let Some(x) = want {
+            ui.set_scroll(scroller, Vec2::new(x, 0.0));
+        }
     }
 
     pub(crate) fn command_line(&self, ui: &mut Ui<'_>) {

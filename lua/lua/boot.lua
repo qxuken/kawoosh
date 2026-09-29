@@ -631,6 +631,10 @@ local function field_node(view_name, env, opts)
   -- space past the end) — from where the last frame left it.
   local label = "field:" .. full
   local g = env.scroll_geometry(label)
+  -- A field's first frame has no geometry to follow the caret by: one
+  -- more frame (`animate`, for this one), or a line set before it — a
+  -- picker opened on a query — waits for a key to scroll.
+  local again = focused and not g
   if focused and g then
     local off = g.offset.x
     local x = env.measure_text(line:sub(1, st.caret), style).width
@@ -691,6 +695,7 @@ local function field_node(view_name, env, opts)
     height = row_h,
     scroll_x = true,
     scrollbar = "hidden",
+    animate = again or nil,
     on_click = { kind = "field", field = full },
     line_row,
   }
