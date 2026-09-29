@@ -1106,7 +1106,7 @@ impl Kawoosh {
         // The server's inlay hints, while `lsp.inlay_hints` is on.
         let inlay = self.inlay_hints_of(buf_id);
         // What plugins painted (`kawoosh.buf.paint`): over the syntax.
-        let (painted, washes) = self.paints_of(buf_id);
+        let (painted, mut washes) = self.paints_of(buf_id);
         // The markdown buffer drawn rendered (markdown.md): its rows are
         // as tall as they wrap to, so it scrolls by what they measured.
         let md = self.markdown_rendered(buf_id);
@@ -1410,6 +1410,23 @@ impl Kawoosh {
                     _ => None,
                 }));
         }
+        // The hunks' signs beside their lines (docs/design/vcs.md
+        // Decision 2) — a multibuffer's excerpt lines their sources' —
+        // and, in a multibuffer, an added or changed line washed in its
+        // sign's colour, so a review reads as a diff.
+        let signs: HashMap<usize, (kawoosh_editor::Sign, kui_native::Color)> = self
+            .signs_of(buf_id, top, &from_files)
+            .into_iter()
+            .map(|(ln, s)| (ln, (s, self.sign_color(s))))
+            .collect();
+        if !from_files.is_empty() {
+            use kawoosh_editor::Sign;
+            for (ln, (s, c)) in &signs {
+                if matches!(s, Sign::Added | Sign::Modified) && *ln < buf.line_count() {
+                    washes.push((buf.line_range(*ln), c.with_alpha(0.12)));
+                }
+            }
+        }
         // The places a list marked on its files, drawn in that list
         // alone: another multibuffer on the same lines is not the list.
         let places_here =
@@ -1576,6 +1593,7 @@ impl Kawoosh {
                                     &numbers,
                                     ln,
                                     letters.get(&ln).copied(),
+                                    signs.get(&ln).copied(),
                                 );
                             }
                         },
@@ -1894,6 +1912,7 @@ impl Kawoosh {
                                         bg: code.then_some(pal.strip),
                                         gutter: (!in_table)
                                             .then(|| (gutter, numbers.label(ln), ln == cur_line)),
+                                        sign: signs.get(&ln).copied(),
                                         rule: *rule,
                                         images: img
                                             .iter()
@@ -1931,6 +1950,7 @@ impl Kawoosh {
                                                     numbers.label(ln),
                                                     ln == cur_line,
                                                 )),
+                                                sign: signs.get(&ln).copied(),
                                                 rule: false,
                                                 images: Vec::new(),
                                                 fit: false,

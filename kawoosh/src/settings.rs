@@ -238,6 +238,11 @@ pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
             "the accent: a colour, or `system` for the OS's",
         ),
         (
+            "vcs.signs",
+            K::Bool,
+            "the hunks' signs in the gutter (docs/design/vcs.md); on unless false",
+        ),
+        (
             "tokens.colors",
             K::Open,
             "a syntax token's colour, one or `{ light, dark }`",

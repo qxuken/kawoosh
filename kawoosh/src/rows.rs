@@ -759,6 +759,8 @@ pub struct RowForm {
     /// The gutter's width, and what it shows beside the row and
     /// whether it is the caret's line.
     pub gutter: Option<(f32, String, bool)>,
+    /// The line's hunk sign and its colour (docs/design/vcs.md).
+    pub sign: Option<(kawoosh_editor::Sign, Color)>,
     /// A rule across the row instead of text (`---`).
     pub rule: bool,
     /// Images instead of text, side by side, each at its size in px;
@@ -942,6 +944,29 @@ impl Numbers {
 /// column's, so a multibuffer header's band fills the gutter.
 const GUTTER_ROW_PAD: f32 = 12.0;
 
+/// A hunk's sign at the row's left edge (docs/design/vcs.md Decision
+/// 2): a bar the row's height for a line added or changed, a short
+/// one across the top (the bottom) for lines taken out before (after)
+/// it — a float in the gutter's padding, so the gutter is no wider for
+/// it.
+fn sign_bar(ui: &mut Ui<'_>, sign: Option<(kawoosh_editor::Sign, Color)>, lh: f32) {
+    use kawoosh_editor::Sign;
+    let Some((sign, color)) = sign else {
+        return;
+    };
+    let (w, h, y) = match sign {
+        Sign::Added | Sign::Modified => (3.0, lh, 0.0),
+        Sign::Deleted => (8.0, 2.0, 0.0),
+        Sign::DeletedBelow => (8.0, 2.0, lh - 2.0),
+    };
+    ui.leaf(
+        NodeSpec::column()
+            .size(w, h)
+            .bg(color)
+            .float(FloatConfig::parent().offset(0.0, y)),
+    );
+}
+
 pub fn gutter_row(
     ui: &mut Ui<'_>,
     face: Face,
@@ -949,6 +974,7 @@ pub fn gutter_row(
     numbers: &Numbers,
     ln: usize,
     mark: Option<char>,
+    sign: Option<(kawoosh_editor::Sign, Color)>,
 ) {
     let color = if ln == numbers.current {
         pal.dim
@@ -973,6 +999,7 @@ pub fn gutter_row(
             .main_align(Align::End)
             .cross_align(Align::Center),
         |ui| {
+            sign_bar(ui, sign, face.line_height);
             if let Some(c) = mark {
                 ui.text_in(
                     NodeSpec::row()
@@ -1282,6 +1309,7 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
                         spec.height(lh).cross_align(Align::Center)
                     },
                     |ui| {
+                        sign_bar(ui, f.sign, lh);
                         let color = if *current { pal.dim } else { pal.faint };
                         ui.text(label, mono(face, pal).color(color));
                     },

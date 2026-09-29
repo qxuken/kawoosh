@@ -178,6 +178,8 @@ pub struct Kawoosh {
     pub(crate) marks: crate::marks::Marks,
     /// The breadcrumbs' outlines and their asks (docs/design/breadcrumbs.md).
     pub(crate) crumbs: crate::breadcrumbs::Breadcrumbs,
+    /// The diffs of buffers with a base, in flight (docs/design/vcs.md).
+    pub(crate) vcs: crate::vcs::Vcs,
     /// The working memory pane (`:memory`): the register's past.
     pub memory_pane: crate::memory::MemoryPanel,
     /// The keymap version and, at it, the first words of the commands
@@ -382,6 +384,7 @@ impl Kawoosh {
             moments: crate::moments::Moments::new(wake.named("moments")),
             marks: Default::default(),
             crumbs: crate::breadcrumbs::Breadcrumbs::new(wake.named("breadcrumbs")),
+            vcs: crate::vcs::Vcs::new(wake.named("vcs")),
             memory_pane: Default::default(),
             bound_names: Default::default(),
             hud: false,
@@ -697,6 +700,7 @@ impl Kawoosh {
             });
         }
         self.ask_crumbs();
+        self.ask_diffs();
     }
 
     /// Blocks until `ts` has answered for every buffer sent — for tests,
@@ -760,6 +764,7 @@ impl Kawoosh {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     self.filtered(token, result);
                 }
+                IoMsg::Diffed { token, hunks } => self.diffed(token, hunks),
                 IoMsg::Image { path, result } => {
                     self.pending_jobs = self.pending_jobs.saturating_sub(1);
                     self.image_decoded(path, result);

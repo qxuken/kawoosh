@@ -130,6 +130,13 @@ pub enum IoMsg {
         token: u64,
         result: Result<String, crate::filter::Failure>,
     },
+    /// A buffer diffed against its base on a job thread
+    /// (docs/design/vcs.md Decision 1): the ask's token, and the hunks —
+    /// the base's lines and the buffer's in their place, from 0.
+    Diffed {
+        token: u64,
+        hunks: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
+    },
     /// A domain's master is up and its files are reachable: the domain
     /// is in `kawoosh_doc::fs`'s registry (docs/design/domains.md).
     DomainUp {

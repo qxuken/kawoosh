@@ -971,6 +971,20 @@ impl Kawoosh {
                 }
                 None => self.ed.message = "paint: no such buffer".into(),
             },
+            Msg::Base {
+                buffer,
+                name,
+                text,
+                label,
+            } => match self.lua_buffer(buffer, name) {
+                Some(id) => match text {
+                    Some(t) => self.ed.set_base(id, std::sync::Arc::from(t), label),
+                    None => {
+                        self.ed.clear_base(id);
+                    }
+                },
+                None => self.ed.message = "base: no such buffer".into(),
+            },
             Msg::Mask {
                 buffer,
                 name,

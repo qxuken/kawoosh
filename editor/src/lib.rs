@@ -8,6 +8,7 @@ pub mod commands;
 pub mod diagnostics;
 pub mod disk;
 pub mod editorconfig;
+pub mod hunks;
 pub mod keymap;
 pub mod masks;
 pub mod motions;
@@ -27,6 +28,7 @@ pub use command::{
     ArgKind, Args, BufFacts, Command, Cond, Ctx, Facts, FnCommand, Form, Invocation, Kind,
     MotionKind, Registry, Spec, fact_words,
 };
+pub use hunks::{Base, LineHunk, Sign};
 pub use kawoosh_doc::Hunk;
 use kawoosh_doc::{Buffer, BufferId, Version};
 pub use keymap::{Binding, KeyStroke, Keymap, Lookup, Mode};
@@ -944,6 +946,10 @@ pub struct Editor {
     /// What is said to be wrong where ([`diagnostics`]): each buffer's
     /// list its layer's runs index, and the files no buffer holds.
     pub diagnostics: diagnostics::Diagnostics,
+    /// What each buffer is read against, and the hunks between them
+    /// ([`hunks`], docs/design/vcs.md): the file as the index has it,
+    /// a revision's, whatever was given.
+    pub bases: HashMap<BufferId, Base>,
     /// The multibuffers, by their buffer ([`multi`]).
     pub multis: HashMap<BufferId, Multi>,
     /// Buffers opened only for a multibuffer: not listed while nothing
@@ -995,6 +1001,7 @@ impl Editor {
             repeat: Default::default(),
             edited: false,
             diagnostics: Default::default(),
+            bases: HashMap::new(),
             multis: HashMap::new(),
             borrowed: Default::default(),
             released: Vec::new(),
@@ -1017,6 +1024,7 @@ impl Editor {
         self.buffers.remove(id);
         self.history.remove(&id);
         self.locals.remove(&id);
+        self.bases.remove(&id);
         self.forget_multi(id);
         // Its own maps go with it, as vim's `<buffer>` maps do.
         self.keymap.drop_scope(&buffer_scope(id));

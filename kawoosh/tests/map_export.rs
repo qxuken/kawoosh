@@ -178,8 +178,9 @@ fn the_keys_are_grouped_by_module() {
     ] {
         assert!(runs(gone).is_empty(), "{gone} still runs {:?}", runs(gone));
     }
-    // keys.md's reserved spellings stay free, for git's commands.
-    for reserved in ["<leader>h", "<leader>wd", "<leader>wc"] {
+    // keys.md's reserved spellings stay free, for a commit UI's commands;
+    // `<leader>h` is the hunks' now (docs/design/vcs.md).
+    for reserved in ["<leader>wd", "<leader>wc"] {
         assert!(
             normal.iter().all(|(k, _)| !k.starts_with(reserved)),
             "{reserved} is reserved"
@@ -194,6 +195,7 @@ fn the_keys_are_grouped_by_module() {
     for (group, words) in [
         ("<leader>b", &["buffer"][..]),
         ("<leader>c", &["compile"]),
+        ("<leader>h", &["hunk", "vcs"]),
         ("<leader>i", &["help", "messages", "commands"]),
         ("<leader>m", &["memory"]),
         (

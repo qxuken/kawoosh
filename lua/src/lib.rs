@@ -437,6 +437,16 @@ pub enum Msg {
         name: Option<String>,
         notes: Vec<(usize, Option<String>)>,
     },
+    /// `kawoosh.buf.base(text, label[, buffer])`: what the buffer is
+    /// read against (docs/design/vcs.md Decision 1) — the diff of the
+    /// two the gutter's signs and `]h`'s hunks; `text` nil or false
+    /// takes the base away.
+    Base {
+        buffer: Option<u64>,
+        name: Option<String>,
+        text: Option<String>,
+        label: String,
+    },
     Tool {
         name: String,
         cmd: String,
@@ -618,6 +628,9 @@ pub struct BufSnap {
     /// `.editorconfig`'s (docs/design/editorconfig.md): the tab's
     /// columns, an indent's, and whether an indent is spaces.
     pub indent: (usize, usize, bool),
+    /// What it is read against, and the hunks as last diffed
+    /// (docs/design/vcs.md): shared, so a publish copies nothing.
+    pub base: Option<kawoosh_editor::Base>,
 }
 
 thread_local! {
@@ -1413,6 +1426,7 @@ impl Runtime {
                     borrowed: ed.borrowed.contains(&id),
                     in_tab: ed.tab_buffers.as_ref().is_none_or(|s| s.contains(&id)),
                     indent: (ed.tabstop_in(id), ed.shiftwidth_in(id), ed.expandtab_in(id)),
+                    base: ed.base(id).cloned(),
                 },
             );
         }
@@ -3651,6 +3665,83 @@ fn seed(
     buf.set(
         "modified",
         lua.create_function(move |_, h: Option<u64>| with_buf(&pp, h, |b| b.modified))?,
+    )?;
+    // ---- `kawoosh.buf.base(text, label[, buffer])`: the buffer read
+    // against `text` from now on — the file as the index has it, a
+    // revision's, anything (docs/design/vcs.md Decision 1) — called
+    // `label` (`index`, `HEAD`, `main`); the diff of the two is the
+    // gutter's signs and `]h`'s hunks, made again once the text has
+    // been still. `text` nil or false takes the base away. The buffer
+    // by handle, by name, or the current one.
+    let (qq, pp) = (q(queue), published.clone());
+    buf.set(
+        "base",
+        lua.create_function(
+            move |_, (text, label, which): (Option<LV>, Option<String>, Option<LV>)| {
+                let (buffer, name) = which_buffer(&pp, which)?;
+                let text = match text {
+                    Some(LV::String(s)) => Some(s.to_str()?.to_string()),
+                    Some(LV::Nil) | Some(LV::Boolean(false)) | None => None,
+                    _ => return Err(mlua::Error::runtime("base: a text, or nil")),
+                };
+                qq.borrow_mut().push(Msg::Base {
+                    buffer,
+                    name,
+                    text,
+                    label: label.unwrap_or_else(|| "base".into()),
+                });
+                Ok(())
+            },
+        )?,
+    )?;
+    // `kawoosh.buf.base_label([buffer])`: what the buffer is read
+    // against, by the label it was given; nil for no base.
+    let pp = published.clone();
+    buf.set(
+        "base_label",
+        lua.create_function(move |_, h: Option<u64>| {
+            with_buf(&pp, h, |b| b.base.as_ref().map(|b| b.label.clone()))
+        })?,
+    )?;
+    // `kawoosh.buf.hunks([buffer])`: the buffer's hunks against its
+    // base as last diffed, in order — each `{ kind = "added" |
+    // "modified" | "deleted", line =, end_line =, old_line =, old_end =,
+    // old = { … } }`, lines from 1 and ends exclusive (`line` for a
+    // deletion the line after what was taken out), `old` the base's
+    // lines it replaced — or nil without a base.
+    let pp = published.clone();
+    buf.set(
+        "hunks",
+        lua.create_function(move |lua, h: Option<u64>| {
+            with_buf(&pp, h, |b| -> mlua::Result<LV> {
+                let Some(base) = &b.base else {
+                    return Ok(LV::Nil);
+                };
+                let out = lua.create_table()?;
+                for h in base.hunks.iter() {
+                    let t = lua.create_table()?;
+                    t.set(
+                        "kind",
+                        match h.kind() {
+                            kawoosh_editor::Sign::Added => "added",
+                            kawoosh_editor::Sign::Modified => "modified",
+                            _ => "deleted",
+                        },
+                    )?;
+                    t.set("line", h.new.start + 1)?;
+                    t.set("end_line", h.new.end + 1)?;
+                    t.set("old_line", h.old.start + 1)?;
+                    t.set("old_end", h.old.end + 1)?;
+                    let old = lua.create_table()?;
+                    for l in base.lines(h.old.clone()) {
+                        old.push(l)?;
+                    }
+                    t.set("old", old)?;
+                    out.push(t)?;
+                }
+                Ok(LV::Table(out))
+            })?
+        })?,
     )?;
     // `kawoosh.buf.indent(buffer)`: its indentation as its settings say
     // — its language's, its `.editorconfig`'s — `{ tabstop, shiftwidth,
