@@ -689,6 +689,61 @@ fn an_empty_layer_offers_a_file_to_create() {
     std::fs::remove_dir_all(&t.dir).ok();
 }
 
+/// `:settings user` (`:settings global`) and `:settings project` open
+/// the file from the command line: the project's nearest the working
+/// directory, and where a layer has none, a template at its path as the
+/// tab's `new` row makes.
+#[test]
+fn a_settings_file_opens_from_the_command_line() {
+    let t = tree("open");
+    let mut d = Drive::new(1100.0, 700.0);
+    let mut app = app_with_lua(&mut d);
+    app.load_user_settings(&t.user);
+    let opened = |app: &Kawoosh| {
+        app.focused_view()
+            .and_then(|v| app.ed.buffer_of(v).path.clone())
+    };
+    ex(&mut d, &mut app, "settings user");
+    assert_eq!(opened(&app), Some(t.user.clone()));
+    assert!(!app.devtools, "a file, not the tab");
+    // The member's own file, not the root's above it.
+    app.set_cwd(&t.sub);
+    ex(&mut d, &mut app, "settings project");
+    assert_eq!(
+        opened(&app),
+        Some(t.sub.join(PROJECT_DIR).join(SETTINGS_FILE))
+    );
+    ex(&mut d, &mut app, "settings global");
+    assert_eq!(opened(&app), Some(t.user.clone()));
+    // A directory under the root with no file of its own: the root's.
+    let deeper = t.root.join("deeper");
+    std::fs::create_dir_all(&deeper).unwrap();
+    app.set_cwd(&deeper);
+    ex(&mut d, &mut app, "settings project");
+    assert_eq!(
+        opened(&app),
+        Some(t.root.join(PROJECT_DIR).join(SETTINGS_FILE))
+    );
+    // No project above: a template in the working directory, unsaved.
+    app.set_cwd(&t.other);
+    ex(&mut d, &mut app, "settings project");
+    let file = t.other.join(PROJECT_DIR).join(SETTINGS_FILE);
+    assert_eq!(opened(&app), Some(file.clone()));
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).text(), kawoosh::settings::SETTINGS_STUB);
+    assert!(app.ed.buffer_of(v).modified);
+    assert!(!file.exists());
+    // The user's the same way, when it is not there yet.
+    let missing = t.dir.join("fresh").join("settings.lua");
+    app.load_user_settings(&missing);
+    ex(&mut d, &mut app, "settings user");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.buffer_of(v).path.as_deref(), Some(missing.as_path()));
+    assert_eq!(app.ed.buffer_of(v).text(), kawoosh::settings::SETTINGS_STUB);
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&t.dir).ok();
+}
+
 /// `font.*`, `theme.*` and `tokens.colors` reach kui at the next frame
 /// (`look.rs`): the face's size, row height and features; a pinned
 /// palette with its accent and a role written over it, the shell's

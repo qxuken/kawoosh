@@ -856,23 +856,7 @@ impl Kawoosh {
                 true
             }
             (Some("new"), Some(path)) => {
-                self.open_in_editor(&path, None, None);
-                if let Some(v) = self.focused_view()
-                    && !path.exists()
-                    && self.ed.buffer_of(v).path.as_deref() == Some(path.as_path())
-                    && self.ed.buffer_of(v).is_empty()
-                {
-                    // An edit, not a reload: the buffer is modified, so
-                    // `:q` asks and `:w` writes.
-                    self.ed.buffer_of_mut(v).replace(0..0, SETTINGS_STUB);
-                    // The caret inside the table, where the first key goes:
-                    // the `}` line, under `return {`.
-                    let off = self.ed.buffer_of(v).line_start(3);
-                    self.ed.views[v].sels =
-                        kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(off));
-                    self.ed.message =
-                        format!("{} — a template; :w keeps it", self.short_name(&path));
-                }
+                self.open_settings_file(&path);
                 true
             }
             (Some("reload"), _) => {
@@ -897,6 +881,52 @@ impl Kawoosh {
             }
             _ => false,
         }
+    }
+
+    /// A settings file in the focused pane; one not on disk yet is a
+    /// buffer at its path with the template as its text — modified, so
+    /// `:q` asks and `:w` writes (the `.kawoosh` directory with it).
+    pub(crate) fn open_settings_file(&mut self, path: &Path) {
+        self.open_in_editor(path, None, None);
+        if let Some(v) = self.focused_view()
+            && !path.exists()
+            && self.ed.buffer_of(v).path.as_deref() == Some(path)
+            && self.ed.buffer_of(v).is_empty()
+        {
+            // An edit, not a reload: the buffer is modified, so `:q`
+            // asks and `:w` writes.
+            self.ed.buffer_of_mut(v).replace(0..0, SETTINGS_STUB);
+            // The caret inside the table, where the first key goes: the
+            // `}` line, under `return {`.
+            let off = self.ed.buffer_of(v).line_start(3);
+            self.ed.views[v].sels =
+                kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(off));
+            self.ed.message = format!("{} — a template; :w keeps it", self.short_name(path));
+        }
+    }
+
+    /// `:settings user` (`:settings global`): the user's settings file,
+    /// a template when there is none yet.
+    pub(crate) fn open_user_settings(&mut self) {
+        match self.config.user.clone().or_else(user_settings_path) {
+            Some(path) => self.open_settings_file(&path),
+            None => self.ed.message = "no config dir: neither $XDG_CONFIG_HOME nor a home".into(),
+        }
+    }
+
+    /// `:settings project`: the project's settings file nearest the
+    /// working directory — the innermost `.kawoosh/settings.lua` above
+    /// it — else a template for one in the working directory, as the
+    /// tab offers. None on a host, where it would never be read.
+    pub(crate) fn open_project_settings(&mut self) {
+        if kawoosh_systems::fs::domain_of(&self.cwd).is_some() {
+            self.ed.message = "a project's settings stay local: none on a host".into();
+            return;
+        }
+        let path = project_settings_files(&self.cwd)
+            .pop()
+            .unwrap_or_else(|| self.cwd.join(PROJECT_DIR).join(SETTINGS_FILE));
+        self.open_settings_file(&path);
     }
 
     /// `:settings reload` and the tab's button: every layer from its
