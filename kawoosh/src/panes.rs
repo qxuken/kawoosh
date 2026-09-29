@@ -1003,9 +1003,8 @@ impl Kawoosh {
                         let row = ((p.y - r.y) / ch) as usize;
                         let col = ((p.x - r.x) / cw) as usize;
                         (row < screen.rows)
-                            .then(|| self.location_cols(id, row, col))
+                            .then(|| self.location_cells(id, row, col))
                             .flatten()
-                            .map(|(cols, uri)| (row, cols, uri))
                     })
                     .flatten();
                 spec = if reporting {
@@ -1029,7 +1028,7 @@ impl Kawoosh {
                 // A program's link (OSC 8) says where it goes while
                 // hovered, at the grid's foot, as a browser's status
                 // does: its text need not be its address.
-                let target = hover.as_ref().and_then(|(_, _, uri)| uri.clone());
+                let target = hover.as_ref().and_then(|(_, uri)| uri.clone());
                 // Kitty's images: a float is a layer over the in-flow
                 // tree and the floats before it, so an image under the
                 // text (`z < 0`) opens before the grid, and the grid is
@@ -1049,11 +1048,13 @@ impl Kawoosh {
                     spec = spec.float(FloatConfig::parent().offset(pad, pad).clipped());
                 }
                 match hover {
-                    Some((row, cols, _)) => {
+                    Some((rows, _)) => {
                         let mut cells = screen.cells.clone();
-                        let at = row * screen.cols;
-                        for c in cols.start.min(screen.cols)..cols.end.min(screen.cols) {
-                            cells[at + c].flags |= kui_native::cells::flags::UNDERLINE;
+                        for (row, cols) in rows.iter().filter(|(r, _)| *r < screen.rows) {
+                            let at = row * screen.cols;
+                            for c in cols.start.min(screen.cols)..cols.end.min(screen.cols) {
+                                cells[at + c].flags |= kui_native::cells::flags::UNDERLINE;
+                            }
                         }
                         let lit = kui_native::CellGrid {
                             cells: &cells,
