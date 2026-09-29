@@ -34,6 +34,7 @@ pub use multi::{Excerpt, Multi, MultiLine, Part};
 pub use repeat::Step;
 pub use selection::{Selection, Selections};
 pub use settings::{Decl, Layer, Scope, Setting, SettingKind, Settings};
+
 use slotmap::{SlotMap, new_key_type};
 
 new_key_type! {
@@ -371,6 +372,16 @@ pub fn path_form(cwd: &Path, path: &Path, form: &str) -> Result<String, String> 
     Ok(out.display().to_string())
 }
 
+/// What a save that waits on its format does once written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AfterWrite {
+    Nothing,
+    /// `:wq`.
+    Quit,
+    /// `:wqa`.
+    QuitAll,
+}
+
 /// What the engine asks the shell to do — things only the shell can.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
@@ -423,6 +434,14 @@ pub enum Effect {
     /// A hooked buffer (`Buffer::hook`) was `:w`ritten: the shell hands
     /// its text to the handler.
     Write(BufferId),
+    /// A save of buffers whose `format_on_save` is on
+    /// (docs/design/formatters.md Decision 4): the shell formats each,
+    /// writes it with [`Editor::write_now`] — formatted or, on a failure,
+    /// as it is — and then does `after` once every write has landed.
+    FormatThenWrite {
+        buffers: Vec<BufferId>,
+        after: AfterWrite,
+    },
     /// A command the engine has no body for — declared by the shell
     /// (splits, tabs, terminals, Lua), or unknown — with everything it
     /// would run with.
@@ -805,12 +824,41 @@ impl Memory {
 
 /// What a buffer's own files say of it (docs/design/editorconfig.md):
 /// the `.editorconfig` resolved for the path it had when the shell
-/// looked, and the settings that makes, a source per section.
+/// looked, and its formatter's word on its indent (formatters.md
+/// Decision 6) — the settings they make, a source each, the
+/// formatter's last so over the file's.
 #[derive(Clone, Debug, Default)]
 pub struct Local {
     pub path: PathBuf,
     pub editorconfig: editorconfig::Resolved,
+    pub tool: Option<(String, Setting)>,
     pub sources: Vec<(String, Setting)>,
+}
+
+impl Local {
+    pub fn new(path: PathBuf, editorconfig: editorconfig::Resolved) -> Self {
+        let mut l = Self {
+            path,
+            editorconfig,
+            tool: None,
+            sources: Vec::new(),
+        };
+        l.rebuild();
+        l
+    }
+
+    /// The formatter's word, and the sources again.
+    pub fn set_tool(&mut self, tool: Option<(String, Setting)>) {
+        if self.tool != tool {
+            self.tool = tool;
+            self.rebuild();
+        }
+    }
+
+    fn rebuild(&mut self) {
+        self.sources = self.editorconfig.settings();
+        self.sources.extend(self.tool.clone());
+    }
 }
 
 pub struct Editor {
@@ -2266,6 +2314,46 @@ impl Editor {
         h.current = node;
         h.prune();
         self.edited = true;
+    }
+
+    /// What each selection of `view` covers, as an operator in visual
+    /// mode takes it: the head's character included, whole lines under
+    /// `V`.
+    pub fn selection_ranges(&self, view: ViewId) -> Vec<Range<usize>> {
+        commands::sel_ranges(self, view)
+    }
+
+    /// Buffer `id`'s text made `text` by the edits that change only the
+    /// lines that differ (`kawoosh_doc::line_diff`), applied as
+    /// [`Editor::apply_edits`] applies — one undo node, every caret
+    /// carried — so a caret on a line left alone stays: a formatter's
+    /// answer (docs/design/formatters.md Decision 3). With `version`,
+    /// only while the buffer is still at it. The edits made, or why not.
+    pub fn replace_diffed(
+        &mut self,
+        id: BufferId,
+        text: &str,
+        version: Option<Version>,
+    ) -> Result<usize, String> {
+        let Some(b) = self.buffers.get(id) else {
+            return Err("no such buffer".into());
+        };
+        if version.is_some_and(|v| v != b.version()) {
+            return Err("the text moved since".into());
+        }
+        if b.read_only {
+            return Err("read-only".into());
+        }
+        let edits = kawoosh_doc::line_diff::line_edits(&b.text(), text);
+        if edits.is_empty() {
+            return Ok(0);
+        }
+        let n = edits.len();
+        if self.apply_edits(id, &edits) {
+            Ok(n)
+        } else {
+            Err(std::mem::take(&mut self.message))
+        }
     }
 
     /// Edits made outside any command — a server's rename, a format, a

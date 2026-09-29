@@ -2732,6 +2732,31 @@ In order — the bugs first, then what needs deciding:
     (`statusline.path`: `relative`, `absolute`, `name`), cut from the
     left a directory at a time, fish's
     way, only as far as the room the others leave needs.
+71. ~~**Formatters, and what they say of indentation**, asked 2026-09-29
+    after step 69: "there is also tools like prettier and eslint that
+    can dictate the rules. they probably offer some protocol to get
+    it?", then "we probably should be able to format using them".
+    Decided, not built: [formatters.md](formatters.md) — a formatter is
+    data (`format.NAME`, as `lsp.NAME`: stdin to stdout, the files that
+    say a project uses it, the project's own `node_modules/.bin` first),
+    shipped for prettier, biome, stylua, clang-format, ruff, gofmt,
+    taplo, shfmt and rustfmt; the buffer's `formatter` through its
+    scope, `auto` the one whose config is nearest, else `lsp`;
+    `:format`, `:format?`, `grf`, the result applied as a line diff;
+    `format_on_save` with the write waiting for it; a project's own
+    tool allowed once before it runs unasked; and its indentation read
+    by formatting a probe — no protocol exists, and a config in
+    JavaScript can only be read by running it — as a source of the
+    buffer's own over `.editorconfig`. Not eslint. Six rounds.~~
+    Built 2026-09-29, "build it, all six rounds" — and "some formats
+    are slow, so add async version or make run be asyncable", so a Lua
+    `run` answers through `done` whenever it has: the line diff
+    (`line_diff`, `replace_diffed`); `format.NAME` and `:format`,
+    `:format selection`, `:format?`, `grf`; format on save with the
+    write waiting (`Effect::FormatThenWrite`, `write_now`); `:format
+    allow`; the probe as the buffer's source; `kawoosh.formatter`,
+    `kawoosh.format`. formatters.md's "Built" says where it departed.
+    `kawoosh/tests/format.rs`, `kawoosh/lua/tests/formatter.lua`.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

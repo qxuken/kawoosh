@@ -457,6 +457,26 @@ pub enum Msg {
         /// JSON; `Null` for none.
         settings: serde_json::Value,
     },
+    /// `kawoosh.formatter(name, def)`: a formatter (formatters.md) — its
+    /// data as `format.NAME` would have it, and whether a `run` function
+    /// formats in its place.
+    Formatter {
+        name: String,
+        def: Setting,
+        run: bool,
+    },
+    /// A `run` formatter's answer — `done(text)`, `done(nil, why)`, or
+    /// the text it returned — for the shell's job `token`.
+    Formatted {
+        token: u64,
+        result: Result<String, String>,
+    },
+    /// `kawoosh.format(buffer, { with = })`: the buffer formatted with
+    /// its formatter or the one named.
+    Format {
+        buffer: Option<u64>,
+        with: Option<String>,
+    },
     /// `kawoosh.language(name, t)`: a language — its files, and where
     /// its grammar is, if anything was said (kui.md D13). The shell
     /// resolves the paths.
@@ -861,6 +881,16 @@ impl Default for Published {
     }
 }
 
+/// What a `run` formatter is told of the buffer it formats.
+#[derive(Clone, Debug)]
+pub struct FormatCtx {
+    pub path: PathBuf,
+    pub language: String,
+    pub buffer: u64,
+    pub cwd: PathBuf,
+    pub range: Option<std::ops::Range<usize>>,
+}
+
 pub fn handle_of(id: BufferId) -> u64 {
     id.data().as_ffi()
 }
@@ -907,6 +937,8 @@ type TrackedCell = Rc<RefCell<HashMap<BufferId, Tracked>>>;
 #[derive(Default)]
 struct Jobs {
     waiting: HashMap<u64, mlua::RegistryKey>,
+    /// The `run` functions of `kawoosh.formatter`, by name.
+    formatters: HashMap<String, mlua::RegistryKey>,
     procs: HashMap<u64, (Option<mlua::RegistryKey>, Option<mlua::RegistryKey>)>,
     next: u64,
 }
@@ -2001,6 +2033,71 @@ impl Runtime {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Runs formatter `name`'s `run` for the shell's job `token` over
+    /// `text`: its answer comes back as `Msg::Formatted`, now or later.
+    /// An error before it answered is its answer.
+    pub fn format_run(
+        &self,
+        name: &str,
+        ctx: &FormatCtx,
+        text: &str,
+        token: u64,
+    ) -> Result<(), String> {
+        let f: Function = {
+            let jobs = self.jobs.borrow();
+            let key = jobs
+                .formatters
+                .get(name)
+                .ok_or_else(|| format!("{name}: no `run` (kawoosh.formatter)"))?;
+            self.lua.registry_value(key).map_err(|e| e.to_string())?
+        };
+        let fired = Rc::new(std::cell::Cell::new(false));
+        let (qq, ff) = (self.queue.clone(), fired.clone());
+        let done = self
+            .lua
+            .create_function(move |_, (text, why): (Option<String>, Option<String>)| {
+                if !ff.replace(true) {
+                    qq.borrow_mut().push(Msg::Formatted {
+                        token,
+                        result: text.ok_or_else(|| why.unwrap_or_else(|| "no text".into())),
+                    });
+                }
+                Ok(())
+            })
+            .map_err(|e| e.to_string())?;
+        let t = (|| {
+            let t = self.lua.create_table()?;
+            t.set("path", ctx.path.display().to_string())?;
+            t.set("language", ctx.language.as_str())?;
+            t.set("buffer", ctx.buffer)?;
+            t.set("cwd", ctx.cwd.display().to_string())?;
+            if let Some(r) = &ctx.range {
+                t.set("from", r.start)?;
+                t.set("to", r.end)?;
+            }
+            Ok::<_, mlua::Error>(t)
+        })()
+        .map_err(|e| e.to_string())?;
+        let answer = |result: Result<String, String>| {
+            if !fired.replace(true) {
+                self.queue
+                    .borrow_mut()
+                    .push(Msg::Formatted { token, result });
+            }
+        };
+        match f.call::<LV>((t, text, done)) {
+            Ok(LV::String(s)) => answer(Ok(s.to_string_lossy())),
+            Ok(_) => {}
+            Err(e) => answer(Err(e
+                .to_string()
+                .lines()
+                .next()
+                .unwrap_or("error")
+                .to_string())),
+        }
+        Ok(())
     }
 
     /// A directory listed for `kawoosh.fs.list(path, fn)`: the job's
@@ -3407,6 +3504,56 @@ fn seed(
         })?,
     )?;
     k.set("lsp", lsp)?;
+
+    // ---- formatters (docs/design/formatters.md): `kawoosh.formatter(name,
+    // def)` defines one — `cmd`, `args`, `languages`, `when`, `node`,
+    // `range`, `probe`, `timeout_ms` as `format.NAME` has them, under
+    // the user's file — or, with `run = fn(ctx, text, done)`, one that
+    // is Lua: `done(text)` or `done(nil, why)` when it has formatted,
+    // later if it is slow (a `kawoosh.spawn`'s `on_exit`), or the text
+    // returned at once. `ctx` has `path`, `language`, `buffer`, `cwd`,
+    // and a range's `from` `to` (bytes, from 0). `kawoosh.format(buffer,
+    // { with = })` formats a buffer.
+    let (qq, jj) = (q(queue), jobs.clone());
+    k.set(
+        "formatter",
+        lua.create_function(move |lua, (name, t): (String, Table)| {
+            let mut def = Setting::table();
+            let mut run = false;
+            for pair in t.pairs::<String, LV>() {
+                let (key, v) = pair?;
+                if key == "run" {
+                    let LV::Function(f) = v else {
+                        return Err(mlua::Error::runtime("formatter: `run` is a function"));
+                    };
+                    jj.borrow_mut()
+                        .formatters
+                        .insert(name.clone(), lua.create_registry_value(f)?);
+                    run = true;
+                    continue;
+                }
+                let at = format!("format.{name}.{key}");
+                def.set(&key, from_lua(&v, &at).map_err(mlua::Error::runtime)?);
+            }
+            if !run && def.get("cmd").is_none() {
+                return Err(mlua::Error::runtime("formatter: a `cmd` or a `run`"));
+            }
+            qq.borrow_mut().push(Msg::Formatter { name, def, run });
+            Ok(())
+        })?,
+    )?;
+    let qq = q(queue);
+    k.set(
+        "format",
+        lua.create_function(move |_, (buffer, opts): (Option<u64>, Option<Table>)| {
+            let with = match opts {
+                Some(t) => t.get::<Option<String>>("with")?,
+                None => None,
+            };
+            qq.borrow_mut().push(Msg::Format { buffer, with });
+            Ok(())
+        })?,
+    )?;
 
     // ---- languages
     let qq = q(queue);

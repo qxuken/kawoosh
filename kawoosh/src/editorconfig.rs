@@ -94,13 +94,12 @@ impl Kawoosh {
             self.config.editorconfig.enabled = Some(enabled);
             self.ed.locals.clear();
         }
-        if !enabled {
-            if !self.config.editorconfig.watched.is_empty() {
-                self.config.editorconfig.watched.clear();
-                self.rewatch_config();
-            }
-            return;
+        if !enabled && !self.config.editorconfig.watched.is_empty() {
+            self.config.editorconfig.watched.clear();
+            self.rewatch_config();
         }
+        // Off, a buffer still has its own sources — empty of the files',
+        // there for its formatter's word (formatters.md Decision 6).
         let stale: Vec<(BufferId, PathBuf)> = self
             .ed
             .buffers
@@ -121,24 +120,26 @@ impl Kawoosh {
         }
         for (id, path) in stale {
             let path = absolute(&path, &self.cwd);
+            if !enabled {
+                let own = self.ed.buffers[id].path.clone().unwrap_or(path);
+                self.ed
+                    .locals
+                    .insert(id, Local::new(own, Default::default()));
+                continue;
+            }
             let (_, found) = self.config.editorconfig.around(&path);
             let files: Vec<(PathBuf, &EditorConfig)> = found
                 .iter()
                 .map(|(p, ec)| (p.clone(), ec.as_ref()))
                 .collect();
             let resolved = editorconfig::resolve(&path, &files);
-            let sources = resolved.settings();
             // Keyed by the buffer's path as it has it, which is what
             // `scope_of` compares.
             let own = self.ed.buffers[id].path.clone().unwrap_or(path);
-            self.ed.locals.insert(
-                id,
-                Local {
-                    path: own,
-                    editorconfig: resolved,
-                    sources,
-                },
-            );
+            self.ed.locals.insert(id, Local::new(own, resolved));
+        }
+        if !enabled {
+            return;
         }
         let mut watched: Vec<PathBuf> = Vec::new();
         let paths: Vec<PathBuf> = self
@@ -365,7 +366,7 @@ type Way = (Vec<(&'static str, String)>, Vec<String>, Vec<String>);
 
 /// `path` made whole against `cwd`, for a buffer opened by a relative
 /// name.
-fn absolute(path: &Path, cwd: &Path) -> PathBuf {
+pub(crate) fn absolute(path: &Path, cwd: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {

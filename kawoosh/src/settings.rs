@@ -358,6 +358,7 @@ impl Kawoosh {
         paths.extend(self.config.init.clone());
         paths.extend(crate::fonts::user_fonts_watch(self.config.fonts.as_deref()));
         paths.extend(self.config.editorconfig.watched.iter().cloned());
+        paths.extend(self.format.watched.iter().cloned());
         self.config.watch.watch(paths);
     }
 
@@ -436,6 +437,7 @@ impl Kawoosh {
         let mut project = false;
         let mut project_init = false;
         let mut editorconfig = false;
+        let mut probes = false;
         let mut names = Vec::new();
         for p in paths {
             if Some(p) == self.config.user.as_ref() {
@@ -450,6 +452,8 @@ impl Kawoosh {
                 project_init = true;
             } else if self.config.editorconfig.watched.contains(p) {
                 editorconfig = true;
+            } else if self.format.watched.contains(p) {
+                probes = true;
             } else {
                 continue;
             }
@@ -463,6 +467,9 @@ impl Kawoosh {
         }
         if editorconfig {
             self.reload_editorconfig();
+        }
+        if probes {
+            self.reload_probes();
         }
         if names.is_empty() {
             return;

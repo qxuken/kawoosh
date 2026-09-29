@@ -123,6 +123,13 @@ pub enum IoMsg {
         hit: Option<(std::ops::Range<usize>, bool)>,
         elapsed: std::time::Duration,
     },
+    /// A text through a program ([`crate::filter::run`]) on a job
+    /// thread — a formatter's answer: the job's token, and the text or
+    /// why not.
+    Filtered {
+        token: u64,
+        result: Result<String, crate::filter::Failure>,
+    },
     /// A domain's master is up and its files are reachable: the domain
     /// is in `kawoosh_doc::fs`'s registry (docs/design/domains.md).
     DomainUp {

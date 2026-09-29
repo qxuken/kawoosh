@@ -10,3 +10,4 @@ repository.workspace = true
 text-buffer.workspace = true
 slotmap.workspace = true
 unicode-segmentation.workspace = true
+imara-diff = "0.2"

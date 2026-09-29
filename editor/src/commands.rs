@@ -1080,7 +1080,10 @@ pub(crate) fn save_beside(
     result
 }
 
-fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
+/// `:w`: the buffer written — now, or once formatted when its
+/// `format_on_save` is on (then `after` is the shell's to do, and this
+/// answers false). `:w!` writes at once, unformatted.
+fn write(ed: &mut Editor, ctx: &Ctx, after: crate::AfterWrite) -> bool {
     let id = view(ed, ctx).buffer;
     if let Some(p) = ctx.args.first() {
         ed.buffers[id].path = Some(std::path::PathBuf::from(p));
@@ -1118,23 +1121,15 @@ fn write(ed: &mut Editor, ctx: &Ctx) -> bool {
         ed.effects.push(Effect::DiskConflict(id));
         return false;
     }
-    match ed.save(id) {
-        Ok(()) => {
-            let b = &ed.buffers[id];
-            ed.message = format!(
-                "\"{}\" {}L, {}B written",
-                path.display(),
-                b.line_count(),
-                b.len()
-            );
-            ed.effects.push(Effect::Wrote(id));
-            true
-        }
-        Err(e) => {
-            ed.message = format!("write failed: {e}");
-            false
-        }
+    if !ctx.bang() && ed.formats_on_save(id) {
+        ed.message = "formatting before writing…".into();
+        ed.effects.push(Effect::FormatThenWrite {
+            buffers: vec![id],
+            after,
+        });
+        return false;
     }
+    ed.write_now(id)
 }
 
 /// `:e!`: the file's text as it is on disk, put in as one journaled
@@ -2371,7 +2366,7 @@ pub fn install(ed: &mut Editor) {
             .bang("write over a file changed on disk since it was read")
             .doc("write the buffer to its file, or to PATH"),
         |ed, ctx| {
-            write(ed, ctx);
+            write(ed, ctx, crate::AfterWrite::Nothing);
         },
     );
     // Whether unsaved changes let `:q` through is the shell's call
@@ -2402,7 +2397,7 @@ pub fn install(ed: &mut Editor) {
             .bang("write over a file changed on disk since it was read")
             .doc("write, then quit"),
         |ed, ctx| {
-            if write(ed, ctx) {
+            if write(ed, ctx, crate::AfterWrite::Quit) {
                 ed.effects.push(Effect::Quit { force: false });
             }
         },
@@ -2414,6 +2409,12 @@ pub fn install(ed: &mut Editor) {
         |ed, _| {
             let w = ed.write_all();
             ed.message = w.message();
+            if !w.deferred.is_empty() {
+                ed.effects.push(Effect::FormatThenWrite {
+                    buffers: w.deferred,
+                    after: crate::AfterWrite::Nothing,
+                });
+            }
         },
     );
     // Quits only when everything was written: a file changed on disk,
@@ -2424,10 +2425,17 @@ pub fn install(ed: &mut Editor) {
             .doc("write every file, then quit"),
         |ed, _| {
             let w = ed.write_all();
-            if w.complete() {
+            if !w.complete() {
+                ed.message = w.message();
+            } else if w.deferred.is_empty() {
                 ed.effects.push(Effect::QuitAll { force: false });
             } else {
+                // The quit once the formats have been written.
                 ed.message = w.message();
+                ed.effects.push(Effect::FormatThenWrite {
+                    buffers: w.deferred,
+                    after: crate::AfterWrite::QuitAll,
+                });
             }
         },
     );
@@ -3714,7 +3722,7 @@ fn select_all_matches(ed: &mut Editor, ctx: &Ctx) {
 /// one's newline off, so a piece does not end on it), else its
 /// characters, the head's included — as an operator in visual mode
 /// takes them.
-fn sel_ranges(ed: &Editor, view_id: ViewId) -> Vec<Range<usize>> {
+pub(crate) fn sel_ranges(ed: &Editor, view_id: ViewId) -> Vec<Range<usize>> {
     let v = &ed.views[view_id];
     let buf = &ed.buffers[v.buffer];
     let lines = ed.mode(view_id) == Mode::Visual && v.visual_linewise;
@@ -4142,7 +4150,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("gra", "lsp action"),
         ("gri", "lsp implementation"),
         ("grt", "lsp type definition"),
-        ("grf", "lsp format"),
+        // `grf` formats with the buffer's formatter, its server one
+        // of them (formatters.md).
+        ("grf", "format"),
         ("grs", "picker symbols"),
         ("grS", "picker workspace_symbols"),
         ("K", "lsp hover"),
@@ -4299,6 +4309,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>vk", "select keep"),
         ("<leader>vl", "select lines"),
         ("<A-,>", "select drop primary"),
+        ("grf", "format selection"),
     ];
     for (k, c) in v {
         km.bind(Visual, k, c);

@@ -1686,3 +1686,28 @@ fn edits_from_outside_land_on_characters_not_graphemes() {
     assert!(t.ed.apply_edits(b, &[(1..3, "\u{300}".into()), (5..5, "!".into())]));
     assert_eq!(t.text(), "e\u{300}!🦀z");
 }
+
+/// A formatter's answer goes in as the lines that changed
+/// (formatters.md Decision 3): a caret on a line it did not touch stays
+/// on its character, one on a reindented line keeps its place in the
+/// text, one `u` takes it all back, and a stale answer is refused.
+#[test]
+fn a_text_put_in_by_its_diff_keeps_the_carets() {
+    let mut t = T::new("if a {\nb;\n}\nkeep this\n");
+    let id = t.ed.views[t.v].buffer;
+    t.keys("3jfh");
+    assert_eq!(t.head(), 18);
+    let v = t.ed.buffers[id].version();
+    let n =
+        t.ed.replace_diffed(id, "if a {\n    b;\n}\nkeep this\n", Some(v))
+            .unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(t.text(), "if a {\n    b;\n}\nkeep this\n");
+    assert_eq!(t.head(), 22, "on the same `h`, four bytes on");
+    t.keys("u");
+    assert_eq!(t.text(), "if a {\nb;\n}\nkeep this\n", "one undo node");
+    let stale = t.ed.buffers[id].version();
+    t.keys("ix<Esc>");
+    assert!(t.ed.replace_diffed(id, "y\n", Some(stale)).is_err());
+    assert_eq!(t.ed.replace_diffed(id, &t.text(), None), Ok(0));
+}
