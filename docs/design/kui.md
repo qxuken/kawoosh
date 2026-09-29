@@ -127,7 +127,7 @@ and `lua` depend on the runner and the binding.
 
 Workspace dependencies that go: `sdl3`, `cosmic-text` (kui owns shaping).
 That come: `kui-native` (the runner, `kui` until alpha.19), `kui-core`,
-`kui-lua` at one pinned pre-release (`=0.1.0-alpha.24`, forgejo registry), `mlua` with **`lua55` + `vendored`**.
+`kui-lua` at one pinned pre-release (`=0.1.0-alpha.25`, forgejo registry), `mlua` with **`lua55` + `vendored`**.
 
 ## Decisions
 
