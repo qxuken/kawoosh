@@ -18,6 +18,13 @@ use crate::commands::{ShellCommand, cmd};
 use crate::confirm::Confirm;
 use crate::layout::{Content, PaneId};
 
+fn workspace_root_of(dir: &Path) -> String {
+    match crate::moments::workspace_of(dir) {
+        w if w.is_empty() => dir.display().to_string(),
+        w => w,
+    }
+}
+
 /// What the dock last saw of the workspaces.
 #[derive(Default)]
 pub struct DockState {
@@ -39,12 +46,18 @@ impl Kawoosh {
         if let Some(w) = self.dock_state.roots.get(dir) {
             return w.clone();
         }
-        let w = match crate::moments::workspace_of(dir) {
-            w if w.is_empty() => dir.display().to_string(),
-            w => w,
-        };
+        let w = workspace_root_of(dir);
         self.dock_state.roots.insert(dir.to_path_buf(), w.clone());
         w
+    }
+
+    /// [`Self::workspace_root`] where it cannot be kept: from what the
+    /// dock asked last frame — every tab's directory — else the disk.
+    pub(crate) fn workspace_root_seen(&self, dir: &Path) -> String {
+        match self.dock_state.roots.get(dir) {
+            Some(w) => w.clone(),
+            None => workspace_root_of(dir),
+        }
     }
 
     /// Once a frame: the dock's kind from `layout.dock`, its new panes

@@ -156,6 +156,16 @@ a session.
 a file open in two tabs is both tabs', and `:b NAME` still reaches
 any buffer, since hiding is a list's business, not the buffer's.
 
+*Amended 2026-09-29:* a listed file under the tab's directory is not
+the tab's when it is in another open workspace nested there — a
+repository inside the project with a tab of its own, a project under
+a tab at `~` — so the outer tab's lists leave the inner's files out.
+And `:bdo` closes the tab's list (`buffers.scope`) less anything
+another workspace has: what a tab in another workspace counts as its
+own, even a file this tab showed too, and what a dock pane of one
+shows. That holds under `buffers.scope = "all"` too: there it closes
+every buffer but those.
+
 ## Round two: a lifecycle, and the dock
 
 *Decided and built 2026-09-25 (roadmap step 32), from three asks the

@@ -288,6 +288,71 @@ fn a_tab_lists_its_own_buffers_and_a_picker_starts_here() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// `:bdo` closes the tab's other buffers and never another workspace's:
+/// not one a tab in another project has shown, even when this tab
+/// showed it too, nor one under the tab's directory in a repository
+/// nested in it that a tab of its own is in — which the tab's lists
+/// leave out too — and not under `buffers.scope = "all"` either.
+#[test]
+fn bdo_leaves_other_workspaces_buffers_even_nested_ones() {
+    let root = tmp("bdo");
+    let (outer, inner) = (root.join("outer"), root.join("outer/inner"));
+    let beta = root.join("beta");
+    for dir in [&outer, &inner, &beta] {
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+    }
+    for (dir, f) in [
+        (&outer, "a.txt"),
+        (&outer, "b.txt"),
+        (&inner, "in.txt"),
+        (&beta, "two.txt"),
+    ] {
+        std::fs::write(dir.join(f), format!("{f}\n")).unwrap();
+    }
+    let (mut d, mut app) = launch();
+    ex(&mut d, &mut app, &format!("cd {}", inner.display()));
+    ex(&mut d, &mut app, "e in.txt");
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", beta.display()));
+    ex(&mut d, &mut app, "e two.txt");
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", outer.display()));
+    // two.txt shown here too: still beta's.
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", beta.join("two.txt").display()),
+    );
+    ex(&mut d, &mut app, "e b.txt");
+    ex(&mut d, &mut app, "e a.txt");
+    // in.txt is under the tab's directory, but the nested repository's.
+    ex(&mut d, &mut app, "ls");
+    let ls = app.ed.message.clone();
+    assert!(ls.contains("b.txt") && !ls.contains("in.txt"), "{ls}");
+    let names = |app: &Kawoosh| {
+        let mut n: Vec<String> = app
+            .ed
+            .listed_buffers()
+            .into_iter()
+            .map(|id| app.ed.buffers[id].name.clone())
+            .collect();
+        n.sort();
+        n
+    };
+    ex(&mut d, &mut app, "bdo");
+    assert_eq!(
+        names(&app),
+        ["a.txt", "in.txt", "two.txt"],
+        "{}",
+        app.ed.message
+    );
+    assert_eq!(app.ed.message, "1 buffer(s) deleted");
+    ex(&mut d, &mut app, "set buffers.scope=all");
+    ex(&mut d, &mut app, "bdo");
+    assert_eq!(names(&app), ["a.txt", "in.txt", "two.txt"]);
+    std::fs::remove_dir_all(&root).ok();
+}
+
 /// A workspace's lifecycle and the dock (roadmap step 32): the dock is
 /// the window's, each of its panes the workspace's it was made in — its
 /// title leads with the project when another is in front — and when the

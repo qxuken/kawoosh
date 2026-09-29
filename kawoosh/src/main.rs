@@ -367,7 +367,7 @@ Notifications: :notify warn TEXT is a toast at the top, :notify TEXT a
 dim line in the corner, :messages the log of every one; ctrl-w n puts
 the keyboard on the toasts (j k h l, Enter, x, Esc).
 alt-j / alt-k add cursors; , keeps the primary.
-Buffers: :ls, :b name, :bn, :bd, :bdo (delete the others); :enew is a
+Buffers: :ls, :b name, :bn, :bd, :bdo (delete the tab's others); :enew is a
 fresh scratch here, :new / :vnew one in a split; - is the file manager
 on the current file's directory.
 
