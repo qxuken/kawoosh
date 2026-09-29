@@ -1644,9 +1644,10 @@ impl Kawoosh {
     fn pane_chord(&mut self, stroke: &KeyStroke) -> bool {
         let note = stroke.notation();
         self.ed.sync_settings();
-        match self.ed.keymap.lookup(Mode::Normal, &[note]) {
+        self.sync_facts();
+        let v = self.focused_view().unwrap_or_else(|| self.ed.pane_view());
+        match self.ed.lookup_keys(v, Mode::Normal, &[note]) {
             Lookup::Exact(bs) => {
-                let bs = bs.to_vec();
                 self.run_bindings(&bs);
                 true
             }

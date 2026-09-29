@@ -70,14 +70,35 @@ end
 -- warning, and the language goes in without colours. The newest
 -- registration wins a file name or a spelling.
 --
+-- The place `opts` gives a map of its own (docs/design/local-maps.md),
+-- as the fact that says where it holds; nil for a global map.
+local function scope_of(opts)
+  if type(opts) ~= "table" then return nil end
+  if opts.scope then return opts.scope end
+  if opts.field then
+    if opts.view then return "field:lua:" .. opts.view .. "/" .. opts.field end
+    return "field:" .. opts.field
+  end
+  if opts.view then return "lua:" .. opts.view end
+  local b = opts.buffer
+  if b == true then b = kawoosh.buf.current() end
+  if type(b) == "number" then return string.format("buffer#%d", b) end
+  if type(b) == "string" then return "buffer:" .. b end
+  if opts.language then return "language:" .. opts.language end
+  return nil
+end
+
 -- kawoosh.map(mode, keys, cmd[, opts]): `cmd` is a command name (with
 -- args, as the command line would spell it) or a function, which
--- becomes one. A key can be bound more than once: the newest binding
--- whose `opts.when` holds and whose command can run is the one that
--- runs, so `map("n", "<CR>", "goto location", { when = { "!language:dir" } })`
--- and then `map("n", "<CR>", "dir enter")` (a command gated on the
--- listing) make one key do the right thing in each place. A binding
--- with no `when` on a command with none shadows the older ones.
+-- becomes one. A map belongs to a place when `opts` names one — `view`
+-- (a view's pane), `view` and `field` (its field), `buffer` (a handle,
+-- `true` for the current one, or a name), `language`, or any fact as
+-- `scope` — and is found only there, before the global map, whose
+-- binding on the same keys and every longer one under them it shadows
+-- there: `map("n", "<CR>", "dir enter", { language = "dir" })` is the
+-- listing's `<CR>` and nothing anywhere else. A key can be bound more
+-- than once in one place: the newest binding whose `opts.when` holds
+-- and whose command can run is the one that runs.
 function kawoosh.map(mode, keys, cmd, opts)
   if type(cmd) == "function" then
     kawoosh._nonce = kawoosh._nonce + 1
@@ -85,7 +106,7 @@ function kawoosh.map(mode, keys, cmd, opts)
     kawoosh.command(name, cmd)
     cmd = name
   end
-  kawoosh._map(mode, keys, cmd, opts and opts.when or nil)
+  kawoosh._map(mode, keys, cmd, opts and opts.when or nil, scope_of(opts))
 end
 
 -- A list of actions — `{ label = "Retry", run = fn }`, or `run =
@@ -107,11 +128,13 @@ local function actions_of(list, prefix)
   return labels, commands
 end
 
--- kawoosh.unmap(mode, keys): the key's bindings gone — the longer ones
--- beneath it stay. A binding whose `when` does not hold where the key
--- is pressed does not shadow those either, so a plugin that unmaps a
--- key and maps it back `when` elsewhere has it as a prefix of its own
--- where it needs one.
+-- kawoosh.unmap(mode, keys[, opts]): the key's bindings gone — the
+-- global ones, or those of the place `opts` names as `kawoosh.map`'s do
+-- — the longer ones beneath it staying. A binding whose `when` does not
+-- hold where the key is pressed does not shadow those either.
+function kawoosh.unmap(mode, keys, opts)
+  kawoosh._unmap(mode, keys, scope_of(opts))
+end
 
 -- kawoosh.on_open(fn): `fn(path)` for every path the editor is asked
 -- to open — `:e`, the command line's argument, a location, a

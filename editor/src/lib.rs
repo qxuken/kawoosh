@@ -24,7 +24,7 @@ use std::time::Instant;
 
 pub use command::{
     ArgKind, Args, BufFacts, Command, Cond, Ctx, Facts, FnCommand, Form, Invocation, Kind,
-    MotionKind, Registry, Spec,
+    MotionKind, Registry, Spec, fact_words,
 };
 pub use kawoosh_doc::Hunk;
 use kawoosh_doc::{Buffer, BufferId, Version};
@@ -39,6 +39,12 @@ new_key_type! {
     /// A view: one window's cursor and scroll onto a buffer. Views
     /// outlive panes (mvp.md Decision 5).
     pub struct ViewId;
+}
+
+/// The place a buffer's own maps live in: `buffer#ID`, its handle
+/// as Lua has it (docs/design/local-maps.md).
+pub fn buffer_scope(id: BufferId) -> String {
+    format!("buffer#{}", slotmap::Key::data(&id).as_ffi())
 }
 
 impl ViewId {
@@ -941,6 +947,8 @@ impl Editor {
         self.buffers.remove(id);
         self.history.remove(&id);
         self.forget_multi(id);
+        // Its own maps go with it, as vim's `<buffer>` maps do.
+        self.keymap.drop_scope(&buffer_scope(id));
     }
 
     pub fn add_view(&mut self, buffer: BufferId) -> ViewId {
@@ -1584,8 +1592,9 @@ impl Editor {
     pub fn facts(&self, view: Option<ViewId>) -> command::Facts<'_> {
         let buffer = view
             .and_then(|v| self.views.get(v))
-            .map(|v| &self.buffers[v.buffer])
-            .map(|b| command::BufFacts {
+            .map(|v| (v.buffer, &self.buffers[v.buffer]))
+            .map(|(id, b)| command::BufFacts {
+                id: slotmap::Key::data(&id).as_ffi(),
                 name: b.name.as_str(),
                 language: &b.language,
                 modified: b.modified,
@@ -1604,6 +1613,75 @@ impl Editor {
     /// Whether `fact` holds on `view`.
     pub fn holds(&self, view: Option<ViewId>, fact: &str) -> bool {
         self.facts(view).holds(fact)
+    }
+
+    /// The places with maps of their own that `view` is in, the
+    /// innermost first (docs/design/local-maps.md): each local scope
+    /// whose fact holds on it. On a field — the command line over a
+    /// pane, a view's query — only what the view itself answers counts
+    /// (its field, `prompt`, its buffer): a pane's own facts are the
+    /// pane's, not the line's opened over it. The resident pane view is
+    /// the pane's keys, and has them all.
+    pub fn key_scopes(&self, view: ViewId) -> Vec<String> {
+        let mut facts = self.facts(Some(view));
+        if self.is_field(view) && !self.is_pane_view(view) {
+            facts.published = None;
+        }
+        self.keymap.scopes_holding(|s| facts.holds(s))
+    }
+
+    /// The buffer a `buffer#ID` place is, while it is open.
+    fn scope_buffer(&self, scope: &str) -> Option<&Buffer> {
+        let ffi: u64 = scope.strip_prefix("buffer#")?.parse().ok()?;
+        let id = BufferId::from(slotmap::KeyData::from_ffi(ffi));
+        self.buffers.get(id)
+    }
+
+    /// A place as a listing names it: one buffer by its buffer's name
+    /// (`buffer notes.md`) rather than its handle, every other place as
+    /// its fact (`language:dir`).
+    pub fn place_name(&self, scope: &str) -> String {
+        match self.scope_buffer(scope).filter(|b| !b.name.is_empty()) {
+            Some(b) => format!("buffer {}", b.name),
+            None => scope.to_string(),
+        }
+    }
+
+    /// A place in words, as the help says it: `the buffer notes.md`,
+    /// `a dir buffer`, `the picker pane`.
+    pub fn place_words(&self, scope: &str) -> String {
+        match self.scope_buffer(scope).filter(|b| !b.name.is_empty()) {
+            Some(b) => format!("the buffer {}", b.name),
+            None if scope.starts_with("buffer#") => "one buffer".into(),
+            None => command::fact_words(scope).unwrap_or_else(|| scope.to_string()),
+        }
+    }
+
+    /// `keys` in `mode` as they resolve on `view`: its places' maps,
+    /// then the global one ([`Keymap::lookup_in`]), a last ctrl chord
+    /// read bare when nothing matched (`<C-w><C-v>` is `<C-w>v`).
+    pub fn lookup_keys(&self, view: ViewId, mode: Mode, keys: &[String]) -> Lookup {
+        self.keymap
+            .lookup_lenient_in(&self.key_scopes(view), mode, keys)
+    }
+
+    /// Whether longer bindings lie beneath `keys` in `mode` on `view`,
+    /// its places' or the global ones.
+    pub fn keys_deeper(&self, view: ViewId, mode: Mode, keys: &[String]) -> bool {
+        self.keymap.deeper_in(&self.key_scopes(view), mode, keys)
+    }
+
+    /// What can follow `prefix` in `mode` on `view` — its places' keys
+    /// with the global ones, a key's bindings the innermost first: the
+    /// which-key's rows.
+    pub fn next_keys(
+        &self,
+        view: ViewId,
+        mode: Mode,
+        prefix: &[String],
+    ) -> Vec<(String, Vec<Binding>)> {
+        self.keymap
+            .next_keys_in(&self.key_scopes(view), mode, prefix)
     }
 
     /// Whether command `name` can run on `view` now: every condition of
@@ -1667,10 +1745,13 @@ impl Editor {
     /// error: the caller does what the gesture does unbound.
     pub fn mouse(&mut self, view: ViewId, notation: &str) -> bool {
         let mode = self.mode(view);
-        let Lookup::Exact(bs) = self.keymap.lookup(mode, &[notation.to_string()]) else {
+        let scopes = self.key_scopes(view);
+        let Lookup::Exact(bs) = self
+            .keymap
+            .lookup_in(&scopes, mode, &[notation.to_string()])
+        else {
             return false;
         };
-        let bs = bs.to_vec();
         match self.pick_binding(view, &bs) {
             Ok(b) => {
                 let b = b.clone();
@@ -2500,6 +2581,7 @@ impl Editor {
                 command: command.to_string(),
                 args: Vec::new(),
                 when: Vec::new(),
+                scope: None,
             },
             None,
         ));
@@ -2547,8 +2629,8 @@ impl Editor {
             Mode::Insert => {
                 let note = stroke.notation();
                 let plain = stroke.text.is_some() && !stroke.ctrl && !stroke.alt && !stroke.sup;
-                if let Lookup::Exact(bs) = self.keymap.lookup(Mode::Insert, &[note]) {
-                    let bs = bs.to_vec();
+                let scopes = self.key_scopes(view);
+                if let Lookup::Exact(bs) = self.keymap.lookup_in(&scopes, Mode::Insert, &[note]) {
                     // A key that types, whose every binding is gated off
                     // here, types: `:` bound for one field is a colon
                     // in every other, `(` for a plugin's buffers is a
@@ -2590,11 +2672,8 @@ impl Editor {
             } else {
                 self.mode(view)
             };
-            match self
-                .keymap
-                .lookup_lenient(mode, std::slice::from_ref(&stroke.notation()))
-            {
-                Lookup::Exact(bs) => self.pick_binding(view, bs).is_ok(),
+            match self.lookup_keys(view, mode, std::slice::from_ref(&stroke.notation())) {
+                Lookup::Exact(bs) => self.pick_binding(view, &bs).is_ok(),
                 _ => false,
             }
         };
@@ -2631,9 +2710,16 @@ impl Editor {
             Mode::Pane => self.keymap.shared_from_pane(&self.pending),
             _ => true,
         };
-        let lookup = match self.keymap.lookup_lenient(lookup_mode, &self.pending) {
+        // The view's places are asked before the global map, in the
+        // key's mode and in the one it falls through to alike.
+        let scopes = self.key_scopes(view);
+        let lookup = match self
+            .keymap
+            .lookup_lenient_in(&scopes, lookup_mode, &self.pending)
+        {
             Lookup::None if falls_through => {
-                self.keymap.lookup_lenient(Mode::Normal, &self.pending)
+                self.keymap
+                    .lookup_lenient_in(&scopes, Mode::Normal, &self.pending)
             }
             l => l,
         };
@@ -2645,8 +2731,7 @@ impl Editor {
                 self.pending_op = None;
                 false
             }
-            Lookup::Exact(bs) => {
-                let mut bs = bs.to_vec();
+            Lookup::Exact(mut bs) => {
                 // A binding that cannot run here does not shadow the
                 // longer ones beneath it: the sequence stays open for
                 // them (`,` keeps the primary selection off a listing,
@@ -2654,8 +2739,8 @@ impl Editor {
                 // sequence falls through, normal mode's longer ones
                 // count too: the launcher's bare `g`, gated off outside
                 // it, had hidden `gg` from visual mode.
-                let deeper = self.keymap.has_deeper(lookup_mode, &self.pending)
-                    || falls_through && self.keymap.has_deeper(Mode::Normal, &self.pending);
+                let deeper = self.keymap.deeper_in(&scopes, lookup_mode, &self.pending)
+                    || falls_through && self.keymap.deeper_in(&scopes, Mode::Normal, &self.pending);
                 let mut picked = self.pick_binding(view, &bs).cloned();
                 if picked.is_err() && deeper {
                     return true;
@@ -2667,8 +2752,12 @@ impl Editor {
                 // binding's reason is said for it.
                 if picked.is_err() && self.gated_off(view, &bs) {
                     let under = match falls_through {
-                        true => match self.keymap.lookup_lenient(Mode::Normal, &self.pending) {
-                            Lookup::Exact(u) => Some(u.to_vec()),
+                        true => match self.keymap.lookup_lenient_in(
+                            &scopes,
+                            Mode::Normal,
+                            &self.pending,
+                        ) {
+                            Lookup::Exact(u) => Some(u),
                             _ => None,
                         },
                         false => None,

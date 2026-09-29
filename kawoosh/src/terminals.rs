@@ -796,17 +796,19 @@ impl Kawoosh {
         }
         keys.push(note);
         self.ed.sync_settings();
-        match self.ed.keymap.lookup_lenient(Mode::Normal, &keys) {
+        // The terminal pane's places (`terminal`, `exited`) and the
+        // global map: another pane's local keys are not looked at
+        // (local-maps.md — the launcher's `z` once answered `<C-\>z`).
+        self.sync_facts();
+        let v = self.focused_view().unwrap_or_else(|| self.ed.pane_view());
+        match self.ed.lookup_keys(v, Mode::Normal, &keys) {
             Lookup::Exact(bs) => {
                 // As in an editor pane: a binding that cannot run here
-                // does not shadow the longer ones under it (the
-                // launcher's bare `z` hid `zz`), and one gated off
-                // here by its own `when` is as good as unbound.
-                let bs = bs.to_vec();
-                self.sync_facts();
-                let v = self.focused_view().unwrap_or_else(|| self.ed.pane_view());
+                // does not shadow the longer ones under it, and one
+                // gated off here by its own `when` is as good as
+                // unbound.
                 if self.ed.pick_binding(v, &bs).is_err() {
-                    if self.ed.keymap.has_deeper(Mode::Normal, &keys) {
+                    if self.ed.keys_deeper(v, Mode::Normal, &keys) {
                         self.terms.escape = Some(keys);
                         return;
                     }

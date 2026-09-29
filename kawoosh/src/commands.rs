@@ -92,85 +92,71 @@ impl Kawoosh {
             self.commands.map.insert(spec.name, Rc::new(c));
         }
         crate::cmdline::bind(&mut self.ed.keymap);
+        // The shell's maps that belong to a place are local to it
+        // (docs/design/local-maps.md): found only there, before the
+        // global ones on the same keys, and by no lookup anywhere else.
+        let km = &mut self.ed.keymap;
         // A terminal's copy mode: `q` in the scrollback buffer gives the
         // pane back to the terminal (`terminals.rs`).
-        self.ed.keymap.bind_when(
+        km.bind_local(
+            "language:scrollback",
             Mode::Normal,
             "q",
             "scrollback close",
-            &[Cond::parse("language:scrollback")],
+            &[],
         );
-        self.ed.keymap.bind_when(
+        km.bind_local(
+            "language:scrollback",
             Mode::Normal,
             "<Esc>",
             "scrollback escape",
-            &[Cond::parse("language:scrollback")],
+            &[],
         );
         // `q` in a pane of text to read — `*lsp*`, `:messages`, the
         // hover, a plugin's `read_only` scratch — closes it, and the
         // keys go back where they came from (`Layout::close`).
-        self.ed.keymap.bind_when(
+        km.bind_local(
+            "readonly",
             Mode::Normal,
             "q",
             "close",
-            &[Cond::parse("readonly"), Cond::parse("!file")],
+            &[Cond::parse("!file")],
         );
         // A finished `:!` pane (`exited`): its keys are normal mode's,
         // `r` its line again and `q` the pane closed.
-        let exited = [Cond::parse("exited")];
-        self.ed
-            .keymap
-            .bind_when(Mode::Normal, "r", "terminal again", &exited);
-        self.ed
-            .keymap
-            .bind_when(Mode::Normal, "q", "close", &exited);
+        km.bind_local("exited", Mode::Normal, "r", "terminal again", &[]);
+        km.bind_local("exited", Mode::Normal, "q", "close", &[]);
         // `r` in the compile's output runs its command again, where it
-        // ran — emacs's `g` in `*compilation*`.
-        self.ed.keymap.bind_when(
-            Mode::Normal,
-            "r",
-            "compile again",
-            &[Cond::parse(&format!(
-                "buffer:{}",
-                crate::compile::COMPILE_BUFFER
-            ))],
-        );
-        // `<C-c>` in the compile's output stops it while it runs
-        // (`compile kill`'s own `when`); done, the key is `normal`.
-        self.ed.keymap.bind_when(
-            Mode::Normal,
-            "<C-c>",
-            "compile kill",
-            &[Cond::parse(&format!(
-                "buffer:{}",
-                crate::compile::COMPILE_BUFFER
-            ))],
-        );
+        // ran — emacs's `g` in `*compilation*`; `<C-c>` stops it while it
+        // runs (`compile kill`'s own `when`), and done the key is
+        // `normal`.
+        let compile = format!("buffer:{}", crate::compile::COMPILE_BUFFER);
+        km.bind_local(&compile, Mode::Normal, "r", "compile again", &[]);
+        km.bind_local(&compile, Mode::Normal, "<C-c>", "compile kill", &[]);
         // In the hover, `gd` and `K` act on a symbol it names: looked up
         // in the workspace, since the hover's text is no document a
         // server holds.
-        let hover = [Cond::parse("buffer:*hover*")];
-        self.ed
-            .keymap
-            .bind_when(Mode::Normal, "gd", "lsp hover definition", &hover);
-        self.ed
-            .keymap
-            .bind_when(Mode::Normal, "K", "lsp hover again", &hover);
-        // A view's field: `<Esc>` in normal mode hands the keys back.
-        self.ed.keymap.bind_when(
+        km.bind_local(
+            "buffer:*hover*",
+            Mode::Normal,
+            "gd",
+            "lsp hover definition",
+            &[],
+        );
+        km.bind_local("buffer:*hover*", Mode::Normal, "K", "lsp hover again", &[]);
+        // A view's field: `<Esc>` in normal mode hands the keys back —
+        // any field's, under the ones a field has of its own.
+        km.bind_local(
+            "field",
             Mode::Normal,
             "<Esc>",
             "field blur",
-            &[
-                Cond::parse("field"),
-                Cond::parse("!prompt"),
-                Cond::parse("!field:commands"),
-            ],
+            &[Cond::parse("!prompt"), Cond::parse("!field:commands")],
         );
         // The memory pane's filter field (`memory.rs`): `<CR>` takes
         // the cursor's row, the list keys move the cursor from the
         // line, in insert mode and normal mode over it alike.
-        let filter = [Cond::parse("field:memory/q")];
+        let filter = "field:memory/q";
         for mode in [Mode::Insert, Mode::Normal] {
             for (k, c) in [
                 ("<CR>", "memory filter done"),
@@ -184,7 +170,7 @@ impl Kawoosh {
                 ("<C-u>", "list half up"),
                 ("<C-c>", "memory filter clear"),
             ] {
-                self.ed.keymap.bind_when(mode, k, c, &filter);
+                km.bind_local(filter, mode, k, c, &[]);
             }
         }
         // Normal mode over the line: `j` `k` walk the rows, as `<C-n>`
@@ -195,7 +181,7 @@ impl Kawoosh {
             ("gg", "list first"),
             ("G", "list last"),
         ] {
-            self.ed.keymap.bind_when(Mode::Normal, k, c, &filter);
+            km.bind_local(filter, Mode::Normal, k, c, &[]);
         }
     }
 

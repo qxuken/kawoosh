@@ -2,7 +2,7 @@
 
 use kawoosh_doc::Buffer;
 use kawoosh_editor::{
-    ArgKind, Args, Editor, Effect, KeyStroke, Mode, Selection, Spec, Step, ViewId,
+    ArgKind, Args, Editor, Effect, KeyStroke, Lookup, Mode, Selection, Spec, Step, ViewId,
 };
 
 struct T {
@@ -1273,6 +1273,104 @@ fn a_gated_off_binding_is_unbound_and_shadows_nothing() {
     assert_eq!(t.ed.message, "list");
 }
 
+/// A map local to a place (docs/design/local-maps.md) is found only
+/// there: before the global one of its keys, which runs everywhere
+/// else; a local key shadows the longer global ones under it (the
+/// launcher's `g` over `gg`) and a local prefix a shorter global one
+/// (the listing's `ma` over `m`); a local command that passes hands
+/// the key to the global binding.
+#[test]
+fn a_local_map_is_the_places_alone() {
+    let mut t = T::new("a\nb\nc\n");
+    for name in ["plain", "listing", "letter", "sort"] {
+        t.ed.register(name, move |ed, _| ed.message = name.into());
+    }
+    t.ed.register("passes", |ed, _| ed.pass());
+    t.ed.keymap.bind(Mode::Normal, "<CR>", "plain");
+    let dir = "language:dir";
+    t.ed.keymap
+        .bind_local(dir, Mode::Normal, "<CR>", "listing", &[]);
+    t.ed.keymap
+        .bind_local(dir, Mode::Normal, "g", "letter", &[]);
+    t.ed.keymap.bind_local(dir, Mode::Normal, "ma", "sort", &[]);
+    t.ed.keymap
+        .bind_local(dir, Mode::Normal, "x", "passes", &[]);
+    t.ed.keymap
+        .bind_local("lua:elsewhere", Mode::Normal, "q", "letter", &[]);
+    // Anywhere else: the global keys, and no trace of the listing's.
+    t.keys("<CR>");
+    assert_eq!(t.ed.message, "plain");
+    t.keys("jjgg");
+    assert_eq!(t.head(), 0, "`gg` is the file's start");
+    let m = ["m".to_string()];
+    assert!(
+        matches!(t.ed.lookup_keys(t.v, Mode::Normal, &m), Lookup::Exact(bs) if bs[0].command == "mark"),
+        "`m` marks"
+    );
+    let b = t.ed.views[t.v].buffer;
+    t.ed.buffers[b].language = "dir".into();
+    t.keys("<CR>");
+    assert_eq!(t.ed.message, "listing");
+    t.keys("g");
+    assert_eq!(t.ed.message, "letter", "the place's `g` at once");
+    assert!(matches!(
+        t.ed.lookup_keys(t.v, Mode::Normal, &m),
+        Lookup::Prefix
+    ));
+    t.keys("ma");
+    assert_eq!(t.ed.message, "sort", "`m` waits for the place's `ma`");
+    t.keys("x");
+    assert_eq!(t.text(), "\nb\nc\n", "passed on to the global `x`");
+    // A key only another place has is nothing here, and says nothing.
+    t.ed.message.clear();
+    t.keys("q");
+    assert_eq!(t.ed.message, "");
+}
+
+/// On a field — the command line over a pane — only what the field
+/// answers itself counts: a pane's places (`terminal`, `lua:NAME`) are
+/// the pane's, not the line's; the resident pane view is the pane's
+/// keys and has them. A buffer's own maps (`:map <buffer>`) go with it.
+#[test]
+fn a_panes_places_are_not_its_fields() {
+    let mut t = T::new("a\n");
+    t.ed.keymap
+        .bind_local("terminal", Mode::Normal, "r", "echo raw", &[]);
+    t.ed.keymap
+        .bind_local("prompt", Mode::Normal, "<Esc>", "echo cancel", &[]);
+    t.ed.fact("terminal", true);
+    let pane = t.ed.pane_view();
+    assert_eq!(t.ed.key_scopes(pane), ["terminal"]);
+    let field = t.ed.open_field("x", "");
+    assert!(
+        t.ed.key_scopes(field).is_empty(),
+        "{:?}",
+        t.ed.key_scopes(field)
+    );
+    // `:map <buffer>`: this buffer's, found here and gone with it.
+    t.ed.execute(t.v, "map <buffer> n Q echo mine");
+    let scope = kawoosh_editor::buffer_scope(t.ed.views[t.v].buffer);
+    assert_eq!(
+        t.ed.key_scopes(t.v),
+        [scope.clone(), "terminal".to_string()]
+    );
+    t.keys("Q");
+    assert_eq!(t.ed.message, "mine");
+    let other = t.ed.add_buffer(Buffer::new("u", ""));
+    let ov = t.ed.add_view(other);
+    assert!(!t.ed.key_scopes(ov).contains(&scope));
+    let b = t.ed.views[t.v].buffer;
+    t.ed.remove_buffer(b);
+    assert!(
+        !t.ed
+            .keymap
+            .bindings(Mode::Normal)
+            .iter()
+            .any(|(k, _)| k == "Q"),
+        "dropped with its buffer"
+    );
+}
+
 /// A key can carry several bindings, newest first: the first whose own
 /// `when` holds and whose command can run is the one that runs; none
 /// of them is the newest one's reason; a bare binding on a bare command
@@ -1318,7 +1416,8 @@ fn a_key_falls_through_its_bindings_by_when() {
     t.keys("<CR>");
     assert_eq!(t.ed.message, "plain");
     // The listing has them all, newest first, an equal one moved to
-    // the front, the default keymap's `goto_location` under them.
+    // the front, the default keymap's `goto_location` under them, and
+    // the prompt's own after the global ones.
     let bs = t.ed.keymap.bindings(Mode::Normal);
     let cr: Vec<String> = bs
         .iter()
@@ -1331,8 +1430,8 @@ fn a_key_falls_through_its_bindings_by_when() {
             "plain_enter",
             "oil enter",
             "plain_enter",
-            "prompt submit",
-            "goto location"
+            "goto location",
+            "prompt submit"
         ]
     );
 }

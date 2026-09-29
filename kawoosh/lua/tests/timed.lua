@@ -1,7 +1,7 @@
 -- Timed rows (timed.lua): `:timed` stamps the empty line and every line
--- `<CR>`, `o` and `O` open; a buffer that is not timed passes the keys
--- on — pairs' `<CR>` still opens a block there; `:timed relative`
--- starts from a dated stamp and counts from it.
+-- `<CR>`, `o` and `O` open, the timed buffer's own keys; a buffer that is
+-- not timed never finds them — pairs' `<CR>` still opens a block there;
+-- `:timed relative` starts from a dated stamp and counts from it.
 local function lines() return kawoosh.buf.lines() end
 local CLOCK = "^%d%d:%d%d "
 
@@ -18,7 +18,7 @@ kawoosh.test.ok(lines()[3]:match(CLOCK .. "third$"), "o stamps: " .. tostring(li
 kawoosh.press("ggOzero<Esc>")
 kawoosh.test.ok(lines()[1]:match(CLOCK .. "zero$"), "O stamps: " .. lines()[1])
 
--- Another buffer: the keys pass on — pairs' block, a plain `o`.
+-- Another buffer: the keys are not there — pairs' block, a plain `o`.
 kawoosh.cmd("enew")
 kawoosh.frame()
 kawoosh.press("iif {<CR>x<Esc>")

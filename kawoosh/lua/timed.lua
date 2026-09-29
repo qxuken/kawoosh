@@ -12,9 +12,9 @@
 -- where it began. `timed.clock` is the clock stamp's `os.date` format.
 --
 -- `<CR>` in insert mode and `o` `O` in normal mode stamp the line they
--- open; in a buffer that is not timed they pass the key on
--- (`kawoosh.pass()`) to the binding under them — pairs' `<CR>`, the
--- engine's `o` — so the two plugins share the key.
+-- open. They are the timed buffer's own keys (docs/design/local-maps.md),
+-- mapped when `:timed` turns it on and unmapped with `:timed off`, so
+-- every other buffer keeps pairs' `<CR>` and the engine's `o` untouched.
 
 local M = {}
 kawoosh.timed = M
@@ -56,17 +56,35 @@ end
 
 local function current() return kawoosh.buf.current() end
 
+-- The keys a timed buffer has of its own.
+local KEYS = {
+  { "i", "<CR>", "timed newline" },
+  { "n", "o", "timed open below" },
+  { "n", "O", "timed open above" },
+}
+local function own_keys(h, on)
+  for _, k in ipairs(KEYS) do
+    if on then
+      kawoosh.map(k[1], k[2], k[3], { buffer = h })
+    else
+      kawoosh.unmap(k[1], k[2], { buffer = h })
+    end
+  end
+end
+
 kawoosh.command("timed", function(ctx)
   local h = current()
   local how = ctx.args[1] or "clock"
   if how == "off" then
     M.on[h] = nil
+    own_keys(h, false)
     return kawoosh.echo("timed rows off")
   end
   if how ~= "clock" and how ~= "relative" then
     return kawoosh.echo("timed: clock, relative or off")
   end
   M.on[h] = how
+  own_keys(h, true)
   -- An empty line under the caret is stamped at once, the caret left
   -- after the stamp (`A` goes on writing).
   if (kawoosh.buf.line(kawoosh.buf.cursor().line) or "") == "" then
@@ -78,8 +96,8 @@ kawoosh.command("timed", function(ctx)
   kawoosh.echo("timed rows: " .. how)
 end, { args = { "text" }, doc = "each new line of this buffer starts with the time: clock, relative, or off (timed.lua)" })
 
--- The keys: each stamps the line it opens in a timed buffer and passes
--- the key on in any other.
+-- The keys: each stamps the line it opens in a timed buffer — and,
+-- run from the command line anywhere else, passes.
 kawoosh.command("timed newline", function()
   local h = current()
   if not M.on[h] then return kawoosh.pass() end
@@ -94,8 +112,6 @@ for key, open in pairs { o = "open below", O = "open above" } do
     kawoosh.cmd(open)
     kawoosh.buf.type(M.stamp(h))
   end, { doc = "`" .. key .. "`, the line stamped in a timed buffer (timed.lua)" })
-  kawoosh.map("n", key, "timed " .. open)
 end
-kawoosh.map("i", "<CR>", "timed newline", { when = { "!prompt", "!field" } })
 
 return M

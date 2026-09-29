@@ -1082,3 +1082,60 @@ fn the_dock_is_a_strip_under_layout_dock_scroll() {
     assert!(dock.contains(first) && dock.contains(third));
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// The text of the `*maps*` pane, empty when there is none.
+fn maps_text(app: &Kawoosh) -> String {
+    app.ed
+        .buffers
+        .values()
+        .find(|b| b.name == "*maps*")
+        .map(|b| b.text())
+        .unwrap_or_default()
+}
+
+/// `:map list` names a buffer's own place by the buffer's name, from
+/// anywhere; `:map list here` keeps what applies where the keys are —
+/// the buffer's own keys in it and not in another (local-maps.md).
+#[test]
+fn map_list_here_lists_what_applies_where_the_keys_are() {
+    let mut app = Kawoosh::new("t", "a\nb");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "map <buffer> n Q echo mine");
+    ex(&mut d, &mut app, "map list here n");
+    d.frame(&mut app);
+    let maps = maps_text(&app);
+    assert!(
+        maps.starts_with("here, innermost first: buffer t, then the global map"),
+        "{maps}"
+    );
+    assert!(
+        maps.lines()
+            .any(|l| l.starts_with("Q ") && l.contains("echo mine") && l.ends_with("in buffer t")),
+        "{maps}"
+    );
+    assert!(
+        maps.contains("goto file start"),
+        "the global map too: {maps}"
+    );
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    // Another buffer: the whole list still names the place; `here` has
+    // none of it.
+    ex(&mut d, &mut app, "enew");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "map list n");
+    d.frame(&mut app);
+    assert!(
+        maps_text(&app).contains("in buffer t"),
+        "{}",
+        maps_text(&app)
+    );
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "map list here n");
+    d.frame(&mut app);
+    let maps = maps_text(&app);
+    assert!(maps.starts_with("here: the global map alone"), "{maps}");
+    assert!(!maps.contains("echo mine"), "{maps}");
+}

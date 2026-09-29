@@ -26,9 +26,11 @@ Everything a key does is a named command. `kawoosh.command(name, fn, opts)` adds
 
 `kawoosh.map(mode, keys, cmd, opts)` binds keys. `mode` is `"n"`, `"i"`, `"v"`, `"o"` (operator pending) or `"p"` (pane mode: panes that are not editors, such as your own views). `keys` is written in vim notation (`<leader>`, `<C-w>`, `<A-S-l>`). A chord's upper-case letter means Shift, so `<A-L>` is `<A-S-l>` and not `<A-l>`, which is how `:map list` shows it. `cmd` is a command line, as you would type it after `:`, or a function.
 
-A key can be bound more than once: the newest binding whose `opts.when` holds, and whose command can run, is the one that runs. That is how one key does the right thing in different places. `kawoosh.unmap(mode, keys)` removes a key's bindings. Inside a command a key ran, `kawoosh.pass()` hands the key on to the binding under it.
+A map can belong to a place, and then it is found only there, before the global map: `opts.view = "NAME"` (your view's pane), `view` with `field = "q"` (its field), `buffer` (a buffer handle, `true` for the current buffer, or a buffer's name such as `"*compile*"`), `language = "dir"`, or any fact as `scope = "terminal"`. There it shadows the global binding of the same keys and every longer one under them, and nowhere else does it exist, so two plugins' panes never collide on a key: `kawoosh.map("n", "<CR>", "dir enter", { language = "dir" })` is the file manager's `<CR>`, and `<CR>` stays `goto location` in every other buffer. `:map <buffer> n KEYS CMD` does the same for the buffer you are in, and a buffer's own maps go when it closes.
 
-`:map list` shows every binding in a pane (`:map list n`, or `:map list <leader>c` for the keys under a prefix), and `:map group <leader>i insert` names a group for the which-key card. `:map export PATH` writes the keymap and every command as JSON — each binding with the command it runs, the groups' names, the leader (bare, it opens in a pane).
+A key can be bound more than once in one place: the newest binding whose `opts.when` holds, and whose command can run, is the one that runs. `kawoosh.unmap(mode, keys, opts)` removes a key's bindings, the global ones or those of the place `opts` names. Inside a command a key ran, `kawoosh.pass()` hands the key on to the binding under it: the global one, under a place's.
+
+`:map list` shows every binding in a pane (`:map list n`, or `:map list <leader>c` for the keys under a prefix), a place's own saying `in` the place (a buffer's by its name); `:map list here` shows only what applies where your keys are, the innermost place's bindings of a key first, and `:map group <leader>i insert` names a group for the which-key card. `:map export PATH` writes the keymap and every command as JSON — each binding with the command it runs, the groups' names, the leader (bare, it opens in a pane).
 
 ## Example: a command with a key
 
@@ -126,7 +128,7 @@ A plugin pane is a function from your state to a tree of UI nodes, drawn every f
 - `kawoosh.view(name, fn, on_event, opts)` declares a view. `fn(ctx)` returns the tree: `column`, `row`, `text` and the rest of kui's nodes. `ctx` has `width`, `height`, `focused`, and `env.theme` for the theme's colours. `opts.session = false` keeps the view out of saved sessions.
 - Clicks come back to `on_event(ev)`: the table you gave as a node's `on_click`, as `ev`. A key pressed in the pane arrives as `{ kind = "key", key = "j" }`; return `true` to keep it. Keys you do not keep work as in any other pane: `<C-w>` moves, `:`, `<leader>`.
 - `kawoosh.view_open(name, { below = true, share = 0.3, focus = false })` shows the view in a split, `kawoosh.view_close(name)` closes it, and `kawoosh.view_toggle(name, opts)` does one or the other. `:view NAME` opens one from the command line.
-- Pane-mode maps (`"p"`) with `when = { "lua:NAME" }` apply only while your view has the keys. Prefer them to handling keys in `on_event`: they show up in `:map list`, take counts, and can be remapped.
+- Pane-mode maps (`"p"`) with `view = "NAME"` apply only while your view has the keys, and a field's with `view` and `field`. Prefer them to handling keys in `on_event`: they show up in `:map list` (with `in lua:NAME`), take counts, and can be remapped.
 - `ctx.field { name = "q", placeholder = "find" }` puts a one-line input in the tree. It is a line of the editor, with its modes and motions. `kawoosh.field_focus(view, name)` gives it the keys, and `kawoosh.field_text` / `field_set` read and write it.
 
 ## Example: a tiny pane
@@ -146,7 +148,7 @@ end, function(ev)
   if ev.kind == "bump" then count = count + 1 end
 end)
 
-kawoosh.map("p", "+", function() count = count + 1 end, { when = { "lua:counter" } })
+kawoosh.map("p", "+", function() count = count + 1 end, { view = "counter" })
 
 kawoosh.command("counter", function()
   kawoosh.view_toggle("counter", { below = true, share = 0.3 })

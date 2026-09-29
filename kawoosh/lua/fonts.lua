@@ -35,7 +35,6 @@ local themes = kawoosh.themes
 local VIEW = "fonts"
 local FIELD = "q"
 local PANE_FACT = "lua:" .. VIEW
-local FIELD_FACT = "field:lua:" .. VIEW .. "/" .. FIELD
 local SHARE = 0.4
 local PAD = 14
 local GAP = 8
@@ -427,12 +426,12 @@ for k, c in pairs {
   ["+"] = "bigger", ["="] = "bigger", ["-"] = "smaller",
   y = "copy", q = "close", ["<Esc>"] = "close",
 } do
-  kawoosh.map("p", k, "fonts " .. c, { when = { PANE_FACT } })
+  kawoosh.map("p", k, "fonts " .. c, { view = VIEW })
 end
 -- Over the search: `⏎` ends it where the cursor is, as the editor's
 -- `/` does; the arrows walk; in its normal mode `j` `k` walk the list
 -- and `n` `N` the matches, not the search's text.
-local at = { when = { FIELD_FACT } }
+local at = { view = VIEW, field = FIELD }
 for _, mode in ipairs { "i", "n" } do
   kawoosh.map(mode, "<CR>", "fonts search done", at)
   kawoosh.map(mode, "<Down>", "fonts down", at)

@@ -178,3 +178,34 @@ fn a_which_key_lists_only_what_works_here() {
     let t = texts(&d);
     assert!(has(&t, "a") && !has(&t, "b") && !has(&t, "c"), "{t:?}");
 }
+
+/// The card lists the keys where they are (docs/design/local-maps.md):
+/// a buffer's own keys in that buffer — over the global binding of the
+/// same keys, a group of their own — and nothing of them in another.
+#[test]
+fn a_which_key_lists_a_places_own_keys_only_there() {
+    let mut app = Kawoosh::new("t", "a\nb");
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "map <buffer> n gg echo top");
+    ex(&mut d, &mut app, "map <buffer> n ]za echo za");
+    d.keys(&mut app, "g");
+    let t = texts(&d);
+    assert!(has(&t, "echo top"), "the buffer's `gg`: {t:?}");
+    assert!(!has(&t, "goto file start"), "over the global one: {t:?}");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "]");
+    let t = texts(&d);
+    assert!(has(&t, "z"), "the buffer's `]z` group: {t:?}");
+    d.key(&mut app, "escape", KeyMods::default());
+    // Another buffer in the pane: the global keys, none of the first's.
+    ex(&mut d, &mut app, "enew");
+    d.frame(&mut app);
+    d.keys(&mut app, "g");
+    let t = texts(&d);
+    assert!(has(&t, "goto file start") && !has(&t, "echo top"), "{t:?}");
+    d.key(&mut app, "escape", KeyMods::default());
+    d.keys(&mut app, "]");
+    let t = texts(&d);
+    assert!(!has(&t, "z"), "no `]z` here: {t:?}");
+}

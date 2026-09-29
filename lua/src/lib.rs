@@ -130,18 +130,23 @@ pub enum Msg {
         name: String,
         text: String,
     },
-    /// `kawoosh.map(mode, keys, cmd, { when = {...} })`.
+    /// `kawoosh.map(mode, keys, cmd, { when = {...} })`, local to the
+    /// place `scope` names (`lua:picker`, `language:dir`, `buffer#ID`)
+    /// when the opts named one (docs/design/local-maps.md).
     Map {
         mode: String,
         keys: String,
         command: String,
         when: Vec<String>,
+        scope: Option<String>,
     },
-    /// `kawoosh.unmap(mode, keys)`: the key's bindings gone, the
-    /// longer ones beneath it kept.
+    /// `kawoosh.unmap(mode, keys, opts)`: the key's bindings gone — the
+    /// global ones, or those local to `scope` — the longer ones beneath
+    /// it kept.
     Unmap {
         mode: String,
         keys: String,
+        scope: Option<String>,
     },
     /// `kawoosh.buf.show(buffer, { split = })`: the buffer into the
     /// focused pane, or into a new one beside (`vsplit`), below
@@ -2492,6 +2497,7 @@ fn seed(
                 published: Some(&p.facts),
                 visual: p.mode == "visual",
                 buffer: buf.map(|b| BufFacts {
+                    id: p.current.unwrap_or_default(),
                     name: b.name.as_str(),
                     language: b.language.as_str(),
                     modified: b.modified,
@@ -2675,6 +2681,7 @@ fn seed(
                 published: Some(&p.facts),
                 visual: p.mode == "visual",
                 buffer: buf.map(|b| BufFacts {
+                    id: p.current.unwrap_or_default(),
                     name: b.name.as_str(),
                     language: b.language.as_str(),
                     modified: b.modified,
@@ -2788,12 +2795,21 @@ fn seed(
     k.set(
         "_map",
         lua.create_function(
-            move |_, (mode, keys, command, when): (String, String, String, Option<Vec<String>>)| {
+            #[allow(clippy::type_complexity)]
+            move |_,
+                  (mode, keys, command, when, scope): (
+                String,
+                String,
+                String,
+                Option<Vec<String>>,
+                Option<String>,
+            )| {
                 qq.borrow_mut().push(Msg::Map {
                     mode,
                     keys,
                     command,
                     when: when.unwrap_or_default(),
+                    scope,
                 });
                 Ok(())
             },
@@ -2801,11 +2817,13 @@ fn seed(
     )?;
     let qq = q(queue);
     k.set(
-        "unmap",
-        lua.create_function(move |_, (mode, keys): (String, String)| {
-            qq.borrow_mut().push(Msg::Unmap { mode, keys });
-            Ok(())
-        })?,
+        "_unmap",
+        lua.create_function(
+            move |_, (mode, keys, scope): (String, String, Option<String>)| {
+                qq.borrow_mut().push(Msg::Unmap { mode, keys, scope });
+                Ok(())
+            },
+        )?,
     )?;
     let qq = q(queue);
     k.set(
@@ -5197,6 +5215,7 @@ mod tests {
                     keys: "<leader>z".into(),
                     command: "zap".into(),
                     when: vec![],
+                    scope: None,
                 }
             ]
         );

@@ -11,8 +11,8 @@ use kawoosh_doc::Buffer;
 use crate::keymap::{Keymap, Mode};
 use crate::motions as m;
 use crate::{
-    ArgKind, Args, Cond, Ctx, Editor, Effect, Kind, Layer, MotionKind, Prompt, Selection, Setting,
-    Spec, ViewId,
+    ArgKind, Args, Ctx, Editor, Effect, Kind, Layer, MotionKind, Prompt, Selection, Setting, Spec,
+    ViewId,
 };
 
 /// `:set`'s line split into its path and its value: the value is past
@@ -2514,7 +2514,9 @@ pub fn install(ed: &mut Editor) {
         |ed, ctx| ed.message = ctx.args.join(" "),
     );
     // `:map MODE KEYS COMMAND ARGS...`: a binding for the session, as a
-    // plugin's `kawoosh.map` makes one.
+    // plugin's `kawoosh.map` makes one; `:map <buffer> MODE KEYS
+    // COMMAND` one local to the buffer the keys are in, vim's spelling
+    // (docs/design/local-maps.md).
     ed.register_spec(
         Spec::new("map")
             .args(Args::rest(&[
@@ -2522,13 +2524,28 @@ pub fn install(ed: &mut Editor) {
                 ArgKind::Text,
                 ArgKind::Command,
             ]))
-            .doc("bind KEYS in MODE to COMMAND"),
-        |ed, ctx| match ctx.args.as_slice() {
-            [mode, keys, cmd @ ..] if !cmd.is_empty() => match Mode::from_short(mode) {
-                Some(m) => ed.keymap.bind(m, keys, &cmd.join(" ")),
-                None => ed.message = format!("map: unknown mode {mode}"),
-            },
-            _ => ed.message = "map what? (:map MODE KEYS COMMAND; :map list to see them)".into(),
+            .doc("bind KEYS in MODE to COMMAND; `<buffer>` first, in this buffer only"),
+        |ed, ctx| {
+            let (scope, args) = match ctx.args.split_first() {
+                Some((first, rest)) if first.eq_ignore_ascii_case("<buffer>") => {
+                    let id = ed.views[ctx.view].buffer;
+                    (Some(crate::buffer_scope(id)), rest)
+                }
+                _ => (None, ctx.args.as_slice()),
+            };
+            match args {
+                [mode, keys, cmd @ ..] if !cmd.is_empty() => match (Mode::from_short(mode), &scope)
+                {
+                    (Some(m), Some(s)) => ed.keymap.bind_local(s, m, keys, &cmd.join(" "), &[]),
+                    (Some(m), None) => ed.keymap.bind(m, keys, &cmd.join(" ")),
+                    (None, _) => ed.message = format!("map: unknown mode {mode}"),
+                },
+                _ => {
+                    ed.message =
+                        "map what? (:map [<buffer>] MODE KEYS COMMAND; :map list to see them)"
+                            .into()
+                }
+            }
         },
     );
 
@@ -4152,8 +4169,8 @@ pub fn default_keymap(km: &mut Keymap) {
     // as iTerm and Terminal.app have them and ctrl-shift where there is
     // no ⌘, the last command's output copied, and the clipboard pasted
     // on insert mode's two spellings — chords, so they reach the pane
-    // past its pty (`Kawoosh::pane_chord`).
-    let on_terminal = [Cond::parse("terminal")];
+    // past its pty (`Kawoosh::pane_chord`). Local to a terminal pane
+    // (docs/design/local-maps.md): nothing another pane looks up.
     for (k, c) in [
         ("<D-Up>", "terminal prompt prev"),
         ("<D-Down>", "terminal prompt next"),
@@ -4166,7 +4183,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<D-v>", "paste clipboard"),
         ("<C-S-v>", "paste clipboard"),
     ] {
-        km.bind_when(Normal, k, c, &on_terminal);
+        km.bind_local("terminal", Normal, k, c, &[]);
     }
     // What each prefix is for, as the which-key names it.
     for (keys, name) in [
@@ -4300,21 +4317,29 @@ pub fn default_keymap(km: &mut Keymap) {
         ("zs", "strip left"),
         ("ze", "strip right"),
         ("zz", "strip center"),
-        // The memory pane's.
+    ];
+    for (k, c) in p {
+        km.bind(Pane, k, c);
+    }
+    // The memory pane's own and the undo pane's, local to each: no
+    // other pane finds them (local-maps.md).
+    for (k, c) in [
         ("/", "memory filter"),
         ("p", "list open"),
         ("y", "memory recall"),
         ("o", "memory origin"),
         ("x", "memory forget"),
         ("m", "memory pin"),
-        // The undo pane's.
+    ] {
+        km.bind_local("memory", Pane, k, c, &[]);
+    }
+    for (k, c) in [
         ("u", "undo pane undo"),
         ("<C-r>", "undo pane redo"),
         ("g-", "undo pane older"),
         ("g+", "undo pane newer"),
-    ];
-    for (k, c) in p {
-        km.bind(Pane, k, c);
+    ] {
+        km.bind_local("undo", Pane, k, c, &[]);
     }
     let i = [
         ("<Esc>", "normal"),
@@ -4359,13 +4384,7 @@ pub fn default_keymap(km: &mut Keymap) {
     for (k, c) in i {
         km.bind(Insert, k, c);
     }
-    // The prompt's keys, bound after the editor's on the same keys so
-    // they come first and fall through when no prompt is open: `<CR>`
-    // submits (in either mode), `<Esc>` in normal mode cancels — so
-    // `<Esc><Esc>` leaves from insert mode — `<BS>` on an empty line
-    // cancels, `<Up>`/`<Down>` and `<C-p>`/`<C-n>` walk the history
-    // (the shell binds the latter two to the completion at the command
-    // line, over these).
+
     // The font's size, from every mode and every pane (a ⌘ chord
     // reaches the keymap from a terminal too, `Kawoosh::pane_chord`):
     // ⌘= and ⌘+ bigger, ⌘- and ⌘_ smaller, ⌘0 back to the settings' —
@@ -4392,17 +4411,27 @@ pub fn default_keymap(km: &mut Keymap) {
             km.bind(mode, k, c);
         }
     }
-    // `m` marks, but not in a listing, where `ma` `ms` `mm` `me` sort
-    // (dir.lua) and a bare `m` would shadow them.
-    km.bind_when(Normal, "m", "mark", &[Cond::parse("!language:dir")]);
-    let prompt = [Cond::parse("prompt")];
-    km.bind_when(Insert, "<CR>", "prompt submit", &prompt);
-    km.bind_when(Normal, "<CR>", "prompt submit", &prompt);
-    km.bind_when(Normal, "<Esc>", "prompt cancel", &prompt);
-    km.bind_when(Normal, "<C-c>", "prompt cancel", &prompt);
-    km.bind_when(Insert, "<BS>", "prompt backspace", &prompt);
-    km.bind_when(Insert, "<Up>", "prompt history prev", &prompt);
-    km.bind_when(Insert, "<Down>", "prompt history next", &prompt);
-    km.bind_when(Insert, "<C-p>", "prompt history prev", &prompt);
-    km.bind_when(Insert, "<C-n>", "prompt history next", &prompt);
+    // `m` marks. A listing's sort keys under it, `ma` `ms` `mm` `me`
+    // (dir.lua), are local to it and shadow it there.
+    km.bind(Normal, "m", "mark");
+    // The prompt's keys, local to it and so before the editor's on the
+    // same keys: `<CR>` submits (in either mode), `<Esc>` in normal
+    // mode cancels — so `<Esc><Esc>` leaves from insert mode — `<BS>`
+    // on an empty line cancels, `<Up>`/`<Down>` and `<C-p>`/`<C-n>`
+    // walk the history (the shell binds the latter two to the
+    // completion at the command line, whose field is a place inside
+    // the prompt's).
+    for (mode, k, c) in [
+        (Insert, "<CR>", "prompt submit"),
+        (Normal, "<CR>", "prompt submit"),
+        (Normal, "<Esc>", "prompt cancel"),
+        (Normal, "<C-c>", "prompt cancel"),
+        (Insert, "<BS>", "prompt backspace"),
+        (Insert, "<Up>", "prompt history prev"),
+        (Insert, "<Down>", "prompt history next"),
+        (Insert, "<C-p>", "prompt history prev"),
+        (Insert, "<C-n>", "prompt history next"),
+    ] {
+        km.bind_local("prompt", mode, k, c, &[]);
+    }
 }
