@@ -21,6 +21,37 @@ use anyhow::{Context as _, Result};
 use kui_core::cells::{Cell, CursorShape as CellCursor, flags};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
+/// How a terminal's process ended ([`Terminal::exit`]), said as
+/// `*compile*` says it: `finished`, `exited with 2`, `killed by SIGTERM`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Exit {
+    Code(u32),
+    Signal(String),
+}
+
+impl Exit {
+    fn of(status: &portable_pty::ExitStatus) -> Self {
+        match status.signal() {
+            Some(s) => Self::Signal(s.to_string()),
+            None => Self::Code(status.exit_code()),
+        }
+    }
+
+    pub fn success(&self) -> bool {
+        *self == Self::Code(0)
+    }
+}
+
+impl std::fmt::Display for Exit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Code(0) => f.write_str("finished"),
+            Self::Code(c) => write!(f, "exited with {c}"),
+            Self::Signal(s) => write!(f, "killed by {s}"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TermSize {
     pub rows: u16,
@@ -61,9 +92,57 @@ pub enum MouseAction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hyperlink {
     pub uri: String,
-    /// The columns of its row it covers.
-    pub cols: std::ops::Range<usize>,
+    /// The screen rows it covers and their columns, top first: more
+    /// than one when a long line wrapped it.
+    pub rows: Vec<(usize, std::ops::Range<usize>)>,
 }
+
+/// The line a screen row is part of, as the program printed it: the
+/// rows a long line wrapped onto joined ([`Terminal::wrapped_line`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WrappedLine {
+    pub text: String,
+    /// Each character's cells: its screen row, negative above the
+    /// screen or past its foot below, and columns — two for a wide one.
+    pub cells: Vec<(i32, std::ops::Range<usize>)>,
+}
+
+impl WrappedLine {
+    /// The character at `col` of screen row `row`, a wide one's spacer
+    /// its; None past the text.
+    pub fn char_at(&self, row: usize, col: usize) -> Option<usize> {
+        self.cells
+            .iter()
+            .position(|(r, c)| *r == row as i32 && c.contains(&col))
+    }
+
+    /// Where characters `chars` of the text are on the screen: a range
+    /// of columns for each row they are on, the rows off it left out.
+    pub fn rows_of(
+        &self,
+        chars: std::ops::Range<usize>,
+        screen_rows: usize,
+    ) -> Vec<(usize, std::ops::Range<usize>)> {
+        let mut out: Vec<(usize, std::ops::Range<usize>)> = Vec::new();
+        for (r, c) in
+            &self.cells[chars.start.min(self.cells.len())..chars.end.min(self.cells.len())]
+        {
+            let Ok(r) = usize::try_from(*r) else { continue };
+            if r >= screen_rows {
+                continue;
+            }
+            match out.last_mut() {
+                Some((last, cols)) if *last == r => cols.end = c.end,
+                _ => out.push((r, c.clone())),
+            }
+        }
+        out
+    }
+}
+
+/// How many rows either way a wrapped line is followed: a line that
+/// long is output, not a link.
+const WRAP_ROWS: i32 = 64;
 
 /// The screen, ready for `ui.cells`: the app owns the `Vec` for a frame.
 pub struct Screen {
@@ -275,6 +354,8 @@ pub struct Terminal {
     reported_cwd: Option<std::path::PathBuf>,
     pub bell: bool,
     exited: bool,
+    /// How the process ended, once it was reaped ([`Terminal::exit`]).
+    exit: Option<Exit>,
     /// Bytes a headless terminal would have sent to its process, for
     /// tests (`Terminal::take_sent`).
     sent: Vec<u8>,
@@ -386,6 +467,7 @@ impl Terminal {
                 reported_cwd: None,
                 bell: false,
                 exited: false,
+                exit: None,
                 sent: Vec::new(),
                 graphics: graphics::Graphics::default(),
                 cell_px: (0, 0),
@@ -419,6 +501,7 @@ impl Terminal {
             reported_cwd: None,
             bell: false,
             exited: false,
+            exit: None,
             sent: Vec::new(),
             graphics: graphics::Graphics::default(),
             cell_px: (0, 0),
@@ -440,15 +523,34 @@ impl Terminal {
             return false;
         }
         match &mut self.child {
-            Some(child) => {
-                let running = matches!(child.try_wait(), Ok(None));
-                if !running {
+            Some(child) => match child.try_wait() {
+                Ok(None) => true,
+                Ok(Some(status)) => {
                     self.exited = true;
+                    self.exit = Some(Exit::of(&status));
+                    false
                 }
-                running
-            }
+                Err(_) => {
+                    self.exited = true;
+                    false
+                }
+            },
             None => false,
         }
+    }
+
+    /// How the process ended; None while it runs, or for a headless
+    /// terminal. Asked as its pty closes, the child is waited for a
+    /// moment: the reader ends as the last holder of the pty lets go,
+    /// a hair before the process is there to reap.
+    pub fn exit(&mut self) -> Option<Exit> {
+        if self.exit.is_none() && self.child.is_some() {
+            let until = std::time::Instant::now() + std::time::Duration::from_millis(200);
+            while self.is_running() && std::time::Instant::now() < until {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+        self.exit.clone()
     }
 
     /// Something that blocks until the process exits, for a thread to
@@ -1317,27 +1419,45 @@ impl Terminal {
     }
 
     /// The link a program printed on purpose (OSC 8) at `(row, col)` of
-    /// the screen: its URI and the columns of the row it covers — the
-    /// run of cells around `col` with the same link.
+    /// the screen: its URI and the cells it covers — the run of cells
+    /// around `col` with the same link, across the rows a long line
+    /// wrapped it onto.
     pub fn hyperlink_at(&self, row: usize, col: usize) -> Option<Hyperlink> {
         let grid = self.term.grid();
         if row >= grid.screen_lines() || col >= grid.columns() {
             return None;
         }
-        let line = Line(row as i32 - grid.display_offset() as i32);
-        let at = grid[line][Column(col)].hyperlink()?;
-        let same = |c: usize| grid[line][Column(c)].hyperlink().as_ref() == Some(&at);
-        let mut start = col;
+        let offset = grid.display_offset() as i32;
+        let points = self.wrapped_points(row);
+        let here = (Line(row as i32 - offset), Column(col));
+        let i = points.iter().position(|p| *p == here)?;
+        let link = |i: usize| grid[points[i].0][points[i].1].hyperlink();
+        let at = link(i)?;
+        let same = |i: usize| link(i).as_ref() == Some(&at);
+        let mut start = i;
         while start > 0 && same(start - 1) {
             start -= 1;
         }
-        let mut end = col + 1;
-        while end < grid.columns() && same(end) {
+        let mut end = i + 1;
+        while end < points.len() && same(end) {
             end += 1;
+        }
+        let mut rows: Vec<(usize, std::ops::Range<usize>)> = Vec::new();
+        for (line, c) in &points[start..end] {
+            let Ok(r) = usize::try_from(line.0 + offset) else {
+                continue;
+            };
+            if r >= grid.screen_lines() {
+                continue;
+            }
+            match rows.last_mut() {
+                Some((last, cols)) if *last == r => cols.end = c.0 + 1,
+                _ => rows.push((r, c.0..c.0 + 1)),
+            }
         }
         Some(Hyperlink {
             uri: at.uri().to_string(),
-            cols: start..end,
+            rows,
         })
     }
 
@@ -1377,6 +1497,59 @@ impl Terminal {
             s.push(cell.c);
         }
         s
+    }
+
+    /// The line screen row `row` (0-based on the displayed screen) is
+    /// part of: the rows above and below it that a long line wrapped
+    /// onto joined, as text, with where each character is — a URL or a
+    /// path printed across the terminal's edge is one again.
+    pub fn wrapped_line(&self, row: usize) -> WrappedLine {
+        let grid = self.term.grid();
+        let offset = grid.display_offset() as i32;
+        let mut line = WrappedLine {
+            text: String::new(),
+            cells: Vec::new(),
+        };
+        for (l, c) in self.wrapped_points(row) {
+            let cell = &grid[l][c];
+            if cell.flags.intersects(
+                Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER | Flags::HIDDEN,
+            ) {
+                continue;
+            }
+            let width = if cell.flags.contains(Flags::WIDE_CHAR) {
+                2
+            } else {
+                1
+            };
+            line.text.push(cell.c);
+            line.cells.push((l.0 + offset, c.0..c.0 + width));
+        }
+        line
+    }
+
+    /// The cells of the line screen row `row` is part of, in order: a
+    /// row whose last cell says it wrapped (`WRAPLINE`) goes on in the
+    /// next, [`WRAP_ROWS`] rows either way at most.
+    fn wrapped_points(&self, row: usize) -> Vec<(Line, Column)> {
+        let grid = self.term.grid();
+        let cols = grid.columns();
+        if cols == 0 || row >= grid.screen_lines() {
+            return Vec::new();
+        }
+        let wraps = |l: Line| grid[l][Column(cols - 1)].flags.contains(Flags::WRAPLINE);
+        let here = Line(row as i32 - grid.display_offset() as i32);
+        let mut first = here;
+        while first > grid.topmost_line() && here.0 - first.0 < WRAP_ROWS && wraps(first - 1) {
+            first -= 1;
+        }
+        let mut last = here;
+        while last < grid.bottommost_line() && last.0 - here.0 < WRAP_ROWS && wraps(last) {
+            last += 1;
+        }
+        (first.0..=last.0)
+            .flat_map(|l| (0..cols).map(move |c| (Line(l), Column(c))))
+            .collect()
     }
 }
 
@@ -2304,12 +2477,12 @@ mod tests {
         t.feed(b"see \x1b]8;;https://kawoosh.dev/x\x1b\\the docs\x1b]8;;\x1b\\ now");
         let h = t.hyperlink_at(0, 6).unwrap();
         assert_eq!(h.uri, "https://kawoosh.dev/x");
-        assert_eq!(h.cols, 4..12, "`the docs`, not the text around it");
+        assert_eq!(h.rows, [(0, 4..12)], "`the docs`, not the text around it");
         assert_eq!(t.hyperlink_at(0, 2), None);
         assert_eq!(t.hyperlink_at(0, 13), None);
         // Two links side by side with the same text stay two.
         t.feed(b"\r\n\x1b]8;id=a;https://a\x1b\\ab\x1b]8;id=b;https://b\x1b\\cd\x1b]8;;\x1b\\");
-        assert_eq!(t.hyperlink_at(1, 1).unwrap().cols, 0..2);
+        assert_eq!(t.hyperlink_at(1, 1).unwrap().rows, [(1, 0..2)]);
         assert_eq!(t.hyperlink_at(1, 2).unwrap().uri, "https://b");
         // Scrolled back, the rows are the screen's.
         for _ in 0..4 {
@@ -2318,6 +2491,37 @@ mod tests {
         assert_eq!(t.hyperlink_at(0, 6), None, "off the screen");
         t.scroll(t.history_size() as i32);
         assert_eq!(t.hyperlink_at(0, 6).unwrap().uri, "https://kawoosh.dev/x");
+    }
+
+    #[test]
+    fn a_wrapped_line_is_one_text_across_its_rows() {
+        let mut t = Terminal::headless(TermSize { rows: 5, cols: 10 });
+        t.feed(b"$ ls\r\nsee https://kawoosh.dev/x ok\r\nnext");
+        // Rows 1-3 are one line the terminal wrapped; row 0 and the
+        // prompt's own row are not part of it.
+        let w = t.wrapped_line(2);
+        assert_eq!(w.text.trim_end(), "see https://kawoosh.dev/x ok");
+        assert_eq!(t.wrapped_line(1), w);
+        assert_eq!(t.wrapped_line(0).text.trim_end(), "$ ls");
+        // `https://kawoosh.dev/x` is characters 4..25: the end of row 1,
+        // all of row 2, the start of row 3.
+        assert_eq!(w.char_at(2, 3), Some(13));
+        assert_eq!(w.rows_of(4..25, 5), [(1, 4..10), (2, 0..10), (3, 0..5)]);
+        // Scrolled off the top, its first row is left out.
+        t.feed(b"\r\n\r\n");
+        let w = t.wrapped_line(0);
+        assert_eq!(w.text.trim_end(), "see https://kawoosh.dev/x ok");
+        assert_eq!(w.rows_of(4..25, 5), [(0, 0..10), (1, 0..5)]);
+    }
+
+    #[test]
+    fn a_wrapped_hyperlink_covers_both_rows() {
+        let mut t = Terminal::headless(TermSize { rows: 3, cols: 10 });
+        t.feed(b"see \x1b]8;;https://kawoosh.dev/x\x1b\\the long docs\x1b]8;;\x1b\\ now");
+        let h = t.hyperlink_at(1, 2).unwrap();
+        assert_eq!(h.uri, "https://kawoosh.dev/x");
+        assert_eq!(h.rows, [(0, 4..10), (1, 0..7)]);
+        assert_eq!(t.hyperlink_at(0, 5), Some(h));
     }
 
     #[test]

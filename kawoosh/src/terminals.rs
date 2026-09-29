@@ -14,16 +14,21 @@ use kui_native::KeyPress;
 
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
-use crate::layout::{Content, SplitDir};
+use crate::layout::{Content, PaneId, SplitDir};
 use crate::links::Target;
 
 pub type TermId = u64;
 
+/// A link's cells on a terminal's screen: a row and its columns, for
+/// each row it is on.
+pub(crate) type LinkCells = Vec<(usize, std::ops::Range<usize>)>;
+
 /// A link on a terminal's screen ([`Kawoosh::term_link`]).
 struct TermLink {
     target: Target,
-    /// The columns of its row it covers.
-    cols: std::ops::Range<usize>,
+    /// The screen rows it covers and their columns: more than one when
+    /// a long line wrapped it.
+    rows: LinkCells,
     /// The address a program printed with it (OSC 8), where the text
     /// need not be it.
     uri: Option<String>,
@@ -77,6 +82,10 @@ pub struct Terminals {
     /// processes not yet: started on the next frame, once the command
     /// socket is up and `$EDITOR` can reach this window.
     pub pending: Vec<(TermId, Pending)>,
+    /// Kept terminals whose process ended (a `:!CMD`'s, [`Spawned::keep`]),
+    /// with how it did: the pane stays, its output there to read, and
+    /// every key is normal mode's — `r` runs the line again, `q` closes.
+    pub done: HashMap<TermId, Option<kawoosh_term::Exit>>,
 }
 
 /// What a terminal was started for: a command (none for the shell),
@@ -85,6 +94,9 @@ pub struct Terminals {
 pub struct Spawned {
     pub cmd: Option<String>,
     pub tool: Option<String>,
+    /// A `:!CMD`'s: the directory its line ran in. Its pane outlives
+    /// the process ([`Terminals::done`]), for `r` to run it there again.
+    pub keep: Option<PathBuf>,
 }
 
 /// A terminal to start: in `cwd`, the tool's command or the shell.
@@ -194,6 +206,81 @@ impl Kawoosh {
         self.spawn_terminal_as(None, cmd, cwd)
     }
 
+    /// `:!CMD`'s terminal: `cmd` in `cwd`, kept when it ends
+    /// ([`Spawned::keep`]).
+    pub fn spawn_bang(&mut self, cmd: &str, cwd: &Path) -> Option<TermId> {
+        let t = self.spawn_terminal(Some(cmd), Some(cwd))?;
+        self.terms.spawned.entry(t).or_default().keep = Some(cwd.to_path_buf());
+        Some(t)
+    }
+
+    /// Terminal `id`'s pty closed: its process is gone. A `:!`'s stays
+    /// in its pane with how it ended printed under its output, as
+    /// `*compile*` ends; any other's pane closes, keeping nothing.
+    pub fn term_closed(&mut self, id: TermId) {
+        self.domain_term_closed(id);
+        let keep = self
+            .terms
+            .spawned
+            .get(&id)
+            .is_some_and(|s| s.keep.is_some());
+        if keep && let Some(t) = self.terms.map.get_mut(&id) {
+            let exit = t.exit();
+            let status = exit
+                .as_ref()
+                .map_or_else(|| "ended".to_string(), ToString::to_string);
+            // Back on the main screen, the mouse and the cursor let go
+            // of: what a program left set is no one's now.
+            let mut tail = String::new();
+            if t.is_alt_screen() {
+                tail.push_str("\x1b[?1049l");
+            }
+            tail.push_str("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25l");
+            tail.push_str(&format!("\x1b[0m\r\n\x1b[2m[{status}]\x1b[0m"));
+            t.feed(tail.as_bytes());
+            t.scroll_to_bottom();
+            self.terms.done.insert(id, exit);
+            return;
+        }
+        if let Some(t) = self.terms.map.get_mut(&id) {
+            t.is_running();
+        }
+        let panes: Vec<PaneId> = self
+            .layout
+            .all_panes()
+            .into_iter()
+            .filter(|p| self.term_of(*p) == Some(id))
+            .collect();
+        for p in panes {
+            self.close_gone(p);
+        }
+        self.terms.map.remove(&id);
+    }
+
+    /// `terminal again` (`r` in a finished `:!` pane): its line run
+    /// again where it ran, in a new terminal in the same pane.
+    fn term_again(&mut self) {
+        let pane = self.layout.focused();
+        let Some(old) = self.term_of(pane) else {
+            return;
+        };
+        let Some(Spawned {
+            cmd: Some(cmd),
+            keep: Some(cwd),
+            ..
+        }) = self.terms.spawned.get(&old).cloned()
+        else {
+            self.ed.message = "terminal again: only in a finished `:!` pane".into();
+            return;
+        };
+        let Some(t) = self.spawn_bang(&cmd, &cwd) else {
+            return;
+        };
+        if let Some(c) = self.layout.panes.insert(pane, Content::Terminal(t)) {
+            self.drop_content(c);
+        }
+    }
+
     /// [`Kawoosh::spawn_terminal`] under a number reserved for it — a
     /// session's pane, made before its process.
     fn spawn_terminal_as(
@@ -297,7 +384,7 @@ impl Kawoosh {
                     id,
                     Spawned {
                         cmd: cmd.map(str::to_string),
-                        tool: None,
+                        ..Default::default()
                     },
                 );
                 self.io.watch_pty(id, reader, exited);
@@ -547,6 +634,13 @@ impl Kawoosh {
     /// `press` as kui delivered it, for kitty's keyboard protocol.
     pub(crate) fn term_key(&mut self, id: TermId, stroke: KeyStroke, press: &KeyPress) {
         let note = stroke.notation();
+        // No process to hear them: every key is normal mode's, as after
+        // the escape — `r` again, `q` closes, `<C-S-x>` copy mode.
+        if self.terms.done.contains_key(&id) {
+            let keys = self.terms.escape.take().unwrap_or_default();
+            self.term_escaped(id, &stroke, keys);
+            return;
+        }
         if let Some(keys) = self.terms.escape.take() {
             self.term_escaped(id, &stroke, keys);
             return;
@@ -609,6 +703,9 @@ impl Kawoosh {
     /// key when it asked for every key — and nothing's otherwise. Never
     /// while the escape is open, whose keys are kawoosh's.
     pub(crate) fn term_key_aside(&mut self, id: TermId, k: &KeyPress, up: bool) {
+        if self.terms.done.contains_key(&id) {
+            return;
+        }
         if up {
             let Some(i) = self.terms.held.iter().position(|h| h.same_key(k)) else {
                 return;
@@ -830,7 +927,8 @@ impl Kawoosh {
 
     /// The link at `(row, col)` of terminal `id`'s screen: the one a
     /// program printed there on purpose (OSC 8) first, else one found in
-    /// the row's text. A path in the text is looked for in the
+    /// the text of the line the row is part of — the rows a long line
+    /// wrapped onto joined, so a URL across the edge is whole. A path in the text is looked for in the
     /// terminal's directory, then the working directory.
     fn term_link(&self, id: TermId, row: usize, col: usize) -> Option<TermLink> {
         let t = self.terms.map.get(&id)?;
@@ -854,46 +952,45 @@ impl Kawoosh {
             };
             return Some(TermLink {
                 target,
-                cols: h.cols,
+                rows: h.rows,
                 uri: Some(h.uri),
                 bases,
             });
         }
-        // A column of the text is a character of the row's.
-        let text = t.row_text(row);
-        let at = text
-            .char_indices()
-            .nth(col)
-            .map(|(i, _)| i)
-            .unwrap_or(text.len());
-        let link = crate::links::link_at(&text, at)?;
+        let line = t.wrapped_line(row);
+        let text = &line.text;
+        let at = line
+            .char_at(row, col)
+            .and_then(|n| text.char_indices().nth(n))
+            .map_or(text.len(), |(i, _)| i);
+        let link = crate::links::link_at(text, at)?;
         let first = text[..link.span.start].chars().count();
-        let cols = first..first + text[link.span.clone()].chars().count();
+        let chars = first..first + text[link.span.clone()].chars().count();
         Some(TermLink {
             target: link.target,
-            cols,
+            rows: line.rows_of(chars, t.size().rows as usize),
             uri: None,
             bases,
         })
     }
 
     /// What a ⌘-click at `(row, col)` of terminal `id`'s screen would
-    /// open, for the hover to underline: the columns of a program's link
+    /// open, for the hover to underline: the cells of a program's link
     /// (OSC 8) and its address, since its text need not be it; or of a
     /// URL, or a path that names a file or a directory there, in the
     /// text.
-    pub(crate) fn location_cols(
+    pub(crate) fn location_cells(
         &self,
         id: TermId,
         row: usize,
         col: usize,
-    ) -> Option<(std::ops::Range<usize>, Option<String>)> {
+    ) -> Option<(LinkCells, Option<String>)> {
         let link = self.term_link(id, row, col)?;
         match &link.target {
-            _ if link.uri.is_some() => Some((link.cols, link.uri)),
-            Target::Url(_) | Target::Elsewhere(_) => Some((link.cols, None)),
+            _ if link.uri.is_some() => Some((link.rows, link.uri)),
+            Target::Url(_) | Target::Elsewhere(_) => Some((link.rows, None)),
             Target::Path { path, .. } => {
-                crate::links::resolve(path, &link.bases).map(|_| (link.cols, None))
+                crate::links::resolve(path, &link.bases).map(|_| (link.rows, None))
             }
         }
     }
@@ -992,10 +1089,16 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
                     }
                 };
                 let cwd = k.cwd.clone();
-                if let Some(t) = k.spawn_terminal(Some(&cmd), Some(&cwd)) {
+                if let Some(t) = k.spawn_bang(&cmd, &cwd) {
                     k.fill_or_split(SplitDir::V, Content::Terminal(t));
                 }
             },
+        ),
+        cmd(
+            Spec::new("terminal again")
+                .when(&["exited"])
+                .doc("the line a finished `:!` pane ran, run again in its place (`r` there)"),
+            |k, _| k.term_again(),
         ),
         cmd(
             Spec::new("scrollback").doc(

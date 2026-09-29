@@ -12,6 +12,8 @@ A terminal pane runs your shell, or any program, inside kawoosh, beside your buf
 | `t` in the launcher | a new split (`<C-w>v`, `<C-w>s`) or tab opens on the launcher; `t` there makes it a terminal |
 | `:!CMD` | CMD in a terminal below; `%` is the file, `%:h` its directory, `%:t` its name, quoted for the shell |
 
+A `:!CMD` pane stays when CMD ends, how it ended printed under its output (`[finished]`, `[exited with 2]`) and `DONE` on the status line. With no program left to hear them its keys are normal mode's: `r` runs the line again in the same pane and directory (`:terminal again`), `q` closes the pane, `<C-S-x>` makes the output a buffer. A shell, or a `:terminal CMD`, that ends takes its pane with it.
+
 A terminal opened from another terminal starts in that shell's directory; otherwise it starts in the working directory. Set `layout.new_pane = "terminal"` to make every bare split a terminal without asking.
 
 The shell is `terminal.shell`, or `$SHELL` when that is empty (`/bin/sh` without one, `%ComSpec%` on Windows). When a session is restored, each shell pane is started again in the directory it was left in; a terminal started with `:terminal CMD` is not, and scrollback is not kept.

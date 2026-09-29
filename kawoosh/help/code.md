@@ -139,7 +139,8 @@ buffer's own words are offered.
 buffer. The paths with line numbers in its output are locations:
 `<CR>` on one opens it, and `]q` `[q` (`:cnext`, `:cprev`) walk them
 from anywhere. `<C-c>` in `*compile*` stops the command and what it
-started (`:compile kill`).
+started (`:compile kill`), `r` runs it again where it ran (`:compile
+again`), and `q` closes it.
 
 `<leader>cc` is a bare `:compile`. It runs, in order of preference:
 

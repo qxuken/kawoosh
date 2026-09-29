@@ -1577,3 +1577,96 @@ fn the_escape_looks_past_a_binding_gated_off_here() {
     assert!(app.layout.tab().is_scroll(), "a strip, where `zz` centres");
     assert_eq!(app.ed.message, "", "`zz` ran, quietly");
 }
+
+/// The text of terminal `t`'s screen, a line a row.
+fn screen_text(app: &Kawoosh, t: u64) -> String {
+    let term = &app.terms.map[&t];
+    (0..term.size().rows as usize)
+        .map(|r| term.row_text(r).trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A `:!CMD` pane outlives its line: how it ended is printed under its
+/// output, the status says `DONE`, and its keys are normal mode's — `r`
+/// runs the line again where it ran, `q` closes the pane. A
+/// `:terminal CMD` that ends still takes its pane with it.
+#[cfg(unix)]
+#[test]
+fn a_bang_pane_stays_when_its_line_ends_and_r_runs_it_again() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-bang-kept-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut app = Kawoosh::from_file(&dir.join("a.txt"));
+    app.set_cwd(&dir);
+    app.ed.settings.set(
+        kawoosh_editor::Layer::Session,
+        "terminal.shell",
+        kawoosh_editor::Setting::Str("/bin/sh".into()),
+    );
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    let panes = app.layout.all_panes().len();
+    d.keys(
+        &mut app,
+        ":!echo x >> runs; echo RUN $(wc -l < runs); exit 3",
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    let t = app.term_of_focused().expect("a terminal pane");
+    let wait_done = |d: &mut Drive, app: &mut Kawoosh, t: u64| {
+        for _ in 0..300 {
+            d.frame(app);
+            if app.terms.done.contains_key(&t) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the line did not end: {}", screen_text(app, t));
+    };
+    wait_done(&mut d, &mut app, t);
+    d.frame(&mut app);
+    assert_eq!(app.term_of_focused(), Some(t), "the pane stayed");
+    let seen = screen_text(&app, t);
+    assert!(seen.contains("RUN 1"), "{seen}");
+    assert!(seen.contains("[exited with 3]"), "{seen}");
+    assert!(
+        d.core
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some("DONE")),
+        "the status says the line ended"
+    );
+
+    // `r`: the line again, in a new terminal in the same pane.
+    d.keys(&mut app, "r");
+    let again = app.term_of_focused().expect("still a terminal pane");
+    assert_ne!(again, t, "a new terminal");
+    assert!(!app.terms.map.contains_key(&t), "the old one let go of");
+    wait_done(&mut d, &mut app, again);
+    let seen = screen_text(&app, again);
+    assert!(seen.contains("RUN 2"), "ran again where it ran: {seen}");
+    assert_eq!(app.layout.all_panes().len(), panes + 1, "in the same pane");
+
+    // `q`: the pane closed.
+    d.keys(&mut app, "q");
+    d.frame(&mut app);
+    assert_eq!(app.layout.all_panes().len(), panes, "dismissed");
+    assert!(app.term_of_focused().is_none());
+    assert!(app.terms.map.is_empty() && app.terms.done.is_empty());
+
+    // A `:terminal CMD` is not kept.
+    d.keys(&mut app, ":terminal true");
+    d.key(&mut app, "enter", KeyMods::default());
+    let t = app.term_of_focused().expect("a terminal pane");
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if !app.terms.map.contains_key(&t) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!app.terms.map.contains_key(&t));
+    assert_eq!(app.layout.all_panes().len(), panes, "its pane went with it");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}

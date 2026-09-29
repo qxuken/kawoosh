@@ -33,6 +33,8 @@ pub const RECENT: usize = 10;
 pub struct Compile {
     pub buffer: Option<BufferId>,
     pub proc_id: u64,
+    /// What `*compile*` shows the run of, for `compile again`.
+    pub cmd: Option<String>,
     pub cwd: Option<PathBuf>,
     pub running: bool,
     /// The running command's, for `compile kill` (`<C-c>` in
@@ -462,6 +464,7 @@ impl Kawoosh {
             .find(|(_, b)| b.name == COMPILE_BUFFER)
             .map(|(id, _)| id);
         self.compile.buffer = buffer;
+        self.compile.cmd = Some(cmd.to_string());
         self.compile.cwd = cwd.clone();
         self.locations = Locations {
             buffer,
@@ -878,6 +881,16 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
             |k, ctx| match ctx.args.first().and_then(|a| a.parse::<usize>().ok()) {
                 Some(n) => k.compile_offered(n, true),
                 None => k.ed.message = "compile edit N: the Nth of :compile pick".into(),
+            },
+        ),
+        // `r` in `*compile*` (emacs's `g` in `*compilation*`): what it
+        // shows run again, stopped first if it still runs.
+        cmd(
+            Spec::new("compile again")
+                .doc("the command *compile* shows, run again where it ran (`r` there)"),
+            |k, _| match (k.compile.cmd.clone(), k.compile.cwd.clone()) {
+                (Some(cmd), Some(cwd)) => k.compile_in(&cmd, cwd),
+                _ => k.ed.message = "compile again: nothing compiled yet".into(),
             },
         ),
         // `<C-c>` in `*compile*` while it runs (emacs's `C-c C-k`);
