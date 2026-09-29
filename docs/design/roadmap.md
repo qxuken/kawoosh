@@ -2770,6 +2770,21 @@ In order — the bugs first, then what needs deciding:
     `settings_edit.rs`, `settings_pane.rs`, `lua/settings.lua`; the
     devtools tab gone. settings.md's "Built" says where it departed.
 
+74. **Where a pane opens** ([pane-placement.md](pane-placement.md)),
+    asked 2026-09-30: "everything that affects the buffer opens as
+    vertical split and everything that doesn't is not — tools by
+    default in their own column, but can be overridden; the terminal
+    its own column". A column is a subject and what is about it: a
+    pane made from the buffer and acting back on it — a list of
+    places, `*hover*`, `:undo` — opens under it in its column; every
+    other — a terminal, a tool, `*compile*`, the named text panes,
+    `:settings` and its kind — a column of its own. `Place` and
+    `Layout::open` the one door, the kind's place a table
+    (Decision 2); `place` on a tool (`dock = true` kept as its
+    spelling) and `terminal.place` the overrides, the launcher's
+    `<C-w>s t` the per-pane one. *73 is the VCS branch's
+    (`claude/vcs-integration-diffs-blame-59b439`), unmerged.*
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision
