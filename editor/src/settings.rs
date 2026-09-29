@@ -519,6 +519,25 @@ impl Settings {
         // after the file's name (docs/design/breadcrumbs.md);
         // `:breadcrumbs` flips one pane.
         defaults.set("editor.breadcrumbs", Setting::Bool(true));
+        // The status line's modules (docs/design/statusline.md): the
+        // names each side draws, in order — kawoosh's own (`mode`,
+        // `recording`, `path`, `keys`, `strip`, `selections`,
+        // `position`, `percent`), a `kawoosh.status` segment at
+        // `place = "statusline"` by its name, `...` for those no list
+        // names — and the path `relative` to the working directory,
+        // `absolute` (the home as `~`) or the file's `name`; cut from
+        // the left to the room the line leaves it.
+        let names =
+            |n: &[&str]| Setting::List(n.iter().map(|s| Setting::Str(s.to_string())).collect());
+        defaults.set(
+            "statusline.left",
+            names(&["mode", "recording", "path", "keys"]),
+        );
+        defaults.set(
+            "statusline.right",
+            names(&["...", "strip", "selections", "position", "percent"]),
+        );
+        defaults.set("statusline.path", Setting::Str("relative".into()));
         // The shell whose PATH the window's children get when it was
         // opened outside a terminal — from Finder, the Dock (kawoosh's
         // `shell_env`): a path to it, since a bare name is looked up on
@@ -598,6 +617,7 @@ impl Settings {
             ("launcher.start", words(&["normal", "insert"])),
             ("buffers.scope", words(&["tab", "all"])),
             ("tabs.directory", words(&["auto", "always", "never"])),
+            ("statusline.path", words(&["relative", "absolute", "name"])),
             ("editor.wrap", words(&["off", "word", "glyph"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
         ] {
@@ -1049,6 +1069,9 @@ mod tests {
                 "secrets.private_temp",
                 "secrets.reveal_secs",
                 "secrets.scan_max_kb",
+                "statusline.left",
+                "statusline.path",
+                "statusline.right",
                 "tabs.directory",
                 "tabstop",
                 "terminal.bell",

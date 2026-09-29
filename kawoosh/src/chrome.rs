@@ -456,6 +456,14 @@ impl Kawoosh {
     /// The segments `kawoosh.status` put at `place`, as blocks: each
     /// part's colour word the theme's.
     fn status_blocks(&self, ui: &mut Ui<'_>, place: &str) -> Vec<Block> {
+        self.status_segments(ui, place)
+            .into_iter()
+            .map(|(_, b)| b)
+            .collect()
+    }
+
+    /// The same, each by its name.
+    pub(crate) fn status_segments(&self, ui: &mut Ui<'_>, place: &str) -> Vec<(String, Block)> {
         let Some(rt) = &self.scripting.rt else {
             return Vec::new();
         };
@@ -463,8 +471,8 @@ impl Kawoosh {
         let pal = self.pal;
         rt.status(place)
             .into_iter()
-            .map(|s| Block {
-                parts: s
+            .map(|s| {
+                let parts = s
                     .parts
                     .into_iter()
                     .map(|(t, c)| {
@@ -478,10 +486,22 @@ impl Kawoosh {
                         };
                         (t, color)
                     })
-                    .collect(),
-                run: s.run,
+                    .collect();
+                (s.name, Block { parts, run: s.run })
             })
             .collect()
+    }
+}
+
+/// A directory's name cut as fish's prompt cuts it: to its first
+/// character, a leading dot kept with the one after it (`.claude` is
+/// `.c`).
+pub fn cut_component(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some('.') => chars.next().map_or(".".into(), |c| format!(".{c}")),
+        Some(c) => c.to_string(),
+        None => String::new(),
     }
 }
 
@@ -503,14 +523,10 @@ pub fn shorten_path(path: &str) -> (String, String) {
         let mut chars = part.chars();
         let sep = chars.next_back();
         let name = chars.as_str();
-        match chars.next() {
-            _ if i == 0 && name.len() > 1 && name.ends_with(':') => out.push_str(name),
-            Some('.') => {
-                out.push('.');
-                out.extend(chars.next());
-            }
-            Some(c) => out.push(c),
-            None => {}
+        if i == 0 && name.len() > 1 && name.ends_with(':') {
+            out.push_str(name);
+        } else {
+            out.push_str(&cut_component(name));
         }
         out.extend(sep);
     }

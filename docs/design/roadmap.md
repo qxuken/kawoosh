@@ -2703,6 +2703,18 @@ In order — the bugs first, then what needs deciding:
     `j` there 52 ms → 0.9, a still frame 26 → 0.8; a re-sort (`s`, or
     the walk sizing something in it) is still 12
     (`many_entries_cost` in `kawoosh/tests/du.rs`).
+69. ~~**The status line as modules, the path relative**, asked
+    2026-09-29: "i need a relative full path at the bottom. or better
+    let's also modularize statusline like neovim does … i have lots of
+    index.ts?x and i don't know where am i."~~ Landed 2026-09-29:
+    [statusline.md](statusline.md), decided and built — the line under
+    the panes is modules (`mode`, `recording`, `path`, `keys`, `strip`,
+    `selections`, `position`, `percent`) placed by `statusline.left`
+    and `statusline.right`, a `kawoosh.status` segment at `place =
+    "statusline"` one more by its name or where `...` stands; the path
+    relative to the working directory (`statusline.path`: `relative`,
+    `absolute`, `name`), cut from the left a directory at a time, fish's
+    way, only as far as the room the others leave needs.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

@@ -1754,6 +1754,25 @@ impl Runtime {
         out
     }
 
+    /// The names of the segments `kawoosh.status` put at `place`,
+    /// whatever they answer now: a status line module named in a list
+    /// is the segment's even while it shows nothing.
+    pub fn status_names(&self, place: &str) -> Vec<String> {
+        let Ok(all) = self
+            .lua
+            .globals()
+            .get::<Table>("kawoosh")
+            .and_then(|k| k.get::<Table>("_status"))
+        else {
+            return Vec::new();
+        };
+        all.pairs::<String, Table>()
+            .flatten()
+            .filter(|(_, t)| t.get::<String>("place").is_ok_and(|p| p == place))
+            .map(|(name, _)| name)
+            .collect()
+    }
+
     /// The shortest `every` a segment asked to be drawn at, seconds.
     pub fn status_every(&self) -> Option<f64> {
         let kawoosh = self.lua.globals().get::<Table>("kawoosh").ok()?;
