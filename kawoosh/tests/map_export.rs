@@ -115,7 +115,7 @@ fn the_keys_are_grouped_by_module() {
         ("gra", "lsp action"),
         ("gri", "lsp implementation"),
         ("grt", "lsp type definition"),
-        ("grf", "lsp format"),
+        ("grf", "format"),
         ("grs", "picker symbols"),
         ("grS", "picker workspace_symbols"),
         ("<leader>d", "diagnostics"),

@@ -14,6 +14,7 @@
 
 pub mod diagnostic;
 pub mod fs;
+pub mod line_diff;
 pub mod paths;
 pub mod version;
 

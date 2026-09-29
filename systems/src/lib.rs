@@ -3,6 +3,7 @@
 //! `wake` — and calls it after posting, so the parked loop draws.
 
 pub mod du;
+pub mod filter;
 pub mod fs;
 pub mod io;
 pub mod lsp;

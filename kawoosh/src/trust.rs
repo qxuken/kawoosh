@@ -95,9 +95,96 @@ pub struct Trust {
     /// The file the confirm is (or was last) up for under this working
     /// directory: what a bare `:trust` means first.
     pub asked: Option<PathBuf>,
+    /// The formatters allowed this run ([`format_key`]), mirrored into
+    /// the store when there is one.
+    formats: std::collections::HashSet<String>,
+}
+
+/// The record of formatter `tool` allowed to run unasked in `dir`
+/// (docs/design/formatters.md Decision 5): by path, not by hash — a
+/// reinstall changes the binary and should not ask again.
+pub fn format_key(tool: &str, dir: &Path) -> String {
+    format!("format:{tool}:{}", dir.display())
+}
+
+/// The directory a format record is for.
+fn format_key_dir(key: &str) -> Option<&Path> {
+    let rest = key.strip_prefix("format:")?;
+    Some(Path::new(rest.split_once(':')?.1))
 }
 
 impl Kawoosh {
+    /// Whether formatter `tool` may run unasked in `dir`.
+    pub(crate) fn format_allowed(&self, tool: &str, dir: &Path) -> bool {
+        let key = format_key(tool, dir);
+        self.trust.formats.contains(&key)
+            || self
+                .store
+                .as_ref()
+                .is_some_and(|s| s.get(NS, &key).is_some())
+    }
+
+    /// Records formatter `tool` as allowed to run unasked in `dir`.
+    pub(crate) fn allow_format(&mut self, tool: &str, dir: &Path) {
+        let key = format_key(tool, dir);
+        self.trust.formats.insert(key.clone());
+        if let Some(store) = &self.store
+            && let Err(e) = store.set(NS, &key, "allowed")
+        {
+            log::warn!("trust: {e}");
+        }
+    }
+
+    /// Forgets the format records for `dir` and under it (`tool` alone
+    /// when given); how many there were.
+    pub(crate) fn revoke_formats(&mut self, dir: &Path, tool: Option<&str>) -> usize {
+        let mut keys: Vec<String> = self.trust.formats.iter().cloned().collect();
+        if let Some(store) = &self.store {
+            keys.extend(
+                store
+                    .keys(NS)
+                    .into_iter()
+                    .filter(|k| k.starts_with("format:")),
+            );
+        }
+        keys.sort();
+        keys.dedup();
+        let mut n = 0;
+        for key in keys {
+            let under = format_key_dir(&key).is_some_and(|d| d.starts_with(dir));
+            let named = tool.is_none_or(|t| key.starts_with(&format!("format:{t}:")));
+            if !(under && named) {
+                continue;
+            }
+            self.trust.formats.remove(&key);
+            if let Some(store) = &self.store
+                && let Err(e) = store.del(NS, &key)
+            {
+                log::warn!("trust: {e}");
+            }
+            n += 1;
+        }
+        n
+    }
+
+    /// How many formatters are allowed under `dir`.
+    fn formats_allowed_under(&self, dir: &Path) -> usize {
+        let mut keys: Vec<String> = self.trust.formats.iter().cloned().collect();
+        if let Some(store) = &self.store {
+            keys.extend(
+                store
+                    .keys(NS)
+                    .into_iter()
+                    .filter(|k| k.starts_with("format:")),
+            );
+        }
+        keys.sort();
+        keys.dedup();
+        keys.iter()
+            .filter(|k| format_key_dir(k).is_some_and(|d| d.starts_with(dir)))
+            .count()
+    }
+
     /// The recorded hash for `path`, this run's first.
     fn trust_record(&self, path: &Path) -> Option<String> {
         if let Some(h) = self.trust.records.get(path) {
@@ -242,18 +329,29 @@ impl Kawoosh {
     fn trust_command(&mut self, args: &[String], query: bool) {
         let files = project_init_files(&self.cwd);
         if query {
+            let formats = self.formats_allowed_under(&self.cwd.clone());
+            let formats = match formats {
+                0 => String::new(),
+                1 => "1 formatter allowed".into(),
+                n => format!("{n} formatters allowed"),
+            };
             if files.is_empty() {
-                self.ed.message =
-                    format!("no {PROJECT_DIR}/{INIT_FILE} under {}", self.cwd.display());
+                self.ed.message = match formats.is_empty() {
+                    true => format!("no {PROJECT_DIR}/{INIT_FILE} under {}", self.cwd.display()),
+                    false => formats,
+                };
                 return;
             }
-            let parts: Vec<String> = files
+            let mut parts: Vec<String> = files
                 .iter()
                 .map(|p| {
                     let src = std::fs::read_to_string(p).unwrap_or_default();
                     format!("{} ({})", self.short_name(p), self.standing(p, &src).name())
                 })
                 .collect();
+            if !formats.is_empty() {
+                parts.push(formats);
+            }
             self.ed.message = parts.join(", ");
             return;
         }
@@ -272,7 +370,10 @@ impl Kawoosh {
                 } else {
                     project_init_candidates(&self.cwd)
                 };
-                let n = self.trust_revoke(&paths);
+                let mut n = self.trust_revoke(&paths);
+                if args.len() <= 1 {
+                    n += self.revoke_formats(&self.cwd.clone(), None);
+                }
                 self.ed.message = match n {
                     0 => "nothing was trusted".into(),
                     1 => "1 record revoked".into(),

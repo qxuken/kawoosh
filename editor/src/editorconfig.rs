@@ -183,7 +183,7 @@ impl Resolved {
     }
 
     /// The settings the properties make, one source per section that
-    /// said something — named as [`Prop::source`] names it — for the
+    /// said something — `editorconfig: ` and [`Prop::source`] — for the
     /// buffer's own tier ([`crate::settings::Scope::local`]):
     ///
     /// - `indent_style` → `expandtab`; `indent_size` → `shiftwidth`
@@ -196,7 +196,7 @@ impl Resolved {
     pub fn settings(&self) -> Vec<(String, Setting)> {
         let mut out: Vec<(String, Setting)> = Vec::new();
         let mut put = |p: &Prop, path: &str, v: Setting| {
-            let src = p.source();
+            let src = format!("editorconfig: {}", p.source());
             let i = match out.iter().position(|(s, _)| *s == src) {
                 Some(i) => i,
                 None => {
@@ -618,12 +618,18 @@ mod tests {
         assert_eq!(get("shiftwidth").map(|x| x.1), Some(Setting::Int(3)));
         assert_eq!(
             get("tabstop"),
-            Some(("/r/app/.editorconfig [*.ts]".to_string(), Setting::Int(3))),
+            Some((
+                "editorconfig: /r/app/.editorconfig [*.ts]".to_string(),
+                Setting::Int(3)
+            )),
             "tab_width is indent_size's when unsaid"
         );
         assert_eq!(
             get("expandtab"),
-            Some(("/r/.editorconfig [*]".to_string(), Setting::Bool(true)))
+            Some((
+                "editorconfig: /r/.editorconfig [*]".to_string(),
+                Setting::Bool(true)
+            ))
         );
         let make = resolve(Path::new("/r/Makefile"), &files).settings();
         assert!(

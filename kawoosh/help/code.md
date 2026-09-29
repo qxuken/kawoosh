@@ -88,7 +88,7 @@ return {
 | `gra` | code actions at the caret or over the selection, in a picker |
 | `gri` | go to the implementation; several are a list |
 | `grt` | go to the type definition |
-| `grf` | format the buffer (`:lsp format`) |
+| `grf` | format the buffer with its formatter ([formatting](#formatting)); in visual mode, the selection |
 | `grs` `grS` | the buffer's symbols, the workspace's, in a picker ([search](search.md#symbols-and-the-outline)) |
 | `<leader>oh` | inlay hints on or off for the session (`:lsp hints`) |
 | `<leader>ob` | breadcrumbs on or off for the pane (`:breadcrumbs`, [search](search.md#breadcrumbs)) |
@@ -132,6 +132,70 @@ buffer's own words are offered.
 | `<C-e>` | drop the completion |
 | `<C-Space>` | ask for completions now |
 | `<C-x>` | the candidates in a picker, with their kind, signature and documentation |
+
+## Formatting
+
+`:format` (`grf`) formats the buffer with its formatter: prettier, biome, stylua, clang-format, ruff, gofmt, taplo, shfmt, rustfmt, or the language server. The formatted text goes in as the lines that changed, as one undo step, so the caret stays where it was on lines the formatter did not touch.
+
+Which one formats a buffer is its `formatter` setting. The default, `auto`, is the formatter whose config file is nearest the file (a `.prettierrc`, a `"prettier"` key in `package.json`, `biome.json`, `stylua.toml`, `.clang-format`, `ruff.toml` or `[tool.ruff]` in `pyproject.toml`, `taplo.toml`), then one that always runs for the language (gofmt for Go), then the language server. Rust formats through rust-analyzer, which knows the crate's edition.
+
+```lua
+return {
+  language = {
+    typescript = { formatter = "biome", format_on_save = true },
+    go = { format_on_save = true },
+    rust = { formatter = { "rustfmt", "lsp" } },   -- tried in order
+  },
+}
+```
+
+| command | what |
+|---|---|
+| `:format` | format the buffer |
+| `:format NAME` | format it with that formatter |
+| `:format selection` | format the selection (`grf` in visual mode), with a formatter that can: prettier, stylua, clang-format |
+| `:format?` | which formatter, why, and the indent it uses |
+| `:format allow` | let the project's own formatter run on save (below) |
+| `:format revoke` | take that back |
+
+A project's own copy (`node_modules/.bin/prettier`) is used before one on your `PATH`.
+
+**On save.** With `format_on_save`, `:w` formats first and writes what the formatter made. If the formatter fails, or takes too long, or you type while it works, the file is written as it is and the message says why. `:w!` writes without formatting. `:wq` and `:wqa` quit once everything is written.
+
+**The project's own formatter.** A formatter in the project's `node_modules`, or one whose config is JavaScript (`prettier.config.js`), is code from the repository. `:format` runs it when you ask. It does not run on save, or to read the indent, until you allow it: the first save asks, and `:format allow` does the same. `:trust?` counts the formatters allowed, and `:trust revoke` forgets them.
+
+**Indentation.** A formatter decides the indentation of the files it formats, so kawoosh asks it: it formats a few lines with one nested block and reads the indent from the answer. That indent applies to the buffer over its `.editorconfig`, so `<Tab>` and `>>` indent as the formatter will. `:set tabstop?` names it (`prettier: …/.prettierrc`); saving the config reads it again.
+
+### Your own formatters
+
+A formatter is data under `format.NAME`. The shipped ones can be changed a key at a time, and new ones added:
+
+```lua
+return {
+  format = {
+    prettier = { args = { "--stdin-filepath", "{path}", "--no-semi" } },
+    shfmt = { when = "always" },                 -- format every shell script
+    black = {
+      cmd = "black", args = { "-q", "--stdin-filename", "{path}", "-" },
+      languages = { "python" }, when = { "pyproject.toml:tool.black" },
+      probe = { python = "if a:\n  b\n" },
+    },
+  },
+}
+```
+
+| key | what |
+|---|---|
+| `cmd`, `args` | the program, reading the text on stdin and writing it formatted on stdout; `{path}` is the file's path |
+| `languages` | the languages it formats |
+| `when` | the files that say a project uses it, looked for from the file's folder up (`FILE:KEY` for a key in a JSON file or a TOML table), or `"always"`, or `"never"` (only when named) |
+| `node` | look in the project's `node_modules/.bin` first |
+| `range` | the arguments that format a range: `{start}` `{end}` `{length}` in bytes, `{start_utf16}` `{end_utf16}` in UTF-16 units |
+| `probe` | a snippet per language whose formatting shows the indent |
+| `timeout_ms` | how long it may take (5000) |
+| `enabled` | `false` to turn it off |
+
+A formatter written in Lua is in [lua](lua.md#formatters).
 
 ## Compile commands
 

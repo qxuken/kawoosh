@@ -89,6 +89,32 @@ return {
 
 `kawoosh.open(path, { line = ..., col = ..., split = "vsplit" | "split" | "tab" })` opens a file in an editor pane.
 
+## Formatters
+
+`kawoosh.formatter(name, def)` adds a formatter ([code](code.md#formatting)): `def` has the keys of `format.NAME` (`cmd`, `args`, `languages`, `when`, …), and your settings file still overrides them. For a tool that does not read stdin and write stdout, or one that is slow, give `run` instead of `cmd`:
+
+```lua
+kawoosh.formatter("pg_format", {
+  languages = { "sql" },
+  timeout_ms = 20000,
+  run = function(ctx, text, done)
+    local out = {}
+    kawoosh.spawn("pg_format -", {
+      cwd = ctx.cwd,
+      stdin = text,
+      on_lines = function(lines) for _, l in ipairs(lines) do out[#out + 1] = l end end,
+      on_exit = function(code)
+        if code == 0 then done(table.concat(out, "\n") .. "\n") else done(nil, out[1] or "failed") end
+      end,
+    })
+  end,
+})
+```
+
+`run(ctx, text, done)` gets the buffer's text. It calls `done(text)` with the formatted text, or `done(nil, why)`, whenever it is ready. A quick one can `return` the text instead. `ctx` has `path`, `language`, `buffer`, `cwd`, and `from` and `to` (bytes, from 0) when formatting a selection. The formatter's `timeout_ms` (5 seconds unless it says) applies either way.
+
+`kawoosh.format(buffer, { with = "name" })` formats a buffer (the current one when `buffer` is nil) with its formatter or the one named.
+
 ## Files and processes
 
 `kawoosh.fs` works on paths as you would write them (`~/x`, `../y`), relative to the working directory, and on a remote host's paths too (see [remote](remote.md)). A failed operation raises an error naming the path.
