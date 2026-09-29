@@ -18,10 +18,23 @@ use kui_native::{Align, FloatConfig, NodeSpec, TextStyle, Ui};
 use crate::app::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
 
-/// Rows per column before the list folds into another column.
+/// Rows per column before the list folds into another column, fewer
+/// when the window holds fewer.
 const PER_COLUMN: usize = 8;
-/// The most columns the root listing spreads over.
+/// The columns the root listing spreads over in a window tall enough;
+/// a shorter one takes more, as many as its width holds.
 const ROOT_COLUMNS: usize = 4;
+/// The card's padding, across and down.
+const CARD_PAD_X: f32 = 10.0;
+const CARD_PAD_Y: f32 = 6.0;
+/// Between the card's title, hint and columns.
+const CARD_GAP: f32 = 4.0;
+/// Between the columns, the rows, and a row's key and command.
+const COLUMN_GAP: f32 = 18.0;
+const ROW_GAP: f32 = 2.0;
+const KEY_GAP: f32 = 8.0;
+/// The bottom-right stack's distance from the window's right edge.
+const STACK_INSET: f32 = 12.0;
 
 /// How a key reads in the list: `SPC`, `RET`, `ESC`, `TAB`, a chord
 /// without its brackets (`C-w`) and with its shift spelled out
@@ -159,6 +172,12 @@ impl Kawoosh {
         (!rows.is_empty()).then_some((keys, mode, rows))
     }
 
+    /// How far the bottom-right stack's foot is above the window's
+    /// bottom: over the status line and the message line.
+    fn stack_foot(&self) -> f32 {
+        2.0 * self.chrome.strip_h + 8.0
+    }
+
     /// The bottom-right stack: the notification corner, then the
     /// which-key under it. One float, so they stack instead of
     /// covering each other.
@@ -173,7 +192,7 @@ impl Kawoosh {
                 .float(
                     FloatConfig::viewport()
                         .inside(Align::End, Align::End)
-                        .offset(-12.0, -(2.0 * self.chrome.strip_h + 8.0)),
+                        .offset(-STACK_INSET, -self.stack_foot()),
                 )
                 .gap(8.0)
                 .cross_align(Align::End),
@@ -229,6 +248,29 @@ impl Kawoosh {
                 pretty(k)
             }
         };
+        let rows: Vec<Row> = rows
+            .iter()
+            .map(|(k, b, under)| match b {
+                Some(b) => Row {
+                    key: show(k),
+                    what: b.line(),
+                    group: false,
+                },
+                None => {
+                    let mut deeper = keys.to_vec();
+                    deeper.push((*k).clone());
+                    Row {
+                        key: show(k),
+                        what: match km.group_name(&deeper) {
+                            Some(name) => format!("+{name}"),
+                            None => format!("+{under}"),
+                        },
+                        group: true,
+                    }
+                }
+            })
+            .collect();
+        let rows = fold_numbered(rows);
         let mut title: String = keys.iter().map(|k| pretty(k)).collect::<Vec<_>>().join(" ");
         if title.is_empty() {
             title = format!("{} mode", mode.word());
@@ -236,49 +278,76 @@ impl Kawoosh {
         if let Some(name) = km.group_name(keys) {
             title = format!("{title} · {name}");
         }
-        let per_column = if keys.is_empty() {
+        let key_style = TextStyle::new(small).color(pal.accent).nowrap();
+        let what_style = TextStyle::new(small).color(pal.fg).nowrap();
+        let group_style = TextStyle::new(small).color(pal.dim).nowrap();
+        let title_style = TextStyle::new(small).color(pal.dim).nowrap();
+        let hint_style = TextStyle::new(small - 1.0).color(pal.dim).nowrap();
+        let hint = keys.is_empty().then_some("also :keys n · i · v · o");
+
+        // The card fits the window: as many rows to a column as its
+        // height holds between the tab strip and the stack's foot, and
+        // as many columns as its width holds; what is past them is
+        // counted in the title.
+        let vp = ui.viewport();
+        let row_h = ui.measure_text("Mg", &key_style, None).height;
+        let mut head_h = CARD_PAD_Y * 2.0 + 2.0 + ui.measure_text("Mg", &title_style, None).height;
+        if let Some(hint) = hint {
+            head_h += CARD_GAP + ui.measure_text(hint, &hint_style, None).height;
+        }
+        let room_h = vp.h - self.stack_foot() - self.chrome.tab_h - 8.0 - head_h - CARD_GAP;
+        let fit = (((room_h + ROW_GAP) / (row_h + ROW_GAP)).floor() as usize).max(1);
+        let wanted = if keys.is_empty() {
             rows.len().div_ceil(ROOT_COLUMNS).max(PER_COLUMN)
         } else {
             PER_COLUMN
         };
-        let key_style = TextStyle::new(small).color(pal.accent).nowrap();
-        let what_style = TextStyle::new(small).color(pal.fg).nowrap();
-        let group_style = TextStyle::new(small).color(pal.dim).nowrap();
+        let per_column = wanted.min(fit);
+        let room_w = vp.w - 2.0 * STACK_INSET - CARD_PAD_X * 2.0 - 2.0;
+        let mut used = 0.0;
+        let mut shown = 0;
+        for chunk in rows.chunks(per_column) {
+            let w = chunk
+                .iter()
+                .map(|r| {
+                    let what = if r.group { &group_style } else { &what_style };
+                    ui.measure_text(&r.key, &key_style, None).width
+                        + KEY_GAP
+                        + ui.measure_text(&r.what, what, None).width
+                })
+                .fold(0.0, f32::max);
+            let next = if shown == 0 { w } else { used + COLUMN_GAP + w };
+            if shown > 0 && next > room_w {
+                break;
+            }
+            used = next;
+            shown += chunk.len();
+        }
+        if shown < rows.len() {
+            title = format!("{title} · {} more", rows.len() - shown);
+        }
         ui.with_keyed(
             "whichkey",
             NodeSpec::column()
                 .bg(pal.panel)
                 .border(1.0, pal.border)
                 .radius(4.0)
-                .pad_xy(10.0, 6.0)
-                .gap(4.0),
+                .pad_xy(CARD_PAD_X, CARD_PAD_Y)
+                .gap(CARD_GAP),
             |ui| {
-                ui.text(&title, TextStyle::new(small).color(pal.dim).nowrap());
+                ui.text(&title, title_style);
                 // The root says how to see the other modes' roots.
-                if keys.is_empty() {
-                    ui.text(
-                        "also :keys n · i · v · o",
-                        TextStyle::new(small - 1.0).color(pal.dim).nowrap(),
-                    );
+                if let Some(hint) = hint {
+                    ui.text(hint, hint_style);
                 }
-                ui.with_keyed("cols", NodeSpec::row().gap(18.0), |ui| {
-                    for (ci, chunk) in rows.chunks(per_column).enumerate() {
-                        ui.with_indexed(ci as u64, NodeSpec::column().gap(2.0), |ui| {
-                            for (ri, (k, b, under)) in chunk.iter().enumerate() {
-                                ui.with_indexed(ri as u64, NodeSpec::row().gap(8.0), |ui| {
-                                    ui.text(&show(k), key_style);
-                                    match b {
-                                        Some(b) => ui.text(&b.line(), what_style),
-                                        None => {
-                                            let mut deeper = keys.to_vec();
-                                            deeper.push((*k).clone());
-                                            let what = match km.group_name(&deeper) {
-                                                Some(name) => format!("+{name}"),
-                                                None => format!("+{under}"),
-                                            };
-                                            ui.text(&what, group_style);
-                                        }
-                                    }
+                ui.with_keyed("cols", NodeSpec::row().gap(COLUMN_GAP), |ui| {
+                    for (ci, chunk) in rows[..shown].chunks(per_column).enumerate() {
+                        ui.with_indexed(ci as u64, NodeSpec::column().gap(ROW_GAP), |ui| {
+                            for (ri, r) in chunk.iter().enumerate() {
+                                ui.with_indexed(ri as u64, NodeSpec::row().gap(KEY_GAP), |ui| {
+                                    ui.text(&r.key, key_style);
+                                    let what = if r.group { group_style } else { what_style };
+                                    ui.text(&r.what, what);
                                 });
                             }
                         });
@@ -287,6 +356,64 @@ impl Kawoosh {
             },
         );
     }
+}
+
+/// A row of the card as it reads: the key, and its command's line or
+/// its group's `+name`.
+struct Row {
+    key: String,
+    what: String,
+    group: bool,
+}
+
+/// A run of keys that differ by a digit counting up, each running a
+/// command that differs by the same digit — `A-1 memory pin 1` to
+/// `A-9 memory pin 9` — is one row, `A-1…9 memory pin 1…9`: the
+/// pinned memories and the panes by number are three runs of nine at
+/// the root.
+fn fold_numbered(rows: Vec<Row>) -> Vec<Row> {
+    // The stem before a last digit, and the digit.
+    fn split(s: &str) -> Option<(&str, u32)> {
+        let d = s.chars().last()?.to_digit(10)?;
+        Some((&s[..s.len() - 1], d))
+    }
+    // Row `r` continues a run from `first` at `d0`, `n` rows along.
+    let follows = |first: &Row, r: &Row, n: u32| -> bool {
+        let (Some((ks, d0)), Some((ws, w0))) = (split(&first.key), split(&first.what)) else {
+            return false;
+        };
+        !first.group
+            && !r.group
+            && d0 == w0
+            && split(&r.key) == Some((ks, d0 + n))
+            && split(&r.what) == Some((ws, d0 + n))
+    };
+    let mut out = Vec::with_capacity(rows.len());
+    let mut rows = rows.into_iter().peekable();
+    while let Some(first) = rows.next() {
+        let mut last = None;
+        let mut n = 1;
+        while let Some(r) = rows.next_if(|r| follows(&first, r, n)) {
+            last = Some(r);
+            n += 1;
+        }
+        match last {
+            Some(last) if n >= 3 => {
+                let d = last.key.chars().last().unwrap_or_default();
+                out.push(Row {
+                    key: format!("{}…{d}", first.key),
+                    what: format!("{}…{d}", first.what),
+                    group: false,
+                });
+            }
+            Some(last) => {
+                out.push(first);
+                out.push(last);
+            }
+            None => out.push(first),
+        }
+    }
+    out
 }
 
 pub(crate) fn commands() -> Vec<ShellCommand> {

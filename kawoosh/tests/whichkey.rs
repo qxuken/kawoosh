@@ -36,7 +36,7 @@ fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
 #[test]
 fn a_which_key_lists_what_can_follow_and_a_setting_hides_it() {
     let mut app = Kawoosh::new("t", "a\nb");
-    let mut d = Drive::new(900.0, 500.0);
+    let mut d = Drive::new(1600.0, 1200.0);
     d.frame(&mut app);
     assert!(texts(&d).is_empty(), "nothing open, nothing shown");
     // The leader: its groups by name, its single keys with their
@@ -208,4 +208,41 @@ fn a_which_key_lists_a_places_own_keys_only_there() {
     d.keys(&mut app, "]");
     let t = texts(&d);
     assert!(!has(&t, "z"), "no `]z` here: {t:?}");
+}
+
+/// The card fits the window (reported 2026-09-29: the root ran past
+/// the window's top): its columns are as tall as the window holds and
+/// as many as its width holds, what is past them counted in the title,
+/// and a run of numbered keys — `<A-1>`…`<A-9>`, `memory pin 1`…`9` —
+/// is one row.
+#[test]
+fn a_which_key_fits_the_window_and_folds_numbered_runs() {
+    let mut app = Kawoosh::new("t", "a\nb");
+    let mut d = Drive::new(700.0, 360.0);
+    d.frame(&mut app);
+    d.keys(&mut app, " ?");
+    let t = texts(&d);
+    let card = d.rect("whichkey").expect("the root card");
+    assert!(
+        card.y >= 0.0 && card.x >= 0.0 && card.y + card.h <= 360.0 && card.x + card.w <= 700.0,
+        "inside the window: {card:?}"
+    );
+    assert!(
+        t.iter()
+            .any(|x| x.starts_with("normal mode · ") && x.ends_with(" more")),
+        "what does not fit is counted: {t:?}"
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    // A window wide and tall enough lists every key, the runs folded.
+    let mut d = Drive::new(1600.0, 1200.0);
+    d.frame(&mut app);
+    d.keys(&mut app, " ?");
+    let t = texts(&d);
+    assert!(has(&t, "normal mode"), "nothing past the card: {t:?}");
+    assert!(has(&t, "A-1…9") && has(&t, "memory pin 1…9"), "{t:?}");
+    assert!(!has(&t, "A-5") && !has(&t, "memory pin 5"), "{t:?}");
+    assert!(
+        has(&t, "D-0") && has(&t, "font reset"),
+        "not part of the run: {t:?}"
+    );
 }

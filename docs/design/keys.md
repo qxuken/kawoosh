@@ -468,7 +468,12 @@ sequence resolves, with no delay to tune. `:keys` — `<leader>?`, as the
 neovim config had it — shows the root, every first key of the mode in
 a few columns, until the next press; `:keys i`, `:keys v`, `:keys o`
 show another mode's (insert mode's alone, since its lookup does not
-fall through to normal mode's). `whichkey = false` in `settings.lua`
+fall through to normal mode's). The card fits the window: a column is
+as tall as the window holds, there are as many columns as its width
+holds, and what is past them is counted in the title (`normal mode ·
+15 more`); a run of keys counting up a digit to commands counting up
+the same digit is one row (`A-1…9 memory pin 1…9`, `D-1…9 pane goto
+1…9`). `whichkey = false` in `settings.lua`
 (`:set -whichkey`) turns it off, and so does its switch in the
 Settings tab (`:settings`), where every boolean of the effective table
 is a click that flips it for the session.
