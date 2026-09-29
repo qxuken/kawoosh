@@ -710,8 +710,10 @@ impl Registry {
     /// is consumed into the name — `memory` + `[forget, k]` is `memory
     /// forget` + `[k]`, `delete` + `[to, end]` is `delete to end` — a
     /// marker on any of those words setting the form (`:memory clear!`
-    /// and `:memory! clear` alike). A name nothing is known by stays
-    /// as written, for the shell to answer.
+    /// and `:memory! clear` alike). A subcommand's alias is resolved as
+    /// its words are consumed — `strip` + `[centre]` is `strip
+    /// center`. A name nothing is known by stays as written, for the
+    /// shell to answer.
     pub fn resolve(&self, name: &str, args: &[String]) -> Invocation {
         let (head, mut form) = Form::split(name);
         let mut name = self.canonical(head).to_string();
@@ -719,6 +721,7 @@ impl Registry {
         while let Some(word) = args.get(i) {
             let (w, f) = Form::split(word);
             let sub = format!("{name} {w}");
+            let sub = self.canonical(&sub).to_string();
             if !self.is_name(&sub) {
                 break;
             }
@@ -780,6 +783,17 @@ mod tests {
         assert_eq!(r.resolve("history", &s(&["clear!"])).form, Form::Bang);
         assert_eq!(r.resolve("history!", &s(&["clear"])).form, Form::Bang);
         assert_eq!(r.resolve("history!", &s(&["clear"])).name, "history clear");
+        // A subcommand's alias, consumed word by word, and on from it.
+        let mut r2 = reg();
+        r2.declare(Spec::new("history wipe out").alias(&["history nuke"]));
+        assert_eq!(
+            r2.resolve("hist", &s(&["nuke!", "x"])),
+            Invocation {
+                name: "history wipe out".into(),
+                form: Form::Bang,
+                args: s(&["x"])
+            }
+        );
         // A word that is no subcommand is an argument.
         assert_eq!(
             r.resolve("history", &s(&["nope", "x"])).args,

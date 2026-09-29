@@ -15,6 +15,13 @@ Each layer overrides the ones above it:
 
 Your files live in `~/.config/kawoosh/` (or `$XDG_CONFIG_HOME/kawoosh/`): `settings.lua` and `init.lua`. `$KAWOOSH_SETTINGS` and `$KAWOOSH_INIT` point elsewhere.
 
+| command | opens |
+|---|---|
+| `:settings user` (or `:settings global`) | your `settings.lua` |
+| `:settings project` | the `.kawoosh/settings.lua` nearest the working directory |
+
+A file that does not exist yet opens as a template at its path (the project's in the working directory), unsaved: `:w` creates it, `.kawoosh/` included.
+
 Tables merge key by key, so a project that sets `lsp.rust.cmd` keeps the rest of your `lsp` table. Anything else, a list included, replaces the value below it. `:cd` swaps the project layer for the new directory's, and leaves what you `:set` alone.
 
 ## Writing settings
