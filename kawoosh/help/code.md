@@ -8,8 +8,8 @@ completion), compile commands, and the syntax tree.
 
 Highlighting comes from tree-sitter grammars built into kawoosh:
 Rust, TOML, CSS, JavaScript, TypeScript, TSX, Go and `go.mod`, Lua,
-Bash, Nushell, C, C++, Python, JSON, JSONC, YAML, SQL, diffs, git
-commit messages and Markdown, with regular expressions and JSDoc
+Bash, Nushell, C, C++, Python, Scheme, JSON, JSONC, YAML, SQL, diffs,
+git commit messages and Markdown, with regular expressions and JSDoc
 highlighted inside the languages that hold them. A file's language is
 chosen by its extension, its name or its shebang line.
 

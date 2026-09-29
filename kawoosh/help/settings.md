@@ -97,7 +97,7 @@ Kawoosh ships these, and yours override them a key at a time:
 
 | languages | ships |
 |---|---|
-| javascript, typescript, tsx, json, jsonc, css, yaml, markdown, lua | `tabstop = 2` |
+| javascript, typescript, tsx, json, jsonc, css, yaml, markdown, lua, scheme | `tabstop = 2` |
 | go, gomod | tabs (`expandtab = false`), 4 wide |
 | markdown, diff, gitcommit | keep trailing spaces |
 

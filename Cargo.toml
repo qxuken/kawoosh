@@ -58,6 +58,7 @@ tree-sitter-gitcommit = "0.5"
 tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "2e886870578eeba1927a2dc4bd2e2b3f598c5f9a" }
 tree-sitter-jsdoc = "0.25"
 tree-sitter-md = "0.5"
+tree-sitter-scheme = "0.24"
 lsp-types = "0.97"
 rusqlite = { version = "0.40", features = ["bundled"] }
 blake3 = "1"

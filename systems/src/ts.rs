@@ -1296,6 +1296,19 @@ mod tests {
                 "CREATE TABLE t (id int);\n",
                 &["0 table t", "1 column id"],
             ),
+            (
+                "scheme",
+                "(define-library (my lib)\n  (begin\n    (define (f x) (define y 1) y)\n    (define g (lambda () 1))\n    (define n 2)\n    (define-syntax swap! (syntax-rules () ((_ a b) 1)))\n    (define-record-type point (make-point x) point? (x point-x))))\n",
+                &[
+                    "0 module (my lib)",
+                    "1 function f",
+                    "2 variable y",
+                    "1 function g",
+                    "1 variable n",
+                    "1 macro swap!",
+                    "1 struct point",
+                ],
+            ),
         ];
         for (language, src, want) in cases {
             assert_eq!(outline_lines(language, src), *want, "{language}");
@@ -1570,6 +1583,26 @@ mod tests {
                     ("// c", Token::Comment),
                 ],
             ),
+            // scheme: a list's head is a call, a form's name a keyword,
+            // a quoted datum a constant; a named let's name is a
+            // procedure, a record's field a property.
+            (
+                "scheme",
+                "; c\n(define (square n) (* n n))\n(let loop ((i 0)) (display \"s\"))\n(car '(sym) #t 1.5)\n(define-record-type point (make-point px) point? (px point-x))\n",
+                &[
+                    ("; c", Token::Comment),
+                    ("define", Token::Keyword),
+                    ("square", Token::Function),
+                    ("loop", Token::Function),
+                    ("display", Token::Function),
+                    ("\"s\"", Token::String),
+                    ("sym", Token::Constant),
+                    ("#t", Token::Constant),
+                    ("1.5", Token::Number),
+                    ("define-record-type", Token::Keyword),
+                    ("px point-x", Token::Property),
+                ],
+            ),
             // markdown: the block grammar's own — a heading, a list
             // marker; the paragraph's inside is the inline grammar's,
             // an injection (the next test).
@@ -1607,6 +1640,37 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    /// A name a Scheme form binds — a lambda's formals, a `let`'s or a
+    /// `do`'s bindings, `let-values`' — heads a list but is no call: it
+    /// is not painted a function, where a call beside it is.
+    #[test]
+    fn scheme_bindings_are_not_calls() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let src = "(lambda (arg rest) (f arg))\n(let* ((bound 1)) (g bound))\n(let loop ((i 0)) (h i))\n(do ((step 0 (+ step 1))) ((= step 3)))\n(let-values (((q r) (floor/ 7 2))) q)\n(case-lambda ((one) one) ((a b) a))\n";
+        let buf = Buffer::new("t", src);
+        let job = Job {
+            buffer: BufferId::default(),
+            language: "scheme".into(),
+            snapshot: buf.snapshot(),
+            edits: None,
+        };
+        let a = highlight(&mut parser, &mut g, &mut Parsed::default(), &job).update();
+        let at = |needle: &str| {
+            let o = src.find(needle).unwrap();
+            a.runs
+                .iter()
+                .find(|r| r.range.contains(&o))
+                .map_or(Token::Plain, |r| Token::from_style(r.style))
+        };
+        for bound in ["arg rest", "bound 1", "i 0", "step 0", "q r", "one)", "a b"] {
+            assert_eq!(at(bound), Token::Plain, "{bound:?}");
+        }
+        for call in ["f arg", "g bound", "h i", "floor/"] {
+            assert_eq!(at(call), Token::Function, "{call:?}");
+        }
     }
 
     /// A language inside another: markdown's paragraphs are its inline

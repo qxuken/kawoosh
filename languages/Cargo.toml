@@ -14,7 +14,7 @@ repository.workspace = true
 default = [
     "rust", "toml", "css", "javascript", "typescript", "go", "lua",
     "bash", "nu", "c", "cpp", "python", "json", "yaml", "sql",
-    "regex", "diff", "gitcommit", "gomod", "jsdoc", "markdown",
+    "regex", "diff", "gitcommit", "gomod", "jsdoc", "markdown", "scheme",
 ]
 rust = ["dep:tree-sitter-rust"]
 toml = ["dep:tree-sitter-toml-ng"]
@@ -41,6 +41,7 @@ gomod = ["dep:tree-sitter-gomod"]
 jsdoc = ["dep:tree-sitter-jsdoc"]
 # The block grammar and the inline one it injects.
 markdown = ["dep:tree-sitter-md"]
+scheme = ["dep:tree-sitter-scheme"]
 
 [dependencies]
 log.workspace = true
@@ -69,3 +70,4 @@ tree-sitter-gitcommit = { workspace = true, optional = true }
 tree-sitter-gomod = { workspace = true, optional = true }
 tree-sitter-jsdoc = { workspace = true, optional = true }
 tree-sitter-md = { workspace = true, optional = true }
+tree-sitter-scheme = { workspace = true, optional = true }
