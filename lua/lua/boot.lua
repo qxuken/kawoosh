@@ -571,7 +571,9 @@ local function field_node(view_name, env, opts)
   end
   local t = env.theme
   local size = opts.size or 13
-  local style = { family = "mono", size = size }
+  -- One line, whatever its length: never wrapped, so no second row is
+  -- drawn over what is under the field.
+  local style = { family = "mono", size = size, wrap = "none" }
   local line = st.text
   local focused = st.focused
   local insert = st.mode == "insert"
@@ -624,6 +626,23 @@ local function field_node(view_name, env, opts)
     return out
   end
   local row_h = size + 6
+  -- A line wider than the field scrolls sideways under it, as little
+  -- as keeps the caret in view — the bar, or the block's character (a
+  -- space past the end) — from where the last frame left it.
+  local label = "field:" .. full
+  local g = env.scroll_geometry(label)
+  if focused and g then
+    local off = g.offset.x
+    local x = env.measure_text(line:sub(1, st.caret), style).width
+    local w = 2
+    if not insert then
+      local glyph = line:sub(st.caret + 1, st.caret + char_len(line, st.caret + 1))
+      w = env.measure_text(glyph ~= "" and glyph or " ", style).width
+    end
+    local want = off
+    if x < off then want = x elseif x + w > off + g.w then want = x + w - g.w end
+    if want ~= off then env.set_scroll(label, want, 0) end
+  end
   local children = {}
   local function push(node) children[#children + 1] = node end
   if insert and focused then
@@ -647,26 +666,34 @@ local function field_node(view_name, env, opts)
       local glyph = line:sub(block_lo + 1, block_hi)
       local h = env.measure_text(glyph, style).height
       push(row {
-        float = { dx = env.measure_text(line:sub(1, block_lo), style).width, dy = (row_h - h) / 2 },
+        float = { dx = env.measure_text(line:sub(1, block_lo), style).width, dy = (row_h - h) / 2,
+                  clip = true },
         text({ { glyph, bg = t.accent, color = t.bg } }, style),
       })
     end
   end
   if #line == 0 and not focused and opts.placeholder then
-    push(text(opts.placeholder, { family = "mono", size = size, color = t.muted }))
+    push(text(opts.placeholder, { family = "mono", size = size, color = t.muted, wrap = "none" }))
   end
-  local props = {
-    key = "field:" .. full,
+  -- The line at its own width, however wide, in a row that scrolls it
+  -- (with no bar: the caret says where it is).
+  local line_row = row {
+    min_width = "fit",
     height = row_h,
     cross_align = "center",
-    on_click = { kind = "field", field = full },
     role = "line",
     caret = focused and st.caret or nil,
     label = opts.label or opts.name,
   }
-  local node = row(props)
-  for _, c in ipairs(children) do node[#node + 1] = c end
-  return node
+  for _, c in ipairs(children) do line_row[#line_row + 1] = c end
+  return row {
+    key = label,
+    height = row_h,
+    scroll_x = true,
+    scrollbar = "hidden",
+    on_click = { kind = "field", field = full },
+    line_row,
+  }
 end
 
 -- kawoosh.field_text(view, name): a view's field's line, "" before it
