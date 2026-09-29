@@ -898,7 +898,7 @@ impl Kawoosh {
                     self.scripting.watches.values().flatten().cloned().collect();
                 all.sort();
                 all.dedup();
-                let (wake, beat) = (self.wake.clone(), self.beat.clone());
+                let (wake, beat) = (self.wake.named("lua watch"), self.beat.clone());
                 self.scripting
                     .watcher
                     .get_or_insert_with(|| kawoosh_systems::watch::Watcher::spawn(wake, beat))

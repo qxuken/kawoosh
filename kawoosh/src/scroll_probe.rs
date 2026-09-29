@@ -101,7 +101,7 @@ impl Kawoosh {
             return;
         };
         p.frame += 1;
-        ui.request_frame();
+        crate::frames::request(ui, "scroll probe");
         // The frame just drawn is the last press's (the first, `gg`'s, left out).
         let total = ui.core().stats.total;
         if p.pressed > 1 && total > p.seen {

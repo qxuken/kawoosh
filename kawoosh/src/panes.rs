@@ -160,7 +160,7 @@ impl Kawoosh {
         // one more frame, or a line typed before it (a paste, keys
         // faster than frames) waits for the next key to scroll.
         if keyed && geometry.is_none() {
-            ui.request_frame();
+            crate::frames::request(ui, "field geometry");
         }
         let want = geometry.filter(|_| keyed).map(|g| {
             let style = rows::mono(font, &pal);
@@ -2175,7 +2175,7 @@ impl Kawoosh {
                 known.insert(ln, h);
             }
             if moved {
-                ui.request_frame();
+                crate::frames::request(ui, "markdown heights");
             }
             for (first, off) in md_table_seen {
                 self.md_table_left.insert((view, first), off);
