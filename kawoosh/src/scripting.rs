@@ -1078,6 +1078,9 @@ impl Kawoosh {
                     ..Default::default()
                 });
             }
+            Msg::Formatter { name, def, run } => self.formatter_from_lua(&name, def, run),
+            Msg::Formatted { token, result } => self.lua_formatted(token, result),
+            Msg::Format { buffer, with } => self.format_from_lua(buffer, with),
             Msg::Language {
                 name,
                 aliases,

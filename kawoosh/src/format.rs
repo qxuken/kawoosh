@@ -51,6 +51,8 @@ pub struct Formatter {
     pub probe: BTreeMap<String, String>,
     pub timeout: Duration,
     pub enabled: bool,
+    /// A Lua `run` formats in its place (`kawoosh.formatter`).
+    pub lua: bool,
 }
 
 impl Formatter {
@@ -66,7 +68,12 @@ impl Formatter {
                 _ => Vec::new(),
             }
         };
-        let cmd = t.get("cmd")?.as_str()?.to_string();
+        let lua = t.get("run").and_then(Setting::as_str) == Some("lua");
+        let cmd = match t.get("cmd").and_then(Setting::as_str) {
+            Some(c) => c.to_string(),
+            None if lua => "lua".to_string(),
+            None => return None,
+        };
         let when = match t.get("when") {
             Some(Setting::Str(s)) if s == "always" => When::Always,
             Some(Setting::Str(s)) if s == "never" => When::Never,
@@ -96,6 +103,7 @@ impl Formatter {
                 .map(|n| Duration::from_millis(n as u64))
                 .unwrap_or(TIMEOUT),
             enabled: t.get("enabled").and_then(Setting::as_bool).unwrap_or(true),
+            lua,
         })
     }
 
@@ -225,6 +233,8 @@ pub struct FormatState {
     /// Saves waiting on a server's format, which has no timeout of its
     /// own: written as they are at the deadline.
     lsp_writes: HashMap<BufferId, (PendingWrite, std::time::Instant)>,
+    /// Lua formatters' runs out, by token: their deadline and name.
+    lua_deadlines: HashMap<u64, (std::time::Instant, String)>,
     /// The probes' answers (Decision 6).
     probes: HashMap<ProbeKey, Probe>,
     /// Each buffer's probe, for the path and settings version it was
@@ -528,6 +538,7 @@ impl Kawoosh {
                         name,
                         then,
                     },
+                    range.clone(),
                 );
                 true
             }
@@ -536,10 +547,22 @@ impl Kawoosh {
 
     /// Runs `p` over `text` off the frame — at once in a test
     /// (`jobs_inline`) — its answer to [`Kawoosh::filtered`].
-    fn run_formatter(&mut self, p: &Picked, args: Vec<String>, text: String, job: Job) {
+    fn run_formatter(
+        &mut self,
+        p: &Picked,
+        args: Vec<String>,
+        text: String,
+        job: Job,
+        range: Option<std::ops::Range<usize>>,
+    ) {
         let token = self.format.next;
         self.format.next += 1;
+        let buffer = job.buffer;
         self.format.jobs.insert(token, job);
+        if p.def.lua {
+            self.run_lua_formatter(p, token, buffer, text, range);
+            return;
+        }
         let (program, cwd, timeout) = (p.program.clone(), p.cwd.clone(), p.def.timeout);
         let run = move || kawoosh_systems::filter::run(&program, &args, Some(&cwd), &text, timeout);
         if self.jobs_inline {
@@ -551,6 +574,95 @@ impl Kawoosh {
                 token,
                 result: run(),
             });
+        }
+    }
+
+    /// A Lua formatter's `run` for job `token`: called now, its `done`
+    /// heard as `Msg::Formatted` whenever it comes, within the def's
+    /// timeout (`sync_format`).
+    fn run_lua_formatter(
+        &mut self,
+        p: &Picked,
+        token: u64,
+        buffer: BufferId,
+        text: String,
+        range: Option<std::ops::Range<usize>>,
+    ) {
+        let fail = |short: String| Failure {
+            short,
+            stderr: String::new(),
+        };
+        let Some(rt) = self.scripting.rt.clone() else {
+            self.filtered(token, Err(fail(format!("{}: no Lua", p.def.name))));
+            return;
+        };
+        let b = &self.ed.buffers[buffer];
+        let ctx = kawoosh_lua::FormatCtx {
+            path: b
+                .path
+                .as_deref()
+                .map(|x| crate::editorconfig::absolute(x, &self.cwd))
+                .unwrap_or_default(),
+            language: b.language.to_string(),
+            buffer: kawoosh_lua::handle_of(buffer),
+            cwd: p.cwd.clone(),
+            range,
+        };
+        self.format.lua_deadlines.insert(
+            token,
+            (
+                std::time::Instant::now() + p.def.timeout,
+                p.def.name.clone(),
+            ),
+        );
+        rt.publish(&self.ed, self.focused_view());
+        if let Err(e) = rt.format_run(&p.def.name, &ctx, &text, token) {
+            self.format.lua_deadlines.remove(&token);
+            self.filtered(token, Err(fail(e)));
+            return;
+        }
+        // A `run` that answered at once: its message is here now.
+        self.drain_lua();
+    }
+
+    /// A Lua formatter's `done`, or its failure (`Msg::Formatted`).
+    pub(crate) fn lua_formatted(&mut self, token: u64, result: Result<String, String>) {
+        let Some((_, name)) = self.format.lua_deadlines.remove(&token) else {
+            return;
+        };
+        let result = result.map_err(|e| Failure {
+            short: format!("{name}: {e}"),
+            stderr: String::new(),
+        });
+        self.filtered(token, result);
+    }
+
+    /// `kawoosh.formatter(name, def)`: its data under `format.NAME` in
+    /// the engine's layer — a user's file over it, key by key — and
+    /// `run = "lua"` when a function formats.
+    pub(crate) fn formatter_from_lua(&mut self, name: &str, def: Setting, run: bool) {
+        let mut def = def;
+        if run {
+            def.set("run", Setting::Str("lua".into()));
+        }
+        self.ed.settings.set(
+            kawoosh_editor::Layer::Default,
+            &format!("format.{name}"),
+            def,
+        );
+    }
+
+    /// `kawoosh.format(buffer, { with = })`.
+    pub(crate) fn format_from_lua(&mut self, buffer: Option<u64>, with: Option<String>) {
+        let id = match buffer {
+            Some(h) => kawoosh_lua::id_of(h),
+            None => match self.focused_view() {
+                Some(v) => self.ed.views[v].buffer,
+                None => return,
+            },
+        };
+        if self.ed.buffers.contains_key(id) {
+            self.format_buffer(id, with.as_deref(), None, Then::Apply);
         }
     }
 
@@ -757,10 +869,21 @@ impl Kawoosh {
     /// Each frame: a save whose server has not answered by its deadline
     /// is written as it is.
     pub(crate) fn sync_format(&mut self) {
+        let now = std::time::Instant::now();
+        let late: Vec<u64> = self
+            .format
+            .lua_deadlines
+            .iter()
+            .filter(|(_, (at, _))| *at <= now)
+            .map(|(t, _)| *t)
+            .collect();
+        for token in late {
+            let timeout = self.format.lua_deadlines[&token].1.clone();
+            self.lua_formatted(token, Err(format!("no answer in time ({timeout})")));
+        }
         if self.format.lsp_writes.is_empty() {
             return;
         }
-        let now = std::time::Instant::now();
         let late: Vec<BufferId> = self
             .format
             .lsp_writes
@@ -872,7 +995,7 @@ impl Kawoosh {
             name: p.def.name.clone(),
             then: Then::Probe(key),
         };
-        self.run_formatter(&p, args, snippet, job);
+        self.run_formatter(&p, args, snippet, job, None);
     }
 
     /// A probed config was saved: every answer asked again.
