@@ -34,6 +34,19 @@ st = kawoosh.picker.state()
 kawoosh.test.eq(st.query, "sl")
 kawoosh.test.eq(st.text, native("src/lib.rs"), "narrowed to the best match")
 
+-- A path typed whole, from the root: matched as the rows spell it.
+kawoosh.field_set("picker", "q", kawoosh.fs.join(kawoosh.fs.cwd(), "src", "main.rs"))
+kawoosh.frame()
+st = kawoosh.picker.state()
+kawoosh.test.eq(st.count, 1, "the one file")
+kawoosh.test.eq(st.text, native("src/main.rs"))
+-- Not under the root: as typed, which matches nothing here.
+kawoosh.field_set("picker", "q", "/elsewhere/src/main.rs")
+kawoosh.frame()
+kawoosh.test.eq(kawoosh.picker.state().count, 0, "a path elsewhere is no row's")
+
+kawoosh.field_set("picker", "q", "sl")
+kawoosh.frame()
 kawoosh.press("<CR>")
 kawoosh.frame()
 kawoosh.test.eq(kawoosh.picker.state(), nil, "gone on a pick")

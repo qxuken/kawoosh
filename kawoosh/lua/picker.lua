@@ -782,9 +782,12 @@ local function search_dynamic(q)
   end
 end
 
+-- The field's line is the query; a source's `query(q, ctx)` says what
+-- of it is matched.
 local function refilter(q)
   P.query = q
   P.cursor, P.top = 1, 1
+  if P.src.query then q = P.src.query(q, P.ctx) or q end
   if P.src.search then search_dynamic(q) else filter_static(q) end
 end
 
@@ -973,7 +976,8 @@ end
 -- name, or on a definition given whole — `{ title =, items = {…} |
 -- load = fn(ctx, done) | search = fn(query, job), pick = fn(item,
 -- how), answer = fn(item), preview = fn(item), keys = { ["<C-x>"] =
--- fn(item) }, columns = {…} (as `picker.rows` takes them) }`. An item
+-- fn(item) }, columns = {…} (as `picker.rows` takes them), query =
+-- fn(query, ctx) (the text matched for what was typed) }`. An item
 -- is `{ text =, sub =, path =, line =, col =, buffer =, offset =, run
 -- =, boost = }`, and a column's field. `opts`: `query`, `cursor`,
 -- `root` (the directory a source that walks or searches starts from,
@@ -1461,9 +1465,19 @@ local function walk_items(ctx, done)
   end)
 end
 
+-- A path typed whole — absolute, or from `~` — is matched as the rows
+-- spell it, from the root, when it is under the root.
+local function from_root(q, ctx)
+  if not (q:match("^[/~]") or q:match("^%a:[/\\]")) then return q end
+  local rel = fs.relative(q, ctx.root or ctx.cwd)
+  if rel and rel ~= "." then return rel end
+  return q
+end
+
 picker.source("files", {
   title = "files", placeholder = "find a file",
   load = walk_items,
+  query = from_root,
   empty = "no files under " .. fs.cwd(),
 })
 

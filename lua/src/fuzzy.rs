@@ -24,10 +24,9 @@ const MATCH_WORD: f64 = 0.8;
 const MATCH_CAPITAL: f64 = 0.7;
 const MATCH_DOT: f64 = 0.6;
 
-/// Longer needles and haystacks are not scored: a query is a few
-/// characters, and a haystack past this is a line, which the caller
-/// cuts.
-const NEEDLE_MAX: usize = 64;
+/// A haystack past this is a line, which the caller cuts; a needle is
+/// scored whole — a path typed out is as long as the path — and is
+/// bounded by it, since a needle longer than the haystack never matches.
 const HAYSTACK_MAX: usize = 1024;
 
 /// One haystack as the matcher keeps it: its characters, lower-cased
@@ -77,10 +76,9 @@ impl Needle {
     fn new(s: &str) -> Self {
         let sensitive = s.chars().any(char::is_uppercase);
         let chars: Vec<char> = if sensitive {
-            s.chars().take(NEEDLE_MAX).collect()
+            s.chars().collect()
         } else {
             s.chars()
-                .take(NEEDLE_MAX)
                 .map(|c| c.to_lowercase().next().unwrap_or(c))
                 .collect()
         };
@@ -315,6 +313,31 @@ mod tests {
         assert_eq!(all.len(), 2, "an empty needle lists in order, capped");
         assert!(all[0].positions.is_empty());
         assert!(m.query("z", 10).is_empty());
+    }
+
+    /// A long path typed whole finds its file (reported 2026-09-29): the
+    /// needle was cut at 64 characters, so every file sharing a deep
+    /// directory matched as well as the one spelled out, and one whose
+    /// name the needle did not spell matched too.
+    #[test]
+    fn a_needle_past_sixty_four_characters_counts_whole() {
+        let dir = "kawoosh/src/some/deeply/nested/directory/with/a/rather/long/name/in/it/";
+        let items = [
+            format!("{dir}alpha.rs"),
+            format!("{dir}beta.rs"),
+            format!("{dir}gamma.rs"),
+        ];
+        let items: Vec<&str> = items.iter().map(String::as_str).collect();
+        let needle = format!("{dir}gamma.rs");
+        assert!(dir.len() > 64, "cut inside the directory");
+        assert_eq!(
+            order(&needle, &items),
+            [items[2]],
+            "the one spelled out, alone"
+        );
+        let hit = &Matcher::new(&items).query(&needle, 10)[0];
+        assert_eq!(hit.positions.len(), needle.len(), "every character placed");
+        assert!(order(&format!("{dir}delta.rs"), &items).is_empty());
     }
 
     #[test]
