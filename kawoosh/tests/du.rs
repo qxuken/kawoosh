@@ -57,8 +57,10 @@ fn the_disk_usage_pane_sizes_walks_sorts_and_deletes() {
         format!("{name} > big size | big 5100 | mid.bin 700 | small 10"),
         "the largest first, a directory by its subtree"
     );
-    // Into `big`, the largest first there too, and back out onto it.
+    // Into `big` once it is read, the largest first there too, and back
+    // out onto it.
     d.press(&mut app, "l");
+    d.frame(&mut app);
     assert_eq!(shown(&mut app), "big > deep size | deep 5000 | a 100");
     d.press(&mut app, "h");
     assert!(shown(&mut app).starts_with(&format!("{name} > big")));
@@ -207,5 +209,56 @@ fn a_du_pane_in_another_tab_is_its_own() {
     d.frame(&mut app);
     d.frame(&mut app);
     assert_eq!(shown(&mut app), "one > b size | a 300 | b 200");
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// A timing probe, not a test: `cargo test --release --test du --
+/// --ignored --nocapture` — a directory of sixteen thousand entries (a
+/// `node_modules` cache), what going into it and a `j` there cost.
+#[test]
+#[ignore]
+fn many_entries_cost() {
+    let ms = |t: std::time::Instant| t.elapsed().as_secs_f64() * 1e3;
+    let root = std::env::temp_dir().join(format!("kawoosh-du-many-{}", std::process::id()));
+    let many = root.join("many");
+    std::fs::create_dir_all(&many).unwrap();
+    for i in 0..16000 {
+        if i % 4 == 0 {
+            std::fs::create_dir_all(many.join(format!("d{i:05}"))).unwrap();
+            std::fs::write(many.join(format!("d{i:05}/f")), vec![0u8; i % 977]).unwrap();
+        } else {
+            std::fs::write(many.join(format!("f{i:05}")), vec![0u8; i % 1013]).unwrap();
+        }
+    }
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let mut app = Kawoosh::new("t", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    let mut d = Drive::new(1000.0, 700.0);
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("du {}", root.display()));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let t = std::time::Instant::now();
+    d.press(&mut app, "l");
+    eprintln!("l (the listing asked for): {:.1} ms", ms(t));
+    let t = std::time::Instant::now();
+    d.frame(&mut app);
+    eprintln!("the frame it lands in:    {:.1} ms", ms(t));
+    let mut worst = 0.0f64;
+    let t = std::time::Instant::now();
+    for _ in 0..40 {
+        let one = std::time::Instant::now();
+        d.press(&mut app, "j");
+        worst = worst.max(ms(one));
+    }
+    eprintln!("j: avg {:.1} ms, max {worst:.1} ms", ms(t) / 40.0);
+    let t = std::time::Instant::now();
+    d.frame(&mut app);
+    eprintln!("an idle frame: {:.1} ms", ms(t));
+    let t = std::time::Instant::now();
+    d.press(&mut app, "s");
+    eprintln!("s (sorted again): {:.1} ms", ms(t));
     std::fs::remove_dir_all(&root).ok();
 }
