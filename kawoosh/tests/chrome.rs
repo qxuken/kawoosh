@@ -418,3 +418,42 @@ fn a_plugin_writes_the_tabs_labels() {
     assert_eq!(tab_labels(&d).len(), 2, "kawoosh's labels back");
     std::fs::remove_dir_all(alpha.parent().unwrap()).ok();
 }
+
+/// The dock's tasks are counted on the title bar, shown or hidden, and
+/// a click on the count shows or hides the dock.
+#[test]
+fn the_title_bar_counts_the_docks_tasks() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "one");
+    d.frame(&mut app);
+    let count = |d: &Drive| texts(d).into_iter().find(|t| t.ends_with(" docked"));
+    assert_eq!(count(&d), None, "no dock, no count");
+    ex(&mut d, &mut app, "dock");
+    d.frame(&mut app);
+    assert!(app.layout.dock_open);
+    assert_eq!(count(&d).as_deref(), Some("1 docked"));
+    // A split in the dock is another task.
+    d.press(&mut app, "<C-\\>");
+    d.press(&mut app, "<C-w>");
+    d.keys(&mut app, "v");
+    d.frame(&mut app);
+    assert_eq!(count(&d).as_deref(), Some("2 docked"));
+    // A click hides the dock; the count stays, and a click shows it.
+    let click = |d: &mut Drive, app: &mut Kawoosh| {
+        let Rect { x, y, w, h } = d
+            .core
+            .nodes()
+            .into_iter()
+            .find(|n| n.text.as_deref() == Some("2 docked"))
+            .map(|n| n.rect)
+            .expect("the count");
+        d.click(app, x + w / 2.0, y + h / 2.0);
+        d.frame(app);
+    };
+    click(&mut d, &mut app);
+    assert!(!app.layout.dock_open, "hidden");
+    assert_eq!(count(&d).as_deref(), Some("2 docked"));
+    click(&mut d, &mut app);
+    assert!(app.layout.dock_open, "shown");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
