@@ -235,6 +235,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `<A-h>` `<A-l>` | nudge the selection by its kind: on lines (a bare caret, `V`, insert mode) dedent, indent a tabstop with the selection kept, so `V<A-l><A-l><A-j>` is one gesture; on characters (`v`) drag the text a column left, right within its line |
 | `<A-o>` `<A-i>` | `select node`: the syntax node under the caret, then the one around it; back in |
 | `<A-n>` `<A-p>` | the next, the previous sibling node |
+| `<A-u>` | `node parent`: the caret up to the start of the node around it — each press one more, as vim's `[{` by the tree; in visual mode the head goes, the anchor stays |
 | `<D-a>` | select all |
 | `<leader>vs` `<leader>vS` (visual) | helix's `s` `S`: the matches of a pattern inside every selection become the selections, or every selection is split on them — a prompt previewed as it is typed, `<Esc>` putting the selections back (`select within`, `select split`; [selections.md](selections.md)); `<D-a><leader>vs` is helix's `%s` |
 | `<leader>vk` (visual) | helix's `K` and `<A-K>`: keep the selections that match, or with `!pattern` those that do not (`select keep`) |
@@ -271,7 +272,11 @@ first ancestor spanning more, and `<A-i>` returns to what `<A-o>`
 replaced (a stack per view), or to the node's first child. The tree
 must be the text's own version — a press right after typing says the
 tree is behind and does nothing, rather than selecting by stale offsets.
-They stay under Alt because each shapes one selection.
+`<A-u>` is the move beside them: from a caret on a token it goes to
+the start of the token's parent, from a caret between a node's
+children (a block's blank line, a string's text) to that node's start,
+and past any that start where the caret is, so every press climbs.
+They stay under Alt because each shapes or places one selection.
 
 The Alt keys work on macOS because kui reports the layout's letter under
 Alt, not the composed character (⌥d arrives as `d`, not `∂`; kui's
@@ -300,6 +305,7 @@ the panes table.
 | `gsd` + char | take the pair off from around the caret |
 | `gsr` + char + char | swap the pair for another (`gsr)]`) |
 | `ga` + motion + char | line up the lines it covers on their first CHAR (`gaip=`, `Vjga:`): the text before it trimmed and padded, a space kept where any line had one; vim-easy-align's letters |
+| `g.` | a node action: what the syntax node under the caret means — a boolean flipped, an operator mirrored, a list split onto its lines or joined, a string's quotes, a number's digits grouped; the innermost node one answers for, up to the body the caret is in ([node-actions.md](node-actions.md)); `:node actions` lists them all |
 | `ga` + motion + `<CR>` | line them up on a pattern's first match instead, asked for at an `align on ` prompt (`gaip<CR>or_else<CR>`); `:align PATTERN` over the selection's lines |
 | `<BS>` (insert mode) | the character before the caret; at a line's start the line joins the one above (vim's `backspace=eol`) — `X` stops there |
 | `<C-S-u>` (insert mode) | the whole line, into the register — `dd` without leaving insert mode; `<C-u>` still kills to the line's start |

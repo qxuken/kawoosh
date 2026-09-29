@@ -16,7 +16,7 @@ use mlua::{Function, Table, Value as LV};
 use crate::Runtime;
 
 /// This crate's source, for the Rust functions' doc comments.
-const SOURCE: &str = include_str!("lib.rs");
+const SOURCE: &str = concat!(include_str!("lib.rs"), "\n", include_str!("nodes.rs"));
 /// How deep the walk goes below `kawoosh`.
 const DEPTH: usize = 4;
 
@@ -47,6 +47,7 @@ impl Runtime {
             out: &mut out,
         };
         w.table("kawoosh", &k, 0);
+        out.push_str(crate::nodes::LUALS_CLASS);
         out
     }
 }
@@ -138,10 +139,16 @@ impl Walk<'_> {
             let _ = writeln!(self.out, "---@param {p}{mark} {ty}");
         }
         // An empty body reads as returning nothing, which makes every
-        // use of an answer a field of `nil`: what it returns is unsaid.
+        // use of an answer a field of `nil`: what it returns is unsaid,
+        // unless the doc says it (`@return kawoosh.Node?`).
+        let returns = if doc.lines().any(|l| l.starts_with("@return")) {
+            ""
+        } else {
+            "---@return any\n"
+        };
         let _ = writeln!(
             self.out,
-            "---@return any\nfunction {full}({}) end\n",
+            "{returns}function {full}({}) end\n",
             params.join(", ")
         );
     }
@@ -200,7 +207,12 @@ fn rust_docs() -> HashMap<String, (String, String)> {
     let mut out = HashMap::new();
     let mut block: Vec<&str> = Vec::new();
     for line in SOURCE.lines().chain(std::iter::once("")) {
-        if let Some(d) = line.trim_start().strip_prefix("///") {
+        // `///` on an item, `//` on a `let` in `seed` (a doc comment
+        // there is one rustc warns of); `//!` is the module's.
+        let l = line.trim_start();
+        if !l.starts_with("//!")
+            && let Some(d) = l.strip_prefix("///").or_else(|| l.strip_prefix("//"))
+        {
             block.push(d.strip_prefix(' ').unwrap_or(d));
             continue;
         }
@@ -235,6 +247,8 @@ fn params_of(args: &str) -> Vec<String> {
     let mut piece = String::new();
     for c in args.chars().chain(std::iter::once(',')) {
         match c {
+            // vim's spelling of what may be left off: `[, buffer]`.
+            '[' | ']' if depth == 0 => continue,
             '{' | '[' | '(' => depth += 1,
             '}' | ']' | ')' => depth -= 1,
             ',' if depth == 0 => {
@@ -265,6 +279,11 @@ mod tests {
 
     #[test]
     fn a_doc_spelling_names_the_parameters() {
+        assert_eq!(params_of("[{ tab = true }]"), ["opts"]);
+        assert_eq!(
+            params_of("{ { from, to, text }, … }[, buffer]"),
+            ["opts", "buffer"]
+        );
         assert_eq!(
             params_of("buffer, { force =, if_hidden = }"),
             ["buffer", "opts"]
@@ -308,5 +327,15 @@ mod tests {
             "---A helper a plugin added.\n---@param a any\n---@param b? any\n---@return any\nfunction kawoosh.extra_thing(a, b) end"
         ));
         assert!(meta.contains("---@param fn function\n---@param frames? any\n---@param what? any\n---@return any\nfunction kawoosh.wait(fn, frames, what) end"));
+        // `kawoosh.node`'s, documented in `nodes.rs` with their types,
+        // and the class its answers are.
+        assert!(
+            meta.contains(
+                "---@return kawoosh.Node?\n---@return string? why\n---@param where any\n---@param buffer? any\nfunction kawoosh.node.at(where, buffer) end"
+            ),
+            "{meta}"
+        );
+        assert!(meta.contains("---@class kawoosh.Node\n"));
+        assert!(meta.contains("function Node:closest(types) end"));
     }
 }

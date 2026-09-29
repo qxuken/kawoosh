@@ -6,6 +6,11 @@
 //! behind a keystroke, so a press right after typing says so and does
 //! nothing rather than selecting by stale offsets.
 //!
+//! `<A-u>` is the move beside them: each caret goes up to the start of
+//! the closest node around it — the parent of the node under it, or
+//! the first ancestor that starts before the caret, so each press
+//! climbs one more (vim's `[{`, by the tree rather than a bracket).
+//!
 //! Every selection is walked (mvp.md Decision 4): each finds its own
 //! node. The selections `<A-o>` replaced are kept on a stack per view
 //! so `<A-i>` returns to exactly them; with nothing on the stack it
@@ -42,6 +47,26 @@ fn over(buf: &kawoosh_doc::Buffer, r: std::ops::Range<usize>) -> Selection {
         r.start
     };
     Selection::new(r.start, head)
+}
+
+/// Where a caret at `head` goes up to: the start of the closest node
+/// around it that starts before it. A caret on a token (a leaf) is
+/// under it, not inside, so its parent is the first asked; a caret
+/// between a node's children (a block's blank line, a string's text)
+/// is inside that node already.
+fn enclosing_start(root: Node, head: usize, next: usize) -> Option<usize> {
+    let at = root.descendant_for_byte_range(head, next)?;
+    let mut node = if at.child_count() == 0 {
+        at.parent()?
+    } else {
+        at
+    };
+    loop {
+        if node.start_byte() < head {
+            return Some(node.start_byte());
+        }
+        node = node.parent()?;
+    }
 }
 
 /// Up from `node` to the first ancestor spanning more than `r`.
@@ -131,6 +156,38 @@ impl Kawoosh {
         self.ed.views[view].sels = sels;
         self.ed.set_mode(view, Mode::Visual);
     }
+
+    /// `<A-u>`: every caret to the start of the node around it; in
+    /// visual mode the head goes, the anchor stays, as for a motion.
+    fn node_parent(&mut self, view: ViewId) {
+        let tree = match self.tree_for(view) {
+            Ok(t) => t,
+            Err(e) => {
+                self.ed.message = e;
+                return;
+            }
+        };
+        let extend = self.ed.mode(view) == Mode::Visual;
+        let buf = &self.ed.buffers[self.ed.views[view].buffer];
+        let root = tree.root_node();
+        let before = self.ed.views[view].sels.clone();
+        let mut sels = before.clone();
+        sels.map(|s| {
+            let head = s.head.min(buf.len());
+            match enclosing_start(root, head, buf.next_char(head)) {
+                Some(to) => s.with_head(to, extend),
+                None => s,
+            }
+        });
+        sels.normalize();
+        if sels == before {
+            self.ed.message = "no node around the caret".into();
+            return;
+        }
+        let v = &mut self.ed.views[view];
+        v.sels = sels;
+        v.goal_col = None;
+    }
 }
 
 pub(crate) fn commands() -> Vec<ShellCommand> {
@@ -142,6 +199,16 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         })
     }
     vec![
+        cmd(
+            Spec::new("node parent")
+                .when(&["editor"])
+                .doc("the caret to the start of the syntax node around it, one more up each press (<A-u>)"),
+            |k, _| {
+                if let Some(v) = k.focused_view() {
+                    k.node_parent(v);
+                }
+            },
+        ),
         step(
             "select node",
             "select the syntax node under the caret, then the one around it (<A-o>)",

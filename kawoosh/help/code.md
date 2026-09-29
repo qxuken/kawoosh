@@ -19,8 +19,10 @@ language of your own is added from Lua with `kawoosh.language`; see
 [lua](lua.md).
 
 The same tree drives selections by syntax node, `<A-o>` `<A-i>`
-`<A-n>` `<A-p>` ([editing](editing.md)), and the outline in the
-symbols picker ([search](search.md#symbols-and-the-outline)).
+`<A-n>` `<A-p>`, the move up to the node around the caret, `<A-u>`
+([editing](editing.md)), the outline in the
+symbols picker ([search](search.md#symbols-and-the-outline)), and your
+own code through `kawoosh.node` ([lua](lua.md#the-syntax-tree)).
 
 ## Language servers
 

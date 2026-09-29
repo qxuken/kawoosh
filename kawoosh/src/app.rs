@@ -650,6 +650,9 @@ impl Kawoosh {
             }
             // The tree behind the runs, for the inspector: a handle, so
             // holding it copies nothing.
+            if let Some(rt) = &self.scripting.rt {
+                rt.set_tree(a.buffer, a.tree.clone().map(|t| (a.version, t)));
+            }
             match a.tree {
                 Some(t) => {
                     self.inspector.trees.insert(a.buffer, (a.version, t));

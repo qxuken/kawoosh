@@ -89,6 +89,30 @@ return {
 
 `kawoosh.open(path, { line = ..., col = ..., split = "vsplit" | "split" | "tab" })` opens a file in an editor pane.
 
+## The syntax tree
+
+`kawoosh.node` reads the buffer's syntax tree, the one the colours come from. A node is a plain table: `type` (the grammar's name for it, such as `call_expression`), `named` (false for a token such as `(` or `==`), `field` (the field it fills in its parent, such as `condition`), `from` and `to` (bytes, as in `kawoosh.buf`), `line` and `end_line`, `error`, `has_error` and `language`. `:syntax_tree` shows the names a language uses, for the node under the caret.
+
+- Getting one: `at(where)` is the smallest named node, `leaf(where)` the smallest node, a token included, and `root()` the whole tree. `where` is an offset, `{ from, to }`, or nothing for the selection; a buffer handle can follow. When there is no tree, or it has not caught up with the last keystroke yet, they return `nil` and the reason.
+- Walking: `n:parent()`, `n:children()`, `n:child(i)` (from 1, `-1` the last), `n:get(field)`, `n:next()`, `n:prev()`, and `n:closest(types)`, which is the node itself or the nearest one around it of a type (a name, or a list of names). Tokens are skipped unless you pass `{ anonymous = true }`. `n:text()` reads its text, and `n:select()` selects it in visual mode.
+- Queries: `kawoosh.node.query(source, where)` runs a tree-sitter query over a node or a whole buffer (`n:query(source)` over `n`) and returns the matches, each with `captures.NAME` (the first node) and `all.NAME` (every node).
+
+A node belongs to the text it was read from. After an edit, read it again: using an old one is an error. Changes are made once your code returns, so make every edit from the same tree in one `kawoosh.buf.edits` call:
+
+```lua
+local flip = { ["true"] = "false", ["false"] = "true" }
+kawoosh.command("flip", function()
+  local edits = {}
+  for _, s in ipairs(kawoosh.buf.selections()) do
+    local n = kawoosh.node.leaf(s.head)
+    if n and flip[n:text()] then edits[#edits + 1] = { n.from, n.to, flip[n:text()] } end
+  end
+  kawoosh.buf.edits(edits)
+end, { when = { "editor", "!readonly" }, doc = "flip the boolean under every caret" })
+```
+
+`g.` does this for you, from actions you can add to. `kawoosh.node.action(name, { types = { … }, languages = "*" | { … }, run = fn(n, ctx) })` adds one: `types` are the node types it takes (a token such as `==` is a type too), or a function of a type saying whether it takes it, and `run` answers the node's new text, `{ text = …, cursor = i }` to put the caret `i` bytes into it, or `nil` when this node is not one it changes, and then the next action, or the next node up, is asked. `run` only reads; `g.` makes the edits, at every caret. `ctx` has `language`, `caret`, `indent` (the node's line's leading whitespace) and `unit` (one indent). The same name again replaces an action — the shipped ones are `flip`, `operator`, `split`, `quotes` and `digits` — and `nil` removes it. The newest action is asked first. `kawoosh.node_actions.lists` holds `split`'s lists by language, to add to.
+
 ## Formatters
 
 `kawoosh.formatter(name, def)` adds a formatter ([code](code.md#formatting)): `def` has the keys of `format.NAME` (`cmd`, `args`, `languages`, `when`, …), and your settings file still overrides them. For a tool that does not read stdin and write stdout, or one that is slow, give `run` instead of `cmd`:
