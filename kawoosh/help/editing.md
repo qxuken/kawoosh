@@ -93,6 +93,7 @@ Every command acts on each selection, so inserting, deleting, operators,
 | `<A-h>` `<A-l>` | on lines: dedent, indent, keeping the selection; in `v` mode: drag the text a column left, right |
 | `<A-o>` `<A-i>` | select the syntax node under the caret, then the one around it; back in |
 | `<A-n>` `<A-p>` | the next, previous sibling node |
+| `<A-u>` | the caret up to the start of the node around it, one more each press; in visual mode the head goes |
 | `⌘a` | select the whole buffer |
 | `o` in visual mode | swap the selection's ends |
 

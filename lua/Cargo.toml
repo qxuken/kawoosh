@@ -16,3 +16,4 @@ mlua.workspace = true
 slotmap.workspace = true
 serde_json.workspace = true
 log.workspace = true
+tree-sitter.workspace = true

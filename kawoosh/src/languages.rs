@@ -143,6 +143,9 @@ impl Kawoosh {
         b.clear_layer(kawoosh_systems::ts::SYNTAX_LAYER);
         self.ts_sent.remove(&id);
         self.inspector.trees.remove(&id);
+        if let Some(rt) = &self.scripting.rt {
+            rt.set_tree(id, None);
+        }
         self.ed.message = format!("syntax {language}");
     }
 }

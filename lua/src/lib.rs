@@ -11,6 +11,7 @@ use std::rc::Rc;
 
 pub mod fuzzy;
 mod meta;
+mod nodes;
 pub use fuzzy::{Hit, Matcher};
 
 use kawoosh_doc::{Buffer, BufferId, Snapshot};
@@ -545,6 +546,8 @@ pub enum Msg {
         buffer: u64,
         sels: Vec<(usize, usize)>,
         primary: usize,
+        /// In visual mode, as `<A-o>` leaves one (`kawoosh.node.select`).
+        visual: bool,
     },
 }
 
@@ -744,6 +747,10 @@ pub struct Published {
     /// Every diagnostic (`kawoosh.lsp.diagnostics`), shared with the
     /// runtime's cache while none moved.
     pub diagnostics: Rc<Vec<kawoosh_editor::diagnostics::Listed>>,
+    /// Each buffer's syntax tree as the shell last had it, with the
+    /// version it was parsed from (`Runtime::set_tree`); `kawoosh.node`
+    /// reads one only when that is the snapshot's.
+    pub trees: HashMap<u64, (kawoosh_doc::Version, tree_sitter::Tree)>,
 }
 
 /// One code action as `kawoosh.lsp.actions()` reads it (the picker's
@@ -869,6 +876,7 @@ impl Default for Published {
             actions: None,
             compile_offer: None,
             diagnostics: Rc::new(Vec::new()),
+            trees: HashMap::new(),
         }
     }
 }
@@ -1313,6 +1321,17 @@ impl Runtime {
     }
 
     /// The snapshot Lua reads from, refreshed before every call in.
+    /// A buffer's syntax tree as the ts thread answered it, parsed from
+    /// `version` (`None` when it has none now): what `kawoosh.node`
+    /// walks while it is of the published text.
+    pub fn set_tree(&self, id: BufferId, tree: Option<(kawoosh_doc::Version, tree_sitter::Tree)>) {
+        let mut p = self.published.borrow_mut();
+        match tree {
+            Some(t) => p.trees.insert(handle_of(id), t),
+            None => p.trees.remove(&handle_of(id)),
+        };
+    }
+
     pub fn publish(&self, ed: &Editor, current: Option<ViewId>) {
         EDITOR_CWD.with(|c| {
             if *c.borrow() != ed.cwd {
@@ -1322,6 +1341,7 @@ impl Runtime {
         let mut p = self.published.borrow_mut();
         p.buffers.clear();
         p.tracked.clear();
+        p.trees.retain(|h, _| ed.buffers.contains_key(id_of(*h)));
         let mut tracked = self.tracked.borrow_mut();
         tracked.retain(|id, _| ed.buffers.contains_key(*id));
         for (id, t) in tracked.iter_mut() {
@@ -2406,6 +2426,7 @@ impl Runtime {
                     buffer,
                     sels,
                     primary,
+                    visual,
                 } => {
                     let id = id_of(buffer);
                     let Some(b) = ed.buffers.get(id) else {
@@ -2439,6 +2460,9 @@ impl Runtime {
                     for v in views {
                         ed.views[v].sels = out.clone();
                         ed.views[v].goal_col = None;
+                        if visual {
+                            ed.set_mode(v, kawoosh_editor::Mode::Visual);
+                        }
                     }
                 }
                 Msg::Echo(s) => ed.message = s,
@@ -4203,6 +4227,7 @@ fn seed(
                 buffer: h,
                 sels,
                 primary,
+                visual: false,
             });
             Ok(())
         })?,
@@ -4353,6 +4378,7 @@ fn seed(
         })?,
     )?;
     k.set("buf", buf)?;
+    nodes::install(lua, &k, published, queue)?;
     // `kawoosh.secrets`: what the mask rules say of a path and a text,
     // for a list that shows lines of files (the picker's grep, its
     // preview): `private(path)`, `mask_text(text, path[, language])`.
