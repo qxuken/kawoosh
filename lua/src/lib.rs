@@ -609,7 +609,53 @@ fn editor_cwd() -> PathBuf {
     })
 }
 
+/// Why a `size` setting's value is not one kui would take as a `width`,
+/// or `None`: a number, a spelling (`sizing_str` — `"fit"`, `"grow"`,
+/// `"80%"`, `"clamp(400px, 80%, 1000px)"`), or the same as data
+/// (`calc::sizing_value`, and `{ grow = n }`). One grammar for what is
+/// checked here and what the launcher hands kui (kui backlog F109); a
+/// percentage as data is `{ pct = n }`, the word kui's Lua takes.
+pub fn size_problem(v: &kawoosh_editor::Setting) -> Option<String> {
+    use kawoosh_editor::Setting;
+    use kui_core::Value;
+    fn value(v: &Setting) -> Result<kui_core::Value, String> {
+        Ok(match v {
+            Setting::Bool(b) => Value::Bool(*b),
+            Setting::Int(n) => Value::Int(*n),
+            Setting::Float(n) => Value::Float(*n),
+            Setting::Str(s) => Value::Str(s.clone()),
+            Setting::List(xs) => Value::List(xs.iter().map(value).collect::<Result<_, _>>()?),
+            Setting::Table(t) => {
+                if t.contains_key("percent") {
+                    return Err("a percentage is { pct = n } in Lua".into());
+                }
+                Value::Map(
+                    t.iter()
+                        .map(|(k, v)| Ok((k.clone(), value(v)?)))
+                        .collect::<Result<_, String>>()?,
+                )
+            }
+        })
+    }
+    match v {
+        Setting::Int(_) | Setting::Float(_) => None,
+        Setting::Str(s) => kui_core::schema::sizing_str(s).err(),
+        Setting::Table(t)
+            if t.len() == 1
+                && matches!(t.get("grow"), Some(Setting::Int(_) | Setting::Float(_))) =>
+        {
+            None
+        }
+        Setting::Table(_) | Setting::List(_) => match value(v) {
+            Ok(v) => kui_core::calc::sizing_value(&v).err(),
+            Err(e) => Some(e),
+        },
+        Setting::Bool(_) => Some("a size is a number, a string or a table".into()),
+    }
+}
+
 #[derive(Clone, Debug)]
+
 pub struct Published {
     pub current: Option<u64>,
     pub mode: String,
@@ -1447,6 +1493,17 @@ impl Runtime {
             );
         }
         p.settings = ed.settings.effective().clone();
+        // A size that is not one kui would take reads as unset: the view
+        // draws its default rather than failing to build, and the
+        // settings' check names the value (kui backlog F109).
+        for path in ed.settings.declared(&kawoosh_editor::SettingKind::Size) {
+            if p.settings
+                .get(path)
+                .is_some_and(|v| size_problem(v).is_some())
+            {
+                p.settings.remove(path);
+            }
+        }
         p.settings_version = ed.settings.version();
         if p.commands_version != ed.commands.version() {
             p.commands = ed.commands.specs().into_iter().cloned().collect();
@@ -2682,7 +2739,7 @@ fn seed(
         })?,
     )?;
     // kawoosh.setting(path, { type = "string" | "boolean" | "integer" |
-    // "number" | "list" | "table" | { "a", "b" }, doc = "…" }): declares
+    // "number" | "list" | "table" | "size" | { "a", "b" }, doc = "…" }): declares
     // a setting a plugin reads — `table` one whose keys are the user's.
     let qq = q(queue);
     k.set(
@@ -2703,6 +2760,7 @@ fn seed(
                             "number" => Kind::Float,
                             "list" => Kind::List,
                             "table" => Kind::Open,
+                            "size" => Kind::Size,
                             _ => Kind::Str,
                         },
                         _ => Kind::Str,

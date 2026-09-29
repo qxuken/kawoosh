@@ -270,6 +270,8 @@ pub(crate) fn declare_shell_settings(s: &mut kawoosh_editor::Settings) {
     }
 }
 
+pub use kawoosh_lua::size_problem;
+
 impl Kawoosh {
     /// The user's settings file into the user layer — a file that is
     /// gone is a layer without it, quietly. What `init.lua` set stays
@@ -380,6 +382,25 @@ impl Kawoosh {
                 Some((_, new)) => format!("`{path}` is now `{new}` ({file})"),
                 None => format!("no setting `{path}` ({file})"),
             };
+            self.notify_with(Note::new(Level::Warn, text).source("settings"));
+        }
+        let sizes = self
+            .ed
+            .settings
+            .values_of(&kawoosh_editor::SettingKind::Size);
+        let bad = sizes
+            .into_iter()
+            .filter_map(|(source, path, v)| size_problem(&v).map(|why| (source, path, why)));
+        for (source, path, why) in bad.collect::<Vec<_>>() {
+            if !self
+                .config
+                .undeclared_said
+                .insert((source.clone(), format!("{path}={why}")))
+            {
+                continue;
+            }
+            let file = self.short_name(Path::new(&source));
+            let text = format!("`{path}`: {why} ({file})");
             self.notify_with(Note::new(Level::Warn, text).source("settings"));
         }
     }

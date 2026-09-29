@@ -181,6 +181,43 @@ line, and `:e PATH` from there fills the new pane.
 | `layout.new_pane` | what a bare split is: `launcher` (the default), `same`, `scratch`, `terminal`, `dir` |
 | `layout.new_tab` | the same for a bare tab |
 | `launcher.start` | `normal` (the default) or `insert`, to start typing at once |
+| `launcher.layout` | which modules it shows, in what order and shape (below) |
+| `launcher.width` | how wide it is drawn, a [size](settings.md#sizes): `720`, `"100%"`, `"clamp(400px, 80%, 1000px)"`; never wider than the pane |
 
-Plugins can add rows or whole sections through `kawoosh.launcher`; see
+### Its layout
+
+The launcher is modules placed by `launcher.layout`, read again when
+`settings.lua` is saved — so an open launcher shows an edit at once:
+
+```lua
+launcher = {
+  layout = {
+    "prompt",                                              -- the query
+    { row = { { module = "here", style = "tiles" }, "plugins" } }, -- side by side
+    { module = "pins", title = "pinned" },
+    { module = "recent", limit = 5 },                      -- 5 rows until you type
+    "...",                                                 -- whatever plugins add
+    "files",
+  },
+}
+```
+
+The modules kawoosh has: `prompt`, `here`, `buffers`, `plugins`,
+`pins`, `recent`, `files` (only with a query) and `workspaces`. A
+place can override a module's `title` (`false` for none), `limit`,
+`show` (`always`, `blank` — only while the query is empty — or
+`query`), `style` (`list`, or `tiles` that wrap) and `keys` (whether
+its rows take letters). `{ column = { … } }` stacks modules inside a
+row, and a `width` sets a column's — a [size](settings.md#sizes), of
+the row it is in (`"40%"`, `"clamp(200, 30%, 400)"`); columns side by side
+share what the row has, a percentage giving back what the gap between
+them needs, as in CSS (two `"50%"` columns fit). What comes after `prompt` scrolls
+and what comes before it stays; with `prompt` last, the field sits at
+the bottom. A file is listed once, in the first module that has it, so
+`pins` before `recent` takes the pins out of recent. A name that is no
+module shows as a line saying so.
+
+`init.lua` or a plugin adds a module with `kawoosh.launcher.module`
+— rows (`items`, `load`, a picker `source`) or a block drawn as it is
+(`draw`) — and a row to one with `kawoosh.launcher.entry`; see
 [Lua](lua.md).

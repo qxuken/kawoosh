@@ -2639,6 +2639,20 @@ In order — the bugs first, then what needs deciding:
     the launcher, made from what it showed; without one, a gone
     terminal is a scratch. Commands with no editor pane open run on
     the resident pane view.
+66. **Maps local to a view**, vim's `<buffer>` maps. Filed 2026-09-29,
+    not built: the launcher's `a`–`z` are global normal-mode bindings
+    gated by facts (`field:lua:launcher/q`, `launcher:blank`), and a
+    gated binding is still found by every lookup — which is what leaked
+    into `<C-\>z` from a terminal (`launcher key z: only in the
+    launcher pane's q field`; fixed at the lookup, a1e5f03, by teaching
+    the terminal's escape the editor's rule that a binding gated off
+    here does not shadow longer ones). The sounder fix is bindings that
+    belong to a view — `kawoosh.map(mode, keys, cmd, { view = "launcher"
+    })` or the field's own map — found only while that view has the
+    keys, so nothing global carries them and no lookup has to know to
+    look past them. The note decides what a local map shadows (the
+    global one of the same keys, as in vim) and whether a picker's and
+    a listing's gated keys move too.
 
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's

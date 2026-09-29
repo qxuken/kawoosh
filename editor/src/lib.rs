@@ -1646,7 +1646,7 @@ impl Editor {
     /// `when`: the key is not bound here at all — a picker's key in
     /// another pane — as good as unbound, where a binding whose command
     /// cannot run has a reason worth saying.
-    fn gated_off(&self, view: ViewId, bs: &[Binding]) -> bool {
+    pub fn gated_off(&self, view: ViewId, bs: &[Binding]) -> bool {
         let facts = self.facts(Some(view));
         bs.iter()
             .all(|b| b.when.iter().any(|c| facts.holds(&c.fact) != c.holds))

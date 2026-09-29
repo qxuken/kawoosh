@@ -96,6 +96,7 @@ pub fn settings_meta(schema: &std::collections::BTreeMap<String, kawoosh_editor:
                 .join("|"),
             K::List => "any[]".into(),
             K::Open => "table<string, any>".into(),
+            K::Size => "integer|string".into(),
         }
     }
     fn field_name(seg: &str) -> String {

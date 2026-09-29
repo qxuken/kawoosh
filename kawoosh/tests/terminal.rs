@@ -1550,3 +1550,30 @@ fn terminal_raw_names_the_programs_that_make_a_pane_raw() {
     assert!(!shows_raw(&d), "turned off by hand for it");
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// After the escape a binding gated off by its own `when` does not
+/// shadow the longer ones under it, as in an editor pane: the
+/// launcher's bare `z` (only in its query) left `<C-\>zz` saying
+/// `launcher key z: only in the launcher pane's q field`.
+#[test]
+fn the_escape_looks_past_a_binding_gated_off_here() {
+    let mut app = Kawoosh::new("t", "editor text");
+    let mut d = Drive::new(900.0, 500.0);
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    app.add_headless_terminal();
+    d.frame(&mut app);
+    d.press(&mut app, "<C-\\>");
+    d.keys(&mut app, "z");
+    assert_eq!(
+        app.terms.escape,
+        Some(vec!["z".to_string()]),
+        "`z` waits for `zz`: {}",
+        app.ed.message
+    );
+    d.keys(&mut app, "z");
+    assert!(app.terms.escape.is_none());
+    assert!(app.layout.tab().is_scroll(), "a strip, where `zz` centres");
+    assert_eq!(app.ed.message, "", "`zz` ran, quietly");
+}

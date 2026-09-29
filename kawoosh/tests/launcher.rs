@@ -513,3 +513,189 @@ fn a_last_terminal_exiting_leaves_a_launcher() {
     d.frame(&mut app);
     assert_eq!(focused_name(&app), "*scratch*", "and answers as any does");
 }
+
+/// A list the launcher's state says — `modules`, `missing`, `blocks` —
+/// joined by `|`.
+fn said(app: &mut Kawoosh, field: &str) -> String {
+    app.run_lua_source(
+        "t",
+        &format!(
+            r#"local s = kawoosh.launcher.state()
+               kawoosh.echo(s and table.concat(s.{field}, "|") or "<none>")"#
+        ),
+    );
+    app.ed.message.clone()
+}
+
+/// Modules in a layout (Decision 8): `launcher.layout` orders them and
+/// overrides a field at a place (`title`, `limit`), a name no module
+/// has is said, not dropped, the prompt goes to the top when it is not
+/// placed, `"..."` is what a plugin registered — not what is bundled —
+/// and a block is drawn on an empty query and not with one. The
+/// setting changed under an open launcher builds it again.
+#[test]
+fn the_layout_orders_the_modules() {
+    let _g = serial();
+    let dir = project("layout");
+    let (mut d, mut app) = launch(&dir);
+    lua(
+        &mut app,
+        r#"kawoosh.launcher.module("hello", {
+             draw = function(ctx) return text("hello " .. ctx.cwd) end })
+           kawoosh.launcher.module("todo", {
+             items = { { text = "write the note", run = "echo noted" } } })
+           kawoosh.opt("launcher.layout", {
+             "hello", { module = "here", title = "start", limit = 2 }, "nope", "..." })"#,
+    );
+    d.frame(&mut app);
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
+    assert!(on_launcher(&app));
+    assert_eq!(
+        said(&mut app, "modules"),
+        "prompt|hello|here|todo|workspaces"
+    );
+    assert_eq!(said(&mut app, "missing"), "nope");
+    assert_eq!(said(&mut app, "blocks"), "hello");
+    let r = rows(&mut app);
+    assert_eq!(
+        r,
+        ["# start", "a.txt", "scratch", "# todo", "write the note"]
+    );
+    // With a query the block goes and the rows are matched.
+    d.keys(&mut app, "/note");
+    d.frame(&mut app);
+    assert_eq!(said(&mut app, "blocks"), "");
+    assert_eq!(rows(&mut app), ["# todo", "write the note"]);
+    // The setting changed under it: built again, the query kept.
+    lua(
+        &mut app,
+        r#"kawoosh.opt("launcher.layout", { "todo", "prompt", "files" })"#,
+    );
+    d.frame(&mut app);
+    assert_eq!(said(&mut app, "modules"), "todo|prompt|files");
+    assert_eq!(rows(&mut app)[..2], ["# todo", "write the note"]);
+    d.press(&mut app, "<CR>");
+    d.frame(&mut app);
+    assert_eq!(app.ed.message, "noted");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// Structure: a row of columns walks a column to its end, then the
+/// next; a module as tiles keeps its letters; `pins` placed before
+/// `recent` takes the pin out of it; an entry goes to the module it
+/// names.
+#[test]
+fn a_row_of_columns_and_tiles() {
+    let _g = serial();
+    let dir = project("columns");
+    let db = dir.join("state.db");
+    let (mut d, mut app) = launch(&dir);
+    app.open_store(Some(&db));
+    lua(
+        &mut app,
+        &format!("kawoosh.pin('file', '{}')", lua_path(&dir.join("notes.md"))),
+    );
+    lua(
+        &mut app,
+        r#"kawoosh.launcher.entry { text = "zebra", run = "echo z", module = "here" }
+           kawoosh.opt("launcher.layout", {
+             "prompt",
+             { row = { { module = "here", style = "tiles" }, { column = { "pins", "recent" } } } },
+           })"#,
+    );
+    d.frame(&mut app);
+    d.press(&mut app, "<C-w>v");
+    d.frame(&mut app);
+    let r = rows(&mut app);
+    assert_eq!(
+        r,
+        [
+            "# here",
+            "a.txt",
+            "scratch",
+            "terminal",
+            "directory",
+            "zebra",
+            "# pins",
+            "notes.md"
+        ],
+        "the pin is not a recent file too"
+    );
+    // The walk: down the tiles, then into the next column.
+    d.press(&mut app, "jjjjj");
+    d.frame(&mut app);
+    app.run_lua_source("t", "kawoosh.echo(kawoosh.launcher.state().cursor)");
+    assert_eq!(app.ed.message, "notes.md");
+    // The tiles' letters: `z` the entry's first free one.
+    d.press(&mut app, "z");
+    d.frame(&mut app);
+    assert_eq!(app.ed.message, "z");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// `launcher.width` is a kui size, handed to kui as it is and resolved
+/// by its layout against the pane: `clamp(400px, 80%, 1000px)` is 80%
+/// of the pane between the two, the same as data, and never past the
+/// pane; a spelling that is not a size is named by the settings' check
+/// (kui's grammar) and the launcher draws its default.
+#[test]
+fn the_width_is_a_size() {
+    let _g = serial();
+    let dir = project("width");
+    let (mut d, mut app) = launch(&dir);
+    let laid_out = |d: &mut Drive, app: &mut Kawoosh| -> (f64, f64) {
+        d.frame(app);
+        d.frame(app);
+        app.run_lua_source(
+            "t",
+            r#"local s = kawoosh.launcher.state()
+               kawoosh.echo(tostring(s.width) .. " " .. tostring(s.room))"#,
+        );
+        let mut it = app
+            .ed
+            .message
+            .split(' ')
+            .map(|x| x.parse::<f64>().unwrap_or(-1.0));
+        (it.next().unwrap(), it.next().unwrap())
+    };
+    lua(
+        &mut app,
+        r#"kawoosh.opt("launcher.width", "clamp(400px, 80%, 1000px)")"#,
+    );
+    d.frame(&mut app);
+    d.press(&mut app, "<C-w>v");
+    let (w, room) = laid_out(&mut d, &mut app);
+    assert!(room > 0.0, "the layout reported the pane: {w} of {room}");
+    let want = (room * 0.8).clamp(400.0, 1000.0).min(room);
+    assert!((w - want).abs() < 0.5, "{w} of {room}, want {want}");
+    // The same as data.
+    lua(
+        &mut app,
+        r#"kawoosh.opt("launcher.width", { clamp = { 400, { pct = 80 }, 1000 } })"#,
+    );
+    let (w2, _) = laid_out(&mut d, &mut app);
+    assert!((w2 - w).abs() < 0.5, "data {w2}, spelled {w}");
+    // Never past the pane.
+    lua(&mut app, r#"kawoosh.opt("launcher.width", 5000)"#);
+    let (w3, room3) = laid_out(&mut d, &mut app);
+    assert!((w3 - room3).abs() < 0.5, "{w3} of {room3}");
+    // Not a size: named, in kui's words, and the default drawn.
+    lua(&mut app, r#"kawoosh.opt("launcher.width", "clamp(1, 2)")"#);
+    d.frame(&mut app);
+    let sizes = app
+        .ed
+        .settings
+        .values_of(&kawoosh_editor::SettingKind::Size);
+    let bad: Vec<_> = sizes
+        .iter()
+        .filter_map(|(_, p, v)| kawoosh::settings::size_problem(v).map(|why| (p.clone(), why)))
+        .collect();
+    assert_eq!(bad.len(), 1, "{bad:?}");
+    assert_eq!(bad[0].0, "launcher.width");
+    assert!(bad[0].1.contains("three"), "{bad:?}");
+    assert!(
+        kawoosh::settings::size_problem(&kawoosh_editor::Setting::Str("grow".into())).is_none()
+    );
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}

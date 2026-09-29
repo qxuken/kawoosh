@@ -1,6 +1,7 @@
 # The launcher: a new pane asks what it is for
 
-Status: decided 2026-09-23 (roadmap step 14), with the four questions
+Status: decided 2026-09-23 (roadmap step 14), Decision 8 (modules in
+a layout) 2026-09-29, with the four questions
 the roadmap left answered by the user the same day — `<Esc>` opens a
 scratch, the vim habit is a setting with more answers than two, no
 launcher on an existing pane, and a session keeps nothing. Each
@@ -173,6 +174,123 @@ first with their digit (`⌥1`), a file already open left to *buffers*.
 *Beat:* the launcher as one more picker source opened below — the
 picker's pane is one at a time and takes half the height; a new pane
 is the room.
+
+*Superseded 2026-09-29 by Decision 8:* the list above was data only
+halfway — *here* and *plugins* were known by their titles for the
+letters, the head and the rows were drawn one way, and the rows were
+windowed by hand at one height, so nothing but one column could be
+drawn. The sections are now modules, and their order a setting.
+
+### 8. Modules in a layout
+
+*Added 2026-09-29, asked: "make launcher modular, I want to experiment
+with its structure, order and content".* The launcher is modules
+placed by a layout, and the layout is a setting — `settings.lua`,
+read again on save, so an experiment is an edit and a look.
+
+**A module** is registered by name, the same name replacing it (a
+config read again is not two):
+
+```lua
+kawoosh.launcher.module("todo", {
+  title = "todo",            -- the header; false for none
+  items = fn(ctx) | load = fn(ctx, done) | source = "<picker source>",
+  draw = fn(ctx),            -- or: a block, a node drawn as it is
+  limit = 9,                 -- the rows while the query is empty
+  show = "always" | "blank" | "query",
+  style = "list" | "tiles",  -- rows, or chips that wrap
+  keys = true,               -- its rows take letters (Decision 4)
+})
+```
+
+A module with rows is matched by the query; a block (`draw`) is not
+matched and shows while the query is empty (`show = "blank"`, its
+default). `ctx` is the pane's: `origin`, `cwd`, `query`, `theme`,
+`size` (the chrome's text size); a block sizes itself with kui sizes.
+The bundled ones: `prompt` (the query's field and its
+label), `here`, `buffers`, `plugins`, `recent`, `pins` (the pinned
+files alone), `files` (`show = "query"`); a picker source registered
+with `launcher = true` is a module of its name (`workspaces`).
+`launcher.entry { …, module = "here" }` adds a row to any module's
+list — *plugins* unless said. The letters go to the modules with
+`keys`, in the layout's order, where the special case by title was.
+
+**The layout** is `launcher.layout`, a list read top to bottom:
+
+```lua
+launcher = {
+  layout = {
+    "prompt",
+    { row = { { module = "here", style = "tiles" }, "plugins" } },
+    { module = "pins", title = "pinned" },
+    { module = "recent", limit = 5 },
+    "...",
+    "files",
+  },
+  width = 900,
+}
+```
+
+An entry is a module's name; `{ module = "name", key = value… }`,
+the module with its fields overridden for this place (a settings
+table is a list or a map, never both, so the name is a field); `{ row = { … } }`, columns
+side by side, each an entry or `{ column = { … } }`, a `width` on one
+fixing it; or `"..."`, every module registered and not placed
+elsewhere, by name — kawoosh's own modules only by name, so what a
+plugin or `init.lua` adds shows up without asking and what is bundled
+only when placed. The default is Decision 5's order:
+`{ "prompt", "here", "buffers", "plugins", "recent", "...", "files" }`.
+A name no module has is drawn as a line saying so, not dropped — a
+typo in an experiment is seen. `launcher.width` is how wide the layout
+is drawn, and a column's `width` in a row how wide it is of that — each
+a size (below).
+
+*Amended the same day, asked: "a foundation for calculable sizes, to
+express something like clamp(400px min, 80% target, 1000px max)", and
+revised the same day: "whoever owns the room resolves the size".* A size
+is kui's (backlog F109): pixels (`720`, `"720px"`), a share (`"80%"`),
+and `min(…)`, `max(…)`, `clamp(MIN, TARGET, MAX)` over those, nested —
+or the same as data, never parsed (`{ clamp = { 400, { pct = 80 },
+1000 } }`). The launcher hands `launcher.width` and a row column's
+`width` to kui as they are, and kui's layout resolves them against the
+box it laid out, the parent's content box; `launcher.state()`'s `width`
+and `room` are what the layout reported (`on_layout`). A setting
+declared `type = "size"` (`SettingKind::Size`) is checked on every change
+with kui's grammar (`kawoosh_lua::size_problem`), one grammar for what
+is checked and what is drawn; a value that is not one is named in a
+warning as an undeclared key is, and reads as unset, so a view draws its
+default rather than failing to build. `launcher.width` is the first
+(720, never past the pane).
+
+*Beat:* resolving in kawoosh — the first cut, `kawoosh_editor::Size` and
+`kawoosh.size(spec, room)` returning px to the view: the plugin cannot
+know its room (a column in a row was resolved against the launcher's
+width), it duplicated layout kui already does, and every plugin with a
+bounded size would repeat it; and a table `{ min =, target =, max = }`
+— longer than the CSS the user named, and no way to nest. Measured
+(kui's F109 entry): in Lua a spelled clamp costs a node what `"80%"`
+does, about 0.09 µs over a number, once seen; the same as a table built
+in the view about 0.9 µs, the conversion of a Lua table allocating each
+frame — so spell it in a view, and keep the table for composing one.
+Not yet a size: `layout.column_width`, whose presets step as fractions
+of the strip (`<A-S-l>`) — the strip's arithmetic is kawoosh's, not
+kui's, so a size there is worked out by the engine against the strip's
+viewport, later.
+
+What comes after the prompt scrolls and what comes before it stays —
+a block above the field is a banner; with the prompt last, what is
+above it scrolls and the field sits at the bottom. The prompt is
+always drawn: at the top when the layout does not place it. A path is
+listed once, in the first module in the layout's order that lists it,
+so `pins` placed before `recent` takes the pins out of it. The walk
+(`j` `k`, `<C-n>`…) is the reading order: a column to its end, then
+the next; the cursor is kept in view by kui's `reveal`, the scrolling
+kui's own, which is what lets a module be any height.
+
+*Beat:* a callback that returns the whole tree (`launcher.draw =
+fn(ctx)`) — the most freedom, but every experiment rewrites the walk,
+the letters and the scroll; and the layout in `init.lua` only — the
+user has none, and data in `settings.lua` is the edit-and-look loop.
 
 ### 6. A session keeps nothing
 

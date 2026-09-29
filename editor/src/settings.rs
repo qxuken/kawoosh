@@ -298,6 +298,11 @@ pub enum SettingKind {
     OneOf(Vec<String>),
     List,
     Open,
+    /// A size the UI resolves against the room it is drawn in: pixels,
+    /// a spelling (`"clamp(400px, 80%, 1000px)"`) or the same as data.
+    /// The grammar is the UI's, so the check is the shell's
+    /// (`Settings::values_of`).
+    Size,
 }
 
 impl SettingKind {
@@ -715,6 +720,35 @@ impl Settings {
                 for path in tree.paths() {
                     if !self.is_declared(&path) {
                         out.push((name.clone(), path));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The paths declared `kind`.
+    pub fn declared<'a>(&'a self, kind: &'a SettingKind) -> impl Iterator<Item = &'a str> + 'a {
+        self.decls
+            .iter()
+            .filter(move |(_, d)| &d.kind == kind)
+            .map(|(p, _)| p.as_str())
+    }
+
+    /// Every value a user wrote — a file's, `:set`'s, `kawoosh.opt`'s —
+    /// for a setting declared `kind`, each with its source: what a check
+    /// the engine cannot make itself reads (a `Size`'s grammar is the
+    /// UI's).
+    pub fn values_of(&self, kind: &SettingKind) -> Vec<(String, String, Setting)> {
+        let mut out = Vec::new();
+        for layer in [Layer::User, Layer::Project, Layer::Session] {
+            for (name, tree) in &self.layers[layer as usize] {
+                for (path, d) in &self.decls {
+                    if &d.kind != kind {
+                        continue;
+                    }
+                    if let Some(v) = tree.get(path) {
+                        out.push((name.clone(), path.clone(), v.clone()));
                     }
                 }
             }

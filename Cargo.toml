@@ -23,9 +23,12 @@ kawoosh-lua = { path = "./lua" }
 # while a release is in CI, these three lines become
 #   kui-native = { path = "../kui/crates/kui-native" }  (and the same for -core, -lua).
 # The runner crate is `kui-native` (`kui` on crates.io is another crate's).
-kui-native = { version = "=0.1.0-alpha.24", registry = "forgejo" }
-kui-core = { version = "=0.1.0-alpha.24", registry = "forgejo" }
-kui-lua = { version = "=0.1.0-alpha.24", registry = "forgejo" }
+# By path while kui F109 and F110 (size expressions, and shares that
+# shrink in a full row; launcher.md Decision 8) are unreleased: kui main
+# at 8a42ba1.
+kui-native = { path = "../kui/crates/kui-native" }
+kui-core = { path = "../kui/crates/kui-core" }
+kui-lua = { path = "../kui/crates/kui-lua" }
 # The one Lua in the binary is kui-lua's (kui.md D6).
 mlua = { version = "0.12", features = ["lua55", "vendored"] }
 

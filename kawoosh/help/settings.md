@@ -36,6 +36,19 @@ A dotted name is a path into the tree: `font = { size = 14 }` sets `font.size`. 
 
 A key no one declared is named in a warning (`no setting …`), once per file, since a misspelling would otherwise do nothing. A file with an error shows it in a notice, and the other files still apply.
 
+### Sizes
+
+A setting that is a size takes pixels or a spelling in CSS's terms, worked out by the layout against the room it is drawn in:
+
+| spelling | means |
+|---|---|
+| `720`, `"720px"` | pixels |
+| `"80%"` | of the room |
+| `"min(720px, 100%)"`, `"max(50%, 300)"` | the smaller, the larger |
+| `"clamp(400px, 80%, 1000px)"` | 80% of the room, never under 400 nor over 1000 |
+
+They nest (`"min(clamp(300, 50%, 900), 90%)"`), and the same can be written as data: `{ clamp = { 400, { pct = 80 }, 1000 } }`, `{ min = { "50%", 300 } }`, `{ pct = 80 }`. One that is not a size is named in a warning, and the setting reads as unset, so what uses it draws its default. `kawoosh.setting(path, { type = "size" })` declares one of your own; hand its value to a view's `width` as it is.
+
 `init.lua` is code: maps, commands, plugins. It sets values with `kawoosh.opt`:
 
 ```lua
@@ -100,6 +113,8 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `layout.new_pane`, `layout.new_tab` | `"launcher"` | what a bare split or tab is: `launcher`, `same`, `scratch`, `terminal` or `dir` |
 | `layout.dock` | `"tree"` | the dock's layout, `tree` or `scroll` |
 | `launcher.start` | `"normal"` | the launcher opens in `normal` (letters launch) or `insert` (typing filters) |
+| `launcher.layout` | | the launcher's modules, their order and shape ([its layout](panes.md#its-layout)) |
+| `launcher.width` | `720` | how wide the launcher is drawn, a [size](#sizes): `"100%"` the pane, `"clamp(400px, 80%, 1000px)"` |
 | `buffers.scope` | `"tab"` | buffer lists show the tab's buffers or `all` |
 | `tabs.directory` | `"auto"` | the directory in tab labels: `auto`, `always`, `never` |
 | `dir.hidden` | | whether directory listings show dot files |
