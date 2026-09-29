@@ -77,12 +77,14 @@ returning `true`, and any other key is **pane mode's** (keys.md
 the list keys, and what every pane shares — `<C-w>…`, `<leader>…`,
 `:`, the shift chords — which is how a plugin's pane gets the
 command line and the pane cluster without handling a key. A view's
-pane-mode maps are gated on the fact `lua:NAME`, which holds while
-the view's pane has the keys, its field under them or not:
+pane-mode maps are its own, local to the place `lua:NAME`, which holds
+while the view's pane has the keys, its field under them or not
+([local-maps.md](local-maps.md), 2026-09-29; they were gated on the
+fact by a `when` until then, and found by every other pane's lookup):
 
 ```lua
-kawoosh.map("p", "j", "finder next", { when = { "lua:finder" } })
-kawoosh.map("p", "<CR>", "finder pick", { when = { "lua:finder" } })
+kawoosh.map("p", "j", "finder next", { view = "finder" })
+kawoosh.map("p", "<CR>", "finder pick", { view = "finder" })
 ```
 
 Prefer a map to handling `ev.kind == "key"`: a map is listed by `:map
@@ -102,19 +104,19 @@ view — `field blur`); `field_focus(NAME, nil)` takes them back;
 `field_text` and `field_set` read and write the line. The status line
 shows the field's mode (`INS`, `NOR`) while it has the keys.
 
-Keys the plugin wants on the field are maps gated on the fact
+Keys the plugin wants on the field are the field's own maps, local to
 `field:lua:NAME/q`, which holds only while that field has the keys:
 
 ```lua
-local AT = { when = { "field:lua:finder/q" } }
-kawoosh.command("finder submit", function() … end, { when = AT.when })
+local AT = { view = "finder", field = "q" }
+kawoosh.command("finder submit", function() … end, { when = { "field:lua:finder/q" } })
 kawoosh.map("i", "<CR>", "finder submit", AT)
 kawoosh.map("n", "<Esc>", "finder close", AT)
 ```
 
-The map rides over the editor's own binding on the same key while the
-fact holds and falls through when it does not — the picker's `<C-n>`
-walks its rows in the query and cycles the completion everywhere else.
+The map rides over the editor's own binding on the same key in the
+field and is not there anywhere else — the picker's `<C-n>` walks its
+rows in the query and cycles the completion everywhere else.
 
 ## The worked example: `picker.lua`
 
