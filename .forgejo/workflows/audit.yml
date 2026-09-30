@@ -2,7 +2,7 @@
 #
 # `cargo audit` reads the lockfile and nothing else: no target dir, no build,
 # and no kui checkout either - kui's crates are in Cargo.lock (from the
-# forgejo registry, or without a source while they are taken by path), and
+# drydock9 registry, or without a source while they are taken by path), and
 # everything they pull in is there and audited like the rest. It is the one
 # check whose result can change without anyone pushing a commit - an advisory
 # is published against code that has not moved - which is why this workflow

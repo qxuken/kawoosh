@@ -22,7 +22,7 @@ kawoosh is a modal editor and a terminal multiplexer in one window. Editing is v
 
 - A stable Rust toolchain recent enough for edition 2024. The repository pins no version (there is no `rust-toolchain` file and no `rust-version`).
 - A C compiler: Lua and the tree-sitter grammars are built from source.
-- [kui](https://drydock9.qxuken.dev/qxuken/kui), the UI toolkit. Its crates come from the Forgejo registry named in `.cargo/config.toml`. While `Cargo.toml` takes them by path (it does now, pointing at `../kui/crates/...`), clone kui next to this repository as `../kui`.
+- [kui](https://drydock9.qxuken.dev/qxuken/kui), the UI toolkit. Its crates come from the drydock9 registry named in `.cargo/config.toml`. While `Cargo.toml` takes them by path (it does now, pointing at `../kui/crates/...`), clone kui next to this repository as `../kui`.
 - Git LFS, for the shipped fonts under `assets/fonts` (about 250 MB). Run `git lfs install` and `git lfs pull` after cloning. Without them the app looks for Iosevka installed on the system, and otherwise draws in the system's monospaced font.
 - [nushell](https://www.nushell.sh) for the scripts under `scripts/`.
 
