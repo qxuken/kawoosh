@@ -1147,6 +1147,63 @@ fn plain_deletes_leave_the_register_alone() {
     );
 }
 
+/// `"_` names the black hole for the next command: what it takes goes
+/// into neither the register nor the clipboard, through an operator's
+/// motion, a count on either side of it, visual mode and `.`; the
+/// command after it is back to the register, and a put from `_` has
+/// nothing to put.
+#[test]
+fn the_black_hole_register_takes_nothing() {
+    let clipboard = |t: &mut T| {
+        t.ed.take_effects()
+            .into_iter()
+            .any(|e| matches!(e, Effect::SetClipboard(_)))
+    };
+    let mut t = T::new("one two three four five six seven");
+    t.keys("yiw");
+    let kept = |t: &T| t.ed.memory.head().map(|m| m.text.clone());
+    assert_eq!(kept(&t).as_deref(), Some("one"));
+    t.ed.take_effects();
+
+    t.keys("w\"_dw");
+    assert_eq!(t.text(), "one three four five six seven");
+    assert_eq!(kept(&t).as_deref(), Some("one"));
+    assert!(!clipboard(&mut t));
+    assert_eq!(t.ed.pending_register, None);
+
+    // `.` repeats the whole of it, the register with it.
+    t.keys(".");
+    assert_eq!(t.text(), "one four five six seven");
+    assert_eq!(kept(&t).as_deref(), Some("one"));
+
+    // A count before `"` or after it.
+    t.keys("2\"_x\"_2x");
+    assert_eq!(t.text(), "one  five six seven");
+    assert_eq!(kept(&t).as_deref(), Some("one"));
+
+    t.keys("w\"_cwFIVE<Esc>");
+    assert_eq!(t.text(), "one  FIVE six seven");
+    t.keys("wviw\"_d");
+    assert_eq!(t.text(), "one  FIVE  seven");
+    assert_eq!(kept(&t).as_deref(), Some("one"));
+    assert!(!clipboard(&mut t));
+
+    // Named, then let go.
+    t.keys("\"_<Esc>x");
+    assert_eq!(kept(&t).as_deref(), Some(" "));
+
+    // A put from the black hole has nothing to put.
+    t.keys("\"_p");
+    assert_eq!(t.ed.message, "the _ register is always empty");
+    assert_eq!(t.text(), "one  FIVE seven");
+
+    // `""` is the register there always is; others are refused.
+    t.keys("0\"\"dw");
+    assert_eq!(kept(&t).as_deref(), Some("one  "));
+    t.keys("\"a");
+    assert_eq!(t.ed.message, "no register a: only _, the black hole");
+}
+
 /// A command's `Path` argument reaches it absolute — `~`, `..` and a
 /// relative path resolved against the engine's working directory — for
 /// the engine's own commands, for one the shell declared, and for one

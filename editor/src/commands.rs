@@ -135,7 +135,8 @@ pub(crate) fn op_range(
 }
 
 /// The text an operator took, remembered: the `"` register and the
-/// memory's newest moment.
+/// memory's newest moment — unless `"_` named the black hole for it,
+/// where it goes nowhere.
 fn set_register(
     ed: &mut Editor,
     id: kawoosh_doc::BufferId,
@@ -144,6 +145,9 @@ fn set_register(
     linewise: bool,
     took: crate::Took,
 ) {
+    if ed.pending_register == Some('_') {
+        return;
+    }
     let mut joined = if texts.len() == 1 {
         texts[0].clone()
     } else {
@@ -1260,7 +1264,10 @@ fn case_turned(t: &str, op: &str) -> String {
 /// none: nothing taken yet, or a secret that went, whose covering text
 /// is not what `p` was pressed for.
 fn has_register(ed: &mut Editor) -> bool {
-    if ed.memory.spent() {
+    if ed.pending_register == Some('_') {
+        ed.message = "the _ register is always empty".into();
+        false
+    } else if ed.memory.spent() {
         ed.message =
             "the register's secret is gone — put once, or its time was up: yank it again".into();
         false
@@ -2404,6 +2411,18 @@ pub fn install(ed: &mut Editor) {
     ed.register_with_char("surround replace", surround_replace);
     ed.register_with_char("surround replace with", surround_replace_with);
 
+    // `"` names the register the next command takes into or puts from.
+    // Only `_` so far, the black hole; `""` is the one there always is.
+    ed.register_with_char("register", |ed, ctx| match ctx.arg_char {
+        Some('_') => ed.pending_register = Some('_'),
+        Some('"') => ed.pending_register = None,
+        Some(c) => {
+            ed.count = None;
+            ed.message = format!("no register {c}: only _, the black hole");
+        }
+        None => {}
+    });
+
     // ---- the stream: `.` and macros (docs/design/keys.md; `repeat`)
     ed.register("repeat", |ed, ctx| {
         ed.repeat_change(ctx.view, ctx.has_count.then_some(ctx.count));
@@ -2983,6 +3002,10 @@ const DOCS: &[(&str, &str)] = &[
     (
         "repeat",
         "the last change again, on the selections as they are (`.`); a count replaces its count",
+    ),
+    (
+        "register",
+        "the next command's register, named by the next key (`\"`): `_`, the black hole, takes nothing into the register or the clipboard (`\"_d`, `\"_c`, `\"_x`)",
     ),
     (
         "macro record",
@@ -4199,6 +4222,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("s", "change char"),
         ("S", "change line"),
         ("r", "replace char"),
+        ("\"", "register"),
         ("i", "insert"),
         ("a", "append"),
         ("I", "insert line start"),
