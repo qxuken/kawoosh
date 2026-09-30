@@ -1557,6 +1557,16 @@ impl Editor {
         }
     }
 
+    /// What `<Tab>` puts at screen column `col` of buffer `id`: a tab,
+    /// or under `expandtab` the spaces to the next `shiftwidth` stop.
+    pub fn tab_from(&self, id: BufferId, col: usize) -> String {
+        if !self.expandtab_in(id) {
+            return "\t".into();
+        }
+        let w = self.shiftwidth_in(id);
+        " ".repeat(w - col % w)
+    }
+
     /// Buffer `id`'s indent level as the indenter reads it.
     pub fn indent_unit(&self, id: BufferId) -> IndentUnit {
         IndentUnit {
@@ -2897,15 +2907,21 @@ impl Editor {
                 );
                 return true;
             }
-            // `<CR>` for `r` is a line break (`r<CR>` splits the line);
-            // no other waiting command has a use for one.
-            let enter = stroke.code == "enter"
-                && self.commands.resolve(&binding.command, &binding.args).name == "replace char";
+            // `<CR>` and `<Tab>` for `r` are a line break and a tab
+            // (`r<CR>` splits the line); no other waiting command has a
+            // use for them.
+            let replace =
+                self.commands.resolve(&binding.command, &binding.args).name == "replace char";
+            let named = match stroke.code.as_str() {
+                "enter" if replace => Some('\n'),
+                "tab" if replace => Some('\t'),
+                _ => None,
+            };
             let c = stroke
                 .text
                 .as_deref()
                 .and_then(|t| t.chars().next())
-                .or_else(|| enter.then_some('\n'))
+                .or(named)
                 .or_else(|| {
                     let mut it = stroke.code.chars();
                     match (it.next(), it.next()) {
@@ -3526,17 +3542,24 @@ impl Editor {
             return;
         }
         let mut text = text.to_string();
-        if text == "\t" {
-            text = self.indent_unit_in(self.views[view].buffer);
-        }
         if self.is_field(view) {
             text = text.replace('\n', " ");
         }
-        let sels = self.views[view].sels.items.clone();
-        let edits = sels
+        // A tab is `<Tab>`'s: each caret's own run to the next stop.
+        let id = self.views[view].buffer;
+        let (buf, ts) = (&self.buffers[id], self.tabstop_in(id));
+        let edits = self.views[view]
+            .sels
             .iter()
             .enumerate()
-            .map(|(i, s)| (i, s.head..s.head, text.clone()))
+            .map(|(i, s)| {
+                let text = if text == "\t" {
+                    self.tab_from(id, motions::display_col(buf, s.head, ts))
+                } else {
+                    text.clone()
+                };
+                (i, s.head..s.head, text)
+            })
             .collect();
         self.edit_each(view, edits, |start, len| Selection::point(start + len));
     }
