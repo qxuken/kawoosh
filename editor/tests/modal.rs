@@ -206,6 +206,48 @@ fn linewise_operators_take_a_crlf_break_whole() {
     assert_eq!(t.head(), t.text().len() - 4, "on the put line");
 }
 
+/// `r` as neovim's (checked there headless): COUNT characters become
+/// CHAR, the caret on the last, nothing when the line is short of them;
+/// `r<CR>` makes the lot one line break at the line's indent, the blanks
+/// after it gone and the caret stepped back as `<Esc>` steps it.
+#[test]
+fn replace_char_takes_a_count_and_a_line_break() {
+    let mut t = T::new("abcdef");
+    t.keys("l3rx");
+    assert_eq!((t.text().as_str(), t.head()), ("axxxef", 3));
+    t.keys("0l9ry");
+    assert_eq!(t.text(), "axxxef", "short of the count: nothing");
+
+    let mut t = T::new("foo bar");
+    t.keys("3lr<CR>");
+    assert_eq!((t.text().as_str(), t.head()), ("foo\nbar", 4));
+    t.keys("u");
+    assert_eq!(t.text(), "foo bar", "one undo");
+
+    let mut t = T::new("    foo bar");
+    t.keys("7lr<CR>");
+    assert_eq!(t.text(), "    foo\n    bar");
+    assert_eq!(t.head(), 8 + 3, "on the indent's last blank");
+
+    let mut t = T::new("foo  bar");
+    t.keys("3lr<CR>");
+    assert_eq!(t.text(), "foo\nbar", "the blanks after it go");
+    let mut t = T::new("foo  bar");
+    t.keys("4lr<CR>");
+    assert_eq!(t.text(), "foo \nbar", "the blanks before it stay");
+
+    let mut t = T::new("abcdef");
+    t.keys("l3r<CR>");
+    assert_eq!((t.text().as_str(), t.head()), ("a\nef", 2));
+    let mut t = T::new("abc");
+    t.keys("2lr<CR>");
+    assert_eq!(t.text(), "ab\n", "the line's last character");
+
+    let mut t = T::new("a b c d");
+    t.keys("lr<CR>j0l.");
+    assert_eq!(t.text(), "a\nb\nc d", "`.` again");
+}
+
 #[test]
 fn undo_redo_are_per_command_and_per_insert_session() {
     let mut t = T::new("abc");
