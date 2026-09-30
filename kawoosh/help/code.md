@@ -42,7 +42,10 @@ of its marker files.
 typescript-language-server needs TypeScript 5 installed beside it
 (`typescript@5`), in the project or globally; it does not work with
 TypeScript 7. A server that refuses to start, as it does without one,
-is off until `:lsp restart`, and the corner says what it said.
+is off until `:lsp restart`, and the corner says what it said. One
+that exits on its own is started again for its files, the corner
+saying how it ended; after three exits in three minutes it is off
+until `:lsp restart`.
 
 ### Settings per server
 
@@ -76,7 +79,7 @@ return {
 |---|---|
 | `:lsp` | the servers running, on the status line |
 | `:lsp info` | the servers in a pane: each one's root, documents and rules |
-| `:lsp restart [LANGUAGE]` | restart one server, or all; a missing program, or one that refused to start, is tried again |
+| `:lsp restart [LANGUAGE]` | restart one server, or all; a missing program, or one that refused to start or kept exiting, is tried again |
 | `:lsp logs [LANGUAGE]` | what a server said, its errors included, live; `:lsp logs clear` forgets it |
 | `:lsp toggle RULE [LANGUAGE]` | flip `enabled`, `load_all` or `inlay_hints` for the session |
 
