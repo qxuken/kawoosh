@@ -390,6 +390,7 @@ pub fn fact_words(fact: &str) -> Option<String> {
         "file" => "a buffer with a file",
         "readonly" => "a read-only buffer",
         "exited" => "a finished command's pane",
+        "rows" => "a pane whose `j` and `k` move by row on screen",
         _ => "",
     };
     if !words.is_empty() {

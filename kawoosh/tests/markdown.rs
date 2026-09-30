@@ -781,3 +781,333 @@ fn walk_the_spaces(tag: &str, doc: &str, row: usize, line: &str) {
         rows.len()
     );
 }
+
+/// A file opened into a pane that drew another fills it on its first
+/// frame. The pane scrolled by the rows' heights it had measured, by
+/// line, whatever buffer they were of: a document of long paragraphs
+/// left heights a short line's row is a fraction of, so the next file
+/// drew five rows and filled in a few more a frame — under load, a
+/// document rendered line by line (2026-09-30).
+#[test]
+fn a_file_opened_into_a_pane_fills_it_at_once() {
+    let dir = fixture("switch");
+    let long = "word ".repeat(400);
+    let a: String = (0..60).map(|i| format!("{i} {long}\n\n")).collect();
+    std::fs::write(dir.join("doc.md"), a).unwrap();
+    let b: String = (0..200).map(|i| format!("short line {i}\n")).collect();
+    std::fs::write(dir.join("b.md"), b).unwrap();
+    let (mut d, mut app) = launch(&dir, 900.0);
+    let before = d.line_rows().len();
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("b.md").display()),
+    );
+    let first = d.line_rows().len();
+    settle(&mut d, &mut app);
+    let settled = d.line_rows().len();
+    assert!(before < 10, "the long paragraphs fill the pane: {before}");
+    assert!(settled > 40, "{settled}");
+    assert!(
+        first >= settled,
+        "the first frame draws the pane full: {first} of {settled}"
+    );
+}
+
+/// The row of line `ln` (from 0) as drawn.
+fn row(d: &Drive, app: &Kawoosh, ln: usize) -> String {
+    let v = app.focused_view().unwrap();
+    let top = app.ed.views[v].top;
+    d.line_rows()[ln - top].clone()
+}
+
+/// `markdown.reveal`: `line` draws the caret's line as its source,
+/// `span` only the mark the caret is in — an emphasis, a link whole with
+/// its destination, a heading's `#` from anywhere on it — and `none`
+/// nothing, but where a caret has nowhere else to stand: a rule.
+#[test]
+fn reveal_shows_the_line_the_mark_or_nothing() {
+    let dir = fixture("reveal");
+    let (mut d, mut app) = launch(&dir, 2400.0);
+    let rendered = "Some strong and emphasis with code and a link. This";
+    let find = |d: &mut Drive, app: &mut Kawoosh, what: &str| {
+        d.press(app, "gg");
+        d.keys(app, &format!("/{what}"));
+        d.key(app, "enter", KeyMods::default());
+        settle(d, app);
+    };
+    find(&mut d, &mut app, "strong");
+    assert!(row(&d, &app, 2).starts_with("Some **strong** and *emphasis*"));
+    ex(&mut d, &mut app, "set markdown.reveal=span");
+    settle(&mut d, &mut app);
+    let r = row(&d, &app, 2);
+    assert!(
+        r.starts_with("Some **strong** and emphasis with code"),
+        "the strong's stars alone: {r}"
+    );
+    find(&mut d, &mut app, "link");
+    let r = row(&d, &app, 2);
+    assert!(
+        r.starts_with("Some strong and emphasis with code and a [link](other.md)."),
+        "the link whole: {r}"
+    );
+    find(&mut d, &mut app, "markdown buffer");
+    assert_eq!(row(&d, &app, 0), "# The markdown buffer", "a heading's `#`");
+    ex(&mut d, &mut app, "set markdown.reveal=none");
+    find(&mut d, &mut app, "strong");
+    assert!(
+        row(&d, &app, 2).starts_with(rendered),
+        "{}",
+        row(&d, &app, 2)
+    );
+    // A click through the caret's rendered row lands on its byte: the
+    // fold it was drawn with is the one the click maps through.
+    let v = app.focused_view().unwrap();
+    let buf = app.ed.buffer_of(v);
+    let head = app.ed.views[v].sels.primary().head;
+    assert_eq!(&buf.text()[head..head + 6], "strong");
+    // A rule's line folds to nothing: the caret there sees its source.
+    d.press(&mut app, "gg");
+    d.keys(&mut app, "27j");
+    settle(&mut d, &mut app);
+    let rows = d.line_rows();
+    assert!(rows.iter().any(|r| r == "---"), "{rows:#?}");
+}
+
+/// `markdown.navigation = "row"`: `j` and `k` move a row on screen in a
+/// rendered pane, through a wrapped paragraph; `gj` does so under
+/// `line` too, where `j` is a line. An operator's `j` is a line.
+#[test]
+fn navigation_moves_by_row_on_screen() {
+    let dir = fixture("rows");
+    let (mut d, mut app) = launch(&dir, 700.0);
+    let head = |app: &Kawoosh| {
+        let v = app.focused_view().unwrap();
+        let buf = app.ed.buffer_of(v);
+        let h = app.ed.views[v].sels.primary().head;
+        let ln = buf.line_of(h);
+        (ln, h - buf.line_range(ln).start)
+    };
+    d.press(&mut app, "gg");
+    d.keys(&mut app, "2j");
+    settle(&mut d, &mut app);
+    assert_eq!(head(&app), (2, 0));
+    d.keys(&mut app, "gj");
+    settle(&mut d, &mut app);
+    let (ln, off) = head(&app);
+    assert_eq!(ln, 2, "`gj` inside the wrapped paragraph");
+    assert!(off > 20, "{off}");
+    d.keys(&mut app, "gk");
+    settle(&mut d, &mut app);
+    d.keys(&mut app, "j");
+    assert_eq!(head(&app).0, 3, "`j` a line by default");
+    d.keys(&mut app, "k");
+    ex(&mut d, &mut app, "set markdown.navigation=row");
+    settle(&mut d, &mut app);
+    d.keys(&mut app, "j");
+    settle(&mut d, &mut app);
+    let (ln, off) = head(&app);
+    assert_eq!(ln, 2, "`j` a row: still the paragraph");
+    assert!(off > 20, "{off}");
+    d.keys(&mut app, "k");
+    settle(&mut d, &mut app);
+    assert_eq!(head(&app), (2, 0), "`k` back up the row");
+    d.keys(&mut app, "dj");
+    settle(&mut d, &mut app);
+    let v = app.focused_view().unwrap();
+    assert!(
+        app.ed
+            .buffer_of(v)
+            .text()
+            .starts_with("# The markdown buffer\n\n## A list"),
+        "`dj` took the paragraph and the blank line after it: {:?}",
+        &app.ed.buffer_of(v).text()[..60]
+    );
+}
+
+/// Under `span`, an element typed into stays shown whole on the frame
+/// the key is drawn in, before the parser has answered for it: the runs
+/// are the last answer's carried over the edit, and a byte typed at a
+/// run's edge is in neither — the code span looked cut in two, its
+/// opening backtick folded, for a frame (2026-09-30).
+#[test]
+fn a_span_typed_into_stays_shown_before_the_parser_answers() {
+    let dir = fixture("typed-span");
+    let (mut d, mut app) = launch(&dir, 2400.0);
+    ex(&mut d, &mut app, "set markdown.reveal=span");
+    d.press(&mut app, "gg");
+    d.keys(&mut app, "/code");
+    d.key(&mut app, "enter", KeyMods::default());
+    settle(&mut d, &mut app);
+    let para = |d: &Drive| {
+        d.line_rows()
+            .into_iter()
+            .find(|r| r.starts_with("Some "))
+            .unwrap()
+    };
+    assert!(para(&d).contains("with `code` and"), "{}", para(&d));
+    // Appended at the code's end, before its closing backtick; the frame
+    // drawn at once, without waiting for the parser.
+    d.keys(&mut app, "ea");
+    for c in ["x", "y", "z"] {
+        d.keys(&mut app, c);
+        let r = para(&d);
+        assert!(r.contains("with `codex"), "the opening backtick shown: {r}");
+    }
+    settle(&mut d, &mut app);
+    assert!(para(&d).contains("with `codexyz` and"), "{}", para(&d));
+}
+
+/// A lone `-` typed under a paragraph is a setext heading's underline to
+/// the grammar, as CommonMark says — but it is the start of a list item
+/// being typed, so while the caret is on it the paragraph stays one. A
+/// caret away, the heading is drawn.
+#[test]
+fn a_dash_typed_under_a_paragraph_does_not_make_it_a_heading() {
+    let dir = fixture("setext");
+    let (mut d, mut app) = launch(&dir, 2400.0);
+    let para_h = |d: &Drive| {
+        // The row's rendered text: the title bar's crumb of the heading
+        // is its source.
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| {
+                n.text
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("Some strong"))
+            })
+            .map(|n| n.rect.h)
+            .unwrap()
+    };
+    d.press(&mut app, "gg");
+    settle(&mut d, &mut app);
+    let body = para_h(&d);
+    d.keys(&mut app, "2jo-");
+    settle(&mut d, &mut app);
+    assert!(
+        (para_h(&d) - body).abs() < 1.0,
+        "a paragraph still: {} vs {body}",
+        para_h(&d)
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    d.press(&mut app, "gg");
+    settle(&mut d, &mut app);
+    assert!(para_h(&d) > body * 1.2, "a heading, the caret away");
+    // Typed on into a list item, the paragraph is one again: its
+    // heading was the line below's, which the reparse of that line
+    // alone left painted on it.
+    d.keys(&mut app, "3jA [");
+    settle(&mut d, &mut app);
+    d.key(&mut app, "escape", KeyMods::default());
+    d.press(&mut app, "gg");
+    settle(&mut d, &mut app);
+    let v = app.focused_view().unwrap();
+    assert!(app.ed.buffer_of(v).text().contains("right.\n- ["));
+    assert!(
+        (para_h(&d) - body).abs() < 1.0,
+        "a paragraph again: {} vs {body}",
+        para_h(&d)
+    );
+}
+
+/// Under `none`, a mark drawn as something else shows its source while
+/// the caret is on it — a task's box is three bytes drawn as one glyph,
+/// and a caret on any of them had nowhere to stand — while hidden marks
+/// stay hidden.
+#[test]
+fn reveal_none_shows_a_box_the_caret_is_on() {
+    let dir = fixture("box");
+    let (mut d, mut app) = launch(&dir, 2400.0);
+    ex(&mut d, &mut app, "set markdown.reveal=none");
+    d.press(&mut app, "gg");
+    d.keys(&mut app, "8j");
+    settle(&mut d, &mut app);
+    let rows = d.line_rows();
+    assert!(
+        rows.iter().any(|r| r == "- \u{F0131} a task"),
+        "on the `-`, its source: {rows:#?}"
+    );
+    d.keys(&mut app, "2l");
+    settle(&mut d, &mut app);
+    let rows = d.line_rows();
+    assert!(rows.iter().any(|r| r == "• [ ] a task"), "{rows:#?}");
+    d.keys(&mut app, "lrx");
+    settle(&mut d, &mut app);
+    let v = app.focused_view().unwrap();
+    assert!(app.ed.buffer_of(v).text().contains("- [x] a task"));
+}
+
+/// A row above the caret's that grows pushes what is above it up, not
+/// the caret down: `=` typed under a paragraph makes it an h1 when the
+/// parser answers, and the caret's row stays where it was on screen,
+/// on that frame and after (2026-09-30).
+#[test]
+fn a_row_above_the_caret_grows_upward() {
+    let dir = fixture("anchor");
+    let (mut d, mut app) = launch(&dir, 2400.0);
+    let y_of = |d: &Drive, text: &str| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| n.text.as_deref() == Some(text))
+            .map(|n| (n.rect.y, n.rect.h))
+    };
+    d.press(&mut app, "gg");
+    d.keys(&mut app, "2jo");
+    settle(&mut d, &mut app);
+    d.keys(&mut app, "x");
+    settle(&mut d, &mut app);
+    let (at, _) = y_of(&d, "x").expect("the caret's row");
+    let para_h = |d: &Drive| {
+        d.core
+            .nodes()
+            .iter()
+            .filter(|n| {
+                n.text
+                    .as_deref()
+                    .is_some_and(|t| t.starts_with("Some strong"))
+            })
+            .map(|n| n.rect.h)
+            .fold(0.0, f32::max)
+    };
+    let para = para_h(&d);
+    d.press(&mut app, "<BS>");
+    d.keys(&mut app, "=");
+    for _ in 0..4 {
+        let (y, _) = y_of(&d, "=").expect("the caret's row");
+        assert!((y - at).abs() < 1.0, "the caret's row stays: {y} vs {at}");
+        d.frame(&mut app);
+        app.wait_for_syntax();
+    }
+    let heading = para_h(&d);
+    assert!(
+        heading > para * 1.2,
+        "the paragraph is an h1: {heading} vs {para}"
+    );
+}
+
+/// Drawn around its caret, a pane lays out rows above its top too; a
+/// click counts its row from the first drawn, not the view's top.
+#[test]
+fn a_click_above_the_caret_lands_on_its_line() {
+    let dir = fixture("anchor-click");
+    let doc: String = (1..=200).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(dir.join("doc.md"), doc).unwrap();
+    let (mut d, mut app) = launch(&dir, 900.0);
+    d.keys(&mut app, "150G");
+    settle(&mut d, &mut app);
+    let v = app.focused_view().unwrap();
+    assert!(app.ed.views[v].top > 100, "{}", app.ed.views[v].top);
+    let (x, y, h) = d
+        .core
+        .nodes()
+        .iter()
+        .find(|n| n.text.as_deref() == Some("line 140"))
+        .map(|n| (n.rect.x, n.rect.y, n.rect.h))
+        .expect("line 140 drawn");
+    d.click(&mut app, x + 5.0, y + h / 2.0);
+    d.frame(&mut app);
+    let buf = app.ed.buffer_of(v);
+    assert_eq!(buf.line_of(app.ed.views[v].sels.primary().head), 139);
+}

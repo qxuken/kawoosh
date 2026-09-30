@@ -227,6 +227,8 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `theme.name`, `theme.dark`, `theme.light` | `"rose-pine"`, `""`, `""` | the theme family, and a dark and a light theme apart from it ([look](look.md#themes)) |
 | `theme.appearance` | `"system"` | `system`, `dark` or `light` |
 | `markdown.render` | `true` | draw markdown rendered |
+| `markdown.reveal` | `"line"` | what the caret shows as its source: its `line`, the `span` it is in, or `none` ([look](look.md#markdown)) |
+| `markdown.navigation` | `"line"` | what `j` and `k` move by in rendered markdown: a `line` or a `row` on screen |
 | `editor.selection_radius` | `0` | round the selection's corners, in pixels |
 | `editor.breadcrumbs` | `true` | the symbols the caret is inside, on the pane's title bar ([search](search.md#breadcrumbs)) |
 | `editor.wrap` | `"off"` | wrap long lines at the pane's width: `"word"` between words, `"glyph"` anywhere ([look](look.md#soft-wrap)) |

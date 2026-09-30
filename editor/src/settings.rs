@@ -544,6 +544,14 @@ const DOCS: &[(&str, &str)] = &[
         "the headings' sizes from h1 down, each a ratio of the body's",
     ),
     (
+        "markdown.reveal",
+        "what the caret shows as its source: `line` its whole line, `span` the mark it is in, `none` nothing",
+    ),
+    (
+        "markdown.navigation",
+        "what `j` and `k` move by in a rendered markdown pane: `line` or `row` on screen",
+    ),
+    (
         "markdown.image_max_mb",
         "an image past this many MB is left as its text",
     ),
@@ -878,6 +886,12 @@ impl Settings {
             ]),
         );
         defaults.set("markdown.image_max_mb", Setting::Int(16));
+        // What the caret's line shows of its source (markdown.md
+        // Decision 3, amended 2026-09-30): the whole line, the mark the
+        // caret is in, or nothing; and whether `j` `k` move by line or by
+        // row on screen.
+        defaults.set("markdown.reveal", Setting::Str("line".into()));
+        defaults.set("markdown.navigation", Setting::Str("line".into()));
         // `p` puts what was copied in another program too: the system
         // clipboard, read when the window or an editor pane gets the
         // keys back, is the register's newest when it is news.
@@ -1110,6 +1124,8 @@ impl Settings {
             ("tabs.directory", words(&["auto", "always", "never"])),
             ("statusline.path", words(&["relative", "absolute", "name"])),
             ("editor.wrap", words(&["off", "word", "glyph"])),
+            ("markdown.reveal", words(&["line", "span", "none"])),
+            ("markdown.navigation", words(&["line", "row"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
             ("end_of_line", words(&["", "lf", "crlf", "cr"])),
             (
@@ -1705,7 +1721,9 @@ mod tests {
                 "lsp.inlay_hints",
                 "markdown.heading",
                 "markdown.image_max_mb",
+                "markdown.navigation",
                 "markdown.render",
+                "markdown.reveal",
                 "memory.idle_secs",
                 "memory.keep_days",
                 "memory.max_mb",

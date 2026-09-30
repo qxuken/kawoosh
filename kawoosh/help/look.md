@@ -100,12 +100,18 @@ A wrapped line keeps its number on its first row only. `j` and `k` still move a 
 
 A markdown buffer is drawn rendered: the marks hidden, headings larger, prose wrapped to the pane, lists with bullets and check boxes, tables aligned, block quotes with a bar, code blocks on their own background, and local images drawn in place. It is still the file: motions, search, undo and `:w` work on the source, and the line with the caret on it (every line of a visual selection) shows its source so you can edit the marks.
 
+`markdown.reveal` chooses how much of the source the caret shows. `"line"` (the default) shows its whole line. `"span"` keeps the line rendered and shows only the marks of what the caret is in: the `**` of a bold word, a link with its destination, a code span's backticks, a heading's `#` from anywhere on the heading. `"none"` keeps the caret's line rendered too; on a hidden mark the caret stands on the next character shown, and a check box, bullet or quote bar shows its source while the caret is on it, so you can edit it. A caret on a table, a line of images or a rule still sees its source, since it has nowhere else to stand.
+
+`markdown.navigation = "row"` makes `j` and `k` (and the arrows) move one row on screen, through a wrapped paragraph, as `gj` and `gk` always do. An operator's `j`, as in `dj`, is still a line.
+
 `:markdown toggle` (`<leader>om`) switches between rendered and source for the session. `gx` on a link opens it: a URL in the browser, a path here, an `#anchor` at its heading.
 
 | setting | default | what |
 |---|---|---|
 | `markdown.render` | `true` | draw markdown rendered |
 | `markdown.heading` | `{ 1.6, 1.35, 1.15, 1.0 }` | heading sizes for h1 to h6, as a ratio of the text; a level not listed is the text's size |
+| `markdown.reveal` | `"line"` | what the caret shows as its source: `line`, `span` or `none` |
+| `markdown.navigation` | `"line"` | what `j` and `k` move by: a `line` or a `row` on screen |
 | `markdown.image_max_mb` | `16` | images larger than this show their alt text |
 
 ## The selection

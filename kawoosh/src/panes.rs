@@ -1135,8 +1135,12 @@ impl Kawoosh {
         let follow = self.ed.views[view].drawn_caret != Some(caret) || focused && self.follow_caret;
         self.ed.views[view].drawn_caret = Some(caret);
         let mut md_last = None;
+        let mut md_anchored = None;
         if tall {
-            md_last = Some(self.md_follow(view, height, follow));
+            let width = self.layout.rects.get(&pane).map_or(0.0, |r| r.w);
+            let (last, anchored) = self.md_follow(ui, view, height, width, follow);
+            md_last = Some(last);
+            md_anchored = anchored;
         }
 
         // Scroll the caret into view — a few lines, in the app.
@@ -1207,36 +1211,53 @@ impl Kawoosh {
             let style = self.markdown_style(ui.theme().is_dark());
             let v = &self.ed.views[view];
             let buf = &self.ed.buffers[buf_id];
-            // The source is drawn where the caret is: each selection's
-            // head's line, and in visual mode every line a selection
-            // covers — so a selection grown line by line turns each line
-            // raw once, as it reaches it, rather than the one it left
-            // turning back and reflowing under it (2026-09-27).
-            let visual = self.ed.mode(view) == kawoosh_editor::Mode::Visual;
-            let raw: std::collections::HashSet<usize> = v
-                .sels
-                .iter()
-                .flat_map(|s| {
-                    if visual {
-                        buf.line_of(s.start())..=buf.line_of(s.end())
-                    } else {
-                        let ln = buf.line_of(s.head);
-                        ln..=ln
-                    }
-                })
-                .collect();
+            // Where the carets are, and what of the lines around them is
+            // their source (`markdown.reveal`).
+            let carets = crate::markdown::Carets::of(&self.ed, view, self.md_shown.get(&view));
+            let mut raw: std::collections::HashSet<usize> = Default::default();
             let mut tables = crate::markdown::Tables::default();
-            for ln in v.top..last {
-                let r =
-                    crate::markdown::line(buf, ln, raw.contains(&ln), &style, tabstop, &mut tables);
+            for ln in md_anchored.map_or(v.top, |a| a.from)..last {
+                let (r, source) = carets.line(buf, ln, &style, tabstop, &mut tables);
+                if source {
+                    raw.insert(ln);
+                }
                 if let Some(first) = r.table_first {
                     md_tables.insert(ln, first);
                 }
                 md_rows.insert(ln, (r, Vec::new()));
             }
+            // What was shown as source around the carets, for the next
+            // frame to carry through what is typed meanwhile.
+            let line_start = |ln: usize| buf.line_start(ln);
+            let ranges: Vec<Range<usize>> = md_rows
+                .iter()
+                .flat_map(|(ln, (r, _))| {
+                    let at = line_start(*ln);
+                    r.revealed.iter().map(move |x| at + x.start..at + x.end)
+                })
+                .collect();
+            if ranges.is_empty() {
+                self.md_shown.remove(&view);
+            } else {
+                self.md_shown.insert(
+                    view,
+                    crate::markdown::Shown {
+                        buffer: buf_id,
+                        version: buf.version(),
+                        ranges,
+                    },
+                );
+            }
             let mut ghosts: HashMap<usize, crate::markdown::Ahead> = HashMap::new();
             for ln in raw.iter().copied().filter(|l| md_tables.contains_key(l)) {
-                let r = crate::markdown::line(buf, ln, false, &style, tabstop, &mut tables);
+                let r = crate::markdown::line(
+                    buf,
+                    ln,
+                    crate::markdown::Reveal::Folded,
+                    &style,
+                    tabstop,
+                    &mut tables,
+                );
                 ghosts.insert(ln, (r, Vec::new()));
             }
             // A table the caret is in slides sideways to show it.
@@ -1384,7 +1405,9 @@ impl Kawoosh {
                 Some(kawoosh_editor::Prompt::Search { .. })
             )
             && self.ed.prompt_from() == Some(view);
-        let top = v.top;
+        // The first line drawn: the view's top, or above it the rows a
+        // tall pane stacks up from its caret's (`markdown::Anchored`).
+        let top = md_anchored.map_or(v.top, |a| a.from);
         let mut left = if tall { 0.0 } else { v.left };
         let last = md_last.unwrap_or((top + rows_n).min(buf.line_count()));
         let sels = &v.sels;
@@ -1579,10 +1602,16 @@ impl Kawoosh {
             }
         }
 
-        let mut md_seen: Vec<(usize, f32)> = Vec::new();
+        // Each tall row drawn: its line, what it drew
+        // (`Heights::stamp`), and its height last frame when it has one.
+        let mut md_seen: Vec<(usize, u64, Option<f32>)> = Vec::new();
         // A wrapped row's line, its text node's key and its drawn text:
         // what `gj` `gk` ask kui about next frame (wrap.rs).
         let mut wrap_seen: Vec<(usize, kui_native::Key, rows::Drawn)> = Vec::new();
+        // The caret's row's key in a tall pane, for the next frame to find
+        // where it was drawn (`markdown::Anchor`).
+        let mut caret_row: Option<kui_native::Key> = None;
+        let mut lines_key: Option<kui_native::Key> = None;
         let sink = ui.with_keyed(
             "editor",
             NodeSpec::row()
@@ -1633,7 +1662,11 @@ impl Kawoosh {
                 let lines = ui.with_keyed(
                     "lines",
                     if tall {
-                        lines_spec.clip()
+                        // Its rect, for the next frame to find the
+                        // caret's row in it (`markdown::Anchor`).
+                        lines_spec
+                            .clip()
+                            .on_layout(Value::map([("kind", "lines".into())]))
                     } else {
                         lines_spec.scroll_x()
                     },
@@ -1667,6 +1700,7 @@ impl Kawoosh {
                                         cells: _,
                                         delimiter: _,
                                         wrap,
+                                        revealed: _,
                                     } = r;
                                     (drawn, Some((marks, scale, code, rule, wrap, img)))
                                 }
@@ -1757,6 +1791,20 @@ impl Kawoosh {
                                         caret_kind
                                     };
                                     let start = masked.map_or(clip(s.head), |m| clip(m.start));
+                                    // On a byte a rendered row folded away
+                                    // (`markdown.reveal = "none"`) the block
+                                    // stands on the next character shown.
+                                    let end = if end <= start
+                                        && caret_kind == Caret::Block
+                                        && md_row.is_some()
+                                    {
+                                        drawn.text[start.min(drawn.text.len())..]
+                                            .chars()
+                                            .next()
+                                            .map_or(start, |c| start + c.len_utf8())
+                                    } else {
+                                        end
+                                    };
                                     carets.push((start..end, kind));
                                 }
                                 if *s == primary && head_line == ln && keyed {
@@ -1917,12 +1965,20 @@ impl Kawoosh {
                             // wrap at the column's width less its number,
                             // the code's panel, a rule, an image.
                             let label = format!("md{ln}");
+                            if tall && !in_table && ln == cur_line {
+                                caret_row = Some(ui.child_key(&label));
+                            }
                             let joined: Vec<(Range<usize>, rows::Mark)>;
                             let (marks, form) = match &md_row {
                                 Some((marks, scale, code, rule, wrap, img)) => {
-                                    if let Some(r) = ui.layout_of(ui.child_key(&label)) {
-                                        md_seen.push((ln, r.h + edges));
-                                    }
+                                    md_seen.push((
+                                        ln,
+                                        crate::markdown::Heights::stamp(
+                                            &drawn.text,
+                                            (scale.to_bits(), *code, *rule, img.len(), in_table),
+                                        ),
+                                        ui.layout_of(ui.child_key(&label)).map(|r| r.h + edges),
+                                    ));
                                     // Images side by side, each at most its
                                     // share of the row, by aspect — `width`
                                     // is the text's, the gutter already out.
@@ -1961,9 +2017,11 @@ impl Kawoosh {
                                 None => {
                                     match wrap.filter(|_| range.len() < rows::LONG_LINE_BYTES) {
                                         Some(w) => {
-                                            if let Some(r) = ui.layout_of(ui.child_key(&label)) {
-                                                md_seen.push((ln, r.h));
-                                            }
+                                            md_seen.push((
+                                                ln,
+                                                crate::markdown::Heights::stamp(&drawn.text, ()),
+                                                ui.layout_of(ui.child_key(&label)).map(|r| r.h),
+                                            ));
                                             let form = rows::RowForm {
                                                 key: label.clone(),
                                                 scale: 1.0,
@@ -2031,161 +2089,201 @@ impl Kawoosh {
                                     )
                                     .then_some(pal.strip),
                                     sel_radius,
-                                    text_key: wrap.is_some().then_some(&text_key),
+                                    // A tall row's text, for `gj` `gk`; a
+                                    // table's rows do not wrap.
+                                    text_key: (tall && !in_table).then_some(&text_key),
                                 },
                             );
                             if let Some(k) = text_key.get() {
                                 wrap_seen.push((ln, k, drawn.clone()));
                             }
                         };
-                        let mut ln = top;
-                        while ln < last {
-                            let Some(&table) = md_tables.get(&ln) else {
-                                emit(ui, ln, false, 0.0);
-                                ln += 1;
-                                continue;
-                            };
-                            // A table: its rows in a block that scrolls
-                            // sideways on its own (the wheel's `dx`, the
-                            // caret), its numbers in a column beside it.
-                            let first = ln;
-                            while ln < last && md_tables.get(&ln) == Some(&table) {
-                                ln += 1;
-                            }
-                            let offset = md_table_left.get(&table).copied().unwrap_or(0.0);
-                            // Its rules above and below, when its first
-                            // row and its last are in sight.
-                            let lh = font.line_height;
-                            let columns = md_columns.get(&table).copied().unwrap_or(0);
-                            let top = first == table;
-                            let bottom = !crate::markdown::is_table_line(buf, ln);
-                            let grid: Vec<bool> =
-                                (first..ln).map(|l| md_cell_h.contains_key(&l)).collect();
-                            let heights: Vec<f32> = (first..ln)
-                                .map(|l| md_cell_h.get(&l).copied().unwrap_or(lh))
-                                .collect();
-                            let edge = |ui: &mut Ui<'_>| {
-                                ui.leaf(NodeSpec::row().height(1.0));
-                            };
-                            ui.with(
-                                NodeSpec::row()
-                                    .grow_width()
-                                    .height(Sizing::Fit)
-                                    .min_height(kui_native::Min::FIT),
-                                |ui| {
-                                    ui.with(
-                                        NodeSpec::column()
-                                            .width(gutter)
-                                            .height(Sizing::Fit)
-                                            .role(Role::None),
-                                        |ui| {
-                                            if top {
-                                                edge(ui);
-                                            }
-                                            for (l, h) in (first..ln).zip(&heights) {
+                        // Lines `from..to`: a row each, a table's rows in
+                        // its block.
+                        let mut span = |ui: &mut Ui<'_>, from: usize, to: usize| {
+                            let mut ln = from;
+                            while ln < to {
+                                let Some(&table) = md_tables.get(&ln) else {
+                                    emit(ui, ln, false, 0.0);
+                                    ln += 1;
+                                    continue;
+                                };
+                                // A table: its rows in a block that scrolls
+                                // sideways on its own (the wheel's `dx`, the
+                                // caret), its numbers in a column beside it.
+                                let first = ln;
+                                while ln < to && md_tables.get(&ln) == Some(&table) {
+                                    ln += 1;
+                                }
+                                let offset = md_table_left.get(&table).copied().unwrap_or(0.0);
+                                // Its rules above and below, when its first
+                                // row and its last are in sight.
+                                let lh = font.line_height;
+                                let columns = md_columns.get(&table).copied().unwrap_or(0);
+                                let top = first == table;
+                                let bottom = !crate::markdown::is_table_line(buf, ln);
+                                let grid: Vec<bool> =
+                                    (first..ln).map(|l| md_cell_h.contains_key(&l)).collect();
+                                let heights: Vec<f32> = (first..ln)
+                                    .map(|l| md_cell_h.get(&l).copied().unwrap_or(lh))
+                                    .collect();
+                                let edge = |ui: &mut Ui<'_>| {
+                                    ui.leaf(NodeSpec::row().height(1.0));
+                                };
+                                ui.with(
+                                    NodeSpec::row()
+                                        .grow_width()
+                                        .height(Sizing::Fit)
+                                        .min_height(kui_native::Min::FIT),
+                                    |ui| {
+                                        ui.with(
+                                            NodeSpec::column()
+                                                .width(gutter)
+                                                .height(Sizing::Fit)
+                                                .role(Role::None),
+                                            |ui| {
+                                                if top {
+                                                    edge(ui);
+                                                }
+                                                for (l, h) in (first..ln).zip(&heights) {
+                                                    ui.with(
+                                                        NodeSpec::row()
+                                                            .grow_width()
+                                                            .height(*h)
+                                                            .pad_xy(12.0, 0.0)
+                                                            .main_align(Align::End)
+                                                            .cross_align(Align::Start),
+                                                        |ui| {
+                                                            let color = if l == cur_line {
+                                                                pal.dim
+                                                            } else {
+                                                                pal.faint
+                                                            };
+                                                            ui.text(
+                                                                &numbers.label(l),
+                                                                rows::mono(font, &pal).color(color),
+                                                            );
+                                                        },
+                                                    );
+                                                }
+                                                if bottom {
+                                                    edge(ui);
+                                                }
+                                            },
+                                        );
+                                        let block = ui.with_key(
+                                            ui.child_key("tbl").index(table as u64),
+                                            NodeSpec::column()
+                                                .grow_width()
+                                                .height(Sizing::Fit)
+                                                .min_height(kui_native::Min::FIT)
+                                                .scroll_x()
+                                                .on_scroll(Value::map([
+                                                    ("kind", "pane".into()),
+                                                    ("pane", Value::Int(pane as i64)),
+                                                    ("table", Value::Int(table as i64)),
+                                                ])),
+                                            |ui| {
+                                                // A kui table: its rows' cells
+                                                // line up, whatever is in them.
+                                                // The caret's row is its source,
+                                                // a child of the table and not
+                                                // a row of it.
                                                 ui.with(
-                                                    NodeSpec::row()
-                                                        .grow_width()
-                                                        .height(*h)
-                                                        .pad_xy(12.0, 0.0)
-                                                        .main_align(Align::End)
-                                                        .cross_align(Align::Start),
+                                                    NodeSpec::table()
+                                                        .width(Sizing::Fit)
+                                                        .height(Sizing::Fit)
+                                                        .min_height(kui_native::Min::FIT),
                                                     |ui| {
-                                                        let color = if l == cur_line {
-                                                            pal.dim
-                                                        } else {
-                                                            pal.faint
-                                                        };
-                                                        ui.text(
-                                                            &numbers.label(l),
-                                                            rows::mono(font, &pal).color(color),
-                                                        );
+                                                        if top {
+                                                            rows::table_edge(ui, columns, pal.dim);
+                                                        }
+                                                        for (l, cells) in (first..ln).zip(&grid) {
+                                                            let mut edges = 0.0;
+                                                            if l == first && top {
+                                                                edges += 1.0;
+                                                            }
+                                                            if l + 1 == ln && bottom {
+                                                                edges += 1.0;
+                                                            }
+                                                            if let Some((t, drawn)) =
+                                                                md_ghosts.get(&l)
+                                                            {
+                                                                rows::table_ghost(
+                                                                    ui, font, &pal, t, drawn,
+                                                                );
+                                                            }
+                                                            if *cells {
+                                                                emit(ui, l, true, edges);
+                                                            } else {
+                                                                // One line: the caret's source,
+                                                                // or a row with no cells (`|`),
+                                                                // which draws nothing and is
+                                                                // still its number's height.
+                                                                ui.with(
+                                                                    NodeSpec::column()
+                                                                        .height(lh)
+                                                                        .min_height(
+                                                                            kui_native::Min::FIT,
+                                                                        ),
+                                                                    |ui| emit(ui, l, true, edges),
+                                                                );
+                                                            }
+                                                        }
+                                                        if bottom {
+                                                            rows::table_edge(ui, columns, pal.dim);
+                                                        }
                                                     },
                                                 );
-                                            }
-                                            if bottom {
-                                                edge(ui);
-                                            }
-                                        },
-                                    );
-                                    let block = ui.with_key(
-                                        ui.child_key("tbl").index(table as u64),
-                                        NodeSpec::column()
-                                            .grow_width()
-                                            .height(Sizing::Fit)
-                                            .min_height(kui_native::Min::FIT)
-                                            .scroll_x()
-                                            .on_scroll(Value::map([
-                                                ("kind", "pane".into()),
-                                                ("pane", Value::Int(pane as i64)),
-                                                ("table", Value::Int(table as i64)),
-                                            ])),
-                                        |ui| {
-                                            // A kui table: its rows' cells
-                                            // line up, whatever is in them.
-                                            // The caret's row is its source,
-                                            // a child of the table and not
-                                            // a row of it.
-                                            ui.with(
-                                                NodeSpec::table()
-                                                    .width(Sizing::Fit)
-                                                    .height(Sizing::Fit)
-                                                    .min_height(kui_native::Min::FIT),
-                                                |ui| {
-                                                    if top {
-                                                        rows::table_edge(ui, columns, pal.dim);
-                                                    }
-                                                    for (l, cells) in (first..ln).zip(&grid) {
-                                                        let mut edges = 0.0;
-                                                        if l == first && top {
-                                                            edges += 1.0;
-                                                        }
-                                                        if l + 1 == ln && bottom {
-                                                            edges += 1.0;
-                                                        }
-                                                        if let Some((t, drawn)) = md_ghosts.get(&l)
-                                                        {
-                                                            rows::table_ghost(
-                                                                ui, font, &pal, t, drawn,
-                                                            );
-                                                        }
-                                                        if *cells {
-                                                            emit(ui, l, true, edges);
-                                                        } else {
-                                                            // One line: the caret's source,
-                                                            // or a row with no cells (`|`),
-                                                            // which draws nothing and is
-                                                            // still its number's height.
-                                                            ui.with(
-                                                                NodeSpec::column()
-                                                                    .height(lh)
-                                                                    .min_height(
-                                                                        kui_native::Min::FIT,
-                                                                    ),
-                                                                |ui| emit(ui, l, true, edges),
-                                                            );
-                                                        }
-                                                    }
-                                                    if bottom {
-                                                        rows::table_edge(ui, columns, pal.dim);
-                                                    }
-                                                },
-                                            );
-                                        },
-                                    );
-                                    // The offset clamped to what the block
-                                    // holds last frame, kept for the next.
-                                    let max = ui
-                                        .scroll_geometry(block)
-                                        .map_or(offset, |g| g.max_offset.x);
-                                    let offset = offset.clamp(0.0, max.max(0.0));
-                                    ui.set_scroll(block, Vec2::new(offset, 0.0));
-                                    md_table_seen.push((table, offset));
-                                },
-                            );
+                                            },
+                                        );
+                                        // The offset clamped to what the block
+                                        // holds last frame, kept for the next.
+                                        let max = ui
+                                            .scroll_geometry(block)
+                                            .map_or(offset, |g| g.max_offset.x);
+                                        let offset = offset.clamp(0.0, max.max(0.0));
+                                        ui.set_scroll(block, Vec2::new(offset, 0.0));
+                                        md_table_seen.push((table, offset));
+                                    },
+                                );
+                            }
+                        };
+                        match md_anchored {
+                            // The rows above the caret's stacked up from
+                            // it: a box as tall as its row's place, and in
+                            // it a float by its bottom edge, which grows
+                            // upward and is cut at the pane's top.
+                            Some(a) => {
+                                ui.with_keyed(
+                                    "above",
+                                    NodeSpec::column()
+                                        .grow_width()
+                                        .height(a.y)
+                                        .min_height(kui_native::Min::px(a.y)),
+                                    |ui| {
+                                        ui.with_keyed(
+                                            "lines above",
+                                            NodeSpec::column()
+                                                .grow_width()
+                                                .height(Sizing::Fit)
+                                                .min_height(kui_native::Min::FIT)
+                                                .float(
+                                                    FloatConfig::parent()
+                                                        .inside(Align::Start, Align::End)
+                                                        .clipped(),
+                                                ),
+                                            |ui| span(ui, top, a.line),
+                                        );
+                                    },
+                                );
+                                span(ui, a.line, last);
+                            }
+                            None => span(ui, top, last),
                         }
                     },
                 );
+                lines_key = Some(lines);
                 // The offset lands in this frame's positions; the clamp
                 // is against last frame's content (a resize is one frame
                 // late), and what the wheel pushed past it comes back.
@@ -2205,20 +2303,53 @@ impl Kawoosh {
         // The rendered rows' heights as kui laid them out last frame: a
         // row that measured otherwise than the pane scrolled by asks
         // for a frame more, which scrolls by what it measured.
-        if wrap.is_some() {
+        if tall {
             self.wrap_rows.insert(view, wrap_seen);
         } else {
             self.wrap_rows.remove(&view);
         }
+        self.drawn_top.insert(view, top);
+        match caret_row.zip(lines_key).filter(|_| tall) {
+            Some((row, lines)) => {
+                self.md_anchor.insert(
+                    view,
+                    crate::markdown::Anchor {
+                        buffer: buf_id,
+                        version: self.ed.buffers[buf_id].version(),
+                        head: self.ed.views[view].sels.primary().head,
+                        row,
+                        lines,
+                    },
+                );
+            }
+            None => {
+                self.md_anchor.remove(&view);
+            }
+        }
         if tall {
+            // A row's layout last frame is its height only when the row
+            // under its key drew the same then: after a buffer switched
+            // or lines went in above, the key was another line's. A row
+            // not measured yet asks for the frame that measures it.
             let known = self.md_heights.entry(view).or_default();
             let mut moved = false;
-            for (ln, h) in md_seen {
-                if known.get(&ln).is_none_or(|k| (k - h).abs() > 0.5) {
-                    moved = true;
+            let mut stamps = HashMap::with_capacity(md_seen.len());
+            for (ln, stamp, h) in md_seen {
+                let same = known.stamps.get(&ln) == Some(&stamp);
+                match h.filter(|_| same) {
+                    Some(h) => {
+                        if known.by_line.get(&ln).is_none_or(|k| (k - h).abs() > 0.5) {
+                            moved = true;
+                        }
+                        known.by_line.insert(ln, h);
+                    }
+                    // Once per row drawn anew, not every frame for a
+                    // row kui has no layout of.
+                    None => moved |= !same,
                 }
-                known.insert(ln, h);
+                stamps.insert(ln, stamp);
             }
+            known.stamps = stamps;
             if moved {
                 crate::frames::request(ui, "markdown heights");
             }
