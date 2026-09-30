@@ -1088,13 +1088,24 @@ fn only_answers_a_waiting_caller_whose_pane_it_closed() {
 #[cfg(unix)]
 #[test]
 fn a_terminal_at_a_password_prompt_says_so() {
+    // Echo stays off until the test makes `echo`, and the line lives on
+    // until it makes `end`: no state is a window the frames must catch.
+    let dir = std::env::temp_dir().join(format!("kawoosh-password-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let (echo, end) = (dir.join("echo"), dir.join("end"));
     let mut app = Kawoosh::new("t", "");
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     d.keys(&mut app, ":term");
     d.keys(
         &mut app,
-        " /bin/sh -c 'stty -echo; sleep 1; stty echo; sleep 2'",
+        &format!(
+            " /bin/sh -c 'stty -echo; until [ -e {} ]; do sleep 0.01; done; \
+             stty echo; until [ -e {} ]; do sleep 0.01; done'",
+            echo.display(),
+            end.display()
+        ),
     );
     d.key(&mut app, "enter", KeyMods::default());
     let titled = |d: &Drive| {
@@ -1114,10 +1125,14 @@ fn a_terminal_at_a_password_prompt_says_so() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(seen, "the title says a password is being asked for");
+    // The frame after, as at the end: echo may have gone off between
+    // the frame's look at it for secure entry and its title.
+    d.frame(&mut app);
     assert!(
         d.core.secure_input(),
         "and asks for secure keyboard entry (kui F85)"
     );
+    std::fs::write(&echo, "").unwrap();
     let mut gone = false;
     for _ in 0..300 {
         d.frame(&mut app);
@@ -1128,10 +1143,13 @@ fn a_terminal_at_a_password_prompt_says_so() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(gone, "and stops when echo is back");
+    assert!(app.term_of_focused().is_some(), "the terminal still there");
     // The frame after: the prompt may have ended between the frame's
     // look at it for secure entry and its title.
     d.frame(&mut app);
     assert!(!d.core.secure_input(), "secure entry with it");
+    std::fs::write(&end, "").unwrap();
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// `:!CMD` runs the line in a terminal below, `%` the file quoted for
