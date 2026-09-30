@@ -100,6 +100,88 @@ fn the_disk_usage_pane_sizes_walks_sorts_and_deletes() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// Marks kept across directories: counted in the head, a `d` in one
+/// directory takes that directory's and leaves the rest, and `D` takes
+/// every one left, wherever it is, in one confirm.
+#[test]
+fn marks_across_directories_and_d_upper_deletes_them_all() {
+    let root = std::env::temp_dir().join(format!("kawoosh-du-marks-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("a")).unwrap();
+    std::fs::create_dir_all(root.join("b")).unwrap();
+    std::fs::write(root.join("a/x"), vec![0u8; 300]).unwrap();
+    std::fs::write(root.join("a/y"), vec![0u8; 200]).unwrap();
+    std::fs::write(root.join("b/z"), vec![0u8; 100]).unwrap();
+    std::fs::write(root.join("top"), vec![0u8; 50]).unwrap();
+    let root = kawoosh_systems::fs::canonicalize(&root).unwrap();
+    let mut app = Kawoosh::new("t", "");
+    app.jobs_inline = true;
+    let ext = app.attach_lua().unwrap();
+    let mut d = Drive::new(1000.0, 700.0);
+    d.extension("lua", ext).unwrap();
+    d.frame(&mut app);
+    ex(&mut d, &mut app, &format!("du {}", root.display()));
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let marked = |app: &mut Kawoosh| {
+        lua(
+            app,
+            r#"local out = {}
+               for _, p in ipairs(kawoosh.du_pane.state().marked) do out[#out + 1] = p:match("[^/\\]+$") end
+               kawoosh.echo(table.concat(out, " "))"#,
+        )
+    };
+    // `a` first (500), then `b`; into `a`, mark `x`, out, into `b`,
+    // mark `z`, out, mark `top` (the last, 50).
+    d.press(&mut app, "ggl");
+    d.frame(&mut app);
+    d.press(&mut app, "ggmhjl");
+    d.frame(&mut app);
+    d.press(&mut app, "ggmhGm");
+    d.frame(&mut app);
+    assert_eq!(marked(&mut app), "x z top");
+    d.frame(&mut app);
+    let texts: Vec<String> = d.core.nodes().iter().filter_map(|n| n.text.clone()).collect();
+    assert!(
+        texts.iter().any(|t| t.contains("3 marked, 450 B")),
+        "the head counts them: {texts:?}"
+    );
+    // `d` here takes `top` alone; `x` and `z` stay marked.
+    d.press(&mut app, "d");
+    assert!(
+        d.confirm_texts().iter().any(|t| t == "delete top"),
+        "{:?}",
+        d.confirm_texts()
+    );
+    d.press(&mut app, "<CR>");
+    d.frame(&mut app);
+    assert!(!root.join("top").exists());
+    assert_eq!(marked(&mut app), "x z");
+    // `D` takes both, in their directories, in one confirm.
+    d.press(&mut app, "D");
+    assert!(app.confirm.is_some(), "the plan asks first");
+    let texts = d.confirm_texts();
+    assert!(texts.iter().any(|t| t.contains("delete x")), "{texts:?}");
+    assert!(texts.iter().any(|t| t.contains("delete z")), "{texts:?}");
+    d.press(&mut app, "<CR>");
+    d.frame(&mut app);
+    assert!(!root.join("a/x").exists() && !root.join("b/z").exists());
+    assert!(root.join("a/y").exists());
+    assert_eq!(marked(&mut app), "");
+    let total = lua(
+        &mut app,
+        "kawoosh.echo(tostring(kawoosh.du_pane.state().state.bytes))",
+    );
+    assert_eq!(total, "200", "only `y` left");
+    // Nothing marked: `D` says so and asks nothing.
+    d.press(&mut app, "D");
+    assert!(app.confirm.is_none());
+    assert_eq!(app.ed.message, "nothing marked");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    d.press(&mut app, "q");
+    std::fs::remove_dir_all(&root).ok();
+}
+
 /// The walk on the io thread, as the app runs it: its totals stream in
 /// over the frames until it is done.
 #[test]
