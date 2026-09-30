@@ -82,9 +82,9 @@ to M. Searching is covered in [search](search.md).
 again; a count goes that many places. A jump is any move that takes the
 caret into another buffer or a screen or more away — a `50j`, a list's
 `<CR>`, a definition, a plugin's move — and `gg` `G` `:N` `n` `N` `*`
-`%`, a search, a mark, a pick from the picker are jumps however near.
-Paging (`<C-d>` `<C-f>`), an edit that carries the caret (an undo, a
-paste), and moving the keys to another pane are not.
+`%`, `<A-u>`, a search, a mark, a pick from the picker are jumps however
+near. Paging (`<C-d>` `<C-f>`), an edit that carries the caret (an undo,
+a paste), and moving the keys to another pane are not.
 
 The list is the tab's: a jump made in one pane and a jump in another
 are one trail, and going back to a place goes into the pane it was left

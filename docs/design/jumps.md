@@ -36,7 +36,8 @@ and the place left is a jump when the move was **big**:
   another file, `]q`), or
 - the primary caret went a screen or more — the pane's rows — from the
   line it was on, or
-- the move was *declared* a jump (Decision 2) and the line changed.
+- the move was *declared* a jump (Decision 2), however short — along
+  its line too (`<A-u>`; the line had to change before 2026-10-01).
 
 What is not a move: a step that edited the buffer (an insert, a paste,
 an undo carry the caret; they do not take it anywhere — vim's `u`
@@ -63,8 +64,9 @@ one would have to remember. Kept as Decision 2's floor, not the rule.
 `Spec::jump()` marks a command whose move is a jump at any distance —
 the ones vim has, where a short file shows both ends on one screen
 and `gg` then `<C-o>` must still come back: `gg`, `G`, `:N`, `n`, `N`,
-`*`, `%`, a search submitted, a mark's `'` and `` ` ``, `gd` and the
-server's gotos, a location's `<CR>`, `]q`. The engine sets
+`*`, `%`, a search submitted, a mark's `'` and `` ` ``, `<A-u>` (the
+node around the caret, each press one entry — asked 2026-10-01), `gd`
+and the server's gotos, a location's `<CR>`, `]q`. The engine sets
 `Editor::jumping` when one runs; the shell sets it where it lands a
 place itself (`open_in_editor` with a line, a mark, a markdown
 anchor); Lua through `kawoosh.buf.set_cursor(…, { jump = true })` and
@@ -103,11 +105,14 @@ boundary, which in kawoosh is where a list's `<CR>`, `gd` from a
 `<C-i>` returns to it. A new jump made while back in the list drops
 the entries ahead and appends — neovim's `jumpoptions=stack`, helix's
 and a browser's — so the list is always the path that led here, never
-a place you walked away from. An entry on the same line of the same
-buffer, left in the same pane, as one already listed takes the older
-one's place at the end (vim's rule, the pane added: a pane is part of
-the place); an entry that is the caret's own line is stepped over. A
-hundred entries, the oldest dropped (vim's cap).
+a place you walked away from. An entry at the same place — line and
+column of the same buffer, left in the same pane — as one already
+listed takes the older one's place at the end; an entry at the caret's
+own place is stepped over. A hundred entries, the oldest dropped (vim's
+cap). *Amended 2026-10-01*, when `<A-u>` became a jump: vim's rule is
+the same *line*, which made the nodes climbed along one line one entry
+and `<C-o>` step over them all; the place is the line and column, and
+the pane (a pane is part of the place).
 
 *The alternative*: vim's default, which keeps the forward entries and
 appends past them; the order stops meaning anything after the first

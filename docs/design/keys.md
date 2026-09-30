@@ -246,7 +246,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `<A-h>` `<A-l>` | nudge the selection by its kind: on lines (a bare caret, `V`, insert mode) dedent, indent a tabstop with the selection kept, so `V<A-l><A-l><A-j>` is one gesture; on characters (`v`) drag the text a column left, right within its line |
 | `<A-o>` `<A-i>` | `select node`: the syntax node under the caret, then the one around it; back in |
 | `<A-n>` `<A-p>` | the next, the previous sibling node |
-| `<A-u>` | `node parent`: the caret up to the start of the node around it — each press one more, as vim's `[{` by the tree; in visual mode the head goes, the anchor stays |
+| `<A-u>` | `node parent`: the caret up to the start of the node around it — each press one more, as vim's `[{` by the tree, and each a jump `<C-o>` comes back from ([jumps.md](jumps.md)); in visual mode the head goes, the anchor stays |
 | `<D-a>` | select all |
 | `<leader>vs` `<leader>vS` (visual) | helix's `s` `S`: the matches of a pattern inside every selection become the selections, or every selection is split on them — a prompt previewed as it is typed, `<Esc>` putting the selections back (`select within`, `select split`; [selections.md](selections.md)); `<D-a><leader>vs` is helix's `%s` |
 | `<leader>vk` (visual) | helix's `K` and `<A-K>`: keep the selections that match, or with `!pattern` those that do not (`select keep`) |

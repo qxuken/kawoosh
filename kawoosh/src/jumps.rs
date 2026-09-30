@@ -127,9 +127,10 @@ fn alive(ed: &Editor, j: &Jump) -> bool {
     j.buffer.is_some_and(|id| ed.buffers.contains_key(id)) || j.path.is_some()
 }
 
-/// Whether two places are one: one line of one text — the same open
-/// buffer, or the same file — left in one pane.
-fn same_line(ed: &Editor, a: &Jump, b: &Jump) -> bool {
+/// Whether two places are one: one line and column of one text — the
+/// same open buffer, or the same file — left in one pane. Not the line
+/// alone, as vim's: `<A-u>` climbs nodes along one line.
+fn same_place(ed: &Editor, a: &Jump, b: &Jump) -> bool {
     if a.view != b.view {
         return false;
     }
@@ -138,7 +139,7 @@ fn same_line(ed: &Editor, a: &Jump, b: &Jump) -> bool {
         (Some(x), Some(y)) => x == y,
         _ => a.path.is_some() && a.path == b.path,
     };
-    same && a.line == b.line
+    same && a.line == b.line && a.col == b.col
 }
 
 impl Kawoosh {
@@ -196,7 +197,8 @@ impl Kawoosh {
         }
         let rows = self.ed.views[v].rows.max(1);
         let far = old.line.abs_diff(now.line) >= rows;
-        if other || far || declared && old.line != now.line {
+        // A declared jump at any distance, along its line too.
+        if other || far || declared {
             self.push_jump(old.jump(v));
         }
     }
@@ -213,7 +215,7 @@ impl Kawoosh {
         for e in &mut js.list {
             settle(ed, e);
         }
-        js.list.retain(|e| alive(ed, e) && !same_line(ed, e, &j));
+        js.list.retain(|e| alive(ed, e) && !same_place(ed, e, &j));
         js.list.push(j);
         if js.list.len() > MAX {
             js.list.remove(0);
@@ -236,7 +238,7 @@ impl Kawoosh {
         let at_present = js.at >= js.list.len();
         let mut from = js.at.min(js.list.len());
         if at_present && let Some(h) = &here {
-            js.list.retain(|e| !same_line(ed, e, h));
+            js.list.retain(|e| !same_place(ed, e, h));
             js.list.push(h.clone());
             from = js.list.len() - 1;
             if js.list.len() > MAX {
@@ -263,8 +265,8 @@ impl Kawoosh {
         self.jump_step(from, n, true, here.as_ref());
     }
 
-    /// `n` entries on from `from`, the dead stepped over and dropped,
-    /// and one on the caret's own line stepped over; gone to.
+    /// `n` entries on from `from`, the dead stepped over, and one at
+    /// the caret's own place; gone to.
     fn jump_step(&mut self, from: usize, n: usize, forward: bool, here: Option<&Jump>) {
         let ed = &self.ed;
         let js = &mut self.layout.focused_home_mut().jumps;
@@ -281,7 +283,7 @@ impl Kawoosh {
             };
             i = k;
             let e = &js.list[k];
-            if !alive(ed, e) || here.is_some_and(|h| same_line(ed, e, h)) {
+            if !alive(ed, e) || here.is_some_and(|h| same_place(ed, e, h)) {
                 continue;
             }
             left -= 1;
@@ -421,9 +423,9 @@ impl Kawoosh {
         };
         if js.at >= js.list.len()
             && let Some(h) = here
-            && !same_line(ed, &h, &want)
+            && !same_place(ed, &h, &want)
         {
-            js.list.retain(|e| !same_line(ed, e, &h));
+            js.list.retain(|e| !same_place(ed, e, &h));
             js.list.push(h);
             if js.list.len() > MAX {
                 js.list.remove(0);

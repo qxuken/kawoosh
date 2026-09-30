@@ -454,3 +454,36 @@ fn a_session_keeps_each_tabs_list() {
     assert_eq!(caret(&app2), ("b.txt".into(), 0));
     drop(d);
 }
+
+#[test]
+fn the_node_around_is_a_jump_each_press() {
+    let dir = tmp("node");
+    let file = dir.join("u.rs");
+    let src = "fn main() {\n    let x = f(1, 2);\n}\n";
+    std::fs::write(&file, src).unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    let mut d = Drive::new(900.0, 500.0);
+    d.frame(&mut app);
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    let head = |app: &Kawoosh| {
+        let v = app.focused_view().unwrap();
+        app.ed.views[v].sels.primary().head
+    };
+    let at = |s: &str| src.find(s).unwrap();
+    d.press(&mut app, "jf2");
+    d.press(&mut app, "<A-u>");
+    d.press(&mut app, "<A-u>");
+    d.frame(&mut app);
+    assert_eq!(head(&app), at("f(1"));
+    // Each press left a place, on one line: the list keeps the last.
+    d.press(&mut app, "<C-o>");
+    d.frame(&mut app);
+    assert_eq!(head(&app), at("(1, 2)"));
+    d.press(&mut app, "<C-o>");
+    d.frame(&mut app);
+    assert_eq!(head(&app), at("2)"));
+    d.press(&mut app, "<C-i><C-i>");
+    d.frame(&mut app);
+    assert_eq!(head(&app), at("f(1"));
+}
