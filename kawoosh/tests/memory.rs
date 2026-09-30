@@ -475,8 +475,8 @@ fn texts_and_prompt_lines_survive_a_restart() {
     assert_eq!(row.text_head.as_deref(), Some("one"));
     assert!(row.meta.contains("\"took\":\"yank\""), "{}", row.meta);
     // Yanked again while it is the head (past the second that makes
-    // two visits one): one row, attended twice.
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    // two visits one, on the test's clock): one row, attended twice.
+    app.moments.expire_visit();
     d.keys(&mut app, "yy");
     d.frame(&mut app);
     app.flush_moments();
@@ -545,7 +545,7 @@ fn texts_and_prompt_lines_survive_a_restart() {
         app.ed.settings.int("memory.text.max_mb")
     );
     assert_eq!(app.ed.memory.head().unwrap().text, "three\n");
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    app.moments.expire_visit();
     d.keys(&mut app, "ggyy");
     d.frame(&mut app);
     app.flush_moments();
@@ -967,7 +967,7 @@ fn a_round_trip_is_no_visit_and_a_recall_no_yank() {
     d.frame(&mut app);
     let store = app.store.clone().unwrap();
     for _ in 0..2 {
-        std::thread::sleep(std::time::Duration::from_millis(1100));
+        app.moments.expire_visit();
         d.keys(&mut app, " mm");
         d.frame(&mut app);
         assert_eq!(app.layout.focused_content(), Some(Content::Memory));
@@ -994,7 +994,7 @@ fn a_round_trip_is_no_visit_and_a_recall_no_yank() {
     // leave the yanks at two, and the recall is the text attended.
     d.keys(&mut app, "yy");
     d.frame(&mut app);
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    app.moments.expire_visit();
     d.keys(&mut app, "jyy");
     d.frame(&mut app);
     app.flush_moments();
@@ -1007,7 +1007,7 @@ fn a_round_trip_is_no_visit_and_a_recall_no_yank() {
     d.frame(&mut app);
     d.frame(&mut app);
     assert_eq!(app.ed.memory.head().unwrap().text, "one\n");
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    app.moments.expire_visit();
     d.keys(&mut app, "y");
     d.frame(&mut app);
     d.frame(&mut app);

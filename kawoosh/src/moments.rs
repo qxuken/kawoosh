@@ -266,6 +266,14 @@ impl Moments {
         self.delta(key).visits += 1;
     }
 
+    /// As if [`SAME_VISIT`] had passed since the last visit: a test's
+    /// clock, so the next visit to it counts without a second's sleep.
+    pub fn expire_visit(&mut self) {
+        if let Some((_, t)) = &mut self.last_visit {
+            *t = t.checked_sub(SAME_VISIT).unwrap_or(*t);
+        }
+    }
+
     /// The meta pending for `key`, not yet flushed.
     pub fn pending_meta(&self, key: &MomentKey) -> Option<String> {
         self.pending.borrow().deltas.get(key)?.meta.clone()

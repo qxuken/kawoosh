@@ -164,20 +164,32 @@ const SWEEP: &[&str] = &[
     "@<leader>ffsome query that matches nothing at all",
 ];
 
+/// The sweep in this many tests, each a share of [`SWEEP`]: a launch per
+/// line and width is about a tenth of a second, and a hundred and
+/// twenty of them in one test were the suite's longest by far.
+const PARTS: usize = 6;
+
 /// Every pane and float the sweep opens, at two widths, draws its texts
-/// inside their boxes. By hand, `SWEEP` (`|` between) narrows what is
-/// opened, `SWEEP_W` (`,` between) and `SWEEP_H` set the window, and
-/// `SWEEP_BOXES` reads the boxes too — which finds, in a column at its
-/// 120 px floor, rows that cannot fit and are cut at the pane's edge,
-/// and, in a window a couple of hundred px tall, a Lua pane's header
-/// rows squeezed below their text by the column they are in (kui's).
-#[test]
-fn every_pane_keeps_its_texts_in_their_boxes() {
+/// inside their boxes — part `part` of [`PARTS`]. By hand, `SWEEP` (`|`
+/// between) narrows what is opened, all of it in part 0, `SWEEP_W` (`,`
+/// between) and `SWEEP_H` set the window, and `SWEEP_BOXES` reads the
+/// boxes too — which finds, in a column at its 120 px floor, rows that
+/// cannot fit and are cut at the pane's edge, and, in a window a couple
+/// of hundred px tall, a Lua pane's header rows squeezed below their
+/// text by the column they are in (kui's).
+fn sweep(part: usize) {
     let env = |k: &str| std::env::var(k).ok();
     let cmds: Vec<String> = match env("SWEEP") {
+        Some(_) if part != 0 => return,
         Some(s) => s.split('|').map(str::to_string).collect(),
-        None => SWEEP.iter().map(|s| s.to_string()).collect(),
+        None => SWEEP
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| i % PARTS == part)
+            .map(|(_, s)| s.to_string())
+            .collect(),
     };
+    let tag = format!("sweep{part}");
     let widths: Vec<f32> = env("SWEEP_W")
         .map(|w| w.split(',').filter_map(|w| w.parse().ok()).collect())
         .unwrap_or_else(|| vec![420.0, 760.0]);
@@ -186,7 +198,7 @@ fn every_pane_keeps_its_texts_in_their_boxes() {
     let mut found = Vec::new();
     for w in widths {
         for c in &cmds {
-            let (mut d, mut app, _) = narrow("sweep", w, h);
+            let (mut d, mut app, _) = narrow(&tag, w, h);
             if let Some(keys) = c.strip_prefix('@') {
                 d.press(&mut app, keys);
             } else if !c.is_empty() {
@@ -205,6 +217,36 @@ fn every_pane_keeps_its_texts_in_their_boxes() {
             );
         }
     }
-    std::fs::remove_dir_all(deep("sweep").ancestors().nth(5).unwrap()).ok();
+    std::fs::remove_dir_all(deep(&tag).ancestors().nth(5).unwrap()).ok();
     assert!(found.is_empty(), "{}", found.join("\n"));
+}
+
+#[test]
+fn every_pane_keeps_its_texts_in_their_boxes_0() {
+    sweep(0);
+}
+
+#[test]
+fn every_pane_keeps_its_texts_in_their_boxes_1() {
+    sweep(1);
+}
+
+#[test]
+fn every_pane_keeps_its_texts_in_their_boxes_2() {
+    sweep(2);
+}
+
+#[test]
+fn every_pane_keeps_its_texts_in_their_boxes_3() {
+    sweep(3);
+}
+
+#[test]
+fn every_pane_keeps_its_texts_in_their_boxes_4() {
+    sweep(4);
+}
+
+#[test]
+fn every_pane_keeps_its_texts_in_their_boxes_5() {
+    sweep(5);
 }
