@@ -257,10 +257,17 @@ impl Editor {
     /// Buffer `id` read against `text` from now on, called `label`. A
     /// base the same as the one it has keeps its hunks — a backend
     /// asked again after a commit elsewhere; another starts them over.
+    /// A base of LF lines against a buffer of CRLF ones is read with
+    /// CRLF (`line_diff::base_line_ends`, git's `core.autocrlf`).
     pub fn set_base(&mut self, id: BufferId, text: Arc<str>, label: String) {
-        if !self.buffers.contains_key(id) {
+        let Some(buffer) = self.buffers.get(id) else {
             return;
-        }
+        };
+        let head = buffer.slice(0..buffer.len().min(64 * 1024));
+        let text = match kawoosh_doc::line_diff::base_line_ends(&text, &head) {
+            std::borrow::Cow::Owned(t) => Arc::from(t),
+            std::borrow::Cow::Borrowed(_) => text,
+        };
         if let Some(b) = self.bases.get_mut(&id) {
             if *b.text == *text {
                 b.label = label;
@@ -483,6 +490,22 @@ mod tests {
         let (v, text) = (b.version(), b.text());
         let hunks = kawoosh_doc::line_diff::line_hunks(&base, &text);
         ed.set_hunks(id, v, hunks);
+    }
+
+    /// A CRLF file against the index's LF blob (`core.autocrlf`) has no
+    /// hunks; an LF file against a CRLF blob is a change, as git has it.
+    #[test]
+    fn an_lf_base_reads_as_a_crlf_buffers_line_ends() {
+        let mut ed = Editor::new();
+        let id = ed.add_buffer(Buffer::new("a", "one\r\ntwo\r\n"));
+        ed.add_view(id);
+        ed.set_base(id, Arc::from("one\ntwo\n"), "index".into());
+        diffed(&mut ed, id);
+        assert!(ed.hunks(id).is_empty());
+        let lf = ed.add_buffer(Buffer::new("b", "one\ntwo\n"));
+        ed.set_base(lf, Arc::from("one\r\ntwo\r\n"), "index".into());
+        diffed(&mut ed, lf);
+        assert_eq!(ed.hunks(lf).len(), 1);
     }
 
     #[test]

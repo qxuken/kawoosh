@@ -241,8 +241,14 @@ fn a_which_key_fits_the_window_and_folds_numbered_runs() {
     assert!(has(&t, "normal mode"), "nothing past the card: {t:?}");
     assert!(has(&t, "A-1…9") && has(&t, "memory pin 1…9"), "{t:?}");
     assert!(!has(&t, "A-5") && !has(&t, "memory pin 5"), "{t:?}");
+    // The font's keys are ⌘ ones on macOS, Ctrl ones elsewhere.
+    let reset = if cfg!(target_os = "macos") {
+        "D-0"
+    } else {
+        "C-0"
+    };
     assert!(
-        has(&t, "D-0") && has(&t, "font reset"),
+        has(&t, reset) && has(&t, "font reset"),
         "not part of the run: {t:?}"
     );
 }

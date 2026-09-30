@@ -61,12 +61,11 @@ fn the_title_bar_carries_the_cwd_and_lists_it() {
         "{shown}"
     );
     assert!(shown.len() < deep.display().to_string().len());
-    // Hovered, it floats the whole path (the spec's `tooltip`).
+    // Hovered, it floats the whole path (the spec's `tooltip`), the
+    // home written `~` — which the temp folder is under on Windows.
     let Rect { x, y, w, h } = d.rect("cwd").unwrap();
-    let full = kawoosh_systems::fs::canonicalize(&deep)
-        .unwrap()
-        .display()
-        .to_string();
+    let full =
+        kawoosh_systems::fs::abbreviate_home(&kawoosh_systems::fs::canonicalize(&deep).unwrap());
     // (The snapshot cuts a long text short.)
     let hints = |d: &Drive| {
         texts(d)

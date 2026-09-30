@@ -2857,10 +2857,12 @@ fn seed(
     // once, as `kawoosh.buf.hunks` shapes them (docs/design/vcs.md
     // Decision 6): `{ kind =, line =, end_line =, old_line =, old_end =,
     // old = { … } }` each, lines from 1, ends exclusive — what a review
-    // of two revisions is laid out from, no buffer needed.
+    // of two revisions is laid out from, no buffer needed. An LF `old`
+    // against CRLF `new` is read with CRLF (`base_line_ends`).
     k.set(
         "diff",
         lua.create_function(|lua, (old, new): (String, String)| {
+            let old = kawoosh_doc::line_diff::base_line_ends(&old, &new).into_owned();
             let hunks = kawoosh_doc::line_diff::line_hunks(&old, &new);
             let starts = {
                 let mut v = vec![0];

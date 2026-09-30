@@ -92,12 +92,12 @@ fn line_range_of_sel(buf: &Buffer, s: &Selection, extra_lines: usize) -> Range<u
     let b = b.min(buf.line_count() - 1);
     let start = buf.line_start(a);
     let end = buf.line_range(b).end;
-    // Take the newline too, unless it is the last line, then the one
-    // before it.
+    // Take the line break too — `\r\n` whole — unless it is the last
+    // line, then the one before it.
     if end < buf.len() {
-        start..end + 1
+        start..buf.line_start(b + 1)
     } else if start > 0 && a > 0 {
-        start - 1..end
+        buf.line_range(a - 1).end..end
     } else {
         start..end
     }
@@ -154,11 +154,15 @@ fn set_register(
     // the line (`line_range_of_sel`); in the register the line is a
     // line like any other, its newline after it — so `p` puts it below
     // the caret's line, not an empty line and then it.
-    if linewise && !joined.ends_with('\n') && joined.starts_with('\n') {
-        joined.remove(0);
-        joined.push('\n');
+    let before = ["\r\n", "\n"].into_iter().find(|b| joined.starts_with(b));
+    if linewise
+        && !joined.ends_with('\n')
+        && let Some(brk) = before
+    {
+        joined.drain(..brk.len());
+        joined.push_str(brk);
         if let Some(r) = &mut origin {
-            r.start += 1;
+            r.start += brk.len();
         }
     }
     let version = ed.buffers[id].version();
@@ -1360,12 +1364,16 @@ fn put(ed: &mut Editor, view: ViewId, count: usize, after: bool, walk: Option<(V
                 if !t.ends_with('\n') {
                     t.push('\n');
                 }
+                // The lines' own break, `\r\n` from a CRLF file.
+                let brk = if t.ends_with("\r\n") { "\r\n" } else { "\n" };
                 if after {
                     let end = buf.line_range(ln).end;
                     if end >= buf.len() {
-                        (i, end..end, format!("\n{}", t.trim_end_matches('\n')))
+                        let lines = t.strip_suffix(brk).unwrap_or(&t);
+                        (i, end..end, format!("{brk}{lines}"))
                     } else {
-                        (i, end + 1..end + 1, t)
+                        let next = buf.line_start(ln + 1);
+                        (i, next..next, t)
                     }
                 } else {
                     let start = buf.line_start(ln);
@@ -1396,7 +1404,8 @@ fn put(ed: &mut Editor, view: ViewId, count: usize, after: bool, walk: Option<(V
         let v = &mut ed.views[view];
         v.sels.map(|s| {
             let ln = buf.line_of(s.head);
-            let ln = if after && s.head > 0 && buf.byte_at(s.head) == Some(b'\n') {
+            let at_break = matches!(buf.byte_at(s.head), Some(b'\n' | b'\r'));
+            let ln = if after && s.head > 0 && at_break {
                 ln + 1
             } else {
                 ln

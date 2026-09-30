@@ -200,7 +200,7 @@ fn a_du_pane_in_another_tab_is_its_own() {
     let first = lua(
         &mut app,
         "local s = kawoosh.du_pane.state(kawoosh.du_pane.panes()[1]) \
-         kawoosh.echo(s.dir:match('[^/]+$') .. ' ' .. s.cursor .. ' ' .. s.sort)",
+         kawoosh.echo(kawoosh.fs.basename(s.dir) .. ' ' .. s.cursor .. ' ' .. s.sort)",
     );
     assert_eq!(first, "one b size");
     d.keys(&mut app, "q");

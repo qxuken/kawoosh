@@ -842,7 +842,11 @@ function git.probe(dir, done)
     local ls = git_lines(text)
     local root, gitdir = ls[1], ls[2]
     if not root or root == "" then return done(nil) end
-    if gitdir and gitdir:sub(1, 1) ~= "/" then gitdir = fs.join(dir, gitdir) end
+    -- Git writes `/` on every platform (`C:/p` on Windows); the paths
+    -- kawoosh holds are the platform's. A git directory relative to
+    -- `dir` is joined on, an absolute one kept.
+    root = fs.expand(root)
+    if gitdir then gitdir = fs.join(dir, gitdir) end
     gitdirs[root] = gitdir
     done(root)
   end)
