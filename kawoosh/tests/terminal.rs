@@ -1670,10 +1670,14 @@ fn a_bang_pane_stays_when_its_line_ends_and_r_runs_it_again() {
     assert!(app.term_of_focused().is_none());
     assert!(app.terms.map.is_empty() && app.terms.done.is_empty());
 
-    // A `:terminal CMD` is not kept.
-    d.keys(&mut app, ":terminal true");
+    // A `:terminal CMD` is not kept. The line runs until the test makes
+    // `go`: one that ends at once may end before the frame after the key,
+    // which then finds its pane already gone.
+    d.keys(&mut app, ":terminal until [ -e go ]; do sleep 0.01; done");
     d.key(&mut app, "enter", KeyMods::default());
     let t = app.term_of_focused().expect("a terminal pane");
+    assert_eq!(app.layout.all_panes().len(), panes + 1, "a pane of its own");
+    std::fs::write(dir.join("go"), "").unwrap();
     for _ in 0..300 {
         d.frame(&mut app);
         if !app.terms.map.contains_key(&t) {
