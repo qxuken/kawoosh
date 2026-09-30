@@ -568,10 +568,24 @@ fn highlight(
                         // edit of one byte of it changes all of its
                         // bytes' — `## ` typed a `#` at a time left the
                         // first `#` an h1.
+                        //
+                        // And over the block the edit was in before as
+                        // well as the one it is in now: a line's block
+                        // can be made by the line below it, and a
+                        // setext heading's `-` typed on into `- [` left
+                        // the paragraph above painted an h2 — its
+                        // heading was the old tree's block, the new
+                        // one's is the list. The old tree was told the
+                        // edits, so its offsets are the new text's.
                         let lines: Vec<Range<usize>> = spans
                             .iter()
                             .map(|s| {
-                                whole_lines(text, enclosing_block(st, tree.root_node(), s.clone()))
+                                let now = enclosing_block(st, tree.root_node(), s.clone());
+                                let was = old.as_ref().map_or(now.clone(), |(t, _)| {
+                                    enclosing_block(st, t.root_node(), s.clone())
+                                });
+                                let cover = now.start.min(was.start)..now.end.max(was.end).min(len);
+                                whole_lines(text, cover)
                             })
                             .collect();
                         blocks = lines
@@ -1827,6 +1841,73 @@ mod tests {
     /// A setext underline turned from `=` to `-` changes the kind of
     /// the line above it: the structure repaints the whole block, which
     /// the reparse's changed ranges (the underline's byte) do not reach.
+    #[test]
+    fn a_setext_underline_typed_on_into_a_list_item_unpaints_its_heading() {
+        let mut g = Grammars::default();
+        let mut parser = Parser::new();
+        let mut parsed = Parsed::default();
+        let mut buf = Buffer::new("t", "# Top\n\nsome para\nmore para\n\nend\n");
+        buf.language = "markdown".into();
+        let mut sent: Option<kawoosh_doc::Version> = None;
+        let mut run = |buf: &mut Buffer, parsed: &mut Parsed| {
+            let edits = sent
+                .and_then(|v| buf.journal().edits_since(v).ok())
+                .map(|it| it.cloned().collect());
+            sent = Some(buf.version());
+            let job = Job {
+                buffer: BufferId::default(),
+                language: "markdown".into(),
+                snapshot: buf.snapshot(),
+                edits,
+            };
+            for u in highlight(&mut parser, &mut g, parsed, &job).updates {
+                buf.apply(u).unwrap();
+            }
+        };
+        let para = |buf: &Buffer| -> Vec<Block> {
+            let at = buf.text().find("some").unwrap();
+            buf.runs(STRUCT_LAYER, at..at + 1)
+                .iter()
+                .filter_map(|r| Block::from_style(r.style))
+                .collect()
+        };
+        run(&mut buf, &mut parsed);
+        assert_eq!(para(&buf), []);
+        let at = buf.text().find("more para\n").unwrap() + "more para\n".len();
+        buf.replace(at..at, "-\n");
+        run(&mut buf, &mut parsed);
+        assert_eq!(
+            para(&buf),
+            [Block::H2],
+            "a setext heading, as CommonMark says"
+        );
+        buf.replace(at + 1..at + 1, " [");
+        run(&mut buf, &mut parsed);
+        let incremental = para(&buf);
+        // The same text parsed whole.
+        let mut whole = Buffer::new("t", &buf.text());
+        whole.language = "markdown".into();
+        let mut fresh = Parsed::default();
+        let job = Job {
+            buffer: BufferId::default(),
+            language: "markdown".into(),
+            snapshot: whole.snapshot(),
+            edits: None,
+        };
+        for u in highlight(
+            &mut Parser::new(),
+            &mut Grammars::default(),
+            &mut fresh,
+            &job,
+        )
+        .updates
+        {
+            whole.apply(u).unwrap();
+        }
+        assert_eq!(para(&whole), [], "parsed whole, a paragraph");
+        assert_eq!(incremental, [], "and so when typed");
+    }
+
     #[test]
     fn a_setext_underline_changed_repaints_its_heading() {
         let mut g = Grammars::default();
