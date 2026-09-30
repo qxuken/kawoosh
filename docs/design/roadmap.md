@@ -2825,6 +2825,17 @@ In order — the bugs first, then what needs deciding:
     step 73's `*hunk*`, merged meanwhile, under the buffer as the
     caret's.
 
+75. ~~**Indentation from the syntax tree** ([indent.md](indent.md)),
+    asked 2026-09-30 after `o` on a `{` and `O` on a `}` landed a level
+    short: "let's do a proper indentation with a tree-sitter". helix's
+    indent queries per grammar, read relative to the text — a level in
+    from the line the innermost indenting node starts on, or as a
+    sibling line is; the engine asks an `Indenter` the shell answers
+    from the ts thread's trees, caught up on the spot; `<CR>`, `o`,
+    `O`, and `=` new.~~ Built 2026-09-30: `systems/src/indent.rs`,
+    `kawoosh/tests/indent.rs`; this repository reindents all but 0.14%
+    of its Rust.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision

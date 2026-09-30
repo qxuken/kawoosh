@@ -35,6 +35,15 @@ fn grammar() -> Result<crate::Grammar, String> {
         Some(INJECTIONS),
     )
     .and_then(|g| g.with_outline(OUTLINE))
+    .and_then(|g| {
+        g.with_indents(
+            &[
+                include_str!("../queries/c/indents.scm"),
+                include_str!("../queries/cpp/indents.scm"),
+            ]
+            .concat(),
+        )
+    })
 }
 
 /// The outline: what `symbols` lists without a server (docs/design/marks.md).

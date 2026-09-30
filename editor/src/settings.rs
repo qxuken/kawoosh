@@ -491,7 +491,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "formatter",
-        "what `:format` uses: a formatter's name, a list tried in order (past what is not installed or cannot format), `lsp`, or `auto` for the one whose config is nearest",
+        "what `:format` uses: a formatter's name, a list tried in order (past what is not installed or cannot format), `lsp`, `indent` (the syntax's indentation alone), or `auto` for the one whose config is nearest, then the server, then `indent`",
     ),
     ("format_on_save", "a save formats the buffer first"),
     ("scrolloff", "lines kept above and below the caret"),

@@ -4,7 +4,10 @@
 //! buffer by its `formatter` setting (`auto`: the one whose config is
 //! nearest, then one that always runs, then its language server), run
 //! off the frame with a timeout, its answer put in as a line diff at
-//! the version sent (`Editor::replace_diffed`).
+//! the version sent (`Editor::replace_diffed`). `indent` is a formatter
+//! too, not a program: the lines put where the syntax says
+//! (docs/design/indent.md), nothing else touched — `auto`'s last resort,
+//! for a language nothing else formats.
 //!
 //! `:format` formats the focused buffer, `:format NAME` with that one,
 //! `:format selection` the selection (a formatter's `range`), `:format?`
@@ -117,6 +120,8 @@ impl Formatter {
 pub enum Choice {
     Tool(Box<Picked>),
     Lsp(String),
+    /// The syntax's indentation (`indent`), and why.
+    Indent(String),
     None(String),
 }
 
@@ -428,6 +433,7 @@ impl Kawoosh {
             }
             None
         };
+        let indents = self.indent_trees.serves(id, &language);
         for w in &wanted {
             match w.as_str() {
                 "lsp" => {
@@ -435,10 +441,24 @@ impl Kawoosh {
                         return c;
                     }
                 }
+                // The syntax's, unless a `format.indent` says otherwise.
+                "indent" if !all.iter().any(|d| d.name == "indent") => {
+                    if indents {
+                        return Choice::Indent("indent: named".into());
+                    }
+                    skipped.push(format!("no indent rules for {language}"));
+                }
                 "auto" => {
                     let Some(dir) = dir.as_deref().filter(|_| !remote) else {
                         if let Some(c) = lsp(&mut skipped, false) {
                             return c;
+                        }
+                        // No file, or one on a host: no config to find,
+                        // and the syntax's indent needs none.
+                        if indents {
+                            return Choice::Indent(format!(
+                                "indent: the syntax's, nothing else formats {language}"
+                            ));
                         }
                         continue;
                     };
@@ -480,6 +500,11 @@ impl Kawoosh {
                     }
                     if let Some(c) = lsp(&mut skipped, false) {
                         return c;
+                    }
+                    if indents {
+                        return Choice::Indent(format!(
+                            "indent: the syntax's, nothing else formats {language}"
+                        ));
                     }
                 }
                 name => {
@@ -534,6 +559,7 @@ impl Kawoosh {
                 self.ed.message = why;
                 false
             }
+            Choice::Indent(_) => self.format_indent(id, range, then),
             Choice::Lsp(who) => {
                 if range.is_some() {
                     self.ed.message = "the language server formats the whole buffer here; :format without a selection".into();
@@ -731,15 +757,7 @@ impl Kawoosh {
             return;
         }
         let said = match result {
-            Ok(text) => match self.ed.replace_diffed(job.buffer, &text, Some(job.version)) {
-                Ok(0) => "already formatted".to_string(),
-                Ok(n) => format!(
-                    "formatted with {} ({n} edit{})",
-                    job.name,
-                    if n == 1 { "" } else { "s" }
-                ),
-                Err(e) => format!("not formatted: {e}"),
-            },
+            Ok(text) => self.put_formatted(job.buffer, &text, job.version, &job.name),
             Err(f) => {
                 if !f.stderr.is_empty() {
                     log::warn!("{}: {}", job.name, f.stderr.trim_end());
@@ -752,6 +770,67 @@ impl Kawoosh {
             Then::Write(w) => self.write_formatted(w, &said),
             Then::Probe(_) => unreachable!("answered above"),
         }
+    }
+
+    /// `text`, formatted by `name` from buffer `id` at `version`, put in
+    /// as a line diff; what to say of it.
+    fn put_formatted(&mut self, id: BufferId, text: &str, version: Version, name: &str) -> String {
+        match self.ed.replace_diffed(id, text, Some(version)) {
+            Ok(0) => "already formatted".to_string(),
+            Ok(n) => format!(
+                "formatted with {name} ({n} edit{})",
+                if n == 1 { "" } else { "s" }
+            ),
+            Err(e) => format!("not formatted: {e}"),
+        }
+    }
+
+    /// The `indent` formatter: the lines of `range` (else every line)
+    /// put where the syntax says, on the frame — a pass over a file is
+    /// milliseconds — and landed as a tool's answer would.
+    fn format_indent(
+        &mut self,
+        id: BufferId,
+        range: Option<std::ops::Range<usize>>,
+        then: Then,
+    ) -> bool {
+        let b = &self.ed.buffers[id];
+        let version = b.version();
+        let lines = match &range {
+            Some(r) => b.line_of(r.start)..b.line_of(r.end.saturating_sub(1).max(r.start)) + 1,
+            None => 0..b.line_count(),
+        };
+        let unit = self.ed.indent_unit(id);
+        let mut indenter = self.ed.indenter.take();
+        let want = indenter
+            .as_mut()
+            .and_then(|x| x.lines(id, &self.ed.buffers[id], lines.clone(), &unit));
+        self.ed.indenter = indenter;
+        let Some(want) = want else {
+            let language = self.ed.buffers[id].language.to_string();
+            self.ed.message = format!("no indent rules for {language}");
+            return false;
+        };
+        let text = self.ed.buffers[id].text();
+        let formatted: Vec<String> = text
+            .split('\n')
+            .enumerate()
+            .map(
+                |(i, line)| match i.checked_sub(lines.start).and_then(|j| want.get(j)) {
+                    Some(Some(w)) if lines.contains(&i) => {
+                        format!("{w}{}", line.trim_start_matches([' ', '\t']))
+                    }
+                    _ => line.to_string(),
+                },
+            )
+            .collect();
+        let said = self.put_formatted(id, &formatted.join("\n"), version, "indent");
+        match then {
+            Then::Apply => self.ed.message = said,
+            Then::Write(w) => self.write_formatted(w, &said),
+            Then::Probe(_) => {}
+        }
+        true
     }
 
     /// `Effect::FormatThenWrite`: each buffer formatted, then written —
@@ -836,6 +915,10 @@ impl Kawoosh {
                     Choice::Tool(p) => (p.def.name.clone(), p.cwd.clone()),
                     Choice::Lsp(_) => {
                         self.ed.message = "the language server needs no allowing".into();
+                        return;
+                    }
+                    Choice::Indent(_) => {
+                        self.ed.message = "the syntax's indent needs no allowing".into();
                         return;
                     }
                     Choice::None(why) => {
@@ -1103,6 +1186,7 @@ impl Kawoosh {
                 s
             }
             Choice::Lsp(why) => format!("lsp: {why}"),
+            Choice::Indent(why) => why,
             Choice::None(why) => why,
         };
     }

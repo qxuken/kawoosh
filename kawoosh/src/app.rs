@@ -138,6 +138,8 @@ pub struct Kawoosh {
     devtools_synced: Option<bool>,
     /// The syntax tab in it: the focused buffer's tree.
     pub inspector: Inspector,
+    /// The trees the editor's indenter reads (`indent.rs`).
+    pub(crate) indent_trees: crate::indent::Trees,
     /// Selections walking the syntax tree (`nodes.rs`).
     pub(crate) nodes: crate::nodes::NodeSelect,
     /// `:keys` asked for a mode's root which-key: shown until the
@@ -378,6 +380,7 @@ impl Kawoosh {
             devtools: false,
             devtools_synced: None,
             inspector: Inspector::new(wake.named("inspector")),
+            indent_trees: Default::default(),
             nodes: Default::default(),
             keys_help: None,
             lua_fact: None,
@@ -448,6 +451,7 @@ impl Kawoosh {
         };
         app.install_commands();
         crate::settings::declare_shell_settings(&mut app.ed.settings);
+        app.ed.indenter = Some(Box::new(app.indent_trees.indenter()));
         app
     }
 
@@ -671,6 +675,13 @@ impl Kawoosh {
             if let Some(rt) = &self.scripting.rt {
                 rt.set_tree(a.buffer, a.tree.clone().map(|t| (a.version, t)));
             }
+            let language = self
+                .ed
+                .buffers
+                .get(a.buffer)
+                .map_or_else(String::new, |b| b.language.to_string());
+            self.indent_trees
+                .answered(a.buffer, &language, a.version, a.tree.as_ref(), a.parse);
             match a.tree {
                 Some(t) => {
                     self.inspector.trees.insert(a.buffer, (a.version, t));
@@ -683,6 +694,8 @@ impl Kawoosh {
         self.inspector
             .trees
             .retain(|id, _| self.ed.buffers.contains_key(*id));
+        self.indent_trees
+            .retain(|id| self.ed.buffers.contains_key(id));
         // What a pane shows, and the files whose excerpts a multibuffer
         // drew last frame.
         let mut shown: Vec<BufferId> = self.ed.views.values().map(|v| v.buffer).collect();

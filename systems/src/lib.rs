@@ -5,6 +5,7 @@
 pub mod du;
 pub mod filter;
 pub mod fs;
+pub mod indent;
 pub mod io;
 pub mod lsp;
 pub mod search;

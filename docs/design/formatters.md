@@ -134,7 +134,11 @@ Its default, `"auto"`, is the first of:
    `biome.json` under a root `.prettierrc` is biome's);
 2. one whose `when` is `always` (gofmt);
 3. `lsp`, the buffer's server, when it formats;
-4. none, and `:format` says so.
+4. `indent`, the syntax's indentation alone (indent.md), when the
+   language has indent rules — added 2026-09-30, asked: "can it be
+   used as a last resort for formats? … we don't have any lsps for
+   json, tomls, yamls";
+5. none, and `:format` says so.
 
 `lsp` is a formatter name like the others, so
 `language.typescript.formatter = "lsp"` keeps today's behaviour, and

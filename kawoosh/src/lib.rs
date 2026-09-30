@@ -32,6 +32,7 @@ pub mod graph;
 pub mod harness;
 pub mod help;
 pub mod history;
+pub mod indent;
 pub mod inspector;
 pub mod languages;
 pub mod launcher;

@@ -127,6 +127,120 @@ pub struct Grammar {
     /// picker's `symbols` without a server and for a mark's symbol
     /// path (docs/design/marks.md Decision 1).
     pub outline: Option<Outline>,
+    /// An indent query: how many levels in a line is, read off the tree
+    /// (docs/design/indent.md).
+    pub indents: Option<Indents>,
+}
+
+/// An indent query in helix's dialect (docs/design/indent.md, the
+/// first decision) and what its captures are; the predicates past
+/// tree-sitter's own are checked at load, so a misspelt one fails there.
+#[derive(Debug)]
+pub struct Indents {
+    pub query: Query,
+    /// Capture index → what it does; `None` for a capture a predicate
+    /// names (`@expr-start`).
+    pub kinds: Vec<Option<IndentKind>>,
+    /// Pattern index → whether its captures apply to their node's own
+    /// line (`#set! "scope" "all"`) or only the lines after it
+    /// (`"tail"`); `None` for the capture's default.
+    pub scopes: Vec<Option<IndentScope>>,
+}
+
+/// An indent query's capture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndentKind {
+    /// `@indent`: the lines after the node's first are a level in —
+    /// once per line, however many start on it.
+    Indent,
+    /// `@indent.always`: a level for every one.
+    IndentAlways,
+    /// `@outdent`: the line the node starts is a level out.
+    Outdent,
+    OutdentAlways,
+    /// `@align`: the node's later lines line up under its `@anchor`.
+    Align,
+    Anchor,
+    /// `@extend`: the node reaches over the more-indented lines after
+    /// it (a Python block ends at its last statement).
+    Extend,
+    /// `@extend.prevent-once`: the node right before the new line is
+    /// not extended over it (after a `return`).
+    ExtendPreventOnce,
+}
+
+/// Which lines of a node a capture counts for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndentScope {
+    /// Its first line too.
+    All,
+    /// Only the lines after its first.
+    Tail,
+}
+
+impl IndentKind {
+    /// Where a capture counts when its pattern does not say: an indent
+    /// for the lines after the node's first, an outdent for its own.
+    pub fn default_scope(self) -> IndentScope {
+        match self {
+            IndentKind::Outdent | IndentKind::OutdentAlways => IndentScope::All,
+            _ => IndentScope::Tail,
+        }
+    }
+}
+
+/// The predicates an indent query may use past tree-sitter's own.
+const INDENT_PREDICATES: &[&str] = &[
+    "not-kind-eq?",
+    "same-line?",
+    "not-same-line?",
+    "one-line?",
+    "not-one-line?",
+];
+
+impl Indents {
+    pub fn new(language: &tree_sitter::Language, text: &str) -> Result<Self, String> {
+        let query = Query::new(language, text).map_err(|e| format!("indents: {e}"))?;
+        let kinds = query
+            .capture_names()
+            .iter()
+            .map(|n| match *n {
+                "indent" => Some(IndentKind::Indent),
+                "indent.always" => Some(IndentKind::IndentAlways),
+                "outdent" => Some(IndentKind::Outdent),
+                "outdent.always" => Some(IndentKind::OutdentAlways),
+                "align" => Some(IndentKind::Align),
+                "anchor" => Some(IndentKind::Anchor),
+                "extend" => Some(IndentKind::Extend),
+                "extend.prevent-once" => Some(IndentKind::ExtendPreventOnce),
+                _ => None,
+            })
+            .collect();
+        let mut scopes = Vec::with_capacity(query.pattern_count());
+        for i in 0..query.pattern_count() {
+            for p in query.general_predicates(i) {
+                if !INDENT_PREDICATES.contains(&p.operator.as_ref()) {
+                    return Err(format!("indents: no predicate #{}", p.operator));
+                }
+            }
+            let mut scope = None;
+            for p in query.property_settings(i) {
+                if &*p.key == "scope" {
+                    scope = match p.value.as_deref() {
+                        Some("all") => Some(IndentScope::All),
+                        Some("tail") => Some(IndentScope::Tail),
+                        v => return Err(format!("indents: scope {v:?} is not all or tail")),
+                    };
+                }
+            }
+            scopes.push(scope);
+        }
+        Ok(Self {
+            query,
+            kinds,
+            scopes,
+        })
+    }
 }
 
 /// An outline query and what its captures are: tree-sitter's tags
@@ -304,7 +418,14 @@ impl Grammar {
             structure: None,
             stand_ins: None,
             outline: None,
+            indents: None,
         })
+    }
+
+    /// An indent query over the same tree ([`Indents`]).
+    pub fn with_indents(mut self, text: &str) -> Result<Self, String> {
+        self.indents = Some(Indents::new(&self.language, text)?);
+        Ok(self)
     }
 
     /// An outline query over the same tree ([`Outline`]). A capture
@@ -491,6 +612,9 @@ pub struct Library {
     /// `outline.scm`, or the grammar's own `tags.scm`, where the
     /// highlights are looked for — by convention only.
     pub outline: Option<PathBuf>,
+    /// `indents.scm`, where the highlights are looked for — by
+    /// convention only (docs/design/indent.md).
+    pub indents: Option<PathBuf>,
 }
 
 /// What a registration said about where a grammar is; [`Library::find`]
@@ -612,12 +736,14 @@ impl Library {
             Some(p) => Some(p),
             None => query(&None, "tags.scm")?,
         };
+        let indents = query(&None, "indents.scm")?;
         Ok(Some(Library {
             path,
             symbol,
             highlights,
             injections,
             outline,
+            indents,
         }))
     }
 
@@ -653,14 +779,20 @@ impl Library {
         let highlights = read(&self.highlights)?;
         let injections = self.injections.as_deref().map(read).transpose()?;
         let outline = self.outline.as_deref().map(read).transpose()?;
-        let g = Grammar::new(language, &highlights, injections.as_deref())
+        let indents = self.indents.as_deref().map(read).transpose()?;
+        let mut g = Grammar::new(language, &highlights, injections.as_deref())
             .map_err(|e| format!("{}: {e}", self.highlights.display()))?;
-        match (outline, &self.outline) {
-            (Some(text), Some(p)) => g
+        if let (Some(text), Some(p)) = (outline, &self.outline) {
+            g = g
                 .with_outline(&text)
-                .map_err(|e| format!("{}: {e}", p.display())),
-            _ => Ok(g),
+                .map_err(|e| format!("{}: {e}", p.display()))?;
         }
+        if let (Some(text), Some(p)) = (indents, &self.indents) {
+            g = g
+                .with_indents(&text)
+                .map_err(|e| format!("{}: {e}", p.display()))?;
+        }
+        Ok(g)
     }
 }
 
@@ -963,6 +1095,13 @@ mod tests {
                 continue;
             };
             let g = load().unwrap_or_else(|e| panic!("{}: {e}", l.name));
+            // An indent query for every language one is written for
+            // (docs/design/indent.md Decision 1).
+            let indented = !matches!(
+                l.name,
+                "gomod" | "regex" | "jsdoc" | "diff" | "gitcommit" | "markdown" | "markdown_inline"
+            );
+            assert_eq!(g.indents.is_some(), indented, "{}: indents", l.name);
             let classed = g.classes.iter().filter(|c| c.is_some()).count();
             assert!(classed > 0, "{}: no capture has a class", l.name);
             let unread: Vec<_> = g
@@ -1065,11 +1204,14 @@ mod tests {
                 highlights: hl.clone(),
                 injections: None,
                 outline: None,
+                indents: None,
             }))
         );
         let inj = touch(home.join("queries/zig/injections.scm"));
+        let ind = touch(home.join("queries/zig/indents.scm"));
         let found = Library::find("zig", &none, Some(&home)).unwrap().unwrap();
         assert_eq!(found.injections, Some(inj));
+        assert_eq!(found.indents, Some(ind));
         // A checkout: `tree-sitter build` left `<name>.so` in it.
         let co = dir.join("tree-sitter-nim");
         let so = touch(co.join("nim.so"));
@@ -1181,6 +1323,7 @@ mod tests {
             highlights: hl.clone(),
             injections: None,
             outline: None,
+            indents: None,
         };
         let g = library.load().unwrap();
         assert_eq!(g.query.capture_names(), &["string", "number", "property"]);

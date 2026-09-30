@@ -73,9 +73,21 @@ pub struct Answer {
     /// a handle over nodes shared with the thread's own copy (a clone is
     /// a count, not a walk). `None` for a language without a grammar.
     pub tree: Option<Tree>,
+    /// The text the tree was parsed from and the grammar that read it,
+    /// for the shell's indenter to bring the tree up to the buffer's
+    /// text on the spot (docs/design/indent.md Decision 4); only for a
+    /// grammar with an indent query that reads the text as it is.
+    pub parse: Option<Parse>,
     /// What the parse and the queries took on the thread — the devtools'
     /// reading of a system the frame never waits on.
     pub elapsed: std::time::Duration,
+}
+
+/// An answer's tree's text and grammar ([`Answer::parse`]).
+#[derive(Clone)]
+pub struct Parse {
+    pub text: text_buffer::Buffer,
+    pub grammar: Arc<Grammar>,
 }
 
 /// A text that is no buffer's, highlighted once: a picker's preview,
@@ -430,6 +442,54 @@ fn tell_each(
     Some(spans)
 }
 
+/// Tells `tree` (parsed from `old_text`) the `edits` that made `text`,
+/// one at a time when they are a multicursor keystroke's
+/// ([`tell_each`]), else as the one edit that covers them; answers the
+/// spans they occupy in `text`.
+fn tell(
+    tree: &mut Tree,
+    edits: &[Edit],
+    old_text: &text_buffer::Buffer,
+    text: &text_buffer::Buffer,
+) -> Vec<Range<usize>> {
+    if let Some(spans) = tell_each(tree, edits, old_text, text) {
+        return spans;
+    }
+    match cover(edits) {
+        Some((old_range, new_end)) => {
+            tree.edit(&InputEdit {
+                start_byte: old_range.start,
+                old_end_byte: old_range.end,
+                new_end_byte: new_end,
+                start_position: point_at(old_text, old_range.start),
+                old_end_position: point_at(old_text, old_range.end),
+                new_end_position: point_at(text, new_end),
+            });
+            std::iter::once(old_range.start..new_end).collect()
+        }
+        None => Vec::new(),
+    }
+}
+
+/// `text` parsed on the caller's thread by `language`: from `old` — a
+/// tree of `old`'s text, told the `edits` that made this one — when
+/// given, else whole. The indenter's, for a line break typed before the
+/// thread answered (docs/design/indent.md Decision 4).
+pub fn reparse(
+    parser: &mut Parser,
+    language: &tree_sitter::Language,
+    text: &text_buffer::Buffer,
+    old: Option<(Tree, &text_buffer::Buffer, &[Edit])>,
+) -> Option<Tree> {
+    parser.set_language(language).ok()?;
+    let old = old.map(|(mut tree, old_text, edits)| {
+        tell(&mut tree, edits, old_text, text);
+        tree
+    });
+    let mut read = |byte: usize, _: Point| text.chunk_at(byte);
+    parser.parse_with_options(&mut read, old.as_ref(), None)
+}
+
 /// Sorted, overlapping and touching ones joined, and no more than
 /// [`SPANS_MAX`]: past that the smallest gaps close first. Closing a gap
 /// leaves the others as they were, so the ones to close are chosen at
@@ -486,6 +546,7 @@ fn highlight(
     // language painted goes.
     let mut blocks: Vec<Vec<Run>> = Vec::new();
     let mut block_spans: Option<Vec<Range<usize>>> = None;
+    let mut parse = None;
     let (runs, tree): (Vec<Vec<Run>>, Option<Tree>) = match grammars.get(&job.language) {
         Some(g) if parser.set_language(&g.language).is_ok() => {
             // What the parser reads instead of lines the grammar gets
@@ -501,24 +562,7 @@ fn highlight(
                 .filter(|(lang, _, _)| *lang == job.language && stood_in.is_none())
                 .and_then(|(_, old_text, mut tree)| {
                     let edits = job.edits.as_ref()?;
-                    let edited = if let Some(spans) = tell_each(&mut tree, edits, &old_text, text) {
-                        spans
-                    } else {
-                        match cover(edits) {
-                            Some((old_range, new_end)) => {
-                                tree.edit(&InputEdit {
-                                    start_byte: old_range.start,
-                                    old_end_byte: old_range.end,
-                                    new_end_byte: new_end,
-                                    start_position: point_at(&old_text, old_range.start),
-                                    old_end_position: point_at(&old_text, old_range.end),
-                                    new_end_position: point_at(text, new_end),
-                                });
-                                std::iter::once(old_range.start..new_end).collect()
-                            }
-                            None => Vec::new(),
-                        }
-                    };
+                    let edited = tell(&mut tree, edits, &old_text, text);
                     Some((tree, edited))
                 });
             let mut read = |byte: usize, _: Point| match &stood_in {
@@ -595,6 +639,12 @@ fn highlight(
                         block_spans = Some(lines);
                     }
                     let handle = tree.clone();
+                    if stood_in.is_none() && g.indents.is_some() {
+                        parse = Some(Parse {
+                            text: text.clone(),
+                            grammar: g.clone(),
+                        });
+                    }
                     if stood_in.is_none() {
                         parsed
                             .by_buffer
@@ -633,6 +683,7 @@ fn highlight(
         buffer: job.buffer,
         version: job.snapshot.version,
         tree,
+        parse,
         elapsed: started.elapsed(),
         updates,
     }

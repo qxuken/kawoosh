@@ -30,6 +30,7 @@ fn grammar() -> Result<crate::Grammar, String> {
         None,
     )
     .and_then(|g| g.with_outline(OUTLINE))
+    .and_then(|g| g.with_indents(include_str!("../queries/scheme/indents.scm")))
 }
 
 /// After the crate's query, so each pattern here is the later one a node

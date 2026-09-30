@@ -12,12 +12,23 @@ where yanked text goes.
 | insert | `i` `a` `I` `A` `o` `O`, `s` `S` `C`, `c` + motion | keys type text |
 | visual | `v` | motions extend the selection |
 | visual line | `V` | the same, by whole lines |
-| operator-pending | `d` `c` `y` `>` `<` `gu` `gU` `g~` `gsa` `ga` | waiting for a motion or a text object |
+| operator-pending | `d` `c` `y` `>` `<` `=` `gu` `gU` `g~` `gsa` `ga` | waiting for a motion or a text object |
 
 An operator doubled works on lines, as in vim: `dd`, `yy`, `cc`, `>>`,
-`guu`, `gUU`, `g~~`, with a count for more lines. `<Esc>` in normal mode
-backs out of whatever is open, one step a press: a pending operator, then
-the extra cursors, then the search highlight.
+`==`, `guu`, `gUU`, `g~~`, with a count for more lines. `<Esc>` in
+normal mode backs out of whatever is open, one step a press: a pending
+operator, then the extra cursors, then the search highlight.
+
+## Indentation
+
+`<CR>`, `o` and `O` open a line at the indent the language's syntax
+says — inside a `{`, after Python's `:`, out again after a `return` —
+following the lines around it, so a two-space file stays two. `=` puts
+lines where the syntax says: `==` one, `=ip` a paragraph, `gg=G` the
+file. A language without indent rules keeps the line's indent, a level
+deeper after an opening bracket, and `=` says it has none. A language
+added with `kawoosh.language` takes an `indents.scm` beside its other
+queries, in helix's dialect.
 
 ## What differs from vim
 

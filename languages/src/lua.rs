@@ -21,6 +21,7 @@ fn grammar() -> Result<crate::Grammar, String> {
         Some(tree_sitter_lua::INJECTIONS_QUERY),
     )
     .and_then(|g| g.with_outline(OUTLINE))
+    .and_then(|g| g.with_indents(include_str!("../queries/lua/indents.scm")))
 }
 
 /// The outline: what `symbols` lists without a server (docs/design/marks.md).

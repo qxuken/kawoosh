@@ -142,9 +142,9 @@ buffer's own words are offered.
 
 ## Formatting
 
-`:format` (`grf`) formats the buffer with its formatter: prettier, biome, stylua, clang-format, ruff, gofmt, taplo, shfmt, rustfmt, or the language server. The formatted text goes in as the lines that changed, as one undo step, so the caret stays where it was on lines the formatter did not touch.
+`:format` (`grf`) formats the buffer with its formatter: prettier, biome, stylua, clang-format, ruff, gofmt, taplo, shfmt, rustfmt, the language server, or `indent` — the language's syntax putting each line at its indent and touching nothing else ([editing](editing.md#indentation)). The formatted text goes in as the lines that changed, as one undo step, so the caret stays where it was on lines the formatter did not touch.
 
-Which one formats a buffer is its `formatter` setting. The default, `auto`, is the formatter whose config file is nearest the file (a `.prettierrc`, a `"prettier"` key in `package.json`, `biome.json`, `stylua.toml`, `.clang-format`, `ruff.toml` or `[tool.ruff]` in `pyproject.toml`, `taplo.toml`), then one that always runs for the language (gofmt for Go), then the language server. Rust formats through rust-analyzer, which knows the crate's edition.
+Which one formats a buffer is its `formatter` setting. The default, `auto`, is the formatter whose config file is nearest the file (a `.prettierrc`, a `"prettier"` key in `package.json`, `biome.json`, `stylua.toml`, `.clang-format`, `ruff.toml` or `[tool.ruff]` in `pyproject.toml`, `taplo.toml`), then one that always runs for the language (gofmt for Go), then the language server, then `indent` where the language has indent rules — so JSON, YAML or TOML with no formatter configured and no server still get `:format` and a format on save. Rust formats through rust-analyzer, which knows the crate's edition.
 
 ```lua
 return {
@@ -152,6 +152,7 @@ return {
     typescript = { formatter = "biome", format_on_save = true },
     go = { format_on_save = true },
     rust = { formatter = { "rustfmt", "lsp" } },   -- tried in order
+    yaml = { formatter = "indent" },               -- the syntax's indent alone
   },
 }
 ```
@@ -162,7 +163,7 @@ A list goes on past what cannot format: a formatter not installed, a server that
 |---|---|
 | `:format` | format the buffer |
 | `:format NAME` | format it with that formatter |
-| `:format selection` | format the selection (`grf` in visual mode), with a formatter that can: prettier, stylua, clang-format |
+| `:format selection` | format the selection (`grf` in visual mode), with a formatter that can: prettier, stylua, clang-format, `indent` |
 | `:format?` | which formatter, why, and the indent it uses |
 | `:format allow` | let the project's own formatter run on save (below) |
 | `:format revoke` | take that back |
