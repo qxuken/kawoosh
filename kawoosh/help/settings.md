@@ -143,7 +143,7 @@ Paths complete as you type, and so do the choices of a setting that takes a few 
 
 ## The settings pane
 
-`:settings` (or `⌘,`) opens every setting in a column beside the one you are in, so a change shows on the code at once. `:settings QUERY` opens it already searched: `:settings font`.
+`:settings` (or `⌘,`, or `<leader>,`) opens every setting in a column beside the one you are in, so a change shows on the code at once. `:settings QUERY` opens it already searched: `:settings font`.
 
 Each setting is a row: its path as a settings file spells it, what it does, and a control for its kind. A switch flips, a word is one of a few chips, a number steps with `−` and `+` or takes a typed value, and a text is typed in place. A list or a table has **edit in file**, which opens the file at the key and adds the key first when the file does not have it. The rows are grouped into sections (Editing, Look, Layout, …), and a wide pane lists the sections down the left.
 

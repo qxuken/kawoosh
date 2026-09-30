@@ -135,6 +135,7 @@ fn the_keys_are_grouped_by_module() {
         ("<leader>ih", "help"),
         ("<leader>im", "messages"),
         ("<leader>ic", "commands"),
+        ("<leader>,", "settings"),
         ("<C-w>C", "tab close"),
         ("<C-w>m", "layout"),
         ("ZA", "quit all"),

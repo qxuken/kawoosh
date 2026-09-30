@@ -1,4 +1,5 @@
--- The settings pane (docs/design/settings.md): `:settings` (`<D-,>`)
+-- The settings pane (docs/design/settings.md): `:settings` (`<D-,>`,
+-- `<leader>,`)
 -- opens a column beside the focused one with every setting in it — its
 -- path, what it does, and a control by its kind — grouped in sections,
 -- the search at the top with the keys in it. `:settings QUERY` opens it
@@ -1033,3 +1034,5 @@ kawoosh.map("n", "<Esc>", "settings edit cancel", editing)
 for _, mode in ipairs { "n", "v", "i", "p" } do
   kawoosh.map(mode, "<D-,>", "settings")
 end
+-- The same comma on the leader, for a keyboard without ⌘.
+kawoosh.map("n", "<leader>,", "settings")

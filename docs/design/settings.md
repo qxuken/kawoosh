@@ -46,7 +46,7 @@ bundled plugins, a Lua view like `:themes` and `:fonts`. It opens as a
 column beside the focused one (half the width), so a change is seen on
 the code at once. `:settings QUERY` opens it with the search filled
 (`:settings font`). `<D-,>`, the macOS key for an app's settings,
-opens it too. `:settings user`, `:settings project` and
+opens it too, and so does `<leader>,`, the same comma without ⌘. `:settings user`, `:settings project` and
 `:settings reload` stay what they are.
 
 The pane reads `kawoosh.settings` (Decision 9), the same door a
