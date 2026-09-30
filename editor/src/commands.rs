@@ -2434,12 +2434,13 @@ pub fn install(ed: &mut Editor) {
     ed.register_with_char("surround replace with", surround_replace_with);
 
     // `"` names the register the next command takes into or puts from.
-    // Only `_` so far, the black hole; `""` is the one there always is.
+    // Only `_` so far, the black hole; `""` is the one there always is,
+    // named all the same, so a count before it is the command's.
     ed.register_with_char("register", |ed, ctx| match ctx.arg_char {
-        Some('_') => ed.pending_register = Some('_'),
-        Some('"') => ed.pending_register = None,
+        Some(c @ ('_' | '"')) => ed.pending_register = Some(c),
         Some(c) => {
             ed.count = None;
+            ed.register_count = None;
             ed.message = format!("no register {c}: only _, the black hole");
         }
         None => {}

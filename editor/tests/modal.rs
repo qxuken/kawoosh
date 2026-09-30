@@ -1273,6 +1273,38 @@ fn the_black_hole_register_takes_nothing() {
     assert_eq!(t.ed.message, "no register a: only _, the black hole");
 }
 
+/// Counts on both sides of `"_` multiply, as vim's: `2"_3x` takes six.
+/// `.` with a count gives it to the command, not to the naming; and a
+/// key bound to nothing after `"_` lets the register go from `.` too.
+#[test]
+fn black_hole_counts_multiply_and_let_go() {
+    let kept = |t: &T| t.ed.memory.head().map(|m| m.text.clone());
+    let mut t = T::new("abcdefghij");
+    t.keys("2\"_3x");
+    assert_eq!(t.text(), "ghij", "two times three");
+    assert_eq!(kept(&t), None);
+    t.keys("\"_2x");
+    assert_eq!(t.text(), "ij", "a count after it alone");
+    let mut t = T::new("abcdefghij");
+    t.keys("2\"\"x");
+    assert_eq!(t.text(), "cdefghij", "`\"\"` keeps the count before it");
+    assert_eq!(kept(&t).as_deref(), Some("ab"));
+    assert_eq!(t.ed.pending_register, None);
+
+    let mut t = T::new("one two three four five six");
+    t.keys("\"_dw3.");
+    assert_eq!(t.text(), "five six", "`3.` deletes three words");
+    assert_eq!(kept(&t), None);
+
+    let mut t = T::new("abc");
+    t.keys("\"_<F12>x");
+    assert_eq!(t.text(), "bc");
+    assert_eq!(kept(&t).as_deref(), Some("a"), "the register is let go");
+    t.keys(".");
+    assert_eq!(t.text(), "c");
+    assert_eq!(kept(&t).as_deref(), Some("b"), "and `.` lets it go too");
+}
+
 /// A command's `Path` argument reaches it absolute — `~`, `..` and a
 /// relative path resolved against the engine's working directory — for
 /// the engine's own commands, for one the shell declared, and for one
