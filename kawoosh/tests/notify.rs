@@ -272,7 +272,7 @@ fn notify_from_the_command_line_and_from_lua() {
           },
         })
         kawoosh.notify("kept", { level = "info", show = "log" })
-        kawoosh.notify("brief", { level = "error", timeout = 1 })
+        kawoosh.notify("brief", { level = "error", timeout = 600000 })
         "#,
     );
     d.frame(&mut app);
@@ -282,8 +282,18 @@ fn notify_from_the_command_line_and_from_lua() {
     assert!(corner_has(&d, "plugin"));
     assert!(!corner_has(&d, "kept"), "show = log");
     assert!(app.notes.log.iter().any(|e| e.text == "kept"));
+    // A timeout of its own, in milliseconds — ten minutes, as this runs
+    // on the wall clock: `timeout = 1` was a millisecond, gone whenever
+    // the frame above came later than that (a loaded suite). Expiry
+    // itself is `notify`'s unit tests', on a clock of their own.
     let brief = app.notes.shown.iter().find(|s| s.text == "brief").unwrap();
-    assert!(brief.until.is_some(), "a timeout of its own");
+    let now = Instant::now();
+    assert!(
+        brief.until.is_some_and(
+            |t| t > now + Duration::from_secs(60) && t <= now + Duration::from_secs(600)
+        ),
+        "a timeout of its own, in milliseconds"
+    );
     let with = app
         .notes
         .shown
