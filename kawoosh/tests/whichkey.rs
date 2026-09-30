@@ -246,3 +246,27 @@ fn a_which_key_fits_the_window_and_folds_numbered_runs() {
         "not part of the run: {t:?}"
     );
 }
+
+/// A column's commands start in one line whatever the width of their
+/// keys: the UI font is proportional, an `m` wider than an `l`.
+#[test]
+fn a_columns_commands_line_up_past_keys_of_any_width() {
+    let mut app = Kawoosh::new("t", "a\nb");
+    let mut d = Drive::new(1600.0, 1200.0);
+    d.frame(&mut app);
+    d.keys(&mut app, " o");
+    let x = |s: &str| {
+        d.core
+            .nodes()
+            .iter()
+            .find(|n| n.text.as_deref() == Some(s))
+            .unwrap_or_else(|| panic!("{s} in {:?}", texts(&d)))
+            .rect
+            .x
+    };
+    let (l, m, f) = (x("theme lab"), x("markdown toggle"), x("fonts"));
+    assert!(
+        (l - m).abs() < 0.5 && (l - f).abs() < 0.5,
+        "l {l}, m {m}, f {f}"
+    );
+}
