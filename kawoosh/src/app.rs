@@ -2412,8 +2412,16 @@ impl kui_native::App for Kawoosh {
                     Some(d) if self.layout.dock_open => Some(d.layout.clone()),
                     _ => None,
                 };
+                // Three lines each at the least while there are six:
+                // below that (a window a couple of hundred px tall) the
+                // floor passed the ceiling and `clamp` panicked.
                 let dock_h = if dock.is_some() {
-                    (body_h * self.layout.dock_ratio).clamp(lh * 3.0, body_h - lh * 3.0)
+                    let share = body_h * self.layout.dock_ratio;
+                    if body_h >= lh * 6.0 {
+                        share.clamp(lh * 3.0, body_h - lh * 3.0)
+                    } else {
+                        share
+                    }
                 } else {
                     0.0
                 };

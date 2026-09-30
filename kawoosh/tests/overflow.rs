@@ -67,6 +67,18 @@ fn a_long_pane_title_stays_on_its_bar() {
     std::fs::remove_dir_all(dir.ancestors().nth(5).unwrap()).ok();
 }
 
+/// The dock in a window too short for three lines of it and three of the
+/// panes: its height's floor passed its ceiling and `clamp` panicked.
+#[test]
+fn the_dock_opens_in_a_short_window() {
+    let (mut d, mut app, dir) = narrow("dock", 420.0, 200.0);
+    ex(&mut d, &mut app, "dock");
+    d.frame(&mut app);
+    assert!(app.layout.dock_open, "the dock is open");
+    assert_fits(&d, "the dock in a short window");
+    std::fs::remove_dir_all(dir.ancestors().nth(5).unwrap()).ok();
+}
+
 /// A long-named file open in a deep directory, in a `w` by `h` window,
 /// the Lua plugins attached.
 fn narrow(tag: &str, w: f32, h: f32) -> (Drive, Kawoosh, std::path::PathBuf) {
