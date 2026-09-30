@@ -92,6 +92,14 @@ fn help_opens_a_topic_read_only_and_links_follow() {
     assert_eq!(app.ed.buffer_of(v).name, "tutor");
     assert!(!app.ed.buffer_of(v).read_only);
     assert!(app.ed.buffer_of(v).line_count() > 50);
+    // Its links reach the pages: a scratch has no directory of its own.
+    d.keys(&mut app, "G?");
+    d.keys(&mut app, r"\[start\]");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.press(&mut app, "gx");
+    settle(&mut d, &mut app);
+    assert_eq!(shown(&app).0, "start.md", "{}", app.ed.message);
+    assert!(app.ed.buffer_of(app.focused_view().unwrap()).read_only);
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

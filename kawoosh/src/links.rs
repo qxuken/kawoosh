@@ -101,10 +101,12 @@ fn markdown_link(line: &str, at: usize) -> Option<(&str, Range<usize>)> {
             open
         };
         if (start..=close).contains(&at) {
-            let dest = line[mid + 2..close]
-                .split_whitespace()
-                .next()?
-                .trim_matches(['<', '>']);
+            // `<…>` holds a destination with spaces in it whole.
+            let inner = line[mid + 2..close].trim_start();
+            let dest = match inner.strip_prefix('<').and_then(|d| d.split_once('>')) {
+                Some((d, _)) => d,
+                None => inner.split_whitespace().next()?,
+            };
             return Some((dest, start..close + 1));
         }
         i = close + 1;
@@ -320,6 +322,17 @@ mod tests {
         assert_eq!(url.target, Target::Url("https://x.io/a".into()));
         assert_eq!(&l[url.span], "https://x.io/a");
         assert_eq!(link_at(l, 1), None);
+        // An angled destination is whole, spaces and all.
+        let a = "[x](<C:/Users/A B/p.md#top> \"t\")";
+        assert_eq!(
+            link_at(a, 1).unwrap().target,
+            Target::Path {
+                path: "C:/Users/A B/p.md".into(),
+                line: None,
+                col: None,
+                anchor: Some("top".into())
+            }
+        );
         // A URL is not read as a path with a line (`https` and `//x.io`).
         let t = "see <https://kawoosh.dev/docs> now";
         assert_eq!(

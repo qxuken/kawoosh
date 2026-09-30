@@ -205,8 +205,14 @@ impl Kawoosh {
     }
 
     /// `:tutor`: the tutorial in a scratch of its own, to edit freely.
+    /// A scratch has no directory for its links to be relative to, so
+    /// they name the pages written out where they are.
     pub(crate) fn tutor(&mut self) {
-        let mut b = kawoosh_doc::Buffer::new("tutor", TUTOR);
+        let text = match self.write_help() {
+            Ok(dir) => absolute_links(TUTOR, &dir),
+            Err(_) => TUTOR.to_string(),
+        };
+        let mut b = kawoosh_doc::Buffer::new("tutor", &text);
         b.language = "markdown".into();
         let id = self.ed.add_buffer(b);
         match self.focused_view().or_else(|| self.claim_launcher()) {
@@ -225,6 +231,32 @@ impl Kawoosh {
     pub(crate) fn help_teardown(&mut self) {
         let _ = std::fs::remove_dir_all(help_dir());
     }
+}
+
+/// `text` with each link to a page — a relative `NAME.md`, its
+/// `#heading` kept — made to name the page in `dir`; a path with a space
+/// in it inside `<…>`.
+fn absolute_links(text: &str, dir: &std::path::Path) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("](") {
+        out.push_str(&rest[..i + 2]);
+        rest = &rest[i + 2..];
+        let end = rest.find([')', ' ']).unwrap_or(rest.len());
+        let dest = &rest[..end];
+        let page = dest.split('#').next().unwrap_or("");
+        if page.ends_with(".md") && !page.contains("://") && !page.starts_with('/') {
+            let path = dir.join(dest).display().to_string();
+            if path.contains(char::is_whitespace) {
+                let _ = write!(out, "<{path}>");
+            } else {
+                out.push_str(&path);
+            }
+            rest = &rest[end..];
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 pub(crate) fn commands() -> Vec<ShellCommand> {
