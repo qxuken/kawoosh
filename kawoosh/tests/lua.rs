@@ -577,7 +577,10 @@ fn dash_opens_the_files_directory_and_can_move_the_cwd() {
         let Some(term) = app.terms.map.get(&t) else {
             break;
         };
-        seen = (0..4).map(|r| term.row_text(r)).collect::<Vec<_>>().join("");
+        seen = (0..4)
+            .map(|r| term.row_text(r))
+            .collect::<Vec<_>>()
+            .join("");
         if seen.contains(&there) {
             break;
         }
@@ -975,7 +978,10 @@ fn a_lua_field_shows_no_caret_off_the_focused_pane() {
     assert_eq!(bars(&d), 1, "the field's bar while its pane has the keys");
     app.layout.focus(editor);
     d.frame(&mut app);
-    assert!(app.lua_field_focused("finder").is_some(), "still the view's");
+    assert!(
+        app.lua_field_focused("finder").is_some(),
+        "still the view's"
+    );
     assert_eq!(bars(&d), 0, "no caret in a pane without the keyboard");
     app.layout.focus(finder);
     d.frame(&mut app);

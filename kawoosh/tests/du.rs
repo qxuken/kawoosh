@@ -141,7 +141,12 @@ fn marks_across_directories_and_d_upper_deletes_them_all() {
     d.frame(&mut app);
     assert_eq!(marked(&mut app), "x z top");
     d.frame(&mut app);
-    let texts: Vec<String> = d.core.nodes().iter().filter_map(|n| n.text.clone()).collect();
+    let texts: Vec<String> = d
+        .core
+        .nodes()
+        .iter()
+        .filter_map(|n| n.text.clone())
+        .collect();
     assert!(
         texts.iter().any(|t| t.contains("3 marked, 450 B")),
         "the head counts them: {texts:?}"

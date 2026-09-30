@@ -904,7 +904,9 @@ impl Kawoosh {
             .map(str::to_string)
             .collect();
         self.lsp_forget_languages(&languages, false);
-        self.lsp.said_unavailable.retain(|c, _| !commands.contains(c));
+        self.lsp
+            .said_unavailable
+            .retain(|c, _| !commands.contains(c));
         for c in &commands {
             *self.lsp.restarting.entry(c.clone()).or_default() += 1;
         }

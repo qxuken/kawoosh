@@ -226,10 +226,7 @@ pub fn on_path(program: &str) -> Option<bool> {
     } else {
         vec![program.to_string()]
     };
-    Some(
-        std::env::split_paths(&path)
-            .any(|d| names.iter().any(|n| d.join(n).is_file())),
-    )
+    Some(std::env::split_paths(&path).any(|d| names.iter().any(|n| d.join(n).is_file())))
 }
 
 /// How a domain is reached (docs/design/domains.md Decision 3): the

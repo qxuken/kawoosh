@@ -683,7 +683,11 @@ fn the_leader_comma_opens_the_pane() {
     let mut d = Drive::new(1100.0, 800.0);
     let mut app = app_with_lua(&mut d);
     d.frame(&mut app);
-    assert!(!texts(&d).iter().any(|x| x == "Settings"), "{:?}", texts(&d));
+    assert!(
+        !texts(&d).iter().any(|x| x == "Settings"),
+        "{:?}",
+        texts(&d)
+    );
     d.press(&mut app, "<leader>,");
     d.frame(&mut app);
     assert!(texts(&d).iter().any(|x| x == "Settings"), "{:?}", texts(&d));

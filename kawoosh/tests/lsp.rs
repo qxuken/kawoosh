@@ -398,7 +398,10 @@ fn a_server_that_exits_is_started_again_then_given_up() {
     let why = "stopped: exited with 3: fake server crashing, 3 exits in 3 minutes";
     let said = format!("`{server}` {why} (:lsp restart once fixed)");
     assert!(until(&mut d, &mut app, |a| noted(a, &said)), "{said}");
-    assert!(msgs(&app, buf_id).is_empty(), "its diagnostics gone with it");
+    assert!(
+        msgs(&app, buf_id).is_empty(),
+        "its diagnostics gone with it"
+    );
     ex(&mut d, &mut app, "lsp format");
     d.frame(&mut app);
     assert_eq!(app.ed.message, format!("the rust server {why}"));
