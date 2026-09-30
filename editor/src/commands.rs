@@ -590,17 +590,44 @@ fn bracket_object(
     }
 }
 
+/// `i"` `a"` and the other quotes, vim's rule, on the cursor's line:
+/// off a quote, the nearest one before the cursor opens — the next
+/// after it when there is none — and the next after that closes; on a
+/// quote, the quotes are paired from the line's start, the cursor's
+/// pair taken. Pairing from the start off a quote too let one stray
+/// quote earlier on the line — in a regex, a comment — turn every
+/// string after it inside out. A quote after an odd run of backslashes
+/// is escaped and neither opens nor closes.
 fn quote_object(buf: &Buffer, o: usize, q: char, around: bool) -> Option<Range<usize>> {
     let ln = buf.line_of(o);
     let range = buf.line_range(ln);
     let text = buf.slice(range.clone());
     let rel = o - range.start;
-    let positions: Vec<usize> = text.match_indices(q).map(|(i, _)| i).collect();
-    let mut pairs = positions.chunks(2).filter(|c| c.len() == 2);
-    let (a, b) = pairs
-        .find(|c| c[0] <= rel && rel <= c[1])
-        .map(|c| (c[0], c[1]))?;
-    let (s, e) = if around { (a, b + 1) } else { (a + 1, b) };
+    let bytes = text.as_bytes();
+    let escaped = |i: usize| bytes[..i].iter().rev().take_while(|&&b| b == b'\\').count() % 2 == 1;
+    let quotes: Vec<usize> = text
+        .match_indices(q)
+        .map(|(i, _)| i)
+        .filter(|&i| !escaped(i))
+        .collect();
+    let (a, b) = if quotes.contains(&rel) {
+        quotes
+            .chunks(2)
+            .filter(|c| c.len() == 2)
+            .find(|c| c[0] <= rel && rel <= c[1])
+            .map(|c| (c[0], c[1]))?
+    } else {
+        let a = quotes
+            .iter()
+            .rev()
+            .find(|&&i| i < rel)
+            .or_else(|| quotes.iter().find(|&&i| i > rel))
+            .copied()?;
+        let b = quotes.iter().find(|&&i| i > a).copied()?;
+        (a, b)
+    };
+    let n = q.len_utf8();
+    let (s, e) = if around { (a, b + n) } else { (a + n, b) };
     Some(range.start + s..range.start + e)
 }
 

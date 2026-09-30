@@ -731,6 +731,26 @@ fn words_that_only_whitespace_ends() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// `i"` by vim's rule: off a quote, the nearest quote before the cursor
+/// opens, so a stray `"` earlier on the line — a minified regex's — does
+/// not turn the string inside out; an escaped quote is text; before any
+/// quote, the next string on the line; on a quote, pairs from the start.
+#[test]
+fn quotes_nearest_the_cursor() {
+    let (mut d, mut app) = with_plugins(r#"r=/"([^"]+)"|x/,s2:"first order",n3:1"#);
+    d.keys(&mut app, "fdhdi\"");
+    assert_eq!(text(&app), r#"r=/"([^"]+)"|x/,s2:"",n3:1"#);
+    let (mut d, mut app) = with_plugins(r#"a("x\"y" z)"#);
+    d.keys(&mut app, "fydi\"");
+    assert_eq!(text(&app), r#"a("" z)"#);
+    let (mut d, mut app) = with_plugins(r#"foo("bar") "baz""#);
+    d.keys(&mut app, "0da\"");
+    assert_eq!(text(&app), "foo() \"baz\"");
+    d.keys(&mut app, "$di\"");
+    assert_eq!(text(&app), "foo() \"\"");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// `}` `{` by paragraphs, as a motion for an operator too; `H` `M` `L`
 /// the pane's lines.
 #[test]
