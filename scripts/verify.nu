@@ -6,6 +6,13 @@
 # in a terminal, `:compile nu scripts/verify.nu` into `*compile*` for
 # `]q` over what failed.
 #
+# The tests run on cargo-nextest when it is installed — every test of
+# every binary on one pool (`.config/nextest.toml`) — else on `cargo
+# test`, a binary at a time. Either way in a temp directory of the
+# run's own, removed after: what the tests leave in `$TMPDIR` had grown
+# to tens of thousands of entries, and a test typing a path through it
+# listed them all.
+#
 # A command that fails stops the script: nushell makes an external's
 # non-zero exit an error.
 
@@ -20,6 +27,18 @@ def main [
   cargo clippy --workspace --all-targets -- -D warnings
   # Every test binary, so one run names every failure.
   print "== test"
-  cargo test --workspace --no-fail-fast
+  let tmp = (mktemp -d)
+  let passed = try {
+    with-env { TMPDIR: $tmp, TMP: $tmp, TEMP: $tmp } {
+      if (which cargo-nextest | is-not-empty) {
+        cargo nextest run --workspace --no-fail-fast
+      } else {
+        cargo test --workspace --no-fail-fast
+      }
+    }
+    true
+  } catch { false }
+  rm -rf $tmp
+  if not $passed { error make { msg: "tests failed" } }
   print "== verified"
 }
