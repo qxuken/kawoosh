@@ -1913,9 +1913,9 @@ dependencies = [
 
 [[package]]
 name = "kui-core"
-version = "0.1.0-alpha.27"
+version = "0.1.0-alpha.28"
 source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "cffb1974e64e58e08e0a0d686ee0836f54230e46c080b079b7f57dcab018cace"
+checksum = "77ce500a66027cb54ed32060b659c4bd3ff297f52f390cae8027d694c02a8e8f"
 dependencies = [
  "cosmic-text",
  "kui-derive",
@@ -1929,9 +1929,9 @@ dependencies = [
 
 [[package]]
 name = "kui-derive"
-version = "0.1.0-alpha.27"
+version = "0.1.0-alpha.28"
 source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "94e024d6f038856573f09fd7389c3c7012127a605022a259164a52af9e30e43e"
+checksum = "4bae9ad549012f2bb7f3ed9be8bee5152d17d246251a4cd0e6d2b6ad147f4db9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1940,18 +1940,18 @@ dependencies = [
 
 [[package]]
 name = "kui-ffi"
-version = "0.1.0-alpha.27"
+version = "0.1.0-alpha.28"
 source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "4e510f262ebc73a93c582798e9133b3b475b852f0b266ba62ee3d82b457a2e22"
+checksum = "a35b250be7ece86b8b2fd757c5a19b9ce4cdf0226c38a77156d6d9f371ea63c1"
 dependencies = [
  "kui-core",
 ]
 
 [[package]]
 name = "kui-lua"
-version = "0.1.0-alpha.27"
+version = "0.1.0-alpha.28"
 source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "81ebe5420787f69fb3b17dc6cf9f9a4b8d78e105e34a6f8983515f68868c167a"
+checksum = "4526d7b8e724bdfe80eead3f73ff1b3951411d768dd66672fac682ba76f79f4c"
 dependencies = [
  "kui-core",
  "kui-ffi",
@@ -1960,9 +1960,9 @@ dependencies = [
 
 [[package]]
 name = "kui-native"
-version = "0.1.0-alpha.27"
+version = "0.1.0-alpha.28"
 source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "f6af599400238a96ec5414f25a2730f6cbfe50b1f41c7ab43d19e1f352fbfdce"
+checksum = "d1037e4a168354c67553df6bf36239ddf2cc1afd4791faf9d5a324641911aabe"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -1982,9 +1982,9 @@ dependencies = [
 
 [[package]]
 name = "kui-wgpu"
-version = "0.1.0-alpha.27"
+version = "0.1.0-alpha.28"
 source = "sparse+https://drydock9.qxuken.dev/api/packages/qxuken/cargo/"
-checksum = "3ad9bb941d9c1b680503289481553f9baabff7e2368c4d7e888b82c7a1cb3e05"
+checksum = "0feafe5365b6853a1ee886f6fdcea8f2e52c5627e97091ded2040cab48cc29b0"
 dependencies = [
  "bytemuck",
  "kui-core",
