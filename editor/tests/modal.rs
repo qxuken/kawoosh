@@ -998,6 +998,36 @@ fn insert_backspace_at_a_line_start_joins_the_line_above() {
     assert_eq!(t.text(), "ab\ncd");
 }
 
+/// Only what an operator took is remembered and put on the clipboard,
+/// as vim's: insert's `<BS>`, `<C-h>`, `<Del>` and `<C-w>`, and the
+/// prompt's `<BS>`, leave the register and the clipboard alone; `x`,
+/// `X` and `dw` fill them.
+#[test]
+fn plain_deletes_leave_the_register_alone() {
+    let mut t = T::new("one two three");
+    t.keys("A<BS><C-h><C-w><Esc>0i<Del><Esc>");
+    assert_eq!(t.text(), "ne two ");
+    assert!(t.ed.memory.head().is_none());
+    t.keys(":ab<BS><Esc><Esc>");
+    assert!(t.ed.memory.head().is_none());
+    assert!(
+        !t.ed
+            .take_effects()
+            .iter()
+            .any(|e| matches!(e, Effect::SetClipboard(_)))
+    );
+    t.keys("x");
+    assert_eq!(t.ed.memory.head().unwrap().text, "n");
+    t.keys("lX");
+    assert_eq!(t.ed.memory.head().unwrap().text, "e");
+    t.keys("0dw");
+    assert_eq!(t.ed.memory.head().unwrap().text, " ");
+    assert!(
+        t.ed.take_effects()
+            .contains(&Effect::SetClipboard(" ".into()))
+    );
+}
+
 /// A command's `Path` argument reaches it absolute — `~`, `..` and a
 /// relative path resolved against the engine's working directory — for
 /// the engine's own commands, for one the shell declared, and for one

@@ -229,13 +229,15 @@ pub(crate) fn apply_operator(
                     .sum::<usize>()
             );
         }
-        "delete" | "change" => {
-            let took = if op == "change" {
-                crate::Took::Change
-            } else {
-                crate::Took::Delete
-            };
-            set_register(ed, id, &ranges, &texts, linewise, took);
+        // `erase` is a delete the register never hears of: insert's
+        // Backspace, Delete and `<C-w>`, as vim's — only an operator's
+        // text is remembered, and on the clipboard.
+        "delete" | "change" | "erase" => {
+            match op {
+                "change" => set_register(ed, id, &ranges, &texts, linewise, crate::Took::Change),
+                "delete" => set_register(ed, id, &ranges, &texts, linewise, crate::Took::Delete),
+                _ => {}
+            }
             let edits = ranges
                 .iter()
                 .enumerate()
@@ -1926,7 +1928,9 @@ pub fn install(ed: &mut Editor) {
                 (a..s.head, false)
             })
             .collect();
-        apply_operator(ed, ctx.view, "delete", ranges);
+        // `X` is `dh`, into the register; Backspace is not.
+        let op = if joins { "erase" } else { "delete" };
+        apply_operator(ed, ctx.view, op, ranges);
     });
     ed.register("change char", |ed, ctx| {
         let id = view(ed, ctx).buffer;
@@ -2103,7 +2107,7 @@ pub fn install(ed: &mut Editor) {
                 )
             })
             .collect();
-        apply_operator(ed, ctx.view, "delete", ranges);
+        apply_operator(ed, ctx.view, "erase", ranges);
     });
     ed.register("delete forward", |ed, ctx| {
         let id = view(ed, ctx).buffer;
@@ -2113,7 +2117,7 @@ pub fn install(ed: &mut Editor) {
             .iter()
             .map(|s| (s.head..buf.next_char(s.head), false))
             .collect();
-        apply_operator(ed, ctx.view, "delete", ranges);
+        apply_operator(ed, ctx.view, "erase", ranges);
     });
     ed.register("paste after", |ed, ctx| paste(ed, ctx, true));
     ed.register("paste over", |ed, ctx| paste_over(ed, ctx, false));
@@ -2759,16 +2763,16 @@ const DOCS: &[(&str, &str)] = &[
     ("delete char", "delete the character under the caret (`x`)"),
     (
         "delete char back",
-        "delete the character before the caret (`X`; insert's Backspace, which joins the line above at a line's start)",
+        "delete the character before the caret (`X`; insert's Backspace, which joins the line above at a line's start and, as vim's, leaves the register alone)",
     ),
     ("delete to end", "delete to the end of the line (`D`)"),
     (
         "delete forward",
-        "delete the character after the caret (insert's Delete)",
+        "delete the character after the caret, the register left alone (insert's Delete)",
     ),
     (
         "delete word back",
-        "delete the word before the caret (insert's <C-w>)",
+        "delete the word before the caret, the register left alone (insert's <C-w>)",
     ),
     (
         "delete line",

@@ -190,7 +190,9 @@ one over a whole file. Search and `:` lines are recorded too.
 and text copied in another program becomes the register when you come
 back to the window — so `p` pastes it. In insert mode `⌘v` (`<C-S-v>`)
 pastes the clipboard; `<C-S-u>` deletes the whole line into the register
-without leaving insert mode.
+without leaving insert mode. As in vim, insert's `<BS>`, `<Del>`, `<C-w>`
+and `<C-u>` leave the register and the clipboard alone; `x` and `X` are
+deletes like `dl` and `dh` and fill them.
 
 Every yank and delete is also kept in the **memory**, newest first:
 
