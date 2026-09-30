@@ -229,8 +229,8 @@ fn the_command_line_completes_commands_paths_and_buffers() {
     assert_eq!(
         app.cmd_completion.as_ref().unwrap().candidates,
         [
-            "all", "clear", "commands", "files", "filter", "forget", "origin", "pin", "pins",
-            "recall", "recent", "searches", "texts"
+            "all", "clear", "commands", "files", "filter", "forget", "jumps", "origin", "pin",
+            "pins", "recall", "recent", "searches", "texts"
         ]
     );
     d.keys(&mut app, "fo");

@@ -437,6 +437,9 @@ pub struct Spec {
     pub kind: Kind,
     /// True for commands that read one more key as an argument.
     pub takes_char: bool,
+    /// Its move is a jump at any distance (docs/design/jumps.md
+    /// Decision 2): the place it left goes on the tab's list.
+    pub jump: bool,
     /// One line on what it does.
     pub doc: String,
 }
@@ -482,6 +485,12 @@ impl Spec {
 
     pub fn takes_char(mut self) -> Self {
         self.takes_char = true;
+        self
+    }
+
+    /// A move that is a jump however short (jumps.md Decision 2).
+    pub fn jump(mut self) -> Self {
+        self.jump = true;
         self
     }
 

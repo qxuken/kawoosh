@@ -19,6 +19,7 @@ Everything a key does is a named command. `kawoosh.command(name, fn, opts)` adds
 - `opts.args` says what the arguments are, one kind per position: `"path"`, `"buffer"`, `"command"`, `"option"`, `"tool"`, `"view"` or `"text"`, the last one written with `"..."` for the rest. The command line completes each kind, and a `"path"` reaches `fn` already made absolute.
 - `opts.when` lists facts that must hold for the command to run, such as `"editor"` (an editor pane has the keys), `"!readonly"`, `"visual"`, `"language:rust"` or `"terminal"`. The command line refuses with the reason when one does not hold. `kawoosh.fact(name, on)` publishes a fact of your own.
 - `opts.doc` is one line on what it does, shown in the command palette (`<leader>ic`); `opts.aliases` gives other spellings, and `opts.bang` / `opts.query` describe what `!` and `?` mean.
+- `opts.jump = true` makes the move it makes a [jump](editing.md#jumps) however near, so `<C-o>` comes back from it; a move of a screen or more, or into another buffer, is one anyway. `kawoosh.memory { jumps = true }` reads the tab's list, newest first: `path`, `line`, `col`, `buffer` while open, and `current` on the place the list is at.
 
 `kawoosh.cmd(line)` runs a command line right away; `kawoosh.run(line)` runs it after what was already asked for. `kawoosh.commands()` lists every command, and `kawoosh.can(name)` says whether one can run now, or why not.
 
@@ -83,7 +84,7 @@ return {
 `kawoosh.buf` reads and changes buffers. A buffer is named by a handle; leave it out to mean the current buffer. Lines count from 1; offsets are bytes from 0, with the end not included.
 
 - Reading: `current()`, `list()`, `name()`, `path()`, `language()`, `indent()` (`tabstop`, `shiftwidth`, `expandtab` and `unit`, one indent's text, as the buffer's language and `.editorconfig` say), `modified()`, `text()`, `lines()`, `line(n)`, `line_count()`, `lines_in(from, to)`, `cursor()` (the caret's `offset`, `line`, `col`), `selections()`.
-- Changing: `insert(offset, text)`, `replace(from, to, text)`, `set_text(text)`, `edits({ { from, to, text }, ... })` (several edits as one undo step), `type(text)` (typed at every caret), `set_cursor(offset)`, `set_selections(...)`.
+- Changing: `insert(offset, text)`, `replace(from, to, text)`, `set_text(text)`, `edits({ { from, to, text }, ... })` (several edits as one undo step), `type(text)` (typed at every caret), `set_cursor(offset, h, { top =, center =, jump = })` (`jump = true`: the move goes on the tab's [jumps](editing.md#jumps) however near), `set_selections(...)`.
 - Showing: `show(buffer)` puts a buffer in the focused pane, `close(buffer)` closes it as `:bd` does.
 - `open_scratch { name = ..., text = ..., on_write = fn, read_only = ..., language = ... }` makes a buffer that is not a file. With `on_write(lines)`, `:w` hands you its lines.
 - `annotate(notes)` draws dim text after lines, and `paint(set, spans)` colours ranges over the syntax colours.

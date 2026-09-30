@@ -433,6 +433,8 @@ pub struct Tab {
     /// tab's own under `buffers.scope = "tab"`, wherever its file is.
     /// Not kept by a session.
     pub seen: std::collections::HashSet<kawoosh_doc::BufferId>,
+    /// The places left in its panes (docs/design/jumps.md Decision 3).
+    pub jumps: crate::jumps::Jumps,
 }
 
 impl Tab {
@@ -443,6 +445,7 @@ impl Tab {
             focused,
             bell: false,
             seen: Default::default(),
+            jumps: Default::default(),
         }
     }
 
@@ -1040,6 +1043,7 @@ impl Layout {
             cwd,
             bell: false,
             seen: Default::default(),
+            jumps: Default::default(),
         });
         self.tab = self.tabs.len() - 1;
         self.dock_focused = false;
@@ -1462,6 +1466,14 @@ impl Layout {
         match (&self.dock, self.in_the_dock()) {
             (Some(d), true) => d,
             _ => self.tab(),
+        }
+    }
+
+    pub fn focused_home_mut(&mut self) -> &mut Tab {
+        let dock = self.in_the_dock();
+        match &mut self.dock {
+            Some(d) if dock => d,
+            _ => &mut self.tabs[self.tab],
         }
     }
 

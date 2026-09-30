@@ -1058,6 +1058,8 @@ impl Kawoosh {
                 None => motions::first_nonblank(buf, ln),
             };
             self.ed.views[v].sels = kawoosh_editor::Selections::single(Selection::point(off));
+            // A place landed: a jump however near (jumps.md Decision 2).
+            self.ed.jumping = true;
         }
     }
 }

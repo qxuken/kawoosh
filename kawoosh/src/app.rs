@@ -190,6 +190,9 @@ pub struct Kawoosh {
     pub moments: crate::moments::Moments,
     /// The live marks of the open files (docs/design/marks.md).
     pub(crate) marks: crate::marks::Marks,
+    /// Where each pane's caret was last seen, for the jumps' look
+    /// (docs/design/jumps.md); the lists are the tabs'.
+    pub(crate) jump_look: crate::jumps::Look,
     /// The breadcrumbs' outlines and their asks (docs/design/breadcrumbs.md).
     pub(crate) crumbs: crate::breadcrumbs::Breadcrumbs,
     /// The diffs of buffers with a base, in flight (docs/design/vcs.md).
@@ -401,6 +404,7 @@ impl Kawoosh {
             undo: Default::default(),
             moments: crate::moments::Moments::new(wake.named("moments")),
             marks: Default::default(),
+            jump_look: Default::default(),
             crumbs: crate::breadcrumbs::Breadcrumbs::new(wake.named("breadcrumbs")),
             vcs: crate::vcs::Vcs::new(wake.named("vcs")),
             memory_pane: Default::default(),
@@ -2338,6 +2342,7 @@ impl kui_native::App for Kawoosh {
         self.sync_disk(false);
         self.sync_update();
         self.sync_marks();
+        self.sync_jumps();
         self.sync_moments(false);
         // A file's edit from the io thread (it landed, a reload, a
         // server's) in the multibuffers showing it.
@@ -2360,6 +2365,7 @@ impl kui_native::App for Kawoosh {
         self.sync_multis();
         if let Some(rt) = self.scripting.rt.clone() {
             rt.set_workspace(self.moments.workspace());
+            self.publish_jumps();
             rt.publish(&self.ed, self.focused_view());
         }
         self.perf.cur.lua = ms(t);
@@ -2521,6 +2527,9 @@ impl kui_native::App for Kawoosh {
         self.frames.input(ev.kind().unwrap_or("event"));
         let prompt = self.ed.prompt_view().map(|f| (f, self.layout.focused()));
         self.on_ui_event(ev, core);
+        // Each event its own step for the jumps' look: two keys in one
+        // frame are two moves, `<C-f>` twice no jump.
+        self.sync_jumps();
         // The prompt is the pane's it was opened in: an event that took
         // the keyboard elsewhere — a picker opened from its normal
         // mode's `<leader>t`, `<C-w>l` — leaves it, or it kept every

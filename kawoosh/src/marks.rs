@@ -958,6 +958,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("mark line")
                 .takes_char()
+                .jump()
                 .doc("go to a mark's line, its first non-blank"),
             |k, ctx| {
                 if let Some(c) = ctx.arg_char {
@@ -968,6 +969,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("mark go")
                 .takes_char()
+                .jump()
                 .doc("go to a mark's line and column"),
             |k, ctx| {
                 if let Some(c) = ctx.arg_char {

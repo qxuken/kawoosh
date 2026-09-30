@@ -202,6 +202,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("node parent")
                 .when(&["editor"])
+                .jump()
                 .doc("the caret to the start of the syntax node around it, one more up each press (<A-u>)"),
             |k, _| {
                 if let Some(v) = k.focused_view() {
