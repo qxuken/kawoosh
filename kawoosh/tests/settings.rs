@@ -676,6 +676,19 @@ fn pane(d: &mut Drive, app: &mut Kawoosh) -> (String, String) {
     (q, first)
 }
 
+/// `<leader>,` opens the settings pane, as `<D-,>` does, for a keyboard
+/// without ⌘.
+#[test]
+fn the_leader_comma_opens_the_pane() {
+    let mut d = Drive::new(1100.0, 800.0);
+    let mut app = app_with_lua(&mut d);
+    d.frame(&mut app);
+    assert!(!texts(&d).iter().any(|x| x == "Settings"), "{:?}", texts(&d));
+    d.press(&mut app, "<leader>,");
+    d.frame(&mut app);
+    assert!(texts(&d).iter().any(|x| x == "Settings"), "{:?}", texts(&d));
+}
+
 /// The settings pane (docs/design/settings.md): `:settings` opens it
 /// with the keys in its search; typing filters; `<Esc>` hands the keys
 /// to the rows, where a number steps, a switch flips, a word cycles
