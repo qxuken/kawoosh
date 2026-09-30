@@ -681,10 +681,13 @@ pub enum Event {
         what: &'static str,
         message: String,
     },
-    /// A server could not start; the app says so once.
+    /// A server could not start — its command not found (`why` None),
+    /// or its `initialize` refused with `why` — and is not tried again
+    /// until a restart; the app says so once.
     Unavailable {
         language: String,
         command: String,
+        why: Option<String>,
     },
     /// A [`Cmd::Restart`] done: the PATH asked for again, the commands'
     /// failures forgotten.
@@ -1504,6 +1507,7 @@ impl Pool {
             self.emit(Event::Unavailable {
                 language: def.language.clone(),
                 command: def.command.clone(),
+                why: None,
             });
             return None;
         };
@@ -2035,9 +2039,30 @@ impl Pool {
                 return;
             };
             let result = message.get("result");
-            if let Some(err) = message.get("error")
-                && method != "initialize"
+            // A server that refused to start (typescript-language-server
+            // with no TypeScript to run) is not one that does nothing:
+            // it is stopped, and not tried again until a restart.
+            if method == "initialize"
+                && let Some(err) = message.get("error")
             {
+                let why = err
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("error")
+                    .to_string();
+                let (language, command) = (server.language.clone(), server.name.clone());
+                self.failed.insert((server.domain.clone(), command.clone()));
+                self.servers[key] = None;
+                self.homes.retain(|_, k| *k != key);
+                self.emit(Event::Unavailable {
+                    language,
+                    command,
+                    why: Some(why),
+                });
+                self.status();
+                return;
+            }
+            if let Some(err) = message.get("error") {
                 let text = err
                     .get("message")
                     .and_then(Value::as_str)

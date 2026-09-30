@@ -208,6 +208,30 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
     c
 }
 
+/// Whether `program` would be found by [`command`]: a path that is a
+/// file, or a name in a directory of the PATH it gives. `None` while
+/// the shell's PATH is still being asked for: not waited on here.
+pub fn on_path(program: &str) -> Option<bool> {
+    let p = std::path::Path::new(program);
+    if p.components().count() > 1 {
+        return Some(p.is_file());
+    }
+    let path = crate::shell_env::path_now()?.or_else(|| std::env::var_os("PATH"))?;
+    let names: Vec<String> = if cfg!(windows) {
+        ["exe", "cmd", "bat"]
+            .iter()
+            .map(|e| format!("{program}.{e}"))
+            .chain([program.to_string()])
+            .collect()
+    } else {
+        vec![program.to_string()]
+    };
+    Some(
+        std::env::split_paths(&path)
+            .any(|d| names.iter().any(|n| d.join(n).is_file())),
+    )
+}
+
 /// How a domain is reached (docs/design/domains.md Decision 3): the
 /// `ssh` binary, the host as `~/.ssh/config` or `user@host` names it,
 /// and the master's control socket.

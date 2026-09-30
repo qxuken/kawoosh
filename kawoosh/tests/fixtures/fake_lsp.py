@@ -35,7 +35,10 @@ error on that line — two lines of message, source `ts`, code 2322 — and
 one with `@workspace` in it a warning published for `other.rs` beside
 it, a file never sent (1:4–1:7, `rustc` `E0425`). A document with
 `@minified` in it formats as a formatter answers a minified bundle: a
-space after every `;`, an edit each, in UTF-16 columns."""
+space after every `;`, an edit each, in UTF-16 columns. Started with
+`--refuse`, it answers `initialize` with an error, as
+typescript-language-server does with no TypeScript to run, and exits;
+with `--no-format`, it does not declare formatting."""
 import json
 import re, sys
 
@@ -76,11 +79,16 @@ while True:
     mid = m.get("id")
     if method is None:
         continue  # a response to a request of ours
+    if method == "initialize" and "--refuse" in sys.argv:
+        send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32603,
+              "message": "Could not find a valid TypeScript installation."}})
+        break
     if method == "initialize":
         send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {
             "completionProvider": {"triggerCharacters": ["."]},
             "renameProvider": True, "referencesProvider": True,
-            "codeActionProvider": True, "documentFormattingProvider": True,
+            "codeActionProvider": True,
+            "documentFormattingProvider": "--no-format" not in sys.argv,
             "typeDefinitionProvider": True, "implementationProvider": True,
             "declarationProvider": True, "documentSymbolProvider": True,
             "workspaceSymbolProvider": True, "inlayHintProvider": True}}})
