@@ -1321,14 +1321,18 @@ local RANK = { conflict = 5, modified = 4, added = 3, untracked = 2, ignored = 1
 -- The states by entry name of directory `d`, from a backend's files
 -- (`{ path =, state = }`, absolute): a file under an entry's directory
 -- gives the entry its state, the strongest winning; a file deleted
--- makes its directory modified.
+-- makes its directory modified. Ignored is the one state that does not
+-- climb: a directory holding ignored files (`*_templ.go`, a
+-- `node_modules/` deep inside) is not ignored itself — only an entry
+-- git names (`data/`) is.
 function dir.states_of(d, files)
   local states = {}
   local prefix = d:gsub("/$", "") .. "/"
   for _, f in ipairs(files) do
     if f.path:sub(1, #prefix) == prefix then
-      local entry = f.path:sub(#prefix + 1):match("^([^/]+)")
+      local entry, rest = f.path:sub(#prefix + 1):match("^([^/]+)(.*)$")
       local state = f.state == "deleted" and "modified" or f.state
+      if state == "ignored" and rest ~= "" and rest ~= "/" then state = nil end
       if entry and RANK[state] then
         local was = states[entry]
         if not was or RANK[state] > RANK[was] then states[entry] = state end
