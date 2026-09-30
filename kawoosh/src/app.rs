@@ -2478,7 +2478,18 @@ impl kui_native::App for Kawoosh {
     fn on_event_with(&mut self, ev: UiEvent, core: &mut Core) {
         let asking = self.confirm.is_some();
         self.frames.input(ev.kind().unwrap_or("event"));
+        let prompt = self.ed.prompt_view().map(|f| (f, self.layout.focused()));
         self.on_ui_event(ev, core);
+        // The prompt is the pane's it was opened in: an event that took
+        // the keyboard elsewhere — a picker opened from its normal
+        // mode's `<leader>t`, `<C-w>l` — leaves it, or it kept every
+        // key while the other pane's caret blinked.
+        if let Some((field, pane)) = prompt
+            && self.ed.prompt_view() == Some(field)
+            && self.layout.focused() != pane
+        {
+            self.ed.cancel_prompt();
+        }
         // A confirm answered: the keyboard was its, and goes back to the
         // pane.
         if asking
