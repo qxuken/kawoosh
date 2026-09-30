@@ -20,7 +20,7 @@
 //! close button, when there is another tab to go to. When the tabs are
 //! in more than one directory each label leads with its own.
 
-use kui_native::{Align, CursorShape, NodeSpec, Role, Span, Ui, Value, widgets};
+use kui_native::{Align, CursorShape, NodeSpec, Role, Span, Stroke, Ui, Value, Vec2, widgets};
 
 use crate::app::Kawoosh;
 use crate::layout::Content;
@@ -331,8 +331,13 @@ impl Kawoosh {
                                             // alone: a group's hover lights
                                             // every member.
                                             let on = ui.is_hovered(ui.child_key("close"));
+                                            // A square shorter than the row,
+                                            // centred in it, its × two strokes
+                                            // about the middle: a glyph sits on
+                                            // the font's math axis, below it.
+                                            let side = (font.line_height * 0.75).round();
                                             let mut close = NodeSpec::row()
-                                                .pad_xy(4.0, 0.0)
+                                                .size(side, side)
                                                 .radius(3.0)
                                                 .hover_group(&group);
                                             if on {
@@ -342,7 +347,7 @@ impl Kawoosh {
                                                     pal.border
                                                 });
                                             }
-                                            ui.text_in_keyed(
+                                            ui.with_keyed(
                                                 "close",
                                                 close
                                                     .on_click(Value::map([
@@ -350,8 +355,22 @@ impl Kawoosh {
                                                         ("index", Value::Int(i as i64)),
                                                     ]))
                                                     .label("close tab"),
-                                                "×",
-                                                rows::mono(font, &pal).color(fg),
+                                                |ui| {
+                                                    let (m, a) = (side / 2.0, side * 0.15);
+                                                    let stroke = Stroke::new(1.25, fg);
+                                                    ui.line(
+                                                        Vec2::new(m - a, m - a),
+                                                        Vec2::new(m + a, m + a),
+                                                        stroke,
+                                                        NodeSpec::row(),
+                                                    );
+                                                    ui.line(
+                                                        Vec2::new(m - a, m + a),
+                                                        Vec2::new(m + a, m - a),
+                                                        stroke,
+                                                        NodeSpec::row(),
+                                                    );
+                                                },
                                             );
                                             ui.leaf(NodeSpec::row().width(6.0));
                                         }
