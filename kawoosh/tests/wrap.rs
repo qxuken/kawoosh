@@ -114,3 +114,74 @@ fn a_language_wraps_whatever_the_setting() {
     settle(&mut d, &mut app);
     assert!(row_h(&d, 0).is_some(), "{}", app.ed.message);
 }
+
+/// A diagnostic's message on a wrapped line sits after the line's last
+/// row, where its text ends (wrap.md §4): it takes no width from the
+/// text, which wraps at the pane's width as a line without one does.
+/// It was the row's sibling, and the text wrapped in what the message
+/// left — `---@type kawoosh.Settings` in three rows, `kawoosh.Settin`
+/// broken mid-word (2026-09-30).
+#[test]
+fn a_diagnostic_takes_no_width_from_a_wrapped_line() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-wrap-diag-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    let long = format!("fn {}", "word ".repeat(30));
+    std::fs::write(&file, format!("{long}\n{long}\n")).unwrap();
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(kawoosh_systems::lsp::ServerDef {
+        roots: vec!["Cargo.toml".into()],
+        ..drive::fake_lsp("rust")
+    });
+    let mut d = Drive::new(600.0, 500.0);
+    settle(&mut d, &mut app);
+    ex(&mut d, &mut app, "set editor.wrap=word");
+    // The fake server says `boom` about line 0's first word.
+    let mut said = false;
+    for _ in 0..300 {
+        d.frame(&mut app);
+        if d.row_extras().iter().any(|e| e.ends_with("boom")) {
+            said = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(said, "the diagnostic arrived: {:?}", d.row_extras());
+    settle(&mut d, &mut app);
+    let lh = app.face.line_height;
+    let (h0, h1) = (row_h(&d, 0).unwrap(), row_h(&d, 1).unwrap());
+    assert!(h1 > 1.5 * lh, "the line wraps: {h1} vs {lh}");
+    assert!(
+        (h0 - h1).abs() < 1.0,
+        "with a message it wraps as without one: {h0} vs {h1}"
+    );
+    let nodes = d.core.nodes();
+    let texts: Vec<_> = nodes
+        .iter()
+        .filter(|n| n.text.as_deref().is_some_and(|t| t.starts_with("fn word")))
+        .collect();
+    assert_eq!(texts.len(), 2);
+    assert!(
+        (texts[0].rect.w - texts[1].rect.w).abs() < 1.0,
+        "the texts as wide: {} vs {}",
+        texts[0].rect.w,
+        texts[1].rect.w
+    );
+    let boom = nodes
+        .iter()
+        .find(|n| n.text.as_deref() == Some("boom"))
+        .unwrap();
+    let row = texts[0].rect;
+    assert!(
+        boom.rect.y > row.y + h0 - 1.5 * lh && boom.rect.y < row.y + h0,
+        "on the line's last row: {:?} in {row:?}",
+        boom.rect
+    );
+    assert!(
+        boom.rect.x + boom.rect.w <= row.x + row.w + 1.0,
+        "inside the pane: {:?} in {row:?}",
+        boom.rect
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

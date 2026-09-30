@@ -1614,20 +1614,32 @@ pub fn emit_line(ui: &mut Ui<'_>, face: Face, pal: &Pal, line: &LineDraw<'_>) ->
             }
             ui.leaf(cell);
         }
+        // A wrapped row's trailing text hangs after its last visual
+        // line, as the cell past the end does: in the row's flow it took
+        // its width from the text, which wrapped in what was left
+        // (2026-09-30). Past the pane's edge it is clipped, as an
+        // unwrapped row's is.
         if let Some((t, color)) = line.trailing {
-            ui.text_in(
-                NodeSpec::row()
-                    .padding(kui_native::Edges {
+            let (spec, style) = match wraps {
+                true => {
+                    let (x, y) = wrapped_at(ui, len);
+                    let spec = NodeSpec::row()
+                        .height(lh)
+                        .pad_xy(TRAILING_GAP, 0.0)
+                        .float(FloatConfig::parent().offset(x, y));
+                    (spec, base.color(color).wrap(kui_native::TextWrap::None))
+                }
+                false => {
+                    let spec = NodeSpec::row().padding(kui_native::Edges {
                         l: (TRAILING_GAP - cell_w).max(0.0),
                         r: TRAILING_GAP,
                         t: 0.0,
                         b: 0.0,
-                    })
-                    .cross_align(Align::Center)
-                    .role(Role::None),
-                t,
-                base.color(color),
-            );
+                    });
+                    (spec, base.color(color))
+                }
+            };
+            ui.text_in(spec.cross_align(Align::Center).role(Role::None), t, style);
         }
         spacer(ui, after);
         if let Some(out) = line.text_key {
