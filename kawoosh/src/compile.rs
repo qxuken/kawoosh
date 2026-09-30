@@ -904,10 +904,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("goto location").doc("open the path:line under the caret"),
             |k, ctx| {
-                if let Some(v) = k
-                    .focused_view()
-                    .or_else(|| k.ed.views.contains_key(ctx.view).then_some(ctx.view))
-                {
+                if let Some(v) = k.view_arg(ctx) {
                     k.goto_location(v);
                 }
             },

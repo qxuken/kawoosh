@@ -699,3 +699,35 @@ fn the_width_is_a_size() {
     );
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
+
+/// `<C-w>t` then `<leader>bd`: the keys are on the launcher's query
+/// field, whose buffer is the field's own — `:bd` had taken it, and the
+/// next frame panicked on a field without its buffer, closing kawoosh.
+/// The launcher has no buffer to close: it stays, and so does the file.
+#[test]
+fn bd_on_a_launcher_leaves_its_field_be() {
+    let _g = serial();
+    let dir = project("bdtab");
+    let (mut d, mut app) = launch(&dir);
+    d.press(&mut app, "<C-w>t");
+    d.frame(&mut app);
+    assert_eq!(app.layout.tabs.len(), 2);
+    assert!(on_launcher(&app));
+    d.keys(&mut app, " bd");
+    d.frame(&mut app);
+    assert!(on_launcher(&app), "the launcher stays");
+    assert!(!app.quit);
+    let names: Vec<String> = app
+        .ed
+        .listed_buffers()
+        .into_iter()
+        .map(|b| app.ed.buffers[b].name.clone())
+        .collect();
+    assert_eq!(names, ["a.txt"]);
+    ex(&mut d, &mut app, "bd");
+    assert!(on_launcher(&app), ":bd from its command line too");
+    d.press(&mut app, "<CR>");
+    d.frame(&mut app);
+    assert_eq!(focused_name(&app), "a.txt");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
