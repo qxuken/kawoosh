@@ -8,7 +8,7 @@ mod drive;
 
 use std::path::{Path, PathBuf};
 
-use drive::Drive;
+use drive::{Drive, fake_lsp};
 use kawoosh::Kawoosh;
 use kawoosh_editor::{Layer, Setting};
 use kui_native::KeyMods;
@@ -86,6 +86,18 @@ fn text(app: &Kawoosh, id: kawoosh_doc::BufferId) -> String {
     app.ed.buffers[id].text()
 }
 
+/// Frames until `pred` holds, letting the server thread answer.
+fn until(d: &mut Drive, app: &mut Kawoosh, mut pred: impl FnMut(&Kawoosh) -> bool) -> bool {
+    for _ in 0..300 {
+        d.frame(app);
+        if pred(app) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    false
+}
+
 /// The nearest config's formatter formats the buffer: its answer put
 /// in as the lines that changed — a caret on a line it left stays —
 /// one `u` taking it back; a failure leaves the text and says why.
@@ -102,6 +114,9 @@ fn the_nearest_configs_formatter_formats() {
     );
     let mut d = Drive::new(900.0, 500.0);
     let mut app = app_in(&mut d, &dir);
+    // The scripted server for typescript, not whatever one this machine
+    // has: it says it formats once it has answered `initialize`.
+    app.add_lsp_server(fake_lsp("typescript"));
     def(
         &mut app,
         "indent",
@@ -159,14 +174,31 @@ fn the_nearest_configs_formatter_formats() {
     ex(&mut d, &mut app, "format nope");
     assert_eq!(app.ed.message, "no formatter nope (format.nope)");
 
-    // The setting over the configs: through the buffer's scope.
+    // The setting over the configs: through the buffer's scope — the
+    // server's edit, not `shout`'s. Formatted once the server has said
+    // it does, so what lands is its answer, whenever that comes.
     app.ed.settings.set(
         Layer::Session,
         "language.typescript.formatter",
         Setting::Str("lsp".into()),
     );
+    ex(&mut d, &mut app, "format?");
+    assert_eq!(app.ed.message, "lsp: the typescript server");
+    assert!(
+        until(&mut d, &mut app, |a| a
+            .lsp
+            .caps
+            .get("typescript")
+            .is_some_and(|c| c.format)),
+        "the server answered `initialize`"
+    );
     ex(&mut d, &mut app, "format");
-    assert_eq!(app.ed.message, "formatting with the typescript server…");
+    assert!(
+        until(&mut d, &mut app, |a| text(a, b) == "// formatted\nX\n"),
+        "the server's edit landed: {:?}",
+        text(&app, b)
+    );
+    assert_eq!(app.ed.message, "formatted (1 edit)");
     std::fs::remove_dir_all(&dir).ok();
 }
 
