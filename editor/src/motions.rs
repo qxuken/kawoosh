@@ -2,6 +2,7 @@
 //! matching brackets. Pure functions of the buffer and a byte offset.
 
 use kawoosh_doc::Buffer;
+use unicode_width::UnicodeWidthChar;
 
 /// `(line, column in chars)` of a byte offset.
 pub fn line_col(buf: &Buffer, offset: usize) -> (usize, usize) {
@@ -11,8 +12,8 @@ pub fn line_col(buf: &Buffer, offset: usize) -> (usize, usize) {
     (ln, col)
 }
 
-/// The screen column of a byte offset: a tab to the next multiple of
-/// `tabstop`, any other character one.
+/// The screen column of a byte offset: each character's cells, as
+/// [`cells_of`] counts them.
 pub fn display_col(buf: &Buffer, offset: usize, tabstop: usize) -> usize {
     let start = buf.line_start(buf.line_of(offset));
     buf.slice(start..offset.max(start))
@@ -22,10 +23,45 @@ pub fn display_col(buf: &Buffer, offset: usize, tabstop: usize) -> usize {
 
 /// The screen column after `c` at `col`.
 pub fn advance(col: usize, c: char, tabstop: usize) -> usize {
+    col + cells_of(c, col, tabstop)
+}
+
+/// The cells a char takes at cell `col`, as the editor pane draws it: a
+/// tab to the next stop, a character drawn as an escape its escape's
+/// chars, else `unicode-width`'s answer (a wide one two, a combining
+/// one none).
+pub fn cells_of(c: char, col: usize, tabstop: usize) -> usize {
     if c == '\t' {
-        (col / tabstop.max(1) + 1) * tabstop.max(1)
+        tabstop.max(1) - (col % tabstop.max(1))
+    } else if let Some(n) = escape_len(c) {
+        n
     } else {
-        col + 1
+        c.width().unwrap_or(0)
+    }
+}
+
+/// How many chars the editor pane spells `c` as when it draws it as an
+/// escape — vim's `isprint` line: C0 and C1 controls and DEL (`^A`,
+/// `<80>`), and the format characters that would be invisible, a
+/// zero-width space, a BOM, the bidi controls, the line and paragraph
+/// separators (`<200b>`) — or `None` for a character drawn as itself.
+/// Not the ZWJ, which joins an emoji sequence. The pane's `escape_of`
+/// spells them and must agree.
+pub fn escape_len(c: char) -> Option<usize> {
+    let u = c as u32;
+    match u {
+        0..0x20 | 0x7f => Some(2),
+        0x80..0xa0 => Some(4),
+        0x200b
+        | 0x200e
+        | 0x200f
+        | 0x2028
+        | 0x2029
+        | 0x202a..=0x202e
+        | 0x2060..=0x2064
+        | 0x2066..=0x2069
+        | 0xfeff => Some(6),
+        _ => None,
     }
 }
 

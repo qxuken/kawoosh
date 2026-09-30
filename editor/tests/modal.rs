@@ -248,6 +248,25 @@ fn replace_char_takes_a_count_and_a_line_break() {
     assert_eq!(t.text(), "a\nb\nc d", "`.` again");
 }
 
+/// Insert's `<Tab>` and `r<Tab>` count columns as the pane draws them:
+/// a wide character two cells, a combining one none, a control its
+/// escape's (`^A` two).
+#[test]
+fn tab_stops_count_the_cells_drawn() {
+    let mut t = T::new("日本");
+    t.keys("A<Tab>");
+    assert_eq!(t.text(), "日本    ", "from cell 4 to 8");
+    let mut t = T::new("日x");
+    t.keys("lr<Tab>");
+    assert_eq!(t.text(), "日  ", "from cell 2 to 4");
+    let mut t = T::new("\u{1}x");
+    t.keys("lr<Tab>");
+    assert_eq!(t.text(), "\u{1}  ", "after `^A`, from cell 2");
+    let mut t = T::new("e\u{301}x");
+    t.keys("lr<Tab>");
+    assert_eq!(t.text(), "e\u{301}   ", "the accent takes no cell");
+}
+
 /// `r` stops where the line's text does, however the line ends: a
 /// `\r\n` line's `\r` is not a character to replace (neovim's `3rx` on
 /// `ab` fails there too).

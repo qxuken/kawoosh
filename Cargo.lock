@@ -1794,6 +1794,7 @@ dependencies = [
  "regex",
  "slotmap",
  "text-buffer",
+ "unicode-width",
 ]
 
 [[package]]
