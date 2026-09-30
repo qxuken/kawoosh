@@ -125,6 +125,9 @@ pub struct Kawoosh {
     pub(crate) lua_types: Option<PathBuf>,
     /// The `:` prompt's completion (`cmdline.rs`), while it is open.
     pub cmd_completion: Option<crate::cmdline::CmdCompletion>,
+    /// The directories the `:` prompt's paths were completed from, each
+    /// listed once while it is open (`cmdline.rs`).
+    pub(crate) cmd_dirs: crate::cmdline::Listed,
     /// The working directory: where terminals and `:e` relative paths
     /// start; `:cd` and the file manager move it.
     pub cwd: PathBuf,
@@ -378,6 +381,7 @@ impl Kawoosh {
             alternate: HashMap::new(),
             lua_types: None,
             cmd_completion: None,
+            cmd_dirs: Default::default(),
             cwd: std::env::current_dir().unwrap_or_default(),
             dark: true,
             devtools: false,
