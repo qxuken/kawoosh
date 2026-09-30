@@ -210,14 +210,18 @@ fn a_programs_link_in_a_terminal_opens_its_address() {
     let mut d = Drive::new(900.0, 500.0);
     d.frame(&mut app);
     let t = app.add_headless_terminal();
-    let lib = dir.join("src/lib.rs");
+    // As a program writes the URL: `file:///C:/…` on Windows.
+    let lib = dir.join("src/lib.rs").display().to_string();
+    let lib = match cfg!(windows) {
+        true => format!("/{}", lib.replace('\\', "/")),
+        false => lib,
+    };
     app.feed_terminal(
         t,
         format!(
             "see \x1b]8;;https://kawoosh.dev/docs\x1b\\the docs\x1b]8;;\x1b\\ now\r\n\
-             \x1b]8;;file://{}#L4\x1b\\lib\x1b]8;;\x1b\\\r\n\
-             \x1b]8;;file://far.example/etc/x\x1b\\far\x1b]8;;\x1b\\\r\n",
-            lib.display()
+             \x1b]8;;file://{lib}#L4\x1b\\lib\x1b]8;;\x1b\\\r\n\
+             \x1b]8;;file://far.example/etc/x\x1b\\far\x1b]8;;\x1b\\\r\n"
         )
         .as_bytes(),
     );

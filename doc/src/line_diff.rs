@@ -119,9 +119,34 @@ fn common_suffix(a: &str, b: &str) -> usize {
     n
 }
 
+/// `base` read with the line ends of a text whose head is `head`: a
+/// base of LF lines against CRLF ones takes CRLF, since git's
+/// `core.autocrlf` keeps LF in the index, writes CRLF to the working
+/// tree, and counts the two the same. A base of CRLF lines against LF
+/// ones is a change, as git has it, and stays.
+pub fn base_line_ends<'a>(base: &'a str, head: &str) -> std::borrow::Cow<'a, str> {
+    let crlf = head.find('\n').is_some_and(|i| head[..i].ends_with('\r'));
+    if crlf && !base.contains("\r\n") {
+        std::borrow::Cow::Owned(base.replace('\n', "\r\n"))
+    } else {
+        std::borrow::Cow::Borrowed(base)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A CRLF text against the index's LF blob (`core.autocrlf`) is the
+    /// same; an LF text against a CRLF blob is not.
+    #[test]
+    fn an_lf_base_takes_a_crlf_texts_line_ends() {
+        let crlf = "one\r\ntwo\r\n";
+        assert_eq!(base_line_ends("one\ntwo\n", crlf), crlf);
+        assert!(line_hunks(&base_line_ends("one\ntwo\n", crlf), crlf).is_empty());
+        assert_eq!(base_line_ends(crlf, "one\ntwo\n"), crlf);
+        assert_eq!(base_line_ends("one\n", "one"), "one\n");
+    }
 
     fn apply(old: &str, edits: &[(Range<usize>, String)]) -> String {
         let mut out = old.to_string();

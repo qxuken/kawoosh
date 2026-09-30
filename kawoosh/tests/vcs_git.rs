@@ -211,8 +211,10 @@ fn a_branch_is_reviewed_against_main_and_blamed() {
     until(&mut d, &mut app, "the review shown", |app| {
         focused_buffer(app) == Some(review)
     });
+    // The file's lines are as the checkout wrote them — CRLF where
+    // `core.autocrlf` says so — and the base's are the review's own.
     assert_eq!(
-        app.ed.buffers[review].text(),
+        app.ed.buffers[review].text().replace("\r\n", "\n"),
         "a.txt  +2 −2\none\ntwo\ntwo!\nthree\ngone\nfour\nfive\n",
         "what the branch did, not what main did since"
     );

@@ -915,10 +915,13 @@ fn navigation_moves_by_row_on_screen() {
     d.keys(&mut app, "dj");
     settle(&mut d, &mut app);
     let v = app.focused_view().unwrap();
+    // (The fixture's lines as the checkout wrote them: CRLF where
+    // `core.autocrlf` says so.)
     assert!(
         app.ed
             .buffer_of(v)
             .text()
+            .replace("\r\n", "\n")
             .starts_with("# The markdown buffer\n\n## A list"),
         "`dj` took the paragraph and the blank line after it: {:?}",
         &app.ed.buffer_of(v).text()[..60]

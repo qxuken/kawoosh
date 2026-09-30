@@ -175,6 +175,37 @@ fn operators_compose_with_motions_and_objects() {
     assert_eq!(t.text(), "c\n\nd");
 }
 
+/// A file of CRLF lines — a Windows checkout's — loses whole lines to a
+/// linewise operator, `\r\n` and all, and the last line takes the break
+/// before it.
+#[test]
+fn linewise_operators_take_a_crlf_break_whole() {
+    let text = "h\r\n\r\npara\r\n\r\n## A";
+    let mut t = T::new(text);
+    t.keys("jjdd");
+    assert_eq!(t.text(), "h\r\n\r\n\r\n## A");
+    let mut t = T::new(text);
+    t.keys("jjdj");
+    assert_eq!(t.text(), "h\r\n\r\n## A");
+    let mut t = T::new(text);
+    t.keys("jjjdk");
+    assert_eq!(t.text(), "h\r\n\r\n## A");
+    // The last line: the break before it goes, and `p` on the blank
+    // line now last puts it back below, a line.
+    let mut t = T::new(text);
+    t.keys("Gdd");
+    assert_eq!(t.text(), "h\r\n\r\npara\r\n");
+    t.keys("p");
+    assert_eq!(t.text(), text);
+    // A line yanked and put below, and below the last.
+    let mut t = T::new(text);
+    t.keys("jjyyp");
+    assert_eq!(t.text(), "h\r\n\r\npara\r\npara\r\n\r\n## A");
+    t.keys("Gp");
+    assert_eq!(t.text(), "h\r\n\r\npara\r\npara\r\n\r\n## A\r\npara");
+    assert_eq!(t.head(), t.text().len() - 4, "on the put line");
+}
+
 #[test]
 fn undo_redo_are_per_command_and_per_insert_session() {
     let mut t = T::new("abc");

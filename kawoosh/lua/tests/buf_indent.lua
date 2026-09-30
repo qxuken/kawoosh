@@ -20,4 +20,6 @@ local ts = kawoosh.buf.indent()
 kawoosh.test.eq(ts.shiftwidth, 3, "the .editorconfig's size")
 kawoosh.test.eq(ts.unit, "   ", "three spaces")
 
-kawoosh.fs.remove(dir)
+-- Where gopls is installed it runs in `dir`, and Windows removes no
+-- directory a process is working in: the cleanup is best effort.
+pcall(kawoosh.fs.remove, dir)

@@ -1496,7 +1496,13 @@ fn raw_gives_the_program_every_key_but_the_escape_and_cmd() {
     d.key(&mut app, "f12", KeyMods::default());
     assert!(!app.devtools, "F12 the program's");
     assert_eq!(sent(&mut app), "\x1b[24~");
-    // Kept: a bound ⌘ chord, and the escape.
+    // Kept: a bound ⌘ chord, and the escape. The font's keys are ⌘ ones
+    // on macOS alone (Ctrl elsewhere): elsewhere ⌘= is bound here.
+    if !cfg!(target_os = "macos") {
+        app.ed
+            .keymap
+            .bind(kawoosh_editor::Mode::Normal, "<D-=>", "font bigger");
+    }
     d.press(&mut app, "<D-=>");
     assert!(
         app.ed.message.starts_with("font "),

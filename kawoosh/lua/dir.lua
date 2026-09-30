@@ -1327,12 +1327,14 @@ local RANK = { conflict = 5, modified = 4, added = 3, untracked = 2, ignored = 1
 -- git names (`data/`) is.
 function dir.states_of(d, files)
   local states = {}
-  local prefix = d:gsub("/$", "") .. "/"
   for _, f in ipairs(files) do
-    if f.path:sub(1, #prefix) == prefix then
-      local entry, rest = f.path:sub(#prefix + 1):match("^([^/]+)(.*)$")
+    -- By components, in the platform's separators: `C:\p` is under
+    -- `C:\`, not a prefix's text.
+    local under = fs.relative(f.path, d)
+    if under and under ~= "." then
+      local entry, rest = under:match("^([^/\\]+)(.*)$")
       local state = f.state == "deleted" and "modified" or f.state
-      if state == "ignored" and rest ~= "" and rest ~= "/" then state = nil end
+      if state == "ignored" and rest:match("[^/\\]") then state = nil end
       if entry and RANK[state] then
         local was = states[entry]
         if not was or RANK[state] > RANK[was] then states[entry] = state end
