@@ -963,6 +963,44 @@ pub struct Editor {
     /// Borrowed buffers no multibuffer holds any more, for the shell to
     /// close ([`Editor::take_released`]).
     released: Vec<BufferId>,
+    /// What says a line's indentation from its syntax (the shell's,
+    /// over its trees; docs/design/indent.md Decision 3); with none,
+    /// or no answer, the bracket rule.
+    pub indenter: Option<Box<dyn Indenter>>,
+}
+
+/// One level of a buffer's indentation: `text` (a tab, or `width`
+/// spaces), `width` columns of it, a tab `tabstop` wide.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndentUnit {
+    pub text: String,
+    pub width: usize,
+    pub tabstop: usize,
+}
+
+/// The indentation a buffer's syntax says (docs/design/indent.md
+/// Decision 3), asked by `<CR>`, `o`, `O` and `=`. `None` is no answer:
+/// no grammar, no indent query — the engine's bracket rule stands.
+pub trait Indenter {
+    /// The indent for a line break inserted at byte `at` of `buf`, the
+    /// new line holding what was after it.
+    fn new_line(
+        &mut self,
+        id: BufferId,
+        buf: &Buffer,
+        at: usize,
+        unit: &IndentUnit,
+    ) -> Option<String>;
+
+    /// The indent each of `lines` should have, top down, each against
+    /// the ones above as they will be; `None` in it for a line to keep.
+    fn lines(
+        &mut self,
+        id: BufferId,
+        buf: &Buffer,
+        lines: std::ops::Range<usize>,
+        unit: &IndentUnit,
+    ) -> Option<Vec<Option<String>>>;
 }
 
 impl Default for Editor {
@@ -1011,6 +1049,7 @@ impl Editor {
             multis: HashMap::new(),
             borrowed: Default::default(),
             released: Vec::new(),
+            indenter: None,
         };
         commands::install(&mut ed);
         commands::default_keymap(&mut ed.keymap);
@@ -1506,6 +1545,15 @@ impl Editor {
             " ".repeat(self.shiftwidth_in(id))
         } else {
             "\t".into()
+        }
+    }
+
+    /// Buffer `id`'s indent level as the indenter reads it.
+    pub fn indent_unit(&self, id: BufferId) -> IndentUnit {
+        IndentUnit {
+            text: self.indent_unit_in(id),
+            width: self.shiftwidth_in(id),
+            tabstop: self.tabstop_in(id),
         }
     }
 

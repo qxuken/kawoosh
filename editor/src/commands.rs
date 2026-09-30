@@ -326,6 +326,64 @@ pub(crate) fn apply_operator(
             ed.surround.align = Some(lines);
             ed.await_char("align on");
         }
+        // `=`: each line of the ranges at the indent the syntax says,
+        // top down; the caret on the first one's first non-blank.
+        "reindent" => {
+            let unit = ed.indent_unit(id);
+            let mut indenter = ed.indenter.take();
+            let buf = &ed.buffers[id];
+            let mut spans: Vec<(usize, usize)> = ranges
+                .iter()
+                .map(|(r, _)| {
+                    (
+                        buf.line_of(r.start),
+                        buf.line_of(r.end.saturating_sub(1).max(r.start)),
+                    )
+                })
+                .collect();
+            spans.sort_unstable();
+            let mut edits = Vec::new();
+            let mut answered = true;
+            let mut done = 0;
+            for (a, b) in spans {
+                let a = a.max(done);
+                if a > b {
+                    continue;
+                }
+                done = b + 1;
+                let Some(said) = indenter
+                    .as_mut()
+                    .and_then(|x| x.lines(id, buf, a..b + 1, &unit))
+                else {
+                    answered = false;
+                    break;
+                };
+                for (ln, want) in (a..=b).zip(said) {
+                    let Some(want) = want else { continue };
+                    let own = m::indent_of(buf, ln);
+                    if own != want {
+                        let start = buf.line_start(ln);
+                        edits.push((usize::MAX - ln, start..start + own.len(), want));
+                    }
+                }
+            }
+            ed.indenter = indenter;
+            if !answered {
+                let lang = ed.buffers[id].language.to_string();
+                ed.message = format!("no indent rules for {lang}");
+                return;
+            }
+            let heads: Vec<usize> = ranges.iter().map(|(r, _)| r.start).collect();
+            ed.edit_each(view, edits, |start, _| Selection::point(start));
+            let buf = &ed.buffers[id];
+            let v = &mut ed.views[view];
+            let mut i = 0;
+            v.sels.map(|_| {
+                let h = heads[i.min(heads.len() - 1)];
+                i += 1;
+                Selection::point(m::first_nonblank(buf, buf.line_of(h.min(buf.len()))))
+            });
+        }
         "indent" | "dedent" => {
             let ts = ed.shiftwidth_in(id);
             let unit = ed.indent_unit_in(id);
@@ -1842,6 +1900,7 @@ pub fn install(ed: &mut Editor) {
         "yank",
         "indent",
         "dedent",
+        "reindent",
         "case lower",
         "case upper",
         "case toggle",
@@ -2092,15 +2151,18 @@ pub fn install(ed: &mut Editor) {
             v.sels.map(Selection::collapse);
         }
     });
-    // A newline at every caret with its line's indent, a level deeper
-    // after an opening bracket; between a bracket and its closer the
-    // block opens, the closer on a line of its own below the caret's.
+    // A newline at every caret, the new line at the indent the syntax
+    // says (docs/design/indent.md), else its line's, a level deeper
+    // after an opening bracket; the blanks after the caret go. Between
+    // a bracket and its closer the block opens, the closer on a line of
+    // its own below the caret's.
     ed.register("insert newline", |ed, ctx| {
         if ed.is_field(ctx.view) {
             return ed.insert_text(ctx.view, "\n");
         }
         let id = view(ed, ctx).buffer;
-        let unit = ed.indent_unit_in(id);
+        let unit = ed.indent_unit(id);
+        let mut indenter = ed.indenter.take();
         let buf = &ed.buffers[id];
         // Where each opened block's caret sits: the edit's start, and
         // how far before its end.
@@ -2113,23 +2175,38 @@ pub fn install(ed: &mut Editor) {
                 let ln = buf.line_of(s.head);
                 let line = buf.line_range(ln);
                 let at = s.head.clamp(line.start, line.end);
-                let indent = m::indent_of(buf, ln);
-                let Some(closer) = m::opens_block(&buf.slice(line.start..at)) else {
-                    return (i, at..at, format!("\n{indent}"));
-                };
                 let after = buf.slice(at..line.end);
                 let rest = after.trim_start();
-                if rest.starts_with(closer) {
-                    let blank = after.len() - rest.len();
-                    back.push((at, 1 + indent.len()));
-                    (i, at..at + blank, format!("\n{indent}{unit}\n{indent}"))
-                } else {
-                    (i, at..at, format!("\n{indent}{unit}"))
+                let blank = after.len() - rest.len();
+                let closer = m::opens_block(&buf.slice(line.start..at));
+                let between = closer.is_some_and(|c| rest.starts_with(c));
+                let said = indenter
+                    .as_mut()
+                    .and_then(|x| x.new_line(id, buf, at, &unit));
+                if between {
+                    // The syntax's answer is the closer's line.
+                    let outer = said.unwrap_or_else(|| m::indent_of(buf, ln));
+                    let inner = format!("{outer}{}", unit.text);
+                    back.push((at, 1 + outer.len()));
+                    return (i, at..at + blank, format!("\n{inner}\n{outer}"));
                 }
+                let indent = said.unwrap_or_else(|| {
+                    let own = m::indent_of(buf, ln);
+                    if closer.is_some() {
+                        own + &unit.text
+                    } else {
+                        own
+                    }
+                });
+                (i, at..at + blank, format!("\n{indent}"))
             })
             .collect();
+        ed.indenter = indenter;
         ed.edit_each(ctx.view, edits, move |start, len| {
-            let b = back.iter().find(|(at, _)| *at == start).map_or(0, |(_, b)| *b);
+            let b = back
+                .iter()
+                .find(|(at, _)| *at == start)
+                .map_or(0, |(_, b)| *b);
             Selection::point(start + len - b)
         });
     });
@@ -2774,6 +2851,10 @@ const DOCS: &[(&str, &str)] = &[
     ),
     ("dedent", "dedent the lines a tabstop"),
     (
+        "reindent",
+        "indent the lines as the syntax says (`=`; docs/design/indent.md)",
+    ),
+    (
         "case lower",
         "lower-case the selection, or what a motion covers (`gu`; `u` on a selection)",
     ),
@@ -3033,9 +3114,14 @@ fn goto_line(ed: &mut Editor, view: ViewId, n: usize) {
     ed.views[view].goal_col = None;
 }
 
+/// `o` / `O`: a line below or above each caret's, at the indent the
+/// syntax says for a line break at the end of the line above it (on the
+/// first line, `O` has none); else the line's own, a level deeper below
+/// a line opening a block or above one closing it.
 fn open_line(ed: &mut Editor, ctx: &Ctx, below: bool) {
     let id = view(ed, ctx).buffer;
-    let unit = ed.indent_unit_in(id);
+    let unit = ed.indent_unit(id);
+    let mut indenter = ed.indenter.take();
     let buf = &ed.buffers[id];
     let edits = ed.views[ctx.view]
         .sels
@@ -3043,18 +3129,21 @@ fn open_line(ed: &mut Editor, ctx: &Ctx, below: bool) {
         .enumerate()
         .map(|(i, s)| {
             let ln = buf.line_of(s.head);
-            let mut indent = m::indent_of(buf, ln);
-            // Below a line opening a block, or above one closing it, the
-            // new line is inside: a level deeper.
-            let text = buf.line_text(ln);
-            let inside = if below {
-                m::opens_block(&text).is_some()
-            } else {
-                m::closes_block(&text)
-            };
-            if inside {
-                indent.push_str(&unit);
-            }
+            let above = if below { Some(ln) } else { ln.checked_sub(1) };
+            let said = above.and_then(|a| {
+                let at = buf.line_range(a).end;
+                indenter.as_mut()?.new_line(id, buf, at, &unit)
+            });
+            let indent = said.unwrap_or_else(|| {
+                let text = buf.line_text(ln);
+                let inside = if below {
+                    m::opens_block(&text).is_some()
+                } else {
+                    m::closes_block(&text)
+                };
+                let own = m::indent_of(buf, ln);
+                if inside { own + &unit.text } else { own }
+            });
             if below {
                 let end = buf.line_range(ln).end;
                 (i, end..end, format!("\n{indent}"))
@@ -3064,6 +3153,7 @@ fn open_line(ed: &mut Editor, ctx: &Ctx, below: bool) {
             }
         })
         .collect();
+    ed.indenter = indenter;
     ed.edit_each(ctx.view, edits, move |start, len| {
         Selection::point(if below { start + len } else { start + len - 1 })
     });
@@ -4042,6 +4132,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("y", "yank"),
         (">", "indent"),
         ("<", "dedent"),
+        ("=", "reindent"),
         ("gu", "case lower"),
         ("gU", "case upper"),
         ("g~", "case toggle"),

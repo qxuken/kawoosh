@@ -19,6 +19,7 @@ fn grammar() -> Result<crate::Grammar, String> {
         None,
     )
     .and_then(|g| g.with_outline(OUTLINE))
+    .and_then(|g| g.with_indents(include_str!("../queries/go/indents.scm")))
 }
 
 /// The outline: what `symbols` lists without a server (docs/design/marks.md).

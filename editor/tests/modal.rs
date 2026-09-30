@@ -969,7 +969,11 @@ fn indent_and_change_line() {
 fn new_lines_indent_inside_a_block() {
     let mut t = T::new("    fn f() {\n        x\n    }");
     t.keys("oa<Esc>");
-    assert_eq!(t.text(), "    fn f() {\n        a\n        x\n    }", "o after {{");
+    assert_eq!(
+        t.text(),
+        "    fn f() {\n        a\n        x\n    }",
+        "o after {{"
+    );
     t.keys("GOb<Esc>");
     assert_eq!(
         t.text(),
@@ -977,9 +981,17 @@ fn new_lines_indent_inside_a_block() {
         "O before }}"
     );
     t.keys("Goc<Esc>");
-    assert_eq!(t.text().lines().last(), Some("    c"), "o after }}: its level");
+    assert_eq!(
+        t.text().lines().last(),
+        Some("    c"),
+        "o after }}: its level"
+    );
     t.keys("ggOd<Esc>");
-    assert_eq!(t.text().lines().next(), Some("    d"), "O before {{: its level");
+    assert_eq!(
+        t.text().lines().next(),
+        Some("    d"),
+        "O before {{: its level"
+    );
 
     let mut t = T::new("  g(  ");
     t.keys("A<CR>y<Esc>");
@@ -989,7 +1001,11 @@ fn new_lines_indent_inside_a_block() {
     assert_eq!(t.text(), "  v = [\n      z\n  ]", "<CR> between [ and ]");
     let mut t = T::new("  a(b)");
     t.keys("fbi<CR><Esc>");
-    assert_eq!(t.text(), "  a(\n      b)", "<CR> after ( with more before the closer");
+    assert_eq!(
+        t.text(),
+        "  a(\n      b)",
+        "<CR> after ( with more before the closer"
+    );
 }
 
 /// `yy` leaves the caret where it is — on the last line too, whose

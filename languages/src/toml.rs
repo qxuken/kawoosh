@@ -22,6 +22,7 @@ fn grammar() -> Result<crate::Grammar, String> {
     )
     .map(|g| g.recapture("type", crate::Token::Property))
     .and_then(|g| g.with_outline(OUTLINE))
+    .and_then(|g| g.with_indents(include_str!("../queries/toml/indents.scm")))
 }
 
 /// The outline: what `symbols` lists without a server (docs/design/marks.md).
