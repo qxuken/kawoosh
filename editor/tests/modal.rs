@@ -1073,6 +1073,21 @@ fn indent_and_change_line() {
     assert_eq!(t.text(), "a\nb\nx");
 }
 
+/// Insert's `<CR>` with two carets in one run of blanks: each breaks
+/// the line where it is, the blanks between them its own, and the
+/// text after them stays.
+#[test]
+fn line_breaks_from_carets_in_one_run_of_blanks() {
+    let mut t = T::new("a  b");
+    t.keys("i");
+    t.ed.views[t.v].sels = kawoosh_editor::Selections {
+        items: vec![Selection::point(1), Selection::point(2)],
+        primary: 0,
+    };
+    t.keys("<CR>");
+    assert_eq!(t.text(), "a\n\nb");
+}
+
 /// `o` below a line ending in an opening bracket, `O` above one
 /// starting with a closer, and `<CR>` after an opener land a level
 /// inside the block; `<CR>` between a bracket and its closer opens it.

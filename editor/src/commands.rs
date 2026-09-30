@@ -3192,7 +3192,7 @@ fn break_lines(ed: &mut Editor, view: ViewId, only: Option<&[usize]>) {
     // Where each opened block's caret sits: the edit's start, and how
     // far before its end.
     let mut back: Vec<(usize, usize)> = Vec::new();
-    let edits = ed.views[view]
+    let mut edits: Vec<_> = ed.views[view]
         .sels
         .iter()
         .enumerate()
@@ -3227,6 +3227,13 @@ fn break_lines(ed: &mut Editor, view: ViewId, only: Option<&[usize]>) {
             (i, at..at + blank, format!("\n{indent}"))
         })
         .collect();
+    // Two carets in one run of blanks: each takes the blanks up to the
+    // next, not the next's too (the carets are in order).
+    for k in 1..edits.len() {
+        let next = edits[k].1.start;
+        let r = &mut edits[k - 1].1;
+        r.end = r.end.min(next).max(r.start);
+    }
     ed.indenter = indenter;
     let step = only.is_some();
     ed.edit_each(view, edits, move |start, len| {
