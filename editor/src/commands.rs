@@ -2083,9 +2083,10 @@ pub fn install(ed: &mut Editor) {
     });
     // COUNT characters under each caret, vim's `r`: each becomes CHAR,
     // the caret on the last; a caret short of COUNT on its line is left
-    // alone. `<CR>` makes the lot one line break, as insert's `<CR>`
-    // does (its indent, the blanks after it gone), the caret stepped
-    // back as `<Esc>` steps it.
+    // alone. `<Tab>` puts what insert's `<Tab>` would, a tab or the
+    // spaces to the next stop, for each. `<CR>` makes the lot one line
+    // break, as insert's `<CR>` does (its indent, the blanks after it
+    // gone), the caret stepped back as `<Esc>` steps it.
     ed.register_with_char("replace char", |ed, ctx| {
         let Some(c) = ctx.arg_char else { return };
         let id = view(ed, ctx).buffer;
@@ -2105,10 +2106,25 @@ pub fn install(ed: &mut Editor) {
             }
         }
         if c != '\n' {
-            let text = c.to_string().repeat(ctx.count);
+            // A tab is `<Tab>`'s, each from the column the last left.
+            let ts = ed.tabstop_in(id);
             let edits = edits
                 .into_iter()
-                .map(|(i, r)| (i, r, text.clone()))
+                .map(|(i, r)| {
+                    let text = if c == '\t' {
+                        let mut col = m::display_col(buf, r.start, ts);
+                        (0..ctx.count)
+                            .map(|_| {
+                                let t = ed.tab_from(id, col);
+                                col = t.chars().fold(col, |col, c| m::advance(col, c, ts));
+                                t
+                            })
+                            .collect()
+                    } else {
+                        c.to_string().repeat(ctx.count)
+                    };
+                    (i, r, text)
+                })
                 .collect();
             let back = c.len_utf8();
             return ed.edit_each(ctx.view, edits, move |start, len| {
@@ -2968,7 +2984,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "replace char",
-        "replace COUNT characters under the caret with CHAR (`r`); `<CR>` breaks the line there",
+        "replace COUNT characters under the caret with CHAR (`r`); `<Tab>` as insert's, `<CR>` breaks the line there",
     ),
     // insert
     ("insert", "insert before the caret"),
@@ -2980,7 +2996,10 @@ const DOCS: &[(&str, &str)] = &[
         "insert newline",
         "break the line at the caret, keeping the indent",
     ),
-    ("insert tab", "insert a tab (spaces under `expandtab`)"),
+    (
+        "insert tab",
+        "insert a tab (under `expandtab` the spaces to the next `shiftwidth` stop)",
+    ),
     ("append", "insert after the caret (`a`)"),
     ("append line end", "insert at the end of the line (`A`)"),
     ("open below", "a new line below, and insert (`o`)"),

@@ -11,6 +11,24 @@ pub fn line_col(buf: &Buffer, offset: usize) -> (usize, usize) {
     (ln, col)
 }
 
+/// The screen column of a byte offset: a tab to the next multiple of
+/// `tabstop`, any other character one.
+pub fn display_col(buf: &Buffer, offset: usize, tabstop: usize) -> usize {
+    let start = buf.line_start(buf.line_of(offset));
+    buf.slice(start..offset.max(start))
+        .chars()
+        .fold(0, |col, c| advance(col, c, tabstop))
+}
+
+/// The screen column after `c` at `col`.
+pub fn advance(col: usize, c: char, tabstop: usize) -> usize {
+    if c == '\t' {
+        (col / tabstop.max(1) + 1) * tabstop.max(1)
+    } else {
+        col + 1
+    }
+}
+
 /// The byte offset of `col` chars into line `ln`, clamped to the line.
 pub fn offset_at(buf: &Buffer, ln: usize, col: usize) -> usize {
     let range = buf.line_range(ln);
