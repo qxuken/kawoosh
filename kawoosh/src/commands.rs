@@ -516,7 +516,7 @@ impl Kawoosh {
     /// listed file under its directory, but for one in another open
     /// workspace nested in it: a repository inside the project, or a
     /// project under a tab at `~`, is its own tab's.
-    fn tab_claims(&self, i: usize) -> std::collections::HashSet<BufferId> {
+    pub(crate) fn tab_claims(&self, i: usize) -> std::collections::HashSet<BufferId> {
         let cwd = self.tab_cwd(i);
         let home = self.workspace_root_seen(cwd);
         let nested: Vec<PathBuf> = (0..self.layout.tabs.len())

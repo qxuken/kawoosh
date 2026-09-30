@@ -1144,7 +1144,8 @@ impl Kawoosh {
 
     /// Closes buffer `id` as `:bd` does: its unsaved changes kept
     /// unless `force` (the reason is the error), the panes on it moved
-    /// to another listed buffer — a new scratch when it was the last.
+    /// to another listed buffer, each tab's to one of its own — a new
+    /// scratch when it was the last.
     /// A field's buffer is the field's, closed with it, never here.
     pub(crate) fn close_buffer(&mut self, id: BufferId, force: bool) -> Result<(), &'static str> {
         if self.ed.is_field_buffer(id) {
@@ -1157,8 +1158,52 @@ impl Kawoosh {
             self.discard(id);
         }
         let next = self.back_from(id);
+        self.leave_in_other_tabs(id);
         self.delete_buffer(id, next);
         Ok(())
+    }
+
+    /// The panes on buffer `id` in the tabs not in front, each moved to
+    /// a buffer its own tab claims — the one it came from, else the
+    /// tab's first listed, else a new scratch — so a `:bd` in one
+    /// workspace puts none of its buffers in another's panes.
+    fn leave_in_other_tabs(&mut self, id: BufferId) {
+        for i in 0..self.layout.tabs.len() {
+            if i == self.layout.tab {
+                continue;
+            }
+            let mut panes = Vec::new();
+            self.layout.tabs[i].panes(&mut panes);
+            let on: Vec<ViewId> = panes
+                .into_iter()
+                .filter_map(|p| self.view_of(p))
+                .filter(|v| self.ed.views[*v].buffer == id)
+                .collect();
+            if on.is_empty() {
+                continue;
+            }
+            let claims = self.tab_claims(i);
+            let listed: Vec<BufferId> = self
+                .ed
+                .listed_buffers()
+                .into_iter()
+                .filter(|b| *b != id && claims.contains(b))
+                .collect();
+            let mut first = listed.first().copied();
+            for v in on {
+                let back = self.alternate.get(&v).copied();
+                let next = match back.filter(|b| listed.contains(b)).or(first) {
+                    Some(n) => n,
+                    None => {
+                        let s = self.ed.add_buffer(Buffer::new("*scratch*", ""));
+                        first = Some(s);
+                        s
+                    }
+                };
+                self.layout.tabs[i].seen.insert(next);
+                self.show_buffer(v, next);
+            }
+        }
     }
 
     /// Where the focused pane goes from buffer `id`: the buffer it came

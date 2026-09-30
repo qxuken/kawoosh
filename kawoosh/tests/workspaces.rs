@@ -404,6 +404,44 @@ fn bd_on_a_scratch_stays_in_its_workspace() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// `:bd` on a file open in two workspaces' tabs: each tab's pane goes
+/// to a buffer of its own tab's — the one it came from, else a new
+/// scratch — never the closing tab's.
+#[test]
+fn bd_moves_another_workspaces_pane_to_its_own() {
+    let root = tmp("bdboth");
+    let (a, b) = projects(&root);
+    std::fs::write(a.join("one.txt"), "one\n").unwrap();
+    std::fs::write(a.join("both.txt"), "both\n").unwrap();
+    std::fs::write(b.join("two.txt"), "two\n").unwrap();
+    let both = a.join("both.txt");
+    let (mut d, mut app) = launch();
+    ex(&mut d, &mut app, &format!("cd {}", a.display()));
+    ex(&mut d, &mut app, "e one.txt");
+    ex(&mut d, &mut app, "e both.txt");
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", b.display()));
+    ex(&mut d, &mut app, "e two.txt");
+    ex(&mut d, &mut app, &format!("e {}", both.display()));
+    // A tab where nothing else is its own.
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", b.join("sub").display()));
+    ex(&mut d, &mut app, &format!("e {}", both.display()));
+    let shown = |app: &Kawoosh| {
+        let v = app.focused_view().unwrap();
+        app.ed.buffers[app.ed.views[v].buffer].name.clone()
+    };
+    assert_eq!(shown(&app), "both.txt");
+    d.keys(&mut app, "gt");
+    ex(&mut d, &mut app, "bd");
+    assert_eq!(shown(&app), "one.txt", "alpha's pane goes back");
+    d.keys(&mut app, "gt");
+    assert_eq!(shown(&app), "two.txt", "beta's to where it came from");
+    d.keys(&mut app, "gt");
+    assert_eq!(shown(&app), "*scratch*", "not alpha's one.txt");
+    std::fs::remove_dir_all(&root).ok();
+}
+
 /// Closing a tab closes the buffers no tab has now: not one under
 /// another tab's directory, nor one another tab has shown; an unsaved
 /// one is kept, the tab in front's, and said.
