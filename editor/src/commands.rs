@@ -2092,12 +2092,46 @@ pub fn install(ed: &mut Editor) {
             v.sels.map(Selection::collapse);
         }
     });
+    // A newline at every caret with its line's indent, a level deeper
+    // after an opening bracket; between a bracket and its closer the
+    // block opens, the closer on a line of its own below the caret's.
     ed.register("insert newline", |ed, ctx| {
+        if ed.is_field(ctx.view) {
+            return ed.insert_text(ctx.view, "\n");
+        }
         let id = view(ed, ctx).buffer;
+        let unit = ed.indent_unit_in(id);
         let buf = &ed.buffers[id];
-        let ln = buf.line_of(ed.views[ctx.view].sels.primary().head);
-        let indent = m::indent_of(buf, ln);
-        ed.insert_text(ctx.view, &format!("\n{indent}"));
+        // Where each opened block's caret sits: the edit's start, and
+        // how far before its end.
+        let mut back: Vec<(usize, usize)> = Vec::new();
+        let edits = ed.views[ctx.view]
+            .sels
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let ln = buf.line_of(s.head);
+                let line = buf.line_range(ln);
+                let at = s.head.clamp(line.start, line.end);
+                let indent = m::indent_of(buf, ln);
+                let Some(closer) = m::opens_block(&buf.slice(line.start..at)) else {
+                    return (i, at..at, format!("\n{indent}"));
+                };
+                let after = buf.slice(at..line.end);
+                let rest = after.trim_start();
+                if rest.starts_with(closer) {
+                    let blank = after.len() - rest.len();
+                    back.push((at, 1 + indent.len()));
+                    (i, at..at + blank, format!("\n{indent}{unit}\n{indent}"))
+                } else {
+                    (i, at..at, format!("\n{indent}{unit}"))
+                }
+            })
+            .collect();
+        ed.edit_each(ctx.view, edits, move |start, len| {
+            let b = back.iter().find(|(at, _)| *at == start).map_or(0, |(_, b)| *b);
+            Selection::point(start + len - b)
+        });
     });
     ed.register("insert tab", |ed, ctx| ed.insert_text(ctx.view, "\t"));
     ed.register("delete to start", |ed, ctx| {
@@ -3001,6 +3035,7 @@ fn goto_line(ed: &mut Editor, view: ViewId, n: usize) {
 
 fn open_line(ed: &mut Editor, ctx: &Ctx, below: bool) {
     let id = view(ed, ctx).buffer;
+    let unit = ed.indent_unit_in(id);
     let buf = &ed.buffers[id];
     let edits = ed.views[ctx.view]
         .sels
@@ -3008,7 +3043,18 @@ fn open_line(ed: &mut Editor, ctx: &Ctx, below: bool) {
         .enumerate()
         .map(|(i, s)| {
             let ln = buf.line_of(s.head);
-            let indent = m::indent_of(buf, ln);
+            let mut indent = m::indent_of(buf, ln);
+            // Below a line opening a block, or above one closing it, the
+            // new line is inside: a level deeper.
+            let text = buf.line_text(ln);
+            let inside = if below {
+                m::opens_block(&text).is_some()
+            } else {
+                m::closes_block(&text)
+            };
+            if inside {
+                indent.push_str(&unit);
+            }
             if below {
                 let end = buf.line_range(ln).end;
                 (i, end..end, format!("\n{indent}"))

@@ -111,7 +111,10 @@ under the loop, which is the "cheap to get wrong".
   before opens the block: newline, newline, up, one indent — spelt with
   the engine's `insert newline` (which keeps the indentation) and
   `insert tab`; the test says `{\n    |\n}` (the tab the buffer's
-  indentation, four spaces by default).
+  indentation, four spaces by default). *Since 2026-09-30* the engine's
+  `insert newline` opens a `()` `[]` `{}` block itself, pairs or not
+  (and `o`/`O` indent inside one); the plugin opens only the pairs a
+  rule adds (`<>`).
 - Nothing on `<Esc>`: a pair typed and left empty stays (helix's
   choice; deleting it surprises more than it helps).
 

@@ -37,6 +37,18 @@ kawoosh.test.eq(text(), "a", "and one character elsewhere")
 reset()
 kawoosh.press("i{<CR>x<Esc>")
 kawoosh.test.eq(text(), "{\n    x\n}", "<CR> opens the block")
+reset("    f()")
+kawoosh.press("$i<CR>x<Esc>")
+kawoosh.test.eq(text(), "    f(\n        x\n    )", "at the line's indent, once")
+
+-- A pair a rule adds opens its block too, though the engine's newline
+-- knows only brackets.
+reset("<>")
+local lang = kawoosh.buf.language()
+kawoosh.pairs.languages[lang] = { { "<", ">" } }
+kawoosh.press("a<CR>x<Esc>")
+kawoosh.test.eq(text(), "<\n    x\n>", "a rule's pair opens a block")
+kawoosh.pairs.languages[lang] = nil
 
 reset()
 kawoosh.press("ia\"<Esc>")
