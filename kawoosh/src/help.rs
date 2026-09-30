@@ -1,8 +1,10 @@
 //! `:help` and `:tutor` (roadmap step 53). The pages are
 //! `kawoosh/help/*.md`, shipped in the binary. `:help` writes them to a
-//! directory of this run's own and opens one read-only in the markdown
-//! buffer, so a page renders, its links follow with `gx` as any markdown
-//! file's do, and a link's `#heading` lands on the heading. Two pages
+//! directory of this run's own and opens one in the markdown buffer,
+//! read-only (a page there is, however it is reached) and so rendered
+//! whole whatever `markdown.reveal` says, its links followed with `gx`
+//! as any markdown file's are, a link's `#heading` landing on the
+//! heading. Two pages
 //! are written from the editor as it runs, so they are never behind it:
 //! `commands.md` (every command, a plugin's among them, with its doc) and
 //! `keys.md` (every binding by mode). `:tutor` opens the tutorial as a
@@ -40,6 +42,12 @@ pub const TUTOR: &str = include_str!("../help/tutor.md");
 /// This run's directory for the pages.
 fn help_dir() -> PathBuf {
     std::env::temp_dir().join(format!("kawoosh-help-{}", std::process::id()))
+}
+
+/// Whether `path` is one of this run's pages, however it is reached —
+/// `:help`, a link's `gx`, `:e` — so it opens read-only.
+pub(crate) fn is_page(path: &std::path::Path) -> bool {
+    path.starts_with(help_dir())
 }
 
 /// Where a topic is: a page, and a line of it to land on.
@@ -194,9 +202,6 @@ impl Kawoosh {
             .and_then(|n| text.lines().position(|l| l.starts_with(&n)))
             .map(|i| i + 1);
         self.open_in_editor(&path, line, None);
-        if let Some(id) = self.ed.buffer_at(&path) {
-            self.ed.buffers[id].read_only = true;
-        }
     }
 
     /// `:tutor`: the tutorial in a scratch of its own, to edit freely.

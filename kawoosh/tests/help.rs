@@ -82,6 +82,8 @@ fn help_opens_a_topic_read_only_and_links_follow() {
     d.press(&mut app, "gx");
     settle(&mut d, &mut app);
     assert_eq!(shown(&app).0, "files.md", "{}", app.ed.message);
+    let v = app.focused_view().unwrap();
+    assert!(app.ed.buffer_of(v).read_only, "a page a link reached is too");
     ex(&mut d, &mut app, "help no such thing at all");
     assert_eq!(app.ed.message, "no help for no such thing at all");
     // The tutorial is a scratch to edit.

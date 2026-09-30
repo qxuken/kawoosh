@@ -872,6 +872,18 @@ fn reveal_shows_the_line_the_mark_or_nothing() {
     settle(&mut d, &mut app);
     let rows = d.line_rows();
     assert!(rows.iter().any(|r| r == "---"), "{rows:#?}");
+    // A read-only buffer is under `none` whatever the setting says:
+    // nothing is typed there, so no source is shown for it.
+    ex(&mut d, &mut app, "set markdown.reveal=line");
+    let v = app.focused_view().unwrap();
+    let id = app.ed.views[v].buffer;
+    app.ed.buffers[id].read_only = true;
+    find(&mut d, &mut app, "strong");
+    assert!(
+        row(&d, &app, 2).starts_with(rendered),
+        "{}",
+        row(&d, &app, 2)
+    );
 }
 
 /// `markdown.navigation = "row"`: `j` and `k` move a row on screen in a
