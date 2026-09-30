@@ -206,6 +206,48 @@ fn linewise_operators_take_a_crlf_break_whole() {
     assert_eq!(t.head(), t.text().len() - 4, "on the put line");
 }
 
+/// `r` as neovim's (checked there headless): COUNT characters become
+/// CHAR, the caret on the last, nothing when the line is short of them;
+/// `r<CR>` makes the lot one line break at the line's indent, the blanks
+/// after it gone and the caret stepped back as `<Esc>` steps it.
+#[test]
+fn replace_char_takes_a_count_and_a_line_break() {
+    let mut t = T::new("abcdef");
+    t.keys("l3rx");
+    assert_eq!((t.text().as_str(), t.head()), ("axxxef", 3));
+    t.keys("0l9ry");
+    assert_eq!(t.text(), "axxxef", "short of the count: nothing");
+
+    let mut t = T::new("foo bar");
+    t.keys("3lr<CR>");
+    assert_eq!((t.text().as_str(), t.head()), ("foo\nbar", 4));
+    t.keys("u");
+    assert_eq!(t.text(), "foo bar", "one undo");
+
+    let mut t = T::new("    foo bar");
+    t.keys("7lr<CR>");
+    assert_eq!(t.text(), "    foo\n    bar");
+    assert_eq!(t.head(), 8 + 3, "on the indent's last blank");
+
+    let mut t = T::new("foo  bar");
+    t.keys("3lr<CR>");
+    assert_eq!(t.text(), "foo\nbar", "the blanks after it go");
+    let mut t = T::new("foo  bar");
+    t.keys("4lr<CR>");
+    assert_eq!(t.text(), "foo \nbar", "the blanks before it stay");
+
+    let mut t = T::new("abcdef");
+    t.keys("l3r<CR>");
+    assert_eq!((t.text().as_str(), t.head()), ("a\nef", 2));
+    let mut t = T::new("abc");
+    t.keys("2lr<CR>");
+    assert_eq!(t.text(), "ab\n", "the line's last character");
+
+    let mut t = T::new("a b c d");
+    t.keys("lr<CR>j0l.");
+    assert_eq!(t.text(), "a\nb\nc d", "`.` again");
+}
+
 #[test]
 fn undo_redo_are_per_command_and_per_insert_session() {
     let mut t = T::new("abc");
@@ -1103,6 +1145,63 @@ fn plain_deletes_leave_the_register_alone() {
         t.ed.take_effects()
             .contains(&Effect::SetClipboard(" ".into()))
     );
+}
+
+/// `"_` names the black hole for the next command: what it takes goes
+/// into neither the register nor the clipboard, through an operator's
+/// motion, a count on either side of it, visual mode and `.`; the
+/// command after it is back to the register, and a put from `_` has
+/// nothing to put.
+#[test]
+fn the_black_hole_register_takes_nothing() {
+    let clipboard = |t: &mut T| {
+        t.ed.take_effects()
+            .into_iter()
+            .any(|e| matches!(e, Effect::SetClipboard(_)))
+    };
+    let mut t = T::new("one two three four five six seven");
+    t.keys("yiw");
+    let kept = |t: &T| t.ed.memory.head().map(|m| m.text.clone());
+    assert_eq!(kept(&t).as_deref(), Some("one"));
+    t.ed.take_effects();
+
+    t.keys("w\"_dw");
+    assert_eq!(t.text(), "one three four five six seven");
+    assert_eq!(kept(&t).as_deref(), Some("one"));
+    assert!(!clipboard(&mut t));
+    assert_eq!(t.ed.pending_register, None);
+
+    // `.` repeats the whole of it, the register with it.
+    t.keys(".");
+    assert_eq!(t.text(), "one four five six seven");
+    assert_eq!(kept(&t).as_deref(), Some("one"));
+
+    // A count before `"` or after it.
+    t.keys("2\"_x\"_2x");
+    assert_eq!(t.text(), "one  five six seven");
+    assert_eq!(kept(&t).as_deref(), Some("one"));
+
+    t.keys("w\"_cwFIVE<Esc>");
+    assert_eq!(t.text(), "one  FIVE six seven");
+    t.keys("wviw\"_d");
+    assert_eq!(t.text(), "one  FIVE  seven");
+    assert_eq!(kept(&t).as_deref(), Some("one"));
+    assert!(!clipboard(&mut t));
+
+    // Named, then let go.
+    t.keys("\"_<Esc>x");
+    assert_eq!(kept(&t).as_deref(), Some(" "));
+
+    // A put from the black hole has nothing to put.
+    t.keys("\"_p");
+    assert_eq!(t.ed.message, "the _ register is always empty");
+    assert_eq!(t.text(), "one  FIVE seven");
+
+    // `""` is the register there always is; others are refused.
+    t.keys("0\"\"dw");
+    assert_eq!(kept(&t).as_deref(), Some("one  "));
+    t.keys("\"a");
+    assert_eq!(t.ed.message, "no register a: only _, the black hole");
 }
 
 /// A command's `Path` argument reaches it absolute — `~`, `..` and a

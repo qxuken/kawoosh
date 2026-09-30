@@ -937,6 +937,124 @@ fn a_lua_view_has_fields_with_modes() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A field keeps the keys of its view, not of the window: with the
+/// keyboard on another pane, a view's field that had them draws no
+/// caret, so one caret is on the screen — and it is back with the pane.
+#[test]
+fn a_lua_field_shows_no_caret_off_the_focused_pane() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "hello\n");
+    app.run_lua_source(
+        "init",
+        r#"
+        kawoosh.view("finder", function(ctx)
+          return column { pad = 8, gap = 4,
+            ctx.field { name = "q", placeholder = "find a thing" },
+            text("typed: " .. ctx.field_text("q")),
+          }
+        end, function(ev) end)
+        "#,
+    );
+    d.frame(&mut app);
+    let editor = app.layout.focused();
+    ex(&mut d, &mut app, "view finder");
+    d.frame(&mut app);
+    let finder = app
+        .layout
+        .visible_panes()
+        .into_iter()
+        .find(|p| matches!(app.layout.content(*p), Some(Content::Lua(_))))
+        .expect("the finder's pane");
+    app.layout.focus(finder);
+    app.run_lua_source("t", r#"kawoosh.field_focus("finder", "q")"#);
+    d.frame(&mut app);
+    d.keys(&mut app, "i");
+    d.keys(&mut app, "abc");
+    d.frame(&mut app);
+    let bars = |d: &Drive| d.core.nodes().iter().filter(|n| n.rect.w == 2.0).count();
+    assert_eq!(bars(&d), 1, "the field's bar while its pane has the keys");
+    app.layout.focus(editor);
+    d.frame(&mut app);
+    assert!(app.lua_field_focused("finder").is_some(), "still the view's");
+    assert_eq!(bars(&d), 0, "no caret in a pane without the keyboard");
+    app.layout.focus(finder);
+    d.frame(&mut app);
+    assert_eq!(bars(&d), 1, "back with the pane");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A click inside a Lua view in a pane without the keyboard — on its
+/// field, or on a node with its own `on_click` — focuses that pane: the
+/// field's caret and the keys go together.
+#[test]
+fn a_click_in_a_lua_view_focuses_its_pane() {
+    let mut d = Drive::new(1400.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "hello\n");
+    app.run_lua_source(
+        "init",
+        r#"
+        pressed = 0
+        kawoosh.view("finder", function(ctx)
+          return column { pad = 8, gap = 4,
+            ctx.field { name = "q", placeholder = "find a thing" },
+            row { key = "press", on_click = { kind = "press" }, text("press me") },
+          }
+        end, function(ev)
+          if ev.kind == "press" then pressed = pressed + 1 end
+        end)
+        "#,
+    );
+    d.frame(&mut app);
+    let editor = app.layout.focused();
+    let text_view = app.focused_view().unwrap();
+    // Below the editor, in its column: both on screen whichever is
+    // focused.
+    app.run_lua_source("t", r#"kawoosh.view_open("finder", { below = true })"#);
+    d.frame(&mut app);
+    let finder = app
+        .layout
+        .visible_panes()
+        .into_iter()
+        .find(|p| matches!(app.layout.content(*p), Some(Content::Lua(_))))
+        .expect("the finder's pane");
+    let centre = |d: &mut Drive, label: &str| {
+        let key = d.core.key_of(label).expect(label);
+        let r = d.core.nodes().iter().find(|n| n.key == key).unwrap().rect;
+        assert!(r.x + 4.0 < 1400.0, "{label} on screen: {r:?}");
+        (r.x + 4.0, r.y + r.h / 2.0)
+    };
+    // The field.
+    app.layout.focus(editor);
+    settle(&mut d, &mut app);
+    let (x, y) = centre(&mut d, "field:lua:finder/q");
+    d.click(&mut app, x, y);
+    d.frame(&mut app);
+    assert_eq!(app.layout.focused(), finder, "a click on the field");
+    assert!(app.lua_field_focused("finder").is_some(), "and its keys");
+    d.keys(&mut app, "ihi");
+    d.frame(&mut app);
+    app.run_lua_source(
+        "t",
+        r#"assert(kawoosh.field_text("finder", "q") == "hi", kawoosh.field_text("finder", "q"))"#,
+    );
+    assert_eq!(
+        app.ed.buffer_of(text_view).text(),
+        "hello\n",
+        "nothing typed into the editor"
+    );
+    d.key(&mut app, "escape", KeyMods::default());
+    d.key(&mut app, "escape", KeyMods::default());
+    // A node of the view's own.
+    app.layout.focus(editor);
+    settle(&mut d, &mut app);
+    let (x, y) = centre(&mut d, "press");
+    d.click(&mut app, x, y);
+    d.frame(&mut app);
+    app.run_lua_source("t", r#"assert(pressed == 1, tostring(pressed))"#);
+    assert_eq!(app.layout.focused(), finder, "a click on a row of the view");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// `kawoosh.language` (kui.md D13): a language of files alone names
 /// them — one opened after, and one already open that nothing had
 /// claimed — and a grammar that is not where it was said to be is a

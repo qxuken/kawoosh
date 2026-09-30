@@ -1330,7 +1330,8 @@ impl Kawoosh {
         let tag = Value::map([("kind", "memory".into()), ("pane", Value::Int(pane as i64))]);
         // With a filter: `12 of 138 texts`.
         let filter = self.memory_pane.filter;
-        let filtering = self.memory_pane.filtering;
+        // The filter has the keys only while the pane has them.
+        let filtering = self.memory_pane.filtering && focused;
         let all = self.memory_pane.all;
         let count = |what: String| -> String {
             if filter.is_some() && all != n {

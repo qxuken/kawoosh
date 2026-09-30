@@ -5,6 +5,7 @@
 mod drive;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use drive::Drive;
 use kawoosh::Kawoosh;
@@ -13,9 +14,15 @@ fn text(app: &Kawoosh) -> String {
     app.ed.buffer_of(app.focused_view().unwrap()).text()
 }
 
-/// A file of `name` holding `src`, open and parsed.
+/// A file of `name` holding `src`, open and parsed — in a folder of
+/// its own: the tests run side by side in one process, and two opening
+/// the same name shared one, a test's `remove_dir_all` taking the
+/// other's file before it was read (an empty buffer, no indent).
 fn open(name: &str, src: &str) -> (Kawoosh, Drive, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("kawoosh-indent-{}-{name}", std::process::id()));
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir =
+        std::env::temp_dir().join(format!("kawoosh-indent-{}-{n}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join(name);
     std::fs::write(&file, src).unwrap();
@@ -54,6 +61,18 @@ fn o_and_upper_o_inside_a_rust_block() {
         text(&app),
         "fn f() {\n    match a {\n        B => {\n            c\n}\n"
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `r<CR>` breaks the line as insert's `<CR>` does, the tree asked
+/// about the text with the replaced character already gone.
+#[test]
+fn replace_with_a_line_break() {
+    let (mut app, mut d, dir) = open("r.rs", "fn f() {\n    if a { b(); }\n}\n");
+    d.press(&mut app, "j0f{lr<CR>");
+    assert_eq!(text(&app), "fn f() {\n    if a {\n        b(); }\n}\n");
+    d.press(&mut app, "f;lr<CR>");
+    assert_eq!(text(&app), "fn f() {\n    if a {\n        b();\n    }\n}\n");
     std::fs::remove_dir_all(&dir).ok();
 }
 

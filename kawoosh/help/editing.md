@@ -48,7 +48,8 @@ Most of vim's letters mean what they always did. The exceptions:
 | `<C-o>` `<C-i>` | the jumps are the tab's, not the window's, and a big move is one whatever made it (below) |
 
 Missing on purpose: named registers (`"a`) — the [memory](memory.md) is
-what they were for — and visual block `<C-v>`, whose job `<C-j>` in
+what they were for; only `"_`, the black hole, is there, to delete or
+change without keeping the text — and visual block `<C-v>`, whose job `<C-j>` in
 visual mode does with carets (below).
 
 ## Motions and text objects

@@ -597,8 +597,10 @@ end
 -- visual mode, the caret — a bar on kui's blink in insert mode, a block
 -- in normal — and a placeholder while it is empty and off the keys.
 -- `full` names the engine field (`lua:<view>/<name>`); one that is not
--- open yet is asked for and drawn empty this frame.
-local function field_node(view_name, env, opts)
+-- open yet is asked for and drawn empty this frame. The field has the
+-- keys when its view's keys are on it and `pane_focused` — the pane the
+-- view is drawn in has the keyboard — so one caret is on the screen.
+local function field_node(view_name, env, opts, pane_focused)
   local full = "lua:" .. view_name .. "/" .. opts.name
   local st = kawoosh._field(full)
   if not st then
@@ -611,7 +613,7 @@ local function field_node(view_name, env, opts)
   -- drawn over what is under the field.
   local style = { family = "mono", size = size, wrap = "none" }
   local line = st.text
-  local focused = st.focused
+  local focused = st.focused and pane_focused
   local insert = st.mode == "insert"
   -- Byte ranges (0-based, end exclusive) of the selection and the block
   -- caret's character, in visual and normal mode.
@@ -780,7 +782,7 @@ function view(env, slot)
   local ctx = { pane = pane, focused = params.focused, width = params.width,
                 height = params.height, share = params.share, origin = params.origin, env = env,
                 name = name }
-  ctx.field = function(opts) return field_node(name, env, opts) end
+  ctx.field = function(opts) return field_node(name, env, opts, params.focused ~= false) end
   ctx.field_text = function(field) return kawoosh.field_text(name, field) end
   local ok, tree = pcall(fn, ctx)
   if not ok then

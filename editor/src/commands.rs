@@ -135,7 +135,8 @@ pub(crate) fn op_range(
 }
 
 /// The text an operator took, remembered: the `"` register and the
-/// memory's newest moment.
+/// memory's newest moment — unless `"_` named the black hole for it,
+/// where it goes nowhere.
 fn set_register(
     ed: &mut Editor,
     id: kawoosh_doc::BufferId,
@@ -144,6 +145,9 @@ fn set_register(
     linewise: bool,
     took: crate::Took,
 ) {
+    if ed.pending_register == Some('_') {
+        return;
+    }
     let mut joined = if texts.len() == 1 {
         texts[0].clone()
     } else {
@@ -1260,7 +1264,10 @@ fn case_turned(t: &str, op: &str) -> String {
 /// none: nothing taken yet, or a secret that went, whose covering text
 /// is not what `p` was pressed for.
 fn has_register(ed: &mut Editor) -> bool {
-    if ed.memory.spent() {
+    if ed.pending_register == Some('_') {
+        ed.message = "the _ register is always empty".into();
+        false
+    } else if ed.memory.spent() {
         ed.message =
             "the register's secret is gone — put once, or its time was up: yank it again".into();
         false
@@ -2074,21 +2081,59 @@ pub fn install(ed: &mut Editor) {
             .collect();
         apply_operator(ed, ctx.view, "change", ranges);
     });
+    // COUNT characters under each caret, vim's `r`: each becomes CHAR,
+    // the caret on the last; a caret short of COUNT on its line is left
+    // alone. `<CR>` makes the lot one line break, as insert's `<CR>`
+    // does (its indent, the blanks after it gone), the caret stepped
+    // back as `<Esc>` steps it.
     ed.register_with_char("replace char", |ed, ctx| {
         let Some(c) = ctx.arg_char else { return };
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
-        let edits = ed.views[ctx.view]
-            .sels
+        let mut edits = Vec::new();
+        let mut last = 0;
+        for (i, s) in ed.views[ctx.view].sels.iter().enumerate() {
+            let mut e = s.head;
+            let mut n = 0;
+            while n < ctx.count && buf.char_at(e).is_some_and(|c| c != '\n') {
+                e = buf.next_char(e);
+                n += 1;
+            }
+            if n == ctx.count && s.head >= last {
+                last = e;
+                edits.push((i, s.head..e));
+            }
+        }
+        if c != '\n' {
+            let text = c.to_string().repeat(ctx.count);
+            let edits = edits
+                .into_iter()
+                .map(|(i, r)| (i, r, text.clone()))
+                .collect();
+            let back = c.len_utf8();
+            return ed.edit_each(ctx.view, edits, move |start, len| {
+                Selection::point(start + len - back)
+            });
+        }
+        // The breaks go where the carets are once the characters are
+        // gone, and nowhere else.
+        let mut gone = 0;
+        let at: Vec<usize> = edits
             .iter()
-            .enumerate()
-            .filter_map(|(i, s)| {
-                let e = buf.next_char(s.head);
-                (e > s.head && buf.char_at(s.head) != Some('\n'))
-                    .then(|| (i, s.head..e, c.to_string()))
+            .map(|(_, r)| {
+                gone += r.len();
+                r.end - gone
             })
             .collect();
+        if at.is_empty() {
+            return;
+        }
+        let edits = edits
+            .into_iter()
+            .map(|(i, r)| (i, r, String::new()))
+            .collect();
         ed.edit_each(ctx.view, edits, |start, _| Selection::point(start));
+        break_lines(ed, ctx.view, Some(&at));
     });
 
     // ---- insert
@@ -2151,64 +2196,12 @@ pub fn install(ed: &mut Editor) {
             v.sels.map(Selection::collapse);
         }
     });
-    // A newline at every caret, the new line at the indent the syntax
-    // says (docs/design/indent.md), else its line's, a level deeper
-    // after an opening bracket; the blanks after the caret go. Between
-    // a bracket and its closer the block opens, the closer on a line of
-    // its own below the caret's.
+    // A newline at every caret (`break_lines`).
     ed.register("insert newline", |ed, ctx| {
         if ed.is_field(ctx.view) {
             return ed.insert_text(ctx.view, "\n");
         }
-        let id = view(ed, ctx).buffer;
-        let unit = ed.indent_unit(id);
-        let mut indenter = ed.indenter.take();
-        let buf = &ed.buffers[id];
-        // Where each opened block's caret sits: the edit's start, and
-        // how far before its end.
-        let mut back: Vec<(usize, usize)> = Vec::new();
-        let edits = ed.views[ctx.view]
-            .sels
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                let ln = buf.line_of(s.head);
-                let line = buf.line_range(ln);
-                let at = s.head.clamp(line.start, line.end);
-                let after = buf.slice(at..line.end);
-                let rest = after.trim_start();
-                let blank = after.len() - rest.len();
-                let closer = m::opens_block(&buf.slice(line.start..at));
-                let between = closer.is_some_and(|c| rest.starts_with(c));
-                let said = indenter
-                    .as_mut()
-                    .and_then(|x| x.new_line(id, buf, at, &unit));
-                if between {
-                    // The syntax's answer is the closer's line.
-                    let outer = said.unwrap_or_else(|| m::indent_of(buf, ln));
-                    let inner = format!("{outer}{}", unit.text);
-                    back.push((at, 1 + outer.len()));
-                    return (i, at..at + blank, format!("\n{inner}\n{outer}"));
-                }
-                let indent = said.unwrap_or_else(|| {
-                    let own = m::indent_of(buf, ln);
-                    if closer.is_some() {
-                        own + &unit.text
-                    } else {
-                        own
-                    }
-                });
-                (i, at..at + blank, format!("\n{indent}"))
-            })
-            .collect();
-        ed.indenter = indenter;
-        ed.edit_each(ctx.view, edits, move |start, len| {
-            let b = back
-                .iter()
-                .find(|(at, _)| *at == start)
-                .map_or(0, |(_, b)| *b);
-            Selection::point(start + len - b)
-        });
+        break_lines(ed, ctx.view, None);
     });
     ed.register("insert tab", |ed, ctx| ed.insert_text(ctx.view, "\t"));
     ed.register("delete to start", |ed, ctx| {
@@ -2417,6 +2410,18 @@ pub fn install(ed: &mut Editor) {
     ed.register_with_char("surround delete", surround_delete);
     ed.register_with_char("surround replace", surround_replace);
     ed.register_with_char("surround replace with", surround_replace_with);
+
+    // `"` names the register the next command takes into or puts from.
+    // Only `_` so far, the black hole; `""` is the one there always is.
+    ed.register_with_char("register", |ed, ctx| match ctx.arg_char {
+        Some('_') => ed.pending_register = Some('_'),
+        Some('"') => ed.pending_register = None,
+        Some(c) => {
+            ed.count = None;
+            ed.message = format!("no register {c}: only _, the black hole");
+        }
+        None => {}
+    });
 
     // ---- the stream: `.` and macros (docs/design/keys.md; `repeat`)
     ed.register("repeat", |ed, ctx| {
@@ -2963,7 +2968,7 @@ const DOCS: &[(&str, &str)] = &[
     ),
     (
         "replace char",
-        "replace the character under the caret with CHAR (`r`)",
+        "replace COUNT characters under the caret with CHAR (`r`); `<CR>` breaks the line there",
     ),
     // insert
     ("insert", "insert before the caret"),
@@ -3017,6 +3022,10 @@ const DOCS: &[(&str, &str)] = &[
     (
         "repeat",
         "the last change again, on the selections as they are (`.`); a count replaces its count",
+    ),
+    (
+        "register",
+        "the next command's register, named by the next key (`\"`): `_`, the black hole, takes nothing into the register or the clipboard (`\"_d`, `\"_c`, `\"_x`)",
     ),
     (
         "macro record",
@@ -3132,6 +3141,73 @@ fn goto_line(ed: &mut Editor, view: ViewId, n: usize) {
     let target = m::first_nonblank(buf, ln);
     ed.views[view].sels.map(|s| s.with_head(target, ext));
     ed.views[view].goal_col = None;
+}
+
+/// A newline at every caret, the new line at the indent the syntax says
+/// (docs/design/indent.md), else its line's, a level deeper after an
+/// opening bracket; the blanks after the caret go. Between a bracket
+/// and its closer the block opens, the closer on a line of its own below
+/// the caret's. `only` is `r<CR>`'s: the carets at those offsets break,
+/// the rest stay, and each stepped back as `<Esc>` steps it.
+fn break_lines(ed: &mut Editor, view: ViewId, only: Option<&[usize]>) {
+    let id = ed.views[view].buffer;
+    let unit = ed.indent_unit(id);
+    let mut indenter = ed.indenter.take();
+    let buf = &ed.buffers[id];
+    // Where each opened block's caret sits: the edit's start, and how
+    // far before its end.
+    let mut back: Vec<(usize, usize)> = Vec::new();
+    let edits = ed.views[view]
+        .sels
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| only.is_none_or(|at| at.contains(&s.head)))
+        .map(|(i, s)| {
+            let ln = buf.line_of(s.head);
+            let line = buf.line_range(ln);
+            let at = s.head.clamp(line.start, line.end);
+            let after = buf.slice(at..line.end);
+            let rest = after.trim_start();
+            let blank = after.len() - rest.len();
+            let closer = m::opens_block(&buf.slice(line.start..at));
+            let between = closer.is_some_and(|c| rest.starts_with(c));
+            let said = indenter
+                .as_mut()
+                .and_then(|x| x.new_line(id, buf, at, &unit));
+            if between {
+                // The syntax's answer is the closer's line.
+                let outer = said.unwrap_or_else(|| m::indent_of(buf, ln));
+                let inner = format!("{outer}{}", unit.text);
+                back.push((at, 1 + outer.len()));
+                return (i, at..at + blank, format!("\n{inner}\n{outer}"));
+            }
+            let indent = said.unwrap_or_else(|| {
+                let own = m::indent_of(buf, ln);
+                if closer.is_some() {
+                    own + &unit.text
+                } else {
+                    own
+                }
+            });
+            (i, at..at + blank, format!("\n{indent}"))
+        })
+        .collect();
+    ed.indenter = indenter;
+    let step = only.is_some();
+    ed.edit_each(view, edits, move |start, len| {
+        let b = back
+            .iter()
+            .find(|(at, _)| *at == start)
+            .map_or(0, |(_, b)| *b);
+        // The caret's line starts past the newline; an indent is
+        // blanks, a byte each.
+        let head = start + len - b;
+        Selection::point(if step && head > start + 1 {
+            head - 1
+        } else {
+            head
+        })
+    });
 }
 
 /// `o` / `O`: a line below or above each caret's, at the indent the
@@ -4166,6 +4242,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("s", "change char"),
         ("S", "change line"),
         ("r", "replace char"),
+        ("\"", "register"),
         ("i", "insert"),
         ("a", "append"),
         ("I", "insert line start"),

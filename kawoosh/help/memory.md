@@ -6,6 +6,8 @@ Kawoosh remembers every text you yank, delete or paste in, every file you attend
 
 Every yank, delete, change and clipboard paste is a *text* the memory keeps, newest first, with where it came from and when. There are no numbered or lettered registers to manage: the register is simply the newest text, and everything before it is still there to put again.
 
+To delete or change without keeping the text, name the black hole first: `"_dw`, `"_cc`, `"_x`, or `"_d` on a selection. What it takes goes nowhere: not into the memory, not onto the clipboard, and the register stays what it was. `"_` lasts one command, and `.` repeats it.
+
 Texts survive a restart, for `memory.text.keep_days` days (7) and up to `memory.text.max_mb` megabytes (8). Set `memory.text.max_mb = 0` to keep them for the session only; nothing you copy is then written to disk. A text over 1 MiB is never written.
 
 ## Putting

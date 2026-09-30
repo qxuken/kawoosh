@@ -273,7 +273,12 @@ impl Kawoosh {
                     .map(|(o, _)| o.chars().next().unwrap_or(' ').to_string())
                     .unwrap_or_default();
                 let count = self.ed.count.map(|c| c.to_string()).unwrap_or_default();
-                Some(Module::text(format!("{count}{op}{pending}"), pal.dim))
+                let reg = self
+                    .ed
+                    .pending_register
+                    .map(|r| format!("\"{r}"))
+                    .unwrap_or_default();
+                Some(Module::text(format!("{reg}{count}{op}{pending}"), pal.dim))
             }
             "strip" => Some(Module::text(self.strip_marks(), pal.dim)),
             "selections" => {
