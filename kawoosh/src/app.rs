@@ -1124,7 +1124,11 @@ impl Kawoosh {
     /// Closes buffer `id` as `:bd` does: its unsaved changes kept
     /// unless `force` (the reason is the error), the panes on it moved
     /// to another listed buffer — a new scratch when it was the last.
+    /// A field's buffer is the field's, closed with it, never here.
     pub(crate) fn close_buffer(&mut self, id: BufferId, force: bool) -> Result<(), &'static str> {
+        if self.ed.is_field_buffer(id) {
+            return Err("a field's buffer closes with its field");
+        }
         if self.ed.buffers[id].modified {
             if !force {
                 return Err("unsaved changes (:bd! to discard)");

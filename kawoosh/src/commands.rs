@@ -343,10 +343,16 @@ impl Kawoosh {
         }
     }
 
-    /// The view a shell command acts on, when the keyboard is on one.
-    fn view_arg(&self, ctx: &Ctx) -> Option<ViewId> {
-        self.focused_view()
-            .or_else(|| self.ed.views.contains_key(ctx.view).then_some(ctx.view))
+    /// The view a shell command acts on, when the keyboard is on one:
+    /// the focused pane's, else the one the command was run on — never
+    /// a field's, a launcher's query or the resident pane view, whose
+    /// buffer is the field's own (`:bd` there had taken it, and the next
+    /// frame read a field without its buffer).
+    pub(crate) fn view_arg(&self, ctx: &Ctx) -> Option<ViewId> {
+        self.focused_view().or_else(|| {
+            (self.ed.views.contains_key(ctx.view) && !self.ed.is_field(ctx.view))
+                .then_some(ctx.view)
+        })
     }
 
     /// `:vsplit` / `:split`: on PATH, else a pane made bare — what
