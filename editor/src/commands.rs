@@ -111,6 +111,45 @@ fn whole_lines_of_sel(buf: &Buffer, s: &Selection, extra_lines: usize) -> Range<
     buf.line_start(a)..buf.line_range(b).end
 }
 
+/// The lines an operator's range covers, first and last. A linewise
+/// range on the last line of a text with no break after it starts at
+/// the break before it (`line_range_of_sel`), which is the line
+/// above's: its first line is the one after that break. The range is
+/// then a break and a line with none after it — an empty last line
+/// the break alone.
+fn op_lines(buf: &Buffer, r: &Range<usize>, linewise: bool) -> (usize, usize) {
+    let brk = match (buf.byte_at(r.start), buf.byte_at(r.start + 1)) {
+        (Some(b'\n'), _) => 1,
+        (Some(b'\r'), Some(b'\n')) => 2,
+        _ => 0,
+    };
+    let last_line = linewise
+        && brk > 0
+        && r.end == buf.len()
+        && (r.end == r.start + brk || buf.byte_at(r.end - 1) != Some(b'\n'));
+    let first = if last_line { r.start + brk } else { r.start };
+    (
+        buf.line_of(first),
+        buf.line_of(r.end.saturating_sub(1).max(first)),
+    )
+}
+
+/// Each selection on the first line its range covered, at its first
+/// non-blank: after `=` `>` `<`, which change no line's count.
+fn to_first_lines(ed: &mut Editor, view: ViewId, firsts: &[usize]) {
+    if firsts.is_empty() {
+        return;
+    }
+    let buf = &ed.buffers[ed.views[view].buffer];
+    let v = &mut ed.views[view];
+    let mut i = 0;
+    v.sels.map(|_| {
+        let ln = firsts[i.min(firsts.len() - 1)];
+        i += 1;
+        Selection::point(m::first_nonblank(buf, ln.min(buf.line_count() - 1)))
+    });
+}
+
 /// The range an operator applies to, per the motion's kind.
 pub(crate) fn op_range(
     buf: &Buffer,
@@ -250,24 +289,14 @@ pub(crate) fn apply_operator(
                 .iter()
                 .enumerate()
                 .map(|(i, (r, lw))| {
-                    // `cc` keeps the line's indent and its newline. A
-                    // linewise range on the last line starts with the
-                    // newline before it (`line_range_of_sel`), which is
-                    // the line above's: the first line changed is the
-                    // one after that byte.
+                    // `cc` keeps the line's indent and its newline, the
+                    // lines' (`op_lines`) from the first's start to the
+                    // last's end.
                     if op == "change" && *lw {
                         let buf = &ed.buffers[id];
-                        let first = if r.end == buf.len() && buf.char_at(r.start) == Some('\n') {
-                            r.start + 1
-                        } else {
-                            r.start
-                        };
-                        let ln = buf.line_of(first);
-                        let indent = m::indent_of(buf, ln);
-                        let inner = buf.line_range(ln).start
-                            ..buf
-                                .line_range(buf.line_of(r.end.saturating_sub(1).max(r.start)))
-                                .end;
+                        let (a, b) = op_lines(buf, r, true);
+                        let indent = m::indent_of(buf, a);
+                        let inner = buf.line_start(a)..buf.line_range(b).end;
                         (i, inner, indent)
                     } else {
                         (i, r.clone(), String::new())
@@ -336,15 +365,10 @@ pub(crate) fn apply_operator(
             let unit = ed.indent_unit(id);
             let mut indenter = ed.indenter.take();
             let buf = &ed.buffers[id];
-            let mut spans: Vec<(usize, usize)> = ranges
-                .iter()
-                .map(|(r, _)| {
-                    (
-                        buf.line_of(r.start),
-                        buf.line_of(r.end.saturating_sub(1).max(r.start)),
-                    )
-                })
-                .collect();
+            let lines: Vec<(usize, usize)> =
+                ranges.iter().map(|(r, lw)| op_lines(buf, r, *lw)).collect();
+            let firsts: Vec<usize> = lines.iter().map(|(a, _)| *a).collect();
+            let mut spans = lines;
             spans.sort_unstable();
             let mut edits = Vec::new();
             let mut answered = true;
@@ -377,16 +401,8 @@ pub(crate) fn apply_operator(
                 ed.message = format!("no indent rules for {lang}");
                 return;
             }
-            let heads: Vec<usize> = ranges.iter().map(|(r, _)| r.start).collect();
             ed.edit_each(view, edits, |start, _| Selection::point(start));
-            let buf = &ed.buffers[id];
-            let v = &mut ed.views[view];
-            let mut i = 0;
-            v.sels.map(|_| {
-                let h = heads[i.min(heads.len() - 1)];
-                i += 1;
-                Selection::point(m::first_nonblank(buf, buf.line_of(h.min(buf.len()))))
-            });
+            to_first_lines(ed, view, &firsts);
         }
         "indent" | "dedent" => {
             let ts = ed.shiftwidth_in(id);
@@ -394,9 +410,10 @@ pub(crate) fn apply_operator(
             let buf = &ed.buffers[id];
             let mut edits = Vec::new();
             let mut seen = std::collections::HashSet::new();
-            for (i, (r, _)) in ranges.iter().enumerate() {
-                let a = buf.line_of(r.start);
-                let b = buf.line_of(r.end.saturating_sub(1).max(r.start));
+            let mut firsts = Vec::new();
+            for (i, (r, lw)) in ranges.iter().enumerate() {
+                let (a, b) = op_lines(buf, r, *lw);
+                firsts.push(a);
                 for ln in a..=b {
                     if !seen.insert(ln) {
                         continue;
@@ -420,16 +437,8 @@ pub(crate) fn apply_operator(
                 }
                 let _ = i;
             }
-            let heads: Vec<usize> = ranges.iter().map(|(r, _)| r.start).collect();
             ed.edit_each(view, edits, |start, _| Selection::point(start));
-            let buf = &ed.buffers[id];
-            let v = &mut ed.views[view];
-            let mut i = 0;
-            v.sels.map(|_| {
-                let h = heads[i.min(heads.len() - 1)];
-                i += 1;
-                Selection::point(m::first_nonblank(buf, buf.line_of(h.min(buf.len()))))
-            });
+            to_first_lines(ed, view, &firsts);
         }
         "join" => {
             let buf = &ed.buffers[id];
