@@ -248,6 +248,33 @@ fn replace_char_takes_a_count_and_a_line_break() {
     assert_eq!(t.text(), "a\nb\nc d", "`.` again");
 }
 
+/// `r<Tab>` as neovim's: what insert's `<Tab>` puts, per character — a
+/// tab, or under `expandtab` the spaces to the next `shiftwidth` stop,
+/// each from where the last left; the caret on the last.
+#[test]
+fn replace_char_with_a_tab_is_insert_tab() {
+    let mut t = T::new("abcdef");
+    t.keys(":set shiftwidth=8<CR>r<Tab>");
+    assert_eq!((t.text().as_str(), t.head()), ("        bcdef", 7));
+    let mut t = T::new("abcdef");
+    t.keys(":set shiftwidth=8<CR>l2r<Tab>");
+    assert_eq!(t.text(), format!("a{}def", " ".repeat(15)), "to 8, then 16");
+    assert_eq!(t.head(), 15);
+    let mut t = T::new("abcdef");
+    t.keys("l2r<Tab>");
+    assert_eq!(t.text(), format!("a{}def", " ".repeat(7)), "stops of 4");
+
+    let mut t = T::new("abcdef");
+    t.keys(":set -expandtab<CR>l2r<Tab>");
+    assert_eq!((t.text().as_str(), t.head()), ("a\t\tdef", 2));
+    t.keys("u");
+    assert_eq!(t.text(), "abcdef", "one undo");
+    t.keys("$.");
+    assert_eq!(t.text(), "abcdef", "`.` short of its count");
+    t.keys("0.");
+    assert_eq!(t.text(), "\t\tcdef", "`.` again");
+}
+
 #[test]
 fn undo_redo_are_per_command_and_per_insert_session() {
     let mut t = T::new("abc");
@@ -1091,9 +1118,9 @@ fn a_last_line_deleted_pastes_as_a_line() {
 fn insert_mode_keys() {
     let mut t = T::new("");
     t.keys("iab<CR>cd<BS><Tab>x<Esc>");
-    assert_eq!(t.text(), "ab\nc    x");
+    assert_eq!(t.text(), "ab\nc   x", "`<Tab>` to the next stop");
     t.keys("o  y<CR>z<Esc>");
-    assert_eq!(t.text(), "ab\nc    x\n  y\n  z");
+    assert_eq!(t.text(), "ab\nc   x\n  y\n  z");
     let mut t = T::new("foo bar");
     t.keys("A<C-w><Esc>");
     assert_eq!(t.text(), "foo ");
