@@ -178,6 +178,33 @@ fn files_are_walked_filtered_and_opened() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `:<Esc>` leaves the prompt open in normal mode, where the leader's
+/// maps run: `<leader>f` from there takes the keyboard to the picker,
+/// and the prompt, whose pane the keyboard left, is gone with it —
+/// left open, it kept every key while the picker's caret blinked.
+#[test]
+fn a_picker_opened_from_the_prompts_normal_mode_takes_the_keys() {
+    let _serial = serial();
+    let dir = project("prompt");
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    d.press(&mut app, ":<Esc>");
+    assert!(app.ed.prompt_view().is_some(), "one <Esc> is normal mode");
+    d.press(&mut app, "<leader>f");
+    d.frame(&mut app);
+    assert!(picker_open(&app), "the picker pane");
+    assert!(app.ed.prompt_view().is_none(), "the prompt left");
+    assert!(keyed_on_query(&app), "the keys on the query");
+    assert_eq!(query_mode(&app), kawoosh_editor::Mode::Insert);
+    d.keys(&mut app, "sl");
+    d.frame(&mut app);
+    let r = rows(&d);
+    assert_eq!(r[0], native("src/lib.rs"), "typed into the query: {r:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// The query is a field: `<Esc>` is normal mode over it, where `j` and
 /// `k` walk the rows and `<Esc>` again closes; `<C-n>` `<C-p>` walk in
 /// insert mode; `<C-c>` closes from either; `<C-v>` takes the row

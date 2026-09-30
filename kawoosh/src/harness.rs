@@ -168,37 +168,45 @@ impl Harness {
 
     fn rows(&self) -> Vec<(String, String)> {
         let nodes = self.core.nodes();
+        // A pane's rows are the children of its `lines`, and of the
+        // float a tall pane stacks the rows above its caret's in
+        // (`lines above`, in the `above` box), in tree order: top down.
+        let holders: Vec<_> = nodes
+            .iter()
+            .filter(|n| matches!(n.label.as_deref(), Some("lines" | "lines above")))
+            .map(|n| n.key)
+            .collect();
         let mut out = Vec::new();
-        for lines in nodes.iter().filter(|n| n.label.as_deref() == Some("lines")) {
-            let mut i = 0;
-            while i < nodes.len() {
-                if nodes[i].parent == Some(lines.key) {
-                    let depth = nodes[i].depth;
-                    let (mut line, mut extra) = (String::new(), String::new());
-                    let mut j = i + 1;
-                    while j < nodes.len() && nodes[j].depth > depth {
-                        if nodes[j].role == Some(kui_native::Role::None) {
-                            let d = nodes[j].depth;
-                            j += 1;
-                            while j < nodes.len() && nodes[j].depth > d {
-                                if let Some(t) = &nodes[j].text {
-                                    extra.push_str(t);
-                                }
-                                j += 1;
-                            }
-                            continue;
-                        }
+        let mut i = 0;
+        while i < nodes.len() {
+            let row = nodes[i].parent.is_some_and(|p| holders.contains(&p))
+                && nodes[i].label.as_deref() != Some("above");
+            if !row {
+                i += 1;
+                continue;
+            }
+            let depth = nodes[i].depth;
+            let (mut line, mut extra) = (String::new(), String::new());
+            let mut j = i + 1;
+            while j < nodes.len() && nodes[j].depth > depth {
+                if nodes[j].role == Some(kui_native::Role::None) {
+                    let d = nodes[j].depth;
+                    j += 1;
+                    while j < nodes.len() && nodes[j].depth > d {
                         if let Some(t) = &nodes[j].text {
-                            line.push_str(t);
+                            extra.push_str(t);
                         }
                         j += 1;
                     }
-                    out.push((line, extra));
-                    i = j;
-                } else {
-                    i += 1;
+                    continue;
                 }
+                if let Some(t) = &nodes[j].text {
+                    line.push_str(t);
+                }
+                j += 1;
             }
+            out.push((line, extra));
+            i = j;
         }
         out
     }

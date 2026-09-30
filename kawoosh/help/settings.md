@@ -143,7 +143,7 @@ Paths complete as you type, and so do the choices of a setting that takes a few 
 
 ## The settings pane
 
-`:settings` (or `⌘,`) opens every setting in a column beside the one you are in, so a change shows on the code at once. `:settings QUERY` opens it already searched: `:settings font`.
+`:settings` (or `⌘,`, or `<leader>,`) opens every setting in a column beside the one you are in, so a change shows on the code at once. `:settings QUERY` opens it already searched: `:settings font`.
 
 Each setting is a row: its path as a settings file spells it, what it does, and a control for its kind. A switch flips, a word is one of a few chips, a number steps with `−` and `+` or takes a typed value, and a text is typed in place. A list or a table has **edit in file**, which opens the file at the key and adds the key first when the file does not have it. The rows are grouped into sections (Editing, Look, Layout, …), and a wide pane lists the sections down the left.
 
@@ -188,7 +188,7 @@ The pane is a Lua plugin over `kawoosh.settings`, which a pane of your own can r
 
 ## Types for the Lua language server
 
-At startup kawoosh writes type definitions for its Lua API and for every declared setting to a `types` folder beside its state database (`~/.local/share/kawoosh/types` unless `$XDG_DATA_HOME` or `$KAWOOSH_TYPES` says otherwise). When kawoosh runs the Lua language server, it adds that folder to the server's library, so `kawoosh.` and the keys of a settings table complete, with their docs. Put `---@type kawoosh.Settings` above the `return` of a settings file. To use them in another editor, add the folder to its `workspace.library`.
+At startup kawoosh writes type definitions for its Lua API and for every declared setting to a folder under `types` beside its state database (`~/.local/share/kawoosh/types` unless `$XDG_DATA_HOME` says otherwise). Each kawoosh executable has a folder of its own there, `kawoosh-` and a hash of its path, with an `exe` file naming it, so two builds side by side never overwrite each other's types; a folder whose executable is gone is removed at the next launch. `$KAWOOSH_TYPES` names one folder instead. When kawoosh runs the Lua language server, it adds that folder to the server's library, so `kawoosh.` and the keys of a settings table complete, with their docs. Put `---@type kawoosh.Settings` above the `return` of a settings file. To use them in another editor, set `KAWOOSH_TYPES` to a folder of your choosing and add that folder to its `workspace.library`.
 
 ## Common settings
 
@@ -227,6 +227,8 @@ At startup kawoosh writes type definitions for its Lua API and for every declare
 | `theme.name`, `theme.dark`, `theme.light` | `"rose-pine"`, `""`, `""` | the theme family, and a dark and a light theme apart from it ([look](look.md#themes)) |
 | `theme.appearance` | `"system"` | `system`, `dark` or `light` |
 | `markdown.render` | `true` | draw markdown rendered |
+| `markdown.reveal` | `"line"` | what the caret shows as its source: its `line`, the `span` it is in, or `none` ([look](look.md#markdown)) |
+| `markdown.navigation` | `"line"` | what `j` and `k` move by in rendered markdown: a `line` or a `row` on screen |
 | `editor.selection_radius` | `0` | round the selection's corners, in pixels |
 | `editor.breadcrumbs` | `true` | the symbols the caret is inside, on the pane's title bar ([search](search.md#breadcrumbs)) |
 | `editor.wrap` | `"off"` | wrap long lines at the pane's width: `"word"` between words, `"glyph"` anywhere ([look](look.md#soft-wrap)) |

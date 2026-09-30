@@ -192,7 +192,7 @@ Environment:
   KAWOOSH_SETTINGS   settings.lua (default: $XDG_CONFIG_HOME/kawoosh/settings.lua)
   KAWOOSH_FONTS      your fonts folder (default: $XDG_CONFIG_HOME/kawoosh/fonts)
   KAWOOSH_STATE      the state db (default: $XDG_DATA_HOME/kawoosh/state.db)
-  KAWOOSH_TYPES      where the Lua type stubs go (default: beside the db)
+  KAWOOSH_TYPES      where the Lua type stubs go (default: a folder per build under types/ beside the db)
 ";
 
 fn main() -> anyhow::Result<()> {
@@ -282,6 +282,7 @@ fn main() -> anyhow::Result<()> {
     // After the config, so what `init.lua` and the plugins added is in
     // the types lua-language-server reads.
     if let Some(dir) = kawoosh::types::types_dir() {
+        kawoosh::types::claim_build_dir(&dir);
         app.write_lua_types(&dir);
     }
     // The path opens after the config, so a plugin's opener sees it — a
