@@ -714,7 +714,12 @@ impl Kawoosh {
                 .fill()
                 .bg(pal.panel)
                 .clip()
-                .border(1.0, if focused { pal.accent } else { pal.border })
+                // One frame for every pane, focused or not: the focus is
+                // the title bar's (its band and its bright name). An
+                // accent frame met the strip's scrollbar and the last
+                // row's underlines along the pane's foot, and read as a
+                // glitch there.
+                .border(1.0, pal.border)
                 .on_layout(Value::map([
                     ("kind", "layout".into()),
                     ("pane", Value::Int(pane as i64)),
