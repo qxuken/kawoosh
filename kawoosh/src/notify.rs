@@ -832,11 +832,12 @@ impl Kawoosh {
     }
 
     /// The toasts: a float over the body's top-right, under the tab
-    /// strip, newest last.
+    /// strip, newest last. Declared every frame, empty when there are
+    /// none: kui stacks a float by when it opened, so a layer opened by
+    /// a toast that comes while a confirm is up (a server's message,
+    /// off the frame) would be over the dialog, inert. Always open, it
+    /// is under every confirm, as the rest of the window is.
     pub(crate) fn toasts(&self, ui: &mut Ui<'_>) {
-        if !self.notes.shown.iter().any(|s| s.toast) {
-            return;
-        }
         let pal = self.pal;
         let small = self.chrome.small;
         let max_w = (ui.viewport().w * 0.45).clamp(200.0, 560.0);
