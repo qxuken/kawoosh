@@ -291,7 +291,9 @@ kawoosh.view(VIEW, function(ctx)
 
   local shown = on_show(cur)
   local head = column { width = "grow", gap = 6, pad = { x = PAD, top = PAD },
-    row { gap = 8, cross_align = "center",
+    -- The size's stepper to a line of its own in a narrow pane, not
+    -- past its edge.
+    row { width = "grow", gap = 8, cross_gap = 6, wrap_children = true, cross_align = "center",
       text({ { "fonts", bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }),
       chip("mono", not S.all, { kind = "mode", all = false }, t),
       chip("all", S.all, { kind = "mode", all = true }, t),

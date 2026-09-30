@@ -208,6 +208,10 @@ impl Kawoosh {
                 .cross_align(Align::Center)
                 .label("statusline"),
             |ui| {
+                // A module squeezed past what fitting did — the name
+                // alone too wide, a branch beside it — ends in `…`
+                // rather than mid-letter.
+                let style = style.ellipsis();
                 for (i, item) in items.iter().enumerate() {
                     match item {
                         Some(m) => draw_module(ui, i, m, style, &pal),

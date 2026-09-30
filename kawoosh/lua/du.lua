@@ -32,6 +32,8 @@ local SHARE = 0.45
 local SIZE = 13
 local ROW_H = 22
 local BAR_W = 90
+-- The pane's width from which a row has room for its bar and count.
+local WIDE = 460
 local SORTS = { "size", "name", "files" }
 
 local du = {}
@@ -255,34 +257,45 @@ kawoosh.view(VIEW, function(ctx)
       and string.format("%s in %s files · %.1f s", human(st.bytes), count(st.files), st.secs)
       or string.format("walking… %s in %s files · %s directories done", human(st.bytes), count(st.files), count(st.dirs))
   if st.errors > 0 then said = said .. " · " .. count(st.errors) .. " unreadable" end
+  -- The place and the totals cut to the pane's width rather than past it.
   local head = column { width = "grow", gap = 4, pad = { x = 12, top = 10 },
-    row { gap = 8, cross_align = "center",
+    row { width = "grow", gap = 8, cross_align = "center",
       text({ { "disk usage", bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }),
-      text(where, { family = "mono", size = SIZE, color = t.accent, wrap = "none" }) },
-    text(said, { size = SIZE - 1, color = st.done and t.muted or t.fg, wrap = "none" }),
+      row { width = "grow", min_width = 0,
+        text(where, { family = "mono", size = SIZE, color = t.accent, ellipsis = true }) } },
+    text(said, { size = SIZE - 1, color = st.done and t.muted or t.fg, ellipsis = true }),
     text("jk walk · l in · h up · s sort (" .. S.sort .. ") · m marks · d deletes · o lists · r again · q closes",
       { size = SIZE - 2, color = t.faint, wrap = "word" }) }
 
+  -- A narrow pane drops the bar and the file counts, for the names.
+  local wide = (ctx.width or 0) == 0 or ctx.width >= WIDE
   local rows = uniform_list(ctx.env, { key = "list", rows = #list, row_h = ROW_H, width = "grow",
                                        height = "grow", pad = { x = 12 } }, function(i)
     local e = list[i + 1]
     local on = i + 1 == cur
     local frac = (largest > 0 and e.bytes) and e.bytes / largest or 0
     local share = (whole > 0 and e.bytes) and string.format("%3.0f%%", 100 * e.bytes / whole) or "   "
-    return row { key = "entry " .. e.name, width = "grow", height = ROW_H, gap = 8, pad = { x = 6 },
+    local r = { key = "entry " .. e.name, width = "grow", height = ROW_H, gap = 8, pad = { x = 6 },
       cross_align = "center", radius = 4,
       bg = on and (ctx.focused and t.selection or t.sunken) or nil,
       on_click = { kind = "row", i = i + 1 },
       text(S.marked[e.path] and "●" or " ", { size = SIZE, color = t.danger, wrap = "none" }),
       row { width = 72, main_align = "end",
-        text(human(e.bytes), { family = "mono", size = SIZE, color = e.bytes and t.fg or t.faint, wrap = "none" }) },
-      row { width = BAR_W, height = 8, radius = 2, bg = t.sunken,
+        text(human(e.bytes), { family = "mono", size = SIZE, color = e.bytes and t.fg or t.faint, wrap = "none" }) } }
+    if wide then
+      r[#r + 1] = row { width = BAR_W, height = 8, radius = 2, bg = t.sunken,
         row { width = math.max(1, math.floor(BAR_W * frac)), height = 8, radius = 2,
-              bg = e.dir and t.accent or t.muted } },
-      text(share, { family = "mono", size = SIZE - 1, color = t.muted, wrap = "none" }),
-      text(e.name .. (e.dir and "/" or ""), { size = SIZE, color = e.dir and t.accent or t.fg, wrap = "none" }),
-      row { width = "grow" },
-      text(e.dir and e.files and (count(e.files) .. " files") or "", { size = SIZE - 2, color = t.faint, wrap = "none" }) }
+              bg = e.dir and t.accent or t.muted } }
+    end
+    r[#r + 1] = text(share, { family = "mono", size = SIZE - 1, color = t.muted, wrap = "none" })
+    -- The name takes what is left, cut with an ellipsis: squeezed to
+    -- nothing, it was pushed past the row's end.
+    r[#r + 1] = row { width = "grow", min_width = 0,
+      text(e.name .. (e.dir and "/" or ""), { size = SIZE, color = e.dir and t.accent or t.fg, ellipsis = true }) }
+    if wide then
+      r[#r + 1] = text(e.dir and e.files and (count(e.files) .. " files") or "", { size = SIZE - 2, color = t.faint, wrap = "none" })
+    end
+    return row(r)
   end)
   if #list == 0 then
     rows[#rows + 1] = row { pad = { x = 8, y = 4 },
