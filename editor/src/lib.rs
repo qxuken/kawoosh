@@ -883,6 +883,9 @@ pub struct Editor {
     pub count: Option<usize>,
     /// An operator waiting for its motion, with the count typed before it.
     pub pending_op: Option<(&'static str, usize)>,
+    /// The register `"` named for the next command: only `_`, the
+    /// black hole, whose text is dropped — no register, no clipboard.
+    pub pending_register: Option<char>,
     /// A command waiting for its character argument.
     pub(crate) awaiting_char: Option<(Binding, Option<usize>)>,
     /// The last `f` / `t`: the character, whether forward, whether
@@ -1021,6 +1024,7 @@ impl Editor {
             pending: Vec::new(),
             count: None,
             pending_op: None,
+            pending_register: None,
             awaiting_char: None,
             last_find: None,
             last_put: None,
@@ -2041,6 +2045,23 @@ impl Editor {
         count: Option<usize>,
         arg_char: Option<char>,
     ) {
+        let naming = self.commands.resolve(name, args).name == "register";
+        self.run_resolved(view, name, args, count, arg_char);
+        // A named register lasts the command it was named for: through
+        // an operator's motion and a `f`'s character, gone after.
+        if !naming && self.pending_op.is_none() && self.awaiting_char.is_none() {
+            self.pending_register = None;
+        }
+    }
+
+    fn run_resolved(
+        &mut self,
+        view: ViewId,
+        name: &str,
+        args: &[String],
+        count: Option<usize>,
+        arg_char: Option<char>,
+    ) {
         let inv = self.commands.resolve(name, args);
         if let Some(spec) = self.commands.spec(&inv.name)
             && !spec.takes(inv.form)
@@ -2201,6 +2222,7 @@ impl Editor {
         }
         repeat::push(&mut self.repeat.current, step);
         let open = self.pending_op.is_some()
+            || self.pending_register.is_some()
             || self.awaiting_char.is_some()
             || self.surround.ranges.is_some()
             || self.surround.from.is_some()
@@ -2843,7 +2865,9 @@ impl Editor {
         }
         if let Some((binding, count)) = self.awaiting_char.take() {
             if stroke.code == "escape" {
+                self.count = None;
                 self.pending_op = None;
+                self.pending_register = None;
                 self.surround = Default::default();
                 return true;
             }
@@ -2996,6 +3020,7 @@ impl Editor {
                 self.pending.clear();
                 self.count = None;
                 self.pending_op = None;
+                self.pending_register = None;
                 false
             }
             Lookup::Exact(mut bs) => {
@@ -3038,21 +3063,29 @@ impl Editor {
                             self.pending.clear();
                             self.count = None;
                             self.pending_op = None;
+                            self.pending_register = None;
                             return false;
                         }
                     }
                 }
                 self.pending.clear();
-                let count = self.count.take();
                 let b = match picked {
                     Ok(b) => b,
                     Err(reason) => {
+                        self.count = None;
                         self.pending_op = None;
+                        self.pending_register = None;
                         self.message = reason;
                         return true;
                     }
                 };
                 let name = self.commands.resolve(&b.command, &b.args).name;
+                // A count before `"` is the command's after it: `3"_dd`
+                // is `"_3dd`.
+                let count = match name.as_str() {
+                    "register" => None,
+                    _ => self.count.take(),
+                };
                 if self.commands.spec(&name).is_some_and(|c| c.takes_char) {
                     self.awaiting_char = Some((b, count));
                     return true;
