@@ -127,7 +127,7 @@ and `lua` depend on the runner and the binding.
 
 Workspace dependencies that go: `sdl3`, `cosmic-text` (kui owns shaping).
 That come: `kui-native` (the runner, `kui` until alpha.19), `kui-core`,
-`kui-lua` at one pinned pre-release (`=0.1.0-alpha.26`, forgejo registry), `mlua` with **`lua55` + `vendored`**.
+`kui-lua` at one pinned pre-release (`=0.1.0-alpha.26`, drydock9 registry), `mlua` with **`lua55` + `vendored`**.
 
 ## Decisions
 
@@ -1086,12 +1086,12 @@ changes) and keeps the old ones (terminal embedding, off-thread
 providers) where they were.
 
 1. **Skeleton on kui.** Workspace pruned to `text-buffer` + `kawoosh`;
-   kui pinned from forgejo; fonts loaded; one read-only buffer drawn as
+   kui pinned from drydock9; fonts loaded; one read-only buffer drawn as
    rows with `j`/`k` scrolling through a root `on_key` sink; one headless
    test asserting rows and no warnings. *Proves the dependency, the Lua
    feature set, and Decision 3's shape.* The dependency half is already
    proven: a scratch crate on 2026-09-15 pulled `kui`, `kui-core` and
-   `kui-lua` `0.1.0-alpha.12` from the forgejo registry with `mlua`
+   `kui-lua` `0.1.0-alpha.12` from the drydock9 registry with `mlua`
    `lua55`+`vendored`, seeded a `kawoosh` global into a `LuaExtension`'s
    state, filled a host-declared slot from that script through
    `Core::frame_with(.., &mut Extensions)`, and asserted the fill's text
