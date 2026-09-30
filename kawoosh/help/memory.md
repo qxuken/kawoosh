@@ -35,12 +35,13 @@ Text that a password manager marks as concealed or transient is not picked up th
 | `texts` | what was yanked, deleted or pasted in, with the text under the rows |
 | `files` | files and scratches attended, with visits, time spent, edits, and any unsaved draft (`:oldfiles` and `:browse` open this view) |
 | `recent` | everything attended, in order, newest first: "where was I" (`<leader>ml`) |
+| `jumps` | this tab's jumps, newest first, with how many `<C-o>` (`‹`) or `<C-i>` (`›`) away each is; `<CR>` goes there, `x` drops one (`<leader>mj`, `:jumps`; [editing](editing.md#jumps)) |
 | `commands`, `searches` | command lines and searches |
 | `pins` | pinned files (`<leader>mp`) |
 | `marks` | marks |
 | `all` | every row, from every workspace |
 
-Every view but `all` shows the current workspace only.
+Every view but `all` and `jumps` shows the current workspace only; `jumps` shows the tab's.
 
 | keys in the pane | what |
 |---|---|

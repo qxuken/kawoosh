@@ -34,6 +34,7 @@ pub mod help;
 pub mod history;
 pub mod indent;
 pub mod inspector;
+pub mod jumps;
 pub mod languages;
 pub mod launcher;
 pub mod layout;

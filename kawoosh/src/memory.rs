@@ -73,6 +73,7 @@ pub enum View {
     Texts,
     Files,
     Recent,
+    Jumps,
     Commands,
     Searches,
     Pins,
@@ -81,10 +82,11 @@ pub enum View {
 }
 
 impl View {
-    pub const ALL: [View; 8] = [
+    pub const ALL: [View; 9] = [
         View::Texts,
         View::Files,
         View::Recent,
+        View::Jumps,
         View::Commands,
         View::Searches,
         View::Pins,
@@ -97,6 +99,7 @@ impl View {
             View::Texts => "texts",
             View::Files => "files",
             View::Recent => "recent",
+            View::Jumps => "jumps",
             View::Commands => "commands",
             View::Searches => "searches",
             View::Pins => "pins",
@@ -176,6 +179,14 @@ pub enum Row {
     },
     /// A transition of the ring.
     Recent(RingRow),
+    /// A place of the tab's jumps (docs/design/jumps.md Decision 5): its
+    /// index in the list, the place, and its line's text while its
+    /// buffer is open.
+    Jump {
+        index: usize,
+        jump: crate::jumps::Jump,
+        text: String,
+    },
 }
 
 impl Row {
@@ -184,7 +195,7 @@ impl Row {
         match self {
             Row::Moment { row, .. } => Some(&row.key),
             Row::Recent(r) => Some(&r.key),
-            Row::Text(_) => None,
+            Row::Text(_) | Row::Jump { .. } => None,
         }
     }
 
@@ -494,6 +505,14 @@ impl Kawoosh {
                 format!("{label} {} {} {extra}", row.key.subject, row.key.kind)
             }
             Row::Recent(r) => format!("{} {}", r.key.subject, r.key.kind),
+            Row::Jump { jump, text, .. } => format!(
+                "{} {} {text}",
+                jump.path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
+                jump.line + 1
+            ),
         }
     }
 
@@ -552,7 +571,8 @@ impl Kawoosh {
             self.memory_pane.view,
             filter,
         );
-        if self.memory_pane.built != Some(stamp) {
+        // The jumps are the tab's, moving with no stamp: read each time.
+        if self.memory_pane.built != Some(stamp) || self.memory_pane.view == View::Jumps {
             let filter_moved = self
                 .memory_pane
                 .built
@@ -627,6 +647,7 @@ impl Kawoosh {
                 .into_iter()
                 .map(Row::Recent)
                 .collect(),
+            View::Jumps => self.jump_rows(),
             View::Files => {
                 let ws = self.moments.workspace();
                 let mut rows = self.moment_rows(&MomentQuery {
@@ -1089,6 +1110,7 @@ impl Kawoosh {
             Row::Recent(_) => {
                 self.ed.message = "a transition is the ring's: forget its subject in files".into();
             }
+            Row::Jump { index, .. } => self.drop_jump(index),
         }
         self.sync_memory_rows();
         self.memory_pane.cursor = i.min(self.memory_pane.rows.len().saturating_sub(1));
@@ -1113,6 +1135,10 @@ impl Kawoosh {
                     .unwrap_or_default();
                 self.open_subject(&r.key, &meta);
             }
+            Row::Jump { index, .. } => {
+                let back = self.memory_pane.back;
+                self.jump_to_entry(index, back);
+            }
         }
     }
 
@@ -1136,7 +1162,7 @@ impl Kawoosh {
         match self.memory_pane.rows.get(cursor).cloned() {
             Some(Row::Text(t)) => self.goto_text_origin(t),
             Some(Row::Moment { row, .. }) => self.open_subject(&row.key, &row.meta),
-            Some(Row::Recent(_)) => self.open_memory_row(cursor),
+            Some(Row::Recent(_) | Row::Jump { .. }) => self.open_memory_row(cursor),
             None => {}
         }
     }
@@ -1152,6 +1178,10 @@ impl Kawoosh {
             return;
         };
         let (key, on) = match row {
+            Row::Jump { .. } => {
+                self.ed.message = "a jump is the tab's, not the memory's to pin".into();
+                return;
+            }
             Row::Moment { row, .. } => (row.key.clone(), row.pinned == 0),
             Row::Recent(r) => {
                 let on = self
@@ -1292,6 +1322,8 @@ impl Kawoosh {
             },
             _ => "",
         };
+        let jumps_at = self.jumps().at;
+        let jumps_len = self.jumps().list.len();
         let has_store = self.store.is_some();
         let pending = self.moments.pending();
         let evicted = self.moments.evicted;
@@ -1316,6 +1348,18 @@ impl Kawoosh {
                 "transition{}",
                 if n == 1 && filter.is_none() { "" } else { "s" }
             )),
+            View::Jumps => {
+                let mut s = count(format!(
+                    "jump{}",
+                    if n == 1 && filter.is_none() { "" } else { "s" }
+                ));
+                s.push_str(" · this tab's");
+                let js = self.jumps();
+                if js.at < js.list.len() {
+                    s.push_str(&format!(" · {} back", js.list.len() - js.at));
+                }
+                s
+            }
             v => {
                 let drafts = rows
                     .iter()
@@ -1426,6 +1470,12 @@ impl Kawoosh {
                         ui.text_in(tm.rest(), "subject", small(pal.faint));
                         ui.text_in(col(8.0), "when", small(pal.faint));
                     }
+                    View::Jumps => {
+                        ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
+                            ui.text("steps", small(pal.faint))
+                        });
+                        ui.text_in(tm.rest(), "place", small(pal.faint));
+                    }
                     _ => {
                         ui.with(col(9.0).main_align(kui_native::Align::Start), |ui| {
                             ui.text(if view == View::Files { "state" } else { "kind" }, small(pal.faint))
@@ -1466,6 +1516,7 @@ impl Kawoosh {
                             });
                         } else if (i == 0 && view == View::Texts)
                             || r.state() == Some(State::OnShow)
+                            || matches!(r, Row::Jump { index, .. } if *index == jumps_at)
                         {
                             // The register's text, a buffer on show.
                             line = line.bg(pal.strip);
@@ -1481,6 +1532,7 @@ impl Kawoosh {
                                 format!("memory {} {}", row.key.kind, row.key.subject)
                             }
                             Row::Recent(rr) => format!("recent {} {} {}", rr.at, rr.key.kind, rr.key.subject),
+                            Row::Jump { index, .. } => format!("jump {index}"),
                         };
                         ui.with_keyed(
                             &label,
@@ -1627,6 +1679,20 @@ impl Kawoosh {
                                         ui.text(&crate::settings::ago(age), style().color(pal.faint));
                                     });
                                 }
+                                // How many `<C-o>` (or `<C-i>`) away,
+                                // `name:line`, the line as it reads.
+                                Row::Jump { index, jump, text } => {
+                                    let (steps, color) = jump_steps(*index, jumps_at, jumps_len);
+                                    ui.text_in(
+                                        col(9.0).main_align(kui_native::Align::Start),
+                                        &steps,
+                                        small(color.pick(&pal)),
+                                    );
+                                    ui.with(tm.rest(), |ui| {
+                                        ui.text(&jump_label(jump), style().color(pal.fg));
+                                        ui.text(text.trim(), small(pal.faint));
+                                    });
+                                }
                             },
                         );
                     },
@@ -1670,6 +1736,13 @@ impl Kawoosh {
                             ),
                         },
                         Some(Row::Recent(rr)) => format!("{} {}", rr.key.kind, rr.key.subject),
+                        Some(Row::Jump { jump, .. }) => match &jump.path {
+                            Some(p) => format!("{} · line {}, column {}", p.display(), jump.line + 1, jump.col + 1),
+                            None => jump_label(jump),
+                        },
+                        None if view == View::Jumps => {
+                            "no jumps in this tab yet: a move of a screen or more, another file, gg G n % 'a gd".into()
+                        }
                         None => match view {
                             View::Texts => {
                                 "nothing remembered yet: a yank, a delete, a paste from the clipboard"
@@ -1762,6 +1835,45 @@ impl Kawoosh {
     }
 }
 
+/// A jump as a row names it: `name:line`, or `line N` of a buffer with
+/// no file.
+fn jump_label(j: &crate::jumps::Jump) -> String {
+    match j.path.as_deref().and_then(kawoosh_systems::fs::basename) {
+        Some(name) => format!("{name}:{}", j.line + 1),
+        None => format!("line {}", j.line + 1),
+    }
+}
+
+/// The colour a jump's steps are drawn in.
+#[derive(Clone, Copy)]
+enum StepColor {
+    Here,
+    Back,
+    Ahead,
+}
+
+impl StepColor {
+    fn pick(self, pal: &crate::palette::Pal) -> Color {
+        match self {
+            StepColor::Here => pal.accent,
+            StepColor::Back => pal.dim,
+            StepColor::Ahead => pal.faint,
+        }
+    }
+}
+
+/// How far entry `i` is from where the list is: `‹ 2` two `<C-o>`
+/// back, `› 1` one `<C-i>` ahead, `here` the entry it is at. From the
+/// present, the newest entry is one back.
+fn jump_steps(i: usize, at: usize, len: usize) -> (String, StepColor) {
+    let at = at.min(len);
+    match i.cmp(&at) {
+        std::cmp::Ordering::Less => (format!("‹ {}", at - i), StepColor::Back),
+        std::cmp::Ordering::Equal => ("here".into(), StepColor::Here),
+        std::cmp::Ordering::Greater => (format!("› {}", i - at), StepColor::Ahead),
+    }
+}
+
 /// A moment's first line, as a row shows it.
 fn preview(text: &str) -> String {
     let first = text.lines().next().unwrap_or("");
@@ -1825,13 +1937,13 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("memory")
                 .args(Args::new(&[ArgKind::Text]))
-                .doc("the memory pane: texts, files, recent, commands, searches, pins, marks (the workspace's), all (every workspace's)"),
+                .doc("the memory pane: texts, files, recent, jumps (the tab's), commands, searches, pins, marks (the workspace's), all (every workspace's)"),
             |k, ctx| match ctx.args.first().map(String::as_str) {
                 Some(name) => match View::parse(name) {
                     Some(v) => k.toggle_memory_panel(Some(v)),
                     None => {
                         k.ed.message = format!(
-                            "no memory view {name} (texts, files, recent, commands, searches, pins, marks, all)"
+                            "no memory view {name} (texts, files, recent, jumps, commands, searches, pins, marks, all)"
                         )
                     }
                 },
@@ -1847,6 +1959,12 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         cmd(
             Spec::new("memory recent").doc("the ring: what was attended, in order, newest first"),
             |k, _| k.toggle_memory_panel(Some(View::Recent)),
+        ),
+        cmd(
+            Spec::new("memory jumps")
+                .alias(&["jumps", "ju"])
+                .doc("the tab's jumps, newest first: how many `<C-o>` away each is"),
+            |k, _| k.toggle_memory_panel(Some(View::Jumps)),
         ),
         cmd(
             Spec::new("memory forget")

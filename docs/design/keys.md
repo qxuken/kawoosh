@@ -210,6 +210,7 @@ stays the pty's, with the chords and `<C-w>…` as before.
 | `gg` `G` | the file's ends |
 | `m{a-z}` `m{A-Z}` | mark the caret's place: a letter this file's, a capital the workspace's (not in a `dir` listing, whose `m` sorts); `:delmarks x`, `:delmarks!` this file's ([marks.md](marks.md)) |
 | `'{x}` `` `{x} `` | the mark's line (its first non-blank), its line and column — its file opened for a capital; found again when the file changed, and said how; adrift, said so, at its symbol when that is known |
+| `<C-o>` `<C-i>` | back, forward along the tab's jumps, COUNT places ([jumps.md](jumps.md)): a place left by a move of a screen or more, into another buffer, or by `gg` `G` `:N` `n` `N` `*` `%` a search a mark a definition a pick — into the pane it was left in while it is in the tab; a new jump from back in the list drops what was ahead |
 | `gh` `gl` | the line's ends (helix; `^` and `$` stay) |
 | `ge` `gE` | the end of the previous word, WORD |
 | `gu` `gU` `g~` + motion | lower-case, upper-case, turn the case of what it covers; `guu` `gUU` `g~~` the line |
@@ -406,6 +407,7 @@ objects, or any other character on both sides.
 | `<leader>mp` `<leader>ma` | the workspace's pinned files (`:memory pins`), pin or unpin the buffer's file |
 | `<A-1>`…`<A-9>` | open the workspace's Nth pin |
 | `<leader>ml` | the memory's ring (`:memory recent`): where was I — every subject attended in this workspace, in order, newest first |
+| `<leader>mj` | the tab's jumps (`:memory jumps`, `:jumps`), newest first, how many `<C-o>` away each is; `<CR>` goes to one, `x` drops it |
 | `<leader>mf` | the files and scratches attended, with their drafts (`:memory files`) |
 | `<leader>ww` | the workspaces worked in before (`picker workspaces`, a launcher section too): a pick moves the tab there and opens the file last attended (workspaces.md Decision 11) |
 | `<leader>ws` `<leader>wr` | save, restore the session |

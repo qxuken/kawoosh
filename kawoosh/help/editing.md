@@ -45,6 +45,7 @@ Most of vim's letters mean what they always did. The exceptions:
 | `-` `_` | open the file's directory, the working directory, as a listing ([files](files.md)) |
 | `<CR>` | on a `path:line` in the text, opens it |
 | `m` `'` `` ` `` | marks as vim's, but a capital letter is the workspace's, across files; `]'` `['` walk the marked lines, `<leader>'` lists them |
+| `<C-o>` `<C-i>` | the jumps are the tab's, not the window's, and a big move is one whatever made it (below) |
 
 Missing on purpose: named registers (`"a`) — the [memory](memory.md) is
 what they were for — and visual block `<C-v>`, whose job `<C-j>` in
@@ -74,6 +75,24 @@ register.
 `:s/PAT/REP/g` replaces on the lines every selection touches (the
 caret's line, with one caret), `:%s` in the whole file, `:N,Ms` on lines N
 to M. Searching is covered in [search](search.md).
+
+## Jumps
+
+`<C-o>` goes back to where you were before a jump, `<C-i>` forward
+again; a count goes that many places. A jump is any move that takes the
+caret into another buffer or a screen or more away — a `50j`, a list's
+`<CR>`, a definition, a plugin's move — and `gg` `G` `:N` `n` `N` `*`
+`%`, a search, a mark, a pick from the picker are jumps however near.
+Paging (`<C-d>` `<C-f>`), an edit that carries the caret (an undo, a
+paste), and moving the keys to another pane are not.
+
+The list is the tab's: a jump made in one pane and a jump in another
+are one trail, and going back to a place goes into the pane it was left
+in — switched back to its file if it shows another now — while that
+pane is still in the tab. Going back and then jumping somewhere new
+drops the places that were ahead, as a browser does. `<leader>mj`
+(`:jumps`) lists them in the [memory](memory.md) pane, how many
+`<C-o>` away each is; a session keeps each tab's list.
 
 ## Case
 
