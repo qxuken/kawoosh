@@ -188,7 +188,7 @@ The pane is a Lua plugin over `kawoosh.settings`, which a pane of your own can r
 
 ## Types for the Lua language server
 
-At startup kawoosh writes type definitions for its Lua API and for every declared setting to a `types` folder beside its state database (`~/.local/share/kawoosh/types` unless `$XDG_DATA_HOME` or `$KAWOOSH_TYPES` says otherwise). When kawoosh runs the Lua language server, it adds that folder to the server's library, so `kawoosh.` and the keys of a settings table complete, with their docs. Put `---@type kawoosh.Settings` above the `return` of a settings file. To use them in another editor, add the folder to its `workspace.library`.
+At startup kawoosh writes type definitions for its Lua API and for every declared setting to a folder under `types` beside its state database (`~/.local/share/kawoosh/types` unless `$XDG_DATA_HOME` says otherwise). Each kawoosh executable has a folder of its own there, `kawoosh-` and a hash of its path, with an `exe` file naming it, so two builds side by side never overwrite each other's types; a folder whose executable is gone is removed at the next launch. `$KAWOOSH_TYPES` names one folder instead. When kawoosh runs the Lua language server, it adds that folder to the server's library, so `kawoosh.` and the keys of a settings table complete, with their docs. Put `---@type kawoosh.Settings` above the `return` of a settings file. To use them in another editor, set `KAWOOSH_TYPES` to a folder of your choosing and add that folder to its `workspace.library`.
 
 ## Common settings
 

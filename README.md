@@ -60,7 +60,7 @@ Environment variables override the paths:
 | `KAWOOSH_INIT` | `init.lua` |
 | `KAWOOSH_STATE` | the state database |
 | `KAWOOSH_FONTS` | the user fonts folder |
-| `KAWOOSH_TYPES` | where the Lua type files for lua-language-server are written (default: `types` beside the state database) |
+| `KAWOOSH_TYPES` | where the Lua type files for lua-language-server are written (default: a folder per kawoosh executable under `types` beside the state database) |
 
 ## Help
 

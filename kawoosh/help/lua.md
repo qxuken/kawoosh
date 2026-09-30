@@ -261,7 +261,7 @@ kawoosh.test.eq(kawoosh.buf.line(1), os.date("%Y-%m-%d"), "the date")
 
 This page covers the main parts. For everything else:
 
-- Your Lua language server knows the whole API. At startup kawoosh writes `kawoosh.lua` (the `kawoosh` table), `kui.lua` (the view nodes) and `settings.lua` (every declared setting) to a `types` folder beside its state database (`~/.local/share/kawoosh/types`, or `KAWOOSH_TYPES`), and adds that folder to lua-language-server's library, so `kawoosh.` and `row {` complete in `init.lua`, in plugins and in settings files.
+- Your Lua language server knows the whole API. At startup kawoosh writes `kawoosh.lua` (the `kawoosh` table), `kui.lua` (the view nodes) and `settings.lua` (every declared setting) to a folder of its own under `types` beside its state database (`~/.local/share/kawoosh/types/kawoosh-…`, one per kawoosh executable; `KAWOOSH_TYPES` names one instead), and adds that folder to lua-language-server's library, so `kawoosh.` and `row {` complete in `init.lua`, in plugins and in settings files.
 - In the source, every function is described in a comment above it in `lua/lua/boot.lua` and `lua/src/lib.rs`, and the bundled plugins in `kawoosh/lua/` are working examples.
 
 See also: [settings](settings.md), [commands](commands.md), [keys](keys.md).
