@@ -937,6 +937,52 @@ fn a_lua_view_has_fields_with_modes() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A field keeps the keys of its view, not of the window: with the
+/// keyboard on another pane, a view's field that had them draws no
+/// caret, so one caret is on the screen — and it is back with the pane.
+#[test]
+fn a_lua_field_shows_no_caret_off_the_focused_pane() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "hello\n");
+    app.run_lua_source(
+        "init",
+        r#"
+        kawoosh.view("finder", function(ctx)
+          return column { pad = 8, gap = 4,
+            ctx.field { name = "q", placeholder = "find a thing" },
+            text("typed: " .. ctx.field_text("q")),
+          }
+        end, function(ev) end)
+        "#,
+    );
+    d.frame(&mut app);
+    let editor = app.layout.focused();
+    ex(&mut d, &mut app, "view finder");
+    d.frame(&mut app);
+    let finder = app
+        .layout
+        .visible_panes()
+        .into_iter()
+        .find(|p| matches!(app.layout.content(*p), Some(Content::Lua(_))))
+        .expect("the finder's pane");
+    app.layout.focus(finder);
+    app.run_lua_source("t", r#"kawoosh.field_focus("finder", "q")"#);
+    d.frame(&mut app);
+    d.keys(&mut app, "i");
+    d.keys(&mut app, "abc");
+    d.frame(&mut app);
+    let bars = |d: &Drive| d.core.nodes().iter().filter(|n| n.rect.w == 2.0).count();
+    assert_eq!(bars(&d), 1, "the field's bar while its pane has the keys");
+    app.layout.focus(editor);
+    d.frame(&mut app);
+    assert!(app.lua_field_focused("finder").is_some(), "still the view's");
+    assert_eq!(bars(&d), 0, "no caret in a pane without the keyboard");
+    app.layout.focus(finder);
+    d.frame(&mut app);
+    assert_eq!(bars(&d), 1, "back with the pane");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// `kawoosh.language` (kui.md D13): a language of files alone names
 /// them — one opened after, and one already open that nothing had
 /// claimed — and a grammar that is not where it was said to be is a
