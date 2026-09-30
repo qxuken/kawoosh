@@ -368,6 +368,42 @@ fn bdo_leaves_other_workspaces_buffers_even_nested_ones() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+/// `:bd` on a scratch in a tab of one project never falls back to
+/// another project's file: the pane goes to a buffer of the tab's, else
+/// a new scratch — and not under `buffers.scope = "all"` either, while
+/// that project's tab is open.
+#[test]
+fn bd_on_a_scratch_stays_in_its_workspace() {
+    let root = tmp("bd");
+    let (a, b) = projects(&root);
+    std::fs::write(a.join("one.txt"), "one\n").unwrap();
+    std::fs::write(b.join("two.txt"), "two\n").unwrap();
+    let (mut d, mut app) = launch();
+    ex(&mut d, &mut app, &format!("cd {}", a.display()));
+    ex(&mut d, &mut app, "e one.txt");
+    ex(&mut d, &mut app, "tabnew");
+    ex(&mut d, &mut app, &format!("cd {}", b.display()));
+    let shown = |app: &Kawoosh| {
+        let v = app.focused_view().unwrap();
+        app.ed.buffers[app.ed.views[v].buffer].name.clone()
+    };
+    assert_eq!(shown(&app), "*scratch*");
+    ex(&mut d, &mut app, "bd");
+    assert_eq!(shown(&app), "*scratch*", "not alpha's one.txt");
+    ex(&mut d, &mut app, "set buffers.scope=all");
+    ex(&mut d, &mut app, "bd");
+    assert_eq!(shown(&app), "*scratch*", "not under scope = all either");
+    ex(&mut d, &mut app, "set buffers.scope!");
+    // One of the tab's own is where it goes.
+    ex(&mut d, &mut app, "e two.txt");
+    ex(&mut d, &mut app, "enew");
+    ex(&mut d, &mut app, "bd");
+    assert_eq!(shown(&app), "two.txt");
+    ex(&mut d, &mut app, "tabp");
+    assert_eq!(shown(&app), "one.txt");
+    std::fs::remove_dir_all(&root).ok();
+}
+
 /// Closing a tab closes the buffers no tab has now: not one under
 /// another tab's directory, nor one another tab has shown; an unsaved
 /// one is kept, the tab in front's, and said.
