@@ -10,12 +10,14 @@
 -- `j` `k` `gg` `G` `<C-d>` `<C-u>` walk; `l` or `<CR>` goes into a
 -- directory (a file opens); `h` or `-` goes up, not past where the walk
 -- began; `s` sorts by size, name, or files; `m` marks an entry (Space
--- is the leader);
--- `d` deletes the marked entries, or the cursor's, through the file
--- manager's plan (`kawoosh.dir.remove`: one confirm, applied as a
--- listing's `:w` applies), their sizes taken out of every total above
--- them; `o` lists the directory in the file manager; `r` walks again;
--- `q` closes, the walk stopped with it.
+-- is the leader), kept as the pane goes elsewhere and counted in its
+-- head;
+-- `d` deletes the directory's marked entries, or the cursor's, and `D`
+-- every marked entry wherever it is, through the file manager's plan
+-- (`kawoosh.dir.remove`: one confirm, applied as a listing's `:w`
+-- applies), their sizes taken out of every total above them; `o` lists
+-- the directory in the file manager; `r` walks again; `q` closes, the
+-- walk stopped with it.
 --
 -- Each pane is its own: a `:du` in another tab opens a pane there with
 -- a walk of its own, and the first goes on as it was (roadmap step 60).
@@ -198,10 +200,69 @@ local function mark()
   local sh = shown()
   local e = sh.rows[index_of(sh, S.cursor)]
   if not e then return end
-  S.marked[e.path] = not S.marked[e.path] or nil
+  S.marked[e.path] = not S.marked[e.path] and e or nil
   walk(1)
 end
 
+-- The marked entries, by path: `count`, and `bytes` as sized so far,
+-- an entry under a marked directory counted with it.
+local function marks()
+  local n, bytes = 0, 0
+  for p, e in pairs(S.marked) do
+    local d, under = fs.parent(p), false
+    while d and not under do
+      under = S.marked[d] ~= nil
+      d = d ~= S.root and fs.parent(d) or nil
+    end
+    if not under then
+      n = n + 1
+      bytes = bytes + ((e.dir and door.size(S.walk, p)) or e.bytes or 0)
+    end
+  end
+  return n, bytes
+end
+
+-- Deletes `gone` (rows) through the plan: once applied, each out of the
+-- walk's totals, its directory's listing read again and its mark gone.
+-- An entry under another of them goes with it, not twice.
+local function remove(gone)
+  local set = {}
+  for _, e in ipairs(gone) do set[e.path] = true end
+  local paths, rows = {}, {}
+  for _, e in ipairs(gone) do
+    local d, under = fs.parent(e.path), false
+    while d and not under do
+      under = set[d] == true
+      d = d ~= S.root and fs.parent(d) or nil
+    end
+    if not under then
+      paths[#paths + 1], rows[#rows + 1] = e.path, e
+    end
+  end
+  if #paths == 0 then return end
+  table.sort(paths)
+  local st, walk_id = S, S.walk
+  kawoosh.dir.remove(paths, function()
+    for _, e in ipairs(rows) do
+      if not fs.exists(e.path) then
+        local bytes, files = e.bytes, e.files
+        if e.dir then bytes, files = door.size(walk_id, e.path) end
+        door.removed(walk_id, e.path, bytes or 0, files or 1)
+      end
+    end
+    if st.walk ~= walk_id then return end
+    for _, e in ipairs(gone) do
+      if not fs.exists(e.path) then
+        st.listed[fs.parent(e.path)] = nil
+        for p in pairs(st.marked) do
+          if p == e.path or fs.relative(p, e.path) then st.marked[p] = nil end
+        end
+      end
+    end
+  end)
+end
+
+-- `d`: the directory's marked entries, or the cursor's.
 local function delete()
   if not S then return end
   local sh = shown()
@@ -211,17 +272,16 @@ local function delete()
   end
   if #gone == 0 then gone[1] = sh.rows[index_of(sh, S.cursor)] end
   if #gone == 0 then return end
-  local paths = {}
-  for _, e in ipairs(gone) do paths[#paths + 1] = e.path end
-  local st, walk_id, dir_on = S, S.walk, S.dir
-  kawoosh.dir.remove(paths, function()
-    for _, e in ipairs(gone) do
-      if not fs.exists(e.path) then door.removed(walk_id, e.path, e.bytes or 0, e.files or 1) end
-    end
-    if st.walk == walk_id then
-      st.listed[dir_on], st.marked = nil, {}
-    end
-  end)
+  remove(gone)
+end
+
+-- `D`: every marked entry, wherever it is.
+local function delete_marked()
+  if not S then return end
+  local gone = {}
+  for _, e in pairs(S.marked) do gone[#gone + 1] = e end
+  if #gone == 0 then return kawoosh.echo("nothing marked") end
+  remove(gone)
 end
 
 local function close(pane)
@@ -257,6 +317,8 @@ kawoosh.view(VIEW, function(ctx)
       and string.format("%s in %s files · %.1f s", human(st.bytes), count(st.files), st.secs)
       or string.format("walking… %s in %s files · %s directories done", human(st.bytes), count(st.files), count(st.dirs))
   if st.errors > 0 then said = said .. " · " .. count(st.errors) .. " unreadable" end
+  local n_marked, marked_bytes = marks()
+  if n_marked > 0 then said = said .. string.format(" · %d marked, %s", n_marked, human(marked_bytes)) end
   -- The place and the totals cut to the pane's width rather than past it.
   local head = column { width = "grow", gap = 4, pad = { x = 12, top = 10 },
     row { width = "grow", gap = 8, cross_align = "center",
@@ -264,7 +326,7 @@ kawoosh.view(VIEW, function(ctx)
       row { width = "grow", min_width = 0,
         text(where, { family = "mono", size = SIZE, color = t.accent, ellipsis = true }) } },
     text(said, { size = SIZE - 1, color = st.done and t.muted or t.fg, ellipsis = true }),
-    text("jk walk · l in · h up · s sort (" .. S.sort .. ") · m marks · d deletes · o lists · r again · q closes",
+    text("jk walk · l in · h up · s sort (" .. S.sort .. ") · m marks · d deletes · D deletes marked · o lists · r again · q closes",
       { size = SIZE - 2, color = t.faint, wrap = "word" }) }
 
   -- A narrow pane drops the bar and the file counts, for the names.
@@ -375,7 +437,8 @@ on("sort", function()
   S.reveal = true
 end, "sort by size, name, or files")
 on("mark", mark, "mark the cursor's entry to delete, or unmark it")
-on("delete", delete, "delete the marked entries, or the cursor's, through the file manager's plan")
+on("delete", delete, "delete the directory's marked entries, or the cursor's, through the file manager's plan")
+on("delete marked", delete_marked, "delete every marked entry, in any directory, through the file manager's plan")
 on("list", function() if S then kawoosh.dir.open(S.dir) end end, "list the directory in the file manager")
 on("again", function(pane) if S then start(pane, S.root) end end, "walk again from the root")
 on("close", close, "close the pane, the walk stopped")
@@ -384,7 +447,7 @@ for k, c in pairs {
   j = "down", k = "up", ["<Down>"] = "down", ["<Up>"] = "up",
   ["<C-d>"] = "page down", ["<C-u>"] = "page up", gg = "first", G = "last",
   l = "into", ["<CR>"] = "into", ["<Right>"] = "into", h = "out", ["-"] = "out", ["<Left>"] = "out",
-  s = "sort", m = "mark", d = "delete", o = "list", r = "again",
+  s = "sort", m = "mark", d = "delete", D = "delete marked", o = "list", r = "again",
   q = "close", ["<Esc>"] = "close",
 } do
   kawoosh.map("p", k, "du " .. c, { view = VIEW })
