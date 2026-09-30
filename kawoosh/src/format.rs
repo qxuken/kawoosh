@@ -143,6 +143,13 @@ pub struct Picked {
 }
 
 impl Picked {
+    /// Whether its program is there to run: a Lua `run` always, a
+    /// command on the `PATH` or the project's own. Taken as there
+    /// while the shell's `PATH` is still being asked for.
+    pub fn found(&self) -> bool {
+        self.def.lua || kawoosh_systems::io::on_path(&self.program) != Some(false)
+    }
+
     /// Whether what runs is code from the repository — its own binary,
     /// or a config that is code (formatters.md Decision 5).
     pub fn is_projects_code(&self) -> bool {
@@ -407,13 +414,30 @@ impl Kawoosh {
             .map(|p| crate::editorconfig::absolute(p, &self.cwd))
             .and_then(|p| p.parent().map(Path::to_path_buf));
         let all = defs(&self.ed.settings);
-        let lsp =
-            || (self.lsp_serves(&language)).then(|| Choice::Lsp(format!("the {language} server")));
+        // What could not format, and why: a list goes on to its next,
+        // and says them all when none could.
+        let mut skipped: Vec<String> = Vec::new();
+        // `named`: `lsp` asked for by name, where no server at all is
+        // worth saying; `auto` says only one down.
+        let lsp = |skipped: &mut Vec<String>, named: bool| {
+            if !self.lsp_serves(&language) {
+                if named {
+                    skipped.push(self.lsp_absent(&language));
+                } else if let Some(why) = self.lsp_down(&language) {
+                    skipped.push(why);
+                }
+            } else if !self.caps_of(id).format {
+                skipped.push(format!("the {language} server does not do formatting"));
+            } else {
+                return Some(Choice::Lsp(format!("the {language} server")));
+            }
+            None
+        };
         let indents = self.indent_trees.serves(id, &language);
         for w in &wanted {
             match w.as_str() {
                 "lsp" => {
-                    if let Some(c) = lsp() {
+                    if let Some(c) = lsp(&mut skipped, true) {
                         return c;
                     }
                 }
@@ -422,14 +446,19 @@ impl Kawoosh {
                     if indents {
                         return Choice::Indent("indent: named".into());
                     }
-                    if wanted.len() == 1 {
-                        return Choice::None(format!("no indent rules for {language}"));
-                    }
+                    skipped.push(format!("no indent rules for {language}"));
                 }
                 "auto" => {
                     let Some(dir) = dir.as_deref().filter(|_| !remote) else {
-                        if let Some(c) = lsp() {
+                        if let Some(c) = lsp(&mut skipped, false) {
                             return c;
+                        }
+                        // No file, or one on a host: no config to find,
+                        // and the syntax's indent needs none.
+                        if indents {
+                            return Choice::Indent(format!(
+                                "indent: the syntax's, nothing else formats {language}"
+                            ));
                         }
                         continue;
                     };
@@ -445,17 +474,31 @@ impl Kawoosh {
                         }
                     }
                     if let Some((_, def, c)) = best {
-                        let why = format!("{}: {}", def.name, self.short_name(&c));
-                        return Choice::Tool(Box::new(pick(def, dir, Some(c), why)));
+                        // The project's word: not another formatter's
+                        // style in its place when this one is missing.
+                        let config = self.short_name(&c);
+                        let why = format!("{}: {config}", def.name);
+                        let p = pick(def, dir, Some(c), why);
+                        if !p.found() {
+                            return Choice::None(format!(
+                                "{} is not found, and {config} says the project formats with it",
+                                def.name
+                            ));
+                        }
+                        return Choice::Tool(Box::new(p));
                     }
                     if let Some(def) = all
                         .iter()
                         .find(|d| d.enabled && d.formats(&language) && d.when == When::Always)
                     {
                         let why = format!("{}: always for {language}", def.name);
-                        return Choice::Tool(Box::new(pick(def, dir, None, why)));
+                        let p = pick(def, dir, None, why);
+                        if p.found() {
+                            return Choice::Tool(Box::new(p));
+                        }
+                        skipped.push(format!("{} is not found", def.name));
                     }
-                    if let Some(c) = lsp() {
+                    if let Some(c) = lsp(&mut skipped, false) {
                         return c;
                     }
                     if indents {
@@ -469,25 +512,36 @@ impl Kawoosh {
                         return Choice::None(format!("no formatter {name} (format.{name})"));
                     };
                     if !def.enabled {
-                        return Choice::None(format!("{name} is off (format.{name}.enabled)"));
+                        skipped.push(format!("{name} is off (format.{name}.enabled)"));
+                        continue;
                     }
                     let Some(dir) = dir.as_deref().filter(|_| !remote) else {
-                        return Choice::None(if remote {
+                        skipped.push(if remote {
                             format!("{name} runs here, the file is on a host")
                         } else {
                             format!("{name} needs a file to format")
                         });
+                        continue;
                     };
                     let config = find_config(def, dir);
                     let why = match &config {
                         Some(c) => format!("{name}: {}", self.short_name(c)),
                         None => format!("{name}: named"),
                     };
-                    return Choice::Tool(Box::new(pick(def, dir, config, why)));
+                    let p = pick(def, dir, config, why);
+                    if !p.found() {
+                        skipped.push(format!("{name} is not found"));
+                        continue;
+                    }
+                    return Choice::Tool(Box::new(p));
                 }
             }
         }
-        Choice::None(format!("no formatter for {language}"))
+        Choice::None(match skipped.len() {
+            0 => format!("no formatter for {language}"),
+            1 => skipped.remove(0),
+            _ => format!("no formatter for {language}: {}", skipped.join("; ")),
+        })
     }
 
     /// Formats buffer `id` — `named` or its own — the selection's

@@ -1463,7 +1463,7 @@ impl Kawoosh {
         {
             return Some(self.open_on_io_thread(path, meta.len() as usize));
         }
-        let buf = match Buffer::from_file(path) {
+        let mut buf = match Buffer::from_file(path) {
             Ok(mut b) => {
                 b.language = self.languages.detect(path, &first_line(&b)).into();
                 b
@@ -1483,6 +1483,8 @@ impl Kawoosh {
         };
         let waited = self.secrets.waited.as_deref() == Some(path);
         let private = self.private_path(path, waited);
+        // A help page is read-only however it is reached (`help.rs`).
+        buf.read_only = crate::help::is_page(path);
         let id = self.ed.add_buffer(buf);
         // A private file has no history (docs/design/secrets.md): the
         // row it had from before it was one is dropped unread.

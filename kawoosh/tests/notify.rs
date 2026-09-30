@@ -193,6 +193,48 @@ fn a_toast_with_actions_waits_for_a_click() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A toast that comes while a confirm is up — a server's message
+/// arriving off the frame — goes under the dialog, not over it: over
+/// it, it would be inert (kui's `modal-behind-content`). Once the
+/// dialog goes, the toast is live.
+#[test]
+fn a_toast_during_a_confirm_is_under_it() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    d.frame(&mut app);
+    app.confirm_with(kawoosh::confirm::Confirm {
+        title: "Close t?".into(),
+        lines: Vec::new(),
+        actions: vec![("Keep".into(), "echo kept".into())],
+        chosen: 0,
+    });
+    d.frame(&mut app);
+    app.notify(Level::Warn, "Failed to discover workspace");
+    d.frame(&mut app);
+    assert!(corner_has(&d, "Failed to discover workspace"), "on show");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    d.key(&mut app, "escape", KeyMods::default());
+    d.frame(&mut app);
+    assert!(app.confirm.is_none());
+    let toast = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| {
+            n.text
+                .as_deref()
+                .is_some_and(|t| t.contains("Failed to discover workspace"))
+        })
+        .expect("the toast");
+    d.click(
+        &mut app,
+        toast.rect.x + toast.rect.w / 2.0,
+        toast.rect.y + toast.rect.h / 2.0,
+    );
+    assert!(app.notes.shown.is_empty(), "clicked away");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 #[test]
 fn notify_from_the_command_line_and_from_lua() {
     let mut d = Drive::new(900.0, 500.0);

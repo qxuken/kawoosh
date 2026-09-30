@@ -1,8 +1,10 @@
 //! `:help` and `:tutor` (roadmap step 53). The pages are
 //! `kawoosh/help/*.md`, shipped in the binary. `:help` writes them to a
-//! directory of this run's own and opens one read-only in the markdown
-//! buffer, so a page renders, its links follow with `gx` as any markdown
-//! file's do, and a link's `#heading` lands on the heading. Two pages
+//! directory of this run's own and opens one in the markdown buffer,
+//! read-only (a page there is, however it is reached) and so rendered
+//! whole whatever `markdown.reveal` says, its links followed with `gx`
+//! as any markdown file's are, a link's `#heading` landing on the
+//! heading. Two pages
 //! are written from the editor as it runs, so they are never behind it:
 //! `commands.md` (every command, a plugin's among them, with its doc) and
 //! `keys.md` (every binding by mode). `:tutor` opens the tutorial as a
@@ -40,6 +42,12 @@ pub const TUTOR: &str = include_str!("../help/tutor.md");
 /// This run's directory for the pages.
 fn help_dir() -> PathBuf {
     std::env::temp_dir().join(format!("kawoosh-help-{}", std::process::id()))
+}
+
+/// Whether `path` is one of this run's pages, however it is reached —
+/// `:help`, a link's `gx`, `:e` — so it opens read-only.
+pub(crate) fn is_page(path: &std::path::Path) -> bool {
+    path.starts_with(help_dir())
 }
 
 /// Where a topic is: a page, and a line of it to land on.
@@ -194,14 +202,17 @@ impl Kawoosh {
             .and_then(|n| text.lines().position(|l| l.starts_with(&n)))
             .map(|i| i + 1);
         self.open_in_editor(&path, line, None);
-        if let Some(id) = self.ed.buffer_at(&path) {
-            self.ed.buffers[id].read_only = true;
-        }
     }
 
     /// `:tutor`: the tutorial in a scratch of its own, to edit freely.
+    /// A scratch has no directory for its links to be relative to, so
+    /// they name the pages written out where they are.
     pub(crate) fn tutor(&mut self) {
-        let mut b = kawoosh_doc::Buffer::new("tutor", TUTOR);
+        let text = match self.write_help() {
+            Ok(dir) => absolute_links(TUTOR, &dir),
+            Err(_) => TUTOR.to_string(),
+        };
+        let mut b = kawoosh_doc::Buffer::new("tutor", &text);
         b.language = "markdown".into();
         let id = self.ed.add_buffer(b);
         match self.focused_view().or_else(|| self.claim_launcher()) {
@@ -220,6 +231,32 @@ impl Kawoosh {
     pub(crate) fn help_teardown(&mut self) {
         let _ = std::fs::remove_dir_all(help_dir());
     }
+}
+
+/// `text` with each link to a page — a relative `NAME.md`, its
+/// `#heading` kept — made to name the page in `dir`; a path with a space
+/// in it inside `<…>`.
+fn absolute_links(text: &str, dir: &std::path::Path) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("](") {
+        out.push_str(&rest[..i + 2]);
+        rest = &rest[i + 2..];
+        let end = rest.find([')', ' ']).unwrap_or(rest.len());
+        let dest = &rest[..end];
+        let page = dest.split('#').next().unwrap_or("");
+        if page.ends_with(".md") && !page.contains("://") && !page.starts_with('/') {
+            let path = dir.join(dest).display().to_string();
+            if path.contains(char::is_whitespace) {
+                let _ = write!(out, "<{path}>");
+            } else {
+                out.push_str(&path);
+            }
+            rest = &rest[end..];
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 pub(crate) fn commands() -> Vec<ShellCommand> {

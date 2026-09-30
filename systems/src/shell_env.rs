@@ -54,6 +54,16 @@ pub fn path() -> Option<OsString> {
     PATH.read().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
+/// The PATH a child is given, without waiting: `None` while the shell
+/// [`resolve`] asked has not answered yet; `Some(None)` for this
+/// process's own.
+pub fn path_now() -> Option<Option<OsString>> {
+    if SHELL.get().is_some() && ANSWERED.get().is_none() {
+        return None;
+    }
+    Some(PATH.read().unwrap_or_else(|e| e.into_inner()).clone())
+}
+
 /// Asks the shell [`resolve`] was given again, on this thread, and
 /// keeps its answer; a shell that gives none leaves the PATH it gave
 /// before. Nothing when [`resolve`] was not called: the PATH is the

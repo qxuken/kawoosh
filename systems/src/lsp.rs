@@ -681,10 +681,25 @@ pub enum Event {
         what: &'static str,
         message: String,
     },
-    /// A server could not start; the app says so once.
+    /// A server could not start — its command not found (`why` None),
+    /// or its `initialize` refused with `why` — and is not tried again
+    /// until a restart; the app says so once.
     Unavailable {
         language: String,
         command: String,
+        why: Option<String>,
+    },
+    /// A server exited on its own — crashed, or quit — with `why` (its
+    /// exit status and last line of stderr). `buffers` were the ones it
+    /// held: forgotten as sent, so they go whole to the next. `again`:
+    /// it is started again for them; else it exited [`CRASHES`] times
+    /// in [`CRASH_WINDOW`] and is not, until a restart.
+    Exited {
+        language: String,
+        command: String,
+        buffers: Vec<BufferId>,
+        why: String,
+        again: bool,
     },
     /// A [`Cmd::Restart`] done: the PATH asked for again, the commands'
     /// failures forgotten.
@@ -734,6 +749,7 @@ impl Event {
             Event::Formatted { .. } => "lsp formatted",
             Event::Failed { .. } => "lsp failed",
             Event::Unavailable { .. } => "lsp unavailable",
+            Event::Exited { .. } => "lsp exited",
             Event::Restarted { .. } => "lsp restarted",
             Event::Status(_) => "lsp status",
             Event::Message { kind: 5, .. } => "lsp stderr",
@@ -1027,6 +1043,8 @@ struct Server {
     root: PathBuf,
     /// The languages whose files `load_all` sent it, or is sending.
     loading: BTreeSet<String>,
+    /// Its last line on stderr: what it said as it went, when it exits.
+    last_stderr: Option<String>,
 }
 
 impl Server {
@@ -1064,7 +1082,7 @@ impl Server {
         let stdin = child.stdin.take()?;
         let stdout = child.stdout.take()?;
         // What the server says on stderr is the log's, line by line.
-        if let Some(stderr) = child.stderr.take() {
+        let stderr_reader = child.stderr.take().map(|stderr| {
             let tx = from_tx.clone();
             thread::spawn(move || {
                 for line in BufReader::new(stderr).lines() {
@@ -1073,15 +1091,24 @@ impl Server {
                         return;
                     }
                 }
-            });
-        }
+            })
+        });
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
+            // Its output closed: it exited, or is exiting — said once
+            // its stderr has been read to the end, its last words ahead.
+            let exited = |from_tx: &Sender<(usize, FromServer)>| {
+                if let Some(t) = stderr_reader {
+                    let _ = t.join();
+                }
+                let _ = from_tx.send((key, FromServer::Exited));
+            };
             loop {
                 let mut content_length = 0usize;
                 loop {
                     let mut line = String::new();
                     if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        exited(&from_tx);
                         return;
                     }
                     let line = line.trim();
@@ -1097,6 +1124,7 @@ impl Server {
                 }
                 let mut body = vec![0u8; content_length];
                 if reader.read_exact(&mut body).is_err() {
+                    exited(&from_tx);
                     return;
                 }
                 if let Ok(message) = serde_json::from_slice::<Value>(&body)
@@ -1121,6 +1149,7 @@ impl Server {
             domain,
             root: root.to_path_buf(),
             loading: BTreeSet::new(),
+            last_stderr: None,
         })
     }
 
@@ -1165,6 +1194,33 @@ impl Server {
     }
 }
 
+/// How `child`, its output closed, ended: its status once it has
+/// exited — a moment given — or that it closed its output alive.
+fn exit_status(child: &mut Child) -> String {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    if let Some(sig) = status.signal() {
+                        return format!("killed by signal {sig}");
+                    }
+                }
+                return match status.code() {
+                    Some(c) => format!("exited with {c}"),
+                    None => "exited".into(),
+                };
+            }
+            Ok(None) if std::time::Instant::now() < deadline => {
+                thread::sleep(std::time::Duration::from_millis(10));
+            }
+            _ => return "closed its output".into(),
+        }
+    }
+}
+
 impl Drop for Server {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -1177,6 +1233,12 @@ impl Drop for Server {
 /// frame drawn at the display's rate; eight a second reads as moving.
 /// A token's begin and end are not held: a line appearing or going is
 /// news.
+/// How many times a server may exit on its own in [`CRASH_WINDOW`] and
+/// still be started again: one that dies at every start is not started
+/// forever.
+pub const CRASHES: usize = 3;
+pub const CRASH_WINDOW: std::time::Duration = std::time::Duration::from_secs(180);
+
 const PROGRESS_PACE: std::time::Duration = std::time::Duration::from_millis(125);
 
 /// When a paced wake is due, at most one every `every`.
@@ -1237,6 +1299,10 @@ struct Pool {
     /// The commands that did not start, by the domain they were tried
     /// on (None: here) — not tried again until a restart.
     failed: std::collections::HashSet<(Option<String>, String)>,
+    /// When each command exited on its own lately, by domain as
+    /// `failed` is: past [`CRASHES`] in [`CRASH_WINDOW`] it is not
+    /// started again until a restart.
+    crashes: HashMap<(Option<String>, String), Vec<std::time::Instant>>,
     /// A restart's commands, sent back once the shell gave its PATH.
     refreshed_tx: Sender<Vec<String>>,
 }
@@ -1248,6 +1314,8 @@ enum FromServer {
     Message(Value),
     Stderr(String),
     Loaded(Loaded),
+    /// Its stdout closed, its stderr read to the end.
+    Exited,
 }
 
 /// A `load_all` walk's answer: each file with its language and text,
@@ -1273,6 +1341,7 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
         progress_at: crate::Alarm::spawn_soonest(wake.named("lsp progress")),
         wake,
         failed: Default::default(),
+        crashes: HashMap::new(),
         refreshed_tx,
     };
     loop {
@@ -1287,11 +1356,13 @@ fn run(cmd_rx: Receiver<Cmd>, event_tx: Sender<Event>, wake: WakeHandle) {
                     FromServer::Message(m) => pool.handle_message(key, m),
                     FromServer::Stderr(line) => pool.handle_stderr(key, line),
                     FromServer::Loaded(l) => pool.handle_loaded(key, l),
+                    FromServer::Exited => pool.handle_exited(key),
                 }
             }
             recv(refreshed_rx) -> commands => {
                 let Ok(commands) = commands else { continue };
                 pool.failed.retain(|(_, c)| !commands.contains(c));
+                pool.crashes.retain(|(_, c), _| !commands.contains(c));
                 pool.emit(Event::Restarted { commands });
             }
         }
@@ -1504,6 +1575,7 @@ impl Pool {
             self.emit(Event::Unavailable {
                 language: def.language.clone(),
                 command: def.command.clone(),
+                why: None,
             });
             return None;
         };
@@ -2005,18 +2077,71 @@ impl Pool {
         server.request(method, params, (buffer, version, offset));
     }
 
+    /// Server `key`'s output closed. One stopped or restarted is gone
+    /// already; one that exited on its own is dropped, what waited on
+    /// it told, and its buffers handed back to be sent to the next —
+    /// started again, unless it has exited [`CRASHES`] times lately.
+    fn handle_exited(&mut self, key: usize) {
+        let Some(mut server) = self.servers.get_mut(key).and_then(Option::take) else {
+            return;
+        };
+        let status = exit_status(&mut server.child);
+        let why = match &server.last_stderr {
+            Some(line) => format!("{status}: {line}"),
+            None => status,
+        };
+        // Who waits on an answer hears there is none.
+        for (_, (method, _, _, offset)) in server.pending.drain() {
+            match method {
+                "textDocument/documentSymbol" | "workspace/symbol" => self.emit(Event::Symbols {
+                    token: offset as u64,
+                    result: Err(format!("the server exited ({why})")),
+                }),
+                "textDocument/formatting" => self.emit(Event::Failed {
+                    what: method,
+                    message: format!("the server exited ({why})"),
+                }),
+                _ => {}
+            }
+        }
+        let crashed_as = (server.domain.clone(), server.name.clone());
+        let now = std::time::Instant::now();
+        let times = self.crashes.entry(crashed_as.clone()).or_default();
+        times.retain(|t| now.duration_since(*t) < CRASH_WINDOW);
+        times.push(now);
+        let again = times.len() < CRASHES;
+        if again {
+            // The next document sent starts one in its root.
+            self.keys.retain(|_, k| *k != key);
+        } else {
+            self.failed.insert(crashed_as);
+        }
+        self.homes.retain(|_, k| *k != key);
+        let buffers = server.documents.values().filter_map(|d| d.buffer).collect();
+        self.emit(Event::Exited {
+            language: server.language.clone(),
+            command: server.name.clone(),
+            buffers,
+            why,
+            again,
+        });
+        self.status();
+    }
+
     /// A line of a server's stderr: a log message from it, below the
     /// protocol's own log messages (`kind` 5, past MessageType's 4) —
     /// rust-analyzer says a line per watched path.
     fn handle_stderr(&mut self, key: usize, line: String) {
-        let Some(server) = self.servers.get(key).and_then(Option::as_ref) else {
+        let Some(server) = self.servers.get_mut(key).and_then(Option::as_mut) else {
             return;
         };
         if line.trim().is_empty() {
             return;
         }
+        server.last_stderr = Some(line.trim().to_string());
+        let name = server.name.clone();
         self.emit(Event::Message {
-            server: server.name.clone(),
+            server: name,
             kind: 5,
             text: line,
             log: true,
@@ -2035,9 +2160,30 @@ impl Pool {
                 return;
             };
             let result = message.get("result");
-            if let Some(err) = message.get("error")
-                && method != "initialize"
+            // A server that refused to start (typescript-language-server
+            // with no TypeScript to run) is not one that does nothing:
+            // it is stopped, and not tried again until a restart.
+            if method == "initialize"
+                && let Some(err) = message.get("error")
             {
+                let why = err
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("error")
+                    .to_string();
+                let (language, command) = (server.language.clone(), server.name.clone());
+                self.failed.insert((server.domain.clone(), command.clone()));
+                self.servers[key] = None;
+                self.homes.retain(|_, k| *k != key);
+                self.emit(Event::Unavailable {
+                    language,
+                    command,
+                    why: Some(why),
+                });
+                self.status();
+                return;
+            }
+            if let Some(err) = message.get("error") {
                 let text = err
                     .get("message")
                     .and_then(Value::as_str)

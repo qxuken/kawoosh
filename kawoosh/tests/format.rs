@@ -202,6 +202,134 @@ fn the_nearest_configs_formatter_formats() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// `:format?` asked each frame until what it says has `part` in it —
+/// the server's answer to `initialize` is off the frame.
+fn format_says(d: &mut Drive, app: &mut Kawoosh, part: &str) -> String {
+    for _ in 0..300 {
+        ex(d, app, "format?");
+        if app.ed.message.contains(part) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    app.ed.message.clone()
+}
+
+/// A server that refuses `initialize` — typescript-language-server with
+/// no TypeScript to run — is down, and says why; it is not a server
+/// that does nothing. A `formatter` list goes past what cannot format —
+/// a tool not installed, a server down or one that does not format —
+/// to the next, and names them all when none can.
+#[test]
+fn a_list_goes_past_what_cannot_format() {
+    let dir = project("list", &[("a.ts", "x\n")]);
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_in(&mut d, &dir);
+    let mut refusing = fake_lsp("typescript");
+    refusing.args.push("--refuse".into());
+    app.add_lsp_server(refusing);
+    def(
+        &mut app,
+        "shout",
+        "tr a-z A-Z",
+        &["typescript"],
+        Setting::Str("never".into()),
+    );
+    app.ed.settings.set(
+        Layer::User,
+        "format.missing.cmd",
+        Setting::Str("/nonexistent/fmt".into()),
+    );
+    app.ed.settings.set(
+        Layer::User,
+        "format.missing.languages",
+        files(&["typescript"]),
+    );
+    let list = |app: &mut Kawoosh, names: &[&str]| {
+        app.ed.settings.set(
+            Layer::Session,
+            "language.typescript.formatter",
+            files(names),
+        )
+    };
+    list(&mut app, &["missing", "lsp"]);
+    let a = open(&mut d, &mut app, &dir, "a.ts");
+    assert_eq!(
+        format_says(&mut d, &mut app, "did not start"),
+        "no formatter for typescript: missing is not found; \
+         the typescript server did not start: Could not find a valid TypeScript installation."
+    );
+    ex(&mut d, &mut app, "format");
+    assert_eq!(text(&app, a), "x\n");
+    ex(&mut d, &mut app, "lsp format");
+    assert_eq!(
+        app.ed.message,
+        "the typescript server did not start: Could not find a valid TypeScript installation."
+    );
+
+    // Something after them formats.
+    list(&mut app, &["missing", "lsp", "shout"]);
+    ex(&mut d, &mut app, "format");
+    assert_eq!(text(&app, a), "X\n");
+    assert_eq!(app.ed.message, "formatted with shout (1 edit)");
+
+    // `auto` finding a project's config: the project's formatter or
+    // none — not another's style in its place.
+    std::fs::write(dir.join(".missrc"), "").unwrap();
+    app.ed
+        .settings
+        .set(Layer::User, "format.missing.when", files(&[".missrc"]));
+    list(&mut app, &["auto", "shout"]);
+    ex(&mut d, &mut app, "format?");
+    assert_eq!(
+        app.ed.message,
+        "missing is not found, and .missrc says the project formats with it"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A server up that does not format is passed over as one down is.
+#[test]
+fn a_server_that_does_not_format_is_passed_over() {
+    let dir = project("noformat", &[("a.ts", "x\n")]);
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_in(&mut d, &dir);
+    let mut server = fake_lsp("typescript");
+    server.args.push("--no-format".into());
+    app.add_lsp_server(server);
+    def(
+        &mut app,
+        "shout",
+        "tr a-z A-Z",
+        &["typescript"],
+        Setting::Str("never".into()),
+    );
+    app.ed.settings.set(
+        Layer::Session,
+        "language.typescript.formatter",
+        files(&["lsp", "shout"]),
+    );
+    let a = open(&mut d, &mut app, &dir, "a.ts");
+    assert!(
+        until(&mut d, &mut app, |a| a.lsp.caps.contains_key("typescript")),
+        "the server answered `initialize`"
+    );
+    assert!(!app.lsp.caps["typescript"].format);
+    ex(&mut d, &mut app, "format");
+    assert_eq!(text(&app, a), "X\n");
+    app.ed.settings.set(
+        Layer::Session,
+        "language.typescript.formatter",
+        Setting::Str("lsp".into()),
+    );
+    ex(&mut d, &mut app, "format?");
+    assert_eq!(
+        app.ed.message,
+        "the typescript server does not do formatting"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A formatter that always runs for its language (gofmt) is the choice
 /// without a config; one that never does only when named; a selection
 /// goes as the range args, and one without them says so.
@@ -601,6 +729,22 @@ fn the_syntax_indents_as_a_last_resort() {
         std::fs::read_to_string(dir.join("a.json")).unwrap(),
         "{\n  \"a\": [\n    1\n  ]\n}\n"
     );
+    // Last in a list, past a tool that is not installed.
+    let s = |v: &str| Setting::Str(v.into());
+    let set = |app: &mut Kawoosh, k: &str, v: Setting| app.ed.settings.set(Layer::User, k, v);
+    set(&mut app, "format.gone.cmd", s("/nonexistent/fmt"));
+    set(
+        &mut app,
+        "format.gone.languages",
+        Setting::List(vec![s("json")]),
+    );
+    set(
+        &mut app,
+        "language.json.formatter",
+        Setting::List(vec![s("gone"), s("indent")]),
+    );
+    ex(&mut d, &mut app, "format?");
+    assert_eq!(app.ed.message, "indent: named");
     // Named where there are no rules; `auto` has nothing there.
     open(&mut d, &mut app, &dir, "b.txt");
     ex(&mut d, &mut app, "format indent");

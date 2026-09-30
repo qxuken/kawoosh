@@ -825,7 +825,10 @@ impl Carets {
     /// reaches it, rather than the one it left turning back and
     /// reflowing under it (2026-09-27). Under `span` and `none` no line
     /// is, but where a caret has nowhere else to stand
-    /// ([`Rendered::caret_needs_source`]).
+    /// ([`Rendered::caret_needs_source`]). A read-only buffer is under
+    /// `none` whatever the setting says: the source is shown so what is
+    /// typed is seen, and nothing is typed there — a help page reads as
+    /// a page (2026-09-30).
     pub fn of(
         ed: &kawoosh_editor::Editor,
         view: kawoosh_editor::ViewId,
@@ -834,6 +837,7 @@ impl Carets {
         let v = &ed.views[view];
         let buf = &ed.buffers[v.buffer];
         let mode = match ed.settings.str("markdown.reveal") {
+            _ if buf.read_only => RevealMode::None,
             Some("span") => RevealMode::Span,
             Some("none") => RevealMode::None,
             _ => RevealMode::Line,

@@ -145,7 +145,11 @@ in before as well (`ts.rs`,
 `a_setext_underline_typed_on_into_a_list_item_unpaints_its_heading`). Under either, a line
 the caret has nowhere to stand on otherwise — a table's row, a line of
 images, a rule, a line folded to nothing — is still its source
-(`Rendered::caret_needs_source`). The frame and a click decide it in
+(`Rendered::caret_needs_source`). A read-only buffer is under `none`
+whatever the setting says: the source is shown so that what is typed
+is seen, and nothing is typed there — a help page, a page reached from
+one by `gx` among them (every buffer opened from the run's help
+directory is read-only), reads as a page. The frame and a click decide it in
 one place (`markdown::Carets`), so a click maps through the fold that
 was drawn. `markdown.navigation = "row"` binds `j` `k` and the arrows
 to `move down row` / `move up row` under the `rows` fact, a local map
