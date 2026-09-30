@@ -248,6 +248,29 @@ fn replace_char_takes_a_count_and_a_line_break() {
     assert_eq!(t.text(), "a\nb\nc d", "`.` again");
 }
 
+/// `r` stops where the line's text does, however the line ends: a
+/// `\r\n` line's `\r` is not a character to replace (neovim's `3rx` on
+/// `ab` fails there too).
+#[test]
+fn replace_char_stops_short_of_a_crlf_break() {
+    let mut t = T::new("ab\r\ncd");
+    t.keys("3rx");
+    assert_eq!(t.text(), "ab\r\ncd", "short of the count: nothing");
+    t.keys("2rx");
+    assert_eq!(t.text(), "xx\r\ncd");
+}
+
+/// A field is one line: `r<CR>` there changes nothing.
+#[test]
+fn replace_char_line_break_in_a_field_changes_nothing() {
+    let mut t = T::new("");
+    t.keys(":foo bar<Esc>0f<Space>r<CR>");
+    assert!(t.ed.prompt_view().is_some());
+    assert_eq!(t.cmdline(), "foo bar");
+    t.keys("rx");
+    assert_eq!(t.cmdline(), "fooxbar", "`r` itself still works there");
+}
+
 /// `r<Tab>` as neovim's: what insert's `<Tab>` puts, per character — a
 /// tab, or under `expandtab` the spaces to the next `shiftwidth` stop,
 /// each from where the last left; the caret on the last.

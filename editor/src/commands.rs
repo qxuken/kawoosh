@@ -2086,17 +2086,23 @@ pub fn install(ed: &mut Editor) {
     // alone. `<Tab>` puts what insert's `<Tab>` would, a tab or the
     // spaces to the next stop, for each. `<CR>` makes the lot one line
     // break, as insert's `<CR>` does (its indent, the blanks after it
-    // gone), the caret stepped back as `<Esc>` steps it.
+    // gone), the caret stepped back as `<Esc>` steps it — but not in
+    // a field, which is one line. A `\r\n` line's `\r` is its break's,
+    // not a character to replace.
     ed.register_with_char("replace char", |ed, ctx| {
         let Some(c) = ctx.arg_char else { return };
+        if c == '\n' && ed.is_field(ctx.view) {
+            return;
+        }
         let id = view(ed, ctx).buffer;
         let buf = &ed.buffers[id];
         let mut edits = Vec::new();
         let mut last = 0;
         for (i, s) in ed.views[ctx.view].sels.iter().enumerate() {
+            let le = buf.line_range(buf.line_of(s.head)).end;
             let mut e = s.head;
             let mut n = 0;
-            while n < ctx.count && buf.char_at(e).is_some_and(|c| c != '\n') {
+            while n < ctx.count && e < le {
                 e = buf.next_char(e);
                 n += 1;
             }
