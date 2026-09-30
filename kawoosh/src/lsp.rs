@@ -108,7 +108,9 @@ pub struct LspState {
     /// A completion asked for and not yet answered: the buffer and where
     /// the word started.
     requested: Option<(BufferId, usize)>,
-    said_unavailable: HashSet<String>,
+    /// The commands that did not start until a restart, and why: not
+    /// found (None), or what their `initialize` refused with.
+    said_unavailable: HashMap<String, Option<String>>,
     /// The commands a `:lsp restart` is waiting on the shell's PATH for,
     /// by how many restarts: no document is sent them meanwhile, which
     /// would start one on the PATH before.
@@ -178,7 +180,7 @@ impl LspState {
             alarm: Alarm::spawn(wake.named("lsp alarm")),
             completion: None,
             requested: None,
-            said_unavailable: HashSet::new(),
+            said_unavailable: HashMap::new(),
             restarting: HashMap::new(),
             status: Vec::new(),
             defs: ServerDef::builtin(),
@@ -474,17 +476,22 @@ impl Kawoosh {
                         self.lsp_format_failed(&message);
                     }
                 }
-                Event::Unavailable { language, command } => {
-                    if self.lsp.said_unavailable.insert(command.clone()) {
-                        self.notify_with(
-                            Note::new(
-                                Level::Warn,
-                                format!(
-                                    "`{command}` not found; lsp off. Installed since? :lsp restart"
-                                ),
-                            )
-                            .source(language),
-                        );
+                Event::Unavailable {
+                    language,
+                    command,
+                    why,
+                } => {
+                    if !self.lsp.said_unavailable.contains_key(&command) {
+                        let text = match &why {
+                            None => format!(
+                                "`{command}` not found; lsp off. Installed since? :lsp restart"
+                            ),
+                            Some(why) => {
+                                format!("`{command}` did not start: {why} (:lsp restart once fixed)")
+                            }
+                        };
+                        self.notify_with(Note::new(Level::Warn, text).source(language));
+                        self.lsp.said_unavailable.insert(command, why);
                     }
                 }
                 Event::Restarted { commands } => {
@@ -732,7 +739,7 @@ impl Kawoosh {
         let why = if b.private {
             Some("a private buffer is not sent to a server".to_string())
         } else if !self.lsp_serves(&language) {
-            Some(format!("no language server for {language}"))
+            Some(self.lsp_absent(&language))
         } else if workspace && !caps.workspace_symbol || !workspace && !caps.document_symbol {
             Some(format!("the {language} server does not list symbols"))
         } else {
@@ -880,7 +887,7 @@ impl Kawoosh {
             .map(str::to_string)
             .collect();
         self.lsp_forget_languages(&languages, false);
-        self.lsp.said_unavailable.retain(|c| !commands.contains(c));
+        self.lsp.said_unavailable.retain(|c, _| !commands.contains(c));
         for c in &commands {
             *self.lsp.restarting.entry(c.clone()).or_default() += 1;
         }
@@ -1022,14 +1029,36 @@ impl Kawoosh {
     pub(crate) fn lsp_serves(&self, language: &str) -> bool {
         self.lsp.defs.iter().any(|d| {
             d.serves(language)
-                && !self.lsp.said_unavailable.contains(&d.command)
+                && !self.lsp.said_unavailable.contains_key(&d.command)
                 && !self.lsp.restarting.contains_key(&d.command)
+        })
+    }
+
+    /// Why `language` has no server to ask, when [`Kawoosh::lsp_serves`]
+    /// says it has none: restarting, did not start, or none at all.
+    pub(crate) fn lsp_absent(&self, language: &str) -> String {
+        self.lsp_down(language)
+            .unwrap_or_else(|| format!("no language server for {language}"))
+    }
+
+    /// Why `language`'s server is not there to ask, when it has one:
+    /// restarting, or it did not start.
+    pub(crate) fn lsp_down(&self, language: &str) -> Option<String> {
+        let defs = || self.lsp.defs.iter().filter(|d| d.serves(language));
+        if defs().any(|d| self.lsp.restarting.contains_key(&d.command)) {
+            return Some(format!("the {language} server is restarting"));
+        }
+        defs().find_map(|d| {
+            Some(match self.lsp.said_unavailable.get(&d.command)? {
+                Some(why) => format!("the {language} server did not start: {why}"),
+                None => format!("the {language} server `{}` is not found", d.command),
+            })
         })
     }
 
     /// What a language's server says it does; a server that has not
     /// answered `initialize` yet is taken to do everything.
-    fn caps_of(&self, buffer: BufferId) -> Caps {
+    pub(crate) fn caps_of(&self, buffer: BufferId) -> Caps {
         let language = &self.ed.buffers[buffer].language;
         self.lsp
             .caps
@@ -1058,7 +1087,7 @@ impl Kawoosh {
     pub(crate) fn lsp_format_buffer(&mut self, id: BufferId) -> Result<(), String> {
         let language = self.ed.buffers[id].language.to_string();
         if !self.lsp_serves(&language) {
-            return Err(format!("no language server for {language}"));
+            return Err(self.lsp_absent(&language));
         }
         if !self.caps_of(id).format {
             return Err(format!("the {language} server does not do formatting"));
@@ -1084,16 +1113,7 @@ impl Kawoosh {
         };
         let language = self.ed.buffers[buffer].language.to_string();
         if !self.lsp_serves(&language) {
-            let restarting = self
-                .lsp
-                .defs
-                .iter()
-                .any(|d| d.serves(&language) && self.lsp.restarting.contains_key(&d.command));
-            self.ed.message = if restarting {
-                format!("the {language} server is restarting")
-            } else {
-                format!("no language server for {language}")
-            };
+            self.ed.message = self.lsp_absent(&language);
             return;
         }
         if !does(&self.caps_of(buffer)) {

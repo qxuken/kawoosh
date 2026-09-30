@@ -142,6 +142,16 @@ Its default, `"auto"`, is the first of:
 prettier. `:format?` says which one and why (`prettier:
 web/.prettierrc`).
 
+*Built 2026-09-30:* "where there is no prettier" means not installed
+too — a name in the list whose program is neither the project's own
+nor on the `PATH` is passed over, as `lsp` is when its server is off,
+did not start (a refused `initialize`, typescript-language-server with
+no TypeScript) or does not declare formatting; with none left, the
+message names each and why. `auto`'s config pick is not passed over:
+a project's `.prettierrc` with no prettier installed says so rather
+than formatting in the server's style. The `PATH` is not waited on:
+while the shell is still asked, a program is taken as there.
+
 ### 3. `:format`, and the result applied as a line diff
 
 `:format` formats the buffer with its formatter, `:format NAME` with
