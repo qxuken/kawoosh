@@ -964,7 +964,8 @@ local function pick(how)
   if item.pick then return item.pick(item, how) end
   if item.buffer then
     kawoosh.buf.show(item.buffer, { split = how })
-    if item.offset then kawoosh.buf.set_cursor(item.offset, item.buffer) end
+    -- A pick is a jump however near (docs/design/jumps.md Decision 2).
+    if item.offset then kawoosh.buf.set_cursor(item.offset, item.buffer, { jump = true }) end
   elseif item.path then
     kawoosh.open(item.path, { line = item.line, col = item.col, split = how })
   elseif item.run then

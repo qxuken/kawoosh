@@ -120,7 +120,7 @@ pub enum FsOp {
 pub enum Msg {
     /// A command and its spec (`kawoosh.command(name, fn, { args = {
     /// "path", "text..." }, aliases = {...}, bang = "...", query =
-    /// "...", when = { "language:dir" }, doc = "..." })`).
+    /// "...", when = { "language:dir" }, doc = "...", jump = true })`).
     RegisterCommand(Spec),
     /// `kawoosh.fact(name, on)`: a plugin's word on what holds, for a
     /// `when`.
@@ -576,6 +576,8 @@ pub enum Msg {
         offset: usize,
         top: Option<usize>,
         center: bool,
+        /// The move a jump however short (docs/design/jumps.md).
+        jump: bool,
     },
     /// Text typed at every caret of the view, as insert mode types it.
     Type(String),
@@ -801,6 +803,21 @@ pub struct Published {
     /// version it was parsed from (`Runtime::set_tree`); `kawoosh.node`
     /// reads one only when that is the snapshot's.
     pub trees: HashMap<u64, (kawoosh_doc::Version, tree_sitter::Tree)>,
+    /// The focused tab's jumps, newest first (`kawoosh.memory { jumps
+    /// = true }`, docs/design/jumps.md Decision 5).
+    pub jumps: Rc<Vec<JumpSnap>>,
+}
+
+/// One place of a tab's jumps as Lua reads it: lines and columns from 1.
+#[derive(Clone, Debug, PartialEq)]
+pub struct JumpSnap {
+    pub path: Option<String>,
+    pub line: usize,
+    pub col: usize,
+    /// The buffer's handle while it is open.
+    pub buffer: Option<u64>,
+    /// The entry the list is at while going back.
+    pub current: bool,
 }
 
 /// One code action as `kawoosh.lsp.actions()` reads it (the picker's
@@ -927,6 +944,7 @@ impl Default for Published {
             compile_offer: None,
             diagnostics: Rc::new(Vec::new()),
             trees: HashMap::new(),
+            jumps: Rc::new(Vec::new()),
         }
     }
 }
@@ -1190,6 +1208,11 @@ impl Runtime {
     /// (`kawoosh._selection_radius()`), or none while it is square.
     pub fn set_selection_radius(&self, radius: Option<f32>) {
         self.published.borrow_mut().selection_radius = radius;
+    }
+
+    /// The focused tab's jumps, newest first, as the shell keeps them.
+    pub fn set_jumps(&self, jumps: Rc<Vec<JumpSnap>>) {
+        self.published.borrow_mut().jumps = jumps;
     }
 
     /// The workspace moments are made under, as the shell knows it.
@@ -2482,8 +2505,10 @@ impl Runtime {
                     offset,
                     top,
                     center,
+                    jump,
                 } => {
                     let id = id_of(buffer);
+                    ed.jumping |= jump;
                     let Some(b) = ed.buffers.get(id) else {
                         continue;
                     };
@@ -4440,10 +4465,11 @@ fn seed(
             Ok(())
         })?,
     )?;
-    // `kawoosh.buf.set_cursor(offset, h, { top =, center = })`: one
-    // caret at `offset` in every view of the buffer; the view scrolled
-    // so line `top` (from 1) is its first, or the caret's line in its
-    // middle with `center`, else as little as shows the caret.
+    // `kawoosh.buf.set_cursor(offset, h, { top =, center =, jump = })`:
+    // one caret at `offset` in every view of the buffer; the view
+    // scrolled so line `top` (from 1) is its first, or the caret's line
+    // in its middle with `center`, else as little as shows the caret;
+    // `jump`, the move a jump however short (docs/design/jumps.md).
     let qq = q(queue);
     let pp = published.clone();
     buf.set(
@@ -4453,18 +4479,20 @@ fn seed(
                 let h = h
                     .or(pp.borrow().current)
                     .ok_or_else(|| mlua::Error::runtime("no current buffer"))?;
-                let (top, center) = match &opts {
+                let (top, center, jump) = match &opts {
                     Some(t) => (
                         t.get::<Option<usize>>("top")?.map(|l| l.saturating_sub(1)),
                         t.get::<Option<bool>>("center")?.unwrap_or(false),
+                        t.get::<Option<bool>>("jump")?.unwrap_or(false),
                     ),
-                    None => (None, false),
+                    None => (None, false, false),
                 };
                 qq.borrow_mut().push(Msg::SetCursor {
                     buffer: h,
                     offset,
                     top,
                     center,
+                    jump,
                 });
                 Ok(())
             },
@@ -4769,6 +4797,22 @@ fn seed(
                 }
                 return Ok(t);
             };
+            // The focused tab's jumps (jumps.md Decision 5): the tab's,
+            // not the store's.
+            if q.get::<Option<bool>>("jumps")?.unwrap_or(false) {
+                let limit: usize = q.get::<Option<usize>>("limit")?.unwrap_or(usize::MAX);
+                let jumps = pp.borrow().jumps.clone();
+                for (i, j) in jumps.iter().take(limit).enumerate() {
+                    let e = lua.create_table()?;
+                    e.set("path", j.path.as_deref())?;
+                    e.set("line", j.line)?;
+                    e.set("col", j.col)?;
+                    e.set("buffer", j.buffer)?;
+                    e.set("current", j.current)?;
+                    t.set(i + 1, e)?;
+                }
+                return Ok(t);
+            }
             let Some(s) = st.borrow().clone() else {
                 return Ok(t);
             };
@@ -5524,6 +5568,11 @@ fn spec_from_lua(name: &str, opts: Option<&Table>) -> Result<Spec, String> {
             .collect::<Vec<_>>(),
     );
     spec.doc = string("doc")?.unwrap_or_default();
+    // Its move a jump however short (docs/design/jumps.md Decision 2).
+    spec.jump = t
+        .get::<Option<bool>>("jump")
+        .map_err(|e| e.to_string())?
+        .unwrap_or(false);
     Ok(spec)
 }
 
@@ -5545,6 +5594,9 @@ fn spec_to_lua(lua: &Lua, s: &Spec) -> mlua::Result<Table> {
         s.when.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
     )?;
     t.set("doc", s.doc.as_str())?;
+    if s.jump {
+        t.set("jump", true)?;
+    }
     t.set(
         "kind",
         match s.kind {

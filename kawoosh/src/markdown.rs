@@ -1382,6 +1382,7 @@ impl Kawoosh {
                 self.ed.views[v].sels =
                     kawoosh_editor::Selections::single(kawoosh_editor::Selection::point(at));
                 self.follow_caret = true;
+                self.ed.jumping = true;
                 self.ed.message = format!("#{anchor}");
                 return;
             }

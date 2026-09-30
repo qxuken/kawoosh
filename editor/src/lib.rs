@@ -966,6 +966,10 @@ pub struct Editor {
     /// Borrowed buffers no multibuffer holds any more, for the shell to
     /// close ([`Editor::take_released`]).
     released: Vec<BufferId>,
+    /// The move being made is a jump however short (docs/design/jumps.md
+    /// Decision 2): set by a command whose spec says `jump`, and by the
+    /// shell where it lands a place itself; the shell's look takes it.
+    pub jumping: bool,
     /// What says a line's indentation from its syntax (the shell's,
     /// over its trees; docs/design/indent.md Decision 3); with none,
     /// or no answer, the bracket rule.
@@ -1053,6 +1057,7 @@ impl Editor {
             multis: HashMap::new(),
             borrowed: Default::default(),
             released: Vec::new(),
+            jumping: false,
             indenter: None,
         };
         commands::install(&mut ed);
@@ -2088,6 +2093,10 @@ impl Editor {
             .spec(&inv.name)
             .map(|s| s.kind)
             .unwrap_or_default();
+        // A jump's move, not an operator's range: `dG` is an edit.
+        if self.pending_op.is_none() && self.commands.spec(&inv.name).is_some_and(|s| s.jump) {
+            self.jumping = true;
+        }
         // A count before the operator is the motion's, multiplied
         // with the motion's own as vim's is: `2dw` is `d2w`, `2d3w`
         // six words. (`2dd` is the operator's own doubling.)

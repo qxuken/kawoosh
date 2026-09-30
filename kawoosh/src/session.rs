@@ -51,6 +51,26 @@ pub struct TabData {
     /// in a file from before, which restores in the launch directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
+    /// Its jumps, oldest first (docs/design/jumps.md Decision 5): the
+    /// files' places only; absent in a file from before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jumps: Vec<JumpData>,
+    /// The entry the list was at while going back; absent at the present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_at: Option<usize>,
+}
+
+/// A place of a tab's jumps, as a session keeps it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct JumpData {
+    pub path: PathBuf,
+    /// Lines and columns from 0, the column in characters.
+    pub line: usize,
+    pub col: usize,
+    /// The pane it was left in, by its ordinal among the tab's panes
+    /// the session keeps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -269,6 +289,7 @@ impl Kawoosh {
                 });
                 let focused = ps.iter().position(|p| *p == t.focused).unwrap_or(0);
                 let cwd = t.cwd.clone().or_else(|| Some(self.cwd.clone()));
+                let (jumps, jump_at) = self.jumps_data(t, &ps);
                 match &t.layout {
                     Kind::Tree(root) => TabData {
                         root: self.node_data(root),
@@ -276,6 +297,8 @@ impl Kawoosh {
                         kind: String::new(),
                         columns: Vec::new(),
                         cwd,
+                        jumps,
+                        jump_at,
                     },
                     Kind::Scroll(s) => {
                         let mut folded = t.clone();
@@ -296,6 +319,8 @@ impl Kawoosh {
                                 })
                                 .collect(),
                             cwd,
+                            jumps,
+                            jump_at,
                         }
                     }
                 }
@@ -380,11 +405,22 @@ impl Kawoosh {
                 cwd,
                 bell: false,
                 seen: Default::default(),
+                jumps: Default::default(),
             };
             let mut ps = Vec::new();
             tab.panes(&mut ps);
             let focused = ps.get(t.focused).or(ps.first()).copied().unwrap_or(0);
-            layout.tabs.push(Tab { focused, ..tab });
+            let jumps = crate::jumps::restore(&t.jumps, t.jump_at, |i| {
+                match ps.get(i).and_then(|p| layout.content(*p)) {
+                    Some(Content::Editor(v)) => Some(v),
+                    _ => None,
+                }
+            });
+            layout.tabs.push(Tab {
+                focused,
+                jumps,
+                ..tab
+            });
         }
         if layout.tabs.is_empty() {
             return false;

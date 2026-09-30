@@ -75,6 +75,13 @@ kawoosh.press("<CR>")
 kawoosh.frame(2)
 eq(kawoosh.picker.state(), nil, "gone on a pick")
 eq(kawoosh.buf.cursor(h).line, 15, "the pick kept")
+-- Only the pick was a jump (docs/design/jumps.md): not the pane's
+-- moves under the picker, nor the close untaken.
+local left = {}
+for _, j in ipairs(kawoosh.memory { jumps = true }) do
+  if j.path and j.path:match("a%.rs$") then left[#left + 1] = j.line .. ":" .. j.col end
+end
+eq(table.concat(left, " "), "11:9", "the pick left `get`'s line, once")
 
 -- `picker.symbol_at`: the innermost holding the line, else the last
 -- before it.

@@ -2836,6 +2836,21 @@ In order — the bugs first, then what needs deciding:
     `kawoosh/tests/indent.rs`; this repository reindents all but 0.14%
     of its Rust.
 
+76. ~~**Jumps** ([jumps.md](jumps.md)), asked 2026-10-01: "let's
+    implement jumplist so we could jump back on a big moves. maybe it
+    should live in memory. also it should be tab scoped i think." A
+    big move is noticed, not declared: after every event and once a
+    frame the focused pane's caret against where it was last seen
+    there — another buffer, a screen or more away, or a move a command
+    says is a jump (`Spec::jump`, `Editor::jumping`: `gg` `G` `:N` `n`
+    `N` `*` `%`, a search, a mark, a landed place, a pick) — and not an
+    edit's carry, nor the prompt's preview. One list per tab, going
+    back into the pane each place was left in; browser order;
+    `<C-o>` `<C-i>`.~~ Built 2026-10-01: `kawoosh/src/jumps.rs`,
+    `:memory jumps` (`<leader>mj`), `kawoosh.memory { jumps = true }`,
+    `set_cursor`'s and a command's `jump`, each tab's list in the
+    session; `kawoosh/tests/jumps.rs`.
+
 Scheduled nowhere, on purpose: incremental sync (measure first),
 the press-and-hold toggle (kui's), native extensions (deferred), WSL (domains.md's
 note after, Windows only) and an agent on a host (domains.md Decision

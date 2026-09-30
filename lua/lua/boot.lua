@@ -43,6 +43,8 @@ kawoosh._nonce = 0
 --           published with `kawoosh.fact`. The command line refuses
 --           with the reason.
 --   doc     one line on what it does.
+--   jump    true: the move it makes is a jump however near, on the
+--           tab's list for `<C-o>` (docs/design/jumps.md).
 -- `kawoosh.commands()` lists every command's spec as such a table;
 -- `kawoosh.can(name)` is true, or the reason it cannot run now.
 function kawoosh.command(name, fn, opts)
@@ -494,6 +496,10 @@ end
 -- `first`, `last` (unix seconds), `age`, `visits`, `dwell` (seconds),
 -- `edits`, `yanks`, `pinned` (0, or the pin's ordinal), `meta` (a
 -- table: a file's `line`, a text's `took`), and a text's `text`.
+-- `{ jumps = true, limit = }` is the focused tab's jumps instead
+-- (docs/design/jumps.md), newest first: `{ path =, line =, col =
+-- (from 1), buffer = (while open), current = (the place the list is
+-- at while going back) }` each.
 -- kawoosh.remember { kind =, subject =, signals = { visits =, edits =,
 -- yanks =, dwell = }, meta = }: signals added to a subject's row — a
 -- file's path resolved as `:e` would — and `meta` set; a plugin's own
