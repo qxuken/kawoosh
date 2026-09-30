@@ -513,9 +513,12 @@ impl Kawoosh {
                 .fill()
                 .scroll_x()
                 // The ribbon glides to the column a key reveals (kui's
-                // F80, asked for from here); the thumb and a swipe are
-                // the hand's and land whole.
+                // F80, asked for from here); a swipe is the hand's and
+                // lands whole.
                 .transition(RIBBON_MS)
+                // No bar, as the tab rows have none: kui's lies over
+                // the columns' foot, on the last row of every pane.
+                .scrollbar(kui_native::ScrollbarMode::Hidden)
                 .cross_align(Align::Start)
                 .label("strip"),
             |ui| {
