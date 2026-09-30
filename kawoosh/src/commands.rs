@@ -300,6 +300,21 @@ impl Kawoosh {
                 matches!(content, Some(Content::Memory | Content::Undo)),
             ),
             ("dock", dock),
+            // `j` `k` by row on screen (`markdown.navigation`): the
+            // rendered markdown pane's local maps.
+            (
+                "rows",
+                match content {
+                    Some(Content::Editor(v)) => {
+                        self.ed
+                            .views
+                            .get(v)
+                            .is_some_and(|v| self.markdown_rendered(v.buffer))
+                            && self.ed.settings.str("markdown.navigation") == Some("row")
+                    }
+                    _ => false,
+                },
+            ),
             ("compiling", self.compile.running),
             (
                 "exited",

@@ -116,6 +116,43 @@ step; now a line turns raw once, as the selection reaches it, and
 stays so until visual mode ends. The selection is on the source it
 takes.
 
+*Amended 2026-09-30, to experiment with:* `markdown.reveal` says how
+much source the caret shows. `line` is the rule above and the default.
+`span` keeps the line rendered and shows the marks of the inline
+element the caret is in or just after (the run of painted bytes around
+it: an emphasis with its delimiters, a code span with its backticks, a
+link from `[` to `)`), a heading's `#`s from anywhere on the heading,
+and a list's marker, box or quote bar the caret is on — typora's and
+obsidian's live preview. `none` shows no hidden mark — a block caret on a
+folded byte stands on the next character drawn — but a mark drawn as
+something else (a box, a bullet, a quote's bar) shows its source while
+the caret is on it: `[ ]` is three bytes drawn as one glyph, and a
+caret on any of them had nowhere to stand, so a box could hardly be
+edited. Under `span`, what was shown around the caret last frame is
+carried through the edits since and kept while a caret touches it
+(`markdown::Shown`): the runs a frame reads are the last parse's
+carried over the edit, and a byte typed at a run's edge is in
+neither, so a code span typed into looked cut in two — its opening
+backtick folded — until the parser answered. And under every mode, a
+lone `-` the caret is on under a paragraph leaves the paragraph a
+paragraph: CommonMark reads it as a setext underline (an empty list
+item cannot interrupt a paragraph), but typed, it is the start of
+`- item`. Typed on (`- [`), it is a list item and the paragraph a
+paragraph again — which the structure layer did not repaint: an edit
+was widened to the block it is in in the new tree, the list, and the
+heading above was the old tree's. It is widened to the block it was
+in before as well (`ts.rs`,
+`a_setext_underline_typed_on_into_a_list_item_unpaints_its_heading`). Under either, a line
+the caret has nowhere to stand on otherwise — a table's row, a line of
+images, a rule, a line folded to nothing — is still its source
+(`Rendered::caret_needs_source`). The frame and a click decide it in
+one place (`markdown::Carets`), so a click maps through the fold that
+was drawn. `markdown.navigation = "row"` binds `j` `k` and the arrows
+to `move down row` / `move up row` under the `rows` fact, a local map
+(local-maps.md), with an operator's `j` `k` kept line moves; `gj` `gk`
+now work in a rendered pane whatever it says, since its rows are
+recorded for them as a wrapped code pane's are.
+
 ### 4. Rendered rows wrap, and this is where soft wrap enters
 
 A rendered row's text gets `wrap = break-spaces` (a word wrap whose
@@ -364,3 +401,37 @@ After a day's use (2026-09-23), five more:
   `file.md#top` after opening the file, by GitHub's slug (lower-cased,
   punctuation dropped, spaces as `-`, a repeat numbered); it had opened
   the directory.
+- **Heights are their buffer's** (2026-09-30). A file opened into a
+  pane that had drawn another — `:e`, the picker — filled in a few
+  rows a frame, which under load read as the document rendering line
+  by line: the pane scrolls by the heights it measured, by line, and
+  kept the other file's, so a pane that had shown long paragraphs
+  drew a short-lined file's first five rows and grew. The heights now
+  carry the buffer, version and width they were measured at
+  (`markdown::Heights`): another buffer or width forgets them, an edit
+  keeps the lines above it and carries those below by the lines it put
+  in or took out. A row's layout is read a frame late by its key
+  (`md{ln}`), which after a switch or an edit above was another line's,
+  so each row is stamped with what it drew and a measurement is taken
+  only when the stamp is last frame's (`a_file_opened_into_a_pane_fills_it_at_once`).
+- **The caret's row stays where it is on screen** (2026-09-30). A row
+  above the caret's that grew — a paragraph turned a heading for a
+  frame while the parser caught up, an image read, a line turned its
+  source — pushed the caret down, off the pane's bottom when it was
+  near it, for the frame kui took to measure it: the pane placed its
+  rows from its top by last frame's heights. Now, while the caret stays
+  on its line and the pane follows it, the pane is drawn around the
+  caret's row where it was last frame (`markdown::Anchor`, its rect
+  read back with `layout_of`): the rows above are a float in a box as
+  tall as the row's place, attached by its bottom edge and cut at the
+  pane's top (`FloatConfig::parent().inside(Start, End).clipped()`),
+  so what grows above pushes up and out of sight, in the frame it
+  grows; half a pane of rows more is laid out above, which a row that
+  shrinks brings in. Not on a caret moved to another line (`j`, `<CR>`,
+  which scroll by `top` as before), nor when the wheel took the view.
+  A click's row ordinal counts from the first line drawn
+  (`Kawoosh::drawn_top`), not `top`. The box is not `role=none`: kui
+  does not reach a text under one from above (AR30), and a click
+  through it found no row. Accepted: the jump itself, and the one-frame
+  lag of the parser behind it (`a_row_above_the_caret_grows_upward`,
+  `a_click_above_the_caret_lands_on_its_line`).

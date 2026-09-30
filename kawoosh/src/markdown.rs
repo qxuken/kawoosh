@@ -11,7 +11,7 @@
 //! ([`Drawn::folded`]), its marks, its size, and whether it is code, a
 //! rule or an image.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -53,12 +53,25 @@ pub struct Rendered {
     /// The table's delimiter row, drawn as cells with a rule across.
     pub delimiter: bool,
     pub wrap: TextWrap,
+    /// Under `Reveal::Near`, the source ranges shown as source.
+    pub revealed: Vec<Range<usize>>,
 }
 
 impl Rendered {
     /// Whether the row is its table's row of cells, not its source.
     pub fn grid(&self) -> bool {
         self.table && (self.delimiter || !self.cells.is_empty())
+    }
+
+    /// Whether a caret on the row has nowhere to stand but its source,
+    /// whatever `markdown.reveal` says: a table's cells, a line of
+    /// images, a rule, a line folded to nothing.
+    pub fn caret_needs_source(&self, src_len: usize) -> bool {
+        self.grid()
+            || !self.images.is_empty()
+            || self.rule
+            || self.table
+            || (self.drawn.text.is_empty() && src_len > 0)
     }
 }
 
@@ -81,16 +94,37 @@ pub struct Style {
     pub heading_color: Option<Color>,
 }
 
+/// What of a rendered line's source is shown (`markdown.reveal`,
+/// markdown.md Decision 3 amended 2026-09-30).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Reveal<'a> {
+    /// Nothing: every mark folded.
+    Folded,
+    /// The whole line: the caret's under `line`, which keeps its size
+    /// and its code background and folds nothing.
+    Source,
+    /// Around carets at these bytes (line-relative): a mark drawn as
+    /// something else — a list's marker, a box, a quote's `>` — the
+    /// caret is on; and with `inline`, the marks of what a caret is in
+    /// — an emphasis, a code span, a link, whole with its destination —
+    /// a heading's `#`s from anywhere on it, and `kept`, what was shown
+    /// so last frame carried through the edits since. The rest folded.
+    Near {
+        carets: &'a [usize],
+        inline: bool,
+        kept: &'a [Range<usize>],
+    },
+}
+
 /// Line `src` (no newline) rendered: `syntax` and `blocks` its runs,
 /// line-relative (the blocks reaching the newline, so an empty line in a
-/// fence is the fence's); `raw` for a line with a caret, which keeps its
-/// size and its code background and folds nothing; `columns` how many
-/// of the table it is a row of.
+/// fence is the fence's); `reveal` what of its source it shows;
+/// `columns` how many of the table it is a row of.
 pub fn render(
     src: &str,
     syntax: &[(Range<usize>, Token)],
     blocks: &[(Range<usize>, Block)],
-    raw: bool,
+    reveal: Reveal<'_>,
     columns: usize,
     style: &Style,
     tabstop: usize,
@@ -112,6 +146,7 @@ pub fn render(
         columns: if table { columns } else { 0 },
         cells: Vec::new(),
         delimiter: false,
+        revealed: Vec::new(),
         // Prose and code alike: a space takes its cell like a letter,
         // one that does not fit starting the next row, where under
         // `Word` it hung past the pane or went with the break, and the
@@ -129,7 +164,7 @@ pub fn render(
     // A table's row's cells, their text in source bytes until the drawn
     // bytes are known.
     let mut src_cells: Vec<Cell> = Vec::new();
-    if raw {
+    if reveal == Reveal::Source {
         if heading.is_some() {
             marks.push((0..src.len(), bold(style.heading_color)));
         }
@@ -197,6 +232,32 @@ pub fn render(
             &mut marks,
         );
     }
+    if let Reveal::Near {
+        carets,
+        inline,
+        kept,
+    } = reveal
+    {
+        let mut shown = Vec::new();
+        if inline {
+            shown = revealed(src, syntax, heading.is_some(), carets);
+            shown.extend(
+                kept.iter()
+                    .map(|r| r.start.min(src.len())..r.end.min(src.len())),
+            );
+        }
+        // A fold goes when it overlaps what is shown, or the caret is on
+        // it: under `span` any; under `none` one drawn as something else
+        // — a box's three bytes are one glyph, and a caret on any of them
+        // had nowhere to stand (2026-09-30).
+        folds.retain(|(f, with)| {
+            !shown.iter().any(|r| f.start < r.end && r.start < f.end)
+                && !carets
+                    .iter()
+                    .any(|&c| f.contains(&c) && (inline || !with.is_empty()))
+        });
+        out.revealed = shown;
+    }
     // By start, an insertion first and then the longest: of two folds
     // from one byte the enclosing one stands — a table's image cell
     // folded whole, not its `!` alone.
@@ -252,6 +313,78 @@ fn to_drawn(drawn: &Drawn, marks: &[(Range<usize>, Mark)]) -> Vec<(Range<usize>,
         .collect()
 }
 
+/// An ATX heading's marks: `## ` and a closing `##`, when the line has
+/// them (a setext heading has none).
+fn heading_marks(src: &str) -> Vec<Range<usize>> {
+    let len = src.len();
+    let bytes = src.as_bytes();
+    let mut out = Vec::new();
+    let lead = bytes.iter().take_while(|b| **b == b' ').count();
+    let hashes = bytes[lead..].iter().take_while(|b| **b == b'#').count();
+    if (1..=6).contains(&hashes) {
+        let after = lead + hashes;
+        let ws = bytes[after..]
+            .iter()
+            .take_while(|b| **b == b' ' || **b == b'\t')
+            .count();
+        out.push(0..after + ws);
+        let trimmed = src.trim_end().len();
+        let closing = src[..trimmed]
+            .bytes()
+            .rev()
+            .take_while(|b| *b == b'#')
+            .count();
+        // `## ` alone: nothing after the marker, and no closing run.
+        if closing > 0
+            && closing < trimmed.saturating_sub(after + ws)
+            && src[..trimmed - closing].ends_with(' ')
+        {
+            let start = src[..trimmed - closing].trim_end().len();
+            out.push(start..len);
+        }
+    }
+    out
+}
+
+/// What `Reveal::Near` shows as source for carets at `carets`: each's
+/// inline element — the run of painted bytes it is in or just after,
+/// which is an emphasis with its delimiters, a code span with its
+/// backticks, a link from `[` to `)` — and a heading's marks.
+fn revealed(
+    src: &str,
+    syntax: &[(Range<usize>, Token)],
+    heading: bool,
+    carets: &[usize],
+) -> Vec<Range<usize>> {
+    let len = src.len();
+    let mut painted = vec![false; len];
+    for (r, _) in syntax {
+        painted[r.start.min(len)..r.end.min(len)].fill(true);
+    }
+    let mut out = Vec::new();
+    for &c in carets {
+        let at = if c < len && painted[c] {
+            c
+        } else if c > 0 && c <= len && painted[c - 1] {
+            c - 1
+        } else {
+            continue;
+        };
+        let (mut a, mut b) = (at, at + 1);
+        while a > 0 && painted[a - 1] {
+            a -= 1;
+        }
+        while b < len && painted[b] {
+            b += 1;
+        }
+        out.push(a..b);
+    }
+    if heading && !carets.is_empty() {
+        out.extend(heading_marks(src));
+    }
+    out
+}
+
 /// A paragraph's line: the heading's `#`s, a list's marker, a task's
 /// box, a quote's `>`, and the inline marks — emphasis, a code span's
 /// backticks, a link's brackets and destination, an escape's backslash.
@@ -267,31 +400,8 @@ fn prose(
     let len = src.len();
     let bytes = src.as_bytes();
     if heading {
-        // `## ` and a closing `##`, when the line has them (a setext
-        // heading has none).
-        let lead = bytes.iter().take_while(|b| **b == b' ').count();
-        let hashes = bytes[lead..].iter().take_while(|b| **b == b'#').count();
-        if (1..=6).contains(&hashes) {
-            let after = lead + hashes;
-            let ws = bytes[after..]
-                .iter()
-                .take_while(|b| **b == b' ' || **b == b'\t')
-                .count();
-            folds.push((0..after + ws, String::new()));
-            let trimmed = src.trim_end().len();
-            let closing = src[..trimmed]
-                .bytes()
-                .rev()
-                .take_while(|b| *b == b'#')
-                .count();
-            // `## ` alone: nothing after the marker, and no closing run.
-            if closing > 0
-                && closing < trimmed.saturating_sub(after + ws)
-                && src[..trimmed - closing].ends_with(' ')
-            {
-                let start = src[..trimmed - closing].trim_end().len();
-                folds.push((start..len, String::new()));
-            }
+        for r in heading_marks(src) {
+            folds.push((r, String::new()));
         }
         marks.push((0..len, bold(style.heading_color)));
     }
@@ -583,14 +693,28 @@ pub struct Images {
     pub by_path: HashMap<PathBuf, Image>,
 }
 
-/// Line `ln` of `buf` rendered (`raw` for a caret's line): its syntax
+/// Line `ln` of `buf` rendered, `reveal` what of it is source: its syntax
 /// and structure runs read line-relative — the structure's reaching the
 /// newline — and, for a table's row, how many columns its table has, worked
 /// out once per table per frame into `tables` (by its first line).
 pub fn line(
     buf: &kawoosh_doc::Buffer,
     ln: usize,
-    raw: bool,
+    reveal: Reveal<'_>,
+    style: &Style,
+    tabstop: usize,
+    tables: &mut Tables,
+) -> Rendered {
+    line_with(buf, ln, reveal, false, style, tabstop, tables)
+}
+
+/// [`line`], `plain` for a setext heading's line drawn as the paragraph
+/// it is while its underline is being typed ([`Carets`]).
+fn line_with(
+    buf: &kawoosh_doc::Buffer,
+    ln: usize,
+    reveal: Reveal<'_>,
+    plain: bool,
     style: &Style,
     tabstop: usize,
     tables: &mut Tables,
@@ -607,7 +731,10 @@ pub fn line(
             (a < b).then_some((a..b, t))
         })
         .collect();
-    let blocks = blocks_of(buf, ln);
+    let mut blocks = blocks_of(buf, ln);
+    if plain {
+        blocks.retain(|(_, b)| b.heading().is_none());
+    }
     let table = blocks
         .iter()
         .any(|(_, b)| matches!(b, Block::Table | Block::TableHeader | Block::TableDelimiter));
@@ -647,7 +774,7 @@ pub fn line(
         &src,
         &syntax,
         &blocks,
-        raw,
+        reveal,
         columns.unwrap_or(0),
         style,
         tabstop,
@@ -656,6 +783,173 @@ pub fn line(
         r.table_first = first_line;
     }
     r
+}
+
+/// Where a view's carets are, as its rendered lines are drawn around
+/// them (`markdown.reveal`): the lines drawn as their source, each
+/// caret's line's heads and what is kept shown on it, line-relative,
+/// and the setext headings' lines drawn as paragraphs.
+pub struct Carets {
+    mode: RevealMode,
+    source: HashSet<usize>,
+    heads: HashMap<usize, Vec<usize>>,
+    kept: HashMap<usize, Vec<Range<usize>>>,
+    plain: HashSet<usize>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum RevealMode {
+    Line,
+    Span,
+    None,
+}
+
+/// What a rendered pane showed as source around its carets last frame
+/// under `span`, in the buffer's bytes then: an element the caret is in
+/// stays shown while it is typed into, whatever the syntax says of it
+/// meanwhile. The runs the frame reads are the last answer's carried
+/// over the edits since, and a byte typed at a run's edge is in
+/// neither, so for a frame or more the element looked cut in two
+/// there, its far mark folded again (2026-09-30).
+pub struct Shown {
+    pub buffer: kawoosh_doc::BufferId,
+    pub version: kawoosh_doc::Version,
+    pub ranges: Vec<Range<usize>>,
+}
+
+impl Carets {
+    /// View `view`'s, `shown` what it showed last frame. Under `line`
+    /// the source is drawn where the caret is: each selection's head's
+    /// line, and in visual mode every line a selection covers — so a
+    /// selection grown line by line turns each line raw once, as it
+    /// reaches it, rather than the one it left turning back and
+    /// reflowing under it (2026-09-27). Under `span` and `none` no line
+    /// is, but where a caret has nowhere else to stand
+    /// ([`Rendered::caret_needs_source`]).
+    pub fn of(
+        ed: &kawoosh_editor::Editor,
+        view: kawoosh_editor::ViewId,
+        shown: Option<&Shown>,
+    ) -> Self {
+        let v = &ed.views[view];
+        let buf = &ed.buffers[v.buffer];
+        let mode = match ed.settings.str("markdown.reveal") {
+            Some("span") => RevealMode::Span,
+            Some("none") => RevealMode::None,
+            _ => RevealMode::Line,
+        };
+        let visual = ed.mode(view) == kawoosh_editor::Mode::Visual;
+        let mut heads: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut source = HashSet::new();
+        for s in v.sels.iter() {
+            let ln = buf.line_of(s.head);
+            heads
+                .entry(ln)
+                .or_default()
+                .push(s.head - buf.line_start(ln));
+            if mode == RevealMode::Line {
+                if visual {
+                    source.extend(buf.line_of(s.start())..=buf.line_of(s.end()));
+                } else {
+                    source.insert(ln);
+                }
+            }
+        }
+        // Last frame's, carried: a range grows by what is typed at
+        // either of its edges, and is kept on a caret's line while a
+        // caret is in it or at its edge.
+        let mut kept: HashMap<usize, Vec<Range<usize>>> = HashMap::new();
+        if mode == RevealMode::Span
+            && let Some(sh) = shown.filter(|sh| sh.buffer == v.buffer)
+            && let Ok(edits) = buf.journal().edits_since(sh.version)
+        {
+            let edits: Vec<&kawoosh_doc::Edit> = edits.collect();
+            for r in &sh.ranges {
+                let (mut a, mut b) = (r.start, r.end);
+                for e in &edits {
+                    a = e.transform_offset(a, kawoosh_doc::Bias::Left);
+                    b = e.transform_offset(b, kawoosh_doc::Bias::Right).max(a);
+                }
+                let (a, b) = (a.min(buf.len()), b.min(buf.len()));
+                for s in v.sels.iter() {
+                    if a <= s.head && s.head <= b {
+                        let ln = buf.line_of(s.head);
+                        let line = buf.line_range(ln);
+                        let (a, b) = (a.max(line.start), b.min(line.end));
+                        if a < b {
+                            kept.entry(ln)
+                                .or_default()
+                                .push(a - line.start..b - line.start);
+                        }
+                    }
+                }
+            }
+        }
+        // A lone `-` under a paragraph is a setext heading's underline
+        // (CommonMark: an empty list item cannot interrupt a
+        // paragraph), and the paragraph an h2 — but typed, it is the
+        // start of `- item`, and the paragraph above turned a heading
+        // for a keystroke. While a caret is on such a line, the
+        // paragraph is drawn as one (2026-09-30).
+        let mut plain = HashSet::new();
+        for &ln in heads.keys() {
+            if ln == 0 || buf.line_text(ln).trim_end() != "-" {
+                continue;
+            }
+            if !blocks_of(buf, ln)
+                .iter()
+                .any(|(_, b)| *b == Block::Underline)
+            {
+                continue;
+            }
+            let mut l = ln;
+            while l > 0 && ln - l < 200 {
+                l -= 1;
+                if !blocks_of(buf, l).iter().any(|(_, b)| b.heading().is_some()) {
+                    break;
+                }
+                plain.insert(l);
+            }
+        }
+        Self {
+            mode,
+            source,
+            heads,
+            kept,
+            plain,
+        }
+    }
+
+    /// Line `ln` as the view draws it, and whether that is its source.
+    pub fn line(
+        &self,
+        buf: &kawoosh_doc::Buffer,
+        ln: usize,
+        style: &Style,
+        tabstop: usize,
+        tables: &mut Tables,
+    ) -> (Rendered, bool) {
+        let plain = self.plain.contains(&ln);
+        if self.source.contains(&ln) {
+            let r = line_with(buf, ln, Reveal::Source, plain, style, tabstop, tables);
+            return (r, true);
+        }
+        let heads = self.heads.get(&ln);
+        let reveal = match heads {
+            Some(h) if self.mode != RevealMode::Line => Reveal::Near {
+                carets: h,
+                inline: self.mode == RevealMode::Span,
+                kept: self.kept.get(&ln).map_or(&[], Vec::as_slice),
+            },
+            _ => Reveal::Folded,
+        };
+        let r = line_with(buf, ln, reveal, plain, style, tabstop, tables);
+        if heads.is_some() && r.caret_needs_source(buf.line_range(ln).len()) {
+            let r = line_with(buf, ln, Reveal::Source, plain, style, tabstop, tables);
+            return (r, true);
+        }
+        (r, false)
+    }
 }
 
 /// What a frame has read of its tables: each table row's first line,
@@ -684,6 +978,128 @@ fn blocks_of(buf: &kawoosh_doc::Buffer, ln: usize) -> Vec<(Range<usize>, Block)>
         .collect()
 }
 
+/// A tall pane's rows' heights as kui last laid them out, by line, and
+/// what they are heights of: the buffer, its version and the pane's
+/// width they were measured at. The scroll counts a line it has no
+/// height for at the body's, the least a row is, so a pane whose
+/// heights are gone draws rows enough to fill it and measures them;
+/// one whose heights are another text's drew as many rows as that
+/// text's would fill and filled in a few a frame — a file opened into
+/// a pane drawn by line after line (2026-09-30).
+#[derive(Default)]
+pub struct Heights {
+    buffer: Option<kawoosh_doc::BufferId>,
+    version: Option<kawoosh_doc::Version>,
+    lines: usize,
+    width: f32,
+    pub by_line: HashMap<usize, f32>,
+    /// What each row drew last frame, by its line then — the row's key
+    /// (`md{ln}`) — as [`Heights::stamp`]: a row's layout, read a frame
+    /// late, is its line's only when the row under the key drew the
+    /// same then, not the line a buffer switched or an edit shifted
+    /// under it.
+    pub stamps: HashMap<usize, u64>,
+}
+
+impl Heights {
+    /// Brought to `buf` (`id`) in a pane `width` wide: another buffer or
+    /// width forgets them all; an edit keeps the lines above it, carries
+    /// the ones below by the lines it put in or took out, and forgets
+    /// those it touched.
+    pub fn sync(&mut self, id: kawoosh_doc::BufferId, buf: &kawoosh_doc::Buffer, width: f32) {
+        let version = buf.version();
+        let count = buf.line_count();
+        if self.buffer != Some(id) || (self.width - width).abs() > 0.5 {
+            self.by_line.clear();
+        } else if self.version != Some(version) {
+            match self.version.map(|v| buf.journal().edits_since(v)) {
+                Some(Ok(edits)) => {
+                    let edits: Vec<&kawoosh_doc::Edit> = edits.collect();
+                    let (first, tail) = unchanged(&edits, buf.len());
+                    let above = buf.line_of(first.min(buf.len()));
+                    // The tail's first whole line: the one its first
+                    // byte is on may have been edited before it.
+                    let from = buf.line_of(buf.len() - tail) + 1;
+                    let n_tail = count.saturating_sub(from);
+                    let old_from = self.lines.saturating_sub(n_tail);
+                    let delta = count as isize - self.lines as isize;
+                    self.by_line = std::mem::take(&mut self.by_line)
+                        .into_iter()
+                        .filter_map(|(ln, h)| {
+                            if ln < above {
+                                Some((ln, h))
+                            } else if ln >= old_from && ln < self.lines {
+                                Some(((ln as isize + delta) as usize, h))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                }
+                _ => self.by_line.clear(),
+            }
+        }
+        self.buffer = Some(id);
+        self.version = Some(version);
+        self.lines = count;
+        self.width = width;
+    }
+
+    /// A row's identity for [`Heights::stamps`]: what it draws and how.
+    pub fn stamp(text: &str, form: impl std::hash::Hash) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        form.hash(&mut h);
+        h.finish()
+    }
+}
+
+/// Where a tall pane's caret row was drawn, for the next frame to find
+/// it: the buffer and version it was of, the caret's byte then, the
+/// row's key and the rows' column's.
+pub struct Anchor {
+    pub buffer: kawoosh_doc::BufferId,
+    pub version: kawoosh_doc::Version,
+    pub head: usize,
+    pub row: kui_native::Key,
+    pub lines: kui_native::Key,
+}
+
+/// A tall pane drawn around its caret's row where it was on screen
+/// (2026-09-30): the rows above it stack up from it, in a float that
+/// grows upward and is cut at the pane's top, so a row above that grows
+/// — a paragraph turned a heading, an image read, a line turned its
+/// source — pushes what is above it up and out of sight, not the caret
+/// down. The scroll by `top` placed the rows from the pane's top by
+/// last frame's heights, and a row above that grew pushed the caret's
+/// down for the frame kui took to measure it, off the pane's bottom
+/// when it was near it. The caret's line, its `y` from the rows'
+/// column's top, and the first line drawn above it.
+#[derive(Clone, Copy, Debug)]
+pub struct Anchored {
+    pub line: usize,
+    pub y: f32,
+    pub from: usize,
+}
+
+/// Of a run of edits in order, ending at a text `len` long: the first
+/// byte any touched, and how many bytes at the end none did. A byte
+/// before every edit's start is before each; a byte nearer the end than
+/// every edit's end was, in its own text, is after each.
+fn unchanged(edits: &[&kawoosh_doc::Edit], len: usize) -> (usize, usize) {
+    let mut first = usize::MAX;
+    let mut tail = usize::MAX;
+    // The text's length after each edit, from the last back.
+    let mut after = len;
+    for e in edits.iter().rev() {
+        first = first.min(e.range.start);
+        tail = tail.min(after.saturating_sub(e.range.start + e.new_len));
+        after = (after + e.removed()).saturating_sub(e.new_len);
+    }
+    (first.min(len), tail.min(len))
+}
+
 impl Kawoosh {
     /// Whether the buffer is drawn rendered: `markdown.render` and its
     /// language.
@@ -698,14 +1114,19 @@ impl Kawoosh {
     /// The rendered pane's scroll: the caret's line and `scrolloff`
     /// after it on screen by the rows' heights as last laid out (a row
     /// not seen yet at the body's), a far jump centred; `v.rows` what
-    /// fits, for the half-page moves. The line past the last drawn.
-    /// `follow` is `render_editor`'s: whether the caret pulls the view.
+    /// fits, for the half-page moves. The line past the last drawn, and
+    /// the anchor when the caret's row stays where it was
+    /// ([`Anchored`]). `follow` is `render_editor`'s: whether the caret
+    /// pulls the view; `width` the pane's, which the heights were
+    /// measured at.
     pub(crate) fn md_follow(
         &mut self,
+        ui: &kui_native::Ui<'_>,
         view: kawoosh_editor::ViewId,
         avail: f32,
+        width: f32,
         follow: bool,
-    ) -> usize {
+    ) -> (usize, Option<Anchored>) {
         let lh = self.face.line_height;
         let rows_est = ((avail / lh).floor() as usize).max(1);
         let so = self
@@ -714,12 +1135,69 @@ impl Kawoosh {
             .int("scrolloff")
             .map_or(3, |n| n.max(0) as usize)
             .min(rows_est / 2);
-        let buf = &self.ed.buffers[self.ed.views[view].buffer];
+        let buf_id = self.ed.views[view].buffer;
+        let buf = &self.ed.buffers[buf_id];
+        let known = self.md_heights.entry(view).or_default();
+        known.sync(buf_id, buf, width);
         let count = buf.line_count().max(1);
         let head = buf.line_of(self.ed.views[view].sels.primary().head);
-        let known = self.md_heights.get(&view);
-        let h = |ln: usize| known.and_then(|k| k.get(&ln)).copied().unwrap_or(lh);
+        let known = &known.by_line;
+        let h = |ln: usize| known.get(&ln).copied().unwrap_or(lh);
+        // Where the caret's row was on screen last frame, when it is on
+        // the same line and keeps `scrolloff` there.
+        let anchored_y = self
+            .md_anchor
+            .get(&view)
+            .filter(|_| follow)
+            .filter(|a| a.buffer == buf_id)
+            .filter(|_| !crate::markdown::is_table_line(buf, head))
+            .and_then(|a| {
+                let edits = buf.journal().edits_since(a.version).ok()?;
+                let at = edits.fold(a.head, |o, e| {
+                    e.transform_offset(o, kawoosh_doc::Bias::Left)
+                });
+                (buf.line_of(at.min(buf.len())) == head).then_some(a)?;
+                let row = ui.layout_of(a.row)?;
+                let lines = ui.layout_of(a.lines)?;
+                Some(row.y - lines.y)
+            })
+            .filter(|y| {
+                let margin = so as f32 * lh;
+                *y >= margin.min(head as f32 * lh) && y + h(head) + margin <= avail
+            });
         let v = &mut self.ed.views[view];
+        if let Some(y) = anchored_y {
+            // The rows above it, stacked up from it to the pane's top and
+            // a half pane more — what a row above shrinking brings in.
+            let mut from = head;
+            let mut above = 0.0;
+            let mut top = head;
+            while from > 0 && above < y + avail / 2.0 {
+                from -= 1;
+                if above < y {
+                    top = from;
+                }
+                above += h(from);
+            }
+            let (mut last, mut acc, mut fits) = (head, y, 0);
+            while last < count && acc < avail {
+                acc += h(last);
+                if acc <= avail {
+                    fits += 1;
+                }
+                last += 1;
+            }
+            v.top = top;
+            v.rows = (fits + head - top).max(1);
+            return (
+                last,
+                Some(Anchored {
+                    line: head,
+                    y,
+                    from,
+                }),
+            );
+        }
         let mut top = v.top.min(count - 1);
         if follow {
             if head + rows_est / 2 < top || head >= top + rows_est + rows_est / 2 {
@@ -743,7 +1221,7 @@ impl Kawoosh {
         }
         v.top = top;
         v.rows = fits.max(1);
-        last
+        (last, None)
     }
 
     /// The frame's render style.
@@ -999,7 +1477,7 @@ mod tests {
             (21..22, Token::Punctuation),
         ];
         let blocks = vec![(0..src.len() + 1, Block::H2)];
-        let r = render(src, &syntax, &blocks, false, 0, &style(), 4);
+        let r = render(src, &syntax, &blocks, Reveal::Folded, 0, &style(), 4);
         assert_eq!(r.drawn.text, "Go to now");
         assert_eq!(r.scale, 1.35);
         assert_eq!(r.drawn.to_src(3), 7, "`to` is where the label is");
@@ -1011,10 +1489,18 @@ mod tests {
         assert!(r.marks.iter().any(|(rg, m)| *rg == (3..5) && m.underline));
         assert!(r.marks.iter().any(|(rg, m)| *rg == (6..9) && m.italic));
         // A heading with nothing after its marker.
-        let empty = render("## ", &[], &[(0..4, Block::H2)], false, 0, &style(), 4);
+        let empty = render(
+            "## ",
+            &[],
+            &[(0..4, Block::H2)],
+            Reveal::Folded,
+            0,
+            &style(),
+            4,
+        );
         assert_eq!(empty.drawn.text, "");
         // Raw: the source, its size kept.
-        let raw = render(src, &syntax, &blocks, true, 0, &style(), 4);
+        let raw = render(src, &syntax, &blocks, Reveal::Source, 0, &style(), 4);
         assert_eq!(raw.drawn.text, src);
         assert_eq!(raw.scale, 1.35);
     }
@@ -1032,7 +1518,7 @@ mod tests {
         ];
         assert_eq!(table_columns(&rows), 2);
         let t = |r: &str| vec![(0..r.len() + 1, Block::Table)];
-        let r = render(&rows[0], &[], &t(&rows[0]), false, 2, &style(), 4);
+        let r = render(&rows[0], &[], &t(&rows[0]), Reveal::Folded, 2, &style(), 4);
         assert_eq!(r.drawn.text, "abb");
         assert_eq!(r.cells, [Cell::Text(0..1), Cell::Text(1..3)]);
         assert_eq!(r.drawn.to_src(1), 6, "`bb` where it is in the source");
@@ -1041,17 +1527,17 @@ mod tests {
             &rows[1],
             &[],
             &[(0..10, Block::TableDelimiter)],
-            false,
+            Reveal::Folded,
             2,
             &style(),
             4,
         );
         assert!(r.delimiter && r.grid());
         assert_eq!(r.drawn.text, "");
-        let r = render(&rows[2], &[], &t(&rows[2]), false, 2, &style(), 4);
+        let r = render(&rows[2], &[], &t(&rows[2]), Reveal::Folded, 2, &style(), 4);
         assert_eq!(r.drawn.text, "cccd");
         assert_eq!(r.cells, [Cell::Text(0..3), Cell::Text(3..4)]);
-        let r = render(&rows[3], &[], &t(&rows[3]), false, 2, &style(), 4);
+        let r = render(&rows[3], &[], &t(&rows[3]), Reveal::Folded, 2, &style(), 4);
         assert_eq!(r.cells, [Cell::Text(0..1), Cell::Image(0)]);
         assert_eq!(r.images, [("y.png".to_string(), "b".to_string())]);
         assert_eq!(r.drawn.text, "x");
@@ -1062,7 +1548,7 @@ mod tests {
             row,
             &[(0..1, Token::Punctuation)],
             &t(row),
-            false,
+            Reveal::Folded,
             2,
             &style(),
             4,
@@ -1071,7 +1557,7 @@ mod tests {
         assert_eq!(r.cells, [Cell::Image(0), Cell::Text(0..1)]);
         assert_eq!(r.drawn.to_src(0), 14);
         // The caret's row is its source.
-        let r = render(&rows[0], &[], &t(&rows[0]), true, 2, &style(), 4);
+        let r = render(&rows[0], &[], &t(&rows[0]), Reveal::Source, 2, &style(), 4);
         assert_eq!(r.drawn.text, rows[0]);
         assert!(!r.grid());
     }
@@ -1107,5 +1593,43 @@ mod tests {
         );
         assert_eq!(images_line("| a | ![b](y.png) |"), None);
         assert_eq!(base64("aGk="), Some(b"hi".to_vec()));
+    }
+
+    /// The heights a pane scrolls by are its buffer's, at its width:
+    /// another buffer or width forgets them; an edit keeps the lines
+    /// above it, carries those below by the lines it put in, and forgets
+    /// the ones it touched.
+    #[test]
+    fn heights_follow_their_buffer_and_its_edits() {
+        let mut ed = kawoosh_editor::Editor::new();
+        let text: String = (0..10).map(|i| format!("line {i}\n")).collect();
+        let a = ed.add_buffer(kawoosh_doc::Buffer::new("a.md", &text));
+        let b = ed.add_buffer(kawoosh_doc::Buffer::new("b.md", ""));
+        let buf = &mut ed.buffers[a];
+        let mut h = Heights::default();
+        h.sync(a, buf, 600.0);
+        h.by_line = (0..10).map(|l| (l, 100.0 + l as f32)).collect();
+        // Two lines put in on line 4.
+        let at = buf.line_start(4);
+        buf.replace(at..at, "new\nnew\n");
+        h.sync(a, buf, 600.0);
+        let got = |h: &Heights, l: usize| h.by_line.get(&l).copied();
+        assert_eq!(got(&h, 3), Some(103.0), "above the edit, kept");
+        assert_eq!(got(&h, 4), None, "the edited line, forgotten");
+        assert_eq!(got(&h, 7), Some(105.0), "line 5 is line 7 now");
+        assert_eq!(got(&h, 11), Some(109.0), "and the last with it");
+        assert_eq!(got(&h, 12), None);
+        // Three lines taken out from line 1.
+        let (s, e) = (buf.line_start(1), buf.line_start(4));
+        buf.replace(s..e, "");
+        h.sync(a, buf, 600.0);
+        assert_eq!(got(&h, 0), Some(100.0));
+        assert_eq!(got(&h, 8), Some(109.0), "line 11 is line 8 now");
+        // Another width, another buffer: nothing.
+        h.sync(a, buf, 500.0);
+        assert!(h.by_line.is_empty());
+        h.by_line.insert(0, 1.0);
+        h.sync(b, &ed.buffers[b], 500.0);
+        assert!(h.by_line.is_empty());
     }
 }

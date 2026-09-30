@@ -153,8 +153,18 @@ pub struct Kawoosh {
     pub(crate) md_pending: Vec<(PathBuf, crate::markdown::Pixels)>,
     /// Each rendered row's height as kui laid it out, by view and line:
     /// what the rendered pane scrolls by, a row being as tall as its
-    /// text wraps to.
-    pub(crate) md_heights: HashMap<ViewId, HashMap<usize, f32>>,
+    /// text wraps to — and what they are heights of.
+    pub(crate) md_heights: HashMap<ViewId, crate::markdown::Heights>,
+    /// What each rendered pane showed as source around its carets last
+    /// frame under `markdown.reveal = "span"` (`markdown::Shown`).
+    pub(crate) md_shown: HashMap<ViewId, crate::markdown::Shown>,
+    /// Where each tall pane's caret row was drawn last frame
+    /// (`markdown::Anchor`).
+    pub(crate) md_anchor: HashMap<ViewId, crate::markdown::Anchor>,
+    /// The first line each editor pane drew last frame: what a click's
+    /// row ordinal counts from — the view's `top`, or a line above it in
+    /// a pane drawn around its caret (`markdown::Anchored`).
+    pub(crate) drawn_top: HashMap<ViewId, usize>,
     /// Each rendered table's sideways offset, by view and its first
     /// line: a table wider than the pane scrolls on its own.
     pub(crate) md_table_left: HashMap<(ViewId, usize), f32>,
@@ -372,6 +382,9 @@ impl Kawoosh {
             md_images: Default::default(),
             md_pending: Vec::new(),
             md_heights: HashMap::new(),
+            md_shown: HashMap::new(),
+            md_anchor: HashMap::new(),
+            drawn_top: HashMap::new(),
             md_table_left: HashMap::new(),
             show_tab: None,
             tab_shown: None,
@@ -1843,7 +1856,11 @@ impl Kawoosh {
         };
         let clicks = d.clicks.unwrap_or(1);
         let tabstop = self.ed.tabstop_in(self.ed.views[view].buffer);
-        let top = self.ed.views[view].top;
+        let top = self
+            .drawn_top
+            .get(&view)
+            .copied()
+            .unwrap_or(self.ed.views[view].top);
         let marked = self.marks.any(self.ed.views[view].buffer);
         let buf = self.ed.buffer_of(view);
         let ln = (top + line as usize).min(buf.line_count() - 1);
@@ -1870,22 +1887,19 @@ impl Kawoosh {
             cell_w: self.cell.0,
         };
         // A rendered row maps back through the fold it was drawn with —
-        // the caret's lines raw, as the frame drew them.
+        // around the carets, as the frame drew it.
         let drawn = if self.markdown_rendered(self.ed.views[view].buffer) {
-            let raw = self.ed.views[view]
-                .sels
-                .iter()
-                .any(|s| buf.line_of(s.head) == ln);
             let style = self.markdown_style(self.dark);
-            crate::markdown::line(
-                buf,
-                ln,
-                raw,
-                &style,
-                tabstop,
-                &mut crate::markdown::Tables::default(),
-            )
-            .drawn
+            crate::markdown::Carets::of(&self.ed, view, self.md_shown.get(&view))
+                .line(
+                    buf,
+                    ln,
+                    &style,
+                    tabstop,
+                    &mut crate::markdown::Tables::default(),
+                )
+                .0
+                .drawn
         } else {
             Drawn::for_line(buf, range.clone(), tabstop, Some(window), 0, None).0
         };

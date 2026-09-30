@@ -4281,6 +4281,20 @@ pub fn default_keymap(km: &mut Keymap) {
     ] {
         km.bind_local("terminal", Normal, k, c, &[]);
     }
+    // A rendered markdown pane under `markdown.navigation = "row"`:
+    // `j` `k` and the arrows a row on screen, `gj` `gk` everywhere else
+    // (wrap.md Decision 2). An operator's `j` stays a line: its lookup
+    // falls through to normal mode's, where the row move would shadow it.
+    for (k, row, line) in [
+        ("j", "move down row", "move down"),
+        ("k", "move up row", "move up"),
+        ("<Down>", "move down row", "move down"),
+        ("<Up>", "move up row", "move up"),
+    ] {
+        km.bind_local("rows", Normal, k, row, &[]);
+        km.bind_local("rows", Visual, k, row, &[]);
+        km.bind_local("rows", OperatorPending, k, line, &[]);
+    }
     // What each prefix is for, as the which-key names it.
     for (keys, name) in [
         ("<leader>", "leader"),
