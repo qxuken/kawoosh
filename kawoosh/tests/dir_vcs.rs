@@ -36,12 +36,17 @@ fn a_listing_in_a_repository_paints_what_git_says() {
     let dir = std::env::temp_dir().join(format!("kawoosh-dir-vcs-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(dir.join("build")).unwrap();
+    std::fs::create_dir_all(dir.join("src/deep")).unwrap();
     let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
     git(&dir, &["init", "-q"]);
-    std::fs::write(dir.join(".gitignore"), "build/\n").unwrap();
+    std::fs::write(dir.join(".gitignore"), "build/\n*.gen\n/src/deep/\n").unwrap();
     std::fs::write(dir.join("kept.txt"), "k\n").unwrap();
     std::fs::write(dir.join("changed.txt"), "c\n").unwrap();
     std::fs::write(dir.join("build/out.o"), "o\n").unwrap();
+    // A directory holding ignored files is not itself ignored.
+    std::fs::write(dir.join("src/main.c"), "m\n").unwrap();
+    std::fs::write(dir.join("src/main.gen"), "g\n").unwrap();
+    std::fs::write(dir.join("src/deep/x"), "x\n").unwrap();
     git(&dir, &["add", "."]);
     git(&dir, &["commit", "-q", "-m", "first"]);
     std::fs::write(dir.join("changed.txt"), "c2\n").unwrap();
