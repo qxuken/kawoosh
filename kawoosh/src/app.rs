@@ -85,6 +85,8 @@ pub struct Kawoosh {
     pub config: Config,
     /// The watch on the open buffers' files (`disk.rs`).
     pub disk: crate::disk::DiskWatch,
+    /// The watch for a new Kawoosh beside this one (`update.rs`).
+    pub(crate) update: crate::update::UpdateWatch,
     /// The project `init.lua` records and the question up (`trust.rs`).
     pub trust: crate::trust::Trust,
     pub compile: Compile,
@@ -353,6 +355,7 @@ impl Kawoosh {
             domains: Default::default(),
             config: Config::new(wake.named("settings"), beat.clone()),
             disk: crate::disk::DiskWatch::new(wake.named("disk"), beat.clone()),
+            update: Default::default(),
             trust: Default::default(),
             compile: Compile::default(),
             multis: Default::default(),
@@ -1058,7 +1061,7 @@ impl Kawoosh {
     }
 
     /// `:qa` (`force`: `:qa!`): as `request_quit`, over every buffer.
-    fn request_quit_all(&mut self, force: bool) {
+    pub(crate) fn request_quit_all(&mut self, force: bool) {
         let modified: Vec<BufferId> = self
             .ed
             .buffers
@@ -2304,6 +2307,7 @@ impl kui_native::App for Kawoosh {
         self.sync_histories(false);
         self.moments.window_focused = ui.env().focused;
         self.sync_disk(false);
+        self.sync_update();
         self.sync_marks();
         self.sync_moments(false);
         // A file's edit from the io thread (it landed, a reload, a

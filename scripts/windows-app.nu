@@ -5,8 +5,15 @@
 #
 #   Kawoosh\kawoosh.exe        the window, its icon linked in (build.rs)
 #   Kawoosh\kawoosh-edit.exe   a terminal's $EDITOR, found beside it
+#   Kawoosh\kawoosh-update.exe what :relaunch puts the next one in with
 #   Kawoosh\fonts\             the bundled faces, found from the binary
 #                              (left out with --no-fonts)
+#
+# A Kawoosh running from the folder keeps it: Windows renames no folder
+# with a file open in it. The new one is then left beside, whole, as
+# Kawoosh.new with a `ready` file in it, and the running Kawoosh offers
+# to relaunch into it (kawoosh/src/update.rs) — so a Kawoosh builds the
+# Kawoosh it runs from.
 #
 # With --install the folder goes to %LOCALAPPDATA%\Programs — a user's
 # own programs, no administrator — and a Start menu shortcut opens it in
@@ -50,32 +57,44 @@ def main [
     }
   }
 
-  ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-edit
+  ^cargo build --release --manifest-path $manifest -p kawoosh --bin kawoosh --bin kawoosh-edit --bin kawoosh-update
   # `path+file:///…/kawoosh#0.0.1`, or `…#kawoosh@0.0.1`.
   let version = ^cargo pkgid --manifest-path $manifest -p kawoosh | str trim | str replace -r '.*[#@]' ''
 
-  # Made beside the old folder, then swapped in by renames: a running
-  # kawoosh.exe holds its folder, so the old one's rename fails whole
-  # and the install stays as it was — where a removal would have taken
-  # every file but the running one.
+  # Made beside the old folder, then swapped in by renames: the old one
+  # aside, the new one into its place. A Kawoosh running from the folder
+  # keeps the first rename from happening, whole, and the install stays
+  # as it was; the new folder is then left beside with `ready` written
+  # in it last — the version — for that Kawoosh to relaunch into. What a
+  # swap left aside goes at the next run.
   let fresh = $"($app).new"
-  let old = $"($app).old"
-  rm -rf $fresh $old
+  let aside = $"($app | path basename).old-"
+  let parent = $app | path dirname
+  if ($parent | path exists) {
+    let stale = ls -a $parent | where type == dir and ($it.name | path basename | str starts-with $aside) | get name
+    for d in $stale {
+      try { rm -rf $d }
+    }
+  }
+  rm -rf $fresh
   mkdir $fresh
-  for bin in [kawoosh kawoosh-edit] {
+  for bin in [kawoosh kawoosh-edit kawoosh-update] {
     cp ($target | path join release $"($bin).exe") $fresh
   }
   if not $no_fonts {
     cp -r $fonts $fresh
   }
-  if ($app | path exists) {
-    try { mv $app $old } catch {
-      rm -rf $fresh
-      error make {msg: $"cannot replace ($app): close Kawoosh if it is running from there"}
-    }
+  let old = $parent | path join $"($aside)(random chars --length 8)"
+  let moved = if ($app | path exists) { try { mv $app $old; true } catch { false } } else { true }
+  if $moved {
+    mv $fresh $app
+    rm -rf $old
+  } else {
+    $version | save ($fresh | path join ready)
+    print -e $"($app) is in use, so Kawoosh ($version) waits beside it in ($fresh).
+A Kawoosh running from there offers to relaunch into it: :relaunch.
+One built before it cannot: quit it and run this again."
   }
-  mv $fresh $app
-  rm -rf $old
 
   if $install {
     # A shortcut is a COM object's to write; PowerShell has the COM.

@@ -71,6 +71,7 @@ pub mod themes;
 pub mod trust;
 pub mod types;
 pub mod undo;
+pub mod update;
 pub mod vcs;
 pub mod whichkey;
 pub mod wrap;

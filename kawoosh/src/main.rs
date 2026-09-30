@@ -294,6 +294,17 @@ fn main() -> anyhow::Result<()> {
             app.restore_session();
         }
     }
+    // A new Kawoosh built beside the folder this one runs from, offered
+    // as it lands (`update.rs`). Windows only: elsewhere a running
+    // program's files are replaced under it.
+    if cfg!(windows)
+        && let Some(dir) = std::env::current_exe()
+            .and_then(|e| kawoosh_systems::fs::canonicalize(&e))
+            .ok()
+            .and_then(|e| e.parent().map(Path::to_path_buf))
+    {
+        app.watch_update(&dir);
+    }
     let launcher = kui_native::app("kawoosh")
         // The title row is kawoosh's (chrome.rs): the cwd and the
         // status blocks in it, the platform's controls kept.

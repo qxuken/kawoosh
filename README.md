@@ -38,7 +38,7 @@ cargo run --release -p kawoosh -- PATH    # open a file, or list a folder
 As an app:
 
 - macOS: `nu scripts/macos-app.nu` builds `Kawoosh.app` in `target/release` (or in a folder you name as the first argument). `--no-fonts` leaves the fonts out of the bundle. To use the CLI from a shell, link the binary onto your `PATH`: `ln -s /Applications/Kawoosh.app/Contents/MacOS/kawoosh ~/.local/bin/`.
-- Windows: `nu scripts/windows-app.nu` builds a `Kawoosh` folder in `target\release` (or a folder you name). `--no-fonts` leaves the fonts out, and `--install` puts it in `%LOCALAPPDATA%\Programs` with a Start menu shortcut.
+- Windows: `nu scripts/windows-app.nu` builds a `Kawoosh` folder in `target\release` (or a folder you name). `--no-fonts` leaves the fonts out, and `--install` puts it in `%LOCALAPPDATA%\Programs` with a Start menu shortcut. Built while a Kawoosh runs from that folder — the one you build it in — the new one waits beside it (`Kawoosh.new`), and the running Kawoosh offers to relaunch into it: `:relaunch` quits, puts the new folder in place (or puts nothing back out of place when it can't) and starts it on your session.
 
 ## Configuration
 
