@@ -1841,7 +1841,13 @@ follow the theme every frame (`panes.rs`).
   launch finds language servers; `--no-fonts` leaves the 217 MB of
   faces out), `scripts/windows-app.nu` the Kawoosh folder and, with
   `--install`, a Start menu shortcut; on Windows the binary is a GUI
-  program and opens no console.
+  program and opens no console. Since 2026-09-30 a Kawoosh builds the
+  one it runs from: Windows renames no folder with a file open in it,
+  so the script leaves the new folder beside (`Kawoosh.new`, a `ready`
+  file written last), the running Kawoosh watches for it and offers
+  `:relaunch`, and `kawoosh-update`, run from a copy in the temp
+  folder, swaps the folders once it has quit — or leaves both as they
+  were and says why — and starts the one in place (`update.rs`).
 - **An image for kawoosh** — done 2026-09-25, the bundles' and the
   window's at runtime (kui F86) [todo]; step 35. Neither bundle had
   an icon: the Dock, Explorer and the window's title showed the

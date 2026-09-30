@@ -51,6 +51,12 @@ base64 = "0.22"
 name = "kawoosh-edit"
 path = "src/bin/edit.rs"
 
+# What `:relaunch` puts a new Kawoosh in place with, on Windows
+# (src/update.rs), shipped beside `kawoosh`.
+[[bin]]
+name = "kawoosh-update"
+path = "src/bin/update.rs"
+
 [[bin]]
 name = "kawoosh-gen"
 path = "src/bin/gen.rs"
