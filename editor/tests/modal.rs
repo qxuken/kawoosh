@@ -962,6 +962,36 @@ fn indent_and_change_line() {
     assert_eq!(t.text(), "a\nb\nx");
 }
 
+/// `o` below a line ending in an opening bracket, `O` above one
+/// starting with a closer, and `<CR>` after an opener land a level
+/// inside the block; `<CR>` between a bracket and its closer opens it.
+#[test]
+fn new_lines_indent_inside_a_block() {
+    let mut t = T::new("    fn f() {\n        x\n    }");
+    t.keys("oa<Esc>");
+    assert_eq!(t.text(), "    fn f() {\n        a\n        x\n    }", "o after {{");
+    t.keys("GOb<Esc>");
+    assert_eq!(
+        t.text(),
+        "    fn f() {\n        a\n        x\n        b\n    }",
+        "O before }}"
+    );
+    t.keys("Goc<Esc>");
+    assert_eq!(t.text().lines().last(), Some("    c"), "o after }}: its level");
+    t.keys("ggOd<Esc>");
+    assert_eq!(t.text().lines().next(), Some("    d"), "O before {{: its level");
+
+    let mut t = T::new("  g(  ");
+    t.keys("A<CR>y<Esc>");
+    assert_eq!(t.text(), "  g(  \n      y", "<CR> after (");
+    let mut t = T::new("  v = [  ]");
+    t.keys("f[a<CR>z<Esc>");
+    assert_eq!(t.text(), "  v = [\n      z\n  ]", "<CR> between [ and ]");
+    let mut t = T::new("  a(b)");
+    t.keys("fbi<CR><Esc>");
+    assert_eq!(t.text(), "  a(\n      b)", "<CR> after ( with more before the closer");
+}
+
 /// `yy` leaves the caret where it is — on the last line too, whose
 /// linewise range starts with the newline before it — and a charwise
 /// yank puts it at the start of what was yanked.

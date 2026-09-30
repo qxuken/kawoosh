@@ -193,14 +193,18 @@ local function backspace()
   apply(heads, actions)
 end
 
--- `<CR>` between a bracket and its closer, at every caret: the block
--- opened — the closer on a line of its own, the caret on an indented
--- line between. Else the engine's newline.
+-- The brackets whose block the engine's `insert newline` opens itself.
+local ENGINE = { ["("] = true, ["["] = true, ["{"] = true }
+
+-- `<CR>` between a pair's opener and its closer, at every caret: the
+-- block opened — the closer on a line of its own, the caret on an
+-- indented line between. The engine's newline does that for `()` `[]`
+-- `{}`; this for a pair a rule adds (`<>`). Else the engine's newline.
 local function enter()
   local rules = M.rules(kawoosh.buf.language())
   local closer_of = {}
   for _, p in ipairs(rules) do
-    if p[1] ~= p[2] then closer_of[p[1]] = p[2] end
+    if p[1] ~= p[2] and not ENGINE[p[1]] then closer_of[p[1]] = p[2] end
   end
   local heads = carets()
   local all = #heads > 0

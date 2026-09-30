@@ -339,6 +339,28 @@ pub fn indent_of(buf: &Buffer, ln: usize) -> String {
         .collect()
 }
 
+/// The closer of a bracket that opens a block: a line ending in one
+/// indents the line below it a level, whatever the language.
+pub fn block_closer(open: char) -> Option<char> {
+    match open {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        _ => None,
+    }
+}
+
+/// The closer `text` ends with an opener of, trailing blanks aside.
+pub fn opens_block(text: &str) -> Option<char> {
+    text.trim_end().chars().next_back().and_then(block_closer)
+}
+
+/// `text` starts with a closer, leading blanks aside: the line above
+/// it is inside the block.
+pub fn closes_block(text: &str) -> bool {
+    matches!(text.trim_start().chars().next(), Some(')' | ']' | '}'))
+}
+
 /// The bracket matching the one at `o`, if `o` is on a bracket.
 pub fn matching_bracket(buf: &Buffer, o: usize) -> Option<usize> {
     let c = char_at(buf, o)?;
