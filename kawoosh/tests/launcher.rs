@@ -100,7 +100,8 @@ fn pane_count(app: &Kawoosh) -> usize {
 }
 
 /// `<C-w>v` opens a launcher with the query keyed in normal mode; its
-/// first section is *here*, the buffer split from first; `<CR>` is
+/// first section is *here*, the buffer split from first, the
+/// workspaces after it; `<CR>` is
 /// vim's split — the same buffer, the caret where it was — and the
 /// launcher is gone.
 #[test]
@@ -124,6 +125,11 @@ fn a_bare_split_asks_and_enter_is_vims_split() {
     assert!(
         !r.iter().any(|s| s == "# files"),
         "no files without a query: {r:?}"
+    );
+    let modules = said(&mut app, "modules");
+    assert!(
+        modules.starts_with("prompt|here|workspaces|buffers|"),
+        "{modules}"
     );
     d.press(&mut app, "<CR>");
     d.frame(&mut app);

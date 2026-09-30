@@ -213,7 +213,7 @@ launcher.module("files", { source = "files", show = "query" })
 launcher.module("prompt", { prompt = true, title = "new pane" })
 
 -- The layout when the setting names none; `init.lua` may set it too.
-launcher.layout = { "prompt", "here", "buffers", "plugins", "recent", "...", "files" }
+launcher.layout = { "prompt", "here", "workspaces", "buffers", "plugins", "recent", "...", "files" }
 
 -- ------------------------------------------------------------- layout
 
