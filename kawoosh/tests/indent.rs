@@ -136,3 +136,44 @@ fn equals_reindents() {
     assert_eq!(app.ed.message, "no indent rules for text");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `=` with a caret on each of two lines: each caret back on its own
+/// line's first non-blank, not at its offset from before the indents
+/// moved the text.
+#[test]
+fn equals_puts_each_caret_back_on_its_line() {
+    let (mut app, mut d, dir) = open("a.rs", "fn f() {\nx;\n}\nfn g() {\ny;\n}\n");
+    let v = app.focused_view().unwrap();
+    app.ed.views[v].sels = kawoosh_editor::Selections {
+        items: vec![
+            kawoosh_editor::Selection::point(9),
+            kawoosh_editor::Selection::point(23),
+        ],
+        primary: 0,
+    };
+    d.press(&mut app, "==");
+    assert_eq!(text(&app), "fn f() {\n    x;\n}\nfn g() {\n    y;\n}\n");
+    let heads: Vec<usize> = app.ed.views[v].sels.items.iter().map(|s| s.head).collect();
+    assert_eq!(heads, vec![13, 31], "each on its own line");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// On the last line of a file with no line break after it, `==` `>>`
+/// `<<` and `cc` take that line alone — not the line above, whose
+/// break a linewise range there starts with.
+#[test]
+fn line_operators_on_an_unbroken_last_line() {
+    let (mut app, mut d, dir) = open("a.rs", "fn f() {\nx;\n  }");
+    d.press(&mut app, "G==");
+    assert_eq!(text(&app), "fn f() {\nx;\n}", "`==`");
+    let v = app.focused_view().unwrap();
+    assert_eq!(app.ed.views[v].sels.primary().head, 12, "on the line");
+    d.press(&mut app, ">>");
+    assert_eq!(text(&app), "fn f() {\nx;\n    }", "`>>`");
+    assert_eq!(app.ed.views[v].sels.primary().head, 16, "on the line");
+    d.press(&mut app, "<<");
+    assert_eq!(text(&app), "fn f() {\nx;\n}", "`<<`");
+    d.press(&mut app, "ccz<Esc>");
+    assert_eq!(text(&app), "fn f() {\nx;\nz", "`cc`");
+    std::fs::remove_dir_all(&dir).ok();
+}

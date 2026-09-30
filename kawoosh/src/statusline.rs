@@ -276,7 +276,10 @@ impl Kawoosh {
                 let reg = self
                     .ed
                     .pending_register
-                    .map(|r| format!("\"{r}"))
+                    .map(|r| {
+                        let before = self.ed.register_count.map(|c| c.to_string());
+                        format!("{}\"{r}", before.unwrap_or_default())
+                    })
                     .unwrap_or_default();
                 Some(Module::text(format!("{reg}{count}{op}{pending}"), pal.dim))
             }

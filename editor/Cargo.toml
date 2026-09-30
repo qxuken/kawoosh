@@ -13,3 +13,4 @@ regex = "1"
 globset = "0.4"
 memchr = "2"
 text-buffer.workspace = true
+unicode-width.workspace = true
