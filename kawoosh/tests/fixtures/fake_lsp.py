@@ -38,7 +38,9 @@ it, a file never sent (1:4–1:7, `rustc` `E0425`). A document with
 space after every `;`, an edit each, in UTF-16 columns. Started with
 `--refuse`, it answers `initialize` with an error, as
 typescript-language-server does with no TypeScript to run, and exits;
-with `--no-format`, it does not declare formatting."""
+with `--no-format`, it does not declare formatting. A text changed to
+have `@crash` in it, or opened with `@crash-open`, makes it say "fake
+server crashing" on stderr and exit with 3."""
 import json
 import re, sys
 
@@ -103,6 +105,9 @@ while True:
         uri = m["params"]["textDocument"]["uri"]
         text = m["params"]["contentChanges"][0]["text"]
         docs[uri] = text
+        if "@crash" in text:
+            print("fake server crashing", file=sys.stderr, flush=True)
+            sys.exit(3)
         if not ended:
             ended = True
             send({"jsonrpc": "2.0", "method": "$/progress", "params": {"token": "ws", "value": {
@@ -121,6 +126,9 @@ while True:
         uri = m["params"]["textDocument"]["uri"]
         docs[uri] = m["params"]["textDocument"]["text"]
         last_uri = uri
+        if "@crash-open" in docs[uri]:
+            print("fake server crashing", file=sys.stderr, flush=True)
+            sys.exit(3)
         diags = [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}},
                   "severity": 1, "message": "boom"}]
         text = docs[uri]

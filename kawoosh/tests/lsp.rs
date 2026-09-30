@@ -354,6 +354,65 @@ fn progress_and_messages_land_in_the_corner() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Whether a note shown so far says `text`.
+fn noted(app: &Kawoosh, text: &str) -> bool {
+    app.notes.shown.iter().any(|s| s.text == text)
+}
+
+/// A server that exits on its own is started again for the buffers it
+/// held — their diagnostics gone, then the new one's — and one that
+/// keeps exiting is stopped at the third in three minutes, saying why,
+/// until `:lsp restart`.
+#[test]
+fn a_server_that_exits_is_started_again_then_given_up() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-lsp-exit-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    let file = dir.join("src/main.rs");
+    std::fs::write(&file, "fn main() {\n}\n").unwrap();
+
+    let mut app = Kawoosh::from_file(&file);
+    app.add_lsp_server(fake_server());
+    let server = fake_server().command;
+    let mut d = Drive::new(900.0, 500.0);
+    let v = app.focused_view().unwrap();
+    let buf_id = app.ed.views[v].buffer;
+    assert!(until(&mut d, &mut app, |a| msgs(a, buf_id) == ["boom"]));
+
+    // A change it dies of: started again, the buffer sent it whole.
+    d.keys(&mut app, "O");
+    d.commit(&mut app, "@crash");
+    d.key(&mut app, "escape", KeyMods::default());
+    let again = format!("`{server}` exited with 3: fake server crashing; started again");
+    assert!(until(&mut d, &mut app, |a| noted(a, &again)), "{again}");
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, buf_id) == ["boom"]),
+        "the new server's diagnostics"
+    );
+
+    // One that dies at every start: the second exit here, the third
+    // as it is sent the text again — and then no more.
+    d.keys(&mut app, "A");
+    d.commit(&mut app, "-open");
+    d.key(&mut app, "escape", KeyMods::default());
+    let why = "stopped: exited with 3: fake server crashing, 3 exits in 3 minutes";
+    let said = format!("`{server}` {why} (:lsp restart once fixed)");
+    assert!(until(&mut d, &mut app, |a| noted(a, &said)), "{said}");
+    assert!(msgs(&app, buf_id).is_empty(), "its diagnostics gone with it");
+    ex(&mut d, &mut app, "lsp format");
+    d.frame(&mut app);
+    assert_eq!(app.ed.message, format!("the rust server {why}"));
+
+    // Mended, and restarted.
+    d.keys(&mut app, "u");
+    ex(&mut d, &mut app, "lsp restart");
+    assert!(
+        until(&mut d, &mut app, |a| msgs(a, buf_id) == ["boom"]),
+        "a server again"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Round two (roadmap step 7), against the fake server: `grn`
 /// fills the prompt with the word and the rename's edits land as one
 /// undo node; `grr` lists the references as a locations buffer `]q`

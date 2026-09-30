@@ -108,8 +108,9 @@ pub struct LspState {
     /// A completion asked for and not yet answered: the buffer and where
     /// the word started.
     requested: Option<(BufferId, usize)>,
-    /// The commands that did not start until a restart, and why: not
-    /// found (None), or what their `initialize` refused with.
+    /// The commands off until a restart, and why: not found (None), or
+    /// what befell them (`did not start: …`, `stopped: …`), said after
+    /// "the LANGUAGE server".
     said_unavailable: HashMap<String, Option<String>>,
     /// The commands a `:lsp restart` is waiting on the shell's PATH for,
     /// by how many restarts: no document is sent them meanwhile, which
@@ -481,17 +482,33 @@ impl Kawoosh {
                     command,
                     why,
                 } => {
-                    if !self.lsp.said_unavailable.contains_key(&command) {
-                        let text = match &why {
-                            None => format!(
-                                "`{command}` not found; lsp off. Installed since? :lsp restart"
-                            ),
-                            Some(why) => {
-                                format!("`{command}` did not start: {why} (:lsp restart once fixed)")
-                            }
-                        };
-                        self.notify_with(Note::new(Level::Warn, text).source(language));
-                        self.lsp.said_unavailable.insert(command, why);
+                    let why = why.map(|w| format!("did not start: {w}"));
+                    self.lsp_off(language, command, why);
+                }
+                Event::Exited {
+                    language,
+                    command,
+                    buffers,
+                    why,
+                    again,
+                } => {
+                    for id in buffers {
+                        if self.ed.buffers.get(id).is_some() {
+                            self.lsp_forget_buffer(id, false);
+                        }
+                    }
+                    if again {
+                        self.notify_with(
+                            Note::new(Level::Warn, format!("`{command}` {why}; started again"))
+                                .source(language),
+                        );
+                    } else {
+                        let why = format!(
+                            "stopped: {why}, {} exits in {} minutes",
+                            kawoosh_systems::lsp::CRASHES,
+                            kawoosh_systems::lsp::CRASH_WINDOW.as_secs() / 60
+                        );
+                        self.lsp_off(language, command, Some(why));
                     }
                 }
                 Event::Restarted { commands } => {
@@ -908,31 +925,50 @@ impl Kawoosh {
             .map(|(id, _)| id)
             .collect();
         for id in held {
-            // One a server held is sent again when one serves it, shown
-            // or not, as it was before.
-            if self.lsp.sent.contains_key(&id) {
-                self.lsp.also_sync.insert(id);
-            }
-            if close {
-                self.lsp_close_buffer(id);
-            }
-            self.lsp.sent.remove(&id);
-            self.lsp.moved.remove(&id);
-            self.lsp.held.remove(&id);
-            self.lsp.hints.remove(&id);
-            self.lsp.hints_asked.remove(&id);
-            let b = &self.ed.buffers[id];
-            let clear = Update {
-                layer: DIAG_LAYER,
-                version: b.version(),
-                span: 0..b.len(),
-                runs: Vec::new(),
-            };
-            self.apply_diagnostics(id, clear, Vec::new());
+            self.lsp_forget_buffer(id, close);
         }
         self.lsp.caps.retain(|l, _| !languages.contains(l));
+    }
+
+    /// Buffer `id` as if no server had seen it — its diagnostics and
+    /// hints gone — and sent again when one serves it, shown or not, as
+    /// it was before; told closed first when `close`.
+    fn lsp_forget_buffer(&mut self, id: BufferId, close: bool) {
+        if self.lsp.sent.contains_key(&id) {
+            self.lsp.also_sync.insert(id);
+        }
+        if close {
+            self.lsp_close_buffer(id);
+        }
+        self.lsp.sent.remove(&id);
+        self.lsp.moved.remove(&id);
+        self.lsp.held.remove(&id);
+        self.lsp.hints.remove(&id);
+        self.lsp.hints_asked.remove(&id);
+        let b = &self.ed.buffers[id];
+        let clear = Update {
+            layer: DIAG_LAYER,
+            version: b.version(),
+            span: 0..b.len(),
+            runs: Vec::new(),
+        };
+        self.apply_diagnostics(id, clear, Vec::new());
         self.lsp.completion = None;
         self.lsp.requested = None;
+    }
+
+    /// `command` off until `:lsp restart`, said once: not found (`why`
+    /// None), or what befell it.
+    fn lsp_off(&mut self, language: String, command: String, why: Option<String>) {
+        if self.lsp.said_unavailable.contains_key(&command) {
+            return;
+        }
+        let text = match &why {
+            None => format!("`{command}` not found; lsp off. Installed since? :lsp restart"),
+            Some(why) => format!("`{command}` {why} (:lsp restart once fixed)"),
+        };
+        self.notify_with(Note::new(Level::Warn, text).source(language));
+        self.lsp.said_unavailable.insert(command, why);
     }
 
     /// Tells the server holding buffer `id` it closed, and forgets it
@@ -1050,7 +1086,7 @@ impl Kawoosh {
         }
         defs().find_map(|d| {
             Some(match self.lsp.said_unavailable.get(&d.command)? {
-                Some(why) => format!("the {language} server did not start: {why}"),
+                Some(why) => format!("the {language} server {why}"),
                 None => format!("the {language} server `{}` is not found", d.command),
             })
         })
