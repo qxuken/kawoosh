@@ -135,6 +135,61 @@ for json, toml or yaml and no config for prettier or taplo, `auto`
 found nothing, and a format on save did nothing; `indent` moves only
 leading blanks, and only where the tree reads the line.
 
+### 7. A broken tree: its brackets, its guesses, its silence
+
+Decided and built 2026-10-01. Found: a new `.rs` file typed `fn f() {`
+`<CR>` without pairs got no indent. tree-sitter-rust reads an unclosed
+top-level item as an ERROR of loose tokens (`fn`, `f`, `()`, `{`), with
+no `block` for `(block) @indent` to match. The reader found nothing
+indenting and answered the margin, and an answer is final, so the
+bracket rule never ran. Inside a closed `fn` the same `{` recovers
+with a MISSING `}` and read fine. Other grammars recover `function f()
+{` at the end of the text with a MISSING `}` instead, and that broke
+the same line from the other side: the guessed `}` was read as the new
+line's first token and outdented it.
+
+The reader now takes a broken tree for what it is:
+
+- **An ERROR's brackets are what is left of its structure.** An opener
+  among an ERROR's loose tokens, not closed by a loose closer after it
+  and before the line, counts as a node begun on the opener's line with
+  an `@indent`. It is innermost relative to the ERROR, and the usual
+  reading (Decision 2) applies: a level in from that line, or as a
+  sibling is. An ERROR ends at its last token, but its open brackets
+  reach over the text after it under the same node, so an ERROR
+  *before* the line counts as well as one around it. A named node
+  inside an ERROR is whole and its brackets are its own. So `impl A {`
+  / `fn f() {` gives 8 on the next line, not 4, and `=` over an
+  unclosed file reads as if the braces were there.
+- **A MISSING token is not text.** It starts no line, and a node whose
+  last child is MISSING (the closer the parser guessed where the text
+  stopped) is open: it reaches over what follows, though it ends
+  before the caret.
+- **Nothing indenting under an ERROR is silence, not the margin.**
+  When an ERROR is around the line or before it and neither the query
+  nor an open bracket says anything, the reader answers nothing. Then
+  Decision 3's fallback runs for `<CR>` / `o` / `O` (the line's own
+  indent, plus a level after an opener), and `=` leaves the line as it
+  is. A line that *starts* an ERROR is read from the sound tree around
+  it.
+
+A sound tree reads as before (the scan runs only under a node with
+`has_error()`). `this_repository_reindents_as_it_is` is unchanged.
+
+Beaten: **deferring every ERROR answer to the engine's bracket rule.**
+It only looks at the line above, so `=` would do nothing over an
+unclosed file, and one ERROR under a sound outer block would still
+answer from that block, a level short. **helix's way**, per-language
+`(ERROR …)` patterns in `indents.scm` (python's three are kept). helix
+has no engine-level reading of ERROR nodes and would answer 0 here too.
+For Rust a pattern cannot do it anyway: `(ERROR "{") @indent` counts
+from the ERROR's first line, so `impl A {` / `fn f() {` would get 4.
+
+Left open: keyword blocks in an ERROR. An unclosed Lua `function f()`
+has no bracket to read, so it gets the fallback's copy of the line's
+own indent. A `(ERROR "function" …)` pattern in lua's query, python's
+way, is the door if it is wanted.
+
 ### Deliberately not (yet)
 
 - **Retyping a line's indent as you type** (`}` or `end` or `else:` as

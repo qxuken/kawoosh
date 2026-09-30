@@ -64,6 +64,26 @@ fn o_and_upper_o_inside_a_rust_block() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A new file typed straight on, no pairs: the unclosed `{` leaves the
+/// tree an ERROR of loose tokens, whose open brackets still indent.
+#[test]
+fn an_unclosed_rust_file_as_typed() {
+    let (mut app, mut d, dir) = open("new.rs", "");
+    d.press(&mut app, "ifn f() {<CR>c<Esc>");
+    assert_eq!(text(&app), "fn f() {\n    c");
+    d.press(&mut app, "oif a {<CR>b<CR>}<CR>d<Esc>");
+    assert_eq!(
+        text(&app),
+        "fn f() {\n    c\n    if a {\n        b\n        }\n    d",
+        "the `}}` is not moved as typed (Decision 5's not-yet); the line after it is the fn's"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+    let (mut app, mut d, dir) = open("open.rs", "fn f() {\n");
+    d.press(&mut app, "ggox<Esc>");
+    assert_eq!(text(&app), "fn f() {\n    x\n");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `r<CR>` breaks the line as insert's `<CR>` does, the tree asked
 /// about the text with the replaced character already gone.
 #[test]
