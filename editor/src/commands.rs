@@ -2753,7 +2753,27 @@ pub fn install(ed: &mut Editor) {
             None => debug_assert!(false, "DOCS names no command: {name}"),
         }
     }
+    for name in JUMPS {
+        match ed.commands.spec_mut(name) {
+            Some(spec) => spec.jump = true,
+            None => debug_assert!(false, "JUMPS names no command: {name}"),
+        }
+    }
 }
+
+/// The engine's moves that are jumps however short (docs/design/jumps.md
+/// Decision 2): vim's, where both ends can share one screen. `H` `M`
+/// `L` stay on it and `{` `}` step through the text, so they are not;
+/// a big one is noticed anyway.
+const JUMPS: &[&str] = &[
+    "goto file start",
+    "goto file end",
+    "goto line",
+    "search next",
+    "search prev",
+    "search word",
+    "match_bracket",
+];
 
 /// What each command of the keymap does, one line, for the `:commands`
 /// pane — the ex commands carry theirs on the spec above; these are
@@ -4210,6 +4230,10 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<D-s>", "write"),
         ("ZZ", "write quit"),
         ("ZQ", "quit!"),
+        // The tab's jumps (docs/design/jumps.md): vim's keys; kui tells
+        // `<C-i>` from `<Tab>`, which stays free.
+        ("<C-o>", "jump back"),
+        ("<C-i>", "jump forward"),
         // Panes, tabs, the dock: the shell's commands (Effect::Shell),
         // under `<C-w>` as vim's, and the four moves on `<C-S-hjkl>` —
         // one spelling, the same in every mode and every kind of pane
@@ -4391,6 +4415,7 @@ pub fn default_keymap(km: &mut Keymap) {
         ("<leader>mp", "memory pins"),
         ("<leader>ma", "memory pin"),
         ("<leader>ml", "memory recent"),
+        ("<leader>mj", "memory jumps"),
         ("<leader>mf", "memory files"),
         ("<A-1>", "memory pin 1"),
         ("<A-2>", "memory pin 2"),
