@@ -362,6 +362,7 @@ impl<'a> Reader<'a> {
         let root = self.tree.root_node();
         let nl = new_line.then_some(at);
         let lowest = root.descendant_for_byte_range(at, at)?;
+        let lowest = unfinished(lowest, at).unwrap_or(lowest);
         let node = self.extend(lowest, at);
         // The node and its ancestors, root first — walked down once:
         // tree-sitter's `parent` walks down from the root each time,
@@ -376,9 +377,42 @@ impl<'a> Reader<'a> {
         };
         let mut this_line = Acc::default();
         let mut from: Option<(usize, Acc)> = None;
+        // Whether an ERROR is around the line, or before it under the
+        // same node: tree-sitter's recovery from text it cannot fit,
+        // the tokens loose.
+        let mut broken = false;
         while let Some(node) = chain.pop() {
+            // A MISSING token is the parser's guess, not the text: the
+            // `}` it closes an unclosed block with, at the caret, starts
+            // no line.
+            if node.is_missing() {
+                continue;
+            }
             let line = start_line(node);
             let caps = self.caps.indent.get(&node.id()).map_or(&[][..], |v| &v[..]);
+            // A broken tree's brackets are what is left of its structure:
+            // an opener left open before the line — the ERROR's around
+            // it, or an ERROR's before it, which ends at its last token
+            // however far its brackets reach — is a node begun on the
+            // opener's line with an `@indent`, inside the node.
+            if node.has_error() && line < target {
+                let (open, errors) = open_brackets(node, at);
+                broken |= errors;
+                match &mut from {
+                    None => {
+                        if let Some(&row) = open.last() {
+                            let mut acc = Acc::default();
+                            acc.add(IndentKind::Indent);
+                            from = Some((row, acc));
+                        }
+                    }
+                    Some((l, acc)) => {
+                        if open.contains(l) {
+                            acc.add(IndentKind::Indent);
+                        }
+                    }
+                }
+            }
             if let Some((l, acc)) = &mut from {
                 if line != *l {
                     break;
@@ -424,10 +458,14 @@ impl<'a> Reader<'a> {
                 from = Some((line, acc));
             }
         }
-        Some(match from {
-            Some((line, acc)) => Level::From(line, acc.net() + this_line.net()),
-            None => Level::Margin(this_line.net()),
-        })
+        match from {
+            Some((line, acc)) => Some(Level::From(line, acc.net() + this_line.net())),
+            // Nothing indents, but the tree is broken around the line:
+            // not the margin's word but the tree's silence — the
+            // caller's own rule says (Decision 3's fallback).
+            None if broken => None,
+            None => Some(Level::Margin(this_line.net())),
+        }
     }
 
     /// The level of line `ln` as it stands, its first non-blank at
@@ -532,6 +570,27 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// The innermost node under `node` left unfinished before `at`: one
+/// whose last child there is MISSING — the closer the parser guessed,
+/// zero-wide where the text stopped — reaches over what follows it as
+/// an unclosed block does, though it ends before `at`.
+fn unfinished<'t>(node: Node<'t>, at: usize) -> Option<Node<'t>> {
+    let mut n = node;
+    loop {
+        let c = (0..n.child_count())
+            .rev()
+            .filter_map(|i| n.child(i))
+            .find(|c| c.end_byte() <= at)?;
+        if c.is_missing() {
+            return Some(n);
+        }
+        if !c.has_error() {
+            return None;
+        }
+        n = c;
+    }
+}
+
 /// The deepest node under `node` that ends at or before `at`: its last
 /// child that does, and that one's last descendant.
 fn deepest_preceding(node: Node, at: usize) -> Option<Node> {
@@ -548,6 +607,53 @@ fn deepest_preceding(node: Node, at: usize) -> Option<Node> {
         d = last;
     }
     Some(d)
+}
+
+/// The rows of the brackets left open before `at` under `node`,
+/// outermost first, and whether it is or holds an ERROR there: an
+/// ERROR's loose `(` `[` `{` less the closers after them — an ERROR
+/// inside one read as part of it — and any other node whole, its
+/// brackets its own.
+fn open_brackets(node: Node, at: usize) -> (Vec<usize>, bool) {
+    fn scan(n: Node, at: usize, loose: bool, open: &mut Vec<(&'static str, usize)>) {
+        let mut cursor = n.walk();
+        for c in n.children(&mut cursor) {
+            if c.end_byte() > at {
+                break;
+            }
+            if c.is_error() {
+                scan(c, at, true, open);
+                continue;
+            }
+            if !loose || c.is_named() || c.is_missing() {
+                continue;
+            }
+            // Each bracket as its opener, and whether it opens.
+            let (opener, opens) = match c.kind() {
+                "(" => ("(", true),
+                "[" => ("[", true),
+                "{" => ("{", true),
+                ")" => ("(", false),
+                "]" => ("[", false),
+                "}" => ("{", false),
+                _ => continue,
+            };
+            if opens {
+                open.push((opener, c.start_position().row));
+            } else if let Some(i) = open.iter().rposition(|(o, _)| *o == opener) {
+                open.truncate(i);
+            }
+        }
+    }
+    let mut open = Vec::new();
+    scan(node, at, node.is_error(), &mut open);
+    let mut cursor = node.walk();
+    let errors = node.is_error()
+        || node
+            .children(&mut cursor)
+            .take_while(|c| c.end_byte() <= at)
+            .any(|c| c.is_error());
+    (open.into_iter().map(|(_, row)| row).collect(), errors)
 }
 
 /// `target` and the nodes above it up to `top`, `top` first: from
@@ -697,6 +803,65 @@ mod tests {
             new_line("rust", "fn f() {\n    g(\n        a,|\n    );\n}\n"),
             "        ",
             "in an argument list"
+        );
+    }
+
+    /// An unclosed item is an ERROR of loose tokens, no `block` for the
+    /// query to match: its brackets are what is left of the structure.
+    #[test]
+    fn unclosed_brackets_in_a_broken_tree() {
+        assert_eq!(
+            new_line("rust", "fn f() {|"),
+            "    ",
+            "a new file's first {{"
+        );
+        // Where the grammar closes the block with a MISSING `}` instead,
+        // the guessed `}` starts no line.
+        assert_eq!(new_line("rust", "struct A {|"), "    ");
+        assert_eq!(new_line("javascript", "function f() {|"), "    ");
+        assert_eq!(new_line("c", "int f() {|"), "    ");
+        assert_eq!(new_line("css", "a {|"), "    ");
+        assert_eq!(new_line("nu", "def f [] {|"), "    ");
+        assert_eq!(new_line("rust", "fn f() {|\n"), "    ");
+        assert_eq!(
+            new_line("rust", "impl A {\n    fn f() {|\n"),
+            "        ",
+            "the innermost unclosed"
+        );
+        assert_eq!(
+            new_line("rust", "fn f() {\n  let x = 1;|\n"),
+            "  ",
+            "a sibling's indent"
+        );
+        assert_eq!(
+            new_line(
+                "rust",
+                "fn f() {\n}\nfn g() {\n    if a {\n        b();\n    }|\n"
+            ),
+            "    ",
+            "a closed pair in the broken part"
+        );
+        assert_eq!(
+            reindent("rust", "impl A {\nfn f() {\nx\n}\n"),
+            "impl A {\n    fn f() {\n        x\n    }\n"
+        );
+        // Nothing open and nothing indenting in a broken tree: the tree
+        // cannot say (the caller's own rule runs), not the margin.
+        let src = "fn f() {}\n  x y z\n";
+        let (g, tree, text) = parse("rust", src);
+        assert!(
+            tree.root_node().has_error(),
+            "{}",
+            tree.root_node().to_sexp()
+        );
+        let at = src.len() - 1;
+        let ind = g.indents.as_ref().unwrap();
+        assert_eq!(for_new_line(ind, &tree, &text, at, &spaces()), None);
+        // The line the ERROR starts on is read from what is around it,
+        // sound: the top level.
+        assert_eq!(
+            for_lines(ind, &tree, &text, 1..2, &spaces()),
+            vec![Some(String::new())]
         );
     }
 
