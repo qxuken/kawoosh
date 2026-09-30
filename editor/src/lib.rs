@@ -2864,10 +2864,15 @@ impl Editor {
                 );
                 return true;
             }
+            // `<CR>` for `r` is a line break (`r<CR>` splits the line);
+            // no other waiting command has a use for one.
+            let enter = stroke.code == "enter"
+                && self.commands.resolve(&binding.command, &binding.args).name == "replace char";
             let c = stroke
                 .text
                 .as_deref()
                 .and_then(|t| t.chars().next())
+                .or_else(|| enter.then_some('\n'))
                 .or_else(|| {
                     let mut it = stroke.code.chars();
                     match (it.next(), it.next()) {
