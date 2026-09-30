@@ -306,22 +306,25 @@ impl Kawoosh {
         let room_w = vp.w - 2.0 * STACK_INSET - CARD_PAD_X * 2.0 - 2.0;
         let mut used = 0.0;
         let mut shown = 0;
+        // Each column's keys take its widest key's width, so its
+        // commands start in one line: the UI font is proportional, an
+        // `m` wider than an `l`.
+        let mut key_w = Vec::new();
         for chunk in rows.chunks(per_column) {
-            let w = chunk
-                .iter()
-                .map(|r| {
-                    let what = if r.group { &group_style } else { &what_style };
-                    ui.measure_text(&r.key, &key_style, None).width
-                        + KEY_GAP
-                        + ui.measure_text(&r.what, what, None).width
-                })
-                .fold(0.0, f32::max);
+            let (mut kw, mut ww) = (0.0f32, 0.0f32);
+            for r in chunk {
+                let what = if r.group { &group_style } else { &what_style };
+                kw = kw.max(ui.measure_text(&r.key, &key_style, None).width.ceil());
+                ww = ww.max(ui.measure_text(&r.what, what, None).width);
+            }
+            let w = kw + KEY_GAP + ww;
             let next = if shown == 0 { w } else { used + COLUMN_GAP + w };
             if shown > 0 && next > room_w {
                 break;
             }
             used = next;
             shown += chunk.len();
+            key_w.push(kw);
         }
         if shown < rows.len() {
             title = format!("{title} · {} more", rows.len() - shown);
@@ -345,7 +348,9 @@ impl Kawoosh {
                         ui.with_indexed(ci as u64, NodeSpec::column().gap(ROW_GAP), |ui| {
                             for (ri, r) in chunk.iter().enumerate() {
                                 ui.with_indexed(ri as u64, NodeSpec::row().gap(KEY_GAP), |ui| {
-                                    ui.text(&r.key, key_style);
+                                    ui.with(NodeSpec::row().width(key_w[ci]), |ui| {
+                                        ui.text(&r.key, key_style);
+                                    });
                                     let what = if r.group { group_style } else { what_style };
                                     ui.text(&r.what, what);
                                 });
