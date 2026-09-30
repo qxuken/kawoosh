@@ -69,8 +69,8 @@ fn two_panes_one_rust_analyzer() {
     assert_eq!(app.lsp.status[0].1, "rust-analyzer");
     assert_eq!(app.lsp.status[0].0, root);
     // Typed into once the server is idle, its first `cargo check` done:
-    // rust-analyzer (1.98.1) publishes nothing, then or after, for edits
-    // that reach it during its first cache priming (2026-09-27, Windows).
+    // rust-analyzer (1.98.1) publishes nothing for edits that reach it
+    // during a cache priming (2026-09-27, Windows; below).
     let mut checked = false;
     for _ in 0..1500 {
         d.frame(&mut app);
@@ -91,7 +91,14 @@ fn two_panes_one_rust_analyzer() {
     let v = app.focused_view().unwrap();
     let id = app.ed.views[v].buffer;
     // Break the second file in memory and expect a diagnostic within a
-    // reasonable while (rust-analyzer indexes first).
+    // reasonable while. Idle is only the best guess the progress lines
+    // give: rust-analyzer primes its caches again when it likes (after
+    // `Building compile-time-deps`, say), and an edit reaching it then
+    // is lost — every `didChange` arrives, each restarts the priming,
+    // and no `publishDiagnostics` follows, not after the priming ends
+    // nor after a `cargo check` (a trace, 2026-09-30). The next edit
+    // is heard at once, so one more keeps the line broken, as typing
+    // on would, every five seconds without an answer.
     d.keys(&mut app, "ggOfn broken( {");
     d.key(&mut app, "escape", KeyMods::default());
     let mut got = false;
@@ -101,6 +108,11 @@ fn two_panes_one_rust_analyzer() {
         if !app.ed.buffers[id].runs(DIAG_LAYER, 0..200).is_empty() {
             got = true;
             break;
+        }
+        if i > 0 && i % 250 == 0 {
+            d.keys(&mut app, "Ax");
+            d.key(&mut app, "escape", KeyMods::default());
+            seen.push(format!("typed on: {:?}", app.ed.buffers[id].text()));
         }
         if i % 50 == 0 {
             let now = format!("{:?} {:?}", app.lsp.status, d.corner_texts());
