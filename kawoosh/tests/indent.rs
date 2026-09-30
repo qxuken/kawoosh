@@ -5,6 +5,7 @@
 mod drive;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use drive::Drive;
 use kawoosh::Kawoosh;
@@ -13,9 +14,15 @@ fn text(app: &Kawoosh) -> String {
     app.ed.buffer_of(app.focused_view().unwrap()).text()
 }
 
-/// A file of `name` holding `src`, open and parsed.
+/// A file of `name` holding `src`, open and parsed — in a folder of
+/// its own: the tests run side by side in one process, and two opening
+/// the same name shared one, a test's `remove_dir_all` taking the
+/// other's file before it was read (an empty buffer, no indent).
 fn open(name: &str, src: &str) -> (Kawoosh, Drive, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("kawoosh-indent-{}-{name}", std::process::id()));
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir =
+        std::env::temp_dir().join(format!("kawoosh-indent-{}-{n}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join(name);
     std::fs::write(&file, src).unwrap();
