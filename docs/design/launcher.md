@@ -238,8 +238,9 @@ side by side, each an entry or `{ column = { … } }`, a `width` on one
 fixing it; or `"..."`, every module registered and not placed
 elsewhere, by name — kawoosh's own modules only by name, so what a
 plugin or `init.lua` adds shows up without asking and what is bundled
-only when placed. The default is Decision 5's order:
-`{ "prompt", "here", "buffers", "plugins", "recent", "...", "files" }`.
+only when placed. The default is Decision 5's order, the workspaces
+after *here* (asked 2026-09-30):
+`{ "prompt", "here", "workspaces", "buffers", "plugins", "recent", "...", "files" }`.
 A name no module has is drawn as a line saying so, not dropped — a
 typo in an experiment is seen. `launcher.width` is how wide the layout
 is drawn, and a column's `width` in a row how wide it is of that — each
