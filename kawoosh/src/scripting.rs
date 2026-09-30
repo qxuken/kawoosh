@@ -1798,6 +1798,10 @@ impl Kawoosh {
                 .fill()
                 .clip()
                 .on_key(tag.clone())
+                // A press on the view's own nodes — a field, a row, a
+                // button — takes kui's keyboard into the view: the pane
+                // follows (`on_event_with`'s `focus`), as a terminal's.
+                .on_focus(tag.clone())
                 // A click the view's own nodes do not take focuses the
                 // pane.
                 .on_click(tag),
