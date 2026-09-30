@@ -241,13 +241,18 @@ fn always_named_and_a_range() {
     d.keys(&mut app, "lvll");
     ex(&mut d, &mut app, "format selection");
     assert_eq!(text(&app, a), "abcdef\n1-4\n");
-    // `shfmt` ships as never: `:format?` in a shell script says none.
+    // `shfmt` ships as never: `:format?` in a shell script falls to
+    // the syntax's indentation, the last resort.
     let sh = project("sh", &[("x.sh", "echo\n")]);
     let mut d2 = Drive::new(900.0, 500.0);
     let mut app2 = app_in(&mut d2, &sh);
     open(&mut d2, &mut app2, &sh, "x.sh");
+    app2.wait_for_syntax();
     ex(&mut d2, &mut app2, "format?");
-    assert_eq!(app2.ed.message, "no formatter for bash");
+    assert_eq!(
+        app2.ed.message,
+        "indent: the syntax's, nothing else formats bash"
+    );
     app2.ed
         .settings
         .set(Layer::User, "format.shfmt.enabled", Setting::Bool(false));
@@ -555,5 +560,52 @@ fn the_shipped_clang_format_runs_for_real() {
     );
     ex(&mut d, &mut app, "format");
     assert_eq!(text(&app, a), "int f() {\n   int a = 1;\n   return a;\n}\n");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `indent`: the syntax's indentation alone (docs/design/indent.md) —
+/// `auto`'s last resort where nothing else formats (json with no
+/// prettier config and no server), on save too, and named; a language
+/// without indent rules says so.
+#[test]
+fn the_syntax_indents_as_a_last_resort() {
+    let dir = project(
+        "syntax",
+        &[("a.json", "{\n\"a\": [\n1\n]\n}\n"), ("b.txt", "  x\n")],
+    );
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_in(&mut d, &dir);
+    let a = open(&mut d, &mut app, &dir, "a.json");
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "format?");
+    assert_eq!(
+        app.ed.message,
+        "indent: the syntax's, nothing else formats json"
+    );
+    ex(&mut d, &mut app, "format");
+    // At json's own width, two.
+    assert_eq!(text(&app, a), "{\n  \"a\": [\n    1\n  ]\n}\n");
+    assert_eq!(app.ed.message, "formatted with indent (3 edits)");
+    ex(&mut d, &mut app, "format");
+    assert_eq!(app.ed.message, "already formatted");
+    // A save formats first.
+    app.ed.settings.set(
+        Layer::User,
+        "language.json.format_on_save",
+        Setting::Bool(true),
+    );
+    type_esc(&mut d, &mut app, "ggjI   ");
+    ex(&mut d, &mut app, "w");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.json")).unwrap(),
+        "{\n  \"a\": [\n    1\n  ]\n}\n"
+    );
+    // Named where there are no rules; `auto` has nothing there.
+    open(&mut d, &mut app, &dir, "b.txt");
+    ex(&mut d, &mut app, "format indent");
+    assert_eq!(app.ed.message, "no indent rules for text");
+    ex(&mut d, &mut app, "format");
+    assert_eq!(app.ed.message, "no formatter for text");
     std::fs::remove_dir_all(&dir).ok();
 }

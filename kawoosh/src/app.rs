@@ -675,8 +675,13 @@ impl Kawoosh {
             if let Some(rt) = &self.scripting.rt {
                 rt.set_tree(a.buffer, a.tree.clone().map(|t| (a.version, t)));
             }
+            let language = self
+                .ed
+                .buffers
+                .get(a.buffer)
+                .map_or_else(String::new, |b| b.language.to_string());
             self.indent_trees
-                .answered(a.buffer, a.version, a.tree.as_ref(), a.parse);
+                .answered(a.buffer, &language, a.version, a.tree.as_ref(), a.parse);
             match a.tree {
                 Some(t) => {
                     self.inspector.trees.insert(a.buffer, (a.version, t));

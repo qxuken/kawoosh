@@ -115,6 +115,26 @@ highlighting another buffer.
   reindented top down, each against the lines above as already
   reindented; a blank line stays empty.
 
+### 6. `indent`, a formatter: named, and `auto`'s last resort
+
+Asked the same day: "can it be used as a last resort for formats?
+maybe explicit one … we don't have any lsps for json, tomls, yamls".
+`indent` is a formatter name as `lsp` is (formatters.md Decision 2):
+`formatter = "indent"`, `:format indent`, a place in a list
+(`{ "prettier", "indent" }`), and `auto`'s last step after the server.
+It reindents every line (`:format selection` the selected ones) as `=`
+does and touches nothing else, on the frame — a file is milliseconds —
+landing as a tool's answer does: one line diff, one undo, a save
+waiting for nothing. Where it has no rules it is not chosen; named
+alone it says `no indent rules for LANG`. A user's `format.indent`
+takes the name. The kept trees keep each language's grammar too, so
+a buffer never shown (`:wa`) is parsed whole when asked.
+
+Beaten: **explicit only**, `auto` never reaching it. With no server
+for json, toml or yaml and no config for prettier or taplo, `auto`
+found nothing, and a format on save did nothing; `indent` moves only
+leading blanks, and only where the tree reads the line.
+
 ### Deliberately not (yet)
 
 - **Retyping a line's indent as you type** (`}` or `end` or `else:` as

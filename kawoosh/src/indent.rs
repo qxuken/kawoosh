@@ -2,7 +2,10 @@
 //! thread's trees, each kept with the text it was parsed from and the
 //! grammar that read it, brought up to the buffer's text on the spot
 //! when the buffer has moved past them — the `<CR>` typed before the
-//! thread answered — and read by `kawoosh_systems::indent`.
+//! thread answered — and read by `kawoosh_systems::indent`. Each
+//! language's grammar is kept too, as the thread's answers bring it, so
+//! a buffer never shown — one a `:wa` formats — is parsed whole when
+//! asked about.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -19,33 +22,47 @@ use tree_sitter::{Parser, Tree};
 
 /// A buffer's tree and what it was read from.
 struct Kept {
+    language: String,
     version: Version,
     text: text_buffer::Buffer,
     tree: Tree,
     grammar: Arc<Grammar>,
 }
 
+#[derive(Default)]
+struct Inner {
+    kept: HashMap<BufferId, Kept>,
+    /// Each language's grammar with an indent query, by its name.
+    grammars: HashMap<String, Arc<Grammar>>,
+}
+
 /// The kept trees, shared between the shell (which files the thread's
 /// answers) and the editor's indenter (which reads and catches them up).
 #[derive(Clone, Default)]
-pub struct Trees(Rc<RefCell<HashMap<BufferId, Kept>>>);
+pub struct Trees(Rc<RefCell<Inner>>);
 
 impl Trees {
-    /// A thread's answer for `id`: its tree kept, when its grammar has
-    /// an indent query; else what was kept goes.
+    /// A thread's answer for `id`, whose language is `language`: its
+    /// tree kept, when its grammar has an indent query; else what was
+    /// kept goes.
     pub fn answered(
         &self,
         id: BufferId,
+        language: &str,
         version: Version,
         tree: Option<&Tree>,
         parse: Option<Parse>,
     ) {
-        let mut kept = self.0.borrow_mut();
+        let mut inner = self.0.borrow_mut();
         match (tree, parse) {
             (Some(tree), Some(p)) => {
-                kept.insert(
+                inner
+                    .grammars
+                    .insert(language.to_string(), p.grammar.clone());
+                inner.kept.insert(
                     id,
                     Kept {
+                        language: language.to_string(),
                         version,
                         text: p.text,
                         tree: tree.clone(),
@@ -54,14 +71,22 @@ impl Trees {
                 );
             }
             _ => {
-                kept.remove(&id);
+                inner.kept.remove(&id);
             }
         }
     }
 
     /// Only the buffers `live` says are.
     pub fn retain(&self, live: impl Fn(BufferId) -> bool) {
-        self.0.borrow_mut().retain(|id, _| live(*id));
+        self.0.borrow_mut().kept.retain(|id, _| live(*id));
+    }
+
+    /// Whether buffer `id`, in `language`, can be read: a tree kept
+    /// for it, or its language's grammar to parse it with.
+    pub fn serves(&self, id: BufferId, language: &str) -> bool {
+        let inner = self.0.borrow();
+        inner.kept.get(&id).is_some_and(|k| k.language == language)
+            || inner.grammars.contains_key(language)
     }
 
     /// The editor's indenter over these trees.
@@ -87,7 +112,26 @@ impl Indenter {
         id: BufferId,
         buf: &Buffer,
     ) -> Option<(Tree, text_buffer::Buffer, Arc<Grammar>)> {
-        let mut kept = self.trees.0.borrow_mut();
+        let mut inner = self.trees.0.borrow_mut();
+        let Inner { kept, grammars } = &mut *inner;
+        let language = &*buf.language;
+        // None kept, or kept in another language: parsed whole, when
+        // the language's grammar is known.
+        if kept.get(&id).is_none_or(|k| k.language != language) {
+            let grammar = grammars.get(language)?.clone();
+            let snap = buf.snapshot();
+            let tree = ts::reparse(&mut self.parser, &grammar.language, &snap.text, None)?;
+            kept.insert(
+                id,
+                Kept {
+                    language: language.to_string(),
+                    version: snap.version,
+                    text: snap.text,
+                    tree,
+                    grammar,
+                },
+            );
+        }
         let k = kept.get_mut(&id)?;
         if k.version != buf.version() {
             let snap = buf.snapshot();
@@ -160,7 +204,9 @@ mod tests {
             .unwrap();
         let grammar = Arc::new((l.grammar.unwrap())().unwrap());
         let mut ed = Editor::new();
-        let id = ed.add_buffer(Buffer::new("a.py", "x = 1\n"));
+        let mut b = Buffer::new("a.py", "x = 1\n");
+        b.language = "python".into();
+        let id = ed.add_buffer(b);
         let buf = &ed.buffers[id];
         let mut parser = Parser::new();
         parser.set_language(&grammar.language).unwrap();
@@ -168,6 +214,7 @@ mod tests {
         let trees = Trees::default();
         trees.answered(
             id,
+            "python",
             buf.version(),
             Some(&tree),
             Some(Parse {
@@ -192,8 +239,23 @@ mod tests {
         buf.replace(at..at, "\n        return 1");
         let at = buf.len() - "\nx = 1\n".len();
         assert_eq!(ind.new_line(id, buf, at, &unit).as_deref(), Some("    "));
-        // A buffer with no tree kept has no answer.
-        let other = ed.add_buffer(Buffer::new("b.py", ""));
-        assert_eq!(ind.new_line(other, &ed.buffers[other], 0, &unit), None);
+        // A buffer the thread never answered for, in a language it has:
+        // parsed whole when asked.
+        let mut b = Buffer::new("b.py", "x = [\n1,\n]\n");
+        b.language = "python".into();
+        let other = ed.add_buffer(b);
+        assert!(trees.serves(other, "python"));
+        assert_eq!(
+            ind.lines(other, &ed.buffers[other], 0..3, &unit),
+            Some(vec![
+                Some(String::new()),
+                Some("    ".into()),
+                Some(String::new())
+            ])
+        );
+        // One in a language never seen has no answer.
+        let third = ed.add_buffer(Buffer::new("c.txt", "x"));
+        assert!(!trees.serves(third, "text"));
+        assert_eq!(ind.new_line(third, &ed.buffers[third], 0, &unit), None);
     }
 }
