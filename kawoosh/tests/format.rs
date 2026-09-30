@@ -753,3 +753,40 @@ fn the_syntax_indents_as_a_last_resort() {
     assert_eq!(app.ed.message, "no formatter for text");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A `cmd` that is a relative path (`./scripts/fmt.sh`) is from where
+/// the formatter runs — the config's directory — not the editor's: it
+/// is found there, and runs.
+#[test]
+fn a_relative_cmd_is_from_where_it_runs() {
+    let dir = project(
+        "relative",
+        &[
+            ("web/.shoutrc", ""),
+            ("web/scripts/fmt.sh", "#!/bin/sh\ntr a-z A-Z\n"),
+            ("web/a.ts", "x\n"),
+        ],
+    );
+    use std::os::unix::fs::PermissionsExt;
+    let script = dir.join("web/scripts/fmt.sh");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_in(&mut d, &dir);
+    let s = |v: &str| Setting::Str(v.into());
+    let set = |app: &mut Kawoosh, k: &str, v: Setting| app.ed.settings.set(Layer::User, k, v);
+    set(&mut app, "format.local.cmd", s("./scripts/fmt.sh"));
+    set(&mut app, "format.local.languages", files(&["typescript"]));
+    set(&mut app, "format.local.when", files(&[".shoutrc"]));
+    set(&mut app, "language.typescript.formatter", s("local"));
+    let a = open(&mut d, &mut app, &dir, "web/a.ts");
+    ex(&mut d, &mut app, "format?");
+    assert!(
+        app.ed.message.contains(&script.display().to_string()),
+        "{}",
+        app.ed.message
+    );
+    ex(&mut d, &mut app, "format");
+    assert_eq!(text(&app, a), "X\n");
+    assert_eq!(app.ed.message, "formatted with local (1 edit)");
+    std::fs::remove_dir_all(&dir).ok();
+}

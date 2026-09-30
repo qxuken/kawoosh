@@ -343,12 +343,24 @@ fn pick(def: &Formatter, dir: &Path, config: Option<PathBuf>, why: String) -> Pi
         .and_then(Path::parent)
         .unwrap_or(dir)
         .to_path_buf();
+    // A relative path (`./scripts/fmt.sh`) is from where it runs, not
+    // the editor's own directory: made whole, so the check that it is
+    // there and the run agree.
+    let cmd = Path::new(&def.cmd);
+    let program = if cmd.is_relative() && cmd.components().count() > 1 {
+        let rest = cmd
+            .components()
+            .filter(|c| !matches!(c, std::path::Component::CurDir));
+        cwd.join(rest.collect::<PathBuf>()).display().to_string()
+    } else {
+        def.cmd.clone()
+    };
     Picked {
         def: def.clone(),
         program: own
             .as_ref()
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|| def.cmd.clone()),
+            .unwrap_or(program),
         own: own.is_some(),
         cwd,
         config,
