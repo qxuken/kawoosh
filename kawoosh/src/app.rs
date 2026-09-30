@@ -1142,15 +1142,25 @@ impl Kawoosh {
 
     /// Where the focused pane goes from buffer `id`: the buffer it came
     /// from, where it was left, as vim's `:bd` goes back; else the
-    /// first other one listed; else a new scratch.
+    /// first other one of the tab's listed — never another open
+    /// workspace's, as `:bdo` spares them, even under `buffers.scope =
+    /// "all"`; else a new scratch.
     pub(crate) fn back_from(&mut self, id: BufferId) -> BufferId {
-        let listed = self.ed.listed_buffers();
+        self.note_tab_buffers();
+        let scope = self.tab_buffers();
+        let listed: Vec<BufferId> = self
+            .ed
+            .listed_buffers()
+            .into_iter()
+            .filter(|b| *b != id && scope.as_ref().is_none_or(|s| s.contains(b)))
+            .collect();
         let back = self
             .focused_view()
             .filter(|v| self.ed.views[*v].buffer == id)
             .and_then(|v| self.alternate.get(&v).copied())
-            .filter(|b| *b != id && listed.contains(b));
-        match back.or_else(|| listed.into_iter().find(|b| *b != id)) {
+            .filter(|b| listed.contains(b));
+        let theirs = self.other_workspaces_buffers();
+        match back.or_else(|| listed.into_iter().find(|b| !theirs.contains(b))) {
             Some(n) => n,
             None => self.ed.add_buffer(Buffer::new("*scratch*", "")),
         }

@@ -591,9 +591,10 @@ impl Kawoosh {
 
     /// The buffers another open workspace has — one a tab is in
     /// (workspaces.md Decision 8): what a tab in it claims, and what a
-    /// dock pane of it shows — which `:bdo` leaves be. A closed one's
-    /// are anybody's, a dock pane it kept included.
-    fn other_workspaces_buffers(&self) -> std::collections::HashSet<BufferId> {
+    /// dock pane of it shows — which `:bdo` leaves be and `:bd` does not
+    /// go to. A closed one's are anybody's, a dock pane it kept
+    /// included.
+    pub(crate) fn other_workspaces_buffers(&self) -> std::collections::HashSet<BufferId> {
         let front = self.workspace_root_seen(&self.cwd);
         let mut open = std::collections::HashSet::new();
         let mut set = std::collections::HashSet::new();
