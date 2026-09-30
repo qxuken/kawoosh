@@ -230,7 +230,7 @@ kawoosh.view(VIEW, function(ctx)
 
   -- The base's chips and what is on show; the keys under them, folded
   -- to the column's width.
-  local chips = row { gap = 8, cross_align = "center",
+  local chips = row { width = "grow", gap = 8, cross_gap = 6, wrap_children = true, cross_align = "center",
     text({ { "base", bold = true } }, { size = SIZE, color = t.fg, wrap = "none" }) }
   for _, word in ipairs { "system", "dark", "light" } do
     chips[#chips + 1] = chip(word, cur.appearance == word, { kind = "appearance", word = word }, t)

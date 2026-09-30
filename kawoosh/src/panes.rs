@@ -293,7 +293,18 @@ impl Kawoosh {
                         }
                     }
                 } else if !self.ed.message.is_empty() {
-                    ui.text(&self.ed.message, TextStyle::new(small).color(pal.dim));
+                    // One line in the strip's fixed height — wrapped, a
+                    // long message painted its rest below the window —
+                    // the whole of one that is cut on hover (and in
+                    // `:messages`).
+                    let msg = &self.ed.message;
+                    let style = TextStyle::new(small).color(pal.dim).ellipsis();
+                    let room = ui.viewport().w - 16.0;
+                    let mut spec = NodeSpec::row().grow_width().label("message");
+                    if msg.contains('\n') || ui.measure_text(msg, &style, None).width > room {
+                        spec = spec.tooltip(msg);
+                    }
+                    ui.with(spec, |ui| ui.text(msg, style));
                 }
             },
         );
@@ -740,10 +751,24 @@ impl Kawoosh {
                         kui_native::CursorShape::Grab
                     });
                 ui.with(title, |ui| {
-                    let style = TextStyle::new(self.chrome.small).color(if focused {
-                        pal.fg
-                    } else {
-                        pal.dim
+                    // One line whatever the name: in the bar's fixed
+                    // height a wrapped name painted its second line
+                    // over the pane's rows. A path is cut to its room
+                    // first, as the status line cuts one; the ellipsis
+                    // takes what still does not fit.
+                    let style = TextStyle::new(self.chrome.small)
+                        .color(if focused { pal.fg } else { pal.dim })
+                        .ellipsis();
+                    let dot = if modified { 18.0 } else { 0.0 };
+                    // The innermost crumb keeps a little of the room.
+                    let reserve = crumbs.last().map_or(0.0, |c| {
+                        ui.measure_text("›", &style, None).width
+                            + 12.0
+                            + ui.measure_text(&c.name, &style, None).width.min(80.0)
+                    });
+                    let name_room = width - 16.0 - dot - reserve;
+                    let name = fit_title(&name, |s| {
+                        ui.measure_text(s, &style, None).width <= name_room
                     });
                     ui.text(&name, style);
                     if modified {
@@ -753,10 +778,7 @@ impl Kawoosh {
                         );
                     }
                     if !crumbs.is_empty() {
-                        let room = width
-                            - 16.0
-                            - ui.measure_text(&name, &style, None).width
-                            - if modified { 18.0 } else { 0.0 };
+                        let room = width - 16.0 - ui.measure_text(&name, &style, None).width - dot;
                         self.breadcrumbs(ui, pane, &crumbs, room, focused);
                     }
                 });
@@ -2382,5 +2404,54 @@ fn shown(
         (r.start, buf.next_char(r.end).max(r.end + 1))
     } else {
         (r.start, r.end)
+    }
+}
+
+/// A pane's name fitted as far as `fits` allows: whole when it fits;
+/// else a path in it — after a lead such as `dir: ` or `undo · ` — cut
+/// as the status line cuts one ([`fit_path`](crate::statusline::fit_path)),
+/// the lead kept; else as it is, for the title's ellipsis to cut.
+pub(crate) fn fit_title(name: &str, mut fits: impl FnMut(&str) -> bool) -> String {
+    use std::path::is_separator;
+    if fits(name) {
+        return name.to_string();
+    }
+    let Some(sep) = name.find(is_separator) else {
+        return name.to_string();
+    };
+    let lead = [": ", " · "]
+        .iter()
+        .filter_map(|l| name[..sep].rfind(l).map(|at| at + l.len()))
+        .max()
+        .unwrap_or(0);
+    let (head, rest) = name.split_at(lead);
+    let (dirs, last) = crate::statusline::fit_path(head, rest, &mut fits);
+    format!("{dirs}{last}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_title;
+
+    #[test]
+    fn a_long_name_is_cut_as_a_path_behind_its_lead() {
+        let at = |n: usize| move |s: &str| s.chars().count() <= n;
+        let sep = std::path::MAIN_SEPARATOR;
+        let name = format!("dir: {sep}Users{sep}q{sep}projects{sep}kawoosh{sep}worktrees");
+        assert_eq!(fit_title(&name, at(100)), name, "whole when it fits");
+        assert_eq!(
+            fit_title(&name, at(25)),
+            format!("dir: {sep}U{sep}q{sep}p{sep}k{sep}worktrees")
+        );
+        let undo = format!("undo · src{sep}deep{sep}file.rs");
+        assert_eq!(
+            fit_title(&undo, at(20)),
+            format!("undo · s{sep}d{sep}file.rs")
+        );
+        // Nothing to cut: the ellipsis's.
+        assert_eq!(
+            fit_title("a long terminal title", at(5)),
+            "a long terminal title"
+        );
     }
 }

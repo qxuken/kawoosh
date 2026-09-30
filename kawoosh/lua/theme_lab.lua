@@ -139,12 +139,14 @@ local function token_scene(s, t)
   table.sort(names)
   for _, name in ipairs(names) do
     local hue, st = s.syntax[name], s.styles[name]
-    local line = row { width = "grow", gap = 8, cross_align = "center",
+    -- A narrow pane takes the three a line each: squeezed abreast, each
+    -- was narrower than its verdict.
+    local line = row { width = "grow", gap = 8, cross_gap = 2, wrap_children = true, cross_align = "center",
       row { width = SIZE * 6, clip = true, text(name, { size = SIZE - 1, color = t.muted, wrap = "none" }) } }
     for _, where in ipairs { "on page", "under selection", "under a hit" } do
       local c = L.by[name .. " " .. where]
       if c then
-        line[#line + 1] = row { width = "grow", gap = 4, cross_align = "center",
+        line[#line + 1] = row { width = "grow", min_width = "fit", gap = 4, cross_align = "center",
           swatch("sample", c.fg, c.bg, st, "grow"), verdict(c, t) }
       end
     end
@@ -161,10 +163,12 @@ end
 -- the muted and the faint grey on it.
 local function surface_scene(s, t)
   local r = s.roles
-  local out = row { width = "grow", gap = 8 }
+  -- Two to a line, or one, in a narrow pane: four abreast, each was
+  -- narrower than its verdicts.
+  local out = row { width = "grow", gap = 8, cross_gap = 8, wrap_children = true }
   for _, sf in ipairs { { "page", r.bg }, { "panel", r.surface }, { "float", r.raised }, { "well", r.sunken } } do
     local name, bg = sf[1], sf[2]
-    local box = column { width = "grow", bg = bg, radius = 4, pad = 8, gap = 4,
+    local box = column { width = "grow", min_width = "fit", bg = bg, radius = 4, pad = 8, gap = 4,
       border = { w = 1, color = r.border },
       text({ { name, bold = true } }, { size = SIZE - 1, color = r.fg, wrap = "none" }) }
     for _, g in ipairs { { "body", r.fg }, { "muted", r.muted }, { "faint", r.faint } } do
@@ -184,10 +188,14 @@ local function chrome_scene(s, t)
     return row { pad = { x = 10, y = 3 }, radius = 3, bg = on and r.accent or r.sunken,
       text(label, { size = SIZE - 1, color = on and r.on_accent or r.muted, wrap = "none" }) }
   end
-  local tabs = row { width = "grow", gap = 4, pad = 4, bg = r.sunken, cross_align = "center",
+  -- The verdicts go to a line of their own in a narrow pane: squeezed
+  -- beside them, the tabs were a pixel wide, their labels past them.
+  local tabs = row { width = "grow", gap = 4, cross_gap = 4, wrap_children = true, pad = 4,
+    bg = r.sunken, cross_align = "center",
     tab("1: code", true), tab("2: notes", false), row { width = "grow" },
     verdict(L.by["active tab label"], t), verdict(L.by["inactive tab label"], t) }
-  local strip = row { width = "grow", gap = 12, pad = { x = 8, y = 3 }, bg = r.sunken, cross_align = "center" }
+  local strip = row { width = "grow", gap = 12, cross_gap = 3, wrap_children = true, pad = { x = 8, y = 3 },
+    bg = r.sunken, cross_align = "center" }
   for _, m in ipairs { { "NORMAL", r.focus_ring }, { "INSERT", r.success }, { "VISUAL", r.warning } } do
     strip[#strip + 1] = row { gap = 4, cross_align = "center",
       text({ { m[1], bold = true } }, face { size = SIZE - 1, color = m[2] }),

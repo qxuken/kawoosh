@@ -749,7 +749,9 @@ kawoosh.view(VIEW, function(ctx)
   local count = (#S.shown == #S.rows) and (#S.rows .. " settings")
     or (#S.shown .. " of " .. #S.rows)
   local head = column { width = "grow", gap = 8, pad = { x = PAD, top = PAD, bottom = 12 },
-    row { width = "grow", gap = 10, cross_align = "center",
+    -- The scope's chips to a line of their own in a narrow pane:
+    -- squeezed beside the title, they were a few pixels each.
+    row { width = "grow", gap = 10, cross_gap = 6, wrap_children = true, cross_align = "center",
       text({ { "Settings", bold = true } }, { size = SIZE + 3, color = t.fg, wrap = "none" }),
       row { width = "grow" },
       text("changes go to", { size = SIZE - 2, color = t.faint, wrap = "none" }),
