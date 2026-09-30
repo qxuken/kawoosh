@@ -27,10 +27,13 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use kawoosh_systems::{Alarm, WakeHandle};
-use kui_native::{Align, Core, FrameCause, Min, NodeSpec, OwedBy, Ui};
+use kui_native::{
+    Align, Color, Core, FrameCause, NodeSpec, OwedBy, Sizing, TextStyle, TextWrap, Ui,
+};
 
 use crate::app::Kawoosh;
 use crate::devtab::Tab;
+use crate::palette::Pal;
 
 /// The tab's name in the devtools strip.
 pub const TAB: &str = "frames";
@@ -187,7 +190,8 @@ impl Frame {
     }
 
     /// Its causes, one key each: `in:key`, a wake's name, `req:NAME`, a
-    /// holder, `kui:NAME` — or `unexplained`.
+    /// holder, `kui:NAME` — or `unexplained`. An input handed twice is
+    /// one key, so a count of keys is a count of frames.
     pub fn cause_keys(&self) -> Vec<String> {
         let mut keys: Vec<String> = self.inputs.iter().map(|i| format!("in:{i}")).collect();
         keys.extend(self.wakes.iter().map(|(n, _)| n.to_string()));
@@ -197,14 +201,28 @@ impl Frame {
         if keys.is_empty() {
             keys.push("unexplained".into());
         }
+        let mut seen = std::collections::HashSet::new();
+        keys.retain(|k| seen.insert(k.clone()));
         keys
     }
 
     /// Its causes, as one line: `pty×3 lsp req:md-heights`.
     pub fn causes(&self) -> String {
         let mut s = String::new();
+        // An input handed several times in the frame once, counted.
+        let mut inputs: Vec<(&str, usize)> = Vec::new();
         for i in &self.inputs {
-            let _ = write!(s, "in:{i} ");
+            match inputs.iter_mut().find(|(n, _)| n == i) {
+                Some((_, k)) => *k += 1,
+                None => inputs.push((i, 1)),
+            }
+        }
+        for (i, k) in inputs {
+            if k == 1 {
+                let _ = write!(s, "in:{i} ");
+            } else {
+                let _ = write!(s, "in:{i}×{k} ");
+            }
         }
         for (n, k) in &self.wakes {
             if *k == 1 {
@@ -265,21 +283,35 @@ pub struct Burn {
 impl Burn {
     /// One line: `2.4 s · 146 frames after key 80 ms before · lsp 131 …`.
     pub fn summary(&self) -> String {
-        let mut s = format!(
-            "{:.1} s · {} frames ({:.0}/s) · view {:.0} ms",
+        format!(
+            "{:.1} s · {} frames ({:.0}/s) · view {:.0} ms · {}",
             self.duration.as_secs_f32(),
             self.frames,
-            self.frames as f32 / self.duration.as_secs_f32().max(1e-3),
+            self.rate(),
             self.work_ms,
-        );
+            self.detail(),
+        )
+    }
+
+    /// Frames a second over its length.
+    pub fn rate(&self) -> f32 {
+        self.frames as f32 / self.duration.as_secs_f32().max(1e-3)
+    }
+
+    /// What the summary says past its numbers: how many frames drew
+    /// nothing new, the input before it, its frames by cause, what it
+    /// drained — the Frames tab's last column, the numbers having
+    /// columns of their own there.
+    pub fn detail(&self) -> String {
+        let mut s = String::new();
         if self.same > 0 {
-            let _ = write!(s, " · {} drew nothing new", self.same);
+            let _ = write!(s, "{} drew nothing new · ", self.same);
         }
         match &self.after {
             Some((what, before)) => {
-                let _ = write!(s, " · after {what} {} ms before", before.as_millis());
+                let _ = write!(s, "after {what} {} ms before", before.as_millis());
             }
-            None => s.push_str(" · no input before it"),
+            None => s.push_str("no input before it"),
         }
         let mut causes: Vec<_> = self.causes.iter().collect();
         causes.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
@@ -623,11 +655,12 @@ impl Kawoosh {
         let pal = self.pal;
         let font = self.face;
         let tm = Tab::of(&ui.metrics(), self.face.line_height);
-        let style = move || tm.style(&pal, font);
-        let dim = move || style().color(pal.dim);
-        let row_spec = move |i: usize| tm.row(&pal, i);
+        let style = tm.style(&pal, font);
+        // A column's width is its widest cell in the tab's mono face, so
+        // one digit's advance measures them all.
+        let digit = ui.measure_text("0", &style, None).width.max(1.0);
 
-        // The last second's frames by cause, and the burns.
+        // The last second's frames by cause.
         let now = Instant::now();
         let recent: Vec<&Frame> = self
             .frames
@@ -643,87 +676,170 @@ impl Kawoosh {
         }
         let mut by_cause: Vec<_> = by_cause.into_iter().collect();
         by_cause.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        let burns: Vec<String> = self
-            .frames
-            .burns
-            .iter()
-            .rev()
-            .map(|b| {
-                let ago = now.saturating_duration_since(b.started).as_secs();
-                let mark = if b.ongoing { "burning" } else { "" };
-                format!("{ago} s ago {mark} · {}", b.summary())
-            })
-            .collect();
-        let last: Vec<(String, String)> = self
-            .frames
-            .ring
-            .iter()
-            .rev()
-            .take(40)
-            .map(|f| {
-                (
-                    format!("+{:.0} ms · {:.2} ms", f.gap_ms, f.work_ms),
-                    f.causes(),
-                )
-            })
-            .collect();
-        let logging = self
-            .frames
-            .log
-            .as_ref()
-            .map(|p| format!("burns also appended to {}", p.display()));
+        let causes = Table {
+            caption: format!("the last second · {} frames, by cause", recent.len()),
+            heads: &["frames", "cause"],
+            rows: by_cause
+                .into_iter()
+                .map(|(c, n)| vec![n.to_string(), c])
+                .collect(),
+            empty: "none",
+            body: Body::AtMost(8.0),
+        };
 
-        ui.with(
-            NodeSpec::column().fill().scroll_y().gap(tm.section_gap),
-            |ui| {
-                let caption = |ui: &mut Ui<'_>, t: &str| ui.text_in(tm.caption(&pal), t, dim());
-                let name_cell = |ui: &mut Ui<'_>, t: &str| {
-                    ui.text_in(NodeSpec::row().grow_width().min_width(Min::FIT), t, dim())
-                };
-                ui.with(NodeSpec::column().grow_width(), |ui| {
-                    caption(
-                        ui,
-                        &format!("the last second · {} frames, by cause", recent.len()),
-                    );
-                    ui.with(NodeSpec::table().grow_width(), |ui| {
-                        for (i, (c, n)) in by_cause.iter().enumerate() {
-                            ui.with(row_spec(i), |ui| {
-                                name_cell(ui, c);
-                                ui.with(NodeSpec::row().main_align(Align::End), |ui| {
-                                    ui.text(&n.to_string(), style())
-                                });
-                            });
-                        }
-                    });
-                });
-                ui.with(NodeSpec::column().grow_width(), |ui| {
-                    let title = match &logging {
-                        Some(l) => format!("burns · {BURN_FRAMES}+ frames with no input · {l}"),
-                        None => format!(
-                            "burns · {BURN_FRAMES}+ frames with no input · KAWOOSH_FRAME_LOG=PATH keeps every frame of them"
-                        ),
-                    };
-                    caption(ui, &title);
-                    if burns.is_empty() {
-                        ui.with(row_spec(0), |ui| ui.text("none yet", dim()));
-                    }
-                    for (i, b) in burns.iter().enumerate() {
-                        ui.with(row_spec(i), |ui| ui.text(b, style()));
-                    }
-                });
-                ui.with(NodeSpec::column().grow_width(), |ui| {
-                    caption(ui, "the last frames, newest first · since the one before · view");
-                    ui.with(NodeSpec::table().grow_width(), |ui| {
-                        for (i, (when, causes)) in last.iter().enumerate() {
-                            ui.with(row_spec(i), |ui| {
-                                name_cell(ui, when);
-                                ui.text(causes, style());
-                            });
-                        }
-                    });
-                });
+        // The burns, the newest first.
+        let burns = Table {
+            caption: match &self.frames.log {
+                Some(p) => format!(
+                    "burns · {BURN_FRAMES}+ frames with no input · also appended to {}",
+                    p.display()
+                ),
+                None => format!(
+                    "burns · {BURN_FRAMES}+ frames with no input · KAWOOSH_FRAME_LOG=PATH keeps every frame of them"
+                ),
             },
-        );
+            heads: &["ago s", "for s", "frames", "/s", "view ms", "what"],
+            rows: self
+                .frames
+                .burns
+                .iter()
+                .rev()
+                .map(|b| {
+                    let ago = now.saturating_duration_since(b.started).as_secs();
+                    let what = if b.ongoing {
+                        format!("burning · {}", b.detail())
+                    } else {
+                        b.detail()
+                    };
+                    vec![
+                        ago.to_string(),
+                        format!("{:.1}", b.duration.as_secs_f32()),
+                        b.frames.to_string(),
+                        format!("{:.0}", b.rate()),
+                        format!("{:.0}", b.work_ms),
+                        what,
+                    ]
+                })
+                .collect(),
+            empty: "none yet",
+            body: Body::AtMost(6.0),
+        };
+
+        // The last frames, the newest first: the rest of the tab.
+        let last = Table {
+            caption: "the last frames, newest first".into(),
+            heads: &["gap ms", "view ms", "causes"],
+            rows: self
+                .frames
+                .ring
+                .iter()
+                .rev()
+                .take(SHOWN)
+                .map(|f| {
+                    vec![
+                        format!("+{:.0}", f.gap_ms),
+                        format!("{:.2}", f.work_ms),
+                        f.causes(),
+                    ]
+                })
+                .collect(),
+            empty: "none yet",
+            body: Body::Rest,
+        };
+
+        ui.with(NodeSpec::column().fill().clip().gap(tm.section_gap), |ui| {
+            for (key, t) in [("causes", &causes), ("burns", &burns), ("last", &last)] {
+                t.draw(ui, key, &tm, &pal, style, digit);
+            }
+        });
+    }
+}
+
+/// The last frames the tab lists.
+const SHOWN: usize = 200;
+
+/// How much of the tab a table's rows take.
+enum Body {
+    /// Their own height, up to this many rows, scrolling past it.
+    AtMost(f32),
+    /// Whatever the tables above leave.
+    Rest,
+}
+
+/// A section of the tab: its caption, the columns named, and its rows,
+/// a cell per column. The columns but the last are as wide as their
+/// widest cell, header included, with their text at the right edge where
+/// numbers line up; the last takes the rest and wraps. Sized so and not
+/// by a `table` node, since the header is not among the rows: they
+/// scroll under it and it stays.
+struct Table {
+    caption: String,
+    heads: &'static [&'static str],
+    rows: Vec<Vec<String>>,
+    /// The one row shown when there are none.
+    empty: &'static str,
+    body: Body,
+}
+
+impl Table {
+    fn draw(&self, ui: &mut Ui<'_>, key: &str, tm: &Tab, pal: &Pal, style: TextStyle, digit: f32) {
+        let dim = style.color(pal.dim);
+        let last = self.heads.len() - 1;
+        let widths: Vec<f32> = (0..last)
+            .map(|c| {
+                let chars = self
+                    .rows
+                    .iter()
+                    .map(|r| r[c].chars().count())
+                    .chain([self.heads[c].chars().count()])
+                    .max()
+                    .unwrap_or(0);
+                chars as f32 * digit
+            })
+            .collect();
+        // A row's last cell wraps, so the row grows rather than clip
+        // what it says; the header's is one word.
+        let wrapped = style.wrap(TextWrap::Word);
+        let row = |ui: &mut Ui<'_>, spec: NodeSpec, cells: &[String], head: bool| {
+            let text = if head { dim } else { style };
+            ui.with(spec, |ui| {
+                for (c, w) in widths.iter().enumerate() {
+                    ui.with(NodeSpec::row().width(*w).main_align(Align::End), |ui| {
+                        ui.text(&cells[c], text)
+                    });
+                }
+                let rest = if head { dim } else { wrapped };
+                ui.text_in(NodeSpec::row().grow_width(), &cells[last], rest);
+            });
+        };
+        // A row's cells at its top, a wrapped last cell growing it down
+        // and the numbers staying on its first line.
+        let line = |i: usize| {
+            tm.row(pal, i)
+                .cross_align(Align::Start)
+                .pad_xy(tm.pad_x, (tm.row_h - tm.text) / 2.0)
+        };
+        let section = match self.body {
+            Body::AtMost(_) => NodeSpec::column().grow_width(),
+            Body::Rest => NodeSpec::column().grow_width().height(Sizing::Grow(1.0)),
+        };
+        ui.with_keyed(key, section, |ui| {
+            ui.text_in(tm.caption(pal), &self.caption, dim);
+            let heads: Vec<String> = self.heads.iter().map(|h| h.to_string()).collect();
+            row(ui, line(0).hover_bg(Color::TRANSPARENT), &heads, true);
+            let body = match self.body {
+                Body::AtMost(rows) => NodeSpec::column().grow_width().max_height(rows * tm.row_h),
+                Body::Rest => NodeSpec::column().grow_width().height(Sizing::Grow(1.0)),
+            };
+            ui.with_keyed("rows", body.scroll_y(), |ui| {
+                if self.rows.is_empty() {
+                    ui.with(line(1), |ui| ui.text(self.empty, dim));
+                }
+                for (i, cells) in self.rows.iter().enumerate() {
+                    row(ui, line(i + 1), cells, false);
+                }
+            });
+        });
     }
 }
 
