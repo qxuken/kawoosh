@@ -513,9 +513,12 @@ impl Kawoosh {
                 .fill()
                 .scroll_x()
                 // The ribbon glides to the column a key reveals (kui's
-                // F80, asked for from here); the thumb and a swipe are
-                // the hand's and land whole.
+                // F80, asked for from here); a swipe is the hand's and
+                // lands whole.
                 .transition(RIBBON_MS)
+                // No bar, as the tab rows have none: kui's lies over
+                // the columns' foot, on the last row of every pane.
+                .scrollbar(kui_native::ScrollbarMode::Hidden)
                 .cross_align(Align::Start)
                 .label("strip"),
             |ui| {
@@ -714,7 +717,12 @@ impl Kawoosh {
                 .fill()
                 .bg(pal.panel)
                 .clip()
-                .border(1.0, if focused { pal.accent } else { pal.border })
+                // One frame for every pane, focused or not: the focus is
+                // the title bar's (its band and its bright name). An
+                // accent frame met the strip's scrollbar and the last
+                // row's underlines along the pane's foot, and read as a
+                // glitch there.
+                .border(1.0, pal.border)
                 .on_layout(Value::map([
                     ("kind", "layout".into()),
                     ("pane", Value::Int(pane as i64)),

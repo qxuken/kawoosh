@@ -216,8 +216,10 @@ session saved and restored as a strip.
   reveals it, which is the expected thing. *A swipe over an editor
   pane's rows never reaches the ribbon, as it happens: the editor owns
   horizontal scrolling there (`on_scroll` on its `lines`). The title
-  bars, the gaps and the scrollbar are where a pointer scrolls the
-  ribbon; the keyboard has `<C-w>hl`, `<C-N>` and `zs` `ze` `zz`.*
+  bars and the gaps are where a pointer scrolls the ribbon; the
+  keyboard has `<C-w>hl`, `<C-N>` and `zs` `ze` `zz`. The ribbon has
+  no scrollbar since 2026-09-30: kui's lay over the last row of every
+  pane.*
 
 ## Built (2026-09-22)
 
