@@ -185,6 +185,8 @@ From a terminal inside kawoosh (through $KAWOOSH_SOCKET):
 Options:
   -h, --help                     print this and exit
   -V, --version                  print the version and exit
+  --after PID                    open once process PID has exited: what
+                                 :relaunch starts
 
 Environment:
   RUST_LOG           stderr log level (trace, debug, info, warn, error, off)
@@ -207,11 +209,12 @@ fn main() -> anyhow::Result<()> {
         args.splice(0..0, ["edit".to_string(), "--wait".to_string()]);
     }
     let after_dashes = args.first().is_some_and(|a| a == "--");
-    // A flag, or `test`: the CLI half, whose output wants a console.
+    // A flag, or `test`: the CLI half, whose output wants a console —
+    // but for `--after`, which is the window.
     if !after_dashes
-        && args
-            .first()
-            .is_some_and(|a| (a.starts_with('-') && a != "-") || a == "test")
+        && args.first().is_some_and(|a| {
+            (a.starts_with('-') && a != "-" && a != kawoosh::update::AFTER) || a == "test"
+        })
     {
         attach_console();
     }
@@ -223,6 +226,19 @@ fn main() -> anyhow::Result<()> {
         Some("-V" | "--version") => {
             println!("kawoosh {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
+        }
+        // `--after PID`: started by that Kawoosh's `:relaunch`, to open
+        // once it has gone — its session saved, its store let go.
+        Some(kawoosh::update::AFTER) => {
+            let Some(pid) = args.get(1).and_then(|p| p.parse::<u32>().ok()) else {
+                eprintln!("kawoosh: --after takes a process id");
+                std::process::exit(2);
+            };
+            args.drain(..2);
+            if !kawoosh::update::gone_within(pid, kawoosh::update::QUIT) {
+                eprintln!("kawoosh: process {pid} did not quit");
+                std::process::exit(1);
+            }
         }
         // Everything after is a path, dash or not.
         Some("--") => {
@@ -294,16 +310,12 @@ fn main() -> anyhow::Result<()> {
             app.restore_session();
         }
     }
-    // A new Kawoosh built beside the folder this one runs from, offered
-    // as it lands (`update.rs`). Windows only: elsewhere a running
-    // program's files are replaced under it.
-    if cfg!(windows)
-        && let Some(dir) = std::env::current_exe()
-            .and_then(|e| kawoosh_systems::fs::canonicalize(&e))
-            .ok()
-            .and_then(|e| e.parent().map(Path::to_path_buf))
-    {
-        app.watch_update(&dir);
+    // A new Kawoosh installed over the executable this one runs from,
+    // or beside its folder, offered as it lands, and what `:relaunch`
+    // starts again (`update.rs`). Resolved now: `kawoosh` on the PATH
+    // is a link into the app, and Linux names the file as it is later.
+    if let Ok(exe) = std::env::current_exe().and_then(|e| kawoosh_systems::fs::canonicalize(&e)) {
+        app.watch_update(&exe);
     }
     let launcher = kui_native::app("kawoosh")
         // The title row is kawoosh's (chrome.rs): the cwd and the

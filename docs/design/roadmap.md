@@ -1848,6 +1848,14 @@ follow the theme every frame (`panes.rs`).
   `:relaunch`, and `kawoosh-update`, run from a copy in the temp
   folder, swaps the folders once it has quit — or leaves both as they
   were and says why — and starts the one in place (`update.rs`).
+  Since 2026-10-01 `:relaunch` is every platform's: it quits and starts
+  the executable this Kawoosh was started from again (`kawoosh --after
+  PID`, which waits for the old one to be gone before it reads the
+  session), so with nothing new it is a restart. Where a running
+  program's files are replaced under it the new Kawoosh is written
+  over the old — `scripts/macos-app.nu` makes the app beside and
+  renames it in, whole — and the running one, watching its own
+  executable, offers the relaunch when that is another file.
 - **An image for kawoosh** — done 2026-09-25, the bundles' and the
   window's at runtime (kui F86) [todo]; step 35. Neither bundle had
   an icon: the Dock, Explorer and the window's title showed the
