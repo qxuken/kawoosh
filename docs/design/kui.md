@@ -488,6 +488,10 @@ either took the line or was lost. Now a notification has a **level**
   the user. Nor does one under the pointer — over the card or one of
   its buttons — and once the pointer leaves, its eight seconds start
   over, so a toast being read is not read out from under the reader.
+  A click on a toast acts and leaves the keyboard with the pane
+  (`keep_focus`, as the chrome's clicks do): a button that took it held
+  it after its toast went, and the pane heard no keys until a click in
+  it (*amended 2026-10-02*).
 - **info → a corner line.** A dim line at the bottom-right above the
   strips, gone after four seconds, grouped under its **source** with
   the source's name below the group — fidget's shape. A language

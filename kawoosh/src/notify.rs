@@ -870,7 +870,13 @@ impl Kawoosh {
                 )
                 .max_width(max_w)
                 .gap(6.0)
-                .cross_align(Align::End),
+                .cross_align(Align::End)
+                // A click on a toast acts and leaves the keyboard with
+                // the pane: a button that took it would hold it after
+                // the toast went, a key focus on a node no longer
+                // drawn, and the pane's keys dead until a click in it.
+                // The toasts' own keyboard is `<C-w>n` (`toast_key`).
+                .keep_focus(),
             |ui| {
                 let focus = self.notes.focus;
                 for s in self.notes.shown.iter().filter(|s| s.toast) {
