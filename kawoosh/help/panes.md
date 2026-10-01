@@ -44,6 +44,15 @@ pane, `<C-w>v` then `t` one beside, whatever the settings say.
 `:split PATH` and `:vsplit PATH` open PATH straight away; `:new` and
 `:vnew` a fresh scratch buffer below, beside.
 
+### Where the keys go when a pane closes
+
+When the pane you are in closes — `<C-w>c`, `:q`, a tool or a terminal
+whose program exits, `q` in a list — the keys go back to the pane of
+the tab you were in before it, wherever that stands and whatever the
+closed pane was opened from: open git from a file, look at the
+terminal, go back to git and quit it, and you are in the terminal. In
+the dock it is the dock's pane you were in last.
+
 ### Dragging panes
 
 Every pane has a title bar, and dragging it moves the pane. Let go over

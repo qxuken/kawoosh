@@ -80,7 +80,7 @@ the strip.
 | `⌘1`…`⌘9`, `<C-S-1>`…`<C-S-9>` | the Nth pane | the Nth column, the last when there are fewer; both reach one from a terminal pane too |
 | `<C-w>e` `<C-w>i` | *(free)* | the pane out of its column's stack into a column of its own after it; the next column's top pane into the stack under it |
 | `zs` `ze` `zz` | *(free)* | the focused column against the left edge, the right edge, or centred |
-| closing the last pane of a column | — | the column goes, the focus to the column before it |
+| closing the last pane of a column | — | the column goes; the keys, if it had them, to the pane they were in last, else the column before it ([pane-placement.md](pane-placement.md) Decision 5) |
 
 `:layout scroll` and `:layout tree` convert the current tab (Decision
 5), a bare `:layout` (`<leader>tl`) flips it; `layout.default`
@@ -393,7 +393,9 @@ departed from the text above, and what day one found:
 - **Closing a pane inside a stack keeps the keyboard in the column**
   (its first pane), where the tree's rule sends it to the tab's first
   pane; closing a column's last pane goes to the column before, else
-  the one that took its place.
+  the one that took its place. Since 2026-10-01 these answer only
+  when the tab noted no pane the keys were in: they go back to the last
+  one first (pane-placement.md Decision 5).
 - **No `exit` on a column, and the strip keyed per tab.** With
   `exit { opacity: 0 }` on the columns, a tab switch cross-faded: the
   columns of the tab left replayed as ghosts over the tab arrived at
