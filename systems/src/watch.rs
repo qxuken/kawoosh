@@ -7,6 +7,11 @@
 //! and it needs no dependency and no per-platform backend. A path that
 //! does not exist is watched as well — a `.kawoosh/settings.lua` made
 //! later counts as a change.
+//!
+//! A path is watched from the call that names it: its stamp is taken
+//! there, by the caller, not when the thread comes to the set — which,
+//! on a busy machine, can be after the save the watch was for, and a
+//! stamp taken then makes that save the state the file started in.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -86,15 +91,19 @@ fn stamp(path: &PathBuf) -> Stamp {
     }
 }
 
+/// A set to watch: each path with its stamp at the call, or none for a
+/// host's, which the thread takes.
+type Set = Vec<(PathBuf, Option<Stamp>)>;
+
 pub struct Watcher {
-    paths: Sender<Vec<PathBuf>>,
+    paths: Sender<Set>,
     changed: Receiver<PathBuf>,
 }
 
 impl Watcher {
     /// A watch whose host paths are stat'd on `beat`.
     pub fn spawn(wake: WakeHandle, beat: Beat) -> Self {
-        let (paths_tx, paths_rx) = unbounded::<Vec<PathBuf>>();
+        let (paths_tx, paths_rx) = unbounded::<Set>();
         let (changed_tx, changed_rx) = unbounded::<PathBuf>();
         std::thread::Builder::new()
             .name("watch".into())
@@ -103,19 +112,30 @@ impl Watcher {
                 let mut stamps: HashMap<PathBuf, Stamp> = HashMap::new();
                 let mut remote_at = Instant::now();
                 loop {
-                    // A new set replaces the old; its stamps are taken now,
-                    // so what was already on disk is not a change.
+                    // A new set replaces the old. A path the old had keeps
+                    // its stamp; a new one has the caller's, so what was on
+                    // disk at the call is not a change and what is saved
+                    // after it is. The sets that waited are each taken, in
+                    // their order: a path in two of them is watched since
+                    // the first, whatever was saved between. A host's
+                    // path is stat'd for the last alone.
                     match paths_rx.recv_timeout(INTERVAL) {
-                        Ok(mut set) => {
-                            while let Ok(next) = paths_rx.try_recv() {
-                                set = next;
+                        Ok(first) => {
+                            let mut sets = vec![first];
+                            sets.extend(paths_rx.try_iter());
+                            let last = sets.len() - 1;
+                            for (i, set) in sets.into_iter().enumerate() {
+                                let mut next = HashMap::with_capacity(set.len());
+                                for (p, at_call) in set {
+                                    let s = match stamps.get(&p).copied().or(at_call) {
+                                        Some(s) => s,
+                                        None if i == last => stamp(&p),
+                                        None => continue,
+                                    };
+                                    next.insert(p, s);
+                                }
+                                stamps = next;
                             }
-                            let mut next = HashMap::with_capacity(set.len());
-                            for p in set {
-                                let s = stamps.get(&p).copied().unwrap_or_else(|| stamp(&p));
-                                next.insert(p, s);
-                            }
-                            stamps = next;
                             continue;
                         }
                         Err(Disconnected) => return,
@@ -152,9 +172,19 @@ impl Watcher {
     }
 
     /// Makes `paths` the set watched. A path already watched keeps its
-    /// stamp; a new one is stamped as it is now.
+    /// stamp; a new one is stamped as it is now — here, before this
+    /// returns, so a save that follows the call is a change whenever the
+    /// thread gets to the set. A host's path is the exception: its stat
+    /// is a round trip, not the caller's to wait on, and is the thread's.
     pub fn watch(&self, paths: Vec<PathBuf>) {
-        let _ = self.paths.send(paths);
+        let set = paths
+            .into_iter()
+            .map(|p| {
+                let at_call = crate::fs::domain_of(&p).is_none().then(|| stamp(&p));
+                (p, at_call)
+            })
+            .collect();
+        let _ = self.paths.send(set);
     }
 
     /// The paths that changed since the last drain.
@@ -203,6 +233,40 @@ mod tests {
         // A new set: `b` as it is now is not a change.
         w.watch(vec![b.clone()]);
         assert!(rx.recv_timeout(INTERVAL * 3).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A file is watched from the call on: a save right after it is a
+    /// change, however late the thread comes to the set — here it is
+    /// kept on a set before, of paths enough to take it a while — and
+    /// though a later set, taken in the same turn, names it again.
+    #[test]
+    fn a_save_right_after_the_watch_is_a_change() {
+        let dir = std::env::temp_dir().join(format!("kawoosh-watch-late-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.lua");
+        std::fs::write(&a, "return {}").unwrap();
+        let (tx, rx) = crossbeam_channel::unbounded::<()>();
+        let wake = WakeHandle::new();
+        wake.set(Arc::new(move || {
+            let _ = tx.send(());
+        }));
+        let w = Watcher::spawn(wake, Beat::default());
+        w.watch(
+            (0..100_000)
+                .map(|i| dir.join(format!("none-{i}")))
+                .collect(),
+        );
+        std::thread::sleep(Duration::from_millis(5));
+        w.watch(vec![a.clone()]);
+        std::fs::write(&a, "return { tabstop = 2 }").unwrap();
+        // Named again after the save, in a set the thread takes with the
+        // one before: watched since the first.
+        w.watch(vec![a.clone(), dir.join("b.lua")]);
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("a wake for the write");
+        assert_eq!(w.drain(), std::slice::from_ref(&a));
         std::fs::remove_dir_all(&dir).ok();
     }
 }
