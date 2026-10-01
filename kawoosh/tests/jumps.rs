@@ -216,6 +216,57 @@ fn a_closed_file_opens_again_at_its_place() {
     assert_eq!(caret(&app), ("a.txt".into(), 7));
 }
 
+/// A file past `ASYNC_OPEN_BYTES` opens on the io thread (here forced
+/// on a small one): the caret goes to the place once the text lands,
+/// and the landing is no jump that cuts `<C-i>` off.
+#[test]
+fn a_file_still_arriving_is_gone_to_once_it_lands() {
+    let (mut d, mut app, dir) = launch("arriving");
+    d.press(&mut app, "7j");
+    let a = app.ed.views[app.focused_view().unwrap()].buffer;
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("b.txt").display()),
+    );
+    app.ed.remove_buffer(a);
+    d.frame(&mut app);
+    let file = dir.join("a.txt");
+    let len = std::fs::metadata(&file).unwrap().len() as usize;
+    app.open_on_io_thread(&file, len);
+    d.press(&mut app, "<C-o>");
+    d.frame(&mut app);
+    app.wait_for_open();
+    d.frame(&mut app);
+    assert_eq!(caret(&app), ("a.txt".into(), 7));
+    assert_eq!(list(&app), vec!["a.txt:7", "b.txt:0"]);
+    d.press(&mut app, "<C-i>");
+    d.frame(&mut app);
+    assert_eq!(caret(&app), ("b.txt".into(), 0));
+}
+
+#[test]
+fn a_file_deleted_since_is_stepped_over() {
+    let (mut d, mut app, dir) = launch("deleted");
+    ex(&mut d, &mut app, "100");
+    let a = app.ed.views[app.focused_view().unwrap()].buffer;
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("b.txt").display()),
+    );
+    app.ed.remove_buffer(a);
+    std::fs::remove_file(dir.join("a.txt")).unwrap();
+    d.frame(&mut app);
+    assert_eq!(list(&app), vec!["a.txt:0", "a.txt:99"]);
+    // Not an empty new a.txt: both its places are dead.
+    d.press(&mut app, "<C-o>");
+    d.frame(&mut app);
+    assert_eq!(app.ed.message, "at the oldest jump");
+    assert_eq!(caret(&app), ("b.txt".into(), 0));
+    assert!(app.ed.buffer_at(&dir.join("a.txt")).is_none());
+}
+
 #[test]
 fn going_back_and_jumping_again_drops_what_was_ahead() {
     let (mut d, mut app, _dir) = launch("stack");
