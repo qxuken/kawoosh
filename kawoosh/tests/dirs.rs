@@ -388,3 +388,36 @@ fn auto_finds_a_zoxide_that_arrives_after_load() {
     assert_eq!(rows(&mut d, &mut app, 2), format!("2|{}", a.display()));
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// The memory counts a visit whichever backend lists: with zoxide gone,
+/// the jumps are the ones made while it was there.
+#[test]
+#[cfg(unix)]
+fn the_memory_counts_visits_under_zoxide_too() {
+    let root = tmp("dual");
+    let (a, b) = (root.join("alpha"), root.join("beta"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let (mut d, mut app, log) = zoxide_app(&root, &a, &b);
+    app.open_store(Some(&root.join("state.db")));
+    ex(&mut d, &mut app, &format!("cd {}", b.display()));
+    let mut logged = String::new();
+    for _ in 0..300 {
+        d.frame(&mut app);
+        logged = std::fs::read_to_string(&log).unwrap_or_default();
+        if logged.contains("add") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(logged.contains(&format!("add {}", b.display())), "{logged}");
+    app.flush_moments();
+    // zoxide gone: the memory's rows.
+    ex(&mut d, &mut app, "set dirs.backend=memory");
+    d.keys(&mut app, " sd");
+    assert_eq!(
+        rows(&mut d, &mut app, 1),
+        format!("1|{}", kawoosh_systems::fs::abbreviate_home(&b))
+    );
+    std::fs::remove_dir_all(&root).ok();
+}

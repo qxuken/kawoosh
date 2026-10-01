@@ -12,8 +12,10 @@
 --
 -- A visit is fed back: the working directory moving (`:cd`,
 -- `~`, a pick — `kawoosh.on_cwd`), and a `dir` listing
--- opened (`kawoosh.dirs.visit`). A terminal's own `cd` is not: the
--- shell's zoxide hook counts that.
+-- opened (`kawoosh.dirs.visit`). The memory counts every visit,
+-- whichever backend lists, so a zoxide uninstalled leaves the jumps
+-- warm. A terminal's own `cd` is not counted: the shell's zoxide hook
+-- counts that, and the memory never hears of it.
 --
 -- `<leader>sd` (and `<C-S-z>`, which reaches from a terminal pane too)
 -- opens it, and `gz` in a `dir` listing. `<CR>` in an editor
@@ -106,10 +108,13 @@ function dirs.backend()
   return dirs.backends[name] or dirs.backends.memory
 end
 
--- dirs.visit(path): a directory attended — counted by the backend.
+-- dirs.visit(path): a directory attended — counted by the memory,
+-- and by the backend too when that is another.
 function dirs.visit(path)
   if not path or path == "" or not fs.is_dir(path) then return end
-  dirs.backend().add(path)
+  local backend = dirs.backend()
+  dirs.backends.memory.add(path)
+  if backend ~= dirs.backends.memory then backend.add(path) end
 end
 
 -- A `:cd` is a place gone to; a tab switch is not.
@@ -185,7 +190,7 @@ picker.source("dirs", {
     if from_terminal then
       -- The shell's own zoxide hook counts the `cd`; the memory has no
       -- hook, so it is told here.
-      if dirs.backend() == dirs.backends.memory then dirs.visit(item.path) end
+      if fs.is_dir(item.path) then dirs.backends.memory.add(item.path) end
       return kawoosh.term.send("cd " .. quoted(item.path) .. "\r", { prompt = true })
     end
     fs.chdir(item.path)

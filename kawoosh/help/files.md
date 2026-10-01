@@ -128,7 +128,8 @@ deletes the mark.
 `<leader>sd` (or `<C-S-z>`, which also works from a
 [terminal](terminal.md) pane) lists the directories you use most, from
 zoxide when it is on your shell's PATH and from kawoosh's own memory
-otherwise. In a [listing](#the-file-manager), `gz` opens it too.
+otherwise. The memory counts the directories you go to inside kawoosh
+either way, so it is ready if zoxide goes away. In a [listing](#the-file-manager), `gz` opens it too.
 
 | keys | what |
 |---|---|
