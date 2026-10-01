@@ -11,8 +11,8 @@ use kawoosh_doc::Buffer;
 use crate::keymap::{Keymap, Mode};
 use crate::motions as m;
 use crate::{
-    ArgKind, Args, Ctx, Editor, Effect, Kind, Layer, MotionKind, Prompt, Selection, Setting, Spec,
-    ViewId,
+    ArgKind, Args, CharArg, Ctx, Editor, Effect, Kind, Layer, MotionKind, Prompt, Selection,
+    Setting, Spec, ViewId,
 };
 
 /// `:set`'s line split into its path and its value: the value is past
@@ -1902,10 +1902,12 @@ pub fn install(ed: &mut Editor) {
     });
 
     // ---- text objects (operator-pending and visual)
-    ed.register_kind_char("textobject inner", Kind::TextObject, |ed, ctx| {
+    // The object is named by the key: `di"` on a Russian layout is the
+    // quotes, where ⇧ on that key typed `Э` (`CharArg`).
+    ed.register_kind_key("textobject inner", Kind::TextObject, |ed, ctx| {
         textobject(ed, ctx, false)
     });
-    ed.register_kind_char("textobject around", Kind::TextObject, |ed, ctx| {
+    ed.register_kind_key("textobject around", Kind::TextObject, |ed, ctx| {
         textobject(ed, ctx, true)
     });
 
@@ -2415,7 +2417,7 @@ pub fn install(ed: &mut Editor) {
     ed.register_kind("surround add", Kind::Operator, |ed, ctx| {
         operator(ed, ctx, "surround add")
     });
-    ed.register_with_char("surround wrap", surround_wrap);
+    ed.register_with_key("surround wrap", surround_wrap);
     // Align (`ga`, easy-align's): an operator over lines that then
     // takes the character to line them up on, or `<CR>` and a pattern.
     // With a pattern (`:align PAT`) the selections' lines, at once.
@@ -2443,14 +2445,14 @@ pub fn install(ed: &mut Editor) {
         ed.awaiting_char = None;
         ed.open_prompt(ctx.view, Prompt::Align);
     });
-    ed.register_with_char("surround delete", surround_delete);
-    ed.register_with_char("surround replace", surround_replace);
-    ed.register_with_char("surround replace with", surround_replace_with);
+    ed.register_with_key("surround delete", surround_delete);
+    ed.register_with_key("surround replace", surround_replace);
+    ed.register_with_key("surround replace with", surround_replace_with);
 
     // `"` names the register the next command takes into or puts from.
     // Only `_` so far, the black hole; `""` is the one there always is,
     // named all the same, so a count before it is the command's.
-    ed.register_with_char("register", |ed, ctx| match ctx.arg_char {
+    ed.register_with_key("register", |ed, ctx| match ctx.arg_char {
         Some(c @ ('_' | '"')) => ed.pending_register = Some(c),
         Some(c) => {
             ed.count = None;
@@ -2466,21 +2468,24 @@ pub fn install(ed: &mut Editor) {
     });
     // `q` ends a recording at once, so it asks for its register only
     // when none is on — `takes_char` would wait for one either way.
-    ed.register("macro record", |ed, ctx| {
-        if let Some(c) = ed.repeat.stop() {
-            ed.message = format!("recorded @{c}");
-            return;
-        }
-        match ctx.arg_char {
-            None => ed.await_char("macro record"),
-            Some(c) if c.is_ascii_alphanumeric() => {
-                ed.repeat.start(c);
-                ed.message.clear();
+    ed.register_spec(
+        Spec::new("macro record").char_arg(CharArg::Key),
+        |ed, ctx| {
+            if let Some(c) = ed.repeat.stop() {
+                ed.message = format!("recorded @{c}");
+                return;
             }
-            Some(c) => ed.message = format!("no register {c} to record into"),
-        }
-    });
-    ed.register_with_char("macro play", |ed, ctx| {
+            match ctx.arg_char {
+                None => ed.await_char("macro record"),
+                Some(c) if c.is_ascii_alphanumeric() => {
+                    ed.repeat.start(c);
+                    ed.message.clear();
+                }
+                Some(c) => ed.message = format!("no register {c} to record into"),
+            }
+        },
+    );
+    ed.register_with_key("macro play", |ed, ctx| {
         let Some(c) = ctx.arg_char else {
             return;
         };

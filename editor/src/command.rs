@@ -418,6 +418,23 @@ pub fn fact_words(fact: &str) -> Option<String> {
     })
 }
 
+/// Which half of the next press a `takes_char` command reads — kui's two
+/// codes, the layout's character and the key's. The character typed, for
+/// a command that looks for it in the text: `f`, `t`, `r`, `align on`
+/// find and write what the layout typed, `fж` the Cyrillic letter. The
+/// key, for one the character *names* something with: a mark, a
+/// register, a macro, a text object, a surround's pair. Those are keys,
+/// as every binding is, so `ma` on a Russian layout is mark `a` from the
+/// key printed A where the layout typed `ф`, `` di` `` empties the
+/// backticks on macOS's Russian whose layout put `]` on that key, and
+/// `di"` the quotes where ⇧ on the key printed `'` typed `Э`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CharArg {
+    #[default]
+    Typed,
+    Key,
+}
+
 /// Everything about a command that is not its behaviour.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Spec {
@@ -437,6 +454,8 @@ pub struct Spec {
     pub kind: Kind,
     /// True for commands that read one more key as an argument.
     pub takes_char: bool,
+    /// Which half of that key: what the layout typed, or the key.
+    pub char_arg: CharArg,
     /// Its move is a jump at any distance (docs/design/jumps.md
     /// Decision 2): the place it left goes on the tab's list.
     pub jump: bool,
@@ -483,8 +502,26 @@ impl Spec {
         self
     }
 
+    /// Reads one more key, as the character the layout typed: for a
+    /// command that looks for it in the text (`f`, `r`).
     pub fn takes_char(mut self) -> Self {
         self.takes_char = true;
+        self.char_arg = CharArg::Typed;
+        self
+    }
+
+    /// Reads one more key, as the key: for a command the character
+    /// names something with (a mark, a register, a text object).
+    pub fn takes_key(mut self) -> Self {
+        self.takes_char = true;
+        self.char_arg = CharArg::Key;
+        self
+    }
+
+    /// Which half of a key it reads when it asks for one itself
+    /// (`Editor::await_char`) rather than at its binding.
+    pub fn char_arg(mut self, half: CharArg) -> Self {
+        self.char_arg = half;
         self
     }
 

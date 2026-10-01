@@ -29,9 +29,19 @@ ctrl with `ц` on W opens `<C-w>`, with no layout switch — and as Shift
 prints it, so `О` on that key is `J` and `Ж` on the key printed `;` is
 `:`, the command line, where the layout's own `:` sits on Shift+6 (kui
 F76, 2026-09-21: before it the stand-in was the unshifted key, and `J`
-moved down); insert mode types the layout's text either way.
-`kawoosh/tests/editor_pane.rs` pins it
-(`a_cyrillic_layout_drives_the_motions_and_types_itself`).
+moved down); insert mode types the layout's text either way. On a layout
+the platform says is not Latin every key is the US one, its ASCII too
+(kui F115, 2026-10-01): macOS's Russian puts `]` on the key printed
+`` ` ``, `%` on ⇧4 and `:` on ⇧5, and judged key by key those won, so
+`` ` `` was `]`, `$` was `%` and `%` opened the command line. A command
+waiting for one more key reads the half it needs (`CharArg`,
+2026-10-01): `f`, `t`, `r` and `align` the character typed, so `fж`
+finds a `ж`; a mark, a register, a macro, a text object and a surround's
+pair the key, so `ma` is mark `a` and `di"` — ⇧ on the key printed `'`,
+which types `Э` — the quotes. `kawoosh/tests/editor_pane.rs` pins it
+(`a_cyrillic_layout_drives_the_motions_and_types_itself`,
+`a_waiting_command_reads_the_typed_character_or_the_key`,
+`a_non_latin_layout_s_punctuation_is_the_us_key`).
 
 The spellings are taken from what the hands already do: the neovim
 config (which-key groups, `<C-hjkl>` for panes, `[x`/`]x` pairs, `<C-s>`,
