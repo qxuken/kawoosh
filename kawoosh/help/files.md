@@ -48,6 +48,7 @@ still there until `:w` applies them or `<C-l>` drops them.
 | `mA` `mS` `mM` `mE` | the same, reversed |
 | `g.` | show or hide dot files (`:dir hidden`, the `dir.hidden` setting) |
 | `~` | make the listed directory the working directory (`:dir cd`) |
+| `gz` | jump to a directory you use often ([directory jumps](#directory-jumps), zoxide's): the pick is listed here |
 
 Directories are always listed before files, and the sort is remembered
 per directory. Because `m` sorts in a listing, it does not set a
@@ -126,11 +127,13 @@ deletes the mark.
 
 `<leader>sd` (or `<C-S-z>`, which also works from a
 [terminal](terminal.md) pane) lists the directories you use most, from
-zoxide when it is installed and from kawoosh's own memory otherwise.
+zoxide when it is on your shell's PATH and from kawoosh's own memory
+otherwise. The memory counts the directories you go to inside kawoosh
+either way, so it is ready if zoxide goes away. In a [listing](#the-file-manager), `gz` opens it too.
 
 | keys | what |
 |---|---|
-| `<CR>` | make it the working directory; from a terminal pane, type `cd 'PATH'` into the shell when it sits at an empty prompt |
+| `<CR>` | make it the working directory; from a listing, list it there; from a terminal pane, type `cd 'PATH'` into the shell when it sits at an empty prompt |
 | `<C-o>` | list it in `dir`, the working directory left alone |
 | `<C-v>` `<C-s>` | list it in a split |
 | `<C-t>` | a new tab on it: its working directory, listed |

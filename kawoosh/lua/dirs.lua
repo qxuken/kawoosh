@@ -3,8 +3,8 @@
 --
 -- The rows come from a backend, `{ list = fn(done), add = fn(path) }`:
 -- `zoxide` (`zoxide query --list --score`, its score the row's boost;
--- `zoxide add` for a visit) when `zoxide` runs and there is a state db,
--- else `memory` — the working memory's `dirs.dir` rows across every
+-- `zoxide add` for a visit) when `zoxide` is on the PATH and there is a
+-- state db, else `memory` — the working memory's `dirs.dir` rows across every
 -- workspace (memory.md: a plugin's kind, five hundred rows, ninety
 -- days), ranked by `kawoosh.memory_rank`. `dirs.backend` (`auto`,
 -- `zoxide`, `memory`) chooses; `dirs.zoxide` names the binary. A config
@@ -12,12 +12,16 @@
 --
 -- A visit is fed back: the working directory moving (`:cd`,
 -- `~`, a pick — `kawoosh.on_cwd`), and a `dir` listing
--- opened (`kawoosh.dirs.visit`). A terminal's own `cd` is not: the
--- shell's zoxide hook counts that.
+-- opened (`kawoosh.dirs.visit`). The memory counts every visit,
+-- whichever backend lists, so a zoxide uninstalled leaves the jumps
+-- warm. A terminal's own `cd` is not counted: the shell's zoxide hook
+-- counts that, and the memory never hears of it.
 --
 -- `<leader>sd` (and `<C-S-z>`, which reaches from a terminal pane too)
--- opens it. `<CR>` in an editor pane makes the directory the working
--- one; opened from a terminal pane, it types `cd 'PATH'⏎` there when
+-- opens it, and `gz` in a `dir` listing. `<CR>` in an editor
+-- pane makes the directory the working one; in a listing it lists the
+-- directory there, the listing's buffer reused, as `-` and `<CR>` move
+-- it (`~` then makes it the working one); opened from a terminal pane, it types `cd 'PATH'⏎` there when
 -- the shell sits at an empty prompt (OSC 133) and says why not
 -- otherwise. `<C-o>` lists the directory in `dir` without moving the
 -- working directory, `<C-v>` `<C-s>` list it in a split, and `<C-t>`
@@ -27,7 +31,7 @@
 
 local fs = kawoosh.fs
 local picker = kawoosh.picker
-local dirs = { backends = {}, zoxide_found = nil }
+local dirs = { backends = {} }
 kawoosh.dirs = dirs
 
 local KIND = "dirs.dir"
@@ -55,8 +59,8 @@ dirs.backends.zoxide = {
       end,
       on_exit = function(code)
         if code == 0 then return done(rows) end
-        dirs.zoxide_found = false
-        -- Not there after all: the memory's rows instead.
+        -- No answer (an empty database exits 1): the memory's rows
+        -- instead, this time.
         dirs.backends.memory.list(done)
       end,
     })
@@ -89,27 +93,28 @@ kawoosh.setting("dirs.backend", { type = { "auto", "zoxide", "memory" },
                                   doc = "where the directory jumps come from" })
 kawoosh.setting("dirs.zoxide", { type = "string", doc = "the zoxide binary" })
 
--- The backend the setting names. `auto` is zoxide while it runs and
--- kawoosh keeps a state db: a run that keeps nothing (no store — the
--- tests) writes to no one else's database either, and has the memory.
+-- The backend the setting names. `auto` is zoxide while it is on the
+-- PATH and kawoosh keeps a state db: a run that keeps nothing (no store
+-- — the tests) writes to no one else's database either, and has the
+-- memory. The PATH is asked each time, not once at load: the plugins
+-- load before a window opened from the Dock has its shell's PATH, and
+-- a zoxide installed since is found; while that PATH is still being
+-- asked for, `auto` counts on it.
 function dirs.backend()
   local name = kawoosh.opt("dirs.backend") or "auto"
   if name == "auto" then
-    name = (dirs.zoxide_found ~= false and kawoosh.holds("store")) and "zoxide" or "memory"
+    name = (fs.on_path(zoxide()) ~= false and kawoosh.holds("store")) and "zoxide" or "memory"
   end
   return dirs.backends[name] or dirs.backends.memory
 end
 
--- Whether zoxide runs, asked once at load; until it answers, `auto`
--- counts on it.
-kawoosh.spawn(zoxide() .. " --version", {
-  on_exit = function(code) dirs.zoxide_found = code == 0 end,
-})
-
--- dirs.visit(path): a directory attended — counted by the backend.
+-- dirs.visit(path): a directory attended — counted by the memory,
+-- and by the backend too when that is another.
 function dirs.visit(path)
   if not path or path == "" or not fs.is_dir(path) then return end
-  dirs.backend().add(path)
+  local backend = dirs.backend()
+  dirs.backends.memory.add(path)
+  if backend ~= dirs.backends.memory then backend.add(path) end
 end
 
 -- A `:cd` is a place gone to; a tab switch is not.
@@ -119,8 +124,9 @@ end)
 
 -- ------------------------------------------------------------ the source
 
--- Where the open picker came from: a pick into a terminal types `cd`.
-local from_terminal = false
+-- Where the open picker came from: a pick into a terminal types `cd`,
+-- a pick into a listing lists the directory there.
+local from_terminal, from_listing = false, false
 
 -- A directory's entries as the preview's lines, directories first.
 local function preview(item)
@@ -147,6 +153,8 @@ picker.source("dirs", {
   title = "directories",
   load = function(ctx, done)
     from_terminal = ctx.terminal == true
+    local ok, name = pcall(kawoosh.buf.name, ctx.buffer)
+    from_listing = not from_terminal and ok and type(name) == "string" and name:match("^dir: ") ~= nil
     dirs.backend().list(function(rows, err)
       if not rows then return done(nil, err) end
       local max = 0
@@ -178,11 +186,11 @@ picker.source("dirs", {
       list_it(item, how)
       return fs.chdir(item.path)
     end
-    if how then return list_it(item, how) end
+    if how or from_listing then return list_it(item, how) end
     if from_terminal then
       -- The shell's own zoxide hook counts the `cd`; the memory has no
       -- hook, so it is told here.
-      if dirs.backend() == dirs.backends.memory then dirs.visit(item.path) end
+      if fs.is_dir(item.path) then dirs.backends.memory.add(item.path) end
       return kawoosh.term.send("cd " .. quoted(item.path) .. "\r", { prompt = true })
     end
     fs.chdir(item.path)

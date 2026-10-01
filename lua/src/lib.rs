@@ -5447,6 +5447,13 @@ fn seed(
         "is_file",
         lua.create_function(|_, p: String| Ok(kfs::is_file(&expand(&p))))?,
     )?;
+    // Whether a program would be found by a child kawoosh spawns — on
+    // the PATH the shell made, for a window opened outside one; nil
+    // while that PATH is still being asked for.
+    fs.set(
+        "on_path",
+        lua.create_function(|_, p: String| Ok(kawoosh_systems::io::on_path(&p)))?,
+    )?;
     fs.set(
         "drives",
         lua.create_function(|_, ()| {
