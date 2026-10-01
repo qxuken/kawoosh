@@ -54,7 +54,8 @@ the releases have a grammar of the same name (C), saying the built-in
 one is what is used. `/` filters it: what you type narrows the rows to
 the grammars whose name or files match (`zig`, `.rb`, `Dockerfile`),
 the best match under the cursor; `⏎` or `<Esc>` goes back to the rows,
-and `<Esc>` there clears the filter. `j` `k` walk it, `⏎` (or `i`, or
+and `<Esc>` there clears the filter. `j` `k` walk it, `gg` `G` go to
+the first and the last, `<C-d>` `<C-u>` ten rows down and up, `⏎` (or `i`, or
 a row's button) installs the grammar under the cursor, `u` updates
 every one, `d` removes the cursor's, `q` closes. One that is on its way
 shows how far it is, and one that failed says why.

@@ -1435,3 +1435,122 @@ fn the_pane_filters_by_name_and_file_and_tags_the_built_in() {
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(t).ok();
 }
+
+/// The pane's head is its counts and its filter, under the title bar
+/// that names it: no `grammars` of its own over them. The filter is the
+/// list panes' line — `/`, the field, how many — drawn on the pane as
+/// the fonts pane's is, not in a box of its own.
+#[test]
+fn the_head_is_the_counts_and_a_plain_filter_line_with_no_title_of_its_own() {
+    let t = temp("pane-head");
+    let mut d = Drive::new(760.0, 700.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.load_grammars(&t.join("grammars"));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "grammars");
+    d.frame(&mut app);
+
+    let body = d.texts_under("body");
+    assert!(
+        !body.iter().any(|s| s == "grammars"),
+        "the title bar names the pane: {body:?}"
+    );
+    let built_in = app
+        .grammars
+        .shown
+        .borrow()
+        .iter()
+        .filter(|g| g.state == "built in")
+        .count();
+    let counts = format!(
+        "0 installed · {} to install · {built_in} built in",
+        app.grammars.listed.len()
+    );
+    assert!(body.contains(&counts), "{body:?}");
+
+    // From the field up to the pane's body, nothing paints a box.
+    let nodes = d.core.nodes();
+    let by_key: std::collections::HashMap<_, _> = nodes.iter().map(|n| (n.key, n)).collect();
+    let field = nodes
+        .iter()
+        .find(|n| n.label.as_deref() == Some("field:lua:grammars/q"))
+        .expect("the filter's field");
+    let line = by_key[&field.parent.unwrap()];
+    let mut at = Some(line);
+    while let Some(n) = at {
+        if n.label.as_deref() == Some("body") {
+            break;
+        }
+        assert_eq!(n.bg.a, 0.0, "{:?} paints {:?}", n.label, n.bg);
+        at = n.parent.and_then(|k| by_key.get(&k)).copied();
+    }
+    assert!(at.is_some(), "the field is in the body");
+    let texts: Vec<String> = nodes
+        .iter()
+        .filter(|n| n.parent == Some(line.key))
+        .filter_map(|n| n.text.clone())
+        .collect();
+    let all = app.grammars.listed.len() + built_in;
+    assert_eq!(texts, ["/".to_string(), format!("{all} grammars")]);
+    assert_eq!(overflows(&d), Vec::<String>::new());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(t).ok();
+}
+
+/// `gg` and `G` take the cursor to the first row and the last, each
+/// scrolled into view, and `<C-d>` `<C-u>` ten rows down and up, as in
+/// the other list panes.
+#[test]
+fn gg_and_g_go_to_the_first_and_last_row_and_ctrl_d_ctrl_u_page() {
+    let t = temp("pane-ends");
+    let mut d = Drive::new(760.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.load_grammars(&t.join("grammars"));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "grammars");
+    d.frame(&mut app);
+    let cursor = |app: &mut Kawoosh| lua(app, "kawoosh.echo(kawoosh.grammars.state().cursor)");
+    let rows: Vec<String> = lua(
+        &mut app,
+        "kawoosh.echo(table.concat(kawoosh.grammars.state().rows, ' '))",
+    )
+    .split(' ')
+    .map(str::to_string)
+    .collect();
+    assert!(rows.len() > 20, "{rows:?}");
+    // Whether the row of `name` is inside the list's box.
+    let shown = |d: &mut Drive, name: &str| {
+        let r = d.rect(&format!("grammar {name}")).unwrap();
+        let list = d.rect("list").unwrap();
+        r.y >= list.y - 0.5 && r.y + r.h <= list.y + list.h + 0.5
+    };
+    let (first, last) = (rows[0].clone(), rows[rows.len() - 1].clone());
+    assert_eq!(cursor(&mut app), first);
+    assert!(!shown(&mut d, &last), "a list longer than the pane");
+
+    d.press(&mut app, "G");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(cursor(&mut app), last);
+    assert!(shown(&mut d, &last), "scrolled to the last");
+    d.press(&mut app, "gg");
+    d.frame(&mut app);
+    d.frame(&mut app);
+    assert_eq!(cursor(&mut app), first);
+    assert!(shown(&mut d, &first), "scrolled back to the first");
+
+    d.press(&mut app, "<C-d>");
+    assert_eq!(cursor(&mut app), rows[10]);
+    d.press(&mut app, "<C-d>");
+    assert_eq!(cursor(&mut app), rows[20]);
+    d.press(&mut app, "<C-u>");
+    assert_eq!(cursor(&mut app), rows[10]);
+    d.press(&mut app, "<C-u><C-u>");
+    assert_eq!(cursor(&mut app), first, "stopping at the end");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(t).ok();
+}

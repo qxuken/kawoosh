@@ -835,3 +835,23 @@ Verified: `an_offer_goes_in_its_time_and_can_be_put_away`
 and `the_pane_filters_by_name_and_file_and_tags_the_built_in`
 (`kawoosh/tests/grammars.rs`), and the pane test's rows with the
 built-in ones after the rest.
+
+**The pane's polish, 2026-10-02.** Asked, after trying it: "grammar
+title dublicated by panel name. remove title.", "use standard field in
+grammar pan", "grammar list does not implement `gg`/`G` moves."
+
+- **No title of its own**: the pane's title bar says `grammars`; the
+  head starts with the counts (`0 installed · 68 to install · 25 built
+  in`) on a line of their own, read as what is under the name.
+- **The filter is the list panes' line**: `/`, the field
+  (`ctx.field`), how many — on the pane as the fonts pane's and the
+  memory pane's are, no longer in a box of its own (the settings
+  pane's search still is).
+- **`gg` `G` `<C-d>` `<C-u>`** take the cursor to the first row, the
+  last, and ten down and up, each scrolled into view — the commands
+  `grammars first` `last` `page down` `page up`, as the fonts, settings
+  and `:du` panes have theirs.
+
+Verified: `the_head_is_the_counts_and_a_plain_filter_line_with_no_title_of_its_own`
+and `gg_and_g_go_to_the_first_and_last_row_and_ctrl_d_ctrl_u_page`
+(`kawoosh/tests/grammars.rs`).
