@@ -81,7 +81,7 @@ recently rank higher.
 | `<leader>F` | files under the current file's directory, or the listing's (`:picker files here`) |
 | `<leader>g` | grep the project as you type (needs `rg`) |
 | `<leader>G` | grep from the current file's directory (`:picker grep here`) |
-| `<leader><leader>` | open buffers, the current one last, so `<CR>` at once goes to the previous one |
+| `<leader><leader>` | open buffers, the current one last, so `<CR>` at once goes to the previous one; the query matches a buffer's path too, so a directory finds the buffers under it, a name's match first |
 | `<leader>/` | lines of the current buffer |
 | `<leader>.` | buffers, then files opened before, then all files |
 | `<leader>so` | files opened before in this workspace |

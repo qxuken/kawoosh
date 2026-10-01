@@ -23,7 +23,8 @@
 -- attended before are boosted by the memory's rank (memory.md D8,
 -- `kawoosh.memory_rank`) and a binary (`picker.binary`, by
 -- extension) held back. A row with columns is matched on its name
--- first and on the rest of its text after.
+-- first and on the rest of its text after, and so is a plain row of a
+-- `wide` source on its `sub` (the buffers' paths).
 --
 -- The query is a field (kui.md D12): typing filters, `<Esc>` is normal
 -- mode over the line, `<Esc>` again closes; `<C-n>` `<C-p>` `<Down>`
@@ -328,8 +329,15 @@ end
 -- and its `dim` field after it, with where each starts (a byte, from
 -- 1) in the row's search text — the pieces joined by two spaces — so
 -- a match's positions, found in that text, land on the piece they
--- are in.
-local function pieces_of(it, columns)
+-- are in. A plain row's pieces are its text (`main`, else `item.text`)
+-- and its `sub`, dim after it.
+local function pieces_of(it, columns, main)
+  if not columns then
+    main = main or it.text
+    local out = { { text = main, from = 1 } }
+    if it.sub and it.sub ~= "" then out[2] = { text = it.sub, from = #main + 3, dim = true } end
+    return out
+  end
   local out, at = {}, 1
   for j, c in ipairs(columns) do
     local main = tostring(it[c[1]] or "")
@@ -349,7 +357,8 @@ end
 -- picker.search(item, columns): the text a row with columns is matched
 -- on — its columns' fields and their `dim` ones, joined by two spaces
 -- — what a source with `columns` has its items matched by (`search`,
--- set when the items load unless the item brought its own).
+-- set when the items load unless the item brought its own). Without
+-- columns, the row's text and its `sub`: a `wide` source's.
 function picker.search(it, columns)
   local parts = {}
   for _, p in ipairs(pieces_of(it, columns)) do parts[#parts + 1] = p.text end
@@ -408,7 +417,8 @@ end
 -- lit; a row's click posts `{ kind = opts.kind or "row", i = }` and
 -- the wheel over the column `{ kind = "scroll", tag = { kind =
 -- opts.scroll or "list" } }`. A row is one text: `opts.text(item)`
--- (default `item.text`) with the match lit, `item.sub` dim after it,
+-- (default `item.text`) with the match lit, `item.sub` dim after it
+-- (lit too where a match on `picker.search`'s text fell in it),
 -- `item.can` in the danger colour when it is not true. With
 -- `opts.columns` — `{ { FIELD, dim = FIELD, family =, muted =, min =,
 -- width =, grow = }, … }` — the rows are a grid, a cell per column
@@ -510,11 +520,16 @@ function picker.rows(ctx, hits, opts)
         r[#r + 1] = cell
       end
     else
-      local spans = picker.spans(text_of, h.positions, t)
+      local ps = pieces_of(it, nil, text_of)
+      local spans = picker.spans(text_of, lit_in(h.positions, ps[1]), t)
       for _, sp in ipairs(spans) do if not sp.color then sp.color = color end end
       if lead then table.insert(spans, 1, { lead }) end
-      if it.sub and it.sub ~= "" then
-        spans[#spans + 1] = { "  " .. it.sub, color = t.muted }
+      if ps[2] then
+        spans[#spans + 1] = { "  ", color = t.muted }
+        for _, sp in ipairs(picker.spans(ps[2].text, lit_in(h.positions, ps[2]), t)) do
+          if not sp.color then sp.color = t.muted end
+          spans[#spans + 1] = sp
+        end
       end
       if off then
         spans[#spans + 1] = { "  " .. it.can, color = t.danger }
@@ -715,7 +730,9 @@ end
 -- ranked by `picker.rank`. With columns, the rows whose name matched
 -- come first, ranked among themselves, then the ones the query found
 -- elsewhere in (a key, the doc) — so `dir` lists the `dir` commands
--- before every command whose doc mentions a directory.
+-- before every command whose doc mentions a directory. A `wide`
+-- source's the same over its `sub`: `main` lists the buffer `main.rs`
+-- before `util.rs` in `main/`.
 local function ranked(hits, q)
   local out = {}
   for i, h in ipairs(hits) do
@@ -805,15 +822,16 @@ local function loaded(items, err)
   items = boosted(items)
   P.items = items
   local texts, wide = {}, {}
+  local widened = P.src.columns or P.src.wide
   for i, it in ipairs(items) do
-    if P.src.columns and not it.search then it.search = picker.search(it, P.src.columns) end
+    if widened and not it.search then it.search = picker.search(it, P.src.columns) end
     texts[i] = it.text
     wide[i] = it.search or it.text
   end
   P.matcher = kawoosh.matcher(texts)
   -- The name is what a match on a row lights and ranks by; the rest
   -- of the row (`search`) is looked in after it.
-  P.wide = P.src.columns and kawoosh.matcher(wide) or nil
+  P.wide = widened and kawoosh.matcher(wide) or nil
   P.widths = P.src.columns and picker.widths(items, P.src.columns) or nil
   -- Where the cursor starts, while nothing is typed: the source's say,
   -- through the refilter the load sets off (`P.keep`).
@@ -977,8 +995,10 @@ end
 -- name, or on a definition given whole — `{ title =, items = {…} |
 -- load = fn(ctx, done) | search = fn(query, job), pick = fn(item,
 -- how), answer = fn(item), preview = fn(item), keys = { ["<C-x>"] =
--- fn(item) }, columns = {…} (as `picker.rows` takes them), query =
--- fn(query, ctx) (the text matched for what was typed) }`. An item
+-- fn(item) }, columns = {…} (as `picker.rows` takes them), wide =
+-- true (a row's `sub` matched too, after its text, as a row with
+-- columns is on its cells after its name), query = fn(query, ctx)
+-- (the text matched for what was typed) }`. An item
 -- is `{ text =, sub =, path =, line =, col =, buffer =, offset =, run
 -- =, boost = }`, and a column's field. `opts`: `query`, `cursor`,
 -- `root` (the directory a source that walks or searches starts from,
@@ -1064,7 +1084,8 @@ picker._keys = {}
 
 -- picker.state(): what the open picker shows — `source`, `query`,
 -- `cursor` (a row's index from 1), `top`, `count` (the rows), `text`
--- (the cursor's row), `item` (its item), `loading`, `preview` (the
+-- (the cursor's row), `item` (its item), `positions` (the bytes its
+-- match lit, in its `picker.search` text), `loading`, `preview` (the
 -- cursor's, as drawn: `title`, `lines`, `runs` once highlighted),
 -- `rows` (every hit's text, in order) and `root` (where a walk starts)
 -- — or nil when none is open; for a status line, a test, a plugin's
@@ -1075,7 +1096,8 @@ function picker.state()
   local rows = {}
   for i, h in ipairs(P.hits) do rows[i] = h.item.text end
   return { source = P.name, query = P.query or "", cursor = P.cursor, top = P.top, count = #P.hits,
-           text = hit and hit.item.text or nil, item = hit and hit.item or nil, loading = P.loading,
+           text = hit and hit.item.text or nil, item = hit and hit.item or nil,
+           positions = hit and hit.positions or nil, loading = P.loading,
            preview = P.preview, rows = rows, root = P.ctx.root }
 end
 
@@ -1484,7 +1506,9 @@ picker.source("files", {
 
 -- The listed buffers, the current one last: `<leader><leader><CR>` is the
 -- one before it. The focused tab's (`buffers.scope = "tab"`, roadmap
--- step 30) or every one; `<C-a>` in the picker flips it.
+-- step 30) or every one; `<C-a>` in the picker flips it. A row is the
+-- name and the path as `short_path` writes it, both matched (`wide`):
+-- a directory typed finds the buffers under it, a name's hit first.
 local function buffer_items(ctx)
   local items, current = {}, nil
   local tab = kawoosh.opt("buffers.scope") ~= "all"
@@ -1532,7 +1556,7 @@ end
 
 picker.source("buffers", {
   title = "buffers", placeholder = "find a buffer · <C-x> closes one · <C-a> this tab's or all",
-  items = buffer_items,
+  items = buffer_items, wide = true,
   keys = { ["<C-x>"] = close_row, ["<C-a>"] = flip_scope },
   empty = "no buffers in this tab · <C-a> for every tab's",
 })
