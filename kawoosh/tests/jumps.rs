@@ -245,6 +245,32 @@ fn a_file_still_arriving_is_gone_to_once_it_lands() {
     assert_eq!(caret(&app), ("b.txt".into(), 0));
 }
 
+/// A terminal's `path:line:col` into a file still arriving lands at its
+/// line once the text has, as a jump to one does — not at the top.
+#[test]
+fn a_link_into_a_file_still_arriving_lands_at_its_line() {
+    let (mut d, mut app, dir) = launch("link-arriving");
+    let a = app.ed.views[app.focused_view().unwrap()].buffer;
+    ex(
+        &mut d,
+        &mut app,
+        &format!("e {}", dir.join("b.txt").display()),
+    );
+    app.ed.remove_buffer(a);
+    d.frame(&mut app);
+    let file = dir.join("a.txt");
+    let len = std::fs::metadata(&file).unwrap().len() as usize;
+    app.open_on_io_thread(&file, len);
+    app.open_in_editor(&file, Some(8), Some(1));
+    d.frame(&mut app);
+    app.wait_for_open();
+    d.frame(&mut app);
+    assert_eq!(caret(&app), ("a.txt".into(), 7));
+    d.press(&mut app, "<C-o>");
+    d.frame(&mut app);
+    assert_eq!(caret(&app), ("b.txt".into(), 0), "the link a jump");
+}
+
 #[test]
 fn a_file_deleted_since_is_stepped_over() {
     let (mut d, mut app, dir) = launch("deleted");
