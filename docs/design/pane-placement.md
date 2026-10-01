@@ -105,9 +105,10 @@ list (`<C-e>` whole, the project search) is still of the pane it was
 asked from — its rows land there — so it stays under it. `*compile*`
 is the one that could go either way and goes right: its rows jump, but
 a build is started from a command, not a caret, is watched while the
-file is typed in (`glance_in_pane`), and is a tool in `<leader>t`'s
-picker; stacked under the file it halved the file for the run's whole
-length. `*hover*` goes left even though it is a read-only text like
+file is typed in, and is a tool in `<leader>t`'s picker; stacked under
+the file it halved the file for the run's whole length. (It opened
+with the keys left in the file, `glance_in_pane`, until 2026-10-02:
+now the keys go to it, compile.md Decision 8.) `*hover*` goes left even though it is a read-only text like
 `*messages*`, because it is the caret's.
 
 What flips against today: the terminal, `:!` and the undocked tools
@@ -206,7 +207,7 @@ table, `dock = true` mapped; `terminal.place` read where `:terminal`
 and `:!` spawn; the docs of Decision 4. Tests: a `:terminal` from an
 editor pane is a new column (and under it with `terminal.place =
 "under"`, and under it from `<C-w>s t`); `*compile*` a column with the
-keyboard staying; `*references*` under the file it was asked from;
+keyboard staying (on it since compile.md Decision 8); `*references*` under the file it was asked from;
 `:undo` under the buffer at its share; a tool's `place` each way and
 `dock = true` still the dock; `add_headless_terminal` unchanged for the
 tests that feed it.

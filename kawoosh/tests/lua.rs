@@ -477,6 +477,7 @@ fn ctrl_c_in_the_compile_buffer_kills_the_compile() {
     let ext = app.attach_lua().unwrap();
     d.extension("lua", ext).unwrap();
     d.frame(&mut app);
+    let code = app.layout.focused();
     // Elsewhere, and with nothing running, `<C-c>` is not the compile's.
     d.press(&mut app, "<C-c>");
     assert_ne!(app.ed.message, "nothing compiling");
@@ -504,16 +505,17 @@ fn ctrl_c_in_the_compile_buffer_kills_the_compile() {
         "{}",
         app.ed.buffers[app.compile.buffer.unwrap()].text()
     );
-    // `<C-c>` in the code pane is still `normal`'s.
+    // The keys went to `*compile*`; back in the code pane, `<C-c>` is
+    // still `normal`'s.
+    let pane = app.layout.focused();
+    assert_ne!(pane, code);
+    app.layout.focus(code);
     d.press(&mut app, "<C-c>");
     assert!(app.compile.running);
     let buffer = app.compile.buffer.unwrap();
-    let pane = app
-        .layout
-        .visible_panes()
-        .into_iter()
-        .find(|p| matches!(app.layout.content(*p), Some(Content::Editor(v)) if app.ed.views[v].buffer == buffer))
-        .unwrap();
+    assert!(
+        matches!(app.layout.content(pane), Some(Content::Editor(v)) if app.ed.views[v].buffer == buffer)
+    );
     app.layout.focus(pane);
     d.press(&mut app, "<C-c>");
     let t0 = std::time::Instant::now();

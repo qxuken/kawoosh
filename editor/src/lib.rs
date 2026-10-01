@@ -1682,7 +1682,7 @@ impl Editor {
 
     /// What `%` names on `view`: its buffer's file, or the file a
     /// scratch stands for (`Buffer::about`).
-    fn percent_path(&self, view: ViewId) -> Result<std::path::PathBuf, String> {
+    pub fn percent_path(&self, view: ViewId) -> Result<std::path::PathBuf, String> {
         self.views
             .get(view)
             .and_then(|v| self.buffers.get(v.buffer))
@@ -1694,15 +1694,15 @@ impl Editor {
     /// directory, `%:t` its name — put in, each quoted for the shell;
     /// `%%` is a `%`. What `:!CMD` runs.
     pub fn expand_percent(&self, view: ViewId, line: &str) -> Result<String, String> {
-        self.expand_percent_from(view, line, None)
+        Self::expand_percent_from(self.percent_path(view).ok().as_deref(), line, None)
     }
 
-    /// [`Self::expand_percent`], a path under `base` written from it —
+    /// [`Self::expand_percent`] with `%` naming `file` (none: "no file
+    /// for %" when there is one), a path under `base` written from it —
     /// what a compile running in `base` is given (compile.md Decision
     /// 7): `e2e/login.spec.ts`, not the whole path; `.` for `base`.
     pub fn expand_percent_from(
-        &self,
-        view: ViewId,
+        file: Option<&Path>,
         line: &str,
         base: Option<&Path>,
     ) -> Result<String, String> {
@@ -1716,7 +1716,9 @@ impl Editor {
                 rest = r;
                 continue;
             }
-            let path = self.percent_path(view)?;
+            let path = file
+                .map(Path::to_path_buf)
+                .ok_or_else(|| "no file for %".to_string())?;
             let (path, r) = if let Some(r) = rest.strip_prefix(":h") {
                 (kawoosh_doc::paths::parent(&path).unwrap_or(path), r)
             } else if let Some(r) = rest.strip_prefix(":t") {
