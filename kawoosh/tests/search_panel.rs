@@ -154,11 +154,10 @@ fn the_panel_is_one_pane_and_opens_files_where_it_was_asked_from() {
     d.frame(&mut app);
 
     // The legend: hidden until `<A-/>` asks for it, the bar growing by
-    // its rows and the results giving them up; again, gone.
-    let legend = |app: &mut Kawoosh| {
-        app.run_lua_source("t", "kawoosh.echo(tostring(kawoosh.search_ui.legend()))");
-        app.ed.message == "true"
-    };
+    // its rows and the results giving them up; again, gone. Every
+    // pane's legend is so (docs/design/icons.md Decision 6), the bar's
+    // the panel's pane's.
+    let legend = |app: &mut Kawoosh| app.legend_full(panel);
     let view = |app: &Kawoosh| match app.layout.content(panel) {
         Some(Content::Editor(v)) => v,
         _ => unreachable!(),

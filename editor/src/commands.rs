@@ -4804,6 +4804,9 @@ pub fn default_keymap(km: &mut Keymap) {
         ("zs", "strip left"),
         ("ze", "strip right"),
         ("zz", "strip center"),
+        // A pane's key legend whole, or one `⌥/ keys` again: `?`
+        // without its shift (docs/design/icons.md Decision 6).
+        ("<A-/>", "legend"),
     ];
     for (k, c) in p {
         km.bind(Pane, k, c);

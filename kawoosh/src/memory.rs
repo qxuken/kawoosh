@@ -1382,6 +1382,7 @@ impl Kawoosh {
         let small = move |c: Color| tm.small(c);
         let col = move |cells: f32| tm.cell(cells, cell_w);
         let view = self.memory_pane.view;
+        let legend = self.legend_full(pane);
         let rows = std::mem::take(&mut self.memory_pane.rows);
         let n = rows.len();
         let cursor = self.memory_pane.cursor.min(n.saturating_sub(1));
@@ -1881,9 +1882,11 @@ impl Kawoosh {
                         },
                     };
                     ui.text(&head, small(pal.dim));
-                    crate::icons::legend_items(
+                    crate::legends::legend(
                         ui,
                         &self.icons.borrow(),
+                        pane,
+                        legend,
                         &[
                             (&["<CR>"], "open"),
                             (&["y"], "recall"),
@@ -1892,8 +1895,11 @@ impl Kawoosh {
                             (&["<Tab>"], "view"),
                             (&["q"], "close"),
                         ],
-                        &crate::icons::KeyStyle::new(small(pal.dim), pal.border),
-                        small(pal.faint),
+                        &crate::legends::LegendStyle {
+                            keys: crate::icons::KeyStyle::new(small(pal.dim), pal.border),
+                            words: small(pal.faint),
+                            hover: pal.hover,
+                        },
                     );
                 });
                 let diff_style = tm.diff(&pal, style());

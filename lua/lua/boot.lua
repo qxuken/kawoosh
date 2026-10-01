@@ -843,24 +843,55 @@ local function keys_node(env, notation, opts)
   return out
 end
 
--- A legend: `{ { "<CR>", "installs" }, { { "j", "k" }, "walk" } }`, each
--- item its keys — a notation, or a list of them for keys that do one
--- thing — as caps and its words after, wrapped between items and never
--- inside one.
-local function legend_node(env, items, opts)
+-- Whether pane `pane`'s legends are whole (docs/design/icons.md
+-- Decision 6): its flip (`<A-/>`, `legend`), else `keys.legend`.
+local function legend_full(pane)
+  local full = kawoosh._legend(pane)
+  if full == nil then full = kawoosh.opt("keys.legend") == "full" end
+  return full
+end
+
+-- The way to a legend and back: `⌥/ keys`, `⌥/ hide keys` while it is
+-- whole; a click flips the pane's (`on_event` below).
+local function legend_toggle(env, pane, opts)
   opts = opts or {}
   local t = env.theme
   local C = kawoosh._cap
   local size = opts.size or kawoosh.metrics(env).note
+  return row { key = "legend toggle", label = "legend", pad = { x = 4 }, radius = 4, gap = C.word_gap,
+    cross_align = "center", hover_bg = t.sunken, on_click = { kind = "legend" },
+    keys_node(env, "<A-/>", opts),
+    text(legend_full(pane) and "hide keys" or "keys", { size = size, color = opts.word or t.faint, wrap = "none" }) }
+end
+
+-- A legend: `{ { "<CR>", "installs" }, { { "j", "k" }, "walk" } }`, each
+-- item its keys — a notation, or a list of them for keys that do one
+-- thing — as caps and its words after, wrapped between items and never
+-- inside one. Compact, as a pane's starts, it is the way to it alone,
+-- `⌥/ keys`; whole, its items and the way back. `full = true` for one
+-- always whole (a confirm's two keys); `toggle = false` for one whose
+-- way to it the view draws elsewhere (`ctx.legend_toggle`): nil while
+-- compact, its items alone while whole.
+local function legend_node(env, pane, items, opts)
+  opts = opts or {}
+  local t = env.theme
+  local C = kawoosh._cap
+  local size = opts.size or kawoosh.metrics(env).note
+  local full = opts.full or legend_full(pane)
+  local toggle = not opts.full and opts.toggle ~= false
+  if not full and not toggle then return nil end
   local out = row { width = opts.width or "grow", gap = C.item_gap, cross_gap = 2,
     wrap_children = true, cross_align = "center" }
-  for _, it in ipairs(items) do
-    local alts = type(it[1]) == "table" and it[1] or { it[1] }
-    local ks = row { gap = C.alt_gap, cross_align = "center" }
-    for _, k in ipairs(alts) do ks[#ks + 1] = keys_node(env, k, opts) end
-    out[#out + 1] = row { gap = C.word_gap, cross_align = "center", ks,
-      text(it[2], { size = size, color = opts.word or t.faint, wrap = "none" }) }
+  if full then
+    for _, it in ipairs(items) do
+      local alts = type(it[1]) == "table" and it[1] or { it[1] }
+      local ks = row { gap = C.alt_gap, cross_align = "center" }
+      for _, k in ipairs(alts) do ks[#ks + 1] = keys_node(env, k, opts) end
+      out[#out + 1] = row { gap = C.word_gap, cross_align = "center", ks,
+        text(it[2], { size = size, color = opts.word or t.faint, wrap = "none" }) }
+    end
   end
+  if toggle then out[#out + 1] = legend_toggle(env, pane, opts) end
   return out
 end
 
@@ -895,9 +926,11 @@ function view(env, slot)
   end
   ctx.field_text = function(field) return kawoosh.field_text(name, field) end
   -- `ctx.icon(name, { size =, color = })`: `kawoosh.icon` in the view's
-  -- foreground, the scale's text size unless given. `ctx.keys("<C-w>j",
-  -- { size =, color =, border = })`: caps. `ctx.legend(items, { size =,
-  -- word = })`: a key legend. Both at the scale's note size unless given.
+  -- foreground, the scale's text size unless given. `ctx.keys("<C-w>j", { size =, color =, border = })`:
+  -- caps. `ctx.legend(items, { size =, word =, full =, toggle = })`: a
+  -- key legend, compact or whole as the pane's is; `ctx.legend_toggle`
+  -- its `⌥/ keys` alone, `ctx.legend_full()` whether it is whole. Keys
+  -- and legends at the scale's note size unless given.
   ctx.icon = function(icon, opts)
     opts = opts or {}
     if opts.color == nil then opts.color = t.fg end
@@ -905,7 +938,9 @@ function view(env, slot)
     return kawoosh.icon(icon, opts)
   end
   ctx.keys = function(notation, opts) return keys_node(env, notation, opts) end
-  ctx.legend = function(items, opts) return legend_node(env, items, opts) end
+  ctx.legend = function(items, opts) return legend_node(env, pane, items, opts) end
+  ctx.legend_toggle = function(opts) return legend_toggle(env, pane, opts) end
+  ctx.legend_full = function() return legend_full(pane) end
   local ok, tree = timed(fn, ctx)
   if not ok then
     return column { pad = 12, gap = 6,
@@ -920,7 +955,12 @@ end
 
 function on_event(ev)
   if not ev.slot then return end
-  local name = split_slot(ev.slot)
+  local name, pane = split_slot(ev.slot)
+  -- A legend's `⌥/ keys`: the pane's whole, or compact again.
+  if ev.kind == "legend" then
+    kawoosh._legend(pane, not legend_full(pane))
+    return
+  end
   -- A click on a field: the keys go to it.
   if ev.kind == "field" and type(ev.field) == "string" then
     kawoosh._field_focus(name, ev.field)

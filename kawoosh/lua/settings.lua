@@ -517,7 +517,8 @@ local function control(r, ctx, t)
     return row { width = "grow", gap = 8, cross_align = "center",
       row { width = "grow", pad = { x = 6, y = 2 }, radius = 4, bg = t.sunken,
             border = { w = 1, color = t.accent }, f },
-      ctx.legend({ { "<CR>", "keeps" }, { "<Esc>", "drops" } }, { size = NOTE, width = "fit" }) }
+      -- The edit's own two keys: whole, never one more `⌥/ keys`.
+      ctx.legend({ { "<CR>", "keeps" }, { "<Esc>", "drops" } }, { size = NOTE, width = "fit", full = true }) }
   end
   if r.kind == "choice" then
     local line = row { width = "grow", gap = 4, cross_gap = 4, wrap_children = true }

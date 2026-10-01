@@ -124,6 +124,9 @@ impl Kawoosh {
         if let Err(e) = crate::icons::lua_door(rt.lua(), self.icons.clone()) {
             log::error!("kawoosh.icons: {e}");
         }
+        if let Err(e) = crate::legends::lua_door(rt.lua(), self.legends.clone()) {
+            log::error!("kawoosh.legends: {e}");
+        }
         for (name, src) in crate::plugins::BUNDLED {
             if let Err(e) = rt.load_source(name, src) {
                 log::error!("{name}: {e}");

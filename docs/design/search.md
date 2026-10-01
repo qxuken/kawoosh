@@ -313,7 +313,10 @@ with a linked panels".
   think we can make it toggle-able" — `<A-/>` (`?` without its shift;
   `<A-l>` is the next stage, and ⌥E ⌥U ⌥N ⌥I are macOS's dead keys)
   flips it for the session, `search.legend` says how it starts, and a
-  dim `⌥/ keys` at the end of the globs' row says it is there.
+  dim `⌥/ keys` at the end of the globs' row says it is there. Since
+  2026-10-02 every pane's legend does so (icons.md Decision 6): the
+  flip is the panel's pane's, `keys.legend` how it starts, and
+  `search.legend` named as moved there.
 - **The bar is the fewest rows that hold it.** Asked 2026-10-02:
   "compress navigation inside a search panel again, and make it the
   same font size as the rest". The bar had grown back to three rows
