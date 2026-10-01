@@ -112,11 +112,12 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "tags.scm"
       ],
       "archive": "c.sqlar",
-      "size": 497664,
-      "blake3": "f09ccf03c1a8e8ea45195de436dbb279075a3d8a3ba1e448cf6d04d8eaa440fc"
+      "size": 498688,
+      "blake3": "a09f1ff5e3328455aeb80de811139cc253ecb33a59f9a691acb958e9059751a2"
     },
     "clojure": {
       "extensions": [
@@ -160,11 +161,12 @@
       "abi": 14,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm"
       ],
       "archive": "cmake.sqlar",
       "size": 149504,
-      "blake3": "1cf728c9d21e306543e74947fe9f9a35f2047b3dc0b5c32e7a3b1fe3ca0d88aa"
+      "blake3": "0a936cc5b85bbad274faf9ad717ece6d2b1dc910c2ede4658b3a2c50a7a24534"
     },
     "csharp": {
       "extensions": [
@@ -227,12 +229,13 @@
       "abi": 14,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm",
         "tags.scm"
       ],
       "archive": "d.sqlar",
-      "size": 1613824,
-      "blake3": "ff5503a3de53f85360ead4687fa38030e1dee68314e06f174af24deb23f33a5a"
+      "size": 1614848,
+      "blake3": "05603a81aa89ea1211dcb0fd2650ebdc6e6a049931816c2ab0524bc8658f1666"
     },
     "dart": {
       "extensions": [
@@ -249,11 +252,12 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "tags.scm"
       ],
       "archive": "dart.sqlar",
-      "size": 758784,
-      "blake3": "415ca7f6dea5330295f47d2acddce51dd3f6fd0bf5a22a39f4890f366c7ab7be"
+      "size": 760832,
+      "blake3": "bf17a152e2a2ce5c45a4b44317287b31263d994f29fa6313f7abd4ffcff2b58a"
     },
     "devicetree": {
       "extensions": [
@@ -390,12 +394,13 @@
       "abi": 14,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm",
         "tags.scm"
       ],
       "archive": "elixir.sqlar",
       "size": 970752,
-      "blake3": "bce3257dddd869e4cec3aef180f7be97a538047333301c0df6d1aa810a46ce09"
+      "blake3": "402bb4545ab14cba819b0922754752f11920deaf3cb5e8e394c96843a14d8a2f"
     },
     "elm": {
       "extensions": [
@@ -458,11 +463,12 @@
       "symbol": "tree_sitter_erlang",
       "abi": 15,
       "queries": [
-        "highlights.scm"
+        "highlights.scm",
+        "indents.scm"
       ],
       "archive": "erlang.sqlar",
       "size": 357376,
-      "blake3": "edf3941e11adcc548942a73963c196431d10790cb8622a5907289269003a5e05"
+      "blake3": "4221e4dfcb5efd820180e80566fd4699434f4e7a23a77541a081dc625f8a6eeb"
     },
     "fish": {
       "extensions": [
@@ -480,11 +486,12 @@
       "symbol": "tree_sitter_fish",
       "abi": 14,
       "queries": [
-        "highlights.scm"
+        "highlights.scm",
+        "indents.scm"
       ],
       "archive": "fish.sqlar",
       "size": 171008,
-      "blake3": "b4243745d9cd73411a76e4cad16ee2b8524a06eb48f1355965020040f0ea9c25"
+      "blake3": "e7bb422ded54c4a235c75c371a374e7df9533c2357a5612692c2b68151952f8b"
     },
     "fortran": {
       "extensions": [
@@ -504,11 +511,12 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "tags.scm"
       ],
       "archive": "fortran.sqlar",
-      "size": 2297856,
-      "blake3": "5a61253ea3bb08c0979d83ca676030dcec9b56fe45d0e0668f601eca9cb68461"
+      "size": 2298880,
+      "blake3": "32026190e0f2e74f58579a6d4455d819082f800a08d6f529e465f15aa22e4b61"
     },
     "fsharp": {
       "extensions": [
@@ -637,11 +645,12 @@
       "abi": 14,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "tags.scm"
       ],
       "archive": "glsl.sqlar",
-      "size": 593920,
-      "blake3": "1b98f1aade454aa689a66f375c3e601bd0ca49152b03d93c67dc060a28fb2dbd"
+      "size": 595968,
+      "blake3": "d7b6d08e3b99561898296b3113d976cc348a9aa77c80f915f2826f5230c06bf7"
     },
     "haskell": {
       "extensions": [
@@ -660,11 +669,12 @@
       "abi": 14,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm"
       ],
       "archive": "haskell.sqlar",
       "size": 1883136,
-      "blake3": "fe1e517f8d4b5c94f389900566523023c8f0d5450ba4ff9842448cfc264572cb"
+      "blake3": "bfd5cda1c7cf7e3985c482e019a5c1128cff6a985885679020adbc7e67b9981e"
     },
     "html": {
       "extensions": [
@@ -746,11 +756,12 @@
       "abi": 14,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "tags.scm"
       ],
       "archive": "java.sqlar",
       "size": 370688,
-      "blake3": "9e3bc5c812b600b036b4253e4101467ee5214bd4689a7b4384e798d5a560e0a2"
+      "blake3": "67029fc1a8ebec3dd9369f73611e76007ef6558690bdfbba49c74f50fc043efa"
     },
     "json5": {
       "extensions": [
@@ -791,11 +802,12 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm"
       ],
       "archive": "julia.sqlar",
       "size": 1537024,
-      "blake3": "44853c444e3b32cbaf8215462790f0435018ce0bd6c964a44f69b9f65f6b831c"
+      "blake3": "3beca29916aa282418739723156e9104a8cb113bdeb87591803a6859b4c6065d"
     },
     "kconfig": {
       "extensions": [],
@@ -833,11 +845,12 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm"
       ],
       "archive": "kdl.sqlar",
-      "size": 155648,
-      "blake3": "1cb977698f1211976ab9933e6b0e2308536179cf1dace103e19ac0cd0787a7a4"
+      "size": 156672,
+      "blake3": "744def23668bab92b03293e4b6b02548120210690b6fb77f0a1763da88de2f58"
     },
     "kotlin": {
       "extensions": [
@@ -857,11 +870,12 @@
       "abi": 14,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "tags.scm"
       ],
       "archive": "kotlin.sqlar",
-      "size": 2496512,
-      "blake3": "a60474fc1f397695441fd8bd5900ff5291149fa22d2e84df1e0feb1fa462c027"
+      "size": 2497536,
+      "blake3": "3cc3a6a36479f7e674d5abb65b8d0f9a1561b48d4b38204dbf27378e4b77dca6"
     },
     "llvm": {
       "extensions": [
@@ -877,11 +891,12 @@
       "symbol": "tree_sitter_llvm",
       "abi": 15,
       "queries": [
-        "highlights.scm"
+        "highlights.scm",
+        "indents.scm"
       ],
       "archive": "llvm.sqlar",
-      "size": 911360,
-      "blake3": "2a2d9a30079256e89fe6b2f5557588e4cc33f5d788d423f6fc65d7bc10520a4f"
+      "size": 912384,
+      "blake3": "ad26bb39f76d5b3e4f96ea6a67f1a3e0a57b107c097d8bb3d0930b64518fa0e9"
     },
     "luau": {
       "extensions": [
@@ -898,11 +913,12 @@
       "abi": 14,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm"
       ],
       "archive": "luau.sqlar",
-      "size": 186368,
-      "blake3": "2100f2ac478bc5676118859ee37ccfb6d96da232c5ca67241689b7b3d740528e"
+      "size": 187392,
+      "blake3": "26312d9f3558b94f761107bf83ae98859b9b0253407bd12990fbd0fc7822f4e7"
     },
     "make": {
       "extensions": [
@@ -925,11 +941,12 @@
       "symbol": "tree_sitter_make",
       "abi": 13,
       "queries": [
-        "highlights.scm"
+        "highlights.scm",
+        "indents.scm"
       ],
       "archive": "make.sqlar",
       "size": 264192,
-      "blake3": "9fb31302ab7e689d146634eb2cb6564722745383d2fd7ab21067b57a19fed2c5"
+      "blake3": "b983c171ea4361b25e38b981dcb53762c6f5269db8932c263b31e8f6cb23f127"
     },
     "meson": {
       "extensions": [],
@@ -947,11 +964,12 @@
       "symbol": "tree_sitter_meson",
       "abi": 15,
       "queries": [
-        "highlights.scm"
+        "highlights.scm",
+        "indents.scm"
       ],
       "archive": "meson.sqlar",
       "size": 208896,
-      "blake3": "5cfb806cc88197a28c37c0f9c847e38f4f8235288129d1f4b6cfdda202855875"
+      "blake3": "5807b5e63bfdc39796a00408ec621e87d416dab4d2833a39146ba9441d7a0a0a"
     },
     "nginx": {
       "extensions": [
@@ -1011,12 +1029,13 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm",
         "tags.scm"
       ],
       "archive": "nix.sqlar",
-      "size": 156672,
-      "blake3": "eb7f38fabdba96dfc20bd3b2ff614f9c97776645d2beefbfbffe03e780673606"
+      "size": 157696,
+      "blake3": "8d690a174f325d72c5abea64fb5d34d2f07518344fe8cc52c958861127b9e747"
     },
     "objc": {
       "extensions": [
@@ -1035,11 +1054,12 @@
       "abi": 14,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "tags.scm"
       ],
       "archive": "objc.sqlar",
       "size": 1818624,
-      "blake3": "c82ccdbbed4ccf888d0ecafb1af44d903c62bc4cdddf19439dd7869d3bc2dd6f"
+      "blake3": "6b036786cd90b420b90158fee2dfdeceb4d15a709eff20d96f57e3200ebfd1c6"
     },
     "ocaml": {
       "extensions": [
@@ -1056,11 +1076,12 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "tags.scm"
       ],
       "archive": "ocaml.sqlar",
-      "size": 2051072,
-      "blake3": "b2622130e30ce17a61933a45e987c62017cb0883260da65c62c0a545443fee00"
+      "size": 2052096,
+      "blake3": "4294cb540e64ab1aaa04b1e53e662fa0fdce79ad59f47f4678a973b0acd7eaa5"
     },
     "odin": {
       "extensions": [
@@ -1077,11 +1098,12 @@
       "abi": 14,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm"
       ],
       "archive": "odin.sqlar",
-      "size": 1221632,
-      "blake3": "2313ce2b5b0dc4e7792c74a82439de28cb0c365b51e5eee3b04036d215ebe1b5"
+      "size": 1222656,
+      "blake3": "1117b9d9e018a50cc62f635de8c1532efbd31f908b3c9129cdf23abd0362c40d"
     },
     "pascal": {
       "extensions": [
@@ -1142,11 +1164,12 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm"
       ],
       "archive": "perl.sqlar",
-      "size": 1855488,
-      "blake3": "086599710b5b274186b28b210cf02b23ee23ff5c9b778169950a426477b1f29f"
+      "size": 1856512,
+      "blake3": "03c5c9746193543b5950d2f58708349e89f7e97ea09d5ed76c36a653a37408fa"
     },
     "php": {
       "extensions": [
@@ -1165,12 +1188,13 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm",
         "tags.scm"
       ],
       "archive": "php.sqlar",
       "size": 722944,
-      "blake3": "464d7da7c61a3111abf2a2f1813c0d80a091caad5df1b2c4d6788ad438b35615"
+      "blake3": "a8ec0e1c5b172179eba6ba722499fe0f618ba7d21f4e13e3990d9c257c1d3c8c"
     },
     "powershell": {
       "extensions": [
@@ -1256,11 +1280,12 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm"
       ],
       "archive": "proto.sqlar",
       "size": 148480,
-      "blake3": "b2c692124940ab80f7ba2d372d15f8bfefc62ec324d160c25840610baeeab79e"
+      "blake3": "ded4b06165fd10969fe848e0163d5e463e3cbaf28b00f98f9c4204e76eb402f2"
     },
     "purescript": {
       "extensions": [
@@ -1363,11 +1388,12 @@
       "symbol": "tree_sitter_ron",
       "abi": 14,
       "queries": [
-        "highlights.scm"
+        "highlights.scm",
+        "indents.scm"
       ],
       "archive": "ron.sqlar",
       "size": 113664,
-      "blake3": "d138ee2370de2a5eadfae6df73178150d0d78be91d92b630ecfa6e16c5fb419d"
+      "blake3": "f0ce748a05fe3d6963ed1f0702168e02558c309a0e66a3ad64ab0e8f69c166de"
     },
     "ruby": {
       "extensions": [
@@ -1393,11 +1419,12 @@
       "abi": 14,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "tags.scm"
       ],
       "archive": "ruby.sqlar",
       "size": 1064960,
-      "blake3": "290cd8ed1163cfcba1ecd78cc8072d2761e6ee1c9a899c60ed0533ae1b3a2632"
+      "blake3": "81616b803903be0423e940db69ef4cea399d60a46cff49d5f5b0ed01a67a6d8d"
     },
     "scala": {
       "extensions": [
@@ -1416,11 +1443,12 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "tags.scm"
       ],
       "archive": "scala.sqlar",
-      "size": 2748416,
-      "blake3": "c4e5642a1bf112465d68be9cc197fa7697cb5b18acc8990bac4d0d63951607ca"
+      "size": 2749440,
+      "blake3": "9daca84001492e636388249ecd7a7653eb9c9c3172202e2b69b6518ae7500340"
     },
     "scss": {
       "extensions": [
@@ -1486,11 +1514,12 @@
       "symbol": "tree_sitter_starlark",
       "abi": 14,
       "queries": [
-        "highlights.scm"
+        "highlights.scm",
+        "indents.scm"
       ],
       "archive": "starlark.sqlar",
-      "size": 372736,
-      "blake3": "648af5f27b28c46fd15e85c3567f74f5944b34c7d8413966119d4be6146ca073"
+      "size": 373760,
+      "blake3": "6dc70dc964983a5ea4fce0fc658822c2380151a555c7c810c762478a8fc968d4"
     },
     "svelte": {
       "extensions": [
@@ -1507,11 +1536,12 @@
       "abi": 14,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm"
       ],
       "archive": "svelte.sqlar",
       "size": 179200,
-      "blake3": "c924be572a91ae05fde980db123a50816284a2048c185673c0e7a4ea913736c9"
+      "blake3": "a05a71a728ed89d9d75ca34f7e93fe77c7d86a55037d12ab872e8697eba56576"
     },
     "wgsl": {
       "extensions": [
@@ -1549,11 +1579,12 @@
       "abi": 15,
       "queries": [
         "highlights.scm",
+        "indents.scm",
         "injections.scm"
       ],
       "archive": "zig.sqlar",
-      "size": 376832,
-      "blake3": "0e98b4d53c5df592f46ae27b7e7c136f437730774968cbccd902e0818f1f9abe"
+      "size": 377856,
+      "blake3": "3c5e4aa37c8c0cae8fd2b784a22a21801e28ecd9373d6323264969590852a114"
     }
   }
 }

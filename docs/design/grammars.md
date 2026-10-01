@@ -647,3 +647,52 @@ hosts; the pane in a window with sixty-seven rows to install.
   from the commits that brought them.
 
 Not verified: Windows.
+
+**After the rounds, 2026-10-01**: queries on top, and indentation.
+Asked: "will indent work with this grammars? Can we add our queries on
+top of repos?" — it did not, and only by replacing a file whole.
+
+- **`; extends`** (kawoosh-grammars 75e4f93): a file of the
+  repository's `queries/` whose opening comments say so goes after the
+  checkout's of its name instead of in its place. A node two patterns
+  match is the later one's (`ts.rs`), so a few patterns added change a
+  few captures. Resolved at build, as `inherits` is: the archive's
+  query is whole. *Not done:* the same word in a user's own
+  `queries/NAME/` under the config directory, which still replaces.
+- **The builder reads an `indents.scm` as `Indents::new` does**: a
+  predicate past helix's five or a `scope` that is not `all` or `tail`
+  is refused there. Here it fails `Library::load`, so the grammar would
+  have installed with no colours at all for a misspelt indent query.
+- **Thirty-one grammars bring an indent query**, release `r5`: c,
+  cmake, d, dart, elixir, erlang, fish, fortran, glsl, haskell, java,
+  julia, kdl, kotlin, llvm, luau, make, meson, nix, objc (c's, which
+  its queries are additions over), ocaml, odin, perl, php, proto, ron,
+  ruby, scala, starlark, svelte, zig. Helix 25.07.1's own where it has
+  one, changed where the grammar pinned names a node otherwise or the
+  language's usual style asked (a `rescue`, an `else`, a `catch`, an
+  `end`, a label a level out; nix's `in` and body not indented; zig's
+  struct members; fish's `case`), each file saying what and carrying
+  the MPL's notice; written in the repository for erlang, haskell and
+  meson. The other thirty-eight indent by the bracket rule, as before.
+- **The bar is this indenter**: a query goes in when `for_lines`,
+  given it, leaves every line of the grammar's sample where it is.
+  `the_repository_s_samples_reindent_as_they_are`
+  (`KAWOOSH_GRAMMARS_REPO=PATH`) installs every grammar from the
+  repository's `dist` as a base, loads it as an install is, and
+  reindents its sample: thirty-one of thirty-one. The repository cannot
+  try it itself, the indenter being kawoosh's.
+- **`default` lines up with its `case`s in C and C++**
+  (`languages/queries/c/indents.scm`): helix's query outdents `case`
+  and not `default`, which sat a level in from its siblings. Found
+  writing the repository's c; `a_default_lines_up_with_its_cases`.
+- **Seen and left**: `#set! "scope" "all"` on a node of several lines
+  counts twice here — its first line a level in, and its later lines a
+  level in from that line, the reader being relative to the text
+  (indent.md Decision 2). nix's `let` was written around it (the `let`
+  indented, its `in` and body outdented). Helix's own c uses `all` for
+  a braceless body, which is one line as a rule; a statement there
+  that runs over two would be a level too far.
+
+Verified: the live test installs ruby from the shipped bases and a
+line opened under a `def` is a level in, where no bracket says
+anything; `nu scripts/verify.nu`.

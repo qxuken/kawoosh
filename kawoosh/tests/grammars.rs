@@ -406,6 +406,31 @@ fn the_released_grammars_install_from_the_shipped_bases() {
         );
         eprintln!("{:?}: {}", shipped[skip].as_str(), app.ed.message);
     }
+
+    // An installed grammar brings its indent query: a line opened under
+    // a Ruby `def`, where no bracket says anything, is a level in.
+    let ruby = t.join("a.rb");
+    std::fs::write(&ruby, "def area\nend\n").unwrap();
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    app.load_grammars(&t.join("grammars-ruby"));
+    app.open(&ruby);
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "grammar install ruby");
+    until(&mut d, &mut app, "ruby installed", |a| {
+        a.grammars.installed.contains_key("ruby")
+    });
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    d.keys(&mut app, "ox");
+    d.frame(&mut app);
+    let v = app.focused_view().unwrap();
+    let text = app.ed.buffer_of(v).text();
+    let line = text.lines().nth(1).unwrap();
+    assert!(
+        line.ends_with('x') && line.len() > 1 && line.trim_start() == "x",
+        "indented under the def: {text:?}"
+    );
     std::fs::remove_dir_all(t).ok();
 }
 
@@ -720,5 +745,112 @@ fn the_pane_lists_walks_installs_and_removes() {
     d.frame(&mut app);
     assert_eq!(rows(&d), Vec::<String>::new(), "closed");
     assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(t).ok();
+}
+
+/// The grammars repository's indent queries, through the whole of it:
+/// each grammar there with an `indents.scm`, installed from the
+/// repository's own `dist` as a base, loaded as an install is, and its
+/// sample reindented by the indenter — no line moves. Only when asked
+/// (`KAWOOSH_GRAMMARS_REPO=PATH`, after `cargo run -- build` there):
+/// the indenter is kawoosh's, so the repository cannot try this itself.
+#[test]
+fn the_repository_s_samples_reindent_as_they_are() {
+    use kawoosh_languages::{Library, Locate};
+    use kawoosh_systems::indent::{Unit, for_lines};
+    let Some(repo) = std::env::var_os("KAWOOSH_GRAMMARS_REPO") else {
+        return;
+    };
+    let repo = kawoosh_systems::fs::canonicalize(Path::new(&repo)).unwrap();
+    let t = temp("repo");
+    let base = [url(&repo.join("dist"))];
+    // Every grammar: one whose queries are another's and more (objc's
+    // are c's) has an indent query its own directory does not show.
+    let mut names: Vec<String> = std::fs::read_dir(repo.join("grammars"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().join("grammar.toml").is_file())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert!(!names.is_empty(), "no grammars under {}", repo.display());
+    let mut with_indents: Vec<&str> = Vec::new();
+    let mut moved: Vec<String> = Vec::new();
+    for name in &names {
+        let installed =
+            kawoosh_systems::grammars::install(name, &base, &t.join("grammars"), &|_| {})
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let said = Locate {
+            path: Some(installed.dir.clone()),
+            symbol: Some(installed.row.symbol.clone()),
+            ..Locate::default()
+        };
+        let grammar = Library::find(name, &said, None)
+            .unwrap()
+            .expect("the install's library")
+            .load()
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let Some(indents) = grammar.indents.as_ref() else {
+            continue;
+        };
+        with_indents.push(name);
+        let sample = std::fs::read_dir(repo.join("grammars").join(name))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.file_stem().is_some_and(|s| s == "sample") && p.is_file())
+            .unwrap();
+        let src = std::fs::read_to_string(&sample).unwrap();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&grammar.language).unwrap();
+        let tree = parser.parse(&src, None).unwrap();
+        let text = text_buffer::Buffer::with_text(src.as_bytes());
+        // The sample's own unit: a tab, else its smallest indent.
+        let width = src
+            .lines()
+            .map(|l| l.len() - l.trim_start_matches(' ').len())
+            .filter(|n| *n > 0)
+            .min()
+            .unwrap_or(4);
+        let unit = if src.lines().any(|l| l.starts_with('\t')) {
+            Unit {
+                text: "\t".into(),
+                width: 4,
+                tabstop: 4,
+            }
+        } else {
+            Unit {
+                text: " ".repeat(width),
+                width,
+                tabstop: width,
+            }
+        };
+        let got = for_lines(indents, &tree, &text, 0..text.line_count(), &unit);
+        for (i, (line, want)) in src.split('\n').zip(got).enumerate() {
+            let own = &line[..line.len() - line.trim_start_matches([' ', '\t']).len()];
+            if !line.trim().is_empty()
+                && let Some(want) = want
+                && want != own
+            {
+                moved.push(format!(
+                    "{name}:{}: {own:?} -> {want:?}  {}",
+                    i + 1,
+                    line.trim()
+                ));
+            }
+        }
+    }
+    assert!(
+        moved.is_empty(),
+        "lines that would move:\n{}",
+        moved.join("\n")
+    );
+    assert!(with_indents.len() >= 30, "{with_indents:?}");
+    eprintln!(
+        "{} of {} grammars have an indent query, and their samples reindent as they are: {}",
+        with_indents.len(),
+        names.len(),
+        with_indents.join(" ")
+    );
     std::fs::remove_dir_all(t).ok();
 }

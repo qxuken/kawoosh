@@ -33,6 +33,12 @@ and paints the language's open buffers; the corner shows how far it
 is. It needs `curl` and nothing else — no compiler. An installed
 grammar is kept and is there at the next launch, with no network.
 
+An installed grammar colours, outlines and selects by node as a
+built-in one does. Thirty-one of them — Ruby, Elixir, Erlang, Haskell,
+OCaml, Nix, fish, Julia, Zig, Java, Kotlin, Scala, Dart, PHP and more —
+also bring an indent query, so `<CR>`, `o` and `=` follow the syntax
+tree ([editing](editing.md)); the others indent by their brackets.
+
 The first time a file of such a language is on show, the corner says
 so and names the command. `grammars.install` chooses: `"ask"` (that
 line, once per language in a session), `"auto"` (the grammar is
