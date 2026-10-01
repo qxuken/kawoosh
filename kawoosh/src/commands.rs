@@ -49,6 +49,7 @@ pub fn all() -> Vec<ShellCommand> {
     v.extend(crate::look::commands());
     v.extend(crate::fonts::commands());
     v.extend(crate::languages::commands());
+    v.extend(crate::grammars::commands());
     v.extend(crate::notify::commands());
     v.extend(crate::lsp::commands());
     v.extend(crate::lsp_rules::commands());

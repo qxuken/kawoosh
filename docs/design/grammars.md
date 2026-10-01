@@ -1,6 +1,9 @@
 # Grammars: built ahead, installed on demand
 
-Status: decided 2026-10-01, not built (roadmap step 77). Asked: "How
+Status: decided 2026-10-01 (roadmap step 77); rounds 1 and 2 — the
+repository, and `:grammar install` — built the same day ("Built" at
+the end says where they departed from the text), rounds 3 to 6 not.
+Asked: "How
 can we implement Tree-Sitter grammar auto installation? Like neovim
 does, or at least `nvim-treesitter/nvim-treesitter` plugins do. We
 don't ship all grammars since it will bloat the installation, but we
@@ -111,7 +114,7 @@ a manifest and the archives it names from the same base**:
 grammars = {
   url = {   -- tried in order; a base is a folder of `manifest.json` and `NAME.sqlar`
     "https://github.com/qxuken/kawoosh-grammars/releases/latest/download",
-    "https://drydock9.qxuken.dev/…",
+    "https://drydock9.qxuken.dev/qxuken/kawoosh-grammars/releases/download/latest",
   },
 }
 ```
@@ -245,8 +248,9 @@ directory's `parsers/` and `queries/`, as now), an installed grammar,
 a linked-in one. A query file under the config directory's
 `queries/NAME/` still replaces an installed grammar's.
 
-The manifest does not list a name kawoosh links in. Moving a linked-in
-grammar out of the binary is not this note's.
+Kawoosh passes over a manifest's name it links in: the repository does
+not know what kawoosh links, and is free to carry `rust` for someone
+else. Moving a linked-in grammar out of the binary is not this note's.
 
 ### 7. Installing: asked for, or on the first file
 
@@ -349,10 +353,11 @@ clang's.
   library signed by no one is refused without the
   `disable-library-validation` entitlement — `kawoosh.language`'s
   libraries too.
-- **GitHub's `latest`** is a release's alias there
-  (`releases/latest/download/FILE`). Whether Forgejo has the same is
-  to be checked in round 1; without it drydock9's base is a generic
-  package at a fixed version.
+- **`latest` is spelled two ways.** GitHub's alias is
+  `releases/latest/download/FILE`, Forgejo's
+  `releases/download/latest/FILE` (checked against Codeberg's Forgejo
+  16, the version drydock9 runs). A base is a whole URL, so each is
+  said as it is.
 
 ## Deliberately not
 
@@ -364,3 +369,113 @@ clang's.
   lockfile was for.
 - **Signatures over the manifest.** The hash is checked against a
   manifest fetched over TLS from a host the user named.
+
+## Built
+
+**Round 1, 2026-10-01**: `~/projects/kawoosh-grammars`, public on
+drydock9 and push-mirrored to GitHub (the user's doing), CI green on
+both, two releases out: `r1` (277ef5e) with dockerfile, html, java,
+kotlin, ruby and zig, and `r2` (2cd997c) with scala and odin, asked for
+the same day. The builder is `kawoosh-grammars build [NAME…]`; an
+archive is 97 KiB to 2.7 MiB (scala's six libraries are over 2 MiB each
+before zlib). The bases answer as Decision 2 spells them:
+
+- `https://drydock9.qxuken.dev/qxuken/kawoosh-grammars/releases/download/latest/`
+- `https://github.com/qxuken/kawoosh-grammars/releases/latest/download/`
+
+Where it departed from the text:
+
+- **The licence is every `LICENSE…`, `LICENCE…` or `COPYING…` file**
+  of the checkout under its own name, not one `LICENSE`.
+- **The manifest has a `format`** (1), its `targets`, and per grammar
+  its `symbol` and the `queries` its archive holds.
+- **A `; inherits: X` comment in a query file is an error** until
+  `grammar.toml` names X: the comment alone does nothing, and a query
+  that leans on it would ship half.
+- **The archive is read back** after it is written: this machine's
+  library out of it must be the bytes that were checked.
+- **A query must have the capture its kind is read by**:
+  `@injection.content` in `injections.scm`, `@name` in `tags.scm` and
+  `outline.scm`. odin's own `injections.scm` is `(comment) @comment`,
+  nvim's old spelling, which compiles and which `Injections::new`
+  refuses; the archive passed the check and failed in kawoosh's
+  loader. The check asks what the loader asks, and odin has an
+  `injections.scm` in the repository.
+- **zig is pinned in `.zig-version`**; the builder refuses another
+  without `--any-zig`. In CI it is the `ziglang` pip wheel
+  (`ZIG="python3 -m ziglang"`), as kui's cross builds have it.
+
+Verified on macOS arm64: a broken sample, a query naming a node the
+grammar lacks and a revision that is not there each fail with the
+place; a second build is the same bytes; `sqlite3 -A` lists and
+extracts an archive; and all eight, extracted to `parsers/NAME.dylib`
+and `queries/NAME/`, load through `Library::find` and `Library::load`
+as they stand — of their captures `Token::from_capture` leaves five
+unread (`@include`, `@exception`, `@embedded`, `@error`, `@spell`).
+
+Verified by the runs: a Linux runner builds all six targets, macOS's
+too, with the `ziglang` wheel and no SDK; drydock9's run publishes its
+release with the run's own token; and the two hosts' manifests are the
+same bytes, `r1` and `r2` both — the same wheel on the same kind of
+runner. This Mac's differ from theirs in the Linux libraries alone, by
+the `.comment` section, where Homebrew's zig names its own clang. So
+Decision 2's rule stands as the safe one, and today either host's
+manifest would do for the other's archives.
+
+Not verified: no Windows has loaded a library.
+
+**Round 2, 2026-10-01**: `:grammar install NAME`.
+`systems/src/grammars.rs` is the install, on a thread
+(`Io::stream`): the manifest, the fetch, the check, the files written
+out, each step an `IoMsg::Grammar`. `kawoosh/src/grammars.rs` is the
+shell's half: the listed languages at launch, the command, the
+progress line, the load. `kawoosh/grammars/manifest.json` is the copy
+in the build, `r2`'s. `kawoosh/tests/grammars.rs` drives it against a
+`file://` base and an archive made in the test.
+
+Where it departed from the text:
+
+- **An install asks its base for the manifest every time** (4 KB), and
+  checks the archive against that one; it is kept as
+  `grammars/manifest.json`. The copy in the build says which languages
+  there are and what their files are called, nothing more: a base's
+  `latest` moves, and a hash built into an older kawoosh would refuse
+  every archive released since. Decision 5's "a kawoosh never updated
+  still names archives by hash" is gone with it.
+- **An install is a directory named by its archive's hash**,
+  `grammars/NAME/HASH12/`, and `grammars/NAME/current` names the one in
+  use. Another archive is another directory: no library a process has
+  open is written over (Windows would refuse, and a second `dlopen` of
+  one path answers the first), and the old directory is pruned at the
+  next launch.
+- **The row an install came from is kept beside it** (`grammar.json`),
+  so a launch needs no manifest to know an installed language's files
+  and symbol — one added to the releases after this kawoosh was built
+  included.
+- **At launch an installed grammar is registered, not loaded**: the ts
+  thread loads it at its first buffer, as it does a linked one. A
+  fresh install loads on the spot, so one that does not load is a
+  warning then.
+- **A listed language does not take a file from one with colours**: it
+  is the newest in the table, and would win the file to show it plain.
+- **Decision 8 came forward**: `grammars.url` is read from the session,
+  the user's files and the defaults, never a project's, which is said
+  once. With the setting there at all, a later round was too late.
+- **`$KAWOOSH_GRAMMARS`** names the directory, as `$KAWOOSH_TYPES`
+  does the types'.
+- **The fetch's progress is paced** at 125 ms and said only when it
+  moved, as a language server's is.
+
+Verified: `nu scripts/verify.nu`, 843 of 843, seven of them new — an
+install fetched, checked and written out; a base that is not there
+passed over; an archive that is not its manifest's refused with both
+sizes and nothing half in; names out of an archive that would leave
+its directory dropped; an open file claimed and painted by the
+installed grammar's query; the next launch finding it with no base;
+a project's `grammars.url` passed over. And over the network
+(`KAWOOSH_GRAMMARS_LIVE=1`): zig installed from each of the two
+shipped bases alone, about two seconds each, painting keywords and
+strings.
+
+Not verified: the real window (the tests drive the app's frames, not
+a screen), and Windows.

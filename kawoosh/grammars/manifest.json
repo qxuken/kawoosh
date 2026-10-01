@@ -1,0 +1,202 @@
+{
+  "format": 1,
+  "targets": [
+    "aarch64-linux",
+    "aarch64-macos",
+    "aarch64-windows",
+    "x86_64-linux",
+    "x86_64-macos",
+    "x86_64-windows"
+  ],
+  "grammars": {
+    "dockerfile": {
+      "extensions": [
+        "dockerfile"
+      ],
+      "filenames": [
+        "Dockerfile",
+        "Containerfile"
+      ],
+      "shebangs": [],
+      "aliases": [
+        "docker"
+      ],
+      "repo": "https://github.com/camdencheek/tree-sitter-dockerfile",
+      "rev": "971acdd908568b4531b0ba28a445bf0bb720aba5",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_dockerfile",
+      "abi": 14,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "dockerfile.sqlar",
+      "size": 165888,
+      "blake3": "ee8d318fa72fdf9c44f03e638b4a86cca4a2d3bb7e508e82018f4adb1d63c8ba"
+    },
+    "html": {
+      "extensions": [
+        "html",
+        "htm",
+        "xhtml"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter/tree-sitter-html",
+      "rev": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_html",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "html.sqlar",
+      "size": 99328,
+      "blake3": "7aa097126a54d56e6fc98b5ea381e0d9bf0b623b37c8a790f1a731f2aebdd199"
+    },
+    "java": {
+      "extensions": [
+        "java"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter/tree-sitter-java",
+      "rev": "e10607b45ff745f5f876bfa3e94fbcc6b44bdc11",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_java",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "java.sqlar",
+      "size": 370688,
+      "blake3": "9e3bc5c812b600b036b4253e4101467ee5214bd4689a7b4384e798d5a560e0a2"
+    },
+    "kotlin": {
+      "extensions": [
+        "kt",
+        "kts"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [
+        "kt"
+      ],
+      "repo": "https://github.com/fwcd/tree-sitter-kotlin",
+      "rev": "1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_kotlin",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "kotlin.sqlar",
+      "size": 2496512,
+      "blake3": "a60474fc1f397695441fd8bd5900ff5291149fa22d2e84df1e0feb1fa462c027"
+    },
+    "odin": {
+      "extensions": [
+        "odin"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-odin",
+      "rev": "d2ca8efb4487e156a60d5bd6db2598b872629403",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_odin",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "odin.sqlar",
+      "size": 1221632,
+      "blake3": "2313ce2b5b0dc4e7792c74a82439de28cb0c365b51e5eee3b04036d215ebe1b5"
+    },
+    "ruby": {
+      "extensions": [
+        "rb",
+        "rake",
+        "gemspec"
+      ],
+      "filenames": [
+        "Gemfile",
+        "Rakefile"
+      ],
+      "shebangs": [
+        "ruby"
+      ],
+      "aliases": [
+        "rb"
+      ],
+      "repo": "https://github.com/tree-sitter/tree-sitter-ruby",
+      "rev": "ad907a69da0c8a4f7a943a7fe012712208da6dee",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_ruby",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "ruby.sqlar",
+      "size": 1064960,
+      "blake3": "290cd8ed1163cfcba1ecd78cc8072d2761e6ee1c9a899c60ed0533ae1b3a2632"
+    },
+    "scala": {
+      "extensions": [
+        "scala",
+        "sc",
+        "sbt"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter/tree-sitter-scala",
+      "rev": "db390f312a54b04b13790e1767bfac32665c17ac",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_scala",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "scala.sqlar",
+      "size": 2748416,
+      "blake3": "c4e5642a1bf112465d68be9cc197fa7697cb5b18acc8990bac4d0d63951607ca"
+    },
+    "zig": {
+      "extensions": [
+        "zig",
+        "zon"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-zig",
+      "rev": "6479aa13f32f701c383083d8b28360ebd682fb7d",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_zig",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "zig.sqlar",
+      "size": 376832,
+      "blake3": "0e98b4d53c5df592f46ae27b7e7c136f437730774968cbccd902e0818f1f9abe"
+    }
+  }
+}

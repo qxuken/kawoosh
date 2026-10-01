@@ -18,6 +18,30 @@ language, `text` for none; `:syntax` alone says which one it is. A
 language of your own is added from Lua with `kawoosh.language`; see
 [lua](lua.md).
 
+### More languages
+
+Kawoosh knows more languages than it carries grammars for: Zig, HTML,
+Java, Kotlin, Scala, Ruby, Odin and Dockerfiles among them. A file of
+one is recognised, and its language server starts, but it has no
+colours until its grammar is installed:
+
+`:grammar install NAME` fetches the grammar, built for this machine,
+and paints the language's open buffers; the corner shows how far it
+is. It needs `curl` and nothing else — no compiler. An installed
+grammar is kept and is there at the next launch, with no network.
+
+The grammars are built by the `kawoosh-grammars` repository, which
+releases them on two hosts. `grammars.url` lists where to fetch from,
+tried in order; each is a folder holding `manifest.json` and one
+archive per grammar, so a mirror of your own is a URL in your
+settings. Only your own settings are read for it: a project's
+`grammars.url` is passed over, since a grammar is code that runs
+inside kawoosh.
+
+A query file of your own under the config directory,
+`queries/NAME/highlights.scm` (or `injections.scm`, `outline.scm`,
+`indents.scm`), is used in place of the installed grammar's.
+
 The same tree drives selections by syntax node, `<A-o>` `<A-i>`
 `<A-n>` `<A-p>`, the move up to the node around the caret, `<A-u>`
 ([editing](editing.md)), the outline in the

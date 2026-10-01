@@ -77,6 +77,9 @@ pub struct Kawoosh {
     /// (kui.md D13). What a file is detected as, and which buffers
     /// `ts` gets; the thread holds the same table.
     pub languages: kawoosh_languages::Registry,
+    /// The grammars there are to install, and those installed
+    /// (docs/design/grammars.md).
+    pub grammars: crate::grammars::Grammars,
     pub lsp: LspState,
     pub scripting: Scripting,
     /// The hosts reached through ssh (docs/design/domains.md).
@@ -367,6 +370,7 @@ impl Kawoosh {
             io: Io::new(wake.named("io")),
             ts: Ts::spawn(wake.named("parser")),
             languages: kawoosh_languages::Registry::builtin(),
+            grammars: crate::grammars::Grammars::default(),
             lsp: LspState::new(wake.clone()),
             scripting: Scripting {
                 servers: kawoosh_systems::lsp::ServerDef::builtin(),
@@ -795,6 +799,7 @@ impl Kawoosh {
                 IoMsg::DomainFailed { name, error } => self.domain_failed(&name, &error),
                 IoMsg::PtyClosed { id } => self.term_closed(id),
                 IoMsg::Request(incoming) => self.on_request(incoming),
+                IoMsg::Grammar { name, step } => self.on_grammar(name, step),
                 // A status segment's time came: the wake drew the frame.
                 IoMsg::Tick => self.status_due = None,
                 IoMsg::FsDone { token, result } => {

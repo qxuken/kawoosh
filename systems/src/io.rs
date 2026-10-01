@@ -49,6 +49,12 @@ pub enum IoMsg {
         id: u64,
         line: String,
     },
+    /// News of the grammar `name`'s install (`grammars::install`, on a
+    /// thread of its own): a step of it, the last one its end.
+    Grammar {
+        name: String,
+        step: crate::grammars::Step,
+    },
     /// A wake the app asked for at a time (`Io::tick_at`): a status
     /// segment that changes with the clock (docs/design/status.md).
     Tick,
