@@ -14,3 +14,11 @@ globset = "0.4"
 memchr = "2"
 text-buffer.workspace = true
 unicode-width.workspace = true
+
+# A test's own CPU time (`modal.rs`'s one-pass bound), which other
+# processes on a loaded machine do not stretch as they do the clock.
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }

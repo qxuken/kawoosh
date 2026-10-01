@@ -1790,11 +1790,13 @@ version = "0.0.1"
 dependencies = [
  "globset",
  "kawoosh-doc",
+ "libc",
  "memchr",
  "regex",
  "slotmap",
  "text-buffer",
  "unicode-width",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

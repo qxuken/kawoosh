@@ -2148,16 +2148,57 @@ fn a_text_put_in_by_its_diff_keeps_the_carets() {
 /// lines took 20 s — placing each caret walked every caret placed
 /// before it, and each edit read its line's graphemes to find a
 /// boundary between two ASCII bytes — 1.7 s now. 60,000 lines here,
-/// bounded far above that and well under the quadratic's 7 s.
+/// bounded far above that and well under the quadratic's 7 s. The
+/// thread's CPU time, not the clock's: under a loaded machine (eight
+/// builds at a load of 90) the clock read 6 to 15 s for the same pass.
 #[test]
 fn an_edit_per_line_over_a_long_file_is_one_pass() {
     let n = 60_000;
     let text = "x\n".repeat(n);
     let mut t = T::new(&text);
-    let start = std::time::Instant::now();
+    let start = thread_cpu();
     t.keys(">G");
-    let took = start.elapsed();
+    let took = thread_cpu() - start;
     assert_eq!(t.text().lines().next(), Some("    x"));
     assert_eq!(t.text().len(), text.len() + 4 * n);
     assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+}
+
+/// The CPU time this thread has had, which other processes do not
+/// stretch.
+#[cfg(unix)]
+fn thread_cpu() -> std::time::Duration {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid timespec for the call to fill.
+    let ok = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    assert_eq!(ok, 0);
+    std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+}
+
+#[cfg(windows)]
+fn thread_cpu() -> std::time::Duration {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+    let zero = || FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero(), zero(), zero(), zero());
+    // SAFETY: the current thread's pseudo-handle, four FILETIMEs to fill.
+    let ok = unsafe {
+        GetThreadTimes(
+            GetCurrentThread(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    assert_ne!(ok, 0);
+    let ticks = |f: FILETIME| (f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64;
+    // FILETIME counts 100 ns.
+    std::time::Duration::from_nanos((ticks(kernel) + ticks(user)) * 100)
 }
