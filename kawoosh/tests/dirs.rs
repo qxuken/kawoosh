@@ -301,3 +301,90 @@ fn ctrl_t_opens_a_tab_on_the_directory() {
     assert_eq!(app.layout.tabs[0].cwd.as_deref(), Some(b.as_path()));
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// From a listing, `z` (yazi's) opens the jumps, and a pick goes there
+/// in the same listing — its buffer reused, no trail in `:ls` — the
+/// working directory left where it was (`~` moves it).
+#[test]
+#[cfg(unix)]
+fn z_in_a_listing_jumps_the_listing() {
+    let root = tmp("listing");
+    let (a, b) = (root.join("alpha"), root.join("beta"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let (mut d, mut app, _log) = zoxide_app(&root, &a, &b);
+    ex(&mut d, &mut app, &format!("cd {}", b.display()));
+    let listed = |d: &mut Drive, app: &mut Kawoosh, path: &Path| {
+        let want = format!("dir: {}", path.display());
+        for _ in 0..100 {
+            d.frame(app);
+            if app
+                .focused_view()
+                .is_some_and(|v| app.ed.buffer_of(v).name == want)
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let v = app.focused_view().unwrap();
+        panic!("never listed {want}: {}", app.ed.buffer_of(v).name);
+    };
+    ex(&mut d, &mut app, &format!("dir {}", root.display()));
+    listed(&mut d, &mut app, &root);
+    d.keys(&mut app, "z");
+    assert_eq!(rows(&mut d, &mut app, 2), format!("2|{}", a.display()));
+    d.key(&mut app, "enter", KeyMods::default());
+    listed(&mut d, &mut app, &a);
+    assert_eq!(app.ed.cwd, b, "the working directory stays");
+    let listings: Vec<String> = app
+        .ed
+        .buffers
+        .values()
+        .map(|b| b.name.clone())
+        .filter(|n| n.starts_with("dir: "))
+        .collect();
+    assert_eq!(
+        listings,
+        [format!("dir: {}", a.display())],
+        "the listing reused"
+    );
+    assert_eq!(picker(&mut app), "none");
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// `auto` asks the PATH when it chooses, not once at load: the plugins
+/// load before a window opened from the Dock has its shell's PATH, and
+/// a zoxide not found then — or installed since — is found when it is
+/// there.
+#[test]
+#[cfg(unix)]
+fn auto_finds_a_zoxide_that_arrives_after_load() {
+    let root = tmp("auto");
+    let (a, b) = (root.join("alpha"), root.join("beta"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let (mut d, mut app) = app();
+    app.open_store(Some(&root.join("state.db")));
+    ex(&mut d, &mut app, "set dirs.backend=auto");
+    let bin = root.join("zoxide");
+    ex(
+        &mut d,
+        &mut app,
+        &format!("set dirs.zoxide={}", bin.display()),
+    );
+    // Not there yet: the memory's rows, a `:cd` counted there.
+    ex(&mut d, &mut app, &format!("cd {}", b.display()));
+    app.flush_moments();
+    d.keys(&mut app, " sd");
+    assert_eq!(
+        rows(&mut d, &mut app, 1),
+        format!("1|{}", kawoosh_systems::fs::abbreviate_home(&b))
+    );
+    d.press(&mut app, "<C-c>");
+    d.frame(&mut app);
+    // There now: its database's rows.
+    fake_zoxide(&root, &a, &b);
+    d.keys(&mut app, " sd");
+    assert_eq!(rows(&mut d, &mut app, 2), format!("2|{}", a.display()));
+    std::fs::remove_dir_all(&root).ok();
+}
