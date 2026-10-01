@@ -309,6 +309,60 @@ fn a_confirm_with_many_answers_lists_them() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A confirm's line longer than the dialog wraps inside it: a `:dir`
+/// plan's copy between two deep directories, seen 2026-10-02 in a window,
+/// ran past the dialog's edge over the pane beside it. Every byte of the
+/// line is still there to read, the destination too.
+#[test]
+fn a_confirm_line_longer_than_the_dialog_wraps_inside_it() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("a", "text");
+    d.frame(&mut app);
+    let deep = "/private/tmp/claude-501/a-rather-long-scratch-directory/with/several/nested/levels/fonts-a/fonts/FiraMono";
+    let line = format!("  copy FiraMono/: {deep} → /elsewhere/fonts-b/fonts/FiraMono");
+    app.confirm_with(kawoosh::confirm::Confirm {
+        title: "1 change(s) in 2 directories?".into(),
+        lines: vec!["between them:".into(), line.clone()],
+        actions: vec![
+            ("Apply".into(), "echo applied".into()),
+            ("Cancel".into(), String::new()),
+        ],
+        chosen: 0,
+    });
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let nodes = d.core.nodes();
+    let line_node = nodes
+        .iter()
+        // The node's text is the line's start: a long one is cut in the
+        // dump with a `…`, not on the screen.
+        .find(|n| {
+            n.text
+                .as_deref()
+                .is_some_and(|t| t.starts_with("  copy FiraMono/:"))
+        })
+        .unwrap_or_else(|| panic!("the line in {:?}", d.confirm_texts()));
+    let text = line_node.rect;
+    // The dialog: the line's nearest floating ancestor.
+    let mut at = line_node.parent;
+    let dialog = loop {
+        let n = nodes
+            .iter()
+            .find(|n| Some(n.key) == at)
+            .expect("a floating ancestor");
+        if n.float {
+            break n.rect;
+        }
+        at = n.parent;
+    };
+    assert!(
+        text.x + text.w <= dialog.x + dialog.w + 0.5,
+        "the line inside the dialog: {text:?} in {dialog:?}"
+    );
+    assert!(text.h > 30.0, "wrapped onto more lines: {text:?}");
+    assert_eq!(drive::overflows(&d), Vec::<String>::new());
+}
+
 /// The tabs' labels as the strip draws them.
 fn tab_labels(d: &Drive) -> Vec<String> {
     d.texts_under("tabs")
