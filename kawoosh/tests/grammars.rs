@@ -537,12 +537,16 @@ fn auto_installs_at_the_first_file_and_update_and_remove_follow() {
         app.ed.message,
         "grammar: jsonish updated (0123456789ab → fedcba987654)"
     );
-    app.wait_for_syntax();
-    d.frame(&mut app);
-    let seen = tokens(&app);
-    assert!(
-        seen.contains(&Token::Property) && !seen.contains(&Token::Number),
-        "painted by the new release's query: {seen:?}"
+    // The buffer is parsed again with the grammar as it is now: the old
+    // paint stands until that answer lands, so it is waited for.
+    until(
+        &mut d,
+        &mut app,
+        "painted by the new release's query",
+        |a| {
+            let seen = tokens(a);
+            seen.contains(&Token::Property) && !seen.contains(&Token::Number)
+        },
     );
     ex(&mut d, &mut app, "grammar update");
     until(&mut d, &mut app, "the list landed", |a| !a.grammars.listing);
@@ -630,43 +634,47 @@ fn the_pane_lists_walks_installs_and_removes() {
     ex(&mut d, &mut app, "grammars");
     d.frame(&mut app);
     let listed = rows(&d);
-    assert_eq!(
-        listed[..4],
-        ["dockerfile", "html", "java", "jsonish"],
-        "by name: {listed:?}"
-    );
-    assert!(
-        all(&d).contains("0 installed · 9 to install"),
-        "{}",
-        all(&d)
-    );
+    let to_install = app.grammars.listed.len();
+    let mut sorted = listed.clone();
+    sorted.sort();
+    assert_eq!(listed, sorted, "by name");
+    assert_eq!(listed.len(), to_install);
+    let at = listed.iter().position(|n| n == NAME).unwrap();
+    let counts = |installed: usize| {
+        format!(
+            "{installed} installed · {} to install",
+            to_install - installed
+        )
+    };
+    assert!(all(&d).contains(&counts(0)), "{}", all(&d));
     assert!(
         all(&d).contains("rust · ") && all(&d).contains("built in"),
         "{}",
         all(&d)
     );
+    assert_eq!(overflows(&d), Vec::<String>::new());
+
+    // The cursor walked down to jsonish, its row scrolled into view:
+    // its files, its size and its button. `<CR>` installs it, and it
+    // moves up to the installed, at its revision, with no button.
+    for _ in 0..at {
+        d.press(&mut app, "j");
+    }
+    d.frame(&mut app);
     let jsonish = row(&d, NAME);
     assert!(
         jsonish.contains(".jsonish") && jsonish.contains("KiB") && jsonish.contains("install"),
         "{jsonish:?}"
     );
-    assert_eq!(overflows(&d), Vec::<String>::new());
-
-    // Three rows down is jsonish; `<CR>` installs it, and it moves up
-    // to the installed, at its revision, with no button.
-    d.press(&mut app, "jjj");
     d.press(&mut app, "<CR>");
     assert!(app.grammars.installing.contains(NAME), "{}", app.ed.message);
     until(&mut d, &mut app, "installed", |a| {
         a.grammars.installed.contains_key(NAME)
     });
     d.frame(&mut app);
+    d.frame(&mut app);
     assert_eq!(rows(&d)[0], NAME, "the installed first");
-    assert!(
-        all(&d).contains("1 installed · 8 to install"),
-        "{}",
-        all(&d)
-    );
+    assert!(all(&d).contains(&counts(1)), "{}", all(&d));
     let jsonish = row(&d, NAME);
     assert!(
         jsonish.contains("0123456789ab") && !jsonish.contains("install"),
@@ -678,7 +686,8 @@ fn the_pane_lists_walks_installs_and_removes() {
     d.press(&mut app, "d");
     d.frame(&mut app);
     assert_eq!(app.ed.message, "grammar: jsonish removed");
-    assert!(row(&d, NAME).contains("install") && rows(&d)[3] == NAME);
+    d.frame(&mut app);
+    assert!(row(&d, NAME).contains("install") && rows(&d)[at] == NAME);
     d.press(&mut app, "d");
     assert_eq!(
         app.ed.message,

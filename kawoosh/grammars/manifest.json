@@ -9,6 +9,273 @@
     "x86_64-windows"
   ],
   "grammars": {
+    "astro": {
+      "extensions": [
+        "astro"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/virchau13/tree-sitter-astro",
+      "rev": "213f6e6973d9b456c6e50e86f19f66877e7ef0ee",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_astro",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "astro.sqlar",
+      "size": 117760,
+      "blake3": "4e8b004bb2e912183b65a1b5a35adfa962c824fc00ceecd4201af4a59e34b4d4"
+    },
+    "awk": {
+      "extensions": [
+        "awk"
+      ],
+      "filenames": [],
+      "shebangs": [
+        "awk",
+        "gawk"
+      ],
+      "aliases": [],
+      "repo": "https://github.com/Beaglefoot/tree-sitter-awk",
+      "rev": "34bbdc7cce8e803096f47b625979e34c1be38127",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_awk",
+      "abi": 14,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "awk.sqlar",
+      "size": 488448,
+      "blake3": "01db0ccbb82e28cfae3e35997e0e4aa68a74a3ef9396f9009306935a62d2d706"
+    },
+    "bibtex": {
+      "extensions": [
+        "bib"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [
+        "bib"
+      ],
+      "repo": "https://github.com/latex-lsp/tree-sitter-bibtex",
+      "rev": "8d04ed27b3bc7929f14b7df9236797dab9f3fa66",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_bibtex",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "bibtex.sqlar",
+      "size": 74752,
+      "blake3": "48bdaa12b835a271e04f815e7040075b94d966bc203ad0fab319bb6adb09971e"
+    },
+    "bicep": {
+      "extensions": [
+        "bicep"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-bicep",
+      "rev": "bff59884307c0ab009bd5e81afd9324b46a6c0f9",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_bicep",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "bicep.sqlar",
+      "size": 200704,
+      "blake3": "52aea593d6d93a4bad3f78f64aa6ced98705d550e8781a11e1919afa6ac0e8ce"
+    },
+    "c": {
+      "extensions": [
+        "c",
+        "h"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter/tree-sitter-c",
+      "rev": "b780e47fc780ddc8da13afa35a3f4ed5c157823d",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_c",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "c.sqlar",
+      "size": 497664,
+      "blake3": "f09ccf03c1a8e8ea45195de436dbb279075a3d8a3ba1e448cf6d04d8eaa440fc"
+    },
+    "clojure": {
+      "extensions": [
+        "clj",
+        "cljs",
+        "cljc",
+        "edn"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [
+        "clj"
+      ],
+      "repo": "https://github.com/sogaiu/tree-sitter-clojure",
+      "rev": "e43eff80d17cf34852dcd92ca5e6986d23a7040f",
+      "path": ".",
+      "license": "CC0-1.0",
+      "symbol": "tree_sitter_clojure",
+      "abi": 14,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "clojure.sqlar",
+      "size": 196608,
+      "blake3": "f841635662375aaf6543c931db5e121b73803400722bc73d3801ce1c2b33f54f"
+    },
+    "cmake": {
+      "extensions": [
+        "cmake"
+      ],
+      "filenames": [
+        "CMakeLists.txt"
+      ],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/uyha/tree-sitter-cmake",
+      "rev": "ca627bb5828616b6246aafdc3c3222789e728e37",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_cmake",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "cmake.sqlar",
+      "size": 149504,
+      "blake3": "1cf728c9d21e306543e74947fe9f9a35f2047b3dc0b5c32e7a3b1fe3ca0d88aa"
+    },
+    "csharp": {
+      "extensions": [
+        "cs",
+        "csx"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [
+        "cs"
+      ],
+      "repo": "https://github.com/tree-sitter/tree-sitter-c-sharp",
+      "rev": "9150f7d56bb47f1a809fa23623f1ba1413e93fa9",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_c_sharp",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "csharp.sqlar",
+      "size": 2146304,
+      "blake3": "cd1124c9aaa84db619ccdc1d0a84fe31a464025e9f5907669e96b89f7353b2fe"
+    },
+    "csv": {
+      "extensions": [
+        "csv"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/amaanq/tree-sitter-csv",
+      "rev": "f6bf6e35eb0b95fbadea4bb39cb9709507fcb181",
+      "path": "csv",
+      "license": "MIT",
+      "symbol": "tree_sitter_csv",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "csv.sqlar",
+      "size": 64512,
+      "blake3": "59e933fdd1316197ec6475a4a80041d90999b43b8f916d19f4d5d201615bec35"
+    },
+    "d": {
+      "extensions": [
+        "d"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [
+        "dlang"
+      ],
+      "repo": "https://github.com/gdamore/tree-sitter-d",
+      "rev": "64f27931b4e6fdd75af1102c79bacbca68a8dacc",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_d",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "injections.scm",
+        "tags.scm"
+      ],
+      "archive": "d.sqlar",
+      "size": 1613824,
+      "blake3": "ff5503a3de53f85360ead4687fa38030e1dee68314e06f174af24deb23f33a5a"
+    },
+    "dart": {
+      "extensions": [
+        "dart"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/UserNobody14/tree-sitter-dart",
+      "rev": "be07cf7118d3dba06236a3f19541685a68209934",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_dart",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "dart.sqlar",
+      "size": 758784,
+      "blake3": "415ca7f6dea5330295f47d2acddce51dd3f6fd0bf5a22a39f4890f366c7ab7be"
+    },
+    "devicetree": {
+      "extensions": [
+        "dts",
+        "dtsi"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/joelspadin/tree-sitter-devicetree",
+      "rev": "e78bf56f206cb47bee28a217423acb651e076848",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_devicetree",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "devicetree.sqlar",
+      "size": 210944,
+      "blake3": "309819c5c728fd39565f4593af36ae8f2a526f46f82e4889b53cca99ea752f18"
+    },
     "dockerfile": {
       "extensions": [
         "dockerfile"
@@ -34,6 +301,371 @@
       "size": 165888,
       "blake3": "ee8d318fa72fdf9c44f03e638b4a86cca4a2d3bb7e508e82018f4adb1d63c8ba"
     },
+    "dot": {
+      "extensions": [
+        "dot",
+        "gv"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [
+        "graphviz"
+      ],
+      "repo": "https://github.com/rydesun/tree-sitter-dot",
+      "rev": "80327abbba6f47530edeb0df9f11bd5d5c93c14d",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_dot",
+      "abi": 13,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "dot.sqlar",
+      "size": 182272,
+      "blake3": "bea0427da231282eb18dc3b4b1c55cd76f78a79848578cf4ae852ec3b074bc5a"
+    },
+    "dotenv": {
+      "extensions": [
+        "env"
+      ],
+      "filenames": [
+        ".env",
+        ".env.local",
+        ".env.example"
+      ],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/pnx/tree-sitter-dotenv",
+      "rev": "a16f203ba05f8efedc780690cac217c095946c06",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_dotenv",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "dotenv.sqlar",
+      "size": 72704,
+      "blake3": "419e1a106fd9654b71f8d1dcf83d85b296b84e3d2de2261d19b174ed44d84303"
+    },
+    "elisp": {
+      "extensions": [
+        "el"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [
+        "emacs-lisp"
+      ],
+      "repo": "https://github.com/Wilfred/tree-sitter-elisp",
+      "rev": "0cbf0906d9ee707c8c109422fba9cdd17ae13dcf",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_elisp",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "elisp.sqlar",
+      "size": 116736,
+      "blake3": "8213456def06e1c648f07bb310984a5026deb8c2b5b9309af234bef8b828ca61"
+    },
+    "elixir": {
+      "extensions": [
+        "ex",
+        "exs"
+      ],
+      "filenames": [],
+      "shebangs": [
+        "elixir"
+      ],
+      "aliases": [],
+      "repo": "https://github.com/elixir-lang/tree-sitter-elixir",
+      "rev": "4b0c7118760af58a2e7081bbc8396e136f820b37",
+      "path": ".",
+      "license": "Apache-2.0",
+      "symbol": "tree_sitter_elixir",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "injections.scm",
+        "tags.scm"
+      ],
+      "archive": "elixir.sqlar",
+      "size": 970752,
+      "blake3": "bce3257dddd869e4cec3aef180f7be97a538047333301c0df6d1aa810a46ce09"
+    },
+    "elm": {
+      "extensions": [
+        "elm"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/razzeee/tree-sitter-elm",
+      "rev": "e1e8fea161a1e66f3997855d316be2a43e4e956f",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_elm",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm",
+        "tags.scm"
+      ],
+      "archive": "elm.sqlar",
+      "size": 296960,
+      "blake3": "5afd91443089b467a836968e26b0ad62e411389e48982ae7dd909e1c432907e7"
+    },
+    "erb": {
+      "extensions": [
+        "erb"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter/tree-sitter-embedded-template",
+      "rev": "3499d85f0a0d937c507a4a65368f2f63772786e1",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_embedded_template",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "erb.sqlar",
+      "size": 65536,
+      "blake3": "b8880def7d6577db3403a7858b3dffc145c67e21286d4edb1b9ff59ad202a5cd"
+    },
+    "erlang": {
+      "extensions": [
+        "erl",
+        "hrl"
+      ],
+      "filenames": [],
+      "shebangs": [
+        "escript"
+      ],
+      "aliases": [
+        "erl"
+      ],
+      "repo": "https://github.com/WhatsApp/tree-sitter-erlang",
+      "rev": "6ba4c762eb3065495e3db85697ffeecdf364ce35",
+      "path": ".",
+      "license": "Apache-2.0",
+      "symbol": "tree_sitter_erlang",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "erlang.sqlar",
+      "size": 357376,
+      "blake3": "edf3941e11adcc548942a73963c196431d10790cb8622a5907289269003a5e05"
+    },
+    "fish": {
+      "extensions": [
+        "fish"
+      ],
+      "filenames": [],
+      "shebangs": [
+        "fish"
+      ],
+      "aliases": [],
+      "repo": "https://github.com/ram02z/tree-sitter-fish",
+      "rev": "b7f1d682941e0c62dfcd6bf9ef481638351bab16",
+      "path": ".",
+      "license": "Unlicense",
+      "symbol": "tree_sitter_fish",
+      "abi": 14,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "fish.sqlar",
+      "size": 171008,
+      "blake3": "b4243745d9cd73411a76e4cad16ee2b8524a06eb48f1355965020040f0ea9c25"
+    },
+    "fortran": {
+      "extensions": [
+        "f90",
+        "f95",
+        "f03",
+        "f08"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/stadelmanma/tree-sitter-fortran",
+      "rev": "7edacd2b21aa80057d9725384a1304a1c758e0f8",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_fortran",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "fortran.sqlar",
+      "size": 2297856,
+      "blake3": "5a61253ea3bb08c0979d83ca676030dcec9b56fe45d0e0668f601eca9cb68461"
+    },
+    "fsharp": {
+      "extensions": [
+        "fs",
+        "fsx"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/ionide/tree-sitter-fsharp",
+      "rev": "0d3ccbb0573e29364cf91f7e68ed1fb2ae8a2b6f",
+      "path": "fsharp",
+      "license": "MIT",
+      "symbol": "tree_sitter_fsharp",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm",
+        "tags.scm"
+      ],
+      "archive": "fsharp.sqlar",
+      "size": 5642240,
+      "blake3": "abc895b23f084192e267a9fa1bf050e7455d342fd1a5f8a5861af593f8688fbe"
+    },
+    "git_config": {
+      "extensions": [],
+      "filenames": [
+        ".gitconfig",
+        ".gitmodules"
+      ],
+      "shebangs": [],
+      "aliases": [
+        "gitconfig"
+      ],
+      "repo": "https://github.com/the-mikedavis/tree-sitter-git-config",
+      "rev": "3a61756a81a86291a0f48e3eeeaa0692b9981aa9",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_git_config",
+      "abi": 14,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "git_config.sqlar",
+      "size": 77824,
+      "blake3": "f4c93ef34d265b002f54b478d31c12e2765f8b165954f70c86d44fb9628bf68e"
+    },
+    "git_rebase": {
+      "extensions": [],
+      "filenames": [
+        "git-rebase-todo"
+      ],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/the-mikedavis/tree-sitter-git-rebase",
+      "rev": "32686d6b72980b36f876ae2d07719c9c3ed154e2",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_git_rebase",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "git_rebase.sqlar",
+      "size": 64512,
+      "blake3": "40f512ce61000dfb95dce098baa4b0e261c122ba43a089b670ba8181f4b05652"
+    },
+    "gitattributes": {
+      "extensions": [],
+      "filenames": [
+        ".gitattributes"
+      ],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/ObserverOfTime/tree-sitter-gitattributes",
+      "rev": "1b7af09d45b579f9f288453b95ad555f1f431645",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_gitattributes",
+      "abi": 14,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "gitattributes.sqlar",
+      "size": 100352,
+      "blake3": "8c910996f32f15d3b023c3108d4ea93a4af0e02c532d07bc3a325031fa80bd18"
+    },
+    "gleam": {
+      "extensions": [
+        "gleam"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/gleam-lang/tree-sitter-gleam",
+      "rev": "cefbd6863983b4df3214b7934bde5e9ca63d5b7f",
+      "path": ".",
+      "license": "Apache-2.0",
+      "symbol": "tree_sitter_gleam",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm",
+        "tags.scm"
+      ],
+      "archive": "gleam.sqlar",
+      "size": 419840,
+      "blake3": "cc8309e3e0021fdbcd2ff9941df833e349736c023474454313179e889c1ca777"
+    },
+    "glsl": {
+      "extensions": [
+        "glsl",
+        "vert",
+        "frag",
+        "geom",
+        "comp"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/theHamsta/tree-sitter-glsl",
+      "rev": "24a6c8ef698e4480fecf8340d771fbcb5de8fbb4",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_glsl",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "glsl.sqlar",
+      "size": 593920,
+      "blake3": "1b98f1aade454aa689a66f375c3e601bd0ca49152b03d93c67dc060a28fb2dbd"
+    },
+    "haskell": {
+      "extensions": [
+        "hs"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [
+        "hs"
+      ],
+      "repo": "https://github.com/tree-sitter/tree-sitter-haskell",
+      "rev": "0975ef72fc3c47b530309ca93937d7d143523628",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_haskell",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "haskell.sqlar",
+      "size": 1883136,
+      "blake3": "fe1e517f8d4b5c94f389900566523023c8f0d5450ba4ff9842448cfc264572cb"
+    },
     "html": {
       "extensions": [
         "html",
@@ -57,6 +689,48 @@
       "size": 99328,
       "blake3": "7aa097126a54d56e6fc98b5ea381e0d9bf0b623b37c8a790f1a731f2aebdd199"
     },
+    "http": {
+      "extensions": [
+        "http"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/rest-nvim/tree-sitter-http",
+      "rev": "db8b4398de90b6d0b6c780aba96aaa2cd8e9202c",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_http",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "http.sqlar",
+      "size": 224256,
+      "blake3": "ecb63f572dc9ce1b8b2bb9b5b7454f123130ce46d109a33644e3471cb71e7861"
+    },
+    "ini": {
+      "extensions": [
+        "ini",
+        "cfg"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/justinmk/tree-sitter-ini",
+      "rev": "e4018b5176132b4f3c5d6e61cea383f42288d0f5",
+      "path": ".",
+      "license": "Apache-2.0",
+      "symbol": "tree_sitter_ini",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "ini.sqlar",
+      "size": 66560,
+      "blake3": "7add49343365fb4645e1f910bc575db7d8455f18e92633fa9a636d913b9c8006"
+    },
     "java": {
       "extensions": [
         "java"
@@ -77,6 +751,93 @@
       "archive": "java.sqlar",
       "size": 370688,
       "blake3": "9e3bc5c812b600b036b4253e4101467ee5214bd4689a7b4384e798d5a560e0a2"
+    },
+    "json5": {
+      "extensions": [
+        "json5"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/Joakker/tree-sitter-json5",
+      "rev": "248b8564567087d7866be76569b182f6dd7e14e9",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_json5",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "json5.sqlar",
+      "size": 89088,
+      "blake3": "3c243cfdd27259f2dc0ed66fdf8da53dc452be02575e4bc1fa64d405bccd57e1"
+    },
+    "julia": {
+      "extensions": [
+        "jl"
+      ],
+      "filenames": [],
+      "shebangs": [
+        "julia"
+      ],
+      "aliases": [
+        "jl"
+      ],
+      "repo": "https://github.com/tree-sitter/tree-sitter-julia",
+      "rev": "e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_julia",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "julia.sqlar",
+      "size": 1537024,
+      "blake3": "44853c444e3b32cbaf8215462790f0435018ce0bd6c964a44f69b9f65f6b831c"
+    },
+    "kconfig": {
+      "extensions": [],
+      "filenames": [
+        "Kconfig"
+      ],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-kconfig",
+      "rev": "9ac99fe4c0c27a35dc6f757cef534c646e944881",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_kconfig",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "kconfig.sqlar",
+      "size": 141312,
+      "blake3": "41b33a2c9816ddac15305cee4a4eb504df0caab44a991d23e871985df707a693"
+    },
+    "kdl": {
+      "extensions": [
+        "kdl"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-kdl",
+      "rev": "e8ff98a113e175b84b92ec2096820517c1e10a66",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_kdl",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "kdl.sqlar",
+      "size": 155648,
+      "blake3": "1cb977698f1211976ab9933e6b0e2308536179cf1dace103e19ac0cd0787a7a4"
     },
     "kotlin": {
       "extensions": [
@@ -102,6 +863,205 @@
       "size": 2496512,
       "blake3": "a60474fc1f397695441fd8bd5900ff5291149fa22d2e84df1e0feb1fa462c027"
     },
+    "llvm": {
+      "extensions": [
+        "ll"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/benwilliamgraham/tree-sitter-llvm",
+      "rev": "2914786ae6774d4c4e25a230f4afe16aa68fe1c1",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_llvm",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "llvm.sqlar",
+      "size": 911360,
+      "blake3": "2a2d9a30079256e89fe6b2f5557588e4cc33f5d788d423f6fc65d7bc10520a4f"
+    },
+    "luau": {
+      "extensions": [
+        "luau"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-luau",
+      "rev": "a8914d6c1fc5131f8e1c13f769fa704c9f5eb02f",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_luau",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "luau.sqlar",
+      "size": 186368,
+      "blake3": "2100f2ac478bc5676118859ee37ccfb6d96da232c5ca67241689b7b3d740528e"
+    },
+    "make": {
+      "extensions": [
+        "mk",
+        "mak"
+      ],
+      "filenames": [
+        "Makefile",
+        "makefile",
+        "GNUmakefile"
+      ],
+      "shebangs": [],
+      "aliases": [
+        "makefile"
+      ],
+      "repo": "https://github.com/alemuller/tree-sitter-make",
+      "rev": "a4b9187417d6be349ee5fd4b6e77b4172c6827dd",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_make",
+      "abi": 13,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "make.sqlar",
+      "size": 264192,
+      "blake3": "9fb31302ab7e689d146634eb2cb6564722745383d2fd7ab21067b57a19fed2c5"
+    },
+    "meson": {
+      "extensions": [],
+      "filenames": [
+        "meson.build",
+        "meson_options.txt",
+        "meson.options"
+      ],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/Decodetalkers/tree-sitter-meson",
+      "rev": "aa8d472034956f94f51f2ef2cbfec4cc07efbfde",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_meson",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "meson.sqlar",
+      "size": 208896,
+      "blake3": "5cfb806cc88197a28c37c0f9c847e38f4f8235288129d1f4b6cfdda202855875"
+    },
+    "nginx": {
+      "extensions": [
+        "nginx"
+      ],
+      "filenames": [
+        "nginx.conf"
+      ],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/opa-oz/tree-sitter-nginx",
+      "rev": "7cdf006ed1addef698fc680ae31721950f85e5e9",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_nginx",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "nginx.sqlar",
+      "size": 166912,
+      "blake3": "ca72ec336f1e8e45ea19b0d94899a02b8f1deb4cdc0c888ad90bc08124e21277"
+    },
+    "ninja": {
+      "extensions": [
+        "ninja"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/alemuller/tree-sitter-ninja",
+      "rev": "0a95cfdc0745b6ae82f60d3a339b37f19b7b9267",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_ninja",
+      "abi": 13,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "ninja.sqlar",
+      "size": 98304,
+      "blake3": "06b1ceb8bc9b41b50abca9bb71f90bb0867cf4dfba579a5f13b490072108688e"
+    },
+    "nix": {
+      "extensions": [
+        "nix"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/nix-community/tree-sitter-nix",
+      "rev": "5a64e75fc1ee54f9e14e3a23918e057d43b2de2b",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_nix",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm",
+        "tags.scm"
+      ],
+      "archive": "nix.sqlar",
+      "size": 156672,
+      "blake3": "eb7f38fabdba96dfc20bd3b2ff614f9c97776645d2beefbfbffe03e780673606"
+    },
+    "objc": {
+      "extensions": [
+        "m"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [
+        "objective-c"
+      ],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-objc",
+      "rev": "181a81b8f23a2d593e7ab4259981f50122909fda",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_objc",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "objc.sqlar",
+      "size": 1818624,
+      "blake3": "c82ccdbbed4ccf888d0ecafb1af44d903c62bc4cdddf19439dd7869d3bc2dd6f"
+    },
+    "ocaml": {
+      "extensions": [
+        "ml"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter/tree-sitter-ocaml",
+      "rev": "a4ce49a6c17e88e7ca8350cfb666749d9a5c6630",
+      "path": "grammars/ocaml",
+      "license": "MIT",
+      "symbol": "tree_sitter_ocaml",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "ocaml.sqlar",
+      "size": 2051072,
+      "blake3": "b2622130e30ce17a61933a45e987c62017cb0883260da65c62c0a545443fee00"
+    },
     "odin": {
       "extensions": [
         "odin"
@@ -122,6 +1082,292 @@
       "archive": "odin.sqlar",
       "size": 1221632,
       "blake3": "2313ce2b5b0dc4e7792c74a82439de28cb0c365b51e5eee3b04036d215ebe1b5"
+    },
+    "pascal": {
+      "extensions": [
+        "pas",
+        "pp"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/Isopod/tree-sitter-pascal",
+      "rev": "042119eca2e18a60e56317fb06ee3ba5c32cb447",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_pascal",
+      "abi": 14,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "pascal.sqlar",
+      "size": 570368,
+      "blake3": "95ba729e076a74612439da85f7f23d163c503063cb99409f57e165fa58e3e863"
+    },
+    "pem": {
+      "extensions": [
+        "pem"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-pem",
+      "rev": "e525b177a229b1154fd81bc0691f943028d9e685",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_pem",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "pem.sqlar",
+      "size": 61440,
+      "blake3": "0bf04ff9f5373cabc580ba24a5e3859ab55a0600901163c5b479c7dccdd9bfe0"
+    },
+    "perl": {
+      "extensions": [
+        "pl",
+        "pm"
+      ],
+      "filenames": [],
+      "shebangs": [
+        "perl"
+      ],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter-perl/tree-sitter-perl",
+      "rev": "aa5600c8df1eb9ed111db72e20c741dd73ec336a",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_perl",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "perl.sqlar",
+      "size": 1855488,
+      "blake3": "086599710b5b274186b28b210cf02b23ee23ff5c9b778169950a426477b1f29f"
+    },
+    "php": {
+      "extensions": [
+        "php"
+      ],
+      "filenames": [],
+      "shebangs": [
+        "php"
+      ],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter/tree-sitter-php",
+      "rev": "3fda2fb9577166c6399834917f9844f30370beea",
+      "path": "php",
+      "license": "MIT",
+      "symbol": "tree_sitter_php",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm",
+        "tags.scm"
+      ],
+      "archive": "php.sqlar",
+      "size": 722944,
+      "blake3": "464d7da7c61a3111abf2a2f1813c0d80a091caad5df1b2c4d6788ad438b35615"
+    },
+    "powershell": {
+      "extensions": [
+        "ps1",
+        "psm1",
+        "psd1"
+      ],
+      "filenames": [],
+      "shebangs": [
+        "pwsh"
+      ],
+      "aliases": [
+        "pwsh"
+      ],
+      "repo": "https://github.com/airbus-cert/tree-sitter-powershell",
+      "rev": "e7bd348c49fdfd5c853a146a670965ba516a6239",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_powershell",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "powershell.sqlar",
+      "size": 678912,
+      "blake3": "a0d49115f70925c4b540a4ccd1e762a408df6d91fa3ed2e4aa2b5346248ce019"
+    },
+    "prisma": {
+      "extensions": [
+        "prisma"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/LumaKernel/tree-sitter-prisma",
+      "rev": "f1c30d82a5bf0b70ce33ef431f4acd7fd69968a3",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_prisma",
+      "abi": 13,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "prisma.sqlar",
+      "size": 82944,
+      "blake3": "12198aec1202b72f01fd3bd65c51372d352fb705abe5fcfffe8064e697fa5a93"
+    },
+    "properties": {
+      "extensions": [
+        "properties"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-properties",
+      "rev": "6310671b24d4e04b803577b1c675d765cbd5773b",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_properties",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "properties.sqlar",
+      "size": 75776,
+      "blake3": "abeadd96a36e375852ad9c92d8e2f1b28777d40f7505aedba72ed7c226994079"
+    },
+    "proto": {
+      "extensions": [
+        "proto"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [
+        "protobuf"
+      ],
+      "repo": "https://github.com/coder3101/tree-sitter-proto",
+      "rev": "6c878d18628ebbff3474479d2fdd6d8ba1954c3e",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_proto",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "proto.sqlar",
+      "size": 148480,
+      "blake3": "b2c692124940ab80f7ba2d372d15f8bfefc62ec324d160c25840610baeeab79e"
+    },
+    "purescript": {
+      "extensions": [
+        "purs"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/postsolar/tree-sitter-purescript",
+      "rev": "f541f95ffd6852fbbe88636317c613285bc105af",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_purescript",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "purescript.sqlar",
+      "size": 1253376,
+      "blake3": "1edbb8b54f212409f08efc631675738fcf7cbcb30f2be263ecf128d1eb7a40ac"
+    },
+    "r": {
+      "extensions": [
+        "r"
+      ],
+      "filenames": [],
+      "shebangs": [
+        "Rscript"
+      ],
+      "aliases": [],
+      "repo": "https://github.com/r-lib/tree-sitter-r",
+      "rev": "58a22794466c0fc15b0d3b40531db751593721e8",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_r",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "r.sqlar",
+      "size": 364544,
+      "blake3": "5531750e9406589f6ed778823ed26726acdcf8cc9eab3433e8f95d43ac653504"
+    },
+    "racket": {
+      "extensions": [
+        "rkt"
+      ],
+      "filenames": [],
+      "shebangs": [
+        "racket"
+      ],
+      "aliases": [],
+      "repo": "https://github.com/6cdh/tree-sitter-racket",
+      "rev": "b3cbbde75ce2de3079e33c7fe90bd41b1d45be48",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_racket",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "tags.scm"
+      ],
+      "archive": "racket.sqlar",
+      "size": 184320,
+      "blake3": "f676e09d36e2cb2656875b06695cf2f5a328cb8fd02499bc5facefc9839116e6"
+    },
+    "requirements": {
+      "extensions": [],
+      "filenames": [
+        "requirements.txt"
+      ],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-requirements",
+      "rev": "2c3bb291f497258ba417d052faa14a2dfee6d401",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_requirements",
+      "abi": 15,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "requirements.sqlar",
+      "size": 121856,
+      "blake3": "8522a3a2ee8b7bf8265467df9b8a431c63512abc9e1f36477e928e077f0c7690"
+    },
+    "ron": {
+      "extensions": [
+        "ron"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-ron",
+      "rev": "78938553b93075e638035f624973083451b29055",
+      "path": ".",
+      "license": "Apache-2.0",
+      "symbol": "tree_sitter_ron",
+      "abi": 14,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "ron.sqlar",
+      "size": 113664,
+      "blake3": "d138ee2370de2a5eadfae6df73178150d0d78be91d92b630ecfa6e16c5fb419d"
     },
     "ruby": {
       "extensions": [
@@ -175,6 +1421,117 @@
       "archive": "scala.sqlar",
       "size": 2748416,
       "blake3": "c4e5642a1bf112465d68be9cc197fa7697cb5b18acc8990bac4d0d63951607ca"
+    },
+    "scss": {
+      "extensions": [
+        "scss"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-scss",
+      "rev": "2ef6d42e3ad7a8208900f9346f4529806ae0f9f9",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_scss",
+      "abi": 14,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "scss.sqlar",
+      "size": 228352,
+      "blake3": "3ebd883718e0dcce99adb89617001d484a549b18713405dd41028553396a2829"
+    },
+    "ssh_config": {
+      "extensions": [],
+      "filenames": [
+        "ssh_config",
+        "sshd_config"
+      ],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/ObserverOfTime/tree-sitter-ssh-config",
+      "rev": "0c35b243392268f48fd096607da192d76c843398",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_ssh_config",
+      "abi": 15,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "ssh_config.sqlar",
+      "size": 391168,
+      "blake3": "38465e3406c3874c6e757649cea7cb17fc5a041dd49d34886df9eb9eb46863a3"
+    },
+    "starlark": {
+      "extensions": [
+        "star",
+        "bzl"
+      ],
+      "filenames": [
+        "BUILD",
+        "BUILD.bazel",
+        "WORKSPACE",
+        "WORKSPACE.bazel"
+      ],
+      "shebangs": [],
+      "aliases": [
+        "bazel"
+      ],
+      "repo": "https://github.com/tree-sitter-grammars/tree-sitter-starlark",
+      "rev": "a453dbf3ba433db0e5ec621a38a7e59d72e4dc69",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_starlark",
+      "abi": 14,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "starlark.sqlar",
+      "size": 372736,
+      "blake3": "648af5f27b28c46fd15e85c3567f74f5944b34c7d8413966119d4be6146ca073"
+    },
+    "svelte": {
+      "extensions": [
+        "svelte"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/Himujjal/tree-sitter-svelte",
+      "rev": "60ea1d673a1a3eeeb597e098d9ada9ed0c79ef4b",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_svelte",
+      "abi": 14,
+      "queries": [
+        "highlights.scm",
+        "injections.scm"
+      ],
+      "archive": "svelte.sqlar",
+      "size": 179200,
+      "blake3": "c924be572a91ae05fde980db123a50816284a2048c185673c0e7a4ea913736c9"
+    },
+    "wgsl": {
+      "extensions": [
+        "wgsl"
+      ],
+      "filenames": [],
+      "shebangs": [],
+      "aliases": [],
+      "repo": "https://github.com/szebniok/tree-sitter-wgsl",
+      "rev": "40259f3c77ea856841a4e0c4c807705f3e4a2b65",
+      "path": ".",
+      "license": "MIT",
+      "symbol": "tree_sitter_wgsl",
+      "abi": 13,
+      "queries": [
+        "highlights.scm"
+      ],
+      "archive": "wgsl.sqlar",
+      "size": 153600,
+      "blake3": "a8141aa8ba8f8129d347f24622bddc94734452d276430b8a6565e24d4a120a9d"
     },
     "zig": {
       "extensions": [

@@ -20,10 +20,13 @@ language of your own is added from Lua with `kawoosh.language`; see
 
 ### More languages
 
-Kawoosh knows more languages than it carries grammars for: Zig, HTML,
-Java, Kotlin, Scala, Ruby, Odin and Dockerfiles among them. A file of
-one is recognised, and its language server starts, but it has no
-colours until its grammar is installed:
+Kawoosh knows more languages than it carries grammars for — some
+seventy: C#, PHP, Java, Kotlin, Scala, Dart, Zig, Haskell, OCaml,
+F#, Elixir, Erlang, Clojure, Ruby, Perl, R, Julia, Nix, HTML, Svelte,
+Astro, SCSS, Makefiles, CMake, Dockerfiles, protobuf, GLSL and WGSL
+among them; `:grammars` lists them all. A
+file of one is recognised, and its language server starts, but it has
+no colours until its grammar is installed:
 
 `:grammar install NAME` fetches the grammar, built for this machine,
 and paints the language's open buffers; the corner shows how far it

@@ -33,9 +33,9 @@ end
 local SHARE = 0.4
 local PAD = 14
 
--- The pane's state: the cursor's grammar by name, the rows the last
--- frame drew in order (the walk reads them), and `reveal`, set when the
--- cursor's row is to be scrolled into view.
+-- The pane's state: the cursor's grammar by name and its place (`at`),
+-- the rows the last frame drew in order (the walk reads them), and
+-- `reveal`, set when the cursor's row is to be scrolled into view.
 local S = nil
 
 -- The list in the pane's parts: installed, to install, linked in.
@@ -66,9 +66,15 @@ end
 
 -- A language's files as a word: its extensions dotted, then its names.
 local function files(g)
-  local out = {}
-  for _, e in ipairs(g.extensions) do out[#out + 1] = "." .. e end
-  for _, f in ipairs(g.filenames) do out[#out + 1] = f end
+  local out, seen = {}, {}
+  for _, e in ipairs(g.extensions) do
+    out[#out + 1] = "." .. e
+    seen["." .. e] = true
+  end
+  -- `.env` the extension and `.env` the file are one word here.
+  for _, f in ipairs(g.filenames) do
+    if not seen[f] then out[#out + 1] = f end
+  end
   return table.concat(out, " ")
 end
 
@@ -143,9 +149,15 @@ kawoosh.view(VIEW, function(ctx)
   S.rows = {}
   for _, g in ipairs(inn) do S.rows[#S.rows + 1] = g.name end
   for _, g in ipairs(out) do S.rows[#S.rows + 1] = g.name end
-  local there = false
-  for _, n in ipairs(S.rows) do there = there or n == S.cursor end
-  if not there then S.cursor = S.rows[1] end
+  local at = nil
+  for i, n in ipairs(S.rows) do
+    if n == S.cursor then at = i end
+  end
+  if not at then S.cursor, at = S.rows[1], 1 end
+  -- The cursor's grammar moved — installed, it is among the first;
+  -- removed, back among the rest: the pane goes with it.
+  if S.at and S.at ~= at then S.reveal = true end
+  S.at = at
   if S.reveal and S.cursor then
     if S.cursor == S.rows[1] then
       ctx.env.set_scroll("body", 0, 0)

@@ -1,9 +1,9 @@
 # Grammars: built ahead, installed on demand
 
-Status: decided 2026-10-01 (roadmap step 77); rounds 1 to 4 — the
+Status: decided 2026-10-01 (roadmap step 77); rounds 1 to 5 — the
 repository, `:grammar install`, the first file with `update` and
-`remove`, and the pane — built the same day ("Built" at the end says
-where they departed from the text), rounds 5 and 6 not.
+`remove`, the pane, and the wider list — built the same day ("Built"
+at the end says where they departed from the text), round 6 not.
 Asked: "How
 can we implement Tree-Sitter grammar auto installation? Like neovim
 does, or at least `nvim-treesitter/nvim-treesitter` plugins do. We
@@ -573,3 +573,77 @@ taking it out, a failed install's row saying so, its texts inside their
 boxes at 760 px); the overflow sweep with `grammars` in it; and in a
 window, with zig in: the three parts, zig's revision, seven rows with
 their sizes and buttons.
+
+**Round 5, 2026-10-01**: the list, wide — sixty-nine grammars, release
+`r3` (kawoosh-grammars 3583533) on both hosts, and the copy in the
+build with it.
+
+- **Seeded from tree-sitter-language-pack's definitions**: each one's
+  repository and pinned revision; the files, aliases and interpreters
+  are the repository's own. Of ninety candidates surveyed, sixty-five
+  had what the builder needs — a committed `src/parser.c`, a scanner
+  in C, a `highlights.scm`, a licence file — and sixty-one went in:
+  astro, awk, bibtex, bicep, c, clojure, cmake, csharp, csv, d, dart,
+  devicetree, dot, dotenv, elisp, elixir, elm, erb, erlang, fish,
+  fortran, fsharp, git_config, git_rebase, gitattributes, gleam, glsl,
+  haskell, http, ini, json5, julia, kconfig, kdl, llvm, luau, make,
+  meson, nginx, ninja, nix, objc, ocaml, pascal, pem, perl, php,
+  powershell, prisma, properties, proto, purescript, r, racket,
+  requirements, ron, scss, ssh_config, starlark, svelte, wgsl. Each
+  has a sample written for it, not copied from its repository.
+- **`c` is in the repository** for glsl's and objc's queries, which
+  are additions over c's (`inherits`); kawoosh links c and passes the
+  name over, as the note has it.
+- **Waiting**, each for a reason the builder gives: no highlights in
+  the grammar's repository (hcl, terraform, xml, vue, vim, typst, just,
+  gitignore, tcl, rst, jq, asm, groovy, fennel, gdscript, matlab,
+  crystal, editorconfig), no committed parser (swift, latex), a C++
+  scanner (nim), a highlights query that does not compile against its
+  own grammar (solidity, vhdl, ocaml's interfaces). A highlights query
+  written in the repository's `queries/` is what brings the first lot
+  in.
+- **The builder grew two things for it**: `kawoosh-grammars check
+  [NAME…]`, the checks with this machine's library alone and nothing
+  written, sixty-nine in under a minute; and `[queries] skip`, a query
+  file of the checkout left out — an `injections.scm` in nvim's old
+  spelling, a `tags.scm` with no `@name`.
+- **A grammar's limit is said where it is pinned**: wgsl's grammar
+  reads no module-scope `const`, scss's no map and no `%placeholder`;
+  each parses the rest and is painted around the ERROR. A comment at
+  the top of its `grammar.toml`.
+- **drydock9's release is a draft until its last file is on**
+  (kawoosh-grammars 3c68ad5). At `r3` the workflow published the
+  release and then attached seventy files, and for those minutes
+  `releases/download/latest/manifest.json` was a release with none: an
+  install from that base in that window fails over to the next. GitHub's
+  `gh release create` uploads before it publishes. `r4`, the same
+  grammars again, was cut to prove it: polled every five seconds while
+  it built and published, drydock9's latest manifest was whole each
+  time.
+- **`@include` and `@exception` are keywords** to
+  `Token::from_capture`: nvim's older names, which fourteen of the
+  sixty-nine grammars' own queries say, were painted plain.
+- **The pane follows its cursor** when the list reshapes under it — a
+  grammar installed is among the first, removed back among the rest —
+  and a file named as its extension is (`.env`) is said once.
+- **The update test raced**: it read the buffer's paint after
+  `wait_for_syntax`, which sees nothing pending when the text has not
+  moved; under load the old paint was still there. It waits for the
+  new paint.
+
+Verified: every one of the sixty-nine built for six targets (1 min 58 s
+here) and, extracted, loaded through `Library::find` and `load` with
+its symbol, painting its sample; `r3`'s manifests on the two hosts the
+same bytes; `nu scripts/verify.nu`, 864 of 864, with the wider list
+built in, on main as it had become (below); the live test against both
+hosts; the pane in a window with sixty-seven rows to install.
+
+- **main moved under the round**: twenty-four commits, among them the
+  rule that a child process is started through `kawoosh_systems::spawn`
+  (its `clippy.toml` reaches a worktree from the checkout above it, so
+  the sweep stopped at clippy while the branch had no such module). The
+  branch is on that main now — merged first, then rebased — and the
+  fetch's `curl` and the tests' `cc` and `curl` start through the rule
+  from the commits that brought them.
+
+Not verified: Windows.
