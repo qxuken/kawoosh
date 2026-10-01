@@ -112,7 +112,7 @@ a manifest and the archives it names from the same base**:
 
 ```lua
 grammars = {
-  url = {   -- tried in order; a base is a folder of `manifest.json` and `NAME.sqlar`
+  urls = {  -- one list, the first base's grammar wins; a base is a folder of `manifest.json` and `NAME.sqlar`
     "https://github.com/qxuken/kawoosh-grammars/releases/latest/download",
     "https://drydock9.qxuken.dev/qxuken/kawoosh-grammars/releases/download/latest",
   },
@@ -294,7 +294,7 @@ say yes is cheap, and `"auto"` is there.
 
 ### 8. Who may say where grammars come from
 
-A grammar is native code in the editor's process. `grammars.url`, and
+A grammar is native code in the editor's process. `grammars.urls`, and
 any source of a grammar, is the user's layer's alone: a project's
 `.kawoosh/settings.lua` that names one is refused with a line, as code
 from a repository is until trusted ([formatters.md](formatters.md)
@@ -873,3 +873,57 @@ grammar pan", "grammar list does not implement `gg`/`G` moves."
 Verified: `the_head_is_the_counts_and_a_plain_filter_line_with_no_title_of_its_own`
 and `gg_and_g_go_to_the_first_and_last_row_and_ctrl_d_ctrl_u_page`
 (`kawoosh/tests/grammars.rs`).
+
+**`grammars.urls`, one list of the bases, 2026-10-02.** Asked: "let
+`grammars.url` setting be a list of `urls`, deduped by first saw
+wins". The setting was a list already, tried in order — but only for
+an install: the list `:grammar update` fetched was the first base's
+that answered, so a grammar a later base alone released was never
+listed, and every install kept its own base's manifest over the last,
+so the list was whichever base answered last.
+
+- **The name is `grammars.urls`.** `grammars.url` is not read any more:
+  a settings file that says it is told "`grammars.url` is now
+  `grammars.urls`", as `compile.command` was when it moved — settings
+  have that and no aliases. The default is as it was, GitHub then
+  drydock9 (Decision 2's order).
+- **The bases are one list, the first that lists a grammar its
+  owner.** `:grammar update` fetches every base's manifest at once
+  (`grammars::refresh`, a host that is down costing its timeout once)
+  and keeps them as one, each grammar the first base's that lists it
+  (`Manifest::merge`), each row saying its `base`. A URL said twice is
+  one base, its first place; a trailing `/` is no other URL.
+- **A base that does not answer is as it was**: its rows in the list
+  kept stay listed under it, and it is said — a warning, "a base did
+  not answer, its grammars listed as they were: …" — so a host that is
+  down hides nothing. None answering is the error it was.
+- **An install falls through**: from the first base that has the
+  grammar, the next when that one does not answer, does not list it,
+  has no library for the machine or serves an archive that is not its
+  manifest's — each archive checked against its own base's manifest
+  still (Decision 2). The manifests fetched on the way are kept into
+  the list by the same rule, not over it.
+- **A grammar says where it came from**: `base` in `grammar.json` and
+  in `kawoosh.grammars.list()` — the base it was fetched from when in,
+  else the one that lists it; empty for one built here. The same
+  archive from another host is the install in, not fetched again.
+  Installed from the second base while the first was down, the first's
+  is what the list has, so the next `:grammar update` with the first
+  back takes it from there — first wins, after the fact too.
+
+Calls taken: the old name replaced rather than read as well — it was a
+day old, and two names for one list would need a rule for both set;
+the bases fetched at once for the list but one after another for an
+install, which stops at the first that has the grammar; the pane does
+not show the base yet (`base` is in the door for it).
+
+Verified: `the_bases_list_together_and_the_first_that_has_a_grammar_wins`
+(`systems/src/grammars.rs`: two `file://` bases, the merge, a base
+down and back, the fall-through, the same archive from a mirror, a
+base dropped from the setting) and
+`the_bases_are_one_list_and_a_grammar_comes_from_the_first_that_has_it`
+(`kawoosh/tests/grammars.rs`: a later base's own grammar listed and
+detected, the install from the second base with the first down, said
+once though its URL is given twice, and taken from the first again
+when it is back); the moved key in
+`an_undeclared_key_is_named_once_and_the_types_know_the_rest`.

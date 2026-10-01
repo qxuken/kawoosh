@@ -90,13 +90,33 @@ pub struct Row {
     /// Built on this machine ([`build`]) rather than fetched built.
     #[serde(default)]
     pub built: bool,
+    /// The base that lists it — in an install's `grammar.json`, the one
+    /// it was fetched from. Empty in the build's own copy of the list
+    /// and for a grammar built here.
+    #[serde(default)]
+    pub base: String,
+}
+
+impl Row {
+    /// The same row but for the base saying it: the same archive from
+    /// another host is the install already in.
+    fn same_but_base(&self, other: &Row) -> bool {
+        let base = String::new();
+        Row {
+            base: base.clone(),
+            ..self.clone()
+        } == Row {
+            base,
+            ..other.clone()
+        }
+    }
 }
 
 fn dot() -> String {
     ".".into()
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     pub format: u32,
     #[serde(default)]
@@ -122,6 +142,59 @@ impl Manifest {
         }
         Ok(m)
     }
+
+    /// A base's manifest, as `parse` reads it and each row saying the
+    /// base.
+    fn of_base(base: &str, text: &str) -> Result<Manifest, String> {
+        let mut m = Manifest::parse(text).map_err(|e| format!("{base}: {e}"))?;
+        for row in m.grammars.values_mut() {
+            row.base = base.to_string();
+        }
+        Ok(m)
+    }
+
+    /// The list the bases give together, in their order: each grammar
+    /// the first's that lists it. A base that did not answer this time
+    /// (`None`) is as it was — the rows `stored` has from it — so a host
+    /// that is down hides nothing it listed before.
+    pub fn merge(answers: &[(String, Option<Manifest>)], stored: Option<&Manifest>) -> Manifest {
+        let mut out = Manifest {
+            format: FORMAT,
+            ..Manifest::default()
+        };
+        for (base, answer) in answers {
+            let (targets, rows): (&[String], Vec<&Row>) = match (answer, stored) {
+                (Some(m), _) => (&m.targets, m.grammars.values().collect()),
+                (None, Some(s)) => (
+                    &s.targets,
+                    s.grammars.values().filter(|r| r.base == *base).collect(),
+                ),
+                (None, None) => continue,
+            };
+            if rows.is_empty() {
+                continue;
+            }
+            for t in targets {
+                if !out.targets.contains(t) {
+                    out.targets.push(t.clone());
+                }
+            }
+            for row in rows {
+                out.grammars
+                    .entry(row.name.clone())
+                    .or_insert_with(|| row.clone());
+            }
+        }
+        out
+    }
+}
+
+/// What a fetch of the list brought (`refresh`): the bases' rows
+/// together, and each base that did not answer, with why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Listing {
+    pub manifest: Manifest,
+    pub unanswered: Vec<String>,
 }
 
 /// This machine as the archives name it: `aarch64-macos`.
@@ -298,38 +371,73 @@ pub fn remove(root: &Path, name: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-/// The manifest of the first of `bases` that answers, fetched and kept
-/// under `root`: what there is to install, and at which archives.
-pub fn refresh(bases: &[String], root: &Path) -> Result<Manifest, String> {
+/// Keeps `answers` under `root` as the list, over what was kept: each
+/// grammar from the first base that lists it ([`Manifest::merge`]).
+/// Nothing is written when no base answered.
+fn keep(root: &Path, answers: &[(String, Option<Manifest>)]) -> Result<Manifest, String> {
+    let merged = Manifest::merge(answers, stored_manifest(root).as_ref());
+    if answers.iter().all(|(_, a)| a.is_none()) {
+        return Ok(merged);
+    }
+    let json = serde_json::to_string_pretty(&merged).map_err(|e| e.to_string())?;
+    write_whole(&root.join("manifest.json"), json.as_bytes())?;
+    Ok(merged)
+}
+
+/// Every base's manifest, fetched at once and kept under `root` as one
+/// list: what there is to install, each grammar from the first base
+/// that lists it. A base that does not answer is said, and its grammars
+/// are listed as they were; none answering is the error.
+pub fn refresh(bases: &[String], root: &Path) -> Result<Listing, String> {
     if bases.is_empty() {
-        return Err("grammars.url names no base to fetch from".into());
+        return Err("grammars.urls names no base to fetch from".into());
     }
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let scratch = root.join(format!(".fetch-{}-list{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).map_err(|e| format!("{}: {e}", scratch.display()))?;
-    let mut failures = Vec::new();
-    let mut found = None;
-    for base in bases {
-        let file = scratch.join("manifest.json");
-        let got = fetch(&join(base, "manifest.json"), &file, 0, &|_| {})
-            .and_then(|()| std::fs::read_to_string(&file).map_err(|e| e.to_string()))
-            .and_then(|text| {
-                let manifest = Manifest::parse(&text).map_err(|e| format!("{base}: {e}"))?;
-                write_whole(&root.join("manifest.json"), text.as_bytes())?;
-                Ok(manifest)
-            });
-        match got {
-            Ok(manifest) => {
-                found = Some(manifest);
-                break;
-            }
-            Err(e) => failures.push(e),
-        }
-    }
+    // At once: a host that is down costs its timeout, not its timeout
+    // before each of the others.
+    let got: Vec<Result<Manifest, String>> = std::thread::scope(|s| {
+        let fetches: Vec<_> = bases
+            .iter()
+            .enumerate()
+            .map(|(i, base)| {
+                let file = scratch.join(format!("manifest-{i}.json"));
+                s.spawn(move || {
+                    fetch(&join(base, "manifest.json"), &file, 0, &|_| {})?;
+                    let text = std::fs::read_to_string(&file)
+                        .map_err(|e| format!("{}: {e}", file.display()))?;
+                    Manifest::of_base(base, &text)
+                })
+            })
+            .collect();
+        fetches
+            .into_iter()
+            .map(|f| {
+                f.join()
+                    .unwrap_or_else(|_| Err("the fetch panicked".into()))
+            })
+            .collect()
+    });
     let _ = std::fs::remove_dir_all(&scratch);
-    found.ok_or_else(|| failures.join("; "))
+    let mut unanswered = Vec::new();
+    let answers: Vec<(String, Option<Manifest>)> = bases
+        .iter()
+        .zip(got)
+        .map(|(base, got)| {
+            let answer = got.map_err(|e| unanswered.push(e)).ok();
+            (base.clone(), answer)
+        })
+        .collect();
+    if answers.iter().all(|(_, a)| a.is_none()) {
+        return Err(unanswered.join("; "));
+    }
+    Ok(Listing {
+        manifest: keep(root, &answers)?,
+        unanswered,
+    })
 }
 
 /// Fetches `url` to `to` with `curl`, saying how far it is against
@@ -461,17 +569,18 @@ fn join(base: &str, file: &str) -> String {
     format!("{}/{file}", base.trim_end_matches('/'))
 }
 
-/// One base's answer: its manifest fetched and kept, the archive it
-/// names for `name` fetched and checked against it, and installed. A
-/// hash that is not the manifest's is tried once more with the
-/// manifest fetched again — a release landing between the two fetches
-/// — and then is the error.
+/// One base's answer: its manifest fetched — into `answer`, to be kept
+/// with the others' — the archive it names for `name` fetched and
+/// checked against it, and installed. A hash that is not the
+/// manifest's is tried once more with the manifest fetched again — a
+/// release landing between the two fetches — and then is the error.
 fn from_base(
     name: &str,
     base: &str,
     root: &Path,
     scratch: &Path,
     say: &dyn Fn(Step),
+    answer: &mut Option<Manifest>,
 ) -> Result<Installed, String> {
     let mut mismatch = String::new();
     for _ in 0..2 {
@@ -479,8 +588,7 @@ fn from_base(
         fetch(&join(base, "manifest.json"), &manifest_file, 0, say)?;
         let text = std::fs::read_to_string(&manifest_file)
             .map_err(|e| format!("{}: {e}", manifest_file.display()))?;
-        let manifest = Manifest::parse(&text).map_err(|e| format!("{base}: {e}"))?;
-        write_whole(&root.join("manifest.json"), text.as_bytes())?;
+        let manifest = answer.insert(Manifest::of_base(base, &text)?);
         let row = manifest
             .grammars
             .get(name)
@@ -493,7 +601,9 @@ fn from_base(
             return Err(format!("{base}: its manifest's row for {name} is not one"));
         }
         let dir = dir_of(root, name, &row.blake3);
-        let whole = installed_one(root, name).filter(|i| i.dir == dir && i.row == *row);
+        // The same archive, from whichever host: the install in stands,
+        // saying the host it came from.
+        let whole = installed_one(root, name).filter(|i| i.dir == dir && i.row.same_but_base(row));
         if let Some(installed) = whole {
             return Ok(installed);
         }
@@ -539,8 +649,11 @@ fn from_base(
 }
 
 /// Installs the grammar `name` under `root` from the first of `bases`
-/// that has it, saying each step. A base that fails is said with the
-/// next one's failure, if every one does.
+/// that has it, saying each step: one that does not answer, does not
+/// list it, or whose archive fails is passed for the next. A base that
+/// fails is said with the next one's failure, if every one does. The
+/// manifests fetched on the way are kept as the list, over what it was
+/// ([`keep`]).
 pub fn install(
     name: &str,
     bases: &[String],
@@ -551,15 +664,17 @@ pub fn install(
         return Err(format!("`{name}` is no grammar's name"));
     }
     if bases.is_empty() {
-        return Err("grammars.url names no base to fetch from".into());
+        return Err("grammars.urls names no base to fetch from".into());
     }
     let scratch = root.join(format!(".fetch-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).map_err(|e| format!("{}: {e}", scratch.display()))?;
     let mut failures = Vec::new();
     let mut done = None;
-    for base in bases {
-        match from_base(name, base, root, &scratch, say) {
+    let mut answers: Vec<(String, Option<Manifest>)> =
+        bases.iter().map(|b| (b.clone(), None)).collect();
+    for (base, answer) in &mut answers {
+        match from_base(name, base, root, &scratch, say, answer) {
             Ok(installed) => {
                 done = Some(installed);
                 break;
@@ -568,7 +683,17 @@ pub fn install(
         }
     }
     let _ = std::fs::remove_dir_all(&scratch);
-    done.ok_or_else(|| failures.join("; "))
+    match (done, keep(root, &answers)) {
+        (Some(installed), Ok(_)) => Ok(installed),
+        (Some(installed), Err(e)) => {
+            log::warn!("grammars: the list was not kept: {e}");
+            Ok(installed)
+        }
+        (None, kept) => {
+            failures.extend(kept.err());
+            Err(failures.join("; "))
+        }
+    }
 }
 
 /// The command that compiles C here: `$CC` — a command line — else
@@ -756,6 +881,7 @@ fn build_in(
     row.rev = rev;
     row.built = true;
     (row.archive, row.size, row.blake3) = (String::new(), 0, String::new());
+    row.base = String::new();
     if let Some(have) = installed_one(root, name).filter(|i| i.dir == dir && i.row == row) {
         return Ok(have);
     }
@@ -1003,13 +1129,15 @@ mod tests {
         let at = base(&remote, b"lib", &[target()]);
 
         // The list alone: kept, and nothing installed by it.
-        let listed = refresh(&[url(&t.join("nowhere")), at.clone()], &root).unwrap();
+        let listed = refresh(&[url(&t.join("nowhere")), at.clone()], &root)
+            .unwrap()
+            .manifest;
         assert_eq!(listed.grammars["zig"].symbol, "tree_sitter_zig");
         assert_eq!(stored_manifest(&root), Some(listed));
         assert!(installed(&root).is_empty());
         let err = refresh(&[url(&t.join("nowhere"))], &root).unwrap_err();
         assert!(err.contains("nowhere/manifest.json"), "{err}");
-        assert!(refresh(&[], &root).unwrap_err().contains("grammars.url"));
+        assert!(refresh(&[], &root).unwrap_err().contains("grammars.urls"));
 
         let got = install("zig", std::slice::from_ref(&at), &root, &|_| {}).unwrap();
         assert_eq!(remove(&root, "zig"), Ok(true));
@@ -1025,6 +1153,102 @@ mod tests {
         assert!(installed(&root).is_empty() && got.dir.is_dir());
         prune(&root);
         assert!(!root.join("zig").exists());
+        std::fs::remove_dir_all(t).unwrap();
+    }
+
+    /// `base`'s manifest with a grammar `name` beside its `zig`, whose
+    /// archive is not there to fetch.
+    fn also_list(dir: &Path, name: &str) {
+        let path = dir.join("manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let mut row = m["grammars"]["zig"].clone();
+        row["archive"] = format!("{name}.sqlar").into();
+        m["grammars"][name] = row;
+        std::fs::write(&path, m.to_string()).unwrap();
+    }
+
+    /// Several bases are one list: each grammar the first's that lists
+    /// it, a base that does not answer as it was, and an install taken
+    /// from the first base that has the grammar — the next when that
+    /// one fails — saying which.
+    #[test]
+    fn the_bases_list_together_and_the_first_that_has_a_grammar_wins() {
+        if !has_curl() {
+            return;
+        }
+        let t = temp("bases");
+        let (a, b, root) = (t.join("a"), t.join("b"), t.join("grammars"));
+        for dir in [&a, &b, &root] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let at_a = base(&a, b"from a", &[target()]);
+        let at_b = base(&b, b"from b", &[target()]);
+        also_list(&b, "odin");
+
+        // zig is both's and a's; odin b's alone.
+        let listed = refresh(&[at_a.clone(), at_b.clone()], &root).unwrap();
+        assert_eq!(listed.unanswered, Vec::<String>::new());
+        let m = &listed.manifest;
+        assert_eq!(m.grammars["zig"].base, at_a);
+        assert_eq!(m.grammars["odin"].base, at_b);
+        assert_eq!(stored_manifest(&root).as_ref(), Some(m), "kept as one");
+
+        // a down: its rows as they were, b's still b's, and a said.
+        let gone = t.join("a-gone");
+        std::fs::rename(&a, &gone).unwrap();
+        let listed = refresh(&[at_a.clone(), at_b.clone()], &root).unwrap();
+        assert!(
+            listed.unanswered.len() == 1 && listed.unanswered[0].contains("a/manifest.json"),
+            "{:?}",
+            listed.unanswered
+        );
+        assert_eq!(listed.manifest.grammars["zig"].base, at_a);
+        assert_eq!(listed.manifest.grammars["odin"].base, at_b);
+
+        // The install falls through to b, and says so.
+        let got = install("zig", &[at_a.clone(), at_b.clone()], &root, &|_| {}).unwrap();
+        let ext = std::env::consts::DLL_EXTENSION;
+        assert_eq!(
+            std::fs::read(got.dir.join(format!("zig.{ext}"))).unwrap(),
+            b"from b"
+        );
+        assert_eq!(got.row.base, at_b);
+        assert_eq!(installed_one(&root, "zig").unwrap().row.base, at_b);
+        // The list kept: a's rows as they were, b's as fetched.
+        let kept = stored_manifest(&root).unwrap();
+        assert_eq!(kept.grammars["zig"].base, at_a);
+        assert_eq!(kept.grammars["odin"].base, at_b);
+
+        // a back: zig is a's again; odin's archive is nowhere, said.
+        std::fs::rename(&gone, &a).unwrap();
+        let got = install("zig", &[at_a.clone(), at_b.clone()], &root, &|_| {}).unwrap();
+        assert_eq!(got.row.base, at_a);
+        let err = install("odin", &[at_a.clone(), at_b.clone()], &root, &|_| {}).unwrap_err();
+        assert!(
+            err.contains("has no grammar odin") && err.contains("b/odin.sqlar"),
+            "{err}"
+        );
+
+        // The same archive from either host is the install in.
+        let mirror = t.join("mirror");
+        std::fs::create_dir_all(&mirror).unwrap();
+        for file in ["manifest.json", "zig.sqlar"] {
+            std::fs::copy(a.join(file), mirror.join(file)).unwrap();
+        }
+        let at_copy = url(&mirror);
+        let same = install("zig", std::slice::from_ref(&at_copy), &root, &|_| {}).unwrap();
+        assert_eq!(same, got, "nothing fetched or written over");
+
+        // A base no longer said lists nothing.
+        let listed = refresh(std::slice::from_ref(&at_b), &root).unwrap();
+        assert!(listed.manifest.grammars.values().all(|r| r.base == at_b));
+        assert!(refresh(&[url(&t.join("nowhere"))], &root).is_err());
+        assert_eq!(
+            stored_manifest(&root),
+            Some(listed.manifest),
+            "kept as it was"
+        );
         std::fs::remove_dir_all(t).unwrap();
     }
 
@@ -1117,6 +1341,7 @@ mod tests {
             size: 7,
             blake3: "of the release".into(),
             built: false,
+            base: "https://example.com/releases".into(),
         };
         let steps = Mutex::new(Vec::new());
         let say = |s: Step| {
@@ -1133,6 +1358,7 @@ mod tests {
             root.join("jsonb").join(format!("src-{}", &rev[..12]))
         );
         assert!(got.row.built && got.row.rev == rev && got.row.blake3.is_empty());
+        assert_eq!(got.row.base, "", "built here, from no host");
         let ext = std::env::consts::DLL_EXTENSION;
         assert!(
             std::fs::metadata(got.dir.join(format!("jsonb.{ext}")))
@@ -1265,7 +1491,7 @@ mod tests {
         let err = install("../zig", std::slice::from_ref(&at), &root, &say).unwrap_err();
         assert!(err.contains("no grammar's name"), "{err}");
         let err = install("zig", &[], &root, &say).unwrap_err();
-        assert!(err.contains("grammars.url"), "{err}");
+        assert!(err.contains("grammars.urls"), "{err}");
         let err = install("zig", &[url(&t.join("nowhere"))], &root, &say).unwrap_err();
         assert!(err.contains("nowhere/manifest.json"), "{err}");
 

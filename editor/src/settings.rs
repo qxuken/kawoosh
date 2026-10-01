@@ -693,8 +693,8 @@ const DOCS: &[(&str, &str)] = &[
         "what the first file of a language with a grammar to install does: `ask` says the command, `auto` installs it, `never` nothing; a project may only say `never`",
     ),
     (
-        "grammars.url",
-        "where grammars are fetched from, tried in order: each a folder of `manifest.json` and an archive a grammar; a project's is passed over",
+        "grammars.urls",
+        "where grammars are fetched from, each a folder of `manifest.json` and an archive a grammar: a grammar several list is the first's, and fetched from the next that has it when that one fails; a URL said twice counts once; a project's is passed over",
     ),
     (
         "theme.appearance",
@@ -1110,13 +1110,14 @@ impl Settings {
         // Where `:grammar install` fetches from (docs/design/grammars.md
         // Decision 2): the releases of `kawoosh-grammars` on its two
         // hosts, each a folder of `manifest.json` and one archive a
-        // grammar, tried in order. Read from the user's layers alone.
+        // grammar; a grammar both list is the first's. Read from the
+        // user's layers alone.
         // What the first file of such a language on show does (Decision
         // 7): `ask`, a corner line naming `:grammar install`, once a
         // language a session; `auto`; `never`.
         defaults.set("grammars.install", Setting::Str("ask".into()));
         defaults.set(
-            "grammars.url",
+            "grammars.urls",
             Setting::List(
                 [
                     "https://github.com/qxuken/kawoosh-grammars/releases/latest/download",
@@ -1734,7 +1735,7 @@ mod tests {
                 "format_on_save",
                 "formatter",
                 "grammars.install",
-                "grammars.url",
+                "grammars.urls",
                 "insert_final_newline",
                 "keys.option_as_alt",
                 "language.css.tabstop",
