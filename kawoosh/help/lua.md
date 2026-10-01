@@ -193,7 +193,7 @@ That is the default. kawoosh's modules are `mode`, `recording` (`REC @a`), `path
 ## Talking to the user
 
 - `kawoosh.echo(text)` puts a line on the message line.
-- `kawoosh.notify(text, opts)` shows a notification. `opts` is a level (`"debug"`, `"info"`, `"warn"`, `"error"`) or a table with `level`, `source`, `timeout` and `actions`, a list of `{ label = "Retry", run = fn }`. Every notification is kept in `:messages`.
+- `kawoosh.notify(text, opts)` shows a notification. `opts` is a level (`"debug"`, `"info"`, `"warn"`, `"error"`) or a table with `level`, `source`, `show` (`"toast"`, `"corner"`, `"log"`), `timeout` (in milliseconds) and `actions`, a list of `{ label = "Retry", run = fn }`. A toast with actions stays until one is taken; given a `timeout` too, it is an offer that goes when its time is up, and a click or `x` puts it away. Every notification is kept in `:messages`.
 - `kawoosh.confirm { title = ..., lines = { ... }, actions = { ... } }` asks a question before anything happens. The first action is what `<CR>` and `y` take; `<Esc>`, `n` and `q` answer no.
 - `kawoosh.cmdline(text)` opens the command line with text on it, and `kawoosh.copy(text)` puts text on the clipboard.
 

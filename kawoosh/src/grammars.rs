@@ -8,8 +8,9 @@
 //! network.
 //!
 //! The first file of a listed language on show does what
-//! `grammars.install` says: `ask`, a corner line naming the command,
-//! once a language a session; `auto`, the install; `never`, nothing.
+//! `grammars.install` says: `ask`, a toast naming the command with a
+//! button that runs it, up for [`ASK_TTL`], once a language a session;
+//! `auto`, the install; `never`, nothing.
 //! `:grammar update` fetches the list and installs what moved;
 //! `:grammar remove NAME` takes one out.
 //!
@@ -33,7 +34,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use kawoosh_editor::{ArgKind, Args, Layer, Spec};
 use kawoosh_languages::{FALLBACK, LANGUAGES, LanguageDef, Library, Locate, Source};
@@ -43,7 +44,7 @@ use kawoosh_systems::ts::SYNTAX_LAYER;
 
 use crate::Kawoosh;
 use crate::commands::{ShellCommand, cmd};
-use crate::notify::{Level, Note};
+use crate::notify::{Level, Note, Show, Ttl};
 
 /// The manifest this build was made with: the release's own file. It
 /// says which languages there are and what their files are called; an
@@ -52,6 +53,10 @@ const BUILT_IN: &str = include_str!("../grammars/manifest.json");
 
 /// Who the notes and the progress line are from.
 const SOURCE: &str = "grammar";
+
+/// How long `ask`'s toast stays: long enough to reach its button, not
+/// so long it is in the way.
+const ASK_TTL: Duration = Duration::from_secs(15);
 
 #[derive(Default)]
 pub struct Grammars {
@@ -62,6 +67,9 @@ pub struct Grammars {
     pub listed: BTreeMap<String, Row>,
     /// What is installed, by name.
     pub installed: BTreeMap<String, Installed>,
+    /// The names a manifest lists that this build links: passed over,
+    /// the linked grammar being the one used.
+    pub passed: BTreeSet<String>,
     /// Installs on their way.
     pub installing: HashSet<String>,
     /// The languages whose first file was met this session — asked
@@ -102,6 +110,9 @@ pub struct Shown {
     pub built: bool,
     /// A release has an archive of it; without one it is built here.
     pub prebuilt: bool,
+    /// A release lists it — of a built-in one, that the linked grammar
+    /// is used over the release's.
+    pub released: bool,
     /// The revision in, else the one there is to install; twelve of it.
     pub rev: String,
     /// The revision an update would bring, when it is another.
@@ -122,8 +133,9 @@ pub struct Shown {
 pub type SharedGrammars = Rc<RefCell<Vec<Shown>>>;
 
 /// `kawoosh.grammars`: `list()`, every grammar there is — each `{ name,
-/// state, installed, built, prebuilt, rev, latest, repo, license,
-/// extensions, filenames, size, step, percent, why }`, `state` one of `"built in"`,
+/// state, installed, built, prebuilt, released, rev, latest, repo,
+/// license, extensions, filenames, size, step, percent, why }`, `state`
+/// one of `"built in"`,
 /// `"installed"`, `"available"`, `"installing"` and `"failed"` — the
 /// linked-in ones first, then the rest by name. What changes one is a
 /// command: `:grammar install`, `update`, `remove`.
@@ -140,6 +152,7 @@ pub(crate) fn lua_door(lua: &mlua::Lua, shown: SharedGrammars) -> mlua::Result<(
                 t.set("installed", g.installed)?;
                 t.set("built", g.built)?;
                 t.set("prebuilt", g.prebuilt)?;
+                t.set("released", g.released)?;
                 t.set("rev", g.rev.as_str())?;
                 t.set("latest", g.latest.as_deref())?;
                 t.set("repo", g.repo.as_str())?;
@@ -277,6 +290,7 @@ impl Kawoosh {
                 installed: true,
                 built: false,
                 prebuilt: false,
+                released: g.passed.contains(l.name),
                 rev: String::new(),
                 latest: None,
                 repo: String::new(),
@@ -314,6 +328,7 @@ impl Kawoosh {
                 installed: installed.is_some(),
                 built: installed.is_some_and(|i| i.built),
                 prebuilt: listed.is_some_and(|l| !l.archive.is_empty()),
+                released: listed.is_some(),
                 rev: row.map_or(String::new(), |r| short(&r.rev)),
                 // A grammar built here is behind when its source's
                 // revision is another; a fetched one, its archive.
@@ -370,6 +385,7 @@ impl Kawoosh {
     fn list_grammars(&mut self, manifest: Manifest) {
         for (name, row) in manifest.grammars {
             if linked_in(&name) {
+                self.grammars.passed.insert(name);
                 continue;
             }
             if self.languages.get(&name).is_none() {
@@ -500,12 +516,27 @@ impl Kawoosh {
             Policy::Never => {}
             Policy::Auto => self.grammar_install(language),
             Policy::Ask => {
+                // A toast, an offer: its button is the command it names,
+                // or the build where no release has a library of it.
+                let built = self
+                    .grammars
+                    .listed
+                    .get(language)
+                    .is_some_and(|r| r.archive.is_empty());
+                let (label, verb) = if built {
+                    ("Build", "build")
+                } else {
+                    ("Install", "install")
+                };
                 self.notify_with(
                     Note::new(
                         Level::Info,
-                        format!("{language} has a grammar: `:grammar install {language}`"),
+                        format!("{language} has a grammar: `:grammar {verb} {language}`"),
                     )
-                    .source(SOURCE),
+                    .source(SOURCE)
+                    .show(Show::Toast)
+                    .action(label, format!("grammar {verb} {language}"))
+                    .ttl(Ttl::After(ASK_TTL)),
                 );
             }
         }

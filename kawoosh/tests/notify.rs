@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use drive::Drive;
 use kawoosh::Kawoosh;
-use kawoosh::notify::{CORNER_TTL, Level, MESSAGES_BUFFER, Note, TOAST_TTL};
+use kawoosh::notify::{CORNER_TTL, Level, MESSAGES_BUFFER, Note, Show, TOAST_TTL, Ttl};
 use kui_native::{InputEvent, KeyMods, Vec2};
 
 fn ex(d: &mut Drive, app: &mut Kawoosh, line: &str) {
@@ -406,6 +406,70 @@ fn the_keyboard_reaches_the_toasts() {
     ex(&mut d, &mut app, "toast");
     d.keys(&mut app, "2");
     assert_eq!(app.ed.message, "b");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
+/// A toast with actions and a time of its own is an offer, not a
+/// question: it goes when its time is up, and `x` or a click on its
+/// card puts it away as a plain toast's does — its button still runs
+/// its action.
+#[test]
+fn an_offer_goes_in_its_time_and_can_be_put_away() {
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    d.frame(&mut app);
+    let offer = |text: &str| {
+        Note::new(Level::Info, text)
+            .source("grammar")
+            .show(Show::Toast)
+            .action("Install", "echo installing")
+            .ttl(Ttl::After(Duration::from_secs(15)))
+    };
+    let node = |d: &Drive, text: &str| {
+        d.core
+            .nodes()
+            .into_iter()
+            .find(|n| n.text.as_deref() == Some(text))
+            .unwrap_or_else(|| panic!("{text} on show"))
+    };
+
+    let t0 = Instant::now();
+    app.notes.push(offer("timed"), t0);
+    d.frame(&mut app);
+    assert!(corner_has(&d, "timed"), "a toast, though an info");
+    app.notes.sweep(t0 + Duration::from_secs(14));
+    d.frame(&mut app);
+    assert!(corner_has(&d, "timed"), "up for its fifteen seconds");
+    app.notes.sweep(t0 + Duration::from_secs(16));
+    d.frame(&mut app);
+    assert!(!corner_has(&d, "timed"), "and gone after them");
+
+    // `x` puts it away: it is not waiting for an answer.
+    app.notify_with(offer("keyed"));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "toast");
+    d.keys(&mut app, "x");
+    d.frame(&mut app);
+    assert!(!corner_has(&d, "keyed"), "{}", app.ed.message);
+    assert!(app.notes.focus.is_none());
+
+    // A click on its card puts it away; one on its button acts.
+    app.notify_with(offer("clicked"));
+    d.frame(&mut app);
+    let n = node(&d, "grammar clicked");
+    d.click(&mut app, n.rect.x + 2.0, n.rect.y + n.rect.h / 2.0);
+    assert!(!corner_has(&d, "clicked"));
+    assert!(app.notes.shown.is_empty());
+    app.notify_with(offer("acted"));
+    d.frame(&mut app);
+    let n = node(&d, "Install");
+    d.click(
+        &mut app,
+        n.rect.x + n.rect.w / 2.0,
+        n.rect.y + n.rect.h / 2.0,
+    );
+    assert_eq!(app.ed.message, "installing");
+    assert!(app.notes.shown.is_empty());
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 

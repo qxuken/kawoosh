@@ -351,7 +351,9 @@ end
 -- dim corner line, a debug the log's alone), `timeout` in ms (0 keeps
 -- it until acted on), and `actions`, a list of `{ label = "Retry", run
 -- = fn }` (or `run = "command line"`) — a toast with actions stays
--- until one is clicked. Every notification is in `:messages`.
+-- until one is clicked, unless it has a `timeout` too: then it is an
+-- offer, gone when its time is up and put away by a click or `x` as a
+-- plain toast is. Every notification is in `:messages`.
 function kawoosh.notify(text, opts)
   if type(opts) == "string" then opts = { level = opts } end
   opts = opts or {}

@@ -39,17 +39,25 @@ OCaml, Nix, fish, Julia, Zig, Java, Kotlin, Scala, Dart, PHP and more —
 also bring an indent query, so `<CR>`, `o` and `=` follow the syntax
 tree ([editing](editing.md)); the others indent by their brackets.
 
-The first time a file of such a language is on show, the corner says
-so and names the command. `grammars.install` chooses: `"ask"` (that
-line, once per language in a session), `"auto"` (the grammar is
-installed without asking) or `"never"`.
+The first time a file of such a language is on show, a notification
+says so, with an Install button, and stays up fifteen seconds — longer
+while the pointer is over it. The button installs the grammar; so does
+`<C-w>n` (the keyboard on the notification) then `⏎`, and `x` puts it
+away. `grammars.install` chooses: `"ask"` (that notification, once per
+language in a session), `"auto"` (the grammar is installed without
+asking) or `"never"`.
 
 `:grammars` opens them all in a pane: the ones installed, each at
 its revision; the ones there are to install, with their files and
-size; the ones built in. `j` `k` walk it, `⏎` (or `i`, or a row's
-button) installs the grammar under the cursor, `u` updates every one,
-`d` removes the cursor's, `q` closes. One that is on its way shows how
-far it is, and one that failed says why.
+size; the ones built into kawoosh, each tagged `built in` — and where
+the releases have a grammar of the same name (C), saying the built-in
+one is what is used. `/` filters it: what you type narrows the rows to
+the grammars whose name or files match (`zig`, `.rb`, `Dockerfile`),
+the best match under the cursor; `⏎` or `<Esc>` goes back to the rows,
+and `<Esc>` there clears the filter. `j` `k` walk it, `⏎` (or `i`, or
+a row's button) installs the grammar under the cursor, `u` updates
+every one, `d` removes the cursor's, `q` closes. One that is on its way
+shows how far it is, and one that failed says why.
 
 | command | |
 |---|---|
