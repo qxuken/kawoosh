@@ -1020,9 +1020,12 @@ struct Followed {
 /// A buffer's tracked lines — the lines it was tracked with, then
 /// every line `kawoosh.buf.track` added, in order, an id each — and
 /// what the last publish made of them, reused while the buffer's
-/// version holds.
+/// version holds. `since` is the version it was tracked at: a buffer
+/// filled anew is tracked anew, its ids from 1 again, and they are
+/// other lines than the ids of before.
 #[derive(Default)]
 struct Tracked {
+    since: kawoosh_doc::Version,
     lines: Vec<Followed>,
     snap: Option<(kawoosh_doc::Version, Rc<TrackedSnap>)>,
 }
@@ -1061,11 +1064,13 @@ impl Jobs {
 type JobsCell = Rc<RefCell<Jobs>>;
 
 /// The register's provenance, computed once per register: the origin
-/// it was read against and how many lines were tracked then.
+/// it was read against, and the tracking it was read in — the version
+/// that tracking began at and how many lines it had then.
 type RegisterKey = (
     BufferId,
     kawoosh_doc::Version,
     std::ops::Range<usize>,
+    kawoosh_doc::Version,
     usize,
 );
 
@@ -1387,9 +1392,14 @@ impl Runtime {
                 }
             })
             .collect();
-        self.tracked
-            .borrow_mut()
-            .insert(id, Tracked { lines, snap: None });
+        self.tracked.borrow_mut().insert(
+            id,
+            Tracked {
+                since: v,
+                lines,
+                snap: None,
+            },
+        );
     }
 
     /// Sets the notes on `id`'s tracked lines — `(id, note)`, `None`
@@ -1548,8 +1558,13 @@ impl Runtime {
             let buffer = origin.map(|o| handle_of(o.buffer));
             let entries = match origin {
                 Some(o) => {
-                    let n = tracked.get(&o.buffer).map_or(0, |t| t.lines.len());
-                    let key = (o.buffer, o.version, o.range.clone(), n);
+                    // Filled anew since the take, the buffer's tracked
+                    // lines are another fill's: none of them is the
+                    // register's, whatever ids the last read gave.
+                    let (since, n) = tracked
+                        .get(&o.buffer)
+                        .map_or((Default::default(), 0), |t| (t.since, t.lines.len()));
+                    let key = (o.buffer, o.version, o.range.clone(), since, n);
                     let mut cached = self.register_map.borrow_mut();
                     match &*cached {
                         Some((k, e)) if *k == key => e.clone(),

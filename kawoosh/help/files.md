@@ -16,7 +16,9 @@ editing the lines, then writing with `:w`.
 - **Delete** an entry by deleting its line.
 - **Move** an entry by cutting its line (`dd`) and pasting it in
   another listing. **Copy** it by yanking and pasting instead. A pasted
-  line keeps track of the entry it came from.
+  line keeps track of the entry it came from — also when the listing
+  you yanked it in has gone on to another directory since, in the same
+  pane.
 
 Every editing feature works here, so several selections, `:s`, macros
 and `.` all become bulk file operations. As you edit, each changed line

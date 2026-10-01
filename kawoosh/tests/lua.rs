@@ -1654,6 +1654,95 @@ fn a_yanked_line_pasted_into_another_listing_is_a_copy() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A line yanked in a listing is its entry wherever it is pasted, the
+/// listing it was yanked in gone on to another directory meanwhile —
+/// the buffer reused, its lines tracked anew — and however many times:
+/// `FiraMono/` yanked in `a/fonts`, pasted in `b/fonts/FiraMono` (as
+/// many lines as `a/fonts`, listed straight after) and then, by `-`
+/// and `<CR>`, in `c/fonts`, all in one pane, is the directory copied
+/// twice — never a new one, nor the entry on that line of the listing
+/// that took the buffer over.
+#[test]
+fn a_line_yanked_before_its_listing_moved_on_is_still_its_entry() {
+    let dir = std::env::temp_dir().join(format!("kawoosh-yankmove-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("a/fonts/FiraMono")).unwrap();
+    std::fs::create_dir_all(dir.join("b/fonts/FiraMono")).unwrap();
+    std::fs::create_dir_all(dir.join("c/fonts")).unwrap();
+    let dir = kawoosh_systems::fs::canonicalize(&dir).unwrap();
+    std::fs::write(dir.join("a/fonts/FiraMono/Regular.ttf"), "fira").unwrap();
+    std::fs::write(dir.join("b/fonts/FiraMono/Old.ttf"), "old").unwrap();
+    std::fs::write(dir.join("c/fonts/x.ttf"), "x").unwrap();
+    std::fs::write(dir.join("c/fonts/y.ttf"), "y").unwrap();
+    let mut d = Drive::new(1200.0, 500.0);
+    let mut app = app_with_lua(&mut d, "t", "");
+    d.frame(&mut app);
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("a/fonts").display()),
+    );
+    assert_eq!(d.line_rows(), ["../", "FiraMono/"]);
+    let n = app.ed.buffers.len();
+    d.keys(&mut app, "jyy");
+    d.frame(&mut app);
+    // Straight to b/fonts/FiraMono, in the same pane: the listing
+    // buffer reused, `Old.ttf` on the line `FiraMono/` was on.
+    ex(
+        &mut d,
+        &mut app,
+        &format!("dir {}", dir.join("b/fonts/FiraMono").display()),
+    );
+    assert_eq!(d.line_rows(), ["../", "Old.ttf"]);
+    assert_eq!(app.ed.buffers.len(), n, "the listing buffer was reused");
+    d.keys(&mut app, "Gp");
+    d.frame(&mut app);
+    assert_eq!(d.line_rows(), ["../", "Old.ttf", "FiraMono/"]);
+    let e: Vec<String> = d.row_extras();
+    assert!(e[2].contains("← copy from "), "{e:?}");
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    assert_eq!(
+        &d.confirm_texts()[1..3],
+        ["between them:", "  copy FiraMono/: fonts/ → FiraMono/"]
+    );
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b/fonts/FiraMono/FiraMono/Regular.ttf")).unwrap(),
+        "fira"
+    );
+    assert!(dir.join("b/fonts/FiraMono/Old.ttf").is_file());
+    // Up and over to c/fonts by keys, the buffer reused again and
+    // again: the same entry.
+    d.keys(&mut app, "---");
+    assert_eq!(d.line_rows(), ["../", "a/", "b/", "c/"]);
+    d.keys(&mut app, "G");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.keys(&mut app, "j");
+    d.key(&mut app, "enter", KeyMods::default());
+    assert_eq!(d.line_rows(), ["../", "x.ttf", "y.ttf"]);
+    assert_eq!(app.ed.buffers.len(), n, "the listing buffer was reused");
+    d.keys(&mut app, "Gp");
+    d.frame(&mut app);
+    let e: Vec<String> = d.row_extras();
+    assert!(e[3].contains("← copy from "), "{e:?}");
+    ex(&mut d, &mut app, "w");
+    d.frame(&mut app);
+    // Two `fonts/`, so by their paths, which the confirm cuts.
+    let c = d.confirm_texts();
+    assert_eq!(c[1], "between them:");
+    assert!(c[2].starts_with("  copy FiraMono/: /"), "{c:?}");
+    d.key(&mut app, "enter", KeyMods::default());
+    d.frame(&mut app);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("c/fonts/FiraMono/Regular.ttf")).unwrap(),
+        "fira"
+    );
+    assert!(dir.join("a/fonts/FiraMono/Regular.ttf").is_file());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// A line cut or yanked in one listing and pasted in another is that
 /// entry, by the register's word on where its text came from: two
 /// files of one name swapped between two listings are two moves, and
