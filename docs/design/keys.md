@@ -402,7 +402,7 @@ objects, or any other character on both sides.
 
 | keys | what |
 |---|---|
-| `<leader><leader>` | the buffers, as a picker — the current one last, so `<CR>` at once is the one before; `<C-x>` closes the row's |
+| `<leader><leader>` | the buffers, as a picker — the current one last, so `<CR>` at once is the one before; the query matched on the name, then on the path as the row writes it; `<C-x>` closes the row's |
 | `<leader>f` | the files git sees under the working directory, as a picker |
 | `<leader>g` | grep the project: `rg` run on the query as it is typed |
 | `<leader>F` `<leader>G` | the same two from the file's directory — a listing's own in `dir` (`:picker files here`, `:picker grep here`) |

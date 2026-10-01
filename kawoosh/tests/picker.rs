@@ -437,6 +437,76 @@ fn buffers_lines_recent_and_smart() {
     std::fs::remove_dir_all(dir.with_extension("db")).ok();
 }
 
+/// The buffers picker matches a row's path as well as its name, as
+/// the row shows it: a directory typed finds the buffers under it. A
+/// hit in the name ranks above one only in the path, and the letters a
+/// match found in the path are lit there.
+#[test]
+fn the_buffers_picker_matches_the_path_too_the_name_first() {
+    let _serial = serial();
+    let dir = project("buffer-paths");
+    std::fs::create_dir_all(dir.join("main")).unwrap();
+    std::fs::write(dir.join("main/util.rs"), "pub fn util() {}\n").unwrap();
+    let mut d = Drive::new(1000.0, 700.0);
+    let mut app = app_with_lua(&mut d, &dir.join("README.md"));
+    app.set_cwd(&dir);
+    d.frame(&mut app);
+    for f in ["src/main.rs", "main/util.rs"] {
+        ex(&mut d, &mut app, &format!("e {}", dir.join(f).display()));
+    }
+    // A directory typed: the buffers under it.
+    d.keys(&mut app, "  src");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), ["main.rs"], "`src` is main.rs's directory");
+    d.press(&mut app, "<C-c>");
+    // `main` is main.rs's name and util.rs's directory: the name first.
+    d.keys(&mut app, "  main");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), ["main.rs", "util.rs"], "the name's hit first");
+    // What a row lights, in brackets: the name's letters on main.rs,
+    // the path's on util.rs.
+    let lit = |app: &mut Kawoosh| {
+        app.run_lua_source(
+            "t",
+            r#"
+            local p = kawoosh.picker
+            local s = p.state()
+            local theme = { accent = "a", fg = "f", muted = "m", faint = "x", danger = "d",
+                            selection = "s", sunken = "k" }
+            local list = p.rows({ env = { theme = theme }, focused = true },
+                                { { item = s.item, positions = s.positions } }, {})
+            local lit = {}
+            local function walk(n)
+              if type(n) ~= "table" then return end
+              if n.type == "text" and n.spans then
+                for _, sp in ipairs(n.spans) do
+                  lit[#lit + 1] = sp.bold and ("[" .. sp[1] .. "]") or sp[1]
+                end
+              end
+              for _, c in ipairs(n) do walk(c) end
+            end
+            walk(list)
+            kawoosh.echo(table.concat(lit))
+            "#,
+        );
+        app.ed.message.clone()
+    };
+    assert_eq!(
+        lit(&mut app),
+        format!("[main].rs  {}", native("src/main.rs"))
+    );
+    d.press(&mut app, "<C-n>");
+    d.frame(&mut app);
+    assert_eq!(cursor_text(&mut app), "util.rs");
+    assert_eq!(
+        lit(&mut app),
+        format!("util.rs  [main]{}util.rs", std::path::MAIN_SEPARATOR)
+    );
+    d.press(&mut app, "<C-c>");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// `kawoosh.highlight`: a text's syntax runs from the ts thread, named
 /// and coloured; the picker's preview asks for its file's and paints
 /// them.
