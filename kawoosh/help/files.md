@@ -48,12 +48,11 @@ still there until `:w` applies them or `<C-l>` drops them.
 | `mA` `mS` `mM` `mE` | the same, reversed |
 | `g.` | show or hide dot files (`:dir hidden`, the `dir.hidden` setting) |
 | `~` | make the listed directory the working directory (`:dir cd`) |
-| `z` | jump to a directory you use often ([directory jumps](#directory-jumps), zoxide's): the pick is listed here |
+| `gz` | jump to a directory you use often ([directory jumps](#directory-jumps), zoxide's): the pick is listed here |
 
 Directories are always listed before files, and the sort is remembered
 per directory. Because `m` sorts in a listing, it does not set a
-[mark](search.md#marks) there; and because `z` jumps, `zz` `zs` `ze`
-do not place the column there.
+[mark](search.md#marks) there.
 
 A listing updates by itself when something else changes the directory,
 unless you have edits in it. Entries are coloured by their git status.
@@ -129,7 +128,7 @@ deletes the mark.
 `<leader>sd` (or `<C-S-z>`, which also works from a
 [terminal](terminal.md) pane) lists the directories you use most, from
 zoxide when it is on your shell's PATH and from kawoosh's own memory
-otherwise. In a [listing](#the-file-manager), `z` opens it too.
+otherwise. In a [listing](#the-file-manager), `gz` opens it too.
 
 | keys | what |
 |---|---|

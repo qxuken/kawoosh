@@ -302,12 +302,12 @@ fn ctrl_t_opens_a_tab_on_the_directory() {
     std::fs::remove_dir_all(&root).ok();
 }
 
-/// From a listing, `z` (yazi's) opens the jumps, and a pick goes there
+/// From a listing, `gz` opens the jumps, and a pick goes there
 /// in the same listing — its buffer reused, no trail in `:ls` — the
 /// working directory left where it was (`~` moves it).
 #[test]
 #[cfg(unix)]
-fn z_in_a_listing_jumps_the_listing() {
+fn gz_in_a_listing_jumps_the_listing() {
     let root = tmp("listing");
     let (a, b) = (root.join("alpha"), root.join("beta"));
     std::fs::create_dir_all(&a).unwrap();
@@ -331,7 +331,7 @@ fn z_in_a_listing_jumps_the_listing() {
     };
     ex(&mut d, &mut app, &format!("dir {}", root.display()));
     listed(&mut d, &mut app, &root);
-    d.keys(&mut app, "z");
+    d.keys(&mut app, "gz");
     assert_eq!(rows(&mut d, &mut app, 2), format!("2|{}", a.display()));
     d.key(&mut app, "enter", KeyMods::default());
     listed(&mut d, &mut app, &a);

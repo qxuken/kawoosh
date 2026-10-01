@@ -402,7 +402,7 @@ objects, or any other character on both sides.
 | `<leader>ss` `<D-S-f>` `<leader>sS` | the project search ([search.md](search.md)), from visual mode the selection as its pattern: a bar below the pane — find, include and exclude as comma lists (`src/*.[ts,tsx], tests/`), `<A-r>` `<A-c>` `<A-w>` `<A-g>` regex, case, whole word, ignored files — whose `<CR>` fills `*search*`, a live multibuffer of the matches; `<A-a>` adds a stage searching what the one before found (`<A-k>`: `in`, `keep`, `drop`), `<A-x>` (or its `×`) takes one out, `<A-h>` `<A-l>` move between them, `<Up>` `<Down>` the searches made here before, `<C-j>` to the results, where `<CR>` or `g<Space>` (Zed's) opens the file at the caret — with carets on several files, the rest opened too; `<leader>ss` from the workspace's root every time, `<leader>sS` from the file's directory (`:search project`, `:grep`, `:search here`) |
 | `<leader>so` | the workspace's files attended before, ranked by the memory (the picker's `recent`) |
 | `<leader>sr` | the last picker again, its query and cursor as they were |
-| `<leader>sd` `<C-S-z>` | the directory jumps (`picker dirs`): zoxide's directories by frecency (the memory's without it); `<CR>` makes one the working directory (from a `dir` listing, lists it there — `z` opens it in a listing), `<C-o>` lists it in `dir` and leaves the working directory, `<C-v>` `<C-s>` `<C-t>` list it in a split or a tab; a shell asks the same picker with `kawoosh pick dirs` |
+| `<leader>sd` `<C-S-z>` | the directory jumps (`picker dirs`): zoxide's directories by frecency (the memory's without it); `<CR>` makes one the working directory (from a `dir` listing, lists it there — `gz` opens it in a listing), `<C-o>` lists it in `dir` and leaves the working directory, `<C-v>` `<C-s>` `<C-t>` list it in a split or a tab; a shell asks the same picker with `kawoosh pick dirs` |
 | `<leader>mm` | the memory pane (`:memory`): texts — what was yanked, deleted or pasted in, to put again — and `<Tab>` through files (with their drafts), recent, commands, searches, pins (each the workspace's), all (every workspace's); `/` filters the view |
 | `<leader>mp` `<leader>ma` | the workspace's pinned files (`:memory pins`), pin or unpin the buffer's file |
 | `<A-1>`…`<A-9>` | open the workspace's Nth pin |
@@ -432,7 +432,7 @@ objects, or any other character on both sides.
 | `<leader>u` | the undo history |
 | `<leader>x` | evaluate the line (the selection, in visual mode) as Lua; the result on the status line, or in a pane when it has lines |
 | `~` | the listed directory as the working one (oil's; in a listing only) |
-| `z` | yazi's: the directory jumps (`picker dirs`, zoxide's) from a listing, `<CR>` listing the pick in it, the working directory left alone; over `zz` `zs` `ze` there, as `m` sorts over the marks |
+| `gz` | the directory jumps (`picker dirs`, zoxide's) from a listing, `<CR>` listing the pick in it, the working directory left alone (in a listing only; not yazi's bare `z`, which would take `zz` `zs` `ze` there) |
 | `-` | oil: the file's directory |
 | `_` | oil: the working directory's listing, from anywhere (`:dir .`) |
 | `<C-c>` | oil: in a listing, back to the buffer it was opened from, the listing gone unless its edits hold it (`dir close`) |

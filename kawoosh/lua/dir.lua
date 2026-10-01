@@ -17,7 +17,7 @@
 -- asked first), `<C-p>` opens a preview of the entry beside the
 -- listing, and `ms` `mm` `ma` `me` (`mS` `mM` `mA` `mE` for the reverse)
 -- list it again by size, mtime, name or type, yazi's keys under `m`;
--- `g.` shows or hides the dot files (`dir.hidden`); `z` opens the
+-- `g.` shows or hides the dot files (`dir.hidden`); `gz` opens the
 -- directory jumps (zoxide's, `dirs.lua`), a pick listed in the same
 -- listing; version control's
 -- word on each entry colours its name (`dir.vcs_enabled`; the backends
@@ -1436,9 +1436,9 @@ kawoosh.map("n", "<2-LeftMouse>", "dir enter", LISTING)
 -- a key without one does it; `_`, the working directory's listing, is
 -- the engine's beside `-`).
 kawoosh.map("n", "~", "dir cd", LISTING)
--- yazi's `z`: the directory jumps (`dirs.lua`, zoxide's), a pick listed
--- here. Over `zz` `zs` `ze` in a listing, as `m` is over the marks.
-kawoosh.map("n", "z", "picker dirs", LISTING)
+-- `gz`: the directory jumps (`dirs.lua`, zoxide's), a pick listed here.
+-- Not yazi's bare `z`, which would take `zz` `zs` `ze` from a listing.
+kawoosh.map("n", "gz", "picker dirs", LISTING)
 for _, c in ipairs(COPIES) do
   kawoosh.map("n", "<leader>y" .. c[1], "dir copy " .. c[2], LISTING)
 end

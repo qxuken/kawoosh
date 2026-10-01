@@ -16,7 +16,7 @@
 -- shell's zoxide hook counts that.
 --
 -- `<leader>sd` (and `<C-S-z>`, which reaches from a terminal pane too)
--- opens it, and `z` in a `dir` listing (yazi's). `<CR>` in an editor
+-- opens it, and `gz` in a `dir` listing. `<CR>` in an editor
 -- pane makes the directory the working one; in a listing it lists the
 -- directory there, the listing's buffer reused, as `-` and `<CR>` move
 -- it (`~` then makes it the working one); opened from a terminal pane, it types `cd 'PATH'⏎` there when
