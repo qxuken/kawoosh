@@ -777,6 +777,43 @@ fn a_cyrillic_layout_drives_the_motions_and_types_itself() {
     assert_eq!(d.warnings(), Vec::<String>::new());
 }
 
+/// A command waiting for one more key reads the half it needs of it: the
+/// character the layout typed for one that looks for it in the text, the
+/// key for one the character names something with (`CharArg`). On a
+/// Russian layout `di"` — ⇧ on the key printed `'`, which types `Э` — is
+/// the quotes, while `fж` finds the `ж` and `rя` writes a `я`. Every one
+/// of them took the typed character: `di"` looked for an `Э` object and
+/// did nothing.
+#[test]
+fn a_waiting_command_reads_the_typed_character_or_the_key() {
+    use kui_native::{InputEvent, KeyCode, KeyPress};
+    let mut app = Kawoosh::new("t", "a \"bc\" жd");
+    let mut d = Drive::new(800.0, 400.0);
+    d.frame(&mut app);
+    let ru = |d: &mut Drive, app: &mut Kawoosh, letter: char, at: char, mods: KeyMods| {
+        let press = KeyPress::from_layout(KeyCode::Char(letter), KeyCode::Char(at), mods)
+            .with_text(letter.to_string());
+        d.input(app, InputEvent::KeyDown(press.clone()));
+        if let Some(ev) = press.edit_event() {
+            d.input(app, ev);
+        }
+        d.input(app, InputEvent::KeyUp(press.released()));
+        d.frame(app);
+    };
+    let none = KeyMods::default();
+    let shift = KeyMods::NONE.with_shift();
+    ru(&mut d, &mut app, 'в', 'd', none);
+    ru(&mut d, &mut app, 'ш', 'i', none);
+    ru(&mut d, &mut app, 'Э', '\'', shift);
+    assert_eq!(text(&app), "a \"\" жd", "`di\"` from the key printed '");
+    ru(&mut d, &mut app, 'а', 'f', none);
+    ru(&mut d, &mut app, 'ж', ';', none);
+    ru(&mut d, &mut app, 'к', 'r', none);
+    ru(&mut d, &mut app, 'я', 'z', none);
+    assert_eq!(text(&app), "a \"\" яd", "`fж` then `rя`, as typed");
+    assert_eq!(d.warnings(), Vec::<String>::new());
+}
+
 /// `J` on the line before the last joins the two and nothing above: the
 /// range an operator takes on the last line reaches back for the newline
 /// before it (`dd`'s rule), which is not the join's business — it began

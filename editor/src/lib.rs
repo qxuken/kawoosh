@@ -26,7 +26,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 pub use command::{
-    ArgKind, Args, BufFacts, Command, Cond, Ctx, Facts, FnCommand, Form, Invocation, Kind,
+    ArgKind, Args, BufFacts, CharArg, Command, Cond, Ctx, Facts, FnCommand, Form, Invocation, Kind,
     MotionKind, Registry, Spec, fact_words,
 };
 pub use conflicts::{Conflict, Take};
@@ -1774,6 +1774,12 @@ impl Editor {
         self.register_kind_char(name, Kind::Other, run);
     }
 
+    /// [`Editor::register_with_char`] for a command the character names
+    /// something with, which reads the key ([`Spec::takes_key`]).
+    pub fn register_with_key(&mut self, name: &str, run: impl Fn(&mut Editor, &Ctx) + 'static) {
+        self.register_spec(Spec::new(name).takes_key(), run);
+    }
+
     pub fn register_kind_char(
         &mut self,
         name: &str,
@@ -1781,6 +1787,16 @@ impl Editor {
         run: impl Fn(&mut Editor, &Ctx) + 'static,
     ) {
         self.register_spec(Spec::new(name).kind(kind).takes_char(), run);
+    }
+
+    /// [`Editor::register_kind_char`] reading the key ([`Spec::takes_key`]).
+    pub fn register_kind_key(
+        &mut self,
+        name: &str,
+        kind: Kind,
+        run: impl Fn(&mut Editor, &Ctx) + 'static,
+    ) {
+        self.register_spec(Spec::new(name).kind(kind).takes_key(), run);
     }
 
     /// A motion over every head: `f(buf, head, count) -> new head`.
@@ -2927,25 +2943,32 @@ impl Editor {
             // `<CR>` and `<Tab>` for `r` are a line break and a tab
             // (`r<CR>` splits the line); no other waiting command has a
             // use for them.
-            let replace =
-                self.commands.resolve(&binding.command, &binding.args).name == "replace char";
+            let resolved = self.commands.resolve(&binding.command, &binding.args).name;
+            let replace = resolved == "replace char";
             let named = match stroke.code.as_str() {
                 "enter" if replace => Some('\n'),
                 "tab" if replace => Some('\t'),
                 _ => None,
             };
-            let c = stroke
-                .text
-                .as_deref()
-                .and_then(|t| t.chars().next())
-                .or(named)
-                .or_else(|| {
-                    let mut it = stroke.code.chars();
-                    match (it.next(), it.next()) {
-                        (Some(c), None) => Some(c),
-                        _ => None,
-                    }
-                });
+            let typed = stroke.text.as_deref().and_then(|t| t.chars().next());
+            let key = {
+                let mut it = stroke.code.chars();
+                match (it.next(), it.next()) {
+                    (Some(c), None) => Some(c),
+                    _ => None,
+                }
+            };
+            // The key's code or the layout's character, as the command
+            // reads it (`CharArg`); each the other's fallback.
+            let by_key = self
+                .commands
+                .spec(&resolved)
+                .is_some_and(|s| s.char_arg == CharArg::Key);
+            let c = if by_key {
+                key.or(typed)
+            } else {
+                typed.or(named).or(key)
+            };
             let Some(c) = c else {
                 return true;
             };

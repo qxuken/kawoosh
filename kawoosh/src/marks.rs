@@ -947,7 +947,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
     vec![
         cmd(
             Spec::new("mark")
-                .takes_char()
+                .takes_key()
                 .doc("mark the caret's place: a-z this file's, A-Z the workspace's"),
             |k, ctx| {
                 if let Some(c) = ctx.arg_char {
@@ -957,7 +957,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         ),
         cmd(
             Spec::new("mark line")
-                .takes_char()
+                .takes_key()
                 .jump()
                 .doc("go to a mark's line, its first non-blank"),
             |k, ctx| {
@@ -968,7 +968,7 @@ pub(crate) fn commands() -> Vec<ShellCommand> {
         ),
         cmd(
             Spec::new("mark go")
-                .takes_char()
+                .takes_key()
                 .jump()
                 .doc("go to a mark's line and column"),
             |k, ctx| {
