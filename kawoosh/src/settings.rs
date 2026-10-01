@@ -172,7 +172,10 @@ impl Config {
 
 /// Settings that were renamed: a file still setting the old one is told
 /// where it went rather than that it is nobody's.
-const MOVED: [(&str, &str); 1] = [("compile.command", "compile.default")];
+const MOVED: [(&str, &str); 2] = [
+    ("compile.command", "compile.default"),
+    ("grammars.url", "grammars.urls"),
+];
 
 /// The settings the shell reads that have no default of their own, and
 /// the tables whose keys are the user's (roadmap step 34): declared so

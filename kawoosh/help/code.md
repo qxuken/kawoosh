@@ -112,11 +112,30 @@ mylang`. With nothing changed it says the grammar is up to date. In the pane a g
 `build`, and `b` builds the one under the cursor.
 
 The grammars are built by the `kawoosh-grammars` repository, which
-releases them on two hosts. `grammars.url` lists where to fetch from,
-tried in order; each is a folder holding `manifest.json` and one
-archive per grammar, so a mirror of your own is a URL in your
-settings. Only your own settings are read for it: a project's
-`grammars.url` and `grammars.sources` are passed over, since a grammar
+releases them on two hosts. `grammars.urls` lists where to fetch from,
+in order; each is a folder holding `manifest.json` and one archive per
+grammar, so a mirror of your own, or a folder of your own archives, is
+a URL in your settings:
+
+```lua
+grammars = { urls = {
+  "file:///Users/me/grammars",   -- mine first
+  "https://github.com/qxuken/kawoosh-grammars/releases/latest/download",
+  "https://drydock9.qxuken.dev/qxuken/kawoosh-grammars/releases/download/latest",
+} }
+```
+
+The lists are one: a grammar several of them list comes from the first
+that does, and one only a later URL lists is there to install all the
+same. When that first one does not answer, or fails, the grammar is
+fetched from the next that has it, and `:grammar update` lists what an
+unanswering URL listed as it was. `kawoosh.grammars.list()` says which
+URL each grammar came from, or would, as its `base`.
+A URL said twice counts once. The setting was `grammars.url` until
+2026-10-02; a settings file that still says it is told so.
+
+Only your own settings are read for it: a project's
+`grammars.urls` and `grammars.sources` are passed over, since a grammar
 is code that runs inside kawoosh, and of `grammars.install` a project's
 settings may say `"never"` and nothing else.
 

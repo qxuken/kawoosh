@@ -1319,6 +1319,7 @@ fn an_undeclared_key_is_named_once_and_the_types_know_the_rest() {
 return {
   tabstop = 2,
   compile = { comand = "make", command = "make" },
+  grammars = { url = { "https://example.com/grammars" } },
   run = { command = "cargo run" },
   dirs = { backend = "memory" },
   tools = { anything = "goes" },
@@ -1353,6 +1354,14 @@ return {
                 rel(".kawoosh/settings.lua")
             )),
         "the renamed key says where it went"
+    );
+    assert!(
+        app.notes.shown.iter().any(|n| n.text
+            == format!(
+                "`grammars.url` is now `grammars.urls` ({})",
+                rel(".kawoosh/settings.lua")
+            )),
+        "and the grammars' bases"
     );
     // Again, a reload later: not said twice.
     app.reload_project_settings();

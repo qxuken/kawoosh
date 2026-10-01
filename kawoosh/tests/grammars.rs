@@ -137,7 +137,7 @@ fn app_with(d: &mut Drive, data: &Path, bases: &[String]) -> Kawoosh {
     let urls = bases.iter().map(|b| Setting::Str(b.clone())).collect();
     app.ed
         .settings
-        .set(Layer::User, "grammars.url", Setting::List(urls));
+        .set(Layer::User, "grammars.urls", Setting::List(urls));
     d.frame(&mut app);
     app
 }
@@ -247,7 +247,9 @@ fn an_install_colours_an_open_file_and_is_there_at_the_next_launch() {
     // A project's word on where grammars come from is passed over.
     let mut app = app_with(&mut d, &data, &[at]);
     let nowhere = Setting::List(vec![Setting::Str(url(&t.join("nowhere")))]);
-    app.ed.settings.set(Layer::Project, "grammars.url", nowhere);
+    app.ed
+        .settings
+        .set(Layer::Project, "grammars.urls", nowhere);
     app.open(&file);
     d.frame(&mut app);
     let v = app.focused_view().unwrap();
@@ -281,7 +283,7 @@ fn an_install_colours_an_open_file_and_is_there_at_the_next_launch() {
     );
     let warned = notes(&app, Level::Warn);
     assert!(
-        warned.len() == 1 && warned[0].contains("grammars.url in a project's settings"),
+        warned.len() == 1 && warned[0].contains("grammars.urls in a project's settings"),
         "{warned:?}"
     );
     assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
@@ -361,6 +363,133 @@ fn an_install_that_fails_says_why() {
     std::fs::remove_dir_all(t).ok();
 }
 
+/// `grammars.urls` is one list of the bases, in order, a URL said twice
+/// counted once: a grammar several list is the first's, one only a
+/// later base lists is there to install too, and an install falls
+/// through to the next base that has it when the first does not
+/// answer — the grammar saying where it came from, in
+/// `kawoosh.grammars.list()` as on disk. With the first back, an update
+/// takes it from there again.
+#[test]
+fn the_bases_are_one_list_and_a_grammar_comes_from_the_first_that_has_it() {
+    let t = temp("urls");
+    let (a, b, data) = (t.join("a"), t.join("b"), t.join("grammars"));
+    for dir in [&a, &b, &data] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let Some(lib) = library(&t) else { return };
+    let at_a = base(&a, &lib);
+    // b's release is another build: another revision, another archive.
+    const B_REV: &str = "fedcba9876543210fedcba9876543210fedcba98";
+    let at_b = release(&b, &lib, B_REV, "(pair key: (string) @property)\n");
+    // And b lists one a does not, out of the same archive.
+    let path = b.join("manifest.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let mut other = m["grammars"][NAME].clone();
+    other["extensions"] = serde_json::json!(["jsonier"]);
+    other["aliases"] = serde_json::json!([]);
+    m["grammars"]["jsonier"] = other;
+    std::fs::write(&path, m.to_string()).unwrap();
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.load_grammars(&data);
+    let urls = [at_a.clone(), at_b.clone(), format!("{at_a}/")]
+        .into_iter()
+        .map(Setting::Str)
+        .collect();
+    app.ed
+        .settings
+        .set(Layer::User, "grammars.urls", Setting::List(urls));
+    d.frame(&mut app);
+    let base_of = |app: &mut Kawoosh, name: &str| {
+        lua(
+            app,
+            &format!(
+                "for _, g in ipairs(kawoosh.grammars.list()) do \
+                 if g.name == '{name}' then kawoosh.echo(g.state .. ' ' .. g.rev .. ' ' .. g.base) end end"
+            ),
+        )
+    };
+    // Each with how many times it was said: the same words twice are
+    // one note, counted.
+    let warned = |app: &Kawoosh| -> Vec<(String, u32)> {
+        app.notes
+            .shown
+            .iter()
+            .filter(|s| s.level == Level::Warn && s.text.starts_with("a base did not answer"))
+            .map(|s| (s.text.clone(), s.count))
+            .collect()
+    };
+
+    ex(&mut d, &mut app, "grammar update");
+    until(&mut d, &mut app, "the list landed", |a| !a.grammars.listing);
+    assert_eq!(
+        base_of(&mut app, NAME),
+        format!("available 0123456789ab {at_a}"),
+        "the first's"
+    );
+    assert_eq!(
+        base_of(&mut app, "jsonier"),
+        format!("available fedcba987654 {at_b}"),
+        "a later base's own is listed too"
+    );
+    assert_eq!(app.languages.detect(Path::new("x.jsonier"), ""), "jsonier");
+
+    // a down: the install is b's, and says so.
+    let gone = t.join("a-gone");
+    std::fs::rename(&a, &gone).unwrap();
+    ex(&mut d, &mut app, "grammar install jsonish");
+    until(&mut d, &mut app, "the install ended", |a| {
+        a.grammars.installing.is_empty()
+    });
+    assert_eq!(app.ed.message, "grammar: jsonish installed (fedcba987654)");
+    assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
+    assert_eq!(
+        base_of(&mut app, NAME),
+        format!("installed fedcba987654 {at_b}")
+    );
+    let on_disk = kawoosh_systems::grammars::installed_one(&data, NAME).unwrap();
+    assert_eq!(on_disk.row.base, at_b, "grammar.json says it");
+
+    // The list fetched with a down: said once, the URL being one base,
+    // and a's grammars listed as they were.
+    ex(&mut d, &mut app, "grammar update");
+    until(&mut d, &mut app, "the list landed", |a| {
+        !a.grammars.listing && a.grammars.installing.is_empty()
+    });
+    let said = warned(&app);
+    assert!(
+        said.len() == 1 && said[0].0.contains("a/manifest.json") && said[0].1 == 1,
+        "{said:?}"
+    );
+    assert_eq!(app.grammars.listed[NAME].base, at_a);
+    assert_eq!(
+        app.ed.message,
+        "grammar: jsonish is up to date (fedcba987654)"
+    );
+
+    // a back: an update takes jsonish from it.
+    std::fs::rename(&gone, &a).unwrap();
+    ex(&mut d, &mut app, "grammar update");
+    until(&mut d, &mut app, "updated from a", |a| {
+        a.ed.message.starts_with("grammar: jsonish updated")
+    });
+    assert_eq!(
+        app.ed.message,
+        "grammar: jsonish updated (fedcba987654 → 0123456789ab)"
+    );
+    assert_eq!(
+        base_of(&mut app, NAME),
+        format!("installed 0123456789ab {at_a}")
+    );
+    assert_eq!(warned(&app).len(), 1, "nothing more said");
+    std::fs::remove_dir_all(t).ok();
+}
+
 /// The releases themselves, over the network: `zig` from the bases the
 /// settings ship with, loaded and painting. Only when asked for
 /// (`KAWOOSH_GRAMMARS_LIVE=1`): it needs the two hosts up.
@@ -385,14 +514,14 @@ fn the_released_grammars_install_from_the_shipped_bases() {
         let shipped = app
             .ed
             .settings
-            .get("grammars.url")
+            .get("grammars.urls")
             .unwrap()
             .as_list()
             .unwrap()
             .to_vec();
         assert_eq!(shipped.len(), 2);
         let one = Setting::List(vec![shipped[skip].clone()]);
-        app.ed.settings.set(Layer::User, "grammars.url", one);
+        app.ed.settings.set(Layer::User, "grammars.urls", one);
         app.open(&file);
         d.frame(&mut app);
         let v = app.focused_view().unwrap();
@@ -754,7 +883,7 @@ fn the_pane_lists_walks_installs_and_removes() {
     d.extension("lua", ext).unwrap();
     app.load_grammars(&data);
     let urls = Setting::List(vec![Setting::Str(at)]);
-    app.ed.settings.set(Layer::User, "grammars.url", urls);
+    app.ed.settings.set(Layer::User, "grammars.urls", urls);
     d.frame(&mut app);
 
     // The rows the cursor walks, as drawn, and one row's texts.
