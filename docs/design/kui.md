@@ -879,7 +879,11 @@ the runtime says which tracked lines those were (`kawoosh.buf.register`,
 each register line carried back through the journal —
 `Buffer::line_carried`, a replay stopped at a version), and a listing
 adopts a pasted line whose text is one of them, tracked from then on
-(`kawoosh.buf.track`) as the entry of the listing it came from — so
+(`kawoosh.buf.track`) as the entry of the listing it came from — and
+a listing filled anew, gone on to the next directory in its buffer or
+read again, first keeps the register's entries as they read then
+(`keep_register`: each `{ dir, name, meta }`), since the runtime's
+word reaches only the lines the buffer is tracked with now — so
 the plan makes it a move (deleted there) or a copy (still there),
 under its new name when its line was renamed after, two files of one
 name each way between two listings included, and pasted back into

@@ -552,7 +552,10 @@ end
 -- when one yank or delete filled it, `buffer` (the handle it came
 -- from) and `entries`, for each line of the text the tracked line of
 -- that buffer it was (an index of `tracked()`, or false): how a line
--- pasted into one listing is known to be an entry of another.
+-- pasted into one listing is known to be an entry of another. Filled
+-- anew since (`open_scratch`), the buffer is tracked anew and none of
+-- its lines is the register's: every entry false — a plugin keeps
+-- what they were before it fills the buffer again.
 --
 -- kawoosh.view_open(name[, { focus = false, below = true, share = 0.5 }])
 -- puts a Lua view in a split — beside, or below with `below`, taking
