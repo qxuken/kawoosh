@@ -1320,6 +1320,7 @@ return {
   tabstop = 2,
   compile = { comand = "make", command = "make" },
   grammars = { url = { "https://example.com/grammars" } },
+  search = { legend = true },
   run = { command = "cargo run" },
   dirs = { backend = "memory" },
   tools = { anything = "goes" },
@@ -1362,6 +1363,14 @@ return {
                 rel(".kawoosh/settings.lua")
             )),
         "and the grammars' bases"
+    );
+    assert!(
+        app.notes.shown.iter().any(|n| n.text
+            == format!(
+                "`search.legend` is now `keys.legend` ({})",
+                rel(".kawoosh/settings.lua")
+            )),
+        "and the search's legend, every pane's now"
     );
     // Again, a reload later: not said twice.
     app.reload_project_settings();

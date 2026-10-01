@@ -502,6 +502,10 @@ const DOCS: &[(&str, &str)] = &[
     ("leader", "the `<leader>` key"),
     ("whichkey", "show the keys that can follow a prefix"),
     (
+        "keys.legend",
+        "how a pane's key legend starts: `compact`, one `⌥/ keys` that `<A-/>` opens, or `full`",
+    ),
+    (
         "keys.option_as_alt",
         "macOS: which ⌥ is Alt for key chords (`<A-u>`) rather than typing accents (`ü`): `left`, `right`, `both`, `none`",
     ),
@@ -857,6 +861,9 @@ impl Settings {
         // ⌥u a chord, not the start of `ü` — so the left by default,
         // and the right left for accents.
         defaults.set("keys.option_as_alt", Setting::Str("left".into()));
+        // A pane's key legend: one `⌥/ keys` until `<A-/>` opens it
+        // (docs/design/icons.md Decision 6), or every key at once.
+        defaults.set("keys.legend", Setting::Str("compact".into()));
         // The scrolling tab (docs/design/scrolling-tab.md): what a new
         // tab is (`tree` | `scroll`; the strip since 2026-09-22), a
         // new column's width (`third`,
@@ -1165,6 +1172,7 @@ impl Settings {
             ("grammars.install", words(&["ask", "auto", "never"])),
             ("markdown.reveal", words(&["line", "span", "none"])),
             ("markdown.navigation", words(&["line", "row"])),
+            ("keys.legend", words(&["compact", "full"])),
             ("theme.appearance", words(&["system", "dark", "light"])),
             ("end_of_line", words(&["", "lf", "crlf", "cr"])),
             (
@@ -1737,6 +1745,7 @@ mod tests {
                 "grammars.install",
                 "grammars.urls",
                 "insert_final_newline",
+                "keys.legend",
                 "keys.option_as_alt",
                 "language.css.tabstop",
                 "language.diff.trim_trailing_whitespace",

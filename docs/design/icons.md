@@ -204,6 +204,51 @@ a shape is code-shaped data, nested lists of points, which the
 settings pane could not edit as a value, and an icon is not a
 preference one toggles.
 
+### 6. A legend is compact until asked for, in every pane
+
+Asked the same day: "add key legend compaction like search does on
+`<A-/>`". The search bar's legend was the one that folded (search.md
+Decision 11: hidden, a dim `⌥/ keys` at the end of its stages' row,
+`<A-/>` flipping `search.legend` for the session). Compaction is the
+legend's now, not the search's: every legend — `ctx.legend` in a Lua
+view (grammars, fonts, themes, settings, search), `legends::legend`
+in the chrome (memory, undo) — draws as one `⌥/ keys` until asked,
+and whole as its items and a last `⌥/ hide keys`.
+
+- **One key, everywhere: `<A-/>`**, the `legend` command — pane mode's
+  for every pane that is not an editor's; the search bar's fields map
+  it too, as they did. A click on the hint is the same. `?` without its
+  shift, as the search had it. Not every field's: the resident pane
+  view is a field too, so a `field` place would be every pane's and
+  the command line's (`a_panes_places_are_not_its_fields`); a filter's
+  field gives `<Esc>` first.
+- **Per pane, for the session.** A flip is the pane's
+  (`Legends`, keyed by pane, shared with Lua as `kawoosh._legend`):
+  opening the grammars' keys leaves the themes pane's as they were,
+  and a pane opened later starts as the setting says. A flip is kept
+  over a change of the setting — it is what the user asked of that
+  pane; a closed pane's is forgotten at the next flip.
+- **`keys.legend = "compact" | "full"`** says how every legend starts,
+  `compact` by default. `search.legend` is gone into it (the settings'
+  moved table names it), since a boolean for one pane would be the
+  exception the setting replaces.
+- **Compact is the hint alone**, not the first few items: which items
+  are first is a guess per pane, and a cut that moves with the pane's
+  width reads as a different legend at each width. One hint is the
+  search's, which was the reference.
+- A legend that is a prompt's own — the settings pane's `⏎ keeps ·
+  esc drops` beside a value being edited — is `full = true`: two keys
+  that are the only way out are not folded. A view that puts the hint
+  elsewhere passes `toggle = false` and draws `ctx.legend_toggle`
+  where it wants it: the search bar keeps its hint at the end of the
+  stages' row and its legend under the bar only while whole, as before.
+
+*Beat:* one global flip (what `search.legend` was, a session value):
+`<A-/>` in one pane would re-lay every pane that has a legend, the
+search bar growing behind the pane one asked in. *Beat:* a setting per
+pane (`search.legend`, `grammars.legend`…): a setting for each plugin
+to declare for one behaviour.
+
 ## What moves now
 
 The first round: the tab's close (`close`), the search stages'
@@ -258,4 +303,15 @@ cleared and a bad one refused, a Lua icon stroke for stroke the
 chrome's, caps no taller than their line with their icons in their
 middle and a legend wrapping between items, the panes' legends as
 caps, the which-key's and the undo panel's keys as caps.
+
+Decision 6, 2026-10-02: `kawoosh/src/legends.rs` (`Legends`, the
+`legend` command, `legend` / `toggle` for the chrome,
+`kawoosh._legend`), boot.lua's `ctx.legend` (`full =`, `toggle =`),
+`ctx.legend_toggle`, `ctx.legend_full`, the click caught in
+`on_event`; `keys.legend`; `<A-/>` in pane mode and the search bar's fields.
+Tests: `kawoosh/tests/legends.rs` — a pane's legend one hint until
+`<A-/>` opens it and again closes it (a click too, another pane's its
+own), the undo pane's the same, `keys.legend = "full"` starting them
+whole; the search panel's legend test on the shared state;
+`search.legend` named as moved.
 

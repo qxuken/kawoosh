@@ -283,6 +283,7 @@ impl Kawoosh {
         let style = move || rows::mono(font, &pal);
         let dim = move || style().color(pal.dim);
         let small = move |c: Color| tm.small(c);
+        let legend = self.legend_full(pane);
         let rows = std::mem::take(&mut self.undo.rows);
         let graph = std::mem::take(&mut self.undo.graph);
         let n = rows.len();
@@ -333,16 +334,21 @@ impl Kawoosh {
                             head = "no buffer".into();
                         }
                         ui.text(&head, small(pal.dim));
-                        crate::icons::legend_items(
+                        crate::legends::legend(
                             ui,
                             &self.icons.borrow(),
+                            pane,
+                            legend,
                             &[
                                 (&["<CR>"], "restore"),
                                 (&["u", "<C-r>", "g-", "g+"], "step"),
                                 (&["q"], "close"),
                             ],
-                            &crate::icons::KeyStyle::new(small(pal.dim), pal.border),
-                            small(pal.faint),
+                            &crate::legends::LegendStyle {
+                                keys: crate::icons::KeyStyle::new(small(pal.dim), pal.border),
+                                words: small(pal.faint),
+                                hover: pal.hover,
+                            },
                         );
                     },
                 );

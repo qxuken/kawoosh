@@ -225,6 +225,9 @@ pub struct Kawoosh {
     /// The icon set, the user's shapes over the shipped ones, shared
     /// with Lua (`icons.rs`).
     pub(crate) icons: crate::icons::Shared,
+    /// The panes whose key legend was flipped, whole or compact, shared
+    /// with Lua (`legends.rs`).
+    pub(crate) legends: crate::legends::Shared,
     /// kui's latency HUD — frame times as a graph in the corner —
     /// toggled with `:kui_framerate_hud`.
     pub hud: bool,
@@ -432,6 +435,7 @@ impl Kawoosh {
             tab_shown: None,
             settings_door: Default::default(),
             icons: Default::default(),
+            legends: Default::default(),
             line_cells: Default::default(),
             perf: Default::default(),
             frames: crate::frames::Frames::with_wake(&wake),
@@ -2897,6 +2901,12 @@ impl Kawoosh {
             Some("syntax") => self.on_syntax_click(p),
             Some("undo") => self.on_undo_click(p),
             Some("memory") => self.on_memory_click(p),
+            // A legend's `⌥/ keys`: its pane's whole, or compact again.
+            Some("legend") => {
+                if let Some(pane) = p.get_int("pane") {
+                    self.flip_legend(pane as PaneId);
+                }
+            }
             // A click's payload is the `on_click` value itself, with the
             // pointer's `cell` beside it on a grid.
             // The badge on a terminal scrolled away: back to the prompt.

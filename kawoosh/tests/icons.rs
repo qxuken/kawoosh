@@ -243,7 +243,7 @@ fn key_caps_keep_the_line_and_a_legend_wraps_between_items() {
                  text("walk", { size = 12, wrap = "none" }), ctx.keys("<C-S-j>", { size = 12 }) },
                column { key = "narrow", width = 150,
                  ctx.legend({ { "<CR>", "installs" }, { { "j", "k" }, "walk" }, { "/", "filters" },
-                              { "<A-/>", "keys" }, { "q", "closes" } }, { size = 12 }) } }
+                              { "<A-/>", "keys" }, { "q", "closes" } }, { size = 12, full = true }) } }
            end)"#,
     );
     ex(&mut d, &mut app, "view caps");
@@ -319,6 +319,8 @@ fn the_panes_legends_are_caps() {
     let mut d = Drive::new(1200.0, 800.0);
     let mut app = app_with_lua(&mut d);
     d.frame(&mut app);
+    // Whole, not the one `⌥/ keys` each starts as.
+    ex(&mut d, &mut app, "lua kawoosh.opt('keys.legend', 'full')");
     for (cmd, key, word) in [
         ("grammars", "q", "closes"),
         ("fonts", "m", "mono or all"),
@@ -326,9 +328,6 @@ fn the_panes_legends_are_caps() {
         ("settings", "x", "clear :set"),
         ("search project", "esc", "to results"),
     ] {
-        if cmd.starts_with("search") {
-            ex(&mut d, &mut app, "lua kawoosh.opt('search.legend', true)");
-        }
         ex(&mut d, &mut app, cmd);
         settle(&mut d, &mut app);
         let nodes = d.core.nodes();
@@ -360,6 +359,7 @@ fn the_chromes_keys_are_caps() {
     assert_eq!(caps.len(), 1, "one key, one cap");
     assert!(caps[0].border_w > 0.0, "outlined");
     d.key(&mut app, "escape", KeyMods::default());
+    ex(&mut d, &mut app, "set keys.legend=full");
     ex(&mut d, &mut app, "undo history");
     settle(&mut d, &mut app);
     let nodes = d.core.nodes();

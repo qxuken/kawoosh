@@ -31,7 +31,6 @@
 local fs = kawoosh.fs
 
 kawoosh.setting("search.context", { type = "integer", doc = "lines shown above and below each match in the search's results" })
-kawoosh.setting("search.legend", { type = "boolean", doc = "the search bar's key legend shown; ⌥/ in the bar flips it" })
 
 local VIEW = "search"
 local RESULTS = "*search*"
@@ -493,23 +492,18 @@ local function trail(ctx)
   end
   local root = search.root and search.root ~= fs.cwd() and ("in " .. fs.form(search.root, "relative") .. "/") or nil
   if root then r[#r + 1] = text(root, { size = SIZE - 1, color = t.faint, wrap = "none" }) end
-  -- At the row's end, the way to the legend: a click flips it too.
+  -- At the row's end, the way to the legend (every pane's, `<A-/>`):
+  -- a click flips it too.
   r[#r + 1] = row { width = "grow" }
-  r[#r + 1] = row { pad = { x = 6 }, height = ROW_H - 2, radius = 4, gap = 4, cross_align = "center",
-    hover_bg = t.sunken, on_click = { kind = "legend" },
-    ctx.keys("<A-/>", { size = HINT_SIZE }),
-    text(search.legend() and "hide keys" or "keys", { size = HINT_SIZE, color = t.faint, wrap = "none" }) }
+  r[#r + 1] = ctx.legend_toggle({ size = HINT_SIZE })
   return r
 end
-
--- search.legend(): whether the legend is shown — `search.legend`, off
--- unless set, flipped for the session by `⌥/` (`search legend`).
-function search.legend() return kawoosh.opt("search.legend") == true end
 
 -- The keys, small and dim, under the rest: one key a hint — a run of
 -- keys under one label (`⌥R ⌥C ⌥W ⌥G regex case word ignored`) read
 -- ambiguously. Drawn as caps, wrapped at the pane's width between
--- hints, never inside one (`ctx.legend`).
+-- hints, never inside one (`ctx.legend`); under the bar only while
+-- the pane's legend is whole, its way there at the trail's end.
 local HINTS = {
   { "<CR>", "search" }, { "<Tab>", "next field" }, { "<S-Tab>", "previous field" },
   { "<Up>", "earlier search" }, { "<Down>", "later search" },
@@ -519,7 +513,7 @@ local HINTS = {
   { "<Esc>", "to results" }, { "<C-S-j>", "to results" }, { "<C-S-k>", "back up" }, { "<C-c>", "close" },
 }
 local function hints(ctx)
-  return ctx.legend(HINTS, { size = HINT_SIZE })
+  return ctx.legend(HINTS, { size = HINT_SIZE, toggle = false })
 end
 
 kawoosh.view(VIEW, function(ctx)
@@ -548,14 +542,12 @@ kawoosh.view(VIEW, function(ctx)
   -- The legend only when asked for: the bar as tall as it draws, so the
   -- results take back the rows it took.
   return column { width = "grow", pad = { x = 8, y = 4 }, gap = 2, clip = true, bg = t.surface,
-    head, globs, trail(ctx), search.legend() and hints(ctx) or nil }
+    head, globs, trail(ctx), hints(ctx) }
 end, function(ev)
   if ev.kind == "unstage" and ev.i then
     search.remove(ev.i)
   elseif ev.kind == "stage" and ev.i then
     search.go(ev.i)
-  elseif ev.kind == "legend" then
-    kawoosh.opt("search.legend", not search.legend())
   elseif ev.kind == "regex" or ev.kind == "case" or ev.kind == "word" or ev.kind == "ignored" then
     search.flip(ev.kind)
   end
@@ -648,8 +640,6 @@ on("stage remove", function() search.remove() end, "the cursor's stage taken out
 on("stage kind", function() search.cycle() end, "the cursor's stage's kind: in, keep, drop")
 on("stage next", function() search.go(search.cur + 1) end, "the next stage to the fields")
 on("stage prev", function() search.go(search.cur - 1) end, "the previous stage to the fields")
-on("legend", function() kawoosh.opt("search.legend", not search.legend()) end,
-   "the bar's key legend shown, or hidden")
 on("close", function() search.close() end, "close the search's panel, its results kept for the next")
 on("earlier", function() search.earlier(1) end, "the search made before this one here, in the bar")
 on("later", function() search.earlier(-1) end, "the search made after this one here, in the bar")
@@ -719,8 +709,8 @@ for _, m in ipairs { "i", "n" } do
     kawoosh.map(m, "<A-k>", "search stage kind", w)
     kawoosh.map(m, "<A-h>", "search stage prev", w)
     kawoosh.map(m, "<A-l>", "search stage next", w)
-    -- `?` without its shift: the keys.
-    kawoosh.map(m, "<A-/>", "search legend", w)
+    -- Every pane's legend key (`legend`), from the bar's fields too.
+    kawoosh.map(m, "<A-/>", "legend", w)
   end
 end
 

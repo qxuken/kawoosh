@@ -79,7 +79,7 @@ you turn them on.
 | `<Up>` `<Down>` | earlier searches made in this workspace |
 | `<C-S-j>`, `<C-j>`, `<Esc>` in normal mode | move down to the results |
 | `<C-c>` | close the panel; the results are kept for next time |
-| `<A-/>` | show or hide the legend of these keys (`search.legend` to start with it shown) |
+| `<A-/>` | show or hide the legend of these keys, as in every pane (`keys.legend = "full"` to start with them shown) |
 
 `:search project PATTERN` runs PATTERN at once. Running
 `:search project` again, from anywhere, puts the keys back in the bar
