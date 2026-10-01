@@ -545,6 +545,72 @@ fn the_first_file_of_a_listed_language_is_asked_about_once() {
     std::fs::remove_dir_all(t).ok();
 }
 
+/// `ask` is a toast with an Install button, up for fifteen seconds —
+/// long enough to reach, not so long it is in the way: the button, or
+/// the keyboard on the toast (`<C-w>n`, `<CR>`), installs the grammar,
+/// and the file it was asked for is painted.
+#[test]
+fn the_ask_is_a_toast_whose_button_installs() {
+    let t = temp("ask-toast");
+    let (remote, data) = (t.join("remote"), t.join("grammars"));
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    let Some(lib) = library(&t) else { return };
+    let at = base(&remote, &lib);
+    // The base's list kept, as an update leaves it: jsonish is listed.
+    std::fs::copy(remote.join("manifest.json"), data.join("manifest.json")).unwrap();
+    let file = t.join("a.jsonish");
+    std::fs::write(&file, "{\"a\": 1}\n").unwrap();
+
+    let mut d = Drive::new(900.0, 500.0);
+    let mut app = app_with(&mut d, &data, &[at]);
+    app.open(&file);
+    d.frame(&mut app);
+    d.frame(&mut app);
+    let asked = app
+        .notes
+        .shown
+        .iter()
+        .find(|s| s.text.starts_with("jsonish has a grammar"))
+        .expect("asked")
+        .clone();
+    assert!(asked.toast, "a toast, not a corner line");
+    assert_eq!(asked.level, Level::Info);
+    assert_eq!(asked.ttl, Some(std::time::Duration::from_secs(15)));
+    assert_eq!(asked.actions.len(), 1);
+    assert_eq!(asked.actions[0].label, "Install");
+    assert_eq!(asked.actions[0].command, "grammar install jsonish");
+    assert!(
+        d.corner_texts().iter().any(|l| l == "Install"),
+        "{:?}",
+        d.corner_texts()
+    );
+
+    // The button.
+    let button = d
+        .core
+        .nodes()
+        .into_iter()
+        .find(|n| n.text.as_deref() == Some("Install"))
+        .expect("the button");
+    d.click(
+        &mut app,
+        button.rect.x + button.rect.w / 2.0,
+        button.rect.y + button.rect.h / 2.0,
+    );
+    assert!(app.grammars.installing.contains(NAME), "{}", app.ed.message);
+    assert!(app.notes.shown.iter().all(|s| !s.toast), "the toast went");
+    until(&mut d, &mut app, "installed", |a| {
+        a.grammars.installed.contains_key(NAME)
+    });
+    app.wait_for_syntax();
+    d.frame(&mut app);
+    assert!(tokens(&app).contains(&Token::Property));
+    assert_eq!(notes(&app, Level::Error), Vec::<String>::new());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(t).ok();
+}
+
 /// `auto` installs at the first file; `:grammar update` installs again
 /// what its release moved and nothing else; `:grammar remove` takes
 /// the grammar and its colours out, and the next launch has none.
@@ -705,12 +771,12 @@ fn the_pane_lists_walks_installs_and_removes() {
 
     ex(&mut d, &mut app, "grammars");
     d.frame(&mut app);
-    let listed = rows(&d);
     let to_install = app.grammars.listed.len();
+    let listed: Vec<String> = rows(&d).into_iter().take(to_install).collect();
     let mut sorted = listed.clone();
     sorted.sort();
     assert_eq!(listed, sorted, "by name");
-    assert_eq!(listed.len(), to_install);
+    assert!(rows(&d).len() > to_install, "the built-in ones after");
     let at = listed.iter().position(|n| n == NAME).unwrap();
     let counts = |installed: usize| {
         format!(
@@ -720,7 +786,7 @@ fn the_pane_lists_walks_installs_and_removes() {
     };
     assert!(all(&d).contains(&counts(0)), "{}", all(&d));
     assert!(
-        all(&d).contains("rust · ") && all(&d).contains("built in"),
+        all(&d).contains("built in") && row(&d, "rust").ends_with("built in"),
         "{}",
         all(&d)
     );
@@ -1226,6 +1292,146 @@ fn a_grammar_that_can_only_be_built_says_so_in_the_pane() {
     let zig = row(&d, "zig");
     assert!(zig.ends_with("install"), "{zig:?}");
     assert_eq!(overflows(&d), Vec::<String>::new());
+    assert_eq!(d.warnings(), Vec::<String>::new());
+    std::fs::remove_dir_all(t).ok();
+}
+
+fn lua(app: &mut Kawoosh, src: &str) -> String {
+    app.run_lua_source("t", src);
+    app.ed.message.clone()
+}
+
+/// The built-in grammars are rows of the pane, each tagged `built in`
+/// with its files — c, which the releases list too, saying the linked
+/// one is what is used — and `/` filters every part: what is typed
+/// narrows the rows by a grammar's name or its files, the cursor on the
+/// best match; `<Esc>` hands the keys back to the rows, which walk what
+/// is shown, and `<Esc>` there empties the filter before it closes.
+#[test]
+fn the_pane_filters_by_name_and_file_and_tags_the_built_in() {
+    let t = temp("pane-filter");
+    // Tall enough for every row to be on screen.
+    let mut d = Drive::new(760.0, 4000.0);
+    let mut app = Kawoosh::new("t", "hello\n");
+    let ext = app.attach_lua().unwrap();
+    d.extension("lua", ext).unwrap();
+    app.load_grammars(&t.join("grammars"));
+    d.frame(&mut app);
+    ex(&mut d, &mut app, "grammars");
+    d.frame(&mut app);
+    let rows = |d: &Drive| -> Vec<String> {
+        d.core
+            .nodes()
+            .iter()
+            .filter_map(|n| n.label.clone())
+            .filter_map(|l| l.strip_prefix("grammar ").map(str::to_string))
+            .collect()
+    };
+    let row = |d: &Drive, name: &str| d.texts_under(&format!("grammar {name}")).join(" ");
+    let all = |d: &Drive| d.texts_under("body").join(" ");
+    let state = |app: &mut Kawoosh| {
+        lua(
+            app,
+            "local s = kawoosh.grammars.state() \
+             kawoosh.echo(s.query .. ' | ' .. s.cursor .. ' | ' .. table.concat(s.rows, ' '))",
+        )
+    };
+
+    // Every grammar a row, the built-in ones last, each saying so.
+    let whole = rows(&d);
+    let built_in = app
+        .grammars
+        .shown
+        .borrow()
+        .iter()
+        .filter(|g| g.state == "built in")
+        .count();
+    assert_eq!(whole.len(), app.grammars.listed.len() + built_in);
+    let (zig, rust) = (
+        whole.iter().position(|n| n == "zig").unwrap(),
+        whole.iter().position(|n| n == "rust").unwrap(),
+    );
+    assert!(zig < rust, "{whole:?}");
+    let rust_row = row(&d, "rust");
+    assert!(
+        rust_row.contains(".rs") && rust_row.ends_with("built in"),
+        "{rust_row:?}"
+    );
+    let c = row(&d, "c");
+    assert!(
+        c.contains(".c .h built in") && c.ends_with("used over the release's c"),
+        "{c:?}"
+    );
+    assert!(
+        !row(&d, "lua").contains("release"),
+        "only where a release lists it"
+    );
+    assert_eq!(overflows(&d), Vec::<String>::new());
+
+    // `/`, then a name: the rows narrow as it is typed, the cursor on
+    // the best, the count says how many of how many.
+    d.press(&mut app, "/");
+    d.press(&mut app, "zig");
+    d.frame(&mut app);
+    let shown = rows(&d);
+    assert!(
+        shown.contains(&"zig".to_string()) && shown.len() < whole.len(),
+        "{shown:?}"
+    );
+    assert!(
+        state(&mut app).starts_with("zig | zig | "),
+        "{}",
+        state(&mut app)
+    );
+    assert!(
+        all(&d).contains(&format!("{} of {}", shown.len(), whole.len())),
+        "{}",
+        all(&d)
+    );
+
+    // A file: the built-in part is filtered too, and its row is the
+    // best; `<Esc>` gives the keys to the rows, `k` walks what is shown.
+    d.press(&mut app, "<C-u>.rs<Esc>");
+    d.frame(&mut app);
+    let shown = rows(&d);
+    let s = state(&mut app);
+    assert!(s.starts_with(".rs | rust | "), "{s}");
+    let walk: Vec<String> = s
+        .rsplit(" | ")
+        .next()
+        .unwrap()
+        .split(' ')
+        .map(str::to_string)
+        .collect();
+    assert_eq!(walk, shown, "the cursor walks what is shown");
+    let at = walk.iter().position(|n| n == "rust").unwrap();
+    if at > 0 {
+        d.press(&mut app, "k");
+        let s = state(&mut app);
+        assert!(s.starts_with(&format!(".rs | {} | ", walk[at - 1])), "{s}");
+        d.press(&mut app, "j");
+    }
+    // `⏎` on a built-in one says so, and fetches nothing.
+    d.press(&mut app, "<CR>");
+    assert_eq!(app.ed.message, "grammars: rust is built in");
+    assert!(app.grammars.installing.is_empty());
+
+    // Nothing matches: the pane says so.
+    d.press(&mut app, "/");
+    d.press(&mut app, "<C-u>qqqq<Esc>");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), Vec::<String>::new());
+    assert!(all(&d).contains("no grammar matches"), "{}", all(&d));
+    assert_eq!(overflows(&d), Vec::<String>::new());
+
+    // `<Esc>` on the rows empties the filter — every row again — and
+    // then closes.
+    d.press(&mut app, "<Esc>");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), whole);
+    d.press(&mut app, "<Esc>");
+    d.frame(&mut app);
+    assert_eq!(rows(&d), Vec::<String>::new(), "closed");
     assert_eq!(d.warnings(), Vec::<String>::new());
     std::fs::remove_dir_all(t).ok();
 }

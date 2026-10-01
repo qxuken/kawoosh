@@ -783,3 +783,55 @@ is not there); `a_source_is_a_repository_or_a_directory`.
 Not done: `kawoosh.language`'s own libraries are not in the `:grammars`
 pane; a grammar there is one the list, an install or
 `grammars.sources` names.
+
+**The todo's three, 2026-10-01.** Asked: "search in grammars",
+"indicate builtins in grammars", "add install button to a notification
+and make it stay for something like 15 sec".
+
+- **`ask` is a toast with an Install button**, up fifteen seconds
+  (`ASK_TTL`) — an info shown as a toast, the text as before, the
+  button `:grammar install NAME` (`Build` and `:grammar build NAME` for
+  a listed grammar no release has an archive of). Decision 7's "one
+  corner line" is that toast now. Notifications had actions and a time
+  of their own already (kui.md Decision 9); what they lacked was the
+  two together: a toast with actions was a question, not put away by
+  `x` or a click until answered, which an offer that goes by itself in
+  fifteen seconds is not. `Shown::waits` says which a toast is —
+  actions and no time — and only a question refuses `x` and a click on
+  its card. The keyboard's way to the button is the toasts' own,
+  `<C-w>n` then `⏎`.
+- **The built-in grammars are rows**, in their own part after the rest,
+  each with its files and a `built in` tag where the others have their
+  button; the cursor walks them, and `⏎` `d` `b` on one say it is built
+  in. `kawoosh.grammars.list()` has `released`: a release lists the
+  name. The names a manifest lists that this build links (only `c`
+  today, there for glsl's and objc's queries) are kept as they are
+  passed over (`Grammars::passed`), so under c's row a line says
+  "used over the release's c" — under it, where a failure's reason
+  goes: beside the tag it squeezed the row's files to nothing at the
+  pane's width.
+- **`/` filters the pane**: a field over the rows (`ctx.field`, as the
+  settings pane's search is), each grammar matched by its name or one
+  of its files, word by word, with `kawoosh.fuzzy` — the picker's fzy
+  scoring — at its best word, so `zig`, `.rb` and `Dockerfile` each find
+  theirs. Matched as one line, a query's letters were gathered from
+  across a long list of extensions: `qqqq` found sql. Every part is
+  filtered and keeps its place, its rows best first and the matched
+  letters lit; the cursor goes to the best match of all whenever the
+  filter moves, stays on its grammar when the filter is emptied, and
+  acts on nothing while its row is hidden. `⏎` or `<Esc>` in the field
+  gives the keys back to the rows (the arrows, `<C-n>` `<C-p>` `<C-j>`
+  `<C-k>` walk them from the field); `<Esc>` on the rows empties the
+  filter, and with none closes the pane. The head and the field stay
+  put over the scrolling rows.
+
+Calls taken: the toast keeps the corner line's text, command and all,
+since the log keeps it after the toast has gone; the filter keeps the
+parts rather than one ranked list, the cursor on the best match
+showing where it is; `i`, which installs, is not the filter's key.
+
+Verified: `an_offer_goes_in_its_time_and_can_be_put_away`
+(`kawoosh/tests/notify.rs`); `the_ask_is_a_toast_whose_button_installs`
+and `the_pane_filters_by_name_and_file_and_tags_the_built_in`
+(`kawoosh/tests/grammars.rs`), and the pane test's rows with the
+built-in ones after the rest.
